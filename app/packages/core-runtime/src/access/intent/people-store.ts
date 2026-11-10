@@ -1,5 +1,5 @@
-import { and, desc, eq, inArray } from 'drizzle-orm';
-import { Context, Effect, Layer, Match, Option, Schema } from 'effect';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { Context, Effect, Layer, Match, Option, Ref, Schema } from 'effect';
 
 import { CoreDatabase } from '../../db/client.ts';
 import { DatabaseIdentityEnrollmentContext } from '../../db/database-identities.ts';
@@ -13,6 +13,8 @@ import {
   accessRoles,
   accessScopes,
   accessTeamMembers,
+  principalCompanyMemberships,
+  principals,
 } from '../../db/schema.ts';
 import type { CoreTransaction } from '../../db/types.ts';
 import type { OperationalScope } from '../../operations/context.ts';
@@ -35,7 +37,8 @@ import {
   RoleRevisionSchema,
   RoleSchema,
 } from '../model.ts';
-import type { PeopleIntentWrite } from '../lifecycle/people-commands.ts';
+import type { PeopleCommandError, PeopleIntentWrite } from '../lifecycle/people-commands.ts';
+import { peopleRefusal } from '../lifecycle/people-commands.ts';
 import type { AccessIntentError } from './errors.ts';
 import { intentConflict } from './errors.ts';
 import { lockRoles, writeGrantIncarnations } from './grant-incarnations.ts';
@@ -287,6 +290,8 @@ const attributionIssue = (scope: OperationalScope, write: PeopleIntentWrite): st
     Match.tag('EndDelegation', () => null),
     Match.tag('EndMembership', () => null),
     Match.tag('RemoveTeamMember', () => null),
+    // A precondition writes nothing; it reads the installed tenant's directory only.
+    Match.tag('RequireDirectoryMember', () => null),
     Match.exhaustive,
   );
 
@@ -380,7 +385,11 @@ const writeMembership = (transaction: CoreTransaction, membership: AccessMembers
     })
     .pipe(durable(PEOPLE_UNIQUE_CONSTRAINTS), Effect.asVoid);
 
-/** A membership only ever moves forward; the row it moved from is the compare-and-set this checks. */
+/**
+ * A membership only ever moves forward; the row it moved from is the compare-and-set this checks. A
+ * revocation records who ended it, when and why, exactly once: the migration's guard admits the three
+ * columns only on the move to 'revoked' and never changes them afterwards.
+ */
 const endMembership = (
   transaction: CoreTransaction,
   scope: OperationalScope,
@@ -388,7 +397,16 @@ const endMembership = (
 ) =>
   transaction
     .update(accessMemberships)
-    .set({ status: write.status })
+    .set(
+      write.status === 'revoked'
+        ? {
+            endedAt: sql`transaction_timestamp()`,
+            endedBy: scope.principalId,
+            endedReason: write.reason ?? null,
+            status: write.status,
+          }
+        : { status: write.status },
+    )
     .where(
       and(
         eq(accessMemberships.tenantId, scope.tenantId),
@@ -648,10 +666,77 @@ const requireGrantorAssignments = (
           ),
         );
 
+/** The reason a refused precondition gives; the store's own conflict carries the same text. */
+const DIRECTORY_MEMBERSHIP_MISSING = (write: Extract<PeopleIntentWrite, { _tag: 'RequireDirectoryMember' }>) =>
+  `Person ${write.principalId} is not an active human with an active directory membership of company ${write.legalEntityId}`;
+
+/**
+ * The company directory precondition of an admission, inside the change's own transaction (S2). The
+ * directory rows are company-scoped by row security, so the company is installed for these two reads
+ * the way invitation acceptance does, and the request's own company is installed again afterwards.
+ * Both rows are share-locked: a concurrent departure, disabling or principal deactivation waits for
+ * this commit, and one that committed first makes the admission refuse instead of landing.
+ */
+const requireDirectoryMember = Effect.fn('AccessPeopleStore.requireDirectoryMember')(
+  function* requireDirectoryMemberEffect(
+    transaction: CoreTransaction,
+    scope: OperationalScope,
+    write: Extract<PeopleIntentWrite, { _tag: 'RequireDirectoryMember' }>,
+    refused: Ref.Ref<Option.Option<PeopleCommandError>>,
+  ) {
+    yield* transaction
+      .execute(sql`select set_config('ontos.legal_entity_id', ${write.legalEntityId}, true)`, 'objects')
+      .pipe(durable(PEOPLE_UNIQUE_CONSTRAINTS));
+    // One statement: the active directory row joined to the active human it names, both share-locked.
+    const directory = yield* transaction
+      .select({ principalId: principalCompanyMemberships.principalId })
+      .from(principalCompanyMemberships)
+      .innerJoin(
+        principals,
+        and(
+          eq(principals.tenantId, principalCompanyMemberships.tenantId),
+          eq(principals.principalId, principalCompanyMemberships.principalId),
+        ),
+      )
+      .where(
+        and(
+          eq(principalCompanyMemberships.tenantId, scope.tenantId),
+          eq(principalCompanyMemberships.legalEntityId, write.legalEntityId),
+          eq(principalCompanyMemberships.principalId, write.principalId),
+          eq(principalCompanyMemberships.status, 'active'),
+          eq(principals.kind, 'human'),
+          eq(principals.status, 'active'),
+        ),
+      )
+      .for('share')
+      .pipe(durable(PEOPLE_UNIQUE_CONSTRAINTS));
+    yield* transaction
+      .execute(sql`select set_config('ontos.legal_entity_id', ${scope.legalEntityId ?? ''}, true)`, 'objects')
+      .pipe(durable(PEOPLE_UNIQUE_CONSTRAINTS));
+    if (directory.length === 1) {
+      return yield* Effect.void;
+    }
+    const reason = DIRECTORY_MEMBERSHIP_MISSING(write);
+    yield* Ref.set(refused, Option.some(peopleRefusal('people_directory_membership_missing', reason)));
+    // Failing the body rolls back every row the change wrote; the caller reports the refusal above.
+    return yield* intentConflict('access_intent_write_refused', reason);
+  },
+);
+
+/** The precondition refusal a rolled-back change recorded, or the conflict itself when there is none. */
+const refusalOr = (
+  refused: Ref.Ref<Option.Option<PeopleCommandError>>,
+  conflict: AccessIntentError,
+): Effect.Effect<never, AccessIntentError | PeopleCommandError> =>
+  Effect.flatMap(Ref.get(refused), (refusal) =>
+    Effect.fail(Option.getOrElse(refusal, (): AccessIntentError | PeopleCommandError => conflict)),
+  );
+
 const applyWrite = (
   transaction: CoreTransaction,
   scope: OperationalScope,
   write: PeopleIntentWrite,
+  refused: Ref.Ref<Option.Option<PeopleCommandError>>,
 ): Effect.Effect<void, AccessIntentError> =>
   Match.value(write).pipe(
     Match.tag('EndAssignment', (ending) => endAssignment(transaction, scope, ending)),
@@ -666,6 +751,7 @@ const applyWrite = (
     Match.tag('RecordMembership', ({ membership }) => writeMembership(transaction, membership)),
     Match.tag('RecordTeamMember', ({ member }) => writeTeamMember(transaction, member)),
     Match.tag('RemoveTeamMember', (removal) => removeTeamMember(transaction, scope, removal)),
+    Match.tag('RequireDirectoryMember', (required) => requireDirectoryMember(transaction, scope, required, refused)),
     Match.exhaustive,
   );
 
@@ -716,11 +802,14 @@ export interface ApplyPeopleChangeInput {
  * and the acting person are the request's and never the command body's.
  */
 export interface AccessPeopleStoreService {
-  /** Every row of one planned change, in one transaction, or nothing at all. */
+  /**
+   * Every row of one planned change, in one transaction, or nothing at all. A precondition the change
+   * names and the transaction refutes is a people refusal (`people_directory_membership_missing`).
+   */
   readonly applyPeopleChange: (
     scope: OperationalScope,
     input: ApplyPeopleChangeInput,
-  ) => Effect.Effect<void, AccessIntentError>;
+  ) => Effect.Effect<void, AccessIntentError | PeopleCommandError>;
   /**
    * The release a role revision pinned: the entries a cell must still exist in. A release is global
    * data, but it is read through the caller's scope so no command can consult one it was not given.
@@ -828,22 +917,24 @@ const makeAccessPeopleDrizzleStore = (database: AccessIntentDatabase): AccessPeo
     if (issue !== null) {
       return yield* intentConflict('access_intent_scope_mismatch', issue);
     }
-    return yield* writes.length === 0
-      ? Effect.void
-      : runScoped(database, scope, PEOPLE_UNIQUE_CONSTRAINTS, (transaction) =>
-          lockRoles(transaction, {
-            mode: 'share',
-            roleIds: assignedRoleIds(writes),
-            tenantId: scope.tenantId,
-          }).pipe(
-            Effect.andThen(
-              Effect.forEach(writes, (write) => applyWrite(transaction, scope, write), {
-                concurrency: 1,
-                discard: true,
-              }),
-            ),
-          ),
-        );
+    if (writes.length === 0) {
+      return yield* Effect.void;
+    }
+    const refused = yield* Ref.make(Option.none<PeopleCommandError>());
+    return yield* runScoped(database, scope, PEOPLE_UNIQUE_CONSTRAINTS, (transaction) =>
+      lockRoles(transaction, {
+        mode: 'share',
+        roleIds: assignedRoleIds(writes),
+        tenantId: scope.tenantId,
+      }).pipe(
+        Effect.andThen(
+          Effect.forEach(writes, (write) => applyWrite(transaction, scope, write, refused), {
+            concurrency: 1,
+            discard: true,
+          }),
+        ),
+      ),
+    ).pipe(Effect.catchTag('AccessIntentConflictError', (conflict) => refusalOr(refused, conflict)));
   });
 
   return Object.freeze({ applyPeopleChange, loadCatalogSnapshot, loadTenantPeople });

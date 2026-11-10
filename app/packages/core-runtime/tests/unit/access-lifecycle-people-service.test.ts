@@ -7,12 +7,15 @@ import { CatalogDigestSchema, CatalogSnapshotIdSchema } from '../../src/access/i
 import type { AccessConfigureBasis } from '../../src/access/changes/authority.ts';
 import type { AccessScopeId, PrincipalId } from '../../src/access/ids.ts';
 import { AccessMembershipIdSchema, AccessMembershipSchema } from '../../src/access/intent/memberships.ts';
+import { AccessTeamMemberIdSchema, AccessTeamMemberSchema, AccessTeamSchema } from '../../src/access/intent/teams.ts';
 import type { AccessMembership } from '../../src/access/intent/memberships.ts';
 import type { AccessPeopleIntent } from '../../src/access/intent/people-store.ts';
+import type { AccessTeamWithMembers } from '../../src/access/intent/teams.ts';
 import { administrationOf, makeAccessPeopleCommands } from '../../src/access/lifecycle/people-service.ts';
 import { isSoleAdministrator } from '../../src/access/lifecycle/owners.ts';
 import type { AssignRoleCommand, GrantDelegationCommand } from '../../src/access/lifecycle/people-service.ts';
-import type { PeopleIntentWrite } from '../../src/access/lifecycle/people-commands.ts';
+import { peopleRefusal } from '../../src/access/lifecycle/people-commands.ts';
+import type { PeopleCommandError, PeopleIntentWrite } from '../../src/access/lifecycle/people-commands.ts';
 import { CatalogSnapshotSchema } from '../../src/access/model.ts';
 import type { Assignment, Cell, Delegation } from '../../src/access/model.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
@@ -124,11 +127,18 @@ const roleBRevision = makeRoleRevision({ cells: [payCell(1)], id: ids.roleRevisi
 const otherRoleBRevision = makeRoleRevision({ cells: [payCell(1)], id: ids.roleRevision(98), roleId: otherRoleB.id });
 
 interface ServiceFixture {
+  /** The store's write, when a case needs it to refuse inside its own transaction. */
+  readonly apply?: (writes: readonly PeopleIntentWrite[]) => Effect.Effect<void, PeopleCommandError>;
   /** The acting person's configure bases, as the tenant intent loader answers them. */
   readonly bases?: readonly AccessConfigureBasis[];
   readonly delegations?: readonly Delegation[];
+  /** The tenant's membership rows; the default makes the manager, member and grantor company-B members. */
+  readonly memberships?: readonly AccessMembership[];
+  /** Counts the reconciles, so a refused write is seen to project nothing. */
+  readonly reconciled?: { count: number };
   /** Roles of the tenant nobody in the fixture holds. */
   readonly roles?: AccessPeopleIntent['roles'];
+  readonly teams?: readonly AccessTeamWithMembers[];
   /** Every write the service persists, in order. */
   readonly written?: PeopleIntentWrite[];
 }
@@ -155,41 +165,53 @@ const serviceOver = (holdings: readonly ReturnType<typeof holding>[], fixture: S
     loader: { loadConfigureBases: () => Effect.succeed(fixture.bases ?? [{ _tag: 'Owner' }]) },
     memberships: {
       loadTenantMemberships: () =>
-        Effect.succeed([
-          membership(MANAGER, scopeB, 1),
-          membership(MEMBER, scopeB, 2),
-          membership(GRANTOR, scopeB, 3),
-          // A company grantor's grants count only on a live path: the tenant's membership and the company's.
-          membership(GRANTOR, tenantScope, 4),
-        ]),
+        Effect.succeed(
+          fixture.memberships ?? [
+            membership(MANAGER, scopeB, 1),
+            membership(MEMBER, scopeB, 2),
+            membership(GRANTOR, scopeB, 3),
+            // A company grantor's grants count only on a live path: the tenant's membership and the company's.
+            membership(GRANTOR, tenantScope, 4),
+          ],
+        ),
       recordMembership: () => unused,
       recordMemberships: () => unused,
       setMembershipStatus: () => unused,
     },
     people: {
       applyPeopleChange: (_scope, change) =>
-        Effect.sync(() => {
-          fixture.written?.push(...change.writes);
-        }),
+        (fixture.apply?.(change.writes) ?? Effect.void).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              fixture.written?.push(...change.writes);
+            }),
+          ),
+        ),
       loadCatalogSnapshot: () => Effect.succeed(Option.some(catalog)),
       loadTenantPeople: () => Effect.succeed(intent),
     },
     projection: {
       reconcileTenant: () =>
-        Effect.succeed({
-          deletions: 0,
-          digest: digestOf('b'),
-          operationId: ids.operation(1),
-          projectionToken: 'token',
-          resumed: false,
-          scopeId: tenantScope,
-          touches: 0,
-          units: [],
-          verified: true,
-        }),
+        Effect.sync(() => {
+          if (fixture.reconciled !== undefined) {
+            fixture.reconciled.count += 1;
+          }
+        }).pipe(
+          Effect.as({
+            deletions: 0,
+            digest: digestOf('b'),
+            operationId: ids.operation(1),
+            projectionToken: 'token',
+            resumed: false,
+            scopeId: tenantScope,
+            touches: 0,
+            units: [],
+            verified: true,
+          }),
+        ),
     },
     teams: {
-      loadTenantTeams: () => Effect.succeed([]),
+      loadTenantTeams: () => Effect.succeed(fixture.teams ?? []),
       recordTeam: () => unused,
       recordTeamMember: () => unused,
       removeTeamMember: () => unused,
@@ -491,4 +513,273 @@ it.effect('counts an owner as an administrator only over a live, unsuspended mem
       false,
     );
   }),
+);
+
+/* ------------------------------------------------------------------------------------------------
+ * Admission and ending: permanent authority only, the directory checked in the write, nothing revived
+ * ---------------------------------------------------------------------------------------------- */
+
+const OWNER = personId(1);
+const LEAVER = MEMBER;
+const ADMIN_A = personId(6);
+const NEWCOMER = personId(7);
+const ownerScope = scopeOf(OWNER);
+const adminAScope = scopeOf(ADMIN_A);
+const adminOf = (legalEntity: typeof companyA): AccessConfigureBasis => ({
+  _tag: 'ScopeAdmin',
+  legalEntityIds: [legalEntity],
+  tenantContext: false,
+});
+
+const row = (
+  holder: PrincipalId,
+  scopeId: AccessScopeId,
+  n: number,
+  kind: AccessMembership['kind'] = 'member',
+): AccessMembership => ({ ...membership(holder, scopeId, n), kind });
+
+/** The owner, a company-A administrator and a person who is a member of the tenant and both companies. */
+const peopleRows: readonly AccessMembership[] = [
+  row(OWNER, tenantScope, 60),
+  row(OWNER, tenantScope, 61, 'owner'),
+  row(ADMIN_A, tenantScope, 62),
+  row(ADMIN_A, scopeA, 63),
+  row(ADMIN_A, scopeA, 64, 'access_admin'),
+  row(LEAVER, tenantScope, 65),
+  row(LEAVER, scopeA, 66),
+  row(LEAVER, scopeB, 67),
+];
+const leaverRow = (scopeId: AccessScopeId) =>
+  peopleRows.find(
+    (candidate) =>
+      candidate.scopeId === scopeId &&
+      candidate.kind === 'member' &&
+      candidate.holder._tag === 'Principal' &&
+      candidate.holder.principalId === LEAVER,
+  );
+
+const teamIn = (scopeId: AccessScopeId, n: number): AccessTeamWithMembers => {
+  const team = Schema.decodeUnknownSync(AccessTeamSchema)({
+    createdAt: ELAPSED,
+    createdBy: OWNER,
+    id: ids.teamId(n),
+    name: `Team ${n}`,
+    scopeId,
+    tenantId: tenant,
+  });
+  const member = Schema.decodeUnknownSync(AccessTeamMemberSchema)({
+    addedAt: ELAPSED,
+    addedBy: OWNER,
+    holder: person(2),
+    id: Schema.decodeUnknownSync(AccessTeamMemberIdSchema)(`30000000-0000-4000-8000-${n.toString().padStart(12, '0')}`),
+    teamId: team.id,
+    tenantId: tenant,
+  });
+  return { members: [member], team };
+};
+
+const leaverHolding = (n: number, scopeId: AccessScopeId) => ({
+  ...holding(n, scopeId, 1000),
+  assignment: makeAssignment({
+    holder: person(2),
+    incarnationId: ids.incarnation(n),
+    roleId: (rolesByScope.get(scopeId) ?? tenantRole).id,
+    roleRevisionId: ids.roleRevision(n),
+    scopeId,
+  }),
+});
+
+const admitInto = (legalEntity: typeof companyA, principalId: PrincipalId = NEWCOMER) => ({
+  companyMembershipId: Schema.decodeUnknownSync(AccessMembershipIdSchema)('40000000-0000-4000-8000-000000000002'),
+  legalEntityId: legalEntity,
+  principalId,
+  tenantMembershipId: Schema.decodeUnknownSync(AccessMembershipIdSchema)('40000000-0000-4000-8000-000000000001'),
+});
+
+it.effect('admits through permanent authority over the company only, with the directory checked in the write', () =>
+  Effect.gen(function* admissionNeedsPermanentAuthority() {
+    yield* TestClock.setTime(AT.getTime());
+    const written: PeopleIntentWrite[] = [];
+    const admitted = yield* serviceOver([], {
+      bases: [adminOf(companyA)],
+      memberships: peopleRows,
+      written,
+    }).admitMember(adminAScope, admitInto(companyA));
+    expect(admitted.membership).toEqual({ principalId: NEWCOMER, scopeId: scopeA, status: 'active' });
+    // A company administrator's admission writes the person's tenant row too, after the precondition.
+    expect(written.map((write) => write._tag)).toEqual([
+      'RequireDirectoryMember',
+      'RecordMembership',
+      'RecordMembership',
+    ]);
+    expect(written[0]).toEqual({ _tag: 'RequireDirectoryMember', legalEntityId: companyA, principalId: NEWCOMER });
+
+    // The administrator of company B does not reach A; a delegated manager never admits anybody.
+    const elsewhere = yield* Effect.flip(
+      serviceOver([], { bases: [adminOf(companyB)], memberships: peopleRows }).admitMember(
+        adminAScope,
+        admitInto(companyA),
+      ),
+    );
+    expect(elsewhere.code).toBe('people_authority_missing');
+    const delegation = managed();
+    const delegated = yield* Effect.flip(
+      serviceOver([], {
+        bases: [delegatedBasis(delegation)],
+        delegations: [delegation],
+        memberships: peopleRows,
+      }).admitMember(managerScope, admitInto(companyB)),
+    );
+    expect(delegated.code).toBe('people_authority_missing');
+    const unknown = yield* Effect.flip(
+      serviceOver([], { memberships: peopleRows }).admitMember(ownerScope, admitInto(legalEntityId(99))),
+    );
+    expect(unknown.code).toBe('people_membership_scope_mismatch');
+  }),
+);
+
+it.effect('refuses an admission the directory refutes inside the write transaction, and projects nothing', () =>
+  Effect.gen(function* directoryCheckedInTheWrite() {
+    yield* TestClock.setTime(AT.getTime());
+    // The person was 'active' when the screen offered them and departs before the write: only the
+    // store's own transaction sees that, so the service must hand it the precondition and report it.
+    const departed = new Set<PrincipalId>([NEWCOMER]);
+    const reconciled = { count: 0 };
+    const refused = yield* Effect.flip(
+      serviceOver([], {
+        apply: (writes) =>
+          writes.some((write) => write._tag === 'RequireDirectoryMember' && departed.has(write.principalId))
+            ? Effect.fail(peopleRefusal('people_directory_membership_missing', 'departed'))
+            : Effect.void,
+        memberships: peopleRows,
+        reconciled,
+      }).admitMember(ownerScope, admitInto(companyA)),
+    );
+    expect(refused.code).toBe('people_directory_membership_missing');
+    expect(reconciled.count).toBe(0);
+  }),
+);
+
+it.effect('ends exactly the closed scopes: one company, or the tenant and every company with it', () =>
+  Effect.gen(function* endingClosesItsScopes() {
+    yield* TestClock.setTime(AT.getTime());
+    const holdings = [leaverHolding(31, scopeA), leaverHolding(32, scopeB), leaverHolding(33, tenantScope)];
+    const managesA = makeDelegation({
+      grantedBy: OWNER,
+      id: ids.delegationId(51),
+      managerId: LEAVER,
+      people: [MANAGER],
+      roleIds: [roleA.id],
+      scopeId: scopeA,
+    });
+    const managesB = makeDelegation({
+      grantedBy: OWNER,
+      id: ids.delegationId(52),
+      managerId: LEAVER,
+      people: [MANAGER],
+      roleIds: [roleB.id],
+      scopeId: scopeB,
+    });
+    const teams = [teamIn(scopeA, 1), teamIn(scopeB, 2)];
+    const fixture = { delegations: [managesA, managesB], memberships: peopleRows, teams };
+    const reason = 'Moved to another employer';
+
+    const companyWrites: PeopleIntentWrite[] = [];
+    const company = yield* serviceOver(holdings, { ...fixture, written: companyWrites }).endMembership(ownerScope, {
+      principalId: LEAVER,
+      reason,
+      scopeId: scopeA,
+    });
+    expect(company.membership).toEqual({ principalId: LEAVER, scopeId: scopeA, status: 'revoked' });
+    // Company A only: its row with the reason, its managed delegation, assignment and team place; the
+    // tenant row, company B and everything in them stay.
+    expect(companyWrites).toEqual([
+      { _tag: 'EndMembership', membershipId: leaverRow(scopeA)?.id, reason, status: 'revoked' },
+      { _tag: 'EndDelegation', delegationId: managesA.id },
+      { _tag: 'EndAssignment', incarnationId: ids.incarnation(31) },
+      { _tag: 'RemoveTeamMember', teamMemberId: teams[0]?.members[0]?.id },
+    ]);
+
+    const tenantWrites: PeopleIntentWrite[] = [];
+    yield* serviceOver(holdings, { ...fixture, written: tenantWrites }).endMembership(ownerScope, {
+      principalId: LEAVER,
+      reason,
+      scopeId: tenantScope,
+    });
+    // Leaving the tenant closes every company: all three member rows (each with the reason), both
+    // delegations, all three assignments and both team places.
+    expect(tenantWrites).toHaveLength(10);
+    expect(tenantWrites).toEqual(
+      expect.arrayContaining([
+        { _tag: 'EndMembership', membershipId: leaverRow(tenantScope)?.id, reason, status: 'revoked' },
+        { _tag: 'EndMembership', membershipId: leaverRow(scopeA)?.id, reason, status: 'revoked' },
+        { _tag: 'EndMembership', membershipId: leaverRow(scopeB)?.id, reason, status: 'revoked' },
+        { _tag: 'EndDelegation', delegationId: managesA.id },
+        { _tag: 'EndDelegation', delegationId: managesB.id },
+        { _tag: 'EndAssignment', incarnationId: ids.incarnation(31) },
+        { _tag: 'EndAssignment', incarnationId: ids.incarnation(32) },
+        { _tag: 'EndAssignment', incarnationId: ids.incarnation(33) },
+      ]),
+    );
+  }),
+);
+
+/** The tenant owner joined company A, and the manager co-administers it. */
+const coAdminRows: readonly AccessMembership[] = [
+  ...peopleRows,
+  row(OWNER, scopeA, 68),
+  row(MANAGER, tenantScope, 69),
+  row(MANAGER, scopeA, 70),
+  row(MANAGER, scopeA, 71, 'access_admin'),
+];
+
+it.effect(
+  'refuses an ending outside the actor authority, over an administrator, or with live granted delegations',
+  () =>
+    Effect.gen(function* endingRefusals() {
+      yield* TestClock.setTime(AT.getTime());
+      const asAdminA = serviceOver([], { bases: [adminOf(companyA)], memberships: peopleRows });
+      const end = (
+        service: ReturnType<typeof serviceOver>,
+        scope: OperationalScope,
+        principalId: PrincipalId,
+        scopeId: AccessScopeId,
+      ) => Effect.flip(service.endMembership(scope, { principalId, reason: 'test', scopeId }));
+
+      expect((yield* end(asAdminA, adminAScope, NEWCOMER, scopeA)).code).toBe('people_membership_unknown');
+      // A company administrator never reaches the tenant row (it closes every company) ...
+      expect((yield* end(asAdminA, adminAScope, LEAVER, tenantScope)).code).toBe('people_authority_missing');
+      // ... nor ends a co-administrator or the tenant owner in their company (S4).
+      const coAdmin = serviceOver([], { bases: [adminOf(companyA)], memberships: coAdminRows });
+      expect((yield* end(coAdmin, adminAScope, MANAGER, scopeA)).code).toBe('people_authority_missing');
+      expect((yield* end(coAdmin, adminAScope, OWNER, scopeA)).code).toBe('people_authority_missing');
+      // The owner ends the co-administrator; the company administrator ends a plain member.
+      yield* serviceOver([], { memberships: coAdminRows }).endMembership(ownerScope, {
+        principalId: MANAGER,
+        reason: 'test',
+        scopeId: scopeA,
+      });
+      yield* asAdminA.endMembership(adminAScope, { principalId: LEAVER, reason: 'test', scopeId: scopeA });
+
+      // While the leaver's own grants stand in a closed scope, the owner revokes them first (S3) ...
+      const grantedA = makeDelegation({
+        grantedBy: LEAVER,
+        id: ids.delegationId(54),
+        managerId: MANAGER,
+        people: [OWNER],
+        roleIds: [roleA.id],
+        scopeId: scopeA,
+      });
+      const granting = serviceOver([], { delegations: [grantedA], memberships: peopleRows });
+      const live = yield* end(granting, ownerScope, LEAVER, scopeA);
+      expect(live.code).toBe('people_granted_delegations_live');
+      expect(live.scopeIds).toEqual([scopeA]);
+      // ... while a grant in a company the ending leaves open does not block it.
+      yield* granting.endMembership(ownerScope, { principalId: LEAVER, reason: 'test', scopeId: scopeB });
+
+      // The sole owner leaving the tenant must transfer it first.
+      const sole = yield* end(serviceOver([], { memberships: peopleRows }), ownerScope, OWNER, tenantScope);
+      expect(sole.code).toBe('ownership_transfer_required');
+      expect(sole.scopeIds).toEqual([tenantScope]);
+    }),
 );

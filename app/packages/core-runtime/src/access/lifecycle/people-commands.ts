@@ -1,7 +1,13 @@
 import { Effect, Match, Option, Schema } from 'effect';
 
-import { AccessScopeIdSchema, AssignmentIncarnationIdSchema, DelegationIdSchema } from '../ids.ts';
-import type { AccessScopeId, AssignmentIncarnationId, PrincipalId, TenantId } from '../ids.ts';
+import {
+  AccessScopeIdSchema,
+  AssignmentIncarnationIdSchema,
+  DelegationIdSchema,
+  LegalEntityIdSchema,
+  PrincipalIdSchema,
+} from '../ids.ts';
+import type { AccessScopeId, AssignmentIncarnationId, LegalEntityId, PrincipalId, TenantId } from '../ids.ts';
 import type { AccessMembership, AccessMembershipId, MembershipKind, MembershipStatus } from '../intent/memberships.ts';
 import {
   AccessMembershipIdSchema,
@@ -164,7 +170,18 @@ export const PeopleIntentWriteSchema = Schema.Union([
   Schema.TaggedStruct('RecordMembership', { membership: AccessMembershipSchema }),
   Schema.TaggedStruct('EndMembership', {
     membershipId: AccessMembershipIdSchema,
+    /** Why the membership ends, recorded with the revocation; a suspension records nothing. */
+    reason: Schema.optionalKey(Schema.String),
     status: Schema.Literals(['revoked', 'suspended']),
+  }),
+  /**
+   * A precondition, not a row: the person is an active human with an 'active' company directory
+   * membership, checked and share-locked inside the change's own transaction, so a concurrent
+   * departure either waits for the admission or refuses it.
+   */
+  Schema.TaggedStruct('RequireDirectoryMember', {
+    legalEntityId: LegalEntityIdSchema,
+    principalId: PrincipalIdSchema,
   }),
   Schema.TaggedStruct('RecordAssignment', {
     assignment: AssignmentSchema,
@@ -480,6 +497,160 @@ export const planMembershipGrant = (
   );
 };
 
+export interface MemberAdmissionRequest {
+  readonly actor: PrincipalId;
+  /** Its `tenantScopeId` names the tenant context the admission may have to join as well. */
+  readonly administration: ScopeAdministration;
+  readonly assignments: readonly Assignment[];
+  readonly at: Date;
+  readonly companyMembershipId: AccessMembershipId;
+  readonly companyScopeId: AccessScopeId;
+  readonly delegations: readonly Delegation[];
+  readonly holder: Holder;
+  /** The company the scope names, whose directory membership the change requires in its transaction. */
+  readonly legalEntityId: LegalEntityId;
+  readonly memberships: readonly AccessMembership[];
+  readonly teamMembers: readonly AccessTeamMember[];
+  readonly teams: readonly AccessTeam[];
+  readonly tenantId: TenantId;
+  /** Used only when the person holds no live tenant member row; a rejoin always gets fresh ids (D27). */
+  readonly tenantMembershipId: AccessMembershipId;
+}
+
+/** Whether an assignment or delegation has not ended yet: active now, or active and still to start. */
+const notEnded = (row: { readonly status: string; readonly validUntil?: Date | undefined }, at: Date) =>
+  row.status === 'active' && (row.validUntil === undefined || at < row.validUntil);
+
+/**
+ * The first piece of authority a fresh member row would make reachable again: a live assignment, a
+ * team place or a managed delegation the person still holds in one of the reached scopes. A membership
+ * that ended through `planMembershipEnd` leaves none, so only rows another writer left behind show up.
+ */
+const leftoverAuthority = (
+  request: MemberAdmissionRequest,
+  holder: PrincipalId,
+  reached: (scopeId: AccessScopeId) => boolean,
+) => {
+  const assignment = request.assignments.find(
+    (row) => reached(row.scopeId) && personOf(row.holder) === holder && notEnded(row, request.at),
+  );
+  if (assignment !== undefined) {
+    return { kind: 'role assignment', scopeId: assignment.scopeId };
+  }
+  const teamScopes = new Map(request.teams.map((entry) => [entry.id, entry.scopeId] as const));
+  const place = request.teamMembers.find((member) => {
+    const scopeId = teamScopes.get(member.teamId);
+    return scopeId !== undefined && reached(scopeId) && personOf(member.holder) === holder;
+  });
+  const placeScope = place === undefined ? undefined : teamScopes.get(place.teamId);
+  if (placeScope !== undefined) {
+    return { kind: 'team place', scopeId: placeScope };
+  }
+  const delegation = request.delegations.find(
+    (row) => reached(row.scopeId) && row.managerId === holder && notEnded(row, request.at),
+  );
+  return delegation === undefined ? undefined : { kind: 'managed delegation', scopeId: delegation.scopeId };
+};
+
+/**
+ * Admits one person to one company as a plain `member`, in ONE plan whose fence is the company's. A
+ * company path starts at the tenant's, so the tenant `member` row is written first when the person
+ * holds no live one; otherwise only the company row is. The kind is never the caller's: `owner` and
+ * `access_admin` move only through ownership transfer.
+ *
+ * Admission grants participation and nothing else, so it never brings back authority nobody granted
+ * again (S1). It refuses a member row in the tenant or the company that is not live but not revoked
+ * either (expired, suspended or still to start), because replacing it would lift what that row now
+ * withholds. And it refuses while the person still holds a live assignment, team place or managed
+ * delegation, or a company member row, that the new rows would make reachable again: a fresh tenant row
+ * reaches every company, a fresh company row reaches that company.
+ *
+ * The company directory precondition is the plan's first write, so the store checks it inside the
+ * same transaction as the rows it admits (S2). "Already a member" is judged per company (C5): a person
+ * live in another company is still admitted to this one.
+ */
+export const planMemberAdmission = (
+  request: MemberAdmissionRequest,
+): Effect.Effect<PeopleChangePlan, PeopleCommandError> => {
+  const principal = principalOf(request.holder);
+  if (Option.isNone(principal)) {
+    return Effect.fail(
+      peopleRefusal('people_agent_holder_forbidden', 'An agent holds no membership in this wave (O67-Q5)'),
+    );
+  }
+  const holder = Option.getOrThrow(principal);
+  const { at, companyScopeId } = request;
+  const { tenantScopeId } = request.administration;
+  if (companyScopeId === tenantScopeId) {
+    return Effect.fail(
+      peopleRefusal(
+        'people_membership_scope_mismatch',
+        'A person is admitted to one company, never to the tenant alone',
+      ),
+    );
+  }
+  const memberRows = request.memberships.filter(
+    (row) => row.kind === 'member' && row.status !== 'revoked' && personOf(row.holder) === holder,
+  );
+  const dormant = memberRows.find(
+    (row) => (row.scopeId === tenantScopeId || row.scopeId === companyScopeId) && !membershipIsLive(row, at),
+  );
+  if (dormant !== undefined) {
+    const expired = dormant.status === 'active' && dormant.validUntil !== undefined && dormant.validUntil <= at;
+    const state = expired ? 'an expired' : `a ${dormant.status} or not yet started`;
+    return Effect.fail(
+      peopleRefusal(
+        expired ? 'people_membership_ended' : 'people_membership_already_active',
+        `Person ${holder} holds ${state} member row ${dormant.id} in scope ${dormant.scopeId}; admission never replaces it`,
+      ),
+    );
+  }
+  const tenantLive =
+    liveMembershipOf({ at, holder, kind: 'member', memberships: request.memberships, scopeId: tenantScopeId }) !==
+    undefined;
+  const grant = (scopeId: AccessScopeId, membershipId: AccessMembershipId) =>
+    planMembershipGrant({
+      actor: request.actor,
+      administration: request.administration,
+      at,
+      holder: request.holder,
+      kind: 'member',
+      membershipId,
+      memberships: request.memberships,
+      scopeId,
+      tenantId: request.tenantId,
+    });
+  return Effect.gen(function* planMemberAdmissionEffect() {
+    const company = yield* grant(companyScopeId, request.companyMembershipId);
+    if (!tenantLive) {
+      const elsewhere = memberRows.find((row) => row.scopeId !== tenantScopeId && row.scopeId !== companyScopeId);
+      if (elsewhere !== undefined) {
+        return yield* peopleRefusal(
+          'people_membership_ended',
+          `Person ${holder} still holds member row ${elsewhere.id} in scope ${elsewhere.scopeId}; a new tenant membership would bring it back`,
+        );
+      }
+    }
+    const leftover = leftoverAuthority(request, holder, (scopeId) => !tenantLive || scopeId === companyScopeId);
+    if (leftover !== undefined) {
+      return yield* peopleRefusal(
+        'people_membership_ended',
+        `Person ${holder} still holds a ${leftover.kind} in scope ${leftover.scopeId} from a membership that ended; end it before admitting them again`,
+      );
+    }
+    const tenant = tenantLive ? [] : (yield* grant(tenantScopeId, request.tenantMembershipId)).writes;
+    return planOf(
+      { scopeId: companyScopeId, tenantId: request.tenantId },
+      ['people_membership_admitted', 'people_directory_membership_required', 'people_admission_revives_nothing'],
+      [
+        { _tag: 'RequireDirectoryMember', legalEntityId: request.legalEntityId, principalId: holder },
+        ...tenant,
+        ...company.writes,
+      ],
+    );
+  });
+};
+
 export interface MembershipEndRequest extends PeopleCommandFacts {
   readonly administration: ScopeAdministration;
   readonly assignments: readonly Assignment[];
@@ -488,6 +659,8 @@ export interface MembershipEndRequest extends PeopleCommandFacts {
   readonly membershipId: AccessMembershipId;
   readonly memberships: readonly AccessMembership[];
   readonly nextStatus: Extract<MembershipStatus, 'revoked' | 'suspended'>;
+  /** Why the membership ends; recorded on every row this plan revokes, never on a suspension. */
+  readonly reason?: string;
   /**
    * The successor named in the SAME command, required exactly where the leaver is the last
    * administrator. Its management membership is minted inside this plan, so the scope is never
@@ -794,6 +967,8 @@ export const planMembershipEnd = (
             ];
       // A delegation is management authority standing on the manager's membership path, so revoking that
       // path ends it too: a later rejoin derives no delegated authority from an envelope left behind.
+      // A delegation that only names the leaver in `people` stays: `requireLiveMember` refuses every
+      // assignment to them until they are admitted again, and then its envelope reaches them again.
       const managedDelegations =
         endsPath && request.nextStatus === 'revoked'
           ? request.delegations.filter(
@@ -803,9 +978,12 @@ export const planMembershipEnd = (
                 (tenantPath || delegation.scopeId === ending.scopeId),
             )
           : [];
+      const why = request.reason === undefined ? {} : { reason: request.reason };
       const writes: readonly PeopleIntentWrite[] = [
         ...transfer,
-        { _tag: 'EndMembership', membershipId: ending.id, status: request.nextStatus },
+        request.nextStatus === 'revoked'
+          ? { _tag: 'EndMembership', membershipId: ending.id, status: 'revoked', ...why }
+          : { _tag: 'EndMembership', membershipId: ending.id, status: request.nextStatus },
         ...managedDelegations.map((delegation): PeopleIntentWrite => ({
           _tag: 'EndDelegation',
           delegationId: delegation.id,
@@ -814,6 +992,7 @@ export const planMembershipEnd = (
           _tag: 'EndMembership',
           membershipId: membership.id,
           status: 'revoked',
+          ...why,
         })),
         ...assignments.map((assignment): PeopleIntentWrite => ({
           _tag: 'EndAssignment',
