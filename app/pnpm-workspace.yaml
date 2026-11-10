@@ -2,7 +2,7 @@ catalog:
   '@app/commerce-customer-context': workspace:*
   '@app/shared-contracts': workspace:*
   '@app/work-tasks': workspace:*
-  '@techsio/ui-kit': 0.59.0
+  '@techsio/ui-kit': 0.59.1
 catalogMode: strict
 
 catalogs:
@@ -103,7 +103,7 @@ minimumReleaseAgeExclude:
   # Framework-owned signed Redact sidecar required by the default React runtime.
   - '@bleedingdev/tanstack-redact@0.2.2'
   # Demo features: the UI kit and the Better Auth MCP, CIMD and OAuth provider cohort.
-  - '@techsio/ui-kit@0.59.0'
+  - '@techsio/ui-kit@0.59.1'
   - better-auth@1.7.12
   - '@better-auth/api-key@1.7.12'
   - '@better-auth/cimd@1.7.12'
