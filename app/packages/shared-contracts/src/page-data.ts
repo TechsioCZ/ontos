@@ -252,7 +252,8 @@ export const definePageData = <I, A, E, R>(options: {
    * Shell/Core data) whose data `load` shows: its own app plus every app it reads directly or whose data its own API
    * returns. A live change naming none of them leaves the store untouched. Omitted: every live change concerns the
    * store. Writes (`moduleWriteEvent`, `invalidate`) and changes without an app list always concern it. A value a
-   * mounted view shows reloads once it is 20 s old, so a write that sends no live change is not missed.
+   * mounted view shows reloads once it is 20 s old, and 20 s after a failed or abandoned load, so a write that sends
+   * no live change is not missed.
    */
   readonly changesFrom?: readonly string[];
   readonly key: (input: I) => string;
@@ -401,15 +402,19 @@ export const definePageData = <I, A, E, R>(options: {
             settled = true;
             settle(entry, generation, result);
             Deferred.doneUnsafe(completion, Effect.fromResult(result));
-            return Result.isSuccess(result) ? expireLater(entry, generation, onExpired) : Effect.void;
+            // A failure is retried by the same check: a scoped store no longer hears the unrelated commits that
+            // used to retry it, and the recovery it waits for may send no live change at all.
+            return expireLater(entry, generation, onExpired);
           }),
         );
       }).pipe(
         Effect.ensuring(
-          Effect.sync(() => {
-            if (!settled) {
-              abandon(entry, generation);
+          Effect.suspend(() => {
+            if (settled) {
+              return Effect.void;
             }
+            abandon(entry, generation);
+            return expireLater(entry, generation, onExpired);
           }),
         ),
       ),

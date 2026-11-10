@@ -508,6 +508,84 @@ it.live('a shown strict scoped store reloads once 20 s old, also when its view s
   }),
 );
 
+interface FlakyOutcome {
+  fail: 'no' | 'error' | 'defect';
+}
+
+const makeFlakyScopedStore = (
+  clock: ManagedRuntime.ManagedRuntime<never, never>,
+  retainStale: boolean,
+  outcome: FlakyOutcome,
+) => {
+  let loads = 0;
+  const store = definePageData({
+    changesFrom: ['finance-billing'],
+    key: (id: string) => id,
+    load: (id: string) =>
+      Effect.suspend(() => {
+        loads += 1;
+        if (outcome.fail === 'error') {
+          return Effect.fail('down' as const);
+        }
+        return outcome.fail === 'defect' ? Effect.die('boom') : Effect.succeed(`${id}#${loads}`);
+      }),
+    retainStale,
+    runtime: clock,
+  });
+  return { loads: () => loads, store };
+};
+
+for (const failure of ['error', 'defect'] as const) {
+  it.live(`a shown scoped store retries 20 s after a reload ends in ${failure}, without an unrelated change`, () =>
+    Effect.gen(function* scopedFailureRetry() {
+      const clock = ManagedRuntime.make(TestClock.layer());
+      const outcome: FlakyOutcome = { fail: 'no' };
+      const { loads, store } = makeFlakyScopedStore(clock, true, outcome);
+      // Read as a React view reads it: the listener carries no input.
+      const unsubscribe = store.subscribe(() => {
+        store.snapshot('shown');
+      });
+      yield* store.preload('shown');
+      outcome.fail = failure;
+      dispatchChange(['finance-billing']);
+      yield* Effect.sleep('10 millis');
+      expect(loads()).toBe(2);
+      expect(store.snapshot('shown')).toMatchObject({ refreshing: false, state: 'ready', value: 'shown#1' });
+      // The backend recovers; the write the view waits for sends no live change.
+      outcome.fail = 'no';
+      yield* Effect.promise(() => clock.runPromise(TestClock.adjust('20 seconds')));
+      yield* Effect.sleep('10 millis');
+      expect(loads()).toBe(3);
+      expect(store.snapshot('shown')).toMatchObject({ state: 'ready', value: 'shown#3' });
+      unsubscribe();
+      yield* Effect.promise(() => clock.dispose());
+    }),
+  );
+}
+
+it.live('a mounted strict scoped store retries 20 s after a failed reload instead of staying failed', () =>
+  Effect.gen(function* strictScopedFailureRetry() {
+    const clock = ManagedRuntime.make(TestClock.layer());
+    const outcome: FlakyOutcome = { fail: 'no' };
+    const { loads, store } = makeFlakyScopedStore(clock, false, outcome);
+    const unsubscribe = store.subscribe(() => {
+      store.snapshot('shown');
+    }, 'shown');
+    yield* store.preload('shown');
+    outcome.fail = 'error';
+    dispatchChange(['finance-billing']);
+    yield* Effect.sleep('10 millis');
+    expect(store.snapshot('shown')).toMatchObject({ state: 'failed' });
+    outcome.fail = 'no';
+    yield* Effect.promise(() => clock.runPromise(TestClock.adjust('20 seconds')));
+    yield* Effect.sleep('10 millis');
+    expect(loads()).toBe(3);
+    expect(store.snapshot('shown')).toMatchObject({ state: 'ready', value: 'shown#3' });
+    unsubscribe();
+    yield* Effect.promise(() => clock.dispose());
+  }),
+);
+
 const changeOf = (detail: ModuleChangeDetail) => new CustomEvent(moduleChangeEvent, { detail });
 
 it('a hook listening to change events itself applies the same app rule as the stores', () => {
