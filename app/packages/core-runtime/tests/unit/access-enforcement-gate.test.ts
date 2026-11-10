@@ -16,6 +16,8 @@ import type { DecisionAuthorityPort, ScopeQuery } from '../../src/access/decisio
 import type { GateInput, ListGateInput } from '../../src/access/enforcement/contract.ts';
 import { makeAccessDecisionService } from '../../src/access/enforcement/service.ts';
 import type { AccessDecisionLogEntry, AccessDecisionLogWriter } from '../../src/access/enforcement/decision-log.ts';
+import { makeActionAuthorityService } from '../../src/permissions/action-authority.ts';
+import type { DeclaredActionAuthority } from '../../src/permissions/action-authority.ts';
 import type { AccessLegalEntityCandidates } from '../../src/access/enforcement/legal-entities.ts';
 import type { AccessWorkloadBindings } from '../../src/access/enforcement/workload-port.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
@@ -835,4 +837,65 @@ it.effect('fails the company list when the engine cannot answer for every compan
     });
     expect(outcome).toBe('AccessDecisionUnavailable');
   }),
+);
+
+it.effect(
+  'answers an Action batch through the real gate exactly as one decision per Action, for every company rule',
+  () =>
+    Effect.gen(function* realGateActionBatch() {
+      const company = LegalEntityIdSchema.make(uid(60));
+      const authority: AuthoritySpec = {
+        cells: [cell({ capability: 'finance.invoice.void' })],
+        legalEntityScope: { _tag: 'LegalEntity', legalEntityId: company, tenantId: tenant },
+      };
+      const voiding = { accessDeclaration: declarationOf() };
+      const archiving = { accessDeclaration: declarationOf({ key: 'finance.invoice.archive' }) };
+      const declared = new Map<string, DeclaredActionAuthority>(
+        (
+          [
+            ['finance.void-in-company', voiding, 'required'],
+            ['finance.void-anywhere', voiding, 'optional'],
+            ['finance.void-tenant', voiding, 'forbidden'],
+            ['finance.archive-in-company', archiving, 'required'],
+          ] as const
+        ).map(([actionKey, carrier, legalEntityScope]) => [actionKey, { actionKey, carrier, legalEntityScope }]),
+      );
+      const actionKeys = [...declared.keys(), 'unpublished.action'];
+      const outcomes: string[][] = [];
+      for (const scope of [scopeFor(person, company), scopeFor(person)]) {
+        const single = harness({ authority });
+        const alone = yield* Effect.forEach(
+          actionKeys,
+          (actionKey) =>
+            single.gate.decide({
+              carrier: declared.get(actionKey)?.carrier ?? {},
+              legalEntityScope: declared.get(actionKey)?.legalEntityScope ?? 'optional',
+              now,
+              scope,
+            }),
+          { concurrency: 1 },
+        );
+        const batched = harness({ authority });
+        const answers = yield* makeActionAuthorityService({ declared, gate: batched.gate, now }).checkActionAuthorities(
+          {
+            actionKeys,
+            scope,
+          },
+        );
+        expect(answers.map(({ execute, propose }) => [execute, propose])).toEqual(
+          alone.map(({ outcome }) => [
+            outcome === 'ALLOWED' ? 'allowed' : 'denied',
+            outcome === 'DENIED' ? 'denied' : 'allowed',
+          ]),
+        );
+        expect(batched.state.entries).toEqual(single.state.entries);
+        outcomes.push(alone.map(({ outcome }) => outcome));
+      }
+      // The company rules really differ: a company-required Action needs a selected company, the others run in
+      // either context, and an ungranted or unpublished Action is denied in both.
+      expect(outcomes).toEqual([
+        ['ALLOWED', 'ALLOWED', 'ALLOWED', 'DENIED', 'DENIED'],
+        ['DENIED', 'ALLOWED', 'ALLOWED', 'DENIED', 'DENIED'],
+      ]);
+    }),
 );

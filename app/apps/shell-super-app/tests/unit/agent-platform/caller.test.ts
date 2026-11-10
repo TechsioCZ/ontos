@@ -1,6 +1,11 @@
 import { AgentAppIdSchema } from '@app/shared-contracts/agent-proposals';
 import type { AccessDeclarationInput, OntosActionContract, OperationalScope } from '@app/core-runtime';
-import { OntosActionContractSchema, OntosModuleIdSchema, TenantModuleStateService } from '@app/core-runtime';
+import {
+  OntosActionContractSchema,
+  OntosModuleIdSchema,
+  TenantModuleStateReadUnavailableError,
+  TenantModuleStateService,
+} from '@app/core-runtime';
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
 import { Effect, Layer, Predicate, Ref, Schema } from 'effect';
@@ -379,6 +384,61 @@ it.effect('counts a module only while the tenant has it installed, whatever the 
     expect(absent.write.size).toBe(0);
     const present = yield* rightsWith([moduleId]);
     expect([...present.access]).toEqual([moduleId]);
+  }),
+);
+
+it.effect('keeps reading a read-only module but drops its write and proposal rights', () =>
+  Effect.gen(function* readOnlyModuleState() {
+    const installed = yield* catalog();
+    const rights = yield* callerModuleAccess(caller).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(
+        Layer.mock(TenantModuleStateService, {
+          getTenantModuleStates: (_tenantId, moduleKeys) =>
+            Effect.succeed(
+              moduleKeys.map((moduleKey) => ({
+                moduleKey: OntosModuleIdSchema.make(moduleKey),
+                state: 'read_only' as const,
+              })),
+            ),
+        }),
+      ),
+      Effect.provideService(AccessDecisionGate, gateAnswering('ALLOWED')),
+      Effect.provideService(
+        ActionAuthority,
+        actionAuthority(() => ({ execute: 'allowed' as const, propose: 'allowed' as const })),
+      ),
+    );
+    expect([...rights.access]).toEqual([moduleId]);
+    expect(rights.write.size).toBe(0);
+    expect(rights.propose.size).toBe(0);
+  }),
+);
+
+it.effect('fails closed as unavailable when the tenant module states cannot be read', () =>
+  Effect.gen(function* unreadableModuleState() {
+    const installed = yield* catalog();
+    const failure = yield* callerModuleAccess(caller).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(
+        Layer.mock(TenantModuleStateService, {
+          getTenantModuleStates: () =>
+            Effect.fail(
+              new TenantModuleStateReadUnavailableError({
+                code: 'tenant_module_state_read_unavailable',
+                reason: 'The module states are unreadable',
+              }),
+            ),
+        }),
+      ),
+      Effect.provideService(AccessDecisionGate, gateAnswering('ALLOWED')),
+      Effect.provideService(
+        ActionAuthority,
+        actionAuthority(() => ({ execute: 'allowed' as const, propose: 'allowed' as const })),
+      ),
+      Effect.flip,
+    );
+    expect(failure._tag).toBe('AgentStoreUnavailable');
   }),
 );
 

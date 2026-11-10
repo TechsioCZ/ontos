@@ -373,10 +373,18 @@ const measured = <A, E, R>(input: {
     const [rows] = yield* input.authorityCase.admin.unsafe<{ readonly count: number }>(
       `select count(*)::int as count from core.access_decision_logs where correlation_id = '${input.correlationId}'`,
     );
+    // Every row's content: all columns except its own id, the correlation it was tagged with and its instant.
+    const contents = yield* input.authorityCase.admin.unsafe<{ readonly content: string }>(
+      `select concat_ws('|', actor_principal_id, actor_json::text, capability_key, mode, outcome, reasons_json::text,
+                        scope_id, coalesce(target::text, '-'), tenant_id, coalesce(admission_deadline::text, '-'), coalesce(delegate_app_id::text, '-'), coalesce(delegate_principal_id::text, '-'),
+                        coalesce(on_behalf_of_principal_id::text, '-'), coalesce(operation_id::text, '-')) as content
+         from core.access_decision_logs where correlation_id = '${input.correlationId}' order by content`,
+    );
     const spans = tally(records);
     return {
       cellReads: countOf(spans, 'TenantIntentLoader.loadAuthorityCells'),
       counters,
+      decisionRowContents: contents.map(({ content }) => content),
       decisionRows: rows?.count ?? -1,
       // Wall time of the read itself, from the span the recording tracer closed around it.
       ms: Math.round(spans.get('measured.read')?.ms ?? -1),
@@ -544,6 +552,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '900 secon
             expect(sorted(caller.value.write)).toEqual(sorted(callerBefore.value.write));
             expect(caller.decisionRows).toBeGreaterThan(0);
             expect(caller.decisionRows).toBe(callerBefore.decisionRows);
+            expect(caller.decisionRowContents).toEqual(callerBefore.decisionRowContents);
             expect(caller.transactions).toBeLessThan(callerBefore.transactions);
 
             // (b) the Action authority one proposal queue read asks; a decide runs that read twice.
@@ -570,6 +579,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '900 secon
             });
             expect(queue.value).toEqual(queueBefore.value);
             expect(queue.decisionRows).toBe(queueBefore.decisionRows);
+            expect(queue.decisionRowContents).toEqual(queueBefore.decisionRowContents);
             expect(queue.transactions).toBeLessThan(queueBefore.transactions);
 
             const path = yield* reportPath;
