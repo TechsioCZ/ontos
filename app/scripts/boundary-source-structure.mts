@@ -15,6 +15,9 @@ const delimiterOpenings = new Map([
  */
 export class DelimiterDepth {
   private readonly depths = new Map<string, number>();
+  // Counts kept beside the depths so every per-character query is O(1).
+  private unbalanced = 0;
+  private unmatchedCloses = 0;
 
   update(character: string | undefined, previous?: string, angles = false): void {
     if (character === undefined) {
@@ -31,15 +34,19 @@ export class DelimiterDepth {
       return;
     }
     const delta = character === opening ? 1 : -1;
-    this.depths.set(opening, (this.depths.get(opening) ?? 0) + delta);
+    const before = this.depths.get(opening) ?? 0;
+    const after = before + delta;
+    this.depths.set(opening, after);
+    this.unbalanced += Number(after !== 0) - Number(before !== 0);
+    this.unmatchedCloses += Number(after < 0) - Number(before < 0);
   }
 
   hasUnmatchedClose(): boolean {
-    return [...this.depths.values()].some((depth) => depth < 0);
+    return this.unmatchedCloses > 0;
   }
 
   isTopLevel(): boolean {
-    return [...this.depths.values()].every((depth) => depth === 0);
+    return this.unbalanced === 0;
   }
 }
 
@@ -59,6 +66,24 @@ export const topLevelSeparators = (
     }
   }
   return positions;
+};
+
+/** The first entry `topLevelSeparators` would return for the same arguments, without scanning past it. */
+export const firstTopLevelSeparator = (
+  structure: string,
+  separators: string,
+  start = 0,
+  end = structure.length,
+  angles = false,
+): number | undefined => {
+  const depth = new DelimiterDepth();
+  for (let index = start; index < end; index += 1) {
+    depth.update(structure[index], structure[index - 1], angles);
+    if (depth.isTopLevel() && separators.includes(structure.charAt(index))) {
+      return index;
+    }
+  }
+  return undefined;
 };
 
 export const matchingDelimiter = (

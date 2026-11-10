@@ -9,6 +9,7 @@ import type { Expression, ObjectExpression } from 'oxc-parser';
 import { hasOriginalConfiguredReadPhase } from './generated-ccc-configured-read-provenance.mts';
 import {
   DelimiterDepth,
+  firstTopLevelSeparator,
   matchingDelimiter,
   separatedSource,
   topLevelSeparators,
@@ -27,6 +28,7 @@ import {
 } from './generated-module-api-boundary.mts';
 import {
   GOVERNED_HTTP_API_CLOSING_ANNOTATION,
+  codePositions,
   isCodePosition,
   maskNonCode,
   toCamelCase,
@@ -103,7 +105,7 @@ const matchingDelimiterEnd = (source: string, start: number, opening: string, cl
 
 interface SourceDepthAnalysis {
   readonly code: string;
-  readonly codePositions: Map<number, boolean>;
+  codePositions: Uint8Array | null;
   readonly comments: string;
   readonly prefixDepths: Int32Array;
 }
@@ -137,7 +139,7 @@ const sourceDepthAnalysis = (source: string): SourceDepthAnalysis => {
   }
   const analysis: SourceDepthAnalysis = {
     code,
-    codePositions: new Map(),
+    codePositions: null,
     comments: maskNonCode(source, true),
     prefixDepths,
   };
@@ -254,15 +256,17 @@ const wholeCallArguments = (
 const codeDepthBeforePosition = (source: string, target: number): number =>
   sourceDepthAnalysis(source).prefixDepths[target] ?? 0;
 
-const codeDepthAtPosition = (source: string, target: number): number | undefined => {
-  const analysis = sourceDepthAnalysis(source);
-  let codePosition = analysis.codePositions.get(target);
-  if (codePosition === undefined) {
-    codePosition = isCodePosition(source, target);
-    analysis.codePositions.set(target, codePosition);
+const isAnalyzedCodePosition = (source: string, target: number): boolean => {
+  if (!Number.isInteger(target) || target < 0) {
+    return isCodePosition(source, target);
   }
-  return codePosition ? codeDepthBeforePosition(source, target) : undefined;
+  const analysis = sourceDepthAnalysis(source);
+  analysis.codePositions ??= codePositions(source);
+  return analysis.codePositions[Math.min(target, source.length)] === 1;
 };
+
+const codeDepthAtPosition = (source: string, target: number): number | undefined =>
+  isAnalyzedCodePosition(source, target) ? codeDepthBeforePosition(source, target) : undefined;
 
 const isTopLevelCodePosition = (source: string, target: number): boolean => codeDepthAtPosition(source, target) === 0;
 
@@ -287,7 +291,7 @@ const assignedExpressionRange = (source: string, declaration: RegExp): SourceRan
     return undefined;
   }
   const start = match.index + match[0].length;
-  const [index] = topLevelSeparators(structure, ';', start);
+  const index = firstTopLevelSeparator(structure, ';', start);
   if (index === undefined) {
     return undefined;
   }
@@ -321,7 +325,7 @@ const constInitializer = (source: string, name: string): string | undefined => {
   if (equals === undefined) {
     return undefined;
   }
-  const [end] = topLevelSeparators(structure, ';', equals + 1);
+  const end = firstTopLevelSeparator(structure, ';', equals + 1);
   return end === undefined ? undefined : source.slice(equals + 1, end).trim();
 };
 
@@ -389,7 +393,7 @@ const hasBalancedArrowCallback = (source: string): boolean => {
   if (suffix.startsWith('=>')) {
     return true;
   }
-  const [arrow] = topLevelSeparators(maskNonCode(suffix), '=', 0, suffix.length, true);
+  const arrow = firstTopLevelSeparator(maskNonCode(suffix), '=', 0, suffix.length, true);
   return suffix.startsWith(':') && arrow !== undefined && suffix.slice(arrow, arrow + 2) === '=>';
 };
 
@@ -413,7 +417,7 @@ const isExecutableCallback = (candidate: string | undefined, ownerSource?: strin
 
 const callbackReturnedExpression = (handlerSource: string): string | undefined => {
   const structure = maskNonCode(handlerSource);
-  const [arrow] = topLevelSeparators(structure, '=', 0, structure.length, true);
+  const arrow = firstTopLevelSeparator(structure, '=', 0, structure.length, true);
   if (arrow === undefined || handlerSource.slice(arrow, arrow + 2) !== '=>') {
     return undefined;
   }
@@ -430,7 +434,7 @@ const callbackReturnedExpression = (handlerSource: string): string | undefined =
     return undefined;
   }
   const returned = body.slice(finalReturn.index + finalReturn[0].length);
-  const [statementEnd] = topLevelSeparators(maskNonCode(returned), ';');
+  const statementEnd = firstTopLevelSeparator(maskNonCode(returned), ';');
   return (statementEnd === undefined ? returned : returned.slice(0, statementEnd)).trim();
 };
 
@@ -465,8 +469,8 @@ const generatedSlotRange = (source: string, startMarker: string, endMarker: stri
     markerStart === -1 ||
     markerEnd <= markerStart ||
     depth === undefined ||
-    !isCodePosition(source, markerStart) ||
-    !isCodePosition(source, markerEnd) ||
+    !isAnalyzedCodePosition(source, markerStart) ||
+    !isAnalyzedCodePosition(source, markerEnd) ||
     codeDepthBeforePosition(source, markerEnd) !== depth ||
     source.includes(startMarker, markerStart + startMarker.length) ||
     source.includes(endMarker, markerEnd + endMarker.length)
@@ -858,7 +862,7 @@ const slotIsInsideMountedLayer = (
 // A trailing slot comment may precede an ASI-terminated root. Stop at the next
 // top-level export rather than swallowing that declaration into the fluent expression.
 const apiStatementEnd = (source: string, start: number): number | undefined => {
-  const [semicolon] = topLevelSeparators(maskNonCode(source), ';', start);
+  const semicolon = firstTopLevelSeparator(maskNonCode(source), ';', start);
   const nextExport = [...maskComments(source).matchAll(/\bexport\s/gu)].find(
     (match) => match.index > start && isTopLevelCodePosition(source, match.index),
   )?.index;
@@ -1195,7 +1199,12 @@ const readFactoryParametersShadow = (
 
 const hasReadFactoryReturnArrow = (tokens: readonly ReadFactoryToken[], annotation: number): boolean => {
   const depth = new DelimiterDepth();
-  for (const token of tokens.slice(annotation + 1)) {
+  // Walk in place: copying the remaining tokens on every call made this quadratic.
+  for (let index = annotation + 1; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === undefined) {
+      continue;
+    }
     if (depth.isTopLevel() && token.kind === SyntaxKind.EqualsGreaterThanToken) {
       return true;
     }
@@ -2629,7 +2638,7 @@ const hasNativeReadServiceFactoryExport = (source: string, binding: string): boo
     return false;
   }
   const annotationStart = declaration.index + declaration[0].length;
-  const [separator] = topLevelSeparators(maskNonCode(source), '=;', annotationStart, source.length, true);
+  const separator = firstTopLevelSeparator(maskNonCode(source), '=;', annotationStart, source.length, true);
   if (separator === undefined || source.charAt(separator) !== '=') {
     return false;
   }
@@ -2681,7 +2690,7 @@ const derivedReadTransactionBinding = (source: string, parameter: string | undef
 
 const hasDerivedReadFactoryResult = (callback: string, closing: number): boolean => {
   const suffix = callback.slice(closing + 1).trim();
-  const [arrow] = topLevelSeparators(maskNonCode(suffix), '=', 0, suffix.length, true);
+  const arrow = firstTopLevelSeparator(maskNonCode(suffix), '=', 0, suffix.length, true);
   const annotation = arrow === undefined ? '' : suffix.slice(0, arrow).trim();
   const opening = annotation.indexOf('<');
   return (
@@ -2831,7 +2840,7 @@ const localReadFactoryMaker = (source: string, candidate: string): LocalReadFact
   ) {
     return undefined;
   }
-  const [arrow] = topLevelSeparators(maskNonCode(makerSource), '=', closing + 1, makerSource.length, true);
+  const arrow = firstTopLevelSeparator(maskNonCode(makerSource), '=', closing + 1, makerSource.length, true);
   if (arrow === undefined || makerSource.slice(arrow, arrow + 2) !== '=>') {
     return undefined;
   }
@@ -3145,7 +3154,7 @@ const hasOwnerReadPermissionFactoryExport = (source: string, binding: string): b
   if (initializer === undefined) {
     return false;
   }
-  const [arrow] = topLevelSeparators(maskNonCode(initializer), '=', 0, initializer.length, true);
+  const arrow = firstTopLevelSeparator(maskNonCode(initializer), '=', 0, initializer.length, true);
   if (arrow === undefined || initializer.slice(arrow, arrow + 2) !== '=>') {
     return false;
   }
@@ -3847,7 +3856,7 @@ const hasScopedReadFactoryTransaction = (
 };
 
 const hasDirectReadCallbackExpression = (callback: string, returned: string): boolean => {
-  const [arrow] = topLevelSeparators(maskNonCode(callback), '=', 0, callback.length, true);
+  const arrow = firstTopLevelSeparator(maskNonCode(callback), '=', 0, callback.length, true);
   return (
     hasBalancedArrowCallback(callback) &&
     arrow !== undefined &&
@@ -3970,7 +3979,7 @@ const scopedReadCallableBody = (implementation: string): string => {
   if (implementation.startsWith('=>')) {
     return implementation.slice(2);
   }
-  const [arrow] = topLevelSeparators(maskNonCode(implementation), '=', 0, implementation.length, true);
+  const arrow = firstTopLevelSeparator(maskNonCode(implementation), '=', 0, implementation.length, true);
   return arrow !== undefined && implementation.slice(arrow, arrow + 2) === '=>'
     ? implementation.slice(arrow + 2)
     : implementation;
@@ -5132,7 +5141,7 @@ const curriedNativeReadFactory = (source: string, initializer: string): string |
     return undefined;
   }
   const suffix = initializer.slice(closing + 1).trim();
-  const [arrow] = topLevelSeparators(maskNonCode(suffix), '=', 0, suffix.length, true);
+  const arrow = firstTopLevelSeparator(maskNonCode(suffix), '=', 0, suffix.length, true);
   const annotation = arrow === undefined ? undefined : suffix.slice(0, arrow).replace(/^:\s*/u, '').trim();
   const returned = callbackReturnedExpression(initializer);
   return annotation !== undefined &&
@@ -6212,7 +6221,7 @@ const hasCanonicalPredicateReadHelper = (owner: ReadPhaseOwner, source: string, 
 const hasTypedEffectReadReturn = (source: string, initializer: string): boolean => {
   const closing = matchingDelimiterEnd(initializer, 0, '(', ')');
   const suffix = closing === undefined ? '' : initializer.slice(closing + 1).trim();
-  const [arrow] = topLevelSeparators(maskNonCode(suffix), '=', 0, suffix.length, true);
+  const arrow = firstTopLevelSeparator(maskNonCode(suffix), '=', 0, suffix.length, true);
   const annotation = arrow === undefined ? '' : suffix.slice(0, arrow).trim();
   const opening = annotation.indexOf('<');
   return (
@@ -14683,7 +14692,7 @@ const nativeReadProgramReturnedExpression = (initializer: string): string | unde
     return undefined;
   }
   const returned = body.slice(finalReturn.index + finalReturn[0].length);
-  const [statementEnd] = topLevelSeparators(maskNonCode(returned), ';');
+  const statementEnd = firstTopLevelSeparator(maskNonCode(returned), ';');
   return (statementEnd === undefined ? returned : returned.slice(0, statementEnd)).trim();
 };
 
@@ -15392,7 +15401,7 @@ const inventoryReadReturnAnnotation = (initializer: string): string | undefined 
   }
   const suffix = initializer.slice(closing + 1);
   const structure = maskNonCode(suffix);
-  const [arrow] = topLevelSeparators(structure, '=', 0, structure.length, true);
+  const arrow = firstTopLevelSeparator(structure, '=', 0, structure.length, true);
   if (arrow === undefined || suffix.slice(arrow, arrow + 2) !== '=>') {
     return undefined;
   }
@@ -15979,7 +15988,7 @@ const inventoryReadBlockBindings = (
     if (!/^const\b/u.test(maskNonCode(trimmed))) {
       return { bindings, rest: trimmed };
     }
-    const [end] = topLevelSeparators(maskNonCode(trimmed), ';', 0, trimmed.length);
+    const end = firstTopLevelSeparator(maskNonCode(trimmed), ';', 0, trimmed.length);
     const binding = end === undefined ? undefined : inventoryReadBlockBinding(trimmed.slice(0, end));
     if (binding === undefined || end === undefined) {
       return undefined;
@@ -16059,7 +16068,7 @@ const inventoryReadPhaseBody = (
     return undefined;
   }
   const suffix = phaseSource.slice(closing + 1);
-  const [arrow] = topLevelSeparators(maskNonCode(suffix), '=', 0, suffix.length, true);
+  const arrow = firstTopLevelSeparator(maskNonCode(suffix), '=', 0, suffix.length, true);
   if (arrow === undefined || suffix.slice(arrow, arrow + 2) !== '=>') {
     return undefined;
   }
@@ -16343,7 +16352,7 @@ const inventoryReadMatchSubject = (base: string): string | undefined => {
 /** The `{ … }` body of an arrow callback, or nothing when it is an expression body. */
 const inventoryReadArrowBlock = (initializer: string): string | undefined => {
   const structure = maskNonCode(initializer);
-  const [arrow] = topLevelSeparators(structure, '=', 0, structure.length, true);
+  const arrow = firstTopLevelSeparator(structure, '=', 0, structure.length, true);
   if (arrow === undefined || initializer.slice(arrow, arrow + 2) !== '=>') {
     return undefined;
   }
@@ -16820,7 +16829,7 @@ const inventoryReadFailureOnlyStatements = (
     return false;
   }
   if (/^const\b/u.test(maskNonCode(trimmed))) {
-    const [end] = topLevelSeparators(maskNonCode(trimmed), ';', 0, trimmed.length);
+    const end = firstTopLevelSeparator(maskNonCode(trimmed), ';', 0, trimmed.length);
     const binding = end === undefined ? undefined : inventoryReadBlockBinding(trimmed.slice(0, end));
     if (binding === undefined || end === undefined || /\bEffect\s*\./u.test(binding.value)) {
       return false;
