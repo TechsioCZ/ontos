@@ -1,17 +1,24 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Effect, Fiber, Option } from 'effect';
-import { useEffect, useEffectEvent, useId, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SidePanel } from '@app/admin-ui';
+import {
+  SaveBar,
+  SidePanel,
+  saveLabelsFor,
+  UnsavedChangesDialog,
+  useDraftSave,
+  useUnsavedChangesGuard,
+} from '@app/admin-ui';
 
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { CreatedCustomer, CustomerListItem } from '../../../../api/customers-client.ts';
 import { existingCustomerWithCompanyId } from '../../../../api/customer-create-decision.ts';
-import { DiscardDialog } from './customer-discard-dialog.tsx';
 import {
   aresFailureKey,
   createCustomerFromDraft,
@@ -238,17 +245,15 @@ export const CustomerCreateDialog = ({
   onWriteRefused,
   open,
 }: CustomerCreateDialogProps) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
+  const labels = saveLabelsFor(language);
   const toaster = useToast();
-  const formId = useId();
+  // The draft is only on screen until Uložit sends it; typing never writes.
   const [draft, setDraft] = useState<CreateDraft>(EMPTY_DRAFT);
-  const [submitted, setSubmitted] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [aresBusy, setAresBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   /** Messages about the IČO or name value, shown under that field. Each clears as soon as its field changes. */
   const [fieldNotices, setFieldNotices] = useState<FieldNotices>(NO_FIELD_NOTICES);
-  const [discardOpen, setDiscardOpen] = useState(false);
   const noticeRef = useRef<HTMLDivElement>(null);
   /** Fields the user typed into. ARES never overwrites them; it may replace what an earlier lookup filled in. */
   const typedFields = useRef(new Set<keyof CreateDraft>());
@@ -279,49 +284,6 @@ export const CustomerCreateDialog = ({
       ico: patch.ico === undefined ? current.ico : null,
       name: patch.name === undefined ? current.name : null,
     }));
-  };
-
-  const close = (next: boolean) => {
-    if (!next) {
-      typedFields.current.clear();
-      lookedUpIco.current = null;
-      setDraft(EMPTY_DRAFT);
-      setSubmitted(false);
-      setNotice(null);
-      setFieldNotices(NO_FIELD_NOTICES);
-    }
-    onOpenChange(next);
-  };
-
-  /** Anything typed, ARES prefill included. A dirty form asks before Escape, the close button or Zrušit drop it. */
-  const dirty = draftFields.some((field) => draft[field].trim() !== '');
-  const requestClose = (next: boolean) => {
-    if (!next && dirty && !busy) {
-      setDiscardOpen(true);
-      return;
-    }
-    close(next);
-  };
-
-  const discard = () => {
-    setDiscardOpen(false);
-    close(false);
-  };
-
-  const fieldProps = (key: keyof CreateDraft, help?: string): FieldMessage => {
-    // A complete IČO is checked at once, because a valid one starts the ARES lookup.
-    const error = submitted || (key === 'ico' && ico.length === 8) ? errors[key] : undefined;
-    if (error !== undefined) {
-      return { helpText: t(`${KEY}.validation.${error}`), validateStatus: 'error' };
-    }
-    if (key === 'ico' && aresBusy) {
-      return { helpText: t(`${KEY}.aresLoading`) };
-    }
-    const fieldNotice = key === 'ico' || key === 'name' ? fieldNotices[key] : null;
-    if (fieldNotice !== null) {
-      return { helpText: fieldNotice.text, validateStatus: fieldNotice.status };
-    }
-    return help === undefined ? {} : { helpText: help };
   };
 
   const showError = (failureKey: string) => setNotice({ status: 'error', text: t(`${KEY}.${failureKey}`) });
@@ -360,20 +322,21 @@ export const CustomerCreateDialog = ({
     }
   };
 
-  const applyCreated = (created: CreatedCustomer) => {
+  /** Returns the save outcome: the owner created or linked the customer, or nothing was written. */
+  const applyCreated = (created: CreatedCustomer): 'saved' | 'failed' => {
     if (created.outcome === 'EXISTING_CUSTOMER') {
       // A current customer already carries this IČO and nothing was written, so the panel stays open with the reason.
       setFieldNotices({ ico: { status: 'error', text: duplicateText(created.displayName) }, name: null });
       revealFirstInvalid(['ico']);
-      return;
+      return 'failed';
     }
     toaster.create(
       created.outcome === 'LINKED_EXISTING_PARTY'
         ? { description: t(`${KEY}.toastMatched`), title: t(`${KEY}.toastCreated`), type: 'success' }
         : { title: t(`${KEY}.toastCreated`), type: 'success' },
     );
-    close(false);
     onCreated();
+    return 'saved';
   };
 
   // A complete, valid IČO is looked up in ARES once, after a short pause; a newer IČO or closing the form cancels it.
@@ -423,11 +386,11 @@ export const CustomerCreateDialog = ({
   /**
    * Duplicates the page already knows about: a current customer with this IČO, or any listed customer with the
    * same name. The owner would refuse both (a same-name Party keeps its duplicate case open for review), so the
-   * panel answers at once, under the field concerned, without a slow round trip.
+   * save answers at once, under the field concerned, without a slow round trip.
    */
-  const knownDuplicates = (): FieldNotices => {
-    const sameIco = Option.getOrUndefined(existingCustomerWithCompanyId(existing, draft.ico));
-    const name = normalizedCustomerName(draft.name);
+  const knownDuplicates = (value: CreateDraft): FieldNotices => {
+    const sameIco = Option.getOrUndefined(existingCustomerWithCompanyId(existing, value.ico));
+    const name = normalizedCustomerName(value.name);
     const sameName = existing.find(
       (customer) => customer.displayName !== null && normalizedCustomerName(customer.displayName) === name,
     );
@@ -437,39 +400,82 @@ export const CustomerCreateDialog = ({
     };
   };
 
-  const submit = () => {
-    if (busy) {
-      return;
-    }
-    setSubmitted(true);
-    if (Object.keys(errors).length > 0) {
-      revealFirstInvalid(Object.keys(errors));
-      return;
-    }
-    const duplicates = knownDuplicates();
-    if (noticedFields(duplicates).length > 0) {
+  const createFailed = (error: Effect.Error<ReturnType<typeof createCustomerFromDraft>>) =>
+    Effect.sync((): 'failed' => {
+      showError(createFailureKey(error));
+      if (isCustomerWriteForbidden(error)) {
+        onWriteRefused();
+      }
+      return 'failed';
+    });
+  const createdCustomer = (created: CreatedCustomer) => Effect.sync(() => applyCreated(created));
+
+  /** The one save: runs only for a changed, valid draft, once per click (`useDraftSave`). */
+  const saveCustomer = (value: CreateDraft): Effect.Effect<'saved' | 'failed'> =>
+    Effect.suspend(() => {
       setNotice(null);
-      setFieldNotices(duplicates);
-      revealFirstInvalid(noticedFields(duplicates));
-      return;
-    }
-    setBusy(true);
+      const duplicates = knownDuplicates(value);
+      if (noticedFields(duplicates).length > 0) {
+        setFieldNotices(duplicates);
+        revealFirstInvalid(noticedFields(duplicates));
+        return Effect.succeed('failed' as const);
+      }
+      return createCustomerFromDraft(value).pipe(
+        Effect.matchEffect({ onFailure: createFailed, onSuccess: createdCustomer }),
+      );
+    });
+
+  const record = useDraftSave({
+    isValid: (value) => Object.keys(validateCreateDraft(value)).length === 0,
+    runtime: browserRuntime,
+    save: saveCustomer,
+    value: draft,
+  });
+
+  /** Drops the draft and continues from an empty form: after a close, a discard or a successful create. */
+  const resetForm = () => {
+    typedFields.current.clear();
+    lookedUpIco.current = null;
+    setDraft(EMPTY_DRAFT);
+    record.adopt(EMPTY_DRAFT);
     setNotice(null);
-    void browserRuntime.runPromise(
-      createCustomerFromDraft(draft).pipe(
-        Effect.matchEffect({
-          onFailure: (error) =>
-            Effect.sync(() => {
-              showError(createFailureKey(error));
-              if (isCustomerWriteForbidden(error)) {
-                onWriteRefused();
-              }
-            }),
-          onSuccess: (created) => Effect.sync(() => applyCreated(created)),
-        }),
-        Effect.ensuring(Effect.sync(() => setBusy(false))),
-      ),
-    );
+    setFieldNotices(NO_FIELD_NOTICES);
+  };
+
+  // Router navigation, browser Back and the panel's dismissal ask the same question as the Cancel button.
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: resetForm });
+  // Every way out (Cancel, the panel's dismissal, a created customer) starts the next open from an empty form.
+  const leave = () => {
+    resetForm();
+    onOpenChange(false);
+  };
+  // A created customer closes the panel.
+  const handleSave = () => {
+    record.save();
+    record.afterSave((status) => {
+      if (status === 'saved') {
+        leave();
+      }
+    });
+  };
+  const handleReloadLatest = resetForm;
+
+  const fieldProps = (key: keyof CreateDraft, help?: string): FieldMessage => {
+    // Invalid draft fields show their message once the draft is changed; a complete IČO is checked at once,
+    // because a valid one starts the ARES lookup.
+    const error = record.status === 'invalid' || (key === 'ico' && ico.length === 8) ? errors[key] : undefined;
+    if (error !== undefined) {
+      return { helpText: t(`${KEY}.validation.${error}`), validateStatus: 'error' };
+    }
+    if (key === 'ico' && aresBusy) {
+      return { helpText: t(`${KEY}.aresLoading`) };
+    }
+    const fieldNotice = key === 'ico' || key === 'name' ? fieldNotices[key] : null;
+    if (fieldNotice !== null) {
+      return { helpText: fieldNotice.text, validateStatus: fieldNotice.status };
+    }
+    return help === undefined ? {} : { helpText: help };
   };
 
   return (
@@ -477,43 +483,38 @@ export const CustomerCreateDialog = ({
       <SidePanel
         actions={
           <>
-            <Button onClick={() => requestClose(false)} theme="outlined" type="button" variant="secondary">
+            <Button onClick={() => guard.request(leave)} theme="outlined" type="button" variant="secondary">
               {t(`${KEY}.cancel`)}
             </Button>
-            {/* Submits the form below, so Enter in any field saves the customer too. */}
-            <Button form={formId} isLoading={busy} loadingText={t(`${KEY}.saving`)} type="submit" variant="primary">
-              {t(`${KEY}.submit`)}
-            </Button>
+            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
           </>
         }
         description={t(`${KEY}.description`)}
+        guard={guard}
         // The IČO is the first field, so typing starts there at once.
         initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#customer-ico')}
-        onOpenChange={requestClose}
+        onOpenChange={(next) => {
+          if (!next) {
+            leave();
+          }
+        }}
         open={open}
         resizeLabel={t('party-registry.sidePanel.resize')}
         size="md"
         title={t(`${KEY}.title`)}
       >
+        {/* Enter does not save: only the Uložit button sends the draft. */}
         <form
           className="flex flex-col gap-200 py-200"
-          id={formId}
           noValidate
           onSubmit={(event) => {
             event.preventDefault();
-            submit();
           }}
         >
           <CreateFormFields draft={draft} fieldProps={fieldProps} notice={notice} noticeRef={noticeRef} set={set} />
         </form>
       </SidePanel>
-      <DiscardDialog
-        copyKey={KEY}
-        onCancel={() => setDiscardOpen(false)}
-        onConfirm={discard}
-        onOpenChange={setDiscardOpen}
-        open={discardOpen}
-      />
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>
   );
 };
