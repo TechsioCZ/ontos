@@ -926,7 +926,9 @@ it.live(
       [principalA, principalB, tenantA, tenantB],
     );
     // The governed Action runs under tenant A's real access fence, so it carries the scopes production bootstrap writes.
-    yield* writeTestTenantScopes(adminDatabase.executor, {
+    // Scopes are installed as the enrolled runtime login, as bootstrap does; the admin login only seeds rows.
+    yield* writeTestTenantScopes(runtimeDatabase.executor, {
+      databaseIdentities: GENERATED_OWNER_DATABASE_IDENTITIES,
       legalEntityIds: [entityA1, entityA2],
       principalId: principalA,
       tenantId: tenantA,
@@ -1120,7 +1122,8 @@ it.live(
       }),
     ).toEqual([
       {
-        ref: resourceRef,
+        // Search rows carry the tenant that owns them (ac674b875), so the ref names it alongside the resource.
+        ref: { ...resourceRef, tenantId: tenantA },
         title: 'A1 searchable',
       },
     ]);
