@@ -6,6 +6,7 @@ import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { useState } from 'react';
 
 import { PeopleEditor } from './people-editor.tsx';
+import type { PendingReview, PeopleReview } from './people-form-save.ts';
 import type {
   PeopleCommand,
   PeopleFeedback,
@@ -217,7 +218,7 @@ export const PeopleView = ({
   readonly onRefresh: () => void;
 }) => {
   const { t } = useModernI18n();
-  const [pending, setPending] = useState<(PeoplePendingChange & { readonly revision: string }) | null>(null);
+  const [pending, setPending] = useState<PendingReview | null>(null);
   const busy = feedback === 'saving';
   const writesAvailable =
     model.writes.assign ||
@@ -230,6 +231,8 @@ export const PeopleView = ({
         person.delegations.some((delegation) => delegation.canRevoke),
     );
   const preview = (change: PeoplePendingChange) => setPending({ ...change, revision: model.revision });
+  const review: PeopleReview = (change, onConfirmed) =>
+    setPending({ ...change, onConfirmed, revision: model.revision });
   const stale = pending !== null && pending.revision !== model.revision;
   return (
     <section aria-label={t(`${prefix}.title`)} className="shell:grid shell:w-full shell:max-w-5xl shell:gap-6">
@@ -265,7 +268,9 @@ export const PeopleView = ({
           {t(`${prefix}.nextPage`)}
         </Button>
       ) : null}
-      {model.scopes.length > 0 ? <PeopleEditor busy={busy} model={model} onPreview={preview} /> : null}
+      {model.scopes.length > 0 ? (
+        <PeopleEditor busy={busy} feedback={feedback} model={model} onPreview={review} onRefresh={onRefresh} />
+      ) : null}
       <Dialog
         actions={
           <>
@@ -277,6 +282,7 @@ export const PeopleView = ({
               onClick={() => {
                 if (pending !== null && !stale && !busy && writesAvailable && feedback !== 'conflict') {
                   onCommand(pending.command, pending.revision);
+                  pending.onConfirmed?.();
                   setPending(null);
                 }
               }}

@@ -1,3 +1,5 @@
+import { SaveBar, saveLabelsFor } from '@app/admin-ui';
+import type { SaveState } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -6,7 +8,7 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { useState } from 'react';
 
-import { canSaveRolePreview, cellHasSelector, parseAmountCeiling, roleCellSlot, targetRecordKeys } from './model.ts';
+import { cellHasSelector, parseAmountCeiling, roleCellSlot, targetRecordKeys } from './model.ts';
 import type {
   RoleCapabilityView,
   RoleCellView,
@@ -32,6 +34,8 @@ export interface RoleEditorViewProps {
   readonly onToggleCell: (cell: RoleCellView, enabled: boolean) => void;
   readonly preview: RolePreviewView | null;
   readonly role: RoleView;
+  /** The shared save bar's status: savable once the change is previewed and every named effect confirmed. */
+  readonly saveState: SaveState;
   readonly status: RoleEditorStatus;
   readonly templates: readonly RoleTemplateView[];
   readonly writesAvailable: boolean;
@@ -196,7 +200,7 @@ const RoleCapabilityCells = ({
 };
 
 export const RoleEditorView = (props: RoleEditorViewProps) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const busy = props.status === 'loading' || props.status === 'saving';
   const blocked =
     busy || props.status === 'conflict' || props.status === 'forbidden' || props.status === 'unauthenticated';
@@ -386,16 +390,15 @@ export const RoleEditorView = (props: RoleEditorViewProps) => {
               onCheckedChange={(checked) => props.onConfirm(effect.id, checked)}
             />
           ))}
-          <Button
-            disabled={!canSaveRolePreview(props.preview, props.confirmations, props.status, props.writesAvailable)}
-            isLoading={props.status === 'saving'}
-            onClick={props.onSave}
-            type="button"
-          >
-            {t('shell.accessAdmin.role.confirmSave')}
-          </Button>
         </section>
       )}
+      <SaveBar
+        error={props.saveState === 'error' ? t(`shell.accessAdmin.common.${props.status}`) : null}
+        labels={saveLabelsFor(language)}
+        onReloadLatest={props.onRefresh}
+        onSave={props.onSave}
+        status={props.saveState}
+      />
     </section>
   );
 };

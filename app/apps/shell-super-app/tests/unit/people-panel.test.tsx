@@ -3,6 +3,7 @@ import type { I18nInstance } from '@modern-js/plugin-i18n/runtime';
 import { ModernI18nProvider } from '@modern-js/plugin-i18n/runtime/consumer';
 import { cleanup, render as renderView, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { saveLabelsFor } from '@app/admin-ui';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import { Effect, Schema } from 'effect';
 import { afterEach, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
@@ -54,6 +55,7 @@ rstest.mock('../../src/routes/people/people-client.ts', () => ({
   loadPeopleAccess: commands.access,
 }));
 
+const labels = saveLabelsFor('cs');
 const tenantId = '00000000-0000-4000-8000-000000000001';
 const companyId = '00000000-0000-4000-8000-000000000002';
 const principalId = '00000000-0000-4000-8000-000000000003';
@@ -167,7 +169,9 @@ it.live('invites a person by email and explicit affiliation, never by principal 
     yield* Effect.promise(() => user.type(screen.getByLabelText(/Jméno a příjmení/u), 'Jana Nováková'));
     yield* Effect.promise(() => user.type(screen.getByLabelText(/E-mail/u), 'jana@example.test'));
     yield* Effect.promise(() => user.selectOptions(screen.getByLabelText('Zařazení ve firmě'), 'external'));
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Vytvořit pozvánku' })));
+    // Typing sends nothing; the one shared Save button sends the invitation once.
+    expect(commands.invite).not.toHaveBeenCalled();
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: labels.save })));
     yield* Effect.promise(() =>
       waitFor(() =>
         expect(commands.invite).toHaveBeenCalledWith({
@@ -182,6 +186,29 @@ it.live('invites a person by email and explicit affiliation, never by principal 
         expect(onCommitted).toHaveBeenCalledWith({ kind: 'membership', result: { membership, projection: 'pending' } }),
       ),
     );
+    expect(commands.invite).toHaveBeenCalledTimes(1);
+    // The sent invitation closes its dialog.
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByLabelText(/Jméno a příjmení/u)).toBeNull()));
+  }),
+);
+
+it.live('an invitation with typed input asks before closing; an untouched one closes at once', () =>
+  Effect.gen(function* inviteLeave() {
+    const user = userEvent.setup();
+    render(<InvitePersonButton onCommitted={() => {}} />);
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Pozvat člověka' })));
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Zrušit' })));
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByLabelText(/Jméno a příjmení/u)).toBeNull()));
+
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Pozvat člověka' })));
+    yield* Effect.promise(() => user.type(screen.getByLabelText(/Jméno a příjmení/u), 'Jana'));
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Zrušit' })));
+    const discard = yield* Effect.promise(() => screen.findByRole('button', { name: labels.discard }));
+    yield* Effect.promise(() => user.click(discard));
+    yield* Effect.promise(() =>
+      waitFor(() => expect(screen.queryByLabelText(/Jméno a příjmení/u, { selector: 'input' })).toBeNull()),
+    );
+    expect(commands.invite).not.toHaveBeenCalled();
   }),
 );
 
@@ -213,7 +240,7 @@ it.live('confirms a committed membership change from the organisation row it rea
       }),
     );
     // Filling in the change sends nothing; the one Save button sends it once.
-    expect(screen.queryByRole('button', { name: 'Potvrdit změnu' })).toBeNull();
+    expect(screen.getAllByRole('button', { name: labels.save })).toHaveLength(1);
     yield* Effect.sleep('1 second');
     expect(commands.membership).not.toHaveBeenCalled();
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Uložit' })));
@@ -255,7 +282,7 @@ it.live('assigns a named canonical role by its identity, never by a role key', (
     expect(screen.queryByText(/SpiceDB/u)).toBeNull();
     yield* Effect.promise(() => user.selectOptions(screen.getByRole('combobox', { name: 'Role' }), roleId));
     yield* Effect.promise(() => user.type(screen.getByLabelText(/Důvod změny/u), 'Převzetí klientů'));
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Potvrdit změnu' })));
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: labels.save })));
     yield* Effect.promise(() =>
       waitFor(() =>
         expect(commands.role).toHaveBeenCalledWith({
@@ -324,7 +351,7 @@ it.live('uses Czech cardinal forms as pending canonical role changes accumulate'
         yield* chooseRowAction(user, person.displayName, 'Spravovat role');
         yield* Effect.promise(() => user.selectOptions(screen.getByRole('combobox', { name: 'Role' }), roleId));
         yield* Effect.promise(() => user.type(screen.getByLabelText(/Důvod změny/u), 'Převzetí agendy'));
-        yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Potvrdit změnu' })));
+        yield* Effect.promise(() => user.click(screen.getByRole('button', { name: labels.save })));
         const matchesExpectedCount = (text: string) => text.startsWith(`Zpracovává se ${expected}`);
         yield* Effect.promise(() => screen.findByText(matchesExpectedCount));
       }),

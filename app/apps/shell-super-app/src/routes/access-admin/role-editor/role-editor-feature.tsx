@@ -1,4 +1,7 @@
+import { UnsavedChangesDialog, saveLabelsFor, useUnsavedChangesGuard } from '@app/admin-ui';
+import type { SaveState } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Effect } from 'effect';
 import { useEffect, useRef, useState } from 'react';
 
@@ -20,6 +23,7 @@ import {
 import type { RoleCellView } from './model.ts';
 import { commitRolePreview, prepareRolePreview, roleErrorStatus, toRolePreviewView } from './role-commands.ts';
 import { RoleEditorView } from './role-editor-view.tsx';
+import { roleSaveState, sameRoleCells, useRoleDraft } from './role-save.ts';
 
 export const RoleEditorFeature = ({
   catalog,
@@ -106,14 +110,13 @@ export const RoleEditorFeature = ({
       status: next,
     }));
   };
-  const save = () => {
-    if (
-      operation.current !== null ||
-      draft.preview === null ||
-      idempotencyKey.current === null ||
-      !canSaveRolePreview(draft.preview, draft.confirmations, status, writesAvailable)
-    ) {
-      return;
+  const savable = canSaveRolePreview(draft.preview, draft.confirmations, status, writesAvailable);
+  const changed = !sameRoleCells(draft.cells, initialRole.cells);
+  const saveState = roleSaveState(status, changed, savable);
+  /** Uložit: commits the previewed and confirmed change once; answers whether a commit started. */
+  const save = (settle: (end: SaveState) => void): boolean => {
+    if (operation.current !== null || draft.preview === null || idempotencyKey.current === null || !savable) {
+      return false;
     }
     const controller = new AbortController();
     operation.current = controller;
@@ -121,7 +124,10 @@ export const RoleEditorFeature = ({
     browserRuntime.runFork(
       commitRolePreview(payload, draft.preview, idempotencyKey.current, language).pipe(
         Effect.match({
-          onFailure: saveFailed,
+          onFailure: (error) => {
+            saveFailed(error);
+            settle(roleErrorStatus(error) === 'conflict' ? 'conflict' : 'error');
+          },
           onSuccess: (result) => {
             idempotencyKey.current = null;
             setDraft((current) => ({
@@ -130,13 +136,26 @@ export const RoleEditorFeature = ({
               status: 'saved',
             }));
             onSaved(result.role);
+            settle('saved');
           },
         }),
         Effect.ensuring(Effect.sync(releaseOperation)),
       ),
       { signal: controller.signal },
     );
+    return true;
   };
+  const roleDraft = useRoleDraft({ changed, onSave: save, savable, saveState });
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => roleDraft.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({
+    draft: roleDraft,
+    navigation: blocker,
+    onDiscard: () => {
+      idempotencyKey.current = null;
+      setDraft((current) => ({ ...initialRoleDraft(initialRole.cells), editorVersion: current.editorVersion + 1 }));
+    },
+  });
+  const handleSave = roleDraft.save;
   const updateAmount = (cell: RoleCellView, amount: string, currency: string) => {
     idempotencyKey.current = null;
     const value = parseAmountCeiling(amount, currency);
@@ -160,48 +179,52 @@ export const RoleEditorFeature = ({
     });
   };
   return (
-    <RoleEditorView
-      catalogSnapshotId={catalog.catalogSnapshotId}
-      cells={draft.cells}
-      confirmations={draft.confirmations}
-      entries={entries}
-      key={draft.editorVersion}
-      onAmount={updateAmount}
-      onConfirm={(id, checked) =>
-        setDraft((current) => ({
-          ...current,
-          confirmations: checked
-            ? [...new Set([...current.confirmations, id])]
-            : current.confirmations.filter((item) => item !== id),
-        }))
-      }
-      onLevel={(moduleKey, level) => edited(addExactLevel(draft.cells, entries, moduleKey, level))}
-      onPreview={runPreview}
-      onRefresh={onRefresh}
-      onSave={save}
-      onTemplate={(template) => {
-        if (template.catalogSnapshotId !== catalog.catalogSnapshotId) {
-          return;
+    <>
+      <RoleEditorView
+        catalogSnapshotId={catalog.catalogSnapshotId}
+        cells={draft.cells}
+        confirmations={draft.confirmations}
+        entries={entries}
+        key={draft.editorVersion}
+        onAmount={updateAmount}
+        onConfirm={(id, checked) =>
+          setDraft((current) => ({
+            ...current,
+            confirmations: checked
+              ? [...new Set([...current.confirmations, id])]
+              : current.confirmations.filter((item) => item !== id),
+          }))
         }
-        idempotencyKey.current = null;
-        setDraft((current) => ({
-          ...editRoleDraft(current, template.cells),
-          editorVersion: current.editorVersion + 1,
-          invalidAmounts: [],
-        }));
-      }}
-      onToggleCell={(cell, enabled) => {
-        idempotencyKey.current = null;
-        setDraft((current) => ({
-          ...editRoleDraft(current, toggleRoleCell(current.cells, cell, enabled)),
-          invalidAmounts: current.invalidAmounts.filter((item) => item !== roleCellSlot(cell)),
-        }));
-      }}
-      preview={draft.preview}
-      role={initialRole}
-      status={status}
-      templates={catalog.templates}
-      writesAvailable={writesAvailable}
-    />
+        onLevel={(moduleKey, level) => edited(addExactLevel(draft.cells, entries, moduleKey, level))}
+        onPreview={runPreview}
+        onRefresh={onRefresh}
+        onSave={handleSave}
+        onTemplate={(template) => {
+          if (template.catalogSnapshotId !== catalog.catalogSnapshotId) {
+            return;
+          }
+          idempotencyKey.current = null;
+          setDraft((current) => ({
+            ...editRoleDraft(current, template.cells),
+            editorVersion: current.editorVersion + 1,
+            invalidAmounts: [],
+          }));
+        }}
+        onToggleCell={(cell, enabled) => {
+          idempotencyKey.current = null;
+          setDraft((current) => ({
+            ...editRoleDraft(current, toggleRoleCell(current.cells, cell, enabled)),
+            invalidAmounts: current.invalidAmounts.filter((item) => item !== roleCellSlot(cell)),
+          }));
+        }}
+        preview={draft.preview}
+        role={initialRole}
+        saveState={saveState}
+        status={status}
+        templates={catalog.templates}
+        writesAvailable={writesAvailable}
+      />
+      <UnsavedChangesDialog labels={saveLabelsFor(language)} prompt={guard.prompt} />
+    </>
   );
 };
