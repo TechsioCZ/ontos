@@ -17,6 +17,7 @@ export const DEFAULT_CONNECTIONS_FILTER: ConnectionAdminFilter = { status: 'acti
 
 /** The company's connections per filter (one per document; a company switch reloads the document). */
 export const companyConnectionsData = definePageData({
+  changesFrom: ['shell'],
   key: (filter: ConnectionAdminFilter) =>
     Object.entries(filter)
       .toSorted(([left], [right]) => left.localeCompare(right))

@@ -1,10 +1,11 @@
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
-import { useHeldSnapshot } from '@app/admin-ui';
+import { rowIntentProps, useHeldSnapshot } from '@app/admin-ui';
+import type { RowIntentProps } from '@app/admin-ui';
 import { Data, Effect, Match, Predicate, Random, Result, Schema } from 'effect';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, PageDataSnapshot } from '@app/shared-contracts/page-data';
-import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import type {
   Order,
@@ -162,6 +163,7 @@ const ordersPageKey = ({ legalEntityId, query, scope }: OrdersPageInput): string
 
 /** One page of orders per company and request. */
 export const ordersPageData = definePageData({
+  changesFrom: ['merchandise'],
   key: ordersPageKey,
   load: ({ query }: OrdersPageInput) => loadOrders(query),
   maxEntries: 16,
@@ -171,6 +173,7 @@ export const ordersPageData = definePageData({
 
 /** The header counts per authenticated scope; they do not depend on the filters. Legacy standalone keys are companies. */
 export const orderCountsData = definePageData({
+  changesFrom: ['merchandise'],
   key: (legalEntityId: string) => legalEntityId,
   load: () => loadCounts,
   maxEntries: 16,
@@ -352,6 +355,7 @@ const loadDetailInput = Effect.fn('OrdersRecords.loadDetailInput')(function* loa
 /** Only successful governed data is reusable. Missing rows and denials are retried on the next opening. */
 export const orderDetailData = definePageData({
   cancelWhenUnused: true,
+  changesFrom: ['merchandise'],
   key: (input: OrderDetailInput) =>
     Result.getOrThrow(encodeQueryIds([input.scope, input.orderId, String(input.revision)])),
   load: loadDetailInput,
@@ -372,6 +376,33 @@ export const preloadOrderDetails = (input: OrdersPageInput, records: RecordsResp
             .pipe(Effect.ignore),
         { concurrency: 2, discard: true },
       );
+
+/**
+ * Warms one order's detail when the user shows the intent to open its row. The strict detail store does the rest: a
+ * fresh entry answers at once without a request and a running read is joined, so each row has at most one read.
+ */
+export const prefetchOrderDetail = (input: OrdersPageInput, records: RecordsResponse, orderId: string): void => {
+  if (input.scope === undefined) {
+    return;
+  }
+  const detail: OrderDetailInput = { orderId, revision: records.revision, scope: input.scope, source: input };
+  if (orderDetailData.snapshot(detail).state !== 'ready') {
+    browserRuntime.runFork(orderDetailData.read(detail).pipe(Effect.ignore));
+  }
+};
+
+/** Intent prefetch of the orders table: `orders` are its rows in table order (no client sorting). */
+export const orderDetailIntent = (
+  input: OrdersPageInput,
+  records: RecordsResponse | undefined,
+  orders: readonly Order[],
+): RowIntentProps =>
+  rowIntentProps((index) => {
+    const order = orders[index];
+    if (records !== undefined && order !== undefined) {
+      prefetchOrderDetail(input, records, order.id);
+    }
+  });
 
 /** One governed command. Every call carries a fresh idempotency key and the revision the caller last saw. */
 const submitCommand = Effect.fn('OrdersRecords.submitCommand')(function* submitCommand(
@@ -536,17 +567,44 @@ export const useOrders = (legalEntityId: string, query: OrdersQuery, context?: M
   const shownPage = useHeldSnapshot(ordersPageData.key(input), page);
   const shownCounts = useHeldSnapshot(countsKey, counts);
   const settled = useSettledPageData(shownPage, input);
-  const prefetch = useEffectEvent((records: RecordsResponse) => preloadOrderDetails(input, records));
+  // One warm-up per request, list revision and rows. The strict detail entries read as pending again once their 20 s
+  // freshness window passes or a live change arrives, and each reload of the page settles as a new snapshot; warming
+  // every row on each of them made an idle list re-read all its details. A write or a change of these orders moves
+  // the revision and warms the rows again; a row opened later is warmed by intent (`orderDetailIntent`).
+  const batch =
+    page.state === 'ready'
+      ? Result.getOrThrow(
+          encodeQueryIds([
+            ordersPageData.key(input),
+            String(page.value.revision),
+            ...page.value.orders.map((order) => order.id),
+          ]),
+        )
+      : undefined;
+  const warmed = useRef<string>(undefined);
+  const prefetch = useEffectEvent((records: RecordsResponse, key: string) =>
+    preloadOrderDetails(input, records).pipe(
+      Effect.andThen(
+        Effect.sync(() => {
+          warmed.current = key;
+        }),
+      ),
+    ),
+  );
   // Prefetch only the current request, never the previous page retained while a filter loads.
   useEffect(() => {
     const fiber =
-      scope !== undefined && page.state === 'ready' && !page.refreshing
-        ? browserRuntime.runFork(prefetch(page.value))
+      scope !== undefined &&
+      page.state === 'ready' &&
+      !page.refreshing &&
+      batch !== undefined &&
+      warmed.current !== batch
+        ? browserRuntime.runFork(prefetch(page.value, batch))
         : undefined;
     return () => {
       fiber?.interruptUnsafe();
     };
-  }, [page, scope]);
+  }, [batch, page, scope]);
   return {
     load: () => {
       orderDetailData.invalidate();

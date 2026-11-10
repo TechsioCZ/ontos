@@ -233,3 +233,40 @@ it.effect('an idle product detail reloads its record on each expiry of the fresh
     expect(reads.length).toBeLessThanOrEqual(3);
   }),
 );
+
+/** Another module commits every 2 s for a minute, as on a busy stage tenant, and the page stays idle. */
+const busyMinute = (change: Effect.Effect<void>): Effect.Effect<void> =>
+  Effect.forEach(Array.from({ length: 30 }), () => change.pipe(Effect.andThen(idle(2))), { discard: true });
+
+/** Reads of an idle product detail during that minute; `scoped: false` is a change event without an app list. */
+const detailReadsPerBusyMinute = (scoped: boolean) =>
+  Effect.gen(function* busyDetail() {
+    yield* mount(ProductDetail);
+    yield* idle(5);
+    reads.length = 0;
+    yield* busyMinute(
+      scoped
+        ? Effect.sync(() =>
+            globalThis.dispatchEvent(
+              new CustomEvent(moduleChangeEvent, { detail: { apps: ['finance-billing', 'party-registry', 'shell'] } }),
+            ),
+          )
+        : liveChange,
+    );
+    return reads.length;
+  });
+
+it.effect('an idle product detail ignores other modules committing every 2 s', () =>
+  Effect.gen(function* otherModulesBusy() {
+    const perMinute = yield* detailReadsPerBusyMinute(true);
+    // The freshness window alone: one read every 20 s.
+    expect(perMinute).toBe(3);
+  }),
+);
+
+it.effect('a change event without an app list still reloads the product detail every time (as before scoping)', () =>
+  Effect.gen(function* unscopedBusy() {
+    const perMinute = yield* detailReadsPerBusyMinute(false);
+    expect(perMinute).toBe(30);
+  }),
+);

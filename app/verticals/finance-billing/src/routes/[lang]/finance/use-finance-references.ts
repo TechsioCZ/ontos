@@ -74,6 +74,7 @@ const loadDirectory = Effect.fn('Finance.referenceDirectory')(function* loadDire
 
 /** Never fails: every read's failure is part of the value. */
 const financeDirectory = definePageData({
+  changesFrom: ['finance-billing', 'party-registry', 'sales-pipeline'],
   key: (scope: string) => scope,
   load: (_scope: string) => loadDirectory(),
   runtime: financeBrowserRuntime,
@@ -102,6 +103,7 @@ const loadProducts = Effect.fn('Finance.referenceProducts')(function* loadProduc
 });
 
 const financeProducts = definePageData({
+  changesFrom: ['finance-billing', 'merchandise'],
   key: (scope: string) => scope,
   load: (_scope: string) => loadProducts(),
   runtime: financeBrowserRuntime,

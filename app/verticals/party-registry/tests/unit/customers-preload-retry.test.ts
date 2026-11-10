@@ -63,17 +63,15 @@ const denied = Schema.decodeSync(CounterpartyReadForbiddenProblemSchema)({
 
 afterEach(cleanup);
 
-it.live('invalidating failed visible preloads starts exactly one bounded retry without changing the selection', () =>
+it.live('visible preloads warm each batch once, with bounded concurrency and no retry of failed rows', () =>
   Effect.gen(function* retryFailedVisiblePreloads() {
     rstest.resetAllMocks();
     customerDetailData.invalidate();
     const initialGate = yield* Deferred.make<true>();
-    const retryGate = yield* Deferred.make<true>();
-    let gate = initialGate;
     let active = 0;
     let peak = 0;
     rstest.mocked(executeCounterpartyRead).mockImplementation(() => {
-      const currentGate = gate;
+      const currentGate = initialGate;
       return Effect.acquireUseRelease(
         Effect.sync(() => {
           active += 1;
@@ -109,25 +107,11 @@ it.live('invalidating failed visible preloads starts exactly one bounded retry w
     rerender();
     expect(executeCounterpartyRead).toHaveBeenCalledTimes(200);
 
-    gate = retryGate;
+    // A batch is warmed once: an invalidation or another render does not start a second one for the same rows.
     act(() => customerDetailData.invalidate());
-    yield* Effect.promise(() =>
-      waitFor(() => {
-        expect(active).toBe(2);
-        expect(executeCounterpartyRead).toHaveBeenCalledTimes(202);
-      }),
-    );
-    yield* Deferred.succeed(retryGate, true);
-    yield* Effect.promise(() =>
-      waitFor(() => {
-        expect(allFailed()).toBe(true);
-        expect(active).toBe(0);
-        expect(executeCounterpartyRead).toHaveBeenCalledTimes(400);
-      }),
-    );
-    // Persistent denial must not schedule a third batch, even on another render.
     rerender();
-    expect(executeCounterpartyRead).toHaveBeenCalledTimes(400);
+    yield* Effect.sleep('10 millis');
+    expect(executeCounterpartyRead).toHaveBeenCalledTimes(200);
     expect(peak).toBe(2);
     expect(overflow.map((customer) => customerDetailData.snapshot({ customer, scope }).state)).toEqual(['pending']);
     unmount();

@@ -1,6 +1,7 @@
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { useHeldSnapshot } from '@app/admin-ui';
+import { rowIntentProps, useHeldSnapshot } from '@app/admin-ui';
+import type { RowIntentProps } from '@app/admin-ui';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import type { TanstackTable } from '@techsio/ui-kit/organisms/data-table';
@@ -235,6 +236,7 @@ export const productCategoryKey = (legalEntityId: string, context?: ModulePageCo
 
 /** One page of the products list with the company indicators and the write capability. */
 export const productListData = definePageData({
+  changesFrom: ['merchandise'],
   key: productListKey,
   load: ({ query }: ProductListInput) => readView(productListView(query)),
   maxEntries: 16,
@@ -270,6 +272,7 @@ export interface CategoryChoices {
  * (the filter then searches it on the server) and, without a tree, the distinct product category labels with counts.
  */
 export const categoryChoicesData = definePageData({
+  changesFrom: ['merchandise'],
   key: (legalEntityId: string) => legalEntityId,
   load: () =>
     readView({ includeProductCategories: true, limit: 0, ordersLimit: 0 }).pipe(
@@ -317,6 +320,7 @@ const readProductDetail = ({ productId }: ProductDetailInput) =>
 
 export const productDetailData = definePageData({
   cancelWhenUnused: true,
+  changesFrom: ['merchandise'],
   key: ({ legalEntityId, productId, revision, scope }: ProductDetailInput) =>
     cacheKey([scope ?? legalEntityId, productId, String(revision)]),
   load: readProductDetail,
@@ -591,24 +595,6 @@ export const prefetchProductDetail = (
   if (input !== undefined && productDetailData.snapshot(input).state !== 'ready') {
     browserRuntime.runFork(productDetailData.read(input).pipe(Effect.ignore));
   }
-};
-
-/** Row element events that announce an opening: pointing (touch included) and keyboard focus. */
-export interface RowIntentProps {
-  readonly onFocus: (event: { readonly currentTarget: HTMLElement }) => void;
-  readonly onPointerDown: (event: { readonly currentTarget: HTMLElement }) => void;
-  readonly onPointerEnter: (event: { readonly currentTarget: HTMLElement }) => void;
-}
-
-/** The DataTable row props that report the pointed or focused row by its position in the row model (`data-index`). */
-export const rowIntentProps = (onIntent: (index: number) => void): RowIntentProps => {
-  const intent = ({ currentTarget }: { readonly currentTarget: HTMLElement }) => {
-    const index = Number(currentTarget.dataset['index']);
-    if (Number.isInteger(index) && index >= 0) {
-      onIntent(index);
-    }
-  };
-  return { onFocus: intent, onPointerDown: intent, onPointerEnter: intent };
 };
 
 /** Intent prefetch of the products list: the row the user points at or focuses has its detail ready to open. */

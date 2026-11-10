@@ -3,11 +3,11 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { TanstackTable } from '@techsio/ui-kit/organisms/data-table';
 import { EmptyState } from '@app/admin-ui';
+import type { RowIntentProps } from '@app/admin-ui';
 import { Schema } from 'effect';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import { paginationProps } from '../../../../form-number.ts';
 import type { TagsOf } from '../../../../tags/subject-tags.ts';
-import type { RowIntentProps } from './products-api.ts';
 import { productColumns } from './products-columns.tsx';
 import { useTableTranslations } from './products-format.ts';
 

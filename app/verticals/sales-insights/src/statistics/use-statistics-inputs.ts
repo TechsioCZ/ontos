@@ -218,12 +218,26 @@ const SOURCE_READ_CONCURRENCY = 6;
 
 const inputKey = (input: StatisticsPageInput): string => input.legalEntityId;
 
+/** The deployment app that owns each producer source; a live change of another app leaves the source alone. */
+const sourceApps = {
+  customers: 'party-registry',
+  employees: 'workforce',
+  invoices: 'finance-billing',
+  movements: 'merchandise',
+  opportunities: 'sales-pipeline',
+  orders: 'merchandise',
+  products: 'merchandise',
+  tags: 'tagging',
+  tasks: 'work-tasks',
+} satisfies Record<StatisticsSource, string>;
+
 /** One producer source as a page dataset, so the Shell can prepare it before it reveals the page. */
 const sourceData = <A, E>(
   source: StatisticsSource,
   read: Effect.Effect<readonly A[], E>,
 ): PageData<StatisticsPageInput, readonly A[], SourceProblem> =>
   definePageData({
+    changesFrom: [sourceApps[source]],
     key: inputKey,
     load: (_input: StatisticsPageInput) => sourceRead(source, read),
     runtime: browserRuntime,
@@ -289,6 +303,8 @@ const idsOf = (items: readonly { readonly id: string }[]): readonly string[] => 
 
 /** One tagging read covers all five subject kinds; every dependency must be fresh, or its failure propagates. */
 const tagAssignmentsData = definePageData({
+  // The assignments of every subject the five entity sources list.
+  changesFrom: ['merchandise', 'party-registry', 'sales-pipeline', 'tagging', 'workforce'],
   key: inputKey,
   load: (input: StatisticsPageInput): Effect.Effect<readonly TagAssignmentInput[], SourceProblem> =>
     Effect.all(

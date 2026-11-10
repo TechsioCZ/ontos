@@ -63,7 +63,8 @@ const resourceIdOf = (search: string): string | undefined =>
   Option.getOrUndefined(Schema.decodeOption(searchCodec)(search))?.resourceId;
 
 /** The page's primary data: loaded before the Shell reveals the page, kept per document, revalidated after writes. */
-const activities = definePageData({
+export const activities = definePageData({
+  changesFrom: ['crm-activities'],
   key: (input: ActivitiesInput) => `${input.legalEntityId}|${input.resourceId ?? ''}`,
   load: (input: ActivitiesInput) =>
     requestId.pipe(
@@ -75,7 +76,8 @@ const activities = definePageData({
 });
 
 /** Tasks an activity can follow up: loaded once the record form is shown, revalidated after writes. */
-const followUpTasks = definePageData({
+export const followUpTasks = definePageData({
+  changesFrom: ['crm-activities', 'work-tasks'],
   key: (legalEntityId: string) => legalEntityId,
   load: (_legalEntityId: string) => requestId.pipe(Effect.flatMap((id) => executeWorkRecords({}, id))),
   runtime: browserRuntime,

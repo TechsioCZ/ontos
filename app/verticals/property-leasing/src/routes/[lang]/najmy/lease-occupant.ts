@@ -1,4 +1,5 @@
 import {
+  changeConcerns,
   definePageData,
   modulePagePreload,
   pageDataPending,
@@ -23,6 +24,9 @@ import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 const keyOf = (parts: readonly string[]) =>
   Result.getOrThrow(Schema.encodeResult(Schema.fromJsonString(Schema.Array(Schema.String)))(parts));
 const moduleId = 'property.leasing';
+/** Deployment app ids of this vertical and of the customer registry, for the stores' `changesFrom`. */
+const ownApp = 'property-leasing';
+const partyApp = 'party-registry';
 
 export interface LeaseInput {
   readonly legalEntityId: string;
@@ -89,6 +93,7 @@ export const loadLeaseRecords = Effect.fn('PropertyLeasing.loadLeaseRecords')(fu
 
 /** Base records settle without a whole-register burst of guest identity reads. */
 export const leaseRecords = definePageData({
+  changesFrom: ['legal-agreements', partyApp, ownApp, 'property-portfolio'],
   key: (input: LeaseInput) => input.scope,
   load: () => loadLeaseRecords(),
   maxEntries: 8,
@@ -109,6 +114,7 @@ export const occupantKey = (input: LeaseDetailInput) =>
 /** A failed related-owner read is not retained as a reusable authorization decision. */
 export const leaseOccupant = definePageData({
   cancelWhenUnused: true,
+  changesFrom: [partyApp, ownApp],
   key: occupantKey,
   load: (input: LeaseDetailInput) => loadOccupantName(input.record).pipe(Effect.map(Option.getOrUndefined)),
   maxEntries: 256,
@@ -148,6 +154,8 @@ export const renderedLeaseOccupantRows = (
   counterpartyId: string | undefined,
   visible: readonly Occupancy[],
 ) => (resourceId === undefined && counterpartyId === undefined ? visible : []);
+/** Apps whose data the rows' detail stores show (occupant name, and the related tasks and invoices). */
+const leaseRowApps = ['finance-billing', partyApp, ownApp, 'work-tasks'];
 /** The plain Table has no hidden sort/page model; these are its exact filtered rows. */
 export const usePrefetchLeaseOccupants = (
   input: LeaseInput,
@@ -172,9 +180,11 @@ export const usePrefetchLeaseOccupants = (
       return constVoid;
     }
     let fiber = browserRuntime.runFork(preload(scope));
-    const restart = () => {
-      fiber.interruptUnsafe();
-      fiber = browserRuntime.runFork(preload(scope));
+    const restart = (event: Event) => {
+      if (changeConcerns(event, leaseRowApps)) {
+        fiber.interruptUnsafe();
+        fiber = browserRuntime.runFork(preload(scope));
+      }
     };
     globalThis.addEventListener(moduleWriteEvent, restart);
     globalThis.addEventListener(moduleChangeEvent, restart);

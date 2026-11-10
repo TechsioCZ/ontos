@@ -4,6 +4,7 @@ import { executeRecords as readFinance } from '@app/finance-billing/clients/reco
 import { executeRecords as readWork } from '@app/work-tasks/clients/records';
 import { listEmployees } from '@app/workforce/clients/records';
 import {
+  changeConcerns,
   definePageData,
   modulePagePreload,
   pageDataPending,
@@ -23,6 +24,7 @@ import { propertySelection, readPropertySearch, PropertySearchInputSchema } from
 const keyOf = (parts: readonly string[]) =>
   Result.getOrThrow(Schema.encodeResult(Schema.fromJsonString(Schema.Array(Schema.String)))(parts));
 const moduleId = 'property.portfolio';
+const ownApp = 'property-portfolio';
 
 export interface RecordsInput {
   readonly legalEntityId: string;
@@ -54,6 +56,7 @@ export interface SummaryInput extends RecordsInput {
 }
 /** The register of buildings, units and assets (archived included); the selection only filters it. */
 export const propertyRecords = definePageData({
+  changesFrom: [ownApp, 'workforce'],
   key: (input: RecordsInput) => input.scope,
   load: () =>
     Effect.all(
@@ -81,13 +84,19 @@ const ownerOptions = {
 };
 const agreementsData = definePageData({
   ...ownerOptions,
+  changesFrom: ['legal-agreements', ownApp],
   load: () => readAgreements({}, 'property-portfolio.summary.agreements'),
 });
 const occupancyData = definePageData({
   ...ownerOptions,
+  changesFrom: ['property-leasing', ownApp],
   load: () => readOccupancy({}, 'property-portfolio.summary.occupancy'),
 });
-const workData = definePageData({ ...ownerOptions, load: () => readWork({}, 'property-portfolio.summary.work') });
+const workData = definePageData({
+  ...ownerOptions,
+  changesFrom: [ownApp, 'work-tasks'],
+  load: () => readWork({}, 'property-portfolio.summary.work'),
+});
 const loadSummary = (input: SummaryInput) =>
   Effect.all(
     {
@@ -101,8 +110,11 @@ const loadSummary = (input: SummaryInput) =>
 class PropertySummaryIncomplete extends Data.TaggedError('PropertySummaryIncomplete')<{
   readonly value: Effect.Success<ReturnType<typeof loadSummary>>;
 }> {}
+/** Apps whose data a property summary shows: its own register and the four owners it summarizes. */
+const summaryApps = ['finance-billing', 'legal-agreements', 'property-leasing', ownApp, 'work-tasks'];
 export const propertySummary = definePageData({
   cancelWhenUnused: true,
+  changesFrom: summaryApps,
   key: (input: SummaryInput) => keyOf([input.scope, input.tenantId, input.propertyId, String(input.revision)]),
   load: (input: SummaryInput) =>
     loadSummary(input).pipe(
@@ -165,9 +177,11 @@ export const usePrefetchPropertySummaries = (
       return constVoid;
     }
     let fiber = browserRuntime.runFork(preload(scope));
-    const restart = () => {
-      fiber.interruptUnsafe();
-      fiber = browserRuntime.runFork(preload(scope));
+    const restart = (event: Event) => {
+      if (changeConcerns(event, summaryApps)) {
+        fiber.interruptUnsafe();
+        fiber = browserRuntime.runFork(preload(scope));
+      }
     };
     globalThis.addEventListener(moduleWriteEvent, restart);
     globalThis.addEventListener(moduleChangeEvent, restart);

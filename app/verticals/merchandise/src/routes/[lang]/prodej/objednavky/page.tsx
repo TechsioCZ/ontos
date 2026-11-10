@@ -50,6 +50,7 @@ import { ResetDemoDialog } from './reset-demo-dialog.tsx';
 import { commonOrderTransitions, ordersPageSummary, orderStatuses, transitionsFrom } from './orders-model.ts';
 import {
   changeOrderStatuses,
+  orderDetailIntent,
   preloadOrdersPage,
   recordsCanEditOrders,
   useOrderDetail,
@@ -157,11 +158,8 @@ const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
   const [busy, setBusy] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
   const [detailVersion, setDetailVersion] = useState(0);
-  const detail = useOrderDetail(detailId, detailVersion, context, {
-    legalEntityId,
-    query,
-    scope: pageDataScopeKey(context, 'demo.merchandise'),
-  });
+  const ordersScope = pageDataScopeKey(context, 'demo.merchandise');
+  const detail = useOrderDetail(detailId, detailVersion, context, { legalEntityId, query, scope: ordersScope });
   const ready = state.kind === 'ready' ? state : undefined;
   const { canWrite, orders, stats, totalOrders } = ordersPageSummary(ready);
   /** Every change reloads the page, the header counts and the open detail. */
@@ -200,6 +198,12 @@ const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
   );
   const filtered = search.trim() !== '' || statusFilter !== null || tagFilter.tagId !== null;
   const stale = ready !== undefined && ready.query !== query;
+  // Pointing at or focusing a row warms its detail; the list itself warms its rows once per revision.
+  const rowIntent = orderDetailIntent(
+    { legalEntityId, query: ready?.query ?? query, scope: ordersScope },
+    stale || tagFilter.status === 'error' ? undefined : ready?.records,
+    orders,
+  );
 
   const runStatusChange = (targets: readonly Order[], status: OrderStatus, reason?: string) => {
     if (ready === undefined) {
@@ -300,6 +304,7 @@ const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
     refilter,
     requestStatus,
     resetOpen,
+    rowIntent,
     runStatusChange,
     search,
     selected,
@@ -545,6 +550,7 @@ const OrdersPageContent = (props: OrdersPageContentProps) => {
     refilter,
     requestStatus,
     resetOpen,
+    rowIntent,
     runStatusChange,
     search,
     selected,
@@ -653,6 +659,7 @@ const OrdersPageContent = (props: OrdersPageContentProps) => {
           rowCount={tagFilter.status === 'error' ? 0 : totalOrders}
           rowSelection={selection}
           size="sm"
+          slotProps={{ row: rowIntent }}
           stickyHeader
           striped
           tableLayout="fixed"

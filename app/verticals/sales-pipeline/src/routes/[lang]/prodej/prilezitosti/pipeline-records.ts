@@ -43,6 +43,7 @@ const loadRecords = ({ customer, owner, stage }: PipelineRecordsInput) =>
 /** Visible opportunities per server filter set, shared by the records page and the AI approvals page. */
 const createPipelineRecords = () =>
   definePageData({
+    changesFrom: ['sales-pipeline'],
     key: recordsKey,
     load: loadRecords,
     maxEntries: 8,

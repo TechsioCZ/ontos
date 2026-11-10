@@ -3,6 +3,7 @@ import { Data, DateTime, Effect, Exit, Match, Option, Predicate, Random, Ref, Re
 import { constVoid } from 'effect/Function';
 
 import {
+  changeConcerns,
   definePageData,
   moduleChangeEvent,
   modulePagePreload,
@@ -11,8 +12,8 @@ import {
   pageDataScopeKey,
 } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
-import { draftSavable, useHeldSnapshot, useRecordDraft, useUnsavedChangesGuard } from '@app/admin-ui';
-import type { BlockedNavigation, DraftSaveResult, SavableDraft, SaveState } from '@app/admin-ui';
+import { draftSavable, rowIntentProps, useHeldSnapshot, useRecordDraft, useUnsavedChangesGuard } from '@app/admin-ui';
+import type { BlockedNavigation, DraftSaveResult, RowIntentProps, SavableDraft, SaveState } from '@app/admin-ui';
 
 import { executeAresLookup } from '../../../../api/ares-lookup-client.ts';
 import { executeDuplicateCandidateList } from '../../../../api/duplicate-candidate-list-client.ts';
@@ -123,6 +124,7 @@ export const customersQuery = (context?: ModulePageContext): string =>
  * page, so rows, stats and segment labels render in the first commit.
  */
 export const customersData = definePageData({
+  changesFrom: ['commerce-customer-context', 'party-registry'],
   key: (query: string) => query,
   load: (_query: string) => loadCustomers,
   maxEntries: 8,
@@ -254,6 +256,7 @@ const customerDetailKey = ({ customer, scope }: CustomerDetailInput): string =>
 /** A partial section is renderable for this opening, but is not a reusable authorization decision. */
 export const customerDetailData = definePageData({
   cancelWhenUnused: true,
+  changesFrom: ['party-registry'],
   key: customerDetailKey,
   load: ({ customer }: CustomerDetailInput) =>
     loadCustomerDetail(customer).pipe(
@@ -313,6 +316,11 @@ export const preloadCustomerDetails = (
       );
 };
 
+/**
+ * Warms the visible rows' details once per batch. The batch key is the scope plus every row's detail key, which carries
+ * the Counterparty and the party revision: a list reload, a freshness expiry or a live change does not warm them again,
+ * while a new page or a changed row does. A row opened later is warmed by its pointer or focus intent instead.
+ */
 export const usePrefetchCustomerDetails = (
   context: ModulePageContext | undefined,
   rows: readonly CustomerListItem[],
@@ -321,22 +329,49 @@ export const usePrefetchCustomerDetails = (
   const selection = Result.getOrThrow(
     Schema.encodeResult(DetailKeySchema)(rows.map((customer) => customerDetailKey({ customer, scope: scope ?? '' }))),
   );
-  const needsPreload = useSyncExternalStore(
-    customerDetailData.subscribe,
-    () =>
-      scope !== undefined &&
-      rows.slice(0, 200).some((customer) => customerDetailData.snapshot({ customer, scope }).state === 'pending'),
-    () => false,
-  );
+  const warmed = useRef<string | undefined>(undefined);
   const preload = useEffectEvent(() => preloadCustomerDetails(context, rows));
   useEffect(() => {
-    const fiber =
-      needsPreload && scope !== undefined && selection !== '[]' ? browserRuntime.runFork(preload()) : undefined;
+    if (scope === undefined || selection === '[]' || warmed.current === selection) {
+      return;
+    }
+    const fiber = browserRuntime.runFork(
+      preload().pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            warmed.current = selection;
+          }),
+        ),
+      ),
+    );
     return () => {
-      fiber?.interruptUnsafe();
+      fiber.interruptUnsafe();
     };
-  }, [needsPreload, scope, selection]);
+  }, [scope, selection]);
 };
+
+/** Warms one row's detail on pointer or keyboard intent. A fresh entry answers without a request. */
+export const prefetchCustomerDetail = (context: ModulePageContext | undefined, customer: CustomerListItem): void => {
+  const scope = pageDataScopeKey(context, 'party.registry');
+  if (scope !== undefined && customerDetailData.snapshot({ customer, scope }).state !== 'ready') {
+    browserRuntime.runFork(customerDetailData.read({ customer, scope }).pipe(Effect.ignore));
+  }
+};
+
+/**
+ * Row intent over the table's row model (`data-index`), passed as the DataTable's `slotProps.row`. The rows are read
+ * when the event fires, so a sort or page change made since this render maps the index to the row actually shown.
+ */
+export const customerDetailIntent = (
+  context: ModulePageContext | undefined,
+  rows: () => readonly CustomerListItem[],
+): RowIntentProps =>
+  rowIntentProps((index) => {
+    const customer = rows()[index];
+    if (customer !== undefined) {
+      prefetchCustomerDetail(context, customer);
+    }
+  });
 
 export type CustomerFactChange =
   | { readonly kind: 'name'; readonly value: string; readonly party: CustomerParty }
@@ -1175,7 +1210,11 @@ export const useCustomerIdentityReview = (onResolved: () => void) => {
       revalidateDetail(caseSelection.current);
     }
   };
-  const follow = useEffectEvent(revalidate);
+  const follow = useEffectEvent((event: Event) => {
+    if (changeConcerns(event, ['party-registry'])) {
+      revalidate();
+    }
+  });
   useEffect(() => {
     if (!open) {
       return;
