@@ -1297,6 +1297,8 @@ const otherCompanyScope = ids.scope(3);
 const ADMITTED_COMPANY = legalEntityId(5);
 
 interface AdmissionFixture {
+  readonly actor?: PrincipalId;
+  readonly administration?: ReturnType<typeof makeAdministration>;
   readonly assignments?: readonly Assignment[];
   readonly delegations?: readonly Delegation[];
   readonly holder?: ReturnType<typeof person>;
@@ -1307,8 +1309,9 @@ interface AdmissionFixture {
 
 const admission = (fixture: AdmissionFixture = {}) =>
   planMemberAdmission({
-    actor: MANAGER,
-    administration: makeAdministration({ tenantOwners: [ownerRecord({ principalId: MANAGER })] }),
+    actor: fixture.actor ?? MANAGER,
+    administration:
+      fixture.administration ?? makeAdministration({ tenantOwners: [ownerRecord({ principalId: MANAGER })] }),
     assignments: fixture.assignments ?? [],
     at: AT,
     companyMembershipId: membershipId(41),
@@ -1444,6 +1447,80 @@ it.effect('refuses an admission that would bring back authority in another compa
       memberships: [memberOf(MEMBER), membership({ holder: MEMBER, id: 2, scopeId: otherCompanyScope })],
     });
     expect(recordedIn(reachesAOnly)).toEqual([{ id: membershipId(41), scopeId: companyScope }]);
+  }),
+);
+
+/** The refusal code of a plan, or `admitted` when it was planned, so a wrong success reads plainly. */
+const refusalOf = (plan: ReturnType<typeof admission>) =>
+  Effect.match(plan, { onFailure: (error) => error.code, onSuccess: () => 'admitted' });
+
+it.effect('refuses an admission that would bring back tenant ownership nobody granted again (S1)', () =>
+  Effect.gen(function* admissionRevivesNoOwnership() {
+    // The tenant member row was revoked while an unexpired owner row stayed: a company
+    // administrator admitting the person would mint a tenant row that makes them owner again.
+    const companyAdmin = OTHER;
+    const ownerLeftover = [
+      membership({ holder: MEMBER, id: 1, status: 'revoked' }),
+      membership({ holder: MEMBER, id: 2, kind: 'owner', validUntil: FUTURE }),
+    ];
+    const ownership = yield* refusalOf(
+      admission({
+        actor: companyAdmin,
+        administration: makeAdministration({
+          companyAdministrators: companyAdministrators(companyScope, [ownerRecord({ principalId: companyAdmin })]),
+          tenantOwners: [
+            ownerRecord({ principalId: MANAGER }),
+            ownerRecord({ principalId: MEMBER, status: 'suspended' }),
+          ],
+        }),
+        memberships: ownerLeftover,
+      }),
+    );
+    expect(ownership).toBe('people_membership_ended');
+    // Whoever asks: the tenant owner cannot revive it either.
+    const byOwner = yield* refusalOf(admission({ memberships: ownerLeftover }));
+    expect(byOwner).toBe('people_membership_ended');
+    // A live owner joining a company mints only the company row, which reaches no tenant ownership.
+    const ownerJoins = yield* admission({
+      memberships: [memberOf(MEMBER), membership({ holder: MEMBER, id: 2, kind: 'owner' })],
+    });
+    expect(recordedIn(ownerJoins)).toEqual([{ id: membershipId(41), scopeId: companyScope }]);
+  }),
+);
+
+it.effect('refuses an admission that would bring back company administration nobody granted again (S1)', () =>
+  Effect.gen(function* admissionRevivesNoAdministration() {
+    // A live tenant member whose company A member row was revoked while an access_admin row stayed:
+    // a new A row would make them administrator of A again.
+    const accessAdmin = yield* refusalOf(
+      admission({
+        memberships: [
+          memberOf(MEMBER),
+          membership({ holder: MEMBER, id: 2, scopeId: companyScope, status: 'revoked' }),
+          membership({ holder: MEMBER, id: 3, kind: 'access_admin', scopeId: companyScope }),
+        ],
+      }),
+    );
+    expect(accessAdmin).toBe('people_membership_ended');
+
+    // Administration in company B is not reached by an A row while the tenant row is live.
+    const adminInB = yield* admission({
+      memberships: [
+        memberOf(MEMBER),
+        membership({ holder: MEMBER, id: 2, scopeId: otherCompanyScope }),
+        membership({ holder: MEMBER, id: 3, kind: 'access_admin', scopeId: otherCompanyScope }),
+      ],
+    });
+    expect(recordedIn(adminInB)).toEqual([{ id: membershipId(41), scopeId: companyScope }]);
+    // Management rows the ending revoked bring nothing back.
+    const endedAdmin = yield* admission({
+      memberships: [
+        membership({ holder: MEMBER, id: 1, status: 'revoked' }),
+        membership({ holder: MEMBER, id: 2, kind: 'owner', status: 'revoked' }),
+        membership({ holder: MEMBER, id: 3, kind: 'access_admin', scopeId: companyScope, status: 'revoked' }),
+      ],
+    });
+    expect(recordedIn(endedAdmin).map(({ id }) => id)).toEqual([membershipId(40), membershipId(41)]);
   }),
 );
 

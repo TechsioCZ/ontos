@@ -523,7 +523,8 @@ const notEnded = (row: { readonly status: string; readonly validUntil?: Date | u
 
 /**
  * The first piece of authority a fresh member row would make reachable again: a live assignment, a
- * team place or a managed delegation the person still holds in one of the reached scopes. A membership
+ * team place, a managed delegation or an unrevoked management membership the person still holds in one
+ * of the reached scopes. A membership
  * that ended through `planMembershipEnd` leaves none, so only rows another writer left behind show up.
  */
 const leftoverAuthority = (
@@ -549,7 +550,20 @@ const leftoverAuthority = (
   const delegation = request.delegations.find(
     (row) => reached(row.scopeId) && row.managerId === holder && notEnded(row, request.at),
   );
-  return delegation === undefined ? undefined : { kind: 'managed delegation', scopeId: delegation.scopeId };
+  if (delegation !== undefined) {
+    return { kind: 'managed delegation', scopeId: delegation.scopeId };
+  }
+  // An `owner` or `access_admin` row stands on the member path, so a fresh member row would make it
+  // live again; only a revoked or expired one is history.
+  const management = request.memberships.find(
+    (row) =>
+      row.kind !== 'member' &&
+      reached(row.scopeId) &&
+      personOf(row.holder) === holder &&
+      row.status !== 'revoked' &&
+      (row.validUntil === undefined || request.at < row.validUntil),
+  );
+  return management === undefined ? undefined : { kind: `${management.kind} membership`, scopeId: management.scopeId };
 };
 
 /**
@@ -561,8 +575,9 @@ const leftoverAuthority = (
  * Admission grants participation and nothing else, so it never brings back authority nobody granted
  * again (S1). It refuses a member row in the tenant or the company that is not live but not revoked
  * either (expired, suspended or still to start), because replacing it would lift what that row now
- * withholds. And it refuses while the person still holds a live assignment, team place or managed
- * delegation, or a company member row, that the new rows would make reachable again: a fresh tenant row
+ * withholds. And it refuses while the person still holds a live assignment, team place, managed
+ * delegation, `owner` or `access_admin` row, or a company member row, that the new rows would make
+ * reachable again: a fresh tenant row
  * reaches every company, a fresh company row reaches that company.
  *
  * The company directory precondition is the plan's first write, so the store checks it inside the
