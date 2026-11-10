@@ -203,6 +203,8 @@ const evaluationHttp = Effect.fn('ImportedNonPayerTest.evaluationHttp')(function
   return { run, snapshot: harness.snapshot, statuses };
 });
 
+const staffWorkloadDecision = () => Effect.succeed(false);
+
 const EvaluatedSuccessSchema = Schema.TaggedStruct('EVALUATED', {
   evidence: TaxEvaluationEvidenceSchema,
   outcome: TaxOutcomeSuccessSchema,
@@ -230,7 +232,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('imported non-payer wi
               runScoped(runtime, scope, (transaction) =>
                 handleImportSellerVatRegimeDeclarations(
                   importPayload,
-                  actionContext(scope, actionInvocationId, sellerVatRegimeDeclarationsForScope(transaction, scope)),
+                  actionContext(scope, actionInvocationId, {
+                    ...sellerVatRegimeDeclarationsForScope(transaction, scope),
+                    readFixtureWorkload: staffWorkloadDecision,
+                  }),
                 ),
               ),
             ),

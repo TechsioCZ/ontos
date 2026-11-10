@@ -50,6 +50,22 @@ export const DECISION_SET_FENCE_SOURCE_TABLES = [
 
 export const assortmentSchema = pgSchema(ASSORTMENT_SCHEMA_NAME);
 
+/** One-use assertion replay evidence written before the authenticated Tenant scope is installed. */
+export const gatewayAssertionRedemptions = assortmentSchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: uuid('jti').notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('assortment_gateway_redemptions_identity_uk').on(table.issuer, table.audience, table.jti),
+    index('assortment_gateway_redemptions_expiry_idx').on(table.expiresAt),
+  ],
+);
+
 const scopeColumns = () => ({
   tenantId: uuid('tenant_id').notNull(),
   legalEntityId: uuid('legal_entity_id').notNull(),
@@ -79,6 +95,25 @@ const scopedPolicies = (prefix: string, table: Readonly<Record<'tenantId' | 'leg
 const tenantPolicies = (prefix: string, table: Readonly<Record<'tenantId', AnyPgColumn>>) =>
   tenantRlsPolicies(prefix, table.tenantId);
 
+const fixtureRoutineInsert = (
+  prefix: string,
+  table: Readonly<Record<'tenantId' | 'provenanceRef', AnyPgColumn>>,
+  legalEntityColumn?: AnyPgColumn,
+) => {
+  const legalEntityMatches =
+    legalEntityColumn === undefined
+      ? sql`true`
+      : sql`${legalEntityColumn} = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
+  return pgPolicy(`${prefix}_c14_fixture_insert`, {
+    for: 'insert',
+    to: 'public',
+    withCheck: sql`current_user <> session_user
+      and ${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid
+      and ${table.provenanceRef} ~ '^internal-c14-assortment:[0-9a-f]{64}$'
+      and ${legalEntityMatches}`,
+  });
+};
+
 const trimmed = (name: string, column: AnyPgColumn) =>
   check(name, sql`${column} = btrim(${column}) and length(${column}) between 1 and 1000`);
 
@@ -101,6 +136,7 @@ export const stableRules = assortmentSchema.table.withRLS(
     check('assortment_stable_rules_code_ck', sql`${table.stableCode} ~ '^[a-z][a-z0-9._-]{0,127}$'`),
     trimmed('assortment_stable_rules_provenance_ck', table.provenanceRef),
     ...tenantPolicies('assortment_stable_rules_scope', table),
+    fixtureRoutineInsert('assortment_stable_rules', table),
   ],
 );
 
@@ -145,6 +181,7 @@ export const ruleRevisions = assortmentSchema.table.withRLS(
     check('assortment_rule_revisions_fingerprint_ck', sql`${table.semanticFingerprint} ~ '^[0-9a-f]{64}$'`),
     trimmed('assortment_rule_revisions_provenance_ck', table.provenanceRef),
     ...tenantPolicies('assortment_rule_revisions_scope', table),
+    fixtureRoutineInsert('assortment_rule_revisions', table),
   ],
 );
 
@@ -212,6 +249,7 @@ export const applicabilityBindings = assortmentSchema.table.withRLS(
     ),
     trimmed('assortment_bindings_channel_ck', table.channelResourceId),
     ...scopedPolicies('assortment_bindings_scope', table),
+    fixtureRoutineInsert('assortment_bindings', table, table.legalEntityId),
   ],
 );
 
@@ -556,6 +594,7 @@ const databaseSchema = {
   commitmentConfirmations,
   decisionSetFences,
   decisionEvidence,
+  gatewayAssertionRedemptions,
   ruleRetirementFacts,
   ruleRevisions,
   stableRules,

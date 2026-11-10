@@ -258,7 +258,6 @@ const cleanupRows = (admin: AssortmentTestDatabase) =>
 const grantRuntimeAccess = (admin: AssortmentTestDatabase) =>
   admin.transaction((transaction) =>
     Effect.gen(function* grantCommitmentConfirmationAccess() {
-      yield* transaction.execute(sql`grant usage on schema assortment to ontos_runtime`, 'objects');
       yield* transaction.execute(
         sql`grant select, insert, update, delete on table assortment.assortment_commitment_confirmations to ontos_runtime`,
         'objects',
@@ -273,7 +272,6 @@ const revokeRuntimeAccess = (admin: AssortmentTestDatabase) =>
         sql`revoke select, insert, update, delete on table assortment.assortment_commitment_confirmations from ontos_runtime`,
         'objects',
       );
-      yield* transaction.execute(sql`revoke usage on schema assortment from ontos_runtime`, 'objects');
     }),
   );
 

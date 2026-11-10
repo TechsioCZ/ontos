@@ -1,4 +1,6 @@
-import { findPostgresFailure } from '@app/core-runtime';
+import { defineScopedRoutine, findPostgresFailure } from '@app/core-runtime';
+import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
+import { readVerifiedGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { DateTime, Effect, Match, Option, Result, Schema } from 'effect';
@@ -12,6 +14,7 @@ import type {
   CreateRulePayload,
   CreateRuleRevisionPayload,
   EndApplicabilityBindingPayload,
+  ImportSymmyRulePayload,
   ReplaceApplicabilityBindingPayload,
   RetireRulePayload,
 } from '../../shared/actions/policy-administration.ts';
@@ -25,6 +28,7 @@ import {
 import {
   AssortmentPolicyConflictKindSchema,
   AssortmentPolicyPersistenceUnavailable,
+  AssortmentSymmyFixtureAccessDenied,
 } from '../../shared/domain/policy-errors.ts';
 import type { AssortmentPolicyConflictKind } from '../../shared/domain/policy-errors.ts';
 
@@ -1282,3 +1286,84 @@ export const assortmentPolicyPersistenceForScope = (
 
 export const assortmentPolicyServiceFactory = (transaction: ScopedTransaction, scope: OperationalScope) =>
   Effect.succeed(assortmentPolicyPersistenceForScope(transaction, scope));
+
+export const assortmentSymmyRuleFixtureWorkload = 'commerce.assortment.symmy-fixture-rule-import';
+const fixtureResourceId = Schema.String.check(Schema.isUUID());
+
+const importSymmyRuleFixture = defineScopedRoutine({
+  name: 'import_c14_rule_fixture',
+  ownerModuleKey: MODULE_KEY,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'legalEntityId', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'jsonb' },
+  ],
+  resultSchema: Schema.Struct({
+    binding_id: fixtureResourceId,
+    revision_id: fixtureResourceId,
+    rule_id: fixtureResourceId,
+  }),
+  routineKey: 'commerce.assortment.import-c14-rule-fixture',
+  schema: 'assortment',
+});
+
+export const assortmentSymmyRuleFixtureServiceFactory = (transaction: ScopedTransaction, scope: OperationalScope) =>
+  Effect.succeed({
+    persistFixture: Effect.fn('AssortmentPolicyPersistence.persistSymmyRuleFixture')(function* persist(
+      payload: ImportSymmyRulePayload,
+      actionInvocationId: string,
+    ) {
+      const source = readVerifiedGatewayWorkload(scope);
+      const admitted = yield* readScopedAdmittedWorkload(transaction, scope, assortmentSymmyRuleFixtureWorkload).pipe(
+        Effect.mapError(unavailable),
+      );
+      if (!admitted || source === undefined) {
+        return yield* new AssortmentSymmyFixtureAccessDenied({
+          code: 'assortment_symmy_fixture_access_denied',
+          reason: 'The exact internal fixture is outside the approved execution scope',
+        });
+      }
+      const { binding, rule } = payload;
+      const meaningFingerprint = assortmentMeaningFingerprint(ruleMeaning(rule));
+      const rows = yield* transaction
+        .invoke(importSymmyRuleFixture, [
+          actionInvocationId,
+          scope.principalId,
+          source.admissionInvocationId,
+          source.originalPrincipalId,
+          {
+            channel: binding.commercialScope.channelRef.resourceId,
+            effect: rule.effect,
+            effectiveFrom: DateTime.formatIso(binding.effectiveFrom),
+            fingerprint: meaningFingerprint,
+            group: binding.audience.groupRef.resourceId,
+            market: binding.commercialScope.commerceMarketRef.resourceId,
+            product: rule.selector.productRef.resourceId,
+            purpose: rule.purpose,
+            reason: rule.reason,
+            stableCode: rule.stableCode,
+            storefront: binding.commercialScope.storefrontRef.resourceId,
+          },
+        ])
+        .pipe(Effect.mapError(unavailable));
+      const [row] = rows;
+      return row === undefined
+        ? null
+        : {
+            bindingId: row.binding_id,
+            created: true,
+            initialRevisionNumber: 1,
+            initialRuleRevisionId: row.revision_id,
+            meaningFingerprint,
+            stableRuleId: row.rule_id,
+          };
+    }),
+  });
+
+export type AssortmentSymmyRuleFixtureService = Effect.Success<
+  ReturnType<typeof assortmentSymmyRuleFixtureServiceFactory>
+>;

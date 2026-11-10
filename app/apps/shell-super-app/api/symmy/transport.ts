@@ -1,6 +1,11 @@
 import { GatewayAuthenticationRequiredProblemSchema } from '@app/shared-contracts';
 import { problemDetailsContentType } from '@app/shared-contracts/problem-details';
-import { summarizeSymmyItemOutcome, SYMMY_REST_PREFIX, SYMMY_ROUTES } from '@app/shared-contracts/symmy';
+import {
+  summarizeSymmyItemOutcome,
+  SYMMY_FIXTURE_ROUTES,
+  SYMMY_REST_PREFIX,
+  SYMMY_ROUTES,
+} from '@app/shared-contracts/symmy';
 import type { SymmyItemOutcome, SymmyRouteKey } from '@app/shared-contracts/symmy';
 import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import type { SymmyRouteContextResponseSchema } from '@app/symmy-integration/api/symmy-route-context';
@@ -53,7 +58,7 @@ type RouteKeyWith<Fields> = {
 }[SymmyRouteKey];
 type Reads = RouteKeyWith<{ readonly mode: 'business_read' }>;
 type ItemWrites = RouteKeyWith<{ readonly mode: 'item_results' }>;
-type JobWrites = RouteKeyWith<{ readonly mode: 'durable_job' }>;
+type JobWrites = RouteKeyWith<{ readonly mode: 'durable_job' }> | keyof typeof SYMMY_FIXTURE_ROUTES;
 type SelectedWrites = RouteKeyWith<{ readonly selector: 'code' }>;
 
 interface FixtureRead {
@@ -85,7 +90,7 @@ export interface SymmyIngressAdmission {
   }) => Effect.Effect<SymmyOwnerAssertion, SymmyIngressProblem>;
   readonly acquireRouteAssertion?: (input: {
     readonly code?: string;
-    readonly routeKey: Exclude<SymmyRouteKey, 'job'>;
+    readonly routeKey: Exclude<SymmyRouteKey, 'job'> | keyof typeof SYMMY_FIXTURE_ROUTES;
   }) => Effect.Effect<
     SymmyOwnerAssertion & { readonly route: typeof SymmyRouteContextResponseSchema.Type },
     SymmyIngressProblem
@@ -182,7 +187,10 @@ const respondMethodNotAllowed = (allowed: HttpMethod.HttpMethod) =>
     status: symmyMethodNotAllowedProblem.status,
   }).pipe(Effect.orDie);
 
-const routePaths = Object.values(SYMMY_ROUTES).map(({ method, path }) => ({ method, segments: path.split('/') }));
+const routePaths = Object.values({ ...SYMMY_ROUTES, ...SYMMY_FIXTURE_ROUTES }).map(({ method, path }) => ({
+  method,
+  segments: path.split('/'),
+}));
 
 const rejectedRoute = Effect.fn('SymmyIngress.rejectRoute')(function* rejectSymmyRoute(
   request: HttpServerRequest.HttpServerRequest,
@@ -449,6 +457,20 @@ export const SymmyIngressHandlersLive = HttpApiBuilder.group(ShellAuthentication
       handleSubmit(
         headers['x-api-key'],
         { ...payload, idempotencyKey: headers['idempotency-key'], route: 'priceListsBatchUpsert' },
+        request,
+      ),
+    )
+    .handle('assortmentRulesFixtureBatch', ({ headers, payload, request }) =>
+      handleSubmit(
+        headers['x-api-key'],
+        { ...payload, idempotencyKey: headers['idempotency-key'], route: 'assortmentRulesFixtureBatch' },
+        request,
+      ),
+    )
+    .handle('sellerVatDeclarationsFixtureBatch', ({ headers, payload, request }) =>
+      handleSubmit(
+        headers['x-api-key'],
+        { ...payload, idempotencyKey: headers['idempotency-key'], route: 'sellerVatDeclarationsFixtureBatch' },
         request,
       ),
     )

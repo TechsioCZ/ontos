@@ -1,11 +1,12 @@
 import { GatewayContextApiGroup } from '@app/shared-contracts';
-import { SYMMY_ROUTES } from '@app/shared-contracts/symmy';
+import { SYMMY_FIXTURE_ROUTES, SYMMY_ROUTES } from '@app/shared-contracts/symmy';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { OpenApi } from 'effect/http-api';
 import {
   SymmyFixtureReadSchema,
   SymmySchemaError,
   symmyCodeParams,
+  symmyFixtureSubmitOptions,
   symmyJobOptions,
   symmyReadOptions,
   symmySubmitOptions,
@@ -79,11 +80,24 @@ const productsBatchEndpoint = HttpApiEndpoint.post(
   symmySubmitOptions,
 );
 
+const assortmentRulesFixtureBatchEndpoint = HttpApiEndpoint.post(
+  'assortmentRulesFixtureBatch',
+  SYMMY_FIXTURE_ROUTES.assortmentRulesFixtureBatch.path,
+  symmyFixtureSubmitOptions,
+);
+
+const sellerVatDeclarationsFixtureBatchEndpoint = HttpApiEndpoint.post(
+  'sellerVatDeclarationsFixtureBatch',
+  SYMMY_FIXTURE_ROUTES.sellerVatDeclarationsFixtureBatch.path,
+  symmyFixtureSubmitOptions,
+);
+
 type SymmyIngressEndpoints = HttpApiEndpoint.AddMiddleware<
   HttpApiEndpoint.AddMiddleware<
     | typeof adminCustomersEndpoint
     | typeof adminProductsEndpoint
     | typeof adminRegionsEndpoint
+    | typeof assortmentRulesFixtureBatchEndpoint
     | typeof customerGroupCustomersBatchEndpoint
     | typeof customerGroupsBatchEndpoint
     | typeof customersBatchEndpoint
@@ -92,7 +106,8 @@ type SymmyIngressEndpoints = HttpApiEndpoint.AddMiddleware<
     | typeof priceListPricesBatchEndpoint
     | typeof priceListsEndpoint
     | typeof priceListsBatchUpsertEndpoint
-    | typeof productsBatchEndpoint,
+    | typeof productsBatchEndpoint
+    | typeof sellerVatDeclarationsFixtureBatchEndpoint,
     SymmySchemaError
   >,
   SymmyDefectBoundary
@@ -112,6 +127,7 @@ export const SymmyIngressGroup: SymmyIngressGroupContract = HttpApiGroup.make('s
     adminCustomersEndpoint,
     adminProductsEndpoint,
     adminRegionsEndpoint,
+    assortmentRulesFixtureBatchEndpoint,
     customerGroupCustomersBatchEndpoint,
     customerGroupsBatchEndpoint,
     customersBatchEndpoint,
@@ -121,6 +137,7 @@ export const SymmyIngressGroup: SymmyIngressGroupContract = HttpApiGroup.make('s
     priceListsEndpoint,
     priceListsBatchUpsertEndpoint,
     productsBatchEndpoint,
+    sellerVatDeclarationsFixtureBatchEndpoint,
   )
   .middleware(SymmySchemaError)
   .middleware(SymmyDefectBoundary);

@@ -1,5 +1,6 @@
 import { defineScopedRoutine, registeredAdmissionAuthContextRef } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import { readVerifiedGatewayRouteScope } from '@app/core-runtime/auth/system-principal-context-provenance';
 import {
   openScopedSourceExecutionFence,
   readScopedOriginalActionInvocation,
@@ -40,6 +41,11 @@ import { SymmyCatalogPricingInventoryIntentSchema } from '../../shared/domain/sy
 import { decodeSymmySourceSelector, verifySymmySourceSelector } from '../../shared/domain/symmy-source-selector.ts';
 import { AdmitSymmySyncResultSchema } from '../../shared/actions/admit-symmy-sync.ts';
 import type { SymmyDecodedSourceSelector } from '../../shared/domain/symmy-source-selector.ts';
+import {
+  mapSymmyPolicyFixtureIntent,
+  SymmyPolicyFixtureIntentSchema,
+  SymmyPolicyFixtureRouteKeySchema,
+} from '../../shared/domain/symmy-policy-fixture-intents.ts';
 import { symmyExecutionRegistration } from '../services/symmy-worker-identity.service.ts';
 
 export class SymmyJobStoreError extends Schema.TaggedError<SymmyJobStoreError>()('SymmyJobStoreError', {
@@ -265,17 +271,97 @@ const encodeCallerIntent = Effect.fn('SymmyJobStore.encodeCallerIntent')(functio
   ).pipe(Effect.mapError(unavailable));
 });
 
+const policyFixtureTemplateAllowed = (template: SymmyFixtureExecutionPlan, isPolicyFixture: boolean): boolean => {
+  if (!isPolicyFixture) {
+    return template.items.every(({ effects }) =>
+      effects.every(({ intent }) => !Schema.is(SymmyPolicyFixtureIntentSchema)(intent)),
+    );
+  }
+  const [item] = template.items;
+  const [effect] = item.effects;
+  return (
+    template.sourceRouteId === undefined &&
+    template.sourceRouteRevision === undefined &&
+    template.sourceMappingVersion === undefined &&
+    template.selector === undefined &&
+    template.inventoryBackendId === undefined &&
+    template.pricingSourceSystem === undefined &&
+    template.items.length === 1 &&
+    item.effects.length === 1 &&
+    (item.unsupportedBranches?.length ?? 0) === 0 &&
+    (effect.dependsOn?.length ?? 0) === 0 &&
+    Schema.is(SymmyPolicyFixtureIntentSchema)(effect.intent)
+  );
+};
+
+const requirePinnedPolicyFixture = (
+  plan: SymmyPinnedJobPlan,
+  routeKey: SymmyDurableRouteKey,
+  legalEntityId?: string,
+) => {
+  const [item] = plan.items;
+  const [{ intent, ref }] = item.effects;
+  return Schema.is(SymmyPolicyFixtureIntentSchema)(intent)
+    ? mapSymmyPolicyFixtureIntent(ref, intent, routeKey, legalEntityId).pipe(
+        Effect.asVoid,
+        Effect.mapError(routeDenied),
+      )
+    : Effect.fail(routeDenied());
+};
+
+const policyFixtureAdmissionAllowed = (
+  input: SymmyJobAdmissionRequest,
+  route: typeof symmyJobRoutes.$inferSelect,
+  scope: OperationalScope,
+): boolean => {
+  const proof = readVerifiedGatewayRouteScope(scope);
+  return (
+    input.fixtureId !== undefined &&
+    input.plan === undefined &&
+    route.fixturePlan !== null &&
+    proof?.routeKey === route.routeKey &&
+    proof.routeId === route.routeId &&
+    proof.routeRevision === route.routeRevision &&
+    proof.sourceRouteId === route.routeId &&
+    proof.sourceRouteRevision === route.routeRevision
+  );
+};
+
+const selectedPlanMatches = (
+  input: SymmyJobAdmissionRequest,
+  template: SymmyFixtureExecutionPlan,
+  tenantId: string,
+): boolean => {
+  if (input.plan === undefined || input.code === undefined) {
+    return true;
+  }
+  const { selector } = template;
+  return (
+    selector?.target !== undefined &&
+    selector.source.route.tenantId === tenantId &&
+    selector.target.tenantId === tenantId &&
+    selector.kind === (input.routeKey === 'priceListPricesBatch' ? 'PRICE_GROUP' : 'CUSTOMER_GROUP')
+  );
+};
+
 const prepareAdmissionPlan = Effect.fn('SymmyJobStore.prepareAdmissionPlan')(function* prepareAdmissionPlan(
   context: { scope: OperationalScope; transaction: ScopedTransactionExecutor },
   route: typeof symmyJobRoutes.$inferSelect,
   input: SymmyJobAdmissionRequest,
 ) {
   const { scope, transaction } = context;
+  const isPolicyFixture = Schema.is(SymmyPolicyFixtureRouteKeySchema)(input.routeKey);
+  if (isPolicyFixture && !policyFixtureAdmissionAllowed(input, route, scope)) {
+    return yield* routeDenied();
+  }
   let preparedPlan: SymmyPinnedJobPlan | null = null;
   if (route.fixturePlan !== null) {
     const template = yield* Schema.decodeUnknownEffect(SymmyFixtureExecutionPlanSchema)(route.fixturePlan).pipe(
       Effect.mapError(unavailable),
     );
+    if (!policyFixtureTemplateAllowed(template, isPolicyFixture)) {
+      return yield* routeDenied();
+    }
     if (input.plan !== undefined && !inputPlanAllowed(template, input.plan, scope)) {
       return yield* routeDenied();
     }
@@ -284,17 +370,7 @@ const prepareAdmissionPlan = Effect.fn('SymmyJobStore.prepareAdmissionPlan')(fun
       input.plan !== undefined ||
         template.items.some(({ effects }) => effects.some(({ intent }) => intent !== undefined)),
     );
-    if (
-      input.plan !== undefined &&
-      input.code !== undefined &&
-      (template.selector === undefined ||
-        template.selector.target === undefined ||
-        template.selector.source.route.tenantId !== scope.tenantId ||
-        template.selector.target.tenantId !== scope.tenantId ||
-        (input.routeKey === 'priceListPricesBatch'
-          ? template.selector.kind !== 'PRICE_GROUP'
-          : template.selector.kind !== 'CUSTOMER_GROUP'))
-    ) {
+    if (!selectedPlanMatches(input, template, scope.tenantId)) {
       return yield* routeDenied();
     }
     const executionPlanJson = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyFixtureExecutionPlanSchema))(
@@ -316,6 +392,9 @@ const prepareAdmissionPlan = Effect.fn('SymmyJobStore.prepareAdmissionPlan')(fun
     preparedPlan = materializePinnedPlan(
       yield* Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema)(pinned.plan).pipe(Effect.mapError(unavailable)),
     );
+    if (isPolicyFixture) {
+      yield* requirePinnedPolicyFixture(preparedPlan, input.routeKey, scope.legalEntityId);
+    }
   } else if (input.plan !== undefined) {
     return yield* routeDenied();
   }
@@ -442,7 +521,11 @@ const pinSyncEffect = Effect.fn('SymmyJobStore.pinSyncEffect')(function* pinSync
   const enrollment = yield* readScopedSystemWorkloadEnrollment(transaction, workload).pipe(
     Effect.mapError(unavailable),
   );
-  if (Option.isNone(enrollment) || effect.intent === undefined) {
+  if (
+    Option.isNone(enrollment) ||
+    effect.intent === undefined ||
+    Schema.is(SymmyPolicyFixtureIntentSchema)(effect.intent)
+  ) {
     return yield* routeDenied();
   }
   const principalFacts: SyncPrincipalFacts = {

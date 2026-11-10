@@ -12,6 +12,7 @@ import { createRuleAction } from './src/actions/create-rule.action.ts';
 import { createRuleRevisionAction } from './src/actions/create-rule-revision.action.ts';
 import { endApplicabilityBindingAction } from './src/actions/end-applicability-binding.action.ts';
 import { endClosedAssortmentBoundaryAction } from './src/actions/end-closed-assortment-boundary.action.ts';
+import { importSymmyRuleAction } from './src/actions/import-symmy-rule.action.ts';
 import { issueAssortmentCommitmentConfirmationAction } from './src/actions/issue-assortment-commitment-confirmation.action.ts';
 import { replaceApplicabilityBindingAction } from './src/actions/replace-applicability-binding.action.ts';
 import { replaceClosedAssortmentBoundaryAction } from './src/actions/replace-closed-assortment-boundary.action.ts';
@@ -27,6 +28,7 @@ export const assortmentRegistration = defineVerticalRuntimeRegistration({
     createRuleRevisionAction,
     endApplicabilityBindingAction,
     endClosedAssortmentBoundaryAction,
+    importSymmyRuleAction,
     issueAssortmentCommitmentConfirmationAction,
     replaceApplicabilityBindingAction,
     replaceClosedAssortmentBoundaryAction,

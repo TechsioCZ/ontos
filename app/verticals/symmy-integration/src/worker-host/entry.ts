@@ -17,6 +17,7 @@ import {
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { SymmyCatalogPricingInventoryAdaptersLive } from '../services/symmy-catalog-pricing-inventory-adapters.ts';
+import { SymmyPolicyFixtureAdaptersLive } from '../services/symmy-policy-fixture-adapters.ts';
 import { SymmyPartyCommerceAdaptersLive } from '../services/symmy-party-commerce-adapters.ts';
 import { outboxWorkers } from '../workers/index.ts';
 import { symmyIntegrationRegistration } from '../../vertical.registration.ts';
@@ -72,6 +73,7 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     Layer.provideMerge(privacyDispatchGatewayLive),
     Layer.provideMerge(SymmyCatalogPricingInventoryAdaptersLive),
     Layer.provideMerge(SymmyPartyCommerceAdaptersLive),
+    Layer.provideMerge(SymmyPolicyFixtureAdaptersLive),
     Layer.provideMerge(OutboxWorkerTenantScopeLive),
     Layer.provide(SystemPrincipalContextResolverLive),
     Layer.provide(outboxWorkerRepositoryLive),

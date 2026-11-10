@@ -552,6 +552,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "commerce.assortment.symmy-fixture-rule.import",
+            "kind": "action",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "fixture-imports",
+              "level": "manage"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.assortment.import-symmy-rule",
+            "moduleKey": "commerce.assortment",
+            "role": "action",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.assortment.visibility.evaluate",
             "kind": "read",
             "modes": [

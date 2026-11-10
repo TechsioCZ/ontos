@@ -16,6 +16,7 @@ import { CreateRuleRevisionActionApi } from './apis/create-rule-revision-action.
 import { DecisionExplanationApi } from './apis/decision-explanation.ts';
 import { EndApplicabilityBindingActionApi } from './apis/end-applicability-binding-action.ts';
 import { EndClosedAssortmentBoundaryActionApi } from './apis/end-closed-assortment-boundary-action.ts';
+import { ImportSymmyRuleActionApi } from './apis/import-symmy-rule-action.ts';
 import { IssueAssortmentCommitmentConfirmationActionApi } from './apis/issue-assortment-commitment-confirmation-action.ts';
 import { PurchaseApi } from './apis/purchase.ts';
 import { ReplaceApplicabilityBindingActionApi } from './apis/replace-applicability-binding-action.ts';
@@ -58,6 +59,7 @@ export const assortmentApi = HttpApi.make('AssortmentApi')
   .addHttpApi(DecisionExplanationApi)
   .addHttpApi(EndApplicabilityBindingActionApi)
   .addHttpApi(EndClosedAssortmentBoundaryActionApi)
+  .addHttpApi(ImportSymmyRuleActionApi)
   .addHttpApi(IssueAssortmentCommitmentConfirmationActionApi)
   .addHttpApi(PurchaseApi)
   .addHttpApi(ReplaceApplicabilityBindingActionApi)

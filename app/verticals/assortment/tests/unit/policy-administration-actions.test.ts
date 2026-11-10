@@ -6,6 +6,7 @@ import {
   EndApplicabilityBindingPayloadSchema,
   CreateRulePayloadSchema,
   CreateRuleRevisionPayloadSchema,
+  ImportSymmyRulePayloadSchema,
   RetireRulePayloadSchema,
   ReplaceApplicabilityBindingPayloadSchema,
 } from '../../shared/actions/policy-administration.ts';
@@ -14,6 +15,7 @@ import {
   AssortmentPolicyPersistenceUnavailable,
   AssortmentPolicyStaleBasis,
   AssortmentPolicyTargetInvariant,
+  AssortmentSymmyFixtureAccessDenied,
 } from '../../shared/domain/policy-errors.ts';
 import {
   assortmentMeaningFingerprint,
@@ -32,6 +34,7 @@ import {
 import { handleCreateRule } from '../../src/actions/create-rule.action.ts';
 import { handleCreateApplicabilityBinding } from '../../src/actions/create-applicability-binding.action.ts';
 import { handleCreateRuleRevision } from '../../src/actions/create-rule-revision.action.ts';
+import { handleImportSymmyRule, importSymmyRuleAction } from '../../src/actions/import-symmy-rule.action.ts';
 import { handleEndApplicabilityBinding } from '../../src/actions/end-applicability-binding.action.ts';
 import { handleReplaceApplicabilityBinding } from '../../src/actions/replace-applicability-binding.action.ts';
 import { handleRetireRule } from '../../src/actions/retire-rule.action.ts';
@@ -119,6 +122,81 @@ const createBindingPayload = Schema.decodeUnknownSync(CreateApplicabilityBinding
   ruleRevisionRef: revisionRef,
 });
 
+const fixtureProvenance = `internal-c14-assortment:${'a'.repeat(64)}`;
+const internalFixtureRule = {
+  binding: {
+    audience: {
+      groupRef: {
+        moduleId: 'commerce.customer-context',
+        resourceId: 'fixture-group',
+        resourceType: 'commerce.customer-context.customer-group',
+        tenantId,
+      },
+      kind: 'COMMERCE_CUSTOMER_GROUP',
+    },
+    commercialScope: {
+      channelRef,
+      commerceMarketRef: {
+        moduleId: 'commerce.market',
+        resourceId: 'fixture-market',
+        resourceType: 'commerce.market.market',
+        tenantId,
+      },
+      sellingLegalEntityRef,
+      storefrontRef: {
+        moduleId: 'commerce.storefront',
+        resourceId: 'fixture-storefront',
+        resourceType: 'commerce.storefront.storefront',
+        tenantId,
+      },
+    },
+    effectiveFrom: '2026-09-22T12:00:00.000Z',
+    provenanceRef: fixtureProvenance,
+    reason: 'Import one explicit internal rule',
+  },
+  rule: {
+    effect: 'ALLOW',
+    provenanceRef: fixtureProvenance,
+    purpose: 'PURCHASE',
+    reason: 'Import one explicit internal rule',
+    selector: {
+      kind: 'PRODUCT',
+      productRef: {
+        moduleId: 'commerce.catalog',
+        resourceId: 'fixture-product',
+        resourceType: 'commerce.catalog.product',
+        tenantId,
+      },
+    },
+    stableCode: `symmy-${'a'.repeat(64)}`,
+  },
+} as const;
+
+it.effect('requires a single explicit Product, Group and complete commercial fixture scope', () =>
+  Effect.gen(function* validateExactFixture() {
+    const decode = Schema.decodeUnknownEffect(ImportSymmyRulePayloadSchema);
+    expect((yield* decode(internalFixtureRule)).rule.selector.kind).toBe('PRODUCT');
+    const { binding, rule } = internalFixtureRule;
+    const { storefrontRef, ...scopeWithoutStorefront } = binding.commercialScope;
+    const differentTenantStorefront = { ...storefrontRef, tenantId: principalId };
+    for (const changed of [
+      { binding, rule: { ...rule, selector: { kind: 'ALL' } } },
+      { binding: { ...binding, audience: { kind: 'SHARED' } }, rule },
+      { binding: { ...binding, commercialScope: scopeWithoutStorefront }, rule },
+      {
+        binding: {
+          ...binding,
+          commercialScope: { ...binding.commercialScope, storefrontRef: differentTenantStorefront },
+        },
+        rule,
+      },
+      { binding: { ...binding, provenanceRef: 'different-source' }, rule },
+    ]) {
+      expect(Schema.isSchemaError(yield* decode(changed).pipe(Effect.flip))).toBe(true);
+    }
+  }),
+);
+
 const endPayload = Schema.decodeUnknownSync(EndApplicabilityBindingPayloadSchema)({
   applicabilityBindingRef: bindingRef,
   effectiveAt: '2026-09-22T12:00:00.000Z',
@@ -181,6 +259,21 @@ const context = <Services>(
   };
   return { audit, events, outbox, value };
 };
+
+it.effect('refuses an ordinary scope before invoking either fixture mutation', () =>
+  Effect.gen(function* refuseOrdinaryScope() {
+    const input = yield* Schema.decodeUnknownEffect(ImportSymmyRulePayloadSchema)(internalFixtureRule);
+    const prepared = context({ persistFixture: unused });
+    const denied = yield* handleImportSymmyRule(input, prepared.value).pipe(Effect.flip);
+    expect(Schema.is(AssortmentSymmyFixtureAccessDenied)(denied)).toBe(true);
+    expect(importSymmyRuleAction.descriptor.accessWorkload?.workloads).toEqual([
+      'commerce.assortment.symmy-fixture-rule-import',
+    ]);
+    expect(importSymmyRuleAction.descriptor.legalEntityScope).toBe('required');
+    expect(prepared.events).toHaveLength(0);
+    expect(prepared.outbox).toHaveLength(0);
+  }),
+);
 
 it.effect('Create Rule returns the Stable Rule and initial immutable revision from one service outcome', () =>
   Effect.gen(function* createRuleSuccess() {

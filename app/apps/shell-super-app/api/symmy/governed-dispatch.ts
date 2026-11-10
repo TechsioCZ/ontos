@@ -1,3 +1,4 @@
+import { SYMMY_FIXTURE_ROUTES } from '@app/shared-contracts/symmy';
 import { GatewayAuthenticationRequiredProblemSchema, GatewayForbiddenProblemSchema } from '@app/shared-contracts';
 import { executeAdmitSymmyJobWithAuthorization } from '@app/symmy-integration/api/admit-symmy-job-action/client';
 import { executeAdmitSymmySyncWithAuthorization } from '@app/symmy-integration/api/admit-symmy-sync-action/client';
@@ -381,6 +382,7 @@ export const makeSymmyGovernedDispatch = (
     request,
   }: Parameters<SymmyIngressDispatch['submit']>[0]) {
     const needsRoute =
+      Object.hasOwn(SYMMY_FIXTURE_ROUTES, request.route) ||
       Schema.is(Schema.toType(SymmyInternalPlanPayloadSchema))(request) ||
       ('code' in request && Schema.is(SymmyEncodedSourceCodeSchema)(request.code));
     const selected = needsRoute ? yield* resolveRoute(admission, request, newRequestIdentifier) : undefined;

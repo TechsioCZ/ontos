@@ -52,7 +52,7 @@ export type SymmySourceRecordRef = typeof SymmySourceRecordRefSchema.Type;
 
 /** Use the admitted tenant, route, issuer and namespace rather than matching any payload claim. */
 export const qualifySymmySourceRecord = (
-  context: SymmyRouteContext,
+  context: Pick<SymmyRouteContext, 'issuerId' | 'route' | 'sourceNamespace'>,
   key: typeof SymmySourceRecordKeySchema.Type,
 ): SymmySourceRecordRef => ({
   entityKind: key.entityKind,

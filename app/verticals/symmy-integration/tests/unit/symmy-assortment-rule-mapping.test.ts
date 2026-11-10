@@ -1,4 +1,3 @@
-import { CreateRuleResultSchema } from '@app/assortment/actions/create-rule';
 import { SymmyRouteContextSchema } from '@app/shared-contracts/symmy';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -9,11 +8,10 @@ const tenantId = '3d46590b-7eae-422c-9643-e5bd5c13403b';
 const sellerId = '50aa3386-3f2a-456a-8ad6-28e402754e26';
 const otherTenantId = 'ba2b0e85-3862-4c7b-9484-3c438d11fb44';
 const mappingVersion = 'INTERNAL_C14_ASSORTMENT_RULE_V1';
-const ruleOperation = 'commerce.assortment.create-rule';
-const bindingOperation = 'commerce.assortment.create-applicability-binding';
+const ruleOperation = 'commerce.assortment.import-symmy-rule';
 
 const route = Schema.decodeUnknownSync(SymmyRouteContextSchema)({
-  allowedOwnerOperations: [ruleOperation, bindingOperation].map((entrypointKey) => ({
+  allowedOwnerOperations: [ruleOperation].map((entrypointKey) => ({
     entrypointKey,
     moduleId: 'commerce.assortment',
     schemaVersion: '1',
@@ -41,9 +39,9 @@ const source = {
   },
   commercialScope: {
     channelRef: ref('commerce.channel', 'commerce.channel.channel', 'fixture-wholesale'),
-    commerceMarketRef: ref('commerce.market-catalog', 'commerce.market-catalog.market', 'fixture-market'),
+    commerceMarketRef: ref('commerce.market', 'commerce.market.market', 'fixture-market'),
     sellingLegalEntityRef: ref('party.registry', 'party.registry.legal-entity', sellerId),
-    storefrontRef: ref('commerce.storefront-registry', 'commerce.storefront-registry.storefront', 'fixture-storefront'),
+    storefrontRef: ref('commerce.storefront', 'commerce.storefront.storefront', 'fixture-storefront'),
   },
   contractVersion: mappingVersion,
   effect: 'DENY',
@@ -54,35 +52,16 @@ const source = {
   sourceRecordId: 'source-rule-1',
 };
 
-const receiptFor = (receiptTenant: string) =>
-  Schema.decodeUnknownSync(CreateRuleResultSchema)({
-    created: true,
-    initialRuleRevisionRef: {
-      ownerModuleId: 'commerce.assortment',
-      revision: '1',
-      sourceRef: {
-        ...ref('commerce.assortment', 'commerce.assortment.rule-revision', 'revision'),
-        tenantId: receiptTenant,
-      },
-    },
-    stableRuleRef: {
-      ...ref('commerce.assortment', 'commerce.assortment.stable-rule', 'rule'),
-      tenantId: receiptTenant,
-    },
-  });
-
-it.effect('maps an explicit rule to the exact owner payloads using the returned initial revision', () =>
+it.effect('maps an explicit rule to one atomic owner command with an exact binding', () =>
   Effect.gen(function* verifiedRuleMapping() {
     const plan = yield* mapSymmyAssortmentRule(route, yield* decodeSymmyAssortmentRuleSource(source));
-    const original = receiptFor(tenantId);
-    const binding = yield* plan.binding(original);
+    const { binding, rule } = plan.payload;
     expect(plan.record).toMatchObject({ issuerId: route.issuerId, sourceRecordId: source.sourceRecordId });
-    expect(plan.rule).toMatchObject({ effect: 'DENY', purpose: 'PURCHASE', selector: source.selector });
+    expect(rule).toMatchObject({ effect: 'DENY', purpose: 'PURCHASE', selector: source.selector });
     expect(binding.audience).toEqual(source.audience);
     expect(binding.commercialScope).toEqual(source.commercialScope);
     expect(DateTime.formatIso(binding.effectiveFrom)).toBe(source.effectiveFrom);
-    expect(binding.ruleRevisionRef).toEqual(original.initialRuleRevisionRef);
-    expect(binding.provenanceRef).toBe(plan.rule.provenanceRef);
+    expect(binding.provenanceRef).toBe(rule.provenanceRef);
   }),
 );
 
@@ -93,16 +72,18 @@ it.effect('keeps the stable rule code across retries without merging different i
     const retry = yield* mapSymmyAssortmentRule(route, fact);
     const otherIssuer = Schema.decodeUnknownSync(SymmyRouteContextSchema)({ ...route, issuerId: 'other-producer' });
     const isolated = yield* mapSymmyAssortmentRule(otherIssuer, fact);
-    expect(retry.rule).toEqual(baseline.rule);
-    expect(isolated.rule.stableCode).not.toBe(baseline.rule.stableCode);
+    expect(retry.payload.rule).toEqual(baseline.payload.rule);
+    expect(isolated.payload.rule.stableCode).not.toBe(baseline.payload.rule.stableCode);
   }),
 );
 
-it.effect('rejects missing authority, cross-tenant references and a foreign owner receipt', () =>
+it.effect('rejects missing authority, cross-tenant references and incomplete commercial scope', () =>
   Effect.gen(function* deniedRuleMapping() {
     const denied = Schema.decodeUnknownSync(SymmyRouteContextSchema)({
       ...route,
-      allowedOwnerOperations: route.allowedOwnerOperations.slice(0, 1),
+      allowedOwnerOperations: [
+        { ...route.allowedOwnerOperations[0], entrypointKey: 'commerce.assortment.create-rule' },
+      ],
     });
     const fact = yield* decodeSymmyAssortmentRuleSource(source);
     const routeFailure = yield* Effect.flip(mapSymmyAssortmentRule(denied, fact));
@@ -120,9 +101,6 @@ it.effect('rejects missing authority, cross-tenant references and a foreign owne
     });
     const wideScopeFailure = yield* Effect.flip(mapSymmyAssortmentRule(route, wideFact));
     expect(wideScopeFailure).toMatchObject({ reason: 'source_scope_mismatch' });
-    const plan = yield* mapSymmyAssortmentRule(route, fact);
-    const receiptFailure = yield* Effect.flip(plan.binding(receiptFor(otherTenantId)));
-    expect(receiptFailure).toMatchObject({ reason: 'rule_receipt_scope_mismatch' });
   }),
 );
 

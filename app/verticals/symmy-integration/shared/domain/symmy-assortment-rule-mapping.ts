@@ -1,15 +1,18 @@
 import { CreateApplicabilityBindingPayloadSchema } from '@app/assortment/actions/create-applicability-binding';
 import { CreateRulePayloadSchema } from '@app/assortment/actions/create-rule';
-import type { CreateRuleResultSchema } from '@app/assortment/actions/create-rule';
+import { ImportSymmyRulePayloadSchema } from '@app/assortment/actions/import-symmy-rule';
 import { qualifySymmySourceRecord, SymmySourceRecordKeySchema } from '@app/shared-contracts/symmy';
 import type { SymmyRouteContext } from '@app/shared-contracts/symmy';
 import { Effect, Schema } from 'effect';
 
 import { symmySourceRecordFingerprint } from './symmy-source-record-fingerprint.ts';
 
-const mappingVersion = 'INTERNAL_C14_ASSORTMENT_RULE_V1';
-const createRuleOperation = 'commerce.assortment.create-rule';
-const createBindingOperation = 'commerce.assortment.create-applicability-binding';
+export const symmyAssortmentRuleMappingVersion = 'INTERNAL_C14_ASSORTMENT_RULE_V1';
+export const symmyAssortmentRuleOperation = {
+  entrypointKey: 'commerce.assortment.import-symmy-rule',
+  moduleId: 'commerce.assortment',
+  schemaVersion: '1',
+} as const;
 const productSelector = Schema.Union(CreateRulePayloadSchema.fields.selector.members).pipe(Schema.toTaggedUnion('kind'))
   .cases.PRODUCT;
 const customerGroupAudience = Schema.Union(CreateApplicabilityBindingPayloadSchema.fields.audience.members).pipe(
@@ -17,10 +20,10 @@ const customerGroupAudience = Schema.Union(CreateApplicabilityBindingPayloadSche
 ).cases.COMMERCE_CUSTOMER_GROUP;
 
 /** One explicitly declared Product rule and Customer Group binding from an internal C14 source. */
-const SymmyAssortmentRuleSourceSchema = Schema.Struct({
+export const SymmyAssortmentRuleSourceSchema = Schema.Struct({
   audience: customerGroupAudience,
   commercialScope: CreateApplicabilityBindingPayloadSchema.fields.commercialScope,
-  contractVersion: Schema.Literal(mappingVersion),
+  contractVersion: Schema.Literal(symmyAssortmentRuleMappingVersion),
   effect: CreateRulePayloadSchema.fields.effect,
   effectiveFrom: CreateApplicabilityBindingPayloadSchema.fields.effectiveFrom,
   purpose: CreateRulePayloadSchema.fields.purpose,
@@ -34,27 +37,35 @@ export const decodeSymmyAssortmentRuleSource = Schema.decodeUnknownEffect(SymmyA
 
 class SymmyAssortmentRuleMappingRejected extends Schema.TaggedError<SymmyAssortmentRuleMappingRejected>()(
   'SymmyAssortmentRuleMappingRejected',
-  { reason: Schema.Literals(['route_not_allowed', 'source_scope_mismatch', 'rule_receipt_scope_mismatch']) },
+  { reason: Schema.Literals(['route_not_allowed', 'source_scope_mismatch']) },
 ) {}
 
-/** Prepares the ordered owner calls. The mapping cannot grant either Action permission. */
+type MappingRoute = Pick<
+  SymmyRouteContext,
+  | 'allowedOwnerOperations'
+  | 'factFamily'
+  | 'issuerId'
+  | 'mappingVersion'
+  | 'route'
+  | 'sellingLegalEntityId'
+  | 'sourceNamespace'
+>;
+
+/** Maps one explicit rule and its binding to an atomic owner command. */
 export const mapSymmyAssortmentRule = Effect.fn('SymmyAssortmentRule.map')(function* mapRule(
-  route: SymmyRouteContext,
+  route: MappingRoute,
   source: typeof SymmyAssortmentRuleSourceSchema.Type,
 ) {
-  const allows = (entrypointKey: string) =>
-    route.allowedOwnerOperations.some(
-      (operation) =>
-        operation.moduleId === 'commerce.assortment' &&
-        operation.entrypointKey === entrypointKey &&
-        operation.schemaVersion === '1',
-    );
   if (
     route.factFamily !== 'ASSORTMENT_RULE' ||
-    route.mappingVersion !== mappingVersion ||
+    route.mappingVersion !== symmyAssortmentRuleMappingVersion ||
     route.sellingLegalEntityId === undefined ||
-    !allows(createRuleOperation) ||
-    !allows(createBindingOperation)
+    !route.allowedOwnerOperations.some(
+      ({ entrypointKey, moduleId, schemaVersion }) =>
+        moduleId === symmyAssortmentRuleOperation.moduleId &&
+        entrypointKey === symmyAssortmentRuleOperation.entrypointKey &&
+        schemaVersion === symmyAssortmentRuleOperation.schemaVersion,
+    )
   ) {
     return yield* new SymmyAssortmentRuleMappingRejected({ reason: 'route_not_allowed' });
   }
@@ -89,31 +100,22 @@ export const mapSymmyAssortmentRule = Effect.fn('SymmyAssortmentRule.map')(funct
   });
   const digest = symmySourceRecordFingerprint(record);
   const provenanceRef = `internal-c14-assortment:${digest}`;
-  const rule = yield* Schema.decodeUnknownEffect(Schema.toType(CreateRulePayloadSchema))({
-    effect: source.effect,
-    provenanceRef,
-    purpose: source.purpose,
-    reason: source.reason,
-    selector,
-    stableCode: `symmy-${digest}`,
-  });
-
-  // The caller must supply the receipt of this plan's exact Create Rule attempt.
-  const binding = Effect.fn('SymmyAssortmentRule.bindRevision')(function* bindRevision(
-    receipt: typeof CreateRuleResultSchema.Type,
-  ) {
-    if (receipt.stableRuleRef.tenantId !== tenantId || receipt.initialRuleRevisionRef.sourceRef.tenantId !== tenantId) {
-      return yield* new SymmyAssortmentRuleMappingRejected({ reason: 'rule_receipt_scope_mismatch' });
-    }
-    return yield* Schema.decodeUnknownEffect(Schema.toType(CreateApplicabilityBindingPayloadSchema))({
+  const payload = yield* Schema.decodeUnknownEffect(Schema.toType(ImportSymmyRulePayloadSchema))({
+    binding: {
       audience,
       commercialScope,
       effectiveFrom: source.effectiveFrom,
       provenanceRef,
       reason: source.reason,
-      ruleRevisionRef: receipt.initialRuleRevisionRef,
-    });
+    },
+    rule: {
+      effect: source.effect,
+      provenanceRef,
+      purpose: source.purpose,
+      reason: source.reason,
+      selector,
+      stableCode: `symmy-${digest}`,
+    },
   });
-
-  return { binding, record, rule };
+  return { payload, record };
 });

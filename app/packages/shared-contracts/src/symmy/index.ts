@@ -20,5 +20,5 @@ export {
 } from './outcomes.ts';
 export type { SymmyItemOutcome } from './outcomes.ts';
 export { selectSymmyRoute, SymmyRouteRejected, SymmyRouteSelectionSchema } from './route-selection.ts';
-export { SYMMY_REST_PREFIX, SYMMY_ROUTES } from './routes.ts';
+export { SYMMY_FIXTURE_ROUTES, SYMMY_REST_PREFIX, SYMMY_ROUTES } from './routes.ts';
 export type { SymmyRouteKey } from './routes.ts';

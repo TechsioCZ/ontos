@@ -1,4 +1,5 @@
 import { SymmyCatalogPricingInventoryAdaptersLive } from '../src/services/symmy-catalog-pricing-inventory-adapters.ts';
+import { SymmyPolicyFixtureAdaptersLive } from '../src/services/symmy-policy-fixture-adapters.ts';
 import { SymmyPartyCommerceAdaptersLive } from '../src/services/symmy-party-commerce-adapters.ts';
 import {
   ActionAuthorizationPreflightDatabaseLive,
@@ -165,6 +166,7 @@ const apiHandlersLive = Layer.mergeAll(symmyIntegrationReadinessLayer, governedR
   Layer.provide(SymmyJobPrivacyLive),
   Layer.provide(SymmyCatalogPricingInventoryAdaptersLive),
   Layer.provide(SymmyPartyCommerceAdaptersLive),
+  Layer.provide(SymmyPolicyFixtureAdaptersLive),
   Layer.provide(FetchHttpClient.layer),
   Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
   Layer.provide(

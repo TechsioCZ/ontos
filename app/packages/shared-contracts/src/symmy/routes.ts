@@ -90,4 +90,20 @@ export const SYMMY_ROUTES = {
   },
 } as const satisfies Readonly<Record<string, SymmyRouteDefinition>>;
 
+/** Operator-configured fixture routes kept separate from the Symmy route inventory. */
+export const SYMMY_FIXTURE_ROUTES = {
+  assortmentRulesFixtureBatch: {
+    method: 'POST',
+    mode: 'durable_job',
+    path: `${SYMMY_REST_PREFIX}/internal-fixtures/assortment-rules/batch`,
+    successStatus: 202,
+  },
+  sellerVatDeclarationsFixtureBatch: {
+    method: 'POST',
+    mode: 'durable_job',
+    path: `${SYMMY_REST_PREFIX}/internal-fixtures/seller-vat-declarations/batch`,
+    successStatus: 202,
+  },
+} as const satisfies Readonly<Record<string, SymmyRouteDefinition>>;
+
 export type SymmyRouteKey = keyof typeof SYMMY_ROUTES;

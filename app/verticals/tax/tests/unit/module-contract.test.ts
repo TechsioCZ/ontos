@@ -102,6 +102,7 @@ describe('Tax module contract', () => {
     expect(Object.keys(taxManifest.publicSurface.api).toSorted()).toEqual([
       'applicable-tax-rule-set',
       'final-order-tax',
+      'import-seller-vat-regime-declarations-action',
       'seller-vat-regime-at-instant',
       'seller-vat-regime-history',
       'tax-correction-preview',
@@ -209,8 +210,20 @@ describe('Tax module contract', () => {
     expect(importAction?.descriptor.accessDeclaration).toMatchObject({
       key: 'commerce.tax.seller-vat-regime-declaration.import',
       kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      risk: 'critical',
       selectors: [],
     });
+    expect(importAction?.descriptor.accessWorkload?.workloads).toEqual([
+      'commerce.tax.symmy-seller-vat-fixture-import',
+    ]);
+    expect(taxManifest.publicSurface.operationContracts).toEqual([
+      {
+        apiKey: 'import-seller-vat-regime-declarations-action',
+        operationKey: 'importSellerVatRegimeDeclarationsAction.execute',
+        registration: importSellerVatRegimeDeclarationsAction,
+      },
+    ]);
     expect(importAction?.descriptor.legalEntityScope).toBe('required');
     expect(importAction?.descriptor.idempotency).toBe('required');
   });

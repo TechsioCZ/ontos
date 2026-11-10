@@ -4,7 +4,12 @@ import { Console, Array as EffectArray, Effect, Layer, Order, Schema } from 'eff
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Reactivity } from 'effect/reactivity';
 import { TaxDatabase, TaxDatabaseLive, TaxPgClientLive } from '../src/database/client.ts';
-import { TAX_SCHEMA_NAME, TAX_TABLES, TAX_TABLE_INVENTORY } from '../src/database/schema.ts';
+import {
+  TAX_SCHEMA_NAME,
+  TAX_TABLES,
+  TAX_TABLE_INVENTORY,
+  gatewayAssertionRedemptions,
+} from '../src/database/schema.ts';
 
 class TaxVerificationError extends Schema.TaggedError<TaxVerificationError>()('TaxVerificationError', {
   reason: Schema.String,
@@ -25,12 +30,13 @@ interface InfrastructureRow extends Readonly<Record<string, boolean | number>> {
   readonly table_count: number;
 }
 
+const redemptionTable = getTableConfig(gatewayAssertionRedemptions).name;
 const expectedTables = EffectArray.sort(
-  TAX_TABLE_INVENTORY.map((name) => `${TAX_SCHEMA_NAME}.${name}`),
+  [...TAX_TABLE_INVENTORY, redemptionTable].map((name) => `${TAX_SCHEMA_NAME}.${name}`),
   Order.String,
 );
 const expectedColumns = EffectArray.sort(
-  TAX_TABLES.flatMap((table) => {
+  [...TAX_TABLES, gatewayAssertionRedemptions].flatMap((table) => {
     const config = getTableConfig(table);
     return config.columns.map((column) => `${config.name}.${column.name}`);
   }),
@@ -40,6 +46,40 @@ const expectedPolicyCount = TAX_TABLES.reduce((count, table) => count + getTable
 
 const sameList = (actual: readonly string[], expected: readonly string[]): boolean =>
   actual.length === expected.length && actual.every((value, index) => value === expected[index]);
+
+const verifyGatewayRedemption = Effect.gen(function* verifyTaxGatewayRedemption() {
+  const database = yield* TaxDatabase;
+  const [redemption] = yield* database.executor
+    .execute<Readonly<Record<string, boolean>> & { readonly valid: boolean }>(
+      sql`select (
+        (select count(*) = 1
+          from pg_catalog.pg_class as relation
+          join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+          where namespace.nspname = ${TAX_SCHEMA_NAME} and relation.relname = ${redemptionTable}
+            and not relation.relrowsecurity and not relation.relforcerowsecurity)
+        and exists(select from pg_catalog.pg_constraint as constraint_record
+          where conrelid = 'tax.gateway_assertion_redemptions'::regclass and contype = 'u'
+            and pg_catalog.pg_get_constraintdef(constraint_record.oid) = 'UNIQUE (issuer, audience, jti)')
+        and exists(select from pg_catalog.pg_indexes
+          where schemaname = ${TAX_SCHEMA_NAME} and tablename = ${redemptionTable}
+            and indexdef like '% USING btree (expires_at)')
+        and has_table_privilege('ontos_runtime', 'tax.gateway_assertion_redemptions', 'SELECT')
+        and has_table_privilege('ontos_runtime', 'tax.gateway_assertion_redemptions', 'INSERT')
+        and has_table_privilege('ontos_runtime', 'tax.gateway_assertion_redemptions', 'DELETE')
+        and not exists(select from pg_catalog.pg_class as relation,
+          lateral pg_catalog.aclexplode(coalesce(relation.relacl, pg_catalog.acldefault('r', relation.relowner))) as acl
+          where relation.oid = 'tax.gateway_assertion_redemptions'::regclass
+            and (acl.grantee = 0 or
+              (acl.grantee = 'ontos_runtime'::regrole and acl.privilege_type not in ('SELECT', 'INSERT', 'DELETE'))))
+      ) as valid`,
+      'objects',
+    )
+    .pipe(Effect.mapError(() => new TaxVerificationError({ reason: 'Unable to verify Tax gateway replay evidence' })));
+  if (!redemption?.valid) {
+    return yield* new TaxVerificationError({ reason: 'Tax gateway replay evidence or grants mismatch' });
+  }
+  return yield* Effect.void;
+});
 
 const verification = Effect.gen(function* verifyTaxDatabase() {
   const connections = yield* loadDatabaseConnectionPair();
@@ -72,6 +112,8 @@ const verification = Effect.gen(function* verifyTaxDatabase() {
     return yield* new TaxVerificationError({ reason: 'Tax column catalog mismatch' });
   }
 
+  yield* verifyGatewayRedemption;
+
   const [infrastructure] = yield* database.executor
     .execute<InfrastructureRow>(
       sql`select count(distinct relation.oid)::integer as table_count, count(distinct relation.oid) filter (where relation.relrowsecurity and relation.relforcerowsecurity)::integer as force_rls_count, (select count(*)::integer from pg_catalog.pg_policy as policy inner join pg_catalog.pg_class as governed on governed.oid = policy.polrelid inner join pg_catalog.pg_namespace as governed_namespace on governed_namespace.oid = governed.relnamespace where governed_namespace.nspname = ${TAX_SCHEMA_NAME}) as policy_count, (select count(*)::integer from pg_catalog.pg_trigger as trigger_record inner join pg_catalog.pg_class as triggered on triggered.oid = trigger_record.tgrelid inner join pg_catalog.pg_namespace as trigger_namespace on trigger_namespace.oid = triggered.relnamespace where trigger_namespace.nspname = ${TAX_SCHEMA_NAME} and trigger_record.tgname like 'tax_%_append_only' and not trigger_record.tgisinternal) as append_only_trigger_count, (select count(*)::integer from pg_catalog.pg_class as journal inner join pg_catalog.pg_namespace as journal_namespace on journal_namespace.oid = journal.relnamespace where journal_namespace.nspname = 'drizzle' and journal.relname = '__drizzle_migrations_tax') as journal_count, has_schema_privilege('ontos_runtime', ${TAX_SCHEMA_NAME}, 'USAGE') as runtime_usage, has_schema_privilege('ontos_runtime', ${TAX_SCHEMA_NAME}, 'CREATE') as runtime_create, runtime_role.rolsuper as role_super, runtime_role.rolbypassrls as role_bypass_rls from pg_catalog.pg_class as relation inner join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace cross join pg_catalog.pg_roles as runtime_role where namespace.nspname = ${TAX_SCHEMA_NAME} and relation.relkind in ('r', 'p') and runtime_role.rolname = 'ontos_runtime' group by runtime_role.rolsuper, runtime_role.rolbypassrls`,
@@ -80,7 +122,7 @@ const verification = Effect.gen(function* verifyTaxDatabase() {
     .pipe(Effect.mapError(() => new TaxVerificationError({ reason: 'Unable to verify Tax RLS and grants' })));
   if (
     infrastructure === undefined ||
-    infrastructure.table_count !== TAX_TABLES.length ||
+    infrastructure.table_count !== expectedTables.length ||
     infrastructure.force_rls_count !== TAX_TABLES.length ||
     infrastructure.policy_count !== expectedPolicyCount ||
     infrastructure.append_only_trigger_count !== TAX_TABLES.length ||
@@ -92,7 +134,7 @@ const verification = Effect.gen(function* verifyTaxDatabase() {
   ) {
     return yield* new TaxVerificationError({ reason: 'Tax owner isolation or append-only contract failed' });
   }
-  return { adminUser: connections.admin.user, typedTableCount: TAX_TABLES.length };
+  return { adminUser: connections.admin.user, typedTableCount: expectedTables.length };
 });
 
 const TaxVerifierLive = TaxDatabaseLive.pipe(
