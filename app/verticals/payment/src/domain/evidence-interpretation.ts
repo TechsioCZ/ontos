@@ -364,9 +364,11 @@ const decideRestatement = (
           (prior) => paymentFactMeaning(prior.factKind)?.outcome === 'EFFECT_CONFIRMED',
         )
       : [];
-  // Every confirmation that established this outcome was fully disproven (for example by a held
-  // retraction): a new confirmation has nothing left to corroborate and is a separate charge.
+  // Every confirmation that established this confirmed outcome was fully disproven (for example by a
+  // held retraction): a new confirmation has nothing left to corroborate and is a separate charge.
+  // Any other established outcome rests on no confirmation, so its restatement only corroborates it.
   const allConfirmationsDisproven =
+    operation.outcome === 'EFFECT_CONFIRMED' &&
     confirmedPriors.length === 0 &&
     aggregate.acceptedObservations.some(
       (prior) =>
