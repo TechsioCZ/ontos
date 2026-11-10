@@ -289,20 +289,36 @@ const directoryFor = (reads: { directoryReads: number }): AccessPeopleDirectoryS
 const PersonaSchema = Schema.Literals(['companyAdmin', 'delegate', 'nobody', 'owner']);
 type Persona = typeof PersonaSchema.Type;
 
-const gateFor = (persona: Persona): AccessDecisionService => {
+/** How the BFF asked the gate: each single decision, and each batch with its questions. */
+interface GateAsks {
+  readonly batches: (readonly GateInput[])[];
+  readonly singles: GateInput[];
+}
+
+const gateFor = (persona: Persona, asks: GateAsks): AccessDecisionService => {
   const base = makeTestAccessDecision();
   const allowed = (input: GateInput): boolean =>
     persona === 'owner' ||
     (persona === 'companyAdmin' && input.legalEntityScope === 'required' && input.scope.legalEntityId === COMPANY_A) ||
     (persona === 'delegate' && input.legalEntityScope === 'required' && input.scope.legalEntityId === COMPANY_B);
+  const answer = (input: GateInput): AccessDecision => ({
+    evidence: [],
+    outcome: allowed(input) ? 'ALLOWED' : 'DENIED',
+    reasons: [{ code: allowed(input) ? 'structural.owner' : 'deny.insufficient_grant' }],
+    selectors: [],
+  });
   return {
     ...base,
     decide: (input) =>
-      Effect.succeed<AccessDecision>({
-        evidence: [],
-        outcome: allowed(input) ? 'ALLOWED' : 'DENIED',
-        reasons: [{ code: allowed(input) ? 'structural.owner' : 'deny.insufficient_grant' }],
-        selectors: [],
+      Effect.sync(() => {
+        asks.singles.push(input);
+        return answer(input);
+      }),
+    // A batch answers each question exactly as a single decision would, as the live gate does.
+    decideMany: (inputs) =>
+      Effect.sync(() => {
+        asks.batches.push(inputs);
+        return inputs.map(answer);
       }),
   };
 };
@@ -361,8 +377,9 @@ const harness = (input: {
   readonly writes?: boolean;
 }) => {
   const recorded: Recorded = { calls: [], directoryReads: 0, reconciles: 0 };
+  const asks: GateAsks = { batches: [], singles: [] };
   const actor = { companyAdmin: COMPANY_ADMIN, delegate: BOB, nobody: OWNER, owner: OWNER }[input.persona];
-  const gate = gateFor(input.persona);
+  const gate = gateFor(input.persona, asks);
   const layer = AccessPeopleBffLive.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -380,7 +397,7 @@ const harness = (input: {
   );
   const run = <Value>(body: (bff: AccessPeopleBffService) => Effect.Effect<Value, AccessAdminProblem>) =>
     AccessPeopleBff.pipe(Effect.flatMap(body), Effect.provide(layer));
-  return { recorded, run };
+  return { asks, recorded, run };
 };
 
 const headers = new Headers();

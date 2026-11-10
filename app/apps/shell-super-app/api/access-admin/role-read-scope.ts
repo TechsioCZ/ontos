@@ -146,6 +146,50 @@ export const roleReadScope = Effect.fn('AccessAdminRoleReadScope.resolve')(funct
   return { companies, tenant: tenantDecision.outcome === 'ALLOWED' };
 });
 
+/** Several declarations of one request, asked in the same contexts at the same Core instant. */
+interface ReadScopesRequest {
+  readonly companies: readonly string[];
+  readonly declarations: readonly AccessDeclaration[];
+  readonly now: Date;
+  readonly scope: OperationalScope;
+}
+
+/**
+ * The contexts each of several declarations may cover, exactly as `roleReadScope` answers each one, asked
+ * as ONE `decideMany`: the gate then reads the actor, each context's scope and its structural basis once
+ * per context instead of once per question, and writes the evidence of a context in one transaction. Every
+ * question is the one `roleReadScope` asks (the tenant context, then each candidate company in its own
+ * required scope), and an unreadable answer for any of them is UNAVAILABLE, never a smaller answer.
+ */
+export const roleReadScopes = Effect.fn('AccessAdminRoleReadScope.resolveMany')(function* resolveRoleReadScopes(
+  input: ReadScopesRequest,
+) {
+  const gate = yield* AccessDecisionGate;
+  const companies = askedCompanies(input.companies);
+  const questions = input.declarations.flatMap((declaration) => [
+    questionOf(input.scope, declaration, input.now, ADMIN_SURFACE_SCOPE),
+    ...companies.map((company) =>
+      questionOf(companyScopeOf(input.scope, company), declaration, input.now, COMPANY_SCOPE),
+    ),
+  ]);
+  const answers: readonly AccessDecision[] = questions.length === 0 ? [] : yield* gate.decideMany(questions);
+  if (answers.length !== questions.length || answers.some(({ outcome }) => outcome === 'UNAVAILABLE')) {
+    return yield* Effect.fail(accessAdminUnavailableProblem());
+  }
+  // The answers come back in question order: one tenant answer, then one per company, per declaration.
+  const stride = companies.length + 1;
+  return input.declarations.map((_, index): RoleReadScope => {
+    const block = answers.slice(index * stride, (index + 1) * stride);
+    return {
+      companies:
+        companies.length === 0
+          ? NO_COMPANIES
+          : new Set<string>(companies.filter((_company, position) => block[position + 1]?.outcome === 'ALLOWED')),
+      tenant: block[0]?.outcome === 'ALLOWED',
+    };
+  });
+});
+
 /** The same answer, with the one refusal every Role read gives when it covers no role at all. */
 export const readableRoleScope = (
   input: ReadScopeRequest,
