@@ -6,7 +6,7 @@ import { PaymentTermRefSchema } from '@app/payment-term-catalog-contracts/resour
 import type { PaymentTermRef } from '@app/payment-term-catalog-contracts/resources/payment-term';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
@@ -50,6 +50,7 @@ import {
   reconciliationCases,
   refundItemClaims,
 } from '../database/schema.ts';
+import { fullyDisprovenTargets } from './payment-full-disproof.ts';
 
 /**
  * Owner-local Payment aggregate persistence over the Core-installed `ScopedTransactionExecutor`
@@ -507,6 +508,52 @@ export const paymentAggregatePersistenceForTransaction = (
    * Accepted corrections that disprove part of an established collection. Other corrections keep their
    * exact claimed amount as evidence but never reduce Current coverage (`correction_effect`).
    */
+  /** The receipts among these ids that a correction fully disproves (the shared full-disproof rule). */
+  const fullyDisprovenReceipts = Effect.fn('PaymentAggregatePersistence.fullyDisprovenReceipts')(
+    function* fullyDisprovenReceipts(receiptIds: readonly string[]) {
+      const scope = yield* ownerScope;
+      const ofScope = and(
+        eq(observations.tenantId, scope.tenantId),
+        eq(observations.legalEntityId, scope.legalEntityId),
+      );
+      const [targets, corrections] = yield* Effect.all(
+        [
+          transaction
+            .select({
+              amountMinor: observations.amountMinor,
+              observationId: observations.observationId,
+              paymentId: observations.paymentId,
+              sourceAuthorityId: observations.sourceAuthorityId,
+            })
+            .from(observations)
+            .where(and(ofScope, inArray(observations.observationId, [...receiptIds])))
+            .pipe(Effect.mapError(readFailure)),
+          transaction
+            .select({
+              acceptanceOutcome: observations.acceptanceOutcome,
+              amountMinor: observations.amountMinor,
+              capabilityCorrelated: observations.capabilityCorrelated,
+              correctsObservationId: observations.correctsObservationId,
+              factKind: observations.factKind,
+              paymentId: observations.paymentId,
+              sourceAuthorityId: observations.sourceAuthorityId,
+            })
+            .from(observations)
+            .where(
+              and(
+                ofScope,
+                eq(observations.factKind, 'SOURCE_CORRECTION'),
+                inArray(observations.correctsObservationId, [...receiptIds]),
+              ),
+            )
+            .pipe(Effect.mapError(readFailure)),
+        ],
+        { concurrency: 1 },
+      );
+      return fullyDisprovenTargets(targets, corrections);
+    },
+  );
+
   const selectCorrections = Effect.fn('PaymentAggregatePersistence.selectCorrections')(function* selectCorrections(
     paymentId: string,
   ) {
@@ -514,6 +561,7 @@ export const paymentAggregatePersistenceForTransaction = (
     const rows = yield* transaction
       .select({
         amountMinor: observations.amountMinor,
+        correctsObservationId: observations.correctsObservationId,
         currency: observations.currency,
         operationId: observations.operationId,
       })
@@ -529,11 +577,21 @@ export const paymentAggregatePersistenceForTransaction = (
         ),
       )
       .pipe(Effect.mapError(readFailure));
-    const measured = rows.flatMap(({ amountMinor, currency, operationId }) =>
-      operationId !== null && amountMinor !== null && currency !== null ? [{ amountMinor, currency, operationId }] : [],
+    const reductions = rows.flatMap(({ amountMinor, correctsObservationId, currency, operationId }) =>
+      operationId !== null && amountMinor !== null && currency !== null
+        ? [{ amountMinor, correctsObservationId, currency, operationId }]
+        : [],
     );
+    const receiptIds = reductions.flatMap(({ correctsObservationId }) =>
+      correctsObservationId === null ? [] : [correctsObservationId],
+    );
+    // A reduction reduces its own receipt: once that receipt is fully disproven (and a replacement may
+    // establish the same collection), the reduction no longer applies to the collection (#1151).
+    const disproven = receiptIds.length === 0 ? new Set<string>() : yield* fullyDisprovenReceipts(receiptIds);
     return yield* Effect.forEach(
-      measured,
+      reductions.filter(
+        ({ correctsObservationId }) => correctsObservationId === null || !disproven.has(correctsObservationId),
+      ),
       (row) =>
         amountOf(row.amountMinor, row.currency).pipe(
           Effect.map((amount) => ({ amount, operationId: row.operationId })),

@@ -1743,3 +1743,55 @@ it.live(
       }),
     ),
 );
+
+it.live('#1151 a reduction of a fully retracted receipt no longer reduces the replacement collection', () =>
+  native(
+    Effect.gen(function* reductionRetiresWithItsReceipt() {
+      const evidence = yield* scenario();
+      const payment = yield* evidence.createPayment();
+      const collect = yield* evidence.startOperation({
+        amountMinor: 100_000,
+        operationKey: 'collect-1',
+        paymentId: payment.paymentId,
+      });
+      yield* configureGopay(evidence);
+      const charge = gopayChargeOf(evidence, payment.paymentId, collect.operationId);
+      const first = yield* charge('gopay:charge:1');
+      const correctionOf = <Fields extends { readonly economicEffectKey: string }>(fields: Fields) =>
+        evidence.accept(
+          gopayStatement({
+            ...fields,
+            correctsObservationId: first.observationId,
+            factKind: 'SOURCE_CORRECTION',
+            operationId: collect.operationId,
+            paymentId: payment.paymentId,
+          }),
+        );
+      // Charge 1 is reduced by 100 CZK, then fully retracted: the retraction is held as an overlap.
+      expect(yield* correctionOf({ amount: czk(10_000), economicEffectKey: 'gopay:charge:1:reduction' })).toMatchObject(
+        {
+          acceptanceOutcome: 'ACCEPTED_OBSERVATION',
+        },
+      );
+      const retraction = yield* correctionOf({ economicEffectKey: 'gopay:charge:1:retraction' });
+      expect(retraction.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+      yield* evidence.decide({
+        caseId: retraction.reconciliationCaseId ?? '',
+        decision: { _tag: 'CLASSIFY_CONFLICT' },
+        reason: 'The source retracted the reduced receipt',
+      });
+      // The replacement charge 2 is attached and re-establishes the same collection in full.
+      const replacement = yield* charge('gopay:charge:2');
+      expect(replacement.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+      const attached = yield* evidence.decide({
+        caseId: replacement.reconciliationCaseId ?? '',
+        decision: { _tag: 'ATTACH_EVIDENCE', observationId: replacement.observationId },
+        reason: 'Charge 2 replaces the retracted charge 1',
+      });
+      expect(Option.getOrUndefined(attached.outcomeChange)).toMatchObject({ toOutcome: 'EFFECT_CONFIRMED' });
+      const loaded = (yield* evidence.evidenceAggregate(payment.paymentId)).current;
+      const funds = computePaymentFunds({ ...paymentFundsSnapshotOf(loaded), unresolvedEvidence: false });
+      expect(ledgerSummary(funds)).toBe('Established collected=100000 returned=0 remaining=100000');
+    }),
+  ),
+);
