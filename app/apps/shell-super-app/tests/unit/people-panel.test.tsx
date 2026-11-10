@@ -208,21 +208,23 @@ it.live('confirms a committed membership change from the organisation row it rea
         value: { ...list, items: [{ ...person, selectedCompanyMembership: departed }] },
       }),
     );
-    // The audited membership change saves itself once the reason is filled in: there is no confirm button.
+    // Filling in the change sends nothing; the one Save button sends it once.
     expect(screen.queryByRole('button', { name: 'Potvrdit změnu' })).toBeNull();
+    yield* Effect.sleep('1 second');
+    expect(commands.membership).not.toHaveBeenCalled();
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Uložit' })));
     yield* Effect.promise(() =>
-      waitFor(
-        () =>
-          expect(commands.membership).toHaveBeenCalledWith({
-            affiliation: 'external',
-            expectedRevision: 1,
-            principalRef,
-            reason: 'Odchod z firmy',
-            status: 'departed',
-          }),
-        { timeout: 4000 },
+      waitFor(() =>
+        expect(commands.membership).toHaveBeenCalledWith({
+          affiliation: 'external',
+          expectedRevision: 1,
+          principalRef,
+          reason: 'Odchod z firmy',
+          status: 'departed',
+        }),
       ),
     );
+    expect(commands.membership).toHaveBeenCalledTimes(1);
     // The row read back is the confirmation, so the change never stays pending.
     yield* Effect.promise(() => waitFor(() => expect(screen.queryByText(/Zpracovává se/u)).toBeNull()));
     // An ended membership leaves the default view of current members, but stays one filter away.

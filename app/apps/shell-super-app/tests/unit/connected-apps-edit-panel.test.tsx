@@ -90,21 +90,42 @@ const click = (element: HTMLElement) =>
 
 const ok = Effect.succeed({ status: 'ok', value: {} });
 
-it.effect('narrows the access by itself, without a save button', () =>
-  Effect.gen(function* narrowedAccessSavesItself() {
+const saveButton = (): HTMLElement => {
+  const button = screen.getByRole('button', { name: 'Uložit' });
+  return button;
+};
+
+it.live('changing the access writes nothing until Uložit, which writes once', () =>
+  Effect.gen(function* editThenSave() {
     update.mockReturnValue(ok);
     const onClose = rstest.fn<() => void>();
     const onSaved = rstest.fn<(name: string) => void>();
     const onStale = rstest.fn<(notice: string) => void>();
     render(<ConnectedAppsEditPanel connection={connection} onClose={onClose} onSaved={onSaved} onStale={onStale} />);
-    expect(screen.queryByRole('button', { name: 'Uložit změny' })).toBeNull();
     yield* click(screen.getByRole('radio', { name: 'Jen čtení' }));
-    // Closing the panel sends the draft that is still waiting for its quiet time.
-    yield* click(closeButton());
+    yield* Effect.sleep('1 second');
+    expect(update).not.toHaveBeenCalled();
+    yield* click(saveButton());
     yield* Effect.promise(async () => {
       await waitFor(() => expect(update).toHaveBeenCalledTimes(1), { timeout: 4000 });
     });
     expect(update.mock.calls[0]?.[0]).toMatchObject({ grantId: 'g1', writePolicy: 'read_only' });
+  }),
+);
+
+it.effect('leaving with unsaved changes asks first, and Zahodit změny sends nothing', () =>
+  Effect.gen(function* leaveAsks() {
+    update.mockReturnValue(ok);
+    const onClose = rstest.fn<() => void>();
+    const onSaved = rstest.fn<(name: string) => void>();
+    const onStale = rstest.fn<(notice: string) => void>();
+    render(<ConnectedAppsEditPanel connection={connection} onClose={onClose} onSaved={onSaved} onStale={onStale} />);
+    yield* click(screen.getByRole('radio', { name: 'Jen čtení' }));
+    yield* click(closeButton());
+    expect(onClose).not.toHaveBeenCalled();
+    yield* click(screen.getByRole('button', { name: 'Zahodit změny' }));
+    expect(update).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
   }),
 );
 
@@ -116,7 +137,7 @@ it.effect('says so and closes when the connection was revoked elsewhere', () =>
     const onStale = rstest.fn<(notice: string) => void>();
     render(<ConnectedAppsEditPanel connection={connection} onClose={onClose} onSaved={onSaved} onStale={onStale} />);
     yield* click(screen.getByRole('radio', { name: 'Jen čtení' }));
-    yield* click(closeButton());
+    yield* click(saveButton());
     yield* Effect.promise(async () => {
       await waitFor(() => expect(onStale).toHaveBeenCalled(), { timeout: 4000 });
     });

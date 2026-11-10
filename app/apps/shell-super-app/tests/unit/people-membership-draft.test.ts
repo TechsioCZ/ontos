@@ -9,7 +9,7 @@ import {
 
 const base = { affiliation: 'employee', status: 'active' } as const;
 
-describe('people membership autosave draft', () => {
+describe('people membership draft', () => {
   it('starts from the membership the server has, and from the defaults when there is none', () => {
     expect(membershipDraftOf(base)).toEqual({ affiliation: 'employee', reason: '', status: 'active' });
     expect(baseOf({})).toEqual({ affiliation: null, status: 'invited' });
