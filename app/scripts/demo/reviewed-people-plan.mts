@@ -12,6 +12,7 @@ import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { DateTime, Match, Option, Result, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 
+import { legalEntityScopeId, tenantContextScopeId } from '@app/core-runtime/access/bootstrap';
 import { stableUuid } from '@app/core-runtime/access/catalog';
 import { isDangerousCell, roleCellEffect } from '@app/core-runtime/access/changes/role-revision';
 
@@ -26,7 +27,11 @@ import {
   AccessRoleRevisionIdSchema,
   AccessScopeTargetSchema,
 } from '../../apps/shell-super-app/shared/access-admin-api.ts';
-import { CapabilityKeySchema } from '../../packages/core-runtime/src/access/ids.ts';
+import {
+  CapabilityKeySchema,
+  LegalEntityIdSchema,
+  TenantIdSchema,
+} from '../../packages/core-runtime/src/access/ids.ts';
 import type { CatalogSnapshotEntry, Cell } from '../../packages/core-runtime/src/access/model.ts';
 import {
   AccessKindSchema,
@@ -93,6 +98,17 @@ export const admitKey = (generation: number, principalId: HumanId): IdempotencyK
   keyOf(`ontos-demo-admit:v1:g${generation}:${principalId}:company-0020`);
 export const assignKey = (generation: number, principalId: HumanId, roleId: RoleId): IdempotencyKey =>
   keyOf(`ontos-demo-assign:v1:g${generation}:${principalId}:${roleId}`);
+/** The access scope id of the tenant context or company 0020, as Core's bootstrap named it. */
+const accessScopeIdOf = (scope: ScopeTarget): string =>
+  scope.kind === 'tenant'
+    ? tenantContextScopeId(TenantIdSchema.make(TENANT_ID))
+    : legalEntityScopeId(TenantIdSchema.make(TENANT_ID), LegalEntityIdSchema.make(scope.legalEntityId));
+/** The membership id the Shell mints for one admission key in one scope (people.ts mintedId). */
+export const membershipIdOf = (idempotencyKey: IdempotencyKey, scope: ScopeTarget): string =>
+  stableUuid(['ontos.shell.access-people.membership', TENANT_ID, idempotencyKey, accessScopeIdOf(scope)].join(':'));
+/** The rows one admission of this script wrote, and so the only rows its rollback may end. */
+export const admittedMembershipIdOf = (generation: number, principalId: HumanId, scope: ScopeTarget): string =>
+  membershipIdOf(admitKey(generation, principalId), scope);
 /** The incarnation id the Shell mints for an assign key (people.ts mintedId). */
 export const assignmentIdOf = (idempotencyKey: IdempotencyKey): AssignmentId =>
   AccessAssignmentIdSchema.make(
@@ -344,6 +360,7 @@ export const desiredState = (localEntries: readonly CatalogSnapshotEntry[]): Res
 
 export interface ObservedMembership {
   readonly kind: 'access_admin' | 'member' | 'owner';
+  readonly membershipId: string;
   readonly scope: ScopeTarget;
   readonly status: 'active' | 'revoked' | 'suspended';
   readonly validUntil: Option.Option<DateTime.Utc>;
@@ -354,10 +371,18 @@ export interface ObservedAssignment {
   readonly scope: ScopeTarget;
   readonly status: 'active' | 'expired' | 'revoked';
 }
+/** One delegation people/list shows on a person: its manager and whether it is still in force. */
+export interface ObservedDelegation {
+  readonly managerId: string;
+  readonly status: 'active' | 'expired' | 'revoked';
+}
 export interface ObservedPerson {
   readonly assignments: readonly ObservedAssignment[];
+  readonly delegations: readonly ObservedDelegation[];
   readonly memberships: readonly ObservedMembership[];
   readonly principalId: HumanId;
+  /** The scope of every team place the person holds. */
+  readonly teams: readonly ScopeTarget[];
 }
 export interface ObservedRole {
   readonly cells: readonly ObservedCell[];
@@ -735,7 +760,41 @@ const applyPlan = (desired: DesiredState, observed: ObservedState, generation: n
   return notReady === undefined ? planned : halt(notReady);
 };
 
-/** Undo the people side: the three lose the managed roles, then company 0020, then the tenant. Roles stay. */
+/** Whether a live member row is one an admission of this script wrote, in any generation up to this one. */
+const admittedByScript = (row: ObservedMembership, principalId: HumanId, generation: number): boolean =>
+  Array.from({ length: generation }, (_unused, index) => index + 1).some(
+    (used) => admittedMembershipIdOf(used, principalId, row.scope) === row.membershipId,
+  );
+
+/**
+ * Why ending this person's membership would close more than the script admitted, if it would. Core ends
+ * every company, management row, team place and managed delegation a tenant membership carries, so any
+ * of them that is not a plain member row in the tenant or company 0020 stops the rollback.
+ */
+const endingIssue = (person: ObservedPerson): string | undefined => {
+  const other = person.memberships.find(
+    (row) => row.status !== 'revoked' && (row.kind !== 'member' || !isAllowedScope(row.scope)),
+  );
+  if (other !== undefined) {
+    const where = other.scope.kind === 'tenant' ? 'the tenant' : `company ${other.scope.legalEntityId}`;
+    return `${person.principalId} also holds a ${other.kind} membership in ${where}, which ending the membership would close`;
+  }
+  if (person.teams.length > 0) {
+    return `${person.principalId} holds ${person.teams.length} team place(s), which ending the membership would remove`;
+  }
+  const managed = person.delegations.filter(
+    ({ managerId, status }) => managerId === person.principalId && status === 'active',
+  );
+  return managed.length > 0
+    ? `${person.principalId} manages ${managed.length} live delegation(s), which ending the membership would revoke`
+    : undefined;
+};
+
+/**
+ * Undo the people side: the three lose the managed roles, then company 0020, then the tenant. Roles stay.
+ * Only the member rows this script's own admissions wrote are ended; a person who was a member before the
+ * apply keeps that membership.
+ */
 const rollbackPlan = (observed: ObservedState, generation: number): Planned => {
   const revokes: PlannedStep[] = [];
   const companyEnds: PlannedStep[] = [];
@@ -765,10 +824,20 @@ const rollbackPlan = (observed: ObservedState, generation: number): Planned => {
         principalId,
         scope,
       });
-    if (memberRows(person, COMPANY_SCOPE).some((row) => isLive(row, observed.at))) {
+    const ours = (scope: ScopeTarget) =>
+      memberRows(person, scope).some(
+        (row) => isLive(row, observed.at) && admittedByScript(row, principalId, generation),
+      );
+    const endsCompany = ours(COMPANY_SCOPE);
+    const endsTenant = ours(TENANT_SCOPE);
+    const issue = person === undefined || !(endsCompany || endsTenant) ? undefined : endingIssue(person);
+    if (issue !== undefined) {
+      return halt(issue);
+    }
+    if (endsCompany) {
       companyEnds.push(end(COMPANY_SCOPE));
     }
-    if (memberRows(person, TENANT_SCOPE).some((row) => isLive(row, observed.at))) {
+    if (endsTenant) {
       tenantEnds.push(end(TENANT_SCOPE));
     }
   }

@@ -23,11 +23,13 @@ import {
   AssignStep,
   AdmitMemberStep,
   IdempotencyKeySchema,
+  admittedMembershipIdOf,
   assignmentIdOf,
   COMPANY_ID,
   COMPANY_SCOPE,
   desiredState,
   MANAGED_ROLE_IDS,
+  membershipIdOf,
   observedCellOf,
   planReviewedPeople,
   PRINCIPAL_IDS,
@@ -73,8 +75,14 @@ const desired = Effect.gen(function* reviewedDesiredState() {
   return yield* Effect.fromResult(desiredState(entries));
 }).pipe(Effect.provide(NodeServices.layer));
 
-const member = (scope: ScopeTarget, kind: ObservedMembership['kind'] = 'member'): ObservedMembership => ({
+/** A membership row somebody else recorded before the script ran; its id is no admission key's. */
+const member = (
+  scope: ScopeTarget,
+  kind: ObservedMembership['kind'] = 'member',
+  membershipId: string = stableUuid(`recorded-before:${kind}:${JSON.stringify(scope)}`),
+): ObservedMembership => ({
   kind,
+  membershipId,
   scope,
   status: 'active',
   validUntil: Option.none(),
@@ -84,8 +92,10 @@ const companyAdmin = (principalId: string, legalEntityId: string): ObservedPerso
   assignments: [
     { incarnationId: incarnation(`a:${principalId}`), roleId: FULL_ACCESS_ROLE, scope: TENANT_SCOPE, status: 'active' },
   ],
+  delegations: [],
   memberships: [member(TENANT_SCOPE), member(company(legalEntityId)), member(company(legalEntityId), 'access_admin')],
   principalId: human(principalId),
+  teams: [],
 });
 
 /** Stage as read at 13:00Z: six people, "Plný přístup" with 11 holders, and none of the three admitted. */
@@ -103,8 +113,10 @@ const stageBefore = (state: DesiredState): ObservedState => ({
       assignments: [
         { incarnationId: incarnation('a:owner'), roleId: FULL_ACCESS_ROLE, scope: TENANT_SCOPE, status: 'active' },
       ],
+      delegations: [],
       memberships: [member(TENANT_SCOPE, 'owner'), member(TENANT_SCOPE), member(COMPANY_SCOPE)],
       principalId: OWNER,
+      teams: [],
     },
   ],
   peopleRevision: AccessPeopleRevisionSchema.make('r0'),
@@ -137,8 +149,10 @@ const stageBefore = (state: DesiredState): ObservedState => ({
 const withPerson = (state: ObservedState, principalId: HumanId, update: (person: ObservedPerson) => ObservedPerson) => {
   const current = state.people.find((person) => person.principalId === principalId) ?? {
     assignments: [],
+    delegations: [],
     memberships: [],
     principalId,
+    teams: [],
   };
   return [...state.people.filter((person) => person.principalId !== principalId), update(current)];
 };
@@ -150,11 +164,20 @@ const holderDelta = (state: ObservedState, roleId: string, delta: number) =>
 const simulate = (state: ObservedState, step: PlannedStep): ObservedState => {
   const next = { ...state, peopleRevision: AccessPeopleRevisionSchema.make(`${state.peopleRevision}+`) };
   return Match.valueTags(step, {
-    AdmitMember: ({ principalId }) => ({
+    // The Shell names both rows by the admission key; a live tenant row is reused, never doubled.
+    AdmitMember: ({ idempotencyKey, principalId }) => ({
       ...next,
       people: withPerson(state, principalId, (person) => ({
         ...person,
-        memberships: [...person.memberships, member(TENANT_SCOPE), member(COMPANY_SCOPE)],
+        memberships: [
+          ...person.memberships,
+          ...(person.memberships.some(
+            (row) => row.kind === 'member' && row.scope.kind === 'tenant' && row.status === 'active',
+          )
+            ? []
+            : [member(TENANT_SCOPE, 'member', membershipIdOf(idempotencyKey, TENANT_SCOPE))]),
+          member(COMPANY_SCOPE, 'member', membershipIdOf(idempotencyKey, COMPANY_SCOPE)),
+        ],
       })),
     }),
     Assign: ({ idempotencyKey, principalId, roleId, scope }) => ({
@@ -414,6 +437,83 @@ it.effect('after a rollback asks for a new generation, and generation 2 admits a
     );
     const endedEarly = simulateAll(admitted, stepsOf(plan(state, admitted, rollback1)));
     expect(haltOf(plan(state, endedEarly, apply1))?.reason).toContain(NEXT_GENERATION);
+  }),
+);
+
+it.effect('rolls back only the memberships its own admissions wrote, and stops before closing anything else', () =>
+  Effect.gen(function* rollbackStaysInsideTheApply() {
+    const state = yield* desired;
+    const [obchodnik = OWNER, ucetni = OWNER] = PRINCIPAL_IDS;
+    // Účetní was a member of the tenant and of company 0020 before the apply, so the apply admits nobody
+    // for her; the other two are admitted under generation 1.
+    const before = stageBefore(state);
+    const memberBefore = {
+      ...before,
+      people: withPerson(before, ucetni, (person) => ({
+        ...person,
+        memberships: [member(TENANT_SCOPE), member(COMPANY_SCOPE)],
+      })),
+    };
+    const applySteps = stepsOf(plan(state, memberBefore, apply1));
+    expect(applySteps.filter(({ _tag }) => _tag === 'AdmitMember')).toHaveLength(2);
+    const done = simulateAll(memberBefore, applySteps);
+    expect(
+      done.people
+        .find(({ principalId }) => principalId === obchodnik)
+        ?.memberships.map(({ membershipId }) => membershipId)
+        .toSorted(),
+    ).toEqual(
+      [
+        admittedMembershipIdOf(1, obchodnik, TENANT_SCOPE),
+        admittedMembershipIdOf(1, obchodnik, COMPANY_SCOPE),
+      ].toSorted(),
+    );
+
+    // Her managed roles are revoked, but her own memberships are not the script's to end.
+    const rollback = stepsOf(plan(state, done, rollback1));
+    expect(tagsOf(rollback)).toEqual([...times(6, 'RevokeAssignment'), ...times(4, 'EndMembership')]);
+    const ended = rollback.flatMap((step) => (step._tag === 'EndMembership' ? [step.principalId] : []));
+    expect(ended).not.toContain(ucetni);
+    // A rollback named with a later generation still recognizes the rows generation 1 admitted.
+    const later = stepsOf(plan(state, done, { generation: 2, mode: 'rollback' }));
+    expect(later.filter(({ _tag }) => _tag === 'EndMembership')).toHaveLength(4);
+
+    // Anything ending an admitted membership would close beyond the two plain member rows stops the plan.
+    const withExtra = (extra: (person: ObservedPerson) => ObservedPerson) => ({
+      ...done,
+      people: withPerson(done, obchodnik, extra),
+    });
+    const najempark = company(NAJEMPARK);
+    const tooMuch: readonly (readonly [string, ObservedState])[] = [
+      ['team place', withExtra((person) => ({ ...person, teams: [COMPANY_SCOPE] }))],
+      [
+        'live delegation',
+        withExtra((person) => ({ ...person, delegations: [{ managerId: obchodnik, status: 'active' }] })),
+      ],
+      [
+        'access_admin membership',
+        withExtra((person) => ({
+          ...person,
+          memberships: [...person.memberships, member(COMPANY_SCOPE, 'access_admin')],
+        })),
+      ],
+      [
+        `member membership in company ${NAJEMPARK}`,
+        withExtra((person) => ({ ...person, memberships: [...person.memberships, member(najempark)] })),
+      ],
+    ];
+    for (const [what, observed] of tooMuch) {
+      expect(haltOf(plan(state, observed, rollback1))?.reason).toContain(what);
+    }
+    // A delegation that only names them, or one already revoked, closes nothing and does not stop it.
+    const harmless = withExtra((person) => ({
+      ...person,
+      delegations: [
+        { managerId: OWNER, status: 'active' },
+        { managerId: obchodnik, status: 'revoked' },
+      ],
+    }));
+    expect(signature(stepsOf(plan(state, harmless, rollback1)))).toEqual(signature(rollback));
   }),
 );
 

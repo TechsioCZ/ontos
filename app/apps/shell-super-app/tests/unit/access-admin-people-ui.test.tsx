@@ -90,7 +90,16 @@ const fixture = () => {
           },
         ],
         displayName: 'Ada Lovelace',
-        memberships: [{ kind: 'owner', scope: company, status: 'suspended', validFrom: from, validUntil: null }],
+        memberships: [
+          {
+            kind: 'owner',
+            membershipId: '00000000-0000-4000-8000-0000000000e1',
+            scope: company,
+            status: 'suspended',
+            validFrom: from,
+            validUntil: null,
+          },
+        ],
         ownership: { administersScopes: [company], soleAdministratorScopes: [company] },
         principalId: personId,
         suspended: true,
@@ -644,7 +653,14 @@ const admissionSnapshot = (open = true): PeopleSnapshot => {
       ...person,
       memberships: [
         ...person.memberships,
-        { kind: 'member', scope: company, status: 'active', validFrom: from, validUntil: null },
+        {
+          kind: 'member',
+          membershipId: '00000000-0000-4000-8000-0000000000e2',
+          scope: company,
+          status: 'active',
+          validFrom: from,
+          validUntil: null,
+        },
       ],
     })),
   });

@@ -7,8 +7,10 @@
  *   printf %s "$PASSWORD" | pnpm demo:stage:reviewed-people --shell-url <origin> --email <owner> --password-stdin
  *
  * Modes: `--plan` (default) reads and prints what it would send; `--apply` sends it one write at a time,
- * re-reading stage after each answer; `--rollback` revokes the three people's managed roles and ends their
- * memberships (the roles stay), and `--plan --rollback` only prints that. `--generation N` names fresh
+ * re-reading stage after each answer; `--rollback` revokes the three people's managed roles and ends the
+ * memberships this script's admissions wrote (the roles stay, and so does a membership somebody had before
+ * the apply), and `--plan --rollback` only prints that. A rollback stops before it would close a team place,
+ * a managed delegation, a management row or a membership outside the tenant and company 0020. `--generation N` names fresh
  * admission and assignment ids after a rollback.
  *
  * The password is read only from stdin and never printed. Besides sign-in, the only request outside the
@@ -345,13 +347,16 @@ const observe = (session: Session, identity: { readonly principalId: string; rea
           scope,
           status,
         })),
-        memberships: person.memberships.map(({ kind, scope, status, validUntil }) => ({
+        delegations: person.delegations.map(({ managerId, status }) => ({ managerId, status })),
+        memberships: person.memberships.map(({ kind, membershipId, scope, status, validUntil }) => ({
           kind,
+          membershipId,
           scope,
           status,
           validUntil: Option.fromNullishOr(validUntil),
         })),
         principalId: person.principalId,
+        teams: person.teams.map(({ scope }) => scope),
       })),
       peopleRevision: people.revision,
       release: {

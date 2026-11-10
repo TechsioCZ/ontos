@@ -395,6 +395,7 @@ const plainDelegation = (view: View, delegation: ViewDelegation) =>
 
 const plainMembership = (view: View, membership: ViewMembership) => ({
   kind: membership.kind,
+  membershipId: membership.id,
   scope: scopeTargetOf(view, membership.scopeId),
   status: membership.status,
   validFrom: membership.validFrom.toISOString(),

@@ -290,8 +290,11 @@ export const AccessTeamIdSchema = uuid.pipe(Schema.brand('AccessTeamId'));
 export const AccessPeopleRevisionSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)).pipe(
   Schema.brand('AccessPeopleRevision'),
 );
+/** One access membership row; a write that admits names its rows by the idempotency key (people.ts). */
+export const AccessMembershipIdSchema = uuid.pipe(Schema.brand('AccessMembershipId'));
 export const AccessMembershipSchema = Schema.Struct({
   kind: Schema.Literals(['member', 'owner', 'access_admin']),
+  membershipId: AccessMembershipIdSchema,
   scope: AccessScopeTargetSchema,
   status: Schema.Literals(['active', 'suspended', 'revoked']),
   validFrom: date,
