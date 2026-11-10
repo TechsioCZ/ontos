@@ -11,7 +11,10 @@ const { records, workRecords } = rstest.hoisted(() => ({ records: rstest.fn(), w
 
 rstest.mock('../../src/api/records-consumer.ts', () => ({ executeRecords: records }));
 rstest.mock('@app/work-tasks/clients/records', () => ({ executeRecords: workRecords }));
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({ useRouterState: () => '' }));
+rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useBlocker: () => ({ status: 'idle' }),
+  useRouterState: () => '',
+}));
 rstest.mock('../../src/routes/ultramodern-route-head', () => ({ UltramodernRouteHead: () => null }));
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   FederatedI18nBoundary: ({ children }: { readonly children: ReactNode }) => children,
