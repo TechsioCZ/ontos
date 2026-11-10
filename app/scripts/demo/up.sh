@@ -193,13 +193,18 @@ done
 [ ${#failed[@]} -eq 0 ] || die "build failed: ${failed[*]} (logs: $LOG_DIR/build-<id>.log)"
 
 # 4b. Module credentials. The platform issues every calling module its own key on each start, with the same program
-#     the stage app host runs on each boot. The keys stay in this shell's memory and reach each process only through
-#     its own channel: a module's own environment for its dedicated server, standard input for the Outbox host.
-say "provisioning module credentials"
-MODULE_CREDENTIALS="$("${WITH_ENV[@]}" node scripts/zerops/provision-module-credentials.mts issue-callers \
-  "$(uuidgen | tr '[:upper:]' '[:lower:]')")" || die "module credential provisioning failed"
-module_key() { # module_key <app-id>: that module's key, or nothing when it calls no other module
-  printf '%s' "$MODULE_CREDENTIALS" | "${WITH_ENV[@]}" node scripts/zerops/module-credential-handover.mts key "$1" 2>/dev/null
+#     the stage app host runs on each boot, once the local composition is published (step 5): each key is attested
+#     for that module's build and the composition revision. The keys stay in this shell's memory (never exported) and
+#     reach each process only on its private channel, file descriptor 3: a private FIFO for a calling module's server,
+#     a pipe for the Outbox host. No key is ever in an environment variable, an argument or a file.
+MODULE_CALLERS=" $(node -e 'import("./scripts/zerops/module-credentials.mts").then((m) => console.log(m.MODULE_CREDENTIAL_CALLERS.join(" ")))') "
+CHANNEL_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ontos-demo-channels.XXXXXX")"
+chmod 700 "$CHANNEL_DIR"
+is_caller() { case "$MODULE_CALLERS" in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+hand_over() { # hand_over <app-id>: write that module's handover line to its channel, then remove the FIFO's name
+  printf '%s' "$MODULE_CREDENTIALS" | "${WITH_ENV[@]}" node scripts/zerops/module-credential-handover.mts handover "$1" \
+    >"$CHANNEL_DIR/$1" || say "WARN no module credential handed over to $1"
+  rm -f "$CHANNEL_DIR/$1"
 }
 
 # 5. Servers. Each runs in its own process group so down.sh can stop the whole tree.
@@ -212,10 +217,12 @@ start() { # start <name> <command...>
     nohup "$@" >"$LOG_DIR/$name.log" 2>&1 </dev/null &
   echo $! >"$PID_DIR/$name.pid"
 }
-start_module() { # start_module <app-id> <directory>: a module's own server, holding only its own key
-  local key
-  if key="$(module_key "$1")"; then
-    ONTOS_GATEWAY_MODULE_API_KEY="$key" start "$1" "${WITH_ENV[@]}" pnpm --dir "$2" exec modern serve
+start_module() { # start_module <app-id> <directory>: a module's own server; a calling module holds only its own key
+  if is_caller "$1"; then
+    # The server keeps its channel open (read-write, so it never sees an end); hand_over fills it later.
+    rm -f "$CHANNEL_DIR/$1" && mkfifo -m 600 "$CHANNEL_DIR/$1"
+    ONTOS_MODULE_CREDENTIAL_HANDOVER=fd3 start "$1" "${WITH_ENV[@]}" node scripts/demo/serve-module.mts "$1" "$2" \
+      3<>"$CHANNEL_DIR/$1"
   else
     start "$1" "${WITH_ENV[@]}" pnpm --dir "$2" exec modern serve
   fi
@@ -245,6 +252,16 @@ start composition "${NO_GIT[@]}" "${WITH_ENV[@]}" node scripts/siampark/developm
   --environment development --port "$COMPOSITION_PORT"
 wait_http "http://127.0.0.1:$COMPOSITION_PORT/active" 180 composition
 
+say "provisioning module credentials for the published composition"
+# The pass writes its output to file descriptor 3, captured here into memory; its logs go to the terminal.
+MODULE_CREDENTIALS="$(ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="http://127.0.0.1:$COMPOSITION_PORT/active" \
+  "${WITH_ENV[@]}" node scripts/zerops/provision-module-credentials.mts issue-installed \
+  --operation="$(uuidgen | tr '[:upper:]' '[:lower:]')" --host="local-demo:$(hostname -s)" 3>&1 1>&2)" ||
+  die "module credential provisioning failed"
+for id in "${VERTICALS[@]}"; do
+  if is_caller "$id"; then hand_over "$id"; fi
+done
+
 # Sales reset discovers native Action ownership from the published composition, including its
 # permissions step after Workforce. Cold starts must publish first; no cached or guessed Action set.
 if [ "${DEMO_RESET:-1}" != 0 ]; then
@@ -263,12 +280,12 @@ else
 fi
 
 say "starting the outbox worker host"
-# It hosts every owner's workers, so it receives their keys on standard input and seals them per owner.
+# It hosts every owner's workers, so it receives their keys on its private channel and holds each in its owner's slot.
 ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="http://127.0.0.1:$COMPOSITION_PORT/active" \
-  ONTOS_DEMO_VERTICALS="$(IFS=,; echo "${VERTICALS[*]}")" ONTOS_MODULE_CREDENTIAL_HANDOVER=stdin \
+  ONTOS_DEMO_VERTICALS="$(IFS=,; echo "${VERTICALS[*]}")" ONTOS_MODULE_CREDENTIAL_HANDOVER=fd3 \
   nohup "${WITH_ENV[@]}" node --experimental-strip-types ./scripts/outbox-worker-host.generated.mts \
-  >"$LOG_DIR/outbox-worker-host.log" 2>&1 \
-  < <(printf '%s' "$MODULE_CREDENTIALS" | "${WITH_ENV[@]}" node scripts/zerops/module-credential-handover.mts handover) &
+  >"$LOG_DIR/outbox-worker-host.log" 2>&1 </dev/null \
+  3< <(printf '%s' "$MODULE_CREDENTIALS" | "${WITH_ENV[@]}" node scripts/zerops/module-credential-handover.mts handover) &
 echo $! >"$PID_DIR/outbox-worker-host.pid"
 sleep 3
 kill -0 "$(cat "$PID_DIR/outbox-worker-host.pid")" 2>/dev/null ||
@@ -318,6 +335,7 @@ restart_server() { # restart_server <name> <directory>
     for _ in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || break; sleep .3; done
   fi
   start_module "$1" "$2"
+  if is_caller "$1"; then hand_over "$1"; fi
 }
 restart_server shell-super-app apps/shell-super-app
 wait_http "http://127.0.0.1:$SHELL_PORT/.well-known/ontos-shell-runtime.json" 180 shell-super-app
