@@ -75,6 +75,11 @@ export interface PaymentReconciliationEvidenceFacts {
   /** A qualified SOURCE_CORRECTION (accepted, held or conflicting) disproved this statement. */
   readonly corrected: boolean;
   /**
+   * Return statements only: the money its accepted partial corrections took away, as the funds reader
+   * measures it. Such a statement proves less than it states (#1150).
+   */
+  readonly correctedAmount?: PaymentMonetaryAmount | undefined;
+  /**
    * Operations this observation's economic effect already counts toward: its own accepted
    * interpretation, governed attachments of it, and those of other observations of the same source
    * and economic effect. `undefined` stands for an attachment whose operation is not identifiable.
@@ -345,6 +350,13 @@ const decideAttach = (
   }
   if (facts.amount !== undefined && !sameAmount(facts.amount, operation.amount)) {
     return reject('payment_reconciliation_evidence_not_qualified', 'The evidence amount differs from the operation');
+  }
+  if (facts.correctedAmount !== undefined) {
+    // A refund has no reduction ledger: a partially retracted receipt cannot confirm the whole REFUND.
+    return reject(
+      'payment_reconciliation_evidence_not_qualified',
+      'Accepted corrections reduced the evidence; it no longer proves the full amount of the operation',
+    );
   }
   if (
     operation.outcome !== meaning.outcome &&
