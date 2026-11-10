@@ -1,4 +1,4 @@
-import { act, cleanup, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { DateTime, Deferred, Effect, Exit, Option, Schema } from 'effect';
 import { CustomerListItemSchema } from '../../shared/apis/customer-list.ts';
@@ -14,7 +14,11 @@ import { executePartyDetail } from '../../src/api/party-detail-client.ts';
 import { executePartyContactPoints } from '../../src/api/party-contact-points-client.ts';
 import { executePartyOfficialIdentifierHistory } from '../../src/api/party-official-identifier-history-client.ts';
 import { updateParty } from '../../src/api/party-command-client.ts';
-import { loadCustomerDetail, useCustomerDetail } from '../../src/routes/[lang]/prodej/zakaznici/customers-data.ts';
+import {
+  hasUnsettledAutosave,
+  loadCustomerDetail,
+  useCustomerDetail,
+} from '../../src/routes/[lang]/prodej/zakaznici/customers-data.ts';
 import { relatedCustomerUrl } from '../../src/routes/[lang]/prodej/zakaznici/customers-model.ts';
 import type { CustomerDetailSnapshot } from '../../src/routes/[lang]/prodej/zakaznici/customers-data.ts';
 import { CustomerDetailDialog } from '../../src/routes/[lang]/prodej/zakaznici/customer-detail-dialog.tsx';
@@ -326,6 +330,73 @@ it('navigates directly only when the customer editor is clean', () => {
   expect(result.current.discardOpen).toBe(false);
 });
 
+it('runs a deferred retarget at once when the customer editor is clean', () => {
+  const { result } = renderHook(useDetail);
+  const run = rstest.fn<() => void>();
+  act(() => result.current.requestLeaveThen(run, false));
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(result.current.discardOpen).toBe(false);
+});
+
+it('asks before a deferred retarget when the editor is dirty, and runs it only after the user confirms', () => {
+  const { result } = renderHook(useDetail);
+  const run = rstest.fn<() => void>();
+  act(() => result.current.changeDraft('new-PHONE-value', '+420123456789'));
+  act(() => result.current.requestLeaveThen(run, false));
+  expect(result.current.discardOpen).toBe(true);
+  expect(run).not.toHaveBeenCalled();
+  act(() => result.current.setDiscardOpen(false));
+  expect(run).not.toHaveBeenCalled();
+  act(() => result.current.requestLeaveThen(run, false));
+  act(() => result.current.confirmDiscard());
+  expect(run).toHaveBeenCalledTimes(1);
+  expect(close).not.toHaveBeenCalled();
+});
+
+it('asks before a deferred retarget when an inline autosave field holds unsaved text', () => {
+  const { result } = renderHook(useDetail);
+  const run = rstest.fn<() => void>();
+  act(() => result.current.requestLeaveThen(run, true));
+  expect(result.current.discardOpen).toBe(true);
+  expect(run).not.toHaveBeenCalled();
+  act(() => result.current.confirmDiscard());
+  expect(run).toHaveBeenCalledTimes(1);
+});
+
+const autosaveStatuses = (states: readonly string[]) => {
+  const root = document.createElement('div');
+  for (const state of states) {
+    const status = document.createElement('div');
+    status.dataset['autosaveState'] = state;
+    root.append(status);
+  }
+  return root;
+};
+
+it('reads an unsettled inline autosave status in the panel body as unsaved text', () => {
+  expect(hasUnsettledAutosave(autosaveStatuses(['saved', 'invalid']))).toBe(true);
+  expect(hasUnsettledAutosave(autosaveStatuses(['dirty']))).toBe(true);
+  expect(hasUnsettledAutosave(autosaveStatuses(['idle', 'saved', 'proposed']))).toBe(false);
+  expect(hasUnsettledAutosave(null)).toBe(false);
+});
+
+it.effect('ignores a deferred retarget while a save is in flight', () =>
+  Effect.gen(function* busyRetarget() {
+    const pending = yield* Deferred.make<typeof party>();
+    rstest.mocked(updateParty).mockReturnValue(Deferred.await(pending));
+    const { result } = renderHook(useDetail);
+    act(() => prepare(result.current));
+    act(() => result.current.save({ kind: 'name', party, value: 'After' }, ['name']));
+    expect(result.current.busy).toBe(true);
+    const run = rstest.fn<() => void>();
+    act(() => result.current.requestLeaveThen(run, false));
+    expect(run).not.toHaveBeenCalled();
+    expect(result.current.discardOpen).toBe(false);
+    yield* Deferred.succeed(pending, afterParty);
+    yield* Effect.promise(() => waitFor(() => expect(result.current.busy).toBe(false)));
+  }),
+);
+
 it.effect('blocks related navigation and document unload during an unfinished save', () =>
   Effect.gen(function* busyNavigation() {
     const pending = yield* Deferred.make<typeof party>();
@@ -366,4 +437,35 @@ it('protects document unload while dirty, grants one confirmed navigation, and r
   const afterUnmount = new Event('beforeunload', { cancelable: true });
   globalThis.dispatchEvent(afterUnmount);
   expect(afterUnmount.defaultPrevented).toBe(false);
+});
+
+const detailDialog = (value?: CustomerDetailSnapshot) => (
+  <CustomerDetailDialog
+    customer={customer}
+    onOpenChange={(open) => {
+      close(open);
+    }}
+    onRenamed={() => {
+      changed();
+    }}
+    onRetry={() => {
+      saved();
+    }}
+    snapshot={value}
+  />
+);
+const reasonField = () => {
+  const element = document.querySelector<HTMLInputElement>('#customer-reason');
+  if (element === null) {
+    throw new Error('missing #customer-reason');
+  }
+  return element;
+};
+
+it('keeps the typed reason when the same customer snapshot passes through a loading refresh', () => {
+  const { rerender } = render(detailDialog(snapshot));
+  fireEvent.change(reasonField(), { target: { value: 'Reviewed document' } });
+  rerender(detailDialog());
+  rerender(detailDialog(snapshot));
+  expect(reasonField().value).toBe('Reviewed document');
 });

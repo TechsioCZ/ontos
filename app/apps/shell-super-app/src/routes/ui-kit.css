@@ -23,6 +23,17 @@
 }
 
 /*
+ * Stop-gap for ui-kit 0.57.0: a modeless dialog still renders its backdrop, transparent but catching clicks. Release
+ * only the backdrop of an open quick-view side panel (marked `ontos-side-peek`), so the list behind stays clickable.
+ * Modal dialogs keep their backdrop. ui-kit renders the backdrop in a portal without a class hook, so a Tailwind
+ * utility cannot sit on it; `@apply` keeps the rule in Tailwind. Remove once a ui-kit release stops rendering the
+ * backdrop for modeless dialogs.
+ */
+[data-scope='dialog'][data-part='backdrop']:has(+ [data-scope='dialog'][data-part='positioner'] > .ontos-side-peek) {
+  @apply pointer-events-none;
+}
+
+/*
  * Calm surfaces: one outlined level. Tables keep light row dividers but lose their outer box and grey fill, tabs and
  * accordions sit on the page colour, dialogs and side panels are white, and every divider is one light hairline.
  */

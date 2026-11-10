@@ -168,6 +168,13 @@
           "endContact": "End contact",
           "endIdentifier": "End identifier validity"
         },
+        "detailView": {
+          "group": "Detail view",
+          "openFailed": "The customer could not be opened.",
+          "openTimeout": "Opening the customer took too long. Try again.",
+          "page": "Full page",
+          "panel": "Side panel"
+        },
         "filters": {
           "allSegments": "All segments",
           "allStatuses": "All statuses"

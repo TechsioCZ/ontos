@@ -1,6 +1,8 @@
 {
   "sales-pipeline": {
     "detail": {
+      "backToList": "Zpět na příležitosti",
+      "navigationFailed": "Stránku příležitosti se nepodařilo otevřít. Zkuste to znovu.",
       "missing": "Požadovaná příležitost není v tomto výběru dostupná.",
       "title": "Obchodní případ",
       "relatedRecords": "Navazující záznamy",
@@ -9,7 +11,40 @@
       "orders": "Objednávky z případu",
       "offerLinesTitle": "Nabídka – položky případu",
       "offerLinesLabel": "Položky nabídky",
-      "stageHistory": "Historie fází"
+      "stageHistory": "Historie fází",
+      "probability": "Pravděpodobnost {{value}}",
+      "customer": "Zákazník",
+      "owner": "Obchodník",
+      "unassigned": "Nepřiřazeno",
+      "companyId": "IČO {{id}}",
+      "amount": "Odhadovaná hodnota (bez DPH)",
+      "closeDate": "Termín uzavření",
+      "createdAt": "Založeno",
+      "updatedAt": "Naposledy změněno",
+      "note": "Poznámka",
+      "taskAssignedToCase": "Přiřazený k případu",
+      "taskCustomer": "Úkol zákazníka",
+      "taskDue": "termín {{date}}",
+      "contractLease": "Nájemní smlouva",
+      "contractDefault": "Smlouva",
+      "contractFrom": "od {{date}}",
+      "contractState": {
+        "ACTIVE": "Platná",
+        "DRAFT": "Návrh smlouvy",
+        "EXPIRED": "Vypršela",
+        "TERMINATED": "Ukončená"
+      },
+      "emptyTasks": "K případu ani k zákazníkovi zatím není žádný úkol.",
+      "emptyContracts": "Zákazník zatím nemá žádnou smlouvu.",
+      "emptyOrders": "Z případu zatím nevznikla žádná objednávka.",
+      "unavailableTasks": "Úkoly se nepodařilo načíst.",
+      "unavailableContracts": "Smlouvy se nepodařilo načíst.",
+      "unavailableOrders": "Objednávky se nepodařilo načíst.",
+      "noOfferLines": "Případ zatím nemá položky nabídky. Doplníte je přes Upravit.",
+      "lineItem": "Položka",
+      "lineQuantity": "Množství",
+      "lineUnitPrice": "Cena/j bez DPH",
+      "lineTotal": "Celkem bez DPH"
     },
     "aiReview": {
       "decisionNote": "Poznámka k rozhodnutí (nepovinná)",
@@ -125,7 +160,8 @@
           "archive": "Archivovat",
           "assignOwner": "Přiřadit obchodníka",
           "changeStage": "Změnit fázi",
-          "edit": "Upravit"
+          "edit": "Upravit",
+          "openDetail": "Otevřít detail"
         },
         "bulk": {
           "owner": "Přiřadit obchodníka",
@@ -272,6 +308,11 @@
     "noResults": "Nic nenalezeno",
     "sidePanel": {
       "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku."
+    },
+    "detailView": {
+      "group": "Zobrazení detailu",
+      "page": "Celá stránka",
+      "panel": "Panel vpravo"
     }
   }
 }

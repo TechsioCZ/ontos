@@ -170,6 +170,13 @@
           "endContact": "Ukončit kontakt",
           "endIdentifier": "Ukončit platnost identifikátoru"
         },
+        "detailView": {
+          "group": "Zobrazení detailu",
+          "openFailed": "Zákazníka se nepodařilo otevřít.",
+          "openTimeout": "Otevření zákazníka trvá příliš dlouho. Zkuste to znovu.",
+          "page": "Celá stránka",
+          "panel": "Panel vpravo"
+        },
         "filters": {
           "allSegments": "Všechny segmenty",
           "allStatuses": "Všechny stavy"

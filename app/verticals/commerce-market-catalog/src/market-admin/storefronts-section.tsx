@@ -307,7 +307,7 @@ export const StorefrontsSection = ({
     <SectionCard
       actions={
         editable && choices.length > 0 ? (
-          <Button onClick={() => setEditing({ kind: 'associate' })} size="sm" variant="secondary">
+          <Button onClick={() => setEditing({ kind: 'associate' })} size="sm" theme="solid" variant="primary">
             {text('detail.storefronts.associate')}
           </Button>
         ) : undefined

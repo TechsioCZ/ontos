@@ -6,7 +6,7 @@ import { Schema } from 'effect';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { isPanelEscape, panelContentId, readEscapeSnapshot } from './side-panel-escape.ts';
-import { sidePanelSurfaceClassName } from './ui-kit-classes.ts';
+import { sidePanelPeekClassName, sidePanelSurfaceClassName } from './ui-kit-classes.ts';
 import { useSidePanelResize } from './use-side-panel-resize.ts';
 
 const sidePanelSizeSchema = Schema.Literals(['sm', 'md', 'lg', 'xl']);
@@ -30,6 +30,11 @@ export interface SidePanelProps {
    */
   readonly onOpenChange: (open: boolean) => void;
   readonly open: boolean;
+  /**
+   * Non-blocking quick view: the list behind stays clickable and an outside click does not close the panel. Escape
+   * and the close button still close it. Default `false` keeps the modal panel used by create and edit forms.
+   */
+  readonly peek?: boolean;
   /** Localized accessible name and keyboard instructions for the resize handle. */
   readonly resizeLabel: string;
   readonly size?: SidePanelSize;
@@ -40,6 +45,18 @@ export interface KeptDraftLabels {
   readonly close: string;
   readonly message: string;
 }
+
+/** Dialog behaviour of the modal panel, unchanged. */
+const modalDialogProps = { closeOnInteractOutside: true } as const;
+
+/** Dialog behaviour of a non-blocking quick view: nothing is trapped, scrolled or dismissed by an outside press. */
+const peekDialogProps = {
+  behavior: 'modeless',
+  closeOnInteractOutside: false,
+  modal: false,
+  preventScroll: false,
+  trapFocus: false,
+} as const;
 
 const defaultKeptDraftLabels: KeptDraftLabels = {
   close: 'Zavřít bez uložení',
@@ -194,11 +211,13 @@ export const SidePanel = ({
   keptDraftLabels = defaultKeptDraftLabels,
   onOpenChange,
   open,
+  peek = false,
   resizeLabel,
   size = 'md',
   title,
 }: SidePanelProps) => {
   const id = useId();
+  const peekClassName = peek ? ` ${sidePanelPeekClassName}` : '';
   const resize = useSidePanelResize();
   useEscapeFallback(open, panelContentId(id), onOpenChange);
   const { keepsDraft, refocusDraft } = useEditedDraft(open, panelContentId(id));
@@ -212,11 +231,11 @@ export const SidePanel = ({
 
   return (
     <Dialog
-      className={`min-w-0 sm:min-w-(--container-dialog-sm) ${sidePanelSurfaceClassName} ${className ?? ''}`}
+      className={`min-w-0 sm:min-w-(--container-dialog-sm) ${sidePanelSurfaceClassName} ${className ?? ''}${peekClassName}`}
       {...(finalFocusEl === undefined ? {} : { finalFocusEl })}
       {...(initialFocusEl === undefined ? {} : { initialFocusEl })}
+      {...(peek ? peekDialogProps : modalDialogProps)}
       actions={actions}
-      closeOnInteractOutside
       contentRef={resize.contentRef}
       contentStyle={{ maxWidth: '100vw', width: resize.width }}
       customTrigger

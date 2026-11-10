@@ -114,6 +114,7 @@ const PriceListEditor = ({
         onChange={(form) => autosave.setDraft(form)}
         prefix="market-pricing"
         showIssues={issues.length > 0}
+        size="sm"
       />
       <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
     </div>
@@ -353,6 +354,7 @@ const ProductSearch = ({
         name="productSearch"
         onChange={(event) => setSearch(event.target.value)}
         placeholder={text('detail.assortment.exceptions.searchPlaceholder')}
+        size="sm"
         value={search}
       />
       {results?.kind === 'failed' && <StatusText status="error">{failureText(text, results.failure)}</StatusText>}

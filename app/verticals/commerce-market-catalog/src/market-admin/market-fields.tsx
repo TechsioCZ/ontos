@@ -142,16 +142,21 @@ interface PricingFieldsProps {
   readonly onChange: (form: MarketPricingForm) => void;
   readonly prefix: string;
   readonly showIssues: boolean;
+  /** The new-market dialog keeps md; the market detail section uses sm. */
+  readonly size?: 'sm' | 'md';
 }
 
-export const PricingFields = ({ form, issues, onChange, prefix, showIssues }: PricingFieldsProps) => {
+export const PricingFields = ({ form, issues, onChange, prefix, showIssues, size = 'md' }: PricingFieldsProps) => {
   const { text } = useMarketText();
   const shown = (field: PricingField) => showIssues && issues.includes(field);
+  // ui-kit 0.57.0 Select.Label does not take the select size, so the small label class is passed explicitly.
+  const selectLabelProps: { className?: string } = size === 'sm' ? { className: 'text-label-sm' } : {};
   return (
     <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
       <SelectTemplate
         items={marketCurrencies.map((currency) => item(currency, currency))}
         label={text('form.currency')}
+        labelProps={selectLabelProps}
         name="currency"
         onValueChange={(details: { readonly value: readonly string[] }) => {
           const currency = marketCurrencies.find((candidate) => candidate === details.value[0]);
@@ -159,11 +164,13 @@ export const PricingFields = ({ form, issues, onChange, prefix, showIssues }: Pr
             onChange({ ...form, currency });
           }
         }}
+        size={size}
         value={[form.currency]}
       />
       <SelectTemplate
         items={offerModes.map((mode) => item(mode, text(`form.offerMode${mode}`)))}
         label={text('form.offerMode')}
+        labelProps={selectLabelProps}
         name="offerMode"
         onValueChange={(details: { readonly value: readonly string[] }) => {
           const mode = offerModes.find((candidate) => candidate === details.value[0]);
@@ -171,6 +178,7 @@ export const PricingFields = ({ form, issues, onChange, prefix, showIssues }: Pr
             onChange({ ...form, offerMode: mode });
           }
         }}
+        size={size}
         value={[form.offerMode]}
       />
       <FormInput
@@ -179,6 +187,7 @@ export const PricingFields = ({ form, issues, onChange, prefix, showIssues }: Pr
         label={text('form.exchangeRate')}
         name="exchangeRate"
         onChange={(event) => onChange({ ...form, exchangeRate: event.target.value })}
+        size={size}
         value={form.exchangeRate}
         {...(shown('exchangeRate')
           ? errorProps(true, text('form.exchangeRateError'))
@@ -190,6 +199,7 @@ export const PricingFields = ({ form, issues, onChange, prefix, showIssues }: Pr
         label={text('form.rounding')}
         name="roundingMinor"
         onChange={(event) => onChange({ ...form, roundingMinor: event.target.value })}
+        size={size}
         value={form.roundingMinor}
         {...(shown('roundingMinor')
           ? errorProps(true, text('form.roundingError'))
