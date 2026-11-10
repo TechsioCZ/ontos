@@ -67,6 +67,8 @@ import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 
 import {
+  accessScopeFences,
+  accessScopes,
   actionInvocations,
   auditEvents,
   coreRelations,
@@ -97,6 +99,8 @@ import { makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
 import { AuthenticationService } from '../../api/auth/service.ts';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { bootstrapScopesOf } from '@app/core-runtime/access/bootstrap';
+import { LegalEntityIdSchema, TenantIdSchema } from '@app/core-runtime/access/ids';
 import type { AccessDecisionService, GateInput } from '@app/core-runtime/access/enforcement';
 import { makeShellAuthenticationApiRuntime as makeProductionShellAuthenticationApiRuntime } from '../../api/index.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
@@ -526,6 +530,7 @@ it.live(
     const approvedPageCatalog = yield* installedPageCatalog();
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: yield* fixtureSnapshotForRevision(approvedPageCatalog.composition.revision),
+      databaseIdentities: SHELL_DATABASE_IDENTITY_ENROLLMENT,
       mode: 'schema-only',
       purpose: 'stabilization-1287-shell-auth',
     });
@@ -583,8 +588,8 @@ it.live(
         coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
         coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, foreignTenantId)),
         coreDatabase.delete(principals).where(inArray(principals.principalId, [principalId, changedPrincipalId])),
-        coreDatabase.delete(legalEntities).where(eq(legalEntities.legalEntityId, fixtureLegalEntityId)),
-        coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
+        // The fixture tenant and its company hold access scopes whose fences are never removed (the
+        // access record is permanent), so they stay until the isolated database is dropped.
         coreDatabase.delete(tenants).where(eq(tenants.tenantId, foreignTenantId)),
       ]);
     });
@@ -640,6 +645,28 @@ it.live(
       status: 'active',
       tenantId,
     });
+    // A provisioned tenant has its access scopes, each with a Ready fence, as bootstrap writes them: a
+    // prepared Action authority pins its decision to those revisions and is unavailable without them.
+    const fixtureAccessScopes = bootstrapScopesOf(TenantIdSchema.make(tenantId), [
+      LegalEntityIdSchema.make(fixtureLegalEntityId),
+    ]);
+    yield* coreDatabase.insert(accessScopes).values(
+      fixtureAccessScopes.map((entry) => ({
+        legalEntityId: entry._tag === 'LegalEntity' ? entry.legalEntityId : null,
+        scopeId: entry.scopeId,
+        tenantContextId: entry._tag === 'TenantContext' ? tenantId : null,
+        tenantId,
+      })),
+    );
+    yield* coreDatabase.insert(accessScopeFences).values(
+      fixtureAccessScopes.map(({ scopeId }) => ({
+        owningOperationId: null,
+        revision: 1,
+        scopeId,
+        state: 'Ready' as const,
+        tenantId,
+      })),
+    );
     yield* coreDatabase.insert(principalAuthBindings).values({
       authenticationNamespaceId: staffAuthenticationNamespaceId,
       principalAuthBindingId: fixtureAuthBindingId,
@@ -1859,6 +1886,7 @@ it.live(
     const testRevision = initialSnapshot.composition.revision;
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: initialSnapshot,
+      databaseIdentities: SHELL_DATABASE_IDENTITY_ENROLLMENT,
       mode: 'schema-only',
       purpose: 'stabilization-1287-shell-auth',
     });
@@ -2715,6 +2743,7 @@ const prepareTenantPartyCase = Effect.fn('TenantPartyGatewayTest.prepareCase')(f
   expect(snapshot.composition.shell.runtimeContract.sha256).toBe(shellRuntimeSha256);
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
+    databaseIdentities: SHELL_DATABASE_IDENTITY_ENROLLMENT,
     mode: 'schema-only',
     purpose: 'stabilization-1267-party-gateway',
   });

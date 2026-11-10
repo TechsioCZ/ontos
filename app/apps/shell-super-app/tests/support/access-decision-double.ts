@@ -125,8 +125,10 @@ export const makeShellTestAccessGate = (options: ShellTestAccessGateOptions = {}
     singleDecisions,
   };
   // The same gate a runtime asks: it already answers `decide`, `list` and `selectableLegalEntities`,
-  // so binding it to a composition's ports changes nothing (the double reads no authority).
-  return { ...gate, bound: gate };
+  // so binding it to a composition's ports changes nothing (the double reads no authority). A prepared
+  // Action authority requires `rebind`, so the double states that identity instead of leaving it out.
+  const shellGate: ShellTestAccessGate = { ...gate, bound: gate, rebind: () => shellGate };
+  return shellGate;
 };
 
 /** A per-key answer map a suite may change between calls, e.g. to prove a revocation is rechecked. */
