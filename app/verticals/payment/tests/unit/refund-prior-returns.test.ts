@@ -63,6 +63,19 @@ describe('#1150 Prior return evidence reduces the remaining budget', () => {
     expect(remainingOf(snapshotOf([collect]), evidence)).toBe(60_000);
   });
 
+  it('the same opaque effect key from two source bindings is two returns, each counted', () => {
+    const fromBankA = { ...statement({}), sourceBindingKey: 'BANK_ACCOUNTING|erp|bank-a|production' };
+    const fromBankB = {
+      ...statement({ observationId: 'observation-2' }),
+      sourceBindingKey: 'BANK_ACCOUNTING|erp|bank-b|production',
+    };
+    expect(remainingOf(snapshotOf([collect]), [fromBankA, fromBankB])).toBe(20_000);
+    // The same binding re-exporting its own key still counts once.
+    expect(remainingOf(snapshotOf([collect]), [fromBankA, { ...fromBankA, observationId: 'observation-3' }])).toBe(
+      60_000,
+    );
+  });
+
   it('evidence of a confirmed or reserved Payment REFUND is not deducted twice', () => {
     const evidence = [statement({ amountMinor: 30_000, operationId: 'refund-1' })];
     expect(remainingOf(snapshotOf([collect, refund('EFFECT_CONFIRMED')]), evidence)).toBe(70_000);

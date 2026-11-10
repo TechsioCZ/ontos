@@ -77,11 +77,15 @@ const returnEvidenceReadFailure = (cause: unknown) =>
   paymentUnavailable('Prior return evidence could not be read', cause);
 
 interface ReturnStatementRow {
+  readonly accountRef: string;
   readonly amountMinor: number | null;
   readonly currency: string | null;
   readonly economicEffectKey: string | null;
+  readonly environment: string;
   readonly observationId: string;
   readonly operationId: string | null;
+  readonly sourceKind: string;
+  readonly sourceSystem: string;
 }
 
 interface CorrectionRow {
@@ -152,6 +156,7 @@ const returnEvidenceOf = Effect.fn('PaymentRefundPersistence.returnEvidenceOf')(
     economicEffectKey: row.economicEffectKey ?? undefined,
     observationId: row.observationId,
     operationId: row.operationId ?? attachedOperationId,
+    sourceBindingKey: [row.sourceKind, row.sourceSystem, row.accountRef, row.environment].join('\u0000'),
   } satisfies PaymentReturnEvidence;
 });
 
@@ -258,13 +263,17 @@ export const paymentRefundPersistenceForTransaction = (
         [
           transaction
             .select({
+              accountRef: observations.accountRef,
               amountMinor: observations.amountMinor,
               currency: observations.currency,
               economicEffectKey: observations.economicEffectKey,
+              environment: observations.environment,
               observationId: observations.observationId,
               operationId: observations.operationId,
               paymentId: observations.paymentId,
               sourceAuthorityId: observations.sourceAuthorityId,
+              sourceKind: observations.sourceKind,
+              sourceSystem: observations.sourceSystem,
             })
             .from(observations)
             .where(
