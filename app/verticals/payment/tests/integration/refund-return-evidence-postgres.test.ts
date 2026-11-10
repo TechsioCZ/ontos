@@ -156,21 +156,35 @@ it.live(
           ),
         ).toBe('payment_refundable_funds_exceeded');
         // 100 CZK of the 400 CZK return statement was erroneous: 300 CZK actually went back.
-        const correction = yield* acceptObservation(refundCase, {
-          amount: { amountMinor: 10_000, currency: 'CZK' },
-          correctsObservationId: returnId,
-          factFamily: 'GATEWAY_OUTCOME',
-          factKind: 'SOURCE_CORRECTION',
-          paymentId: refundCase.payment.paymentId,
-          source: GATEWAY_SOURCE,
-          sourceOccurrenceId: 'gopay-prior-return-correction-1',
-          sourceRevision: 0,
-        });
+        const correctionOf = (sourceOccurrenceId: string) =>
+          acceptObservation(refundCase, {
+            amount: { amountMinor: 10_000, currency: 'CZK' },
+            correctsObservationId: returnId,
+            economicEffectKey: 'gopay:refund:prior-partial:correction',
+            factFamily: 'GATEWAY_OUTCOME',
+            factKind: 'SOURCE_CORRECTION',
+            paymentId: refundCase.payment.paymentId,
+            source: GATEWAY_SOURCE,
+            sourceOccurrenceId,
+            sourceRevision: 0,
+          });
+        const correction = yield* correctionOf('gopay-prior-return-correction-1');
         expect(correction.acceptanceOutcome).toBe('ACCEPTED_OBSERVATION');
         // Only 700 CZK may remain (1000 - 300); the same 800 CZK refund must still be refused.
         expect(
           yield* failureCodeOf(
             requestRefund(refundCase, itemsRefund(refundCase, 'over-remaining', over), { items: over }),
+          ),
+        ).toBe('payment_refundable_funds_exceeded');
+        // The same correction re-issued under new occurrences is the same 100 CZK, never another one:
+        // four re-issues must not eat the whole 400 CZK return.
+        for (const occurrence of ['2', '3', '4', '5']) {
+          const reissue = yield* correctionOf(`gopay-prior-return-correction-${occurrence}`);
+          expect(reissue.acceptanceOutcome).toBe('ACCEPTED_OBSERVATION');
+        }
+        expect(
+          yield* failureCodeOf(
+            requestRefund(refundCase, itemsRefund(refundCase, 'over-after-reissues', over), { items: over }),
           ),
         ).toBe('payment_refundable_funds_exceeded');
       }),
