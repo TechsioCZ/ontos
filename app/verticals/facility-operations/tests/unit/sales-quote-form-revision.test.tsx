@@ -4,9 +4,9 @@
 import { Effect, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { createElement } from 'react';
-import { SalesQuoteSchema } from '../../shared/domain/purchasing.ts';
-import type { SalesQuote } from '../../shared/domain/purchasing.ts';
-import { SalesQuoteFormPanel } from '../../src/routes/[lang]/provoz/nakupy/sales-tab.tsx';
+import { PurchasingStateSchema, SalesQuoteSchema, emptyPurchasingState } from '../../shared/domain/purchasing.ts';
+import type { PurchasingState, SalesQuote } from '../../shared/domain/purchasing.ts';
+import { SalesQuoteEditPanel } from '../../src/routes/[lang]/provoz/nakupy/sales-tab.tsx';
 import {
   agendaAt,
   bodyText,
@@ -69,8 +69,20 @@ const theirs = quoteAt('2026-10-21T09:30:00Z', '2026-11-30', 'Servis do konce mÄ
 const note = '#sales-quote-note';
 const validUntil = '#sales-quote-valid';
 
+const stateWith = (quote: SalesQuote): PurchasingState => ({
+  ...Schema.decodeUnknownSync(PurchasingStateSchema)(emptyPurchasingState),
+  salesQuotes: [quote],
+});
+
+// As the page renders it: the panel holds only the quote's id, each re-read of the agenda brings a new state and runner.
 const panelOf = (quote: SalesQuote, agenda: FakeAgenda, revision: number) =>
-  createElement(SalesQuoteFormPanel, { onClose: toPage, onSaved: toPage, quote, run: runnerAt(agenda, revision) });
+  createElement(SalesQuoteEditPanel, {
+    onClose: toPage,
+    onSaved: toPage,
+    quoteId: quote.id,
+    run: runnerAt(agenda, revision),
+    state: stateWith(quote),
+  });
 
 const sentRevisions = (agenda: FakeAgenda) => agenda.applied.map((entry) => entry.expectedRevision);
 

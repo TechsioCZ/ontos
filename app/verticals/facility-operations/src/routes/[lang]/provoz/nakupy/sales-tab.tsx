@@ -708,6 +708,33 @@ export const SalesQuoteFormPanel = ({
   );
 };
 
+/**
+ * The quote form as the page opens it: a new quote, or the edit of `quoteId` resolved from the page's live state on
+ * every render. The edit therefore takes each newer read, so "Načíst nejnovější" loads the version the newer revision
+ * belongs to. A quote that is gone from the state closes the form.
+ */
+export const SalesQuoteEditPanel = ({
+  onClose,
+  onSaved,
+  quoteId,
+  run,
+  state,
+}: {
+  readonly onClose: () => void;
+  readonly onSaved: (quoteId: string) => void;
+  readonly quoteId?: string;
+  readonly run: RunCommand;
+  readonly state: PurchasingState;
+}) => {
+  if (quoteId === undefined) {
+    return <SalesQuoteFormPanel onClose={onClose} onSaved={onSaved} run={run} />;
+  }
+  const quote = (state.salesQuotes ?? []).find((entry) => entry.id === quoteId);
+  return quote === undefined ? null : (
+    <SalesQuoteFormPanel onClose={onClose} onSaved={onSaved} quote={quote} run={run} />
+  );
+};
+
 // ── Detail panels ────────────────────────────────────────────────────────────────────────────────────────────────
 
 const LinesTable = ({
