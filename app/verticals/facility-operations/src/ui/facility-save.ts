@@ -4,9 +4,11 @@ import { Effect } from 'effect';
 import type { CommandOutcome } from './use-agenda.ts';
 
 /**
- * One facility command as the save bar sees it. The agenda refuses a draft built on an outdated revision, which is
- * the conflict the panel offers to resolve. A change the agenda parked for approval is `proposed`: it is not saved
- * and the same draft is never sent again. Every other failure leaves the draft for the next click on Uložit.
+ * One facility command as the save bar sees it. The agenda refuses a save whose revision is older than a change to
+ * the same record, which is the conflict the panel offers to resolve. That only protects a draft whose runner sends
+ * the revision the draft was built on (`useDraftBase`): the page's current runner sends the newest read's revision.
+ * A change the agenda parked for approval is `proposed`: it is not saved and the same draft is never sent again.
+ * Every other failure leaves the draft for the next click on Uložit.
  */
 export const facilitySaveOutcome = (run: Effect.Effect<CommandOutcome>): Effect.Effect<SaveOutcome> =>
   run.pipe(

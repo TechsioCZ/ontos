@@ -43,6 +43,7 @@ import {
 import type { ContractDraft, DocumentEditDraft } from './document-draft.ts';
 import { useEditGuard } from '../../../../ui/edit-guard.tsx';
 import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
+import { useDraftBase } from '../../../../ui/draft-base.ts';
 import {
   documentCategories,
   FileTypeIcon,
@@ -621,6 +622,8 @@ const DocumentEditPanel = ({
   const invoices = useInvoiceOptions();
   const [draft, setDraft] = useState<DocumentEditDraft>(() => documentEditDraftOf(document));
   const problems = documentEditProblems(draft);
+  // Saves carry the revision of the read the draft was built on, so someone else's newer change refuses them.
+  const base = useDraftBase(document, run);
   const record = useDraftSave<DocumentEditDraft, never>({
     equals: sameDocumentEditDraft,
     isValid: (value) => Option.isSome(documentUpdateCommandOf(document.id, value)),
@@ -628,9 +631,19 @@ const DocumentEditPanel = ({
     save: (value) =>
       Option.match(documentUpdateCommandOf(document.id, value), {
         onNone: () => Effect.succeed<SaveOutcome>('failed'),
-        onSome: (command) => facilitySaveOutcome(run(command)),
+        onSome: (command) => base.confirm(facilitySaveOutcome(base.run(command))),
       }),
     value: draft,
+  });
+  base.sync({
+    onAdopt: () => {
+      const stored = documentEditDraftOf(document);
+      if (!sameDocumentEditDraft(stored, draft)) {
+        record.adopt(stored);
+        setDraft(stored);
+      }
+    },
+    settled: !record.pending && sameDocumentEditDraft(draft, record.confirmed),
   });
   const update = (patch: Partial<DocumentEditDraft>) => setDraft((current) => ({ ...current, ...patch }));
   const setTerm = (key: keyof ContractDraft) => (value: string) =>
@@ -653,6 +666,7 @@ const DocumentEditPanel = ({
   const handleSave = record.save;
   const handleReloadLatest = () => {
     const current = documentEditDraftOf(document);
+    base.rebase();
     record.adopt(current);
     setDraft(current);
   };
