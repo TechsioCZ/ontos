@@ -617,9 +617,8 @@ const contributionOf = (
       path: authored.approvalsPage.path,
     };
   }
-  if (Object.keys(commandActions).length > 0) {
-    contribution.commandActions = commandActions;
-  }
+  // Always published, `{}` without command unions: an absent map marks a stale contract the platform refuses.
+  contribution.commandActions = commandActions;
   if (authored.commandFieldLabels !== undefined) {
     contribution.commandFieldLabels = { ...authored.commandFieldLabels };
   }

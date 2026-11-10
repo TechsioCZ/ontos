@@ -161,6 +161,12 @@ const submitTracedProposals = Effect.fn('AgentPlatform.submitTracedProposals')(f
     if (!modules.access.has(module.moduleKey)) {
       return yield* new AgentPlatformForbidden({ reason: `Agent nemá přístup k modulu ${module.label}.` });
     }
+    if (composedModule.commandActions === undefined) {
+      // A stale contract publishes no command map: which Action owns which command is unknown, so nothing passes.
+      return yield* new AgentPlatformInvalid({
+        reason: `Modul ${module.label} teď návrhy agentů nepřijímá: jeho nasazení nezveřejňuje, která akce provádí který příkaz.`,
+      });
+    }
     const actionSlug = proposal.actionSlug ?? DEFAULT_ACTION_SLUG;
     // A tagged command only for the Action whose command union accepts it; an untagged payload only for an Action
     // without one. The caller was authorized for exactly this Action, and approval runs exactly this Action.

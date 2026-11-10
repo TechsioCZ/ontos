@@ -139,7 +139,8 @@ export type OntosMcpToolCatalogReference = typeof OntosMcpToolCatalogReferenceSc
 /**
  * Every command tag of the module's command-union Actions (`{ command, expectedRevision }`), hidden commands
  * included, with the slugs of the Actions whose command union accepts it. Derived from the published Action payloads,
- * so the platform addresses a stored command to the Action that owns it without naming any module.
+ * so the platform addresses a stored command to the Action that owns it without naming any module. Always published
+ * (`{}` without command unions); a contract without it is stale and its module accepts no proposal.
  */
 export const OntosMcpCommandActionsSchema = Schema.Record(
   nonEmpty,
@@ -161,10 +162,29 @@ export const commandActionSlugsOf = (
 export const isCommandUnionAction = (commandActions: OntosMcpCommandActions | undefined, actionSlug: string): boolean =>
   Object.values(commandActions ?? {}).some((slugs) => slugs.includes(actionSlug));
 
+/** A payload that is itself a command envelope: a `command` object carrying a `_tag`, revision or not. */
+const isCommandEnvelope = Schema.is(Schema.Struct({ command: Schema.Struct({ _tag: Schema.Json }) }));
+
+/**
+ * Whether `payload` may run as the module's named Action `actionSlug` as is. Only with the module's published
+ * command map (an absent map is a stale contract: nothing is known, so nothing passes), only for an Action without a
+ * command union, and never for a payload that wraps a command envelope itself: a command is valid only tagged, on
+ * the Action whose published union owns its tag.
+ */
+export const isNamedActionPayload = (
+  commandActions: OntosMcpCommandActions | undefined,
+  actionSlug: string,
+  payload: Readonly<Record<string, Schema.Json>>,
+): boolean =>
+  commandActions !== undefined &&
+  Predicate.isUndefined(payload['_tag']) &&
+  !isCommandEnvelope(payload) &&
+  !isCommandUnionAction(commandActions, actionSlug);
+
 /**
  * Whether an agent may propose `command` for the module's Action `actionSlug`: a tagged command only for an Action
- * whose command union accepts that tag (never an AI change decision), an untagged payload only for an Action that has
- * no command union.
+ * whose published command union accepts that tag (never an AI change decision), an untagged payload only as a
+ * {@link isNamedActionPayload}. A module without a published command map accepts no proposal.
  */
 export const isProposableModuleCommand = (
   commandActions: OntosMcpCommandActions | undefined,
@@ -173,7 +193,7 @@ export const isProposableModuleCommand = (
 ): boolean => {
   const tag = command['_tag'];
   if (Predicate.isUndefined(tag)) {
-    return !isCommandUnionAction(commandActions, actionSlug);
+    return isNamedActionPayload(commandActions, actionSlug, command);
   }
   return Match.value(tag).pipe(
     Match.when(
@@ -206,7 +226,7 @@ export const OntosMcpContributionSchema = Schema.Struct({
   approvalsPage: Schema.optionalKey(OntosMcpApprovalsPageSchema),
   /** Proposals for this module may go to the platform approval queue („Ke schválení“). */
   approvals: Schema.Boolean,
-  /** See {@link OntosMcpCommandActionsSchema}; absent when the module publishes no command-union Action. */
+  /** See {@link OntosMcpCommandActionsSchema}; absent only in a stale contract, whose module accepts no proposal. */
   commandActions: Schema.optionalKey(OntosMcpCommandActionsSchema),
   commandFieldLabels: Schema.optionalKey(OntosMcpCommandFieldLabelsSchema),
   description: OntosMcpTextSchema,

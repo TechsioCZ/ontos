@@ -167,11 +167,32 @@ it.effect('runs a module undo command on its owning Action, not the approved one
   }),
 );
 
-it.effect('refuses a tagged command when the module publishes no command union', () =>
-  Effect.gen(function* noUnions() {
+it.effect('refuses every command, tagged or named, when the module contract publishes no command map', () =>
+  Effect.gen(function* staleContract() {
     state.published = false;
-    const outcome = yield* run({ _tag: 'CreateProduct', name: 'Mug' }, { exact: 'apply-command' });
-    expect(outcome).toMatchObject({ ok: false, status: 400 });
+    for (const [command, exact] of [
+      [{ _tag: 'CreateProduct', name: 'Mug' }, 'apply-command'],
+      [{ name: 'Acme', partyId: 'party-1' }, 'update-party'],
+    ] as const) {
+      expect(yield* run(command, { exact })).toMatchObject({ ok: false, status: 400 });
+    }
+    expect(state.sent).toEqual([]);
+  }),
+);
+
+it.effect('never posts a self-wrapped command envelope as a named Action payload', () =>
+  Effect.gen(function* selfWrapped() {
+    const decision = { _tag: 'AiDecideChanges', changeIds: ['c-1'], decision: 'approve' };
+    for (const [command, exact] of [
+      // The human-only decision, wrapped by the proposer, on its owning Action or on a named one.
+      [{ command: decision, expectedRevision: 3 }, 'review-changes'],
+      [{ command: decision }, 'update-party'],
+      // An ordinary command is valid only tagged, on the Action that owns it.
+      [{ command: { _tag: 'CreateProduct', name: 'Mug' }, expectedRevision: 1 }, 'apply-command'],
+    ] as const) {
+      expect(yield* run(command, { exact })).toMatchObject({ ok: false, status: 400 });
+      expect(yield* run(command, { preferred: exact })).toMatchObject({ ok: false, status: 400 });
+    }
     expect(state.sent).toEqual([]);
   }),
 );
@@ -193,4 +214,12 @@ it('selects the owning Action from the published command unions only', () => {
   });
   expect(commandTargetOf(commandActions, { name: 'x' }, {})).toBeUndefined();
   expect(commandTargetOf(commandActions, { _tag: 'Unknown' }, {})).toBeUndefined();
+  expect(commandTargetOf(undefined, { name: 'x' }, { exact: 'update-party' })).toBeUndefined();
+  expect(
+    commandTargetOf(
+      commandActions,
+      { command: { _tag: 'ChangePrice' }, expectedRevision: 1 },
+      { exact: 'update-party' },
+    ),
+  ).toBeUndefined();
 });

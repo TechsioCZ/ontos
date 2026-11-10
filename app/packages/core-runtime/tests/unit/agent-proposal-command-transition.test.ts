@@ -3,7 +3,11 @@ import { expect, it } from 'effect-rstest';
 
 import { AgentProposalCommandPayloadSchema } from '../../src/auth/agent-proposal-command-contract.ts';
 import { AgentProposalCommandError } from '../../src/auth/agent-proposal-command-error.ts';
-import { commandActionSlugOf, isProposableModuleCommand } from '../../src/modules/mcp-contribution.ts';
+import {
+  commandActionSlugOf,
+  isNamedActionPayload,
+  isProposableModuleCommand,
+} from '../../src/modules/mcp-contribution.ts';
 import { planProposalTransition, proposalReservationQuery } from '../../src/auth/agent-proposal-command-transition.ts';
 import { mutateAgentProposalsAction } from '../../src/modules/actions/mutate-agent-proposals.action.ts';
 import {
@@ -76,8 +80,28 @@ it('allows a tagged command only on the Action whose union owns it, never human 
   expect(isProposableModuleCommand(commandActions, 'manage', { title: 'New' })).toBe(false);
   expect(isProposableModuleCommand(commandActions, 'apply-command', { _tag: '' })).toBe(false);
   expect(isProposableModuleCommand(commandActions, 'review', { _tag: 'AiDecideChanges' })).toBe(false);
+  expect(isProposableModuleCommand({}, 'update', { title: 'New' })).toBe(true);
+});
+
+it('never accepts a self-wrapped command envelope as a named Action payload, nor anything without a map', () => {
+  const commandActions = { AiDecideChanges: ['review'], CreateTask: ['apply-command'] };
+  const decision = { command: { _tag: 'AiDecideChanges', changeIds: ['c-1'], decision: 'approve' } };
+  // The human-only decision stays unproposable in every shape, revision or not, on its own Action or any other.
+  for (const slug of ['review', 'update']) {
+    expect(isProposableModuleCommand(commandActions, slug, decision)).toBe(false);
+    expect(isProposableModuleCommand(commandActions, slug, { ...decision, expectedRevision: 3 })).toBe(false);
+    expect(isNamedActionPayload(commandActions, slug, decision)).toBe(false);
+  }
+  // An ordinary command must be sent tagged, on the Action that owns it.
+  const wrapped = { command: { _tag: 'CreateTask', title: 'New' }, expectedRevision: 1 };
+  expect(isProposableModuleCommand(commandActions, 'apply-command', wrapped)).toBe(false);
+  expect(isProposableModuleCommand(commandActions, 'update', wrapped)).toBe(false);
+  // A genuine named payload may carry a `command` field that is not a tagged command.
+  expect(isProposableModuleCommand(commandActions, 'update', { command: 'reorder', title: 'New' })).toBe(true);
+  // Without a published map (a stale contract) nothing passes, tagged or not.
   expect(isProposableModuleCommand(undefined, 'apply-command', { _tag: 'CreateTask' })).toBe(false);
-  expect(isProposableModuleCommand(undefined, 'update', { title: 'New' })).toBe(true);
+  expect(isProposableModuleCommand(undefined, 'update', { title: 'New' })).toBe(false);
+  expect(isNamedActionPayload(undefined, 'update', { title: 'New' })).toBe(false);
 });
 
 it('resolves a module-supplied command to its owning Action, the preferred one first', () => {

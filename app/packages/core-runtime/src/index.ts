@@ -1057,6 +1057,7 @@ export {
   commandActionSlugsOf,
   defineOntosMcpContribution,
   isCommandUnionAction,
+  isNamedActionPayload,
   isProposableModuleCommand,
 } from './modules/mcp-contribution.ts';
 export type {

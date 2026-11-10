@@ -67,7 +67,8 @@ const taskAction = (slug: string) =>
 
 const compositionFixture = (
   slugs: readonly string[] = ['update'],
-  commandActions?: Readonly<Record<string, readonly string[]>>,
+  /** `stale`: a contract from before the module published its command map. */
+  commandActions: Readonly<Record<string, readonly string[]>> | 'stale' = {},
 ) => {
   const base = makeOutboxWorkerComposition([{ appId: 'tasks', moduleId: 'work.tasks' }]);
   const release = base.modules.at(0);
@@ -81,7 +82,7 @@ const compositionFixture = (
     label: { cs: 'Tasks', en: 'Tasks' },
     toolCatalog: { path: '/.well-known/ontos-module-mcp-tools.json', sha256: 'a'.repeat(64), toolCount: 0 },
   } as const;
-  const mcp = commandActions === undefined ? tasksMcp : { ...tasksMcp, commandActions };
+  const mcp = commandActions === 'stale' ? tasksMcp : { ...tasksMcp, commandActions };
   const codec = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
   const contract = Schema.decodeSync(codec)(release.contractDocument);
   const contractDocument = Schema.encodeSync(codec)(
@@ -317,17 +318,55 @@ for (const propose of ['allowed', 'denied'] as const) {
   );
 }
 
-// `apply-command` keeps creation only; renaming moved to its own command-union Action `manage`.
-const splitComposition = compositionFixture(['apply-command', 'manage', 'update'], {
+// `apply-command` keeps creation only; renaming moved to its own command-union Action `manage`, and decisions on the
+// module's own AI changes to `review`.
+const splitComposition = compositionFixture(['apply-command', 'manage', 'review', 'update'], {
+  AiDecideChanges: ['review'],
   CreateTask: ['apply-command'],
   RenameTask: ['manage'],
 });
-for (const [name, actionSlug, tag, expectedActions] of [
-  ['a split command on the Action that owns it', 'manage', 'RenameTask', ['work.tasks.manage']],
-  ['a command of an unsplit apply-command', 'apply-command', 'CreateTask', ['work.tasks.apply-command']],
-  ['a split command addressed to apply-command', 'apply-command', 'RenameTask', []],
-  ['a command its named Action does not own', 'manage', 'CreateTask', []],
-  ['a tagged command on a named Action', 'update', 'RenameTask', []],
+const decision = { _tag: 'AiDecideChanges', changeIds: ['c-1'], decision: 'approve' };
+for (const [name, actionSlug, command, expectedActions, fixture] of [
+  [
+    'a split command on the Action that owns it',
+    'manage',
+    { _tag: 'RenameTask', title: 'New' },
+    ['work.tasks.manage'],
+    'published',
+  ],
+  [
+    'a command of an unsplit apply-command',
+    'apply-command',
+    { _tag: 'CreateTask', title: 'New' },
+    ['work.tasks.apply-command'],
+    'published',
+  ],
+  ['a named Action payload', 'update', { title: 'New' }, ['work.tasks.update'], 'published'],
+  [
+    'a split command addressed to apply-command',
+    'apply-command',
+    { _tag: 'RenameTask', title: 'New' },
+    [],
+    'published',
+  ],
+  ['a command its named Action does not own', 'manage', { _tag: 'CreateTask', title: 'New' }, [], 'published'],
+  ['a tagged command on a named Action', 'update', { _tag: 'RenameTask', title: 'New' }, [], 'published'],
+  [
+    'a self-wrapped human-only decision on its Action',
+    'review',
+    { command: decision, expectedRevision: 3 },
+    [],
+    'published',
+  ],
+  ['a self-wrapped human-only decision on a named Action', 'update', { command: decision }, [], 'published'],
+  [
+    'a self-wrapped ordinary command',
+    'apply-command',
+    { command: { _tag: 'CreateTask' }, expectedRevision: 1 },
+    [],
+    'published',
+  ],
+  ['any payload of a module whose contract has no command map', 'update', { title: 'New' }, [], 'stale'],
 ] as const) {
   it.effect(`agent submission of ${name} asks only the owning Action`, () =>
     Effect.gen(function* splitSubmit() {
@@ -340,13 +379,13 @@ for (const [name, actionSlug, tag, expectedActions] of [
           {
             actionSlug,
             appId: 'tasks',
-            command: { _tag: tag, title: 'New' },
+            command,
             diff: [],
             moduleKey: 'work.tasks',
             proposalId,
             reason: 'Requested',
             risk: 'low' as const,
-            summary: 'Rename',
+            summary: 'Change',
             targetLabel: 'Task',
           },
         ],
@@ -389,7 +428,7 @@ for (const [name, actionSlug, tag, expectedActions] of [
               },
               checkActionProposalPermission: forbiddenContext,
             },
-            splitComposition,
+            fixture === 'published' ? splitComposition : compositionFixture(['update'], fixture),
           ),
         ),
       );

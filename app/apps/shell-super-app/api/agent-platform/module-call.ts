@@ -7,7 +7,7 @@ import type { AgentCommand } from '@app/shared-contracts/agent-proposals';
 import {
   commandActionSlugOf,
   commandActionSlugsOf,
-  isCommandUnionAction,
+  isNamedActionPayload,
 } from '@app/core-runtime/modules/mcp-contribution';
 import { Data, Effect, Option, Predicate, Result, Schema } from 'effect';
 
@@ -214,7 +214,8 @@ const failed = (message: string, status: number, code?: string): ModuleCommandOu
  * Which module Action runs a command. `exact`: the approved proposal's own Action, authorized at submit; it runs
  * exactly that Action or nothing. Otherwise the module supplied the command itself (undo plan, follow-up, AI change
  * decision): the Action whose command union accepts its tag, `preferred` first; an untagged command runs as
- * `preferred`, a named Action.
+ * `preferred`, a named Action. Untagged payloads pass only as {@link isNamedActionPayload}: never a self-wrapped
+ * command envelope, never without the module's published command map.
  */
 export type ModuleCommandAction = { readonly exact: string } | { readonly preferred?: string };
 
@@ -232,20 +233,18 @@ export const commandTargetOf = (
 ): CommandTarget | undefined => {
   const tag = command['_tag'];
   if ('exact' in action) {
-    if (isCommandUnionAction(commandActions, action.exact)) {
-      return Predicate.isString(tag) && commandActionSlugsOf(commandActions, tag).includes(action.exact)
-        ? { envelope: true, slug: action.exact }
-        : undefined;
+    if (isNamedActionPayload(commandActions, action.exact, command)) {
+      return { envelope: false, slug: action.exact };
     }
-    return Predicate.isUndefined(tag) ? { envelope: false, slug: action.exact } : undefined;
+    return Predicate.isString(tag) && commandActionSlugsOf(commandActions, tag).includes(action.exact)
+      ? { envelope: true, slug: action.exact }
+      : undefined;
   }
   if (Predicate.isString(tag)) {
     const slug = commandActionSlugOf(commandActions, tag, action.preferred);
     return slug === undefined ? undefined : { envelope: true, slug };
   }
-  return Predicate.isUndefined(tag) &&
-    action.preferred !== undefined &&
-    !isCommandUnionAction(commandActions, action.preferred)
+  return action.preferred !== undefined && isNamedActionPayload(commandActions, action.preferred, command)
     ? { envelope: false, slug: action.preferred }
     : undefined;
 };
