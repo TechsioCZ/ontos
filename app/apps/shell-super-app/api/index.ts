@@ -2891,6 +2891,14 @@ export const agentPlatformKeyCaller = Effect.fn('shell.agentPlatform.keyCaller')
       ApiKeyStateInconsistentError: () => failIdentityProblem(shellAuthenticationRequiredProblem()),
     }),
   );
+  // A module credential acts only through the delegated endpoint, never as an agent of its own.
+  yield* admitIntegrationCredential(verified.providerKeyId).pipe(
+    Effect.catchTag('GatewayDelegationError', (error) =>
+      failIdentityProblem(
+        error.code === 'forbidden' ? shellTargetForbiddenProblem() : shellCapabilityUnavailableProblem(),
+      ),
+    ),
+  );
   const identity = yield* resolver.resolveBetterAuthApiKey(verified.providerKeyId).pipe(
     Effect.catchTags({
       PrincipalBindingAmbiguousError: () => failIdentityProblem(shellAuthenticationRequiredProblem()),
