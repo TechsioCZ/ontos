@@ -249,6 +249,33 @@ const legalEntitySelectionOptions = {
         : Effect.die('missing fixture legal entity'),
   },
 } as const;
+/**
+ * A signed-in person who is not an administrator. Identity administration is definitely denied for the tenant
+ * (`manage_identity`) and the company (`manage_people`); company selection and the other permissions answer as above.
+ */
+const nonAdministratorContextAccess = {
+  ...legalEntitySelectionOptions.contextAccess,
+  legalEntities: ({
+    legalEntityIds,
+    permission,
+  }: {
+    readonly legalEntityIds: readonly string[];
+    readonly permission?: string;
+  }) =>
+    Effect.succeed(
+      legalEntityIds.map((key) => ({
+        decision: permission === 'manage_people' ? ('denied' as const) : ('allowed' as const),
+        key,
+      })),
+    ),
+  tenants: ({ permission, tenantIds }: { readonly permission: string; readonly tenantIds: readonly string[] }) =>
+    Effect.succeed(
+      tenantIds.map((key) => ({
+        decision: permission === 'manage_identity' ? ('denied' as const) : ('allowed' as const),
+        key,
+      })),
+    ),
+};
 const contextAccessLayer = Layer.mergeAll(
   Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
   Layer.succeed(ContextAccess, legalEntitySelectionOptions.contextAccess),
@@ -1156,7 +1183,7 @@ it.live(
       false,
       Layer.mergeAll(
         Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
-        Layer.succeed(ContextAccess, legalEntitySelectionOptions.contextAccess),
+        Layer.succeed(ContextAccess, nonAdministratorContextAccess),
       ),
       undefined,
       undefined,
@@ -1868,6 +1895,8 @@ it.live(
     // Ordered child-before-parent within the owned fixture rows.
     const cleanup = Effect.fnUntraced(function* runIntegration7() {
       yield* coreDatabase.delete(dataAccessEvents).where(inArray(dataAccessEvents.tenantId, fixtureTenants));
+      // Audit rows reference the bindings they were written under (restrict), so they go before the bindings.
+      yield* coreDatabase.delete(auditEvents).where(inArray(auditEvents.tenantId, fixtureTenants));
       const existingUsers = yield* authDatabase.select({ id: user.id }).from(user).where(eq(user.email, multiEmail));
       const existingUserIds = existingUsers.map(({ id }) => id);
       if (existingUserIds.length > 0) {
@@ -2432,6 +2461,8 @@ it.live(
     // resolver can still prove that an existing selected session rejects a genuinely missing row.
     yield* purgeFixtureRows([
       coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, secondTenantId)),
+      // Audit rows reference the bindings they were written under (restrict), so they go before the bindings.
+      coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, secondTenantId)),
       coreDatabase.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, secondTenantId)),
     ]);
     yield* assertSessionForbidden(
