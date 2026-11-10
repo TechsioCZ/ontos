@@ -7,10 +7,13 @@ import type { Dispatch, SetStateAction } from 'react';
 
 /**
  * What the save bar shows. `dirty` is a changed draft that can be saved, `invalid` a changed draft the form's own
- * validation holds back; `proposed` means the draft was accepted for approval and is not saved yet.
+ * validation holds back; `proposed` means the draft was accepted for approval and is not saved yet. `ready` is a form
+ * that opened with valid values Uložit can send at once (a suggested value) and nothing typed yet: savable, but not
+ * unsaved input.
  */
 export const SaveStateSchema = Schema.Literals([
   'idle',
+  'ready',
   'dirty',
   'invalid',
   'saving',
@@ -52,10 +55,15 @@ export const draftPending = (status: SaveState): boolean => status !== 'idle' &&
  * Statuses in which leaving the form would lose something typed. A draft parked for approval is not one of them:
  * it was handed over and is never sent again.
  */
-export const draftUnsaved = (status: SaveState): boolean => draftPending(status) && status !== 'proposed';
+export const draftUnsaved = (status: SaveState): boolean =>
+  draftPending(status) && status !== 'proposed' && status !== 'ready';
 
-/** Statuses in which the Save button sends the draft: a changed, valid draft, or one whose last save failed. */
-export const draftSavable = (status: SaveState): boolean => status === 'dirty' || status === 'error';
+/**
+ * Statuses in which the Save button sends the draft: a changed, valid draft (typed, or the values the form opened
+ * with), or one whose last save failed.
+ */
+export const draftSavable = (status: SaveState): boolean =>
+  status === 'dirty' || status === 'ready' || status === 'error';
 
 type Fork<R> = <A>(effect: Effect.Effect<A, never, R>) => Fiber.Fiber<A>;
 
@@ -472,7 +480,9 @@ export const useDraftSave = <V, R>(options: UseDraftSaveOptions<V, R>): DraftSav
   // Only a changed draft can be untouched: once a save of the opening values ran, its result is the user's.
   const untouched =
     options.opened !== undefined && (status === 'dirty' || status === 'invalid') && same(options.value, options.opened);
-  return { ...record, dirty: record.dirty && options.open !== false && !untouched };
+  // Valid opening values are savable but not input: the save bar says nothing about unsaved changes for them.
+  const shown: SaveState = untouched && status === 'dirty' ? 'ready' : status;
+  return { ...record, dirty: record.dirty && options.open !== false && !untouched, status: shown };
 };
 
 export interface UseRecordDraftOptions<V, R> extends Omit<DraftSaveOptions<V, R>, 'save'> {

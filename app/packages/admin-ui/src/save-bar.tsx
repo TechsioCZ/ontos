@@ -29,8 +29,8 @@ type SaveStatusProps = Pick<SaveBarProps, 'error' | 'onReloadLatest' | 'size' | 
 
 const SaveStatus = ({ error, labels, onReloadLatest, size = 'md', status }: SaveStatusProps) =>
   Match.value(status).pipe(
-    // The button itself shows a running save.
-    Match.whenOr('idle', 'saving', () => null),
+    // The button itself shows a running save. Values a form opened with are not unsaved input: nothing to say.
+    Match.whenOr('idle', 'ready', 'saving', () => null),
     Match.when('dirty', () => <StatusText size="sm">{labels.unsaved}</StatusText>),
     Match.when('saved', () => (
       <StatusText showIcon size="sm" status="success">
@@ -66,7 +66,7 @@ const SaveStatus = ({ error, labels, onReloadLatest, size = 'md', status }: Save
  * The save control of an edit form: one primary Save button with the status of the draft next to it. Put it last in
  * the form's footer (in a side panel, last in the panel's `actions`).
  *
- * The button is enabled only for a changed, valid draft and after a failed save, shows the loading state while the
+ * The button is enabled only for a changed, valid draft (`ready` included) and after a failed save, shows the loading state while the
  * save runs, and one click sends one save. Nothing else in a form may save.
  */
 export const SaveBar = ({ error, labels = saveLabels, onReloadLatest, onSave, size = 'md', status }: SaveBarProps) => (
