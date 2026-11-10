@@ -185,6 +185,7 @@ const connection = (grantId: string): ConnectionSummary =>
     legalEntityId: principal.legalEntityId,
     legalName: 'Company',
     limits: { maxWritePolicy: 'read_only', modules: [] },
+    live: true,
     modules: [],
     profileId: 'test-profile',
     revokedAt: null,
