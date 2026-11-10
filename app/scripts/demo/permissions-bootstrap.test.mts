@@ -1,10 +1,16 @@
+import { readFileSync } from 'node:fs';
+
+import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+
+import { WorkloadKeySchema } from '../../packages/core-runtime/src/authorization/access-declaration.ts';
 
 import {
   IDENTITY_PROVIDER_WORKLOAD,
   CRM_PARTY_INTAKE_WORKLOAD,
   STOREFRONT_CLIENT_WORKLOAD,
   STOREFRONT_INQUIRY_WORKLOAD,
+  STOREFRONT_MERCHANDISE_WORKLOAD,
   agentBotPrincipal,
   akrosStorefrontPrincipal,
   commercePortalPrincipal,
@@ -86,11 +92,19 @@ it('binds only the declared workload keys, and only for principals whose caller 
   expect(keys).toEqual(
     new Set([
       STOREFRONT_CLIENT_WORKLOAD,
+      STOREFRONT_MERCHANDISE_WORKLOAD,
       STOREFRONT_INQUIRY_WORKLOAD,
       IDENTITY_PROVIDER_WORKLOAD,
       CRM_PARTY_INTAKE_WORKLOAD,
     ]),
   );
+  // Every key is one a carrier of this release declares, in that carrier module's own namespace.
+  const catalog = Schema.decodeUnknownSync(
+    Schema.fromJsonString(Schema.Struct({ declaredWorkloadKeys: Schema.Array(WorkloadKeySchema) })),
+  )(readFileSync(new URL('../../topology/authorization-catalog.json', import.meta.url), 'utf-8'));
+  for (const key of keys) {
+    expect(catalog.declaredWorkloadKeys).toContain(key);
+  }
   const principals = new Set(bindings.map((binding) => binding.principalId));
   expect(principals).toEqual(
     new Set([
@@ -108,6 +122,30 @@ it('binds only the declared workload keys, and only for principals whose caller 
   expect(
     bindings.filter((binding) => binding.workloadKey === STOREFRONT_INQUIRY_WORKLOAD).map((b) => b.principalId),
   ).toEqual([akrosStorefrontPrincipal.principalId]);
+});
+
+it('binds each storefront to what its BFF calls, registered for its own company as on stage', () => {
+  const bindings = reviewedWorkloadBindings();
+  const of = (principalId: string) =>
+    bindings
+      .filter((binding) => binding.principalId === principalId)
+      .map(({ legalEntityId, workloadKey }) => ({ legalEntityId, workloadKey }));
+  // Merchandise records/media reads and the guest order, the market catalog and portal journey, the inquiry form.
+  expect(new Set(of(akrosStorefrontPrincipal.principalId).map(({ workloadKey }) => workloadKey))).toEqual(
+    new Set([STOREFRONT_CLIENT_WORKLOAD, STOREFRONT_MERCHANDISE_WORKLOAD, STOREFRONT_INQUIRY_WORKLOAD]),
+  );
+  expect(new Set(of(storefrontPrincipal.principalId).map(({ workloadKey }) => workloadKey))).toEqual(
+    new Set([STOREFRONT_CLIENT_WORKLOAD, STOREFRONT_MERCHANDISE_WORKLOAD]),
+  );
+  for (const principal of [storefrontPrincipal, akrosStorefrontPrincipal]) {
+    for (const { legalEntityId } of of(principal.principalId)) {
+      expect(legalEntityId).toBe(principal.legalEntityId);
+    }
+  }
+  // Non-storefront workloads keep acting across the tenant: no company is registered for them.
+  for (const principal of [commercePortalPrincipal, crmPartyIntakePrincipal]) {
+    expect(of(principal.principalId).every(({ legalEntityId }) => legalEntityId === undefined)).toBe(true);
+  }
 });
 
 it('leaves every other service principal unbound and names its carrier gap', () => {

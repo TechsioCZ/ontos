@@ -18,6 +18,8 @@ import {
   IDENTITY_PROVIDER_WORKLOAD,
   CRM_PARTY_INTAKE_WORKLOAD,
   STOREFRONT_CLIENT_WORKLOAD,
+  STOREFRONT_INQUIRY_WORKLOAD,
+  STOREFRONT_MERCHANDISE_WORKLOAD,
   agentBotPrincipal,
   akrosStorefrontPrincipal,
   commercePortalPrincipal,
@@ -26,7 +28,7 @@ import {
   reviewedWorkloadBindings,
   storefrontPrincipal,
 } from '../demo/permissions.mts';
-import { demoTenantId } from '../demo/fixture-ids.mts';
+import { demoLegalEntityId, demoTenantId } from '../demo/fixture-ids.mts';
 
 /*
  * The registered workload rule, proved against the real enforcement seam (O73). The reviewed demo bindings
@@ -36,7 +38,8 @@ import { demoTenantId } from '../demo/fixture-ids.mts';
  *  - a service principal is admitted only on a carrier that declares one of its bound keys;
  *  - an unrelated declared key, a declaration carrier and an unbound principal are all refused;
  *  - a person is never admitted on a workload carrier;
- *  - the registry answers only the request's own tenant, so a binding never crosses a tenant.
+ *  - the registry answers only the request's own tenant, so a binding never crosses a tenant;
+ *  - a storefront is registered for its own company (D6), so a company-scoped call elsewhere is refused.
  */
 const foreignTenantId = '70000000-0000-4000-8000-000000000099';
 const workloadUnbound = 'deny.workload_unbound';
@@ -48,6 +51,14 @@ const storefrontCarrier: AccessWorkload = {
 const identityProviderCarrier: AccessWorkload = {
   reason: 'The external identity provider resolves the binding of the subject it is admitting',
   workloads: [WorkloadKeySchema.make(IDENTITY_PROVIDER_WORKLOAD)],
+};
+const merchandiseCarrier: AccessWorkload = {
+  reason: 'The registered Storefront BFF reads published catalog data and places its own guest orders',
+  workloads: [WorkloadKeySchema.make(STOREFRONT_MERCHANDISE_WORKLOAD)],
+};
+const inquiryCarrier: AccessWorkload = {
+  reason: 'A storefront files a customer inquiry as a Work Task',
+  workloads: [WorkloadKeySchema.make(STOREFRONT_INQUIRY_WORKLOAD)],
 };
 const unrelatedCarrier: AccessWorkload = {
   reason: 'A carrier no reviewed workload declares',
@@ -76,15 +87,39 @@ const boundKeysOf = (tenantId: string, principalId: string): ReadonlySet<string>
       : [],
   );
 
-const scopeOf = (principalId: string, tenantId: string = demoTenantId): OperationalScope => ({
-  authBindingId: `fixture-binding-${principalId}`,
-  authContextRef: `fixture:${principalId}`,
-  authMethod: 'api_key',
-  correlationId: 'workload-binding-denial',
-  legalEntityId: '71000000-0000-4000-8000-000000000020',
-  principalId,
-  tenantId,
-});
+/** The companies the reviewed bindings register for a principal (D6), as the Drizzle reader answers them. */
+const registeredCompaniesOf = (tenantId: string, principalId: string): ReadonlySet<string> =>
+  new Set(
+    tenantId === demoTenantId
+      ? reviewedWorkloadBindings().flatMap((binding) =>
+          binding.principalId === principalId && binding.legalEntityId !== undefined ? [binding.legalEntityId] : [],
+        )
+      : [],
+  );
+
+/**
+ * A storefront calls in the company it is registered for. An unregistered workload is asked without a company,
+ * which isolates its key binding (O73) from the company registration (D6); a direct company-scoped call of a
+ * workload is admitted only in a registered company, which the storefront case below proves.
+ */
+const homeCompanyOf = (principalId: string): string | undefined =>
+  [...registeredCompaniesOf(demoTenantId, principalId)][0];
+
+const scopeOf = (
+  principalId: string,
+  tenantId: string = demoTenantId,
+  legalEntityId: string | undefined = homeCompanyOf(principalId),
+): OperationalScope => {
+  const scope: OperationalScope = {
+    authBindingId: `fixture-binding-${principalId}`,
+    authContextRef: `fixture:${principalId}`,
+    authMethod: 'api_key',
+    correlationId: 'workload-binding-denial',
+    principalId,
+    tenantId,
+  };
+  return legalEntityId === undefined ? scope : { ...scope, legalEntityId };
+};
 
 const ports: AccessDecisionPorts = {
   authorityFor: () => ({
@@ -99,11 +134,13 @@ const ports: AccessDecisionPorts = {
   principalKinds: { readKind: (query) => Effect.succeed(kindOf(query.principalId)) },
   workloadBindings: {
     readActiveWorkloadKeys: (query) => Effect.succeed(boundKeysOf(query.tenantId, query.principalId)),
-    readCompanyDeclaration: () =>
-      Effect.succeed({
-        activeCompanyIds: new Set([LegalEntityIdSchema.make('71000000-0000-4000-8000-000000000020')]),
-        pinned: true,
-      }),
+    readCompanyDeclaration: (query) => {
+      const companies = registeredCompaniesOf(query.tenantId, query.principalId);
+      return Effect.succeed({
+        activeCompanyIds: new Set([...companies].map((company) => LegalEntityIdSchema.make(company))),
+        pinned: companies.size > 0,
+      });
+    },
   },
 };
 
@@ -120,12 +157,16 @@ const declarationFor = (key: string): AccessDeclaration => ({
 const decideOn = (
   principalId: string,
   accessWorkload: AccessWorkload | undefined,
-  options: { readonly accessDeclaration?: { readonly key: string }; readonly tenantId?: string } = {},
+  options: {
+    readonly accessDeclaration?: { readonly key: string };
+    readonly legalEntityId?: string;
+    readonly tenantId?: string;
+  } = {},
 ) => {
   const question = {
     legalEntityScope: 'required' as const,
     now: new Date(0),
-    scope: scopeOf(principalId, options.tenantId),
+    scope: scopeOf(principalId, options.tenantId, options.legalEntityId),
   };
   if (accessWorkload === undefined) {
     if (options.accessDeclaration === undefined) {
@@ -158,6 +199,22 @@ it.effect('admits the portal on both of its declared keys, and the AKROS storefr
     expect((yield* decideOn(commercePortalPrincipal.principalId, storefrontCarrier)).outcome).toBe('ALLOWED');
     expect((yield* decideOn(commercePortalPrincipal.principalId, identityProviderCarrier)).outcome).toBe('ALLOWED');
     expect((yield* decideOn(akrosStorefrontPrincipal.principalId, storefrontCarrier)).outcome).toBe('ALLOWED');
+  }),
+);
+
+it.effect('admits each storefront on the merchandise carrier it calls, and only in its own company', () =>
+  Effect.gen(function* storefrontCompanies() {
+    for (const storefront of [storefrontPrincipal, akrosStorefrontPrincipal]) {
+      expect((yield* decideOn(storefront.principalId, merchandiseCarrier)).outcome).toBe('ALLOWED');
+      const elsewhere = yield* decideOn(storefront.principalId, merchandiseCarrier, {
+        legalEntityId: demoLegalEntityId,
+      });
+      expect(elsewhere.outcome).toBe('DENIED');
+      expect(codesOf(elsewhere)).toEqual([workloadUnbound]);
+    }
+    // Only ŠroubShop's storefront files inquiries; Kavárna's has no inquiry form and holds no such key.
+    expect((yield* decideOn(akrosStorefrontPrincipal.principalId, inquiryCarrier)).outcome).toBe('ALLOWED');
+    expect((yield* decideOn(storefrontPrincipal.principalId, inquiryCarrier)).outcome).toBe('DENIED');
   }),
 );
 
@@ -205,7 +262,9 @@ it.effect("keeps a binding inside its own tenant: another tenant holds none of t
     expect(decision.outcome).toBe('DENIED');
     expect(codesOf(decision)).toEqual([workloadUnbound]);
     // The registry the demo seeds names exactly one tenant, so the refusal above is the contract, not a stub.
-    expect(boundKeysOf(demoTenantId, storefrontPrincipal.principalId)).toEqual(new Set([STOREFRONT_CLIENT_WORKLOAD]));
+    expect(boundKeysOf(demoTenantId, storefrontPrincipal.principalId)).toEqual(
+      new Set([STOREFRONT_CLIENT_WORKLOAD, STOREFRONT_MERCHANDISE_WORKLOAD]),
+    );
     expect(boundKeysOf(foreignTenantId, storefrontPrincipal.principalId).size).toBe(0);
   }),
 );

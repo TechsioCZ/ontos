@@ -54,6 +54,8 @@ import {
 import type { MembershipKind } from '../src/access/intent/memberships.ts';
 import { AccessProjectionWriter, AccessProjectionWriterLive } from '../src/access/intent/projection-writer.ts';
 import { writeWorkloadBindings } from '../src/access/workloads/binding-store.ts';
+import { writeWorkloadCompanyBindings } from '../src/access/workloads/company-bindings.ts';
+import { AccessWorkloadCompanyBindingIdSchema } from '../src/access/workloads/company-store.ts';
 import { AccessWorkloadBindingIdSchema } from '../src/access/workloads/store.ts';
 import { TenantAccessBootstrap, TenantAccessBootstrapLive } from '../src/access/bootstrap/bootstrap-tenant-access.ts';
 import type { BootstrapScope } from '../src/access/bootstrap/persistence.ts';
@@ -145,7 +147,17 @@ const AccessFixtureSchema = Schema.Struct({
       legalEntityId: Schema.optionalKey(FixtureLegalEntityIdSchema),
     }),
   ),
-  workloads: Schema.Array(Schema.Struct({ principalId: FixturePrincipalIdSchema, workloadKey: WorkloadKeySchema })),
+  /**
+   * The registered machine workloads (O73). `legalEntityId` registers the binding for the one company the
+   * workload acts for (D6); a standalone workload is admitted on a company-scoped call only for that company.
+   */
+  workloads: Schema.Array(
+    Schema.Struct({
+      legalEntityId: Schema.optionalKey(FixtureLegalEntityIdSchema),
+      principalId: FixturePrincipalIdSchema,
+      workloadKey: WorkloadKeySchema,
+    }),
+  ),
 });
 
 /** The SQL company memberships the demo seed writes; a role assignment never creates one. */
@@ -435,6 +447,8 @@ const fixtureMembershipId = (
 ): string => stableUuid(['ontos.development.access.membership', tenantId, scopeId, kind, principalId].join(':'));
 const fixtureWorkloadBindingId = (tenantId: TenantId, principalId: PrincipalId, workloadKey: string): string =>
   stableUuid(['ontos.development.access.workload-binding', tenantId, principalId, workloadKey].join(':'));
+const fixtureWorkloadCompanyId = (tenantId: TenantId, bindingId: string, legalEntityId: string, part: string) =>
+  stableUuid(['ontos.development.access.workload-company', part, tenantId, bindingId, legalEntityId].join(':'));
 
 /** The company a reviewed membership names, or the tenant context when it names none. */
 const fixtureMembershipScope = (tenantId: TenantId, legalEntityId: LegalEntityId | undefined): BootstrapScope =>
@@ -653,6 +667,34 @@ const applyReviewedAccess = (
             principalId,
             tenantId,
             workloadKey: WorkloadKeySchema.make(workload.workloadKey),
+          };
+        }),
+      }).pipe(
+        Effect.mapError((cause) => new DevelopmentBootstrapError({ cause, reason: `${cause.code}: ${cause.reason}` })),
+      );
+    }
+    const registered = access.workloads.flatMap((workload) =>
+      workload.legalEntityId === undefined ? [] : [{ ...workload, legalEntityId: workload.legalEntityId }],
+    );
+    if (registered.length > 0) {
+      yield* writeWorkloadCompanyBindings({ enrollment, executor }, scope, {
+        bindings: registered.map((workload) => {
+          const bindingId = fixtureWorkloadBindingId(
+            tenantId,
+            PrincipalIdSchema.make(workload.principalId),
+            workload.workloadKey,
+          );
+          return {
+            companyBindingId: AccessWorkloadCompanyBindingIdSchema.make(
+              fixtureWorkloadCompanyId(tenantId, bindingId, workload.legalEntityId, 'binding'),
+            ),
+            createdAt: at,
+            incarnation: AccessWorkloadCompanyBindingIdSchema.make(
+              fixtureWorkloadCompanyId(tenantId, bindingId, workload.legalEntityId, 'incarnation'),
+            ),
+            legalEntityId: LegalEntityIdSchema.make(workload.legalEntityId),
+            tenantId,
+            workloadBindingId: AccessWorkloadBindingIdSchema.make(bindingId),
           };
         }),
       }).pipe(

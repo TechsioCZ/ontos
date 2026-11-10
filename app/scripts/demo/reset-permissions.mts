@@ -257,6 +257,7 @@ const ContextFixtureSchema = Schema.Struct({
     ),
     workloads: Schema.Array(
       Schema.Struct({
+        legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
         principalId: PrincipalIdSchema,
         workloadKey: Schema.toEncoded(Text.pipe(Schema.brand('WorkloadKey'))),
       }),

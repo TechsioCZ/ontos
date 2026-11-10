@@ -706,6 +706,8 @@ export const akrosStorefrontPrincipal = {
 
 /** The declared workload of the shared Storefront client (O73). */
 export const STOREFRONT_CLIENT_WORKLOAD = 'commerce.storefront-client';
+/** The declared workload of a storefront that reads the merchandise catalog and places its orders (O73). */
+export const STOREFRONT_MERCHANDISE_WORKLOAD = 'demo.storefront-client';
 /** The declared workload of a storefront that files customer inquiries as Work Tasks (O73). */
 export const STOREFRONT_INQUIRY_WORKLOAD = 'work.storefront-client';
 /** The declared workload of the external identity provider that reserves and activates bindings (O73). */
@@ -719,9 +721,21 @@ export const CRM_PARTY_INTAKE_WORKLOAD = 'demo.crm.party-intake';
  * and only while Core holds this active binding; the kind alone grants nothing.
  */
 export interface ReviewedWorkloadBinding {
+  /** The one company the workload acts for (D6); its company-scoped calls are admitted only there. */
+  readonly legalEntityId?: string;
   readonly principalId: string;
   readonly workloadKey: string;
 }
+
+/** A storefront acts for its own company only, exactly as the stage registrations name it. */
+const storefrontBinding = (
+  principal: { readonly legalEntityId: string; readonly principalId: string },
+  workloadKey: string,
+): ReviewedWorkloadBinding => ({
+  legalEntityId: principal.legalEntityId,
+  principalId: principal.principalId,
+  workloadKey,
+});
 
 /**
  * The reviewed workload bindings of the demo tenant. Every entry names a key a carrier in this release
@@ -731,8 +745,12 @@ export interface ReviewedWorkloadBinding {
  *   (`commerce.customer-context.start-portal-enrollment`, `…-transition.claim`, and the delegated
  *   `party.registry.party.create` / `ensure-retail-customer-profile` / `bind-retail-portal-profile`
  *   subjects) — all of which declare `commerce.storefront-client`;
+ * - both storefront BFFs read the merchandise catalog and media (`demo.merchandise` records and media reads) and
+ *   place their guest orders (`demo.merchandise.place-storefront-order`), which declare `demo.storefront-client`;
  * - ŠroubShop's storefront files its contact and product-question form as `work.tasks.submit-storefront-inquiry`,
  *   which declares `work.storefront-client` (Kavárna's storefront has no inquiry form, so it is not bound);
+ * - each storefront binding is registered for the storefront's own company (D6), as on stage, so a
+ *   company-scoped storefront call is admitted in that company and nowhere else;
  * - the Commerce customer portal is also the external identity provider that reserves and activates
  *   principal bindings (`core.identity.reserve-principal-binding`, `…-binding.activate` and the
  *   `core.identity` external-identity reads), which declare `core.identity-provider`.
@@ -845,9 +863,11 @@ export const crmPartyIntakePrincipal = {
 
 /** Exact reviewed bindings. Topology caller `crm` does not rename producer workload `demo.crm.party-intake`. */
 export const reviewedWorkloadBindings = (): readonly ReviewedWorkloadBinding[] => [
-  { principalId: storefrontPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
-  { principalId: akrosStorefrontPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
-  { principalId: akrosStorefrontPrincipal.principalId, workloadKey: STOREFRONT_INQUIRY_WORKLOAD },
+  storefrontBinding(storefrontPrincipal, STOREFRONT_CLIENT_WORKLOAD),
+  storefrontBinding(storefrontPrincipal, STOREFRONT_MERCHANDISE_WORKLOAD),
+  storefrontBinding(akrosStorefrontPrincipal, STOREFRONT_CLIENT_WORKLOAD),
+  storefrontBinding(akrosStorefrontPrincipal, STOREFRONT_MERCHANDISE_WORKLOAD),
+  storefrontBinding(akrosStorefrontPrincipal, STOREFRONT_INQUIRY_WORKLOAD),
   { principalId: commercePortalPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
   { principalId: commercePortalPrincipal.principalId, workloadKey: IDENTITY_PROVIDER_WORKLOAD },
   { principalId: crmPartyIntakePrincipal.principalId, workloadKey: CRM_PARTY_INTAKE_WORKLOAD },
