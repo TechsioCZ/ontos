@@ -2,6 +2,7 @@
 // The create panel as the user sees it: typing and ticking kinds send nothing, one click on Save sends the new tag
 // once, and leaving with typed values asks first. Only the owner client, the i18n runtime and the router blocker are
 // replaced.
+import { requiredLabelFor } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { act } from 'react';
@@ -202,6 +203,14 @@ describe('tag create panel with one Save button', () => {
       yield* Effect.promise(() => click(button('Zahodit změny')));
       expect(view.closed).toEqual(['close']);
       expect(writes()).toBe(0);
+    }),
+  );
+
+  it.effect('reads the required text of a required field in Czech', () =>
+    Effect.gen(function* requiredText() {
+      yield* Effect.promise(mount);
+      expect(nameField().labels?.[0]?.textContent).toContain(requiredLabelFor('cs'));
+      expect(document.body.textContent).not.toContain('(required)');
     }),
   );
 });
