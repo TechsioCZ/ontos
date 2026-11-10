@@ -23,7 +23,7 @@ type RecordsFailure = Effect.Error<ReturnType<typeof executeRecords>>;
 
 /** What the register answered about the order's version; a failed or missing read keeps the version we have. */
 export type OrderVersionRead =
-  | { readonly status: 'found'; readonly version: OrderVersion }
+  | { readonly order: Order; readonly status: 'found'; readonly version: OrderVersion }
   | { readonly cause: RecordsFailure; readonly status: 'failed' }
   | { readonly status: 'missing' };
 
@@ -36,7 +36,7 @@ export const readOrderVersion = (orderId: Order['id']): Effect.Effect<OrderVersi
       const found = response.orders.find((order) => order.id === orderId);
       return found === undefined
         ? { status: 'missing' }
-        : { status: 'found', version: { revision: response.revision, updatedAt: found.updatedAt } };
+        : { order: found, status: 'found', version: { revision: response.revision, updatedAt: found.updatedAt } };
     }),
     Effect.match({
       onFailure: (cause): OrderVersionRead => ({ cause, status: 'failed' }),
@@ -50,25 +50,33 @@ const outcomeOf = (error: EditFailure): AutosaveOutcome =>
     ? 'conflict'
     : 'failed';
 
-/** The order version a saved edit left behind, or `saved` when it could not be read; otherwise why nothing was saved. */
+/**
+ * The order version a saved edit left behind, or `saved` when that version is not known; otherwise why nothing was
+ * saved.
+ */
 export type OrderEditSaveResult = OrderVersion | AutosaveOutcome;
 
 /**
  * Sends one order edit against `revision` and reads the version the server has afterwards, which the next change of
- * the same session builds on instead of conflicting with its own write. A version that could not be read answers
- * `saved`: the draft then keeps its base, and the next save asks the panel to load the current version instead of
+ * the same session builds on instead of conflicting with its own write.
+ *
+ * The read-back is that version only while the order still is what this edit left (`isWritten`). An edit by
+ * someone else that landed between the save and the read-back is in the read order too: taking its version as the
+ * base would let the next save put this form's older lines over their change. Such a read, like one that failed,
+ * answers `saved`: the draft keeps its base, and the next save is refused and offers the current version instead of
  * guessing. `pending` gets the approval notice of a refused save and is cleared by a save that went through.
  */
 export const saveOrderEdit = (
   command: Extract<MerchandiseCommand, { readonly _tag: 'EditOrder' }>,
   revision: number,
+  isWritten: (order: Order) => boolean,
   pending?: (message: string | null) => void,
 ): Effect.Effect<OrderEditSaveResult> =>
   editOrder(command, revision).pipe(
     Effect.flatMap(() => readOrderVersion(command.id)),
     Effect.map((read): OrderEditSaveResult => {
       pending?.(null);
-      return read.status === 'found' ? read.version : 'saved';
+      return read.status === 'found' && isWritten(read.order) ? read.version : 'saved';
     }),
     Effect.match({
       onFailure: (error) => {
@@ -97,7 +105,8 @@ interface OrderEditAutosaveOptions {
  * refuses the save when someone else changed the order meanwhile, instead of taking old lines over their change.
  *
  * The base the draft tracks is the order's own `updatedAt`, the precondition the server checks for an order edit;
- * the catalog revision moves with every other order and product too. Each save sends the pair read together.
+ * the catalog revision moves with every other order and product too. Each save sends the pair read together. After a
+ * save the base moves to the version read back only when that order is what the save wrote (`saveOrderEdit`).
  */
 export const useOrderEditAutosave = ({ isValid, order, revision }: OrderEditAutosaveOptions) => {
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
@@ -119,9 +128,12 @@ export const useOrderEditAutosave = ({ isValid, order, revision }: OrderEditAuto
     save: (value, expectedVersion, confirmed): Effect.Effect<RevisionedSaveResult> => {
       const base = versions.current.get(expectedVersion) ?? { revision, updatedAt };
       const command = editCommandOf(order, base.updatedAt, value, confirmed);
+      // The register stores no change reason on the order, so the order this save leaves is the draft without it.
+      const written = { ...value, reason: '' };
+      const isWritten = (read: Order) => sameOrderDraft(draftOf(read), written);
       return command === null
         ? Effect.succeed('saved')
-        : saveOrderEdit(command, base.revision, setPendingMessage).pipe(
+        : saveOrderEdit(command, base.revision, isWritten, setPendingMessage).pipe(
             Effect.map((result): RevisionedSaveResult => {
               if (result === 'conflict' || result === 'failed' || result === 'proposed') {
                 return result;

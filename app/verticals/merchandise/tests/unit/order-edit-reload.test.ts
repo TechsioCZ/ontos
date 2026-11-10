@@ -85,6 +85,45 @@ const acceptNextEdit = (after: Order, revision: number) => {
   rstest.mocked(executeRecords).mockReturnValue(Effect.succeed(recordsWith(after, revision)));
 };
 
+const refused = Schema.decodeSync(ManageCatalogActionConflictProblemSchema)({
+  _tag: 'ManageCatalogActionConflictProblem',
+  code: 'merchandise_revision_conflict',
+  detail: 'The order changed; refresh before another edit',
+  status: 409,
+  title: 'Conflict',
+  type: 'urn:test:conflict',
+});
+
+/**
+ * A register that checks an edit the way the server does: the edit must name the version of the order the register
+ * has. `afterEdits` are the orders the register has after each accepted edit, in turn; one that carries more than
+ * the edit wrote stands for someone else's change that landed right behind it.
+ */
+const serveLikeTheRegister = (start: Order, startRevision: number, afterEdits: readonly Order[]) => {
+  const register = { accepted: 0, order: start, revision: startRevision };
+  rstest
+    .mocked(executeRecords)
+    .mockImplementation(() => Effect.sync(() => recordsWith(register.order, register.revision)));
+  rstest.mocked(executeManageCatalog).mockImplementation(({ command }) =>
+    Effect.suspend(() => {
+      const next = afterEdits[register.accepted];
+      const named = command._tag === 'EditOrder' ? command.expectedUpdatedAt : undefined;
+      if (
+        next === undefined ||
+        named === undefined ||
+        DateTime.toEpochMillis(named) !== DateTime.toEpochMillis(register.order.updatedAt)
+      ) {
+        return Effect.fail(refused);
+      }
+      register.accepted += 1;
+      register.order = next;
+      register.revision += 1;
+      return Effect.succeed({ entityIds: [], revision: register.revision });
+    }),
+  );
+  return register;
+};
+
 type OrderEdit = ReturnType<typeof useOrderEditAutosave>;
 
 let latest: OrderEdit | null = null;
@@ -279,6 +318,56 @@ describe('mounted order edit draft against a reloaded order', () => {
         expectedUpdatedAt: savedHere,
       });
       expect(edit().autosave.status).toBe('saved');
+    }),
+  );
+
+  it.effect('a read-back that already carries someone else change does not become the base of the kept draft', () =>
+    Effect.gen(function* raced() {
+      const mine = orderOf({ updatedAt: opened });
+      yield* Effect.promise(() => mount(mine, 7));
+      // The note is saved, and before the form reads the order back someone else changes the quantity to 5.
+      const register = serveLikeTheRegister(mine, 7, [
+        orderOf({ note: 'Zavolat předem', quantity: 5, updatedAt: changedElsewhere }),
+        orderOf({ note: 'Zavolat předem', quantity: 3, updatedAt: savedHere }),
+      ]);
+      yield* type({ note: 'Zavolat předem' });
+      yield* saveNow(1);
+      expect(edit().autosave.status).toBe('saved');
+
+      // The draft still holds the quantity the form opened with; changing it sends all the lines.
+      yield* type({ lines: draft().lines.map((line) => ({ ...line, quantityText: '3' })) });
+      yield* saveNow(2);
+
+      // The edit names the version the form saved over, so the register refuses it instead of taking 3 over their 5.
+      expect(sentEdits()[1]?.expectedUpdatedAt).toBe(opened);
+      expect(sentEdits()[1]?.expectedRevision).toBe(7);
+      expect(edit().autosave.status).toBe('conflict');
+      expect(register.order.lines[0]?.quantity).toBe(5);
+    }),
+  );
+
+  it.effect('a read-back that differs only in what the form does not edit becomes the base', () =>
+    Effect.gen(function* unrelated() {
+      const mine = orderOf({ updatedAt: opened });
+      yield* Effect.promise(() => mount(mine, 7));
+      // Someone confirms the order right behind the save: a newer version with the same editable content.
+      const confirmed = Schema.decodeSync(OrderSchema)({
+        ...Schema.encodeSync(OrderSchema)(orderOf({ note: 'Zavolat předem', updatedAt: changedElsewhere })),
+        status: 'CONFIRMED',
+      });
+      const register = serveLikeTheRegister(mine, 7, [
+        confirmed,
+        orderOf({ note: 'Zavolat předem', quantity: 3, updatedAt: savedHere }),
+      ]);
+      yield* type({ note: 'Zavolat předem' });
+      yield* saveNow(1);
+
+      yield* type({ lines: draft().lines.map((line) => ({ ...line, quantityText: '3' })) });
+      yield* saveNow(2);
+      expect(sentEdits()[1]?.expectedUpdatedAt).toBe(changedElsewhere);
+      expect(sentEdits()[1]?.expectedRevision).toBe(8);
+      expect(edit().autosave.status).toBe('saved');
+      expect(register.order.lines[0]?.quantity).toBe(3);
     }),
   );
 
