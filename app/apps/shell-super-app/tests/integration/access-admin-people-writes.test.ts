@@ -105,6 +105,40 @@ const memberRowsIn = (accessCase: AccessAdminCase, principalId: string, scopeId:
      where principal_id = '${principalId}' and scope_id = '${scopeId}' and kind = 'member'`,
   );
 
+interface MemberEndRow {
+  readonly ended: boolean;
+  readonly ended_by: string | null;
+  readonly ended_reason: string | null;
+  readonly scope_id: string;
+  readonly status: string;
+}
+
+/** Who ended each of one person's `member` rows, when and why, as Core recorded it. */
+const memberEndsOf = (accessCase: AccessAdminCase, principalId: string) =>
+  rowsOf<MemberEndRow>(
+    accessCase,
+    `select scope_id, status, ended_by, ended_reason, ended_at is not null as ended
+     from core.access_memberships where principal_id = '${principalId}' and kind = 'member'
+`,
+  );
+
+/** A `member` row nobody ended, as `memberEndsOf` reads it. */
+const liveMemberRow = (scopeId: string): MemberEndRow => ({
+  ended: false,
+  ended_by: null,
+  ended_reason: null,
+  scope_id: scopeId,
+  status: 'active',
+});
+
+/** The statuses of one person's tenant ownership rows. */
+const ownerRowsOf = (accessCase: AccessAdminCase, principalId: string) =>
+  rowsOf<{ readonly status: string }>(
+    accessCase,
+    `select status from core.access_memberships
+     where tenant_id = '${accessCase.tenantId}' and principal_id = '${principalId}' and kind = 'owner'`,
+  ).pipe(Effect.map((rows) => rows.map(({ status }) => status)));
+
 /** The membership id the Shell mints for one admission key in one scope. */
 const mintedMembershipId = (accessCase: AccessAdminCase, key: string, scopeId: string) =>
   stableUuid(['ontos.shell.access-people.membership', accessCase.tenantId, key, scopeId].join(':'));
@@ -124,12 +158,24 @@ type PeopleWritePayload =
 const scenarioOf = (accessCase: AccessAdminCase, shell: ShellHttp) => {
   const [companyA = '', companyB = ''] = accessCase.companies;
   const idOf = (persona: Persona) => accessCase.ids.get(persona)?.principalId ?? '';
-  const write = (persona: Persona, path: string, idempotencyKey: string, payload: PeopleWritePayload) =>
-    shell.post({ idempotencyKey, path: `${PEOPLE}/${path}`, payload, persona });
-  /** The revision of what this persona's Lidé screen shows right now. */
-  const revisionOf = (persona: Persona) =>
+  /** One write by a persona, in the tenant context or with the named company selected in the Shell. */
+  const write = (
+    persona: Persona,
+    path: string,
+    idempotencyKey: string,
+    payload: PeopleWritePayload,
+    legalEntityId?: string,
+  ) =>
+    shell.post(
+      legalEntityId === undefined
+        ? { idempotencyKey, path: `${PEOPLE}/${path}`, payload, persona }
+        : { idempotencyKey, legalEntityId, path: `${PEOPLE}/${path}`, payload, persona },
+    );
+  /** The revision of what this persona's Lidé screen shows right now, in the session's company. */
+  const revisionOf = (persona: Persona, legalEntityId?: string) =>
     Effect.gen(function* readRevision() {
-      const answer = yield* shell.post({ path: `${PEOPLE}/list`, payload: { limit: 100 }, persona });
+      const request = { path: `${PEOPLE}/list`, payload: { limit: 100 }, persona };
+      const answer = yield* shell.post(legalEntityId === undefined ? request : { ...request, legalEntityId });
       expectStatus(answer, 200);
       return (yield* decodeBody(ListAccessPeopleResponseSchema, answer.text)).revision;
     });
@@ -215,15 +261,37 @@ const admission = (accessCase: AccessAdminCase) =>
       expect(yield* membershipsOf(accessCase, idOf('departed'))).toEqual([]);
       expect(yield* membershipsOf(accessCase, foreignNewcomer)).toEqual([]);
 
+      // Company A's own administrator admits: permanent authority over that company, offered company A's
+      // candidates only, and Core writes the tenant row as well (owner decision), both recorded by them.
+      const adminOptions = yield* shell.post({
+        path: `${PEOPLE}/options`,
+        payload: { limit: 100 },
+        persona: 'companyAdmin',
+      });
+      expectStatus(adminOptions, 200);
+      const adminOffered = yield* decodeBody(ListAccessPeopleOptionsResponseSchema, adminOptions.text);
+      expect({
+        canAdmitMember: adminOffered.writeAvailability.canAdmitMember,
+        canEndMembership: adminOffered.writeAvailability.canEndMembership,
+        outsideA: adminOffered.admissionCandidates.filter(({ scope }) => scope.legalEntityId !== companyA),
+      }).toEqual({ canAdmitMember: true, canEndMembership: true, outsideA: [] });
+      expect(adminOffered.admissionCandidates.map(({ principalId, scope }) => ({ principalId, scope }))).toContainEqual(
+        { principalId: newcomer, scope: company(companyA) },
+      );
+
       const key = 'admit-newcomer-into-a';
-      const admitted = yield* write('owner', 'admit-member', key, admitInto(newcomer, companyA, ownerRevision));
+      const adminRevision = yield* revisionOf('companyAdmin');
+      const admitted = yield* write('companyAdmin', 'admit-member', key, admitInto(newcomer, companyA, adminRevision));
       expectStatus(admitted, 200);
       const answer = yield* decodeBody(AccessPeopleMutationResponseSchema, admitted.text);
       expect(answer.membership).toEqual({ principalId: newcomer, scope: company(companyA), status: 'active' });
-      // Exactly the two rows a company decision rests on, named by the key and scope, recorded by the owner.
+      // Exactly the two rows a company decision rests on, named by the key and scope, recorded by the
+      // company administrator who admitted.
       const tenantScopeId = yield* accessCase.scopeIdOf();
       const scopeA = yield* accessCase.scopeIdOf(companyA);
+      const scopeB = yield* accessCase.scopeIdOf(companyB);
       const owner = idOf('owner');
+      const companyAdmin = idOf('companyAdmin');
       const admittedRows = yield* membershipsOf(accessCase, newcomer);
       expect(admittedRows).toHaveLength(2);
       expect(admittedRows).toEqual(
@@ -231,14 +299,14 @@ const admission = (accessCase: AccessAdminCase) =>
           {
             kind: 'member',
             membership_id: mintedMembershipId(accessCase, key, tenantScopeId),
-            recorded_by: owner,
+            recorded_by: companyAdmin,
             scope_id: tenantScopeId,
             status: 'active',
           },
           {
             kind: 'member',
             membership_id: mintedMembershipId(accessCase, key, scopeA),
-            recorded_by: owner,
+            recorded_by: companyAdmin,
             scope_id: scopeA,
             status: 'active',
           },
@@ -250,7 +318,7 @@ const admission = (accessCase: AccessAdminCase) =>
 
       // A retry after the commit meets a moved revision, and a new key for a live member is a moved row
       // the screen repairs by re-reading (design: 409 people_membership_already_active), never a second row.
-      const replay = yield* write('owner', 'admit-member', key, admitInto(newcomer, companyA, ownerRevision));
+      const replay = yield* write('companyAdmin', 'admit-member', key, admitInto(newcomer, companyA, adminRevision));
       expectStatus(replay, 409);
       const again = yield* write(
         'owner',
@@ -286,6 +354,87 @@ const admission = (accessCase: AccessAdminCase) =>
       const rows = yield* membershipsOf(accessCase, newcomer);
       expect(rows.map(({ kind }) => kind)).toEqual(['member', 'member', 'member']);
       expect(rows.filter(({ scope_id: scopeId }) => scopeId === tenantScopeId)).toHaveLength(1);
+
+      // Company A's administrator ends the newcomer's company-A membership: the end is theirs, the role
+      // there ends with it, and the tenant and company-B rows stay live.
+      const endedInA = yield* write('companyAdmin', 'end-membership', 'admin-ends-newcomer-in-a', {
+        expectedRevision: yield* revisionOf('companyAdmin'),
+        principalId: newcomer,
+        reason: LEAVER_REASON,
+        scope: company(companyA),
+      });
+      expectStatus(endedInA, 200);
+      const endedByAdmin = {
+        ended: true,
+        ended_by: companyAdmin,
+        ended_reason: LEAVER_REASON,
+        scope_id: scopeA,
+        status: 'revoked',
+      };
+      const afterAdminEnd = yield* memberEndsOf(accessCase, newcomer);
+      expect(afterAdminEnd).toHaveLength(3);
+      expect(afterAdminEnd).toEqual(
+        expect.arrayContaining([liveMemberRow(tenantScopeId), endedByAdmin, liveMemberRow(scopeB)]),
+      );
+      expect(yield* tasksIn('directoryMember', companyA)).toBe('DENIED');
+
+      // The owner with company A selected in the Shell, as the stage apply and the screens run: ending the
+      // tenant membership closes company B with it, and a fresh admission writes a new tenant row again.
+      const endedTenant = yield* write(
+        'owner',
+        'end-membership',
+        'owner-in-a-ends-newcomer',
+        {
+          expectedRevision: yield* revisionOf('owner', companyA),
+          principalId: newcomer,
+          reason: LEAVER_REASON,
+          scope: { kind: 'tenant' },
+        },
+        companyA,
+      );
+      expectStatus(endedTenant, 200);
+      const endedByOwner = (scopeId: string) => ({
+        ended: true,
+        ended_by: owner,
+        ended_reason: LEAVER_REASON,
+        scope_id: scopeId,
+        status: 'revoked',
+      });
+      const afterTenantEnd = yield* memberEndsOf(accessCase, newcomer);
+      expect(afterTenantEnd).toHaveLength(3);
+      expect(afterTenantEnd).toEqual(
+        expect.arrayContaining([endedByOwner(tenantScopeId), endedByAdmin, endedByOwner(scopeB)]),
+      );
+      const rejoinKey = 'owner-in-a-readmits-newcomer';
+      const rejoined = yield* write(
+        'owner',
+        'admit-member',
+        rejoinKey,
+        admitInto(newcomer, companyA, yield* revisionOf('owner', companyA)),
+        companyA,
+      );
+      expectStatus(rejoined, 200);
+      const rejoinedRows = (yield* membershipsOf(accessCase, newcomer)).filter(({ status }) => status === 'active');
+      expect(rejoinedRows).toHaveLength(2);
+      expect(rejoinedRows).toEqual(
+        expect.arrayContaining([
+          {
+            kind: 'member',
+            membership_id: mintedMembershipId(accessCase, rejoinKey, tenantScopeId),
+            recorded_by: owner,
+            scope_id: tenantScopeId,
+            status: 'active',
+          },
+          {
+            kind: 'member',
+            membership_id: mintedMembershipId(accessCase, rejoinKey, scopeA),
+            recorded_by: owner,
+            scope_id: scopeA,
+            status: 'active',
+          },
+        ]),
+      );
+      expect(yield* tasksIn('directoryMember', companyA)).toBe('DENIED');
     }),
   );
 
@@ -306,10 +455,8 @@ const coreRefusals = (accessCase: AccessAdminCase) =>
         principalId: lapsed,
         scope: company(companyA),
       });
-      expect({ refused: [409, 422].includes(revived.status), text: revived.text }).toEqual({
-        refused: true,
-        text: expect.stringMatching(/people_membership_(?:ended|already_active)/u),
-      });
+      // Core's dormant-row rule answers, not a Shell-side conflict that never reached it.
+      expectRefusal(revived, 422, 'people_membership_ended');
       expect(yield* membershipsOf(accessCase, lapsed)).toEqual(before);
       expect(yield* tasksIn('lapsed', companyB)).toBe('DENIED');
 
@@ -437,17 +584,7 @@ const endMembership = (accessCase: AccessAdminCase) =>
       const answer = yield* decodeBody(AccessPeopleMutationResponseSchema, ended.text);
       expect(answer.membership).toEqual({ principalId: leaver, scope: company(companyA), status: 'revoked' });
       // Who, when and why, on the row that ended; the tenant row stays live.
-      const endedRows = yield* rowsOf<{
-        readonly ended: boolean;
-        readonly ended_by: string | null;
-        readonly ended_reason: string | null;
-        readonly scope_id: string;
-        readonly status: string;
-      }>(
-        accessCase,
-        `select scope_id, status, ended_by, ended_reason, ended_at is not null as ended
-       from core.access_memberships where principal_id = '${leaver}' and kind = 'member'`,
-      );
+      const endedRows = yield* memberEndsOf(accessCase, leaver);
       expect(endedRows).toHaveLength(2);
       expect(endedRows).toEqual(
         expect.arrayContaining([
@@ -493,18 +630,34 @@ const endMembership = (accessCase: AccessAdminCase) =>
       );
       expect(yield* tasksIn('manager', companyA)).toBe('DENIED');
 
-      // The sole owner cannot end their own tenant membership and leave the tenant unowned.
+      // The sole owner cannot end their own tenant membership. While a delegation they granted is live,
+      // that is the refusal; once they revoked it, the last-owner rule answers, and nothing is written.
       const ownerBefore = yield* membershipsOf(accessCase, owner);
-      const ownerEnd = yield* write('owner', 'end-membership', 'owner-ends-self', {
-        expectedRevision: yield* revisionOf('owner'),
-        principalId: owner,
-        reason: LEAVER_REASON,
-        scope: { kind: 'tenant' },
-      });
-      expect({ status: ownerEnd.status, text: ownerEnd.text }).toEqual({
-        status: 409,
-        text: expect.stringMatching(/ownership_transfer_required|people_granted_delegations_live/u),
-      });
+      const ownerEnd = (idempotencyKey: string) =>
+        Effect.flatMap(revisionOf('owner'), (expectedRevision) =>
+          write('owner', 'end-membership', idempotencyKey, {
+            expectedRevision,
+            principalId: owner,
+            reason: LEAVER_REASON,
+            scope: { kind: 'tenant' },
+          }),
+        );
+      expectRefusal(yield* ownerEnd('owner-ends-self-while-granting'), 409, 'people_granted_delegations_live');
+      const grants = yield* rowsOf<{ readonly delegation_id: string }>(
+        accessCase,
+        `select delegation_id::text from core.access_delegations
+         where tenant_id = '${accessCase.tenantId}' and granted_by = '${owner}' and status = 'active'`,
+      );
+      expect(grants.length).toBeGreaterThan(0);
+      for (const { delegation_id: delegationId } of grants) {
+        const revoked = yield* write('owner', 'revoke-delegation', `owner-revokes-${delegationId}`, {
+          delegationId,
+          expectedRevision: yield* revisionOf('owner'),
+          reason: 'P14: the owner leaves nothing granted behind',
+        });
+        expectStatus(revoked, 200);
+      }
+      expectRefusal(yield* ownerEnd('owner-ends-self'), 409, 'ownership_transfer_required');
       expect(yield* membershipsOf(accessCase, owner)).toEqual(ownerBefore);
     }),
   );
@@ -619,7 +772,7 @@ const delegation = (accessCase: AccessAdminCase) =>
   Effect.scoped(
     Effect.gen(function* delegationCase() {
       const shell = yield* shellHttpFor(accessCase);
-      const { company, companyA, idOf, revisionOf, tasksIn, write } = scenarioOf(accessCase, shell);
+      const { company, companyA, companyB, idOf, revisionOf, tasksIn, write } = scenarioOf(accessCase, shell);
       const { managerDelegationId, tasksRoleA } = accessCase.seeded;
       const delegations = countOf(accessCase, 'select 1 from core.access_delegations');
       const delegationsBefore = yield* delegations;
@@ -688,6 +841,11 @@ const delegation = (accessCase: AccessAdminCase) =>
       expectStatus(afterRevoke, 403);
 
       // A delegation inside the grantor's authority: an administration key they hold, over the tasks role.
+      const administersIn = (legalEntityId: string) =>
+        accessCase
+          .decide({ declarationKey: SPINE_DECLARATION, legalEntityId, persona: 'member', scope: 'legal-entity' })
+          .pipe(Effect.map(({ outcome }) => outcome));
+      expect(yield* administersIn(companyA)).toBe('DENIED');
       const granted = yield* write(
         'companyAdmin',
         'delegate',
@@ -696,6 +854,33 @@ const delegation = (accessCase: AccessAdminCase) =>
       );
       expectStatus(granted, 200);
       expect(yield* delegations).toBe(delegationsBefore + 1);
+      const grantedId = (yield* decodeBody(AccessPeopleMutationResponseSchema, granted.text)).delegation?.delegationId;
+      const scopeA = yield* accessCase.scopeIdOf(companyA);
+      // Persisted as asked: the grantor, the manager, the person, the role, the key and the scope.
+      expect(
+        yield* rowsOf(
+          accessCase,
+          `select granted_by::text, manager_id::text, people::text[] as people, role_ids::text[] as role_ids,
+                  capability_keys::text[] as capability_keys, scope_id::text, status,
+                  until = '${DELEGATION_END}'::timestamptz as ends_as_asked
+           from core.access_delegations where delegation_id = '${grantedId ?? ''}'`,
+        ),
+      ).toEqual([
+        {
+          capability_keys: [SPINE_DECLARATION],
+          ends_as_asked: true,
+          granted_by: idOf('companyAdmin'),
+          manager_id: idOf('member'),
+          people: [idOf('delegate')],
+          role_ids: [tasksRoleA.roleId],
+          scope_id: scopeA,
+          status: 'active',
+        },
+      ]);
+      // And the real gate follows it: the manager now holds that key in company A through the delegation,
+      // and nowhere else.
+      expect(yield* administersIn(companyA)).toBe('ALLOWED');
+      expect(yield* administersIn(companyB)).toBe('DENIED');
       // While it is live its grantor is not ended: the owner decision is refuse, never cascade.
       const grantorRows = yield* membershipsOf(accessCase, idOf('companyAdmin'));
       const grantorEnd = yield* write('owner', 'end-membership', 'owner-ends-grantor', {
@@ -761,6 +946,10 @@ const ownership = (accessCase: AccessAdminCase) =>
       expectStatus(transferred, 200);
       // The successor now administers the tenant structurally, with no role cell behind it.
       expect(yield* administersTenant).toBe('ALLOWED');
+      // Handed on, never doubled: the old owner's row ended and the tenant still has one owner.
+      expect(yield* owners).toBe(ownersBefore);
+      expect(yield* ownerRowsOf(accessCase, owner)).toEqual(['revoked']);
+      expect(yield* ownerRowsOf(accessCase, member)).toEqual(['active']);
     }),
   );
 

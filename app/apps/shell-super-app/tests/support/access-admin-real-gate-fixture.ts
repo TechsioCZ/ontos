@@ -1440,6 +1440,11 @@ export interface ShellHttpAnswer {
 export interface ShellHttpRequest {
   /** The `idempotency-key` header every access write carries. */
   readonly idempotencyKey?: string;
+  /**
+   * The company the persona's session has selected, as the Shell's company switcher records it; without
+   * it the session stays in the tenant context.
+   */
+  readonly legalEntityId?: string;
   readonly path: string;
   readonly payload: unknown;
   /** The signed-in persona; a request without one has no session at all. */
@@ -1451,6 +1456,13 @@ export interface ShellHttp {
 }
 
 const PERSONA_HEADER = 'x-p14-persona';
+const LEGAL_ENTITY_HEADER = 'x-p14-legal-entity';
+
+/** The session one persona holds, in the tenant context or with one company selected. */
+const sessionKey = (persona: string, legalEntityId: string | null | undefined) =>
+  legalEntityId === undefined || legalEntityId === null || legalEntityId === ''
+    ? persona
+    : `${persona}@${legalEntityId}`;
 
 /** Every persona that signs in; the workload is never a Shell session. */
 const SIGNED_IN: readonly Persona[] = PERSONAS.filter((persona) => persona !== 'workload');
@@ -1470,7 +1482,7 @@ const personaAuthentication = (
     resolveDocumentContext: () => unsupportedSession('resolveDocumentContext'),
     resolveShellContext: () => unsupportedSession('resolveShellContext'),
     resolveTenantContext: (headers) => {
-      const principal = principals.get(headers.get(PERSONA_HEADER) ?? '');
+      const principal = principals.get(sessionKey(headers.get(PERSONA_HEADER) ?? '', headers.get(LEGAL_ENTITY_HEADER)));
       return Effect.succeed(
         principal === undefined
           ? { setCookieHeaders: [], state: 'anonymous' as const }
@@ -1503,8 +1515,8 @@ const personaAuthentication = (
  * suite driving writes through it goes red the moment the composition ships them closed.
  *
  * The signed-in person is the one thing it supplies itself: `resolveTenantContext` answers the
- * persona a request header names with that persona's seeded principal, because authentication is not
- * what these suites test.
+ * persona a request header names with that persona's seeded principal, in the tenant context or with
+ * the company a second header names selected, because authentication is not what these suites test.
  *
  * `api/index.ts` is loaded on first use, so the suites that only need the gate never load the Shell.
  */
@@ -1520,8 +1532,13 @@ export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* 
   );
   const principals = new Map<string, TrustedPrincipalContext>();
   for (const persona of SIGNED_IN) {
-    const scope = yield* accessCase.scopeFor(persona);
-    principals.set(persona, yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(scope).pipe(Effect.orDie));
+    for (const legalEntityId of [undefined, ...accessCase.companies]) {
+      const scope = yield* accessCase.scopeFor(persona, legalEntityId);
+      principals.set(
+        sessionKey(persona, legalEntityId),
+        yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(scope).pipe(Effect.orDie),
+      );
+    }
   }
   const [, issuer, moduleStates] = shell.shellProductionRuntimeArguments;
   const runtime = shell.makeShellAuthenticationApiRuntime(
@@ -1551,6 +1568,9 @@ export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* 
       const headers = new Headers({ 'content-type': 'application/json' });
       if (request.persona !== undefined) {
         headers.set(PERSONA_HEADER, request.persona);
+      }
+      if (request.legalEntityId !== undefined) {
+        headers.set(LEGAL_ENTITY_HEADER, request.legalEntityId);
       }
       if (request.idempotencyKey !== undefined) {
         headers.set('idempotency-key', request.idempotencyKey);
