@@ -2,7 +2,7 @@ import { comboboxTranslations, formatDate, matchesSearch, SidePanel, UnsavedChan
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Combobox } from '@techsio/ui-kit/molecules/combobox';
+import { Combobox } from '@app/admin-ui/form-controls';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { DateTime } from 'effect';
 import { useRef, useState } from 'react';
