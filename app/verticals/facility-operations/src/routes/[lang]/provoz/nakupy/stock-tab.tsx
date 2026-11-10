@@ -20,6 +20,7 @@ import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import { useDraftBase } from '../../../../ui/draft-base.ts';
 import { useEditGuard } from '../../../../ui/edit-guard.tsx';
 import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
+import type { CommandOutcome } from '../../../../ui/use-agenda.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -494,6 +495,16 @@ const ItemEditForm = ({
   const { language, t } = useModernI18n();
   const [values, setValues] = useState<ItemEditDraft>(() => itemEditDraftOf(item));
   const set = (name: keyof ItemEditDraft, next: string) => setValues((current) => ({ ...current, [name]: next }));
+  const toast = useToast();
+  // Why the last save failed, in the agenda's words; the save bar shows it while the save is failed.
+  const [error, setError] = useState<string | null>(null);
+  const answered = (outcome: CommandOutcome) =>
+    Effect.sync(() => {
+      setError(outcome.ok ? null : t(failureKey(outcome.reason)));
+      if (outcome.ok) {
+        toast.create({ duration: 5000, title: t('facility-operations.common.saved'), type: 'success' });
+      }
+    });
   // Saves carry the revision of the read the draft was built on, so someone else's newer change refuses them.
   const base = useDraftBase(item, run);
   const record = useDraftSave<ItemEditDraft, never>({
@@ -503,7 +514,7 @@ const ItemEditForm = ({
     save: (value) =>
       Option.match(stockItemCommandOf(value, item, state), {
         onNone: () => Effect.succeed<SaveOutcome>('failed'),
-        onSome: (command) => base.confirm(facilitySaveOutcome(base.run(command))),
+        onSome: (command) => base.confirm(facilitySaveOutcome(base.run(command).pipe(Effect.tap(answered)))),
       }),
     value: values,
   });
@@ -575,6 +586,7 @@ const ItemEditForm = ({
           {t('facility-operations.common.cancel')}
         </Button>
         <SaveBar
+          error={error}
           labels={labels}
           onReloadLatest={handleReloadLatest}
           onSave={handleSave}

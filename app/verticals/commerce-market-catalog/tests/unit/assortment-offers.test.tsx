@@ -89,6 +89,17 @@ const exceptions: ExceptionsSpec = {
   onOffset: constVoid,
 };
 
+type ManageMarketsFailure = Effect.Error<ReturnType<typeof executeManageMarkets>>;
+/** The action's refusal for a user without the permission. */
+const forbidden: Extract<ManageMarketsFailure, { readonly _tag: 'ManageMarketsActionForbiddenProblem' }> = {
+  _tag: 'ManageMarketsActionForbiddenProblem',
+  code: 'action_permission_denied',
+  detail: 'The actor may not manage markets',
+  status: 403,
+  title: 'Forbidden',
+  type: 'https://ontos.dev/problems/forbidden',
+};
+
 const commands = () => rstest.mocked(executeManageMarkets).mock.calls.length;
 const commandTags = (): string[] =>
   rstest.mocked(executeManageMarkets).mock.calls.map(([payload]) => payload.command._tag);
@@ -211,6 +222,22 @@ describe('e-shop offer switches of the price list', () => {
       yield* Effect.promise(settle);
       expect(commands()).toBe(2);
       expect(commandTags()).toEqual(['SetProductMarketOffer', 'SetProductMarketOffer']);
+    }),
+  );
+
+  it.live('a refused offer names the reason on the save bar', () =>
+    Effect.gen(function* refusedOffer() {
+      rstest.mocked(executeManageMarkets).mockReturnValue(Effect.fail(forbidden));
+      yield* Effect.promise(() => mount());
+      yield* Effect.sleep('50 millis');
+      yield* Effect.promise(settle);
+      yield* Effect.promise(() => toggle('SKU-1'));
+      yield* Effect.promise(() => clickSave());
+      yield* Effect.sleep('100 millis');
+      yield* Effect.promise(settle);
+      expect(commands()).toBe(1);
+      expect(document.body.textContent).toContain('commerce-market-catalog.failures.forbidden');
+      expect(document.body.textContent).not.toContain('Uložení se nezdařilo');
     }),
   );
 

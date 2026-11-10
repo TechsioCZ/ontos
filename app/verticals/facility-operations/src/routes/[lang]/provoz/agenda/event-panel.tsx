@@ -184,8 +184,8 @@ const sameDraft = (left: Draft, right: Draft): boolean =>
   left.title === right.title;
 
 /**
- * Sends one wire command as the save bar sees it: a command the schema refuses saves nothing and says why, the rest
- * is `facilitySaveOutcome`.
+ * Sends one wire command as the save bar sees it: a command the schema refuses saves nothing and says why, a command
+ * the agenda refuses says the agenda's reason, and the outcome is `facilitySaveOutcome`.
  */
 const useSendCommand = () => {
   const { t } = useModernI18n();
@@ -195,16 +195,15 @@ const useSendCommand = () => {
       setError({ cause, message: t('facility-operations.common.errors.invalid') });
       return 'failed';
     });
-  const answered = (outcome: SaveOutcome) =>
+  const answered = (outcome: CommandOutcome) =>
     Effect.sync(() => {
-      setError(undefined);
-      return outcome;
+      setError(outcome.ok ? undefined : { message: t(`facility-operations.common.errors.${outcome.reason}`) });
     });
   const send = (command: WireCommand, run: (command: OpsCommand) => Effect.Effect<CommandOutcome>) =>
     Schema.decodeEffect(OpsCommandSchema)(command).pipe(
       Effect.matchEffect({
         onFailure: refused,
-        onSuccess: (decoded) => facilitySaveOutcome(run(decoded)).pipe(Effect.flatMap(answered)),
+        onSuccess: (decoded) => facilitySaveOutcome(run(decoded).pipe(Effect.tap(answered))),
       }),
     );
   return { error: error?.message, send };
@@ -252,6 +251,8 @@ export const CreateEventPanel = ({
   const record = useDraftSave<Draft, never>({
     equals: sameDraft,
     isValid: completeDraft,
+    // The panel stays mounted while closed: only the open panel asks before leaving.
+    open,
     runtime: browserRuntime,
     save: (value) => send(commandOf(value), onRun),
     value: draft,

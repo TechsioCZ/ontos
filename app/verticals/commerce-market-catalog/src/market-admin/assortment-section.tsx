@@ -28,7 +28,7 @@ import { PricingFields } from './market-fields.tsx';
 import { configureMarketCommand, defaultPricingForm, pricingFormOf, pricingIssues } from './market-form.ts';
 import { failureText, useMarketText } from './market-ui.tsx';
 import { marketExceptionsData, runMerchandiseCommand } from './page-data.ts';
-import type { ExceptionsInput, MarketInput, WriteFailure } from './page-data.ts';
+import type { ExceptionsInput, MarketInput, WriteFailure, WriteOutcome } from './page-data.ts';
 
 export { priceListSaveResult } from './assortment-save.ts';
 
@@ -90,14 +90,20 @@ export const PriceListEditor = ({
   // The offer of each product as the server has it; a changed product is compared with it on Save.
   const serverOffers = useRef(new Map<string, boolean>());
   const marketId = market.marketRef.resourceId;
+  // Why the last command of a save was refused; the save bar names it while the save is failed.
+  const [failure, setFailure] = useState<WriteFailure | null>(null);
+  const noted = <A,>(outcome: WriteOutcome<A>) =>
+    Effect.sync(() => {
+      setFailure(outcome.ok ? null : outcome.reason);
+    });
   const stepsOf = (serverOffersNow: Map<string, boolean>): SectionSteps => ({
     configure: (pricing, expectedRevision) =>
       commandOutcome(
         configureMarketCommand({ expectedRevision, form: pricing, marketCode: market.marketCode, marketId }),
         revision,
-      ),
+      ).pipe(Effect.tap(noted)),
     offer: (productId, offered) =>
-      commandOutcome({ _tag: 'SetProductMarketOffer', marketId, offered, productId }, revision),
+      commandOutcome({ _tag: 'SetProductMarketOffer', marketId, offered, productId }, revision).pipe(Effect.tap(noted)),
     serverOffers: serverOffersNow,
   });
   const announce = (result: DraftSaveResult<SectionDraft>) =>
@@ -181,7 +187,13 @@ export const PriceListEditor = ({
         size="sm"
       />
       {exceptionsView}
-      <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+      <SaveBar
+        error={failure === null ? null : failureText(text, failure)}
+        labels={labels}
+        onReloadLatest={handleReloadLatest}
+        onSave={handleSave}
+        status={record.status}
+      />
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </div>
   );

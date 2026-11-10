@@ -8,6 +8,8 @@ import { createElement } from 'react';
 import { AgendaStateSchema, emptyAgendaState } from '../../shared/domain/agenda.ts';
 import type { AgendaState } from '../../shared/domain/agenda.ts';
 import { DeadlineSchema } from '../../shared/domain/ops-overview.ts';
+import type { OpsCommand } from '../../shared/agendas.ts';
+import type { CommandOutcome } from '../../src/ui/use-agenda.ts';
 import { CreateEventPanel, DeadlinePanel } from '../../src/routes/[lang]/provoz/agenda/event-panel.tsx';
 import {
   agendaAt,
@@ -69,6 +71,7 @@ const deadline = Schema.decodeUnknownSync(DeadlineSchema)({
 });
 const title = '#ops-agenda-title';
 const editLabel = 'facility-operations.agenda.event.edit';
+const forbidden = 'facility-operations.common.errors.forbidden';
 
 const panelOf = (state: AgendaState, agenda: FakeAgenda, revision: number) =>
   createElement(DeadlinePanel, {
@@ -107,6 +110,43 @@ describe('calendar event forms', () => {
       expect(agenda.applied).toEqual([]);
       yield* save(agenda, 1);
       expect(agenda.applied.map((entry) => entry.command._tag)).toEqual(['AgendaEventCreate']);
+    }),
+  );
+
+  it.live('a refused new event and a refused edit name the agenda’s reason', () =>
+    Effect.gen(function* refusedEvent() {
+      const refused: OpsCommand[] = [];
+      const refusing = (command: OpsCommand): Effect.Effect<CommandOutcome> =>
+        Effect.sync((): CommandOutcome => {
+          refused.push(command);
+          return { ok: false, reason: 'forbidden' };
+        });
+      yield* mountPanel(
+        createElement(CreateEventPanel, { initialDate: '2026-11-20', onClose: toPage, onRun: refusing, open: true }),
+      );
+      yield* typeInto(title, 'Revize výtahu');
+      yield* click(labels.save);
+      expect(refused.map((command) => command._tag)).toEqual(['AgendaEventCreate']);
+      expect(bodyText()).toContain(forbidden);
+      expect(bodyText()).not.toContain(labels.failed);
+      unmountPanels();
+
+      yield* mountPanel(
+        createElement(DeadlinePanel, {
+          canWrite: true,
+          deadline,
+          onClose: toPage,
+          onRun: refusing,
+          state: opened,
+          today: '2026-11-10',
+        }),
+      );
+      yield* click(editLabel);
+      yield* typeInto(title, 'Porada týmu');
+      yield* click(labels.save);
+      expect(refused.map((command) => command._tag)).toEqual(['AgendaEventCreate', 'AgendaEventUpdate']);
+      expect(bodyText()).toContain(forbidden);
+      expect(bodyText()).not.toContain(labels.failed);
     }),
   );
 
