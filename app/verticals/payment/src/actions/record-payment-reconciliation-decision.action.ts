@@ -20,9 +20,10 @@ import type { PaymentExecutionProvenance } from '../../shared/domain/payment-pro
 import { PaymentRejected } from '../../shared/domain/payment-rejected.ts';
 import { PaymentUnavailable, paymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import { OutboxPayloadSchema as OperationOutcomeChangedSchema } from '../../shared/outbox/payment-core-operation-outcome-changed-v1.ts';
+import { computePaymentFunds, PaymentFundsLedger } from '../domain/coverage.ts';
 import { paymentFactMeaning } from '../domain/evidence-interpretation.ts';
 import { decidePaymentReconciliation, PaymentReconciliationStep } from '../domain/evidence-reconciliation.ts';
-import { sameAmount } from '../domain/money.ts';
+import { fundsSnapshotWithPriorReturns } from '../domain/refund-prior-returns.ts';
 import type {
   PaymentReconciliationCaseEvidence,
   PaymentReconciliationEvidenceFacts,
@@ -30,8 +31,13 @@ import type {
   PaymentReconciliationStepCase,
 } from '../domain/evidence-reconciliation.ts';
 import type { PaymentAggregateRecord, PaymentOperationRecord } from '../persistence/payment-aggregate-persistence.ts';
-import { paymentAggregatePersistenceForTransaction } from '../persistence/payment-aggregate-persistence.ts';
+import {
+  paymentAggregatePersistenceForTransaction,
+  paymentFundsSnapshotOf,
+} from '../persistence/payment-aggregate-persistence.ts';
 import { paymentEvidencePersistenceForTransaction } from '../persistence/payment-evidence-persistence.ts';
+import { paymentRefundPersistenceForTransaction } from '../persistence/payment-refund-persistence.ts';
+import type { PaymentRefundPersistence } from '../persistence/payment-refund-persistence.ts';
 import type {
   PaymentEvidenceActionServices,
   PaymentObservationAttachmentRecord,
@@ -53,7 +59,9 @@ const RecordPaymentReconciliationDecisionErrorSchema = Schema.Union([
   PaymentEvidenceRejected,
 ]);
 
-type DecisionContext = ActionHandlerContext<typeof domainEvents, PaymentEvidenceActionServices>;
+/** The evidence services plus the shared funds reader the prior-return close rule derives from. */
+type DecisionServices = PaymentEvidenceActionServices & { readonly refunds: PaymentRefundPersistence };
+type DecisionContext = ActionHandlerContext<typeof domainEvents, DecisionServices>;
 type AppliedStep = Extract<PaymentReconciliationStepCase, { readonly _tag: 'Apply' }>;
 
 const provenanceOf = (context: DecisionContext): PaymentExecutionProvenance => ({
@@ -66,7 +74,7 @@ const provenanceOf = (context: DecisionContext): PaymentExecutionProvenance => (
 const paymentEvidenceServices = (
   transaction: ScopedTransactionExecutor,
   scope: OperationalScope,
-): Effect.Effect<PaymentEvidenceActionServices, OperationContextUnavailable> =>
+): Effect.Effect<DecisionServices, OperationContextUnavailable> =>
   scope.legalEntityId === undefined
     ? Effect.fail(
         new OperationContextUnavailable({
@@ -77,6 +85,7 @@ const paymentEvidenceServices = (
     : Effect.succeed({
         aggregate: paymentAggregatePersistenceForTransaction(transaction),
         evidence: paymentEvidencePersistenceForTransaction(transaction),
+        refunds: paymentRefundPersistenceForTransaction(transaction),
       });
 
 const requireApplied = (step: PaymentReconciliationStepCase) =>
@@ -314,13 +323,12 @@ const establishedCurrentState = Effect.fn('RecordPaymentReconciliationDecisionAc
   },
 );
 
-const QUALIFIED_ACCEPTANCE: ReadonlySet<string> = new Set(['ACCEPTED_OBSERVATION', 'HELD_UNRESOLVED', 'CONFLICT']);
-
 /**
- * Whether a held REFUND_CONFIRMED is a prior return the funds reader already counts against a COLLECT of this
- * Payment (#1150 "counted once ... whether or not its reconciliation case is closed"). The reader's rule, read
- * from the locked aggregate and the statement's same-effect group: money stated, a COLLECT of this Payment,
- * and every same-effect statement naming that COLLECT with the same money.
+ * Whether a held REFUND_CONFIRMED is a prior return the shared funds accounting already counts against a
+ * proven COLLECT of this Payment (#1150 "counted once ... whether or not its reconciliation case is closed").
+ * Derived from the same reader and calculator as coverage and the refund guard: the reader holds the
+ * statement as a return of that COLLECT, the collection is established, and with every case closed the
+ * ledger is consistent (returns fit the collection, nothing ambiguous).
  */
 const priorReturnCountedOf = Effect.fn('RecordPaymentReconciliationDecisionAction.priorReturnCounted')(
   function* priorReturnCounted(
@@ -328,25 +336,35 @@ const priorReturnCountedOf = Effect.fn('RecordPaymentReconciliationDecisionActio
     observation: PaymentObservationRecord,
     current: Option.Option<PaymentAggregateRecord>,
   ) {
-    const { amount, operationId, paymentId } = observation;
-    if (observation.factKind !== 'REFUND_CONFIRMED' || amount === undefined || operationId === undefined) {
-      return false;
-    }
+    const { operationId, paymentId } = observation;
     const loaded = Option.getOrUndefined(current);
-    if (loaded === undefined || loaded.payment.paymentId !== paymentId) {
+    if (
+      observation.factKind !== 'REFUND_CONFIRMED' ||
+      operationId === undefined ||
+      loaded === undefined ||
+      loaded.payment.paymentId !== paymentId
+    ) {
       return false;
     }
-    if (loaded.operations.find((operation) => operation.operationId === operationId)?.kind !== 'COLLECT') {
+    const collect = loaded.operations.find((operation) => operation.operationId === operationId);
+    if (collect?.kind !== 'COLLECT' || collect.outcome !== 'EFFECT_CONFIRMED') {
       return false;
     }
-    const effect = yield* sameEffectObservations(context, observation);
-    return effect.every(
-      (member) =>
-        QUALIFIED_ACCEPTANCE.has(member.acceptanceOutcome) &&
-        member.operationId === operationId &&
-        member.amount !== undefined &&
-        sameAmount(member.amount, amount),
+    const evidence = yield* context.services.refunds.selectReturnEvidence(loaded.payment.paymentId);
+    yield* recordPaymentLookup(context, {
+      paymentId,
+      query: 'return-evidence',
+      recordId: observation.observationId,
+      resultCount: evidence.length,
+    });
+    const counted = evidence.find((statement) => statement.observationId === observation.observationId);
+    if (counted?.operationId !== operationId) {
+      return false;
+    }
+    const ledger = computePaymentFunds(
+      fundsSnapshotWithPriorReturns({ ...paymentFundsSnapshotOf(loaded), unresolvedEvidence: false }, evidence),
     );
+    return PaymentFundsLedger.$is('Established')(ledger);
   },
 );
 
