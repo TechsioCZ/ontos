@@ -265,6 +265,7 @@ export const paymentRefundPersistenceForTransaction = (
             .select({
               accountRef: observations.accountRef,
               amountMinor: observations.amountMinor,
+              capabilityCorrelated: observations.capabilityCorrelated,
               currency: observations.currency,
               economicEffectKey: observations.economicEffectKey,
               environment: observations.environment,
@@ -314,7 +315,11 @@ export const paymentRefundPersistenceForTransaction = (
       // A fully disproven return (the shared rule, held retractions included) no longer counts at all;
       // otherwise only accepted corrections reduce what the statement still proves.
       const disproven = fullyDisprovenTargets(statements, corrections);
-      const standing = statements.filter((row) => !disproven.has(row.observationId));
+      // A selected-capability source (carrier, POS) that never proved the selected capability proves no
+      // return: its statement stays unresolved debt of its own case, never a counted return (#1152).
+      const standing = statements.filter(
+        (row) => !disproven.has(row.observationId) && row.capabilityCorrelated !== false,
+      );
       const attached = yield* attachedOperationsOf(
         { legalEntityId, tenantId },
         standing.filter((row) => row.operationId === null).map((row) => row.observationId),

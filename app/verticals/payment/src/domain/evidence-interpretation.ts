@@ -77,6 +77,12 @@ export interface PaymentInterpretedEvidence {
    * retractions included). Reductions of such a receipt no longer apply to its collection.
    */
   readonly fullyDisprovenObservationIds?: ReadonlySet<string>;
+  /**
+   * Qualified, not fully disproven REFUND_CONFIRMED statements that name an operation directly, one per
+   * source-scoped economic effect. Those naming a COLLECT are the prior returns the funds reader counts
+   * against it whether or not their case is open (#1150).
+   */
+  readonly returnStatements?: readonly { readonly amount: PaymentMonetaryAmount; readonly operationId: string }[];
 }
 
 /** The Current aggregate the interpreter reads: `PaymentAggregateRecord` operations plus the lineage. */
@@ -489,6 +495,12 @@ const reductionExceedsRemainingFunds = (
       other.outcome !== 'NOT_EFFECTED_CONFIRMED'
     ) {
       returns += other.amount.amountMinor;
+    }
+  }
+  // Returns stated against the collection itself count as well, exactly as the funds reader counts them.
+  for (const statement of aggregate.returnStatements ?? []) {
+    if (statement.operationId === operation.operationId) {
+      returns += statement.amount.amountMinor;
     }
   }
   return operation.amount.amountMinor - reduced < returns;
