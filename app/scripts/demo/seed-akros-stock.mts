@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { NodeServices } from '@effect/platform-node';
-import { MerchandiseCommandSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
+import { ManageCatalogPayloadSchema } from '../../verticals/merchandise/shared/actions/manage-catalog.ts';
 import { Config, Console, Effect, Exit, FileSystem, Layer, Redacted, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { FetchHttpClient } from 'effect/http';
@@ -8,7 +8,7 @@ import { FetchHttpClient } from 'effect/http';
 import { akrosMinimumStock } from '../../verticals/merchandise/scripts/akros-baseline.ts';
 import { buildAkrosEncoded } from '../../verticals/merchandise/scripts/akros-catalog.mts';
 import { akrosDemoLegalEntityId, demoTenantId } from './fixture-ids.mts';
-import { connectSeedClient, DemoSeedError, validateSeedTarget } from './seed-client.mts';
+import { connectSeedClient, DemoSeedError, ownerAction, validateSeedTarget } from './seed-client.mts';
 import type { SeedClient } from './seed-client.mts';
 import { seedCheckpointDirectory, seedWriteCheckpoint } from './seed-checkpoint.mts';
 
@@ -31,7 +31,7 @@ const Records = Schema.Struct({
   ),
   revision: Schema.Int,
 });
-const command = Schema.toEncoded(MerchandiseCommandSchema);
+const manageCatalog = ownerAction('manage-catalog', Schema.toEncoded(ManageCatalogPayloadSchema));
 
 /** Repair only imported groups. Never move stock, reprice, reset an order, or change a custom product. */
 export const seedAkrosStock = (client: SeedClient, apply: boolean) =>
@@ -70,7 +70,7 @@ export const seedAkrosStock = (client: SeedClient, apply: boolean) =>
         if (apply) {
           const result = yield* client.apply(
             'merchandise',
-            command,
+            manageCatalog,
             { _tag: 'UpdateProduct', id: product.id, patch: { lowStockThreshold: minimum } },
             revision,
           );

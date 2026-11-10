@@ -3,12 +3,12 @@
  * Only uses governed workforce Reads/Actions; never resets another agenda or company.
  */
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
-import { WorkforceCommandSchema } from '@app/workforce/contracts/apply-command';
+import { ApplyCommandPayloadSchema } from '@app/workforce/contracts/apply-command';
 import { RecordsResponseSchema } from '@app/workforce/contracts/records';
 import { Config, Console, Effect, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { demoId, demoTenantId, rentalDemoLegalEntityId } from './fixture-ids.mts';
-import { connectSeedClient } from './seed-client.mts';
+import { connectSeedClient, ownerAction } from './seed-client.mts';
 
 const people = [
   ['management', 'Vedení Nájempark', 'SALES_HEAD', 'Vedení', '21'],
@@ -36,7 +36,7 @@ const program = Effect.gen(function* linkWorkforceLogins() {
       yield* Console.log(`Already linked: ${email}`);
       continue;
     }
-    const command = yield* Schema.decodeUnknownEffect(WorkforceCommandSchema)({
+    const command = yield* Schema.decodeUnknownEffect(ApplyCommandPayloadSchema.fields.command)({
       _tag: 'CreateEmployee',
       active: true,
       department,
@@ -46,7 +46,12 @@ const program = Effect.gen(function* linkWorkforceLogins() {
       principalRef: { principalId: `72000000-0000-4000-8000-0000000000${suffix}`, tenantId: demoTenantId },
       role,
     });
-    yield* client.apply('workforce', WorkforceCommandSchema, command, records.revision);
+    yield* client.apply(
+      'workforce',
+      ownerAction('apply-command', ApplyCommandPayloadSchema),
+      command,
+      records.revision,
+    );
     yield* Console.log(`Linked: ${email} → ${name}`);
   }
 });

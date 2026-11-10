@@ -23,7 +23,8 @@ import { Config, Console, DateTime, Effect, Exit, Layer, Redacted, Schema } from
 import { Command, Flag } from 'effect/cli';
 import { FetchHttpClient } from 'effect/http';
 
-import { TaggingCommandSchema } from '../../verticals/tagging/shared/actions/apply-command.ts';
+import { ApplyCommandPayloadSchema as CreateTagPayloadSchema } from '../../verticals/tagging/shared/actions/apply-command.ts';
+import { AssignTagPayloadSchema } from '../../verticals/tagging/shared/actions/assign-tag.ts';
 import { SubjectSchema, TagIdSchema } from '../../verticals/tagging/shared/apis/records.ts';
 import {
   companyContent,
@@ -37,7 +38,7 @@ import {
 import type { CompanyContent, SubjectSpec, TagSpec, TaskSpec } from './company-content.mts';
 import { demoTenantId } from './fixture-ids.mts';
 import { seedCustomerList } from './rental-seed-customer.mts';
-import { connectSeedClient, DemoSeedError } from './seed-client.mts';
+import { connectSeedClient, DemoSeedError, ownerAction } from './seed-client.mts';
 import type { SeedClient } from './seed-client.mts';
 
 const taggingAudience = 'tagging';
@@ -66,27 +67,18 @@ const Opportunities = Schema.Struct({
   items: Schema.Array(Schema.Struct({ id: Schema.String, title: Schema.String })),
 });
 
-const TaggingPayload = Schema.Struct({ command: Schema.toEncoded(TaggingCommandSchema), expectedRevision: Schema.Int });
-const TaggingResult = Schema.Struct({ revision: Schema.Int, tagId: TagIdSchema });
+/** `apply-command` accepts only CreateTag for Tagging; AssignTag is its own Action. */
+const createTagAction = ownerAction('apply-command', Schema.toEncoded(CreateTagPayloadSchema));
+const assignTagAction = ownerAction('assign-tag', Schema.toEncoded(AssignTagPayloadSchema));
 const WorkPayload = Schema.Struct({ command: Schema.toEncoded(SingleWorkCommandSchema), expectedRevision: Schema.Int });
 const WorkResult = Schema.Struct({
   revision: Schema.Int,
   task: Schema.optionalKey(Schema.Struct({ ref: TaskRefSchema })),
 });
 
-type TaggingCommand = (typeof TaggingPayload.Type)['command'];
 type WorkCommand = (typeof WorkPayload.Type)['command'];
 type CreateTaskCommand = Extract<WorkCommand, { readonly _tag: 'CreateTask' }>;
 
-const applyTagging = (client: SeedClient, command: TaggingCommand, expectedRevision: number) =>
-  client.call(
-    taggingAudience,
-    `/${taggingAudience}/actions/apply-command`,
-    TaggingPayload,
-    { command, expectedRevision },
-    TaggingResult,
-    true,
-  );
 const applyWork = (client: SeedClient, command: WorkCommand, expectedRevision: number) =>
   client.call(
     workAudience,
@@ -165,7 +157,7 @@ const seedTags = Effect.fn('CompanyContent.seedTags')(function* seedTags(
       name: spec.name,
       subjectKinds: [...spec.subjectKinds],
     } as const;
-    ({ revision } = yield* applyTagging(client, createTag, revision));
+    ({ revision } = yield* client.apply(taggingAudience, createTagAction, createTag, revision));
   }
   if (apply && created.length > 0) {
     records = yield* client.read(taggingAudience, TaggingRecords);
@@ -200,7 +192,12 @@ const seedTags = Effect.fn('CompanyContent.seedTags')(function* seedTags(
     }
     assigned += missing.length;
     if (apply && tag !== undefined && missing.length > 0) {
-      ({ revision } = yield* applyTagging(client, { _tag: 'AssignTag', subjects: missing, tagId: tag.id }, revision));
+      ({ revision } = yield* client.apply(
+        taggingAudience,
+        assignTagAction,
+        { _tag: 'AssignTag', subjects: missing, tagId: tag.id },
+        revision,
+      ));
     }
   }
   return { assigned, created: created.map((spec: TagSpec) => spec.name), unresolved };

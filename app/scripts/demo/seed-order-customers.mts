@@ -13,12 +13,12 @@ import type { PartyCommandOptions } from '@app/party-registry/api/client';
 import { Config, Console, Effect, Exit, FileSystem, Layer, Redacted, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { FetchHttpClient } from 'effect/http';
-import { MerchandiseCommandSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
+import { ManageCatalogPayloadSchema } from '../../verticals/merchandise/shared/actions/manage-catalog.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../verticals/merchandise/shared/apis/records.ts';
 import { convertOrderCustomer } from '../../verticals/merchandise/shared/order-customer-conversion.ts';
 import { orderCustomerSeedEligible } from '../../verticals/merchandise/scripts/order-presentation.ts';
 import { akrosDemoLegalEntityId, demoTenantId } from './fixture-ids.mts';
-import { connectSeedClient, DemoSeedError, validateSeedTarget } from './seed-client.mts';
+import { connectSeedClient, DemoSeedError, ownerAction, validateSeedTarget } from './seed-client.mts';
 import type { SeedClient } from './seed-client.mts';
 import { seedCheckpointDirectory, seedWriteCheckpoint } from './seed-checkpoint.mts';
 
@@ -75,6 +75,8 @@ const ownersFor = (client: SeedClient) => {
   };
 };
 
+const linkOrderCustomer = ownerAction('manage-catalog', ManageCatalogPayloadSchema);
+
 const main = (apply: boolean, includeRealOrders: boolean) =>
   Effect.gen(function* seed() {
     const target = {
@@ -118,15 +120,13 @@ const main = (apply: boolean, includeRealOrders: boolean) =>
             order,
             owners,
           );
-          const command = yield* Schema.decodeEffect(MerchandiseCommandSchema)({
+          const command = yield* Schema.decodeEffect(ManageCatalogPayloadSchema.fields.command)({
             _tag: 'LinkOrderCustomer',
             ...customer,
             expectedPartyId: order.partyId,
             id: order.id,
           });
-          ({ revision } = yield* client.apply('merchandise', MerchandiseCommandSchema, command, revision, [
-            'party-registry',
-          ]));
+          ({ revision } = yield* client.apply('merchandise', linkOrderCustomer, command, revision, ['party-registry']));
         }
         converted += 1;
       }

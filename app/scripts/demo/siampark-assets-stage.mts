@@ -5,7 +5,7 @@ import { NodeServices } from '@effect/platform-node';
 import { Config, Console, Effect, Exit, FileSystem, Layer, Option, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { FetchHttpClient } from 'effect/http';
-import { OpsCommandSchema } from '../../verticals/facility-operations/shared/actions/apply-command.ts';
+import { ApplyCommandPayloadSchema } from '../../verticals/facility-operations/shared/actions/apply-command.ts';
 import { assetsCommandSchemas } from '../../verticals/facility-operations/shared/commands/assets.ts';
 import { optionalField } from '../../verticals/facility-operations/shared/domain/common.ts';
 import { AssetSchema, AssetsStateSchema } from '../../verticals/facility-operations/shared/domain/assets.ts';
@@ -20,7 +20,7 @@ import {
 } from '../../verticals/property-portfolio/shared/apis/records.ts';
 import type { RecordsResponse as PropertyRecords } from '../../verticals/property-portfolio/shared/apis/records.ts';
 import { demoTenantId, rentalDemoLegalEntityId } from './fixture-ids.mts';
-import { connectSeedClient, DemoSeedError } from './seed-client.mts';
+import { connectSeedClient, DemoSeedError, ownerAction } from './seed-client.mts';
 
 const origin = 'https://ontos-stage.web-revolution.cz';
 const target = { legalEntityId: rentalDemoLegalEntityId, shellUrl: origin, tenantId: demoTenantId };
@@ -172,7 +172,7 @@ const run = (mode: 'plan' | 'apply' | 'verify', planPath: string, reviewed: Opti
       }
       yield* client.apply(
         'facility-operations',
-        Schema.toEncoded(OpsCommandSchema),
+        ownerAction('apply-command', Schema.toEncoded(ApplyCommandPayloadSchema)),
         yield* assetRepairCommand(selected.asset, selected.property),
         envelope.revision,
       );

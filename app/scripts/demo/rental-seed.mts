@@ -1,22 +1,21 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import { AgreementsCommandSchema } from '@app/legal-agreements/contracts/apply-command';
+import { ApplyCommandPayloadSchema as AgreementsApplyPayloadSchema } from '@app/legal-agreements/contracts/apply-command';
 import { RecordsResponseSchema as AgreementsRecords } from '@app/legal-agreements/contracts/records';
-import { FinanceCommandSchema } from '@app/finance-billing/contracts/apply-command';
+import { ApplyCommandPayloadSchema as FinanceApplyPayloadSchema } from '@app/finance-billing/contracts/apply-command';
 import { RecordsResponseSchema as FinanceRecords } from '@app/finance-billing/contracts/records';
-import { OccupancyCommandSchema } from '@app/property-leasing/contracts/apply-command';
+import { ApplyCommandPayloadSchema as OccupancyApplyPayloadSchema } from '@app/property-leasing/contracts/apply-command';
 import { RecordsResponseSchema as OccupancyRecords } from '@app/property-leasing/contracts/records';
-import { PropertyCommandSchema } from '@app/property-portfolio/contracts/apply-command';
-import {
-  PropertyDateSchema,
-  RecordsResponseSchema as PropertyRecords,
-} from '@app/property-portfolio/contracts/records';
+import { ApplyCommandPayloadSchema as PropertyApplyPayloadSchema } from '@app/property-portfolio/contracts/apply-command';
+import { ApplyCommandPayloadSchema as WorkApplyPayloadSchema } from '@app/work-tasks/contracts/apply-command';
+import { ApplyCommandPayloadSchema as PipelineApplyPayloadSchema } from '../../verticals/sales-pipeline/shared/actions/apply-command.ts';
+import { RecordsResponseSchema as PropertyRecords } from '@app/property-portfolio/contracts/records';
 import { Console, DateTime, Effect, Option, Schema } from 'effect';
 
 import { demoId } from './fixture-ids.mts';
 import { preflightRentalCrmOrders, seedRentalCrmOrders } from './rental-crm-orders.mts';
 import { ensureSeedCustomer, existingSeedCustomer, seedCustomerList } from './rental-seed-customer.mts';
-import { DemoSeedError } from './seed-client.mts';
+import { DemoSeedError, ownerAction } from './seed-client.mts';
 import type { SeedClient, SeedTarget } from './seed-client.mts';
 
 const propertyAudience = 'property-portfolio';
@@ -260,10 +259,13 @@ const propertyRead = Schema.toEncoded(PropertyRecords);
 const occupancyRead = Schema.toEncoded(OccupancyRecords);
 const agreementsRead = Schema.toEncoded(AgreementsRecords);
 const financeRead = Schema.toEncoded(FinanceRecords);
-const propertyCommand = Schema.toEncoded(PropertyCommandSchema);
-const occupancyCommand = Schema.toEncoded(OccupancyCommandSchema);
-const agreementCommand = Schema.toEncoded(AgreementsCommandSchema);
-const financeCommand = Schema.toEncoded(FinanceCommandSchema);
+const applyCommandSlug = 'apply-command';
+const propertyApply = ownerAction(applyCommandSlug, Schema.toEncoded(PropertyApplyPayloadSchema));
+const occupancyApply = ownerAction(applyCommandSlug, Schema.toEncoded(OccupancyApplyPayloadSchema));
+const agreementApply = ownerAction(applyCommandSlug, Schema.toEncoded(AgreementsApplyPayloadSchema));
+const financeApply = ownerAction(applyCommandSlug, Schema.toEncoded(FinanceApplyPayloadSchema));
+const workApply = ownerAction(applyCommandSlug, Schema.toEncoded(WorkApplyPayloadSchema));
+const pipelineApply = ownerAction(applyCommandSlug, Schema.toEncoded(PipelineApplyPayloadSchema));
 const occupancyReferenceAudiences = [propertyAudience, propertyAudience, partyAudience, agreementsAudience];
 const contractReferenceAudiences = [partyAudience, propertyAudience, propertyAudience, occupancyAudience];
 
@@ -277,14 +279,6 @@ const ContextRef = Schema.Struct({
 const WorkRecords = Schema.Struct({
   items: Schema.Array(Schema.Struct({ contextRefs: Schema.Array(ContextRef), title: Schema.String })),
   revision: Schema.Int,
-});
-const CreateTask = Schema.TaggedStruct('CreateTask', {
-  contextRefs: Schema.Array(ContextRef),
-  description: Schema.String,
-  dueDate: PropertyDateSchema,
-  partyId: Schema.toEncoded(Schema.String.pipe(Schema.brand('PartyId'))),
-  priority: Schema.Literals(['LOW', 'NORMAL', 'HIGH']),
-  title: Schema.String,
 });
 const Line = Schema.Struct({
   productId: Schema.optionalKey(Schema.toEncoded(Schema.String.pipe(Schema.brand('ProductId')))),
@@ -304,12 +298,6 @@ const Opportunities = Schema.Struct({
     }),
   ),
   revision: Schema.Int,
-});
-const CreateOpportunity = Schema.TaggedStruct('CreateOpportunity', {
-  expectedCloseDate: PropertyDateSchema,
-  lines: Schema.Array(Line),
-  partyId: Schema.toEncoded(Schema.String.pipe(Schema.brand('PartyId'))),
-  title: Schema.String,
 });
 
 export const requireSeedMatch = (label: string, matches: boolean) =>
@@ -344,7 +332,7 @@ const ensureProperty = (client: SeedClient, spec: PropertySpec) =>
     if (record === undefined) {
       yield* client.apply(
         propertyAudience,
-        propertyCommand,
+        propertyApply,
         {
           _tag: 'CreateProperty',
           address: spec.address,
@@ -363,7 +351,7 @@ const ensureProperty = (client: SeedClient, spec: PropertySpec) =>
     if (propertyType === '' || responsiblePerson === '') {
       yield* client.apply(
         propertyAudience,
-        propertyCommand,
+        propertyApply,
         {
           _tag: 'UpdateProperty',
           address: record.address,
@@ -386,7 +374,7 @@ const ensureProperty = (client: SeedClient, spec: PropertySpec) =>
     if (record.lifecycleState === 'PLANNED') {
       yield* client.apply(
         propertyAudience,
-        propertyCommand,
+        propertyApply,
         { _tag: 'ChangePropertyLifecycle', lifecycleState: activeLeaseState, propertyRef: record.propertyRef },
         snapshot.revision,
       );
@@ -406,7 +394,7 @@ const ensureUnit = (client: SeedClient, property: Property, spec: UnitSpec) =>
     if (record === undefined) {
       yield* client.apply(
         propertyAudience,
-        propertyCommand,
+        propertyApply,
         {
           _tag: 'CreateUnit',
           capacity: spec.capacity,
@@ -436,7 +424,7 @@ const ensureLeaseDraft = (client: SeedClient, target: SeedTarget, spec: LeaseSpe
     if (record === undefined) {
       yield* client.apply(
         occupancyAudience,
-        occupancyCommand,
+        occupancyApply,
         {
           _tag: 'CreateDraft',
           record: {
@@ -473,7 +461,7 @@ const ensureLeaseDraft = (client: SeedClient, target: SeedTarget, spec: LeaseSpe
     if (record.rentTerms === undefined && record.state !== 'COMPLETED') {
       yield* client.apply(
         occupancyAudience,
-        occupancyCommand,
+        occupancyApply,
         { _tag: 'SetRentTerms', occupancyRef: record.occupancyRef, rentTerms: rentTerms(spec) },
         snapshot.revision,
       );
@@ -492,13 +480,13 @@ const occupancyState = (client: SeedClient, lease: Lease) =>
 const applyOccupancy = (
   client: SeedClient,
   lease: Lease,
-  command: typeof occupancyCommand.Type,
+  command: (typeof occupancyApply.payload.Type)['command'],
   from: readonly string[],
 ) =>
   Effect.gen(function* step() {
     const { record, revision } = yield* occupancyState(client, lease);
     if (record !== undefined && from.includes(record.state)) {
-      yield* client.apply(occupancyAudience, occupancyCommand, command, revision, occupancyReferenceAudiences);
+      yield* client.apply(occupancyAudience, occupancyApply, command, revision, occupancyReferenceAudiences);
     }
   });
 
@@ -523,7 +511,7 @@ const ensureContract = (
     if (record === undefined) {
       yield* client.apply(
         agreementsAudience,
-        agreementCommand,
+        agreementApply,
         {
           _tag: 'CreateContract',
           record: {
@@ -582,7 +570,7 @@ const progressLease = (client: SeedClient, spec: LeaseSpec, lease: Lease, contra
       if (record?.lifecycleState === 'DRAFT') {
         yield* client.apply(
           agreementsAudience,
-          agreementCommand,
+          agreementApply,
           { _tag: 'ActivateContract', contractRef: contract.contractRef },
           revision,
           contractReferenceAudiences,
@@ -605,7 +593,7 @@ const progressLease = (client: SeedClient, spec: LeaseSpec, lease: Lease, contra
       if (record?.lifecycleState === activeLeaseState) {
         yield* client.apply(
           agreementsAudience,
-          agreementCommand,
+          agreementApply,
           { _tag: 'TerminateContract', contractRef: contract.contractRef },
           revision,
         );
@@ -628,7 +616,7 @@ const ensureTenantContacts = (client: SeedClient, lease: Lease) =>
     }
     yield* client.apply(
       occupancyAudience,
-      occupancyCommand,
+      occupancyApply,
       {
         _tag: 'UpdateTenantDossier',
         activity: { kind: 'NOTE', summary: 'DEMO: založena evidence kontaktních osob nájemce kavárny R101.' },
@@ -662,7 +650,7 @@ const ensureTask = (client: SeedClient, spec: TaskSpec, unit: Unit, tenant: Cust
     }
     yield* client.apply(
       workAudience,
-      CreateTask,
+      workApply,
       {
         _tag: 'CreateTask',
         contextRefs: [unit.propertyRef, unit.unitRef],
@@ -705,7 +693,7 @@ export const ensureInvoice = (
     const matching = () => snapshot.state.invoices.filter((item) => item.documentNumber === spec.documentNumber);
     let existing = yield* uniqueSeedRecord(`Invoice ${spec.documentNumber}`, matching());
     if (existing === undefined) {
-      const draft: Extract<typeof financeCommand.Type, { readonly _tag: 'CreateInvoiceDraft' }> = {
+      const draft: Extract<(typeof financeApply.payload.Type)['command'], { readonly _tag: 'CreateInvoiceDraft' }> = {
         _tag: 'CreateInvoiceDraft' as const,
         counterpartyRef: tenant.counterpartyRef,
         currency: 'CZK',
@@ -722,7 +710,7 @@ export const ensureInvoice = (
       };
       yield* client.apply(
         financeAudience,
-        financeCommand,
+        financeApply,
         contract === undefined ? draft : { ...draft, contractRef: contract.contractRef },
         snapshot.revision,
         [
@@ -749,7 +737,7 @@ export const ensureInvoice = (
       if (existing.reviewState !== 'PREPARED') {
         yield* client.apply(
           financeAudience,
-          financeCommand,
+          financeApply,
           { _tag: 'MarkInvoicesPrepared', invoiceRefs: [existing.ref] },
           snapshot.revision,
         );
@@ -757,7 +745,7 @@ export const ensureInvoice = (
       }
       yield* client.apply(
         financeAudience,
-        financeCommand,
+        financeApply,
         { _tag: 'ConfirmInvoice', invoiceRef: existing.ref },
         snapshot.revision,
         [
@@ -779,7 +767,7 @@ export const ensureInvoice = (
     if (spec.paid && existing.paidMinor < existing.totalMinor) {
       yield* client.apply(
         financeAudience,
-        financeCommand,
+        financeApply,
         {
           _tag: 'RecordManualPayment',
           amountMinor: existing.totalMinor - existing.paidMinor,
@@ -803,7 +791,7 @@ export const ensureInvoice = (
     if (existing.budgetCategory === undefined) {
       yield* client.apply(
         financeAudience,
-        financeCommand,
+        financeApply,
         { _tag: 'SetInvoiceDetails', budgetCategory: category, invoiceRef: existing.ref },
         snapshot.revision,
       );
@@ -822,7 +810,7 @@ export const ensureInvoice = (
     if (budget === undefined) {
       yield* client.apply(
         financeAudience,
-        financeCommand,
+        financeApply,
         {
           _tag: 'UpsertBudgetLine',
           category,
@@ -847,7 +835,7 @@ const ensureOpportunity = (client: SeedClient, tenant: Customer) =>
     }
     yield* client.apply(
       pipelineAudience,
-      CreateOpportunity,
+      pipelineApply,
       {
         _tag: 'CreateOpportunity',
         expectedCloseDate: spec.expectedCloseDate,

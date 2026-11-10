@@ -135,6 +135,23 @@ export type SeedWriteCheckpoint = (
   payload: string,
 ) => Effect.Effect<string, DemoSeedError>;
 
+/** Every owner Action takes `{ command, expectedRevision }`; the command type is read from the Action's own payload. */
+export type OwnerActionPayload = Schema.Top & {
+  readonly Type: { readonly command: unknown; readonly expectedRevision: number };
+};
+/**
+ * One owner Action: its URL slug and the payload schema from the owner's shared action definition. Build it with
+ * `ownerAction`; a command the Action does not accept (e.g. `UpdateProduct` on `apply-command`) fails to compile.
+ */
+export interface OwnerAction<P extends OwnerActionPayload = OwnerActionPayload> {
+  readonly payload: P;
+  readonly slug: string;
+}
+export const ownerAction = <P extends OwnerActionPayload>(slug: string, payload: P): OwnerAction<P> => ({
+  payload,
+  slug,
+});
+
 const makeOwnerClient = (
   target: SeedTarget,
   origin: string,
@@ -185,20 +202,19 @@ const makeOwnerClient = (
     });
   const read = <R extends Schema.Top>(audience: string, schema: R) =>
     call(audience, '/reads/records', Empty, {}, schema);
-  const apply = <P extends Schema.Top>(
+  const apply = <P extends OwnerActionPayload>(
     audience: string,
-    schema: P,
-    command: P['Type'],
+    action: OwnerAction<P>,
+    command: P['Type']['command'],
     expectedRevision: number,
     referenceAudiences: readonly string[] = [],
   ) =>
     Effect.gen(function* applyCommand() {
-      const payloadSchema = Schema.Struct({ command: schema, expectedRevision: Schema.Int });
-      const payload = yield* Schema.decodeUnknownEffect(payloadSchema)({ command, expectedRevision });
+      const payload = yield* Schema.decodeUnknownEffect(action.payload)({ command, expectedRevision });
       return yield* call(
         audience,
-        `/${audience}/actions/apply-command`,
-        payloadSchema,
+        `/${audience}/actions/${action.slug}`,
+        action.payload,
         payload,
         Revision,
         true,
