@@ -1,6 +1,7 @@
 import { TaskRefSchema } from '../../shared/resources/task.ts';
 import {
   WorkLifecycleConflict,
+  WorkReferenceUnavailable,
   WorkScopeMismatch,
   SingleWorkCommandSchema,
 } from '../../shared/actions/apply-command.ts';
@@ -363,32 +364,20 @@ it.effect('projects departed task and project owners without rewriting their sto
   }),
 );
 
-it.effect('one member Core cannot evaluate is left out of the candidates and never withholds the records', () =>
-  Effect.gen(function* unevaluableMemberProjection() {
-    const available = {
-      displayName: 'Available colleague',
+it.effect('records read fails as unavailable when Core cannot evaluate the assignee directory, asking Core once', () =>
+  Effect.gen(function* unavailableAssigneeDirectory() {
+    const member = {
+      displayName: 'Colleague',
+      membershipStatus: 'active',
       principalRef: { principalId: scope.principalId, tenantId },
-    };
-    const unevaluable = {
-      displayName: 'Unevaluable member',
-      principalRef: { principalId: scope.authBindingId, tenantId },
-    };
-    const asked: string[][] = [];
-    const records = yield* finishWorkRecords(
+      principalStatus: 'active',
+    } as const;
+    let reads = 0;
+    const failure = yield* finishWorkRecords(
       {},
       {
-        assignmentDirectory: {
-          legalEntityId: scope.legalEntityId,
-          members: [
-            { ...unevaluable, membershipStatus: 'active', principalStatus: 'active' },
-            { ...available, membershipStatus: 'active', principalStatus: 'active' },
-          ],
-          tenantId,
-        },
-        names: new Map([
-          [available.principalRef.principalId, available.displayName],
-          [unevaluable.principalRef.principalId, unevaluable.displayName],
-        ]),
+        assignmentDirectory: { legalEntityId: scope.legalEntityId, members: [member], tenantId },
+        names: new Map([[member.principalRef.principalId, member.displayName]]),
         revision: 0,
       },
       {
@@ -400,25 +389,20 @@ it.effect('one member Core cannot evaluate is left out of the candidates and nev
       scope,
     ).pipe(
       Effect.provideService(AssignablePrincipals, {
-        read: (directory) => {
-          const ids = directory.members.map(({ principalRef }) => principalRef.principalId);
-          asked.push(ids);
-          return ids.includes(unevaluable.principalRef.principalId)
-            ? Effect.fail(new AssignablePrincipalsUnavailable({ reason: 'Assignment authorization is unavailable' }))
-            : Effect.succeed([available]);
+        read: () => {
+          reads += 1;
+          return Effect.fail(
+            new AssignablePrincipalsUnavailable({ reason: 'Assignment authorization is unavailable' }),
+          );
         },
         resolveAssignee: () => Effect.fail(new AssigneeIneligible({ reason: 'Not used by a records read' })),
       }),
+      // A read that still succeeds becomes a plain string, so that failure shows a readable diff.
+      Effect.as('records read succeeded'),
+      Effect.flip,
     );
-    expect(records.assignablePrincipals).toEqual([available]);
-    expect(records.items).toEqual([]);
-    expect(records.principalNames.map(({ displayName }) => displayName)).toEqual([available.displayName]);
-    // The whole directory first, then each member alone and exactly once.
-    expect(asked).toEqual([
-      [unevaluable.principalRef.principalId, available.principalRef.principalId],
-      [unevaluable.principalRef.principalId],
-      [available.principalRef.principalId],
-    ]);
+    expect(failure).toBeInstanceOf(WorkReferenceUnavailable);
+    expect(reads).toBe(1);
   }),
 );
 
