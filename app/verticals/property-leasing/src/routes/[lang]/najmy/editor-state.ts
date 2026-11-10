@@ -20,6 +20,26 @@ interface EditorInputs {
   readonly stayNote: string;
   readonly unitId: string;
 }
+/**
+ * What the Save button of the lease or stay form sends from: every typed field of the form. The guest search box is
+ * not part of it; it only looks parties up.
+ */
+export type OccupancyDraft = Omit<EditorInputs, 'editingId' | 'guestQuery'>;
+
+/** The draft of an editor state. */
+export const occupancyDraftOf = (state: EditorInputs): OccupancyDraft => ({
+  customerId: state.customerId,
+  endDate: state.endDate,
+  guestId: state.guestId,
+  peopleCount: state.peopleCount,
+  rentMonthly: state.rentMonthly,
+  rentPaymentDay: state.rentPaymentDay,
+  rentService: state.rentService,
+  startDate: state.startDate,
+  stayNote: state.stayNote,
+  unitId: state.unitId,
+});
+
 export interface OccupancyEditorState extends EditorInputs {
   readonly customerOpen: boolean;
   readonly customers: Effect.Success<ReturnType<typeof listCustomers>>;
@@ -41,6 +61,8 @@ export type OccupancyEditorAction = Data.TaggedEnum<{
     readonly startDate: EditorInputs['startDate'];
   };
   OPEN_RENT: { readonly terms: Option.Option<RentTerms> };
+  /** "Zahodit změny" or "Načíst aktuální verzi": the form shows `draft` again. */
+  RESTORE_DRAFT: { readonly draft: OccupancyDraft };
   SET_CUSTOMER_OPEN: { readonly open: boolean };
   SET_EDITOR: { readonly mode: OccupancyEditorState['editor'] };
   SET_INPUT: { readonly field: keyof EditorInputs; readonly value: string };
@@ -77,6 +99,14 @@ const rentInputs = (terms: Option.Option<RentTerms>) =>
       rentService: crownsInput(value.serviceChargesMinor),
     }),
   });
+
+/** A lease draft's form fields as `record` holds them; the other fields of `draft` stay. */
+export const withRecordInputs = (draft: OccupancyDraft, record: Occupancy): OccupancyDraft => ({
+  ...draft,
+  ...rentInputs(Option.fromUndefinedOr(record.rentTerms)),
+  endDate: record.endDate ?? '',
+  startDate: record.startDate,
+});
 
 /** One transition owns the related dialog fields; filters and records remain outside the editor. */
 export const occupancyEditorReducer = (
@@ -132,6 +162,7 @@ export const occupancyEditorReducer = (
         unitId: initialUnitId,
       }),
       OPEN_RENT: ({ terms }) => ({ ...state, ...rentInputs(terms), rentEditorOpen: true }),
+      RESTORE_DRAFT: ({ draft }) => ({ ...state, ...draft }),
       SET_CUSTOMER_OPEN: ({ open }) => ({ ...state, customerOpen: open }),
       SET_EDITOR: ({ mode }) => ({ ...state, editor: mode }),
       SET_INPUT: ({ field, value }) => ({ ...state, [field]: value }),
