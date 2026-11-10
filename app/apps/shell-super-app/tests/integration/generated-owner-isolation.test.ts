@@ -75,6 +75,7 @@ import {
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
 } from '../../../../packages/core-runtime/src/operations/context.ts';
+import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import {
   SPICEDB_CHECK_TIMEOUT_MS,
@@ -170,7 +171,14 @@ const OwnerTimelineSchema = Schema.Struct({
   ),
   projectionLagging: Schema.Boolean,
 });
-const OwnerSearchSchema = Schema.Array(Schema.Struct({ ref: ResourceRefSchema, title: Schema.String }));
+// The owner's search contract publishes the company each row belongs to; the client decode must keep it.
+const OwnerSearchSchema = Schema.Array(
+  Schema.Struct({
+    ref: ResourceRefSchema,
+    selectedLegalEntityId: LegalEntityIdSchema,
+    title: Schema.String,
+  }),
+);
 interface GeneratedOwnerModules {
   // Generated source is imported from a temporary path, so TypeScript cannot retain the private
   // Action-registration symbols across the dynamic module boundary. Runtime checks below prove it.
@@ -1124,6 +1132,7 @@ it.live(
       {
         // Search rows carry the tenant that owns them (ac674b875), so the ref names it alongside the resource.
         ref: { ...resourceRef, tenantId: tenantA },
+        selectedLegalEntityId: entityA1,
         title: 'A1 searchable',
       },
     ]);
@@ -1157,8 +1166,20 @@ it.live(
         'searchable',
       ),
     ).toEqual({
+      // The owner declares no search presentation, so the business block is empty for this release.
       partial: false,
-      results: [{ kind: 'resource', ref: resourceRef, title: 'A1 searchable' }],
+      presentation: {
+        business: { compositionRevision: catalog.composition.revision, entries: [], schemaVersion: '1' },
+        pages: [],
+      },
+      results: [
+        {
+          kind: 'resource',
+          ref: { ...resourceRef, tenantId: tenantA },
+          selectedLegalEntityId: entityA1,
+          title: 'A1 searchable',
+        },
+      ],
     });
     const shellDefinitionsLayer = createShellGovernedReadDefinitionsLayer(
       gateway,
