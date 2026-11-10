@@ -314,6 +314,9 @@ export const cs = {
     standaloneItem: "samostatná položka",
     removeFailed: "Variantu se nepodařilo odebrat. Zkuste to znovu.",
   },
+  notifications: { close: "Zavřít oznámení", label: "Oznámení", loading: "Probíhá…" },
+  // Read by screen readers after the "*" of a required field.
+  forms: { requiredLabel: "(povinné)" },
   cart: {
     title: "Nákupní košík",
     miniCart: {

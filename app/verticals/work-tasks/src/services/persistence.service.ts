@@ -36,6 +36,7 @@ import type {
   BulkSkipReason,
   BulkTaskResult,
   BulkWorkCommand,
+  CreateTaskCommand,
   PlanningCommand,
   SingleWorkCommand,
   WorkCommand,
@@ -45,6 +46,7 @@ import type {
   ContextRef,
   HistoryEntry,
   RecordsRequest,
+  StorefrontInquiry,
   Task,
   TaskState,
   WorkProject,
@@ -598,6 +600,38 @@ const redactTaskLookups = (task: Task, access: WorkRecordsGrants['lookupAccess']
 };
 
 /**
+ * Assignment candidates are a picker hint; the Action re-decides every assignee it is given. When Core cannot
+ * evaluate the directory as a whole, each member is asked alone: a member that stays unevaluable is left out and
+ * logged, so one such member never withholds the records the gate has already allowed.
+ */
+const assignableCandidates = Effect.fn('Work.assignableCandidates')(function* assignableCandidates(
+  directory: AssignablePrincipalDirectory,
+  scope: OperationalScope,
+) {
+  const assignments = yield* AssignablePrincipals;
+  const eligibility = { carrier: workRecordsCarrier, scope };
+  const whole = yield* assignments.read(directory, eligibility).pipe(Effect.option);
+  if (Option.isSome(whole)) {
+    return whole.value;
+  }
+  const candidates = yield* Effect.forEach(
+    directory.members,
+    (member) =>
+      assignments
+        .read({ ...directory, members: [member] }, eligibility)
+        .pipe(
+          Effect.catchTag('AssignablePrincipalsUnavailable', (failure) =>
+            Effect.logWarning('Work assignment candidate unavailable', member.principalRef, failure).pipe(
+              Effect.as([]),
+            ),
+          ),
+        ),
+    { concurrency: 1 },
+  );
+  return candidates.flat();
+});
+
+/**
  * After commit: decode the SQL-filtered state and shape the authorized records response.
  */
 export const finishWorkRecords = Effect.fn('Work.finishRecords')(function* finishWorkRecords(
@@ -647,13 +681,7 @@ export const finishWorkRecords = Effect.fn('Work.finishRecords')(function* finis
       (request.contextResourceId === undefined ||
         task.contextRefs.some((ref) => ref.resourceId === request.contextResourceId)),
   );
-  const assignments = yield* AssignablePrincipals;
-  const assignablePrincipals = yield* assignments
-    .read(loaded.assignmentDirectory, {
-      carrier: workRecordsCarrier,
-      scope,
-    })
-    .pipe(Effect.mapError(referenceUnavailable));
+  const assignablePrincipals = yield* assignableCandidates(loaded.assignmentDirectory, scope);
   const departedPrincipalIds = new Set(
     loaded.assignmentDirectory.members.flatMap((member) =>
       member.membershipStatus === 'departed' ? [member.principalRef.principalId] : [],
@@ -801,8 +829,10 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
       return (yield* principalNames(new Set([scope.principalId]))).get(scope.principalId);
     });
     const whereScope = and(eq(workStates.tenantId, scope.tenantId), eq(workStates.legalEntityId, legalEntityId));
-    const load = Effect.fn('Work.load')(function* load() {
-      const [row] = yield* transaction.select().from(workStates).where(whereScope).limit(1);
+    /** `lock` holds the company's Work row until commit, so writers that take the current revision serialize. */
+    const load = Effect.fn('Work.load')(function* load(lock: 'none' | 'for_update') {
+      const query = transaction.select().from(workStates).where(whereScope).limit(1);
+      const [row] = yield* lock === 'for_update' ? query.for('update') : query;
       if (row === undefined) {
         return { revision: 0, state: yield* emptyWorkState(scope, legalEntityId) };
       }
@@ -903,7 +933,7 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
       command: BulkWorkCommand,
       expectedRevision: number,
     ) {
-      const snapshot = yield* load();
+      const snapshot = yield* load('none');
       if (snapshot.revision !== expectedRevision) {
         return yield* new WorkRevisionConflict({
           code: 'work_revision_conflict',
@@ -1027,7 +1057,7 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
       expectedRevision: number,
       resourceId: string,
     ) {
-      const snapshot = yield* load();
+      const snapshot = yield* load('none');
       if (snapshot.revision !== expectedRevision) {
         return yield* new WorkRevisionConflict({ code: 'work_revision_conflict', reason: workChangedReason });
       }
@@ -1036,12 +1066,12 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
         ? addComment(command, snapshot, expectedRevision, resourceId, now)
         : applyProject(command, snapshot, expectedRevision, resourceId, now);
     });
-    const applySingle = Effect.fn('Work.applySingle')(function* applySingle(
+    const applySingleTo = Effect.fn('Work.applySingleTo')(function* applySingleTo(
+      snapshot: WorkSnapshot,
       command: SingleWorkCommand,
       expectedRevision: number,
       resourceId: string,
     ) {
-      const snapshot = yield* load();
       if (Predicate.isTagged('CreateTask')(command) && command.storefrontInquiry !== undefined) {
         const inquiry = command.storefrontInquiry;
         const existing = snapshot.state.tasks.find((task) => task.storefrontInquiry?.requestId === inquiry.requestId);
@@ -1098,6 +1128,24 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
         task: recorded.tasks.find((item) => item.ref.resourceId === change.task.ref.resourceId) ?? change.task,
       };
     });
+    const applySingle = Effect.fn('Work.applySingle')(function* applySingle(
+      command: SingleWorkCommand,
+      expectedRevision: number,
+      resourceId: string,
+    ) {
+      return yield* applySingleTo(yield* load('none'), command, expectedRevision, resourceId);
+    });
+    /**
+     * A storefront inquiry carries no revision: it only adds a task, so it writes on top of the current row, locked
+     * until commit. A repeated inquiry request id answers the task it already created, exactly as `CreateTask` does.
+     */
+    const submitStorefrontInquiry = Effect.fn('Work.submitStorefrontInquiry')(function* submitStorefrontInquiry(
+      command: CreateTaskCommand & { readonly storefrontInquiry: StorefrontInquiry },
+      resourceId: string,
+    ) {
+      const snapshot = yield* load('for_update');
+      return yield* applySingleTo(snapshot, command, snapshot.revision, resourceId);
+    });
     const apply = Effect.fn('Work.apply')(function* apply(
       command: WorkCommand,
       expectedRevision: number,
@@ -1118,7 +1166,7 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
       }
       return yield* applySingle(command, expectedRevision, resourceId);
     });
-    return { apply, loadRecords };
+    return { apply, loadRecords, submitStorefrontInquiry };
   },
   Effect.mapError((cause) =>
     Object.defineProperty(

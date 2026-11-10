@@ -67,6 +67,8 @@ import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 
 import {
+  accessScopeFences,
+  accessScopes,
   actionInvocations,
   auditEvents,
   coreRelations,
@@ -97,6 +99,8 @@ import { makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
 import { AuthenticationService } from '../../api/auth/service.ts';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { bootstrapScopesOf } from '@app/core-runtime/access/bootstrap';
+import { LegalEntityIdSchema, TenantIdSchema } from '@app/core-runtime/access/ids';
 import type { AccessDecisionService, GateInput } from '@app/core-runtime/access/enforcement';
 import { makeShellAuthenticationApiRuntime as makeProductionShellAuthenticationApiRuntime } from '../../api/index.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
@@ -249,6 +253,33 @@ const legalEntitySelectionOptions = {
         : Effect.die('missing fixture legal entity'),
   },
 } as const;
+/**
+ * A signed-in person who is not an administrator. Identity administration is definitely denied for the tenant
+ * (`manage_identity`) and the company (`manage_people`); company selection and the other permissions answer as above.
+ */
+const nonAdministratorContextAccess = {
+  ...legalEntitySelectionOptions.contextAccess,
+  legalEntities: ({
+    legalEntityIds,
+    permission,
+  }: {
+    readonly legalEntityIds: readonly string[];
+    readonly permission?: string;
+  }) =>
+    Effect.succeed(
+      legalEntityIds.map((key) => ({
+        decision: permission === 'manage_people' ? ('denied' as const) : ('allowed' as const),
+        key,
+      })),
+    ),
+  tenants: ({ permission, tenantIds }: { readonly permission: string; readonly tenantIds: readonly string[] }) =>
+    Effect.succeed(
+      tenantIds.map((key) => ({
+        decision: permission === 'manage_identity' ? ('denied' as const) : ('allowed' as const),
+        key,
+      })),
+    ),
+};
 const contextAccessLayer = Layer.mergeAll(
   Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
   Layer.succeed(ContextAccess, legalEntitySelectionOptions.contextAccess),
@@ -499,6 +530,7 @@ it.live(
     const approvedPageCatalog = yield* installedPageCatalog();
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: yield* fixtureSnapshotForRevision(approvedPageCatalog.composition.revision),
+      databaseIdentities: SHELL_DATABASE_IDENTITY_ENROLLMENT,
       mode: 'schema-only',
       purpose: 'stabilization-1287-shell-auth',
     });
@@ -556,8 +588,8 @@ it.live(
         coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId)),
         coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, foreignTenantId)),
         coreDatabase.delete(principals).where(inArray(principals.principalId, [principalId, changedPrincipalId])),
-        coreDatabase.delete(legalEntities).where(eq(legalEntities.legalEntityId, fixtureLegalEntityId)),
-        coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId)),
+        // The fixture tenant and its company hold access scopes whose fences are never removed (the
+        // access record is permanent), so they stay until the isolated database is dropped.
         coreDatabase.delete(tenants).where(eq(tenants.tenantId, foreignTenantId)),
       ]);
     });
@@ -613,6 +645,28 @@ it.live(
       status: 'active',
       tenantId,
     });
+    // A provisioned tenant has its access scopes, each with a Ready fence, as bootstrap writes them: a
+    // prepared Action authority pins its decision to those revisions and is unavailable without them.
+    const fixtureAccessScopes = bootstrapScopesOf(TenantIdSchema.make(tenantId), [
+      LegalEntityIdSchema.make(fixtureLegalEntityId),
+    ]);
+    yield* coreDatabase.insert(accessScopes).values(
+      fixtureAccessScopes.map((entry) => ({
+        legalEntityId: entry._tag === 'LegalEntity' ? entry.legalEntityId : null,
+        scopeId: entry.scopeId,
+        tenantContextId: entry._tag === 'TenantContext' ? tenantId : null,
+        tenantId,
+      })),
+    );
+    yield* coreDatabase.insert(accessScopeFences).values(
+      fixtureAccessScopes.map(({ scopeId }) => ({
+        owningOperationId: null,
+        revision: 1,
+        scopeId,
+        state: 'Ready' as const,
+        tenantId,
+      })),
+    );
     yield* coreDatabase.insert(principalAuthBindings).values({
       authenticationNamespaceId: staffAuthenticationNamespaceId,
       principalAuthBindingId: fixtureAuthBindingId,
@@ -1156,7 +1210,7 @@ it.live(
       false,
       Layer.mergeAll(
         Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
-        Layer.succeed(ContextAccess, legalEntitySelectionOptions.contextAccess),
+        Layer.succeed(ContextAccess, nonAdministratorContextAccess),
       ),
       undefined,
       undefined,
@@ -1832,6 +1886,7 @@ it.live(
     const testRevision = initialSnapshot.composition.revision;
     const isolated = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: initialSnapshot,
+      databaseIdentities: SHELL_DATABASE_IDENTITY_ENROLLMENT,
       mode: 'schema-only',
       purpose: 'stabilization-1287-shell-auth',
     });
@@ -1868,6 +1923,8 @@ it.live(
     // Ordered child-before-parent within the owned fixture rows.
     const cleanup = Effect.fnUntraced(function* runIntegration7() {
       yield* coreDatabase.delete(dataAccessEvents).where(inArray(dataAccessEvents.tenantId, fixtureTenants));
+      // Audit rows reference the bindings they were written under (restrict), so they go before the bindings.
+      yield* coreDatabase.delete(auditEvents).where(inArray(auditEvents.tenantId, fixtureTenants));
       const existingUsers = yield* authDatabase.select({ id: user.id }).from(user).where(eq(user.email, multiEmail));
       const existingUserIds = existingUsers.map(({ id }) => id);
       if (existingUserIds.length > 0) {
@@ -2432,6 +2489,8 @@ it.live(
     // resolver can still prove that an existing selected session rejects a genuinely missing row.
     yield* purgeFixtureRows([
       coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, secondTenantId)),
+      // Audit rows reference the bindings they were written under (restrict), so they go before the bindings.
+      coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, secondTenantId)),
       coreDatabase.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, secondTenantId)),
     ]);
     yield* assertSessionForbidden(
@@ -2684,6 +2743,7 @@ const prepareTenantPartyCase = Effect.fn('TenantPartyGatewayTest.prepareCase')(f
   expect(snapshot.composition.shell.runtimeContract.sha256).toBe(shellRuntimeSha256);
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
+    databaseIdentities: SHELL_DATABASE_IDENTITY_ENROLLMENT,
     mode: 'schema-only',
     purpose: 'stabilization-1267-party-gateway',
   });

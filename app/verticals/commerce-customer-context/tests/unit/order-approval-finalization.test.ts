@@ -67,7 +67,8 @@ it.effect(
         authMethod: 'api_key' as const,
         correlationId: 'order-preflight-test',
         legalEntityId: proposal.context.sellingLegalEntityId,
-        principalId: '10000000-0000-4000-8000-000000000009',
+        // The verified subject of an Order finalization call is the approval's buyer.
+        principalId: proposal.identity.buyer.principalId,
         tenantId: proposal.context.tenantId,
       };
       const facts = Schema.decodeUnknownSync(PurchaseLimitEvaluationCurrentFactsSchema)({
@@ -111,7 +112,7 @@ it.effect(
         .pipe(Effect.flip);
       expect(mismatch.code).toBe('purchase_limit_dependency_unavailable');
       const wrongBuyer = yield* currentness
-        .resolveCurrent({ ...input, scope: { ...input.scope, principalId: scope.principalId } })
+        .resolveCurrent({ ...input, scope: { ...input.scope, principalId: '10000000-0000-4000-8000-000000000009' } })
         .pipe(Effect.flip);
       expect(wrongBuyer.code).toBe('purchase_limit_dependency_unavailable');
       yield* TestClock.adjust('1 second');

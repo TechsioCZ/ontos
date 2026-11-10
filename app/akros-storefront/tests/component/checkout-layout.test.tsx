@@ -74,7 +74,7 @@ describe("checkout cart composition", () => {
     expect(screen.getByRole("link", { name: "Vytvořit účet" }).getAttribute("href")).toContain(
       "/registrace",
     );
-    expect(screen.getByRole("tab", { name: "Doprava a platba" }).hasAttribute("disabled")).toBe(
+    expect(screen.getByRole("button", { name: "Doprava a platba" }).hasAttribute("disabled")).toBe(
       true,
     );
     expect(screen.getAllByRole("complementary", { name: "Shrnutí" })).toHaveLength(1);
@@ -91,7 +91,7 @@ describe("checkout cart composition", () => {
     await user.click(await screen.findByRole("button", { name: "Objednat bez registrace" }));
     expect(router.push).toHaveBeenCalledWith("/kosik/doprava-platba");
     expect(window.sessionStorage.getItem("sf-checkout-guest")).toBe("true");
-    expect(screen.getByRole("tab", { name: "Doprava a platba" }).hasAttribute("disabled")).toBe(
+    expect(screen.getByRole("button", { name: "Doprava a platba" }).hasAttribute("disabled")).toBe(
       false,
     );
     expect(await screen.findByRole("link", { name: "Vybrat dopravu a platbu" })).not.toBeNull();

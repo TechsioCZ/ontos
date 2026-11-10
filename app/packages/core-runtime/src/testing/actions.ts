@@ -62,6 +62,17 @@ export type { ActionTestPreparationRead, ActionTestPreparationReadScript } from 
 export { makeActionPreparationProbe } from './action-preparation-probe.ts';
 export { makeActionTestAccessFences } from './action-access-fences.ts';
 export type { ActionTestAccessFenceQuery, ActionTestAccessFenceRow } from './action-access-fences.ts';
+/**
+ * Test-only: the scripted authority a native fixture gives its real `AccessDecisionLive` gate. It
+ * answers the acting principal's cells and the engine's witness relations, while the persisted
+ * fence/revision reader stays the production one over the fixture's own scope rows.
+ */
+export {
+  makeTestActionAccessLayers,
+  makeTestActionAccessPorts,
+  testActionAccessScopeIds,
+} from './action-access-authority.ts';
+export type { TestActionAccessAuthorityScript } from './action-access-authority.ts';
 
 /** Test-only: bind the existing issuer registrar to an explicitly scoped fixture pool. */
 export { makeGatewayScopeGrantRegistrar } from '../auth/gateway-scope-grant.ts';

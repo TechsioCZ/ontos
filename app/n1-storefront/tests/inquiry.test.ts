@@ -1,4 +1,4 @@
-import { Effect, Match } from "effect";
+import { Effect } from "effect";
 import type { InquiryOutcome } from "../src/ontos/inquiry";
 import type { InquirySubmissionRef } from "../src/ontos/inquiry-client";
 import { inquiryRuntime, startInquirySubmission } from "../src/ontos/inquiry-client";
@@ -7,8 +7,9 @@ import {
   confirmInquiryTask,
   decodeInquiry,
   InquiryFailure,
+  inquiryIdempotencyKey,
   isInquiryOrigin,
-  makeInquiryCommand,
+  makeInquiryPayload,
   sendInquiry,
   resolveInquiryProduct,
 } from "../src/ontos/inquiry-model";
@@ -94,22 +95,28 @@ describe("N1 canonical product questions", () => {
           throw new Error("Expected the decoded product selector");
         }
         const context = yield* resolveInquiryProduct(input.product, questionCatalog.details);
-        const payload = yield* makeInquiryCommand(input, 12, context);
-        const command = Match.value(payload.command).pipe(
-          Match.tag("CreateTask", (value) => value),
-          Match.orElse(() => null),
-        );
-        expect(command?.storefrontInquiry).toMatchObject({
-          kind: "PRODUCT_QUESTION",
-          message: customer.message,
-          productId: "product",
-          productName: "Actual owner product",
-          productSlug: "actual-owner-product",
-          requestId: customer.requestId,
+        const payload = yield* makeInquiryPayload(input, context);
+        expect(payload).toEqual({
+          description: [
+            "Kontakt: Shopper <shopper@example.com>",
+            "Telefon: +420123456789",
+            "Variant: M (ACTUAL-M) [n1legacy:variant:12]",
+            "",
+            customer.message,
+          ].join("\n"),
+          storefrontInquiry: {
+            email: customer.email,
+            kind: "PRODUCT_QUESTION",
+            message: customer.message,
+            name: customer.name,
+            productId: "product",
+            productName: "Actual owner product",
+            productSlug: "actual-owner-product",
+            requestId: customer.requestId,
+            subject: "N1 product enquiry",
+          },
+          title: "N1 product enquiry",
         });
-        expect(command?.description).toContain("Variant: M (ACTUAL-M) [n1legacy:variant:12]");
-        expect(command?.description).not.toContain("Forged product");
-        expect(command?.storefrontInquiry).not.toHaveProperty("variantIds");
       }),
   );
   for (const selector of [
@@ -140,8 +147,8 @@ describe("N1 canonical product questions", () => {
         ...customer,
         product: { productId: "product", variantIds: [] },
       });
-      const payload = yield* makeInquiryCommand(input, 2, context);
-      expect(payload.command).toMatchObject({
+      const payload = yield* makeInquiryPayload(input, context);
+      expect(payload).toMatchObject({
         storefrontInquiry: { kind: "PRODUCT_QUESTION", productId: "product" },
       });
     }),
@@ -152,24 +159,18 @@ describe("N1 canonical product questions", () => {
         ...customer,
         product: { productId: "product", variantIds: [] },
       });
-      let reads = 0;
       let writes = 0;
       const failure = yield* Effect.flip(
         sendInquiry(input, {
-          apply: () =>
+          product: () => Effect.fail(new InquiryFailure({ reason: "unavailable" })),
+          submit: () =>
             Effect.sync(() => {
               writes += 1;
               return "unexpected";
             }),
-          product: () => Effect.fail(new InquiryFailure({ reason: "unavailable" })),
-          revision: Effect.sync(() => {
-            reads += 1;
-            return 1;
-          }),
         }),
       );
       expect(failure.reason).toBe("unavailable");
-      expect(reads).toBe(0);
       expect(writes).toBe(0);
     }),
   );
@@ -194,15 +195,11 @@ describe("N1 canonical product questions", () => {
         phone: "p".repeat(40),
         product: { productId: "product", variantIds: [context.variant.id] },
       });
-      const payload = yield* makeInquiryCommand(input, 1, context);
-      const command = Match.value(payload.command).pipe(
-        Match.tag("CreateTask", (value) => value),
-        Match.orElse(() => null),
-      );
-      expect(command?.description?.length).toBeLessThanOrEqual(2000);
-      expect(command?.storefrontInquiry?.message).toBe(input.message);
+      const payload = yield* makeInquiryPayload(input, context);
+      expect(payload.description?.length).toBeLessThanOrEqual(2000);
+      expect(payload.storefrontInquiry.message).toBe(input.message);
       const failure = yield* Effect.flip(
-        makeInquiryCommand({ ...input, message: `${input.message}m` }, 1, context),
+        makeInquiryPayload({ ...input, message: `${input.message}m` }, context),
       );
       expect(failure.reason).toBe("invalid");
     }),
@@ -216,7 +213,7 @@ describe("N1 canonical product questions", () => {
           product: { productId: "product", variantIds: [] },
         });
         const failure = yield* Effect.flip(
-          makeInquiryCommand(input, 1, {
+          makeInquiryPayload(input, {
             productId: "other",
             productName: "Other",
             productSlug: "other",
@@ -235,27 +232,21 @@ describe("N1 contact owner integration", () => {
       expect(failure.reason).toBe("invalid");
     }),
   );
-  it.effect("requires canonical product resolution before reading or writing the task owner", () =>
+  it.effect("requires canonical product resolution before writing to the task owner", () =>
     Effect.gen(function* productResolutionRequired() {
       const input = yield* decodeInquiry({
         ...customer,
         product: { productId: "product", variantIds: ["variant"] },
       });
       let writes = 0;
-      let reads = 0;
       const outcome = yield* sendInquiry(input, {
-        apply: () =>
+        submit: () =>
           Effect.sync(() => {
             writes += 1;
             return "unexpected";
           }),
-        revision: Effect.sync(() => {
-          reads += 1;
-          return 4;
-        }),
       }).pipe(Effect.result);
       expect(writes).toBe(0);
-      expect(reads).toBe(0);
       expect(outcome._tag).toBe("Failure");
     }),
   );
@@ -265,7 +256,7 @@ describe("N1 contact owner integration", () => {
       expect(failure.reason).toBe("invalid");
     }),
   );
-  it.effect("keeps caller identity fields out of the command and retains the optional phone", () =>
+  it.effect("sends only the action's own fields and retains the optional phone", () =>
     Effect.gen(function* customerFieldsOnly() {
       const input = yield* decodeInquiry({
         ...customer,
@@ -273,98 +264,102 @@ describe("N1 contact owner integration", () => {
         tenantId: "attacker",
         title: "attacker",
       });
-      const payload = yield* makeInquiryCommand(input, 3);
-      expect(payload.expectedRevision).toBe(3);
-      const command = Match.value(payload.command).pipe(
-        Match.tag("CreateTask", (value) => value),
-        Match.orElse(() => null),
-      );
-      expect(command?.title).toBe("N1 contact inquiry");
-      expect(command?.description).toContain("Telefon: +420123456789");
-      expect(command?.storefrontInquiry?.requestId).toBe(customer.requestId);
-      expect(payload).not.toHaveProperty("tenantId");
-    }),
-  );
-  it.effect("never retries an unknown write outcome", () =>
-    Effect.gen(function* uncertainWrite() {
-      const input = yield* decodeInquiry(customer);
-      let writes = 0;
-      const failure = yield* Effect.flip(
-        sendInquiry(input, {
-          apply: () =>
-            Effect.sync(() => {
-              writes += 1;
-            }).pipe(Effect.andThen(Effect.fail(new InquiryFailure({ reason: "unconfirmed" })))),
-          revision: Effect.succeed(4),
-        }),
-      );
-      expect(failure.reason).toBe("unconfirmed");
-      expect(writes).toBe(1);
-    }),
-  );
-  it.effect("retries a definite revision refusal with a fresh revision", () =>
-    Effect.gen(function* revisionConflict() {
-      const input = yield* decodeInquiry(customer);
-      let revision = 4;
-      const attempts: number[] = [];
-      const requestIds: string[] = [];
-      const receipt = yield* sendInquiry(input, {
-        apply: (payload) => {
-          attempts.push(payload.expectedRevision);
-          const requestId = Match.value(payload.command).pipe(
-            Match.tag("CreateTask", (command) => command.storefrontInquiry?.requestId),
-            Match.orElse(() => null),
-          );
-          requestIds.push(requestId ?? "");
-          return attempts.length === 1
-            ? Effect.fail(new InquiryFailure({ reason: "conflict" }))
-            : Effect.succeed("task-confirmed");
+      const payload = yield* makeInquiryPayload(input);
+      // The owner answers any other field (_tag, priority, command, expectedRevision, tenant) with a 400.
+      expect(payload).toEqual({
+        description:
+          "Kontakt: Shopper <shopper@example.com>\nTelefon: +420123456789\n\nPlease contact me about delivery.",
+        storefrontInquiry: {
+          email: customer.email,
+          kind: "CONTACT",
+          message: customer.message,
+          name: customer.name,
+          requestId: customer.requestId,
+          subject: "N1 contact inquiry",
         },
-        revision: Effect.sync(() => {
-          const current = revision;
-          revision += 1;
-          return current;
-        }),
+        title: "N1 contact inquiry",
       });
-      expect(receipt.taskId).toBe("task-confirmed");
-      expect(attempts).toEqual([4, 5]);
-      expect(requestIds).toEqual([customer.requestId, customer.requestId]);
     }),
   );
-  it.effect("does not attempt a write when the owner read is forbidden", () =>
-    Effect.gen(function* forbiddenRead() {
-      const input = yield* decodeInquiry(customer);
-      let writes = 0;
-      const failure = yield* Effect.flip(
-        sendInquiry(input, {
-          apply: () =>
-            Effect.sync(() => {
-              writes += 1;
-              return "unexpected";
-            }),
-          revision: Effect.fail(new InquiryFailure({ reason: "forbidden" })),
-        }),
-      );
-      expect(failure.reason).toBe("forbidden");
-      expect(writes).toBe(0);
-    }),
-  );
+  for (const reason of ["unconfirmed", "forbidden", "unavailable", "invalid"] as const) {
+    it.effect(`never repeats a write that ended ${reason}`, () =>
+      Effect.gen(function* terminalWrite() {
+        const input = yield* decodeInquiry(customer);
+        const keys: string[] = [];
+        const failure = yield* Effect.flip(
+          sendInquiry(input, {
+            submit: (_payload, key) =>
+              Effect.sync(() => {
+                keys.push(key);
+              }).pipe(Effect.andThen(Effect.fail(new InquiryFailure({ reason })))),
+          }),
+        );
+        expect(failure.reason).toBe(reason);
+        expect(keys).toEqual([inquiryIdempotencyKey(customer.requestId)]);
+      }),
+    );
+  }
+  for (const reason of ["committed", "conflict"] as const) {
+    it.effect(`resends a ${reason} refusal once under a new key with the same request id`, () =>
+      Effect.gen(function* resentWrite() {
+        const input = yield* decodeInquiry(customer);
+        const attempts: { key: string; requestId: string }[] = [];
+        const receipt = yield* sendInquiry(input, {
+          submit: (payload, key) => {
+            attempts.push({ key, requestId: payload.storefrontInquiry.requestId });
+            return attempts.length === 1
+              ? Effect.fail(new InquiryFailure({ reason }))
+              : Effect.succeed("task-confirmed");
+          },
+        });
+        const firstKey = `n1-inquiry-${customer.requestId}`;
+        expect(receipt.taskId).toBe("task-confirmed");
+        expect(attempts).toHaveLength(2);
+        expect(attempts[0]).toEqual({ key: firstKey, requestId: customer.requestId });
+        expect(attempts[1]?.key).toMatch(new RegExp(`^${firstKey}-[\\da-f-]{36}$`, "u"));
+        expect(attempts[1]?.requestId).toBe(customer.requestId);
+      }),
+    );
+  }
+  for (const [first, second, expected] of [
+    // Two definite refusals: nothing was saved, the form may be sent again.
+    ["conflict", "conflict", "unavailable"],
+    ["conflict", "forbidden", "forbidden"],
+    ["conflict", "unconfirmed", "unconfirmed"],
+    // A committed key means a saved task; a failed read-back is never reported as not sent.
+    ["conflict", "committed", "unconfirmed"],
+    ["committed", "committed", "unconfirmed"],
+    ["committed", "conflict", "unconfirmed"],
+    ["committed", "forbidden", "unconfirmed"],
+    ["committed", "unavailable", "unconfirmed"],
+  ] as const) {
+    it.effect(`stops after one resend: ${first} then ${second} ends ${expected}`, () =>
+      Effect.gen(function* boundedResend() {
+        const input = yield* decodeInquiry(customer);
+        let writes = 0;
+        const failure = yield* Effect.flip(
+          sendInquiry(input, {
+            submit: () =>
+              Effect.suspend(() => {
+                writes += 1;
+                return Effect.fail(new InquiryFailure({ reason: writes === 1 ? first : second }));
+              }),
+          }),
+        );
+        expect(failure.reason).toBe(expected);
+        expect(writes).toBe(2);
+      }),
+    );
+  }
 });
 
 for (const result of [
   {},
-  {
-    task: {
-      ref: { resourceId: "task-1", tenantId: "other-tenant" },
-      storefrontInquiry: { requestId: customer.requestId },
-    },
-  },
-  {
-    task: {
-      ref: { resourceId: "task-1", tenantId: "n1" },
-      storefrontInquiry: { requestId: "other-request" },
-    },
-  },
+  { requestId: customer.requestId },
+  { requestId: customer.requestId, taskRef: { resourceId: "task-1", tenantId: "other-tenant" } },
+  { requestId: "other-request", taskRef: { resourceId: "task-1", tenantId: "n1" } },
+  { requestId: customer.requestId, taskRef: { resourceId: "", tenantId: "n1" } },
+  { taskRef: { resourceId: "task-1", tenantId: "n1" } },
 ]) {
   it.effect("requires a matching owner receipt", () =>
     Effect.gen(function* verifiesReceipt() {
@@ -387,12 +382,7 @@ it("requires the same complete origin", () => {
 it.effect("confirms the matching persisted task", () =>
   Effect.gen(function* confirmsSavedTask() {
     const taskId = yield* confirmInquiryTask(
-      {
-        task: {
-          ref: { resourceId: "saved-task", tenantId: "n1" },
-          storefrontInquiry: { requestId: customer.requestId },
-        },
-      },
+      { requestId: customer.requestId, taskRef: { resourceId: "saved-task", tenantId: "n1" } },
       "n1",
       customer.requestId,
     );

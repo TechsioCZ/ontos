@@ -22,7 +22,8 @@ describe("truthful product read loading", () => {
     const html = renderState("product", true);
     expect(html).toContain("Načítání ceny");
     expect(html).toContain("Načítání dostupnosti");
-    expect(html).toContain('disabled=""');
+    // A loading ui-kit Button stays focusable: it is aria-disabled, not natively disabled.
+    expect(html).toContain('aria-disabled="true"');
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain(getDictionary("cs").notifications.loading);
     expect(html).not.toContain(getDictionary("cs").addToCartDetail);

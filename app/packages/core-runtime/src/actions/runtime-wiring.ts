@@ -1,6 +1,7 @@
 import { Layer } from 'effect';
 
 import { AccessPrincipalKindSourceLive as principalKindSourceLive } from '../access/enforcement/actor.ts';
+import { AccessDecisionLogBatchLive as decisionLogBatchLive } from '../access/enforcement/decision-log-batch.ts';
 import { AccessDecisionLogLive as decisionLogLive } from '../access/enforcement/decision-log.ts';
 import { DecisionCheckLive as decisionCheckLive } from '../access/enforcement/enforcement-live.ts';
 import { AccessIntentLive as intentLive } from '../access/enforcement/intent-reader.ts';
@@ -34,6 +35,8 @@ import { AccessWorkloadBindingSourceLive as workloadBindingSourceLive } from '..
 export const AccessEnforcementPortsLive = Layer.mergeAll(
   intentLive,
   decisionLogLive,
+  // Subject inspection writes every row of one batch in one transaction through the same evidence table.
+  decisionLogBatchLive,
   principalKindSourceLive,
   legalEntityCandidatesLive,
   decisionCheckLive,
@@ -42,6 +45,7 @@ export const AccessEnforcementPortsLive = Layer.mergeAll(
 
 export { AccessPrincipalKindSourceLive } from '../access/enforcement/actor.ts';
 export { AccessDecisionGate } from '../access/enforcement/contract.ts';
+export { AccessDecisionLogBatchLive } from '../access/enforcement/decision-log-batch.ts';
 export { AccessDecisionLogLive } from '../access/enforcement/decision-log.ts';
 export { DecisionCheckLive } from '../access/enforcement/enforcement-live.ts';
 export { AccessIntentLive } from '../access/enforcement/intent-reader.ts';

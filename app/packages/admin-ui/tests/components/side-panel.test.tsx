@@ -161,6 +161,79 @@ it.effect('lets a settled autosave form close from the backdrop', () =>
   }),
 );
 
+/** A quick view over a list: the row behind the panel keeps working while the panel is open. */
+const PeekExample = ({ onRowClick }: { readonly onRowClick: () => void }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button onClick={() => setOpen(true)} type="button">
+        Open row
+      </button>
+      <button onClick={onRowClick} type="button">
+        Next row
+      </button>
+      <SidePanel onOpenChange={setOpen} open={open} peek resizeLabel="Resize panel" title={copy.title}>
+        <label>
+          Draft
+          <input />
+        </label>
+      </SidePanel>
+    </>
+  );
+};
+
+const openPeek = Effect.fn('openPeek')(function* openPeek(onRowClick: () => void) {
+  render(<PeekExample onRowClick={onRowClick} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Open row' }));
+  const dialog = yield* Effect.promise(() => screen.findByRole('dialog', { name: copy.title }));
+  return dialog;
+});
+
+it.effect('keeps the default panel modal', () =>
+  Effect.gen(function* defaultPanel() {
+    const { dialog } = yield* openPanel();
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    expect(dialog.parentElement?.classList.contains('pointer-events-auto')).toBe(true);
+  }),
+);
+
+it.effect('renders a peek panel as a modeless dialog without a backdrop', () =>
+  Effect.gen(function* peekDom() {
+    const dialog = yield* openPeek(() => {});
+    expect(dialog.getAttribute('aria-modal')).toBe('false');
+    expect(document.querySelector("[data-scope='dialog'][data-part='backdrop']")).toBeNull();
+  }),
+);
+
+it.effect('keeps a peek panel open for outside presses and keeps the list behind it clickable', () =>
+  Effect.gen(function* peekOutside() {
+    let rowClicks = 0;
+    const dialog = yield* openPeek(() => {
+      rowClicks += 1;
+    });
+    const row = screen.getByRole('button', { name: 'Next row' });
+    fireEvent.pointerDown(row, { button: 0, clientX: 0, clientY: 0, pointerType: 'mouse' });
+    fireEvent.pointerUp(row, { button: 0, clientX: 0, clientY: 0, pointerType: 'mouse' });
+    fireEvent.click(row);
+    expect(rowClicks).toBe(1);
+    yield* Effect.promise(() => waitFor(() => expect(dialog.dataset['state']).toBe('open')));
+    expect(screen.getByRole('dialog', { name: copy.title })).toBe(dialog);
+    expect(document.body.style.overflow).toBe('');
+  }),
+);
+
+it.effect('still closes a peek panel on Escape and with the close button', () =>
+  Effect.gen(function* peekClose() {
+    const dialog = yield* openPeek(() => {});
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()));
+    fireEvent.click(screen.getByRole('button', { name: 'Open row' }));
+    yield* Effect.promise(() => screen.findByRole('dialog', { name: copy.title }));
+    fireEvent.click(screen.getByRole('button', { name: 'Zavřít' }));
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()));
+  }),
+);
+
 it.effect('asks the draft owner once when the kept draft is closed on request', () =>
   Effect.gen(function* guardedClose() {
     const { dialog } = yield* openPanel(true);

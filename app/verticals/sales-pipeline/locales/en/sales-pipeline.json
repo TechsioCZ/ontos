@@ -1,6 +1,8 @@
 {
   "sales-pipeline": {
     "detail": {
+      "backToList": "Back to opportunities",
+      "navigationFailed": "The opportunity page could not be opened. Try again.",
       "missing": "The requested opportunity is not available in this selection.",
       "title": "Business case",
       "relatedRecords": "Related records",
@@ -9,7 +11,40 @@
       "orders": "Orders from this case",
       "offerLinesTitle": "Offer – case line items",
       "offerLinesLabel": "Offer line items",
-      "stageHistory": "Stage history"
+      "stageHistory": "Stage history",
+      "probability": "Probability {{value}}",
+      "customer": "Customer",
+      "owner": "Owner",
+      "unassigned": "Unassigned",
+      "companyId": "Company ID {{id}}",
+      "amount": "Estimated value (excl. VAT)",
+      "closeDate": "Expected close date",
+      "createdAt": "Created",
+      "updatedAt": "Last changed",
+      "note": "Note",
+      "taskAssignedToCase": "Assigned to the case",
+      "taskCustomer": "Customer task",
+      "taskDue": "due {{date}}",
+      "contractLease": "Lease",
+      "contractDefault": "Contract",
+      "contractFrom": "from {{date}}",
+      "contractState": {
+        "ACTIVE": "Active",
+        "DRAFT": "Draft",
+        "EXPIRED": "Expired",
+        "TERMINATED": "Terminated"
+      },
+      "emptyTasks": "There are no tasks for this case or customer yet.",
+      "emptyContracts": "The customer has no contract yet.",
+      "emptyOrders": "No order has come from this case yet.",
+      "unavailableTasks": "Tasks could not be loaded.",
+      "unavailableContracts": "Contracts could not be loaded.",
+      "unavailableOrders": "Orders could not be loaded.",
+      "noOfferLines": "This case has no offer items yet. Add them with Edit.",
+      "lineItem": "Item",
+      "lineQuantity": "Quantity",
+      "lineUnitPrice": "Unit price excl. VAT",
+      "lineTotal": "Total excl. VAT"
     },
     "aiReview": {
       "decisionNote": "Decision note (optional)",
@@ -125,7 +160,8 @@
           "archive": "Archive",
           "assignOwner": "Assign owner",
           "changeStage": "Change stage",
-          "edit": "Edit"
+          "edit": "Edit",
+          "openDetail": "Open detail"
         },
         "bulk": {
           "owner": "Assign owner",
@@ -272,6 +308,11 @@
     "noResults": "No results",
     "sidePanel": {
       "resize": "Resize panel. Drag or use the left and right arrows. Double-click or Home restores the default width."
+    },
+    "detailView": {
+      "group": "Detail view",
+      "page": "Full page",
+      "panel": "Side panel"
     }
   }
 }

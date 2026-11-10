@@ -232,6 +232,9 @@ it.layer(NodeCrypto.layer)(
             expect(joinedWorkloads).toBeDefined();
             if (joinedWorkloads !== undefined) {
               yield* joinedWorkloads.readActiveWorkloadKeys({ principalId: person, scope, tenantId: tenant });
+              // The company declaration joins the same transaction, so a prepared Action's recheck reads
+              // it from the snapshot its receipt belongs to, never from a second connection (D6, O75).
+              yield* joinedWorkloads.readCompanyDeclaration({ principalId: person, scope, tenantId: tenant });
             }
             return statements.slice(before);
           }),
@@ -241,6 +244,7 @@ it.layer(NodeCrypto.layer)(
         expect(joinedReads.some((statement) => statement.includes('access_decision_logs'))).toBe(true);
         expect(joinedReads.some((statement) => statement.includes('legal_entities'))).toBe(true);
         expect(joinedReads.some((statement) => statement.includes('access_workload_bindings'))).toBe(true);
+        expect(joinedReads.some((statement) => statement.includes('access_workload_company_bindings'))).toBe(true);
         expect(joinedReads.some(opensOwnTransaction)).toBe(false);
 
         // Negative control: the same actor adapter with no transaction named opens one of its own.

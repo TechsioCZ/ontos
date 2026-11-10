@@ -146,7 +146,7 @@ export const AGENT_CREATED_ID_PLACEHOLDER = '$createdId';
 export const AgentProposalInputSchema = Schema.Struct({
   /** Stable deployment app id of the module (from the composition). */
   appId: AgentAppIdSchema.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
-  /** Module action slug: `apply-command` (default, body `{ command, expectedRevision }`) or a named Action such as `update-party` whose body is `command` itself (no `_tag`). */
+  /** Module Action slug (default `apply-command`). A command-union Action (body `{ command, expectedRevision }`) takes only the `_tag`s its union accepts; a named Action such as `update-party` takes `command` itself (no `_tag`). */
   actionSlug: Schema.optionalKey(ShortText),
   command: AgentCommandSchema,
   diff: Schema.Array(AgentDiffLineSchema).check(Schema.isMaxLength(60)),

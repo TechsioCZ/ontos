@@ -4,6 +4,7 @@ import { getCatalog } from "@/ontos/catalog";
 import { StorefrontShell } from "@/features/shell";
 import { CartProvider } from "@/features/cart-provider";
 import { PortalSessionProvider } from "@/features/auth-view";
+import { RequiredLabelProvider } from "@/features/form-controls";
 import { getCartScope } from "@/ontos/cart-quote-server";
 import { storefrontRuntime } from "@/ontos/runtime";
 import { Effect } from "effect";
@@ -41,13 +42,15 @@ const LocaleLayout = async ({
         <p className="bg-black px-4 py-2 text-center text-sm font-medium text-white" role="note">
           {demoNotice}
         </p>
-        <StorefrontShell
-          categories={result.state === "ready" ? result.catalog.categories : []}
-          dictionary={dictionary}
-          locale={locale}
-        >
-          {children}
-        </StorefrontShell>
+        <RequiredLabelProvider requiredLabel={dictionary.requiredLabel}>
+          <StorefrontShell
+            categories={result.state === "ready" ? result.catalog.categories : []}
+            dictionary={dictionary}
+            locale={locale}
+          >
+            {children}
+          </StorefrontShell>
+        </RequiredLabelProvider>
       </PortalSessionProvider>
     </CartProvider>
   );

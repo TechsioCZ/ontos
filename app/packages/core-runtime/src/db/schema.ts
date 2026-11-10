@@ -1485,6 +1485,7 @@ export const {
   accessTeamMembers,
   accessTeams,
   accessWorkloadBindings,
+  accessWorkloadCompanyBindings,
 } = accessTables.tables;
 
 export const accessDatabaseSchema = accessTables.tables;

@@ -19,6 +19,11 @@ export {
   executeRequestSearchRebuildWithAuthorization,
 } from './request-search-rebuild-action-client.ts';
 export type { RequestSearchRebuildActionClientOptions } from './request-search-rebuild-action-client.ts';
+export {
+  executeSubmitStorefrontInquiry,
+  executeSubmitStorefrontInquiryWithAuthorization,
+} from './submit-storefront-inquiry-action-client.ts';
+export type { SubmitStorefrontInquiryActionClientOptions } from './submit-storefront-inquiry-action-client.ts';
 // </generated-action-http-client-exports>
 
 // <generated-module-api-client-exports>

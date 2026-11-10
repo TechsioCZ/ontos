@@ -57,6 +57,11 @@ export interface BoundAccessGate {
    */
   readonly decide: (input: GateInput, transaction?: CoreTransaction) => Effect.Effect<AccessDecision>;
   /**
+   * Many decisions of one request in ONE engine snapshot, one answer and one evidence row each, exactly
+   * as `decide` would give them one at a time. Present when the seam answers a batch.
+   */
+  readonly decideMany?: (input: readonly GateInput[]) => Effect.Effect<readonly AccessDecision[]>;
+  /**
    * A list, search or history page: the owner applies the returned predicate in its own query (O25).
    * `transaction` joins a transaction the caller already owns, exactly as for `decide`.
    */
@@ -77,6 +82,9 @@ export interface BoundAccessGate {
  */
 export interface UnboundAccessGate {
   readonly decide: (input: GateInput) => Effect.Effect<AccessDecision, never, AccessDecisionRequirements>;
+  readonly decideMany?: (
+    input: readonly GateInput[],
+  ) => Effect.Effect<readonly AccessDecision[], never, AccessDecisionRequirements>;
   readonly list: (input: ListGateInput) => Effect.Effect<ListAccessResolution, never, AccessDecisionRequirements>;
   /**
    * The same seam over other ports (O75): a binding that joins a caller's transaction rebinds the
@@ -172,6 +180,8 @@ export const joinAccessEnforcementPorts = (
           workloadBindings: Object.freeze({
             readActiveWorkloadKeys: (query: WorkloadBindingQuery) =>
               workloadBindings.readActiveWorkloadKeys(query, transaction),
+            readCompanyDeclaration: (query: WorkloadBindingQuery) =>
+              workloadBindings.readCompanyDeclaration(query, transaction),
           }),
         },
   );
@@ -280,7 +290,15 @@ export const bindAccessGate = (gate: UnboundAccessGate, ports: AccessEnforcement
     selectableLegalEntities: (input: SelectableLegalEntitiesInput) =>
       gate.selectableLegalEntities(input).pipe(Effect.provideContext(context)),
   };
-  return Object.freeze(ports.currentness === undefined ? bound : { ...bound, prepare });
+  const { decideMany } = gate;
+  const batched =
+    decideMany === undefined
+      ? bound
+      : {
+          ...bound,
+          decideMany: (input: readonly GateInput[]) => decideMany(input).pipe(Effect.provideContext(context)),
+        };
+  return Object.freeze(ports.currentness === undefined ? batched : { ...batched, prepare });
 };
 
 /** The runtime's own wiring: the seam from the tag, the ports from the layers it is built with. */

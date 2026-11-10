@@ -21,6 +21,7 @@ import {
   useProductDetail,
 } from '../products-api.ts';
 import { ProductDetailView } from '../product-detail-dialog.tsx';
+import type { ProductDetailTab } from '../product-detail-dialog.tsx';
 import { productVariantIdFromSearch } from '../product-variant-destination.ts';
 import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
 import csResource from '../../../../../../locales/cs/merchandise.json';
@@ -68,6 +69,15 @@ const ProductDetailPageContent = ({ context, legalEntityId, routeParams, search 
   const revisionHint = productRevisionOf(search);
   const variantId = productVariantIdFromSearch(search);
   const input = detailInput(legalEntityId, routeParams.id, context, revisionHint);
+  // The page keeps the active tab, so it survives an editor remount (a failed reload, another product).
+  const [tab, setTab] = useState<ProductDetailTab>(() => (variantId === undefined ? 'detail' : 'variants'));
+  const [variantTabKey, setVariantTabKey] = useState(variantId);
+  if (variantTabKey !== variantId) {
+    setVariantTabKey(variantId);
+    if (variantId !== undefined) {
+      setTab('variants');
+    }
+  }
   const [refreshVersion, setRefreshVersion] = useState(0);
   const state = useProductDetail(legalEntityId, routeParams.id, context, revisionHint, refreshVersion);
   const back = () => {
@@ -126,8 +136,10 @@ const ProductDetailPageContent = ({ context, legalEntityId, routeParams, search 
           onBack={back}
           onCommitted={committed}
           onReload={handleReload}
+          onTabChange={setTab}
           product={state.product}
           revision={state.response.revision}
+          tab={tab}
           variantId={variantId}
         />
       ) : (

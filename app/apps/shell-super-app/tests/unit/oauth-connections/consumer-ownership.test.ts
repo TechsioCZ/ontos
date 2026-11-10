@@ -71,8 +71,9 @@ rs.mock('../../../api/oauth-connections/connection-service.ts', () => ({
   loadActingAuthority: () =>
     Effect.succeed({
       labelOf: (moduleId: string | null | undefined) => moduleId ?? '',
-      live: { read: new Set<string>(), write: new Set<string>() },
-      offered: [],
+      live: { read: new Set<string>(['crm']), write: new Set<string>() },
+      // One offered module: a draft for `all` is within authority only while something is offered.
+      offered: [{ label: 'CRM', moduleId: 'crm', read: true, write: false }],
       policyCap: 'direct',
     }),
   loadLiveConnection: () =>

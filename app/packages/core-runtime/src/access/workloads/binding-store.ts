@@ -11,6 +11,7 @@ import type { AccessIntentError } from '../intent/errors.ts';
 import type { AccessIntentDatabase } from '../intent/persistence.ts';
 import { durable, runScoped, scopeIssue } from '../intent/persistence.ts';
 import { AccessWorkloadBindingStore } from './store.ts';
+import { lockWorkloadAuthority } from './authority-fence.ts';
 import type {
   AccessWorkloadBindingStoreService,
   RegisterWorkloadBindingInput,
@@ -93,17 +94,21 @@ export const makeAccessWorkloadBindingDrizzleStore = (
     'AccessWorkloadBindingStore.revokeBinding',
   )(function* revokeBindingEffect(scope: OperationalScope, input: RevokeWorkloadBindingInput) {
     yield* runScoped(database, scope, OWNER_UNIQUE_CONSTRAINTS, (transaction) =>
-      transaction
-        .update(accessWorkloadBindings)
-        .set({ revokedAt: input.revokedAt, status: 'revoked' })
-        .where(
-          and(
-            eq(accessWorkloadBindings.tenantId, scope.tenantId),
-            eq(accessWorkloadBindings.bindingId, input.bindingId),
-            eq(accessWorkloadBindings.status, 'active'),
-          ),
-        )
-        .pipe(durable(OWNER_UNIQUE_CONSTRAINTS), Effect.asVoid),
+      lockWorkloadAuthority(transaction, scope).pipe(
+        Effect.andThen(() =>
+          transaction
+            .update(accessWorkloadBindings)
+            .set({ revokedAt: input.revokedAt, status: 'revoked' })
+            .where(
+              and(
+                eq(accessWorkloadBindings.tenantId, scope.tenantId),
+                eq(accessWorkloadBindings.bindingId, input.bindingId),
+                eq(accessWorkloadBindings.status, 'active'),
+              ),
+            )
+            .pipe(durable(OWNER_UNIQUE_CONSTRAINTS), Effect.asVoid),
+        ),
+      ),
     );
   });
 

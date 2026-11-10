@@ -13,11 +13,12 @@ import type { VerticalRuntimeRegistrationInput } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
 import { AgentReviewApi } from './shared/apis/agent-review.ts';
-import { RecordsApi } from './shared/apis/records.ts';
-import { applyCommandAction } from './src/actions/apply-command.action.ts';
-import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
 import { agentReviewRead } from './src/api/agent-review.read.ts';
+import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { RecordsApi } from './shared/apis/records.ts';
 import { recordsRead } from './src/api/records.read.ts';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
+import { submitStorefrontInquiryAction } from './src/actions/submit-storefront-inquiry.action.ts';
 // </generated-module-manifest-imports>
 // <generated-module-registration-imports>
 import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
@@ -67,6 +68,7 @@ export const workTasksRuntimeManifest: VerticalRuntimeRegistrationInput['manifes
       // <generated-module-manifest-actions>
       applyCommandAction,
       requestSearchRebuildAction,
+      submitStorefrontInquiryAction,
       // </generated-module-manifest-actions>
     ],
     api: {

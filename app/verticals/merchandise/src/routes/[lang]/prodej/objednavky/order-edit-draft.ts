@@ -1,4 +1,6 @@
-// The editable fields of a demo order: the draft as typed, and when two drafts would be saved the same.
+// The editable fields of a demo order: the draft as typed, when two drafts would be saved the same, and the edit
+// one draft sends.
+import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { Order } from '../../../../../shared/apis/records.ts';
 import type { ProductId, ShippingMethod, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
 import { moneyInputText } from '../../../../form-number.ts';
@@ -88,6 +90,13 @@ const sameLine = (left: DraftLine, right: DraftLine): boolean =>
   parseQuantity(left.quantityText) === parseQuantity(right.quantityText) &&
   parseAmount(left.priceText) === parseAmount(right.priceText);
 
+const sameLines = (left: readonly DraftLine[], right: readonly DraftLine[]): boolean =>
+  left.length === right.length &&
+  left.every((line, index) => {
+    const other = right[index];
+    return other !== undefined && sameLine(line, other);
+  });
+
 /**
  * Two drafts the server would store the same: surrounding spaces do not count, and the quantity and price inputs are
  * read as numbers, so `1,00` and `1` are one quantity.
@@ -104,8 +113,110 @@ export const sameOrderDraft = (left: Draft, right: Draft): boolean =>
   left.shippingMethod === right.shippingMethod &&
   parseAmount(left.shippingPriceText) === parseAmount(right.shippingPriceText) &&
   left.street.trim() === right.street.trim() &&
-  left.lines.length === right.lines.length &&
-  left.lines.every((line, index) => {
-    const other = right.lines[index];
-    return other !== undefined && sameLine(line, other);
-  });
+  sameLines(left.lines, right.lines);
+
+type EditCommand = Extract<MerchandiseCommand, { readonly _tag: 'EditOrder' }>;
+type EditLine = NonNullable<EditCommand['lines']>[number];
+
+const editLineOf = (line: DraftLine): EditLine => {
+  const edit: Mutable<EditLine> = {
+    productId: line.productId,
+    quantity: parseQuantity(line.quantityText) ?? 1,
+    unitPriceMinor: parseAmount(line.priceText) ?? 0,
+  };
+  if (line.variantId !== undefined) {
+    edit.variantId = line.variantId;
+  }
+  return edit;
+};
+
+const addressOf = (draft: Draft) =>
+  [draft.street, draft.city, draft.postalCode, draft.country].map((field) => field.trim());
+
+const contactOf = (draft: Draft) => [draft.name, draft.email, draft.phone].map((field) => field.trim());
+
+const sameTexts = (left: readonly string[], right: readonly string[]): boolean =>
+  left.length === right.length && left.every((text, index) => text === right[index]);
+
+/** The delivery address was edited: it is then sent whole, and has to be complete. */
+const addressTouched = (draft: Draft, base: Draft): boolean => !sameTexts(addressOf(draft), addressOf(base));
+
+/** The contact was edited: it is then sent whole, and has to carry a name and an e-mail. */
+const contactTouched = (draft: Draft, base: Draft): boolean => !sameTexts(contactOf(draft), contactOf(base));
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
+
+/**
+ * An edited address that cannot be sent: it is sent whole, so the street, city and postal code have to be there.
+ * `base` is the draft the edit is compared with (`editCommandOf`); an address left as `base` has it is not sent.
+ */
+export const addressIncomplete = (draft: Draft, base: Draft): boolean =>
+  addressTouched(draft, base) && [draft.street, draft.city, draft.postalCode].some((field) => field.trim() === '');
+
+/** An edited contact that cannot be sent: it is sent whole, so it has to carry a name and an e-mail. */
+export const contactIncomplete = (draft: Draft, base: Draft): boolean =>
+  contactTouched(draft, base) && (draft.name.trim() === '' || !EMAIL.test(draft.email.trim()));
+
+const editAddress = (draft: Draft): NonNullable<EditCommand['deliveryAddress']> => {
+  const address: Mutable<NonNullable<EditCommand['deliveryAddress']>> = {
+    city: draft.city.trim(),
+    postalCode: draft.postalCode.trim(),
+    street: draft.street.trim(),
+  };
+  if (draft.country.trim() !== '') {
+    address.country = draft.country.trim();
+  }
+  return address;
+};
+
+const editContact = (draft: Draft): NonNullable<EditCommand['contact']> => {
+  const contact: Mutable<NonNullable<EditCommand['contact']>> = { email: draft.email.trim(), name: draft.name.trim() };
+  if (draft.phone.trim() !== '') {
+    contact.phone = draft.phone.trim();
+  }
+  return contact;
+};
+
+/**
+ * The edit a valid draft sends: only the parts that differ from `base`, the draft of the order version the server
+ * last confirmed, and that version's `updatedAt` as the precondition. The open order on the page is not the base: it
+ * still shows the version before the form's own save until its reload lands, and after someone else's change it is
+ * newer than what this draft was typed over. Null when nothing would change; a change reason alone is no change.
+ */
+export const editCommandOf = (
+  order: Pick<Order, 'id'>,
+  expectedUpdatedAt: Order['updatedAt'],
+  draft: Draft,
+  base: Draft,
+): EditCommand | null => {
+  const shippingPrice = parseAmount(draft.shippingPriceText);
+  const linesChanged = !sameLines(draft.lines, base.lines);
+  const shippingChanged =
+    draft.shippingMethod !== null &&
+    shippingPrice !== null &&
+    (draft.shippingMethod !== base.shippingMethod || shippingPrice !== parseAmount(base.shippingPriceText));
+  const addressChanged = addressTouched(draft, base);
+  const contactChanged = contactTouched(draft, base);
+  const noteChanged = draft.note.trim() !== base.note.trim();
+  const reason = draft.reason.trim();
+  const command: Mutable<EditCommand> = { _tag: 'EditOrder', expectedUpdatedAt, id: order.id };
+  if (linesChanged) {
+    command.lines = draft.lines.map(editLineOf);
+  }
+  if (shippingChanged && draft.shippingMethod !== null && shippingPrice !== null) {
+    command.shipping = { method: draft.shippingMethod, priceMinor: shippingPrice };
+  }
+  if (addressChanged) {
+    command.deliveryAddress = editAddress(draft);
+  }
+  if (contactChanged) {
+    command.contact = editContact(draft);
+  }
+  if (noteChanged) {
+    command.note = draft.note.trim();
+  }
+  if (reason !== '') {
+    command.reason = reason;
+  }
+  return linesChanged || shippingChanged || addressChanged || contactChanged || noteChanged ? command : null;
+};

@@ -6,10 +6,12 @@
  * `evaluateLiveChecks`; the database, SpiceDB and catalog reads live in the effects below.
  */
 import {
+  decideModuleStateAccess,
   OAuthAuthenticationAudit,
   OAuthConnectionCompanies,
   openDemoAccountGrants,
   openPrincipalOperators,
+  TenantModuleStateService,
 } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { SubjectAccessInspection, SubjectInspectionUnavailable } from '@app/core-runtime/access/enforcement';
@@ -35,8 +37,10 @@ import type {
   ConnectionWritePolicy,
 } from '@app/shared-contracts/oauth-connections';
 import { DateTime, Effect, Option, Schema } from 'effect';
+import type { Ref } from 'effect';
 
 import { subjectModuleAccess } from '../agent-platform/caller.ts';
+import type { SubjectAccessTrace } from '../agent-platform/caller.ts';
 import { composedModulesOf } from '../agent-platform/composed-modules.ts';
 import { mcpModulesOf } from '../mcp/catalog.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
@@ -166,6 +170,8 @@ export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingA
       readonly legalEntityId: string;
       readonly tenantId: string;
     },
+    /** Receives the inner steps' progress, so a slow or cut-off caller can say which step it was in. */
+    trace?: Ref.Ref<SubjectAccessTrace>,
   ) {
     if (asker.tenantId !== input.tenantId || asker.legalEntityId !== input.legalEntityId) {
       return yield* new SubjectInspectionUnavailable({ reason: 'Connection scope differs from requester scope' });
@@ -175,15 +181,32 @@ export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingA
         reason: 'OAuth agent has no credential-bound access connection and consent revision',
       });
     }
-    const sets = yield* subjectModuleAccess({
-      queryScope: { legalEntityId: input.legalEntityId, tenantId: input.tenantId },
-      requesterScope: asker,
-      subject: { principalId: input.actingPrincipalId, tenantId: input.tenantId },
-    });
-    const catalog = yield* (yield* ShellInstalledModuleCatalog).load;
-    const { labelOf } = composedModulesOf(mcpModulesOf(catalog.composition));
-    const live: LiveRights = { read: sets.access, write: new Set([...sets.run, ...sets.propose]) };
-    const policyCap: ConnectionWritePolicy = 'direct';
+    const sets = yield* subjectModuleAccess(
+      {
+        queryScope: { legalEntityId: input.legalEntityId, tenantId: input.tenantId },
+        requesterScope: asker,
+        subject: { principalId: input.actingPrincipalId, tenantId: input.tenantId },
+      },
+      trace,
+    );
+    const { labelOf } = composedModulesOf(mcpModulesOf(sets.installed.composition));
+    // The gate answers over the whole composition: a tenant owner is admitted on every administration declaration,
+    // also of a module this tenant never installed. A module is usable only while the tenant's own state admits the
+    // access, exactly as its entrypoints are gated, so a connection reaches no other module.
+    const answered = [...new Set([...sets.access, ...sets.run, ...sets.propose])];
+    const states = yield* (yield* TenantModuleStateService).getTenantModuleStates(input.tenantId, answered);
+    const stateOf = new Map(states.map(({ moduleKey, state }) => [moduleKey, state]));
+    const admitted = (modules: ReadonlySet<string>, access: 'read' | 'write'): ReadonlySet<string> =>
+      new Set(
+        [...modules].filter((moduleId) => decideModuleStateAccess(stateOf.get(moduleId) ?? null, access) === 'allow'),
+      );
+    const run = admitted(sets.run, 'write');
+    const propose = admitted(sets.propose, 'write');
+    const live: LiveRights = { read: admitted(sets.access, 'read'), write: new Set([...run, ...propose]) };
+    // A module the person may only propose to cannot take a direct write, so while one exists the ceiling is approval.
+    // The MCP execution path enforces the same thing per call; this keeps the offer and the consent truthful.
+    const proposeOnly = [...propose].some((moduleId) => !run.has(moduleId));
+    const policyCap: ConnectionWritePolicy = proposeOnly ? 'approval' : 'direct';
     return { labelOf, live, offered: offeredModules(live, policyCap, labelOf), policyCap };
   },
   Effect.mapError(toUnavailable),
@@ -436,6 +459,15 @@ const summaryOf = (
   };
 };
 
+/**
+ * One grant's summary as read now. `live` only when its live check passed in this read: only then are its modules and
+ * write policy its current rights. A summary that is not live carries the stored grant, which is not a usable right.
+ */
+export interface ConnectionSummaryRead {
+  readonly live: boolean;
+  readonly summary: ConnectionSummary;
+}
+
 /** Summarizes retained grant rows without querying the same management selection twice. */
 export const connectionSummariesOf = Effect.fn('OAuthConnectionService.connectionSummariesOf')(
   function* connectionSummariesOf(tenantId: string, rows: readonly GrantRow[], asker?: OperationalScope) {
@@ -457,9 +489,12 @@ export const connectionSummariesOf = Effect.fn('OAuthConnectionService.connectio
         row.status === 'active'
           ? loadLiveConnection(row.grantId, asker).pipe(
               Effect.option,
-              Effect.map((live) => summaryOf(row, names, legalNames, Option.getOrUndefined(live), labelOf)),
+              Effect.map((live) => ({
+                live: Option.isSome(live),
+                summary: summaryOf(row, names, legalNames, Option.getOrUndefined(live), labelOf),
+              })),
             )
-          : Effect.succeed(summaryOf(row, names, legalNames, undefined, labelOf)),
+          : Effect.succeed({ live: false, summary: summaryOf(row, names, legalNames, undefined, labelOf) }),
       // loadLiveConnection eventually opens two authority reads; keep room for the PostgreSQL connection.
       { concurrency: 2 },
     );
@@ -529,9 +564,9 @@ export const updateConnection = Effect.fn('OAuthConnectionService.updateConnecti
       principalId: input.actorPrincipalId,
     })
     .pipe(Effect.mapError(toUnavailable));
-  const [summary] = yield* connectionSummariesOf(grant.tenantId, [updated], asker);
-  if (summary === undefined) {
+  const [read] = yield* connectionSummariesOf(grant.tenantId, [updated], asker);
+  if (read === undefined) {
     return yield* new ConnectionInvalid({ code: 'grant_not_found' });
   }
-  return summary;
+  return read.summary;
 });

@@ -1,3 +1,4 @@
+import { isProposableModuleCommand } from '@app/core-runtime/modules/mcp-contribution';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -97,4 +98,43 @@ it('decodes and projects module-owned activity destinations, rejecting non-local
   expect(projected.modules[0]?.agentAdministrationPage).toBe('/people');
   expect(directory('https://outside.example/record').modules).toEqual([]);
   expect(directory('//outside.example').modules).toEqual([]);
+});
+
+it('carries the Actions that own each command from the contract, which submit checks proposals against', () => {
+  const source = modules.byAppId(FIXTURE_APP_ID);
+  if (source === undefined) {
+    throw new Error('Fixture contribution is missing');
+  }
+  const commandActions = { AddNote: ['apply-command'], UpdateNote: ['manage-notes'] };
+  const projected = buildMcpModules({
+    modules: [
+      fixtureModule(
+        FIXTURE_MODULE_ID,
+        FIXTURE_APP_ID,
+        JSON.stringify({
+          manifest: {
+            publicSurface: {
+              mcp: {
+                approvals: source.approvals,
+                commandActions,
+                description: source.description,
+                keywords: source.keywords,
+                label: source.label,
+                toolCatalog: source.toolCatalog,
+              },
+            },
+          },
+        }),
+        'http://127.0.0.1:9',
+      ),
+    ],
+    revision: fixtureComposition.revision,
+  });
+  const [module] = projected.modules;
+  expect(module?.commandActions).toEqual(commandActions);
+  // An agent proposes the split command on the Action that owns it, never on the create-only apply-command.
+  const update = { _tag: 'UpdateNote', title: 'New' };
+  expect(isProposableModuleCommand(module?.commandActions, 'manage-notes', update)).toBe(true);
+  expect(isProposableModuleCommand(module?.commandActions, 'apply-command', update)).toBe(false);
+  expect(isProposableModuleCommand(module?.commandActions, 'apply-command', { _tag: 'AddNote' })).toBe(true);
 });

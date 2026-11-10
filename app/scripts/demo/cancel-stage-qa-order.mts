@@ -4,14 +4,15 @@ import { Config, Console, Effect, Exit, FileSystem, Layer, Schema } from 'effect
 import { Command, Flag } from 'effect/cli';
 import { FetchHttpClient } from 'effect/http';
 
-import { MerchandiseCommandSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
+import { ChangeOrderStatusPayloadSchema } from '../../verticals/merchandise/shared/actions/change-order-status.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../verticals/merchandise/shared/apis/records.ts';
 import { akrosDemoLegalEntityId, demoTenantId } from './fixture-ids.mts';
 import { seedCheckpointDirectory, seedWriteCheckpoint } from './seed-checkpoint.mts';
-import { connectSeedClient, DemoSeedError, validateSeedTarget } from './seed-client.mts';
+import { connectSeedClient, DemoSeedError, ownerAction, validateSeedTarget } from './seed-client.mts';
 import type { SeedClient } from './seed-client.mts';
 
 const orderNumber = 'OBJ-2026-0007';
+const changeOrderStatus = ownerAction('change-order-status', Schema.toEncoded(ChangeOrderStatusPayloadSchema));
 
 /** A normal audited staff cancellation, never demo marking, deletion or a stock-ledger bypass. */
 export const cancelStageQaOrder = (client: SeedClient, apply: boolean) =>
@@ -48,7 +49,7 @@ export const cancelStageQaOrder = (client: SeedClient, apply: boolean) =>
     if (apply) {
       yield* client.apply(
         'merchandise',
-        Schema.toEncoded(MerchandiseCommandSchema),
+        changeOrderStatus,
         { _tag: 'ChangeOrderStatus', id: order.id, reason: 'Testovací objednávka', status: 'CANCELLED' },
         snapshot.revision,
       );

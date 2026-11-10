@@ -36,10 +36,12 @@ import {
   DateTime,
   Deferred,
   Effect,
+  Exit,
   FileSystem,
   Layer,
   Option,
   Redacted,
+  Ref,
   Schema,
   Stream,
 } from 'effect';
@@ -394,7 +396,24 @@ const makeControllerOwner = Effect.fn('ControllerOwnerTest.makeFixture')(functio
     stderr: 'pipe',
     stdout: 'pipe',
   });
-  yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
+  // The Party fixture redacts credentials before writing its private diagnostic channel.
+  const diagnostics = yield* Ref.make('');
+  yield* child.stderr.pipe(
+    Stream.decodeText(),
+    Stream.runForEach((chunk) => Ref.update(diagnostics, (previous) => `${previous}${chunk}`.slice(-16_384))),
+    Effect.forkScoped,
+  );
+  yield* Effect.addFinalizer((exit) =>
+    Exit.isFailure(exit)
+      ? Ref.get(diagnostics).pipe(
+          Effect.flatMap((tail) =>
+            tail.length > 0
+              ? Effect.logError({ diagnostics: tail, event: 'privacy-party-receiver-failure' })
+              : Effect.void,
+          ),
+        )
+      : Effect.void,
+  );
   const firstLine = yield* Deferred.make<string>();
   yield* child.stdout.pipe(
     Stream.decodeText(),

@@ -6,7 +6,13 @@ import type {
   PurchaseApprovalTriggerCurrentEvidence,
   PurchaseApprovalTriggerEvidenceSource,
 } from '../services/purchase-approval-trigger-evidence-source.ts';
-import type { ActionHandlerContext, OperationalScope, OwnerAccessFacts } from '@app/core-runtime';
+import type {
+  ActionHandlerContext,
+  ActionServicePreparationContext,
+  OperationalScope,
+  OwnerAccessFacts,
+  ScopedTransactionExecutor,
+} from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint, OperationContextUnavailable } from '@app/core-runtime';
 import { Effect, Predicate, Schema } from 'effect';
 import {
@@ -31,6 +37,16 @@ import {
   PurchaseLimitEvaluationSourceFactory,
 } from '../../shared/domain/purchase-limit-evaluation.ts';
 import { purchasingApprovalSubmissionForScope } from '../persistence/purchasing-approval-persistence.ts';
+import {
+  purchaseApprovalTriggerEvidenceSourceForTransaction,
+  purchaseLimitEvaluationSourceForTransaction,
+} from '../persistence/purchase-limit-persistence.ts';
+import { preparePurchaseLimitCurrentness } from '../services/purchase-currentness-preparation.ts';
+import {
+  ProfileCounterpartyRoleEligibilityResolverFactory,
+  withPreparedCounterpartyRoleCurrent,
+} from '../profile-counterparty-role-eligibility.ts';
+import { ProfilePersistenceDependencyFailure } from '../persistence/profile-persistence.ts';
 import { purchaseValueAccessAmount } from './purchase-value-access-amount.ts';
 import type {
   PurchaseLimitEvaluationContext,
@@ -262,6 +278,83 @@ const handleTriggerPurchaseApproval = Effect.fn('TriggerPurchaseApproval.handle'
 export const triggerPurchaseApprovalOwnerFacts = (payload: TriggerPurchaseApprovalPayload): OwnerAccessFacts =>
   counterpartyOwnerFacts(payload.counterpartyRef.resourceId, payload.storefrontId);
 
+const preparedTriggerUnavailable = (cause: unknown) =>
+  preserveFailureCause(
+    dependencyUnavailable('PURCHASING_APPROVAL', 'Prepared trigger evidence changed or expired before commit'),
+    cause,
+  );
+
+const preparedTriggerRoleUnavailable = (cause: ProfilePersistenceDependencyFailure) =>
+  Effect.fail(preparedTriggerUnavailable(cause));
+
+const prepareTriggerServices = Effect.fn('TriggerPurchaseApproval.prepareServices')(function* prepareServices(
+  payload: TriggerPurchaseApprovalPayload,
+  context: ActionServicePreparationContext,
+) {
+  const trusted = yield* decodeTrustedContext(payload, context.scope);
+  const roleFactory = yield* ProfileCounterpartyRoleEligibilityResolverFactory;
+  const [prepareCurrentness, role] = yield* Effect.all(
+    [
+      preparePurchaseLimitCurrentness(context, payload.purchaseValue),
+      roleFactory.make({
+        legalEntityId: trusted.sellingLegalEntityId,
+        operationalScope: context.scope,
+        requestCorrelation: context.scope.correlationId,
+        tenantId: context.scope.tenantId,
+      })({
+        counterpartyResourceId: payload.counterpartyRef.resourceId,
+        tenantId: context.scope.tenantId,
+      }),
+    ],
+    { concurrency: 2 },
+  ).pipe(Effect.mapError(preparedTriggerUnavailable));
+  return Effect.fn('TriggerPurchaseApproval.commitServices')(function* commitServices(
+    transaction: ScopedTransactionExecutor,
+    scope: OperationalScope,
+    revision: string,
+  ) {
+    const [prepared, submission] = yield* Effect.all(
+      [prepareCurrentness(transaction, scope, revision), purchasingApprovalSubmissionForScope(transaction, scope)],
+      { concurrency: 1 },
+    );
+    const bindSubmission = submission.forActionInvocation;
+    if (bindSubmission === undefined) {
+      return yield* new OperationContextUnavailable({
+        code: 'operation_context_unavailable',
+        reason: 'Trigger submission requires invocation-bound persistence',
+      });
+    }
+    const ownerScope = {
+      ...scope,
+      legalEntityId: trusted.sellingLegalEntityId,
+      trustedStorefrontId: trusted.storefrontId,
+    };
+    return {
+      evaluationSource: purchaseLimitEvaluationSourceForTransaction(transaction, ownerScope, prepared.currentness),
+      evidence: purchaseApprovalTriggerEvidenceSourceForTransaction(transaction, ownerScope, prepared.currentness, {
+        resolveCounterpartyRole: (request) =>
+          request.tenantId === scope.tenantId && request.counterpartyResourceId === payload.counterpartyRef.resourceId
+            ? Effect.succeed(role)
+            : Effect.fail(new ProfilePersistenceDependencyFailure({ reason: 'Prepared trigger Counterparty differs' })),
+      }),
+      submission: {
+        forActionInvocation: (invocation) => ({
+          submit: (input) =>
+            invocation === context.actionInvocationId
+              ? withPreparedCounterpartyRoleCurrent(
+                  role,
+                  bindSubmission(invocation)
+                    .submit(input)
+                    .pipe(Effect.tap(prepared.revalidate().pipe(Effect.mapError(preparedTriggerUnavailable)))),
+                ).pipe(Effect.catchTag('ProfilePersistenceDependencyFailure', preparedTriggerRoleUnavailable))
+              : Effect.fail(preparedTriggerUnavailable('The trigger invocation differs')),
+        }),
+        submit: () => Effect.fail(preparedTriggerUnavailable('Trigger persistence requires its exact invocation')),
+      },
+    } satisfies TriggerPurchaseApprovalServices;
+  });
+});
+
 export const triggerPurchaseApprovalAction = defineAction(
   {
     accessAmount: (payload) => purchaseValueAccessAmount(payload.purchaseValue.monetaryAmount),
@@ -302,7 +395,16 @@ export const triggerPurchaseApprovalAction = defineAction(
     schemaVersion: '1',
   },
   handleTriggerPurchaseApproval,
-  (transaction, scope) =>
+  (
+    transaction,
+    scope,
+  ): Effect.Effect<
+    TriggerPurchaseApprovalServices,
+    OperationContextUnavailable,
+    | Effect.Services<ReturnType<typeof prepareTriggerServices>>
+    | PurchaseLimitEvaluationSourceFactory
+    | PurchaseApprovalTriggerEvidenceSourceFactory
+  > =>
     Effect.all(
       {
         evaluationSource: PurchaseLimitEvaluationSourceFactory.pipe(
@@ -325,6 +427,7 @@ export const triggerPurchaseApprovalAction = defineAction(
         ),
       ),
     ),
+  { prepareServices: prepareTriggerServices },
 );
 
 // <generated-outbox-message-exports>

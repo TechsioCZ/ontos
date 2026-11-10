@@ -1,6 +1,7 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
 import type { AccessPrincipalKind, AccessWorkloadBindings } from '@app/core-runtime/access/enforcement';
+import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -47,6 +48,8 @@ const question = (scope: typeof storefrontScope) => ({
 const gateFor = (options: { readonly boundWorkloadKeys?: readonly string[]; readonly kind: AccessPrincipalKind }) => {
   const workloadBindings: AccessWorkloadBindings = {
     readActiveWorkloadKeys: () => Effect.succeed(new Set(options.boundWorkloadKeys)),
+    readCompanyDeclaration: () =>
+      Effect.succeed({ activeCompanyIds: new Set([LegalEntityIdSchema.make(legalEntityId)]), pinned: true }),
   };
   return makeAccessDecisionService({
     authorityFor: () => ({

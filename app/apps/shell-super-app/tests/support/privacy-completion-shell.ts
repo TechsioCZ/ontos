@@ -28,7 +28,7 @@ import {
 import { NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices, NodeSocket } from '@effect/platform-node';
 import { resolveEffectBffModuleHandler } from '@modern-js/bff-effect/effect';
 import { dispatchEffectBffRequest } from '@modern-js/bff-effect/effect-edge';
-import { Config, ConfigProvider, Context, Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Config, ConfigProvider, Console, Context, Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { PgClient } from '@effect/sql-pg';
 import { Socket } from 'effect/socket';
@@ -66,6 +66,10 @@ class PrivacyCompletionShellFailure extends Schema.TaggedError<PrivacyCompletion
 const partyModule = 'party.registry';
 const partyAppId = 'party-registry';
 
+// Only fixed stage names cross stderr: bootstrap failures may carry private credentials in their causes.
+const startupStage = (stage: 'create-user' | 'creator-bootstrap' | 'fixture-runtime' | 'module-credential' | 'serve') =>
+  Effect.tapCause(() => Console.error(`privacy-completion-shell:${stage}`));
+
 interface PartyModuleCredentialInput {
   readonly headers: Headers;
   readonly principal: TrustedPrincipalContext;
@@ -87,6 +91,8 @@ const issuePartyModuleCredential = Effect.fn('PrivacyCompletionShell.issuePartyM
       correlationId: `${input.suffix}:module:key`,
       idempotencyKey: `${input.suffix}:module:key`,
       managedPrincipalId: service.principalId,
+      // A module credential is a tenant-managed key: the bind action refuses a managed key with no scope.
+      managedScope: 'tenant-managed',
       // Better Auth's API key plugin caps key names at 32 characters.
       name: 'Party registry module',
       principal: input.principal,
@@ -323,8 +329,12 @@ const serve = Effect.scoped(
     const authentication = yield* makeAuthenticationService().pipe(Effect.provideContext(authenticationContext));
     const email = `privacy-completion-${suffix}@example.test`;
     const password = `privacy-completion-${suffix}`;
-    const providerSubjectId = yield* authentication.createFixtureUser(email, 'Privacy completion test', password);
-    const prepared = yield* requestCreatorBootstrap(responseSocket, providerSubjectId);
+    const providerSubjectId = yield* authentication
+      .createFixtureUser(email, 'Privacy completion test', password)
+      .pipe(startupStage('create-user'));
+    const prepared = yield* requestCreatorBootstrap(responseSocket, providerSubjectId).pipe(
+      startupStage('creator-bootstrap'),
+    );
     const fixture = yield* Effect.acquireRelease(
       makeLiveOperationFixtureRuntime({
         configuration: {
@@ -352,7 +362,7 @@ const serve = Effect.scoped(
       }),
       (value) => value.close().pipe(Effect.orDie),
     );
-    const fixtureContext = yield* Layer.build(fixture.layer);
+    const fixtureContext = yield* Layer.build(fixture.layer).pipe(startupStage('fixture-runtime'));
     /**
      * The one gate this fixture serves HTTP with (CUTOVER-PLAN §3.1 step 8). The child's database
      * carries no v2 access intent, so the production default would refuse every gateway-context
@@ -417,7 +427,7 @@ const serve = Effect.scoped(
       resolver: Context.get(resolver, PrincipalResolver),
       suffix,
       tenantId: fixture.tenantId,
-    }).pipe(Effect.provideContext(Context.merge(fixtureContext, lifecycleContext)));
+    }).pipe(Effect.provideContext(Context.merge(fixtureContext, lifecycleContext)), startupStage('module-credential'));
     const moduleBindings = yield* partyModuleBindings(composition, moduleCredential.providerKeyId);
     const principal = { ...resolved.principal, legalEntityId: fixture.legalEntityId };
     const catalog = yield* makeInstalledModuleCatalogLoader(Effect.succeed(composition));
@@ -523,7 +533,7 @@ NodeRuntime.runMain(
       const services = yield* Layer.build(
         Layer.mergeAll(NodeHttpServer.layerTest, NodeCrypto.layer, NodeServices.layer),
       );
-      return yield* serve.pipe(Effect.provideContext(services));
+      return yield* serve.pipe(Effect.provideContext(services), startupStage('serve'));
     }),
   ),
 );

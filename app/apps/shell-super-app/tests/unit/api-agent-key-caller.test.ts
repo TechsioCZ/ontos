@@ -8,7 +8,7 @@ import type { OperationalScope } from '@app/core-runtime';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { NodeCrypto } from '@effect/platform-node';
-import { Effect, Layer, Result } from 'effect';
+import { ConfigProvider, Effect, Layer, Result } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
@@ -35,6 +35,9 @@ const resolutionUnavailable = new OperationContextUnavailable({
 
 const run = Effect.fn('test.agentKeyCaller')(function* run(
   options: {
+    /** `ONTOS_GATEWAY_MODULE_BINDINGS`; a deployment without module credentials enrolls none (`[]`). */
+    readonly enrolment?: string;
+    readonly providerKeyId?: string;
     readonly resolutionUnavailable?: boolean;
     readonly selectable?: boolean;
     readonly selectionUnavailable?: boolean;
@@ -74,7 +77,7 @@ const run = Effect.fn('test.agentKeyCaller')(function* run(
             verify: (key) => {
               events.push('verify-key');
               expect(key).toBe('raw-key');
-              return Effect.succeed({ providerKeyId: 'provider-key-1' });
+              return Effect.succeed({ providerKeyId: options.providerKeyId ?? 'provider-key-1' });
             },
           }),
         ),
@@ -104,6 +107,10 @@ const run = Effect.fn('test.agentKeyCaller')(function* run(
           HttpServerRequest.fromWeb(new Request('https://shell.test/agent')),
         ),
       ),
+    ),
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromUnknown({ ONTOS_GATEWAY_MODULE_BINDINGS: options.enrolment ?? '[]' }),
     ),
     Effect.result,
   );
@@ -154,6 +161,48 @@ it.effect('does not ask company authority before the API-key scope has been reva
     const { events, gate, result } = yield* run({ resolutionUnavailable: true });
     expect(events).toEqual(['verify-key', 'resolve-principal', 'resolve-scope']);
     expect(gate.selectableAsks).toEqual([]);
+    expect(Result.isFailure(result)).toBe(true);
+    if (Result.isFailure(result)) {
+      expect(result.failure._tag).toBe('ShellCapabilityUnavailableProblem');
+      expect(result.failure.status).toBe(503);
+    }
+  }),
+);
+
+const moduleEnrolment = JSON.stringify([
+  {
+    compositionRevision: 'a'.repeat(64),
+    providerKeyId: 'module-key-1',
+    sourceAppId: 'commerce-customer-context',
+    sourceBuildMarker: 'commerce-build',
+  },
+]);
+
+it.effect('refuses an enrolled module credential before acting as its principal', () =>
+  Effect.gen(function* moduleCredentialRefused() {
+    const { events, gate, result } = yield* run({ enrolment: moduleEnrolment, providerKeyId: 'module-key-1' });
+    expect(events).toEqual(['verify-key']);
+    expect(gate.selectableAsks).toEqual([]);
+    expect(Result.isFailure(result)).toBe(true);
+    if (Result.isFailure(result)) {
+      expect(result.failure._tag).toBe('ShellTargetForbiddenProblem');
+      expect(result.failure.status).toBe(403);
+    }
+  }),
+);
+
+it.effect('admits an agent key that is not an enrolled module credential', () =>
+  Effect.gen(function* agentKeyAdmitted() {
+    const { events, result } = yield* run({ enrolment: moduleEnrolment });
+    expect(events).toEqual(['verify-key', 'resolve-principal', 'resolve-scope', 'validate-company']);
+    expect(Result.isSuccess(result)).toBe(true);
+  }),
+);
+
+it.effect('answers an unreadable module enrolment as unavailable instead of admitting the key', () =>
+  Effect.gen(function* enrolmentUnavailable() {
+    const { events, result } = yield* run({ enrolment: '{not json' });
+    expect(events).toEqual(['verify-key']);
     expect(Result.isFailure(result)).toBe(true);
     if (Result.isFailure(result)) {
       expect(result.failure._tag).toBe('ShellCapabilityUnavailableProblem');

@@ -1,5 +1,10 @@
 {
   "sales-insights": {
+    "chartData": {
+      "toggle": "Zobrazit data grafu",
+      "category": "Skupina",
+      "value": "Hodnota"
+    },
     "language": {
       "cs": "Čeština",
       "en": "Angličtina",

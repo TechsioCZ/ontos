@@ -66,23 +66,41 @@ export const testAccessSpecOf = (
  */
 const inertPortAnswer = () => Effect.fail(accessDecisionUnavailable('The scripted gate reads no authority'));
 
+/** The one authority the inert source answers with; it reads nothing, so every answer is the same. */
+const inertAuthority = Object.freeze({
+  readCells: inertPortAnswer,
+  readConnection: inertPortAnswer,
+  readScope: inertPortAnswer,
+  readTeamIds: inertPortAnswer,
+});
+
 export const inertAccessEnforcementPorts = (): AccessEnforcementPorts =>
   Object.freeze({
     candidates: Object.freeze({ listCandidateIds: () => Effect.succeed([]) }),
     check: Object.freeze({ checkBulk: inertPortAnswer }),
     decisionLog: Object.freeze({ record: () => Effect.void }),
     intent: Object.freeze({
-      authorityFor: () =>
-        Object.freeze({
-          readCells: inertPortAnswer,
-          readConnection: inertPortAnswer,
-          readScope: inertPortAnswer,
-          readTeamIds: inertPortAnswer,
-        }),
+      authorityFor: () => inertAuthority,
+      // Prepared Action authority joins the caller's transaction (O75). The inert source has no rows to
+      // join, so its joined answer is the same inert authority; a binding without it fails closed.
+      joined: () => Object.freeze({ authorityFor: () => inertAuthority }),
     }),
     principalKinds: Object.freeze({ readKind: inertPortAnswer }),
-    workloadBindings: Object.freeze({ readActiveWorkloadKeys: inertPortAnswer }),
+    workloadBindings: Object.freeze({
+      readActiveWorkloadKeys: inertPortAnswer,
+      readCompanyDeclaration: inertPortAnswer,
+    }),
   });
+
+/**
+ * A scripted gate reads no ports, so its answers hold whichever ports a binding rebinds it to. The
+ * binding already keeps such a gate when `rebind` is absent; a prepared Action authority requires the
+ * method to exist, so a scripted gate states that identity explicitly instead of leaving it out.
+ */
+type ScriptedGate = Omit<AccessDecisionService, 'rebind'>;
+
+export const withScriptedRebind = (gate: ScriptedGate): AccessDecisionService =>
+  Object.freeze({ ...gate, rebind: () => withScriptedRebind(gate) });
 
 /** A bound gate plus the double's own record of what it was asked, for the runner suites. */
 export interface TestBoundAccessGate {
@@ -94,7 +112,8 @@ export const makeTestBoundAccessGate = (
   spec: TestAccessDecisionSpec = {},
   ports: AccessEnforcementPorts = inertAccessEnforcementPorts(),
 ): TestBoundAccessGate => {
-  const accessDecision = makeTestAccessDecision(spec);
+  // The scripted double states its own rebind, which a prepared Action authority needs.
+  const accessDecision: TestAccessDecision = makeTestAccessDecision(spec);
   return Object.freeze({ accessDecision, bound: bindAccessGate(accessDecision, ports) });
 };
 
@@ -273,7 +292,8 @@ export const makeTestAccessGateLayers = (options: TestAccessGateScript = {}): Te
     return scopeAccess?.decide(input) ?? scripted.decide(input);
   };
 
-  const gate: AccessDecisionService = {
+  // A scripted gate reads no ports, so it states its rebind: a prepared Action authority needs one to prove currentness.
+  const gate = withScriptedRebind({
     decide: decideOf,
     decideMany: (input) => Effect.forEach(input, decideOf, { concurrency: 1 }),
     list: (input: ListGateInput) => {
@@ -304,7 +324,7 @@ export const makeTestAccessGateLayers = (options: TestAccessGateScript = {}): Te
       const { legalEntityId: selected } = input.scope;
       return Effect.succeed(selected === undefined ? [] : [LegalEntityIdSchema.make(selected)]);
     },
-  };
+  });
 
   return Layer.mergeAll(
     Layer.succeed(AccessDecisionGate, gate),

@@ -91,7 +91,8 @@ export const decideLegacy = Effect.fn('AgentPlatform.decideLegacy')(function* de
     principal,
     appId,
     trimmedNote === undefined || trimmedNote.length === 0 ? command : { ...command, note: trimmedNote },
-    { idempotencyKey },
+    // The module's own AI change engine: the Action whose command union accepts the decision.
+    { action: {}, idempotencyKey },
   );
 });
 
@@ -108,6 +109,6 @@ export const revertLegacy = Effect.fn('AgentPlatform.revertLegacy')(function* re
     principal,
     appId,
     trimmedNote === undefined || trimmedNote.length < 3 ? command : { ...command, note: trimmedNote },
-    { idempotencyKey },
+    { action: {}, idempotencyKey },
   );
 });

@@ -14,6 +14,7 @@ import {
 } from '../../shared/market-retirement-admission.ts';
 import type { ManageMarketRetirementAdmissionPayload } from '../../shared/market-retirement-admission.ts';
 import { MarketRetirementImpactAssessmentUnavailable } from './market-retirement-impact-assessment-unavailable.ts';
+import { prepareMarketRetirementAdmissionServices } from '../services/market-retirement-admission-preflight.ts';
 import { marketRetirementAdmissionService } from '../services/market-retirement-admission.service.ts';
 import type { MarketRetirementAdmissionService } from '../services/market-retirement-admission.service.ts';
 
@@ -90,6 +91,7 @@ export const manageMarketRetirementAdmissionAction = defineAction(
   },
   handleManageMarketRetirementAdmission,
   marketRetirementAdmissionService,
+  { prepareServices: prepareMarketRetirementAdmissionServices },
 );
 
 // <generated-outbox-message-exports>

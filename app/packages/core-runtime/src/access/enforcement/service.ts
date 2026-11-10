@@ -13,7 +13,13 @@ import type { ListAccessResolution } from '../decision/engine.ts';
 import type { ListAccessPredicate } from '../decision/list-access.ts';
 import { accessDecisionUnavailable } from '../decision/errors.ts';
 import { withOptional } from '../decision/optional.ts';
-import { AccessScopeIdSchema, CapabilityKeySchema, PrincipalIdSchema, TenantIdSchema } from '../ids.ts';
+import {
+  AccessScopeIdSchema,
+  CapabilityKeySchema,
+  LegalEntityIdSchema,
+  PrincipalIdSchema,
+  TenantIdSchema,
+} from '../ids.ts';
 import type { AccessScopeId, LegalEntityId, PrincipalId } from '../ids.ts';
 import type { ActorContext, DecisionReason, Holder } from '../model.ts';
 import { AccessPrincipalKindSource, isWorkloadPrincipalKind, resolveGateActor } from './actor.ts';
@@ -31,10 +37,11 @@ import type {
 import { AccessDecisionGate } from './contract.ts';
 import { AccessWorkloadBindingSource } from './workload-port.ts';
 import { seamAdmission, seamDenial, seamRefusal, seamUnavailable } from './decisions.ts';
-import type { AccessDecisionDelegation } from './decision-log.ts';
+import type { AccessDecisionDelegation, AccessDecisionLogEntry } from './decision-log.ts';
 import { AccessDecisionLog, shouldRecordDecision, shouldRecordDelegatedDecision } from './decision-log.ts';
+import { AccessDecisionLogBatch } from './decision-log-batch.ts';
 import { LegalEntityCandidates } from './legal-entities.ts';
-import type { AccessWorkloadBindings } from './workload-port.ts';
+import type { AccessWorkloadBindings, WorkloadCompanyDeclaration } from './workload-port.ts';
 
 export type { AccessDecisionPorts } from './contract.ts';
 
@@ -109,6 +116,7 @@ const workloadOnDeclarationCode = (declaration: GateInput['carrier']['accessDecl
  */
 const FAIL_CLOSED_WORKLOADS: AccessWorkloadBindings = {
   readActiveWorkloadKeys: () => Effect.fail(accessDecisionUnavailable('This composition bound no workload registry')),
+  readCompanyDeclaration: () => Effect.fail(accessDecisionUnavailable('This composition bound no workload registry')),
 };
 const ALLOW_WORKLOAD = 'allow.workload';
 
@@ -157,6 +165,23 @@ const denialOf = (reasons: readonly DecisionReason[]): AccessDecision => {
   const [first, ...rest] = reasons;
   return seamDenial(first ?? { code: INSUFFICIENT_GRANT }, ...rest);
 };
+
+/**
+ * The company refusal of one admitted workload (D6): a workload whose owner declared a company acts
+ * only in the companies that declaration names, so a request that names another company is refused
+ * exactly as a workload whose binding names no key is (O73). A standalone workload always needs an
+ * active company registration; losing its last registration must never unpin another active binding.
+ * A verified module subject with no declaration keeps its carrier's tenant-wide authority.
+ */
+const workloadCompanyRefusalOf = (
+  scope: OperationalScope,
+  declaration: WorkloadCompanyDeclaration,
+): AccessDecision | undefined =>
+  (readVerifiedGatewayActor(scope) === undefined || declaration.pinned) &&
+  scope.legalEntityId !== undefined &&
+  !declaration.activeCompanyIds.has(LegalEntityIdSchema.make(scope.legalEntityId))
+    ? denialOf([{ code: WORKLOAD_UNBOUND }])
+    : undefined;
 
 /**
  * The refusal of a workload subject of a module call on an `admin` declaration. The direct path refuses a
@@ -274,6 +299,11 @@ interface BatchedGate {
   readonly scopeId: AccessScopeId;
 }
 
+/** A refusal the seam took for a known subject: only its evidence row is still owed (D6 step 5). */
+interface EvidencedGate extends Omit<BatchedGate, 'actor'> {
+  readonly actor: EvidenceSubject;
+}
+
 /** One batch: the inputs of one trusted request scope, in the order they were asked. */
 interface GateGroup {
   /** Built once, before any decision is taken, and only read afterwards. */
@@ -300,8 +330,14 @@ const gateGroupsOf = (input: readonly GateInput[]): readonly GateGroup[] => {
 interface GroupGate {
   readonly actor?: GateActor | undefined;
   readonly calledBy?: VerifiedGatewayActor | undefined;
+  /** The company declaration of this workload, read once for the whole batch (D6). */
+  readonly companyDeclaration?: WorkloadCompanyDeclaration | undefined;
+  /** The declaration could not be read; only a workload-marked entry is then UNAVAILABLE (O48, D6). */
+  readonly companyDeclarationUnavailable?: boolean | undefined;
   readonly decision?: AccessDecision | undefined;
+  readonly refusalScopeId?: AccessScopeId | undefined;
   readonly subjectDecision?: AccessDecision | undefined;
+  readonly subjectEvidence?: EvidenceSubject | undefined;
   readonly workloadKeys?: ReadonlySet<string> | undefined;
   readonly workloadRegistryUnavailable?: boolean | undefined;
 }
@@ -311,14 +347,18 @@ interface GatePrepared {
   readonly decision?: AccessDecision;
   readonly entry?: BatchedGate;
   /** A delegated decision the seam took without the engine: its evidence row still follows (D6). */
-  readonly evidenced?: BatchedGate;
+  readonly evidenced?: EvidencedGate;
 }
 
 /** The subject of one batch whose calls are delegated: the admitted person or workload, or why it is neither. */
 interface DelegatedGroup {
   readonly actor?: GateActor | undefined;
   readonly calledBy: VerifiedGatewayActor;
+  /** The subject's tenant scope, read once for the group when one of its refusals is evidenced there. */
+  readonly refusalScopeId?: AccessScopeId | undefined;
   readonly subjectDecision?: AccessDecision | undefined;
+  /** The subject a group-wide refusal is evidenced under: an agent or kindless principal is still named (D6). */
+  readonly subjectEvidence?: EvidenceSubject | undefined;
   /** The active workload keys of a workload subject, read once for the group when an entry names some. */
   readonly workloadKeys?: ReadonlySet<string> | undefined;
   readonly workloadRegistryUnavailable?: boolean | undefined;
@@ -350,8 +390,25 @@ const prepareDelegatedEntry = (params: {
   readonly preambles: ReadonlyMap<string, GatePreamble>;
   readonly scope: OperationalScope;
 }): GatePrepared => {
+  const { refusalScopeId } = params.group;
+  /** A refusal evidenced in the subject's tenant scope, exactly as `delegatedPreambleOf` records it. */
+  const refusedInTenant = (decision: AccessDecision, subject: EvidenceSubject | undefined): GatePrepared =>
+    subject === undefined || refusalScopeId === undefined
+      ? { decision }
+      : {
+          decision,
+          evidenced: {
+            actor: subject,
+            capability: evidenceCapabilityOf(params.gate.carrier.accessDeclaration),
+            delegation: delegationOf(params.group.calledBy),
+            gate: params.gate,
+            index: params.index,
+            mode: params.gate.mode ?? DEFAULT_MODE,
+            scopeId: refusalScopeId,
+          },
+        };
   if (params.group.subjectDecision !== undefined) {
-    return { decision: params.group.subjectDecision };
+    return refusedInTenant(params.group.subjectDecision, params.group.subjectEvidence);
   }
   const { actor } = params.group;
   if (actor === undefined) {
@@ -359,7 +416,9 @@ const prepareDelegatedEntry = (params: {
   }
   const gateScope = gateScopeOf(params.gate.legalEntityScope, params.scope);
   if (gateScope.refusal !== undefined) {
-    return { decision: denialOf([gateScope.refusal]) };
+    // A workload subject leaves no v2 evidence row (O29, O73); a person's refused company is evidenced in the tenant.
+    const decision = denialOf([gateScope.refusal]);
+    return isWorkloadPrincipalKind(actor.kind) ? { decision } : refusedInTenant(decision, actor);
   }
   if (isWorkloadPrincipalKind(actor.kind)) {
     return { decision: delegatedWorkloadDecision(params.gate, params.group) };
@@ -406,6 +465,10 @@ const prepareDelegatedEntry = (params: {
  */
 const prepareEntry = (params: {
   readonly actor: GateActor;
+  /** The company declaration of this actor, read once for the whole batch; absent when none was read (D6). */
+  readonly companyDeclaration: WorkloadCompanyDeclaration | undefined;
+  /** The declaration could not be read; only a workload-marked entry is then UNAVAILABLE (O48, D6). */
+  readonly companyDeclarationUnavailable: boolean;
   readonly gate: GateInput;
   readonly index: number;
   readonly preambles: ReadonlyMap<string, GatePreamble>;
@@ -428,9 +491,17 @@ const prepareEntry = (params: {
     if (params.workloadRegistryUnavailable) {
       return { decision: seamUnavailable(IDENTITY_UNAVAILABLE) };
     }
-    return admitsWorkload(accessWorkload, params.workloadKeys)
-      ? { decision: seamAdmission(ALLOW_WORKLOAD) }
-      : { decision: denialOf([{ code: WORKLOAD_UNBOUND }]) };
+    if (!admitsWorkload(accessWorkload, params.workloadKeys)) {
+      return { decision: denialOf([{ code: WORKLOAD_UNBOUND }]) };
+    }
+    if (params.companyDeclarationUnavailable) {
+      return { decision: seamUnavailable(IDENTITY_UNAVAILABLE) };
+    }
+    const companyRefusal =
+      params.companyDeclaration === undefined
+        ? undefined
+        : workloadCompanyRefusalOf(params.scope, params.companyDeclaration);
+    return companyRefusal === undefined ? { decision: seamAdmission(ALLOW_WORKLOAD) } : { decision: companyRefusal };
   }
   if (accessDeclaration === undefined) {
     // A human or agent reached a workload carrier: a v2 decision never admits one (O59, O67-Q4).
@@ -458,6 +529,91 @@ const prepareEntry = (params: {
       scopeId: preamble.scopeId,
     },
   };
+};
+
+/** What one decision's evidence row is built from. */
+interface EvidenceParams {
+  readonly actor: EvidenceSubject;
+  readonly capability: ReturnType<typeof capabilityPolicyOf>;
+  readonly decision: AccessDecision;
+  /** The calling module of a delegated request; its evidence is always recorded (D6). */
+  readonly delegation?: AccessDecisionDelegation | undefined;
+  readonly entry: {
+    readonly mode: AccessDecisionRequest['mode'];
+    readonly onBehalfOfPrincipalId?: PrincipalId;
+    readonly scope: OperationalScope;
+    readonly scopeId: AccessScopeId;
+    readonly target?: GateInput['target'];
+  };
+  readonly now: Date;
+}
+
+/** The evidence row one decision must leave behind, or none when the decision needs no row. */
+const evidenceEntryOf = (params: EvidenceParams): AccessDecisionLogEntry | undefined => {
+  const { actor, capability, decision, delegation, entry, now } = params;
+  const evidence =
+    delegation === undefined ? shouldRecordDecision(decision, capability) : shouldRecordDelegatedDecision(decision);
+  if (!evidence) {
+    return undefined;
+  }
+  return withOptional(
+    withOptional(
+      withOptional(
+        withOptional(
+          {
+            actor: actorContextOf(actor),
+            capability,
+            decidedAt: now,
+            mode: entry.mode,
+            outcome: decision.outcome,
+            reasons: decision.reasons,
+            scope: entry.scope,
+            scopeId: entry.scopeId,
+          },
+          'admissionDeadline',
+          decision.admissionDeadline,
+        ),
+        'delegation',
+        delegation,
+      ),
+      'onBehalfOfPrincipalId',
+      entry.onBehalfOfPrincipalId,
+    ),
+    'target',
+    entry.target?.recordKey,
+  );
+};
+
+/** The evidence of one batched request; a refusal decided before the engine writes none. */
+const evidenceOfOne = (params: {
+  readonly answers: ReadonlyMap<number, AccessDecision>;
+  readonly index: number;
+  readonly one: GateInput;
+  readonly reached: ReadonlyMap<number, EvidencedGate>;
+}): { readonly decision: AccessDecision; readonly evidence?: EvidenceParams } => {
+  const decision = params.answers.get(params.index) ?? seamUnavailable(IDENTITY_UNAVAILABLE);
+  const entry = params.reached.get(params.index);
+  return entry === undefined
+    ? { decision }
+    : {
+        decision,
+        evidence: {
+          actor: entry.actor,
+          capability: entry.capability,
+          decision,
+          delegation: entry.delegation,
+          entry: withOptional(
+            withOptional(
+              { mode: entry.mode, scope: params.one.scope, scopeId: entry.scopeId },
+              'onBehalfOfPrincipalId',
+              params.one.onBehalfOfPrincipalId,
+            ),
+            'target',
+            params.one.target,
+          ),
+          now: params.one.now,
+        },
+      };
 };
 
 /**
@@ -628,9 +784,22 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
       if (Option.isNone(bound)) {
         return { decision: seamUnavailable(IDENTITY_UNAVAILABLE) };
       }
-      return admitsWorkload(accessWorkload, bound.value)
+      if (!admitsWorkload(accessWorkload, bound.value)) {
+        return { decision: denialOf([{ code: WORKLOAD_UNBOUND }]) };
+      }
+      // A declared company narrows the workload to it. The declaration is read here, on every decision,
+      // from the caller's own transaction when it has one (O75): a revoked registration therefore ends
+      // the company of an already-prepared Action exactly as a revoked binding ends its key (D6).
+      const declared = yield* Effect.option(
+        (ports.workloadBindings ?? FAIL_CLOSED_WORKLOADS).readCompanyDeclaration(workloadQueryOf(input.scope, actor)),
+      );
+      if (Option.isNone(declared)) {
+        return { decision: seamUnavailable(IDENTITY_UNAVAILABLE) };
+      }
+      const companyRefusal = workloadCompanyRefusalOf(input.scope, declared.value);
+      return companyRefusal === undefined
         ? { decision: seamAdmission(ALLOW_WORKLOAD), workloadAdmitted: true as const }
-        : { decision: denialOf([{ code: WORKLOAD_UNBOUND }]) };
+        : { decision: companyRefusal };
     }
     if (accessDeclaration === undefined) {
       // A human or agent reached a workload carrier: a v2 decision never admits one (O59, O67-Q4).
@@ -653,58 +822,15 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
    * Records the evidence this decision must leave behind. A decision that cannot be recorded is not
    * taken: the caller gets a retryable UNAVAILABLE instead of an unrecorded sensitive act.
    */
-  const recordDecision = Effect.fn('AccessDecisionGate.recordDecision')(function* recordDecisionEffect(params: {
-    readonly actor: EvidenceSubject;
-    readonly capability: ReturnType<typeof capabilityPolicyOf>;
-    readonly decision: AccessDecision;
-    /** The calling module of a delegated request; its evidence is always recorded (D6). */
-    readonly delegation?: AccessDecisionDelegation | undefined;
-    readonly entry: {
-      readonly mode: AccessDecisionRequest['mode'];
-      readonly onBehalfOfPrincipalId?: PrincipalId;
-      readonly scope: OperationalScope;
-      readonly scopeId: AccessScopeId;
-      readonly target?: GateInput['target'];
-    };
-    readonly now: Date;
-  }) {
-    const { actor, capability, decision, delegation, entry, now } = params;
-    const evidence =
-      delegation === undefined ? shouldRecordDecision(decision, capability) : shouldRecordDelegatedDecision(decision);
-    if (!evidence) {
-      return decision;
+  const recordDecision = Effect.fn('AccessDecisionGate.recordDecision')(function* recordDecisionEffect(
+    params: EvidenceParams,
+  ) {
+    const entry = evidenceEntryOf(params);
+    if (entry === undefined) {
+      return params.decision;
     }
-    const recorded = yield* Effect.option(
-      ports.decisionLog.record(
-        withOptional(
-          withOptional(
-            withOptional(
-              withOptional(
-                {
-                  actor: actorContextOf(actor),
-                  capability,
-                  decidedAt: now,
-                  mode: entry.mode,
-                  outcome: decision.outcome,
-                  reasons: decision.reasons,
-                  scope: entry.scope,
-                  scopeId: entry.scopeId,
-                },
-                'admissionDeadline',
-                decision.admissionDeadline,
-              ),
-              'delegation',
-              delegation,
-            ),
-            'onBehalfOfPrincipalId',
-            entry.onBehalfOfPrincipalId,
-          ),
-          'target',
-          entry.target?.recordKey,
-        ),
-      ),
-    );
-    return Option.isNone(recorded) ? seamUnavailable(EVIDENCE_UNAVAILABLE) : decision;
+    const recorded = yield* Effect.option(ports.decisionLog.record(entry));
+    return Option.isNone(recorded) ? seamUnavailable(EVIDENCE_UNAVAILABLE) : params.decision;
   });
 
   /**
@@ -822,13 +948,22 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
     return decision === listing.decision ? listing : { decision };
   });
 
-  /** The companies whose context this actor may select, proved in one engine snapshot (O28). */
+  /**
+   * The companies whose context this actor may select, proved in one engine snapshot (O28).
+   *
+   * A workload is classified on both of its paths (D6, O73): as the subject of a verified module call it may
+   * act in every company of the tenant its binding is registered in, and standalone — with no verified
+   * calling module — it may select only the companies its owner explicitly registered for an active binding
+   * of this principal. A standalone storefront API key therefore reaches exactly the one company the operator
+   * declared, never the tenant's whole company list and never a company through a bare principal kind.
+   */
   const selectableLegalEntities = Effect.fn('AccessDecisionGate.selectableLegalEntities')(
     function* selectableLegalEntitiesGate(input: SelectableLegalEntitiesInput) {
+      const calledBy = readVerifiedGatewayActor(input.scope);
       const actorResolution = yield* resolveGateActor(ports.principalKinds, input.scope, {
-        // A workload selects a company only as the subject of a verified module call (D6); on its own request it
-        // keeps no company at all (O29).
-        admitWorkloads: readVerifiedGatewayActor(input.scope) !== undefined,
+        // The kind is resolved here and each path below decides what it may select: a workload is never
+        // refused as an unknown kind, and a person or an agent never reaches a workload path.
+        admitWorkloads: true,
       });
       if (actorResolution.unavailable === true) {
         return yield* accessDecisionUnavailable('The acting principal could not be read');
@@ -841,14 +976,28 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
       if (actorResolution.workload === true) {
         // A workload holds no v2 tuple. Its registered binding is tenant-wide, so the subject of a module call may
         // act in every company of the tenant it is bound in, and in none while it holds no active binding (O73).
-        const bound = yield* Effect.option(
-          (ports.workloadBindings ?? FAIL_CLOSED_WORKLOADS).readActiveWorkloadKeys(workloadQueryOf(input.scope, actor)),
-        );
+        const registry = ports.workloadBindings ?? FAIL_CLOSED_WORKLOADS;
+        const query = workloadQueryOf(input.scope, actor);
+        const bound = yield* Effect.option(registry.readActiveWorkloadKeys(query));
         if (Option.isNone(bound)) {
           return yield* accessDecisionUnavailable('The workload registry could not be read');
         }
         if (bound.value.size === 0) {
           return [];
+        }
+        if (calledBy === undefined) {
+          // A standalone workload holds no company by kind: only the companies its owner registered for one of
+          // its active bindings, intersected with the tenant's own companies, are selectable. The tenant-wide
+          // list is never authority for a machine that no verified module call stands behind.
+          const declared = yield* Effect.option(registry.readCompanyDeclaration(query));
+          if (Option.isNone(declared)) {
+            return yield* accessDecisionUnavailable('The registered companies of this workload could not be read');
+          }
+          const companies = yield* Effect.option(ports.legalEntities.listCandidateIds(input.scope));
+          if (Option.isNone(companies)) {
+            return yield* accessDecisionUnavailable('The companies of this tenant could not be read');
+          }
+          return companies.value.filter((legalEntityId) => declared.value.activeCompanyIds.has(legalEntityId));
         }
       }
       const candidates = yield* Effect.option(ports.legalEntities.listCandidateIds(input.scope));
@@ -907,10 +1056,25 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
       }
       const { actor } = subject;
       if (actor === undefined) {
-        return { calledBy, subjectDecision: seamRefusal(ACTOR_SUBJECT_INVALID) };
+        // An agent, or a principal with no kind, is never the subject of a module call. Every entry's refusal is
+        // evidence naming the delegate, in the subject's tenant scope read once for the group (D6 step 5).
+        const principalId = PrincipalIdSchema.make(params.scope.principalId);
+        return {
+          calledBy,
+          refusalScopeId: yield* refusalScopeOf(params.scope, memberHoldersOf({ principalId })),
+          subjectDecision: seamRefusal(ACTOR_SUBJECT_INVALID),
+          subjectEvidence: { principalId },
+        };
       }
       if (!isWorkloadPrincipalKind(actor.kind)) {
-        return { actor, calledBy };
+        // A refused company is evidenced in the tenant scope, read once for the group and only when one is refused.
+        const refusesCompany = params.group.indexes.some((index) => {
+          const one = params.input[index];
+          return one !== undefined && gateScopeOf(one.legalEntityScope, params.scope).refusal !== undefined;
+        });
+        return refusesCompany
+          ? { actor, calledBy, refusalScopeId: yield* refusalScopeOf(params.scope, memberHoldersOf(actor)) }
+          : { actor, calledBy };
       }
       // A workload subject reads the registry once for the whole group, and only when an entry names workload keys.
       const namesWorkloads = params.group.indexes.some(
@@ -959,14 +1123,28 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
       // registry read is spent here (R5a-5).
       return { actor, workloadKeys: NO_WORKLOADS, workloadRegistryUnavailable: false };
     }
-    const bound = yield* Effect.option(
-      (ports.workloadBindings ?? FAIL_CLOSED_WORKLOADS).readActiveWorkloadKeys(workloadQueryOf(params.scope, actor)),
-    );
+    const registry = ports.workloadBindings ?? FAIL_CLOSED_WORKLOADS;
+    const query = workloadQueryOf(params.scope, actor);
+    const bound = yield* Effect.option(registry.readActiveWorkloadKeys(query));
     // An unreadable registry is UNAVAILABLE for the workload-marked entries of this group only; a
     // declaration-only entry still refuses a workload by its carrier (R5a-5, O48, O73).
-    return Option.isNone(bound)
-      ? { actor, workloadKeys: NO_WORKLOADS, workloadRegistryUnavailable: true }
-      : { actor, workloadKeys: bound.value, workloadRegistryUnavailable: false };
+    if (Option.isNone(bound)) {
+      return { actor, workloadKeys: NO_WORKLOADS, workloadRegistryUnavailable: true };
+    }
+    if (bound.value.size === 0) {
+      // No key of this group admits any workload, so no entry reaches the company declaration (D6).
+      return { actor, workloadKeys: NO_WORKLOADS, workloadRegistryUnavailable: false };
+    }
+    // The company declaration is read once for the whole group, beside its keys (D6).
+    const companyDeclaration = yield* Effect.option(registry.readCompanyDeclaration(query));
+    return Option.isNone(companyDeclaration)
+      ? { actor, companyDeclarationUnavailable: true, workloadKeys: bound.value, workloadRegistryUnavailable: false }
+      : {
+          actor,
+          companyDeclaration: companyDeclaration.value,
+          workloadKeys: bound.value,
+          workloadRegistryUnavailable: false,
+        };
   });
 
   /** One scope read per distinct company context of a group, never one per entry (O66). */
@@ -989,7 +1167,7 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
     const reads = yield* Effect.forEach(
       entries,
       ([, legalEntityId]) => resolveGateScope(scope, legalEntityId, holders),
-      { concurrency: 4 },
+      { concurrency: 2 },
     );
     const preambles = new Map<string, GatePreamble>();
     for (const [index, [key]] of entries.entries()) {
@@ -1033,7 +1211,9 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
           group: {
             actor: gate.actor,
             calledBy: gate.calledBy,
+            refusalScopeId: gate.refusalScopeId,
             subjectDecision: gate.subjectDecision,
+            subjectEvidence: gate.subjectEvidence,
             workloadKeys: gate.workloadKeys,
             workloadRegistryUnavailable: gate.workloadRegistryUnavailable,
           },
@@ -1051,6 +1231,8 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
         ? { decision: gate.decision ?? seamUnavailable(IDENTITY_UNAVAILABLE) }
         : prepareEntry({
             actor: gate.actor,
+            companyDeclaration: gate.companyDeclaration,
+            companyDeclarationUnavailable: gate.companyDeclarationUnavailable ?? false,
             gate: one,
             index,
             preambles,
@@ -1071,34 +1253,39 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
     return entries.length === 0 ? { decisions, evidence } : { batch: { entries, scope }, decisions, evidence };
   });
 
-  /** The evidence row of one batched request; a refusal decided before the engine writes none. */
-  const recordOne = (params: {
-    readonly answers: ReadonlyMap<number, AccessDecision>;
-    readonly index: number;
-    readonly one: GateInput;
-    readonly reached: ReadonlyMap<number, BatchedGate>;
-  }): Effect.Effect<AccessDecision> => {
-    const decision = params.answers.get(params.index) ?? seamUnavailable(IDENTITY_UNAVAILABLE);
-    const entry = params.reached.get(params.index);
-    return entry === undefined
-      ? Effect.succeed(decision)
-      : recordDecision({
-          actor: entry.actor,
-          capability: entry.capability,
-          decision,
-          delegation: entry.delegation,
-          entry: withOptional(
-            withOptional(
-              { mode: entry.mode, scope: params.one.scope, scopeId: entry.scopeId },
-              'onBehalfOfPrincipalId',
-              params.one.onBehalfOfPrincipalId,
-            ),
-            'target',
-            params.one.target,
-          ),
-          now: params.one.now,
-        });
-  };
+  /**
+   * Every evidence row of one batch: through the batch writer, one transaction per request scope, when the
+   * composition provides one; otherwise each row through the single writer. A decision whose row was not kept is not
+   * taken: every decision of a scope whose rows failed becomes a retryable UNAVAILABLE, exactly as a failed single row.
+   */
+  const recordBatchEvidence = Effect.fn('AccessDecisionGate.recordBatchEvidence')(function* recordBatchEvidence(
+    answered: readonly { readonly decision: AccessDecision; readonly evidence?: EvidenceParams }[],
+  ) {
+    const batchWriter = ports.decisionLogBatch;
+    if (batchWriter === undefined) {
+      return yield* Effect.forEach(
+        answered,
+        ({ decision, evidence }) => (evidence === undefined ? Effect.succeed(decision) : recordDecision(evidence)),
+        { concurrency: 1 },
+      );
+    }
+    const entries = answered.map(({ evidence }) => (evidence === undefined ? undefined : evidenceEntryOf(evidence)));
+    const scopes = [...new Set(entries.flatMap((entry) => (entry === undefined ? [] : [entry.scope])))];
+    // One write per request scope, one after another: each is one transaction on the shared pool.
+    const written = yield* Effect.forEach(
+      scopes,
+      (scope) =>
+        Effect.option(
+          batchWriter.recordAll(entries.filter((entry): entry is AccessDecisionLogEntry => entry?.scope === scope)),
+        ).pipe(Effect.map((outcome) => ({ kept: Option.isSome(outcome), scope }))),
+      { concurrency: 1 },
+    );
+    const unrecorded = new Set(written.flatMap(({ kept, scope }) => (kept ? [] : [scope])));
+    return answered.map(({ decision }, index) => {
+      const entry = entries[index];
+      return entry !== undefined && unrecorded.has(entry.scope) ? seamUnavailable(EVIDENCE_UNAVAILABLE) : decision;
+    });
+  });
 
   /**
    * Many protected requests, one answer each: navigation and search providers ask this once per
@@ -1107,7 +1294,8 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
    */
   const decideMany = Effect.fn('AccessDecisionGate.decideMany')(function* decideManyGate(input: readonly GateInput[]) {
     const groups = gateGroupsOf(input);
-    const prepared = yield* Effect.forEach(groups, (group) => prepareGroup({ group, input }), { concurrency: 4 });
+    // Each group reads identity and scope through the pool: two at a time, never more of a small shared pool.
+    const prepared = yield* Effect.forEach(groups, (group) => prepareGroup({ group, input }), { concurrency: 2 });
     const batches = prepared.flatMap(({ batch }) => (batch === undefined ? [] : [batch]));
     const decided = yield* decideAccessMany(
       ports.check,
@@ -1125,7 +1313,7 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
       })),
     );
     const answers = new Map<number, AccessDecision>(prepared.flatMap(({ decisions }) => [...decisions.entries()]));
-    const reached = new Map<number, BatchedGate>([
+    const reached = new Map<number, EvidencedGate>([
       ...batches.flatMap(({ entries }) => entries.map((entry) => [entry.index, entry] as const)),
       ...prepared.flatMap(({ evidence }) => evidence.map((entry) => [entry.index, entry] as const)),
     ]);
@@ -1138,9 +1326,7 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
         }
       }
     }
-    return yield* Effect.forEach(input, (_one, index) => recordOne({ answers, index, one: _one, reached }), {
-      concurrency: 1,
-    });
+    return yield* recordBatchEvidence(input.map((one, index) => evidenceOfOne({ answers, index, one, reached })));
   });
 
   return {
@@ -1172,11 +1358,17 @@ export const AccessDecisionLive: Layer.Layer<
     // The registry is resolved where it is provided, never required: a composition that only ever
     // decides human or agent requests is complete without one, and a workload then fails closed (O73).
     const workloadBindings = yield* Effect.serviceOption(AccessWorkloadBindingSource);
+    // The batch writer is resolved where it is provided: a batch's rows then share one transaction per scope.
+    const decisionLogBatch = yield* Effect.serviceOption(AccessDecisionLogBatch);
     return makeAccessDecisionService(
       withOptional(
-        { authorityFor: intent.authorityFor, check, decisionLog, legalEntities, principalKinds },
-        'workloadBindings',
-        Option.getOrUndefined(workloadBindings),
+        withOptional(
+          { authorityFor: intent.authorityFor, check, decisionLog, legalEntities, principalKinds },
+          'workloadBindings',
+          Option.getOrUndefined(workloadBindings),
+        ),
+        'decisionLogBatch',
+        Option.getOrUndefined(decisionLogBatch),
       ),
     );
   }),

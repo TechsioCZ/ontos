@@ -24,8 +24,9 @@ import type {
   AgentQueueRequest,
 } from '@app/shared-contracts/agent-proposals';
 import { agentCommandDiff } from '@app/shared-contracts/agent-diff';
-import { DateTime, Effect, Match, Option, Predicate, Schema, Struct } from 'effect';
+import { DateTime, Effect, Option, Schema, Struct } from 'effect';
 
+import { isProposableModuleCommand } from '@app/core-runtime/modules/mcp-contribution';
 import type { AgentProposalCommandPayload } from '@app/core-runtime';
 
 import { AgentActionRequestIdentity } from '../auth/agent-action-request-identity.ts';
@@ -44,6 +45,8 @@ import {
   callerModuleAccess,
 } from './caller.ts';
 import { loadComposedModules } from './composed-modules.ts';
+import { requestPhase, withRequestTrace } from './request-trace.ts';
+import type { TracedRequest } from './request-trace.ts';
 import type { ComposedModules } from './composed-modules.ts';
 import type { AgentPlatformCaller } from './caller.ts';
 import { readLegacyBatches } from './legacy-queue.ts';
@@ -61,23 +64,11 @@ import {
   principalNames,
 } from './proposal-store.ts';
 
-const HUMAN_ONLY_COMMANDS: ReadonlySet<string> = new Set(['AiDecideChanges', 'AiRevertBatch']);
 const DEFAULT_ACTION_SLUG = 'apply-command';
-/** Named Action slugs, e.g. `update-party`; `apply-command` is the default command envelope. */
-const ACTION_SLUG = /^[a-z][a-z0-9-]{0,99}$/u;
 const REVIEW_PATH = `/cs${AGENT_APPROVALS_PATH}`;
 /** Module reviews and owner-engine records reads of one activity page; a composition has only a few of each. */
 const MODULE_READ_CONCURRENCY = 4;
 const NO_DECIDER = 'Návrhy agentů schvalují jen lidé s oprávněním k zápisu v některém modulu firmy.';
-
-const agentCommandAllowed = (actionSlug: string, command: AgentCommand) =>
-  ACTION_SLUG.test(actionSlug) &&
-  (actionSlug === DEFAULT_ACTION_SLUG
-    ? Match.value(command['_tag']).pipe(
-        Match.when(Match.nonEmptyString, (value) => !HUMAN_ONLY_COMMANDS.has(value)),
-        Match.orElse(() => false),
-      )
-    : Predicate.isUndefined(command['_tag']));
 
 const moduleTextsOf = (composed: ComposedModules) => ({
   commandFieldLabelsOf: (appId: string) => composed.byAppId(appId)?.commandFieldLabels ?? {},
@@ -128,33 +119,37 @@ export const findPendingDuplicateBatch = (
   );
 };
 
-/** Stores an agent's batch as pending proposals. Repeating a runId returns the stored batch (`replayed`). */
-export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposals')(function* submitAgentProposals(
+const submitTracedProposals = Effect.fn('AgentPlatform.submitTracedProposals')(function* submitTracedProposalsEffect(
   agent: AgentPlatformCaller,
   request: AgentProposalSubmitRequest,
+  trace: TracedRequest,
 ) {
   const { legalEntityId, principalId, tenantId } = agent.principal;
-  yield* assertAgentProposalsAuthorized(agent, request.proposals);
+  yield* requestPhase(trace, 'assert', assertAgentProposalsAuthorized(agent, request.proposals));
   // Core owns atomic run/pending deduplication and rejects a reused ingress key with a different payload.
   // Never return an early Shell replay before the native Action can check that request hash.
   const actionTransport = yield* AgentActionRequestIdentity;
-  const modules = yield* callerModuleAccess(agent);
+  const modules = yield* requestPhase(trace, 'callerAccess', callerModuleAccess(agent, trace.caller));
   const composed = yield* loadComposedModules;
   const transport = yield* AgentReadRequestIdentity;
-  const names = yield* principalNames(agent.principal, transport);
+  const names = yield* requestPhase(trace, 'names', principalNames(agent.principal, transport));
   const identitySeed = `${tenantId}/${legalEntityId}/${principalId}/${actionTransport.idempotencyKey}`;
   const batchId = derivedUuid(`${identitySeed}/insert/batch`);
   // The modules describe their own commands (read as the agent); the platform never trusts the agent's diff.
-  const reviews = yield* reviewByModule(
-    agent.principal,
-    composed.byAppId,
-    request.proposals.map((proposal, index) => ({
-      actionSlug: proposal.actionSlug ?? DEFAULT_ACTION_SLUG,
-      appId: proposal.appId,
-      command: proposal.command,
-      key: `p${index}`,
-      stage: 'proposed' as const,
-    })),
+  const reviews = yield* requestPhase(
+    trace,
+    'reviews',
+    reviewByModule(
+      agent.principal,
+      composed.byAppId,
+      request.proposals.map((proposal, index) => ({
+        actionSlug: proposal.actionSlug ?? DEFAULT_ACTION_SLUG,
+        appId: proposal.appId,
+        command: proposal.command,
+        key: `p${index}`,
+        stage: 'proposed' as const,
+      })),
+    ),
   );
   const proposals: Extract<AgentProposalCommandPayload, { readonly operation: 'insert' }>['proposals'][number][] = [];
   for (const [index, proposal] of request.proposals.entries()) {
@@ -166,9 +161,16 @@ export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposal
     if (!modules.access.has(module.moduleKey)) {
       return yield* new AgentPlatformForbidden({ reason: `Agent nemá přístup k modulu ${module.label}.` });
     }
+    if (composedModule.commandActions === undefined) {
+      // A stale contract publishes no command map: which Action owns which command is unknown, so nothing passes.
+      return yield* new AgentPlatformInvalid({
+        reason: `Modul ${module.label} teď návrhy agentů nepřijímá: jeho nasazení nezveřejňuje, která akce provádí který příkaz.`,
+      });
+    }
     const actionSlug = proposal.actionSlug ?? DEFAULT_ACTION_SLUG;
-    // apply-command needs a command `_tag`; a named Action (party-registry, commerce) takes its payload without one.
-    if (!agentCommandAllowed(actionSlug, proposal.command)) {
+    // A tagged command only for the Action whose command union accepts it; an untagged payload only for an Action
+    // without one. The caller was authorized for exactly this Action, and approval runs exactly this Action.
+    if (!isProposableModuleCommand(composedModule.commandActions, actionSlug, proposal.command)) {
       return yield* new AgentPlatformInvalid({ reason: `Návrh ${index + 1} nemá povolený příkaz modulu.` });
     }
     const review = reviews.get(module.appId);
@@ -201,9 +203,10 @@ export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposal
     instruction: request.instruction,
     proposals,
   };
-  const stored = yield* insertProposals(
-    agent.principal,
-    request.runId === undefined ? insertion : { ...insertion, runId: request.runId },
+  const stored = yield* requestPhase(
+    trace,
+    'insert',
+    insertProposals(agent.principal, request.runId === undefined ? insertion : { ...insertion, runId: request.runId }),
   );
   return AgentProposalSubmitResponseSchema.make({
     batchId: AgentBatchIdSchema.make(stored.batchId),
@@ -212,6 +215,10 @@ export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposal
     reviewPath: REVIEW_PATH,
   });
 });
+
+/** Stores an agent's batch as pending proposals. Repeating a runId returns the stored batch (`replayed`). */
+export const submitAgentProposals = (agent: AgentPlatformCaller, request: AgentProposalSubmitRequest) =>
+  withRequestTrace('Agent proposal submit slow', (trace) => submitTracedProposals(agent, request, trace));
 
 /** The agent's own core batches in its company (newest first); the agent decides nothing. */
 export const listOwnAgentBatches = Effect.fn('AgentPlatform.listOwnAgentBatches')(function* listOwnAgentBatches(

@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
-import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import { FormInput } from "@/components/form-controls";
 import { useDictionary } from "@/ontos/market-context";
 import { marketRequestHeaders } from "@/ontos/market-locale";
 

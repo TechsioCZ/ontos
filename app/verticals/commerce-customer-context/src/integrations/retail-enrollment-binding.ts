@@ -5,7 +5,6 @@ import {
   readVerifiedGatewayCompositionRevision,
 } from '@app/core-runtime';
 import type { ActionServicePreparationContext, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
-import { and, eq } from 'drizzle-orm';
 import { Context, DateTime, Effect, Option, Schema } from 'effect';
 import type { ReadPrincipalBindingResultSchema } from '@app/core-runtime/auth/external-identity-contracts';
 
@@ -18,7 +17,6 @@ import type {
   EnrollmentAttemptSnapshot,
   EnrollmentOwnerOperationSnapshot,
 } from '../../shared/enrollment-contracts.ts';
-import { customerProfiles, portalEnrollmentAttempts, portalEnrollmentOwnerOperations } from '../database/schema.ts';
 import { commerceEnrollmentAttemptPersistenceForTransaction } from '../enrollment/attempts/attempt-persistence.ts';
 import {
   BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY,
@@ -45,7 +43,7 @@ import {
   PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
   PORTAL_AUTH_OWNER_MODULE_KEY,
 } from '../enrollment/orchestration/prepared-owner-authority.ts';
-import { readRetailProfileByParty } from '../persistence/profile-persistence.ts';
+import { readRetailProfileByParty, readRetailProfileLifecycle } from '../persistence/profile-persistence.ts';
 import { stableRevision } from '../stable-revision.ts';
 
 export type CurrentRetailEnrollmentIdentity = Extract<
@@ -100,7 +98,7 @@ const attemptMatchesBinding = (
   scope: OperationalScope,
   revision: string,
   payload: RetailPortalBindingPayload,
-  profiles: readonly Pick<typeof customerProfiles.$inferSelect, 'lifecycle' | 'profileKind' | 'revision'>[],
+  profile: Effect.Success<ReturnType<typeof readRetailProfileLifecycle>>,
 ) =>
   attempt.portalEnrollmentAttemptId === payload.enrollmentEvidenceRef &&
   attempt.tenantId === scope.tenantId &&
@@ -110,9 +108,9 @@ const attemptMatchesBinding = (
   attempt.compositionRevision === revision &&
   attempt.originatorActionInvocationId !== undefined &&
   payload.effectiveAt === DateTime.formatIso(attempt.createdAt) &&
-  profiles.length === 1 &&
-  profiles[0]?.profileKind === 'RETAIL' &&
-  profiles[0]?.lifecycle === 'ACTIVE';
+  Option.isSome(profile) &&
+  !profile.value.reconciling &&
+  profile.value.state === 'ACTIVE';
 
 const bindingIntentMatches = (
   binding: EnrollmentOwnerOperationSnapshot,
@@ -232,45 +230,11 @@ export const loadRetailEnrollmentBindingSnapshot = Effect.fn('RetailEnrollmentBi
     portalEnrollmentAttemptId: payload.enrollmentEvidenceRef,
     tenantId: scope.tenantId,
   }).pipe(Effect.mapError(unavailable));
-  yield* transaction
-    .select({ id: portalEnrollmentAttempts.portalEnrollmentAttemptId })
-    .from(portalEnrollmentAttempts)
-    .where(
-      and(
-        eq(portalEnrollmentAttempts.tenantId, scope.tenantId),
-        eq(portalEnrollmentAttempts.portalEnrollmentAttemptId, identity.portalEnrollmentAttemptId),
-      ),
-    )
-    .for('update')
-    .pipe(Effect.mapError(unavailable));
-  yield* transaction
-    .select({ id: portalEnrollmentOwnerOperations.portalEnrollmentOwnerOperationId })
-    .from(portalEnrollmentOwnerOperations)
-    .where(
-      and(
-        eq(portalEnrollmentOwnerOperations.tenantId, scope.tenantId),
-        eq(portalEnrollmentOwnerOperations.portalEnrollmentAttemptId, identity.portalEnrollmentAttemptId),
-      ),
-    )
-    .orderBy(portalEnrollmentOwnerOperations.portalEnrollmentOwnerOperationId)
-    .for('update')
-    .pipe(Effect.mapError(unavailable));
-  const profiles = yield* transaction
-    .select({
-      lifecycle: customerProfiles.lifecycle,
-      profileKind: customerProfiles.profileKind,
-      revision: customerProfiles.revision,
-    })
-    .from(customerProfiles)
-    .where(
-      and(
-        eq(customerProfiles.tenantId, scope.tenantId),
-        eq(customerProfiles.legalEntityId, legalEntityId),
-        eq(customerProfiles.customerProfileId, payload.profileRef.resourceId),
-      ),
-    )
-    .for('update')
-    .pipe(Effect.mapError(unavailable));
+  // Owner state is read only through its owned routines; the binding routine itself re-verifies the profile and
+  // serializes the binding under its own lock when the Action commits.
+  const profile = yield* readRetailProfileLifecycle(transaction, payload.profileRef.resourceId).pipe(
+    Effect.mapError(unavailable),
+  );
   const persistence = commerceEnrollmentAttemptPersistenceForTransaction(transaction, {
     legalEntityId,
     tenantId: scope.tenantId,
@@ -281,13 +245,21 @@ export const loadRetailEnrollmentBindingSnapshot = Effect.fn('RetailEnrollmentBi
       operations: persistence.readOperations(identity),
     },
     { concurrency: 1 },
-  ).pipe(Effect.mapError(unavailable));
+  ).pipe(
+    // An enrollment the Storefront client never started is a definite refusal, not an unavailable owner.
+    Effect.catchTag('CommerceEnrollmentAttemptNotFound', () =>
+      Effect.fail(rejected('The target must belong to the current open enrollment and Active Retail profile')),
+    ),
+    Effect.mapError((failure) =>
+      Schema.is(RetailPortalBindingActionRejected)(failure) ? failure : unavailable(failure),
+    ),
+  );
   const { accountSubject } = attempt;
   if (
     accountSubject === undefined ||
     accountSubject.authenticationNamespaceId !== COMMERCE_AUTHENTICATION_NAMESPACE_ID ||
     accountSubject.subjectType !== 'user' ||
-    !attemptMatchesBinding(attempt, scope, compositionRevision, payload, profiles)
+    !attemptMatchesBinding(attempt, scope, compositionRevision, payload, profile)
   ) {
     return yield* rejected('The target must belong to the current open enrollment and Active Retail profile');
   }
@@ -305,7 +277,7 @@ export const loadRetailEnrollmentBindingSnapshot = Effect.fn('RetailEnrollmentBi
     return yield* rejected('The enrollment owner lease has expired');
   }
   const journal = yield* ownerJournalForBinding(transaction, scope, payload, attempt, operations);
-  return { accountSubject, attempt, operations, profileRevision: profiles[0]?.revision, ...journal };
+  return { accountSubject, attempt, operations, profileRevision: Option.getOrUndefined(profile)?.revision, ...journal };
 });
 
 /** Prepared after authorization, outside SQL; consumed only for this actual Action invocation. */

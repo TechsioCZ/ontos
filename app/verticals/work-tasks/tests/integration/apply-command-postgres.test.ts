@@ -14,9 +14,11 @@ import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import {
   ApplyCommandPayloadSchema,
+  WorkLifecycleConflict,
   WorkReferenceUnavailable,
   WorkRevisionConflict,
 } from '../../shared/actions/apply-command.ts';
+import { SubmitStorefrontInquiryPayloadSchema } from '../../shared/actions/submit-storefront-inquiry.ts';
 import { prepareApplyCommandServices } from '../../src/actions/apply-command.action.ts';
 import { TaskRefSchema } from '../../shared/resources/task.ts';
 import { and, eq } from 'drizzle-orm';
@@ -239,7 +241,93 @@ const nativeWorkCommands = Effect.scoped(
   }),
 ).pipe(Effect.provide(referenceTransportNotUsed));
 
+/** A storefront inquiry writes on the current revision, replays its request id and refuses a reused one. */
+const storefrontInquiries = Effect.scoped(
+  Effect.gen(function* storefrontInquiries() {
+    const crypto = yield* Crypto.Crypto;
+    const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+    const reactivity = yield* Reactivity.make;
+    const client = yield* PgClient.make({ url: Redacted.make(connections.runtime.connectionString) }).pipe(
+      Effect.provideService(Reactivity.Reactivity, reactivity),
+    );
+    const database = yield* makeWithDefaults({ relations: workRelations }).pipe(
+      Effect.provideService(PgClient.PgClient, client),
+    );
+    const principal = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
+      authBindingId: yield* crypto.randomUUIDv4(),
+      authContextRef: 'api_key:storefront-inquiry-test',
+      authMethod: 'api_key',
+      legalEntityId: yield* crypto.randomUUIDv4(),
+      principalId: yield* crypto.randomUUIDv4(),
+      tenantId: yield* crypto.randomUUIDv4(),
+    });
+    const scope: OperationalScope = { ...principal, correlationId: 'storefront-inquiry-test' };
+    const inquiryOf = Effect.fn('StorefrontInquiryTest.inquiry')(function* inquiryOf(
+      requestId: string,
+      message: string,
+    ) {
+      const payload = yield* Schema.decodeEffect(SubmitStorefrontInquiryPayloadSchema)({
+        description: 'Kontakt: Jana Nováková',
+        storefrontInquiry: {
+          email: 'zakaznik@example.cz',
+          kind: 'CONTACT',
+          message,
+          name: 'Jana Nováková',
+          requestId,
+          subject: 'Dotaz',
+        },
+        title: 'Dotaz z e-shopu',
+      });
+      return { _tag: 'CreateTask' as const, ...payload };
+    });
+    const first = yield* inquiryOf(yield* crypto.randomUUIDv4(), 'Máte otevřeno v sobotu?');
+    const second = yield* inquiryOf(yield* crypto.randomUUIDv4(), 'Posíláte i na Slovensko?');
+    const reused = yield* inquiryOf(first.storefrontInquiry.requestId, 'Jiný text pod stejným id');
+    const result = yield* database
+      .transaction(
+        Effect.fn('StorefrontInquiryTest.transaction')(function* inquiryTransaction(tx) {
+          const scoped = yield* installOperationalScope(tx, scope, defineDatabaseIdentityEnrollment([]));
+          const services = yield* persistenceService(scoped, { scope });
+          const firstId = yield* crypto.randomUUIDv4();
+          const created = yield* services.submitStorefrontInquiry(first, firstId);
+          expect(created.revision).toBe(1);
+          expect(created.task).toMatchObject({ priority: 'NORMAL', ref: { resourceId: firstId }, state: 'NEW' });
+          expect(created.task).not.toHaveProperty('ownerPrincipalRef');
+          // A retried submission answers the task it already created and writes nothing.
+          const replayed = yield* services.submitStorefrontInquiry(first, yield* crypto.randomUUIDv4());
+          expect(replayed).toMatchObject({ revision: 1, task: { ref: { resourceId: firstId } } });
+          const conflict = yield* services
+            .submitStorefrontInquiry(reused, yield* crypto.randomUUIDv4())
+            .pipe(Effect.flip);
+          expect(Schema.is(WorkLifecycleConflict)(conflict)).toBe(true);
+          // A second inquiry needs no revision from the caller: it lands on whatever the company holds now.
+          const next = yield* services.submitStorefrontInquiry(second, yield* crypto.randomUUIDv4());
+          expect(next.revision).toBe(2);
+          const [row] = yield* scoped
+            .select()
+            .from(workStates)
+            .where(
+              and(eq(workStates.tenantId, scope.tenantId), eq(workStates.legalEntityId, scope.legalEntityId ?? '')),
+            )
+            .limit(1);
+          const state = yield* Schema.decodeUnknownEffect(WorkStateSchema)(row?.state);
+          expect(state.tasks.map((task) => task.storefrontInquiry?.requestId)).toEqual([
+            first.storefrontInquiry.requestId,
+            second.storefrontInquiry.requestId,
+          ]);
+          return yield* Effect.fail('fixture-rollback' as const);
+        }),
+      )
+      .pipe(Effect.flip);
+    expect(result).toBe('fixture-rollback');
+  }),
+);
+
 it.layer(NodeCrypto.layer, { excludeTestServices: true })('native task commands', (suite) => {
+  suite.effect(
+    'files storefront inquiries without a caller revision, replays a request id and refuses a reused one',
+    () => storefrontInquiries,
+  );
   suite.effect(
     'keeps references outside SQL, preserves CAS and preparation binding, and filters assigned JSONB rows in PostgreSQL',
     () => nativeWorkCommands,

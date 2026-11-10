@@ -1,9 +1,7 @@
 import { beforeEach, expect, rs } from "@rstest/core";
 import { it } from "effect-rstest";
-import { Effect, Schema } from "effect";
+import { Effect } from "effect";
 import { FetchHttpClient } from "effect/http";
-import { ApplyCommandPayloadSchema } from "@app/work-tasks/contracts/apply-command";
-import type { RecordsResponseSchema } from "@app/work-tasks/contracts/records";
 import { readConfiguration } from "../src/ontos/config";
 import type { StorefrontConfiguration } from "../src/ontos/config";
 import { decodeInquiry } from "../src/ontos/inquiry";
@@ -26,125 +24,220 @@ const customer = {
   phone: "",
   requestId: "71000000-0000-4000-8000-000000000097",
 };
-const collection = {
-  properties: {
-    dueDate: { locked: true, type: "DATE" },
-    ownerPrincipalRef: { locked: true, type: "PRINCIPAL" },
-    status: { groups: ["NOT_STARTED", "IN_PROGRESS", "DONE"], locked: true, type: "STATUS" },
-    title: { locked: true, type: "TEXT" },
-  },
-  ref: {
-    moduleId: "work.tasks",
-    resourceId: "inquiries",
-    resourceType: "work.tasks.task-collection",
-    tenantId: config.tenantId,
-  },
-  title: "Inquiries",
-} as const;
-const snapshot = {
-  actorPrincipalRef: {
-    principalId: "71000000-0000-4000-8000-000000000096",
-    tenantId: config.tenantId,
-  },
-  assignablePrincipals: [],
-  canWrite: true,
-  collection,
-  indicators: { open: 0, openByAssignee: [], overdue: 0 },
-  items: [],
-  principalNames: [],
-  referenceDate: "2026-11-07",
-  revision: 4,
-} satisfies typeof RecordsResponseSchema.Encoded;
-const backend = (outcome: "committed" | "proposal" | "proposal-with-task") => {
+const actionPath = "/shell-super-app-api/gateway/work-tasks/actions/submit-storefront-inquiry";
+const contextPath = "/shell-super-app-api/auth/api-key/gateway-context";
+const firstKey = `n1-inquiry-${customer.requestId}`;
+const accepted = (
+  ref: { resourceId?: string; tenantId?: string } = {},
+  requestId = customer.requestId,
+) =>
+  Response.json({
+    requestId,
+    taskRef: {
+      moduleId: "work.tasks",
+      resourceId: "confirmed-inquiry",
+      resourceType: "work.tasks.task",
+      tenantId: config.tenantId,
+      ...ref,
+    },
+  });
+const refused = (
+  status: 403 | 409 | 503,
+  problem: string,
+  code: string,
+  extra: Record<string, string | boolean> = {},
+) =>
+  Response.json(
+    {
+      _tag: `SubmitStorefrontInquiryAction${problem}Problem`,
+      code,
+      detail: "The Action was refused.",
+      status,
+      title: "Action refused",
+      type: "https://ontos.dev/problems/action-refused",
+      ...extra,
+    },
+    { status },
+  );
+const denied = () => refused(403, "Forbidden", "action_permission_denied");
+const conflict = (code: string) => refused(409, "Conflict", code);
+const alreadyCommitted = () =>
+  refused(409, "AlreadyCommitted", "action_already_committed", {
+    invocationId: "60000000-0000-4000-8000-000000000001",
+    resolution: "REFRESH_GOVERNED_READS",
+    retryCommand: false,
+  });
+const unavailable = () =>
+  refused(503, "Unavailable", "work_persistence_unavailable", { retryable: true });
+
+/** The Shell as the storefront key sees it: an assertion per write and the one admitted Work Tasks action. */
+const backend = (...answers: readonly (() => Response)[]) => {
   const calls: Request[] = [];
+  let assertions = 0;
+  let writes = 0;
   const fetch: typeof globalThis.fetch = async (url, init) => {
     const request = new Request(url, init);
     calls.push(request.clone());
     const path = new URL(request.url).pathname;
-    if (path.endsWith("/gateway-read")) {
-      return Response.json(snapshot);
-    }
-    if (path.endsWith("/gateway-context")) {
+    if (path === contextPath) {
+      assertions += 1;
       return Response.json({
         apiBaseUrl: "/shell-super-app-api/gateway",
         compositionRevision: "a".repeat(64),
         expiresAt: 9_999_999_999,
-        token: "inquiry-test-only-assertion",
+        token: `inquiry-test-only-assertion-${assertions}`,
       });
     }
-    if (path.endsWith("/actions/apply-command")) {
-      const payload = Schema.decodeUnknownSync(ApplyCommandPayloadSchema)(await request.json());
-      if (payload.command._tag !== "CreateTask") {
-        throw new Error("Expected the actual inquiry CreateTask command");
-      }
-      const task = {
-        collectionRef: collection.ref,
-        contextRefs: [],
-        createdAt: "2026-11-07T12:00:00.000Z",
-        priority: "NORMAL",
-        ref: {
-          moduleId: "work.tasks",
-          resourceId: "confirmed-inquiry",
-          resourceType: "work.tasks.task",
-          tenantId: config.tenantId,
-        },
-        state: "NEW",
-        storefrontInquiry: payload.command.storefrontInquiry,
-        title: payload.command.title,
-        updatedAt: "2026-11-07T12:00:00.000Z",
-      };
-      if (outcome === "committed") {
-        return Response.json({ revision: 5, task });
-      }
-      const proposal = {
-        _tag: "ActionProposalAccepted",
-        expiresAt: "2026-11-08T12:00:00.000Z",
-        proposalId: "60000000-0000-4000-8000-000000000001",
-      };
-      const response =
-        outcome === "proposal-with-task" ? { ...proposal, revision: 5, task } : proposal;
-      return Response.json(response, { status: 202 });
+    const answer = path === actionPath ? answers[writes] : undefined;
+    if (answer === undefined) {
+      throw new Error(`Unexpected inquiry transport call: ${path}`);
     }
-    throw new Error(`Unexpected inquiry transport path: ${path}`);
+    writes += 1;
+    return answer();
   };
-  return { calls, fetch };
+  return {
+    fetch,
+    paths: () => calls.map((call) => new URL(call.url).pathname),
+    writes: () => calls.filter((call) => new URL(call.url).pathname === actionPath),
+  };
 };
+const persist = (owner: ReturnType<typeof backend>, input: typeof customer = customer) =>
+  decodeInquiry(input).pipe(
+    Effect.flatMap(persistInquiry),
+    Effect.provide(FetchHttpClient.layer),
+    Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
+  );
+
+const wireBody = (call: Request | undefined) =>
+  Effect.promise(async () => (call === undefined ? "" : await call.text()));
 
 beforeEach(() => {
   rs.clearAllMocks();
   rs.mocked(readConfiguration).mockReturnValue(Effect.succeed(config));
 });
 
-it.effect("confirms only the committed native owner response for this inquiry", () =>
+it.effect("files the inquiry through the one admitted action with exactly its payload", () =>
   Effect.gen(function* committedInquiry() {
-    const owner = backend("committed");
-    const inquiry = yield* decodeInquiry(customer);
-    const result = yield* persistInquiry(inquiry).pipe(
-      Effect.provide(FetchHttpClient.layer),
-      Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
-    );
+    const owner = backend(accepted);
+    const result = yield* persist(owner, { ...customer, name: "  Shopper ", phone: " +420 1 " });
     expect(result).toEqual({ taskId: "confirmed-inquiry" });
-    expect(owner.calls.map((call) => new URL(call.url).pathname)).toEqual([
-      "/shell-super-app-api/auth/api-key/gateway-read",
-      "/shell-super-app-api/auth/api-key/gateway-context",
-      "/shell-super-app-api/gateway/work-tasks/actions/apply-command",
-    ]);
+    // No Work Tasks read precedes the write: the key is admitted on this action only.
+    expect(owner.paths()).toEqual([contextPath, actionPath]);
+    const [write] = owner.writes();
+    expect(write?.method).toBe("POST");
+    expect(write?.headers.get("authorization")).toBe("Bearer inquiry-test-only-assertion-1");
+    expect(write?.headers.get("x-ontos-composition-revision")).toBe("a".repeat(64));
+    expect(write?.headers.get("idempotency-key")).toBe(firstKey);
+    expect(write?.headers.get("x-correlation-id")).toMatch(/^[\da-f-]{36}$/u);
+    const sent: unknown = JSON.parse(yield* wireBody(write));
+    // The owner refuses any other field (_tag, priority, command, expectedRevision) with a 400.
+    expect(sent).toEqual({
+      description:
+        "Kontakt: Shopper <shopper@example.test>\nTelefon: +420 1\n\nPlease contact me about delivery.",
+      storefrontInquiry: {
+        email: customer.email,
+        kind: "CONTACT",
+        message: customer.message,
+        name: "Shopper",
+        requestId: customer.requestId,
+        subject: "N1 contact inquiry",
+      },
+      title: "N1 contact inquiry",
+    });
   }),
 );
 
-for (const outcome of ["proposal", "proposal-with-task"] as const) {
-  it.effect(`keeps ${outcome} unconfirmed without retrying or inventing a saved task`, () =>
-    Effect.gen(function* pendingInquiry() {
-      const owner = backend(outcome);
-      const inquiry = yield* decodeInquiry(customer);
-      const failure = yield* persistInquiry(inquiry).pipe(
-        Effect.provide(FetchHttpClient.layer),
-        Effect.provideService(FetchHttpClient.Fetch, owner.fetch),
-        Effect.flip,
+it.effect("reports a refused key as forbidden without another attempt", () =>
+  Effect.gen(function* deniedInquiry() {
+    const owner = backend(denied);
+    const failure = yield* persist(owner).pipe(Effect.flip);
+    expect(failure.reason).toBe("forbidden");
+    expect(owner.paths()).toEqual([contextPath, actionPath]);
+  }),
+);
+
+it.effect("does not resend a request id that already belongs to another submission", () =>
+  Effect.gen(function* foreignRequestId() {
+    const owner = backend(() => conflict("work_lifecycle_conflict"), accepted);
+    const failure = yield* persist(owner).pipe(Effect.flip);
+    expect(failure.reason).toBe("unconfirmed");
+    expect(owner.writes()).toHaveLength(1);
+  }),
+);
+
+for (const [name, first] of [
+  ["an already committed key", alreadyCommitted],
+  ["a first-task revision race", () => conflict("work_revision_conflict")],
+] as const) {
+  it.effect(`resends ${name} once under a new key with the same request id`, () =>
+    Effect.gen(function* resentInquiry() {
+      const owner = backend(first, () => accepted({ resourceId: "existing-inquiry" }));
+      expect(yield* persist(owner)).toEqual({ taskId: "existing-inquiry" });
+      // Assertions are single-use: the resend redeems its own.
+      expect(owner.paths()).toEqual([contextPath, actionPath, contextPath, actionPath]);
+      const [original, resent] = owner.writes();
+      expect(original?.headers.get("idempotency-key")).toBe(firstKey);
+      expect(resent?.headers.get("idempotency-key")).toMatch(
+        new RegExp(`^${firstKey}-[\\da-f-]{36}$`, "u"),
       );
+      expect(resent?.headers.get("authorization")).toBe("Bearer inquiry-test-only-assertion-2");
+      const sent = yield* wireBody(original);
+      expect(yield* wireBody(resent)).toBe(sent);
+      expect(sent).toContain(`"requestId":"${customer.requestId}"`);
+    }),
+  );
+}
+
+for (const [name, answer, reason] of [
+  // The owner refused both writes, so nothing was saved and the customer may send again.
+  ["a repeated revision race", () => conflict("work_revision_conflict"), "unavailable"],
+  // A task exists for this key but its reference could not be read back.
+  ["a repeated already-committed answer", alreadyCommitted, "unconfirmed"],
+] as const) {
+  it.effect(`stops after the one resend of ${name}`, () =>
+    Effect.gen(function* boundedResend() {
+      const owner = backend(answer, answer, accepted);
+      const failure = yield* persist(owner).pipe(Effect.flip);
+      expect(failure.reason).toBe(reason);
+      expect(owner.writes()).toHaveLength(2);
+    }),
+  );
+}
+
+it.effect("never claims non-delivery when the resend of a committed key fails", () =>
+  Effect.gen(function* committedThenDenied() {
+    const owner = backend(alreadyCommitted, denied);
+    const failure = yield* persist(owner).pipe(Effect.flip);
+    expect(failure.reason).toBe("unconfirmed");
+    expect(owner.writes()).toHaveLength(2);
+  }),
+);
+
+for (const [name, answer] of [
+  ["an unavailable owner", unavailable],
+  ["a receipt for another tenant", () => accepted({ tenantId: config.legalEntityId })],
+  ["a receipt for another request", () => accepted({}, "71000000-0000-4000-8000-000000000001")],
+  ["a receipt without a task id", () => accepted({ resourceId: "" })],
+  [
+    "an approval proposal instead of a saved task",
+    () =>
+      Response.json(
+        {
+          _tag: "ActionProposalAccepted",
+          expiresAt: "2026-11-08T12:00:00.000Z",
+          proposalId: "60000000-0000-4000-8000-000000000001",
+        },
+        { status: 202 },
+      ),
+  ],
+] as const) {
+  it.effect(`keeps ${name} unconfirmed without retrying or inventing a saved task`, () =>
+    Effect.gen(function* unconfirmedInquiry() {
+      const owner = backend(answer, accepted);
+      const failure = yield* persist(owner).pipe(Effect.flip);
       expect(failure.reason).toBe("unconfirmed");
       expect(failure).not.toHaveProperty("taskId");
-      expect(owner.calls).toHaveLength(3);
+      expect(owner.writes()).toHaveLength(1);
     }),
   );
 }

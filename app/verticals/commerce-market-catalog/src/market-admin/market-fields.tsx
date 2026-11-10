@@ -142,9 +142,11 @@ interface PricingFieldsProps {
   readonly onChange: (form: MarketPricingForm) => void;
   readonly prefix: string;
   readonly showIssues: boolean;
+  /** The new-market dialog keeps md; the market detail section uses sm. */
+  readonly size?: 'sm' | 'md';
 }
 
-export const PricingFields = ({ form, issues, onChange, prefix, showIssues }: PricingFieldsProps) => {
+export const PricingFields = ({ form, issues, onChange, prefix, showIssues, size = 'md' }: PricingFieldsProps) => {
   const { text } = useMarketText();
   const shown = (field: PricingField) => showIssues && issues.includes(field);
   return (
@@ -159,6 +161,7 @@ export const PricingFields = ({ form, issues, onChange, prefix, showIssues }: Pr
             onChange({ ...form, currency });
           }
         }}
+        size={size}
         value={[form.currency]}
       />
       <SelectTemplate
@@ -171,6 +174,7 @@ export const PricingFields = ({ form, issues, onChange, prefix, showIssues }: Pr
             onChange({ ...form, offerMode: mode });
           }
         }}
+        size={size}
         value={[form.offerMode]}
       />
       <FormInput
@@ -179,6 +183,7 @@ export const PricingFields = ({ form, issues, onChange, prefix, showIssues }: Pr
         label={text('form.exchangeRate')}
         name="exchangeRate"
         onChange={(event) => onChange({ ...form, exchangeRate: event.target.value })}
+        size={size}
         value={form.exchangeRate}
         {...(shown('exchangeRate')
           ? errorProps(true, text('form.exchangeRateError'))
@@ -190,6 +195,7 @@ export const PricingFields = ({ form, issues, onChange, prefix, showIssues }: Pr
         label={text('form.rounding')}
         name="roundingMinor"
         onChange={(event) => onChange({ ...form, roundingMinor: event.target.value })}
+        size={size}
         value={form.roundingMinor}
         {...(shown('roundingMinor')
           ? errorProps(true, text('form.roundingError'))

@@ -707,7 +707,7 @@ const maskNonCodeOpening = (
   return 0;
 };
 
-export const maskNonCode = (content: string, preserveStrings = false): string => {
+const computeMaskNonCode = (content: string, preserveStrings: boolean): string => {
   const masked = stringCodeUnits(content);
   let state: NonCodeState | null = null;
   let escaped = false;
@@ -733,6 +733,31 @@ export const maskNonCode = (content: string, preserveStrings = false): string =>
   return masked.join('');
 };
 
+// Masking is a pure function of its input, and boundary proofs mask the same owner
+// sources many times per run. Keep the most recently used results, bounded so a
+// process that validates many disposable trees does not retain all of them.
+const maskedSources = [new Map<string, string>(), new Map<string, string>()] as const;
+const MAX_MASKED_SOURCES = 256;
+
+export const maskNonCode = (content: string, preserveStrings = false): string => {
+  const cache = maskedSources[preserveStrings ? 1 : 0];
+  const cached = cache.get(content);
+  if (cached !== undefined) {
+    cache.delete(content);
+    cache.set(content, cached);
+    return cached;
+  }
+  const masked = computeMaskNonCode(content, preserveStrings);
+  if (cache.size >= MAX_MASKED_SOURCES) {
+    const [oldest] = cache.keys();
+    if (oldest !== undefined) {
+      cache.delete(oldest);
+    }
+  }
+  cache.set(content, masked);
+  return masked;
+};
+
 export const isCodePosition = (content: string, target: number): boolean => {
   let state: NonCodeState | null = null;
   let escaped = false;
@@ -754,6 +779,39 @@ export const isCodePosition = (content: string, target: number): boolean => {
     ({ escaped, regexCharacterClass, state } = transition);
   }
   return state === null;
+};
+
+/**
+ * `isCodePosition(content, target)` for every target in one pass. Index `target` is 1 for a
+ * code position; targets past the end share the value at `content.length`.
+ */
+export const codePositions = (content: string): Uint8Array => {
+  const positions = new Uint8Array(content.length + 1);
+  let state: NonCodeState | null = null;
+  let escaped = false;
+  let regexCharacterClass = false;
+  for (let index = 0; index < content.length; index += 1) {
+    positions[index] = Number(state === null);
+    const character = content[index] ?? '';
+    const next = content[index + 1] ?? null;
+    if (state === null) {
+      state = nonCodeStateAt(content, index, character, next);
+      if (state === LINE_COMMENT_STATE || state === BLOCK_COMMENT_STATE) {
+        index += 1;
+        positions[index] = 0;
+      }
+      continue;
+    }
+    const transition = advanceNonCodeState(state, character, next, escaped, regexCharacterClass);
+    const closesBlockComment = state === BLOCK_COMMENT_STATE && transition.state === null;
+    ({ escaped, regexCharacterClass, state } = transition);
+    if (closesBlockComment) {
+      index += 1;
+      positions[index] = 1;
+    }
+  }
+  positions[content.length] = Number(state === null);
+  return positions;
 };
 
 interface ModuleFederationExposesRange {

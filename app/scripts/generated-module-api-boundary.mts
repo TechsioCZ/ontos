@@ -115,7 +115,7 @@ const scanTemplateDelimiter = (
   return kind;
 };
 
-export const tokenizeGovernedClient = (source: string): readonly GovernedClientToken[] => {
+const scanGovernedClient = (source: string): readonly GovernedClientToken[] => {
   const scanner = createScanner(true, LanguageVariant.Standard, source);
   const tokens: GovernedClientToken[] = [];
   const templateExpressionBraceDepths: number[] = [];
@@ -129,9 +129,33 @@ export const tokenizeGovernedClient = (source: string): readonly GovernedClientT
       kind = scanner.reScanSlashToken();
     }
     kind = scanTemplateDelimiter(scanner, kind, templateExpressionBraceDepths);
-    tokens.push({ kind, value: scanner.getTokenValue() });
+    tokens.push(Object.freeze({ kind, value: scanner.getTokenValue() }));
     scannedKind = scanner.scan();
   }
+  return Object.freeze(tokens);
+};
+
+// Tokens are a pure, frozen function of the source, and boundary proofs tokenize the
+// same owner sources many times per run. Keep the most recently used results, bounded
+// so a process that validates many disposable trees does not retain all of them.
+const scannedGovernedClients = new Map<string, readonly GovernedClientToken[]>();
+const MAX_SCANNED_GOVERNED_CLIENTS = 256;
+
+export const tokenizeGovernedClient = (source: string): readonly GovernedClientToken[] => {
+  const cached = scannedGovernedClients.get(source);
+  if (cached !== undefined) {
+    scannedGovernedClients.delete(source);
+    scannedGovernedClients.set(source, cached);
+    return cached;
+  }
+  const tokens = scanGovernedClient(source);
+  if (scannedGovernedClients.size >= MAX_SCANNED_GOVERNED_CLIENTS) {
+    const [oldest] = scannedGovernedClients.keys();
+    if (oldest !== undefined) {
+      scannedGovernedClients.delete(oldest);
+    }
+  }
+  scannedGovernedClients.set(source, tokens);
   return tokens;
 };
 

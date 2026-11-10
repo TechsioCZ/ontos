@@ -7,6 +7,8 @@ export {
   type AutosaveOutcome,
   AutosaveOutcomeSchema,
   type AutosaveState,
+  type DraftSaveResult,
+  type PartlySaved,
   type RevisionedSaveResult,
   AutosaveStateSchema,
   autosavePending,
@@ -19,8 +21,16 @@ export {
 export { AutosaveStatus, type AutosaveStatusProps } from './autosave-status.tsx';
 export { BulkActionBar, type BulkActionBarProps } from './bulk-action-bar.tsx';
 export { DetailList, type DetailListItem } from './detail-list.tsx';
+export {
+  DETAIL_VIEW_MODE_KEY,
+  DetailViewModeSchema,
+  type DetailViewMode,
+  useDetailViewMode,
+} from './detail-view-mode.ts';
+export { DetailViewModeToggle, type DetailViewModeToggleProps } from './detail-view-mode-toggle.tsx';
 export { EmptyState, type EmptyStateProps } from './empty-state.tsx';
 export { formatDate, formatDateTime, formatMoney, formatNumber, formatPercent } from './format.ts';
+export { useHeldSnapshot } from './held-snapshot.ts';
 export { PageHeader, type PageHeaderProps } from './page-header.tsx';
 export { foldSearchText, matchesSearch } from './search-text.ts';
 export { ScrollRegion, type ScrollRegionProps } from './scroll-region.tsx';

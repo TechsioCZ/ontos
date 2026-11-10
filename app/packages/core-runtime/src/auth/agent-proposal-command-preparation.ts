@@ -1,4 +1,4 @@
-import { Clock, Context, Effect, Layer, Match, Option, Predicate, Ref, Schema } from 'effect';
+import { Clock, Context, Effect, Layer, Option, Ref, Schema } from 'effect';
 
 import { ActionPermissionCheckError } from '../actions/errors.ts';
 import { computeCanonicalValueHash, recoverSqlTransactionError } from '../actions/repository.ts';
@@ -10,6 +10,7 @@ import {
   validateActiveApplicationCompositionSnapshot,
 } from '../modules/active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
+import { isProposableModuleCommand } from '../modules/mcp-contribution.ts';
 import type { OperationalScope } from '../operations/context.ts';
 // The pure tag, not the catalog-backed implementation: this module is reached from the Core Action
 // catalog (via `mutate-agent-proposals.action.ts`), so importing the implementation would cycle.
@@ -94,15 +95,6 @@ export const proposalLifecycleAdministrator = Effect.fn('AgentProposalCommand.li
   },
 );
 
-const humanOnlyCommands = new Set(['AiDecideChanges', 'AiRevertBatch']);
-export const isProposableCommand = (actionSlug: string, command: Readonly<Record<string, Schema.Json>>) =>
-  actionSlug === 'apply-command'
-    ? Match.value(command['_tag']).pipe(
-        Match.when(Match.nonEmptyString, (tag) => !humanOnlyCommands.has(tag)),
-        Match.orElse(() => false),
-      )
-    : Predicate.isUndefined(command['_tag']);
-
 const targetsOf = (payload: AgentProposalCommandPayload, snapshot: AgentProposalCommandSnapshot) => {
   const targetId = proposalCommandTargetId(payload);
   const rows = Option.isSome(targetId)
@@ -121,16 +113,17 @@ type Catalog = Effect.Success<ReturnType<typeof buildApplicationCompositionCatal
 const resolveActions = (targets: ReturnType<typeof targetsOf>, active: ActiveSnapshot, catalog: Catalog) => {
   const releases = new Map(active.composition.modules.map((release) => [release.deployment.appId, release]));
   const contracts = new Map(catalog.contracts.map((contract) => [contract.manifest.module.id, contract]));
-  const resolved: { readonly actionKey: string; readonly moduleKey: string }[] = [];
+  const resolved: string[] = [];
   for (const target of targets) {
     const release = releases.get(target.appId);
     const contract = contracts.get(release?.moduleId ?? '');
     if (
       release?.moduleId !== target.moduleKey ||
       contract?.manifest.publicSurface.mcp?.approvals !== true ||
-      !isProposableCommand(target.actionSlug, target.command)
+      // The command must belong to the exact Action it is authorized and later executed as.
+      !isProposableModuleCommand(contract.manifest.publicSurface.mcp.commandActions, target.actionSlug, target.command)
     ) {
-      return Option.none<readonly { readonly actionKey: string; readonly moduleKey: string }[]>();
+      return Option.none<readonly string[]>();
     }
     const matching = contract.manifest.publicSurface.actions.filter((action) => {
       const prefix = `${action.owningModuleId}.`;
@@ -143,9 +136,9 @@ const resolveActions = (targets: ReturnType<typeof targetsOf>, active: ActiveSna
     });
     const [action] = matching;
     if (matching.length !== 1 || action === undefined) {
-      return Option.none<readonly { readonly actionKey: string; readonly moduleKey: string }[]>();
+      return Option.none<readonly string[]>();
     }
-    resolved.push({ actionKey: action.actionKey, moduleKey: target.moduleKey });
+    resolved.push(action.actionKey);
   }
   return Option.some(resolved);
 };
@@ -164,18 +157,6 @@ export const AgentProposalCommandPreparationLive = Layer.effect(
     const authority = yield* ActionAuthority;
     const contextAccess = yield* ContextAccess;
     const prepared = yield* Ref.make<ReadonlyMap<string, PreparedCommand>>(new Map());
-    const modulesAllowed = Effect.fn('AgentProposalCommand.modulesAllowed')(function* modulesAllowed(
-      target: Parameters<(typeof ContextAccess)['Service']['modules']>[0],
-    ) {
-      const decisions = yield* contextAccess.modules(target);
-      if (decisions.some((decision) => decision.decision === 'unavailable')) {
-        return yield* preflightUnavailable('Module authorization is unavailable');
-      }
-      const allowed = new Set(decisions.flatMap((decision) => (decision.decision === 'allowed' ? [decision.key] : [])));
-      return (
-        decisions.length === target.moduleIds.length && target.moduleIds.every((moduleId) => allowed.has(moduleId))
-      );
-    });
     const prepare = Effect.fn('AgentProposalCommand.prepare')(function* prepare(
       input: ActionAuthorizationPreflightInput,
     ) {
@@ -219,15 +200,10 @@ export const AgentProposalCommandPreparationLive = Layer.effect(
         if (Option.isNone(resolution)) {
           return { outcome: 'denied' as const };
         }
-        const resolved = resolution.value;
-        const { legalEntityId, principalId, tenantId } = input.scope;
-        const moduleIds = [...new Set(resolved.map((target) => target.moduleKey))];
-        if (!(yield* modulesAllowed({ legalEntityId, moduleIds, principalId, tenantId }))) {
-          return { outcome: 'denied' as const };
-        }
-        const actions = [...new Set(resolved.map((target) => target.actionKey))];
+        const actions = [...new Set(resolution.value)];
         // One gate question per proposed Action in the acting request's own scope (O66): `insert` needs
-        // the Action's own propose answer, every other operation its execute answer.
+        // the Action's own propose answer, every other operation its execute answer. The Action's answer is
+        // its module's: no retired `module_access` relation is asked beside it.
         const permissions = yield* authority
           .checkActionAuthorities({ actionKeys: actions, scope: input.scope })
           .pipe(Effect.mapError(preflightUnavailable));
@@ -240,11 +216,6 @@ export const AgentProposalCommandPreparationLive = Layer.effect(
           return { outcome: 'denied' as const };
         }
         if (payload.operation === 'claim-approval') {
-          if (
-            !(yield* modulesAllowed({ legalEntityId, moduleIds, principalId: snapshot.proposer.principalId, tenantId }))
-          ) {
-            return { outcome: 'denied' as const };
-          }
           // The same question asked of the proposer: the recorded proposal is only claimable when its
           // proposer could still propose it, decided in the proposer's own identity within this tenant.
           const proposer = yield* authority

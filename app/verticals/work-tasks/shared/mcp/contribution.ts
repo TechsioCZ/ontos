@@ -2,7 +2,8 @@
 import { OntosMcpHidden, defineOntosMcpContribution } from '@app/core-runtime';
 
 export const workTasksMcpContribution = defineOntosMcpContribution({
-  actions: { 'request-search-rebuild': 'hidden' },
+  // A storefront workload files inquiries; no agent or person may run it, so it is never a tool.
+  actions: { 'request-search-rebuild': 'hidden', 'submit-storefront-inquiry': 'hidden' },
   approvalReview: { read: 'agent-review' },
   approvals: true,
   commandFieldLabels: {

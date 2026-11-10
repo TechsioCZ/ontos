@@ -9,7 +9,7 @@ import { declaredActionAuthorities } from '../../permissions/action-authority.ts
 import { AccessIntent } from '../decision/authority.ts';
 import { DecisionCheck } from '../decision/engine.ts';
 import { AccessPrincipalKindSource } from './actor.ts';
-import { AccessDecisionLog } from './decision-log.ts';
+import { AccessDecisionLogBatch } from './decision-log-batch.ts';
 import { SubjectAccessInspection, SubjectInspectionUnavailable } from './inspection-contract.ts';
 import { SubjectInspectionIdentitySource } from './inspection-facts.ts';
 import { makeSubjectAccessInspection } from './inspection.ts';
@@ -21,7 +21,7 @@ export const SubjectAccessInspectionLive: Layer.Layer<
   | AccessIntent
   | DecisionCheck
   | AccessPrincipalKindSource
-  | AccessDecisionLog
+  | AccessDecisionLogBatch
   | SubjectInspectionIdentitySource
   | ActiveApplicationCompositionService
 > = Layer.effect(
@@ -32,7 +32,7 @@ export const SubjectAccessInspectionLive: Layer.Layer<
         AccessIntent,
         DecisionCheck,
         AccessPrincipalKindSource,
-        AccessDecisionLog,
+        AccessDecisionLogBatch,
         SubjectInspectionIdentitySource,
         ActiveApplicationCompositionService,
       ] as const,

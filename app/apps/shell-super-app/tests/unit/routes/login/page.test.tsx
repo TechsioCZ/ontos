@@ -103,7 +103,7 @@ rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
   browserRuntime: { runCallback: browserRuntime.runCallback, runPromise: browserRunPromiseMock },
 }));
 
-const getLogin = () => screen.getByRole('textbox', { name: 'Login *' });
+const getLogin = () => screen.getByRole('textbox', { name: /^Login/u });
 const getPassword = () => screen.getByLabelText(/^Password/u, { selector: 'input' });
 const getSubmit = () => screen.getByRole('button', { name: 'Login' });
 

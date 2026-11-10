@@ -163,6 +163,7 @@ const cs = {
     confirmed: "Objednávka byla přijata",
     country: "Země",
     countryPlaceholder: "Vyberte zemi",
+    deliveryAddress: "Doručovací adresa",
     email: "E-mail",
     errors: {
       email: "Zadejte platnou e-mailovou adresu",
@@ -178,10 +179,12 @@ const cs = {
     loadReceipt: "Načíst podrobnosti objednávky",
     netIncludesShipping: "Cena bez DPH včetně dopravy",
     noCountries: "Pro tento trh nyní není dostupná doručovací země.",
+    orderItems: "Položky objednávky",
     orderNumber: "Číslo objednávky",
     paymentNote: "Online platba nyní není dostupná. Přijetí objednávky nepotvrzuje její zaplacení.",
     phone: "Telefon (volitelně)",
     postalCode: "PSČ",
+    priceSummary: "Souhrn ceny",
     quantity: "Kusů",
     rejected: "Objednávku nelze v této podobě potvrdit. Zkontrolujte košík a dopravu.",
     savedAddresses: {
@@ -211,6 +214,7 @@ const cs = {
     storage: "Bezpečné uložení stavu objednávky není dostupné. Objednávku nyní neodesílejte.",
     street: "Adresa",
     summary: "Shrnutí objednávky",
+    thankYou: "Děkujeme za vaši objednávku.",
     total: "Celkem",
     unavailable: "Pokladna je dočasně nedostupná. Zkuste to prosím později.",
     uncertain:
@@ -349,6 +353,7 @@ const cs = {
     shoes: "Flat podrážky jsou v kurzu",
   },
   quantity: "Množství",
+  requiredLabel: "(povinné)",
   retry: "Zkusit znovu",
   search: "Hledat",
   searchLabel: "Hledat produkty",
@@ -596,6 +601,7 @@ const en: typeof cs = {
     confirmed: "Your order has been received",
     country: "Country",
     countryPlaceholder: "Choose a country",
+    deliveryAddress: "Delivery address",
     email: "Email",
     errors: {
       email: "Enter a valid email address",
@@ -611,10 +617,12 @@ const en: typeof cs = {
     loadReceipt: "Load order details",
     netIncludesShipping: "Net amount including shipping",
     noCountries: "No delivery country is available for this market at the moment.",
+    orderItems: "Order items",
     orderNumber: "Order number",
     paymentNote: "Online payment is currently unavailable. Order receipt does not confirm payment.",
     phone: "Phone (optional)",
     postalCode: "Postal code",
+    priceSummary: "Price summary",
     quantity: "Quantity",
     rejected: "This order cannot be confirmed. Check your cart and shipping selection.",
     savedAddresses: {
@@ -645,6 +653,7 @@ const en: typeof cs = {
     storage: "Your order state cannot be saved safely. Do not submit the order at this time.",
     street: "Address",
     summary: "Order summary",
+    thankYou: "Thank you for your order.",
     total: "Total",
     unavailable: "Checkout is temporarily unavailable. Please try again later.",
     uncertain:
@@ -781,6 +790,7 @@ const en: typeof cs = {
     shoes: "Flat soles are in style",
   },
   quantity: "Quantity",
+  requiredLabel: "(required)",
   retry: "Try again",
   search: "Search",
   searchLabel: "Search products",

@@ -3,7 +3,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Exit, Fiber } from "effect";
 import { StatusText } from "@techsio/ui-kit/atoms/status-text";
-import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import { FormInput } from "./form-controls";
 import { Select } from "@techsio/ui-kit/molecules/select";
 import type { Dictionary } from "@/i18n";
 import {

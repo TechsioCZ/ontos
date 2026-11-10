@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs';
 
-import { v1 } from '@authzed/authzed-node';
 import { ContextAccessLive, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { ResolveExternalSubjectResultSchema } from '@app/core-runtime/auth/external-identity-contracts';
@@ -10,6 +9,7 @@ import { GatewayPrincipalVerifierLive } from '@app/gateway-principal-verifier/se
 import { ExternalIdentityClient } from '@app/shared-contracts/server/external-identity-client';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq, sql } from 'drizzle-orm';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { Crypto, Config, Context, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
 import { Base64Url } from 'effect/encoding';
 import { expect, it } from 'effect-rstest';
@@ -19,9 +19,6 @@ import {
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
-import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
-import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
-import { historicalPermissionObjectId } from '../../../../packages/core-runtime/tests/support/historical-owner-targets.ts';
 import { CommercePortalAuthEnrollmentStartInputSchema } from '../../api/portal-auth/enrollment/contracts.ts';
 import { commercePortalAuthEnrollmentAccountCreationOutcome } from '../../api/portal-auth/enrollment/http.ts';
 import {
@@ -99,6 +96,8 @@ import {
   installEnrollmentTestAuthority,
 } from '../support/enrollment-composition-authority.ts';
 import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
+import { environmentTestAccessTarget, grantTestTenantRoleAccess } from '@app/core-runtime/testing/tenant-access';
+import { seedCommercePortalCoreRealm } from '../support/counterparty-invitation-core-realm.ts';
 
 const issuedFixtureExpiry = Effect.fn('EnrollmentAccountFixture.issuedExpiry')(function* issuedExpiry(
   assertion: string,
@@ -455,50 +454,6 @@ it.live('admits the new provider account immediately after verification and one 
           CommercePortalAuthAccountLookupLive.pipe(Layer.provide(Layer.succeed(CommercePortalAuthDatabase, provider))),
         ),
       );
-      const spice = newSpiceDbGrpcClient(yield* loadSpiceDbConfig());
-      yield* Effect.addFinalizer(() => Effect.sync(() => spice.close()));
-      const permissionObjectId = historicalPermissionObjectId('retail.profile.read', {
-        kind: 'retail_profile',
-        legalEntityId,
-        profileId,
-        tenantId,
-      });
-      if (permissionObjectId === undefined) {
-        return yield* Effect.die('The exact retail profile permission must have a native identity');
-      }
-      const permissionResource = v1.ObjectReference.create({
-        objectId: permissionObjectId,
-        objectType: 'business_permission',
-      });
-      const principalSubject = v1.SubjectReference.create({
-        object: v1.ObjectReference.create({ objectId: principalId, objectType: 'principal' }),
-      });
-      // The canonical grantee predicate requires this exact tenant membership; all three tuples are test-owned.
-      const relationships = [
-        v1.Relationship.create({ relation: 'grantee', resource: permissionResource, subject: principalSubject }),
-        v1.Relationship.create({
-          relation: 'tenant',
-          resource: permissionResource,
-          subject: v1.SubjectReference.create({
-            object: v1.ObjectReference.create({ objectId: tenantId, objectType: 'tenant' }),
-          }),
-        }),
-        v1.Relationship.create({
-          relation: 'member',
-          resource: v1.ObjectReference.create({ objectId: tenantId, objectType: 'tenant' }),
-          subject: principalSubject,
-        }),
-      ];
-      const grant = (operation: v1.RelationshipUpdate_Operation) =>
-        Effect.promise(
-          async () =>
-            await spice.promises.writeRelationships(
-              v1.WriteRelationshipsRequest.create({
-                updates: relationships.map((relationship) => v1.RelationshipUpdate.create({ operation, relationship })),
-              }),
-            ),
-        );
-      yield* Effect.addFinalizer(() => grant(v1.RelationshipUpdate_Operation.DELETE).pipe(Effect.asVoid, Effect.orDie));
       const owner = enrollmentAcceptanceScriptedOwner({
         actorPrincipalId,
         answers: {
@@ -559,7 +514,6 @@ it.live('admits the new provider account immediately after verification and one 
                     }
                     if (operation.transitionKey === BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY) {
                       yield* commitBinding(operation.ownerInvocationId);
-                      yield* grant(v1.RelationshipUpdate_Operation.TOUCH);
                     }
                     return yield* owner.effect.dispatch(operation);
                   }),
@@ -633,6 +587,21 @@ it.live('admits the new provider account immediately after verification and one 
       expect((yield* continuation.advance(identity)).outcome).toBe('COMPLETE');
       expect((yield* fixture.ownerStore.read(identity)).accountSubject?.providerSubjectId).toBe(providerSubjectId);
       expect(owner.log.dispatched).toHaveLength(4);
+      // The customer is a person of this Tenant: Core resolves every governed read from the persisted Tenant,
+      // Principal and Commerce portal binding, and the one gate admits the access check from v2 intent.
+      yield* seedCommercePortalCoreRealm({
+        legalEntityId,
+        people: [{ authBindingId, displayName: 'Registered portal customer', principalId, providerSubjectId }],
+        storefront: { authBindingId: yield* randomId, principalId: actorPrincipalId },
+        tenantId,
+        title: 'Enrollment registration account',
+      });
+      yield* grantTestTenantRoleAccess({
+        ...(yield* environmentTestAccessTarget),
+        holders: [{ capabilityKeys: ['commerce.customer-context.retail-access.check'], principalId }],
+        legalEntityIds: [legalEntityId],
+        tenantId,
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
       const gateway = yield* makeAcceptanceGatewayIssuer(
         'http://gateway.enrollment-account.test',
         'enrollment-account',
@@ -683,7 +652,8 @@ it.live('admits the new provider account immediately after verification and one 
         Layer.provide(
           Layer.mergeAll(
             core,
-            productionReadRuntimeLive,
+            // The production read runtime admits its reads against this deployment's composition source.
+            productionReadRuntimeLive.pipe(Layer.provide(gateway.verificationLive)),
             commercePortalAuthPlatformCryptoLive,
             runner,
             ContextAccessLive,

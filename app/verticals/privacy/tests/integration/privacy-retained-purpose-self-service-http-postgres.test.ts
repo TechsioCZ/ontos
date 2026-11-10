@@ -919,14 +919,31 @@ const startOwner = Effect.fn('RetainedAccount.startOwner')(function* startOwner(
     stdout: 'pipe',
   });
   yield* Effect.addFinalizer(() => channel.beginClose);
-  yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
+  // Keep the child's error tail so an owner that dies before its readiness line says why.
+  const stderrTail = yield* Ref.make('');
+  yield* child.stderr.pipe(
+    Stream.decodeText(),
+    Stream.runForEach((text) => Ref.update(stderrTail, (tail) => `${tail}${text}`.slice(-8192))),
+    Effect.forkScoped,
+  );
+  // A non-zero owner exit logs the child's stderr tail, so a readiness failure says why.
+  yield* child.exitCode.pipe(
+    Effect.flatMap((code) =>
+      Number(code) === 0
+        ? Effect.void
+        : Ref.get(stderrTail).pipe(
+            Effect.flatMap((tail) => Effect.logError(`owner exited with code ${code}; stderr tail:\n${tail}`)),
+          ),
+    ),
+    Effect.forkScoped,
+  );
   const stopped = child.exitCode.pipe(Effect.andThen(Effect.fail(failed('private-owner-exited'))));
   const next = Effect.raceFirst(Queue.take(channel.responses), Effect.raceFirst(channel.lost, stopped));
   const send = Effect.fn('RetainedAccount.sendPrivate')(function* send(text: string) {
     const output = yield* Effect.raceFirst(channel.writer, Effect.raceFirst(channel.lost, stopped));
     return yield* output.write(text).pipe(Effect.mapError(() => failed('private-owner-write')));
   });
-  return { child, next, send };
+  return { child, next, send, stderrTail };
 });
 const firstLine = Effect.fn('RetainedAccount.firstLine')(function* firstLine(
   stream: Stream.Stream<Uint8Array, unknown>,
@@ -1573,6 +1590,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   };
   const commerceEnvironment = {
     ...environment,
+    COMMERCE_CORE_IDENTITY_API_KEY: Redacted.value(issued.secret),
     COMMERCE_CORE_IDENTITY_BASE_URL: `${coreOrigin}${shellGatewayContextContract.apiPrefix}`,
     COMMERCE_PORTAL_AUTH_DATABASE_URL: isolated.connections.runtime.connectionString,
     COMMERCE_PORTAL_AUTH_SECRET: `${suffix}${suffix}`,
@@ -1586,6 +1604,9 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
         gatewayApiKey: Redacted.value(issued.secret),
       },
     }),
+    // Commerce's own module credential, which the Shell attests to Commerce's release: the Ensure Action reads
+    // the Party through delegated gateway context before its transaction.
+    ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(moduleIssued.secret),
     ONTOS_RETAINED_CONSENT_SERVER_SCOPE: JSON.stringify({
       compositionRevision: initialSnapshot.composition.revision,
       legalEntityId: fixture.legalEntityId,

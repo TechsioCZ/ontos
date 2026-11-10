@@ -61,8 +61,9 @@ const partyRegistryDatabaseConfigLive = makeDatabaseConfigLive(PARTY_REGISTRY_RE
 /**
  * The Party suite's own authority, flipped over the fixture's HTTP surface (see
  * `party-test-access-gate.ts`). The isolated database carries no v2 access intent and reaches no
- * engine, so the production default would refuse every protected read and Action; the suite still
- * proves a real revocation because the control really changes the gate's answer.
+ * engine, so the decision is scripted; Action preparation still runs the production path against the
+ * Ready scope and fence rows the owning fixture seeded. The suite proves a real revocation because
+ * the control really changes the gate's answer.
  */
 const accessGate = partyTestAccessGate();
 const partyRegistryDatabaseIdentityEnrollmentLive = Layer.succeed(

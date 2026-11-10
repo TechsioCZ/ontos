@@ -3269,7 +3269,11 @@ it.live('creates a real separately bound managed service credential through pack
           );
           expect(serviceId).not.toBe(fixture.core.manager.principalId);
           const issue = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/api-keys/managed`, {
-            body: yield* HttpBody.json({ name: 'Native source relay', principalId: serviceId }),
+            body: yield* HttpBody.json({
+              name: 'Native source relay',
+              principalId: serviceId,
+              scope: 'tenant-managed',
+            }),
             headers: {
               cookie: Redacted.value(cookie),
               'idempotency-key': yield* crypto.randomUUIDv4(),
@@ -3647,7 +3651,11 @@ it.live(
             );
             expect(serviceId).not.toBe(fixture.core.manager.principalId);
             const issue = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/api-keys/managed`, {
-              body: yield* HttpBody.json({ name: 'Native source relay', principalId: serviceId }),
+              body: yield* HttpBody.json({
+                name: 'Native source relay',
+                principalId: serviceId,
+                scope: 'tenant-managed',
+              }),
               headers: {
                 cookie: Redacted.value(cookie),
                 'idempotency-key': yield* crypto.randomUUIDv4(),
@@ -4554,7 +4562,11 @@ it.live('completes the real CCC Guest attribution through Party with the origina
           );
           expect(serviceId).not.toBe(fixture.core.manager.principalId);
           const issue = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/api-keys/managed`, {
-            body: yield* HttpBody.json({ name: 'Native source relay', principalId: serviceId }),
+            body: yield* HttpBody.json({
+              name: 'Native source relay',
+              principalId: serviceId,
+              scope: 'tenant-managed',
+            }),
             headers: {
               cookie: Redacted.value(cookie),
               'idempotency-key': yield* crypto.randomUUIDv4(),
@@ -5337,7 +5349,11 @@ it.live(
             );
             expect(serviceId).not.toBe(fixture.core.manager.principalId);
             const issue = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/api-keys/managed`, {
-              body: yield* HttpBody.json({ name: 'Native source relay', principalId: serviceId }),
+              body: yield* HttpBody.json({
+                name: 'Native source relay',
+                principalId: serviceId,
+                scope: 'tenant-managed',
+              }),
               headers: {
                 cookie: Redacted.value(cookie),
                 'idempotency-key': yield* crypto.randomUUIDv4(),
@@ -5381,7 +5397,11 @@ it.live(
             const issueMarketKey = yield* client.post(
               `${fixture.origin}${shell.apiPrefix}/auth/identity/api-keys/managed`,
               {
-                body: yield* HttpBody.json({ name: 'Native Market source relay', principalId: serviceId }),
+                body: yield* HttpBody.json({
+                  name: 'Native Market source relay',
+                  principalId: serviceId,
+                  scope: 'tenant-managed',
+                }),
                 headers: {
                   cookie: Redacted.value(cookie),
                   'idempotency-key': yield* crypto.randomUUIDv4(),
@@ -5493,7 +5513,11 @@ it.live(
               gateway: { issuer: fixture.origin, publicJwks: gatewayMaterial.publicJwks },
               port: Number(new URL(customerContext.origin).port),
               relativeDirectory: '../../verticals/commerce-customer-context',
-              relaySource: { apiKey: issued.secret, shellBaseUrl: `${fixture.origin}/shell-super-app-api` },
+              relaySource: {
+                apiKey: issued.secret,
+                shellBaseUrl: `${fixture.origin}/shell-super-app-api`,
+                tenantId: fixture.core.tenantId,
+              },
             });
             children.push(enrolledCustomerContext.child);
             expect(enrolledCustomerContext.origin).toBe(customerContext.origin);

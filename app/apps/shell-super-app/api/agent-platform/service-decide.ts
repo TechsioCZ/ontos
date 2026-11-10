@@ -34,6 +34,8 @@ import { parseLegacyKey } from '../../shared/proposal-key.ts';
 import { decideLegacy, revertLegacy } from './legacy-queue.ts';
 import type { AgentProposalRow } from './mappers.ts';
 import { loadComposedModules } from './composed-modules.ts';
+import { requestPhase, withRequestTrace } from './request-trace.ts';
+import type { TracedRequest } from './request-trace.ts';
 import { applyModuleCommand, readModuleRecords } from './module-call.ts';
 import type { ModuleCommandOutcome } from './module-call.ts';
 import { reviewedItem, reviewInModule } from './module-review.ts';
@@ -152,6 +154,8 @@ const runFollowUp = Effect.fn('AgentPlatform.runFollowUp')(function* runFollowUp
     commands ?? [],
     (command, index) =>
       applyModuleCommand(caller.principal, row.appId, command, {
+        // The module's own follow-up: the Action that owns its command, the approved one first.
+        action: { preferred: row.actionSlug },
         idempotencyKey: `agent-proposal-${row.proposalId}-follow-up-${index}`,
         referenceAudiences: [...new Set([...row.referenceAudiences, ...followUp.referenceAudiences])],
       }).pipe(Effect.ignore),
@@ -199,8 +203,9 @@ const revertRow = Effect.fn('AgentPlatform.revertRow')(function* revertRow(
   yield* Effect.forEach(
     plan.commands,
     Effect.fn('AgentPlatform.revertCommand')(function* revertCommand(command, index) {
+      // The module's undo command may belong to another Action than the approved one (create -> update).
       const outcome = yield* applyModuleCommand(caller.principal, row.appId, command, {
-        actionSlug: row.actionSlug,
+        action: { preferred: row.actionSlug },
         idempotencyKey: `agent-revert-${row.proposalId}-${index}`,
         ...audiencesOf(row),
       });
@@ -236,8 +241,9 @@ const approveCoreRow = Effect.fn('AgentPlatform.approveCoreRow')(function* appro
   }
   yield* requireCurrentProposalClaim(caller.principal, claim, 'claim-approval');
   const plan = revertPlanOf(reviewed);
+  // Exactly the Action and command authorized at submit and claimed above; never another Action.
   const outcome = yield* applyModuleCommand(caller.principal, row.appId, row.command, {
-    actionSlug: row.actionSlug,
+    action: { exact: row.actionSlug },
     idempotencyKey: `agent-proposal-${row.proposalId}`,
     ...audiencesOf(row),
   });
@@ -288,10 +294,11 @@ const decideCore = Effect.fn('AgentPlatform.decideCore')(function* decideCore(
   caller: AgentPlatformCaller,
   batchId: string,
   request: AgentDecideRequest,
+  trace: TracedRequest,
 ) {
   // Complete-batch authorization and private visibility must succeed before the first claim or mutation.
   // A forbidden sibling denies the entire request; do not translate it into per-item forbidden counts.
-  const rows = yield* loadBatchProposals(caller.principal, batchId);
+  const rows = yield* requestPhase(trace, 'batch', loadBatchProposals(caller.principal, batchId));
   if (rows.length === 0) {
     return yield* new AgentPlatformInvalid({ reason: BATCH_NOT_FOUND });
   }
@@ -306,15 +313,16 @@ const decideCore = Effect.fn('AgentPlatform.decideCore')(function* decideCore(
       if (row.status !== 'pending') {
         return result(itemKey, 'skipped', 'Změna už byla vyřízena.');
       }
-      const { check, reviewed } = yield* checkApprover(caller.principal, row);
+      const { check, reviewed } = yield* requestPhase(trace, 'review', checkApprover(caller.principal, row));
       if (!check.ok) {
         return result(itemKey, 'forbidden', check.hidden ? ITEM_NOT_IN_BATCH : check.reason);
       }
       if (request.decision === 'reject') {
         const target = { batchId, proposalId: row.proposalId };
-        const rejected = yield* markRejected(
-          caller.principal,
-          request.note === undefined ? target : { ...target, note: request.note },
+        const rejected = yield* requestPhase(
+          trace,
+          'reject',
+          markRejected(caller.principal, request.note === undefined ? target : { ...target, note: request.note }),
         );
         return rejected.affectedProposalIds.includes(row.proposalId)
           ? result(itemKey, 'rejected')
@@ -323,7 +331,7 @@ const decideCore = Effect.fn('AgentPlatform.decideCore')(function* decideCore(
       if (row.batchRevertedAt !== null) {
         return result(itemKey, 'skipped', BATCH_REVERTED);
       }
-      return yield* approveCoreRow(caller, row, reviewed);
+      return yield* requestPhase(trace, 'approve', approveCoreRow(caller, row, reviewed));
     }),
     { concurrency: 1 },
   );
@@ -376,7 +384,9 @@ export const decideAgentItems = Effect.fn('AgentPlatform.decideAgentItems')(func
 ) {
   const coreBatchId = parseCoreKey(request.batchKey);
   if (coreBatchId !== undefined) {
-    return yield* decideCore(caller, coreBatchId, request);
+    return yield* withRequestTrace('Agent proposal decide slow', (trace) =>
+      decideCore(caller, coreBatchId, request, trace),
+    );
   }
   const legacy = parseLegacyKey(request.batchKey);
   if (legacy !== undefined) {

@@ -6,6 +6,7 @@ import {
   IDENTITY_PROVIDER_WORKLOAD,
   CRM_PARTY_INTAKE_WORKLOAD,
   STOREFRONT_CLIENT_WORKLOAD,
+  STOREFRONT_INQUIRY_WORKLOAD,
   akrosStorefrontPrincipal,
   commerceEnrollmentOperatorActionKeys,
   commercePortalPrincipal,
@@ -115,6 +116,7 @@ it('maps every reviewed machine identity to exactly the workload keys a carrier 
   expect(bindings).toEqual([
     { principalId: storefrontPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
     { principalId: akrosStorefrontPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
+    { principalId: akrosStorefrontPrincipal.principalId, workloadKey: STOREFRONT_INQUIRY_WORKLOAD },
     { principalId: commercePortalPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
     { principalId: commercePortalPrincipal.principalId, workloadKey: IDENTITY_PROVIDER_WORKLOAD },
     { principalId: crmPartyIntakePrincipal.principalId, workloadKey: CRM_PARTY_INTAKE_WORKLOAD },

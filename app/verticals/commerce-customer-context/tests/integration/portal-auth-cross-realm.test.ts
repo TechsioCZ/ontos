@@ -12,8 +12,7 @@ import {
 } from '@app/core-runtime';
 import { AccessDecisionGate } from '../../../../packages/core-runtime/src/access/enforcement/contract.ts';
 import { makeScriptedBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
-import { ResendEmailDeliveryConfig, ResendEmailDeliveryLive } from '@app/email-delivery/resend';
-import { FetchHttpClient } from 'effect/http';
+import { localEmailDeliveryLive } from '../support/local-email-delivery.ts';
 import { eq } from 'drizzle-orm';
 import { Config, Effect, Layer, Redacted } from 'effect';
 import type { Scope } from 'effect';
@@ -76,12 +75,6 @@ const portalConfiguration = Effect.gen(function* portalConfiguration() {
   });
 });
 
-const emailDeliveryConfiguration = Layer.succeed(ResendEmailDeliveryConfig, {
-  apiKey: Redacted.make('re_commerce_portal_auth_cross_realm_test'),
-  endpoint: 'https://api.resend.com/emails',
-  from: 'no-reply@commerce.example.test',
-});
-
 const cookieHeader = (setCookieHeaders: readonly string[]): string =>
   setCookieHeaders.map((header) => header.split(';')[0]).join('; ');
 
@@ -97,10 +90,8 @@ const portalRuntime = Effect.acquireRelease(
         Layer.provideMerge(
           Layer.mergeAll(
             Layer.succeed(CommercePortalAuthConfig, configuration),
-            ResendEmailDeliveryLive.pipe(
-              Layer.provide(FetchHttpClient.layer),
-              Layer.provide(emailDeliveryConfiguration),
-            ),
+            // Provider mail stays local: the realm sends with the context it captured, never the real API.
+            localEmailDeliveryLive([]),
           ),
         ),
       ),

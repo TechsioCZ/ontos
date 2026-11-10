@@ -48,9 +48,31 @@ class CoreRealmDatabase extends Context.Service<CoreRealmDatabase, TestDatabaseF
   '@app/commerce-customer-context/tests/support/CoreRealmDatabase',
 ) {}
 
-/** The Core rows a governed caller of this Tenant reads, plus the two session bindings. */
-export const seedCounterpartyInvitationCoreRealm = Effect.fnUntraced(function* seedCounterpartyInvitationCoreRealm(
-  realm: CounterpartyInvitationRealm,
+/** One portal person: a human Principal of the Tenant with an active Commerce portal session binding. */
+export interface CommercePortalCorePerson {
+  readonly authBindingId: string;
+  readonly displayName: string;
+  readonly principalId: string;
+  readonly providerSubjectId: string;
+}
+
+/** The Tenant, its Selling Legal Entity, the Storefront workload that acts for portal people, and those people. */
+export interface CommercePortalCoreRealm {
+  readonly legalEntityId: string;
+  readonly people: readonly CommercePortalCorePerson[];
+  readonly storefront: { readonly authBindingId: string; readonly principalId: string };
+  readonly tenantId: string;
+  readonly title: string;
+}
+
+/**
+ * The Core rows a governed Commerce portal caller of this Tenant reads: the Tenant, the Selling Legal Entity, the
+ * Commerce module state, the Storefront workload Principal and its workload binding, every portal person as a human
+ * Principal with an active session binding, and the Ready access scopes the one gate pins every protected write to
+ * (O51, O73).
+ */
+export const seedCommercePortalCoreRealm = Effect.fnUntraced(function* seedCommercePortalCoreRealm(
+  realm: CommercePortalCoreRealm,
 ) {
   const connections = yield* loadDatabaseConnectionPair();
   const adminClient = yield* acquireFixturePgClient(connections.admin.connectionString, 2);
@@ -75,39 +97,32 @@ export const seedCounterpartyInvitationCoreRealm = Effect.fnUntraced(function* s
   yield* Effect.acquireRelease(cleanup, () => cleanup.pipe(Effect.orDie));
   yield* admin.insert(tenants).values({
     defaultLocale: 'en',
-    name: 'Counterparty invitation enrollment acceptance',
-    slug: `counterparty-invitation-acceptance-${realm.tenantId}`,
+    name: realm.title,
+    slug: `commerce-portal-realm-${realm.tenantId}`,
     status: 'active',
     tenantId: realm.tenantId,
   });
   yield* admin.insert(principals).values([
     {
-      displayName: 'Counterparty invitation storefront client',
+      displayName: `${realm.title} storefront client`,
       kind: 'system',
-      principalId: realm.storefrontPrincipalId,
+      principalId: realm.storefront.principalId,
       status: 'active',
       tenantId: realm.tenantId,
     },
-    {
-      displayName: 'Counterparty access administrator',
-      kind: 'human',
-      principalId: realm.inviterPrincipalId,
-      status: 'active',
+    ...realm.people.map((person) => ({
+      displayName: person.displayName,
+      kind: 'human' as const,
+      principalId: person.principalId,
+      status: 'active' as const,
       tenantId: realm.tenantId,
-    },
-    {
-      displayName: 'Counterparty invitation recipient',
-      kind: 'human',
-      principalId: realm.recipientPrincipalId,
-      status: 'active',
-      tenantId: realm.tenantId,
-    },
+    })),
   ]);
   yield* admin.insert(legalEntities).values({
     legalEntityId: realm.legalEntityId,
-    legalName: 'Counterparty invitation selling entity',
+    legalName: `${realm.title} selling entity`,
     registrationCountry: 'CZ',
-    registrationNumber: `counterparty-invitation-${realm.legalEntityId}`,
+    registrationNumber: `commerce-portal-realm-${realm.legalEntityId}`,
     status: 'active',
     tenantId: realm.tenantId,
   });
@@ -162,7 +177,7 @@ export const seedCounterpartyInvitationCoreRealm = Effect.fnUntraced(function* s
     .values({
       bindingId: randomUUID(),
       incarnation: randomUUID(),
-      principalId: realm.storefrontPrincipalId,
+      principalId: realm.storefront.principalId,
       status: 'active',
       tenantId: realm.tenantId,
       workloadKey: 'commerce.storefront-client',
@@ -171,34 +186,47 @@ export const seedCounterpartyInvitationCoreRealm = Effect.fnUntraced(function* s
   yield* admin.insert(principalAuthBindings).values([
     {
       authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-      principalAuthBindingId: realm.storefrontAuthBindingId,
-      principalId: realm.storefrontPrincipalId,
+      principalAuthBindingId: realm.storefront.authBindingId,
+      principalId: realm.storefront.principalId,
       provider: PORTAL_PROVIDER,
-      providerSubjectId: `counterparty-invitation-storefront-${realm.storefrontPrincipalId}`,
+      providerSubjectId: `commerce-portal-storefront-${realm.storefront.principalId}`,
       status: 'active',
       subjectType: 'user',
       tenantId: realm.tenantId,
     },
-    {
+    ...realm.people.map((person) => ({
       authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-      principalAuthBindingId: realm.inviterAuthBindingId,
-      principalId: realm.inviterPrincipalId,
+      principalAuthBindingId: person.authBindingId,
+      principalId: person.principalId,
       provider: PORTAL_PROVIDER,
-      providerSubjectId: `counterparty-invitation-inviter-${realm.inviterPrincipalId}`,
-      status: 'active',
-      subjectType: 'user',
+      providerSubjectId: person.providerSubjectId,
+      status: 'active' as const,
+      subjectType: 'user' as const,
       tenantId: realm.tenantId,
-    },
-    {
-      authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-      principalAuthBindingId: realm.recipientAuthBindingId,
-      principalId: realm.recipientPrincipalId,
-      provider: PORTAL_PROVIDER,
-      providerSubjectId: `counterparty-invitation-recipient-${realm.recipientPrincipalId}`,
-      status: 'active',
-      subjectType: 'user',
-      tenantId: realm.tenantId,
-    },
+    })),
   ]);
   return admin;
 });
+
+/** The Core rows a Counterparty invitation acceptance needs: its inviter and recipient are the portal people. */
+export const seedCounterpartyInvitationCoreRealm = (realm: CounterpartyInvitationRealm) =>
+  seedCommercePortalCoreRealm({
+    legalEntityId: realm.legalEntityId,
+    people: [
+      {
+        authBindingId: realm.inviterAuthBindingId,
+        displayName: 'Counterparty access administrator',
+        principalId: realm.inviterPrincipalId,
+        providerSubjectId: `counterparty-invitation-inviter-${realm.inviterPrincipalId}`,
+      },
+      {
+        authBindingId: realm.recipientAuthBindingId,
+        displayName: 'Counterparty invitation recipient',
+        principalId: realm.recipientPrincipalId,
+        providerSubjectId: `counterparty-invitation-recipient-${realm.recipientPrincipalId}`,
+      },
+    ],
+    storefront: { authBindingId: realm.storefrontAuthBindingId, principalId: realm.storefrontPrincipalId },
+    tenantId: realm.tenantId,
+    title: 'Counterparty invitation enrollment acceptance',
+  });

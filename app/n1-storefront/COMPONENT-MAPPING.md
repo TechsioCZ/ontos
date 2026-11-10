@@ -166,7 +166,7 @@ Mobilní navigace59:1595/418:2491: existující Dialog left/xs s Accordion
 md/borderless a VerticalNavigation.Link pro skutečné větve ownera. Drawer se
 kotví podle skutečného spodního okraje Headeru přes veřejný ref; počáteční
 useLayoutEffect a ResizeObserver hlavičky i body mají cleanup; body zachytí
-také změnu výšky oznámení nad shellem. Modal nadále zamyká scroll pozadí.
+také změnu výšky oznámení nad shellem. Dialog nadále zamyká scroll pozadí.
 Dynamický top je pouze geometrie existujícího aplikačního wrapperu, nikoli
 inline vzhled knihovní komponenty. Statický součet nezahrnoval demo lištu
 ani zalomení utility odkazu a překrýval logo. Vzhled používá doložené role:
@@ -180,9 +180,24 @@ Native Button font role je skutečně spotřebovaná i u Accordion.Header:
 root nav scope400, existující heading scope600; původní accordion weight
 v shipped cascade přebíjí font-button, proto se neuvádí neúčinný override.
 
-Nativní Dialog close zůstává dostupný uvnitř focus trapu. Figma close v headeru
-nelze jen vizuálně nahradit za vnější inertní tlačítko. Root řádek zůstává40px
-proti Figma38, child36 proti34 kvůli kanonické24px lince. Separátory borderless
+Figma59:1595 /418:2412/2620 má zavírání v headeru. Tentýž Button proto při
+otevření používá existující `token-icon-close` (mdi:close) a `closeMenu`, při
+zavření `token-icon-menu` a základní název kategorií. Nativní Dialog dostává
+`modal=false`, `trapFocus=false`, `preventScroll=true` a `hideCloseButton`:
+header zůstává dostupný a nepřibývá druhé nepodložené X uvnitř draweru.
+Shipped `behavior` vybírá pouze vzhledové varianty; zůstává jeho dosavadní
+výchozí N1 backdrop. Nativní machine samostatně řídí modalitu, scroll a focus.
+
+Kit0.57 nabízí jen `customTrigger`, nikoli compound Dialog.Trigger nebo
+onInteractOutside/persistentElements. Externí řízený Button proto zachovává
+stejnou veřejnou Zag anatomii jako getTriggerProps: data-scope=dialog,
+data-part=trigger a data-ownedby se stejným Dialog id. Native dismissable
+layer tak trigger vyloučí z outside-close a native return-focus jej dohledá.
+Nepoužívá se hádané vnitřní DOM id ani vlastní document listener. Při otevření
+je geometrický wrapper pointer-active pro nativní backdrop; při zavření
+pointer-transparent. Knihovní content/positioner pointer chování se nepřepisuje.
+
+Root řádek zůstává40px proti Figma38, child36 proti34 kvůli kanonické24px lince. Separátory borderless
 Accordionu nemají přímou slot roli; nový CSS border se nevyrábí. Skutečný strom,
 child destinations a další původní demo větve zůstávají, počet není Figma fixture.
 
@@ -873,3 +888,51 @@ Během quote/place je Zpět nativní `Button disabled type="button"` se stejnou
 secondary/solid/md rolí jako předtím; po dokončení zůstává skutečný NextLink
 přes LinkButton. Tím se uplatní i knihovní disabled vzhled. Ověřování, zápis,
 obnova objednávky, skutečné možnosti dopravy ani dostupnost plateb se nemění.
+
+## 9. 11. — samostatné odkazy mobilního menu
+
+Aktuální Code Connect pro 418:2487 (Novinky) a 418:2606 (samostatná kořenová
+položka) mapuje přímo `@techsio/ui-kit/atoms/link`. Mobilní menu proto pro
+tyto navigační odkazy používá `Link as={NextLink}`. Tlačítkové props a
+wrapper role `n1-mobile-category-heading` z těchto dvou míst odstraněny.
+Accordion.Header si ponechává svou samostatnou roli. Žádné CSS ani tokeny se
+kvůli změně odkazu neupravují. Kontrola knihovny 0.57.0 potvrzuje, že Link
+nemá tlačítkovou typografii; runtime Novinky má weight 400.
+
+Data zůstávají skutečná: nynější kořeny, pořadí a počty nejsou nahrazeny
+Figma fixture. Zavíraní v headeru, native focus a disclosure zůstávají zachované.
+
+## 9. 11. — oddělovače kořenů mobilního menu
+
+Figma `418:2489`, `418:2517` a další obsahují samostatný oddělovač za
+celým kořenovým řádkem, mimo mapovanou instanci Accordion. Aplikace jej
+skládá na existujícím obalu pomocí `border-b border-border-secondary`.
+U větve obal zahrnuje celý Accordion.Item včetně rozbalených potomků.
+U Novinek a samostatného kořenového odkazu je stejný oddělovač na jejich
+obalu. Vnořené řádky jej nedostávají. Accordion zůstává md/borderless/none;
+žádná komponentová CSS ani tokenové override nebyly přidány.
+
+## 9. 11. — samostatné odkazy desktopového megamenu
+
+Aktuální Figma `418:2368` mapuje obrázek kategorie a textový Link odděleně.
+Stejná skladba je nyní v desktopovém menu; odstraněný bold span již
+nepřebíjí typografii Link atomu. Obrázek zůstává přístupným odkazem se jménem
+kategorie a oba odkazy navigují stejnou cestou a zavírají popup.
+Auditované lokální ilustrace mají přednost, ostatní kategorie mohou použít
+skutečné owner imageSrc. Nevznikají ilustrace odvozené z názvu ani fixture.
+Stávající modeless popup, šest sloupců, mezera 8 a panelový padding 18
+zůstávají beze změny; používají zavedené tokeny a app kompozici.
+
+## 10. 11. — potvrzení objednávky a nativní readback
+
+Fresh Figma55:1948/55:2309, obsah372:3125: potvrzený nákup doplní své
+datum, adresu a dopravu jedním existujícím status readem. Úspěch placementu
+zůstává potvrzený i při chybě čtení; ruční načtení je jen fallback. Automatické
+i ruční doplnění pouze aktualizuje receipt, neopakuje placement ani čištění
+košíku. Odpověď musí patřit stejné objednávce, scope, guardu a session.
+
+Nadpisy Položky objednávky, Doručovací adresa a Souhrn ceny jsou převzaté
+z návrhu. Děkovná věta neslibuje odeslaný e-mail, protože pro něj nativní
+kontrakt nedává důkaz. Žádná nová komponenta, CSS nebo tokenový override.
+Moje objednávky pro guest nákup nepřidáváme; přihlášená větev zůstává
+samostatnou neověřenou částí.

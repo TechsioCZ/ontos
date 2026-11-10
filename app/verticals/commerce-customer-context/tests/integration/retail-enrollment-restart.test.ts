@@ -173,13 +173,14 @@ const assertRestartAdmission = (input: {
     expect(yield* account(providerSubjectId, customerPrincipalId, yield* randomId)).toEqual([]);
     yield* execute(sql`reset role`);
     yield* execute(
-      sql`update commerce_customer_context.retail_portal_profile_bindings set authorization_state = 'REVOKED' where retail_portal_profile_binding_id = ${bindingId}::uuid`,
+      // Main's final access state: a revoked binding is revoked in lifecycle, operation and state together.
+      sql`update commerce_customer_context.retail_portal_profile_bindings set lifecycle = 'REVOKED', authorization_operation = 'revoke', authorization_state = 'REVOKED', revoked_at = now() where retail_portal_profile_binding_id = ${bindingId}::uuid`,
     );
     yield* execute(sql`set local role ontos_runtime`);
     expect(yield* account()).toEqual([]);
     yield* execute(sql`reset role`);
     yield* execute(
-      sql`update commerce_customer_context.retail_portal_profile_bindings set authorization_state = 'ACTIVE' where retail_portal_profile_binding_id = ${bindingId}::uuid`,
+      sql`update commerce_customer_context.retail_portal_profile_bindings set lifecycle = 'ACTIVE', authorization_operation = 'grant', authorization_state = 'ACTIVE', revoked_at = null where retail_portal_profile_binding_id = ${bindingId}::uuid`,
     );
     yield* execute(
       sql`update commerce_customer_context.customer_profiles set lifecycle = 'SUSPENDED' where customer_profile_id = ${profileId}::uuid`,

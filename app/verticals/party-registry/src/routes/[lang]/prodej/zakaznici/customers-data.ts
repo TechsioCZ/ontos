@@ -11,6 +11,7 @@ import {
   pageDataScopeKey,
 } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
+import { useHeldSnapshot } from '@app/admin-ui';
 
 import { executeAresLookup } from '../../../../api/ares-lookup-client.ts';
 import { executeDuplicateCandidateList } from '../../../../api/duplicate-candidate-list-client.ts';
@@ -118,6 +119,22 @@ export const customersData = definePageData({
   retainStale: false,
   runtime: browserRuntime,
 });
+
+/**
+ * The customer list as the page reads it. The strict store reads as pending while it reloads the same register
+ * (freshness window, live change, settled write); the rows and the stat tiles stay on the last ready read of the
+ * same scope until the reload settles. Another scope never reuses that read, and a failed or refused reload replaces
+ * it at once.
+ */
+export const useCustomersSnapshot = (query: string) =>
+  useHeldSnapshot(
+    query,
+    useSyncExternalStore(
+      (listener) => customersData.subscribe(listener, query),
+      () => customersData.snapshot(query),
+      (): ReturnType<typeof customersData.snapshot> => pageDataPending,
+    ),
+  );
 
 /** `preloadPage` of the customers page. */
 export const preloadCustomers = modulePagePreload((props) => customersData.preload(customersQuery(props.context)));
@@ -511,8 +528,35 @@ export const loadCustomerDetailInto = (
   return () => fiber.interruptUnsafe();
 };
 
-type CustomerLeaveIntent = { readonly kind: 'close' } | { readonly href: string; readonly kind: 'navigate' };
+type CustomerLeaveIntent =
+  | { readonly kind: 'close' }
+  | { readonly href: string; readonly kind: 'navigate' }
+  | { readonly kind: 'run'; readonly run: () => void };
 const navigateCustomerDocument = (href: string): void => globalThis.location.assign(href);
+
+export const CustomerLeaveDecisionSchema = Schema.Literals(['ignore', 'confirm', 'proceed']);
+export type CustomerLeaveDecision = typeof CustomerLeaveDecisionSchema.Type;
+/** The one leave check of the customer detail: a save in flight ignores the request, unsaved edits ask first. */
+export const customerLeaveDecision = (state: {
+  readonly busy: boolean;
+  readonly dirty: boolean;
+}): CustomerLeaveDecision => {
+  if (state.busy) {
+    return 'ignore';
+  }
+  return state.dirty ? 'confirm' : 'proceed';
+};
+
+const settledAutosaveStates = new Set(['idle', 'saved', 'proposed']);
+/** Inline autosave fields keep their own drafts; one whose status has not settled holds typed text not yet saved. */
+export const hasUnsettledAutosave = (root: ParentNode | null): boolean =>
+  root !== null &&
+  [...root.querySelectorAll<HTMLElement>('[data-autosave-state]')].some(
+    (status) => !settledAutosaveStates.has(status.dataset['autosaveState'] ?? ''),
+  );
+
+/** Runs `run` after the open detail's leave check. The open detail exposes it through a ref; the list page calls it. */
+export type CustomerLeaveRun = (run: () => void) => void;
 
 /** Application state stays with the owning feature. Each mutation retains unrelated drafts. */
 export const useCustomerDetail = (
@@ -580,13 +624,15 @@ export const useCustomerDetail = (
           allowDocumentLeave.current = true;
           navigate(href);
         },
+        run: ({ run }) => run(),
       }),
     );
-  const requestLeave = (intent: CustomerLeaveIntent) => {
-    if (busy) {
+  const requestLeave = (intent: CustomerLeaveIntent, inlineDraft = false) => {
+    const decision = customerLeaveDecision({ busy, dirty: dirty || inlineDraft });
+    if (decision === 'ignore') {
       return;
     }
-    if (dirty) {
+    if (decision === 'confirm') {
       setLeaveIntent(intent);
       return;
     }
@@ -600,6 +646,13 @@ export const useCustomerDetail = (
     }
   };
   const requestNavigation = (href: string) => requestLeave({ href, kind: 'navigate' });
+  /**
+   * Runs `run` only after the same leave check as close: a save in flight ignores it, unsaved edits ask first.
+   * `inlineDraft` reports text typed into an inline autosave field that is not saved yet.
+   */
+  const requestLeaveThen = (run: () => void, inlineDraft: boolean) => {
+    requestLeave({ kind: 'run', run }, inlineDraft);
+  };
   const setDiscardOpen = (open: boolean) => {
     if (!open) {
       setLeaveIntent(undefined);
@@ -711,6 +764,7 @@ export const useCustomerDetail = (
     reason,
     refresh,
     requestClose,
+    requestLeaveThen,
     requestNavigation,
     save,
     setDiscardOpen,
@@ -768,6 +822,17 @@ export const useCustomerDetailSelection = (context?: ModulePageContext) => {
       context,
     );
   };
+  /** Exposed by the open detail view (null while no detail is mounted): its leave check guards a retarget or a navigation. */
+  const leaveRunRef = useRef<CustomerLeaveRun | null>(null);
+  /** Runs `run` after the open detail's leave check. Unsaved edits ask first, a save in flight ignores it, a clean detail runs it at once. */
+  const runAfterLeave = (run: () => void) => {
+    const guard = leaveRunRef.current;
+    if (guard === null) {
+      run();
+      return;
+    }
+    guard(run);
+  };
   const retryDetail = () => {
     if (detail !== null) {
       openDetail(detail);
@@ -803,8 +868,10 @@ export const useCustomerDetailSelection = (context?: ModulePageContext) => {
     detail: openingScope === scope ? detail : null,
     detailFailure: shownSnapshot?.failure,
     detailValue: shownSnapshot?.value,
+    leaveRunRef,
     openDetail,
     retryDetail,
+    runAfterLeave,
   };
 };
 

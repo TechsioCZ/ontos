@@ -2,7 +2,7 @@ import { SHARED_RUNTIME_IDENTITY, databaseRuntime } from '@app/core-runtime';
 import { Config, ConfigProvider, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
 import { CommercePortalAuthConfig } from './config-service.ts';
-import { HttpUrlSchema, optionalConfigReader, parseHttpUrl } from './config-support.ts';
+import { deploymentConfigProvider, HttpUrlSchema, optionalConfigReader, parseHttpUrl } from './config-support.ts';
 
 export { CommercePortalAuthConfig } from './config-service.ts';
 
@@ -346,7 +346,7 @@ const portalAuthEnvironmentFor = Effect.fn('CommercePortalAuthConfig.environment
     });
   },
 );
-const portalAuthEnvironment = portalAuthEnvironmentFor(ConfigProvider.fromEnv({ preserveEmptyStrings: true }));
+const portalAuthEnvironment = deploymentConfigProvider.pipe(Effect.flatMap(portalAuthEnvironmentFor));
 
 /** `Option.none()` only when the supplied host environment names no portal-realm value at all. */
 export const parseOptionalCommercePortalAuthConfig = (
@@ -384,5 +384,7 @@ export const portalAuthRealmConfigured: Effect.Effect<boolean> = optionalCommerc
 
 export const CommercePortalAuthConfigLive = Layer.effect(
   CommercePortalAuthConfig,
-  portalAuthEnvironment.pipe(Effect.flatMap(parseCommercePortalAuthConfigFromProvider)),
+  Effect.gen(function* readCommercePortalAuthConfig() {
+    return yield* parseCommercePortalAuthConfigFromProvider(yield* portalAuthEnvironment);
+  }),
 );

@@ -63,7 +63,11 @@ const gateFor = (kind: 'human' | 'service', bound: boolean) =>
     decisionLog: { record: () => Effect.void },
     legalEntities: { listCandidateIds: () => Effect.succeed([LegalEntityIdSchema.make(companyId)]) },
     principalKinds: { readKind: () => Effect.succeed(Option.some(kind)) },
-    workloadBindings: { readActiveWorkloadKeys: () => Effect.succeed(new Set(bound ? ['demo.crm.party-intake'] : [])) },
+    workloadBindings: {
+      readActiveWorkloadKeys: () => Effect.succeed(new Set(bound ? ['demo.crm.party-intake'] : [])),
+      readCompanyDeclaration: () =>
+        Effect.succeed({ activeCompanyIds: new Set([LegalEntityIdSchema.make(companyId)]), pinned: true }),
+    },
   });
 
 const intakeTestLayer = Layer.mergeAll(

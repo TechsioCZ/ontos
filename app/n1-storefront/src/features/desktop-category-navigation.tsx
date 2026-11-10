@@ -5,7 +5,7 @@ import NextLink from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Option, Schema } from "effect";
 import { Image } from "@techsio/ui-kit/atoms/image";
-import { Link } from "@techsio/ui-kit/atoms/link";
+import { Link } from "@/features/plain-link";
 import { Header } from "@techsio/ui-kit/organisms/header";
 import { Popover } from "@techsio/ui-kit/molecules/popover";
 import type { Dictionary } from "@/i18n";
@@ -158,30 +158,41 @@ export const DesktopCategoryNavigation = ({
                 >
                   <div className="grid min-h-n1-category-menu-grid grid-cols-6 content-center items-end gap-2">
                     {categoryLinks.map((category) => {
-                      const artwork = navigationArtwork.get(category.id);
+                      const ownerArtwork = category.imageSrc?.trim();
+                      const artwork =
+                        navigationArtwork.get(category.id) ??
+                        (ownerArtwork === "" ? undefined : ownerArtwork);
                       return (
-                        <div className="flex min-w-0 flex-col items-center gap-2" key={category.id}>
+                        <div
+                          className="flex min-w-0 flex-col items-center gap-2 text-center"
+                          key={category.id}
+                        >
+                          {artwork !== undefined && (
+                            <Link
+                              aria-label={category.name}
+                              as={NextLink}
+                              href={`/${locale}/kategorie/${encodeURIComponent(category.slug)}`}
+                              onClick={() => api.setOpen(false)}
+                            >
+                              <div className="relative size-24">
+                                <Image
+                                  alt=""
+                                  as={NextImage}
+                                  fill
+                                  objectFit="contain"
+                                  size="full"
+                                  sizes="96px"
+                                  src={artwork}
+                                />
+                              </div>
+                            </Link>
+                          )}
                           <Link
                             as={NextLink}
                             href={`/${locale}/kategorie/${encodeURIComponent(category.slug)}`}
                             onClick={() => api.setOpen(false)}
                           >
-                            <div className="flex flex-col items-center gap-2 text-center">
-                              {artwork !== undefined && (
-                                <div className="relative size-24">
-                                  <Image
-                                    alt=""
-                                    as={NextImage}
-                                    fill
-                                    objectFit="contain"
-                                    size="full"
-                                    sizes="96px"
-                                    src={artwork}
-                                  />
-                                </div>
-                              )}
-                              <span className="text-sm font-bold">{category.name}</span>
-                            </div>
+                            {category.name}
                           </Link>
                         </div>
                       );

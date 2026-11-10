@@ -8,7 +8,7 @@ import { DataTable } from "@techsio/ui-kit/organisms/data-table";
 import type { ColumnDef } from "@techsio/ui-kit/organisms/data-table";
 import { Breadcrumb } from "@techsio/ui-kit/molecules/breadcrumb";
 import { Tabs } from "@techsio/ui-kit/molecules/tabs";
-import { Link } from "@techsio/ui-kit/atoms/link";
+import { Link } from "@/features/plain-link";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { AvailabilityStatus } from "@techsio/ui-kit/molecules/availability-status";
 import { PriceBlock } from "@techsio/ui-kit/molecules/price-block";

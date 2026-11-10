@@ -1,4 +1,5 @@
-import { Config, ConfigProvider, Context, Effect, Layer, Option } from 'effect';
+import { Config, Context, Effect, Layer, Option } from 'effect';
+import type { ConfigProvider } from 'effect';
 import type { ExternalIdentityClientOptions } from '@app/shared-contracts/server/external-identity-client';
 
 import {
@@ -9,7 +10,7 @@ import type {
   CommerceTenantWorkloadCredentialUnavailable,
   CommerceTenantWorkloadCredentials,
 } from '../../tenant-workload-credentials.ts';
-import { optionalConfigReader, parseHttpUrl } from './config-support.ts';
+import { deploymentConfigProvider, optionalConfigReader, parseHttpUrl } from './config-support.ts';
 import { CommerceCoreIdentityClientConfigError } from './core-identity-config-error.ts';
 
 /**
@@ -79,7 +80,7 @@ const parseOptionalFromProvider = optionalConfigReader(
 export const optionalCommerceCoreIdentityClientConfig: Effect.Effect<
   Option.Option<CommerceCoreIdentityClientConfigValue>,
   CommerceCoreIdentityClientConfigError
-> = parseOptionalFromProvider(ConfigProvider.fromEnv({ preserveEmptyStrings: true }));
+> = deploymentConfigProvider.pipe(Effect.flatMap(parseOptionalFromProvider));
 
 /**
  * The one fail-closed availability read every consumer that must keep serving shares. Naming only
@@ -100,7 +101,9 @@ export const coreIdentityTransportConfigured: Effect.Effect<boolean> = optionalC
 
 export const CommerceCoreIdentityClientConfigLive = Layer.effect(
   CommerceCoreIdentityClientConfig,
-  parseFromProvider(ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
+  Effect.gen(function* readCommerceCoreIdentityClientConfig() {
+    return yield* parseFromProvider(yield* deploymentConfigProvider);
+  }),
 );
 
 /**

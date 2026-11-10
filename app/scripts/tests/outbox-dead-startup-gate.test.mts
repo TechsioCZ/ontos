@@ -70,9 +70,22 @@ it.effect('continues the original startup exactly once after a successful empty 
 it('wires the unfiltered native gate before the real migrator and publication, without weakening the drain', () => {
   const source = readFileSync(new URL('../zerops/app-host.mts', import.meta.url), 'utf-8');
   const startup = source.slice(source.indexOf('const startup = Effect.gen(function* startupSequence()'));
-  expect(startup.indexOf('listDeadOutboxDeliveries(database.executor, { limit: 10 })')).toBeGreaterThan(0);
-  expect(startup.indexOf('withOutboxDeadStartupGate(')).toBeLessThan(startup.indexOf("runChild('migrator'"));
-  expect(startup.indexOf('withOutboxDeadStartupGate(')).toBeLessThan(startup.indexOf('yield* publish;'));
+  const gate = startup.indexOf('withOutboxDeadStartupGate(');
+  // The gate owns the unfiltered all-tenant native inventory, never a filtered or drained subset of it.
+  expect(startup).toContain(
+    'startupDeadOutboxInventory(coreSchemaExists, listDeadOutboxDeliveries(database.executor, { limit: 10 }))',
+  );
+  expect(gate).toBeGreaterThan(0);
+  // Its failure stops this startup through the host failure, so the gate can never be ignored.
+  const gateCall = startup.slice(gate, gate + 400);
+  expect(gateCall).toContain('Effect.mapError');
+  expect(gateCall).not.toContain('Effect.ignore');
+  // Every step that can change authority follows the proof: owner DDL, the release drain and its
+  // verification, and the publication that admits this release.
+  expect(gate).toBeLessThan(startup.indexOf("runChild('migrator'"));
+  expect(gate).toBeLessThan(startup.indexOf('observeOwners(units, publicOrigin)'));
+  expect(gate).toBeLessThan(startup.indexOf('verifyReleaseAccessIntent(releaseSnapshot)'));
+  expect(gate).toBeLessThan(startup.indexOf('publishSnapshot(releaseSnapshot)'));
 });
 
 it.effect('permits only proven first Core install, never an inventory or catalog error', () =>

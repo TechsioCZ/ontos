@@ -1,4 +1,3 @@
-import { pendingProposalMessage } from '../../../../api/action-result.ts';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
@@ -9,6 +8,7 @@ import type { DataTableProps } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import {
   BulkActionBar,
+  DetailViewModeToggle,
   EmptyState,
   formatNumber,
   PageHeader,
@@ -16,12 +16,14 @@ import {
   StatRow,
   statusPresentation,
   Toaster,
+  useDetailViewMode,
 } from '@app/admin-ui';
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
 import { modulePagePreload, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { Effect, Option, Schema, SchemaGetter } from 'effect';
-import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import { useNavigate, useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import type { RegisteredRouter } from '@tanstack/react-router';
 import { useState } from 'react';
 import type { Order } from '../../../../../shared/apis/records.ts';
 import type { OrderStatus } from '../../../../../shared/domain/merchandise-model.ts';
@@ -41,14 +43,11 @@ import { OrderCancelDialog } from './order-cancel-dialog.tsx';
 import { OrderCreateDialog } from './order-create-dialog.tsx';
 import { selectItem } from '../../../../ui/select-item.ts';
 import { OrderDetailDialog } from './order-detail-dialog.tsx';
+import { OrderDetailPage } from './order-detail-page.tsx';
+import { orderNavigationFailureKey } from './order-navigation.ts';
+import { proposalToast, statusChangeNotification } from './order-status-notice.ts';
 import { ResetDemoDialog } from './reset-demo-dialog.tsx';
-import {
-  commonOrderTransitions,
-  ordersPageSummary,
-  orderStatuses,
-  statusDoneKey,
-  transitionsFrom,
-} from './orders-model.ts';
+import { commonOrderTransitions, ordersPageSummary, orderStatuses, transitionsFrom } from './orders-model.ts';
 import {
   changeOrderStatuses,
   preloadOrdersPage,
@@ -92,27 +91,6 @@ const bulkUnavailableStatusHint = (allFinal: boolean, canWriteTags: boolean) => 
   return canWriteTags ? 'bulk.finalStatus' : 'bulk.finalStatusOnly';
 };
 
-const statusChangeNotification = (
-  t: ReturnType<typeof useModernI18n>['t'],
-  status: OrderStatus,
-  total: number,
-  changed: number,
-  failed: number,
-) => {
-  if (failed > 0) {
-    return {
-      description: t(key('bulk.result'), { changed, failed }),
-      title: t(key('bulk.partial')),
-      type: 'error',
-    } satisfies Parameters<ReturnType<typeof useToast>['create']>[0];
-  }
-  const doneKey = statusDoneKey(status);
-  return {
-    title: total === 1 && doneKey !== null ? t(doneKey) : t(key('bulk.success')),
-    type: 'success',
-  } satisfies Parameters<ReturnType<typeof useToast>['create']>[0];
-};
-
 interface OrdersPageContentProps {
   readonly context?: ModulePageProps['context'];
   readonly legalEntityId: string;
@@ -132,10 +110,19 @@ const OrdersPageQuerySchema = ordersQueryString.pipe(
     encode: SchemaGetter.encodeURLSearchParams(),
   }),
 );
+/** The order `?orderId=` names, if any. */
+const orderIdOfSearch = (searchStr: string): string | undefined =>
+  Schema.decodeOption(OrdersPageQuerySchema)(searchStr).pipe(
+    Option.flatMap((decodedSearch) => Option.fromNullishOr(decodedSearch.orderId)),
+    Option.filter((orderId) => orderId !== ''),
+    Option.getOrUndefined,
+  );
 
 const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
+  const navigate = useNavigate();
   const toaster = useToast();
+  const [viewMode, setViewMode] = useDetailViewMode();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<OrderStatus | null>(null);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: PAGE_SIZE });
@@ -161,15 +148,10 @@ const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
   const [selectedOrders, setSelectedOrders] = useState<Readonly<Record<string, Order>>>({});
   const [createOpen, setCreateOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
-  // `?orderId=` (e.g. from an opportunity's related orders) opens that order's detail.
+  // In panel mode `?orderId=` (e.g. from an opportunity's related orders) opens that order in the panel.
   const initialSearch = useRouterState({ select: (router) => router.location.searchStr });
   const [detailId, setDetailId] = useState<string | null>(() =>
-    globalThis.location === undefined
-      ? null
-      : Option.match(Schema.decodeOption(OrdersPageQuerySchema)(initialSearch), {
-          onNone: () => null,
-          onSome: (decodedSearch) => decodedSearch.orderId ?? null,
-        }),
+    globalThis.location === undefined ? null : (orderIdOfSearch(initialSearch) ?? null),
   );
   const [pendingCancel, setPendingCancel] = useState<readonly Order[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -241,10 +223,7 @@ const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
         Effect.flatMap(({ changed, failed, proposals }) =>
           Effect.sync(() => {
             for (const proposal of proposals ?? []) {
-              toaster.create({
-                title: pendingProposalMessage(proposal) ?? 'Awaiting approval. No changes have been applied.',
-                type: 'info',
-              });
+              toaster.create(proposalToast(proposal, t));
             }
             if (changed > 0 || failed > 0) {
               toaster.create(statusChangeNotification(t, status, changed + failed, changed, failed));
@@ -255,6 +234,36 @@ const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
             load();
           }),
         ),
+      ),
+    );
+  };
+
+  /**
+   * A row opens the full order page by default. In panel mode it opens the quick-view panel instead, which
+   * retargets when another row is clicked.
+   */
+  const navigateToOrder = navigate<RegisteredRouter, string>;
+  const openDetail = (id: Order['id']) => {
+    if (viewMode === 'panel') {
+      setDetailId(id);
+      return;
+    }
+    void browserRuntime.runPromise(
+      Effect.tryPromise(
+        navigateToOrder.bind(undefined, {
+          search: { orderId: id },
+          to: `/${language ?? 'cs'}/prodej/objednavky`,
+        }),
+      ).pipe(
+        Effect.timeout('10 seconds'),
+        Effect.matchEffect({
+          onFailure: (error) =>
+            Effect.sync(() => {
+              const messageKey = orderNavigationFailureKey(error);
+              toaster.create({ title: t(key(messageKey)), type: 'error' });
+            }),
+          onSuccess: Effect.succeed,
+        }),
       ),
     );
   };
@@ -282,6 +291,7 @@ const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
     directory,
     filtered,
     load,
+    openDetail,
     orders,
     orderTags,
     pagination,
@@ -306,6 +316,7 @@ const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
     setSelection,
     setStatusFilter,
     setTagsOpen,
+    setViewMode,
     stale,
     state,
     stats,
@@ -316,6 +327,7 @@ const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
     tagsOpen,
     toaster,
     totalOrders,
+    viewMode,
   };
 };
 
@@ -343,37 +355,48 @@ const renderOrdersPageHeader = ({
   ready,
   setCreateOpen,
   setResetOpen,
+  setViewMode,
   t,
+  viewMode,
 }: ReturnType<typeof useOrdersPage>) => (
   <PageHeader
     actions={
-      (ready?.records.canEditOrders ?? canWrite) || ready?.records.canResetDemo === true ? (
-        <div className="flex flex-wrap items-center gap-100">
-          {ready?.records.canResetDemo === true && (
-            <Button
-              className="shrink-0 whitespace-nowrap"
-              icon="icon-[mdi--restore]"
-              onClick={() => setResetOpen(true)}
-              size="sm"
-              theme="outlined"
-              variant="secondary"
-            >
-              Obnovit ukázková data
-            </Button>
-          )}
-          {(ready?.records.canEditOrders ?? canWrite) && (
-            <Button
-              className="shrink-0 whitespace-nowrap"
-              icon="icon-[mdi--plus]"
-              onClick={() => setCreateOpen(true)}
-              size="sm"
-              variant="primary"
-            >
-              {t(key('create.title'))}
-            </Button>
-          )}
-        </div>
-      ) : undefined
+      <div className="flex flex-wrap items-center gap-100">
+        <DetailViewModeToggle
+          groupLabel={t('merchandise.detailView.group')}
+          onChange={setViewMode}
+          pageLabel={t('merchandise.detailView.page')}
+          panelLabel={t('merchandise.detailView.panel')}
+          value={viewMode}
+        />
+        {(ready?.records.canEditOrders ?? canWrite) || ready?.records.canResetDemo === true ? (
+          <div className="flex flex-wrap items-center gap-100">
+            {ready?.records.canResetDemo === true && (
+              <Button
+                className="shrink-0 whitespace-nowrap"
+                icon="icon-[mdi--restore]"
+                onClick={() => setResetOpen(true)}
+                size="sm"
+                theme="outlined"
+                variant="secondary"
+              >
+                {t(key('actions.resetDemo'))}
+              </Button>
+            )}
+            {(ready?.records.canEditOrders ?? canWrite) && (
+              <Button
+                className="shrink-0 whitespace-nowrap"
+                icon="icon-[mdi--plus]"
+                onClick={() => setCreateOpen(true)}
+                size="sm"
+                variant="primary"
+              >
+                {t(key('create.title'))}
+              </Button>
+            )}
+          </div>
+        ) : undefined}
+      </div>
     }
     description={t(key('description'))}
     title={t(key('title'))}
@@ -513,6 +536,7 @@ const OrdersPageContent = (props: OrdersPageContentProps) => {
     detail,
     directory,
     load,
+    openDetail,
     orders,
     orderTags,
     pagination,
@@ -620,7 +644,7 @@ const OrdersPageContent = (props: OrdersPageContentProps) => {
           manualPagination
           maxHeight="calc(100dvh - 15rem)"
           onPaginationChange={setPagination}
-          onRowClick={(row) => setDetailId(row.original.id)}
+          onRowClick={(row) => openDetail(row.original.id)}
           onRowSelectionChange={setSelection}
           pageSizeOptions={[50, 100, 200]}
           pagination={pagination}
@@ -630,6 +654,7 @@ const OrdersPageContent = (props: OrdersPageContentProps) => {
           rowSelection={selection}
           size="sm"
           stickyHeader
+          striped
           tableLayout="fixed"
           translations={ordersTranslations(t)}
         />
@@ -699,6 +724,17 @@ const OrdersPageContent = (props: OrdersPageContentProps) => {
   );
 };
 
+/** With the full page chosen, `?orderId=` shows that order's page in place of the list; the panel keeps the list. */
+const OrdersRoute = ({ context, legalEntityId }: OrdersPageContentProps) => {
+  const [viewMode] = useDetailViewMode();
+  const orderId = orderIdOfSearch(useRouterState({ select: (router) => router.location.searchStr }));
+  return viewMode === 'page' && orderId !== undefined ? (
+    <OrderDetailPage context={context} key={orderId} legalEntityId={legalEntityId} orderId={orderId} />
+  ) : (
+    <OrdersPageContent context={context} legalEntityId={legalEntityId} />
+  );
+};
+
 /** The Shell prepares the first page, its header counts and the customer names before it reveals the page. */
 export const preloadPage = modulePagePreload((props) =>
   preloadOrdersPage(legalEntityOf(props), PAGE_SIZE, props.context),
@@ -711,7 +747,7 @@ export const OrdersPage = (props: Partial<ModulePageProps>) => (
     resources={merchandiseI18nResources}
     supportedLanguages={['en', 'cs']}
   >
-    <OrdersPageContent
+    <OrdersRoute
       context={props.context}
       key={pageDataScopeKey(props.context, 'demo.merchandise') ?? legalEntityOf(props)}
       legalEntityId={legalEntityOf(props)}

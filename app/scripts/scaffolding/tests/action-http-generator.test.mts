@@ -181,9 +181,8 @@ it.effect('accepts actual owner backend registrations and native constructors wi
         source
           .replace('../vertical.runtime-declaration.ts', '../foreign.runtime-declaration.ts')
           .replace('../vertical.registration.ts', '../foreign.registration.ts'),
-        source.replace(
-          /makeActionRuntimeLive\(ultramodernDeliveryUnit,\s*[A-Za-z]+Registration\)/u,
-          'makeActionRuntimeLive(ultramodernDeliveryUnit, foreignRegistration)',
+        source.replace(/makeActionRuntimeLive\(\s*ultramodernDeliveryUnit,\s*[A-Za-z]+Registration/u, (matched) =>
+          matched.replace(/[A-Za-z]+Registration$/u, 'foreignRegistration'),
         ),
       ]) {
         expect(invalid).not.toBe(source);

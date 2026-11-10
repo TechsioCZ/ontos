@@ -123,9 +123,10 @@ export async function POST(request: Request) {
         .digest("hex")
         .slice(0, 24);
       try {
+        // The storefront key is admitted on merchandise's narrow storefront-order Action, not on apply-command.
         const result = (await callAction(
           "merchandise",
-          "apply-command",
+          "place-storefront-order",
           payload,
           `sf-${clientRequestId}-${digest}`,
         )) as {

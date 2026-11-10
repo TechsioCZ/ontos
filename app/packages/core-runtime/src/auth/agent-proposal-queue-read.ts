@@ -31,8 +31,7 @@ const prepare = Effect.fn('AgentProposalQueueRead.prepare')(function* prepare(
   input: AgentProposalQueueInput,
   context: ReadPrepareContext,
 ) {
-  const { legalEntityId, principalId, tenantId } = context.scope;
-  if (legalEntityId === undefined) {
+  if (context.scope.legalEntityId === undefined) {
     return yield* unavailable('An exact company context is required');
   }
   // A connected application reads back only its own proposals, never a person's queue or lifecycle batches.
@@ -65,21 +64,8 @@ const prepare = Effect.fn('AgentProposalQueueRead.prepare')(function* prepare(
     return yield* unavailable('The active composition changed during admission');
   }
   const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition).pipe(Effect.mapError(unavailable));
-  const modules = yield* (yield* ContextAccess).modules({
-    legalEntityId,
-    moduleIds: catalog.moduleIds,
-    principalId,
-    tenantId,
-  });
-  if (modules.some(({ decision }) => decision === 'unavailable')) {
-    return yield* unavailable('Module authorization is unavailable');
-  }
-  const accessible = new Set(modules.flatMap(({ decision, key }) => (decision === 'allowed' ? [key] : [])));
   const declared = catalog.contracts.flatMap(({ deployment, manifest }) => {
     const moduleKey = manifest.module.id;
-    if (!accessible.has(moduleKey)) {
-      return [];
-    }
     return manifest.publicSurface.actions.flatMap((action) => {
       if (action.owningModuleId !== moduleKey || action.legalEntityScope === 'forbidden') {
         return [];
@@ -97,7 +83,8 @@ const prepare = Effect.fn('AgentProposalQueueRead.prepare')(function* prepare(
     });
   });
   // One gate question per Action over this request's own trusted scope: the queue lists exactly the
-  // Actions the acting person may run, and no scalar identity is re-derived from client input (O66).
+  // Actions the acting person may run, and no scalar identity is re-derived from client input (O66). The
+  // Action's answer is its module's: no retired `module_access` relation is asked beside it.
   const decisions = yield* (yield* ActionAuthority)
     .checkActionAuthorities({ actionKeys: declared.map(({ actionKey }) => actionKey), scope: context.scope })
     .pipe(Effect.mapError(unavailable));

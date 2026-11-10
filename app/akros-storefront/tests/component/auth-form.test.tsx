@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LoginForm, RegistrationForm } from "@/components/auth-form";
 import { VerificationResendForm } from "@/components/verification-resend-form";
@@ -27,7 +28,8 @@ function login() {
   fill("login-password", "real-long-password");
   fireEvent.submit(document.getElementById("login-password")!.closest("form")!);
 }
-function register(confirmation = "real-long-password") {
+// The UI-kit checkbox toggles on a real pointer or keyboard activation, not on a bare synthetic click.
+async function register(confirmation = "real-long-password") {
   for (const [id, value] of Object.entries({
     "register-first-name": "Real",
     "register-last-name": "Customer",
@@ -37,7 +39,7 @@ function register(confirmation = "real-long-password") {
     "register-password-confirm": confirmation,
   }))
     fill(id, value);
-  fireEvent.click(screen.getByRole("checkbox", { name: /Souhlasím/ }));
+  await userEvent.click(screen.getByRole("checkbox", { name: /Souhlasím/ }));
   fireEvent.submit(document.getElementById("register-password")!.closest("form")!);
 }
 
@@ -76,14 +78,14 @@ describe("real customer forms", () => {
   });
   it("rejects mismatched passwords without submitting credentials", async () => {
     render(<RegistrationForm />);
-    register("different-password");
+    await register("different-password");
     expect((await screen.findByRole("alert")).textContent).toContain("Hesla se neshodují.");
     expect(fetchAccount).not.toHaveBeenCalled();
   });
   it("sends phone and consent and truthfully acknowledges started enrollment, not a completed fake profile", async () => {
     fetchAccount.mockResolvedValue(Response.json({ outcome: "ENROLLMENT_STARTED" }));
     render(<RegistrationForm />);
-    register();
+    await register();
     expect(await screen.findByText(/Registrace byla přijata/)).toBeTruthy();
     const [path, init] = fetchAccount.mock.calls[0]!;
     expect(path).toBe("/api/ontos/account");

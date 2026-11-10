@@ -55,6 +55,7 @@ import { Reactivity } from 'effect/reactivity';
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
 import type { CommerceCustomerContextTransaction } from '../../src/database/types.ts';
 import { customerCommercePolicyRepositoryForScope } from '../../src/persistence/customer-commerce-policy-persistence.ts';
+import { observedEligibleCounterpartyRole } from '../support/observed-counterparty-role.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -153,20 +154,18 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
         ),
     }),
     Layer.succeed(ProfileCounterpartyRoleEligibilityResolverFactory, {
+      // Observed like the production resolver: an ELIGIBLE answer is usable for at most 30 seconds.
       make: (scope) => (request) =>
-        Effect.succeed(
-          request.tenantId === fixture.tenantId &&
-            scope.tenantId === fixture.tenantId &&
-            request.counterpartyResourceId === counterpartyId &&
-            [fixture.legalEntityId, secondary.legalEntityId].includes(scope.legalEntityId)
-            ? {
-                managedLegalEntityId: scope.legalEntityId,
-                outcome: 'ELIGIBLE' as const,
-                roleResourceId: roleId,
-                roleResourceRevision: '2026-01-01T00:00:00.000Z',
-              }
-            : { outcome: 'INDETERMINATE' as const },
-        ),
+        request.tenantId === fixture.tenantId &&
+        scope.tenantId === fixture.tenantId &&
+        request.counterpartyResourceId === counterpartyId &&
+        [fixture.legalEntityId, secondary.legalEntityId].includes(scope.legalEntityId)
+          ? observedEligibleCounterpartyRole({
+              managedLegalEntityId: scope.legalEntityId,
+              roleResourceId: roleId,
+              roleResourceRevision: '2026-01-01T00:00:00.000Z',
+            })
+          : Effect.succeed({ outcome: 'INDETERMINATE' as const }),
     }),
     partyRegistryGuestResolverFactoryLive,
     profileReactivationEligibilityEvaluatorFactoryLive.pipe(Layer.provide(profileReconfirmationPolicyUnavailableLive)),

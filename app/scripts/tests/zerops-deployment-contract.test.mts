@@ -429,43 +429,76 @@ it('installs Chromium for the warm-up client before running its bounded browser 
   expect(warmup).toBeGreaterThan(install);
 });
 
-it('proves the durable attempt marker by reading it, retried, before any remote mutation', () => {
+it('binds the attempted delivery to the current run and persists it before any remote mutation', () => {
   const source = readFileSync(stageWorkflowPath, 'utf-8');
+  const StepSchema = Schema.Struct({
+    'continue-on-error': Schema.optional(Schema.Boolean),
+    id: Schema.optional(Schema.String),
+    if: Schema.optional(Schema.String),
+    name: Schema.optional(Schema.String),
+    run: Schema.optional(Schema.String),
+    uses: Schema.optional(Schema.String),
+    with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  });
   const workflow = Schema.decodeUnknownSync(
     Schema.Struct({
       jobs: Schema.Struct({
-        deploy: Schema.Struct({
-          steps: Schema.Array(
-            Schema.Struct({
-              'continue-on-error': Schema.optional(Schema.Boolean),
-              id: Schema.optional(Schema.String),
-              name: Schema.String,
-              run: Schema.optional(Schema.String),
-              uses: Schema.optional(Schema.String),
-              with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-            }),
-          ),
-        }),
+        deploy: Schema.Struct({ steps: Schema.Array(StepSchema) }),
+        plan: Schema.Struct({ steps: Schema.Array(StepSchema) }),
+        record: Schema.Struct({ steps: Schema.Array(StepSchema) }),
+        verify: Schema.Struct({ steps: Schema.Array(StepSchema) }),
       }),
     }),
   )(parse(source));
   const { steps } = workflow.jobs.deploy;
-  // The cache index and the restore lookup are different read surfaces with different lag, so a marker
-  // the index already lists can still miss its own restore; only the read proves the marker is readable.
-  const restores = steps.filter(({ uses }) => uses?.startsWith('actions/cache/restore') === true);
-  expect(restores.map(({ id }) => id)).toStrictEqual(['durable-attempt-1', 'durable-attempt-2', 'durable-attempt']);
-  expect(restores.map((step) => step.with?.['fail-on-cache-miss'])).toStrictEqual([false, false, true]);
-  expect(restores.slice(0, 2).every(({ 'continue-on-error': soft }) => soft === true)).toBe(true);
-  // A marker that cannot be read within the bound still stops the deploy, and every wait is bounded.
-  const waits = steps.flatMap(({ run }) =>
-    run === undefined ? [] : [...run.matchAll(/sleep (?<seconds>\d+)/gu)].map((match) => Number(match.groups?.seconds)),
+  // The attempt names this run and the exact planned revision, and refuses a remote head that moved on.
+  const mark = steps.find(({ name }) => name === 'Mark the actual deployment attempt');
+  expect(mark?.run).toContain('test "$current_head" = "$GITHUB_SHA"');
+  expect(mark?.run).toContain('.runId==$runId and .validatedHead==$sourceRevision');
+  expect(mark?.run).toContain('{runId:$runId,runAttempt:$runAttempt,sourceRevision:$sourceRevision}');
+  // Persisting the attempt is best-effort and keyed to this run, so a cache service can never gate a deploy.
+  const persist = steps.find(({ name }) => name === 'Persist the attempted delivery before any remote mutation');
+  expect(persist?.uses?.startsWith('actions/cache/save@')).toBe(true);
+  expect(persist?.['continue-on-error']).toBe(true);
+  expect(persist?.with?.key).toContain(`\${{ github.run_id }}-\${{ github.run_attempt }}`);
+  expect(persist?.with?.path).toContain('last-attempt');
+  // The attempt is written after it is marked and before the first remote mutation: every secret sync and
+  // the delivery push itself. Nothing in the deploy reads the attempt cache or demands a hit.
+  const markIndex = steps.findIndex(({ name }) => name === 'Mark the actual deployment attempt');
+  const persistIndex = steps.findIndex(
+    ({ name }) => name === 'Persist the attempted delivery before any remote mutation',
   );
-  expect(waits.length).toBeGreaterThan(0);
-  expect(Math.max(...waits)).toBeLessThanOrEqual(30);
-  // The proof precedes the first remote mutation, and the index poll that failed to prove it is gone.
-  const proof = steps.findIndex(({ id }) => id === 'durable-attempt');
-  const push = steps.findIndex(({ run }) => run?.includes('push-delivery.sh') === true);
-  expect(proof).toBeGreaterThanOrEqual(0);
-  expect(proof).toBeLessThan(push);
-  expect(source).not.toContain('actions/caches?key=');
+  const firstMutation = steps.findIndex(
+    ({ run }) => run?.includes('push-delivery.sh') === true || run?.includes('sync-service-secret.sh') === true,
+  );
+  expect(markIndex).toBeGreaterThanOrEqual(0);
+  expect(persistIndex).toBeGreaterThan(markIndex);
+  expect(firstMutation).toBeGreaterThan(persistIndex);
+  expect(steps.filter(({ uses }) => uses?.startsWith('actions/cache/restore') === true)).toEqual([]);
+  for (const step of steps) {
+    expect(step.if ?? '', step.name ?? 'unnamed deploy step').not.toContain('cache-hit');
+  }
+  const assertRequiredLiveProofs = () => {
+    for (const job of ['plan', 'deploy', 'record'] as const) {
+      for (const step of workflow.jobs[job].steps) {
+        expect(step.with?.['fail-on-cache-miss'], step.name ?? step.uses ?? job).not.toBe(true);
+      }
+    }
+    expect(source).not.toContain('actions/caches?key=');
+    // The verified ledger is written only for this run and this source revision, and the live proofs that
+    // admit it stay mandatory instead of being skipped by a cache hit.
+    const ledger = workflow.jobs.record.steps.find(({ run }) => run?.includes('last-success/receipt.json') === true);
+    expect(ledger?.run).toContain('.runId==$runId and .validatedHead==$sourceRevision');
+    expect(ledger?.run).toContain('.runAttempt=$runAttempt');
+    for (const proof of [
+      'scripts/ops/stage-warmup.mts',
+      'scripts/ops/stage-demo-verify.mjs',
+      'scripts/demo/prove-mcp-oauth.mts',
+    ]) {
+      const step = workflow.jobs.verify.steps.find(({ run }) => run?.includes(proof) === true);
+      expect(step, proof).toBeDefined();
+      expect(step?.if ?? '', proof).not.toContain('cache-hit');
+    }
+  };
+  assertRequiredLiveProofs();
 });

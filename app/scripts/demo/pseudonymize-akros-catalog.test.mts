@@ -660,7 +660,7 @@ describe('catalog failure diagnostics', () => {
   it('distinguishes staff owner reads, Action dispatch and the public storefront image request', () => {
     for (const [url, hostClass, requestPhase] of [
       [`${staffOrigin}/merchandise-api/reads/records`, 'staff', 'owner-records'],
-      [`${staffOrigin}/merchandise-api/merchandise/actions/apply-command`, 'staff', 'owner-action'],
+      [`${staffOrigin}/merchandise-api/merchandise/actions/manage-catalog`, 'staff', 'owner-action'],
       ['https://ontos-stage-shop.web-revolution.cz/cs/obrazky/product/photo', 'shop', 'public-image'],
       ['https://private.invalid/a?token=secret', 'other', 'other'],
     ]) {

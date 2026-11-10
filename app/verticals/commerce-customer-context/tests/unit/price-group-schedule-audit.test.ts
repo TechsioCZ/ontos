@@ -13,6 +13,7 @@ import type { CustomerPriceGroupAssignmentStorePort } from '../../shared/domain/
 import { assignCustomerPriceGroupAction } from '../../src/actions/assign-customer-price-group.action.ts';
 import { removeCustomerPriceGroupAction } from '../../src/actions/remove-customer-price-group.action.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
+import { priceGroupProfileAbsentPreparationRead } from '../support/price-group-preparation-reads.ts';
 
 const tenantId = '12480000-0000-4000-8000-000000000001';
 const principal = {
@@ -103,6 +104,7 @@ it.effect('retains the finite request rather than a truncated replay row, and do
     const harness = yield* makeActionTestHarness({
       ownerRegistration: commerceCustomerContextRegistration,
       ...permissions,
+      preparationReads: [priceGroupProfileAbsentPreparationRead],
       services: [bindActionTestServices(assignCustomerPriceGroupAction, services)],
     });
     const request = {
@@ -164,6 +166,7 @@ it.effect('collects worst escaped identifiers and open schedules below the actua
     const harness = yield* makeActionTestHarness({
       ownerRegistration: commerceCustomerContextRegistration,
       ...permissions,
+      preparationReads: [priceGroupProfileAbsentPreparationRead],
       services: [bindActionTestServices(assignCustomerPriceGroupAction, services)],
     });
     yield* harness.runtime.runAction({

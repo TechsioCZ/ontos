@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { chmod, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,7 +17,7 @@ import { expect, it } from 'effect-rstest';
 import { DEVELOPMENT_OVERLAY_PATH } from '../topology-development-ports.mjs';
 import { generateOutboxWorkerHostEntry } from '../generate-outbox-worker-deployment.mjs';
 import { materializeOutboxWorker, resolveOutboxWorker } from '../materialize-outbox-worker.mjs';
-import { OUTBOX_WORKER_HOST } from '../outbox-worker-delivery.mjs';
+import { OUTBOX_WORKER_HOST, OUTBOX_WORKER_HOST_EXPORT } from '../outbox-worker-delivery.mjs';
 
 const SHELL_UNIT_ID = 'app/shell-super-app';
 const SHELL_PACKAGE = '@app/shell-super-app';
@@ -314,6 +314,37 @@ it.live('refuses to materialize an Outbox Worker host whose entry drifted from i
   }),
 );
 
+/**
+ * The hosted owner graph the real topology declares: a vertical is hosted when its package publishes the
+ * generated worker start and host entry export. Reading it here keeps the bundled-owner expectation equal to
+ * the declarations instead of a hand-picked list that can drop or invent an owner.
+ */
+const declaredHostedOwners = () => {
+  const topology = Schema.decodeUnknownSync(
+    Schema.Struct({
+      shell: Schema.Struct({ id: Schema.String }),
+      verticals: Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String })),
+    }),
+  )(JSON.parse(readFileSync(TOPOLOGY_PATH, 'utf-8')));
+  const ownerIds = topology.verticals.flatMap(({ id, path: verticalPath }) => {
+    const manifestPath = `${verticalPath}/${PACKAGE_MANIFEST}`;
+    if (!existsSync(manifestPath)) {
+      return [];
+    }
+    const ownerPackage = Schema.decodeUnknownSync(
+      Schema.Struct({
+        exports: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+        scripts: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+      }),
+    )(JSON.parse(readFileSync(manifestPath, 'utf-8')));
+    return ownerPackage.scripts?.['worker:start'] === `node --experimental-strip-types ./${WORKER_HOST_ENTRY}` &&
+      ownerPackage.exports?.[OUTBOX_WORKER_HOST_EXPORT] === `./${WORKER_ENTRY}`
+      ? [id]
+      : [];
+  });
+  return { ownerIds, shellId: topology.shell.id };
+};
+
 it.live('bundles every hosted owner entry into the real Outbox Worker host artifact', () =>
   Effect.gen(function* bundlesHost() {
     const runtimeDir = yield* Effect.acquireRelease(
@@ -341,9 +372,13 @@ it.live('bundles every hosted owner entry into the real Outbox Worker host artif
     );
     expect(artifact.serviceId).toBe(OUTBOX_WORKER_HOST.id);
     expect(runtimePackage.name).toBe('outbox-worker-host-runtime');
-    for (const owner of ['party-registry', 'commerce-customer-context', 'price-group-catalog']) {
-      expect(artifact.sourceInputs).toContain(`verticals/${owner}/src/worker-host/entry.ts`);
-      expect(artifact.sourceInputs).not.toContain(`verticals/${owner}/src/worker-host/main.ts`);
+    // The bundle hosts the Core owner and exactly the declared hosted owners, in topology order.
+    const { ownerIds, shellId } = declaredHostedOwners();
+    expect(ownerIds.length).toBeGreaterThan(0);
+    expect(owners.map(({ ownerId }) => ownerId)).toEqual([shellId, ...ownerIds]);
+    for (const owner of owners) {
+      expect(artifact.sourceInputs).toContain(`${owner.path}/${owner.hostEntry}`);
+      expect(artifact.sourceInputs).not.toContain(`${owner.path}/src/worker-host/main.ts`);
     }
     expect(artifact.sourceInputs).toContain(OUTBOX_WORKER_HOST.entry);
     expect(artifact.sourceInputs).toContain(`${SHELL_PATH}/${CORE_WORKER_ENTRY}`);

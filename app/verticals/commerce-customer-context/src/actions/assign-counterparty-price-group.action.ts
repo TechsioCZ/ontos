@@ -38,7 +38,8 @@ import type {
 } from '../../shared/domain/price-group-ports.ts';
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
 import { createAssignCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupAssignedV1OutboxMessage } from './assign-counterparty-price-group.commerce-customer-context-counterparty-price-group-assigned-v1.outbox-message.ts';
-import { assignCounterpartyPriceGroupServicesForTransaction } from './price-group-action-services.ts';
+import { prepareAssignCounterpartyPriceGroupServices } from './price-group-action-preparation.ts';
+import { priceGroupActionServicesForTransaction } from './price-group-action-services.ts';
 import { counterpartyOwnerFacts } from './owner-access-facts.ts';
 
 export { AssignCounterpartyPriceGroupPayloadSchema } from '../../shared/actions/assign-counterparty-price-group.ts';
@@ -384,5 +385,6 @@ export const assignCounterpartyPriceGroupAction = defineAction(
     schemaVersion: '1',
   },
   handleAssignCounterpartyPriceGroup,
-  assignCounterpartyPriceGroupServicesForTransaction,
+  priceGroupActionServicesForTransaction,
+  { prepareServices: prepareAssignCounterpartyPriceGroupServices },
 );

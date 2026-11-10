@@ -114,6 +114,8 @@ interface FixtureOptions {
 const fixture = (options: FixtureOptions = {}) => {
   const calls: { readonly port: string; readonly scope: OperationalScope }[] = [];
   const entries: AccessDecisionLogEntry[] = [];
+  /** The size of every evidence write: each one is one transaction in production. */
+  const evidenceBatches: number[] = [];
   const baseSpec: AuthoritySpec = {
     cells: options.cells ?? [cell({ capability: read.key, holder: principalHolder(otherPerson) })],
     legalEntityScope: { _tag: 'LegalEntity', legalEntityId: company, tenantId: tenant },
@@ -156,9 +158,12 @@ const fixture = (options: FixtureOptions = {}) => {
     },
     currentCatalog: options.catalog ?? Effect.succeed(catalog),
     decisionLog: {
-      record: (entry) => {
-        calls.push({ port: 'evidence', scope: entry.scope });
-        entries.push(entry);
+      recordAll: (batch) => {
+        evidenceBatches.push(batch.length);
+        for (const entry of batch) {
+          calls.push({ port: 'evidence', scope: entry.scope });
+          entries.push(entry);
+        }
         return options.evidenceFailure === true
           ? Effect.fail(accessDecisionUnavailable('evidence outage'))
           : Effect.void;
@@ -198,7 +203,7 @@ const fixture = (options: FixtureOptions = {}) => {
       },
     },
   });
-  return { actions, authority, calls, check, connectionQueries, entries, service };
+  return { actions, authority, calls, check, connectionQueries, entries, evidenceBatches, service };
 };
 
 it.effect(
@@ -616,5 +621,137 @@ it.effect('preserves interruption without returning a projection or writing deci
     expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
     expect(f.entries).toEqual([]);
     expect(f.check.calls.checkBulk).toBe(0);
+  }),
+);
+
+const listedRead = declaration({ key: 'party.registry.party.list', risk: 'routine', selectors: ['assigned'] });
+const deniedRead = declaration({ key: 'party.registry.party.secret' });
+const fieldRead = declaration({
+  fieldClass: 'personal_data',
+  key: 'party.registry.party.personal-data',
+  kind: 'field_read',
+});
+const changeAction = declaration({ key: 'party.registry.party.change', kind: 'action', modes: ['run', 'propose'] });
+/** The subject's cells, built once so every fixture of a comparison holds the very same grants. */
+const batchCells = [
+  cell({ capability: read.key, holder: principalHolder(otherPerson) }),
+  cell({ capability: listedRead.key, holder: principalHolder(otherPerson), selector: { _tag: 'assigned' } }),
+  cell({ capability: fieldRead.key, holder: principalHolder(otherPerson) }),
+  cell({ capability: changeAction.key, holder: principalHolder(otherPerson), mode: 'propose' }),
+];
+
+/** A mixed batch: every seam refusal, an allow, a denial, a LIST, a field question and a sensitive Action. */
+const batchOf = (options: FixtureOptions = {}) => {
+  const field = fieldRead;
+  const action = changeAction;
+  const questions = [
+    { carrier: { accessDeclaration: read }, legalEntityScope: 'required', listing: false },
+    { carrier: { accessDeclaration: deniedRead }, legalEntityScope: 'required', listing: false },
+    { carrier: { accessDeclaration: listedRead }, legalEntityScope: 'required', listing: true },
+    { carrier: { accessDeclaration: listedRead }, legalEntityScope: 'required', listing: false },
+    { carrier: { accessDeclaration: field }, legalEntityScope: 'required', listing: false },
+    { carrier: { accessDeclaration: field }, legalEntityScope: 'required', listing: true },
+    { carrier: { accessDeclaration: action }, legalEntityScope: 'required', listing: true },
+    { carrier: {}, legalEntityScope: 'required', listing: false },
+    { carrier: { accessDeclaration: read }, legalEntityScope: 'forbidden', listing: false },
+    { carrier: { accessDeclaration: read }, legalEntityScope: 'optional', listing: false },
+    { carrier: { accessDeclaration: action }, legalEntityScope: 'required', listing: false, mode: 'propose' },
+  ] as const;
+  const f = fixture({ cells: batchCells, ...options });
+  f.actions.set('party.registry.change-party', {
+    actionKey: 'party.registry.change-party',
+    carrier: { accessDeclaration: action },
+    legalEntityScope: 'required',
+  });
+  return { f, questions };
+};
+
+/** What one decision row says, without the instant it was taken at: each single call takes its own. */
+const rowOf = ({ decidedAt: _decidedAt, ...entry }: AccessDecisionLogEntry) => entry;
+
+it.effect('answers and records every batch question exactly as the single inspect, list and actions calls do', () =>
+  Effect.gen(function* batchEquivalence() {
+    const single = batchOf();
+    const singleAnswers = yield* Effect.forEach(
+      single.questions,
+      ({ listing, ...rest }) => {
+        const asked = { ...base, ...rest };
+        return listing
+          ? single.f.service.list(asked).pipe(Effect.map(({ inspectionOnly: _inspectionOnly, ...answer }) => answer))
+          : single.f.service.inspect(asked).pipe(Effect.map(({ decision }) => ({ decision })));
+      },
+      { concurrency: 1 },
+    );
+    const singleActions = yield* single.f.service.actions({
+      ...base,
+      actionKeys: ['party.registry.change-party', 'unknown.action'],
+    });
+    const batched = batchOf();
+    const batch = yield* batched.f.service.capabilities({
+      ...base,
+      actionKeys: ['party.registry.change-party', 'unknown.action'],
+      questions: batched.questions,
+    });
+    expect(batch.answers).toEqual(singleAnswers);
+    expect(batch.authorities).toEqual(singleActions.authorities);
+    // Every row a single call writes is written by the batch too, with the same content and in the same order.
+    expect(batched.f.entries.map(rowOf)).toEqual(single.f.entries.map(rowOf));
+    expect(batched.f.entries.length).toBeGreaterThan(3);
+    // ...all of it in one write, where the single calls needed one write per recorded inspect/list decision.
+    expect(batched.f.evidenceBatches).toEqual([batched.f.entries.length]);
+    expect(single.f.evidenceBatches.length).toBeGreaterThan(1);
+    expect(single.f.evidenceBatches.reduce((sum, size) => sum + size, 0)).toBe(batched.f.entries.length);
+    // Each outcome kind is present, so the comparison covers allows, denials, refusals and a LIST predicate.
+    expect(new Set(batch.answers.map(({ decision }) => decision.outcome))).toEqual(new Set(['ALLOWED', 'DENIED']));
+    expect(batch.answers[2]?.predicate).toBeDefined();
+    expect(batch.answers.map(({ decision }) => decision.reasons[0]?.code)).toEqual(
+      singleAnswers.map(({ decision }) => decision.reasons[0]?.code),
+    );
+  }),
+);
+
+it.effect('resolves the subject once per company context and asks the engine once for a whole batch', () =>
+  Effect.gen(function* batchReads() {
+    const { f, questions } = batchOf();
+    yield* f.service.capabilities({ ...base, actionKeys: ['party.registry.change-party'], questions });
+    const ports = f.calls.map(({ port }) => port);
+    // Two contexts are asked about: the company (required) and the tenant (optional resolves to the company here).
+    expect(ports.filter((port) => port === 'facts').length).toBeLessThanOrEqual(2);
+    expect(ports.filter((port) => port === 'kind').length).toBeLessThanOrEqual(2);
+    // One snapshot for every targetless question, plus one per LIST question.
+    expect(f.check.calls.checkBulk).toBeLessThanOrEqual(1 + questions.filter(({ listing }) => listing).length);
+    expect(f.calls.every(({ scope }) => scope === requesterScope)).toBe(true);
+  }),
+);
+
+for (const [name, options] of [
+  ['identity store', { factsFailure: true }],
+  ['principal kind', { kindFailure: true }],
+  ['canonical engine', { engineFailure: true }],
+  ['required evidence', { evidenceFailure: true }],
+] as const) {
+  it.effect(`fails a whole batch on a ${name} outage instead of answering any question`, () =>
+    Effect.gen(function* batchOutage() {
+      const { f, questions } = batchOf(options);
+      const result = yield* Effect.result(
+        f.service.capabilities({ ...base, actionKeys: ['party.registry.change-party'], questions }),
+      );
+      expect(Result.isFailure(result) && Schema.is(SubjectInspectionUnavailable)(result.failure)).toBe(true);
+    }),
+  );
+}
+
+it.effect('reads a batch against one composition revision and refuses a batch whose composition changed', () =>
+  Effect.gen(function* batchCurrentness() {
+    let revision = 0;
+    const { questions } = batchOf();
+    const changing = batchOf({
+      catalog: Effect.sync(() => {
+        revision += 1;
+        return { actions: new Map(), revision: `revision-${revision}` };
+      }),
+    });
+    const result = yield* Effect.result(changing.f.service.capabilities({ ...base, actionKeys: [], questions }));
+    expect(Result.isFailure(result) && Schema.is(SubjectInspectionUnavailable)(result.failure)).toBe(true);
   }),
 );

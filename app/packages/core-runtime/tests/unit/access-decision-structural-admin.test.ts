@@ -387,6 +387,37 @@ it.effect('answers a structural and a role-cell admin key in one batch exactly a
   }),
 );
 
+it.effect("reads one actor's configure bases once per batch, however many admin keys it asks", () =>
+  Effect.gen(function* sharedConfigureBases() {
+    const spec = withOptional({ cells: [] as const, legalEntityScope: companyScopeOf(companyA) }, 'configureBases', [
+      owner,
+    ] as const);
+    const keys = ['core.access.roles.publish', 'core.access.people.revoke', 'core.access.roles.archive'];
+    const requests = keys.map((key) => ({
+      actor: actorIn(companyA),
+      now,
+      request: { capability: { ...policy, capabilityKey: capability(key) }, mode: 'run' as const },
+    }));
+    const batchAuthority = makeAuthority(spec);
+    const [answers] = yield* decideAccessMany(makeCheck({ authority: spec }).port, [
+      { authority: batchAuthority.port, inputs: requests },
+    ]);
+    const single = yield* Effect.forEach(
+      requests,
+      (input) => decideAccess(makeAuthority(spec).port, makeCheck({ authority: spec }).port, input),
+      { concurrency: 1 },
+    );
+    expect(answers?.map(verdictOf)).toEqual(single.map(verdictOf));
+    expect(answers?.map(({ reasons }) => reasons[0]?.code)).toEqual(keys.map(() => 'structural.owner'));
+    // The same actor, tenant and instant: one read for the whole batch, shared with no other batch.
+    expect(batchAuthority.calls.readConfigureBases).toBe(1);
+    yield* decideAccessMany(makeCheck({ authority: spec }).port, [
+      { authority: batchAuthority.port, inputs: requests },
+    ]);
+    expect(batchAuthority.calls.readConfigureBases).toBe(2);
+  }),
+);
+
 /*
  * O88: entering the administration surface. A person who administers access in at least one company
  * of the tenant may open the admin pages without having selected a company, and every operation keeps

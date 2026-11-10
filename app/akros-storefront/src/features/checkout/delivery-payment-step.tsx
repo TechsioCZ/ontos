@@ -6,6 +6,7 @@ import { useDictionary, useMoney, useStoreHref } from "@/ontos/market-context";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { RadioGroup } from "@techsio/ui-kit/molecules/radio-group";
+import { RadioGroupLabel } from "@/components/form-controls";
 import { useCheckout } from "./checkout-provider";
 import { selectDelivery, validateMethods } from "@/features/checkout/checkout-state";
 import { formatCheckoutPrice } from "./checkout-format";
@@ -64,7 +65,7 @@ export function DeliveryPaymentStep() {
               if (id) updateDraft((current) => selectDelivery(current, id));
             }}
           >
-            <RadioGroup.Label className="sr-only">{copy.methodLabel}</RadioGroup.Label>
+            <RadioGroupLabel className="sr-only">{copy.methodLabel}</RadioGroupLabel>
             <RadioGroup.ItemGroup>
               {methods.map((method) => {
                 const price = method.priceMinor;

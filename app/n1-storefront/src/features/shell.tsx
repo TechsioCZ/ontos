@@ -6,7 +6,7 @@ import NextLink from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Image } from "@techsio/ui-kit/atoms/image";
-import { Link } from "@techsio/ui-kit/atoms/link";
+import { Link } from "@/features/plain-link";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Header } from "@techsio/ui-kit/organisms/header";
 import { Toaster } from "@techsio/ui-kit/molecules/toast";
@@ -123,8 +123,12 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
                 <Button
                   aria-controls="n1-mobile-navigation"
                   aria-expanded={mobileMenuOpen}
-                  aria-label={d.menu}
-                  icon="token-icon-menu"
+                  aria-haspopup="dialog"
+                  aria-label={mobileMenuOpen ? d.closeMenu : d.menu}
+                  data-ownedby="n1-mobile-navigation"
+                  data-part="trigger"
+                  data-scope="dialog"
+                  icon={mobileMenuOpen ? "token-icon-close" : "token-icon-menu"}
                   iconSize="xl"
                   onClick={() =>
                     setHeaderPanel((current) =>

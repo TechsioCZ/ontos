@@ -29,6 +29,12 @@ export type { AccessAmount } from '../decision/contract.ts';
 export { accessAmountAt, capabilityPolicyOf, gateAmountOf, gateScopeOf } from './capability.ts';
 export { seamDenial, seamRefusal, seamUnavailable } from './decisions.ts';
 export type { AccessDecisionLogEntry, AccessDecisionLogWriter } from './decision-log.ts';
+export type { AccessDecisionLogBatchWriter } from './decision-log-batch.ts';
+export {
+  AccessDecisionLogBatch,
+  AccessDecisionLogBatchLive,
+  makeDrizzleAccessDecisionLogBatch,
+} from './decision-log-batch.ts';
 export {
   AccessDecisionLog,
   AccessDecisionLogLive,
@@ -64,14 +70,35 @@ export type {
 } from '../workloads/store.ts';
 export { AccessWorkloadBindingSourceLive, makeDrizzleAccessWorkloadBindings } from '../workloads/bindings.ts';
 export { AccessWorkloadBindingStoreLive, makeAccessWorkloadBindingDrizzleStore } from '../workloads/binding-store.ts';
+export type {
+  AccessWorkloadCompanyBinding,
+  AccessWorkloadCompanyBindingStoreService,
+  RegisterWorkloadCompanyBindingInput,
+  RegisterWorkloadCompanyBindingsInput,
+  RevokeWorkloadCompanyBindingInput,
+  WorkloadCompanyBindingStatus,
+} from '../workloads/company-store.ts';
+export {
+  AccessWorkloadCompanyBindingIdSchema,
+  AccessWorkloadCompanyBindingStore,
+  WORKLOAD_COMPANY_BINDING_STATUSES,
+} from '../workloads/company-store.ts';
+export {
+  AccessWorkloadCompanyBindingStoreLive,
+  makeAccessWorkloadCompanyBindingDrizzleStore,
+  writeWorkloadCompanyBindings,
+} from '../workloads/company-bindings.ts';
 export type { TestAccessDecision, TestAccessDecisionSpec, TestGateAnswer } from './testing.ts';
 export { makeTestAccessDecision } from './testing.ts';
 export type {
   InspectionSubject,
   SubjectAccessInspectionService,
   SubjectActionInspection,
+  SubjectCapabilityAnswer,
+  SubjectCapabilityBatchInspection,
   SubjectCapabilityInspection,
   SubjectCapabilityInspectionInput,
+  SubjectCapabilityQuestion,
   SubjectInspectionInput,
   SubjectListInspection,
   SubjectScopeInspection,

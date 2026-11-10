@@ -39,6 +39,8 @@ export interface McpModule {
   readonly approvals: boolean;
   /** Shell page where people review the module's own AI changes (undefined: none). */
   readonly approvalsPage: OntosMcpContribution['approvalsPage'];
+  /** Command tags of the module's command-union Actions and the Actions that accept each (undefined: none). */
+  readonly commandActions: OntosMcpContribution['commandActions'];
   /** Czech names of the module's command fields, by wire key (empty: the module names none). */
   readonly commandFieldLabels: OntosMcpCommandFieldLabels;
   readonly description: OntosMcpText;
@@ -160,6 +162,7 @@ export const buildMcpModules = (composition: ComposedRevision): McpModules => {
           approvalReview: contribution.approvalReview,
           approvals: contribution.approvals,
           approvalsPage: contribution.approvalsPage,
+          commandActions: contribution.commandActions,
           commandFieldLabels: contribution.commandFieldLabels ?? {},
           description: contribution.description,
           keywords: contribution.keywords,

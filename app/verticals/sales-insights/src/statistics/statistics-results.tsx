@@ -131,6 +131,7 @@ const ChartBody = ({
   valueLabel,
   warning,
 }: ChartBodyProps) => {
+  const { t } = useModernI18n();
   if (loading) {
     return (
       <Skeleton aria-label={loadingLabel} isLoaded={false}>
@@ -160,6 +161,7 @@ const ChartBody = ({
         <Chart
           ariaLabel={ariaLabel}
           data={points.map((point) => ({ key: point.key, label: point.label, value: point.value / scale }))}
+          dataTableLabel={t('sales-insights.chartData.toggle')}
           formatTooltipValue={(value) => formatMetricValue(value * scale, unit)}
           formatValue={(value) => formatAxisValue(value * scale, unit)}
           height={280}
@@ -168,7 +170,9 @@ const ChartBody = ({
           type={chart}
           valueLabel={valueLabel}
           x="label"
+          xLabel={t('sales-insights.chartData.category')}
           y="value"
+          yLabel={valueLabel}
         />
       )}
     </>

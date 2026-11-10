@@ -254,6 +254,40 @@ describe("checkout operation feedback", () => {
       expect(html).toContain(d.checkout.confirmed);
       expect(html).not.toContain(d.checkout.uncertain);
       expect(html).not.toContain(d.checkout.rejected);
+      expect(html).toContain(d.checkout.thankYou);
+      expect(html).toContain(d.checkout.orderItems);
+      expect(html).toContain(d.checkout.priceSummary);
+      expect(html).not.toContain(d.checkout.paymentNote);
+      expect(html).toContain(d.checkout.loadReceipt);
+      const reading = render({ ...checkout, progress: "recovery" });
+      expect(reading).toContain(d.checkout.confirmed);
+      expect(reading).not.toContain(d.checkout.loadReceipt);
+      expect(reading).not.toContain('type="submit"');
+      for (const progress of ["quote", "place"] as const) {
+        const pending = render({ ...checkout, progress });
+        expect(pending).toMatch(
+          /<button(?=[^>]*disabled="")[^>]*>[\s\S]*?Načíst podrobnosti objednávky/u,
+        );
+      }
+      const enriched = render({
+        ...checkout,
+        receipt: {
+          ...receipt,
+          receipt: {
+            contact: { email: "buyer@example.test", name: "Test Buyer" },
+            createdAt: "2026-11-09T12:00:00.000Z",
+            deliveryAddress: {
+              city: "Praha",
+              country: "CZ",
+              postalCode: "11000",
+              street: "Test 1",
+            },
+            shippingMethod: "PPL",
+          },
+        },
+      });
+      expect(enriched).toContain(d.checkout.deliveryAddress);
+      expect(enriched).not.toContain(d.checkout.loadReceipt);
       const preserved = render({ ...checkout, notice: "cart-preserved" });
       expect(preserved).toContain(d.checkout.cartPreserved);
       expect(preserved).toContain('role="status"');

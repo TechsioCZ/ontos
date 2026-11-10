@@ -1,17 +1,24 @@
 import { AgentAppIdSchema } from '@app/shared-contracts/agent-proposals';
 import type { AccessDeclarationInput, OntosActionContract, OperationalScope } from '@app/core-runtime';
-import { OntosActionContractSchema } from '@app/core-runtime';
+import {
+  OntosActionContractSchema,
+  OntosModuleIdSchema,
+  TenantModuleStateReadUnavailableError,
+  TenantModuleStateService,
+} from '@app/core-runtime';
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
-import { Effect, Predicate, Schema } from 'effect';
+import { Effect, Layer, Predicate, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ActionPermissionCheckError } from '../../../../../packages/core-runtime/src/actions/errors.ts';
+import { accessDecisionUnavailable } from '../../../../../packages/core-runtime/src/access/decision/errors.ts';
 import { makeModuleContractFixture } from '../../../../../packages/core-runtime/src/testing/module-contract.ts';
 import {
   AgentPlatformInvalid,
   assertAgentProposalsAuthorized,
   callerModuleAccess,
+  emptySubjectAccessTrace,
   proposalActionKey,
   subjectModuleAccess,
 } from '../../../api/agent-platform/caller.ts';
@@ -22,13 +29,24 @@ import {
   ShellInstalledModuleCatalog,
 } from '../../../api/modules/installed-module-catalog.ts';
 import { makeCompositionSnapshot } from '../../fixtures/application-composition.ts';
-import { subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
+import { pageCarrierCatalog, subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
 
 const moduleId = 'work.tasks';
 const appId = AgentAppIdSchema.make('work-tasks');
 const legalEntityId = '71000000-0000-4000-8000-000000000020';
 const principalId = '72000000-0000-4000-8000-000000000020';
 const tenantId = '70000000-0000-4000-8000-000000000020';
+/** The tenant's own module states: the named modules installed and active, by default every module asked about. */
+const tenantModuleStates = (installedModuleIds?: readonly string[]) =>
+  Layer.mock(TenantModuleStateService, {
+    getTenantModuleStates: (_tenantId, moduleKeys) =>
+      Effect.succeed(
+        moduleKeys
+          .filter((moduleKey) => installedModuleIds?.includes(moduleKey) ?? true)
+          .map((moduleKey) => ({ moduleKey: OntosModuleIdSchema.make(moduleKey), state: 'active' as const })),
+      ),
+  });
+
 /** The caller's own resolved trusted scope; every gate question is asked in a scope derived from it. */
 const scope: OperationalScope = {
   authMethod: 'api_key',
@@ -66,13 +84,14 @@ let actionFixtureSequence = 0;
 const action = (
   actionKey: string,
   legalEntityScope: OntosActionContract['legalEntityScope'] = 'required',
+  modes: readonly ('propose' | 'run')[] = ['run'],
 ): OntosActionContract => {
   actionFixtureSequence += 1;
   return Schema.decodeUnknownSync(OntosActionContractSchema)({
     accessDeclaration: {
       key: `${moduleId}.action-${actionFixtureSequence}.run`,
       kind: 'action',
-      modes: ['run'],
+      modes,
       placement: { group: 'actions', level: 'extended' },
       risk: 'routine',
       selectors: [],
@@ -208,6 +227,7 @@ it.effect('preserves the authenticated requester scope for visibility and exact 
     const actionScopes: OperationalScope[] = [];
     const rights = yield* callerModuleAccess({ scope: authenticatedScope }).pipe(
       Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(tenantModuleStates()),
       Effect.provideService(AccessDecisionGate, gate),
       Effect.provideService(ActionAuthority, {
         checkActionAuthorities: (input) => {
@@ -263,6 +283,7 @@ it.effect('never treats proposal authority as executable module authority', () =
     const installed = yield* catalog();
     const rights = yield* callerModuleAccess(caller).pipe(
       Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(tenantModuleStates()),
       Effect.provideService(AccessDecisionGate, gateAnswering('ALLOWED')),
       Effect.provideService(
         ActionAuthority,
@@ -329,6 +350,7 @@ it.effect('keeps a read-only module visible through its own read carrier, with n
     const installed = yield* catalogWithPageOnly();
     const rights = yield* callerModuleAccess(caller).pipe(
       Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(tenantModuleStates()),
       Effect.provideService(AccessDecisionGate, gateAnswering('ALLOWED')),
       Effect.provideService(
         ActionAuthority,
@@ -341,12 +363,92 @@ it.effect('keeps a read-only module visible through its own read carrier, with n
   }),
 );
 
+it.effect('counts a module only while the tenant has it installed, whatever the gate answers', () =>
+  Effect.gen(function* installedModulesOnly() {
+    const installed = yield* catalogWithPageOnly();
+    const rightsWith = (installedModuleIds: readonly string[]) =>
+      callerModuleAccess(caller).pipe(
+        Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+        Effect.provide(tenantModuleStates(installedModuleIds)),
+        Effect.provideService(AccessDecisionGate, gateAnswering('ALLOWED')),
+        Effect.provideService(
+          ActionAuthority,
+          actionAuthority(() => ({ execute: 'allowed' as const, propose: 'allowed' as const })),
+        ),
+      );
+    // A tenant owner is admitted on every administration declaration of the composition; the tenant's own state
+    // decides whether the module is there at all.
+    const absent = yield* rightsWith([]);
+    expect([...absent.access]).toEqual([]);
+    expect(absent.propose.size).toBe(0);
+    expect(absent.write.size).toBe(0);
+    const present = yield* rightsWith([moduleId]);
+    expect([...present.access]).toEqual([moduleId]);
+  }),
+);
+
+it.effect('keeps reading a read-only module but drops its write and proposal rights', () =>
+  Effect.gen(function* readOnlyModuleState() {
+    const installed = yield* catalog();
+    const rights = yield* callerModuleAccess(caller).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(
+        Layer.mock(TenantModuleStateService, {
+          getTenantModuleStates: (_tenantId, moduleKeys) =>
+            Effect.succeed(
+              moduleKeys.map((moduleKey) => ({
+                moduleKey: OntosModuleIdSchema.make(moduleKey),
+                state: 'read_only' as const,
+              })),
+            ),
+        }),
+      ),
+      Effect.provideService(AccessDecisionGate, gateAnswering('ALLOWED')),
+      Effect.provideService(
+        ActionAuthority,
+        actionAuthority(() => ({ execute: 'allowed' as const, propose: 'allowed' as const })),
+      ),
+    );
+    expect([...rights.access]).toEqual([moduleId]);
+    expect(rights.write.size).toBe(0);
+    expect(rights.propose.size).toBe(0);
+  }),
+);
+
+it.effect('fails closed as unavailable when the tenant module states cannot be read', () =>
+  Effect.gen(function* unreadableModuleState() {
+    const installed = yield* catalog();
+    const failure = yield* callerModuleAccess(caller).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(
+        Layer.mock(TenantModuleStateService, {
+          getTenantModuleStates: () =>
+            Effect.fail(
+              new TenantModuleStateReadUnavailableError({
+                code: 'tenant_module_state_read_unavailable',
+                reason: 'The module states are unreadable',
+              }),
+            ),
+        }),
+      ),
+      Effect.provideService(AccessDecisionGate, gateAnswering('ALLOWED')),
+      Effect.provideService(
+        ActionAuthority,
+        actionAuthority(() => ({ execute: 'allowed' as const, propose: 'allowed' as const })),
+      ),
+      Effect.flip,
+    );
+    expect(failure._tag).toBe('AgentStoreUnavailable');
+  }),
+);
+
 it.effect('uses list admission for a record-scoped read instead of asking without its required target', () =>
   Effect.gen(function* recordScopedModuleVisibility() {
     const installed = yield* catalogWithPageOnly({ ...pageDeclaration, selectors: ['assigned'] });
     const gate = gateAnswering('ALLOWED');
     const rights = yield* callerModuleAccess(caller).pipe(
       Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(tenantModuleStates()),
       Effect.provideService(AccessDecisionGate, gate),
       Effect.provideService(
         ActionAuthority,
@@ -365,6 +467,7 @@ it.effect('sees a module for a principal that holds only v2 grants and no legacy
     const installed = yield* catalog();
     const rights = yield* callerModuleAccess(caller).pipe(
       Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(tenantModuleStates()),
       // The gate admits the module's own carriers; no legacy `module_access` read is consulted at all.
       Effect.provideService(AccessDecisionGate, gateAnswering('ALLOWED')),
       Effect.provideService(
@@ -382,6 +485,7 @@ it.effect('denies a revoked or wrong-tenant acting principal that the gate refus
     const installed = yield* catalog();
     const rights = yield* callerModuleAccess(caller).pipe(
       Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(tenantModuleStates()),
       Effect.provideService(AccessDecisionGate, gateAnswering('DENIED')),
       Effect.provideService(
         ActionAuthority,
@@ -455,6 +559,305 @@ it.effect('projects current human Action modes without turning the result into e
     expect(authority.policyCap).toBe('direct');
     expect(inspection.requesterScopes.every((observed) => observed === scope)).toBe(true);
   }),
+);
+
+it.effect('caps the human write ceiling at approval while a module is proposable but not executable', () =>
+  Effect.gen(function* proposeOnlyCeiling() {
+    // The Action declares both modes; the person holds only the proposal right, so `run` is denied.
+    const installed = yield* catalog([action(`${moduleId}.apply-command`, 'required', ['propose', 'run'])]);
+    const declarations = installed.contracts.flatMap(({ manifest }) =>
+      manifest.publicSurface.actions.flatMap(({ accessDeclaration }) =>
+        accessDeclaration === undefined ? [] : [accessDeclaration],
+      ),
+    );
+    const inspection = subjectInspectionFixture({
+      capabilities: declarations.map(({ key }) => ({ key, modes: ['propose'] })),
+      snapshot: yield* makeCompositionSnapshot(installed.contracts),
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const authority = yield* loadActingAuthority(scope, {
+      actingKind: 'human',
+      actingPrincipalId: principalId,
+      legalEntityId,
+      tenantId,
+    }).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+    );
+    // The module stays offered for proposals, but no direct write is possible, so the ceiling is approval.
+    expect([...authority.live.write]).toEqual([moduleId]);
+    expect(authority.policyCap).toBe('approval');
+    expect(authority.offered.map((module) => [module.moduleId, module.write])).toEqual([[moduleId, true]]);
+  }),
+);
+
+/** A module this tenant never installed; the composition still publishes its administration Action. */
+const uninstalledModuleId = 'projects.core';
+
+const catalogWithUninstalledAdministration = Effect.gen(function* uninstalledAdministrationCatalog() {
+  const tasks = makeModuleContractFixture({ appId, moduleId });
+  const projects = makeModuleContractFixture({ appId: 'projects-core', moduleId: uninstalledModuleId });
+  const rebuild = Schema.decodeUnknownSync(OntosActionContractSchema)({
+    accessDeclaration: {
+      key: `${uninstalledModuleId}.search-index.rebuild`,
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'search', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    actionKey: `${uninstalledModuleId}.request-search-rebuild`,
+    auditProfile: 'standard',
+    entrypoint: {
+      access: 'write',
+      authorization: { kind: 'protected' },
+      entrypointKey: `${uninstalledModuleId}.request-search-rebuild`,
+      moduleKey: uninstalledModuleId,
+      role: 'action',
+      scope: 'tenant',
+    },
+    idempotency: 'required',
+    legalEntityScope: 'required',
+    owningModuleId: uninstalledModuleId,
+    schemaVersion: '1',
+  });
+  const snapshot = yield* makeCompositionSnapshot([
+    {
+      ...tasks,
+      manifest: {
+        ...tasks.manifest,
+        publicSurface: { ...tasks.manifest.publicSurface, actions: [action(`${moduleId}.apply-command`)] },
+      },
+    },
+    {
+      ...projects,
+      manifest: { ...projects.manifest, publicSurface: { ...projects.manifest.publicSurface, actions: [rebuild] } },
+    },
+  ]);
+  return { installed: yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot)), snapshot };
+});
+
+it.effect('offers a tenant owner only the modules its tenant has installed, not every administration carrier', () =>
+  Effect.gen(function* ownerOfOneModuleTenant() {
+    const { installed, snapshot } = yield* catalogWithUninstalledAdministration;
+    const taskKeys = installed.contracts.flatMap(({ manifest }) =>
+      manifest.publicSurface.actions.flatMap(({ accessDeclaration, owningModuleId }) =>
+        accessDeclaration === undefined || owningModuleId !== moduleId ? [] : [accessDeclaration.key],
+      ),
+    );
+    // The stage verification account owns its own tenant: Core admits an owner on every `admin` declaration of
+    // the composition, also of a module the tenant never installed. Its granted cells reach `work.tasks` only.
+    const inspection = subjectInspectionFixture({
+      capabilities: taskKeys.map((key) => ({ key, modes: ['run', 'propose'] })),
+      installedModules: [moduleId],
+      owners: [principalId],
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const authority = yield* loadActingAuthority(scope, {
+      actingKind: 'human',
+      actingPrincipalId: principalId,
+      legalEntityId,
+      tenantId,
+    }).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+    );
+    expect([...authority.live.read]).toEqual([moduleId]);
+    expect([...authority.live.write]).toEqual([moduleId]);
+    expect(authority.offered.map((module) => [module.moduleId, module.write])).toEqual([[moduleId, true]]);
+    expect(authority.policyCap).toBe('direct');
+    // One state read for every module the gate answered, so no module escapes the tenant's own installation.
+    expect(inspection.stateReads.map((read) => ({ ...read, moduleKeys: read.moduleKeys.toSorted() }))).toEqual([
+      { moduleKeys: [uninstalledModuleId, moduleId].toSorted(), tenantId },
+    ]);
+  }),
+);
+
+/** The human's read rights of each carrier's capability, so every carrier is inspected. */
+const readableCarriers = (ids: readonly string[]) =>
+  ids.map((id) => ({ key: `${id}.page.open`, modes: ['run'] as const }));
+
+/** The subject-only request the connection ceiling makes: the person in their own company. */
+const humanRequest = {
+  queryScope: { legalEntityId, tenantId },
+  requesterScope: scope,
+  subject: { principalId, tenantId },
+};
+
+it.effect('asks every carrier in one batch and keeps carrier order whatever finishes first', () =>
+  Effect.gen(function* batchedCarriers() {
+    const ids = ['alpha.pages', 'beta.pages', 'gamma.pages'];
+    const { installed, snapshot } = yield* pageCarrierCatalog(ids);
+    // Each read yields this many times before it finishes; alpha is first in carrier order and finishes last.
+    const turns = new Map([
+      ['alpha.pages.page.open', 6],
+      ['beta.pages.page.open', 2],
+      ['gamma.pages.page.open', 0],
+    ]);
+    const finished: string[] = [];
+    const probe = { active: 0, finished, maxActive: 0 };
+    const inspection = subjectInspectionFixture({
+      capabilities: readableCarriers(ids),
+      onCapabilityRead: (key) =>
+        Effect.gen(function* holdCarrierRead() {
+          probe.active += 1;
+          probe.maxActive = Math.max(probe.maxActive, probe.active);
+          yield* Effect.forEach(Array.from({ length: turns.get(key) ?? 0 }), () => Effect.yieldNow, { discard: true });
+          probe.active -= 1;
+          probe.finished.push(key);
+        }),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const trace = yield* Ref.make(emptySubjectAccessTrace);
+    const result = yield* subjectModuleAccess(humanRequest, trace).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+    );
+    // The carriers' intent reads overlap inside the one batch, never beyond the engine's own bound of eight.
+    expect(probe.maxActive).toBeGreaterThan(1);
+    expect(probe.maxActive).toBeLessThanOrEqual(8);
+    // Access follows carrier order, not completion order: beta and gamma finished before alpha.
+    expect(probe.finished.indexOf('alpha.pages.page.open')).toBeGreaterThan(
+      probe.finished.indexOf('beta.pages.page.open'),
+    );
+    expect([...result.access]).toEqual(ids);
+    const traced = yield* Ref.get(trace);
+    // The scope, then the carriers and Actions in one batch: two inspection calls, whatever the carrier count.
+    expect({ actions: traced.actions, active: traced.active, carriers: traced.carriers }).toEqual({
+      actions: 0,
+      active: null,
+      carriers: 3,
+    });
+    expect(traced.inspectionCalls).toBe(2);
+    expect(Object.keys(traced.durations).toSorted()).toEqual(['capabilities', 'modules', 'scope']);
+  }),
+);
+
+/** Every scripted port call one subject read makes over `ids` page carriers, one readable. */
+const roundTripsFor = (ids: readonly string[]) =>
+  Effect.gen(function* roundTrips() {
+    const { installed, snapshot } = yield* pageCarrierCatalog(ids);
+    const inspection = subjectInspectionFixture({
+      capabilities: readableCarriers(ids.slice(0, 1)),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const result = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+    );
+    return { access: [...result.access], reads: inspection.reads };
+  });
+
+it.effect('makes a fixed number of identity, scope, engine and evidence round trips however many carriers exist', () =>
+  Effect.gen(function* boundedRoundTrips() {
+    const few = yield* roundTripsFor(['alpha.pages', 'beta.pages']);
+    const many = yield* roundTripsFor(Array.from({ length: 24 }, (_, index) => `module${index}.pages`));
+    expect(few.access).toEqual(['alpha.pages']);
+    expect(many.access).toEqual(['module0.pages']);
+    const fixed = ({ engine, evidenceWrites, facts, kind, scope: scopeReads }: typeof few.reads) => ({
+      engine,
+      evidenceWrites,
+      facts,
+      kind,
+      scopeReads,
+    });
+    // The scope inspection and the one capability batch each resolve the subject once, and the batch asks the engine
+    // once and writes its evidence once; only the per-capability intent reads follow the carrier count.
+    expect(fixed(many.reads)).toEqual(fixed(few.reads));
+    expect(many.reads.evidenceWrites).toBeLessThanOrEqual(1);
+    expect(many.reads.engine).toBeLessThanOrEqual(2);
+    // Every carrier that is not granted is a denial, and every denial keeps its evidence row.
+    expect(many.reads.evidenceRows).toBe(23);
+    expect(many.reads.cells).toBe(24);
+  }),
+);
+
+it.effect('fails the whole carrier load when one carrier cannot be read, returning no partial access', () =>
+  Effect.gen(function* oneUnreadableCarrier() {
+    const ids = ['alpha.pages', 'beta.pages'];
+    const { installed, snapshot } = yield* pageCarrierCatalog(ids);
+    const inspection = subjectInspectionFixture({
+      capabilities: readableCarriers(ids),
+      onCapabilityRead: (key) =>
+        key === 'beta.pages.page.open'
+          ? Effect.fail(accessDecisionUnavailable('beta carrier unreadable'))
+          : Effect.void,
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    // The load is an Effect failure: nothing is returned, so the alpha carrier's access is not kept either.
+    const failure = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+      Effect.flip,
+    );
+    expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
+  }),
+);
+
+it.effect('loads the installed-module catalog once per subject read, however many carriers it inspects', () =>
+  Effect.gen(function* catalogLoadedOnce() {
+    const ids = ['alpha.pages', 'beta.pages', 'gamma.pages'];
+    const { installed, snapshot } = yield* pageCarrierCatalog(ids);
+    let loads = 0;
+    const counted = {
+      load: Effect.suspend(() => {
+        loads += 1;
+        return Effect.succeed(installed);
+      }),
+    };
+    const inspection = subjectInspectionFixture({
+      capabilities: readableCarriers(ids),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const result = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, counted),
+      Effect.provide(inspection.layer),
+    );
+    expect(loads).toBe(1);
+    expect([...result.access]).toEqual(ids);
+  }),
+);
+
+it.effect(
+  'gives a denied subject no access and inspects no carrier or Action, while still loading the catalog once',
+  () =>
+    Effect.gen(function* deniedSubjectInspected() {
+      const ids = ['alpha.pages', 'beta.pages'];
+      const { installed, snapshot } = yield* pageCarrierCatalog(ids);
+      let capabilityReads = 0;
+      let loads = 0;
+      const counted = {
+        load: Effect.suspend(() => {
+          loads += 1;
+          return Effect.succeed(installed);
+        }),
+      };
+      // No subject is registered, so the scope decision is denied and no capability is read.
+      const inspection = subjectInspectionFixture({
+        capabilities: readableCarriers(ids),
+        onCapabilityRead: () =>
+          Effect.sync(() => {
+            capabilityReads += 1;
+          }),
+        snapshot,
+        subjects: [],
+      });
+      const result = yield* subjectModuleAccess(humanRequest).pipe(
+        Effect.provideService(ShellInstalledModuleCatalog, counted),
+        Effect.provide(inspection.layer),
+      );
+      expect(result.access.size).toBe(0);
+      expect(result.propose.size).toBe(0);
+      expect(result.run.size).toBe(0);
+      expect(result.inspectionOnly).toBe(true);
+      expect(capabilityReads).toBe(0);
+      expect(loads).toBe(1);
+    }),
 );
 
 it.effect('denies a foreign-tenant subject without changing the requester tenant', () =>

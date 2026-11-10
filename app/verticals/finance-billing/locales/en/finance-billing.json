@@ -1,5 +1,11 @@
 {
   "finance-billing": {
+    "chartData": {
+      "toggle": "Show chart data",
+      "category": "Month",
+      "value": "Amount",
+      "series": "Series"
+    },
     "language": {
       "cs": "Czech",
       "en": "English",

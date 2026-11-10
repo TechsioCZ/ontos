@@ -7,11 +7,11 @@ import { Config, Console, Effect, Exit, FileSystem, Layer, Option, Schema } from
 import { Command, Flag } from 'effect/cli';
 import { FetchHttpClient } from 'effect/http';
 
-import { CrmCommandSchema } from '../../verticals/crm/shared/actions/apply-command.ts';
+import { ApplyCommandPayloadSchema } from '../../verticals/crm/shared/actions/apply-command.ts';
 import { VisitSchema } from '../../verticals/crm/shared/domain/visits.ts';
 import type { Visit } from '../../verticals/crm/shared/domain/visits.ts';
 import { demoTenantId, rentalDemoLegalEntityId } from './fixture-ids.mts';
-import { connectSeedClient, DemoSeedError } from './seed-client.mts';
+import { connectSeedClient, DemoSeedError, ownerAction } from './seed-client.mts';
 
 const origin = 'https://ontos-stage.web-revolution.cz';
 const target = { legalEntityId: rentalDemoLegalEntityId, shellUrl: origin, tenantId: demoTenantId };
@@ -88,7 +88,7 @@ const run = (mode: 'plan' | 'apply' | 'verify', planPath: string, reviewed: Opti
       }
       yield* client.apply(
         'crm',
-        Schema.toEncoded(CrmCommandSchema),
+        ownerAction('apply-command', Schema.toEncoded(ApplyCommandPayloadSchema)),
         { _tag: 'ArchiveVisit', reason, visitId: plan.visit.id },
         plan.revision,
       );

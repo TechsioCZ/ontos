@@ -35,18 +35,18 @@ import type {
 } from '../../shared/domain/purchasing-approval.ts';
 
 import { revalidatePurchaseApprovalAction } from '../../src/actions/revalidate-purchase-approval.action.ts';
-import { enrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import { nativeTestDatabaseContainer } from '../support/native-test-database.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { makePurchasingApprovalNativeFixture } from '../support/purchasing-approval-native.ts';
 
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  ActionPermissionCheckError,
   ActionRuntime,
-  ContextAccess,
   isVerifiedGatewayPrincipalContext,
+  readVerifiedGatewayActor,
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionSnapshotSchema,
-  ReadHandlerExecutionError,
   ReadHandlerNotFound,
   ReadPolicyDenied,
   ReadRuntime,
@@ -161,6 +161,8 @@ const copyApprovalFreshMigrationJournal = Effect.fn('ApprovalFreshProofTests.cop
   expect((yield* approvalFreshJournalReceipt(target, owner)).count).toBe(0);
   const table =
     owner === 'core' ? 'drizzle.__drizzle_migrations_core' : 'drizzle.__drizzle_migrations_commerce_customer_context';
+  // The suite runs pg_dump/psql only inside the database container this run owns.
+  const container = yield* nativeTestDatabaseContainer;
   const dump = yield* ChildProcess.make(
     'docker',
     [
@@ -168,7 +170,7 @@ const copyApprovalFreshMigrationJournal = Effect.fn('ApprovalFreshProofTests.cop
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      container,
       'pg_dump',
       '--host',
       'localhost',
@@ -197,7 +199,7 @@ const copyApprovalFreshMigrationJournal = Effect.fn('ApprovalFreshProofTests.cop
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      container,
       'psql',
       '--host',
       'localhost',
@@ -464,11 +466,15 @@ const actualCurrentReplayFrame = (
 const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenario(
   state: ClockMigrationState = 'CURRENT',
   requestTtlMilliseconds = 60_000,
-  apiKeyManager = false,
+  orderModule = false,
   hierarchyTtlMilliseconds?: number,
   orderBinding = false,
 ) {
-  const snapshot = yield* enrollmentApplicationCompositionSnapshot;
+  // Order consumes as the calling module, so its release must name Order for the Shell to sign it as the actor.
+  const snapshot = yield* makeEnrollmentApplicationCompositionSnapshot(
+    ultramodernApiMarker.buildMarker,
+    orderModule === true || orderBinding === true ? ['commerce-order'] : [],
+  );
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
     // Core's db:verify below checks the trust catalog against the provisioned gateway audiences.
@@ -479,7 +485,6 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
   });
   yield* applyApprovalFreshProfileCurrentMigrations(isolated.connections, state);
   const owner = yield* makePurchasingApprovalNativeFixture({
-    apiKeyManager,
     connections: isolated.connections,
     finalProofTest: true,
     snapshot,
@@ -625,13 +630,14 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
   // Persistence component control only: this deliberately permissive foreign
   // authority double exercises the native consumption guards, not a real Order
   // producer, committed Order, or downstream reconciliation.
-  const consumeComponent = (input: ConsumePurchaseApprovalInput, apiKey = true) =>
+  // The buyer is the verified subject; `orderActor` false is the buyer calling without the Order module.
+  const consumeComponent = (input: ConsumePurchaseApprovalInput, orderActor = true) =>
     Effect.gen(function* consumeRegisteredComponent() {
       return yield* Context.get(context, ActionRuntime).runAction({
         payload: yield* Schema.encodeEffect(consumePurchaseApprovalAction.descriptor.payloadSchema)(input),
-        principal: yield* owner.authenticatedPrincipal(
-          apiKey ? owner.fixture.manager : { ...owner.fixture.manager, authMethod: 'session' },
-        ),
+        principal: orderActor
+          ? yield* owner.authenticatedPrincipal(owner.fixture.manager, 'commerce-order')
+          : yield* owner.authenticatedPrincipal(owner.fixture.manager),
         registration: consumePurchaseApprovalAction,
         transport: {
           correlationId: randomUUID(),
@@ -1003,247 +1009,276 @@ it.live(
   120_000,
 );
 
-it.live('keeps unavailable, changed, foreign and unresolved final bindings proof-free', () =>
-  Effect.scoped(
-    Effect.gen(function* finalAuthorityDenials() {
-      const test = yield* scenario();
-      const unavailable = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
-        yield* Effect.flip(test.check(randomUUID(), {}, false)),
-      );
-      expect(unavailable.code).toBe('CURRENT_STATE_INDETERMINATE');
-      for (const finalBinding of [
-        { ...test.binding, bundleHash: 'e'.repeat(64) },
-        { ...test.binding, attemptRef: { ...test.binding.attemptRef, resourceId: randomUUID() } },
-        { ...test.binding, attemptRef: { ...test.binding.attemptRef, tenantId: randomUUID() } },
-      ]) {
-        const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
-          yield* Effect.flip(
-            test.check(randomUUID(), {
-              finalBinding: yield* Schema.decodeUnknownEffect(PurchaseApprovalFinalBindingSchema)(finalBinding),
-            }),
-          ),
+it.live(
+  'keeps unavailable, changed, foreign and unresolved final bindings proof-free',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* finalAuthorityDenials() {
+        const test = yield* scenario();
+        const unavailable = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
+          yield* Effect.flip(test.check(randomUUID(), {}, false)),
         );
-        expect(failure.code).toBe('CURRENT_STATE_INDETERMINATE');
+        expect(unavailable.code).toBe('CURRENT_STATE_INDETERMINATE');
+        for (const finalBinding of [
+          { ...test.binding, bundleHash: 'e'.repeat(64) },
+          { ...test.binding, attemptRef: { ...test.binding.attemptRef, resourceId: randomUUID() } },
+          { ...test.binding, attemptRef: { ...test.binding.attemptRef, tenantId: randomUUID() } },
+        ]) {
+          const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
+            yield* Effect.flip(
+              test.check(randomUUID(), {
+                finalBinding: yield* Schema.decodeUnknownEffect(PurchaseApprovalFinalBindingSchema)(finalBinding),
+              }),
+            ),
+          );
+          expect(failure.code).toBe('CURRENT_STATE_INDETERMINATE');
+          expect(yield* test.readProofs()).toEqual([]);
+        }
+        test.setEligible(false);
+        const unknown = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
+          yield* Effect.flip(test.check(randomUUID())),
+        );
+        expect(unknown.code).toBe('CURRENT_STATE_INDETERMINATE');
         expect(yield* test.readProofs()).toEqual([]);
-      }
-      test.setEligible(false);
-      const unknown = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
-        yield* Effect.flip(test.check(randomUUID())),
-      );
-      expect(unknown.code).toBe('CURRENT_STATE_INDETERMINATE');
-      expect(yield* test.readProofs()).toEqual([]);
-    }),
-  ).pipe(Effect.provide(services)),
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
 );
 
-it.live('serializes distinct and same fresh intents without changing request revision or historical proof bytes', () =>
-  Effect.scoped(
-    Effect.gen(function* concurrentProofIssuance() {
-      const test = yield* scenario();
-      const first = yield* test.check(randomUUID());
-      const original = yield* test.readProofs();
-      yield* test.expire(first.revalidation.validUntil);
-      const results = yield* Effect.all([test.check(randomUUID()), test.check(randomUUID())], { concurrency: 2 });
-      expect(new Set(results.map((result) => result.revalidation.revalidationRef.resourceId)).size).toBe(2);
-      expect(yield* test.readProofs()).toHaveLength(3);
-      const intent = randomUUID();
-      const replay = yield* Effect.all([test.check(intent), test.check(intent)], { concurrency: 2 });
-      expect(replay[0].revalidation.revalidationRef).toEqual(replay[1].revalidation.revalidationRef);
-      const records = yield* test.readProofs();
-      expect(records).toHaveLength(4);
-      expect(records.find((row) => row.revalidationResourceId === original[0]?.revalidationResourceId)).toEqual(
-        original[0],
-      );
-      for (const record of records) {
-        expect(record.evidence.requestRevision).toBe(test.approved.request.requestRevision);
-      }
-    }),
-  ).pipe(Effect.provide(services)),
+it.live(
+  'serializes distinct and same fresh intents without changing request revision or historical proof bytes',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* concurrentProofIssuance() {
+        const test = yield* scenario();
+        const first = yield* test.check(randomUUID());
+        const original = yield* test.readProofs();
+        yield* test.expire(first.revalidation.validUntil);
+        const results = yield* Effect.all([test.check(randomUUID()), test.check(randomUUID())], { concurrency: 2 });
+        expect(new Set(results.map((result) => result.revalidation.revalidationRef.resourceId)).size).toBe(2);
+        expect(yield* test.readProofs()).toHaveLength(3);
+        const intent = randomUUID();
+        const replay = yield* Effect.all([test.check(intent), test.check(intent)], { concurrency: 2 });
+        expect(replay[0].revalidation.revalidationRef).toEqual(replay[1].revalidation.revalidationRef);
+        const records = yield* test.readProofs();
+        expect(records).toHaveLength(4);
+        expect(records.find((row) => row.revalidationResourceId === original[0]?.revalidationResourceId)).toEqual(
+          original[0],
+        );
+        for (const record of records) {
+          expect(record.evidence.requestRevision).toBe(test.approved.request.requestRevision);
+        }
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
 );
 
-/** Order and Shell replies are transport fixtures; all clients, Action gates and SQL are real. */
-it.live('consumes an approved proof through the registered Order Action and rejects conflicting evidence', () =>
-  Effect.scoped(
-    Effect.gen(function* realOrderConsumptionAction() {
-      const test = yield* scenario('CURRENT', 120_000, true, undefined, true);
-      test.setObservationWindow(extendedObservationSeconds);
-      const proof = yield* test.check(randomUUID());
-      const clock = yield* test.owner.nativeNow();
-      const payload = yield* Schema.decodeUnknownEffect(ConsumeOrderPurchaseApprovalPayloadSchema)({
-        finalBinding: test.binding,
-        idempotencyKey: randomUUID(),
-        orderRef: {
-          moduleId: 'commerce.order',
-          resourceId: randomUUID(),
-          resourceType: 'commerce.order.order',
-          tenantId: test.owner.tenantId,
-        },
-        revalidationRef: proof.revalidation.revalidationRef,
-      });
-      const evidence = yield* Schema.decodeUnknownEffect(CommittedOrderApprovalEvidenceResponseSchema)({
-        ...payload,
-        buyerPrincipalId: test.owner.principal.principalId,
-        commitmentCorrelationId: test.correlation,
-        committedAt: DateTime.formatIso(clock.at),
-        consumptionIntent: payload.idempotencyKey,
-        counterpartyRef: test.chain.counterpartyRef,
-        decisionBundleHash: test.approved.decision.decisionBundleHash,
-        decisionBundleVersion: test.approved.decision.decisionBundleVersion,
-        legalEntityId: test.owner.legalEntityId,
-        observedAt: DateTime.formatIso(clock.at),
-        proposalHash: test.chain.proposal.canonicalHash,
-        proposalRevisionRef: test.chain.proposal.proposalRevisionRef,
-        provenance: 'commerce.order.committed-approval-evidence.v1',
-        requestRef: test.approved.request.requestRef,
-        storefrontId: test.owner.storefrontId,
-        tenantId: test.owner.tenantId,
-        validUntil: DateTime.formatIso(DateTime.add(clock.at, { seconds: 25 })),
-      });
-      const sourceUrl = 'https://composition.order-consumption.test/active';
-      const shellUrl = 'https://shell.order-consumption.test';
-      const orderUrl = 'https://order.order-consumption.test';
-      const environment = ConfigProvider.orElse(
-        ConfigProvider.fromUnknown({
-          ONTOS_ACTION_TRANSACTION_IO_GUARD: true,
-          ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: sourceUrl,
-          ONTOS_CCC_ORDER_CONSUMER_AUTHENTICATION_NAMESPACE_ID: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-          ONTOS_CCC_ORDER_CONSUMER_LEGAL_ENTITY_ID: test.owner.legalEntityId,
-          ONTOS_CCC_ORDER_CONSUMER_PRINCIPAL_ID: test.owner.fixture.manager.principalId,
-          ONTOS_CCC_ORDER_CONSUMER_TENANT_ID: test.owner.tenantId,
-          ONTOS_CCC_ORDER_GATEWAY_API_KEY: 'test-owned-order-api-key',
-          ONTOS_COMMERCE_ORDER_API_BASE_URL: `${orderUrl}/commerce-order-api`,
-          ONTOS_SHELL_GATEWAY_BASE_URL: `${shellUrl}/shell-super-app-api`,
-        }),
-        ConfigProvider.fromEnv(),
-      );
-      const sourceDocument = yield* Schema.encodeEffect(
-        Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
-      )(test.snapshot);
-      const compositionLayer = ActiveApplicationCompositionConfigLive.pipe(
-        Layer.provide(ActiveApplicationCompositionSourceLive.pipe(Layer.provide(FetchHttpClient.layer))),
-        Layer.provide(ConfigProvider.layer(environment)),
-      );
-      const requests: Request[] = [];
-      const consume = (candidate: typeof payload, returnedEvidence: typeof evidence) =>
-        Effect.gen(function* executeRealConsumption() {
-          const body = yield* Schema.encodeEffect(CommittedOrderApprovalEvidenceResponseSchema)(returnedEvidence);
-          const fetch: typeof globalThis.fetch = async (target, init) => {
-            const request = new Request(target, init);
-            requests.push(request.clone());
-            if (request.url === sourceUrl) {
-              return new Response(sourceDocument, { headers: { 'content-type': 'application/json' } });
-            }
-            if (request.url === `${shellUrl}/shell-super-app-api/auth/api-key/gateway-context`) {
-              expect(request.headers.get('x-api-key')).toBe('test-owned-order-api-key');
-              return Response.json({
-                apiBaseUrl: '/commerce-order-api',
-                compositionRevision: test.snapshot.composition.revision,
-                expiresAt: clock.epoch + 30,
-                token: 'test-order-gateway-assertion',
-              });
-            }
-            expect(request.url).toBe(`${orderUrl}/commerce-order-api/reads/committed-order-approval-evidence`);
-            expect(request.headers.get('authorization')).toBe('Bearer test-order-gateway-assertion');
-            expect(await request.json()).toEqual({
-              finalBinding: candidate.finalBinding,
-              orderRef: candidate.orderRef,
-              revalidationRef: candidate.revalidationRef,
-            });
-            return Response.json(body);
-          };
-          const principal = yield* test.owner.authenticatedPrincipal();
-          expect(isVerifiedGatewayPrincipalContext(principal)).toBe(true);
-          expect(principal).toMatchObject({
-            authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-            authMethod: 'api_key',
-            legalEntityId: test.owner.legalEntityId,
-            principalId: test.owner.fixture.manager.principalId,
+/**
+ * Order and Shell replies are transport fixtures; all clients, Action gates and SQL are real. The buyer is the
+ * verified subject and the Order module the verified actor, as the Shell signs a delegated call.
+ */
+it.live(
+  'consumes an approved proof through the registered Order Action and rejects conflicting evidence',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* realOrderConsumptionAction() {
+        const test = yield* scenario('CURRENT', 120_000, false, undefined, true);
+        test.setObservationWindow(extendedObservationSeconds);
+        const proof = yield* test.check(randomUUID());
+        const clock = yield* test.owner.nativeNow();
+        const payload = yield* Schema.decodeUnknownEffect(ConsumeOrderPurchaseApprovalPayloadSchema)({
+          finalBinding: test.binding,
+          idempotencyKey: randomUUID(),
+          orderRef: {
+            moduleId: 'commerce.order',
+            resourceId: randomUUID(),
+            resourceType: 'commerce.order.order',
             tenantId: test.owner.tenantId,
-          });
-          const moduleDecisions = yield* Context.get(test.context, ContextAccess).modules({
-            legalEntityId: test.owner.legalEntityId,
-            moduleIds: ['commerce.customer-context'],
-            principalId: principal.principalId,
-            tenantId: test.owner.tenantId,
-          });
-          expect(moduleDecisions).toEqual([{ decision: 'allowed', key: 'commerce.customer-context' }]);
-          return yield* Context.get(test.context, ActionRuntime)
-            .runAction({
-              payload: yield* Schema.encodeEffect(ConsumeOrderPurchaseApprovalPayloadSchema)(candidate),
-              principal,
-              registration: consumeOrderPurchaseApprovalAction,
-              transport: {
-                correlationId: randomUUID(),
-                idempotencyKey: randomUUID(),
-                targetModuleKey: 'commerce.customer-context',
-              },
-            })
-            .pipe(
-              Effect.provideService(FetchHttpClient.Fetch, fetch),
-              Effect.provide(compositionLayer),
-              Effect.provide(FetchHttpClient.layer),
-              Effect.provideService(ConfigProvider.ConfigProvider, environment),
-              Effect.provideContext(test.context),
-            );
+          },
+          revalidationRef: proof.revalidation.revalidationRef,
         });
-      const beforeRequest = yield* test.readRequest();
-      const beforeProofs = yield* test.readProofs();
-      const before = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      const wrongEvidence = yield* Effect.result(consume(payload, { ...evidence, proposalHash: 'a'.repeat(64) }));
-      assert.isOk(Result.isFailure(wrongEvidence));
-      const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(wrongEvidence.failure);
-      expect(
-        failure.code,
-        `Order consumption rejection: ${failure.reason}; transport paths: ${requests.map(({ url }) => new URL(url).pathname).join(', ')}`,
-      ).toBe('COMMIT_CONFLICT');
-      expect(yield* test.readRequest()).toEqual(beforeRequest);
-      expect(yield* test.readProofs()).toEqual(beforeProofs);
-      const foreignProof = { ...payload, revalidationRef: { ...payload.revalidationRef, resourceId: randomUUID() } };
-      const wrongProof = yield* Effect.result(
-        consume(foreignProof, { ...evidence, revalidationRef: foreignProof.revalidationRef }),
-      );
-      assert.isOk(Result.isFailure(wrongProof));
-      // The unchanged native consumption routine hides unknown proofs with its canonical permission denial.
-      expect(yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(wrongProof.failure)).toMatchObject({
-        code: 'PERMISSION_DENIED',
-      });
-      expect(yield* test.readRequest()).toEqual(beforeRequest);
-      expect(yield* test.readProofs()).toEqual(beforeProofs);
-      const afterRefusal = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      expect(afterRefusal.events).toEqual(before.events);
-      expect(afterRefusal.outbox).toEqual(before.outbox);
-      const consumed = yield* consume(payload, evidence);
-      expect(consumed.outcome).toBe('CONSUMED');
-      expect(consumed.request.consumptionProofRef).toEqual(payload.revalidationRef);
-      const persisted = yield* test.readRequest();
-      const afterConsumption = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      expect(afterConsumption.events).toHaveLength(before.events.length + 1);
-      expect(afterConsumption.outbox).toHaveLength(before.outbox.length + 1);
-      expect((yield* consume(payload, evidence)).outcome).toBe('ALREADY_CONSUMED');
-      expect(yield* test.readRequest()).toEqual(persisted);
-      expect(yield* test.readProofs()).toEqual(beforeProofs);
-      const afterReplay = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      expect(afterReplay.events).toEqual(afterConsumption.events);
-      expect(afterReplay.outbox).toEqual(afterConsumption.outbox);
-      const otherOrder = { ...payload, orderRef: { ...payload.orderRef, resourceId: randomUUID() } };
-      const conflict = yield* Effect.result(consume(otherOrder, { ...evidence, orderRef: otherOrder.orderRef }));
-      assert.isOk(Result.isFailure(conflict));
-      expect(yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(conflict.failure)).toMatchObject({
-        code: 'COMMIT_CONFLICT',
-      });
-      expect(yield* test.readRequest()).toEqual(persisted);
-      expect(yield* test.readProofs()).toEqual(beforeProofs);
-      const afterConflict = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      expect(afterConflict.events).toEqual(afterConsumption.events);
-      expect(afterConflict.outbox).toEqual(afterConsumption.outbox);
-      expect(requests.some(({ url }) => url === `${shellUrl}/shell-super-app-api/auth/api-key/gateway-context`)).toBe(
-        true,
-      );
-      expect(
-        requests.some(({ url }) => url === `${orderUrl}/commerce-order-api/reads/committed-order-approval-evidence`),
-      ).toBe(true);
-    }),
-  ).pipe(Effect.provide(services)),
+        const evidence = yield* Schema.decodeUnknownEffect(CommittedOrderApprovalEvidenceResponseSchema)({
+          ...payload,
+          buyerPrincipalId: test.owner.principal.principalId,
+          commitmentCorrelationId: test.correlation,
+          committedAt: DateTime.formatIso(clock.at),
+          consumptionIntent: payload.idempotencyKey,
+          counterpartyRef: test.chain.counterpartyRef,
+          decisionBundleHash: test.approved.decision.decisionBundleHash,
+          decisionBundleVersion: test.approved.decision.decisionBundleVersion,
+          legalEntityId: test.owner.legalEntityId,
+          observedAt: DateTime.formatIso(clock.at),
+          proposalHash: test.chain.proposal.canonicalHash,
+          proposalRevisionRef: test.chain.proposal.proposalRevisionRef,
+          provenance: 'commerce.order.committed-approval-evidence.v1',
+          requestRef: test.approved.request.requestRef,
+          storefrontId: test.owner.storefrontId,
+          tenantId: test.owner.tenantId,
+          validUntil: DateTime.formatIso(DateTime.add(clock.at, { seconds: 25 })),
+        });
+        const sourceUrl = 'https://composition.order-consumption.test/active';
+        const shellUrl = 'https://shell.order-consumption.test';
+        const orderUrl = 'https://order.order-consumption.test';
+        const environment = ConfigProvider.orElse(
+          ConfigProvider.fromUnknown({
+            ONTOS_ACTION_TRANSACTION_IO_GUARD: true,
+            ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: sourceUrl,
+            ONTOS_COMMERCE_ORDER_API_BASE_URL: `${orderUrl}/commerce-order-api`,
+            ONTOS_GATEWAY_MODULE_API_KEY: 'test-owned-customer-context-module-key',
+            ONTOS_SHELL_GATEWAY_BASE_URL: `${shellUrl}/shell-super-app-api`,
+          }),
+          ConfigProvider.fromEnv(),
+        );
+        const sourceDocument = yield* Schema.encodeEffect(
+          Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
+        )(test.snapshot);
+        const compositionLayer = ActiveApplicationCompositionConfigLive.pipe(
+          Layer.provide(ActiveApplicationCompositionSourceLive.pipe(Layer.provide(FetchHttpClient.layer))),
+          Layer.provide(ConfigProvider.layer(environment)),
+        );
+        const requests: Request[] = [];
+        const buyer = test.owner.fixture.manager;
+        const orderForBuyer = { calledBy: 'commerce-order', subject: buyer };
+        const consume = (
+          candidate: typeof payload,
+          returnedEvidence: typeof evidence,
+          caller: { readonly calledBy?: string; readonly subject: typeof buyer },
+        ) =>
+          Effect.gen(function* executeRealConsumption() {
+            const body = yield* Schema.encodeEffect(CommittedOrderApprovalEvidenceResponseSchema)(returnedEvidence);
+            const fetch: typeof globalThis.fetch = async (target, init) => {
+              const request = new Request(target, init);
+              requests.push(request.clone());
+              if (request.url === sourceUrl) {
+                return new Response(sourceDocument, { headers: { 'content-type': 'application/json' } });
+              }
+              if (request.url === `${shellUrl}/shell-super-app-api/auth/delegated/gateway-context`) {
+                // Customer Context's own module credential, delegating the verified subject's assertion.
+                expect(request.headers.get('x-api-key')).toBe('test-owned-customer-context-module-key');
+                expect(await request.json()).toMatchObject({
+                  audience: 'commerce-order',
+                  legalEntityScope: 'subject',
+                  subject: { _tag: 'Assertion' },
+                });
+                return Response.json({
+                  apiBaseUrl: '/commerce-order-api',
+                  compositionRevision: test.snapshot.composition.revision,
+                  expiresAt: clock.epoch + 30,
+                  token: 'test-order-gateway-assertion',
+                });
+              }
+              expect(request.url).toBe(`${orderUrl}/commerce-order-api/reads/committed-order-approval-evidence`);
+              expect(request.headers.get('authorization')).toBe('Bearer test-order-gateway-assertion');
+              expect(await request.json()).toEqual({
+                finalBinding: candidate.finalBinding,
+                orderRef: candidate.orderRef,
+                revalidationRef: candidate.revalidationRef,
+              });
+              return Response.json(body);
+            };
+            const principal = yield* test.owner.authenticatedPrincipal(caller.subject, caller.calledBy);
+            expect(isVerifiedGatewayPrincipalContext(principal)).toBe(true);
+            expect(principal).toMatchObject({
+              authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+              authMethod: 'session',
+              legalEntityId: test.owner.legalEntityId,
+              principalId: caller.subject.principalId,
+              tenantId: test.owner.tenantId,
+            });
+            expect(readVerifiedGatewayActor(principal)?.appId).toBe(caller.calledBy);
+            return yield* Context.get(test.context, ActionRuntime)
+              .runAction({
+                payload: yield* Schema.encodeEffect(ConsumeOrderPurchaseApprovalPayloadSchema)(candidate),
+                principal,
+                registration: consumeOrderPurchaseApprovalAction,
+                transport: {
+                  correlationId: randomUUID(),
+                  idempotencyKey: randomUUID(),
+                  targetModuleKey: 'commerce.customer-context',
+                },
+              })
+              .pipe(
+                Effect.provideService(FetchHttpClient.Fetch, fetch),
+                Effect.provide(compositionLayer),
+                Effect.provide(FetchHttpClient.layer),
+                Effect.provideService(ConfigProvider.ConfigProvider, environment),
+                Effect.provideContext(test.context),
+              );
+          });
+        const beforeRequest = yield* test.readRequest();
+        const beforeProofs = yield* test.readProofs();
+        const before = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        // The buyer alone is not the Order service, and the Order service may act only for the approval's buyer.
+        for (const caller of [{ subject: buyer }, { calledBy: 'commerce-order', subject: test.owner.fixture.reader }]) {
+          const refused = yield* Effect.result(consume(payload, evidence, caller));
+          assert.isOk(Result.isFailure(refused));
+          expect(
+            yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(refused.failure),
+            `caller ${caller.calledBy ?? 'none'} for ${caller.subject.principalId}`,
+          ).toMatchObject({ code: caller.calledBy === undefined ? 'PERMISSION_DENIED' : 'COMMIT_CONFLICT' });
+          expect(yield* test.readRequest()).toEqual(beforeRequest);
+          expect(yield* test.readProofs()).toEqual(beforeProofs);
+        }
+        const wrongEvidence = yield* Effect.result(
+          consume(payload, { ...evidence, proposalHash: 'a'.repeat(64) }, orderForBuyer),
+        );
+        assert.isOk(Result.isFailure(wrongEvidence));
+        const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(wrongEvidence.failure);
+        expect(
+          failure.code,
+          `Order consumption rejection: ${failure.reason}; transport paths: ${requests.map(({ url }) => new URL(url).pathname).join(', ')}`,
+        ).toBe('COMMIT_CONFLICT');
+        expect(yield* test.readRequest()).toEqual(beforeRequest);
+        expect(yield* test.readProofs()).toEqual(beforeProofs);
+        const foreignProof = { ...payload, revalidationRef: { ...payload.revalidationRef, resourceId: randomUUID() } };
+        const wrongProof = yield* Effect.result(
+          consume(foreignProof, { ...evidence, revalidationRef: foreignProof.revalidationRef }, orderForBuyer),
+        );
+        assert.isOk(Result.isFailure(wrongProof));
+        // The unchanged native consumption routine hides unknown proofs with its canonical permission denial.
+        expect(yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(wrongProof.failure)).toMatchObject({
+          code: 'PERMISSION_DENIED',
+        });
+        expect(yield* test.readRequest()).toEqual(beforeRequest);
+        expect(yield* test.readProofs()).toEqual(beforeProofs);
+        const afterRefusal = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        expect(afterRefusal.events).toEqual(before.events);
+        expect(afterRefusal.outbox).toEqual(before.outbox);
+        const consumed = yield* consume(payload, evidence, orderForBuyer);
+        expect(consumed.outcome).toBe('CONSUMED');
+        expect(consumed.request.consumptionProofRef).toEqual(payload.revalidationRef);
+        const persisted = yield* test.readRequest();
+        const afterConsumption = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        expect(afterConsumption.events).toHaveLength(before.events.length + 1);
+        expect(afterConsumption.outbox).toHaveLength(before.outbox.length + 1);
+        expect((yield* consume(payload, evidence, orderForBuyer)).outcome).toBe('ALREADY_CONSUMED');
+        expect(yield* test.readRequest()).toEqual(persisted);
+        expect(yield* test.readProofs()).toEqual(beforeProofs);
+        const afterReplay = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        expect(afterReplay.events).toEqual(afterConsumption.events);
+        expect(afterReplay.outbox).toEqual(afterConsumption.outbox);
+        const otherOrder = { ...payload, orderRef: { ...payload.orderRef, resourceId: randomUUID() } };
+        const conflict = yield* Effect.result(
+          consume(otherOrder, { ...evidence, orderRef: otherOrder.orderRef }, orderForBuyer),
+        );
+        assert.isOk(Result.isFailure(conflict));
+        expect(yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(conflict.failure)).toMatchObject({
+          code: 'COMMIT_CONFLICT',
+        });
+        expect(yield* test.readRequest()).toEqual(persisted);
+        expect(yield* test.readProofs()).toEqual(beforeProofs);
+        const afterConflict = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        expect(afterConflict.events).toEqual(afterConsumption.events);
+        expect(afterConflict.outbox).toEqual(afterConsumption.outbox);
+        expect(
+          requests.some(({ url }) => url === `${shellUrl}/shell-super-app-api/auth/delegated/gateway-context`),
+        ).toBe(true);
+        expect(
+          requests.some(({ url }) => url === `${orderUrl}/commerce-order-api/reads/committed-order-approval-evidence`),
+        ).toBe(true);
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
 );
 
 type FreshProofScenario = Effect.Success<ReturnType<typeof scenario>>;
@@ -1424,6 +1459,7 @@ it.live(
         expect(after.outbox).toEqual(expect.arrayContaining(before.outbox));
       }),
     ).pipe(Effect.provide(services)),
+  120_000,
 );
 
 it.live(
@@ -1467,31 +1503,35 @@ it.live(
         expect(after.outbox).toEqual(expect.arrayContaining(before.outbox));
       }),
     ).pipe(Effect.provide(services)),
+  120_000,
 );
 
-it.live('refuses original I1 after the actual registered request wait crosses exclusive P1 expiry', () =>
-  Effect.scoped(
-    Effect.gen(function* registeredExpiryAfterWait() {
-      const test = yield* scenario();
-      const intent = randomUUID();
-      const first = yield* test.check(intent);
-      const original = yield* test.readProofs();
-      const held = yield* holdGenuineRequest(test);
-      const replay = yield* test.check(intent).pipe(Effect.result, Effect.forkScoped);
-      const pid = yield* waitForExactBlock(test, held.blocker, 'REQUEST', first.revalidation.validUntil);
-      yield* test.expire(first.revalidation.validUntil);
-      expect(yield* waitForExactBlock(test, held.blocker, 'REQUEST')).toBe(pid);
-      yield* Deferred.succeed(held.release, true);
-      yield* Fiber.join(held.holder);
-      const result = yield* Fiber.join(replay);
-      expect(Result.isFailure(result)).toBe(true);
-      if (Result.isFailure(result)) {
-        const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(result.failure);
-        expect(failure.code).toBe('OWNER_CONFIRMATION_EXPIRED');
-      }
-      expect(yield* test.readProofs()).toEqual(original);
-    }),
-  ).pipe(Effect.provide(services)),
+it.live(
+  'refuses original I1 after the actual registered request wait crosses exclusive P1 expiry',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* registeredExpiryAfterWait() {
+        const test = yield* scenario();
+        const intent = randomUUID();
+        const first = yield* test.check(intent);
+        const original = yield* test.readProofs();
+        const held = yield* holdGenuineRequest(test);
+        const replay = yield* test.check(intent).pipe(Effect.result, Effect.forkScoped);
+        const pid = yield* waitForExactBlock(test, held.blocker, 'REQUEST', first.revalidation.validUntil);
+        yield* test.expire(first.revalidation.validUntil);
+        expect(yield* waitForExactBlock(test, held.blocker, 'REQUEST')).toBe(pid);
+        yield* Deferred.succeed(held.release, true);
+        yield* Fiber.join(held.holder);
+        const result = yield* Fiber.join(replay);
+        expect(Result.isFailure(result)).toBe(true);
+        if (Result.isFailure(result)) {
+          const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(result.failure);
+          expect(failure.code).toBe('OWNER_CONFIRMATION_EXPIRED');
+        }
+        expect(yield* test.readProofs()).toEqual(original);
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
 );
 
 for (const state of ['OLD_CLOCK', 'CURRENT'] as const) {
@@ -1551,29 +1591,32 @@ for (const state of ['OLD_CLOCK', 'CURRENT'] as const) {
   );
 }
 
-it.live('rejects fresh proof after actual buyer revocation and retains committed P1 history', () =>
-  Effect.scoped(
-    Effect.gen(function* revokedBuyerBetweenProofs() {
-      const test = yield* scenario();
-      const first = yield* test.check(randomUUID());
-      const original = yield* test.readProofs();
-      const request = yield* test.readRequest();
-      yield* test.expire(first.revalidation.validUntil);
-      const revoked = yield* test.chain.revokeBuyer();
-      expect(revoked.outcome).toBe('REVOKED');
-      expect(revoked.grant.state).toBe('REVOKED');
-      // Revocation is now one owner commit. No worker settlement or pending second permission store exists.
-      const entries = test.authorityEntries();
-      const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
-        yield* Effect.flip(test.check(randomUUID())),
-      );
-      expect(failure.code).toBe('BUYER_PERMISSION_DENIED');
-      // Released preparation rejects the now-denied local buyer before asking the final owner.
-      expect(test.authorityEntries()).toBe(entries);
-      expect(yield* test.readProofs()).toEqual(original);
-      expect(yield* test.readRequest()).toEqual(request);
-    }),
-  ).pipe(Effect.provide(services)),
+it.live(
+  'rejects fresh proof after actual buyer revocation and retains committed P1 history',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* revokedBuyerBetweenProofs() {
+        const test = yield* scenario();
+        const first = yield* test.check(randomUUID());
+        const original = yield* test.readProofs();
+        const request = yield* test.readRequest();
+        yield* test.expire(first.revalidation.validUntil);
+        const revoked = yield* test.chain.revokeBuyer();
+        expect(revoked.outcome).toBe('REVOKED');
+        expect(revoked.grant.state).toBe('REVOKED');
+        // Revocation is now one owner commit. No worker settlement or pending second permission store exists.
+        const entries = test.authorityEntries();
+        const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
+          yield* Effect.flip(test.check(randomUUID())),
+        );
+        expect(failure.code).toBe('BUYER_PERMISSION_DENIED');
+        // Released preparation rejects the now-denied local buyer before asking the final owner.
+        expect(test.authorityEntries()).toBe(entries);
+        expect(yield* test.readProofs()).toEqual(original);
+        expect(yield* test.readRequest()).toEqual(request);
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
 );
 
 for (const change of ['POLICY', 'PROFILE'] as const) {
@@ -1689,15 +1732,13 @@ for (const scope of ['TENANT', 'STOREFRONT'] as const) {
                 },
           ),
         );
-        if (scope === 'TENANT') {
-          const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(refused);
-          expect(failure.code).toBe('PERMISSION_DENIED');
-          expect(failure.reason).toBe('Revalidation scope must match trusted Counterparty Storefront context');
-          expect(failure.retryable).toBe(false);
-        } else {
-          const failure = yield* Schema.decodeUnknownEffect(ActionPermissionCheckError)(refused);
-          expect(failure.reason).toBe('The declared business permission target does not match trusted scope');
-        }
+        // Both mismatches are the governed Action's own trusted-scope guard (O62): the runner no
+        // longer validates a legacy business-permission target, so the same domain rejection answers
+        // a wrong Tenant and a wrong Storefront before the Current authority is consulted.
+        const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(refused);
+        expect(failure.code).toBe('PERMISSION_DENIED');
+        expect(failure.reason).toBe('Revalidation scope must match trusted Counterparty Storefront context');
+        expect(failure.retryable).toBe(false);
         expect(test.authorityEntries()).toBe(entries);
         expect(yield* test.readProofs()).toEqual(original);
         expect(yield* test.readRequest()).toEqual(request);
@@ -1706,171 +1747,180 @@ for (const scope of ['TENANT', 'STOREFRONT'] as const) {
   );
 }
 
-it.live('rolls back a genuinely inserted fresh owner proof when its enclosing transaction fails', () =>
-  Effect.scoped(
-    Effect.gen(function* nativeFreshProofRollback() {
-      const test = yield* scenario();
-      const first = yield* test.check(randomUUID());
-      const original = yield* test.readProofs();
-      const request = yield* test.readRequest();
-      yield* test.expire(first.revalidation.validUntil);
-      const intent = randomUUID();
-      test.setObservationWindow(extendedObservationSeconds);
-      const frame = yield* test.prepareReplayFrame(intent);
-      const invocation = first.revalidation.evidence.actionInvocationId;
-      assert.isOk(invocation !== undefined);
-      // Owner component rollback control: actual Current factory and native INSERT, then an explicit
-      // TEST enclosing-transaction failure. Reuse genuine P1 invocation metadata only inside this
-      // rollback-only component control; no new registered invocation/Order provenance is claimed.
-      const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
-        yield* Effect.flip(
-          test.owner.fixture
-            .prepareOwner(
-              (transaction, scope) =>
-                Effect.gen(function* insertThenAbort() {
-                  const workflow = yield* purchasingApprovalWorkflowForScope(transaction, scope);
-                  const staged = yield* workflow.forActionInvocation(invocation).revalidate(frame);
-                  expect(staged.outcome).toBe('APPROVAL_VALID');
-                  expect(staged.revalidation.revalidationRef.resourceId).not.toBe(
-                    first.revalidation.revalidationRef.resourceId,
-                  );
-                  return yield* Effect.fail(
-                    new PurchasingApprovalRejected({
-                      code: 'CURRENT_STATE_INDETERMINATE',
-                      reason: 'TEST abort after successful native fresh-proof INSERT',
-                      retryable: true,
-                    }),
-                  );
-                }),
-              'required',
-            )
-            .pipe(Effect.provideContext(test.context)),
-        ),
-      );
-      expect(failure.reason).toBe('TEST abort after successful native fresh-proof INSERT');
-      expect(yield* test.readProofs()).toEqual(original);
-      expect(yield* test.readRequest()).toEqual(request);
-      // The rolled-back intent is reusable: it can subsequently commit exactly one new P2.
-      const retried = yield* test.check(intent);
-      expect(retried.outcome).toBe('APPROVAL_VALID');
-      const committed = yield* test.readProofs();
-      expect(committed).toHaveLength(2);
-      expect(committed.find((row) => row.revalidationResourceId === original[0]?.revalidationResourceId)).toEqual(
-        original[0],
-      );
-      expect(yield* test.readRequest()).toEqual(request);
-    }),
-  ).pipe(Effect.provide(services)),
+it.live(
+  'rolls back a genuinely inserted fresh owner proof when its enclosing transaction fails',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* nativeFreshProofRollback() {
+        const test = yield* scenario();
+        const first = yield* test.check(randomUUID());
+        const original = yield* test.readProofs();
+        const request = yield* test.readRequest();
+        yield* test.expire(first.revalidation.validUntil);
+        const intent = randomUUID();
+        test.setObservationWindow(extendedObservationSeconds);
+        const frame = yield* test.prepareReplayFrame(intent);
+        const invocation = first.revalidation.evidence.actionInvocationId;
+        assert.isOk(invocation !== undefined);
+        // Owner component rollback control: actual Current factory and native INSERT, then an explicit
+        // TEST enclosing-transaction failure. Reuse genuine P1 invocation metadata only inside this
+        // rollback-only component control; no new registered invocation/Order provenance is claimed.
+        const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
+          yield* Effect.flip(
+            test.owner.fixture
+              .prepareOwner(
+                (transaction, scope) =>
+                  Effect.gen(function* insertThenAbort() {
+                    const workflow = yield* purchasingApprovalWorkflowForScope(transaction, scope);
+                    const staged = yield* workflow.forActionInvocation(invocation).revalidate(frame);
+                    expect(staged.outcome).toBe('APPROVAL_VALID');
+                    expect(staged.revalidation.revalidationRef.resourceId).not.toBe(
+                      first.revalidation.revalidationRef.resourceId,
+                    );
+                    return yield* Effect.fail(
+                      new PurchasingApprovalRejected({
+                        code: 'CURRENT_STATE_INDETERMINATE',
+                        reason: 'TEST abort after successful native fresh-proof INSERT',
+                        retryable: true,
+                      }),
+                    );
+                  }),
+                'required',
+              )
+              .pipe(Effect.provideContext(test.context)),
+          ),
+        );
+        expect(failure.reason).toBe('TEST abort after successful native fresh-proof INSERT');
+        expect(yield* test.readProofs()).toEqual(original);
+        expect(yield* test.readRequest()).toEqual(request);
+        // The rolled-back intent is reusable: it can subsequently commit exactly one new P2.
+        const retried = yield* test.check(intent);
+        expect(retried.outcome).toBe('APPROVAL_VALID');
+        const committed = yield* test.readProofs();
+        expect(committed).toHaveLength(2);
+        expect(committed.find((row) => row.revalidationResourceId === original[0]?.revalidationResourceId)).toEqual(
+          original[0],
+        );
+        expect(yield* test.readRequest()).toEqual(request);
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
 );
 
-it.live('reads exact fresh P2 and retained expired P1 through governed buyer evidence without renewing history', () =>
-  Effect.scoped(
-    Effect.gen(function* governedBuyerProofHistory() {
-      // Governed lifecycle and CCC owner-read proof only. Final authority remains the scenario's
-      // explicit TEST seam: no production HTTP, genuine final-owner issuance or full acceptance.
-      const test = yield* scenario();
-      const first = yield* test.check(randomUUID());
-      const original = yield* test.readProofs();
-      const request = yield* test.readRequest();
-      yield* test.expire(first.revalidation.validUntil);
-      test.setObservationWindow(extendedObservationSeconds);
-      const second = yield* test.check(randomUUID());
-      expect(second.revalidation.revalidationRef).not.toEqual(first.revalidation.revalidationRef);
-      expect(DateTime.isGreaterThan(second.revalidation.checkedAt, first.revalidation.validUntil)).toBe(true);
-      const proofs = yield* test.readProofs();
-      expect(proofs).toHaveLength(2);
-      expect(proofs.find((row) => row.revalidationResourceId === original[0]?.revalidationResourceId)).toEqual(
-        original[0],
-      );
-      const before = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      const authorityEntries = test.authorityEntries();
-      const reader = Context.get(test.context, ReadRuntime);
-      const read = (input: OrderCommitmentApprovalEvidenceRequest) =>
-        Effect.gen(function* governedEvidenceRead() {
-          return yield* reader
-            .runRead({
-              audience: 'commerce-customer-context',
-              input: yield* Schema.encodeEffect(OrderCommitmentApprovalEvidenceRequestSchema)(input),
-              // Fresh TEST-signed, verified and redeemed principal for every read, including refusals.
-              principal: yield* test.owner.authenticatedPrincipal(),
-              registration: orderCommitmentApprovalEvidenceRead,
-              transport: { correlationId: randomUUID(), targetModuleKey: 'commerce.customer-context' },
-            })
-            .pipe(Effect.provideContext(test.context));
+it.live(
+  'reads exact fresh P2 and retained expired P1 through governed buyer evidence without renewing history',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* governedBuyerProofHistory() {
+        // Governed lifecycle and CCC owner-read proof only. Final authority remains the scenario's
+        // explicit TEST seam: no production HTTP, genuine final-owner issuance or full acceptance.
+        const test = yield* scenario();
+        const first = yield* test.check(randomUUID());
+        const original = yield* test.readProofs();
+        const request = yield* test.readRequest();
+        yield* test.expire(first.revalidation.validUntil);
+        test.setObservationWindow(extendedObservationSeconds);
+        const second = yield* test.check(randomUUID());
+        expect(second.revalidation.revalidationRef).not.toEqual(first.revalidation.revalidationRef);
+        expect(DateTime.isGreaterThan(second.revalidation.checkedAt, first.revalidation.validUntil)).toBe(true);
+        const proofs = yield* test.readProofs();
+        expect(proofs).toHaveLength(2);
+        expect(proofs.find((row) => row.revalidationResourceId === original[0]?.revalidationResourceId)).toEqual(
+          original[0],
+        );
+        const before = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        const authorityEntries = test.authorityEntries();
+        const reader = Context.get(test.context, ReadRuntime);
+        const read = (input: OrderCommitmentApprovalEvidenceRequest) =>
+          Effect.gen(function* governedEvidenceRead() {
+            return yield* reader
+              .runRead({
+                audience: 'commerce-customer-context',
+                input: yield* Schema.encodeEffect(OrderCommitmentApprovalEvidenceRequestSchema)(input),
+                // Fresh TEST-signed, verified and redeemed principal for every read, including refusals.
+                principal: yield* test.owner.authenticatedPrincipal(),
+                registration: orderCommitmentApprovalEvidenceRead,
+                transport: { correlationId: randomUUID(), targetModuleKey: 'commerce.customer-context' },
+              })
+              .pipe(Effect.provideContext(test.context));
+          });
+        const input = yield* Schema.decodeUnknownEffect(OrderCommitmentApprovalEvidenceRequestSchema)({
+          counterpartyRef: test.chain.counterpartyRef,
+          finalBinding: test.binding,
+          operation: 'VERIFY_PROOF',
+          requestRef: test.approved.request.requestRef,
+          revalidationRef: second.revalidation.revalidationRef,
+          storefrontId: test.owner.storefrontId,
         });
-      const input = yield* Schema.decodeUnknownEffect(OrderCommitmentApprovalEvidenceRequestSchema)({
-        counterpartyRef: test.chain.counterpartyRef,
-        finalBinding: test.binding,
-        operation: 'VERIFY_PROOF',
-        requestRef: test.approved.request.requestRef,
-        revalidationRef: second.revalidation.revalidationRef,
-        storefrontId: test.owner.storefrontId,
-      });
-      assert.isOk(input.operation === 'VERIFY_PROOF');
-      const fresh = yield* read(input);
-      assert.isOk(fresh.operation === 'VERIFY_PROOF');
-      expect(fresh.proof).toEqual({
-        checkedAt: second.revalidation.checkedAt,
-        evidence: second.revalidation.evidence,
-        proposalRevisionRef: second.revalidation.proposalRevisionRef,
-        requestRef: input.requestRef,
-        revalidationRef: second.revalidation.revalidationRef,
-        status: second.revalidation.status,
-        validUntil: second.revalidation.validUntil,
-      });
-      expect(fresh.proposal).toEqual(test.chain.proposal);
-      expect(fresh.request).toEqual(test.approved.request);
-      const historical = yield* read({ ...input, revalidationRef: first.revalidation.revalidationRef });
-      assert.isOk(historical.operation === 'VERIFY_PROOF');
-      expect(historical.proof).toEqual({
-        checkedAt: first.revalidation.checkedAt,
-        evidence: first.revalidation.evidence,
-        proposalRevisionRef: first.revalidation.proposalRevisionRef,
-        requestRef: input.requestRef,
-        revalidationRef: first.revalidation.revalidationRef,
-        status: first.revalidation.status,
-        validUntil: first.revalidation.validUntil,
-      });
-      expect(historical.request).toEqual(fresh.request);
-      expect(historical.proposal).toEqual(fresh.proposal);
-      // APPROVAL_VALID is the retained issuance status, not a claim that expired P1 is Current.
-      expect(DateTime.isGreaterThanOrEqualTo((yield* test.owner.nativeNow()).at, historical.proof.validUntil)).toBe(
-        true,
-      );
-      for (const patch of [
-        { revalidationRef: { ...input.revalidationRef, resourceId: randomUUID() } },
-        { finalBinding: { ...input.finalBinding, bundleHash: 'e'.repeat(64) } },
-        { requestRef: { ...input.requestRef, tenantId: randomUUID() } },
-      ]) {
-        const mismatched = yield* Schema.decodeUnknownEffect(OrderCommitmentApprovalEvidenceRequestSchema)({
+        assert.isOk(input.operation === 'VERIFY_PROOF');
+        const fresh = yield* read(input);
+        assert.isOk(fresh.operation === 'VERIFY_PROOF');
+        expect(fresh.proof).toEqual({
+          checkedAt: second.revalidation.checkedAt,
+          evidence: second.revalidation.evidence,
+          proposalRevisionRef: second.revalidation.proposalRevisionRef,
+          requestRef: input.requestRef,
+          revalidationRef: second.revalidation.revalidationRef,
+          status: second.revalidation.status,
+          validUntil: second.revalidation.validUntil,
+        });
+        expect(fresh.proposal).toEqual(test.chain.proposal);
+        expect(fresh.request).toEqual(test.approved.request);
+        const historical = yield* read({ ...input, revalidationRef: first.revalidation.revalidationRef });
+        assert.isOk(historical.operation === 'VERIFY_PROOF');
+        expect(historical.proof).toEqual({
+          checkedAt: first.revalidation.checkedAt,
+          evidence: first.revalidation.evidence,
+          proposalRevisionRef: first.revalidation.proposalRevisionRef,
+          requestRef: input.requestRef,
+          revalidationRef: first.revalidation.revalidationRef,
+          status: first.revalidation.status,
+          validUntil: first.revalidation.validUntil,
+        });
+        expect(historical.request).toEqual(fresh.request);
+        expect(historical.proposal).toEqual(fresh.proposal);
+        // APPROVAL_VALID is the retained issuance status, not a claim that expired P1 is Current.
+        expect(DateTime.isGreaterThanOrEqualTo((yield* test.owner.nativeNow()).at, historical.proof.validUntil)).toBe(
+          true,
+        );
+        for (const patch of [
+          { revalidationRef: { ...input.revalidationRef, resourceId: randomUUID() } },
+          { finalBinding: { ...input.finalBinding, bundleHash: 'e'.repeat(64) } },
+          { requestRef: { ...input.requestRef, tenantId: randomUUID() } },
+        ]) {
+          const mismatched = yield* Schema.decodeUnknownEffect(OrderCommitmentApprovalEvidenceRequestSchema)({
+            ...input,
+            ...patch,
+          });
+          const failure = yield* Schema.decodeUnknownEffect(ReadHandlerNotFound)(yield* Effect.flip(read(mismatched)));
+          expect(failure.code).toBe('read_handler_not_found');
+          expect(failure.reason).toBe('Approval evidence is unavailable');
+        }
+        const wrongStorefront = yield* Schema.decodeUnknownEffect(OrderCommitmentApprovalEvidenceRequestSchema)({
           ...input,
-          ...patch,
+          storefrontId: 'different-native-approval-storefront',
         });
-        const failure = yield* Schema.decodeUnknownEffect(ReadHandlerNotFound)(yield* Effect.flip(read(mismatched)));
-        expect(failure.code).toBe('read_handler_not_found');
-        expect(failure.reason).toBe('Approval evidence is unavailable');
-      }
-      const wrongStorefront = yield* Schema.decodeUnknownEffect(OrderCommitmentApprovalEvidenceRequestSchema)({
-        ...input,
-        storefrontId: 'different-native-approval-storefront',
-      });
-      const scopeFailure = yield* Schema.decodeUnknownEffect(ReadHandlerExecutionError)(
-        yield* Effect.flip(read(wrongStorefront)),
-      );
-      expect(scopeFailure.code).toBe('read_handler_execution_failed');
-      expect(scopeFailure.reason).toBe('The declared read permission target is invalid');
-      expect(test.authorityEntries()).toBe(authorityEntries);
-      expect(yield* test.readProofs()).toEqual(proofs);
-      expect(yield* test.readRequest()).toEqual(request);
-      const after = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      // Core must durably record the two allowed reads. No new business/Action effects are issued.
-      expect(after.accesses).toHaveLength(before.accesses.length + 2);
-      expect(after.invocations).toEqual(before.invocations);
-      expect(after.audits).toEqual(before.audits);
-      expect(after.events).toEqual(before.events);
-      expect(after.outbox).toEqual(before.outbox);
-    }),
-  ).pipe(Effect.provide(services)),
+        // The v2 owner overlay checks the counterparty's own grant, which is scope-wide here; a
+        // Storefront that does not match the retained proposal is therefore indistinguishable from
+        // an unknown intent, exactly like the tenant and revision mismatches above (O62, O70).
+        const scopeFailure = yield* Schema.decodeUnknownEffect(ReadHandlerNotFound)(
+          yield* Effect.flip(read(wrongStorefront)),
+        );
+        expect(scopeFailure.code).toBe('read_handler_not_found');
+        expect(scopeFailure.reason).toBe('Approval evidence is unavailable');
+        expect(test.authorityEntries()).toBe(authorityEntries);
+        expect(yield* test.readProofs()).toEqual(proofs);
+        expect(yield* test.readRequest()).toEqual(request);
+        const after = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        // Core must durably record the two allowed reads. No new business/Action effects are issued.
+        expect(after.accesses).toHaveLength(before.accesses.length + 2);
+        expect(after.invocations).toEqual(before.invocations);
+        expect(after.audits).toEqual(before.audits);
+        expect(after.events).toEqual(before.events);
+        expect(after.outbox).toEqual(before.outbox);
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
 );
 
 it.live(
@@ -1984,23 +2034,23 @@ it.live(
           ...input,
           storefrontId: 'different-native-approval-storefront',
         });
-        const refused = yield* Schema.decodeUnknownEffect(ReadHandlerExecutionError)(
-          yield* Effect.flip(read(wrongStorefront)),
-        );
-        expect(refused.reason).toBe('The declared read permission target is invalid');
+        // The v2 owner overlay checks the counterparty's own scope-wide grant, so a Storefront that
+        // does not match the retained intent recovers exactly as an unknown intent: NOT_FOUND, with
+        // no effect on history (O62, O70).
+        expect(yield* read(wrongStorefront)).toEqual(absent);
         expect(test.authorityEntries()).toBe(entries);
         expect(yield* test.readProofs()).toEqual(proofs);
         expect(yield* test.readRequest()).toEqual(requests);
         const after = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-        // Seven successful governed results: two FOUND and five indistinguishable NOT_FOUND.
+        // Eight successful governed results: two FOUND and six indistinguishable NOT_FOUND.
         // Core additionally records denied-read evidence for conflicts. No new Action effects.
         const priorAccessIds = new Set(before.accesses.map((access) => access.dataAccessEventId));
         const recoveryReads = after.accesses.filter(
           (access) => !priorAccessIds.has(access.dataAccessEventId) && access.outcome === 'allowed',
         );
-        expect(recoveryReads).toHaveLength(7);
+        expect(recoveryReads).toHaveLength(8);
         expect(recoveryReads.filter((access) => access.resultCount === 1)).toHaveLength(2);
-        expect(recoveryReads.filter((access) => access.resultCount === 0)).toHaveLength(5);
+        expect(recoveryReads.filter((access) => access.resultCount === 0)).toHaveLength(6);
         for (const access of recoveryReads) {
           expect(access.evidencePolicyKey).toBe(
             orderCommitmentApprovalEvidenceRead.descriptor.evidencePolicy.policyKey,
@@ -2016,67 +2066,72 @@ it.live(
         expect(after.outbox).toEqual(before.outbox);
       }),
     ).pipe(Effect.provide(services)),
+  120_000,
 );
 
-it.live('component consumption selects exact P2 once, retains P1 and rejects competing proof and Order claims', () =>
-  Effect.scoped(
-    Effect.gen(function* exactP2NativeConsumptionComponent() {
-      const test = yield* scenario('CURRENT', 60_000, true);
-      const p1 = yield* test.check(randomUUID());
-      yield* test.expire(p1.revalidation.validUntil);
-      test.setObservationWindow(extendedObservationSeconds);
-      const p2 = yield* test.check(randomUUID());
-      const proofs = yield* test.readProofs();
-      const before = yield* test.readRequest();
-      const beforeEffects = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      const claim = yield* test.componentConsumptionClaim(p2.revalidation.revalidationRef);
-      const sessionDenied = yield* Schema.decodeUnknownEffect(
-        Schema.Struct({ _tag: Schema.Literal('OperationAuthenticationRequired'), reason: Schema.String }),
-      )(yield* Effect.flip(test.consumeComponent(claim, false)));
-      expect(sessionDenied.reason).toBe('The authenticated principal subject type is not valid');
-      const stale = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
-        yield* Effect.flip(test.consumeComponent({ ...claim, revalidationRef: p1.revalidation.revalidationRef })),
-      );
-      expect(stale.code, stale.reason).toBe('PERMISSION_DENIED');
-      expect(yield* test.readRequest()).toEqual(before);
-      expect(yield* test.readProofs()).toEqual(proofs);
-      const consumed = yield* test.consumeComponent(claim);
-      expect(consumed.outcome).toBe('CONSUMED');
-      expect(consumed.request.consumptionProofRef).toEqual(p2.revalidation.revalidationRef);
-      expect(consumed.request.requestRevision).toBe(test.approved.request.requestRevision + 1);
-      const stored = yield* test.readRequest();
-      const replay = yield* test.consumeComponent(claim);
-      expect(replay.outcome).toBe('ALREADY_CONSUMED');
-      expect(replay.request).toEqual(consumed.request);
-      const conflict = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
-        yield* Effect.flip(
-          test.consumeComponent({ ...claim, orderRef: { ...claim.orderRef, resourceId: randomUUID() } }),
-        ),
-      );
-      expect(conflict.code).toBe('COMMIT_CONFLICT');
-      const competing = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
-        yield* Effect.flip(test.consumeComponent({ ...claim, revalidationRef: p1.revalidation.revalidationRef })),
-      );
-      expect(competing.code).toBe('COMMIT_CONFLICT');
-      const afterConsumption = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      const consumedEvents = afterConsumption.events.filter(
-        (event) => event.eventType === 'commerce.customer-context.purchase-approval-consumed.v1',
-      );
-      expect(consumedEvents).toHaveLength(1);
-      expect(afterConsumption.events).toHaveLength(beforeEffects.events.length + 1);
-      expect(afterConsumption.outbox).toHaveLength(beforeEffects.outbox.length + 1);
-      const afterConsumed = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
-        yield* Effect.flip(test.check(randomUUID())),
-      );
-      expect(afterConsumed.code).toBe('CURRENT_STATE_INDETERMINATE');
-      expect(afterConsumed.retryable).toBe(true);
-      const afterRefusal = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      expect(afterRefusal.events).toEqual(afterConsumption.events);
-      expect(afterRefusal.outbox).toEqual(afterConsumption.outbox);
-      expect(yield* test.readRequest()).toEqual(stored);
-      expect(yield* test.readProofs()).toEqual(proofs);
-    }),
-  ).pipe(Effect.provide(services)),
+it.live(
+  'component consumption selects exact P2 once, retains P1 and rejects competing proof and Order claims',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* exactP2NativeConsumptionComponent() {
+        const test = yield* scenario('CURRENT', 60_000, true);
+        const p1 = yield* test.check(randomUUID());
+        yield* test.expire(p1.revalidation.validUntil);
+        test.setObservationWindow(extendedObservationSeconds);
+        const p2 = yield* test.check(randomUUID());
+        const proofs = yield* test.readProofs();
+        const before = yield* test.readRequest();
+        const beforeEffects = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        const claim = yield* test.componentConsumptionClaim(p2.revalidation.revalidationRef);
+        // The buyer alone is not the Order module, so the consumption seam refuses it before any owner work.
+        const buyerAlone = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
+          yield* Effect.flip(test.consumeComponent(claim, false)),
+        );
+        expect(buyerAlone.code, buyerAlone.reason).toBe('PERMISSION_DENIED');
+        const stale = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
+          yield* Effect.flip(test.consumeComponent({ ...claim, revalidationRef: p1.revalidation.revalidationRef })),
+        );
+        expect(stale.code, stale.reason).toBe('PERMISSION_DENIED');
+        expect(yield* test.readRequest()).toEqual(before);
+        expect(yield* test.readProofs()).toEqual(proofs);
+        const consumed = yield* test.consumeComponent(claim);
+        expect(consumed.outcome).toBe('CONSUMED');
+        expect(consumed.request.consumptionProofRef).toEqual(p2.revalidation.revalidationRef);
+        expect(consumed.request.requestRevision).toBe(test.approved.request.requestRevision + 1);
+        const stored = yield* test.readRequest();
+        const replay = yield* test.consumeComponent(claim);
+        expect(replay.outcome).toBe('ALREADY_CONSUMED');
+        expect(replay.request).toEqual(consumed.request);
+        const conflict = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
+          yield* Effect.flip(
+            test.consumeComponent({ ...claim, orderRef: { ...claim.orderRef, resourceId: randomUUID() } }),
+          ),
+        );
+        expect(conflict.code).toBe('COMMIT_CONFLICT');
+        const competing = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
+          yield* Effect.flip(test.consumeComponent({ ...claim, revalidationRef: p1.revalidation.revalidationRef })),
+        );
+        expect(competing.code).toBe('COMMIT_CONFLICT');
+        const afterConsumption = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        const consumedEvents = afterConsumption.events.filter(
+          (event) => event.eventType === 'commerce.customer-context.purchase-approval-consumed.v1',
+        );
+        expect(consumedEvents).toHaveLength(1);
+        expect(afterConsumption.events).toHaveLength(beforeEffects.events.length + 1);
+        expect(afterConsumption.outbox).toHaveLength(beforeEffects.outbox.length + 1);
+        const afterConsumed = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
+          yield* Effect.flip(test.check(randomUUID())),
+        );
+        expect(afterConsumed.code).toBe('CURRENT_STATE_INDETERMINATE');
+        expect(afterConsumed.retryable).toBe(true);
+        const afterRefusal = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        expect(afterRefusal.events).toEqual(afterConsumption.events);
+        expect(afterRefusal.outbox).toEqual(afterConsumption.outbox);
+        expect(yield* test.readRequest()).toEqual(stored);
+        expect(yield* test.readProofs()).toEqual(proofs);
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
 );
 
 it.live(
@@ -2117,350 +2172,369 @@ it.live(
   120_000,
 );
 
-it.live('component consumption rejects mismatched evidence without effects and still accepts exact P2', () =>
-  Effect.scoped(
-    Effect.gen(function* consumptionMismatchMatrix() {
-      const test = yield* scenario('CURRENT', 60_000, true);
-      const p1 = yield* test.check(randomUUID());
-      yield* test.expire(p1.revalidation.validUntil);
-      test.setObservationWindow(extendedObservationSeconds);
-      const p2 = yield* test.check(randomUUID());
-      const claim = yield* test.componentConsumptionClaim(p2.revalidation.revalidationRef);
-      const proofs = yield* test.readProofs();
-      const request = yield* test.readRequest();
-      const before = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      const otherBundle = yield* Schema.decodeUnknownEffect(PurchaseApprovalFinalBindingSchema)({
-        ...test.binding,
-        bundleRef: { ...test.binding.bundleRef, resourceId: randomUUID() },
-      });
-      const otherAttempt = yield* Schema.decodeUnknownEffect(PurchaseApprovalFinalBindingSchema)({
-        ...test.binding,
-        attemptRef: { ...test.binding.attemptRef, resourceId: randomUUID() },
-      });
-      const controls: readonly {
-        readonly code: PurchasingApprovalRejected['code'];
-        readonly label: string;
-        readonly patch: Partial<ConsumePurchaseApprovalInput>;
-      }[] = [
-        {
-          code: 'CURRENT_STATE_INDETERMINATE',
-          label: 'request',
-          patch: { requestRef: { ...claim.requestRef, resourceId: randomUUID() } },
-        },
-        {
-          code: 'PERMISSION_DENIED',
-          label: 'proposal',
-          patch: { proposalRevisionRef: { ...claim.proposalRevisionRef, resourceId: randomUUID() } },
-        },
-        { code: 'PERMISSION_DENIED', label: 'Decision hash', patch: { decisionBundleHash: 'e'.repeat(64) } },
-        { code: 'PERMISSION_DENIED', label: 'correlation', patch: { commitmentCorrelationId: randomUUID() } },
-        {
-          code: 'PERMISSION_DENIED',
-          label: 'Bundle',
-          patch: {
-            finalBinding: otherBundle,
+it.live(
+  'component consumption rejects mismatched evidence without effects and still accepts exact P2',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* consumptionMismatchMatrix() {
+        const test = yield* scenario('CURRENT', 60_000, true);
+        const p1 = yield* test.check(randomUUID());
+        yield* test.expire(p1.revalidation.validUntil);
+        test.setObservationWindow(extendedObservationSeconds);
+        const p2 = yield* test.check(randomUUID());
+        const claim = yield* test.componentConsumptionClaim(p2.revalidation.revalidationRef);
+        const proofs = yield* test.readProofs();
+        const request = yield* test.readRequest();
+        const before = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        const otherBundle = yield* Schema.decodeUnknownEffect(PurchaseApprovalFinalBindingSchema)({
+          ...test.binding,
+          bundleRef: { ...test.binding.bundleRef, resourceId: randomUUID() },
+        });
+        const otherAttempt = yield* Schema.decodeUnknownEffect(PurchaseApprovalFinalBindingSchema)({
+          ...test.binding,
+          attemptRef: { ...test.binding.attemptRef, resourceId: randomUUID() },
+        });
+        const controls: readonly {
+          readonly code: PurchasingApprovalRejected['code'];
+          readonly label: string;
+          readonly patch: Partial<ConsumePurchaseApprovalInput>;
+        }[] = [
+          {
+            code: 'CURRENT_STATE_INDETERMINATE',
+            label: 'request',
+            patch: { requestRef: { ...claim.requestRef, resourceId: randomUUID() } },
           },
-        },
-        {
-          code: 'PERMISSION_DENIED',
-          label: 'Attempt',
-          patch: {
-            finalBinding: otherAttempt,
+          {
+            code: 'PERMISSION_DENIED',
+            label: 'proposal',
+            patch: { proposalRevisionRef: { ...claim.proposalRevisionRef, resourceId: randomUUID() } },
           },
-        },
-        {
-          code: 'PERMISSION_DENIED',
-          label: 'Bundle hash',
-          patch: { finalBinding: { ...test.binding, bundleHash: 'e'.repeat(64) } },
-        },
-        {
-          code: 'PERMISSION_DENIED',
-          label: 'unknown proof',
-          patch: { revalidationRef: { ...p2.revalidation.revalidationRef, resourceId: randomUUID() } },
-        },
-        {
-          code: 'PERMISSION_DENIED',
-          label: 'foreign proof',
-          patch: { revalidationRef: { ...p2.revalidation.revalidationRef, tenantId: randomUUID() } },
-        },
-        { code: 'PERMISSION_DENIED', label: 'expired P1', patch: { revalidationRef: p1.revalidation.revalidationRef } },
-      ];
-      for (const control of controls) {
-        const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
-          yield* Effect.flip(test.consumeComponent({ ...claim, ...control.patch })),
-        );
-        expect(failure.code, `${control.label}: ${failure.reason}`).toBe(control.code);
-        expect(yield* test.readRequest(), control.label).toEqual(request);
-        expect(yield* test.readProofs(), control.label).toEqual(proofs);
+          { code: 'PERMISSION_DENIED', label: 'Decision hash', patch: { decisionBundleHash: 'e'.repeat(64) } },
+          { code: 'PERMISSION_DENIED', label: 'correlation', patch: { commitmentCorrelationId: randomUUID() } },
+          {
+            code: 'PERMISSION_DENIED',
+            label: 'Bundle',
+            patch: {
+              finalBinding: otherBundle,
+            },
+          },
+          {
+            code: 'PERMISSION_DENIED',
+            label: 'Attempt',
+            patch: {
+              finalBinding: otherAttempt,
+            },
+          },
+          {
+            code: 'PERMISSION_DENIED',
+            label: 'Bundle hash',
+            patch: { finalBinding: { ...test.binding, bundleHash: 'e'.repeat(64) } },
+          },
+          {
+            code: 'PERMISSION_DENIED',
+            label: 'unknown proof',
+            patch: { revalidationRef: { ...p2.revalidation.revalidationRef, resourceId: randomUUID() } },
+          },
+          {
+            code: 'PERMISSION_DENIED',
+            label: 'foreign proof',
+            patch: { revalidationRef: { ...p2.revalidation.revalidationRef, tenantId: randomUUID() } },
+          },
+          {
+            code: 'PERMISSION_DENIED',
+            label: 'expired P1',
+            patch: { revalidationRef: p1.revalidation.revalidationRef },
+          },
+        ];
+        for (const control of controls) {
+          const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
+            yield* Effect.flip(test.consumeComponent({ ...claim, ...control.patch })),
+          );
+          expect(failure.code, `${control.label}: ${failure.reason}`).toBe(control.code);
+          expect(yield* test.readRequest(), control.label).toEqual(request);
+          expect(yield* test.readProofs(), control.label).toEqual(proofs);
+          const after = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+          expect(after.events, control.label).toEqual(before.events);
+          expect(after.outbox, control.label).toEqual(before.outbox);
+        }
+        const consumed = yield* test.consumeComponent(claim);
+        expect(consumed.outcome).toBe('CONSUMED');
+        expect(consumed.request.consumptionProofRef).toEqual(p2.revalidation.revalidationRef);
+        const stored = yield* test.readRequest();
+        const committed = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        for (const patch of [
+          { idempotencyKey: randomUUID() },
+          { commitmentCorrelationId: randomUUID() },
+          { committedAt: DateTime.add(claim.committedAt, { milliseconds: 1 }) },
+        ]) {
+          const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
+            yield* Effect.flip(test.consumeComponent({ ...claim, ...patch })),
+          );
+          expect(failure.code).toBe('COMMIT_CONFLICT');
+          expect(yield* test.readRequest()).toEqual(stored);
+          expect(yield* test.readProofs()).toEqual(proofs);
+          const after = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+          expect(after.events).toEqual(committed.events);
+          expect(after.outbox).toEqual(committed.outbox);
+        }
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
+);
+
+it.live(
+  'component reconciliation uses the exclusive stored P2 commitment interval after real expiry',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* exactCommitmentInterval() {
+        const test = yield* scenario('CURRENT', 60_000, true);
+        const p1 = yield* test.check(randomUUID());
+        yield* test.expire(p1.revalidation.validUntil);
+        const p2 = yield* test.check(randomUUID());
+        const claim = yield* test.componentConsumptionClaim(p2.revalidation.revalidationRef);
+        const proofs = yield* test.readProofs();
+        const request = yield* test.readRequest();
+        const before = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        yield* test.expire(p2.revalidation.validUntil);
+        for (const committedAt of [
+          p2.revalidation.validUntil,
+          DateTime.subtract(p2.revalidation.checkedAt, { milliseconds: 1 }),
+        ]) {
+          const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
+            yield* Effect.flip(test.consumeComponent({ ...claim, committedAt })),
+          );
+          expect(failure.code).toBe('PERMISSION_DENIED');
+          expect(yield* test.readRequest()).toEqual(request);
+          expect(yield* test.readProofs()).toEqual(proofs);
+          const after = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+          expect(after.events).toEqual(before.events);
+          expect(after.outbox).toEqual(before.outbox);
+        }
+        const timelyCommitment = {
+          ...claim,
+          committedAt: DateTime.subtract(p2.revalidation.validUntil, { milliseconds: 1 }),
+        };
+        expect(DateTime.isGreaterThan(timelyCommitment.committedAt, p2.revalidation.checkedAt)).toBe(true);
+        const consumed = yield* test.consumeComponent(timelyCommitment);
+        expect(consumed.outcome).toBe('CONSUMED');
+        expect(consumed.request.consumptionProofRef).toEqual(p2.revalidation.revalidationRef);
+        const committed = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        const replay = yield* test.consumeComponent(timelyCommitment);
+        expect(replay.outcome).toBe('ALREADY_CONSUMED');
+        expect(replay.request).toEqual(consumed.request);
+        expect(yield* test.readProofs()).toEqual(proofs);
         const after = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-        expect(after.events, control.label).toEqual(before.events);
-        expect(after.outbox, control.label).toEqual(before.outbox);
-      }
-      const consumed = yield* test.consumeComponent(claim);
-      expect(consumed.outcome).toBe('CONSUMED');
-      expect(consumed.request.consumptionProofRef).toEqual(p2.revalidation.revalidationRef);
-      const stored = yield* test.readRequest();
-      const committed = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      for (const patch of [
-        { idempotencyKey: randomUUID() },
-        { commitmentCorrelationId: randomUUID() },
-        { committedAt: DateTime.add(claim.committedAt, { milliseconds: 1 }) },
-      ]) {
-        const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
-          yield* Effect.flip(test.consumeComponent({ ...claim, ...patch })),
-        );
+        expect(after.events).toEqual(committed.events);
+        expect(after.outbox).toEqual(committed.outbox);
+        expect(after.events).toHaveLength(before.events.length + 1);
+        expect(after.outbox).toHaveLength(before.outbox.length + 1);
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
+);
+
+it.live(
+  'component competing proofs and Order claims consume once under concurrent registered Actions',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* competingConsumption() {
+        const test = yield* scenario('CURRENT', 60_000, true);
+        const p1 = yield* test.check(randomUUID());
+        yield* test.expire(p1.revalidation.validUntil);
+        test.setObservationWindow(extendedObservationSeconds);
+        const p2 = yield* test.check(randomUUID());
+        const p3 = yield* test.check(randomUUID());
+        expect(p2.revalidation.revalidationRef).not.toEqual(p3.revalidation.revalidationRef);
+        const first = yield* test.componentConsumptionClaim(p2.revalidation.revalidationRef);
+        const second = yield* test.componentConsumptionClaim(p3.revalidation.revalidationRef);
+        const claims = [
+          first,
+          { ...second, orderRef: { ...second.orderRef, resourceId: 'TEST_COMPONENT_COMPETING_ORDER' } },
+        ];
+        const proofs = yield* test.readProofs();
+        const before = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        const request = yield* test.readRequest();
+        const pauseA = yield* test.pauseAuthority();
+        const entries = test.authorityEntries();
+        const actionA = yield* test.consumeComponent(first).pipe(Effect.result, Effect.forkScoped);
+        yield* awaitPausedAuthority(pauseA, actionA);
+        yield* assertNoOpenActionTransaction(test);
+        const [, competingClaim] = claims;
+        assert.isOk(competingClaim !== undefined);
+        const pauseB = yield* test.pauseAuthority();
+        const actionB = yield* test.consumeComponent(competingClaim).pipe(Effect.result, Effect.forkScoped);
+        yield* awaitPausedAuthority(pauseB, actionB);
+        expect(test.authorityEntries()).toBe(entries + 2);
+        yield* assertNoOpenActionTransaction(test);
+        const held = yield* holdGenuineTenant(test);
+        yield* Deferred.succeed(pauseA.release, true);
+        yield* waitForExactBlock(test, held.blocker, 'TENANT');
+        expect(yield* test.readProofs()).toEqual(proofs);
+        expect(yield* test.readRequest()).toEqual(request);
+        yield* Deferred.succeed(held.release, true);
+        yield* Fiber.join(held.holder);
+        const resultA = yield* Fiber.join(actionA);
+        yield* assertNoOpenActionTransaction(test);
+        yield* Deferred.succeed(pauseB.release, true);
+        const results = [resultA, yield* Fiber.join(actionB)];
+        expect(test.authorityEntries()).toBe(entries + 2);
+        const winners = results.filter(Result.isSuccess);
+        const losers = results.filter(Result.isFailure);
+        expect(winners).toHaveLength(1);
+        expect(losers).toHaveLength(1);
+        const [winner] = winners;
+        const [loser] = losers;
+        assert.isOk(winner !== undefined && loser !== undefined);
+        expect(winner.success.outcome).toBe('CONSUMED');
+        expect(winner.success.request.consumptionProofRef).toEqual(p2.revalidation.revalidationRef);
+        expect(winner.success.request.committedOrderRef).toEqual(first.orderRef);
+        const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(loser.failure);
         expect(failure.code).toBe('COMMIT_CONFLICT');
+        const selected = claims.find(
+          (claim) => claim.revalidationRef?.resourceId === winner.success.request.consumptionProofRef?.resourceId,
+        );
+        assert.isOk(selected !== undefined);
+        expect(winner.success.request.committedOrderRef).toEqual(selected.orderRef);
+        expect(winner.success.request.requestRevision).toBe(test.approved.request.requestRevision + 1);
+        const stored = yield* test.readRequest();
+        const committed = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        expect(committed.events).toHaveLength(before.events.length + 1);
+        expect(committed.outbox).toHaveLength(before.outbox.length + 1);
+        const replay = yield* test.consumeComponent(selected);
+        expect(replay.outcome).toBe('ALREADY_CONSUMED');
+        expect(replay.request).toEqual(winner.success.request);
         expect(yield* test.readRequest()).toEqual(stored);
         expect(yield* test.readProofs()).toEqual(proofs);
         const after = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
         expect(after.events).toEqual(committed.events);
         expect(after.outbox).toEqual(committed.outbox);
-      }
-    }),
-  ).pipe(Effect.provide(services)),
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
 );
 
-it.live('component reconciliation uses the exclusive stored P2 commitment interval after real expiry', () =>
-  Effect.scoped(
-    Effect.gen(function* exactCommitmentInterval() {
-      const test = yield* scenario('CURRENT', 60_000, true);
-      const p1 = yield* test.check(randomUUID());
-      yield* test.expire(p1.revalidation.validUntil);
-      const p2 = yield* test.check(randomUUID());
-      const claim = yield* test.componentConsumptionClaim(p2.revalidation.revalidationRef);
-      const proofs = yield* test.readProofs();
-      const request = yield* test.readRequest();
-      const before = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      yield* test.expire(p2.revalidation.validUntil);
-      for (const committedAt of [
-        p2.revalidation.validUntil,
-        DateTime.subtract(p2.revalidation.checkedAt, { milliseconds: 1 }),
-      ]) {
-        const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
-          yield* Effect.flip(test.consumeComponent({ ...claim, committedAt })),
+it.live(
+  'rejects fresh I2 after Current source or material-value drift and preserves immutable P1',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* changedCurrentEvidenceRefusal() {
+        const test = yield* scenario();
+        const p1 = yield* test.check(randomUUID());
+        yield* test.expire(p1.revalidation.validUntil);
+        const proofs = yield* test.readProofs();
+        const request = yield* test.readRequest();
+        const before = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        const entries = test.authorityEntries();
+        const currentSourceRevisions = test.chain.sourceRevisions.filter(
+          ({ source }) => source !== 'counterparty-policy' && source !== 'principal-override',
         );
-        expect(failure.code).toBe('PERMISSION_DENIED');
-        expect(yield* test.readRequest()).toEqual(request);
-        expect(yield* test.readProofs()).toEqual(proofs);
-        const after = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-        expect(after.events).toEqual(before.events);
-        expect(after.outbox).toEqual(before.outbox);
-      }
-      const timelyCommitment = {
-        ...claim,
-        committedAt: DateTime.subtract(p2.revalidation.validUntil, { milliseconds: 1 }),
-      };
-      expect(DateTime.isGreaterThan(timelyCommitment.committedAt, p2.revalidation.checkedAt)).toBe(true);
-      const consumed = yield* test.consumeComponent(timelyCommitment);
-      expect(consumed.outcome).toBe('CONSUMED');
-      expect(consumed.request.consumptionProofRef).toEqual(p2.revalidation.revalidationRef);
-      const committed = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      const replay = yield* test.consumeComponent(timelyCommitment);
-      expect(replay.outcome).toBe('ALREADY_CONSUMED');
-      expect(replay.request).toEqual(consumed.request);
-      expect(yield* test.readProofs()).toEqual(proofs);
-      const after = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      expect(after.events).toEqual(committed.events);
-      expect(after.outbox).toEqual(committed.outbox);
-      expect(after.events).toHaveLength(before.events.length + 1);
-      expect(after.outbox).toHaveLength(before.outbox.length + 1);
-    }),
-  ).pipe(Effect.provide(services)),
-);
-
-it.live('component competing proofs and Order claims consume once under concurrent registered Actions', () =>
-  Effect.scoped(
-    Effect.gen(function* competingConsumption() {
-      const test = yield* scenario('CURRENT', 60_000, true);
-      const p1 = yield* test.check(randomUUID());
-      yield* test.expire(p1.revalidation.validUntil);
-      test.setObservationWindow(extendedObservationSeconds);
-      const p2 = yield* test.check(randomUUID());
-      const p3 = yield* test.check(randomUUID());
-      expect(p2.revalidation.revalidationRef).not.toEqual(p3.revalidation.revalidationRef);
-      const first = yield* test.componentConsumptionClaim(p2.revalidation.revalidationRef);
-      const second = yield* test.componentConsumptionClaim(p3.revalidation.revalidationRef);
-      const claims = [
-        first,
-        { ...second, orderRef: { ...second.orderRef, resourceId: 'TEST_COMPONENT_COMPETING_ORDER' } },
-      ];
-      const proofs = yield* test.readProofs();
-      const before = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      const request = yield* test.readRequest();
-      const pauseA = yield* test.pauseAuthority();
-      const entries = test.authorityEntries();
-      const actionA = yield* test.consumeComponent(first).pipe(Effect.result, Effect.forkScoped);
-      yield* awaitPausedAuthority(pauseA, actionA);
-      yield* assertNoOpenActionTransaction(test);
-      const [, competingClaim] = claims;
-      assert.isOk(competingClaim !== undefined);
-      const pauseB = yield* test.pauseAuthority();
-      const actionB = yield* test.consumeComponent(competingClaim).pipe(Effect.result, Effect.forkScoped);
-      yield* awaitPausedAuthority(pauseB, actionB);
-      expect(test.authorityEntries()).toBe(entries + 2);
-      yield* assertNoOpenActionTransaction(test);
-      const held = yield* holdGenuineTenant(test);
-      yield* Deferred.succeed(pauseA.release, true);
-      yield* waitForExactBlock(test, held.blocker, 'TENANT');
-      expect(yield* test.readProofs()).toEqual(proofs);
-      expect(yield* test.readRequest()).toEqual(request);
-      yield* Deferred.succeed(held.release, true);
-      yield* Fiber.join(held.holder);
-      const resultA = yield* Fiber.join(actionA);
-      yield* assertNoOpenActionTransaction(test);
-      yield* Deferred.succeed(pauseB.release, true);
-      const results = [resultA, yield* Fiber.join(actionB)];
-      expect(test.authorityEntries()).toBe(entries + 2);
-      const winners = results.filter(Result.isSuccess);
-      const losers = results.filter(Result.isFailure);
-      expect(winners).toHaveLength(1);
-      expect(losers).toHaveLength(1);
-      const [winner] = winners;
-      const [loser] = losers;
-      assert.isOk(winner !== undefined && loser !== undefined);
-      expect(winner.success.outcome).toBe('CONSUMED');
-      expect(winner.success.request.consumptionProofRef).toEqual(p2.revalidation.revalidationRef);
-      expect(winner.success.request.committedOrderRef).toEqual(first.orderRef);
-      const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(loser.failure);
-      expect(failure.code).toBe('COMMIT_CONFLICT');
-      const selected = claims.find(
-        (claim) => claim.revalidationRef?.resourceId === winner.success.request.consumptionProofRef?.resourceId,
-      );
-      assert.isOk(selected !== undefined);
-      expect(winner.success.request.committedOrderRef).toEqual(selected.orderRef);
-      expect(winner.success.request.requestRevision).toBe(test.approved.request.requestRevision + 1);
-      const stored = yield* test.readRequest();
-      const committed = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      expect(committed.events).toHaveLength(before.events.length + 1);
-      expect(committed.outbox).toHaveLength(before.outbox.length + 1);
-      const replay = yield* test.consumeComponent(selected);
-      expect(replay.outcome).toBe('ALREADY_CONSUMED');
-      expect(replay.request).toEqual(winner.success.request);
-      expect(yield* test.readRequest()).toEqual(stored);
-      expect(yield* test.readProofs()).toEqual(proofs);
-      const after = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      expect(after.events).toEqual(committed.events);
-      expect(after.outbox).toEqual(committed.outbox);
-    }),
-  ).pipe(Effect.provide(services)),
-);
-
-it.live('rejects fresh I2 after Current source or material-value drift and preserves immutable P1', () =>
-  Effect.scoped(
-    Effect.gen(function* changedCurrentEvidenceRefusal() {
-      const test = yield* scenario();
-      const p1 = yield* test.check(randomUUID());
-      yield* test.expire(p1.revalidation.validUntil);
-      const proofs = yield* test.readProofs();
-      const request = yield* test.readRequest();
-      const before = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      const entries = test.authorityEntries();
-      const currentSourceRevisions = test.chain.sourceRevisions.filter(
-        ({ source }) => source !== 'counterparty-policy' && source !== 'principal-override',
-      );
-      for (const source of [
-        'purchase-proposal',
-        'customer-commerce-policy',
-        'storefront-context',
-        'purchasing-profile',
-      ] as const) {
+        for (const source of [
+          'purchase-proposal',
+          'customer-commerce-policy',
+          'storefront-context',
+          'purchasing-profile',
+        ] as const) {
+          yield* test.chain.changeCurrentFacts({
+            currentSourceRevisions: currentSourceRevisions.map((revision) =>
+              revision.source === source ? { ...revision, revision: '2' } : revision,
+            ),
+            purchaseValue: test.chain.proposal.purchaseValue,
+          });
+          const refused = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
+            yield* Effect.flip(test.check(randomUUID())),
+          );
+          expect(refused.code, source).toBe('CURRENT_STATE_INDETERMINATE');
+          expect(yield* test.readProofs(), source).toEqual(proofs);
+          expect(yield* test.readRequest(), source).toEqual(request);
+          expect(test.authorityEntries(), source).toBe(entries);
+          const after = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+          expect(after.events, source).toEqual(before.events);
+          expect(after.outbox, source).toEqual(before.outbox);
+        }
         yield* test.chain.changeCurrentFacts({
-          currentSourceRevisions: currentSourceRevisions.map((revision) =>
-            revision.source === source ? { ...revision, revision: '2' } : revision,
-          ),
-          purchaseValue: test.chain.proposal.purchaseValue,
+          currentSourceRevisions,
+          purchaseValue: yield* Schema.decodeUnknownEffect(
+            Schema.toType(PurchaseProposalRevisionSchema.fields.purchaseValue),
+          )({
+            ...test.chain.proposal.purchaseValue,
+            monetaryAmount: { ...test.chain.proposal.purchaseValue.monetaryAmount, amount: '121' },
+          }),
         });
-        const refused = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
+        const material = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
           yield* Effect.flip(test.check(randomUUID())),
         );
-        expect(refused.code, source).toBe('CURRENT_STATE_INDETERMINATE');
-        expect(yield* test.readProofs(), source).toEqual(proofs);
-        expect(yield* test.readRequest(), source).toEqual(request);
-        expect(test.authorityEntries(), source).toBe(entries);
-        const after = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-        expect(after.events, source).toEqual(before.events);
-        expect(after.outbox, source).toEqual(before.outbox);
-      }
-      yield* test.chain.changeCurrentFacts({
-        currentSourceRevisions,
-        purchaseValue: yield* Schema.decodeUnknownEffect(
-          Schema.toType(PurchaseProposalRevisionSchema.fields.purchaseValue),
-        )({
-          ...test.chain.proposal.purchaseValue,
-          monetaryAmount: { ...test.chain.proposal.purchaseValue.monetaryAmount, amount: '121' },
-        }),
-      });
-      const material = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
-        yield* Effect.flip(test.check(randomUUID())),
-      );
-      expect(material.code).toBe('CURRENT_STATE_INDETERMINATE');
-      expect(yield* test.readProofs()).toEqual(proofs);
-      expect(yield* test.readRequest()).toEqual(request);
-      expect(test.authorityEntries()).toBe(entries);
-      const refused = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      expect(refused.events).toEqual(before.events);
-      expect(refused.outbox).toEqual(before.outbox);
-      yield* test.chain.changeCurrentFacts({
-        currentSourceRevisions,
-        purchaseValue: test.chain.proposal.purchaseValue,
-      });
-      test.setObservationWindow(extendedObservationSeconds);
-      const p2 = yield* test.check(randomUUID());
-      expect(p2.outcome).toBe('APPROVAL_VALID');
-      expect(p2.revalidation.revalidationRef).not.toEqual(p1.revalidation.revalidationRef);
-      expect(yield* test.readRequest()).toEqual(request);
-      const after = yield* test.readProofs();
-      expect(after).toHaveLength(2);
-      for (const original of proofs) {
-        expect(after.find((proof) => proof.revalidationResourceId === original.revalidationResourceId)).toEqual(
-          original,
-        );
-      }
-    }),
-  ).pipe(Effect.provide(services)),
-);
-
-it.live('refuses terminal decision rewrites of an approved proof-bearing request without superseding P1', () =>
-  Effect.scoped(
-    Effect.gen(function* approvedLifecycleRejection() {
-      const test = yield* scenario();
-      const p1 = yield* test.check(randomUUID());
-      yield* test.expire(p1.revalidation.validUntil);
-      const proofs = yield* test.readProofs();
-      const request = yield* test.readRequest();
-      const before = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      for (const decision of ['RETURN', 'REJECT'] as const) {
-        const refused = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
-          yield* Effect.flip(
-            test.chain.decide({
-              decision,
-              expectedRequestRevision: test.approved.request.requestRevision,
-              idempotencyKey: randomUUID(),
-              reason: 'TEST refuses rewriting an already approved request and proposal',
-            }),
-          ),
-        );
-        // The native Decision routine combines state/revision checks in pa_request_cas.
-        expect(refused.code).toBe('COMMIT_CONFLICT');
-        expect(refused.retryable).toBe(true);
+        expect(material.code).toBe('CURRENT_STATE_INDETERMINATE');
         expect(yield* test.readProofs()).toEqual(proofs);
         expect(yield* test.readRequest()).toEqual(request);
-        const after = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-        expect(after.events).toEqual(before.events);
-        expect(after.outbox).toEqual(before.outbox);
-      }
-      test.setObservationWindow(extendedObservationSeconds);
-      const p2 = yield* test.check(randomUUID());
-      expect(p2.outcome).toBe('APPROVAL_VALID');
-      expect(p2.revalidation.revalidationRef).not.toEqual(p1.revalidation.revalidationRef);
-      expect(yield* test.readRequest()).toEqual(request);
-      const after = yield* test.readProofs();
-      expect(after).toHaveLength(2);
-      for (const original of proofs) {
-        expect(after.find((proof) => proof.revalidationResourceId === original.revalidationResourceId)).toEqual(
-          original,
-        );
-      }
-    }),
-  ).pipe(Effect.provide(services)),
+        expect(test.authorityEntries()).toBe(entries);
+        const refused = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        expect(refused.events).toEqual(before.events);
+        expect(refused.outbox).toEqual(before.outbox);
+        yield* test.chain.changeCurrentFacts({
+          currentSourceRevisions,
+          purchaseValue: test.chain.proposal.purchaseValue,
+        });
+        test.setObservationWindow(extendedObservationSeconds);
+        const p2 = yield* test.check(randomUUID());
+        expect(p2.outcome).toBe('APPROVAL_VALID');
+        expect(p2.revalidation.revalidationRef).not.toEqual(p1.revalidation.revalidationRef);
+        expect(yield* test.readRequest()).toEqual(request);
+        const after = yield* test.readProofs();
+        expect(after).toHaveLength(2);
+        for (const original of proofs) {
+          expect(after.find((proof) => proof.revalidationResourceId === original.revalidationResourceId)).toEqual(
+            original,
+          );
+        }
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
+);
+
+it.live(
+  'refuses terminal decision rewrites of an approved proof-bearing request without superseding P1',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* approvedLifecycleRejection() {
+        const test = yield* scenario();
+        const p1 = yield* test.check(randomUUID());
+        yield* test.expire(p1.revalidation.validUntil);
+        const proofs = yield* test.readProofs();
+        const request = yield* test.readRequest();
+        const before = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+        for (const decision of ['RETURN', 'REJECT'] as const) {
+          const refused = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(
+            yield* Effect.flip(
+              test.chain.decide({
+                decision,
+                expectedRequestRevision: test.approved.request.requestRevision,
+                idempotencyKey: randomUUID(),
+                reason: 'TEST refuses rewriting an already approved request and proposal',
+              }),
+            ),
+          );
+          // The native Decision routine combines state/revision checks in pa_request_cas.
+          expect(refused.code).toBe('COMMIT_CONFLICT');
+          expect(refused.retryable).toBe(true);
+          expect(yield* test.readProofs()).toEqual(proofs);
+          expect(yield* test.readRequest()).toEqual(request);
+          const after = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
+          expect(after.events).toEqual(before.events);
+          expect(after.outbox).toEqual(before.outbox);
+        }
+        test.setObservationWindow(extendedObservationSeconds);
+        const p2 = yield* test.check(randomUUID());
+        expect(p2.outcome).toBe('APPROVAL_VALID');
+        expect(p2.revalidation.revalidationRef).not.toEqual(p1.revalidation.revalidationRef);
+        expect(yield* test.readRequest()).toEqual(request);
+        const after = yield* test.readProofs();
+        expect(after).toHaveLength(2);
+        for (const original of proofs) {
+          expect(after.find((proof) => proof.revalidationResourceId === original.revalidationResourceId)).toEqual(
+            original,
+          );
+        }
+      }),
+    ).pipe(Effect.provide(services)),
+  120_000,
 );

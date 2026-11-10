@@ -87,10 +87,13 @@ const workloadActorDeclaration = (overrides: Partial<AccessActorInput> = {}) =>
 const workloadRegistry = (keys: readonly string[], principal: string = workloadPrincipal): AccessWorkloadBindings => ({
   readActiveWorkloadKeys: (query) =>
     Effect.succeed(new Set(query.principalId === principal && query.tenantId === tenant ? keys : [])),
+  // This registry declares no company, so a standalone workload keeps the tenant-wide rule (D6).
+  readCompanyDeclaration: () => Effect.succeed({ activeCompanyIds: new Set(), pinned: false }),
 });
 
 const unreadableRegistry: AccessWorkloadBindings = {
   readActiveWorkloadKeys: () => Effect.fail(accessDecisionUnavailable('the workload registry is unreadable')),
+  readCompanyDeclaration: () => Effect.fail(accessDecisionUnavailable('the workload registry is unreadable')),
 };
 
 /**
@@ -311,14 +314,17 @@ it.effect('refuses a batch workload subject without subjectWorkloads, and leaves
   }),
 );
 
-it.effect('leaves a batch with an agent subject without any row, because no tenant person is named', () =>
+it.effect('records a batch with an agent subject at tenant scope, naming the subject and the delegate', () =>
   Effect.gen(function* batchesAgentSubject() {
+    const caller = callerOf('commerce-order');
     const { gate, state } = harness({ kinds: kindSource('agent') });
     const decisions = yield* gate.decideMany([
-      gateOf({ accessActor: actorDeclaration({ subject: 'identity' }) }, delegatedScopeOf(callerOf('commerce-order'))),
+      gateOf({ accessActor: actorDeclaration({ subject: 'identity' }) }, delegatedScopeOf(caller)),
     ]);
     expect(codesOf(decisions[0] ?? { reasons: [] })).toEqual(['deny.actor_subject_invalid']);
-    expect(state.entries.length).toBe(0);
+    expect(state.entries.length).toBe(1);
+    expect(state.entries[0]?.actor.principalId).toBe(person);
+    expect(state.entries[0]?.delegation).toEqual({ appId: 'commerce-order', principalId: caller.principalId });
   }),
 );
 
@@ -1006,5 +1012,53 @@ it.effect('keeps a person subject on the engine: a module call selects only the 
     expect(check.calls.checkBulk).toBe(1);
     expect(selectable.every((legalEntityId) => [uid(60), uid(61)].includes(legalEntityId))).toBe(true);
     expect(check.subjects.every((subject) => subject === 'principal')).toBe(true);
+  }),
+);
+
+/** The same delegated questions answered one at a time and in one batch, each over its own copy of the same intent. */
+const singleAndBatched = (
+  options: { readonly authority: AuthoritySpec; readonly kinds: AccessPrincipalKinds },
+  inputs: readonly GateInput[],
+) =>
+  Effect.gen(function* singleAndBatchedRows() {
+    const single = harness(options);
+    const alone = yield* Effect.forEach(inputs, (one) => single.gate.decide(one), { concurrency: 1 });
+    const batched = harness(options);
+    const together = yield* batched.gate.decideMany(inputs);
+    return { alone, batchedRows: batched.state.entries, singleRows: single.state.entries, together };
+  });
+
+it.effect('records an agent subject refusal of a batch in the tenant scope, row for row as single decisions', () =>
+  Effect.gen(function* agentSubjectBatchEvidence() {
+    const scope = delegatedScopeOf(callerOf('commerce-order'));
+    const carrier = { accessActor: actorDeclaration(), accessDeclaration: declarationOf() };
+    const { alone, batchedRows, singleRows, together } = yield* singleAndBatched(
+      { authority: { cells: [cell({ capability: 'finance.invoice.void' })] }, kinds: kindSource('agent') },
+      [gateOf(carrier, scope), gateOf(carrier, scope)],
+    );
+    expect(together).toEqual(alone);
+    expect(together.map(codesOf)).toEqual([['deny.actor_subject_invalid'], ['deny.actor_subject_invalid']]);
+    expect(singleRows).toHaveLength(2);
+    expect(batchedRows).toEqual(singleRows);
+  }),
+);
+
+it.effect('records a refused company of a delegated batch in the tenant scope, row for row as single decisions', () =>
+  Effect.gen(function* refusedCompanyBatchEvidence() {
+    // The scope names no company, so an entry that requires one is refused before any company read.
+    const scope = delegatedScopeOf(callerOf('commerce-order'));
+    const carrier = { accessActor: actorDeclaration(), accessDeclaration: declarationOf() };
+    const required = (): GateInput => ({ ...gateOf(carrier, scope), legalEntityScope: 'required' });
+    const authority: AuthoritySpec = { cells: [cell({ capability: 'finance.invoice.void' })] };
+    const human = yield* singleAndBatched({ authority, kinds: kindSource('human') }, [required(), required()]);
+    expect(human.together).toEqual(human.alone);
+    expect(human.together.map(({ outcome }) => outcome)).toEqual(['DENIED', 'DENIED']);
+    expect(human.singleRows).toHaveLength(2);
+    expect(human.batchedRows).toEqual(human.singleRows);
+    // A workload subject is never a v2 subject: neither path leaves a row for its refused company (O29, O73).
+    const workload = yield* singleAndBatched({ authority, kinds: kindSource('service') }, [required()]);
+    expect(workload.together).toEqual(workload.alone);
+    expect(workload.singleRows).toEqual([]);
+    expect(workload.batchedRows).toEqual([]);
   }),
 );

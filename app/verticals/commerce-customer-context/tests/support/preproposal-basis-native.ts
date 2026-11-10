@@ -2235,7 +2235,21 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
           }),
           'stdin',
         );
-        yield* scopeGrantChild.read(Schema.Struct({ type: Schema.Literal('registered') }), 'public');
+        const registration = yield* scopeGrantChild.read(
+          Schema.Union([
+            Schema.Struct({ type: Schema.Literal('registered') }),
+            Schema.Struct({
+              stage: Schema.Literals(['command', 'registration', 'transport']),
+              type: Schema.Literal('failed'),
+            }),
+          ]),
+          'public',
+        );
+        // A refused grant names its step, so the run reports why the Party assertion was not registered.
+        yield* requireProtocol(
+          registration.type === 'registered',
+          `party-assertion-grant:${registration.type === 'failed' ? registration.stage : 'registered'}`,
+        );
       }
       return Redacted.make(`Bearer ${token}`);
     });

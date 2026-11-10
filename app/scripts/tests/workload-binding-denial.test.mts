@@ -13,6 +13,7 @@ import {
   WorkloadKeySchema,
 } from '../../packages/core-runtime/src/authorization/access-declaration.ts';
 import type { OperationalScope } from '../../packages/core-runtime/src/operations/context.ts';
+import { LegalEntityIdSchema } from '../../packages/core-runtime/src/access/ids.ts';
 import {
   IDENTITY_PROVIDER_WORKLOAD,
   CRM_PARTY_INTAKE_WORKLOAD,
@@ -98,6 +99,11 @@ const ports: AccessDecisionPorts = {
   principalKinds: { readKind: (query) => Effect.succeed(kindOf(query.principalId)) },
   workloadBindings: {
     readActiveWorkloadKeys: (query) => Effect.succeed(boundKeysOf(query.tenantId, query.principalId)),
+    readCompanyDeclaration: () =>
+      Effect.succeed({
+        activeCompanyIds: new Set([LegalEntityIdSchema.make('71000000-0000-4000-8000-000000000020')]),
+        pinned: true,
+      }),
   },
 };
 

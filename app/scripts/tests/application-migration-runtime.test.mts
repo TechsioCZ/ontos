@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os';
+
 import { NodeServices } from '@effect/platform-node';
 import { Reactivity } from 'effect/reactivity';
 import { Array as EffectArray, Config, ConfigProvider, Effect, FileSystem, Order, Schema } from 'effect';
@@ -382,7 +384,9 @@ it.effect(
 it.effect('refuses an unreviewed topology migration owner instead of guessing its schema or verifier', () =>
   Effect.gen(function* unreviewedMigrationOwner() {
     const fs = yield* FileSystem.FileSystem;
-    const owned = yield* Config.String('OWNED_TEMP_DIR');
+    // The CI shard provisions no OWNED_TEMP_DIR; that directory only narrows where this disposable
+    // fixture lives, so an absent value falls back to the system temp root like the sibling tests.
+    const owned = yield* Config.String('OWNED_TEMP_DIR').pipe(Config.withDefault(tmpdir()));
     const root = yield* fs.makeTempDirectoryScoped({ directory: owned });
     yield* fs.makeDirectory(`${root}/topology`, { recursive: true });
     yield* fs.makeDirectory(`${root}/verticals/unreviewed`, { recursive: true });

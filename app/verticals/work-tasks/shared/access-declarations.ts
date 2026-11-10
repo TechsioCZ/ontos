@@ -1,6 +1,8 @@
 import { decodeAccessDeclarationOrThrow } from '@app/core-runtime';
 import type { AccessDeclarationInput } from '@app/core-runtime';
 
+const moduleKey = 'work.tasks';
+
 // These are the declarations carried by the registered owner operations, not picker-only capabilities.
 export const workRecordsReadDeclaration = {
   key: 'work.tasks.api-records.read',
@@ -24,7 +26,7 @@ export const workRecordsCarrier = {
   accessDeclaration: decodeAccessDeclarationOrThrow(workRecordsReadDeclaration, {
     access: 'read',
     authorization: { kind: 'protected' },
-    moduleKey: 'work.tasks',
+    moduleKey,
     role: 'api',
   }),
 };
@@ -32,7 +34,7 @@ export const workWriteCarrier = {
   accessDeclaration: decodeAccessDeclarationOrThrow(workApplyCommandDeclaration, {
     access: 'write',
     authorization: { kind: 'protected' },
-    moduleKey: 'work.tasks',
+    moduleKey,
     role: 'action',
   }),
 };

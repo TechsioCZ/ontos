@@ -110,9 +110,10 @@ export const ACCESS_DECISION_REQUEST_GRANTS: readonly DatabaseTableGrant[] = Obj
     table: 'core.principals',
   },
   {
-    columns: { select: ['legal_entity_id', 'tenant_id'] },
+    columns: { select: ['legal_entity_id', 'status', 'tenant_id'] },
     privileges: ['select'],
-    reason: 'Core access/enforcement/legal-entities.ts lists the companies the engine may then narrow',
+    reason:
+      'Core access/enforcement/legal-entities.ts lists the companies the engine may then narrow, and a workload registration read joins the active ones (D6)',
     table: 'core.legal_entities',
   },
   {
@@ -269,6 +270,13 @@ export const ACCESS_DECISION_REQUEST_GRANTS: readonly DatabaseTableGrant[] = Obj
     privileges: ['select'],
     reason: 'Core access/workloads/bindings.ts reads the active workloads the acting workload is registered for (O73)',
     table: 'core.access_workload_bindings',
+  },
+  {
+    columns: { select: ['legal_entity_id', 'status', 'tenant_id', 'workload_binding_id'] },
+    privileges: ['select'],
+    reason:
+      'Core access/workloads/bindings.ts reads the companies a standalone workload is explicitly registered for (D6)',
+    table: 'core.access_workload_company_bindings',
   },
   {
     columns: {

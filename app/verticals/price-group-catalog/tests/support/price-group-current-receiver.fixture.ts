@@ -1,5 +1,7 @@
 import { CapabilityKeySchema } from '@app/core-runtime/access/ids';
-import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate';
+import { CoreDatabase } from '@app/core-runtime/db/client';
+import { makeTestActionAccessLayers } from '@app/core-runtime/testing/actions';
+import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
 import { priceGroupCatalogRegistration } from '../../vertical.registration.ts';
 import { priceGroupCurrentInputGuard } from './price-group-current-input.ts';
 import { Socket } from 'effect/socket';
@@ -17,6 +19,7 @@ import {
   makeDatabaseIdentityEnrollmentLive,
 } from '@app/core-runtime';
 import {
+  AccessDecisionLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
@@ -365,14 +368,27 @@ const serveOwner = Effect.fn('PriceGroupCurrentFixture.serveOwner')(function* se
   const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
   const gate = ModuleStateGateLive.pipe(Layer.provide(states));
   const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(gate));
-  // The owned database carries no v2 access intent, so the one gate is scripted: it allows the admitted
-  // actor every Catalog capability except the ones the parent withholds, exactly as a missing grant refuses.
-  const access = makeTestAccessGateLayers({
-    spec: {
-      answers: Object.fromEntries(bootstrap.deniedCapabilityKeys.map((key) => [key, { outcome: 'DENIED' as const }])),
-      defaultAnswer: { outcome: 'ALLOWED' },
-    },
+  const enrollment = defineDatabaseIdentityEnrollment([]);
+  // The owned database carries no v2 access intent, so the one gate runs the production engine over the
+  // fixture's own authority: the admitted actor holds every Catalog capability the request declares,
+  // except the ones the parent withholds, exactly as a missing assignment refuses. The scope and Ready
+  // fence a prepared Action pins are written first, through Core's own scoped writer, so the decision
+  // reads real persisted authority instead of an invented lease.
+  const persistenceContext = yield* Layer.build(persistence);
+  yield* writeTestTenantScopes(Context.get(persistenceContext, CoreDatabase).executor, {
+    databaseIdentities: enrollment,
+    principalId: bootstrap.actor.principalId,
+    tenantId: bootstrap.actor.tenantId,
   });
+  const access = AccessDecisionLive.pipe(
+    Layer.provideMerge(
+      makeTestActionAccessLayers({
+        principalId: bootstrap.actor.principalId,
+        refusedCapabilityKeys: bootstrap.deniedCapabilityKeys,
+        tenantId: bootstrap.actor.tenantId,
+      }),
+    ),
+  );
   const scopes = OperationalScopeResolverLive.pipe(
     Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, access)),
   );
@@ -414,7 +430,7 @@ const serveOwner = Effect.fn('PriceGroupCurrentFixture.serveOwner')(function* se
   ).pipe(
     Layer.provide(ActionPrincipalVerifierLive.pipe(Layer.provide(actions))),
     Layer.provide(Layer.mergeAll(actions, reads, namespace, redemption, source, RequestSchemaProblemLive)),
-    Layer.provide(makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]))),
+    Layer.provide(makeDatabaseIdentityEnrollmentLive(enrollment)),
   );
   const app = yield* Effect.acquireRelease(
     Effect.sync(() =>

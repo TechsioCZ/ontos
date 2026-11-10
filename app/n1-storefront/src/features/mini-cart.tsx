@@ -8,7 +8,7 @@ import { Struct } from "effect";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Badge } from "@techsio/ui-kit/atoms/badge";
 import { Image } from "@techsio/ui-kit/atoms/image";
-import { Link } from "@techsio/ui-kit/atoms/link";
+import { Link } from "@/features/plain-link";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
 import { Popover } from "@techsio/ui-kit/molecules/popover";

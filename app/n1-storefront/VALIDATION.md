@@ -1933,3 +1933,134 @@ souborech, typy, lint, formát a 447 kanonických tokenů PASS. TraceDecay
 package diagnostika bez chyb. Globální i18n nadále obsahuje stejných 28
 diagnostik ve stejných souborech mimo N1; porovnáno s předchozím logem,
 bez potlačení. Nejde o celorepozitářový zelený výsledek.
+
+## 9. 11. 2026 — mobilní zavírání navigace podle Figmy
+
+Čerstvé Figma podklady 59:1595, 418:2412/2620 potvrzují X v headeru při otevření
+a nepřítomnost druhého close uvnitř draweru. Desktop 418:2368 byl zároveň
+načtený jako reference šesti sloupců; tato změna desktop neupravuje.
+
+Actual browser RED před opravou: CS 320/390 a EN 390 — všechny tři případy
+ukázaly stále menu glyph a původní název; druhý klik na trigger selhal kvůli
+modal inert headeru. Regrese je interakční, proto se neřeší SSR mockováním
+useState ani testem kopírujícím nový ternární výraz.
+
+Po opravě prošly CS 390 a EN 390. První cold CS 320 pokus skončil na timeoutu
+odpovědi vzdáleného account endpointu ještě před UI kontrolami a zůstává
+zaznamenaný jako neúspěšná precondition. Samostatný CS 320 recheck čeká na
+skutečné zahájení klientského account requestu a dva animační framy, nikoli
+na jeho vzdálenou odpověď; proběhl bez mockování a prošel.
+
+Tyto tři kombinace dokládají header X, opětovné zavření triggerem, Escape,
+návrat focusu na trigger, body scroll lock, outside close bez navigace na
+podklad, přepnutí z menu do košíku a absenci overflow i page errors. Všechny
+tři after screenshoty a Figma PNG otevřel také nezávislý reviewer; v této
+úpravě nenašel blokující připomínku. Přesný první focus target není doložen.
+
+Návrh používá veřejné Button props, podporované Dialog flags a nativní Zag
+trigger anatomii. Nezavádí component CSS override ani nové tokeny. Kvůli
+nedostupnému živému katalogu tato kontrola neschvaluje naplněný strom ani
+celý storefront jako vizuálně dokončený. Při testu nevznikly business zápisy.
+
+Automatická sada: 801 testů v 76 souborech PASS, bez skipů. Typy, lint,
+formát a kontrola 447 kanonických tokenů PASS.
+
+## 9. 11. — mobilní menu se živým katalogem a mapovaným Link
+
+Po novém Stage nasazení proběhl nový actual browser průchod se skutečnými
+kategoriemi, bez mocků. CS 320/390 a EN 390: všechny tři případy PASS. První
+focus je uvnitř dialogu na odkazu, skutečná větev se rozbalí a sbalí, funguje
+header toggle, Escape/return focus, body scroll lock, outside close bez
+prokliku a přepnutí do košíku. Bez overflow a page errors; všechny obchodní
+POSTy byly v tomto průchodu blokované a žádný nebyl vyvolán.
+
+Čerstvý high-fidelity Figma context 59:1595 a 418:2484 předepisuje samostatné
+Link atomy. Původní LinkButton přidával těmto místům tlačítkový weight 600;
+po opravě má Novinky v reálném browseru weight 400 bez CSS override. Po
+změně znovu prošly stejné tři kombinace a byly pořízené viewport screenshoty
+se skutečnými daty. Header a Link mapování nejsou vydávané za celkové
+vizuální schválení všech Figma stránek; známé typografické a datové rozdíly
+zůstávají oddělené.
+
+## 9. 11. — skutečný košík po obnově Stage
+
+Nový browser průchod CS 390 a 1440 px prošel přidáním skutečné varianty
+Northwave LXL, globálním toastem, badge 1, otevřením minikošíku, navigací do
+košíku, změnou na dva kusy a odebráním do prázdného stavu bez badge.
+Native quote v obou případech vrací HTTP 200 / VALID pro 1 i 2 kusy;
+součet dvou kusů je 1 758 Kč. Přidání nevynucuje otevření minikošíku ani
+navigaci. Žádné technické popisky o neověřené uložené ceně se nezobrazují.
+Bez page errors, bez mocků, vložení storage, auth pokusů či objednávek.
+Povoleny pouze skutečné quote POSTy; žádný jiný zápis nebyl vyvolán.
+
+První úplný pokus zastavil chybný testovací selector Odebrat: kit správně
+přidává do aria-label název produktu. Po opravě helperu prošly oba viewporty
+včetně odebrání. Tato oprava nevyžadovala změnu aplikace. Důkaz je lokální
+`n1-cart-live-ui-complete-20261109/result.json` a osm runtime screenshotů.
+Jde o funkční kontrolu těchto stavů, nikoli nové vizuální schválení celého
+košíku či pozitivní GUI průchod odesláním objednávky.
+
+## 9. 11. — závěrečný kontrolovaný rozsah navigace
+
+Mobil CS320/390 a EN390: 3/3 PASS pro samostatný Link, oddělovač pod celým
+kořenovým blokem, nativní ArrowDown/Up, disclosure, Escape/return focus,
+header toggle, scroll lock, outside close a přepnutí na košík. Samostatné
+výchozí screenshoty bez keyboard focusu potvrzují šedé oddělovače; černé
+hrany předchozího snímku byly nativní focus outline, který zůstává funkční.
+
+Desktop CS768/1440 PASS, CS1024 samostatný PASS po čekání na skutečné
+načtení lazy ilustrací. Měřeno šest tracků, gap8, padding18 a border1,
+pět auditovaných obrázků, plain Link weight400; hover, outside close, vstup
+klávesnicí, Escape/return focus a zavření při mobilním resize. Čerstvá
+Figma418:2368 má pět položek; skutečný owner strom deset, proto dva řádky.
+Počty a názvy zůstávají skutečná data. Reviewer otevřel všechny tři šířky.
+
+EN1024: kliknutí na obrázek i text naviguje a zavírá popup, bez page errors
+a zápisů. První cold Next navigace překročila 30s test timeout (30,2s
+kompilace); samostatný dokončený průchod prošel s odpovídajícím čekáním.
+Původní neúplný report nebyl přepsán na PASS. Nezávislé review potvrdilo
+konkrétní upravenou skladbu; neprohlašuje celkovou shodu všech Figma stránek
+ani otestování owner-image fallbacku jen na základě auditovaných ilustrací.
+
+Aktuální plná N1 sada: 801 testů v 76 souborech PASS bez skipů.
+
+## 10. 11. — potvrzení objednávky a zachování nového košíku
+
+Cílené nativní HTTP/Deferred regrese ověřují jeden status read, soft failure
+po PLACED, pozdní odpovědi po vypršení caller fence, odmítnutí jiné objednávky
+nebo scope a explicitní read retry. SSR ověřuje potvrzené texty a fallback.
+Tyto testy nejsou vydávané za React lifecycle E2E. Source review odstranilo
+dvě skutečná rizika: pending progress po změně session a druhé clearSubmitted
+při ručním doplnění již potvrzené objednávky.
+
+Skutečný GUI nákup OBJ-2026-0006: quote200/VALID, právě jeden place200/PLACED,
+998 Kč včetně České pošty119 Kč. Samostatné čtení uložené objednávky
+vrátilo200/REPLAYED se shodným kontaktem TEST, variantou, cenou a dopravou.
+Původní cross-tab část nedokončila testovací přípravu klienta; její neúplný
+report zůstává zachovaný. Bez nového nákupu následně prošlo sdílení přidání
+i odebrání mezi dvěma hydratovanými panely.
+
+Samostatný regresní GUI případ OBJ-2026-0007 potvrdil nativní vytvoření,
+řízené přerušení prvního čtení, zachovaný úspěch, nový stejný košík ve druhém
+panelu, ruční status200 a zachování nového košíku po readbacku. Bez runtime
+mocků, vložení storage nebo placement retry. Závěrečný screenshot selhal:
+completed=false v celém helperu je zachované, následný screenshot a lokální
+cleanup se neprohlašují za provedené. Funkční assertions/readback jsou
+samostatně doložené; nejde o celkové vizuální schválení potvrzení.
+
+Po převzetí94 upstream commitů na ffe48b6f2 a standardní instalaci UI kitu
+0.59.0 znovu prošlo809 testů v76souborech, typy, standardní N1 lint, formát
+a kontrola447 kanonických tokenů. Živé GUI průchody výše předcházely této
+aktualizaci knihovny; jejich přesná verze není zaměňovaná za nový browser
+průchod na0.59. Všechny nové aplikační a testové změny tohoto celku jsou N1.
+
+Kontaktní formulář přešel na Action `work.tasks.submit-storefront-inquiry`
+(viz INTEGRATION.md, Kontaktní formulář a dotaz na produkt). Dřívější záznamy
+o čtení `records` před zápisem, čerstvé assertion „po redeemed read“ a
+opakování revision conflictu přes `apply-command`/`CreateTask` popisují
+nahrazenou cestu, kterou OntOS servisnímu klíči odmítá. Nově: žádné čtení
+Work Tasks, jedna assertion na zápis, nejvýše jedno opakování s novým klíčem
+a stejným `requestId`. Ověřeno jen cílenými testy `tests/inquiry.test.ts` a
+`tests/inquiry-server.test.ts` (57/57), typy a lintem balíčku; skutečný N1
+zápis na stage neproběhl a navázání workloadu `work.storefront-client` tím
+není ověřené.

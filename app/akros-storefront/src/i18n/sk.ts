@@ -317,6 +317,8 @@ export const sk: Dictionary = {
     standaloneItem: "samostatná položka",
     removeFailed: "Variant sa nepodarilo odobrať. Skúste to znova.",
   },
+  notifications: { close: "Zavrieť oznámenie", label: "Oznámenia", loading: "Načítava sa…" },
+  forms: { requiredLabel: "(povinné)" },
   cart: {
     title: "Nákupný košík",
     miniCart: {

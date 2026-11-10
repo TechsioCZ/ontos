@@ -584,11 +584,12 @@ const scenario = Effect.fn('PreferencePeriod.nativeScenario')(function* nativeSc
         targetModuleKey: 'commerce.customer-context',
       },
     }).pipe(
+      // The transaction IO guard is added on top of, not instead of, the delegated gateway configuration.
       Effect.provideService(
         ConfigProvider.ConfigProvider,
         ConfigProvider.orElse(
           ConfigProvider.fromUnknown({ ONTOS_ACTION_TRANSACTION_IO_GUARD: true }),
-          ConfigProvider.fromEnv(),
+          ConfigProvider.orElse(delegatedGatewayConfiguration(origin), ConfigProvider.fromEnv()),
         ),
       ),
       Effect.provideContext(context),

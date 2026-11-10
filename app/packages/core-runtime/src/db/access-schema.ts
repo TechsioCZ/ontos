@@ -985,6 +985,59 @@ export const defineAccessTables = ({ legalEntities, principals, requestRoles, te
     ],
   );
 
+  /**
+   * The one company an active workload binding is explicitly registered for (D6). A binding is
+   * tenant-wide, so a standalone workload that holds no verified module actor selects no company at
+   * all unless its owner declared one here: at most one live registration per binding, written only
+   * by the install/bootstrap path. Like the bindings, a registration is identity, not a grant, and a
+   * revoked one is never reopened, so a re-registration is a new row with a new incarnation (D27).
+   */
+  const accessWorkloadCompanyBindings = core.table.withRLS(
+    'access_workload_company_bindings',
+    {
+      companyBindingId: uuid('company_binding_id').primaryKey(),
+      createdAt: createdAt(),
+      incarnation: uuid('incarnation').notNull(),
+      legalEntityId: uuid('legal_entity_id').notNull(),
+      revokedAt: timestamp('revoked_at', { withTimezone: true }),
+      status: text('status').$type<WorkloadBindingStatus>().notNull(),
+      tenantId: tenantId(),
+      workloadBindingId: uuid('workload_binding_id').notNull(),
+    },
+    (t) => [
+      uniqueIndex('access_workload_company_bindings_tenant_id_uk').on(t.tenantId, t.companyBindingId),
+      // The incarnation is the registration's identity a later reference may point at, never reused.
+      uniqueIndex('access_workload_company_bindings_incarnation_uk').on(t.tenantId, t.incarnation),
+      // At most one live company per binding: a workload selects exactly the company its owner declared.
+      uniqueIndex('access_workload_company_bindings_active_uk')
+        .on(t.tenantId, t.workloadBindingId)
+        .where(sql`${t.status} = 'active'`),
+      // The registration names an active-or-revoked binding of this tenant, never another tenant's.
+      sameTenant(
+        'access_workload_company_bindings_binding_fk',
+        t.tenantId,
+        t.workloadBindingId,
+        accessWorkloadBindings.tenantId,
+        accessWorkloadBindings.bindingId,
+      ),
+      // The registered company is a company of this tenant, so a cross-tenant company is impossible.
+      sameTenant(
+        'access_workload_company_bindings_company_fk',
+        t.tenantId,
+        t.legalEntityId,
+        legalEntities.tenantId,
+        legalEntities.legalEntityId,
+      ),
+      check('access_workload_company_bindings_status_ck', sql`${t.status} in ('active', 'revoked')`),
+      check(
+        'access_workload_company_bindings_revoked_ck',
+        sql`(${t.status} = 'revoked') = (${t.revokedAt} is not null)`,
+      ),
+      ...tenantRlsPolicies('access_workload_company_bindings', t.tenantId),
+      ...gatewayRequestReadPolicies('access_workload_company_bindings', t.tenantId),
+    ],
+  );
+
   const accessDatabaseSchema = {
     accessAgentConnections,
     accessAssignments,
@@ -1009,6 +1062,7 @@ export const defineAccessTables = ({ legalEntities, principals, requestRoles, te
     accessTeamMembers,
     accessTeams,
     accessWorkloadBindings,
+    accessWorkloadCompanyBindings,
   } as const;
   const ACCESS_TABLES = Object.values(accessDatabaseSchema);
   const ACCESS_TABLE_INVENTORY = [
@@ -1035,6 +1089,7 @@ export const defineAccessTables = ({ legalEntities, principals, requestRoles, te
     'access_teams',
     'access_team_members',
     'access_workload_bindings',
+    'access_workload_company_bindings',
   ] as const;
   return { all: ACCESS_TABLES, inventory: ACCESS_TABLE_INVENTORY, tables: accessDatabaseSchema };
 };

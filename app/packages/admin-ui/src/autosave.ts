@@ -1,5 +1,6 @@
 // Autosave for edit forms of existing records: the form keeps its draft, the controller decides when to send it.
-import { Duration, Effect, Equal, Exit, Option, Schema } from 'effect';
+import { Duration, Effect, Equal, Exit, Option, Predicate, Schema } from 'effect';
+import { constVoid } from 'effect/Function';
 import type { Fiber, ManagedRuntime } from 'effect';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
@@ -33,8 +34,12 @@ export interface AutosaveOptions<V, R> {
   readonly delayMs?: number;
   /** Whether two drafts are the same. Defaults to structural equality. */
   readonly equals?: (left: V, right: V) => boolean;
-  /** The form's own validation; an invalid draft is never sent. */
-  readonly isValid: (value: V) => boolean;
+  /**
+   * The form's own validation; an invalid draft is never sent. `confirmed` is the version the server last confirmed
+   * (`AutosaveController.confirmed`), for a rule that depends on what the save would send, such as a part that is
+   * sent whole, and so has to be complete, once it differs from that version.
+   */
+  readonly isValid: (value: V, confirmed: V) => boolean;
   /**
    * Sends one draft. Map every typed failure to an outcome; a defect or interruption counts as `failed`.
    * A follow-up save can start before React re-renders, so keep the draft's base revision in a ref that `save`
@@ -97,7 +102,7 @@ export class AutosaveController<V, R = never> {
       this.setState('proposed');
       return;
     }
-    if (!this.options.isValid(value)) {
+    if (!this.options.isValid(value, this.saved)) {
       this.setState('invalid');
       return;
     }
@@ -133,7 +138,7 @@ export class AutosaveController<V, R = never> {
       this.setState('proposed');
       return;
     }
-    if (!this.options.isValid(this.latest)) {
+    if (!this.options.isValid(this.latest, this.saved)) {
       this.setState('invalid');
       return;
     }
@@ -145,6 +150,14 @@ export class AutosaveController<V, R = never> {
     if (this.state === 'error') {
       this.flush();
     }
+  };
+
+  /**
+   * A save that sends several commands wrote part of its draft before it failed: `value` is what the server has now.
+   * The draft stays unsaved; from here on it is compared with `value`, so taking a written field back is a change.
+   */
+  readonly confirm = (value: V): void => {
+    this.saved = value;
   };
 
   /** The draft the server last confirmed (or the version this controller started from). */
@@ -298,25 +311,55 @@ interface Generation<V, R> {
  */
 export type RevisionedSaveResult = AutosaveOutcome | number;
 
+/**
+ * Result of a save that sends several commands and stopped part-way: the server took `confirmed` and left it at
+ * `revision`, and the rest of the draft ended as `outcome`. The draft stays unsaved. `confirmed` becomes the version
+ * later saves are compared with and `revision` their base, so a retry sends only what is still missing, and a field
+ * taken back to its value before the save is sent as the change it now is.
+ */
+export interface PartlySaved<V> {
+  readonly confirmed: V;
+  readonly outcome: Exclude<AutosaveOutcome, 'saved'>;
+  readonly revision: number;
+}
+
+/** What a draft save answers: a `RevisionedSaveResult`, or how far a save of several commands got. */
+export type DraftSaveResult<V> = RevisionedSaveResult | PartlySaved<V>;
+
 interface GenerationOptions<V, R> extends Omit<AutosaveOptions<V, R>, 'save'> {
   readonly revision: number;
   readonly runtime: ManagedRuntime.ManagedRuntime<R, never>;
-  readonly save: (value: V, expectedRevision: number) => Effect.Effect<RevisionedSaveResult, never, R>;
+  readonly save: (value: V, expectedRevision: number, confirmed: V) => Effect.Effect<DraftSaveResult<V>, never, R>;
   readonly value: V;
 }
 
 const isOutcome = Schema.is(AutosaveOutcomeSchema);
 
-const boundTo = <V, R>(options: GenerationOptions<V, R>, base: BaseRevision): AutosaveOptions<V, R> => ({
+/** The confirmed version of one draft generation: read when a save starts, moved by a save that got part-way. */
+interface ConfirmedVersion<V> {
+  readonly confirm: (value: V) => void;
+  readonly confirmed: () => V;
+}
+
+const boundTo = <V, R>(
+  options: GenerationOptions<V, R>,
+  base: BaseRevision,
+  version: ConfirmedVersion<V>,
+): AutosaveOptions<V, R> => ({
   ...options,
   save: (value) =>
-    options.save(value, base.current()).pipe(
+    options.save(value, base.current(), version.confirmed()).pipe(
       Effect.map((result): AutosaveOutcome => {
         if (isOutcome(result)) {
           return result;
         }
-        base.advance(result);
-        return 'saved';
+        if (Predicate.isNumber(result)) {
+          base.advance(result);
+          return 'saved';
+        }
+        base.advance(result.revision);
+        version.confirm(result.confirmed);
+        return result.outcome;
       }),
     ),
 });
@@ -326,12 +369,16 @@ const useGeneration = <V, R>(options: GenerationOptions<V, R>) => {
   const { runtime } = options;
   const begin = (from: V, revision: number): Generation<V, R> => {
     const base = baseRevision(revision);
-    return { base, controller: runtime.runSync(startAutosave(from, boundTo(options, base))) };
+    // Nothing is saved yet, so `from` is the confirmed version; from here on the controller knows it.
+    const startedFrom: ConfirmedVersion<V> = { confirm: constVoid, confirmed: () => from };
+    const controller = runtime.runSync(startAutosave(from, boundTo(options, base, startedFrom)));
+    controller.configure(boundTo(options, base, controller));
+    return { base, controller };
   };
   const [generation, setGeneration] = useState(() => begin(options.value, options.revision));
   const { base, controller } = generation;
   useEffect(() => {
-    controller.configure(boundTo(options, base));
+    controller.configure(boundTo(options, base, controller));
   }, [base, controller, options]);
   useEffect(() => {
     controller.change(options.value);
@@ -381,14 +428,30 @@ export interface UseAutosaveDraftOptions<V, R> extends Omit<AutosaveOptions<V, R
   /**
    * Sends one draft. Return the record's new revision (or `saved`), `proposed` when the change was parked for
    * approval, `conflict` for the action's revision conflict and `failed` otherwise; a defect or interruption counts
-   * as `failed`.
+   * as `failed`. A save of several commands that stopped after some of them went through returns `PartlySaved`.
+   *
+   * `confirmed` is the version the server last confirmed for this draft: the server version the draft started from,
+   * then the draft of every successful save (or what a partly successful one wrote). A save that sends only what
+   * changed compares the draft with it, never with page data, which still shows the version before that save until
+   * its reload lands.
    */
-  readonly save: (value: V, expectedRevision: number) => Effect.Effect<RevisionedSaveResult, never, R>;
+  readonly save: (value: V, expectedRevision: number, confirmed: V) => Effect.Effect<DraftSaveResult<V>, never, R>;
   /** The record as the server has it now, in the draft's shape (recomputed on every render is fine). */
   readonly server: V;
+  /**
+   * What a draft with nothing pending becomes when it takes a newer server version; the server version by default.
+   * For a field the server does not store, such as a note that goes out with the next save: return the server
+   * version with that field of `draft`. The result is a draft over that server version like any typed one.
+   */
+  readonly takeServer?: (server: V, draft: V) => V;
 }
 
 export interface AutosaveDraft<V> extends Autosave<V> {
+  /**
+   * The version the server last confirmed, as of this render: what a save compares the draft with. Field messages
+   * that follow the `isValid` rule read it, so they name the same fields the rule holds the draft back for.
+   */
+  readonly confirmed: V;
   readonly draft: V;
   /** "Načíst aktuální verzi": drop the draft, continue from the server version and re-read it. */
   readonly reloadLatest: () => void;
@@ -415,7 +478,7 @@ export const useAutosaveDraft = <V, R>(options: UseAutosaveDraftOptions<V, R>): 
     setSeen(server);
     const settled = !autosavePending(status) && same(draft, controller.confirmed());
     if (settled && !same(server, draft)) {
-      setDraft(server);
+      setDraft(options.takeServer?.(server, draft) ?? server);
       setGeneration(begin(server, revision));
     } else if (status === 'proposed' && same(server, draft)) {
       // The proposal was approved: the server now has this draft, so it is confirmed from that version on. The old
@@ -435,6 +498,7 @@ export const useAutosaveDraft = <V, R>(options: UseAutosaveDraftOptions<V, R>): 
   };
   return {
     ...autosaveOf(controller, status, adopt),
+    confirmed: controller.confirmed(),
     draft,
     reloadLatest: () => {
       adopt(seen);

@@ -130,7 +130,7 @@ it.layer(NodeServices.layer)((suite) => {
         });
         const preExtraction = yield* corePolicies('20261024223832_gateway-identity-attestation');
         // Keep the historical policies exact while including the current intent and prepared-authority policies.
-        const current = yield* corePolicies('20261107110051_full-target-action-authority-v2');
+        const current = yield* corePolicies('20261109185619_workload-company-bindings');
         const actual = [
           ...Object.values(coreDatabaseSchema).flatMap((table) =>
             getTableConfig(table).policies.map((policy) => renderPolicy({ policy, table })),
@@ -140,7 +140,7 @@ it.layer(NodeServices.layer)((suite) => {
 
         expect(preExtraction).toHaveLength(59);
         expect(actual).toEqual(expect.arrayContaining(preExtraction));
-        expect(current).toHaveLength(174);
+        expect(current).toHaveLength(179);
         expect(actual).toEqual(current);
       }),
   );

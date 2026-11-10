@@ -1,4 +1,3 @@
-import { committedResult, pendingProposalMessage } from '../../../../api/action-result.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
@@ -12,26 +11,16 @@ import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { selectItem } from '../../../../ui/select-item.ts';
-import { AutosaveStatus, dialogCloseLabel, formatDate, formatMoney, PageHeader, useAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
-import { DateTime, Effect, Predicate, Random } from 'effect';
-import { isRealVariant } from '../../../../../shared/domain/merchandise-model.ts';
+import { AutosaveStatus, dialogCloseLabel, formatDate, formatMoney, PageHeader } from '@app/admin-ui';
+import { DateTime, Schema } from 'effect';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { useEffect, useRef, useState } from 'react';
-import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
+import { useState } from 'react';
 import type { CategoryTrail, ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
 import { orderLineVatMinor } from '../../../../../shared/domain/order-totals.ts';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
-import { executeManageCatalog } from '../../../../api/manage-catalog-action-client.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import {
-  detailDraftInvalid,
-  detailSaveOf,
-  draftOf,
-  measurementInvalid,
-  sameDetailDraft,
-} from './product-detail-draft.ts';
+import { useProductDetailAutosave } from './product-detail-autosave.ts';
+import { detailDraftInvalid, draftOf, measurementInvalid } from './product-detail-draft.ts';
 import type { DetailDraft } from './product-detail-draft.ts';
 import {
   PRODUCT_LIMITS,
@@ -53,6 +42,19 @@ import { MarketsPanel } from './product-markets.tsx';
 import type { ProductMarket } from '../../../../../shared/domain/market-offers.ts';
 import type { MovementDraft } from './product-movement-draft.ts';
 
+const ProductDetailTabSchema = Schema.Literals([
+  'detail',
+  'variants',
+  'eshop',
+  'content',
+  'markets',
+  'prices',
+  'movements',
+]);
+/** The tabs of the product editor, owned by the page so the active tab survives a product reload. */
+export type ProductDetailTab = typeof ProductDetailTabSchema.Type;
+const isProductDetailTab = Schema.is(ProductDetailTabSchema);
+
 export interface ProductDetailViewProps {
   readonly canMoveStock?: boolean;
   readonly canWrite: boolean;
@@ -68,9 +70,13 @@ export interface ProductDetailViewProps {
   readonly onBack: () => void;
   readonly onCommitted: (message: string) => void;
   readonly onReload: () => void;
+  /** Called when the user picks another tab; the page keeps the active tab across product reloads. */
+  readonly onTabChange: (tab: ProductDetailTab) => void;
   readonly product: ProductRecord;
   readonly revision: number;
   readonly storefrontOrigin?: string;
+  /** The active tab, owned by the page so that it survives the remount after a product reload. */
+  readonly tab: ProductDetailTab;
   /** The opaque variant target from the URL; resolution happens against the current authorized product. */
   readonly variantId?: string | undefined;
 }
@@ -403,70 +409,11 @@ const DetailForm = ({ canWrite, draft, onBlur, onDraftChange, product }: DetailF
   );
 };
 
-type CommandFailure = Effect.Error<ReturnType<typeof runProductCommand>>;
-
-const idempotencyKey = Effect.all({ now: DateTime.now, random: Random.nextInt }, { concurrency: 1 }).pipe(
-  Effect.map(({ now, random }) => `merchandise:product:${DateTime.toEpochMillis(now)}:${random}`),
-);
-
-/** One merchandise command; the revision the server answered with is the one the next command must expect. */
-const runProductCommand = (
-  command: Extract<MerchandiseCommand, { readonly _tag: 'UpdateProduct' | 'ChangePrice' }>,
-  expectedRevision: number,
-) =>
-  idempotencyKey.pipe(
-    Effect.flatMap((key) => executeManageCatalog({ command, expectedRevision }, key, { idempotencyKey: key })),
-    Effect.flatMap(committedResult),
-    Effect.map((result) => result.revision),
-  );
-
-const failureOutcome = (error: CommandFailure): AutosaveOutcome =>
-  Predicate.isTagged(error, 'ManageCatalogActionConflictProblem') && error.code !== 'merchandise_lifecycle_conflict'
-    ? 'conflict'
-    : 'failed';
-
 /**
- * One autosave of the detail form: the changed basic fields first, then a changed price, each against the revision
- * the previous command or the page left. A conflict keeps the draft and offers the version someone else saved.
- */
-const saveDetailEffect = (
-  value: DetailDraft,
-  product: ProductRecord,
-  revisionRef: { current: number },
-  pending: (message: string | null) => void,
-): Effect.Effect<AutosaveOutcome> => {
-  const { patch, priceChanged, priceMinor } = detailSaveOf(value, product);
-  if (Object.keys(patch).length === 0 && !priceChanged) {
-    return Effect.succeed('saved');
-  }
-  const update: Effect.Effect<number, CommandFailure> =
-    Object.keys(patch).length === 0
-      ? Effect.succeed(revisionRef.current)
-      : runProductCommand({ _tag: 'UpdateProduct', id: product.id, patch }, revisionRef.current);
-  return update.pipe(
-    Effect.flatMap((revision) => {
-      revisionRef.current = revision;
-      return priceChanged
-        ? runProductCommand({ _tag: 'ChangePrice', id: product.id, priceMinor }, revision)
-        : Effect.succeed(revision);
-    }),
-    Effect.tap((revision) =>
-      Effect.sync(() => {
-        revisionRef.current = revision;
-      }),
-    ),
-    Effect.match({
-      onFailure: (error) => {
-        pending(pendingProposalMessage(error) ?? null);
-        return failureOutcome(error);
-      },
-      onSuccess: (): AutosaveOutcome => 'saved',
-    }),
-  );
-};
-
-/**
- * Full-page product editor, keyed by product id. Refreshes retain the active tab and unsaved fields.
+ * Full-page product editor, keyed by product id. It stays mounted while its product reloads. A reloaded product
+ * replaces an untouched draft; a draft with unsaved changes stays, and its save still expects the revision it was
+ * based on, so a change someone else made in the meantime ends in a conflict instead of being overwritten. The
+ * active tab is owned by the page.
  */
 export const ProductDetailView = ({
   canWrite,
@@ -478,47 +425,24 @@ export const ProductDetailView = ({
   onBack,
   onCommitted,
   onReload,
+  onTabChange,
   product,
   revision,
   storefrontOrigin,
+  tab,
   variantId,
 }: ProductDetailViewProps) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
-  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
-  const [editableDraft, setEditableDraft] = useState(() => draftOf(product));
-  // Real variants are read-only on this tab and always come from the latest product.
-  // Deriving them preserves unsaved detail fields when the variants tab commits a change.
-  const draft = { ...editableDraft, realVariants: (product.variants ?? []).filter(isRealVariant) };
   const [movementDraft, setMovementDraft] = useState(EMPTY_MOVEMENT_DRAFT);
   const variantDestination = resolveProductVariantDestination(product, variantId);
-  const [tab, setTab] = useState(() => (variantId === undefined ? 'detail' : 'variants'));
-  const [variantTabKey, setVariantTabKey] = useState(variantId);
-  if (variantTabKey !== variantId) {
-    setVariantTabKey(variantId);
-    if (variantId !== undefined) {
-      setTab('variants');
-    }
-  }
-  // The revision the next save must expect: the one the page passed, then the one each save returns.
-  // The page's snapshot is the authority after a reload; a save moves it to the revision the server answered with,
-  // and a conflict is healed by reloading the product, so the next save never builds on a revision nobody has.
-  const revisionRef = useRef(revision);
-  useEffect(() => {
-    revisionRef.current = revision;
-  }, [revision]);
   // Every change of the product fields saves itself, debounced; the page re-reads the product after each save.
-  const autosave = useAutosave<DetailDraft, never>({
-    equals: sameDetailDraft,
-    isValid: (value) => !detailDraftInvalid(value),
-    runtime: browserRuntime,
-    save: (value): Effect.Effect<AutosaveOutcome> => saveDetailEffect(value, product, revisionRef, setPendingMessage),
-    value: draft,
-  });
+  // The editor stays mounted across that reload (`useProductDetailAutosave`).
+  const { autosave, draft, followStockCommit, pendingMessage } = useProductDetailAutosave({ product, revision });
   const dirty = autosave.pending || isMovementDraftDirty(movementDraft);
   const blocker = useBlocker({ enableBeforeUnload: () => dirty, shouldBlockFn: () => dirty, withResolver: true });
   const updateDraft = (patch: Partial<DetailDraft>) => {
-    setEditableDraft((current) => ({ ...current, ...patch }));
+    autosave.setDraft((current) => ({ ...current, ...patch }));
   };
   const updateMovementDraft = (patch: Partial<MovementDraft>) => {
     setMovementDraft((current) => ({ ...current, ...patch }));
@@ -570,7 +494,15 @@ export const ProductDetailView = ({
           }
           title={product.name}
         />
-        <Tabs onValueChange={setTab} value={tab} variant="line">
+        <Tabs
+          onValueChange={(value) => {
+            if (isProductDetailTab(value)) {
+              onTabChange(value);
+            }
+          }}
+          value={tab}
+          variant="line"
+        >
           <div style={{ overflowX: 'auto' }}>
             <Tabs.List style={{ minWidth: '100%', width: 'max-content' }}>
               <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="detail">
@@ -613,6 +545,7 @@ export const ProductDetailView = ({
               key={`variants-${DateTime.formatIso(product.updatedAt)}`}
               onCommitted={onCommitted}
               onReload={onReload}
+              onStockCommitted={followStockCommit}
               product={product}
               revision={revision}
               variantDestination={variantDestination}
@@ -671,6 +604,7 @@ export const ProductDetailView = ({
                 onCommitted={onCommitted}
                 onDraftChange={updateMovementDraft}
                 onReload={onReload}
+                onStockCommitted={followStockCommit}
                 productId={product.id}
                 revision={revision}
                 stockOnHand={product.stockOnHand}

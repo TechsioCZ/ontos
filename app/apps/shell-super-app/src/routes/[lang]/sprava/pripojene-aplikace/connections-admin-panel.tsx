@@ -110,6 +110,22 @@ const tiles = (stats: ConnectionAdminListResponse['stats']) => [
 const selectClass = 'w-full min-w-0 max-w-full truncate rounded-md border border-border-primary bg-base p-100';
 const labelClass = 'grid min-w-0 gap-50 text-sm';
 
+/** The stored status, except that an active grant whose live check does not pass now is not usable, not active. */
+const StatusBadge = ({ connection }: { readonly connection: ConnectionSummary }) =>
+  connection.status === 'active' && !connection.live ? (
+    <Badge variant="warning">Teď nelze použít</Badge>
+  ) : (
+    <Badge variant={statusBadge[connection.status]}>{statusLabel[connection.status]}</Badge>
+  );
+
+/** The effective write policy of a live grant; a dash while the grant is not usable, never a ceiling it does not have. */
+const WritePolicyCell = ({ connection }: { readonly connection: ConnectionSummary }) =>
+  connection.live ? (
+    <Badge variant={writePolicyBadge[connection.writePolicy]}>{writePolicyLabel[connection.writePolicy]}</Badge>
+  ) : (
+    '—'
+  );
+
 const EndedDetail = ({ connection }: { readonly connection: ConnectionSummary }) => {
   const detail = endedDetail(connection);
   if (detail === undefined) {
@@ -404,14 +420,14 @@ export const ConnectionsAdminPanel = () => {
                     </td>
                     <td className="p-100">{c.user.displayName}</td>
                     <td className="p-100">{actingAdminLabel(c)}</td>
-                    <td className="p-100">{accessSummary(c)}</td>
+                    <td className="p-100">{c.live ? accessSummary(c) : '—'}</td>
                     <td className="whitespace-nowrap p-100">
-                      <Badge variant={writePolicyBadge[c.writePolicy]}>{writePolicyLabel[c.writePolicy]}</Badge>
+                      <WritePolicyCell connection={c} />
                     </td>
                     <td className="p-100">
                       <span className="grid gap-50">
                         <span className="whitespace-nowrap">
-                          <Badge variant={statusBadge[c.status]}>{statusLabel[c.status]}</Badge>
+                          <StatusBadge connection={c} />
                         </span>
                         <EndedDetail connection={c} />
                       </span>
@@ -441,13 +457,13 @@ export const ConnectionsAdminPanel = () => {
                   </p>
                   <p>Osoba: {c.user.displayName}</p>
                   <p>Jedná jako: {actingAdminLabel(c)}</p>
-                  <p>Přístup: {accessSummary(c)}</p>
+                  <p>Přístup: {c.live ? accessSummary(c) : '—'}</p>
                   <p className="flex flex-wrap items-center gap-100">
-                    Zápis: <Badge variant={writePolicyBadge[c.writePolicy]}>{writePolicyLabel[c.writePolicy]}</Badge>
+                    Zápis: <WritePolicyCell connection={c} />
                   </p>
                   <div className="grid gap-50">
                     <p className="flex flex-wrap items-center gap-100">
-                      Stav: <Badge variant={statusBadge[c.status]}>{statusLabel[c.status]}</Badge>
+                      Stav: <StatusBadge connection={c} />
                     </p>
                     <EndedDetail connection={c} />
                   </div>

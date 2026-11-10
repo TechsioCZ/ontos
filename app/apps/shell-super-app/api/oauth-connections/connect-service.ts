@@ -4,14 +4,8 @@
  * same user, company, acting principal and client, reusing its profile id) and denial. Pure helpers are exported for
  * unit tests; the HTTP mapping lives in connect-http.ts.
  */
-import {
-  OAuthAuthenticationAudit,
-  OAuthConnectionCompanies,
-  openDemoAccountGrants,
-  openPrincipalOperators,
-} from '@app/core-runtime';
+import { OAuthAuthenticationAudit, OAuthConnectionCompanies } from '@app/core-runtime';
 import type {
-  ConnectAgentOption,
   ConnectApproveRequest,
   ConnectApproveResponse,
   ConnectCompanyOption,
@@ -23,7 +17,6 @@ import type {
   ConnectDraftSummaryRequest,
   ConnectOptions,
   ConnectOptionsRequest,
-  ConnectionActingKind,
   ConnectionClient,
   ConnectionModulesRequest,
 } from '@app/shared-contracts/oauth-connections';
@@ -37,8 +30,10 @@ import {
   ConnectionProfileIdSchema,
   OAUTH_DRAFT_TTL_SECONDS,
 } from '@app/shared-contracts/oauth-connections';
-import { Clock, Crypto, Duration, Effect, Option, Schema } from 'effect';
+import { Clock, Crypto, Duration, Effect, Exit, Option, Ref, Schema } from 'effect';
 
+import { emptySubjectAccessTrace } from '../agent-platform/caller.ts';
+import type { SubjectAccessTrace } from '../agent-platform/caller.ts';
 import { finishRevocation, loadActingAuthority } from './connection-service.ts';
 import { effectiveAuthority, isModulesRequestWithin, isPolicyWithin, minWritePolicy } from './effective-authority.ts';
 import { ConnectionForbidden, ConnectionInvalid, ConnectionUnavailable } from './errors.ts';
@@ -48,7 +43,6 @@ import {
   findPreviousProfileId,
   findSessionGrant,
   insertDraftGrant,
-  listAgentPrincipals,
   loadPrincipals,
   setGrantStatus,
 } from './grant-store.ts';
@@ -110,33 +104,10 @@ const toUnavailable = (cause: unknown): ConnectionUnavailable =>
 const modulesJson = (modules: ConnectionModulesRequest) =>
   Schema.encodeEffect(ModulesJson)(modules).pipe(Effect.mapError(toUnavailable));
 
-const companiesOfAgent = (agentPrincipalId: string) =>
-  openDemoAccountGrants.pipe(
-    Effect.flatMap((grants) => grants.companiesOf(agentPrincipalId)),
-    Effect.scoped,
-    Effect.mapError(toUnavailable),
-  );
-
-const canOperateAgent = (agentPrincipalId: string, operatorPrincipalId: string) =>
-  openPrincipalOperators.pipe(
-    Effect.flatMap((operators) => operators.canOperate(agentPrincipalId, operatorPrincipalId)),
-    Effect.scoped,
-    Effect.mapError(toUnavailable),
-  );
-
-/** The agent is active, belongs to the company and the session person may operate it (`principal#operate`). */
-const mayActAsAgent = Effect.fn('OAuthConnectService.mayActAsAgent')(function* mayActAsAgent(
-  session: ConnectSession,
-  agentPrincipalId: string,
-  legalEntityId: string,
-) {
-  const active = (yield* listAgentPrincipals(session.tenantId)).some((agent) => agent.principalId === agentPrincipalId);
-  return (
-    active &&
-    (yield* companiesOfAgent(agentPrincipalId)).includes(legalEntityId) &&
-    (yield* canOperateAgent(agentPrincipalId, session.principalId))
-  );
-});
+/** Refusal of a draft that would act as an agent: no OAuth agent has a credential-bound connection. */
+const AGENT_REFUSAL = 'Za tohoto agenta nesmíte jednat.';
+/** Refusal of a write policy the person's current authority does not reach. */
+const WRITE_POLICY_REFUSAL = 'Požadovaný způsob zápisu není pro toto připojení povolen.';
 
 /** Verified OAuth query and the client it names (unknown client = invalid query). */
 const verifiedClient = Effect.fn('OAuthConnectService.verifiedClient')(function* verifiedClient(oauthQuery: string) {
@@ -157,30 +128,89 @@ const verifiedClient = Effect.fn('OAuthConnectService.verifiedClient')(function*
   return { client, verified };
 });
 
-/** Active agents the session person may operate, with the companies each agent belongs to. */
-const operableAgents = Effect.fn('OAuthConnectService.operableAgents')(function* operableAgents(
-  session: ConnectSession,
-) {
-  const agents = yield* listAgentPrincipals(session.tenantId);
-  const checked = yield* Effect.forEach(
-    agents,
-    Effect.fn('OAuthConnectService.checkAgent')(function* checkAgent(agent) {
-      const operable = yield* canOperateAgent(agent.principalId, session.principalId);
-      const companies = operable ? yield* companiesOfAgent(agent.principalId) : [];
-      return { ...agent, companies, operable };
-    }),
-    { concurrency: 4 },
-  );
-  return checked.filter((agent) => agent.operable);
-});
+const OptionsPhaseSchema = Schema.Literals(['companyAuthority', 'verifyClient']);
+type OptionsPhase = typeof OptionsPhaseSchema.Type;
 
-export const connectOptions = Effect.fn('OAuthConnectService.connectOptions')(function* connectOptions(
-  session: ConnectSession,
-  request: ConnectOptionsRequest,
-) {
-  const { client, verified } = yield* verifiedClient(request.oauthQuery);
+/** One options build's progress. Kept in a Ref so a build that stalls or is cut off still names its active phase. */
+interface OptionsTrace {
+  readonly active: OptionsPhase | null;
+  readonly budgetExceeded: boolean;
+  readonly companies: number;
+  readonly durations: Partial<Record<OptionsPhase, number>>;
+}
+
+/** Both traces of one options build: its own phases, and the steps inside the company-authority read. */
+interface OptionsTraces {
+  readonly authority: Ref.Ref<SubjectAccessTrace>;
+  readonly options: Ref.Ref<OptionsTrace>;
+}
+
+interface OptionsTiming {
+  readonly phase: <Value, Failure, Requirements>(
+    phase: OptionsPhase,
+    effect: Effect.Effect<Value, Failure, Requirements>,
+  ) => Effect.Effect<Value, Failure, Requirements>;
+}
+
+const makeTiming = (trace: Ref.Ref<OptionsTrace>): OptionsTiming => {
+  const phase = Effect.fn('OAuthConnectService.phase')(function* timedPhase<Value, Failure, Requirements>(
+    name: OptionsPhase,
+    effect: Effect.Effect<Value, Failure, Requirements>,
+  ) {
+    yield* Ref.update(trace, (current) => ({ ...current, active: name }));
+    const startedAt = yield* Clock.currentTimeMillis;
+    const value = yield* effect;
+    const finishedAt = yield* Clock.currentTimeMillis;
+    yield* Ref.update(trace, (current) => ({
+      ...current,
+      active: null,
+      durations: { ...current.durations, [name]: finishedAt - startedAt },
+    }));
+    return value;
+  });
+  return { phase };
+};
+
+/** Longest a consent options build may run; below the 30 s request budget, so a stall ends as a retryable 503. */
+const CONNECT_OPTIONS_BUDGET = Duration.seconds(20);
+/** A build slower than this logs one line with every phase's duration. */
+const SLOW_OPTIONS_MILLIS = 3000;
+/** Cause of the budget failure; `toProblem` maps it to the same retryable 503 as any unavailable build. */
+export const OPTIONS_BUDGET_CAUSE = 'connect options exceeded budget';
+
+/** The acting-authority read of one company: `loadActingAuthority` in production, a double in tests. */
+type ActingAuthority = Effect.Success<ReturnType<typeof loadActingAuthority>>;
+type ActingAuthorityInput = Parameters<typeof loadActingAuthority>[1];
+
+/** What an options build reads beyond the OAuth query and the session. Production wires the live one. */
+export interface ConnectOptionsPorts<Requirements> {
+  readonly authorityOf: (
+    asker: OperationalScope,
+    input: ActingAuthorityInput,
+    trace: Ref.Ref<SubjectAccessTrace>,
+  ) => Effect.Effect<ActingAuthority, ConnectionUnavailable, Requirements>;
+}
+
+interface OptionsBuild<Requirements> {
+  readonly authorityTrace: Ref.Ref<SubjectAccessTrace>;
+  readonly ports: ConnectOptionsPorts<Requirements>;
+  readonly request: ConnectOptionsRequest;
+  readonly session: ConnectSession;
+  readonly timing: OptionsTiming;
+}
+
+const buildOptions = Effect.fn('OAuthConnectService.buildOptions')(function* buildOptions<Requirements>({
+  authorityTrace,
+  ports,
+  request,
+  session,
+  timing,
+}: OptionsBuild<Requirements>) {
+  const { client, verified } = yield* timing.phase('verifyClient', verifiedClient(request.oauthQuery));
   const user = { displayName: session.displayName, principalId: ConnectionPrincipalIdSchema.make(session.principalId) };
-  if (session.companies.length === 0) {
+  // Only the company the session is scoped to has authority that can be loaded, so no other company is offered.
+  const scoped = session.companies.find((company) => company.legalEntityId === session.scope.legalEntityId);
+  if (scoped === undefined) {
     return {
       client,
       companies: [],
@@ -189,46 +219,27 @@ export const connectOptions = Effect.fn('OAuthConnectService.connectOptions')(fu
       user,
     } satisfies ConnectOptions;
   }
-  const agents = yield* operableAgents(session);
-  const agentOption = Effect.fn('OAuthConnectService.agentOption')(function* agentOption(
-    legalEntityId: string,
-    agent: { readonly displayName: string; readonly principalId: string },
-  ) {
-    const authority = yield* loadActingAuthority(session.scope, {
-      actingKind: 'agent',
-      actingPrincipalId: agent.principalId,
-      legalEntityId,
-      tenantId: session.scope.tenantId,
-    });
-    return {
-      displayName: agent.displayName,
-      modules: authority.offered,
-      principalId: ConnectionPrincipalIdSchema.make(agent.principalId),
-      writePolicy: authority.policyCap,
-    } satisfies ConnectAgentOption;
-  });
-  const companyOption = Effect.fn('OAuthConnectService.companyOption')(function* companyOption(
-    company: ConnectSession['companies'][number],
-  ) {
-    const own = yield* loadActingAuthority(session.scope, {
-      actingKind: 'human',
-      actingPrincipalId: session.principalId,
-      legalEntityId: company.legalEntityId,
-      tenantId: session.scope.tenantId,
-    });
-    const agentOptions = yield* Effect.forEach(
-      agents.filter((agent) => agent.companies.includes(company.legalEntityId)),
-      (agent) => agentOption(company.legalEntityId, agent),
-      { concurrency: 4 },
-    );
-    return {
-      agents: agentOptions,
-      legalEntityId: ConnectionLegalEntityIdSchema.make(company.legalEntityId),
-      legalName: company.legalName,
+  const own = yield* timing.phase(
+    'companyAuthority',
+    ports.authorityOf(
+      session.scope,
+      {
+        actingKind: 'human',
+        actingPrincipalId: session.principalId,
+        legalEntityId: scoped.legalEntityId,
+        tenantId: session.scope.tenantId,
+      },
+      authorityTrace,
+    ),
+  );
+  const companies = [
+    {
+      agents: [],
+      legalEntityId: ConnectionLegalEntityIdSchema.make(scoped.legalEntityId),
+      legalName: scoped.legalName,
       modules: own.offered,
-    } satisfies ConnectCompanyOption;
-  });
-  const companies = yield* Effect.forEach(session.companies, companyOption, { concurrency: 4 });
+    },
+  ] satisfies ConnectCompanyOption[];
   return {
     client,
     companies,
@@ -243,45 +254,110 @@ export const connectOptions = Effect.fn('OAuthConnectService.connectOptions')(fu
   } satisfies ConnectOptions;
 });
 
+const outcomeOf = (exit: Exit.Exit<unknown, unknown>, state: OptionsTrace): string => {
+  if (Exit.isSuccess(exit)) {
+    return 'ok';
+  }
+  return state.budgetExceeded ? 'budget_exceeded' : 'failed';
+};
+
+/** One warning with the phase durations and counts when the build was slow. Fixed names only: no identities or tokens. */
+const logSlowOptions = Effect.fn('OAuthConnectService.logSlowOptions')(function* logSlowOptions(input: {
+  readonly exit: Exit.Exit<unknown, unknown>;
+  readonly startedAt: number;
+  readonly traces: OptionsTraces;
+}) {
+  const totalMs = (yield* Clock.currentTimeMillis) - input.startedAt;
+  if (totalMs <= SLOW_OPTIONS_MILLIS) {
+    return;
+  }
+  const state = yield* Ref.get(input.traces.options);
+  const authority = yield* Ref.get(input.traces.authority);
+  yield* Effect.logWarning('OAuth connect options slow').pipe(
+    Effect.annotateLogs({
+      activePhase: state.active ?? 'none',
+      authorityActions: authority.actions,
+      authorityActivePhase: authority.active ?? 'none',
+      authorityCapabilitiesMs: authority.durations.capabilities ?? null,
+      authorityCarriers: authority.carriers,
+      authorityCatalogMs: authority.durations.modules ?? null,
+      authorityInspectionCalls: authority.inspectionCalls,
+      authorityScopeMs: authority.durations.scope ?? null,
+      companies: state.companies,
+      companyAuthorityMs: state.durations.companyAuthority ?? null,
+      outcome: outcomeOf(input.exit, state),
+      totalMs,
+      verifyClientMs: state.durations.verifyClient ?? null,
+    }),
+  );
+});
+
+/** The consent chooser's options with the given ports, bounded by the budget and timed per phase. */
+export const connectOptionsWith = <Requirements>(ports: ConnectOptionsPorts<Requirements>) =>
+  Effect.fn('OAuthConnectService.connectOptions')(function* connectOptions(
+    session: ConnectSession,
+    request: ConnectOptionsRequest,
+  ) {
+    const traces: OptionsTraces = {
+      authority: yield* Ref.make(emptySubjectAccessTrace),
+      options: yield* Ref.make<OptionsTrace>({
+        active: null,
+        budgetExceeded: false,
+        companies: session.companies.length,
+        durations: {},
+      }),
+    };
+    const startedAt = yield* Clock.currentTimeMillis;
+    return yield* buildOptions({
+      authorityTrace: traces.authority,
+      ports,
+      request,
+      session,
+      timing: makeTiming(traces.options),
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: CONNECT_OPTIONS_BUDGET,
+        orElse: () =>
+          Ref.update(traces.options, (current) => ({ ...current, budgetExceeded: true })).pipe(
+            Effect.andThen(Effect.fail(new ConnectionUnavailable({ cause: OPTIONS_BUDGET_CAUSE }))),
+          ),
+      }),
+      Effect.onExit((exit) => logSlowOptions({ exit, startedAt, traces })),
+    );
+  });
+
+export const connectOptions = connectOptionsWith({ authorityOf: loadActingAuthority });
+
 export const createDraft = Effect.fn('OAuthConnectService.createDraft')(function* createDraft(
   session: ConnectSession,
   request: ConnectDraftRequest,
 ) {
   const { client } = yield* verifiedClient(request.oauthQuery);
-  if (!session.companies.some((company) => company.legalEntityId === request.legalEntityId)) {
+  if (
+    request.legalEntityId !== session.scope.legalEntityId ||
+    !session.companies.some((company) => company.legalEntityId === request.legalEntityId)
+  ) {
     return yield* new ConnectionForbidden({ code: 'access_blocked', reason: 'K této firmě nemáte přístup.' });
   }
-  let actingKind: ConnectionActingKind = 'human';
-  let actingPrincipalId = session.principalId;
+  // No OAuth agent has a credential-bound connection, so an agent cannot be connected. Refused before any read.
   if (Option.isSome(request.actingPrincipalId)) {
-    const agentId = request.actingPrincipalId.value;
-    if (!(yield* mayActAsAgent(session, agentId, request.legalEntityId))) {
-      return yield* new ConnectionForbidden({
-        code: 'acting_principal_forbidden',
-        reason: 'Za tohoto agenta nesmíte jednat.',
-      });
-    }
-    actingKind = 'agent';
-    actingPrincipalId = agentId;
+    return yield* new ConnectionForbidden({ code: 'acting_principal_forbidden', reason: AGENT_REFUSAL });
   }
   const authority = yield* loadActingAuthority(session.scope, {
-    actingKind,
-    actingPrincipalId,
+    actingKind: 'human',
+    actingPrincipalId: session.principalId,
     legalEntityId: request.legalEntityId,
     tenantId: session.scope.tenantId,
   });
   if (!isPolicyWithin(request.writePolicy, authority.policyCap)) {
-    return yield* new ConnectionForbidden({
-      code: 'write_policy_forbidden',
-      reason: 'Požadovaný způsob zápisu není pro toto připojení povolen.',
-    });
+    return yield* new ConnectionForbidden({ code: 'write_policy_forbidden', reason: WRITE_POLICY_REFUSAL });
   }
   if (!isModulesRequestWithin(request.modules, authority.offered)) {
     return yield* new ConnectionInvalid({ code: 'modules_invalid' });
   }
   const profileId =
     (yield* findPreviousProfileId({
-      actingPrincipalId,
+      actingPrincipalId: session.principalId,
       clientId: client.clientId,
       legalEntityId: request.legalEntityId,
       userId: session.userId,
@@ -292,8 +368,8 @@ export const createDraft = Effect.fn('OAuthConnectService.createDraft')(function
       ? 'read_only'
       : request.writePolicy;
   const row = yield* insertDraftGrant({
-    actingKind,
-    actingPrincipalId,
+    actingKind: 'human',
+    actingPrincipalId: session.principalId,
     clientHost: client.host,
     clientId: client.clientId,
     clientKind: client.kind,
@@ -311,6 +387,10 @@ export const createDraft = Effect.fn('OAuthConnectService.createDraft')(function
   return { grantId: ConnectionGrantIdSchema.make(row.grantId) } satisfies ConnectDraftResponse;
 });
 
+/** A grant belongs to the scope the session is in now: its tenant and its company. Summary, approval and denial share it. */
+const inSessionScope = (grant: GrantRow, session: ConnectSession): boolean =>
+  grant.tenantId === session.scope.tenantId && grant.legalEntityId === session.scope.legalEntityId;
+
 export const draftSummary = Effect.fn('OAuthConnectService.draftSummary')(function* draftSummary(
   session: ConnectSession,
   request: ConnectDraftSummaryRequest,
@@ -323,7 +403,7 @@ export const draftSummary = Effect.fn('OAuthConnectService.draftSummary')(functi
   if (grant === undefined || grant.status !== 'draft' || grant.clientId !== verified.clientId) {
     return yield* new ConnectionInvalid({ code: 'draft_not_found' });
   }
-  if (grant.tenantId !== session.scope.tenantId || grant.legalEntityId !== session.scope.legalEntityId) {
+  if (!inSessionScope(grant, session)) {
     return yield* new ConnectionUnavailable({ cause: 'Retained connection scope differs from original requester' });
   }
   const agent = grant.actingKind === 'agent';
@@ -393,19 +473,29 @@ export const approve = Effect.fn('OAuthConnectService.approve')(function* approv
   if (grant === undefined || !isOwnFreshDraft(grant, session, verified.clientId, now)) {
     return yield* new ConnectionInvalid({ code: 'draft_not_found' });
   }
-  // The agent may have been deactivated, deleted or the person removed from its operators since the draft.
-  if (grant.actingKind === 'agent' && !(yield* mayActAsAgent(session, grant.actingPrincipalId, grant.legalEntityId))) {
-    yield* setGrantStatus({
-      grantId: grant.grantId,
-      revokedByPrincipalId: session.principalId,
-      revokeReason: null,
-      status: 'denied',
-    });
-    return yield* new ConnectionForbidden({
-      code: 'acting_principal_forbidden',
-      reason:
-        'Agent byl mezitím deaktivován nebo smazán, nebo ho už nesmíte připojit. Připojení se nevytvořilo; spusťte ho znovu.',
-    });
+  // Refused before any read or write, also for an agent draft made before createDraft refused agents.
+  if (grant.actingKind === 'agent') {
+    return yield* new ConnectionForbidden({ code: 'acting_principal_forbidden', reason: AGENT_REFUSAL });
+  }
+  if (grant.actingPrincipalId !== session.principalId) {
+    return yield* new ConnectionInvalid({ code: 'draft_not_found' });
+  }
+  if (!inSessionScope(grant, session)) {
+    return yield* new ConnectionUnavailable({ cause: 'Retained connection scope differs from original requester' });
+  }
+  // The consent showed the draft under the person's authority; approval re-reads that authority, so a right withdrawn
+  // since the draft (or a write policy the company no longer allows) refuses the grant and writes nothing.
+  const authority = yield* loadActingAuthority(session.scope, {
+    actingKind: 'human',
+    actingPrincipalId: grant.actingPrincipalId,
+    legalEntityId: grant.legalEntityId,
+    tenantId: grant.tenantId,
+  });
+  if (!isPolicyWithin(grant.writePolicy, authority.policyCap)) {
+    return yield* new ConnectionForbidden({ code: 'write_policy_forbidden', reason: WRITE_POLICY_REFUSAL });
+  }
+  if (!isModulesRequestWithin(grant.modules, authority.offered)) {
+    return yield* new ConnectionInvalid({ code: 'modules_invalid' });
   }
   const approved = yield* approveDraftGrant({ actorPrincipalId: session.principalId, grant });
   if (approved === undefined) {
@@ -417,7 +507,6 @@ export const approve = Effect.fn('OAuthConnectService.approve')(function* approv
     (old) => finishRevocation({ actorPrincipalId: session.principalId, grant: old, note: null, reason: 'superseded' }),
     { concurrency: 1, discard: true },
   );
-  const agent = grant.actingKind === 'agent';
   yield* (yield* OAuthAuthenticationAudit)
     .record({
       authBindingId: session.authBindingId ?? null,
@@ -426,7 +515,7 @@ export const approve = Effect.fn('OAuthConnectService.approve')(function* approv
       evidence: {
         actingPrincipalId: grant.actingPrincipalId,
         clientKind: grant.clientKind,
-        delegatedByPrincipalId: agent ? session.principalId : null,
+        delegatedByPrincipalId: null,
         legalEntityId: grant.legalEntityId,
         modules: yield* modulesJson(grant.modules),
         writePolicy: grant.writePolicy,
@@ -451,11 +540,13 @@ export const deny = Effect.fn('OAuthConnectService.deny')(function* deny(
   const verified = yield* (yield* OAuthFlow).verifyQuery(request.oauthQuery);
   if (Option.isSome(request.grantId)) {
     const grant = yield* findGrant(request.grantId.value);
+    // A denial writes only a draft of this session and of the company the session is in now.
     if (
       grant !== undefined &&
       grant.status === 'draft' &&
       grant.sessionId === session.sessionId &&
-      grant.userId === session.userId
+      grant.userId === session.userId &&
+      inSessionScope(grant, session)
     ) {
       const denied = yield* setGrantStatus({
         grantId: grant.grantId,

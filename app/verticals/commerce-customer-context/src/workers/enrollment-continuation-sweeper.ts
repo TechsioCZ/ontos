@@ -1,8 +1,8 @@
-import { Cause, Clock, DateTime, Effect, Option, Ref } from 'effect';
+import { Cause, Clock, DateTime, Duration, Effect, Layer, Option, Ref, Schedule } from 'effect';
 
 import type { DueEnrollmentAttempt, DueEnrollmentAttemptCursor } from '../enrollment/attempts/attempt-persistence.ts';
+import { CommerceEnrollmentContinuation } from '../enrollment/continuation/enrollment-continuation.ts';
 import type {
-  CommerceEnrollmentContinuation,
   CommerceEnrollmentContinuationResult,
   CommerceEnrollmentContinuationSweepPass,
 } from '../enrollment/continuation/enrollment-continuation.ts';
@@ -511,4 +511,47 @@ export const commerceEnrollmentContinuationSweeperFor = Effect.fnUntraced(
     };
     return sweeper;
   },
+);
+
+const hasActivity = (result: CommerceEnrollmentContinuationSweepResult): boolean =>
+  result.released > 0 || result.swept > 0;
+
+/** The supervision loop: a tick that cannot fail, logged only when it moved something. */
+const runCommerceEnrollmentContinuationSweepLoop = (
+  sweep: Effect.Effect<CommerceEnrollmentContinuationSweepResult>,
+  intervalMillis: number,
+): Effect.Effect<void> =>
+  sweep.pipe(
+    Effect.tap((result) =>
+      hasActivity(result)
+        ? Effect.annotateLogs(Effect.logInfo('The Commerce enrollment sweep cycle completed'), {
+            released: result.released,
+            swept: result.swept,
+            tracked: result.tracked,
+          })
+        : Effect.void,
+    ),
+    Effect.repeat(Schedule.spaced(Duration.millis(intervalMillis))),
+    Effect.asVoid,
+  );
+
+/**
+ * The swept continuation: the continuation this deployment resolved, instrumented, with the sweep
+ * loop running for the lifetime of the layer's scope. It takes the unswept continuation as its own
+ * requirement, so root decides which one is wrapped — a host without the enrollment realm sweeps a
+ * fail-closed continuation that refuses every Attempt and reports an empty journal, which is a
+ * no-op rather than a second code path.
+ */
+export const CommerceEnrollmentSweptContinuationLive: Layer.Layer<
+  CommerceEnrollmentContinuation,
+  never,
+  CommerceEnrollmentContinuation
+> = Layer.effect(
+  CommerceEnrollmentContinuation,
+  Effect.gen(function* makeCommerceEnrollmentSweptContinuation() {
+    const continuation = yield* CommerceEnrollmentContinuation;
+    const sweeper = yield* commerceEnrollmentContinuationSweeperFor({ continuation });
+    yield* Effect.forkScoped(runCommerceEnrollmentContinuationSweepLoop(sweeper.sweep, LEASE_WINDOW_MS));
+    return sweeper.continuation;
+  }),
 );

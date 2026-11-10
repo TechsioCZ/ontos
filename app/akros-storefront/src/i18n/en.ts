@@ -318,6 +318,8 @@ export const en: Dictionary = {
     standaloneItem: "stand-alone item",
     removeFailed: "The variant could not be removed. Please try again.",
   },
+  notifications: { close: "Close notification", label: "Notifications", loading: "Working…" },
+  forms: { requiredLabel: "(required)" },
   cart: {
     title: "Shopping cart",
     miniCart: {

@@ -647,6 +647,15 @@ const awaitChildReadiness = (
     ),
   );
 
+const ShellStartupFailureSchema = Schema.Literals([
+  'privacy-completion-shell:create-user',
+  'privacy-completion-shell:creator-bootstrap',
+  'privacy-completion-shell:fixture-runtime',
+  'privacy-completion-shell:module-credential',
+  'privacy-completion-shell:serve',
+]);
+const isShellStartupFailure = Schema.is(ShellStartupFailureSchema);
+
 const start = Effect.fn('PrivacyCompletionTest.start')(function* start(
   path: string,
   env: Readonly<Record<string, string>>,
@@ -712,7 +721,12 @@ const start = Effect.fn('PrivacyCompletionTest.start')(function* start(
       Effect.forkScoped,
     );
   }
-  yield* Stream.runDrain(child.stderr).pipe(Effect.forkScoped);
+  yield* child.stderr.pipe(
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.runForEach((value) => (isShellStartupFailure(value) ? Effect.logError(value) : Effect.void)),
+    Effect.forkScoped,
+  );
   const response = retrySession === undefined ? Deferred.await(line) : Queue.take(retrySession.replies);
   // Shell is a persistent server. One-cycle workers may legitimately exit while their stdout is draining.
   const readiness = privateReply === true ? awaitChildReadiness(response, child.exitCode) : response;
@@ -1373,6 +1387,30 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
       })),
     });
   });
+  // Every Outbox delivery with the message it delivers. The matcher reports only totals across every
+  // subscription that matched (Privacy's own dispatch watchdog beside Party's consumer), so attribution reads the rows.
+  const deliveries = Effect.fn('PrivacyCompletionTest.deliveries')(function* deliveries() {
+    const facts = yield* Effect.all(
+      {
+        deliveries: coreEvidenceExecutor.query.outboxDeliveries.findMany({
+          columns: { consumerModuleKey: true, outboxMessageId: true, status: true, workerKey: true },
+        }),
+        messages: coreEvidenceExecutor.query.outboxMessages.findMany({
+          columns: { outboxMessageId: true, producerModuleKey: true, topic: true },
+        }),
+      },
+      { concurrency: 2 },
+    );
+    const messages = new Map(facts.messages.map((message) => [message.outboxMessageId, message]));
+    return facts.deliveries.map((delivery) => ({
+      consumerModuleKey: delivery.consumerModuleKey,
+      messageId: delivery.outboxMessageId,
+      producerModuleKey: messages.get(delivery.outboxMessageId)?.producerModuleKey,
+      status: delivery.status,
+      topic: messages.get(delivery.outboxMessageId)?.topic,
+      workerKey: delivery.workerKey,
+    }));
+  });
   const observeSealFailure = Effect.gen(function* observeSealFailure() {
     const facts = yield* Effect.all({
       deliveries: coreEvidenceExecutor.query.outboxDeliveries.findMany({
@@ -1606,6 +1644,7 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
   return {
     control,
     cycle,
+    deliveries,
     dispatch,
     evidence,
     handoff,
@@ -1844,6 +1883,19 @@ it.effect('counts only the declared dispatch transaction failure and rejects unr
     ).toBe(false);
     expect(isDispatchTransactionRefusal(new TypeError('TEST transport failed'))).toBe(false);
     expect(isDispatchTransactionRefusal(null)).toBe(false);
+  }),
+);
+
+it.effect('admits only fixed Shell startup stage diagnostics, never private error details', () =>
+  Effect.sync(() => {
+    expect(isShellStartupFailure('privacy-completion-shell:module-credential')).toBe(true);
+    for (const value of [
+      'TEST:secret-child-diagnostic',
+      'privacy-completion-shell:serve:TEST-private-credential',
+      'privacy-completion-shell:unknown',
+    ]) {
+      expect(isShellStartupFailure(value)).toBe(false);
+    }
   }),
 );
 
@@ -2503,6 +2555,9 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
           });
           yield* f.isolated.composition.closeAdmission();
           yield* pending(f);
+          const privacyDeliveries = (rows: Effect.Success<ReturnType<typeof f.deliveries>>) =>
+            rows.filter((row) => row.messageId === originalMessage.id && row.consumerModuleKey === 'party.registry');
+          const deliveriesBefore = yield* f.deliveries();
           // Actual registered handler + repository.complete: succeeded is counted only after durable ACK.
           const completedCycle = yield* f.cycle();
           expect(completedCycle).toMatchObject({
@@ -2512,9 +2567,18 @@ it.layer(nativeFixtureServices, { excludeTestServices: true, timeout: '30 second
             retried: 0,
             succeeded: 1,
           });
+          const deliveriesAfter = yield* f.deliveries();
           // Shell's real installed-catalog matcher also runs: this worker may find its delivery already matched.
           // Keep both matchers and require the same single claim/ACK and exact message-derived debt settlement.
-          expect([0, 1]).toContain(completedCycle.matched.deliveriesCreated);
+          // One match inserts every subscribed delivery of the message: Party's consumer and Privacy's own
+          // dispatch watchdog. The totals count both, so this count reads Party's delivery of the one dispatch.
+          expect(privacyDeliveries(deliveriesAfter)).toHaveLength(1);
+          expect([0, 1]).toContain(
+            privacyDeliveries(deliveriesAfter).length - privacyDeliveries(deliveriesBefore).length,
+          );
+          expect(completedCycle.matched.deliveriesCreated).toBeLessThanOrEqual(
+            deliveriesAfter.length - deliveriesBefore.length,
+          );
           expect(completedCycle.matched.messagesMatched).toBeGreaterThanOrEqual(
             completedCycle.matched.deliveriesCreated,
           );

@@ -91,7 +91,7 @@ export const makeTestAccessDecision = (spec: TestAccessDecisionSpec = {}): TestA
     const named = key === undefined ? undefined : spec.answers?.[key];
     return named ?? spec.defaultAnswer ?? { outcome: 'DENIED' };
   };
-  return {
+  const double: TestAccessDecision = {
     askedDecisions,
     askedLists,
     askedSelectableLegalEntities,
@@ -117,5 +117,9 @@ export const makeTestAccessDecision = (spec: TestAccessDecisionSpec = {}): TestA
         ? Effect.fail(accessDecisionUnavailable('The authorization engine did not answer'))
         : Effect.succeed(spec.legalEntityIds ?? []);
     },
+    // The double reads no ports, so over any other ports it is itself; its record of questions stays in one place.
+    // A prepared Action authority requires a gate that can rebind (O75).
+    rebind: () => double,
   };
+  return double;
 };

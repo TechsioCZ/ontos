@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Effect, Exit, Match, Schema } from "effect";
 import { HttpApiClient } from "effect/http-api";
 import { Button } from "@techsio/ui-kit/atoms/button";
-import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import { FormInput } from "./form-controls";
 import { useToast } from "@techsio/ui-kit/molecules/toast";
 import type { Dictionary } from "@/i18n";
 import { CustomerProfileApi, CustomerProfileUpdateSchema } from "@/ontos/customer-profile";

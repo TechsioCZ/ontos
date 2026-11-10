@@ -20,6 +20,11 @@ beforeEach(() => {
   });
 });
 
+// The UI-kit carousel scrolls its track on mount. Browsers implement Element.scrollTo; jsdom does not.
+if (typeof Element !== "undefined" && !("scrollTo" in Element.prototype)) {
+  Object.defineProperty(Element.prototype, "scrollTo", { configurable: true, value: () => {} });
+}
+
 // Component suites render Kai's UI outside Next's RSC runtime and root layout, on the generated
 // seed catalog. Owner reads are covered by ontos-catalog/ontos-catalog-server and the page suites.
 vi.mock("@/ontos/catalog-provider", async () => {

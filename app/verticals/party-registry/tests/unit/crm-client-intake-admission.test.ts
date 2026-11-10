@@ -44,7 +44,10 @@ const delegated = (compositionRevision: string, appId = 'crm') =>
 const gateFor = (kind: 'service' | 'human', bound = true) =>
   makeAccessDecisionService({
     principalKinds: { readKind: () => Effect.succeed(Option.some(kind)) },
-    workloadBindings: { readActiveWorkloadKeys: () => Effect.succeed(new Set(bound ? ['demo.crm.party-intake'] : [])) },
+    workloadBindings: {
+      readActiveWorkloadKeys: () => Effect.succeed(new Set(bound ? ['demo.crm.party-intake'] : [])),
+      readCompanyDeclaration: () => Effect.succeed({ activeCompanyIds: new Set([legalEntityId]), pinned: true }),
+    },
     authorityFor: () => ({
       readScope: (query) =>
         Effect.succeed(

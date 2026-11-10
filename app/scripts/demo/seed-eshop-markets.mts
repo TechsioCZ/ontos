@@ -26,7 +26,7 @@ import type {
   JurisdictionRefSchema,
   MarketChannelSchema,
 } from '../../verticals/commerce-market-catalog/shared/market-contracts.ts';
-import { MerchandiseCommandSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
+import { ManageMarketsPayloadSchema } from '../../verticals/merchandise/shared/actions/manage-markets.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../verticals/merchandise/shared/apis/records.ts';
 import type { MarketCurrency, MarketOfferMode } from '../../verticals/merchandise/shared/domain/market-offers.ts';
 import {
@@ -38,7 +38,7 @@ import {
   StorefrontApplicationsResponseSchema,
 } from '../../verticals/storefront-registry/shared/apis/storefront-applications.ts';
 import { akrosDemoLegalEntityId, demoId, demoTenantId, eshopDemoLegalEntityId } from './fixture-ids.mts';
-import { connectSeedClient, DemoSeedError } from './seed-client.mts';
+import { connectSeedClient, DemoSeedError, ownerAction } from './seed-client.mts';
 import type { SeedClient } from './seed-client.mts';
 
 const modes = ['dry-run', 'apply', 'verify'] as const;
@@ -215,9 +215,9 @@ const ApplicationsRequest = Schema.toEncoded(StorefrontApplicationsRequestSchema
 const ApplicationsResponse = Schema.toEncoded(StorefrontApplicationsResponseSchema);
 const RecordsRequest = Schema.toEncoded(RecordsRequestSchema);
 const Records = Schema.toEncoded(RecordsResponseSchema);
-const MerchandiseCommandPayload = Schema.toEncoded(MerchandiseCommandSchema);
+const manageMarkets = ownerAction('manage-markets', Schema.toEncoded(ManageMarketsPayloadSchema));
 type RecordsView = (typeof RecordsRequest.Type)['view'];
-type MerchandiseCommand = typeof MerchandiseCommandPayload.Type;
+type MarketCommand = (typeof manageMarkets.payload.Type)['command'];
 type Catalog = typeof CatalogResponse.Type;
 
 const sellerRef = (legalEntityId: string) => ({
@@ -254,9 +254,9 @@ const readApplications = (client: SeedClient) =>
   );
 const readRecords = (client: SeedClient, view: RecordsView) =>
   client.call(merchandiseAudience, '/reads/records', RecordsRequest, { view }, Records);
-const merchandiseCommand = (client: SeedClient, command: MerchandiseCommand) =>
+const marketCommand = (client: SeedClient, command: MarketCommand) =>
   readRecords(client, { limit: 0, summary: true }).pipe(
-    Effect.flatMap(({ revision }) => client.apply(merchandiseAudience, MerchandiseCommandPayload, command, revision)),
+    Effect.flatMap(({ revision }) => client.apply(merchandiseAudience, manageMarkets, command, revision)),
   );
 const marketAction = <P extends Schema.Top, R extends Schema.Top>(
   client: SeedClient,
@@ -386,7 +386,7 @@ const ensureMarketSettings = ({ client, company, report, write }: Step) =>
       if (!markets.some((entry) => entry.marketId === marketId)) {
         report.push(`configure ${seed.code} ${seed.offerMode} ${seed.currency}`);
         if (write) {
-          yield* merchandiseCommand(client, {
+          yield* marketCommand(client, {
             _tag: 'ConfigureMarket',
             currency: seed.currency,
             exchangeRate: seed.exchangeRate,
@@ -426,7 +426,7 @@ const ensureAkrosOffers = ({ client, report, write }: Step) =>
           { offered: true, productIds: exceptions.offered },
         ].filter(({ productIds }) => write && productIds.length > 0);
         for (const { offered, productIds } of batches) {
-          yield* merchandiseCommand(client, { _tag: 'SetMarketProductOffers', marketId, offered, productIds });
+          yield* marketCommand(client, { _tag: 'SetMarketProductOffers', marketId, offered, productIds });
         }
       }
     }

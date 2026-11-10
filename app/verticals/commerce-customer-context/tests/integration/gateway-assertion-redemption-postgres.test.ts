@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { GatewayAssertionReplayError, loadDatabaseConnectionPair } from '@app/core-runtime';
+import {
+  ContextAccessLive,
+  DatabaseConfigLive,
+  GatewayAssertionReplayError,
+  loadDatabaseConnectionPair,
+} from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
@@ -17,6 +22,7 @@ import { decodeJwt, SignJWT } from 'jose';
 import { defineRelations, eq, sql } from 'drizzle-orm';
 import {
   Config,
+  ConfigProvider,
   Context,
   Deferred,
   Effect,
@@ -35,7 +41,13 @@ import { expect, it, rs } from 'effect-rstest';
 
 import { makeGatewayAssertionRedemption } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
 import { gatewayAssertionRedemptions } from '../../src/database/schema.ts';
-import defaultApi from '../../api/index.ts';
+import {
+  configuredGatewayAssertionRedemptionLive,
+  deploymentPortalAuthRuntimeLive,
+  makeCommerceCustomerContextApiRuntime,
+  productionActionRuntimeLive,
+  productionReadRuntimeLive,
+} from '../../api/index.ts';
 import { executeCounterpartyCommerceAccessListWithAuthorization } from '../../src/api/counterparty-commerce-access-list-client.ts';
 import { CounterpartyCommerceAccessListRequestSchema } from '../../shared/apis/counterparty-commerce-access-list.ts';
 import { makeEnrollmentAcceptanceFixture } from '../support/enrollment-acceptance-fixture.ts';
@@ -162,7 +174,9 @@ it.live('durably rejects replay through the exact global least-privilege table',
 const tenantAccessServices = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer);
 
 // Exercise the exported deployment root, with only its external configuration/source transport
-// supplied by the fixture. No receiving, redemption, Core, or owner layer is replaced.
+// supplied by the fixture. No receiving, redemption, Core, or owner layer is replaced. The gateway
+// trust configuration is handed to the root explicitly: the process configuration is read once per
+// process, before this case exists, so an environment variable set here would never reach it.
 it.live('serves an authorized owner Read through the unchanged default API and rejects replay', () =>
   Effect.scoped(
     Effect.gen(function* defaultReceivingProof() {
@@ -170,23 +184,34 @@ it.live('serves an authorized owner Read through the unchanged default API and r
       const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId: randomUUID() }, snapshot.composition.revision);
       const realm = yield* makeCounterpartyInvitationRealm(fixture);
       const gateway = yield* makeAcceptanceGatewayIssuer('https://ccc-default-redemption.ontos.test', 'ccc-redemption');
-      rs.stubEnv('ONTOS_GATEWAY_ISSUER', gateway.issuer);
-      rs.stubEnv('ONTOS_GATEWAY_PUBLIC_JWKS', JSON.stringify({ keys: [gateway.publicJwk] }));
-      rs.stubEnv('ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL', 'https://composition.ccc-redemption.test/active');
-      rs.stubGlobal('fetch', async () => Response.json(snapshot));
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          rs.unstubAllGlobals();
-          rs.unstubAllEnvs();
-        }),
+      const gatewayTrust = ConfigProvider.layer(
+        ConfigProvider.orElse(
+          ConfigProvider.fromUnknown({
+            ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: 'https://composition.ccc-redemption.test/active',
+            ONTOS_GATEWAY_ISSUER: gateway.issuer,
+            ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [gateway.publicJwk] }),
+          }),
+          ConfigProvider.fromEnv(),
+        ),
       );
+      rs.stubGlobal('fetch', async () => Response.json(snapshot));
+      yield* Effect.addFinalizer(() => Effect.sync(() => rs.unstubAllGlobals()));
       yield* fixture.admin.execute(
         sql`insert into commerce_customer_context.counterparty_commerce_access_grants
       (tenant_id, legal_entity_id, counterparty_purchasing_profile_id, lifecycle, permission_code, principal_id, revision, action_invocation_id, actor_principal_id)
       values (${realm.tenantId}::uuid, ${realm.legalEntityId}::uuid, ${realm.counterpartyPurchasingProfileId}::uuid, 'ACTIVE', 'counterparty.access.read', ${realm.recipientPrincipalId}::uuid, 1, ${randomUUID()}::uuid, ${realm.inviterPrincipalId}::uuid)`,
         'objects',
       );
-      const runtime = defaultApi.createHandler();
+      // The default export's own layers, with the gateway trust supplied as this deployment's input.
+      const runtime = makeCommerceCustomerContextApiRuntime(
+        productionReadRuntimeLive,
+        productionActionRuntimeLive,
+        configuredGatewayAssertionRedemptionLive,
+        deploymentPortalAuthRuntimeLive,
+        gatewayTrust,
+        DatabaseConfigLive,
+        ContextAccessLive,
+      ).createHandler();
       yield* Effect.addFinalizer(() => Effect.promise(async () => await runtime.dispose()));
       const principal = {
         authBindingId: realm.recipientAuthBindingId,

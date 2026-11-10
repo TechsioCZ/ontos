@@ -24,7 +24,41 @@
           "confirm": "Začít zpracovávat",
           "deliver": "Dokončit",
           "ship": "Předat dopravci",
-          "pack": "Připraveno k předání"
+          "pack": "Připraveno k předání",
+          "resetDemo": "Obnovit ukázková data"
+        },
+        "eshop": {
+          "workflow": {
+            "new": "Nová",
+            "confirmed": "Zpracovává se",
+            "packing": "Připravená k předání",
+            "shipped": "Předáno dopravci",
+            "delivered": "Dokončená"
+          },
+          "history": {
+            "ADDRESS": "Doručovací adresa",
+            "CONTACT": "Kontakt",
+            "CREATED": "Objednávka vytvořena",
+            "LINES": "Položky a ceny",
+            "NOTE": "Poznámka",
+            "SHIPPING": "Doprava",
+            "STATUS": "Změna stavu"
+          },
+          "actor": {
+            "system": "Systém",
+            "you": "Vy",
+            "youAs": "{{label}} (vy)",
+            "unknown": "Pracovník",
+            "withEmail": "{{label}} ({{email}})",
+            "fulfilment": "Expedice",
+            "administrator": "Správce e-shopu",
+            "storefront": "E-shop (storefront)",
+            "sales": "Obchodník",
+            "warehouse": "Skladník",
+            "assistant": "AI asistent",
+            "salesLead": "Vedoucí obchodu",
+            "accountant": "Účetní"
+          }
         },
         "bulk": {
           "changeStatus": "Změnit stav",
@@ -38,7 +72,8 @@
           "finalStatusOnly": "U dokončených a stornovaných objednávek už stav změnit nelze.",
           "selectionScope": "Akce se týkají vybraných objednávek v aktuálním filtru, včetně dalších stránek.",
           "noCommonStatus": "Vybrané objednávky nemají společný další stav. Štítky můžete upravit společně.",
-          "finalStatus": "U dokončených a stornovaných objednávek už stav změnit nelze. Štítky můžete upravit společně."
+          "finalStatus": "U dokončených a stornovaných objednávek už stav změnit nelze. Štítky můžete upravit společně.",
+          "pendingApproval": "Čeká na schválení. Žádné změny zatím nebyly provedeny."
         },
         "columns": {
           "createdAt": "Vytvořeno",
@@ -111,7 +146,45 @@
           "loading": "Načítám objednávku…",
           "notFound": "Objednávka nebyla nalezena.",
           "failed": "Objednávku se nepodařilo načíst. Zkuste to znovu.",
-          "market": "Trh"
+          "market": "Trh",
+          "backToList": "Zpět na objednávky",
+          "navigationFailed": "Objednávku se nepodařilo otevřít. Zkuste to znovu.",
+          "cancelledNotice": "Objednávka je zrušená. Další změny stavu nejsou možné.",
+          "historyEmpty": "Historie změn není u této starší objednávky k dispozici.",
+          "before": "Před:",
+          "after": "Po:",
+          "reason": "Důvod: {{reason}}",
+          "storefrontSource": "E-shop (DEMO)",
+          "storefrontSourceBrand": "E-shop {{brand}} (DEMO)",
+          "editOrder": "Upravit objednávku",
+          "editTitle": "Úprava objednávky {{number}}",
+          "backToDetail": "Zpět na detail",
+          "contact": "Kontakt",
+          "payment": "Platba",
+          "paymentNone": "Nic neplatíte (DEMO)",
+          "note": "Poznámka",
+          "demoPrefix": "DEMO:",
+          "demoNotice": "E-shop je prezentační demo. Žádné zboží nebude doručeno a nic se neplatí.",
+          "demoStatusNotice": "Změny stavu neodesílají zásilku ani výzvu k platbě.",
+          "unitPriceGross": "Cena/j s DPH",
+          "unitPriceNet": "Cena/j bez DPH",
+          "goodsGross": "Zboží s DPH",
+          "shippingGross": "Doprava s DPH",
+          "cleanup": {
+            "open": "Odstranit DEMO objednávku",
+            "keep": "Zachovat objednávku",
+            "confirm": "Potvrdit odstranění DEMO",
+            "busy": "Odstraňuji…",
+            "description": "Pouze pro správce. Objednávka zmizí z prezentačního seznamu v libovolném stavu. Historie i identita původního podání zůstanou v auditu. Skutečné objednávky nelze odstranit.",
+            "title": "Odstranit DEMO objednávku {{number}}?",
+            "reasonDefault": "Úklid prezentační DEMO objednávky",
+            "failed": "Objednávku se nepodařilo odstranit. Obnovte data a zkuste to znovu.",
+            "removed": "DEMO objednávka odstraněna; audit zůstal zachován"
+          },
+          "conversion": {
+            "converted": "Kontakt byl převeden na zákazníka"
+          },
+          "navigationTimeout": "Otevření objednávky trvá příliš dlouho. Zkuste to znovu."
         },
         "filters": {
           "allStatuses": "Všechny stavy",
@@ -541,6 +614,11 @@
       "orderNote": "Poznámka k objednávce",
       "changeReason": "Důvod změny (zapíše se do historie)",
       "changeReasonPlaceholder": "Např. zákazník telefonicky změnil množství"
+    },
+    "detailView": {
+      "group": "Zobrazení detailu",
+      "page": "Celá stránka",
+      "panel": "Panel vpravo"
     }
   }
 }

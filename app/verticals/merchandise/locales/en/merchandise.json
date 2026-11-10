@@ -24,7 +24,41 @@
           "confirm": "Confirm",
           "deliver": "Complete",
           "ship": "Hand over to carrier",
-          "pack": "Start packing"
+          "pack": "Start packing",
+          "resetDemo": "Restore sample data"
+        },
+        "eshop": {
+          "workflow": {
+            "new": "New",
+            "confirmed": "Processing",
+            "packing": "Ready for handover",
+            "shipped": "Handed to carrier",
+            "delivered": "Completed"
+          },
+          "history": {
+            "ADDRESS": "Delivery address",
+            "CONTACT": "Contact",
+            "CREATED": "Order created",
+            "LINES": "Items and prices",
+            "NOTE": "Note",
+            "SHIPPING": "Shipping",
+            "STATUS": "Status change"
+          },
+          "actor": {
+            "system": "System",
+            "you": "You",
+            "youAs": "{{label}} (you)",
+            "unknown": "Staff member",
+            "withEmail": "{{label}} ({{email}})",
+            "fulfilment": "Fulfilment",
+            "administrator": "E-shop administrator",
+            "storefront": "Online store (storefront)",
+            "sales": "Sales rep",
+            "warehouse": "Warehouse clerk",
+            "assistant": "AI assistant",
+            "salesLead": "Sales lead",
+            "accountant": "Accountant"
+          }
         },
         "bulk": {
           "changeStatus": "Change status",
@@ -38,7 +72,8 @@
           "finalStatusOnly": "Completed and cancelled orders cannot change status.",
           "selectionScope": "Actions apply to the selected orders in the current filter, including other pages.",
           "noCommonStatus": "The selected orders have no shared next status. You can still change their tags together.",
-          "finalStatus": "Delivered and cancelled orders cannot change status. You can still change their tags together."
+          "finalStatus": "Delivered and cancelled orders cannot change status. You can still change their tags together.",
+          "pendingApproval": "Awaiting approval. No changes have been applied."
         },
         "columns": {
           "createdAt": "Created",
@@ -111,7 +146,45 @@
           "loading": "Loading the order…",
           "notFound": "The order was not found.",
           "failed": "The order could not be loaded. Try again.",
-          "market": "Market"
+          "market": "Market",
+          "backToList": "Back to orders",
+          "navigationFailed": "The order could not be opened. Try again.",
+          "cancelledNotice": "This order is cancelled. No further status changes are possible.",
+          "historyEmpty": "Change history is not available for this older order.",
+          "before": "Before:",
+          "after": "After:",
+          "reason": "Reason: {{reason}}",
+          "storefrontSource": "Online store (DEMO)",
+          "storefrontSourceBrand": "Online store {{brand}} (DEMO)",
+          "editOrder": "Edit order",
+          "editTitle": "Editing order {{number}}",
+          "backToDetail": "Back to details",
+          "contact": "Contact",
+          "payment": "Payment",
+          "paymentNone": "You pay nothing (DEMO)",
+          "note": "Note",
+          "demoPrefix": "DEMO:",
+          "demoNotice": "The online store is a presentation demo. No goods will be delivered and nothing is charged.",
+          "demoStatusNotice": "Status changes send neither a shipment nor a payment request.",
+          "unitPriceGross": "Unit price incl. VAT",
+          "unitPriceNet": "Unit price excl. VAT",
+          "goodsGross": "Goods incl. VAT",
+          "shippingGross": "Shipping incl. VAT",
+          "cleanup": {
+            "open": "Remove DEMO order",
+            "keep": "Keep order",
+            "confirm": "Confirm DEMO removal",
+            "busy": "Removing…",
+            "description": "Administrators only. The order disappears from the presentation list in any status. Its history and the identity of the original submission stay in the audit log. Real orders cannot be removed.",
+            "title": "Remove DEMO order {{number}}?",
+            "reasonDefault": "Clean-up of a presentation DEMO order",
+            "failed": "The order could not be removed. Reload the data and try again.",
+            "removed": "DEMO order removed; the audit log was kept"
+          },
+          "conversion": {
+            "converted": "The contact was converted to a customer"
+          },
+          "navigationTimeout": "Opening the order is taking too long. Try again."
         },
         "filters": {
           "allStatuses": "All statuses",
@@ -537,6 +610,11 @@
       "orderNote": "Order note",
       "changeReason": "Reason for the change (recorded in history)",
       "changeReasonPlaceholder": "E.g. the customer changed the quantity by phone"
+    },
+    "detailView": {
+      "group": "Detail view",
+      "page": "Full page",
+      "panel": "Side panel"
     }
   }
 }

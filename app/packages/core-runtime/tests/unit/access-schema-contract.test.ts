@@ -32,6 +32,7 @@ import {
   accessScopes,
   accessTeamMembers,
   accessTeams,
+  accessWorkloadCompanyBindings,
   accessWorkloadBindings,
   coreDatabaseSchema,
 } from '../../src/db/schema.ts';
@@ -109,14 +110,25 @@ const INITIAL_GATEWAY_REQUEST_READ_TABLES: ReadonlySet<string> = new Set([
 const GATEWAY_REQUEST_READ_TABLES: ReadonlySet<string> = new Set([
   ...INITIAL_GATEWAY_REQUEST_READ_TABLES,
   'access_scope_fences',
+  // The explicit company registrations (D6) are read on the same request path as the bindings.
+  'access_workload_company_bindings',
 ]);
 const GATEWAY_REQUEST_INSERT_TABLES: ReadonlySet<string> = new Set(['access_decision_logs']);
 
+/**
+ * The access tables the authorization-v2-access-intent migration creates. The explicit workload
+ * company registrations (D6) arrive in a later access migration, so this suite names that one
+ * addition explicitly instead of reading the live inventory as if one migration still created it all.
+ */
+const ACCESS_INTENT_MIGRATION_TABLES: readonly string[] = ACCESS_TABLE_INVENTORY.filter(
+  (table) => table !== 'access_workload_company_bindings',
+);
+
 it('registers every access intent table once in the Core schema inventory', () => {
   const tables = Object.values(accessDatabaseSchema);
-  expect(tables).toHaveLength(23);
-  expect(ACCESS_TABLE_INVENTORY).toHaveLength(23);
-  expect(new Set(ACCESS_TABLE_INVENTORY).size).toBe(23);
+  expect(tables).toHaveLength(24);
+  expect(ACCESS_TABLE_INVENTORY).toHaveLength(24);
+  expect(new Set(ACCESS_TABLE_INVENTORY).size).toBe(24);
   expect(ACCESS_TABLES).toEqual(tables);
   for (const table of tables) {
     const config = getTableConfig(table);
@@ -138,7 +150,7 @@ it('keeps the global release catalog outside tenant RLS and every intent table i
   const tenantTables = Object.values(accessDatabaseSchema).filter(
     (table) => table !== accessCatalogSnapshots && table !== accessCatalogEntries,
   );
-  expect(tenantTables).toHaveLength(21);
+  expect(tenantTables).toHaveLength(22);
   for (const table of tenantTables) {
     const config = getTableConfig(table);
     expect(config.enableRLS).toBe(true);
@@ -206,6 +218,39 @@ it('pins the registered workload bindings to one live row per principal and key 
     expect.arrayContaining([
       'access_workload_bindings_principal_fk',
       'access_workload_bindings_tenant_id_tenants_tenant_id_fk',
+    ]),
+  );
+});
+
+it('pins the explicit company registrations to one live company per binding (D6)', () => {
+  const companyChecks = checks(accessWorkloadCompanyBindings);
+  // A revoked registration names its revocation instant; an active one never does.
+  expect(companyChecks.get('access_workload_company_bindings_status_ck')).toContain("'revoked'");
+  expect(companyChecks.get('access_workload_company_bindings_revoked_ck')).toContain('revoked_at');
+  const indexes = constraintNames(accessWorkloadCompanyBindings);
+  expect(indexes.indexes).toEqual(
+    expect.arrayContaining([
+      'access_workload_company_bindings_active_uk',
+      'access_workload_company_bindings_incarnation_uk',
+      'access_workload_company_bindings_tenant_id_uk',
+    ]),
+  );
+  // At most one live company per binding, so a second company is refused and a revoked one never
+  // blocks a fresh registration.
+  const activeIndex = getTableConfig(accessWorkloadCompanyBindings).indexes.find(
+    (index) => index.config.name === 'access_workload_company_bindings_active_uk',
+  );
+  const activeWhere = activeIndex?.config.where;
+  expect(activeWhere).toBeDefined();
+  expect(dialect.sqlToQuery(activeWhere ?? sql`false`).sql).toBe(
+    '"core"."access_workload_company_bindings"."status" = \'active\'',
+  );
+  // The registration names a binding and a company of this same tenant, never another tenant's.
+  expect(indexes.foreignKeys).toEqual(
+    expect.arrayContaining([
+      'access_workload_company_bindings_binding_fk',
+      'access_workload_company_bindings_company_fk',
+      'access_workload_company_bindings_tenant_id_tenants_tenant_id_fk',
     ]),
   );
 });
@@ -350,6 +395,7 @@ it('keeps every reference tenant-qualified inside one tenant', () => {
     accessScopes,
     accessTeamMembers,
     accessTeams,
+    accessWorkloadCompanyBindings,
     accessWorkloadBindings,
   ]) {
     const { foreignKeys } = constraintNames(table);
@@ -362,6 +408,7 @@ it('keeps every reference tenant-qualified inside one tenant', () => {
     accessConsentSnapshots,
     accessMemberships,
     accessTeamMembers,
+    accessWorkloadCompanyBindings,
     accessWorkloadBindings,
   ]) {
     for (const key of getTableConfig(table).foreignKeys) {
@@ -422,7 +469,8 @@ it.layer(NodeFileSystem.layer)('the access intent migration', (suite) => {
     Effect.fnUntraced(function* onlyAdds() {
       const { folders, migration } = yield* readMigration;
       expect(folders).toHaveLength(1);
-      for (const table of ACCESS_TABLE_INVENTORY) {
+      expect(ACCESS_INTENT_MIGRATION_TABLES).toHaveLength(23);
+      for (const table of ACCESS_INTENT_MIGRATION_TABLES) {
         expect(migration).toContain(`CREATE TABLE "core"."${table}"`);
       }
       const altered = [...migration.matchAll(/ALTER TABLE "core"\."(?<table>[a-z_]+)"/gu)].map(
@@ -563,7 +611,7 @@ it.layer(NodeFileSystem.layer)('the access intent migration', (suite) => {
       const forced = [...migration.matchAll(/ALTER TABLE "core"\."(?<table>[a-z_]+)" FORCE ROW LEVEL SECURITY;/gu)].map(
         (match) => match.groups?.['table'] ?? '',
       );
-      const tenantTables = ACCESS_TABLE_INVENTORY.filter((table) => !CATALOG_TABLE_NAMES.has(table));
+      const tenantTables = ACCESS_INTENT_MIGRATION_TABLES.filter((table) => !CATALOG_TABLE_NAMES.has(table));
       expect(tenantTables).toHaveLength(21);
       expect(forced.toSorted((left, right) => left.localeCompare(right))).toEqual(
         [...tenantTables].toSorted((left, right) => left.localeCompare(right)),
@@ -591,7 +639,7 @@ it.layer(NodeFileSystem.layer)('the access intent migration', (suite) => {
         statement,
         table: /ON "core"\."(?<table>[a-z_]+)"/u.exec(statement)?.groups?.['table'] ?? '',
       }));
-      const tenantTables = ACCESS_TABLE_INVENTORY.filter((table) => !CATALOG_TABLE_NAMES.has(table));
+      const tenantTables = ACCESS_INTENT_MIGRATION_TABLES.filter((table) => !CATALOG_TABLE_NAMES.has(table));
       const requestPolicies = policies.filter((policy) => policy.statement.includes('TO "party_registry_runtime"'));
       const runtimePolicies = policies.filter((policy) => !requestPolicies.includes(policy));
       expect(runtimePolicies).toHaveLength(82);

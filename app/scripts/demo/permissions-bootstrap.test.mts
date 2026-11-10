@@ -4,6 +4,7 @@ import {
   IDENTITY_PROVIDER_WORKLOAD,
   CRM_PARTY_INTAKE_WORKLOAD,
   STOREFRONT_CLIENT_WORKLOAD,
+  STOREFRONT_INQUIRY_WORKLOAD,
   agentBotPrincipal,
   akrosStorefrontPrincipal,
   commercePortalPrincipal,
@@ -82,7 +83,14 @@ it('names the reviewed company of every company-scoped assignment, and never a f
 it('binds only the declared workload keys, and only for principals whose caller runs them', () => {
   const bindings = reviewedWorkloadBindings();
   const keys = new Set(bindings.map((binding) => binding.workloadKey));
-  expect(keys).toEqual(new Set([STOREFRONT_CLIENT_WORKLOAD, IDENTITY_PROVIDER_WORKLOAD, CRM_PARTY_INTAKE_WORKLOAD]));
+  expect(keys).toEqual(
+    new Set([
+      STOREFRONT_CLIENT_WORKLOAD,
+      STOREFRONT_INQUIRY_WORKLOAD,
+      IDENTITY_PROVIDER_WORKLOAD,
+      CRM_PARTY_INTAKE_WORKLOAD,
+    ]),
+  );
   const principals = new Set(bindings.map((binding) => binding.principalId));
   expect(principals).toEqual(
     new Set([
@@ -96,6 +104,10 @@ it('binds only the declared workload keys, and only for principals whose caller 
   expect(
     bindings.filter((binding) => binding.workloadKey === IDENTITY_PROVIDER_WORKLOAD).map((b) => b.principalId),
   ).toEqual([commercePortalPrincipal.principalId]);
+  // Only ŠroubShop's storefront has an inquiry form, so it alone files inquiries into Work Tasks.
+  expect(
+    bindings.filter((binding) => binding.workloadKey === STOREFRONT_INQUIRY_WORKLOAD).map((b) => b.principalId),
+  ).toEqual([akrosStorefrontPrincipal.principalId]);
 });
 
 it('leaves every other service principal unbound and names its carrier gap', () => {

@@ -294,7 +294,12 @@ it.live('revokes only T1 through the governed Core action and keeps T2 admitted 
       },
     ]);
     // The governed revoke runs under T1's real access fence, so T1 carries the scope production bootstrap writes.
-    yield* writeTestTenantScopes(admin, { principalId: principalOneId, tenantId: tenantOneId });
+    // Scopes are installed as the enrolled runtime login, as bootstrap does; the admin login only seeds rows.
+    yield* writeTestTenantScopes(database, {
+      databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      principalId: principalOneId,
+      tenantId: tenantOneId,
+    });
 
     const resolveCurrent = (principal: typeof tenantOne, operation: string) =>
       Effect.suspend(() => {

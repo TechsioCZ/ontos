@@ -106,6 +106,7 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
               ariaDescription={t(`${k}.countsDescription`, { from, to })}
               ariaLabel={t(`${k}.countsAria`)}
               data={countData}
+              dataTableLabel={t('crm.chartData.toggle')}
               formatCategory={monthTitle}
               formatTooltipValue={formatNumber}
               formatValue={(value) => (Number.isInteger(value) ? formatNumber(value) : '')}
@@ -114,7 +115,9 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
               type="bar"
               valueLabel={t(`${k}.orderCount`)}
               x="month"
+              xLabel={t('crm.chartData.category')}
               y="count"
+              yLabel={t(`${k}.orderCount`)}
             />
           </ChartBoundary>
         </SectionCard>
@@ -152,6 +155,7 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
                   ariaDescription={t(`${k}.valueDescription`, { currency, from, to })}
                   ariaLabel={t(`${k}.valueAria`, { currency })}
                   data={valueData}
+                  dataTableLabel={t('crm.chartData.toggle')}
                   formatCategory={monthTitle}
                   formatValue={(value) => formatDecimalMoney(String(value), currency)}
                   height={260}
@@ -159,7 +163,9 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
                   type="bar"
                   valueLabel={t(`${k}.valueTitle`)}
                   x="month"
+                  xLabel={t('crm.chartData.category')}
                   y="value"
+                  yLabel={t(`${k}.valueTitle`)}
                 />
               </ChartBoundary>
             </>

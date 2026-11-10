@@ -18,12 +18,14 @@ import type { RetailPartyResolutionExecutor } from '../../src/integrations/retai
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import type { Issue } from 'effect/SchemaIssue';
-import { makeGatewayScopeGrantRegistrar } from '@app/core-runtime/testing/actions';
-import { allowedAccessLayers } from './access-gate.ts';
+import { makeGatewayScopeGrantRegistrar, makeTestActionAccessLayers } from '@app/core-runtime/testing/actions';
+import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
+import { CoreDatabase } from '@app/core-runtime/db/client';
 import { Socket } from 'effect/socket';
 import { NodeSocket, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  AccessDecisionLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
@@ -137,6 +139,7 @@ import {
   failure,
   requireCondition,
 } from './price-group-temporal-protocol.ts';
+import { RetailPartyDetailExecutor } from '../../src/integrations/retail-party-detail-executor.ts';
 
 const RequestIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('PriceGroupTemporalRequestId'),
@@ -933,6 +936,14 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
   const counterpartyFactory = Context.get(factories, ProfileCounterpartyRoleEligibilityResolverFactory);
   const ownerServices = Layer.mergeAll(
     retailResolverLayerFor(readParty),
+    // Retail profile preparation reads the Party before its owner transaction through this transport seam, over the
+    // same authority-issued Party Registry client as the in-transaction resolver.
+    Layer.succeed(
+      RetailPartyDetailExecutor,
+      RetailPartyDetailExecutor.of({
+        execute: (payload, requestCorrelation) => readParty(payload, requestCorrelation),
+      }),
+    ),
     Layer.succeed(ProfileCounterpartyRoleEligibilityResolverFactory, {
       make: (input) => counterpartyFactory.make(input, readCounterparty),
     }),
@@ -945,9 +956,28 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
   const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
   const stateGate = ModuleStateGateLive.pipe(Layer.provide(states));
   const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(stateGate));
-  const accessGate = allowedAccessLayers({
-    legalEntityIds: bootstrap.actor.legalEntityId === undefined ? [] : [bootstrap.actor.legalEntityId],
+  const legalEntityIds = bootstrap.actor.legalEntityId === undefined ? [] : [bootstrap.actor.legalEntityId];
+  // The owned database carries no v2 access intent, so the one gate runs the production engine over the
+  // fixture's own authority: the acting principal holds the capability each request declares, and every
+  // other holder is refused exactly as an unseeded tenant refuses them. The persisted scope and Ready
+  // fence a prepared Action pins are written first, through Core's own scoped writer, so a decision
+  // reads real authority instead of an invented lease.
+  const persistenceContext = yield* Layer.build(persistence);
+  yield* writeTestTenantScopes(Context.get(persistenceContext, CoreDatabase).executor, {
+    databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+    legalEntityIds,
+    principalId: bootstrap.actor.principalId,
+    tenantId: bootstrap.actor.tenantId,
   });
+  const accessGate = AccessDecisionLive.pipe(
+    Layer.provideMerge(
+      makeTestActionAccessLayers({
+        legalEntityIds,
+        principalId: bootstrap.actor.principalId,
+        tenantId: bootstrap.actor.tenantId,
+      }),
+    ),
+  );
   const resolver = OperationalScopeResolverLive.pipe(
     Layer.provide(Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT)),
     Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, accessGate)),
@@ -1019,19 +1049,7 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
     customerPriceGroupAssignmentReadReadApiLive,
   ).pipe(
     Layer.provide(ActionPrincipalVerifierLive.pipe(Layer.provide(actions))),
-    Layer.provide(
-      Layer.mergeAll(
-        actions,
-        reads,
-        namespace,
-        redemption,
-        source,
-        RequestSchemaProblemLive,
-        allowedAccessLayers({
-          legalEntityIds: bootstrap.actor.legalEntityId === undefined ? [] : [bootstrap.actor.legalEntityId],
-        }),
-      ),
-    ),
+    Layer.provide(Layer.mergeAll(actions, reads, namespace, redemption, source, RequestSchemaProblemLive, accessGate)),
   );
   const app = yield* Effect.acquireRelease(
     Effect.sync(() =>

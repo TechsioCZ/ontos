@@ -74,10 +74,18 @@ const moduleContract = (input: {
       shellContributions: {
         ...emptyContributions,
         search: input.search.map((contributionKey) => ({
+          accessDeclaration: {
+            key: `${input.moduleId}.party.search`,
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: 'party-identity', level: 'basic' },
+            risk: 'sensitive',
+            selectors: ['all'],
+          },
           contributionKey,
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
+            authorization: { kind: 'protected' },
             entrypointKey: contributionKey,
             moduleKey: input.moduleId,
             role: 'search',

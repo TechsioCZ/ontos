@@ -59,9 +59,14 @@ const compositionSourceUrl = 'https://composition.enrollment-acceptance.test/act
  * gateway keys layered on top. This fixture builds the snapshot in process, so — unlike the
  * deployment's own support — it reads no published Shell artifact.
  */
+/**
+ * `ownerFetch` carries every request other than the composition source: the ordinary fetch, or a suite's fetch that
+ * answers the remote owners it stands in for at their HTTP boundary.
+ */
 export const enrollmentApplicationCompositionVerificationLayer = (
   snapshot: ActiveApplicationCompositionSnapshot,
   gatewayConfiguration: Readonly<Record<string, string>> = {},
+  ownerFetch: typeof globalThis.fetch = fetch,
 ) =>
   Layer.mergeAll(
     ConfigProvider.layer(
@@ -72,6 +77,9 @@ export const enrollmentApplicationCompositionVerificationLayer = (
     ),
     Layer.succeed(FetchHttpClient.Fetch, async (input, init) => {
       const request = new Request(input, init);
-      return request.url === compositionSourceUrl ? Response.json(snapshot) : await fetch(request);
+      if (request.url === compositionSourceUrl) {
+        return Response.json(snapshot);
+      }
+      return await ownerFetch(request);
     }),
   );

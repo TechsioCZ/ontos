@@ -103,7 +103,9 @@ const scopedTransactionExecutor = /\bScopedTransactionExecutor\b/u;
 const isVerticalOwnerSource = (relative: string): boolean => /(?:^|\/)verticals\/[^/]+\/src\//u.test(relative);
 const importsCoreDatabaseSchema = new RegExp(`${importPrefix}['"]@app\\/core-runtime\\/db\\/schema['"]`, 'u');
 const importSpecifier = new RegExp(`${importPrefix}['"](?<specifier>[^'"]+)['"]`, 'u');
-const valueImportPrefix = String.raw`(?:import\s+(?!type\b)[^;]*?\s+from\s+|import\s*\(\s*|import\s+|export\s+(?!type\b)[^;]*?\s+from\s+)`;
+// `[^;]*?` already spans whitespace, so one `\s` before `from` accepts exactly what `\s+` would.
+// `\s+` there backtracks quadratically over the long blank runs left by inert string data.
+const valueImportPrefix = String.raw`(?:import\s+(?!type\b)[^;]*?\sfrom\s+|import\s*\(\s*|import\s+|export\s+(?!type\b)[^;]*?\sfrom\s+)`;
 const postgresDriver = String.raw`pg|drizzle-orm\/node-postgres`;
 const globalDatabaseImplementationImport = new RegExp(
   String.raw`${valueImportPrefix}['"](?:${postgresDriver}|@app\/core-runtime\/db\/client|[^'"]*\/db\/client(?:\.[^'"]*)?)['"]`,

@@ -1,3 +1,38 @@
+diff --git a/dist/cjs/microvertical-api-baseline.cjs b/dist/cjs/microvertical-api-baseline.cjs
+index 4598cfd..c87af88 100644
+--- a/dist/cjs/microvertical-api-baseline.cjs
++++ b/dist/cjs/microvertical-api-baseline.cjs
+@@ -61,6 +61,21 @@ const stringLiteral = (expression)=>{
+     const unwrapped = (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(expression);
+     return types_namespaceObject.isStringLiteral(unwrapped) ? unwrapped.value : void 0;
+ };
++/** Bounded lexical route-path resolution: only a top-level `const` string declared in the endpoint's own module; never external authority, mutable bindings, calls, member lookup or dynamic expressions. */
++const localConstString = (sourceFile, expression)=>{
++    if (null == sourceFile || null == expression) return;
++    const seen = new Set();
++    let node = (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(expression);
++    for(let hop = 0; hop < 16; hop += 1){
++        if (!types_namespaceObject.isIdentifier(node) || seen.has(node.name)) return;
++        seen.add(node.name);
++        const declaration = (0, external_module_graph_cjs_namespaceObject.localConst)(sourceFile, node.name);
++        if (void 0 === declaration || null == declaration.init) return;
++        const value = stringLiteral(declaration.init);
++        if (void 0 !== value) return value;
++        node = (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(declaration.init);
++    }
++};
+ const numericLiteral = (expression)=>{
+     if (null == expression) return;
+     const unwrapped = (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(expression);
+@@ -260,7 +275,7 @@ const reachableEndpoints = (graph, declaration)=>{
+                 const callee = accessPath(node.callee);
+                 const method = callee?.length === 2 && 'HttpApiEndpoint' === callee[0] ? verbs[callee[1]] : void 0;
+                 const name = stringLiteral(node.arguments[0]);
+-                const routePath = stringLiteral(node.arguments[1]);
++                const routePath = stringLiteral(node.arguments[1]) ?? localConstString(module.file, node.arguments[1]);
+                 if (!method || !name || !routePath) return false;
+                 const identity = `${group}:${name}`;
+                 if (identities.has(identity)) return false;
 diff --git a/dist/cjs/microvertical-api-boundary.cjs b/dist/cjs/microvertical-api-boundary.cjs
 index 77ec9f8..96b1f9d 100644
 --- a/dist/cjs/microvertical-api-boundary.cjs
@@ -193,6 +228,41 @@ index f22192f..b5e30f4 100644
              });
          const capturedTransport = (node)=>guarded(node, (node)=>{
                  const init = initialized(node);
+diff --git a/dist/esm-node/microvertical-api-baseline.js b/dist/esm-node/microvertical-api-baseline.js
+index 1f7f15a..6afa22b 100644
+--- a/dist/esm-node/microvertical-api-baseline.js
++++ b/dist/esm-node/microvertical-api-baseline.js
+@@ -27,6 +27,21 @@ const stringLiteral = (expression)=>{
+     const unwrapped = unwrapExpression(expression);
+     return __rspack_external__babel_types_6e8337dd.isStringLiteral(unwrapped) ? unwrapped.value : void 0;
+ };
++/** Bounded lexical route-path resolution: only a top-level `const` string declared in the endpoint's own module; never external authority, mutable bindings, calls, member lookup or dynamic expressions. */
++const localConstString = (sourceFile, expression)=>{
++    if (null == sourceFile || null == expression) return;
++    const seen = new Set();
++    let node = unwrapExpression(expression);
++    for(let hop = 0; hop < 16; hop += 1){
++        if (!__rspack_external__babel_types_6e8337dd.isIdentifier(node) || seen.has(node.name)) return;
++        seen.add(node.name);
++        const declaration = localConst(sourceFile, node.name);
++        if (void 0 === declaration || null == declaration.init) return;
++        const value = stringLiteral(declaration.init);
++        if (void 0 !== value) return value;
++        node = unwrapExpression(declaration.init);
++    }
++};
+ const numericLiteral = (expression)=>{
+     if (null == expression) return;
+     const unwrapped = unwrapExpression(expression);
+@@ -226,7 +241,7 @@ const reachableEndpoints = (graph, declaration)=>{
+                 const callee = accessPath(node.callee);
+                 const method = callee?.length === 2 && 'HttpApiEndpoint' === callee[0] ? verbs[callee[1]] : void 0;
+                 const name = stringLiteral(node.arguments[0]);
+-                const routePath = stringLiteral(node.arguments[1]);
++                const routePath = stringLiteral(node.arguments[1]) ?? localConstString(module.file, node.arguments[1]);
+                 if (!method || !name || !routePath) return false;
+                 const identity = `${group}:${name}`;
+                 if (identities.has(identity)) return false;
 diff --git a/dist/esm-node/microvertical-api-boundary.js b/dist/esm-node/microvertical-api-boundary.js
 index 6a61b71..a6ca515 100644
 --- a/dist/esm-node/microvertical-api-boundary.js
@@ -389,6 +459,41 @@ index 7a3703d..b0911a7 100644
              });
          const capturedTransport = (node)=>guarded(node, (node)=>{
                  const init = initialized(node);
+diff --git a/dist/esm/microvertical-api-baseline.js b/dist/esm/microvertical-api-baseline.js
+index 3f3eb33..d1c194f 100644
+--- a/dist/esm/microvertical-api-baseline.js
++++ b/dist/esm/microvertical-api-baseline.js
+@@ -26,6 +26,21 @@ const stringLiteral = (expression)=>{
+     const unwrapped = unwrapExpression(expression);
+     return __rspack_external__babel_types_6e8337dd.isStringLiteral(unwrapped) ? unwrapped.value : void 0;
+ };
++/** Bounded lexical route-path resolution: only a top-level `const` string declared in the endpoint's own module; never external authority, mutable bindings, calls, member lookup or dynamic expressions. */
++const localConstString = (sourceFile, expression)=>{
++    if (null == sourceFile || null == expression) return;
++    const seen = new Set();
++    let node = unwrapExpression(expression);
++    for(let hop = 0; hop < 16; hop += 1){
++        if (!__rspack_external__babel_types_6e8337dd.isIdentifier(node) || seen.has(node.name)) return;
++        seen.add(node.name);
++        const declaration = localConst(sourceFile, node.name);
++        if (void 0 === declaration || null == declaration.init) return;
++        const value = stringLiteral(declaration.init);
++        if (void 0 !== value) return value;
++        node = unwrapExpression(declaration.init);
++    }
++};
+ const numericLiteral = (expression)=>{
+     if (null == expression) return;
+     const unwrapped = unwrapExpression(expression);
+@@ -225,7 +240,7 @@ const reachableEndpoints = (graph, declaration)=>{
+                 const callee = accessPath(node.callee);
+                 const method = callee?.length === 2 && 'HttpApiEndpoint' === callee[0] ? verbs[callee[1]] : void 0;
+                 const name = stringLiteral(node.arguments[0]);
+-                const routePath = stringLiteral(node.arguments[1]);
++                const routePath = stringLiteral(node.arguments[1]) ?? localConstString(module.file, node.arguments[1]);
+                 if (!method || !name || !routePath) return false;
+                 const identity = `${group}:${name}`;
+                 if (identities.has(identity)) return false;
 diff --git a/dist/esm/microvertical-api-boundary.js b/dist/esm/microvertical-api-boundary.js
 index 0663082..6bd594c 100644
 --- a/dist/esm/microvertical-api-boundary.js

@@ -3,6 +3,7 @@ import { documentNavigationModules } from '@app/shared-contracts';
 import { listOrders } from '@app/merchandise/clients/records';
 import { executeRecords as executeAgreementsRecords } from '@app/legal-agreements/clients/records';
 import { listTasks } from '@app/work-tasks/clients/records';
+import { useHeldSnapshot } from '@app/admin-ui';
 import { Data, Effect, Random, Result, Schema } from 'effect';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
@@ -298,11 +299,13 @@ export const useOpportunityRelated = (
     );
   const key =
     opportunity === undefined ? '' : relatedKey({ counterpartyId, opportunity, revision, scope: requestScope });
-  const cached = useSyncExternalStore(
+  const stored = useSyncExternalStore(
     (listener) => opportunityRelatedData.subscribe(listener, input),
     () => (input === undefined ? pageDataPending : opportunityRelatedData.snapshot(input)),
     () => pageDataPending,
   );
+  // The strict store reads as pending while it reloads this same business case; its lists stay until it settles.
+  const cached = useHeldSnapshot(key, stored);
   const [local, setLocal] = useState<{ readonly key: string; readonly value: OpportunityRelated }>();
   const read = useEffectEvent((selection: string) => {
     if (opportunity === undefined) {

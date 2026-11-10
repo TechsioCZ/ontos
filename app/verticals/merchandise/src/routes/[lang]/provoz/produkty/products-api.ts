@@ -1,5 +1,6 @@
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import { useHeldSnapshot } from '@app/admin-ui';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import type { TanstackTable } from '@techsio/ui-kit/organisms/data-table';
@@ -623,10 +624,16 @@ export const useProductDetail = (
     const fiber = browserRuntime.runFork(load(request));
     return () => fiber.interruptUnsafe();
   }, [request]);
+  // The strict store reads as pending while it reloads this same record (freshness window, live change, own write).
+  // The held snapshot keeps the detail mounted until the reload settles; another key or a failure never reuses it.
+  const shown = useHeldSnapshot(
+    Option.isSome(input) ? productDetailData.key(input.value) : '',
+    scope === undefined ? pageDataPending : snapshot,
+  );
   if (scope === undefined) {
     return detailState(Option.isSome(input), unscoped?.key === request ? unscoped.snapshot : pageDataPending);
   }
-  return detailState(Option.isSome(input), snapshot);
+  return detailState(Option.isSome(input), shown);
 };
 
 export const productNavigationFailureKey = Match.type<Cause.TimeoutError | Cause.UnknownError>().pipe(

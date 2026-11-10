@@ -114,7 +114,15 @@ interface PackagedApplicationInput {
   };
   readonly port?: number;
   readonly relativeDirectory: string;
-  readonly relaySource?: { readonly apiKey: Redacted.Redacted; readonly shellBaseUrl: string };
+  /**
+   * `tenantId` names the Tenant whose service Principal the key belongs to. Commerce acts for a Tenant only through
+   * its `COMMERCE_TENANT_CREDENTIALS` entry, so a Commerce child that reads Party needs that pair too.
+   */
+  readonly relaySource?: {
+    readonly apiKey: Redacted.Redacted;
+    readonly shellBaseUrl: string;
+    readonly tenantId?: string;
+  };
   readonly sourceBindings?: Redacted.Redacted;
 }
 
@@ -171,10 +179,19 @@ const makePackagedEnvironment = Effect.fn('ServerOwnerRelayNative.makePackagedEn
       }
     }
     if (input.relaySource !== undefined) {
+      const relayKey = Redacted.value(input.relaySource.apiKey);
       Object.assign(environment, {
-        ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(input.relaySource.apiKey),
+        ONTOS_GATEWAY_MODULE_API_KEY: relayKey,
         ONTOS_SHELL_GATEWAY_BASE_URL: input.relaySource.shellBaseUrl,
       });
+      if (input.relaySource.tenantId !== undefined) {
+        // The Commerce module key is the Tenant's own service Principal key, so it serves as both tenant credentials.
+        Object.assign(environment, {
+          COMMERCE_TENANT_CREDENTIALS: JSON.stringify({
+            [input.relaySource.tenantId]: { coreIdentityApiKey: relayKey, gatewayApiKey: relayKey },
+          }),
+        });
+      }
     }
     // The Shell requires an explicit enrolment; a deployment with no module credential enrols none.
     Object.assign(environment, {

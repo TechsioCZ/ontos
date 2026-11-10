@@ -79,6 +79,7 @@ import {
 import { partyRegistryGuestResolverFactoryLive } from '../../src/integrations/party-registry-guest-resolver.ts';
 import { partyRegistryRetailPartyResolverFactoryLive } from '../../src/integrations/party-registry-retail-party-resolver.ts';
 import { purchasingApprovalCommercialFixture } from '../unit/purchasing-approval-fixtures.ts';
+import { prepareTestApprovalCurrentness } from './purchasing-approval-test-currentness.ts';
 
 /** Shared native construction path: domain values stay decoded until the exact Core wire boundary. */
 export const purchasingApprovalNativePayloads = {
@@ -160,7 +161,6 @@ export const grantAccess = defineScopedRoutine({
  */
 export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApprovalNative.make')(
   function* makePurchasingApprovalNativeFixture(input: {
-    readonly apiKeyManager?: boolean;
     readonly connections: Effect.Success<ReturnType<typeof loadDatabaseConnectionPair>>;
     readonly finalProofTest?: true;
     readonly snapshot: ActiveApplicationCompositionSnapshot;
@@ -192,7 +192,6 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
         authenticationSubjectTypes: input.finalProofTest === true ? ['user', 'api_key'] : ['user'],
         compositionRevision: input.snapshot.composition.revision,
         expectedDeployment: ultramodernApiMarker,
-        managerAuthenticationMethod: input.apiKeyManager === true ? 'api_key' : 'session',
         moduleKeys: [ownerModuleKey],
         ownerRegistration: commerceCustomerContextRegistration,
         runtimeConnectionString: Redacted.make(input.connections.runtime.connectionString),
@@ -232,22 +231,24 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
     const roleLayer = Layer.succeed(ProfileCounterpartyRoleEligibilityResolverFactory, {
       make:
         (scope) =>
-        ({ counterpartyResourceId, tenantId: targetTenant }) => {
-          const known = roleFacts.get(counterpartyResourceId);
-          return Effect.succeed(
-            known !== undefined &&
+        ({ counterpartyResourceId, tenantId: targetTenant }) =>
+          Effect.gen(function* observeExactApprovalRole() {
+            const known = roleFacts.get(counterpartyResourceId);
+            const now = yield* DateTime.now;
+            return known !== undefined &&
               scope.tenantId === tenantId &&
               targetTenant === tenantId &&
               scope.legalEntityId === legalEntityId
               ? {
                   managedLegalEntityId: legalEntityId,
+                  observedAt: DateTime.formatIso(now),
                   outcome: 'ELIGIBLE' as const,
                   roleResourceId: known.roleId,
                   roleResourceRevision: known.at,
+                  validUntil: DateTime.formatIso(DateTime.add(now, { seconds: 30 })),
                 }
-              : { outcome: 'INDETERMINATE' as const },
-          );
-        },
+              : { outcome: 'INDETERMINATE' as const };
+          }),
     });
     const currentFacts: PurchaseLimitEvaluationCurrentnessPortService['resolveCurrent'] = (request) =>
       Effect.gen(function* resolveExactTESTCurrentFacts() {
@@ -293,6 +294,20 @@ export const makePurchasingApprovalNativeFixture = Effect.fn('PurchasingApproval
         return known.facts;
       });
     const currentLayer = Layer.succeed(PurchaseLimitEvaluationCurrentnessPort, {
+      // The independent TEST owner prepares exact currentness outside the Action transaction, as the
+      // prepared revalidation requires; it never answers for a source revision it does not know.
+      prepare: (context, source) => {
+        const known = candidates.get(source.sourceRef);
+        return known !== undefined && known.proposal.purchaseValue.sourceRevision === source.sourceRevision
+          ? prepareTestApprovalCurrentness(context, known)
+          : Effect.fail(
+              PurchaseLimitDependencyUnavailableSchema.make({
+                code: 'purchase_limit_dependency_unavailable',
+                dependency: 'TEST_EXACT_APPROVAL_SOURCE',
+                reason: 'The independent TEST owner has no exact source revision',
+              }),
+            );
+      },
       resolveCandidate: currentFacts,
       resolveCurrent: currentFacts,
     });

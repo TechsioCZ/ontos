@@ -85,6 +85,16 @@ describe("cart action notifications", () => {
     expect(screen.getAllByText("Přidáno do košíku")).toHaveLength(1);
   });
 
+  it("announces the notification region and names its close button in Czech", async () => {
+    const user = userEvent.setup();
+    renderCart();
+    await user.click(screen.getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" }));
+    await screen.findByText("Přidáno do košíku");
+    expect(document.querySelector('[aria-label="Oznámení"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label="Notifications"]')).toBeNull();
+    expect(screen.getByRole("button", { name: "Zavřít oznámení" })).not.toBeNull();
+  });
+
   it("rejects an owner stock refusal instead of silently reducing quantity or announcing success", async () => {
     window.localStorage.setItem(
       "akros-demo-cart-v3",
@@ -192,7 +202,7 @@ describe("cart action notifications", () => {
     await user.click(screen.getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" }));
     await user.click(screen.getByRole("button", { name: "Odebrat Tyč" }));
     await screen.findByRole("button", { name: "Obnovit" });
-    await user.click(screen.getByRole("button", { name: "Close notification" }));
+    await user.click(screen.getByRole("button", { name: "Zavřít oznámení" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Obnovit" })).toBeNull());
     await user.click(screen.getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" }));
     expect(lines()[0].quantity).toBe(0.5);

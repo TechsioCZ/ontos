@@ -16,6 +16,8 @@ import type { DecisionAuthorityPort, ScopeQuery } from '../../src/access/decisio
 import type { GateInput, ListGateInput } from '../../src/access/enforcement/contract.ts';
 import { makeAccessDecisionService } from '../../src/access/enforcement/service.ts';
 import type { AccessDecisionLogEntry, AccessDecisionLogWriter } from '../../src/access/enforcement/decision-log.ts';
+import { makeActionAuthorityService } from '../../src/permissions/action-authority.ts';
+import type { DeclaredActionAuthority } from '../../src/permissions/action-authority.ts';
 import type { AccessLegalEntityCandidates } from '../../src/access/enforcement/legal-entities.ts';
 import type { AccessWorkloadBindings } from '../../src/access/enforcement/workload-port.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
@@ -126,8 +128,16 @@ const workloadCarrier = (
 
 interface RunOptions {
   readonly authority?: AuthoritySpec;
+  /** A batch evidence writer: each call's rows are kept, or the whole call fails. */
+  readonly batchLog?: 'fails' | 'writes';
   /** A scripted engine port, for the suites that answer `select` themselves. */
   readonly check?: DecisionCheckPort;
+  /** The declaration cannot be read: the gate must answer UNAVAILABLE, never "no declaration" (O48, D6). */
+  readonly companyDeclarationReadFails?: boolean;
+  /** The companies this workload is pinned to; absent means its owner declared none (D6). */
+  readonly declaredCompanies?: readonly LegalEntityId[];
+  /** The owner declared a company and then revoked it: the workload is pinned to none (D6). */
+  readonly declaredCompaniesRevoked?: boolean;
   readonly engineFailure?: boolean;
   readonly kinds?: AccessPrincipalKinds;
   readonly logFails?: boolean;
@@ -162,16 +172,39 @@ const harness = (options: RunOptions = {}) => {
       options.workloadReadFails === true
         ? Effect.fail(accessDecisionUnavailable('the workload registry is unavailable'))
         : Effect.succeed(new Set(options.workloadKeys)),
+    readCompanyDeclaration: () =>
+      options.companyDeclarationReadFails === true
+        ? Effect.fail(accessDecisionUnavailable('the workload registry is unavailable'))
+        : Effect.succeed({
+            activeCompanyIds: new Set(options.declaredCompanies),
+            pinned: options.declaredCompaniesRevoked === true || options.declaredCompanies !== undefined,
+          }),
   };
-  const gate = makeAccessDecisionService({
+  const batches: (readonly AccessDecisionLogEntry[])[] = [];
+  const ports = {
     authorityFor: () => port,
     check: options.check ?? check.port,
     decisionLog: log,
     legalEntities: legalEntityCandidates(options.selectableLegalEntities ?? []),
     principalKinds: options.kinds ?? kindSource('human'),
     workloadBindings,
-  });
-  return { authority, gate, scopes, state };
+  };
+  const gate = makeAccessDecisionService(
+    options.batchLog === undefined
+      ? ports
+      : {
+          ...ports,
+          decisionLogBatch: {
+            recordAll: (entries: readonly AccessDecisionLogEntry[]) =>
+              options.batchLog === 'fails'
+                ? Effect.fail(accessDecisionUnavailable('the evidence batch could not be written'))
+                : Effect.sync(() => {
+                    batches.push(entries);
+                  }),
+          },
+        },
+  );
+  return { authority, batches, gate, scopes, state };
 };
 
 const gateOf = (overrides: Partial<GateInput> = {}): GateInput => ({
@@ -609,7 +642,10 @@ it.effect('answers a 20-entry navigation from one engine snapshot, identically t
       decisionLog: log,
       legalEntities: legalEntityCandidates([]),
       principalKinds: countingKinds,
-      workloadBindings: { readActiveWorkloadKeys: () => Effect.succeed(new Set()) },
+      workloadBindings: {
+        readActiveWorkloadKeys: () => Effect.succeed(new Set()),
+        readCompanyDeclaration: () => Effect.succeed({ activeCompanyIds: new Set(), pinned: false }),
+      },
     });
     const inputs = navigationKeys.map((key) => gateOf({ carrier: { accessDeclaration: navigationDeclaration(key) } }));
     const measure = () => {
@@ -682,6 +718,45 @@ it.effect('answers a batch UNAVAILABLE when the engine fails, and records no evi
     const decisions = yield* gate.decideMany([gateOf(), gateOf()]);
     expect(decisions.map(({ outcome }) => outcome)).toEqual(['UNAVAILABLE', 'UNAVAILABLE']);
     expect(state.entries.length).toBe(0);
+  }),
+);
+
+it.effect('writes the evidence rows of a batch in one batch write, with the rows the single writer gets', () =>
+  Effect.gen(function* writesBatchEvidenceOnce() {
+    // One request scope, as the Action authority and the caller's module authority ask in.
+    const scope = scopeFor(person);
+    const inputs = [
+      gateOf({ scope }),
+      gateOf({ carrier: workloadCarrier('machine provisioning'), scope }),
+      gateOf({ scope }),
+    ];
+    // One authority for both runs, so both decide over the very same cells.
+    const authority: AuthoritySpec = { cells: [cell({ capability: 'finance.invoice.void' })] };
+    const single = harness({ authority });
+    const alone = yield* single.gate.decideMany(inputs);
+    const batched = harness({ authority, batchLog: 'writes' });
+    const decisions = yield* batched.gate.decideMany(inputs);
+    expect(decisions).toEqual(alone);
+    expect(decisions.map(({ outcome }) => outcome)).toEqual(['ALLOWED', 'DENIED', 'ALLOWED']);
+    // No row through the single writer; one batch write holding exactly the rows it would have written.
+    expect(batched.state.entries).toEqual([]);
+    expect(batched.batches).toHaveLength(1);
+    expect(batched.batches[0]).toEqual(single.state.entries);
+  }),
+);
+
+it.effect('answers UNAVAILABLE for every decision whose evidence batch was not kept', () =>
+  Effect.gen(function* unkeptBatchEvidence() {
+    const { batches, gate, state } = harness({ batchLog: 'fails' });
+    const decisions = yield* gate.decideMany([
+      gateOf(),
+      gateOf({ carrier: workloadCarrier('machine provisioning') }),
+      gateOf(),
+    ]);
+    // The two sensitive allows needed rows; the refusal before the engine needed none and stays a denial.
+    expect(decisions.map(({ outcome }) => outcome)).toEqual(['UNAVAILABLE', 'DENIED', 'UNAVAILABLE']);
+    expect(batches).toEqual([]);
+    expect(state.entries).toEqual([]);
   }),
 );
 
@@ -762,4 +837,65 @@ it.effect('fails the company list when the engine cannot answer for every compan
     });
     expect(outcome).toBe('AccessDecisionUnavailable');
   }),
+);
+
+it.effect(
+  'answers an Action batch through the real gate exactly as one decision per Action, for every company rule',
+  () =>
+    Effect.gen(function* realGateActionBatch() {
+      const company = LegalEntityIdSchema.make(uid(60));
+      const authority: AuthoritySpec = {
+        cells: [cell({ capability: 'finance.invoice.void' })],
+        legalEntityScope: { _tag: 'LegalEntity', legalEntityId: company, tenantId: tenant },
+      };
+      const voiding = { accessDeclaration: declarationOf() };
+      const archiving = { accessDeclaration: declarationOf({ key: 'finance.invoice.archive' }) };
+      const declared = new Map<string, DeclaredActionAuthority>(
+        (
+          [
+            ['finance.void-in-company', voiding, 'required'],
+            ['finance.void-anywhere', voiding, 'optional'],
+            ['finance.void-tenant', voiding, 'forbidden'],
+            ['finance.archive-in-company', archiving, 'required'],
+          ] as const
+        ).map(([actionKey, carrier, legalEntityScope]) => [actionKey, { actionKey, carrier, legalEntityScope }]),
+      );
+      const actionKeys = [...declared.keys(), 'unpublished.action'];
+      const outcomes: string[][] = [];
+      for (const scope of [scopeFor(person, company), scopeFor(person)]) {
+        const single = harness({ authority });
+        const alone = yield* Effect.forEach(
+          actionKeys,
+          (actionKey) =>
+            single.gate.decide({
+              carrier: declared.get(actionKey)?.carrier ?? {},
+              legalEntityScope: declared.get(actionKey)?.legalEntityScope ?? 'optional',
+              now,
+              scope,
+            }),
+          { concurrency: 1 },
+        );
+        const batched = harness({ authority });
+        const answers = yield* makeActionAuthorityService({ declared, gate: batched.gate, now }).checkActionAuthorities(
+          {
+            actionKeys,
+            scope,
+          },
+        );
+        expect(answers.map(({ execute, propose }) => [execute, propose])).toEqual(
+          alone.map(({ outcome }) => [
+            outcome === 'ALLOWED' ? 'allowed' : 'denied',
+            outcome === 'DENIED' ? 'denied' : 'allowed',
+          ]),
+        );
+        expect(batched.state.entries).toEqual(single.state.entries);
+        outcomes.push(alone.map(({ outcome }) => outcome));
+      }
+      // The company rules really differ: a company-required Action needs a selected company, the others run in
+      // either context, and an ungranted or unpublished Action is denied in both.
+      expect(outcomes).toEqual([
+        ['ALLOWED', 'ALLOWED', 'ALLOWED', 'DENIED', 'DENIED'],
+        ['DENIED', 'ALLOWED', 'ALLOWED', 'DENIED', 'DENIED'],
+      ]);
+    }),
 );

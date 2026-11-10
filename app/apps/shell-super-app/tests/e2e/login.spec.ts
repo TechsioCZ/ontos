@@ -77,13 +77,13 @@ const login = async (page: Page, language: 'cs' | 'en', credentials: Authenticat
   const labels =
     language === 'en'
       ? {
-          login: /^Login\s*\*$/u,
+          login: /^Login/u,
           password: /^Password/u,
           submit: 'Login',
           url: /\/en\/?$/u,
         }
       : {
-          login: /^Přihlašovací jméno\s*\*$/u,
+          login: /^Přihlašovací jméno/u,
           password: /^Heslo/u,
           submit: 'Přihlásit se',
           url: /\/cs\/?$/u,
@@ -185,7 +185,7 @@ test('shows one generic error for invalid English credentials', async ({ authent
     .then(
       async () =>
         await hydratedLoginForm(page)
-          .getByRole('textbox', { name: /^Login\s*\*$/u })
+          .getByRole('textbox', { name: /^Login/u })
           .fill(authentication.credentials.email),
     )
     .then(
@@ -199,7 +199,7 @@ test('shows one generic error for invalid English credentials', async ({ authent
       async () =>
         await Promise.all([
           expect(page.getByText('The login or password is invalid.')).toHaveCount(1),
-          expect(hydratedLoginForm(page).getByRole('textbox', { name: /^Login\s*\*$/u })).toHaveValue(
+          expect(hydratedLoginForm(page).getByRole('textbox', { name: /^Login/u })).toHaveValue(
             authentication.credentials.email,
           ),
           expect(hydratedLoginForm(page).getByLabel(/^Password/u)).toBeFocused(),
@@ -226,7 +226,7 @@ test('logs a user in without any server-error response', async ({ authentication
 
   await gotoHydratedLogin(page, 'en');
   const form = hydratedLoginForm(page);
-  await form.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(authentication.credentials.email);
+  await form.getByRole('textbox', { name: /^Login/u }).fill(authentication.credentials.email);
   await form.getByLabel(/^Password/u).fill(authentication.credentials.password);
 
   const signInResponsePromise = page.waitForResponse(
@@ -435,13 +435,15 @@ test('contains a Contacts render-phase failure and rechecks revoked access acros
     await expect(page.getByRole('button', { exact: true, name: 'Reload page' })).toBeEnabled();
     await expect(page.locator('header[aria-label="Dashboard header"]')).toBeVisible();
     await expect(sidebar).toBeVisible();
-    await sidebar.getByRole('searchbox', { exact: true, name: 'Search' }).fill('still usable');
-    await expect(sidebar.getByRole('searchbox', { exact: true, name: 'Search' })).toHaveValue('still usable');
-    await sidebar.getByRole('searchbox', { exact: true, name: 'Search' }).clear();
+    await page.getByRole('searchbox', { exact: true, name: 'Search' }).fill('still usable');
+    await expect(page.getByRole('searchbox', { exact: true, name: 'Search' })).toHaveValue('still usable');
+    await page.getByRole('searchbox', { exact: true, name: 'Search' }).clear();
     await waitForInteractiveAccountMenu(page);
   } finally {
-    await restoreFault.evaluate((restore) => restore());
-    await restoreFault.dispose();
+    if (!page.isClosed()) {
+      await restoreFault.evaluate((restore) => restore());
+      await restoreFault.dispose();
+    }
   }
   // This is same-Composition browser evidence. A genuine R1 -> R2 browser publication
   // remains the separately isolated #1297 joint acceptance; observation renewal is not R2.
@@ -697,7 +699,7 @@ test('persists an English session, logs out, clears the cookie, and stays anonym
     .then(
       async () =>
         await hydratedLoginForm(page)
-          .getByRole('textbox', { name: /^Login\s*\*$/u })
+          .getByRole('textbox', { name: /^Login/u })
           .fill(authentication.credentials.email),
     )
     .then(
@@ -930,7 +932,7 @@ test('keeps the login form keyboard- and mobile-usable', async ({ page }) => {
   await gotoHydratedLogin(page, 'cs');
   const form = hydratedLoginForm(page);
   const loginInput = form.getByRole('textbox', {
-    name: /^Přihlašovací jméno\s*\*$/u,
+    name: /^Přihlašovací jméno/u,
   });
   await expect(async () => {
     await loginInput.fill('hydration-probe');

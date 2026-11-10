@@ -57,6 +57,7 @@ const connection = (overrides: Partial<typeof ConnectionSummarySchema.Encoded>):
       maxWritePolicy: 'direct',
       modules: [mod('crm', 'CRM', true, true), mod('sklad', 'Sklad', true, true)],
     },
+    live: true,
     modules: [mod('crm', 'CRM', true, true)],
     profileId: 'pr-1',
     revokedAt: null,

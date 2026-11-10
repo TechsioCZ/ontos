@@ -5,7 +5,7 @@ import NextLink from "next/link";
 import { useRouter } from "next/navigation";
 import NextImage from "next/image";
 import { Button } from "@techsio/ui-kit/atoms/button";
-import { Link } from "@techsio/ui-kit/atoms/link";
+import { Link } from "@/features/plain-link";
 import { Image } from "@techsio/ui-kit/atoms/image";
 import { LineItem } from "@techsio/ui-kit/organisms/line-item";
 import { PriceBlock } from "@techsio/ui-kit/molecules/price-block";

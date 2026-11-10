@@ -140,8 +140,8 @@ buttons therefore add only legal package multiples (including metre-based produc
 explains this before adding; grouped product summaries defer to each variant rather than
 advertising another variant’s minimum. The server still rechecks all constraints independently.
 
-`POST /api/ontos/orders` only constructs `PlaceStorefrontOrder`, through merchandise
-`apply-command`. It validates the input and delivery details, uses the fresh aggregate revision
+`POST /api/ontos/orders` and the cart quote only construct `PlaceStorefrontOrder`, through merchandise's
+`place-storefront-order` Action (the only merchandise Action the storefront key is admitted on). It validates the input and delivery details, uses the fresh aggregate revision
 and an idempotency key derived from the persisted `clientRequestId` + exact payload. The owner
 rechecks prices/stock/quantities and persists/deduplicates the order by clientRequestId. It never
 accepts a browser-requested arbitrary Action. Origin/content-type/body-size checks protect the BFF.
@@ -161,6 +161,45 @@ and returns only `{id,number,status,statusLabel,updatedAt,final}` with the staff
 labels (Nová, Zpracovává se, Připravená k předání, Předáno dopravci (simulace), Dokončená,
 Stornovaná). Both ids must match, so the endpoint cannot enumerate orders. No staff orders read,
 customer data or order-search endpoint is exposed to the public browser.
+
+Inquiries: the contact, FAQ, product-question and complaint forms post to `POST /api/ontos/inquiries`
+(`{requestId, kind, name, email, subject, message, productId?}`). The BFF files each one through the
+Work Tasks Action `work.tasks.submit-storefront-inquiry`
+(`callAction("work-tasks", "submit-storefront-inquiry", payload, key)`), the only Work Tasks surface a
+storefront key is admitted on. It reads no Work Tasks records and sends no revision. The payload is
+exactly `{title, description, storefrontInquiry}`; the owner answers any other field with a 400 and
+creates an unassigned task with normal priority. For a product question the BFF reads the product
+again and sends the owner's `productId`, `productName` and `productSlug`, never a browser label.
+
+| Field                         | Limit sent to the owner                             |
+| ----------------------------- | --------------------------------------------------- |
+| `title`                       | 1–200, `<kind label>: <subject>`                    |
+| `description`                 | up to 2000: contact line, product line, the message |
+| `storefrontInquiry.requestId` | UUID, one per submission; the owner's duplicate key |
+| `storefrontInquiry.kind`      | `CONTACT`, `PRODUCT_QUESTION` or `COMPLAINT`        |
+| `name` / `email` / `subject`  | 1–120 / up to 254 in e-mail shape / 1–160           |
+| `message`                     | 1–1500                                              |
+| `productId` / `Name` / `Slug` | 1–300 each, only for a product question             |
+
+Text is trimmed and checked against these limits before the call. Nothing is clipped: input that
+would not fit (also a description over 2000 characters) gets the form's validation message with
+HTTP 400. The Action answers `{requestId, taskRef}`; the form shows `taskRef.resourceId` only when
+`requestId` matches the submission.
+
+The browser keeps one `requestId` for an unchanged form, so sending the same text again answers the
+task it already created instead of a second one. The first write uses the idempotency key
+`sf-inquiry-<requestId>`. Two refusals are answered by one resend with a new key
+(`sf-inquiry-<requestId>-<uuid>`) and the same `requestId`, never a loop: 409
+`action_already_committed` (the owner then returns the existing `taskRef`) and 409
+`work_revision_conflict` (two first tasks of a company raced). 409 `work_lifecycle_conflict` (the
+`requestId` belongs to other content), `action_request_hash_conflict`, 503 and every unknown outcome
+are not repeated and show „Přijetí dotazu se nepodařilo potvrdit“.
+
+Every 403 (`action_permission_denied` and the other denials) shows „Kontaktní formulář je dočasně
+nedostupný. Dotaz nebyl odeslán.“ with the brand's e-mail and phone. A key is admitted only when an
+operator has bound its principal to the workload `work.storefront-client`; the local demo seed binds
+`akros-storefront` (`scripts/demo/permissions.mts`), on stage the form stays unavailable until the
+operator binds it.
 
 ## Honest demo boundaries
 

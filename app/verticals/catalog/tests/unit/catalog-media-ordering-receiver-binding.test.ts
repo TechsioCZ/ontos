@@ -9,6 +9,7 @@ import {
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import type { AccessDecisionService } from '@app/core-runtime/access/enforcement';
 import { LegalEntityIdSchema, PrincipalIdSchema } from '@app/core-runtime/access/ids';
 import { inertAccessEnforcementPorts } from '@app/core-runtime/testing/access-gate';
 import { NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
@@ -88,7 +89,15 @@ it.effect('binds the receiver scripted access gate once, with its declared refus
 it.effect('keeps the production refusal for a gate that cannot prepare persisted authority', () =>
   Effect.gen(function* productionPreparationRefusal() {
     const { services } = yield* makeCatalogScriptedAccess(mediaOrderingAccessScript);
-    const bound = bindAccessGate(Context.get(services, AccessDecisionGate), {
+    const scripted = Context.get(services, AccessDecisionGate);
+    // A gate that really cannot rebind to the caller's transaction: the scripted decisions without `rebind`.
+    const unrebindable: AccessDecisionService = {
+      decide: scripted.decide,
+      decideMany: scripted.decideMany,
+      list: scripted.list,
+      selectableLegalEntities: scripted.selectableLegalEntities,
+    };
+    const bound = bindAccessGate(unrebindable, {
       ...inertAccessEnforcementPorts(),
       // A sentinel: the binding must refuse before reading any authority revisions.
       currentness: { read: () => Effect.die('Preparation must refuse before reading revisions') },

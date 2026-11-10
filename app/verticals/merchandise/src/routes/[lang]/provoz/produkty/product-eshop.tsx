@@ -89,6 +89,8 @@ interface PanelProps {
   readonly onArchived?: () => void;
   readonly onCommitted: (message: string) => void;
   readonly onReload: () => void;
+  /** A variant stock movement replaced catalog revision `expectedRevision` with `revision`; it changed stock only. */
+  readonly onStockCommitted?: ((expectedRevision: number, revision: number) => void) | undefined;
   readonly product: ProductRecord;
   readonly revision: number;
   readonly storefrontOrigin?: string;
@@ -112,7 +114,7 @@ const variantMovementDelta = (reason: MovementReason, quantity: number) => {
 };
 
 /** Stock movement for one variant (ledger entry with variantId). */
-const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }: PanelProps) => {
+const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, product, revision }: PanelProps) => {
   const { t } = useModernI18n();
   const failure = useCommandFailure();
   const variants = product.variantRecords ?? [];
@@ -157,6 +159,7 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }
           );
           return;
         }
+        onStockCommitted?.(revision, outcome.revision);
         onCommitted(`Pohyb zapsán: ${variant.name} ${delta > 0 ? '+' : ''}${delta} ks`);
       },
     );
@@ -708,6 +711,7 @@ export const VariantsPanel = (props: PanelProps) => {
           canWrite={canMoveStock}
           onCommitted={onCommitted}
           onReload={onReload}
+          onStockCommitted={props.onStockCommitted}
           product={product}
           revision={revision}
         />

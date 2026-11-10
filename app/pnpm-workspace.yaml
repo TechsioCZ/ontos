@@ -2,7 +2,7 @@ catalog:
   '@app/commerce-customer-context': workspace:*
   '@app/shared-contracts': workspace:*
   '@app/work-tasks': workspace:*
-  '@techsio/ui-kit': 0.57.0
+  '@techsio/ui-kit': 0.59.2
 catalogMode: strict
 
 catalogs:
@@ -102,8 +102,8 @@ minimumReleaseAgeExclude:
   - '@bleedingdev/modern-js-utils@3.9.3-ultramodern.18'
   # Framework-owned signed Redact sidecar required by the default React runtime.
   - '@bleedingdev/tanstack-redact@0.2.2'
-  # Demo features: the patched UI kit and the Better Auth MCP, CIMD and OAuth provider cohort.
-  - '@techsio/ui-kit@0.57.0'
+  # Demo features: the UI kit and the Better Auth MCP, CIMD and OAuth provider cohort.
+  - '@techsio/ui-kit@0.59.2'
   - better-auth@1.7.12
   - '@better-auth/api-key@1.7.12'
   - '@better-auth/cimd@1.7.12'
@@ -184,8 +184,6 @@ patchedDependencies:
   drizzle-orm@1.0.0-rc.5-ab785fc: patches/drizzle-orm-rc5-declarations.patch
   # upstream: https://github.com/authzed/authzed-node (typed leaf exports)
   '@authzed/authzed-node@1.6.1': patches/@authzed__authzed-node@1.6.1.patch
-  # upstream: https://www.npmjs.com/package/@techsio/ui-kit/v/0.57.0 (label and translation accessibility props)
-  '@techsio/ui-kit@0.57.0': patches/@techsio__ui-kit@0.57.0.patch
   # upstream: https://github.com/oxc-project/oxc (handle omitted optional AST children in the CFG traverser)
   oxlint@1.81.0: patches/oxlint@1.81.0.patch
   # upstream: https://github.com/millionco/react-doctor (require array evidence before suggesting Set membership)

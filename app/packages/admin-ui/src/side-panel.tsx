@@ -30,6 +30,11 @@ export interface SidePanelProps {
    */
   readonly onOpenChange: (open: boolean) => void;
   readonly open: boolean;
+  /**
+   * Non-blocking quick view: the list behind stays clickable and an outside click does not close the panel. Escape
+   * and the close button still close it. Default `false` keeps the modal panel used by create and edit forms.
+   */
+  readonly peek?: boolean;
   /** Localized accessible name and keyboard instructions for the resize handle. */
   readonly resizeLabel: string;
   readonly size?: SidePanelSize;
@@ -40,6 +45,18 @@ export interface KeptDraftLabels {
   readonly close: string;
   readonly message: string;
 }
+
+/** Dialog behaviour of the modal panel, unchanged. */
+const modalDialogProps = { closeOnInteractOutside: true } as const;
+
+/** Dialog behaviour of a non-blocking quick view: nothing is trapped, scrolled or dismissed by an outside press. */
+const peekDialogProps = {
+  behavior: 'modeless',
+  closeOnInteractOutside: false,
+  modal: false,
+  preventScroll: false,
+  trapFocus: false,
+} as const;
 
 const defaultKeptDraftLabels: KeptDraftLabels = {
   close: 'Zavřít bez uložení',
@@ -194,6 +211,7 @@ export const SidePanel = ({
   keptDraftLabels = defaultKeptDraftLabels,
   onOpenChange,
   open,
+  peek = false,
   resizeLabel,
   size = 'md',
   title,
@@ -215,8 +233,8 @@ export const SidePanel = ({
       className={`min-w-0 sm:min-w-(--container-dialog-sm) ${sidePanelSurfaceClassName} ${className ?? ''}`}
       {...(finalFocusEl === undefined ? {} : { finalFocusEl })}
       {...(initialFocusEl === undefined ? {} : { initialFocusEl })}
+      {...(peek ? peekDialogProps : modalDialogProps)}
       actions={actions}
-      closeOnInteractOutside
       contentRef={resize.contentRef}
       contentStyle={{ maxWidth: '100vw', width: resize.width }}
       customTrigger

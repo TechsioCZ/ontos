@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import StoreLink from "@/components/store-link";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
-import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import { FormInput } from "@/components/form-controls";
 import { DataTable, type ColumnDef } from "@techsio/ui-kit/organisms/data-table";
 import { AccountHeading } from "./account-content";
 import { ReorderAction } from "./reorder-action";
