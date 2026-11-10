@@ -426,21 +426,47 @@ it.effect('prepares the exact Retail Party before SQL and rejects a changed sele
         return Effect.die('Unexpected SQL snapshot');
       },
     };
+    // The owner preflight prepared this Party for the actor; the Action consumes that evidence and reads nothing.
+    const factory: typeof PartyRegistryRetailPartyResolverFactory.Service = {
+      make: (preparedScope) => (preparedRequest) => {
+        expect(preparedScope).toEqual(scope);
+        expect(preparedRequest).toEqual(request);
+        calls += 1;
+        return Effect.succeed({
+          outcome: 'CURRENT_PARTY_RESOLVED' as const,
+          partyResourceId: partyId,
+          partyResourceRevision: '7',
+        });
+      },
+    };
+    yield* prepareRetailProfileServices(payload, context).pipe(
+      Effect.provideService(PartyRegistryRetailPartyResolverFactory, factory),
+    );
+    // Without prepared evidence it reads Party once itself, for the same actor, through the delegated transport.
+    let reads = 0;
     const executor: typeof RetailPartyDetailExecutor.Service = {
       execute: (selector, correlation, authority) => {
         expect(selector).toEqual({ partyRef: partyRef(partyId) });
         expect(correlation).toBe(scope.requestCorrelation);
         expect(authority.scope).toBe(context.scope);
-        expect(authority.actionInvocationId).toBe(context.actionInvocationId);
-        expect(authority.compositionRevision).toBe(context.compositionRevision);
-        calls += 1;
+        reads += 1;
         return Effect.succeed(response());
       },
     };
     yield* prepareRetailProfileServices(payload, context).pipe(
       Effect.provideService(RetailPartyDetailExecutor, executor),
     );
-    expect(calls).toBe(1);
+    expect(reads).toBe(1);
+    // With prepared evidence and a transport it still reads nothing more.
+    yield* prepareRetailProfileServices(payload, context).pipe(
+      Effect.provideService(PartyRegistryRetailPartyResolverFactory, factory),
+      Effect.provideService(RetailPartyDetailExecutor, executor),
+    );
+    expect(reads).toBe(1);
+    // Neither prepared evidence nor a transport: it fails closed.
+    const unprepared = yield* Effect.flip(prepareRetailProfileServices(payload, context));
+    expect(unprepared.code).toBe('DEPENDENCY_UNAVAILABLE');
+    expect(calls).toBe(2);
     expect(transactions).toBe(0);
     const prepared = bindPreparedRetailParty(request, {
       outcome: 'CURRENT_PARTY_RESOLVED',
@@ -456,6 +482,6 @@ it.effect('prepares the exact Retail Party before SQL and rejects a changed sele
     ]) {
       expect(yield* Effect.flip(prepared(changed))).toBeInstanceOf(ProfilePersistenceDependencyFailure);
     }
-    expect(calls).toBe(1);
+    expect(calls).toBe(2);
   }),
 );
