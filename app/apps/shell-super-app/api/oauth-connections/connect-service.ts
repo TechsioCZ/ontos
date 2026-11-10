@@ -280,7 +280,7 @@ const logSlowOptions = Effect.fn('OAuthConnectService.logSlowOptions')(function*
       authorityActivePhase: authority.active ?? 'none',
       authorityCapabilitiesMs: authority.durations.capabilities ?? null,
       authorityCarriers: authority.carriers,
-      authorityCatalogMs: authority.durations.catalog ?? null,
+      authorityCatalogMs: authority.durations.modules ?? null,
       authorityInspectionCalls: authority.inspectionCalls,
       authorityScopeMs: authority.durations.scope ?? null,
       companies: state.companies,

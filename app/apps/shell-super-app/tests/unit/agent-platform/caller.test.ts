@@ -630,7 +630,7 @@ it.effect('asks every carrier in one batch and keeps carrier order whatever fini
       carriers: 3,
     });
     expect(traced.inspectionCalls).toBe(2);
-    expect(Object.keys(traced.durations).toSorted()).toEqual(['capabilities', 'catalog', 'scope']);
+    expect(Object.keys(traced.durations).toSorted()).toEqual(['capabilities', 'modules', 'scope']);
   }),
 );
 

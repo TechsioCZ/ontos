@@ -541,7 +541,7 @@ it.effect('names the authority step that was running, with its timings and count
           actions: 240,
           active: 'capabilities',
           carriers: 334,
-          durations: { catalog: 12, scope: 340 },
+          durations: { modules: 12, scope: 340 },
           inspectionCalls: 2,
         });
         return yield* Effect.never;

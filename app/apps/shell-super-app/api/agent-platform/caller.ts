@@ -227,7 +227,7 @@ export const callerModuleAccess = Effect.fn('AgentPlatform.callerModuleAccess')(
 );
 
 /** The inner steps of one subject read, in the order they run. */
-export const SUBJECT_ACCESS_PHASES = ['catalog', 'scope', 'capabilities'] as const;
+export const SUBJECT_ACCESS_PHASES = ['modules', 'scope', 'capabilities'] as const;
 export type SubjectAccessPhase = (typeof SUBJECT_ACCESS_PHASES)[number];
 
 /**
@@ -289,7 +289,7 @@ export const subjectModuleAccess = Effect.fn('AgentPlatform.subjectModuleAccess'
   const inspection = yield* SubjectAccessInspection;
   const installed = yield* tracedPhase(
     progress,
-    'catalog',
+    'modules',
     (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError((cause) => new AgentStoreUnavailable({ cause }))),
   );
   yield* countInspection(progress, {});
