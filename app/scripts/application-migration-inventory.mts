@@ -155,6 +155,7 @@ const orderedSources: readonly OwnerStreamSource[] = [
     ['commerce_order'],
     ['verticals/commerce-order/scripts/verify-database.mts'],
   ),
+  primary('payment', 'verticals/payment', ['payment'], ['verticals/payment/scripts/verify-db-schema.mts']),
 ];
 const portal: OwnerStreamSource = {
   configFile: 'drizzle.portal-auth.config.ts',

@@ -40,6 +40,7 @@ for (const owner of [
   'sales-insights',
   'finance-billing',
   'crm-activities',
+  'payment',
 ]) {
   it(`D1 migrates and packages ${owner} before claiming database readiness`, () => {
     const migration = migrator.indexOf(`yield* migrate('verticals/${owner}', 'drizzle.config.ts');`);

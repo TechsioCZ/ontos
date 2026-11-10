@@ -189,6 +189,7 @@ const main = Effect.scoped(
     yield* migrate('verticals/projects', 'drizzle.config.ts');
     yield* migrate('verticals/commerce-cart', 'drizzle.config.ts');
     yield* migrate('verticals/commerce-order', 'drizzle.config.ts');
+    yield* migrate('verticals/payment', 'drizzle.config.ts');
     // </generated-vertical-provider-migrations>
     yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
     if (Option.isSome(portalAuthDatabase)) {
