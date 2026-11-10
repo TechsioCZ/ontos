@@ -49,8 +49,10 @@ import { Socket } from 'effect/socket';
 import { HttpServer, HttpServerResponse } from 'effect/http';
 import { exportJWK, generateKeyPair } from 'jose';
 
+import { readCompiledNodeShellIdentity } from '../../../../scripts/ontos-shell-runtime-contract.ts';
 import { OwnedAuthRuntimeContract, OwnedAuthRuntimeContractLive } from '../support/api-key-gateway-auth-runtime.ts';
 import type { ShellNativeOwnedDatabase } from '../support/api-key-gateway-auth-runtime.ts';
+import { allocateLoopbackPort, startCompiledSymmyShell } from '../support/server-owner-relay-native-fixture.ts';
 import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-policy.ts';
 import { GatewayIssuerError } from '../../api/auth/gateway-issuer.ts';
 import { ShellGatewayReleaseDiagnosticSchema } from '../../api/auth/gateway-release-diagnostic.ts';
@@ -99,6 +101,7 @@ export const ShellNativeRelaySourceSchema = Schema.Struct({
   sourceBuildMarker: Schema.String.check(Schema.isMinLength(1)),
 });
 export const ShellNativeModuleAppIdSchema = Schema.Literals([
+  'assortment',
   'party-registry',
   customerContextAppId,
   'privacy',
@@ -428,7 +431,7 @@ export const decodeShellNativePriceReadEnvironment = Effect.fn('ShellNativeFixtu
 
 export { makeCompositionSnapshot as makeApiKeyGatewayNativeComposition } from './application-composition.ts';
 
-const bundleChild = Effect.fn('ApiKeyGatewayNativeFixture.bundle')(function* bundleChild() {
+const bundleChild = Effect.fn('ApiKeyGatewayNativeFixture.bundle')(function* bundleChild(expectedBuildMarker: string) {
   const filesystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const generated = yield* Schema.decodeUnknownEffect(
@@ -441,7 +444,7 @@ const bundleChild = Effect.fn('ApiKeyGatewayNativeFixture.bundle')(function* bun
       }),
     ),
   )(yield* filesystem.readFileString(new URL('../../shared/ultramodern-build.json', import.meta.url).pathname));
-  const identity = yield* Effect.try({
+  const release = yield* Effect.try({
     catch: unavailable,
     try: () =>
       resolveUltramodernReleaseIdentity({
@@ -449,6 +452,17 @@ const bundleChild = Effect.fn('ApiKeyGatewayNativeFixture.bundle')(function* bun
         unitId: generated.deliveryUnit.unitId,
         workspaceRoot: appRoot,
       }),
+  });
+  const compiled =
+    release.sourceRevision === 'workspace' && release.buildMarker !== expectedBuildMarker
+      ? yield* readCompiledNodeShellIdentity(`${appRoot}apps/shell-super-app`).pipe(Effect.mapError(unavailable))
+      : Option.none();
+  const identity = Option.match(compiled, {
+    onNone: () => release,
+    onSome: (candidate) =>
+      candidate.sourceRevision === release.sourceRevision && candidate.buildMarker === expectedBuildMarker
+        ? candidate
+        : release,
   });
   const cache = new URL('../../node_modules/.cache/ontos-1250/', import.meta.url).pathname;
   yield* filesystem.makeDirectory(cache, { recursive: true });
@@ -701,7 +715,7 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
     const regionsEnvironment = yield* decodeShellNativeRegionsEnvironment(options.regionsProjectionJson);
     const priceReadEnvironment = yield* decodeShellNativePriceReadEnvironment(options.priceReadProjectionJson);
     const additionalRelaySources = yield* resolveAdditionalRelaySources(options, snapshot);
-    const { artifact, receiverDeployment } = yield* bundleChild();
+    const { artifact, receiverDeployment } = yield* bundleChild(snapshot.composition.shell.deployment.buildMarker);
     if (
       snapshot.composition.shell.deployment.appId !== receiverDeployment.appId ||
       snapshot.composition.shell.deployment.buildMarker !== receiverDeployment.buildMarker
@@ -798,21 +812,19 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
       )(relaySource === undefined ? Option.none() : Option.some(relaySource)),
       ONTOS_SHELL_NATIVE_SOCKET: privateChannel.socketPath,
     };
-    const effectiveEnvironment =
+    const issuerConnectionString =
       options.productionGate === true
-        ? {
-            ...childEnvironment,
-            SHELL_GATEWAY_ISSUER_DATABASE_URL: yield* Config.schema(
-              Schema.URLFromString,
-              'SHELL_GATEWAY_ISSUER_DATABASE_URL',
-            ).pipe(
-              Effect.map((url) => {
-                url.pathname = new URL(pair.runtime.connectionString).pathname;
-                return url.href;
-              }),
-            ),
-          }
-        : childEnvironment;
+        ? yield* Config.schema(Schema.URLFromString, 'SHELL_GATEWAY_ISSUER_DATABASE_URL').pipe(
+            Effect.map((url) => {
+              url.pathname = new URL(pair.runtime.connectionString).pathname;
+              return url.href;
+            }),
+          )
+        : undefined;
+    const effectiveEnvironment =
+      issuerConnectionString === undefined
+        ? childEnvironment
+        : { ...childEnvironment, SHELL_GATEWAY_ISSUER_DATABASE_URL: issuerConnectionString };
     const child = yield* ChildProcess.make(process.execPath, [artifact], {
       cwd: appRoot,
       env: effectiveEnvironment,
@@ -1176,6 +1188,31 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
         return Schema.is(ShellNativeRequestDiagnosticsResponseSchema)(response)
           ? response.outcomes
           : yield* unavailable();
+      }),
+      startCompiledShell: Effect.fn('ApiKeyGatewayNativeFixture.startCompiledShell')(function* startCompiledShell() {
+        yield* ensureOpen;
+        if (issuerConnectionString === undefined) {
+          return yield* unavailable();
+        }
+        const spice = yield* Config.all({
+          caCertificate: Config.String('SPICEDB_CA_CERT'),
+          endpoint: Config.String('SPICEDB_ENDPOINT'),
+          preSharedKey: Config.Redacted('SPICEDB_PRESHARED_KEY'),
+        });
+        return yield* startCompiledSymmyShell({
+          appId: 'shell-super-app',
+          authentication: {
+            baseUrl: childEnvironment.BETTER_AUTH_URL,
+            connectionString: authRuntime.runtimeConnectionString,
+            issuerConnectionString: Redacted.make(issuerConnectionString),
+            port: yield* allocateLoopbackPort(),
+            secret: Redacted.make(secret),
+            spice,
+          },
+          compositionUrl: sourceUrl,
+          gateway: { issuer, privateJwk: Redacted.make(privateJwk), publicJwks },
+          relativeDirectory: `${appRoot}apps/shell-super-app`,
+        });
       }),
     });
   },

@@ -15,10 +15,7 @@ import type { AdmitSymmySyncPayload } from '../../shared/actions/admit-symmy-syn
 
 type Services = Effect.Success<ReturnType<typeof symmyJobOperationFactory>>;
 const domainEvents: Record<never, never> = {};
-const rejected = (
-  code: 'symmy_sync_route_denied' | 'symmy_sync_intent_conflict' | 'symmy_sync_unavailable',
-  cause?: unknown,
-) => {
+const rejected = (code: typeof AdmitSymmySyncRejected.fields.code.Type, cause?: unknown) => {
   const error = new AdmitSymmySyncRejected({
     code,
     reason: 'The synchronous integration intent could not be admitted.',
@@ -28,6 +25,7 @@ const rejected = (
 const admissionProblemByCode = {
   idempotency_conflict: 'symmy_sync_intent_conflict',
   route_denied: 'symmy_sync_route_denied',
+  stock_assertion_denied: 'symmy_sync_stock_assertion_denied',
   unavailable: 'symmy_sync_unavailable',
 } as const;
 const handleAdmitSymmySync = Effect.fn('SymmySync.admit')(function* admit(

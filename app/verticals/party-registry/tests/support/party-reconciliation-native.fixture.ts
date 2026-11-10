@@ -56,7 +56,7 @@ export const makePartyReconciliationComposition = Effect.fn('PartyReconciliation
 export const preparePartyReconciliationNative = Effect.fn('PartyReconciliation.prepareNative')(
   function* preparePartyReconciliationNative(
     connections: DatabaseConnectionPair,
-    schema: 'rebuild' | 'already-migrated' = 'rebuild',
+    schema: 'migrate' | 'rebuild' = 'rebuild',
   ) {
     const source = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
     const path = yield* Config.String('PATH');
@@ -72,7 +72,10 @@ export const preparePartyReconciliationNative = Effect.fn('PartyReconciliation.p
       ONTOS_FIXTURE_SOURCE_DATABASE: source.admin.database,
       PATH: path,
     };
-    const ownerSchema = (phase: 'rebuild' | 'verify', identityEnvironment: Readonly<Record<string, string>>) =>
+    const ownerSchema = (
+      phase: 'migrate' | 'rebuild' | 'verify',
+      identityEnvironment: Readonly<Record<string, string>>,
+    ) =>
       Effect.gen(function* runOwnerSchemaPhase() {
         const child = yield* ChildProcess.make(
           'pnpm',
@@ -95,9 +98,7 @@ export const preparePartyReconciliationNative = Effect.fn('PartyReconciliation.p
         );
         expect(code, `Party owner schema ${phase}: ${stderr.slice(-4000)} ${stdout.slice(-4000)}`).toBe(0);
       });
-    if (schema === 'rebuild') {
-      yield* ownerSchema('rebuild', {});
-    }
+    yield* ownerSchema(schema, {});
     const adminContext = yield* Layer.build(
       PgClient.layer({ maxConnections: 1, url: Redacted.make(connections.admin.connectionString) }).pipe(
         Layer.provideMerge(Reactivity.layer),

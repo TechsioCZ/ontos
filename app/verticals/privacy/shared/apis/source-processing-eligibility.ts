@@ -30,6 +30,9 @@ export const SourceProcessingEligibilityRequestSchema = Schema.Struct({
     SymmyCustomerSourceIntakeConsumerModule,
   ]),
   operation: Ref,
+  organizationBusinessUse: Schema.optionalKey(
+    Schema.Literals(['COMPANY_ICO', 'COMPANY_NAME', 'GROUP_MEMBERSHIP', 'PRICE_GROUP_ASSIGNMENT']),
+  ),
   partySourceReference: Schema.optionalKey(PrivacySourcePersonReferenceSchema),
   /** Null identifies a native owner operation, never an invented external issuer. */
   source: Schema.toEncoded(Schema.OptionFromNullOr(SourceProcessingIdentitySchema)),
@@ -49,13 +52,17 @@ export const SourceProcessingEligibilityRequestSchema = Schema.Struct({
     ),
   ),
 }).check(
-  Schema.makeFilter(({ consumerModuleId, operation, source, target }) => {
+  Schema.makeFilter(({ consumerModuleId, operation, organizationBusinessUse, source, target }) => {
     if (consumerModuleId === SymmyCustomerSourceIntakeConsumerModule) {
-      return operation === SymmyCustomerSourceIntakeOperation && source !== null
+      return operation === SymmyCustomerSourceIntakeOperation &&
+        source !== null &&
+        (organizationBusinessUse === undefined ||
+          target?.kind === (organizationBusinessUse === 'COMPANY_NAME' ? 'PARTY' : 'COUNTERPARTY_PURCHASING_PROFILE'))
         ? undefined
         : 'Symmy intake requires a qualified source and its dedicated processing operation';
     }
     return operation !== SymmyCustomerSourceIntakeOperation &&
+      organizationBusinessUse === undefined &&
       target?.kind !== 'PARTY_CONTACT_POINT' &&
       target?.kind !== 'COUNTERPARTY'
       ? undefined

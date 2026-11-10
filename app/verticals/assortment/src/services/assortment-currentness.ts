@@ -1,8 +1,9 @@
-import { DateTime, Effect, Layer, Match, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Match, Schema } from 'effect';
 import { failClosedOwnerAuthorizationOverlay, OwnerAuthorizationOverlay } from '@app/core-runtime';
 import type {
   OperationalScope,
   OwnerAccessFacts,
+  OwnerAuthorizationDecision,
   OwnerAuthorizationOverlayService,
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
@@ -13,6 +14,7 @@ import type {
 } from '../../shared/domain/governed-read-contracts.ts';
 import { AssortmentPolicyPersistenceUnavailable } from '../../shared/domain/policy-errors.ts';
 import { assortmentConfigurationReadSourceForScope } from './governed-configuration-read.service.ts';
+import { importSymmyRuleActionKey } from './symmy-rule-fixture-enrollment.ts';
 
 type Configuration = AssortmentConfigurationResponse['configuration'];
 type Failure = InstanceType<typeof AssortmentPolicyPersistenceUnavailable>;
@@ -35,7 +37,11 @@ export interface AssortmentRecordRef {
 export type AssortmentCurrentnessTarget =
   | Readonly<{ readonly kind: 'assortment_configuration'; readonly resource: AssortmentRecordRef }>
   | Readonly<{ readonly kind: 'assortment_decision' }>
-  | Readonly<{ readonly kind: 'assortment_fixture'; readonly selectorKind: 'PRODUCT' }>
+  | Readonly<{
+      readonly commandFingerprint?: string;
+      readonly kind: 'assortment_fixture';
+      readonly selectorKind: 'PRODUCT';
+    }>
   | Readonly<{
       readonly kind: 'assortment_rule';
       readonly mode: 'create';
@@ -71,6 +77,7 @@ export type AssortmentCurrentnessTarget =
 const CURRENTNESS = 'assortment.currentness';
 const kindKey = `${CURRENTNESS}.kind` as const;
 const modeKey = `${CURRENTNESS}.mode` as const;
+const fixtureCommandFingerprintKey = `${CURRENTNESS}.fixtureCommandFingerprint` as const;
 const selectorKindKey = `${CURRENTNESS}.selectorKind` as const;
 const recordModuleKey = `${CURRENTNESS}.recordModuleKey` as const;
 const recordTypeKey = `${CURRENTNESS}.recordType` as const;
@@ -139,7 +146,12 @@ export const assortmentCurrentnessFacts = (target: AssortmentCurrentnessTarget):
       assortment_boundary: boundaryFacts,
       assortment_configuration: (value) => ({ [kindKey]: value.kind, ...recordFacts(value.resource) }),
       assortment_decision: (value) => ({ [kindKey]: value.kind }),
-      assortment_fixture: (value) => ({ [kindKey]: value.kind, [selectorKindKey]: value.selectorKind }),
+      assortment_fixture: (value) => {
+        const facts = { [kindKey]: value.kind, [selectorKindKey]: value.selectorKind };
+        return value.commandFingerprint === undefined
+          ? facts
+          : { ...facts, [fixtureCommandFingerprintKey]: value.commandFingerprint };
+      },
       assortment_rule: ruleFacts,
     }),
   );
@@ -225,7 +237,8 @@ export const assortmentCurrentnessTargetFromFacts = (
     return { kind };
   }
   if (kind === 'assortment_fixture' && selectorKind === 'PRODUCT') {
-    return { kind, selectorKind };
+    const commandFingerprint = facts[fixtureCommandFingerprintKey];
+    return commandFingerprint === undefined ? { kind, selectorKind } : { commandFingerprint, kind, selectorKind };
   }
   if (kind === 'assortment_configuration') {
     const resource = recordFromFacts(facts);
@@ -515,7 +528,20 @@ const ownerDecisionFor = (status: AssortmentAuthorizationCurrentResult['status']
  * seam only answers the Current question the descriptor's `accessOwnerFacts` names, and it keeps
  * failing closed: a Current question it cannot prove denies (or reports unavailable), never allows.
  */
-export const assortmentOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService = {
+type FixtureCurrentnessCheck = (
+  scope: OperationalScope,
+  operationAt: DateTime.Utc,
+  fingerprint: string,
+) => Effect.Effect<OwnerAuthorizationDecision>;
+
+export class AssortmentFixtureOwnerCurrentness extends Context.Service<
+  AssortmentFixtureOwnerCurrentness,
+  { readonly check: FixtureCurrentnessCheck }
+>()('@app/assortment/services/assortment-currentness/AssortmentFixtureOwnerCurrentness') {}
+
+const makeAssortmentOwnerAuthorizationOverlay = (
+  checkFixture?: FixtureCurrentnessCheck,
+): OwnerAuthorizationOverlayService => ({
   authorize: (transaction, input) => {
     const target = assortmentCurrentnessTargetFromFacts(input.ownerFacts);
     if (target === undefined) {
@@ -532,14 +558,25 @@ export const assortmentOwnerAuthorizationOverlay: OwnerAuthorizationOverlayServi
     ) {
       return Effect.succeed('unavailable' as const);
     }
+    if (
+      target.kind === 'assortment_fixture' &&
+      target.commandFingerprint !== undefined &&
+      input.operation === 'action' &&
+      input.operationKey === importSymmyRuleActionKey &&
+      checkFixture !== undefined
+    ) {
+      return checkFixture(input.scope, input.operationAt, target.commandFingerprint);
+    }
     const currentService = assortmentAuthorizationCurrentForTransaction(transaction);
     return currentService
       .assess({ operationAt: input.operationAt, scope: input.scope, target })
       .pipe(Effect.map((result) => ownerDecisionFor(result.status)));
   },
-};
+});
 
-export const assortmentOwnerAuthorizationOverlayLive = Layer.succeed(
+export const assortmentOwnerAuthorizationOverlay = makeAssortmentOwnerAuthorizationOverlay();
+
+export const assortmentOwnerAuthorizationOverlayLive = Layer.effect(
   OwnerAuthorizationOverlay,
-  assortmentOwnerAuthorizationOverlay,
+  AssortmentFixtureOwnerCurrentness.pipe(Effect.map(({ check }) => makeAssortmentOwnerAuthorizationOverlay(check))),
 );

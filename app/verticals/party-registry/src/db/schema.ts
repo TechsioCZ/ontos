@@ -54,6 +54,7 @@ export const PARTY_TABLE_INVENTORY = [
   'party_corrections',
   'party_create_source_receipts',
   'party_fact_assertions',
+  'party_ico_correlation_epochs',
   'party_legacy_ico_authority_fences',
   'party_match_decisions',
   'party_merges',
@@ -1003,6 +1004,24 @@ export const partyMatchDecisions = enableGovernedRls(
   ),
 );
 
+/** An opaque owner version. Request and worker roles cannot publish a new epoch. */
+export const partyIcoCorrelationEpochs = enableGovernedRls(
+  partySchema.table(
+    'party_ico_correlation_epochs',
+    {
+      tenantId: uuid('tenant_id').primaryKey(),
+      epoch: uuid('epoch').defaultRandom().notNull(),
+    },
+    (table) => [
+      ...gatewayScopedTenantRlsPolicies(
+        'party_ico_correlation_epoch',
+        table.tenantId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
+    ],
+  ),
+);
+
 /** A tenant cutover fence is immutable and has no expiry or implicit reset. */
 export const partyLegacyIcoAuthorityFences = enableGovernedRls(
   partySchema.table(
@@ -1348,6 +1367,7 @@ export const partyDatabaseSchema = {
   partyCorrections,
   partyCreateSourceReceipts,
   partySourceEffectReceipts,
+  partyIcoCorrelationEpochs,
   partyLegacyIcoAuthorityFences,
   partyFactAssertions,
   partyMatchDecisions,
@@ -1371,6 +1391,7 @@ export const PARTY_TABLES = [
   partyCorrections,
   partyCreateSourceReceipts,
   partySourceEffectReceipts,
+  partyIcoCorrelationEpochs,
   partyLegacyIcoAuthorityFences,
   partyFactAssertions,
   partyMatchDecisions,

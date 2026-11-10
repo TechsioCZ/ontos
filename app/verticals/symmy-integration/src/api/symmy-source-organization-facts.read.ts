@@ -30,6 +30,7 @@ export const symmySourceOrganizationFactsRead = defineRead(
     accessKind: 'detail',
     accessWorkload: {
       reason: 'Only the exact Privacy source-fact purpose may call this protected receiver.',
+      requestPurpose: 'PROCESSING',
       workloads: ['integration.symmy.source-organization-facts.read'],
     },
     entrypoint: symmySourceOrganizationFactsEntrypoint,

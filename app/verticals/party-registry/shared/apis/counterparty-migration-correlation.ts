@@ -6,14 +6,19 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { CounterpartyRefSchema } from '../resources/counterparty.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 import { LegacyIcoSnapshotVersionSchema } from '../actions/fence-legacy-ico-authority.ts';
+import { IcoCorrelationWitnessSchema } from './legacy-ico-inventory.ts';
 
-export const CounterpartyMigrationCorrelationRequestSchema = Schema.Struct({ counterpartyRef: CounterpartyRefSchema });
+export const CounterpartyMigrationCorrelationRequestSchema = Schema.Struct({
+  counterpartyRef: CounterpartyRefSchema,
+  includeCorrelationWitness: Schema.optionalKey(Schema.Literal(true)),
+});
 export type CounterpartyMigrationCorrelationRequest = typeof CounterpartyMigrationCorrelationRequestSchema.Type;
 export const CounterpartyMigrationCorrelationResponseSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,
   partyRef: PartyRefSchema,
   revision: LegacyIcoSnapshotVersionSchema,
   archived: Schema.Boolean,
+  correlationWitness: Schema.optionalKey(IcoCorrelationWitnessSchema),
 });
 export type CounterpartyMigrationCorrelationResponse = typeof CounterpartyMigrationCorrelationResponseSchema.Type;
 

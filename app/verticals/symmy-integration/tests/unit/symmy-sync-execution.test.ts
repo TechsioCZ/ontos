@@ -119,6 +119,35 @@ const refreshed = (hash = requestHash) =>
   });
 
 describe('synchronous fresh original invocation facts', () => {
+  it.effect('distinguishes failure before owner dispatch from a possibly committed write', () =>
+    Effect.gen(function* ownerFailureBoundary() {
+      for (const dispatchPossible of [false, true]) {
+        const result = yield* executeSymmySyncAdmission(admitted, 'b'.repeat(64)).pipe(
+          Effect.provideService(SymmySyncOriginalInvocationFacts, { read: () => Effect.succeedNone }),
+          Effect.provideService(SymmyEffectAdapters, {
+            adapters: [
+              {
+                execute: (input) =>
+                  Effect.gen(function* failOwner() {
+                    if (dispatchPossible) {
+                      yield* input.recordOwnerRequest({
+                        authContextRef,
+                        executorPrincipalId: principalId,
+                        requestHash,
+                      });
+                    }
+                    return yield* symmyJobWorkerUnavailable();
+                  }),
+                operation: first.ref.operation,
+                recover: () => Effect.fail(symmyJobWorkerUnavailable()),
+              },
+            ],
+          }),
+        );
+        expect(result.items[0].effects[0].status).toBe(dispatchPossible ? 'indeterminate' : 'unavailable');
+      }
+    }),
+  );
   it.effect('reads the just-committed current native identity instead of reusing the pre-admission snapshot', () =>
     Effect.gen(function* actualFreshCapability() {
       const stages: string[] = [];

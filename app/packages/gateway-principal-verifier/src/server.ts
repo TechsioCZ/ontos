@@ -1,8 +1,6 @@
-import {
-  privacyDispatchOperationContract,
-  organizationGovernanceReadOperationContract,
-  trustVerifiedGatewayPrincipalContext,
-} from '@app/core-runtime/auth/system-principal-context-provenance';
+import { OntosModuleDeploymentContractSchema } from '@app/core-runtime';
+import type { ApplicationComposition } from '@app/core-runtime';
+import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type {
   RegisteredGatewayRouteScope,
   RegisteredGatewayPrivacyDispatch,
@@ -20,8 +18,6 @@ import {
 } from '@app/core-runtime/modules/active-application-composition';
 import {
   DELEGATED_GATEWAY_ASSERTION_VERSION,
-  PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION,
-  ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION,
   WORKLOAD_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_VERSION,
@@ -30,6 +26,9 @@ import {
   GatewayContextClaimsSchema,
   decodeSupportedGatewayContextClaims,
   decodeGatewayContextProtectedHeader,
+  organizationGovernanceReadOperationContract,
+  privacyDispatchAuthorityPolicy,
+  privacyDispatchOperationContract,
 } from '@app/shared-contracts';
 import {
   Clock,
@@ -352,7 +351,57 @@ const privacyDispatchSourceIsApproved = (
   audience: string,
 ): boolean =>
   signedSourceBuildIsApproved(deployment, sourceBuildMarker) &&
-  privacyDispatchOperationContract(dispatch.operation).appId === audience;
+  privacyDispatchOperationContract(dispatch.operation, dispatch.target).appId === audience;
+
+const decodePublishedContract = Schema.decodeUnknownOption(Schema.fromJsonString(OntosModuleDeploymentContractSchema), {
+  onExcessProperty: 'error',
+});
+const privacyDispatchAuthorityFromComposition = (
+  composition: ApplicationComposition,
+  dispatch: RegisteredGatewayPrivacyDispatch,
+) => {
+  const policy = privacyDispatchAuthorityPolicy(dispatch.operation);
+  const contractOf = (moduleId: string) =>
+    decodePublishedContract(composition.modules.find((module) => module.moduleId === moduleId)?.contractDocument);
+  const producer = contractOf(policy.producerModuleKey);
+  const consumer = contractOf(policy.consumerModuleKey);
+  if (Option.isNone(producer) || Option.isNone(consumer)) {
+    return Option.none();
+  }
+  const actions = producer.value.manifest.publicSurface.actions.filter(
+    ({ actionKey }) => actionKey === policy.originActionKey,
+  );
+  const subscriptions = consumer.value.runtime.outboxSubscriptions.filter(
+    ({ workerKey }) => workerKey === policy.workerKey,
+  );
+  const [action] = actions;
+  const [subscription] = subscriptions;
+  if (
+    actions.length !== 1 ||
+    subscriptions.length !== 1 ||
+    action?.accessDeclaration?.key !== policy.originCapabilityKey ||
+    action.accessWorkload !== undefined ||
+    action.entrypoint.access !== 'write' ||
+    action.legalEntityScope !== 'required' ||
+    consumer.value.manifest.originatorActions?.includes(action.actionKey) !== true ||
+    subscription?.consumerModuleKey !== policy.consumerModuleKey ||
+    subscription.producerModuleKey !== policy.producerModuleKey ||
+    subscription.entrypoint.entrypointKey !== policy.workerKey ||
+    subscription.topic !== policy.topic
+  ) {
+    return Option.none();
+  }
+  return Option.some({
+    consumerModuleKey: subscription.consumerModuleKey,
+    originActionKey: action.actionKey,
+    originCapabilityKey: action.accessDeclaration.key,
+    producerModuleKey: subscription.producerModuleKey,
+    subjectResourceType: policy.subjectResourceType,
+    targetAccess: policy.targetAccess,
+    topic: subscription.topic,
+    workerKey: subscription.workerKey,
+  });
+};
 
 const legacyMappingMatchesIssuer = (
   mapping: LegacyGatewayNamespaceMapping | undefined,
@@ -362,10 +411,11 @@ const legacyMappingMatchesIssuer = (
 const organizationGovernanceSourceIsApproved = (
   deployment: Parameters<typeof signedSourceBuildIsApproved>[0],
   sourceBuildMarker: string,
+  read: RegisteredGatewayOrganizationGovernanceRead,
   audience: string,
 ): boolean =>
   signedSourceBuildIsApproved(deployment, sourceBuildMarker) &&
-  organizationGovernanceReadOperationContract().appId === audience;
+  organizationGovernanceReadOperationContract(read.target).appId === audience;
 
 const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthenticatedToken')(
   function* verifyAuthenticatedTokenEffect(
@@ -498,15 +548,25 @@ const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthe
       }
       principalFromClaims = claims.principal;
       ({ workload } = claims);
-    } else if (claims.ver === ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION) {
+    } else if ('organizationGovernanceRead' in claims) {
       const approvedActor = approvedDeploymentOf(claims.act.appId);
-      if (!organizationGovernanceSourceIsApproved(approvedActor, claims.act.buildMarker, expectedAudience)) {
+      if (
+        !organizationGovernanceSourceIsApproved(
+          approvedActor,
+          claims.act.buildMarker,
+          claims.organizationGovernanceRead,
+          expectedAudience,
+        )
+      ) {
         return yield* Effect.fail(invalidError());
       }
       principalFromClaims = claims.principal;
-      ({ organizationGovernanceRead } = claims);
+      organizationGovernanceRead = {
+        ...claims.organizationGovernanceRead,
+        target: organizationGovernanceReadOperationContract(claims.organizationGovernanceRead.target),
+      };
       actor = { appId: claims.act.appId, buildMarker: claims.act.buildMarker, principalId: claims.act.principalId };
-    } else if (claims.ver === PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION) {
+    } else if ('privacyDispatch' in claims) {
       const approvedActor = approvedDeploymentOf(claims.act.appId);
       if (
         !privacyDispatchSourceIsApproved(
@@ -519,7 +579,14 @@ const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthe
         return yield* Effect.fail(invalidError());
       }
       principalFromClaims = claims.principal;
-      ({ privacyDispatch } = claims);
+      privacyDispatch = {
+        ...claims.privacyDispatch,
+        authority: yield* Effect.fromOption(
+          privacyDispatchAuthorityFromComposition(snapshot.composition, claims.privacyDispatch),
+          invalidError,
+        ),
+        target: privacyDispatchOperationContract(claims.privacyDispatch.operation, claims.privacyDispatch.target),
+      };
       actor = { appId: claims.act.appId, buildMarker: claims.act.buildMarker, principalId: claims.act.principalId };
     } else if (claims.ver === DELEGATED_GATEWAY_ASSERTION_VERSION) {
       // The Shell signs `act` only for a calling module it resolved from a bound module key. The calling

@@ -130,14 +130,12 @@ const finishRegisteredAssertion = Effect.fn('GatewayDelegation.finishRegisteredA
     binding.sourceAppId !== 'privacy' ||
     source.manifest.module.id !== 'privacy.core' ||
     workload.entrypointKey !== 'privacy.core.api.organization-business-applicability' ||
-    workload.schemaVersion !== '1' ||
     workload.workloadKey !== 'privacy.core.organization-business-check' ||
     sourceAccess !== 'read' ||
     subject.operationRequirementKey !== 'privacy.core.requirement.organization-business-source-facts' ||
     subject.processingRequestHash === undefined ||
     workload.recovery !== undefined ||
     rule.entrypointKey !== 'integration.symmy.api.symmy-source-organization-facts' ||
-    rule.schemaVersion !== '1' ||
     rule.declarationKey !== 'integration.symmy.symmy-source-organization-facts.read' ||
     rule.workloadKey !== 'integration.symmy.source-organization-facts.read' ||
     rule.legalEntityScope !== 'required' ||

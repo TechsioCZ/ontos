@@ -30,6 +30,7 @@ export const AdmitSymmySyncActionForbiddenProblemSchema = makeProblemDetailsSche
       'module_state_denied',
       'operation_context_denied',
       'operation_context_invalid',
+      'symmy_sync_stock_assertion_denied',
     ]),
   },
 );

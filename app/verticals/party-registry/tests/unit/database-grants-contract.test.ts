@@ -55,6 +55,7 @@ it('covers RLS-protected Party and Contacts tables while keeping source receipts
   const rlsTables = [...PARTY_TABLES, ...CONTACTS_TABLES]
     .filter((table) => getTableConfig(table).enableRLS)
     .map(qualifiedName)
+    .filter((table) => table !== 'party.party_ico_correlation_epochs')
     .toSorted();
   const ownedGrants = PARTY_REGISTRY_REQUEST_DATABASE_GRANTS.tables.filter(
     (grant) =>

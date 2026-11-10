@@ -2,6 +2,7 @@ import { BindInitialVariantSourcePayloadSchema } from '@app/catalog/api/bind-ini
 import { CorrectProductPayloadSchema } from '@app/catalog/api/correct-product-action';
 import { CreateProductPayloadSchema } from '@app/catalog/api/create-product-action';
 import { CreateVariantPayloadSchema } from '@app/catalog/api/create-variant-action';
+import { SetVariantLocalizedFactsPayloadSchema } from '@app/catalog/api/set-variant-localized-facts-action';
 import { UpdateProductPayloadSchema } from '@app/catalog/api/update-product-action';
 import { ProductActionInvocationIdSchema } from '@app/catalog/domain/product';
 import { ProductRefSchema } from '@app/catalog/resources/product';
@@ -107,6 +108,11 @@ export const SymmyCatalogPricingInventoryIntentSchema = Schema.Union([
   Schema.TaggedStruct('PriceDefineFromGroupEffect', {
     fromPriceGroupEffect: productEffectReference,
     payload: definePriceFromGroupEffectPayload,
+  }),
+  Schema.TaggedStruct('CatalogSetVariantLocalizedFacts', {
+    payload: SetVariantLocalizedFactsPayloadSchema.check(
+      Schema.makeFilter(({ evidenceRefs }) => evidenceRefs.length > 0 || 'Localized source facts require evidence'),
+    ),
   }),
 ]);
 export type SymmyCatalogPricingInventoryIntent = typeof SymmyCatalogPricingInventoryIntentSchema.Type;

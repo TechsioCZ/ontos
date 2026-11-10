@@ -6,6 +6,8 @@ import {
 } from '../../src/auth/system-principal-context-provenance.ts';
 import type { PrivacyDispatchOperation } from '../../src/auth/system-principal-context-provenance.ts';
 
+const symmyModuleKey = 'integration.symmy';
+
 /** Core infrastructure fixture: production receives these claims only after official verification/redemption. */
 export const privacyDispatchPrincipal = (
   principal: TrustedPrincipalContext,
@@ -27,6 +29,16 @@ export const privacyDispatchPrincipal = (
     undefined,
     undefined,
     Schema.decodeSync(RegisteredGatewayPrivacyDispatchSchema)({
+      authority: {
+        consumerModuleKey: symmyModuleKey,
+        originActionKey: 'privacy.core.dispatch-privacy-measure',
+        originCapabilityKey: 'privacy.core.privacy-measure.dispatch',
+        producerModuleKey: 'privacy.core',
+        subjectResourceType: 'privacy.core.privacy-measure',
+        targetAccess: operation === 'SymmyRetention' ? 'tenant-scope' : 'tenant-unrestricted-list',
+        topic: 'privacy.measure.dispatched',
+        workerKey: 'integration.symmy.symmy-job-privacy-dispatch',
+      },
       claimId: 'privacy-dispatch-native-claim',
       deliveryId: '00000000-0000-4000-8000-000000000011',
       dispatchInvocationId: '00000000-0000-4000-8000-000000000012',
@@ -39,10 +51,25 @@ export const privacyDispatchPrincipal = (
       principalId: principal.principalId,
       requestHash,
       sourceMode: 'worker',
+      target: {
+        access: operation === 'SymmyRetention' ? 'write' : 'read',
+        appId: 'symmy-integration',
+        declarationKey:
+          operation === 'SymmyRetention'
+            ? 'integration.symmy.symmy-retention.execute'
+            : 'integration.symmy.privacy-measure.read-receipt',
+        entrypointKey:
+          operation === 'SymmyRetention'
+            ? 'integration.symmy.execute-symmy-retention'
+            : 'integration.symmy.api.symmy-job-privacy-execution',
+        legalEntityScope: 'optional',
+        moduleId: symmyModuleKey,
+        schemaVersion: '1',
+      },
       taskId: 'privacy.core.task-fixture',
       tenantId: principal.tenantId,
       workerKey: 'integration.symmy.symmy-job-privacy-dispatch',
-      workerModuleKey: 'integration.symmy',
+      workerModuleKey: symmyModuleKey,
     }),
   );
 };

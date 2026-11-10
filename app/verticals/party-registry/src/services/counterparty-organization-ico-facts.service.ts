@@ -2,11 +2,12 @@
 import type { OperationalScope } from '@app/core-runtime';
 import { and, eq, gt, isNull, lte, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
-import { DateTime, Effect } from 'effect';
+import { DateTime, Effect, Option } from 'effect';
 import { legalEntityRef } from '../../shared/domain/counterparty-contract.ts';
 import { makePartyRef, PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
 import type { PartyPersistenceUnavailableError } from '../../shared/domain/identity-contracts.ts';
 import { counterparties, counterpartyRolePeriods, parties, partyAliases, partyFactAssertions } from '../db/schema.ts';
+import { decodeIcoCorrelationWitness, icoCorrelationWitnessSelection } from './ico-correlation-proof.service.ts';
 import type { PartyTransaction } from '../db/types.ts';
 
 import type {
@@ -50,6 +51,10 @@ export const readCounterpartyOrganizationIcoFacts = Effect.fn('CounterpartyOrgan
         counterpartyRevision,
         customerRoleId: customerRole.rolePeriodId,
         customerRoleRevision,
+        correlationWitness: icoCorrelationWitnessSelection(
+          counterparty.counterpartyId,
+          input.includeCorrelationWitness,
+        ),
       })
       .from(counterparty)
       .innerJoin(parties, and(eq(parties.tenantId, counterparty.tenantId), eq(parties.partyId, counterparty.partyId)))
@@ -91,7 +96,7 @@ export const readCounterpartyOrganizationIcoFacts = Effect.fn('CounterpartyOrgan
     if (rows.length !== 1 || row === undefined || row.normalizedType !== 'ORGANIZATION') {
       return notCurrent;
     }
-    return {
+    const result: CounterpartyOrganizationIcoFactsResponse = {
       outcome: 'CURRENT_ORGANIZATION_CUSTOMER',
       counterpartyRef: input.counterpartyRef,
       partyRef: makePartyRef(scope.tenantId, row.partyId),
@@ -106,5 +111,14 @@ export const readCounterpartyOrganizationIcoFacts = Effect.fn('CounterpartyOrgan
       },
       currentCustomerRoleRevision: row.customerRoleRevision,
     };
+    if (input.includeCorrelationWitness === true) {
+      const correlationWitness = yield* decodeIcoCorrelationWitness(row.correlationWitness).pipe(
+        Effect.mapError(unavailable),
+      );
+      if (Option.isSome(correlationWitness)) {
+        Object.assign(result, { correlationWitness: correlationWitness.value });
+      }
+    }
+    return result;
   },
 );

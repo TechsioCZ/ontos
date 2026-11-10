@@ -479,7 +479,7 @@ it.effect('uses a privately acquired route assertion without falling back to hum
       }),
     );
     expect(response.status).toBe(202);
-    expect(scopes).toEqual([{ code, routeKey: 'priceListPricesBatch' }]);
+    expect(scopes).toEqual([{ code, replayIdempotencyKey: idempotencyKey, routeKey: 'priceListPricesBatch' }]);
     expect(genericSelections).toBe(0);
     expect(nativeCalls).toEqual([`${releasePath}/symmy-integration/actions/admit-symmy-job`]);
   }),
@@ -819,7 +819,7 @@ it.effect('derives async scope from the governed route and obtains a fresh scope
     ]);
     expect(tokens).toEqual(['Bearer synthetic-assertion-1', 'Bearer fresh-scoped-job-assertion']);
     expect(bodies).toEqual([
-      { routeKey: 'productsBatch' },
+      { replayIdempotencyKey: idempotencyKey, routeKey: 'productsBatch' },
       { ...internalProductInput, idempotencyKey, routeKey: 'productsBatch' },
     ]);
   }),

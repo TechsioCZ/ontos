@@ -15,6 +15,9 @@ const StoredCurrentSchema = Schema.Struct({
   lifecycle: Schema.Literals(['DRAFT', 'ACTIVE', 'SUSPENDED', 'RETIRED']),
   observedAt: instant,
   revision: positiveRevision,
+  storefrontApplicationId: Schema.optionalKey(
+    Schema.String.check(Schema.isUUID()).pipe(Schema.brand('StoredStorefrontApplicationId')),
+  ),
 });
 const SnapshotPayloadSchema = Schema.Union([
   Schema.TaggedStruct('found', { current: StoredCurrentSchema }),
@@ -91,10 +94,11 @@ const decodeCurrentSnapshot = Effect.fn('CurrentStorefrontApplicationPersistence
   },
 );
 
-const decodeRow = Effect.fn('CurrentStorefrontApplicationPersistence.decodeRow')(function* decodeSnapshot(row: {
-  readonly payload: typeof SnapshotPayloadSchema.Type;
-}): Effect.fn.Return<CurrentStorefrontApplicationPersistenceResult, PersistenceFailure> {
-  return yield* Match.value(row.payload).pipe(
+const decodeRow = Effect.fn('CurrentStorefrontApplicationPersistence.decodeRow')(function* decodeSnapshot(
+  payload: typeof SnapshotPayloadSchema.Type,
+  expectedStorefrontApplicationId: string | undefined,
+): Effect.fn.Return<CurrentStorefrontApplicationPersistenceResult, PersistenceFailure> {
+  return yield* Match.value(payload).pipe(
     Match.tag('not_found', ({ generation: currentGeneration, observedAt }) =>
       canonicalInstant(observedAt).pipe(
         Effect.map((canonicalObservedAt) => ({
@@ -104,35 +108,43 @@ const decodeRow = Effect.fn('CurrentStorefrontApplicationPersistence.decodeRow')
         })),
       ),
     ),
-    Match.tag('found', decodeCurrentSnapshot),
+    Match.tag('found', (found) =>
+      expectedStorefrontApplicationId === undefined ||
+      found.current.storefrontApplicationId === expectedStorefrontApplicationId
+        ? decodeCurrentSnapshot(found)
+        : Effect.fail(unavailable('The Storefront Registry routine did not prove the expected application ID')),
+    ),
     Match.exhaustive,
   );
 });
+
+const currentReadInput = (input: CurrentStorefrontApplicationRequest) => {
+  const request = { effectiveAt: input.effectiveAt, storefrontAppId: input.storefrontAppId };
+  return input.expectedStorefrontApplicationId === undefined
+    ? request
+    : { ...request, expectedStorefrontApplicationId: input.expectedStorefrontApplicationId };
+};
 
 export const currentStorefrontApplicationPersistence = (
   transaction: ScopedRoutineInvoker,
   tenantId: string,
 ): CurrentStorefrontApplicationPersistence => ({
   load: (input) =>
-    transaction
-      .invoke(readCurrentStorefrontApplicationRoutine, [
-        { effectiveAt: input.effectiveAt, storefrontAppId: input.storefrontAppId },
-      ])
-      .pipe(
-        Effect.mapError((cause: ScopedRoutineInvocationError) => unavailable(cause)),
-        Effect.flatMap(([row]) => {
-          if (row === undefined) {
-            return Effect.fail(unavailable('The Storefront Registry owner routine returned no snapshot'));
-          }
-          if (input.tenantId === tenantId) {
-            return Schema.decodeUnknownEffect(SnapshotPayloadSchema)(row.payload).pipe(
-              Effect.mapError(unavailable),
-              Effect.flatMap((payload) => decodeRow({ payload })),
-            );
-          }
-          return Effect.fail(unavailable('The Storefront Registry request Tenant does not match the trusted scope'));
-        }),
-      ),
+    transaction.invoke(readCurrentStorefrontApplicationRoutine, [currentReadInput(input)]).pipe(
+      Effect.mapError((cause: ScopedRoutineInvocationError) => unavailable(cause)),
+      Effect.flatMap(([row]) => {
+        if (row === undefined) {
+          return Effect.fail(unavailable('The Storefront Registry owner routine returned no snapshot'));
+        }
+        if (input.tenantId === tenantId) {
+          return Schema.decodeUnknownEffect(SnapshotPayloadSchema)(row.payload).pipe(
+            Effect.mapError(unavailable),
+            Effect.flatMap((payload) => decodeRow(payload, input.expectedStorefrontApplicationId)),
+          );
+        }
+        return Effect.fail(unavailable('The Storefront Registry request Tenant does not match the trusted scope'));
+      }),
+    ),
 });
 
 export const currentStorefrontApplicationPersistenceForScope: ReadServiceFactory<

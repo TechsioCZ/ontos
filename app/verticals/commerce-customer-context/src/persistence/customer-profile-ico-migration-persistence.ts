@@ -1,3 +1,4 @@
+import { lockProfileIcoCorrelation } from './profile-ico-correlation-fence.ts';
 import { defineScopedRoutine, requireModuleOperation } from '@app/core-runtime';
 import type { ReadServiceFactory } from '@app/core-runtime';
 import { CounterpartyMigrationCorrelationResponseSchema } from '@app/party-registry/apis/counterparty-migration-correlation';
@@ -5,7 +6,11 @@ import type { LegacyIcoInventoryAssertion } from '@app/party-registry/apis/legac
 import { OrganizationProfileIcoMigrationLegacySchema } from '../../shared/domain/organization-profile-ico-migration.ts';
 import { CommerceOrganizationProfileIcoEligibility } from '../integrations/organization-profile-ico-eligibility.ts';
 import { DateTime, Effect, Option, Schema } from 'effect';
-import { CommerceLegacyIcoInventory } from '../integrations/party-legacy-ico-inventory.ts';
+import {
+  CommerceLegacyIcoInventory,
+  profileIcoCorrelationOptions,
+  profileIcoInventoryOptions,
+} from '../integrations/party-legacy-ico-inventory.ts';
 import { CommerceSourceProcessingEligibility } from '../integrations/source-processing-eligibility.ts';
 import type { CommerceSourceProcessingRejected } from '../integrations/source-processing-eligibility.ts';
 import {
@@ -15,6 +20,8 @@ import {
   CustomerProfileIcoMigrationRejected,
   classifyCustomerProfileIcoMigration,
   customerProfileIcoMigrationInventoryVersion,
+  observeIcoCorrelationCoverage,
+  requiresIcoCorrelationCoverage,
 } from '../../shared/domain/customer-profile-ico-migration.ts';
 import type {
   CustomerProfileIcoMigrationInputSchema,
@@ -108,6 +115,7 @@ export const customerProfileIcoMigrationServices: ReadServiceFactory<
   const correlateTarget = Effect.fn('CustomerProfileIcoMigration.correlateTarget')(function* correlateTarget(
     target: typeof CustomerProfileIcoMigrationTargetSchema.Type,
     operation: 'report' | 'migrate',
+    requireWitness: boolean,
   ) {
     if (target.profileRef.kind === 'RETAIL' || target.legalEntityId !== scope.legalEntityId) {
       return target;
@@ -123,7 +131,12 @@ export const customerProfileIcoMigrationServices: ReadServiceFactory<
         resourceType: 'party.registry.counterparty',
         tenantId: scope.tenantId,
       },
-      { operationRequirementKey: `commerce.customer-context.requirement.profile-ico-${operation}-counterparty` },
+      profileIcoCorrelationOptions(
+        {
+          operationRequirementKey: `commerce.customer-context.requirement.profile-ico-${operation}-counterparty`,
+        },
+        requireWitness,
+      ),
     );
     return Option.isSome(partyCorrelation) ? { ...target, partyCorrelation: partyCorrelation.value } : target;
   });
@@ -133,6 +146,7 @@ export const customerProfileIcoMigrationServices: ReadServiceFactory<
       assertions: readonly LegacyIcoInventoryAssertion[],
       operation: 'report' | 'migrate',
       error: CommerceSourceProcessingRejected,
+      requireWitness: boolean,
     ) {
       if (target.profileRef.kind !== 'COUNTERPARTY' || target.legalEntityId !== scope.legalEntityId) {
         return yield* privacyDenied(error);
@@ -164,7 +178,13 @@ export const customerProfileIcoMigrationServices: ReadServiceFactory<
           resourceType: 'party.registry.counterparty',
           tenantId: scope.tenantId,
         },
-        { operationRequirementKey: `${prefix}-counterparty`, organizationOnly: true },
+        profileIcoCorrelationOptions(
+          {
+            operationRequirementKey: `${prefix}-counterparty`,
+            organizationOnly: true,
+          },
+          requireWitness,
+        ),
       );
       if (
         Option.isNone(current) ||
@@ -199,22 +219,35 @@ export const customerProfileIcoMigrationServices: ReadServiceFactory<
     yield* requireModuleOperation(`commerce.customer-context.requirement.profile-ico-${operation}-privacy`).pipe(
       Effect.mapError(unavailable),
     );
-    const [inventory, targetRows] = yield* Effect.all(
-      [
-        party.read(scope, {
-          operationRequirementKey: `commerce.customer-context.requirement.profile-ico-${operation}-inventory`,
-        }),
-        transaction.invoke(inventoryRoutine, []).pipe(Effect.mapError(unavailable)),
-      ],
-      { concurrency: 2 },
-    );
-    const [targets] = targetRows;
+    const [targets] = yield* transaction.invoke(inventoryRoutine, []).pipe(Effect.mapError(unavailable));
     if (targets === undefined) {
       return yield* unavailable();
     }
+    const requireWitness = requiresIcoCorrelationCoverage(targets.result.targets, scope.legalEntityId);
+    const [commitFence] =
+      operation === 'migrate' && requireWitness
+        ? yield* transaction.invoke(lockProfileIcoCorrelation, []).pipe(Effect.mapError(unavailable))
+        : [];
+    if (operation === 'migrate' && requireWitness && commitFence === undefined) {
+      return yield* unavailable();
+    }
+    const inventory = yield* party.read(
+      scope,
+      profileIcoInventoryOptions(
+        {
+          operationRequirementKey: `commerce.customer-context.requirement.profile-ico-${operation}-inventory`,
+        },
+        scope.legalEntityId,
+        input.correlationWitnesses,
+        requireWitness,
+        commitFence?.challenge,
+      ),
+    );
     const correlatedTargets = yield* Effect.forEach(
-      targets.result.targets,
-      (target) => correlateTarget(target, operation),
+      requireWitness
+        ? targets.result.targets.filter((target) => target.legalEntityId === scope.legalEntityId)
+        : targets.result.targets,
+      (target) => correlateTarget(target, operation, requireWitness),
       { concurrency: 1 },
     );
     const now = DateTime.formatIso(yield* DateTime.now);
@@ -248,13 +281,20 @@ export const customerProfileIcoMigrationServices: ReadServiceFactory<
         );
         return yield* personal.pipe(
           Effect.as(target),
-          Effect.catch((error) => organizationFallback(target, inventory.assertions, operation, error)),
+          Effect.catch((error) => organizationFallback(target, inventory.assertions, operation, error, requireWitness)),
         );
       }),
       { concurrency: 1 },
     );
+    const coverage = observeIcoCorrelationCoverage(
+      inventory,
+      targets.result.targets,
+      authorizedTargets,
+      scope.legalEntityId,
+      input.correlationWitnesses ?? [],
+    );
     const classified = classifyCustomerProfileIcoMigration(
-      input,
+      { asOf: input.asOf, planId: input.planId, reason: input.reason, sourceContext: input.sourceContext },
       inventory,
       authorizedTargets,
       targets.result.version,
@@ -263,27 +303,32 @@ export const customerProfileIcoMigrationServices: ReadServiceFactory<
         legalEntityId: scope.legalEntityId ?? '',
         observedAt: now,
       },
+      coverage,
     );
-    return {
-      inventory,
-      plan: {
-        ...classified,
-        nativeTargetInventoryVersion: targets.result.version,
-        targetInventoryVersion: customerProfileIcoMigrationInventoryVersion(
-          targets.result.version,
-          authorizedTargets,
-          classified.records,
-        ),
-      },
-      targetInventoryCount: targets.result.targets.length,
+    const plan: CustomerProfileIcoMigrationPlan = {
+      ...classified,
+      nativeTargetInventoryVersion: targets.result.version,
+      targetInventoryVersion: customerProfileIcoMigrationInventoryVersion(
+        targets.result.version,
+        authorizedTargets,
+        classified.records,
+        coverage?.version,
+      ),
     };
+    if (coverage?.version !== undefined) {
+      Object.assign(plan, { correlationCoverageVersion: coverage.version });
+    }
+    return { commitFence, coverage, inventory, plan, targetInventoryCount: targets.result.targets.length };
   });
   return {
     apply: Effect.fn('CustomerProfileIcoMigration.apply')(function* apply(input, invocationId) {
-      const { inventory, plan, targetInventoryCount } = yield* prepare(
-        { asOf: input.asOf, planId: input.planId, reason: input.reason, sourceContext: input.sourceContext },
-        'migrate',
-      );
+      const { commitFence, coverage, inventory, plan, targetInventoryCount } = yield* prepare(input, 'migrate');
+      if (coverage !== undefined && (!coverage.complete || inventory.commitFenceHeld !== true)) {
+        return yield* new CustomerProfileIcoMigrationRejected({
+          code: 'INVENTORY_UNAVAILABLE',
+          reason: 'Current owner correlation proof is required for every Counterparty home',
+        });
+      }
       if (
         plan.partySnapshotVersion !== input.expectedPartySnapshotVersion ||
         plan.targetInventoryVersion !== input.expectedTargetInventoryVersion
@@ -311,6 +356,7 @@ export const customerProfileIcoMigrationServices: ReadServiceFactory<
           invocationId,
           DateTime.formatIso(yield* DateTime.now),
           {
+            commitFenceChallenge: commitFence?.challenge ?? null,
             expectedAuthorityRevision: input.expectedAuthorityRevision ?? null,
             fence,
             operation: input.operation,
@@ -334,6 +380,11 @@ export const customerProfileIcoMigrationServices: ReadServiceFactory<
       );
       return { ...evidence, result, targetInventoryCount };
     }),
-    report: (input) => prepare(input, 'report').pipe(Effect.map(({ plan }) => plan)),
+    report: (input) =>
+      prepare(input, 'report').pipe(
+        Effect.map(({ coverage, plan }) =>
+          coverage === undefined ? plan : { ...plan, homeCorrelationWitnesses: coverage.homeWitnesses },
+        ),
+      ),
   };
 });

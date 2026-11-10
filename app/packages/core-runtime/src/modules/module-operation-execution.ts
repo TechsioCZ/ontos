@@ -10,8 +10,6 @@ import {
   isVerifiedGatewayPrincipalContext,
   readVerifiedGatewayPrivacyDispatch,
   readVerifiedGatewayOrganizationGovernanceRead,
-  organizationGovernanceReadOperationContract,
-  privacyDispatchOperationContract,
   readVerifiedGatewayCompositionRevision,
   readVerifiedGatewayRouteScope,
   readVerifiedGatewayWorkload,
@@ -320,15 +318,16 @@ const matchesSignedOperation = (lease: ModuleOperationExecutionLease, scope: Tru
     return false;
   }
   const { entrypoint, schemaVersion } = registration.descriptor;
-  if (readVerifiedGatewayOrganizationGovernanceRead(scope) !== undefined) {
-    const operation = organizationGovernanceReadOperationContract();
+  const governanceRead = readVerifiedGatewayOrganizationGovernanceRead(scope);
+  if (governanceRead !== undefined) {
+    const operation = governanceRead.target;
     if (operation.entrypointKey !== entrypoint.entrypointKey || operation.schemaVersion !== schemaVersion) {
       return false;
     }
   }
   const privacy = readVerifiedGatewayPrivacyDispatch(scope);
   if (privacy !== undefined) {
-    const operation = privacyDispatchOperationContract(privacy.operation);
+    const operation = privacy.target;
     if (operation.entrypointKey !== entrypoint.entrypointKey || operation.schemaVersion !== schemaVersion) {
       return false;
     }

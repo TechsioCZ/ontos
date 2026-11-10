@@ -89,6 +89,7 @@ const publicComponentContribution = (value: PublicComponentContributionInput): P
 
 const currentPersonCondition = 'privacy.core.condition.current-person-owner-proof';
 const currentPersonEvidence = 'privacy.core.evidence.current-canonical-person-proof';
+const sourceProcessingConsumer = 'privacy.core.api.source-processing-eligibility';
 const partyOwnerModule = 'party.registry';
 const sourcePersonProvider = 'party.registry.api.source-person-admission';
 const profileIcoCondition = 'privacy.core.condition.native-organization-profile-ico-facts';
@@ -466,10 +467,24 @@ export const privacyManifest: OntosModuleManifestInput = defineOntosModuleManife
       },
       {
         condition: currentPersonCondition,
-        entrypointKey: 'privacy.core.api.source-processing-eligibility',
+        entrypointKey: sourceProcessingConsumer,
         evidence: [currentPersonEvidence],
         key: 'privacy.core.requirement.source-processing-source-person',
         provider: { entrypointKey: sourcePersonProvider, moduleId: partyOwnerModule, schemaVersion: '1' },
+      },
+      {
+        condition: organizationBusinessCondition,
+        entrypointKey: sourceProcessingConsumer,
+        evidence: [organizationBusinessEvidence],
+        key: 'privacy.core.requirement.customer-intake-organization-party',
+        provider: { entrypointKey: organizationBusinessPartyProvider, moduleId: partyOwnerModule, schemaVersion: '1' },
+      },
+      {
+        condition: organizationBusinessCondition,
+        entrypointKey: sourceProcessingConsumer,
+        evidence: [organizationBusinessEvidence],
+        key: 'privacy.core.requirement.customer-intake-organization-profile',
+        provider: { entrypointKey: profileIcoProvider, moduleId: commerceOwnerModule, schemaVersion: '1' },
       },
     ],
     schemaVersion: '1',

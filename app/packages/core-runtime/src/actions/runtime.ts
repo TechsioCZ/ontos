@@ -63,7 +63,6 @@ import {
   readVerifiedGatewayPrivacyDispatch,
   readVerifiedGatewayOrganizationGovernanceRead,
   readVerifiedGatewayOrganizationProcessingRead,
-  privacyDispatchOperationContract,
   readVerifiedGatewayWorkload,
   isTrustedSupportRecoveryPrincipalContext,
   preserveSystemPrincipalContextTrust,
@@ -800,7 +799,7 @@ const validatePrincipal = <Input, Registration extends object = object, Payload 
         if (!isActionRegistration(actionRegistration)) {
           return false;
         }
-        const expected = privacyDispatchOperationContract(dispatch.operation);
+        const expected = dispatch.target;
         return (
           expected.access === 'write' &&
           actionRegistration.descriptor.entrypoint.entrypointKey === expected.entrypointKey &&

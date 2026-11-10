@@ -13,6 +13,7 @@ import {
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
+import { assortmentProductClassificationV1Read } from './src/api/assortment-product-classification-v1.read.ts';
 import { activateLocalOverrideAction } from './src/actions/activate-local-override.action.ts';
 import { ActivateLocalOverrideRecoveryApi } from './shared/apis/activate-local-override-recovery.ts';
 import { activatePackageDefinitionAction } from './src/actions/activate-package-definition.action.ts';
@@ -231,7 +232,9 @@ import { SetProductUnitTargetDivisibilityRecoveryApi } from './shared/apis/set-p
 import { setVariantAttributeOverrideAction } from './src/actions/set-variant-attribute-override.action.ts';
 import { SetVariantAttributeOverrideRecoveryApi } from './shared/apis/set-variant-attribute-override-recovery.ts';
 import { setVariantLocalizedFactsAction } from './src/actions/set-variant-localized-facts.action.ts';
+import { SetVariantLocalizedFactsActionApi } from './shared/apis/set-variant-localized-facts-action.ts';
 import { SetVariantLocalizedFactsRecoveryApi } from './shared/apis/set-variant-localized-facts-recovery.ts';
+import { setVariantLocalizedFactsRecoveryRead } from './src/api/set-variant-localized-facts-recovery.read.ts';
 import { SkuLookupApi } from './shared/apis/sku-lookup.ts';
 import { updateProductAction } from './src/actions/update-product.action.ts';
 import { UpdateProductRecoveryApi } from './shared/apis/update-product-recovery.ts';
@@ -495,6 +498,7 @@ export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManife
       'set-product-type-recovery': SetProductTypeRecoveryApi,
       'set-product-unit-target-divisibility-recovery': SetProductUnitTargetDivisibilityRecoveryApi,
       'set-variant-attribute-override-recovery': SetVariantAttributeOverrideRecoveryApi,
+      'set-variant-localized-facts-action': SetVariantLocalizedFactsActionApi,
       'set-variant-localized-facts-recovery': SetVariantLocalizedFactsRecoveryApi,
       'sku-lookup': SkuLookupApi,
       'update-product-action': UpdateProductActionApi,
@@ -515,6 +519,11 @@ export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManife
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
       {
+        apiKey: 'assortment-product-classification-v1',
+        operationKey: 'assortmentProductClassificationV1.execute',
+        registration: assortmentProductClassificationV1Read,
+      },
+      {
         apiKey: 'bind-initial-variant-source-action',
         operationKey: 'bindInitialVariantSourceAction.execute',
         registration: bindInitialVariantSourceAction,
@@ -528,6 +537,11 @@ export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManife
         apiKey: 'update-product-action',
         operationKey: 'updateProductAction.execute',
         registration: updateProductAction,
+      },
+      {
+        apiKey: 'set-variant-localized-facts-action',
+        operationKey: 'setVariantLocalizedFactsAction.execute',
+        registration: setVariantLocalizedFactsAction,
       },
       {
         apiKey: 'create-variant-action',
@@ -548,6 +562,11 @@ export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManife
         apiKey: 'update-product-recovery',
         operationKey: 'updateProductRecovery.execute',
         registration: updateProductRecoveryRead,
+      },
+      {
+        apiKey: 'set-variant-localized-facts-recovery',
+        operationKey: 'setVariantLocalizedFactsRecovery.execute',
+        registration: setVariantLocalizedFactsRecoveryRead,
       },
       {
         apiKey: 'create-variant-recovery',

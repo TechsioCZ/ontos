@@ -56,6 +56,7 @@ import {
   GatewayActorClaimSchema,
   GatewayDelegatedContextRequestSchema,
   GatewayPrivacyDispatchSubjectSchema,
+  decodeSupportedGatewayContextClaims,
 } from '@app/shared-contracts';
 import {
   acquireDelegatedGatewayContext,
@@ -68,7 +69,10 @@ import {
 } from '@app/symmy-integration/api/symmy-job-privacy-execution';
 import { ExecuteSymmyRetentionPayloadSchema } from '@app/symmy-integration/api/execute-symmy-retention-action';
 import { OutboxPayloadSchema, outboxTopic } from '@app/privacy/outbox/privacy-measure-dispatched';
-import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
+import {
+  ActionPrincipalInvalidErrorSchema,
+  bindGatewayPrincipalVerifier,
+} from '@app/gateway-principal-verifier/server';
 import { NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
@@ -90,7 +94,7 @@ import {
 import { Reactivity } from 'effect/reactivity';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
-import { exportJWK, generateKeyPair } from 'jose';
+import { decodeJwt, exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import {
   GatewayIssuer,
@@ -123,6 +127,7 @@ const receiptRead = 'integration.symmy.api.symmy-job-privacy-execution';
 const receiptCapability = 'integration.symmy.privacy-measure.read-receipt';
 const outcomeAction = 'privacy.core.record-owner-execution-outcome';
 const eligibilityRead = 'privacy.core.api.measure-execution-eligibility';
+const eligibilityVersion = '2';
 const receiptRequirement = 'privacy.core.requirement.symmy-owner-execution-outcome';
 const eligibilityRequirement = 'integration.symmy.requirement.retention-privacy-current-authority';
 const outcomeRequirement = 'integration.symmy.requirement.privacy-report-owner-outcome';
@@ -324,7 +329,7 @@ const contractInputs = () => {
                 role: 'api',
               }),
               operationKey: 'eligibility.execute',
-              schemaVersion: '1',
+              schemaVersion: eligibilityVersion,
             },
           ],
         },
@@ -386,7 +391,7 @@ const contractInputs = () => {
               entrypointKey: retentionAction,
               evidence: ['integration.symmy.evidence.current-privacy-measure-authority'],
               key: eligibilityRequirement,
-              provider: { entrypointKey: eligibilityRead, moduleId: 'privacy.core', schemaVersion: '1' },
+              provider: { entrypointKey: eligibilityRead, moduleId: 'privacy.core', schemaVersion: eligibilityVersion },
             },
             {
               condition: 'integration.symmy.condition.persisted-original-privacy-owner-outcome',
@@ -432,7 +437,7 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
       const crypto = yield* Crypto.Crypto;
       const shellDeployment = { appId: 'shell-super-app' as const, buildMarker: ultramodernDeliveryUnit.buildMarker };
       const inputs = contractInputs();
-      const snapshot = yield* makeCompositionSnapshot(inputs, 600_000, {
+      const shellRuntime = {
         document: JSON.stringify({
           contributionAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
           coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
@@ -440,7 +445,8 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
           schemaVersion: '2',
         }),
         receiverDeployment: shellDeployment,
-      });
+      };
+      const snapshot = yield* makeCompositionSnapshot(inputs, 600_000, shellRuntime);
       const fixture = yield* makeIsolatedNativeDatabaseFixture({
         compositionSnapshot: snapshot,
         mode: 'schema-only',
@@ -631,7 +637,7 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
           Effect.provideService(ConfigProvider.ConfigProvider, configuration),
           Effect.provideService(AuthenticationNamespaceRegistry, namespaceRegistry),
         );
-      const receive = (token: string, audience: 'privacy' | 'symmy-integration') =>
+      const receive = (token: string, audience: 'privacy' | 'symmy-integration', selected = snapshot) =>
         bindGatewayPrincipalVerifier(audience, { appId: audience, buildMarker: `${audience}-build` })
           .verifyAndRedeem(Redacted.make(`Bearer ${token}`), {
             environment: {
@@ -642,7 +648,7 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
             },
             redemption: nativeRedemption(runtime),
           })
-          .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }));
+          .pipe(Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(selected) }));
       const runtimeServices = yield* Layer.build(
         OutboxRuntimeLive.pipe(
           Layer.provide(OutboxRepositoryLive),
@@ -1009,8 +1015,25 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
           },
           'privacy',
         );
+        const unsubscribed = yield* makeCompositionSnapshot(
+          inputs.map((contract) => ({ ...contract, runtime: { outboxSubscriptions: [] } })),
+          600_000,
+          shellRuntime,
+        );
+        const eligibilityClaims = yield* decodeSupportedGatewayContextClaims(decodeJwt(eligibility.token));
+        const unsubscribedToken = yield* Effect.promise(() =>
+          new SignJWT({ ...eligibilityClaims, compositionRevision: unsubscribed.composition.revision })
+            .setProtectedHeader({ alg: 'EdDSA', kid: 'native-privacy', typ: 'JWT' })
+            .sign(privateKey),
+        );
+        const unsubscribedError = yield* receive(unsubscribedToken, 'privacy', unsubscribed).pipe(Effect.flip);
+        expect(Schema.is(ActionPrincipalInvalidErrorSchema)(unsubscribedError)).toBe(true);
         const eligibilityPrincipal = yield* receive(eligibility.token, 'privacy');
         expect(readVerifiedGatewayPrivacyDispatch(eligibilityPrincipal)?.operation).toBe('PrivacyEligibility');
+        expect(readVerifiedGatewayPrivacyDispatch(eligibilityPrincipal)?.target).toMatchObject({
+          entrypointKey: eligibilityRead,
+          schemaVersion: eligibilityVersion,
+        });
         const eligibilityScope = yield* scopes
           .resolve({
             audience: 'privacy',
@@ -1024,13 +1047,25 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
             accessActor: privacyActor,
             accessDeclaration: eligibilityDeclaration,
             entrypoint: eligibilityEntrypoint,
-            schemaVersion: '1',
+            schemaVersion: eligibilityVersion,
           },
           legalEntityScope: 'required',
           now: yield* DateTime.nowAsDate,
           scope: eligibilityScope,
         });
         expect(eligibilityDecision.outcome, JSON.stringify(eligibilityDecision.reasons)).toBe('ALLOWED');
+        const wrongEligibilityVersion = yield* gate.decide({
+          carrier: {
+            accessActor: privacyActor,
+            accessDeclaration: eligibilityDeclaration,
+            entrypoint: eligibilityEntrypoint,
+            schemaVersion: '1',
+          },
+          legalEntityScope: 'required',
+          now: yield* DateTime.nowAsDate,
+          scope: eligibilityScope,
+        });
+        expect(wrongEligibilityVersion.outcome).toBe('DENIED');
         const rechecked = yield* issue(
           {
             _tag: 'PrivacyDispatch',

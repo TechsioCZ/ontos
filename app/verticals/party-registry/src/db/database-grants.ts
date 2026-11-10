@@ -218,6 +218,8 @@ export const PARTY_REGISTRY_REQUEST_DATABASE_GRANTS: DatabaseRoleGrants = {
       executableBy.includes(PARTY_REGISTRY_REQUEST_IDENTITY.role) ? [signature] : [],
     ),
     PRUNE_EXPIRED_GATEWAY_ASSERTION_REDEMPTIONS_SIGNATURE,
+    'party.issue_ico_correlation_witness(uuid)',
+    'party.observe_ico_correlation_coverage(uuid[],jsonb)',
   ],
   acceptedFindings: [],
 };

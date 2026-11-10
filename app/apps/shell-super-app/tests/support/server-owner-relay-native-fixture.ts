@@ -7,13 +7,28 @@ import {
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { GatewayContextV2ClaimsSchema, GatewayTrustedPrincipalContextSchema } from '@app/shared-contracts';
 import type { GatewayTrustedPrincipalContext } from '@app/shared-contracts';
+import { SYMMY_REST_PREFIX } from '@app/shared-contracts/symmy/route-catalog';
 import { jwtVerify } from 'jose';
 import { NodeSocketServer } from '@effect/platform-node';
-import { Config, Crypto, Deferred, Effect, FileSystem, Option, Path, Redacted, Schema, Stream } from 'effect';
+import {
+  Config,
+  Crypto,
+  Deferred,
+  Effect,
+  FileSystem,
+  Option,
+  Path,
+  Redacted,
+  Ref,
+  Schedule,
+  Schema,
+  Stream,
+} from 'effect';
 import { ChildProcess } from 'effect/process';
 import { HttpClient } from 'effect/http';
 
 import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';
+import { readCompiledNodeShellIdentity } from '../../../../scripts/ontos-shell-runtime-contract.ts';
 
 const SHELL_APP_ID = 'shell-super-app';
 const CUSTOMER_CONTEXT_APP_ID = 'commerce-customer-context';
@@ -50,6 +65,11 @@ const IdentitySchema = Schema.Struct({
   version: Schema.String.check(Schema.isMinLength(1)),
 });
 const PackagedBuildSchema = Schema.Struct({ deliveryUnit: IdentitySchema });
+const ApiRoutesDocumentSchema = Schema.fromJsonString(
+  Schema.Struct({
+    routes: Schema.Array(Schema.Struct({ isApi: Schema.optionalKey(Schema.Boolean), urlPath: Schema.String })),
+  }),
+);
 const ReleaseEnvelopeSchema = Schema.Struct({
   identity: Schema.Struct({
     buildMarker: IdentitySchema.fields.buildMarker,
@@ -195,19 +215,9 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
         reason: 'Compiled, public and immutable release identities disagree',
       });
     }
-    const routes = yield* filesystem.readFileString(path.join(directory, '.output', 'route.json')).pipe(
-      Effect.flatMap(
-        Schema.decodeEffect(
-          Schema.fromJsonString(
-            Schema.Struct({
-              routes: Schema.Array(
-                Schema.Struct({ isApi: Schema.optionalKey(Schema.Boolean), urlPath: Schema.String }),
-              ),
-            }),
-          ),
-        ),
-      ),
-    );
+    const routes = yield* filesystem
+      .readFileString(path.join(directory, '.output', 'route.json'))
+      .pipe(Effect.flatMap(Schema.decodeEffect(ApiRoutesDocumentSchema)));
     const apiRoute = routes.routes.find((route) => route.isApi === true);
     if (apiRoute === undefined) {
       return yield* new PackagedOwnerStartupError({ reason: 'Packaged API prefix is missing' });
@@ -434,6 +444,92 @@ export const allocateLoopbackPort = Effect.fn('ServerOwnerRelayNative.allocateLo
         return address.port;
       }),
     );
+  },
+);
+
+/** Serve the actual local Node compiler output without claiming a promotable release envelope. */
+export const startCompiledSymmyShell = Effect.fn('ServerOwnerRelayNative.startCompiledSymmyShell')(
+  function* startCompiledSymmyShell(
+    input: PackagedApplicationInput & {
+      readonly appId: typeof SHELL_APP_ID;
+      readonly authentication: NonNullable<PackagedApplicationInput['authentication']>;
+    },
+  ) {
+    const filesystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = path.resolve(input.relativeDirectory);
+    const dist = path.join(directory, 'dist');
+    const { routes } = yield* filesystem
+      .readFileString(path.join(dist, 'route.json'))
+      .pipe(Effect.flatMap(Schema.decodeEffect(ApiRoutesDocumentSchema)));
+    const prefixes = routes.filter(({ isApi }) => isApi === true).map(({ urlPath }) => urlPath);
+    if (prefixes[0] !== '/shell-super-app-api' || !prefixes.includes(SYMMY_REST_PREFIX)) {
+      return yield* new PackagedOwnerStartupError({ reason: 'Compiled Shell lacks the internal Symmy Node mount' });
+    }
+    const contractSchema = Schema.fromJsonString(OntosShellRuntimeContractSchema);
+    const contract = yield* filesystem
+      .readFileString(path.join(dist, 'public', ONTOS_SHELL_RUNTIME_CONTRACT_PATH.slice(1)))
+      .pipe(Effect.flatMap(Schema.decodeEffect(contractSchema)));
+    const build = yield* readCompiledNodeShellIdentity(directory);
+    if (Option.isNone(build) || build.value.buildMarker !== contract.deployment.buildMarker) {
+      return yield* new PackagedOwnerStartupError({
+        reason: 'Local runtime contract does not identify the compiled Shell',
+      });
+    }
+    const environment = yield* makePackagedEnvironment(input);
+    const child = yield* ChildProcess.make('mise', ['exec', '--', 'pnpm', 'serve'], {
+      cwd: directory,
+      env: { ...environment, ONTOS_INTERNAL_SYMMY_INGRESS: '1' },
+      extendEnv: false,
+      forceKillAfter: '3 seconds',
+      stderr: 'pipe',
+      stdin: 'ignore',
+      stdout: 'pipe',
+    });
+    const diagnostics = yield* Ref.make<readonly string[]>([]);
+    yield* Effect.forEach(
+      [child.stdout, child.stderr],
+      (stream) =>
+        stream.pipe(
+          Stream.decodeText(),
+          Stream.splitLines,
+          Stream.runForEach((line) => {
+            const status = /['"]http\.status['"]:\s*(?<status>[1-5][0-9]{2})/u.exec(line)?.groups?.['status'];
+            return status === undefined
+              ? Effect.void
+              : Ref.update(diagnostics, (previous) => [...previous, `http.status=${status}`].slice(-16));
+          }),
+          Effect.forkScoped,
+        ),
+      { discard: true },
+    );
+    const origin = `http://127.0.0.1:${input.authentication.port}`;
+    const client = yield* HttpClient.HttpClient;
+    const ready = client.get(`${origin}${ONTOS_SHELL_RUNTIME_CONTRACT_PATH}`).pipe(
+      Effect.flatMap(
+        Effect.fnUntraced(function* readContract(response) {
+          if (response.status !== 200) {
+            return yield* new PackagedOwnerStartupError({ reason: 'Compiled Shell contract is not ready' });
+          }
+          return yield* response.json;
+        }),
+      ),
+      Effect.timeout('1 second'),
+      Effect.retry({ schedule: Schedule.spaced('250 millis'), times: 60 }),
+    );
+    const body = yield* Effect.raceFirst(
+      ready,
+      child.exitCode.pipe(
+        Effect.flatMap(() =>
+          Effect.fail(new PackagedOwnerStartupError({ reason: 'Compiled Shell process exited before readiness' })),
+        ),
+      ),
+    );
+    const served = yield* Schema.decodeUnknownEffect(OntosShellRuntimeContractSchema)(body);
+    if (!Schema.toEquivalence(OntosShellRuntimeContractSchema)(served, contract)) {
+      return yield* new PackagedOwnerStartupError({ reason: 'Compiled Shell served a different runtime contract' });
+    }
+    return { apiPrefix: prefixes[0], diagnostics: Ref.get(diagnostics), origin };
   },
 );
 

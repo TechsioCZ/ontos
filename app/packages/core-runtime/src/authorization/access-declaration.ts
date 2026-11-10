@@ -575,6 +575,10 @@ export type WorkloadKey = typeof WorkloadKeySchema.Type;
 export const AccessWorkloadSchema = Schema.Struct({
   /** Why no human or agent may run this Action; the only human-readable field. */
   reason: Schema.String.check(Schema.isMaxLength(400), Schema.isMinLength(1), Schema.isTrimmed()),
+  /** A Read that requires a signed exact request hash and this decoded purpose. */
+  requestPurpose: Schema.optionalKey(
+    Schema.String.check(Schema.isMaxLength(80), Schema.isMinLength(1), Schema.isTrimmed()),
+  ),
   /** The registered workloads allowed to run this carrier; at least one, never repeated (O73). */
   workloads: Schema.NonEmptyArray(WorkloadKeySchema).check(Schema.isUnique()),
 });
@@ -612,11 +616,14 @@ export const decodeAccessWorkload = <Input>(
 ): Result.Result<AccessWorkload, AccessDeclarationError> =>
   decodeAccessWorkloadFields(input).pipe(
     Result.mapError((issue) => invalidDeclaration(`accessWorkload: ${issue.message}`)),
-    Result.map((workload) => Object.freeze({ reason: workload.reason, workloads: Object.freeze(workload.workloads) })),
+    Result.map((workload) => Object.freeze({ ...workload, workloads: Object.freeze(workload.workloads) })),
     Result.flatMap((workload) => {
       const reason = accessWorkloadEntrypointIssue(owner);
       if (reason !== undefined) {
         return Result.fail(invalidDeclaration(reason));
+      }
+      if (workload.requestPurpose !== undefined && !isGovernedReadCarrier(owner)) {
+        return Result.fail(invalidDeclaration('accessWorkload.requestPurpose requires a governed Read'));
       }
       const foreign = workload.workloads.find((key) => !workloadKeyBelongsToModule(key, owner.moduleKey));
       return foreign === undefined

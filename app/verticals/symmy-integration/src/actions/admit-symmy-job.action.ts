@@ -20,15 +20,17 @@ const moduleKey = 'integration.symmy' as const;
 const domainEvents = { 'integration.symmy.job-admitted.v1': OutboxPayloadSchema };
 type Services = Effect.Success<ReturnType<typeof symmyJobOperationFactory>>;
 
+const routeDenied = {
+  code: 'symmy_job_route_denied',
+  reason: 'This integration job is not authorized for the current route.',
+} as const;
 const rejected = {
   idempotency_conflict: {
     code: 'symmy_job_intent_conflict',
     reason: 'The idempotency key is already bound to a different accepted intent.',
   },
-  route_denied: {
-    code: 'symmy_job_route_denied',
-    reason: 'This integration job is not authorized for the current route.',
-  },
+  route_denied: routeDenied,
+  stock_assertion_denied: routeDenied,
   unavailable: {
     code: 'symmy_job_persistence_unavailable',
     reason: 'The integration job could not be admitted.',

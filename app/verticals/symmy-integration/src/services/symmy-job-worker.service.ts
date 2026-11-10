@@ -402,15 +402,13 @@ const recoverOrExecute = Effect.fn('SymmyJobWorker.recoverOrExecute')(function* 
 });
 
 // Native adapters persist their executor and request identity before any Action HTTP call.
-// A finite invalid command is definitive only while every such durable attempt pin is absent.
-const invalidBeforeOwnerAttempt = Effect.fn('SymmyJobWorker.invalidBeforeOwnerAttempt')(function* noAttempt(
+const beforeOwnerAttempt = Effect.fn('SymmyJobWorker.beforeOwnerAttempt')(function* noAttempt(
   context: OutboxWorkerHandlerContext,
   jobId: string,
   effect: SymmyPinnedEffect,
   version: number,
 ) {
   if (
-    effect.intent === undefined ||
     effect.executorPrincipalId !== undefined ||
     effect.originalInvocationId !== undefined ||
     effect.requestHash !== undefined ||
@@ -434,13 +432,14 @@ const invalidBeforeOwnerAttempt = Effect.fn('SymmyJobWorker.invalidBeforeOwnerAt
     Option.isNone(saved.ownerReceipt ?? Option.none())
   );
 });
-const recoverInvalidOutcome = Effect.fn('SymmyJobWorker.recoverInvalidOutcome')(function* invalidOutcome(
+const recordExecutionFailure = Effect.fn('SymmyJobWorker.recordExecutionFailure')(function* recordFailure(
   context: OutboxWorkerHandlerContext,
   jobId: string,
   effect: SymmyPinnedEffect,
   claimToken: string,
   version: number,
   error: SymmyJobWorkerError,
+  allowUnsentClassification: boolean,
 ): Effect.fn.Return<
   SymmyExecutionOutcome,
   SymmyJobWorkerError,
@@ -449,15 +448,19 @@ const recoverInvalidOutcome = Effect.fn('SymmyJobWorker.recoverInvalidOutcome')(
   if (error.code === 'symmy_job_worker_blocked') {
     return yield* error;
   }
-  if (
-    error.code === 'symmy_job_worker_invalid' &&
-    (yield* invalidBeforeOwnerAttempt(context, jobId, effect, version))
-  ) {
+  const unsent =
+    allowUnsentClassification &&
+    (error.code === 'symmy_job_worker_unavailable' || effect.intent !== undefined) &&
+    (yield* beforeOwnerAttempt(context, jobId, effect, version));
+  if (unsent && error.code === 'symmy_job_worker_invalid') {
     return { owner: effect.ref.operation.moduleId, reason: 'missing_context', status: 'unsupported' };
   }
+  const availability = unsent ? 'unavailable' : 'indeterminate';
   const persistence = yield* SymmyJobExecutionPersistence;
   yield* inScope(context, (scope) =>
-    persistence.storeFor(scope.routineInvoker).markIndeterminate(jobId, effect.ref.effectId, claimToken, version),
+    persistence
+      .storeFor(scope.routineInvoker)
+      .markIndeterminate(jobId, effect.ref.effectId, claimToken, version, availability),
   );
   return yield* error;
 });
@@ -500,10 +503,26 @@ const processEffect = Effect.fn('SymmyJobWorker.processEffect')(function* proces
   if (effect === undefined || !sameEffect(effect, saved.effect)) {
     return yield* symmyJobWorkerUnavailable();
   }
+  const recovering = claim.mode === 'recover';
+  // Reclaim clears the stored outcome. A consecutive claim can carry forward the exact observed marker.
+  const previousUnavailable =
+    saved.state === 'indeterminate' &&
+    claim.version === saved.version + 1 &&
+    Option.getOrUndefined(saved.outcome)?.status === 'unavailable';
   const outcome = dependencyRejected
     ? { owner: effect.ref.operation.moduleId, reason: 'missing_context' as const, status: 'unsupported' as const }
-    : yield* recoverOrExecute(context, job, effect, claimToken, claim.version, claim.mode === 'recover').pipe(
-        Effect.catch((error) => recoverInvalidOutcome(context, job.jobId, effect, claimToken, claim.version, error)),
+    : yield* recoverOrExecute(context, job, effect, claimToken, claim.version, recovering).pipe(
+        Effect.catch((error) =>
+          recordExecutionFailure(
+            context,
+            job.jobId,
+            effect,
+            claimToken,
+            claim.version,
+            error,
+            !recovering || (previousUnavailable && error.code === 'symmy_job_worker_unavailable'),
+          ),
+        ),
       );
   if (outcome.status === 'unavailable' || outcome.status === 'indeterminate') {
     const { status } = outcome;

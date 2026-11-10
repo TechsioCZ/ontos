@@ -28,6 +28,7 @@
     "./api/assign-customer-price-group-action/client": "./src/api/assign-customer-price-group-action-client.ts",
     "./api/change-customer-profile-ico-action": "./shared/apis/change-customer-profile-ico-action.ts",
     "./api/change-customer-profile-ico-action/client": "./src/api/change-customer-profile-ico-action-client.ts",
+    "./api/customer-group-detail": "./shared/apis/customer-group-detail.ts",
     "./api/client": "./src/api/commerce-customer-context-client.ts",
     "./api/consume-order-purchase-approval-action": "./shared/apis/consume-order-purchase-approval-action.ts",
     "./api/consume-order-purchase-approval-action/client": "./src/api/consume-order-purchase-approval-action-client.ts",

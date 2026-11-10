@@ -24,11 +24,12 @@ import {
 
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 const runner = path.join(workspaceRoot, 'scripts/run-zerops-migrator.mjs');
+const retainedCatalogOwner = 'price-group-catalog';
 const selected: ApplicationMigrationRequirements = {
   mode: 'selected',
   owners: [
     { migrate: true, ownerId: 'tax', verify: true },
-    { migrate: false, ownerId: 'price-group-catalog', verify: true },
+    { migrate: false, ownerId: retainedCatalogOwner, verify: true },
   ],
 };
 const none: ApplicationMigrationRequirements = { mode: 'none', owners: [] };
@@ -270,7 +271,29 @@ it.live(
       const native = yield* fixture();
       yield* runToReadiness(allFile, native.allEnvironment, false);
       const streams = (yield* loadApplicationMigrationInventory()).filter(({ optional }) => !optional);
-      expect(streams).toHaveLength(20);
+      expect(streams.map(({ ownerId }) => ownerId)).toEqual([
+        'core-runtime',
+        'shell-super-app',
+        'party-registry-contacts',
+        'party-registry',
+        'payment-term-catalog',
+        retainedCatalogOwner,
+        'assortment',
+        'commerce-customer-context',
+        'commerce-market-catalog',
+        'catalog',
+        'inventory',
+        'pricing',
+        'privacy',
+        'storefront-registry',
+        'symmy-integration',
+        'tax',
+        'projects',
+        'commerce-cart',
+        'commerce-order',
+        'payment',
+        'promotion',
+      ]);
       const baseline = yield* observeNative(native.selectedEnvironment);
       expect(baseline.nativeTargets.map(({ database }) => database)).toEqual([native.database]);
       expect(baseline.nativeTargets.map(({ systemIdentifier }) => systemIdentifier)).toEqual([native.physicalIdentity]);
@@ -287,7 +310,7 @@ it.live(
       yield* native.client.unsafe(`drop schema ${quoteIdentifier('tax')} cascade`);
       yield* native.client.unsafe(`drop table drizzle.${quoteIdentifier(tax.journalName)}`);
       const pending = yield* prepareNative(native.selectedEnvironment, selectedFile);
-      expect(pending.plan.owners.map(({ ownerId }) => ownerId)).toEqual(['core-runtime', 'price-group-catalog', 'tax']);
+      expect(pending.plan.owners.map(({ ownerId }) => ownerId)).toEqual(['core-runtime', retainedCatalogOwner, 'tax']);
       expect(
         pending.plan.owners
           .filter(({ pendingMigrations }) => pendingMigrations.length > 0)

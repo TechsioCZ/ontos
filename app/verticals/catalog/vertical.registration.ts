@@ -4,6 +4,7 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { catalogManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
+import { assortmentProductClassificationV1Read } from './src/api/assortment-product-classification-v1.read.ts';
 import { activateLocalOverrideAction } from './src/actions/activate-local-override.action.ts';
 import { activatePackageDefinitionAction } from './src/actions/activate-package-definition.action.ts';
 import { activatePackageOptionAction } from './src/actions/activate-package-option.action.ts';
@@ -97,6 +98,7 @@ import { setVariantLocalizedFactsAction } from './src/actions/set-variant-locali
 import { updateProductAction } from './src/actions/update-product.action.ts';
 import { createProductRecoveryRead } from './src/api/create-product-recovery.read.ts';
 import { createVariantRecoveryRead } from './src/api/create-variant-recovery.read.ts';
+import { setVariantLocalizedFactsRecoveryRead } from './src/api/set-variant-localized-facts-recovery.read.ts';
 import { updateProductRecoveryRead } from './src/api/update-product-recovery.read.ts';
 import { correctProductRecoveryRead } from './src/api/correct-product-recovery.read.ts';
 // </generated-module-registration-imports>
@@ -357,8 +359,10 @@ export const catalogRegistration = defineVerticalRuntimeRegistration({
   ],
   reads: [
     // <generated-module-registration-reads>
+    assortmentProductClassificationV1Read,
     correctProductRecoveryRead,
     updateProductRecoveryRead,
+    setVariantLocalizedFactsRecoveryRead,
     createVariantRecoveryRead,
     createProductRecoveryRead,
     bindInitialVariantSourceRecoveryRead,

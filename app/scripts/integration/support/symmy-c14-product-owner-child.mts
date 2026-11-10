@@ -35,20 +35,58 @@ const publicProblemSchema = Schema.Struct({
   title: Schema.optionalKey(Schema.String),
   type: Schema.optionalKey(Schema.String),
 });
+const AssortmentStaleFactBodySchema = Schema.Union([
+  Schema.Struct({ group: Schema.Struct({ currentState: Schema.Literal('ARCHIVED') }) }),
+  Schema.Struct({ outcome: Schema.Literal('NOT_CURRENT') }),
+]);
 const outputSchema = Schema.Union([
   Schema.Struct({
+    path: Schema.String,
+    state: Schema.Literals(['ARCHIVED', 'NOT_CURRENT']),
+    type: Schema.Literal('assortment-stale-fact'),
+  }),
+  Schema.Struct({
+    method: Schema.String,
     path: Schema.String,
     problem: publicProblemSchema,
     status: Schema.Int,
     type: Schema.Literal('owner-http-problem'),
   }),
-  Schema.Struct({ path: Schema.String, status: Schema.Int, type: Schema.Literal('committed-response-lost') }),
+  Schema.Struct({
+    path: Schema.String,
+    status: Schema.Int,
+    type: Schema.Literals(['committed-response-lost', 'original-response-recovered']),
+  }),
   Schema.Struct({ marker: OntosDeploymentIdentitySchema, port: Schema.Int, type: Schema.Literal('ready') }),
 ]);
 const sendOutput = Effect.fn('SymmyC14ProductOwnerChild.output')(function* sendOutput(value: typeof outputSchema.Type) {
   const line = yield* Schema.encodeEffect(Schema.fromJsonString(outputSchema))(value);
   yield* Effect.sync(() => process.stdout.write(`${line}\n`));
 });
+
+const observeAssortmentStaleFact = Effect.fn('SymmyC14ProductOwnerChild.observeAssortmentFact')(
+  function* observeAssortmentFact(enabled: boolean, path: string, response: Response) {
+    if (
+      !enabled ||
+      !response.ok ||
+      !(path.endsWith('/reads/customer-group-detail') || path.endsWith('/reads/current-storefront-application'))
+    ) {
+      return;
+    }
+    const observed = yield* Effect.tryPromise({
+      catch: unavailable,
+      try: async () => await Schema.decodeUnknownPromise(AssortmentStaleFactBodySchema)(await response.clone().json()),
+    }).pipe(Effect.option);
+    if (Option.isSome(observed)) {
+      const fact = observed.value;
+      yield* sendOutput({
+        path,
+        state: 'group' in fact ? fact.group.currentState : fact.outcome,
+        type: 'assortment-stale-fact',
+      });
+    }
+  },
+);
 
 const serve = Effect.scoped(
   Effect.gen(function* serveActualOwner() {
@@ -66,6 +104,7 @@ const serve = Effect.scoped(
         '/assortment-api',
         '/tax-api',
         '/commerce-market-catalog-api',
+        '/storefront-registry-api',
       ]),
       'ONTOS_C14_OWNER_PREFIX',
     );
@@ -86,6 +125,7 @@ const serve = Effect.scoped(
     const faultOperation = yield* Config.schema(
       Schema.Literals([
         'catalog-create-product',
+        'catalog-set-variant-localized-facts',
         'customer-group-create',
         'inventory-import',
         'assortment-import',
@@ -96,6 +136,10 @@ const serve = Effect.scoped(
     const faultPaths = {
       'assortment-import': { read: null, write: '/actions/import-symmy-rule' },
       'catalog-create-product': { read: '/reads/create-product-recovery', write: '/actions/create-product' },
+      'catalog-set-variant-localized-facts': {
+        read: '/reads/set-variant-localized-facts-recovery',
+        write: '/actions/set-variant-localized-facts',
+      },
       'customer-group-create': {
         read: '/reads/customer-group-definition-source',
         write: '/actions/create-customer-group',
@@ -105,7 +149,22 @@ const serve = Effect.scoped(
     } as const;
     const faultPath = faultPaths[faultOperation];
     const traceProblems = yield* Config.Boolean('ONTOS_C14_TRACE_PROBLEMS').pipe(Config.withDefault(false));
+    const traceAssortmentFacts = yield* Config.Boolean('ONTOS_C14_TRACE_ASSORTMENT_FACTS').pipe(
+      Config.withDefault(false),
+    );
     const fs = yield* FileSystem.FileSystem;
+    const dropCommittedWriteResponse = Effect.fn('SymmyC14ProductOwnerChild.dropCommittedWriteResponse')(
+      function* dropCommittedWriteResponse(faultActive: boolean, path: string, response: Response) {
+        if (!faultActive || !path.endsWith(faultPath.write) || !response.ok) {
+          return false;
+        }
+        const firstLoss = !(yield* Ref.getAndSet(lost, true));
+        if (firstLoss) {
+          yield* sendOutput({ path, status: response.status, type: 'committed-response-lost' });
+        }
+        return firstLoss || faultPath.read === null;
+      },
+    );
     const application = Effect.gen(function* actualOwnerRequest() {
       const request = yield* HttpServerRequest.toWeb(yield* HttpServerRequest.HttpServerRequest);
       const path = new URL(request.url).pathname;
@@ -119,23 +178,32 @@ const serve = Effect.scoped(
         try: async () =>
           await dispatchEffectBffRequest(async (mounted) => await app.handler(mounted), request, { prefix }),
       });
+      yield* observeAssortmentStaleFact(traceAssortmentFacts, path, response);
       if (traceProblems && response.status >= 400) {
         const problem = yield* Effect.tryPromise({
           catch: unavailable,
           try: async () => await Schema.decodeUnknownPromise(publicProblemSchema)(await response.clone().json()),
         }).pipe(Effect.option);
         if (Option.isSome(problem)) {
-          yield* sendOutput({ path, problem: problem.value, status: response.status, type: 'owner-http-problem' });
+          yield* sendOutput({
+            method: request.method,
+            path,
+            problem: problem.value,
+            status: response.status,
+            type: 'owner-http-problem',
+          });
         }
       }
-      if (faultActive && path.endsWith(faultPath.write) && response.status >= 200 && response.status < 300) {
-        const firstLoss = !(yield* Ref.getAndSet(lost, true));
-        if (firstLoss) {
-          yield* sendOutput({ path, status: response.status, type: 'committed-response-lost' });
-        }
-        if (firstLoss || faultPath.read === null) {
-          return HttpServerResponse.empty({ status: 503 });
-        }
+      if (yield* dropCommittedWriteResponse(faultActive, path, response)) {
+        return HttpServerResponse.empty({ status: 503 });
+      }
+      if (
+        faultOperation === 'catalog-set-variant-localized-facts' &&
+        path.endsWith(faultPaths[faultOperation].read) &&
+        response.ok &&
+        (yield* Ref.get(lost))
+      ) {
+        yield* sendOutput({ path, status: response.status, type: 'original-response-recovered' });
       }
       return HttpServerResponse.fromWeb(response);
     });

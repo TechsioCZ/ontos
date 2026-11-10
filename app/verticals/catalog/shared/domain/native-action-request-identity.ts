@@ -4,6 +4,7 @@ import { BindInitialVariantSourcePayloadSchema } from '../actions/bind-initial-v
 import { CorrectProductPayloadSchema } from '../actions/correct-product.ts';
 import { CreateProductPayloadSchema } from '../actions/create-product.ts';
 import { CreateVariantPayloadSchema } from '../actions/create-variant.ts';
+import { SetVariantLocalizedFactsPayloadSchema } from '../actions/set-variant-localized-facts.ts';
 import { UpdateProductPayloadSchema } from '../actions/update-product.ts';
 
 /** These scope-wide native Actions declare no resource or owner permission target. Core hashes {}.
@@ -40,3 +41,6 @@ export const correctProductRequestIdentity = (payload: Schema.Json) =>
 
 export const bindInitialVariantSourceRequestIdentity = (payload: Schema.Json) =>
   requestIdentity(BindInitialVariantSourcePayloadSchema, payload, 'commerce.catalog.bind-initial-variant-source', '1');
+
+export const setVariantLocalizedFactsRequestIdentity = (payload: Schema.Json) =>
+  requestIdentity(SetVariantLocalizedFactsPayloadSchema, payload, 'commerce.catalog.set-variant-localized-facts', '1');

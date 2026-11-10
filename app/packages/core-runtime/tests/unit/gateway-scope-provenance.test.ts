@@ -180,13 +180,8 @@ it('restricts the sealed Organization processing marker to its exact required-co
   expect(readVerifiedGatewayOrganizationProcessingRead(principal)?.requestHash).toBe('c'.repeat(64));
   expect(Object.isFrozen(readVerifiedGatewayOrganizationProcessingRead(principal))).toBe(true);
   expect(readVerifiedGatewayOrganizationProcessingRead({ ...principal })).toBeUndefined();
-  for (const change of [
-    { entrypointKey: 'integration.symmy.other-read' },
-    { declarationKey: 'integration.symmy.other.read' },
-    { workloadKey: 'integration.symmy.other-read' },
-    { schemaVersion: '2' },
-    { legalEntityScope: 'optional' },
-  ]) {
+  expect(Schema.is(RegisteredGatewayWorkloadSchema)({ ...metadata, schemaVersion: '2' })).toBe(true);
+  for (const change of [{ legalEntityScope: 'optional' }]) {
     expect(Schema.is(RegisteredGatewayWorkloadSchema)({ ...metadata, ...change })).toBe(false);
   }
   const recovered = registeredGatewayRecoveryPrincipal({

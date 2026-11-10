@@ -8,8 +8,12 @@ import { CounterpartyRefSchema } from '../resources/counterparty.ts';
 import { CounterpartyRolePeriodRefSchema } from '../resources/counterparty-role-period.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 import { LegacyIcoSnapshotVersionSchema } from '../actions/fence-legacy-ico-authority.ts';
+import { IcoCorrelationWitnessSchema } from './legacy-ico-inventory.ts';
 
-export const CounterpartyOrganizationIcoFactsRequestSchema = Schema.Struct({ counterpartyRef: CounterpartyRefSchema });
+export const CounterpartyOrganizationIcoFactsRequestSchema = Schema.Struct({
+  counterpartyRef: CounterpartyRefSchema,
+  includeCorrelationWitness: Schema.optionalKey(Schema.Literal(true)),
+});
 export type CounterpartyOrganizationIcoFactsRequest = typeof CounterpartyOrganizationIcoFactsRequestSchema.Type;
 export const CounterpartyOrganizationIcoFactsResponseSchema = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal('NOT_CURRENT_ORGANIZATION_CUSTOMER') }),
@@ -22,6 +26,7 @@ export const CounterpartyOrganizationIcoFactsResponseSchema = Schema.Union([
     counterpartyRevision: LegacyIcoSnapshotVersionSchema,
     currentCustomerRoleRef: CounterpartyRolePeriodRefSchema,
     currentCustomerRoleRevision: LegacyIcoSnapshotVersionSchema,
+    correlationWitness: Schema.optionalKey(IcoCorrelationWitnessSchema),
   }),
 ]);
 export type CounterpartyOrganizationIcoFactsResponse = typeof CounterpartyOrganizationIcoFactsResponseSchema.Type;

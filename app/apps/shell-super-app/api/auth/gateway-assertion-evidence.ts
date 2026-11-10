@@ -94,7 +94,7 @@ export const admitAssertionSubject = Effect.fn('GatewayDelegation.admitAssertion
     ) {
       return yield* delegationForbidden();
     }
-    if (source.ver === 5 || source.ver === 6) {
+    if ('privacyDispatch' in source || 'organizationGovernanceRead' in source) {
       return yield* delegationForbidden();
     }
     if (source.ver === 4) {

@@ -966,9 +966,15 @@ importers:
 
   verticals/assortment:
     dependencies:
+      '@app/catalog':
+        specifier: workspace:*
+        version: link:../catalog
       '@app/commerce-customer-context':
         specifier: workspace:*
         version: link:../commerce-customer-context
+      '@app/commerce-market-catalog':
+        specifier: workspace:*
+        version: link:../commerce-market-catalog
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
@@ -981,6 +987,9 @@ importers:
       '@app/shared-design-tokens':
         specifier: workspace:*
         version: link:../../packages/shared-design-tokens
+      '@app/storefront-registry-contracts':
+        specifier: workspace:*
+        version: link:../../packages/storefront-registry-contracts
       '@effect/opentelemetry':
         specifier: 4.0.7
         version: 4.0.7(@opentelemetry/api-logs@0.223.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.223.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.7)

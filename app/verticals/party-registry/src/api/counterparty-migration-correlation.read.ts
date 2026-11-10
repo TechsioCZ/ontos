@@ -83,6 +83,11 @@ export const counterpartyMigrationCorrelationRead = defineRead(
   (transaction, scope) =>
     Effect.succeed({
       load: (input: CounterpartyMigrationCorrelationRequest) =>
-        findCounterpartyMigrationCorrelation(transaction, scope, input.counterpartyRef),
+        findCounterpartyMigrationCorrelation(
+          transaction,
+          scope,
+          input.counterpartyRef,
+          input.includeCorrelationWitness,
+        ),
     }),
 );

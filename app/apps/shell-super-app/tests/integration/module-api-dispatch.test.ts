@@ -10,7 +10,8 @@ import {
   moduleReleaseFetch,
   moduleReleaseWorkerName,
 } from '@app/core-runtime/unit-service-fetch';
-import { Effect, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Predicate, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
 import { dispatchModuleApiRequest } from '../../src/module-api/transport.ts';
@@ -161,7 +162,8 @@ it.effect.each([
 
 it.effect('requires fresh complete authority and never dispatches from an expired bundle', () =>
   Effect.gen(function* rejectsExpiredAuthority() {
-    const snapshot = yield* makeCompositionSnapshot([contract], -1);
+    const snapshot = yield* makeCompositionSnapshot([contract]);
+    yield* TestClock.setTime(DateTime.toEpochMillis(snapshot.validUntil) + 1);
     const error = yield* dispatchModuleApiRequest(requestFor(snapshot.composition.revision)).pipe(
       Effect.provide(makeActiveApplicationCompositionLayer(Effect.succeed(snapshot))),
       Effect.flip,

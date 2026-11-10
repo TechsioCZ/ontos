@@ -30,6 +30,7 @@ export const SymmyAssortmentRuleSourceSchema = Schema.Struct({
   reason: CreateRulePayloadSchema.fields.reason,
   selector: productSelector,
   sourceRecordId: SymmySourceRecordKeySchema.fields.sourceRecordId,
+  storefrontAppId: ImportSymmyRulePayloadSchema.fields.binding.fields.storefrontAppId,
 });
 export const decodeSymmyAssortmentRuleSource = Schema.decodeUnknownEffect(SymmyAssortmentRuleSourceSchema, {
   onExcessProperty: 'error',
@@ -83,8 +84,6 @@ export const mapSymmyAssortmentRule = Effect.fn('SymmyAssortmentRule.map')(funct
   ];
   if (
     commercialScope.sellingLegalEntityRef.resourceId !== sellerId ||
-    commercialScope.sellingLegalEntityRef.moduleId !== 'party.registry' ||
-    commercialScope.sellingLegalEntityRef.resourceType !== 'party.registry.legal-entity' ||
     commercialScope.commerceMarketRef === undefined ||
     commercialScope.storefrontRef === undefined ||
     selector.productRef.moduleId !== 'commerce.catalog' ||
@@ -100,14 +99,18 @@ export const mapSymmyAssortmentRule = Effect.fn('SymmyAssortmentRule.map')(funct
   });
   const digest = symmySourceRecordFingerprint(record);
   const provenanceRef = `internal-c14-assortment:${digest}`;
+  const binding = {
+    audience,
+    commercialScope,
+    effectiveFrom: source.effectiveFrom,
+    provenanceRef,
+    reason: source.reason,
+  };
+  if (source.storefrontAppId !== undefined) {
+    Object.assign(binding, { storefrontAppId: source.storefrontAppId });
+  }
   const payload = yield* Schema.decodeUnknownEffect(Schema.toType(ImportSymmyRulePayloadSchema))({
-    binding: {
-      audience,
-      commercialScope,
-      effectiveFrom: source.effectiveFrom,
-      provenanceRef,
-      reason: source.reason,
-    },
+    binding,
     rule: {
       effect: source.effect,
       provenanceRef,

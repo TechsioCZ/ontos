@@ -80,6 +80,10 @@ export const setVariantLocalizedFactsRecoveryRead = defineRead(
       selectors: [],
     },
     accessKind: 'detail',
+    accessWorkload: {
+      reason: 'Recover the exact original localized Variant source fact for the registered C14 integration',
+      workloads: ['commerce.catalog.symmy-variant-localized-facts-recovery'],
+    },
     entrypoint: setVariantLocalizedFactsRecoveryEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',

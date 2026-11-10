@@ -609,6 +609,16 @@ const readSourceOwnerProof = Effect.fn('Privacy.organizationBusinessReadSource')
   }
   return proof;
 });
+export const readOrganizationProfileOwnerFacts = (
+  request: typeof CustomerProfileOrganizationIcoFactsRequestSchema.Type,
+  issued: Effect.Success<ReturnType<typeof acquireDelegatedGatewayContext>>,
+  scope: OperationalScope,
+) =>
+  executeCustomerProfileOrganizationIcoFactsWithAuthorization(request, issued.authorization, scope.correlationId, {
+    baseUrl: issued.apiBaseUrl,
+    compositionRevision: issued.compositionRevision,
+  }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(CustomerProfileOrganizationIcoFactsResponseSchema)));
+
 const readProfileOwnerProof = Effect.fn('Privacy.organizationBusinessReadProfile')(function* readProfile(
   intent: Extract<Intent, { kind: 'COUNTERPARTY_PROFILE' }>,
   scope: OperationalScope,
@@ -620,13 +630,7 @@ const readProfileOwnerProof = Effect.fn('Privacy.organizationBusinessReadProfile
       : { profileRef: intent.profileRef },
   ).pipe(Effect.mapError(unavailable));
   const issued = yield* providerContext('PROFILE', phase, scope, nativeRequest);
-  return yield* executeCustomerProfileOrganizationIcoFactsWithAuthorization(
-    nativeRequest,
-    issued.authorization,
-    scope.correlationId,
-    { baseUrl: issued.apiBaseUrl, compositionRevision: issued.compositionRevision },
-  ).pipe(
-    Effect.flatMap((value) => Schema.decodeUnknownEffect(CustomerProfileOrganizationIcoFactsResponseSchema)(value)),
+  return yield* readOrganizationProfileOwnerFacts(nativeRequest, issued, scope).pipe(
     Effect.mapError(unavailable),
     Effect.flatMap((value) =>
       Match.value(value).pipe(

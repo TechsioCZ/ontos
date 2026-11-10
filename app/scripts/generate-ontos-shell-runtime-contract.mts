@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
-import { Effect, FileSystem, Layer, Path, Schema } from 'effect';
+import { Effect, FileSystem, Layer, Option, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
 import {
@@ -9,7 +9,7 @@ import {
   OntosShellRuntimeContractSchema,
 } from '../packages/core-runtime/src/index.ts';
 
-import { createShellRuntimeContract } from './ontos-shell-runtime-contract.ts';
+import { createShellRuntimeContract, readCompiledNodeShellIdentity } from './ontos-shell-runtime-contract.ts';
 
 export { createShellRuntimeContract } from './ontos-shell-runtime-contract.ts';
 
@@ -57,7 +57,7 @@ export const generateOntosShellRuntimeContract = Effect.fn('generateOntosShellRu
     if (platformPath.resolve(workspaceRoot, shell.path) !== shellDirectory) {
       return yield* new ShellRuntimeContractGenerationError({ message: 'the Shell directory does not match topology' });
     }
-    const { buildMarker } = yield* Effect.try({
+    const release = yield* Effect.try({
       catch: (cause) =>
         new ShellRuntimeContractGenerationError({ cause, message: 'unable to resolve the Shell release identity' }),
       try: () =>
@@ -66,6 +66,27 @@ export const generateOntosShellRuntimeContract = Effect.fn('generateOntosShellRu
           unitId: shell.deliveryUnit.unitId,
           workspaceRoot,
         }),
+    });
+    const compiled =
+      input.target === 'dist'
+        ? yield* readCompiledNodeShellIdentity(shellDirectory).pipe(
+            Effect.mapError(
+              (cause) => new ShellRuntimeContractGenerationError({ cause, message: 'invalid compiled Shell identity' }),
+            ),
+          )
+        : Option.none();
+    if (
+      Option.isSome(compiled) &&
+      (compiled.value.sourceRevision !== release.sourceRevision ||
+        (release.sourceRevision !== 'workspace' && compiled.value.buildMarker !== release.buildMarker))
+    ) {
+      return yield* new ShellRuntimeContractGenerationError({
+        message: 'the compiled Shell identity does not match the current release',
+      });
+    }
+    const buildMarker = Option.match(compiled, {
+      onNone: () => release.buildMarker,
+      onSome: (identity) => identity.buildMarker,
     });
     const encoded = yield* Schema.encodeEffect(ShellRuntimeContractJsonSchema)(
       createShellRuntimeContract(buildMarker),

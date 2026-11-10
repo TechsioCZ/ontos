@@ -2,14 +2,14 @@ import { GatewayInternalProblemSchema } from '@app/shared-contracts';
 import { makeProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApiMiddleware } from 'effect/http-api';
 
-export const SymmyRouteNotFoundProblemSchema = makeProblemDetailsSchema('SymmyRouteNotFoundProblem', 404);
+import { symmyRouteNotFoundPayload } from '../../shared/symmy-route-not-found.ts';
 
-export const symmyRouteNotFoundProblem = SymmyRouteNotFoundProblemSchema.make({
-  detail: 'The requested integration path is unavailable.',
-  status: SymmyRouteNotFoundProblemSchema.fields.status.literal,
-  title: 'Integration route not found',
-  type: 'https://ontos.dev/problems/symmy-route-not-found',
-});
+export const SymmyRouteNotFoundProblemSchema = makeProblemDetailsSchema(
+  symmyRouteNotFoundPayload._tag,
+  symmyRouteNotFoundPayload.status,
+);
+
+export const symmyRouteNotFoundProblem: typeof SymmyRouteNotFoundProblemSchema.Type = symmyRouteNotFoundPayload;
 
 export class SymmyDefectBoundary extends HttpApiMiddleware.Service<SymmyDefectBoundary>()(
   '@app/shell-super-app/api/symmy/defect-boundary/SymmyDefectBoundary',

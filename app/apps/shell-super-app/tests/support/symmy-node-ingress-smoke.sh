@@ -1,9 +1,14 @@
 #!/bin/sh
 set -eu
 
-# Run from the Shell package after building with ONTOS_INTERNAL_SYMMY_INGRESS=1.
-# Start PORT=14328 mise exec -- node .output/index.js, then run
+# Compile the local Node artifact from app:
+# ONTOS_INTERNAL_SYMMY_INGRESS=1 mise exec -- pnpm --filter @app/shell-super-app exec modern build --deploy-target node
+# mise exec -- node scripts/generate-ontos-shell-runtime-contract.mts --shell-directory apps/shell-super-app --target dist
+# Then run from the Shell package:
+# Start ONTOS_INTERNAL_SYMMY_INGRESS=1 PORT=14328 mise exec -- pnpm serve, then run
 # sh tests/support/symmy-node-ingress-smoke.sh 14328
+# For the authenticated compiled poll, run the Product conformance suite with
+# ONTOS_C14_COMPILED_SHELL_SMOKE=true against the isolated native fixture.
 port=${1:?Supply the compiled Shell loopback port.}
 case "$port" in
   *[!0-9]*) printf 'The Shell port must be numeric.\n' >&2; exit 1 ;;

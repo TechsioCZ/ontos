@@ -26,14 +26,18 @@ import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
-import { Layer as GovernedReadLayer, Logger, References, Result, Schema, Tracer } from 'effect';
-import { FetchHttpClient } from 'effect/http';
+import { Crypto, Layer as GovernedReadLayer, Logger, References, Result, Schema, Tracer } from 'effect';
+import { FetchHttpClient, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
 import { assortmentApi, assortmentMarkerSchema, assortmentOperationContexts } from '../shared/api.ts';
 import type { OperationContext } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
-import { assortmentOwnerAuthorizationOverlayLive } from '../src/services/assortment-currentness.ts';
+import { checkAssortmentFixtureOwnerCurrentness } from '../src/adapters/assortment-fixture-owner-currentness.ts';
+import {
+  AssortmentFixtureOwnerCurrentness,
+  assortmentOwnerAuthorizationOverlayLive,
+} from '../src/services/assortment-currentness.ts';
 import { AssortmentDatabaseLive, AssortmentPgClientLive } from '../src/database/client.ts';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
@@ -122,8 +126,27 @@ const readRuntimeDependenciesLive = Layer.mergeAll(
   accessEnforcementLive,
 );
 
+const assortmentFixtureOwnerCurrentnessLive = Layer.effect(
+  AssortmentFixtureOwnerCurrentness,
+  Effect.gen(function* assortmentOwnerOverlay() {
+    const crypto = yield* Crypto.Crypto;
+    const client = yield* HttpClient.HttpClient;
+    return {
+      check: (scope, at, fingerprint) =>
+        checkAssortmentFixtureOwnerCurrentness(crypto, scope, at, fingerprint).pipe(
+          Effect.provideService(HttpClient.HttpClient, client),
+        ),
+    };
+  }),
+);
+
 /** Installs owner Current checks without replacing Core's separate exact Permission checks. */
-export const withAssortmentOwnerAuthorizationOverlay = Layer.provide(assortmentOwnerAuthorizationOverlayLive);
+export const withAssortmentOwnerAuthorizationOverlay = Layer.provide(
+  assortmentOwnerAuthorizationOverlayLive.pipe(
+    Layer.provide(assortmentFixtureOwnerCurrentnessLive),
+    Layer.provide(Layer.merge(compositionHttpClientLive, nodeCryptoLayer)),
+  ),
+);
 const productionReadRuntimeLive = withAssortmentOwnerAuthorizationOverlay(
   makeReadRuntimeLive(ultramodernDeliveryUnit, assortmentRegistration),
 ).pipe(

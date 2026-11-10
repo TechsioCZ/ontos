@@ -4,6 +4,7 @@ import {
   correctProductRequestIdentity,
   createProductRequestIdentity,
   createVariantRequestIdentity,
+  setVariantLocalizedFactsRequestIdentity,
   updateProductRequestIdentity,
 } from '@app/catalog/api/native-action-request-identity';
 import { CreateProductRecoveryRequestSchema } from '@app/catalog/api/create-product-recovery';
@@ -30,12 +31,15 @@ import { executeCreateProductWithAuthorization } from '@app/catalog/api/create-p
 import { executeCreateProductRecoveryWithAuthorization } from '@app/catalog/api/create-product-recovery-client';
 import { executeCreateVariantWithAuthorization } from '@app/catalog/api/create-variant-action-client';
 import { executeCreateVariantRecoveryWithAuthorization } from '@app/catalog/api/create-variant-recovery-client';
+import { executeSetVariantLocalizedFactsWithAuthorization } from '@app/catalog/api/set-variant-localized-facts-action-client';
+import { executeSetVariantLocalizedFactsRecoveryWithAuthorization } from '@app/catalog/api/set-variant-localized-facts-recovery-client';
 import { executeUpdateProductWithAuthorization } from '@app/catalog/api/update-product-action-client';
 import { executeUpdateProductRecoveryWithAuthorization } from '@app/catalog/api/update-product-recovery-client';
 import type { CreateProductRecoveryResponseSchema } from '@app/catalog/api/create-product-recovery';
 import { CreateVariantPayloadSchema } from '@app/catalog/api/create-variant-action';
 import type { CatalogSourceCorrelationSchema } from '@app/catalog/domain/catalog-source-correlation';
 import { ProductActionInvocationIdSchema } from '@app/catalog/domain/product';
+import type { ProductRef } from '@app/catalog/resources/product';
 import {
   executeImportSourceAssertionWithAuthorization,
   executeInventorySourceImportReceiptWithAuthorization,
@@ -290,6 +294,8 @@ const checkedIntent = Effect.fn('SymmyOwnerAdapters.checkedIntent')(function* ch
         payload.variantRef.tenantId === tenantId &&
         qualifiedSource(input, payload.sourceCorrelation),
       CatalogCreateVariantFromProductEffect: () => false,
+      CatalogSetVariantLocalizedFacts: ({ payload }) =>
+        entityKind === 'VARIANT' && expectedTarget(payload.variantRef) && payload.productRef.tenantId === tenantId,
       CatalogUpdateProduct: ({ payload }) => entityKind === 'PRODUCT' && expectedTarget(payload.productRef),
       InventoryImport: ({ payload }) =>
         input.inventoryBackendId !== undefined &&
@@ -361,6 +367,16 @@ const symmyCatalogPricingInventoryContracts: readonly AdapterContract[] = [
     recoveryEntrypointKey: 'commerce.catalog.api.update-product-recovery',
     schemaVersion: '1',
     tag: 'CatalogUpdateProduct',
+  },
+  {
+    audience: catalogAudience,
+    declarationKey: 'commerce.catalog.variant-localized-facts.set',
+    entrypointKey: 'commerce.catalog.set-variant-localized-facts',
+    moduleId: catalogModuleId,
+    recoveryDeclarationKey: 'commerce.catalog.set-variant-localized-facts-recovery.read',
+    recoveryEntrypointKey: 'commerce.catalog.api.set-variant-localized-facts-recovery',
+    schemaVersion: '1',
+    tag: 'CatalogSetVariantLocalizedFacts',
   },
   {
     audience: catalogAudience,
@@ -719,28 +735,22 @@ const verifyExistingCatalogTarget = Effect.fn('SymmyOwnerAdapters.verifyCatalogS
     crypto: Crypto.Crypto,
   ) {
     const { record } = input.effect.ref.occurrence;
+    const occurrenceSource = {
+      issuerId: record.issuerId,
+      mappingRevision: input.effect.ref.mappingVersion,
+      recordId: record.sourceRecordId,
+      recordNamespace: record.sourceNamespace,
+      routeScope: record.route.integrationRouteId,
+    };
     const selectedSource = Match.value(requestIntent).pipe(
       Match.tags({
         CatalogBindInitialVariantSource: ({ payload }) => Option.some(payload.productSource),
-        CatalogCorrectProduct: () =>
-          Option.some({
-            issuerId: record.issuerId,
-            mappingRevision: input.effect.ref.mappingVersion,
-            recordId: record.sourceRecordId,
-            recordNamespace: record.sourceNamespace,
-            routeScope: record.route.integrationRouteId,
-          }),
+        CatalogCorrectProduct: () => Option.some(occurrenceSource),
         CatalogCreateProduct: () => Option.none(),
         CatalogCreateVariant: ({ productSource }) => Option.some(productSource),
         CatalogCreateVariantFromProductEffect: () => Option.none(),
-        CatalogUpdateProduct: () =>
-          Option.some({
-            issuerId: record.issuerId,
-            mappingRevision: input.effect.ref.mappingVersion,
-            recordId: record.sourceRecordId,
-            recordNamespace: record.sourceNamespace,
-            routeScope: record.route.integrationRouteId,
-          }),
+        CatalogSetVariantLocalizedFacts: () => Option.some(occurrenceSource),
+        CatalogUpdateProduct: () => Option.some(occurrenceSource),
         InventoryImport: () => Option.none(),
         PriceDefine: () => Option.none(),
         PriceDefineFromGroupEffect: () => Option.none(),
@@ -766,6 +776,10 @@ const verifyExistingCatalogTarget = Effect.fn('SymmyOwnerAdapters.verifyCatalogS
     if (target === undefined) {
       return false;
     }
+    const variantProduct = Match.value(requestIntent).pipe(
+      Match.tag('CatalogSetVariantLocalizedFacts', ({ payload }) => Option.some(payload.productRef)),
+      Match.orElse(Option.none<ProductRef>),
+    );
     const wire = yield* freshGateway(
       input,
       {
@@ -778,7 +792,7 @@ const verifyExistingCatalogTarget = Effect.fn('SymmyOwnerAdapters.verifyCatalogS
     );
     const result = yield* executeCatalogSourceProductsWithAuthorization(
       {
-        entityKind: 'PRODUCT',
+        entityKind: Option.isSome(variantProduct) ? 'VARIANT' : 'PRODUCT',
         issuerId: source.issuerId,
         operation: 'LOOKUP',
         recordId: source.recordId,
@@ -790,12 +804,19 @@ const verifyExistingCatalogTarget = Effect.fn('SymmyOwnerAdapters.verifyCatalogS
       wire.options,
     ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
     const [item] = result.items;
-    return (
-      result.outcome === 'FOUND' &&
-      result.items.length === 1 &&
-      item !== undefined &&
-      sameRef(item.product.productRef, target)
-    );
+    if (result.outcome !== 'FOUND' || result.items.length !== 1 || item === undefined) {
+      return false;
+    }
+    if (Option.isSome(variantProduct)) {
+      return (
+        item.entityKind === 'VARIANT' &&
+        item.source.mappingRevision === source.mappingRevision &&
+        item.variantId === target.resourceId &&
+        sameRef(item.product.productRef, variantProduct.value) &&
+        item.product.variants.some((variant) => sameRef(variant.variantRef, target))
+      );
+    }
+    return sameRef(item.product.productRef, target);
   },
 );
 
@@ -870,6 +891,17 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
         return createdSourceOutcome(input, invocationId, result.businessOriginalCreateInvocationId);
       }),
       CatalogCreateVariantFromProductEffect: () => Effect.fail(symmyJobWorkerInvalid()),
+      CatalogSetVariantLocalizedFacts: Effect.fn('SymmyOwnerAdapters.recoverVariantLocalizedFacts')(
+        function* recoverVariantLocalizedFacts() {
+          const result = yield* executeSetVariantLocalizedFactsRecoveryWithAuthorization(
+            catalogRequest,
+            credential,
+            requestCorrelation,
+            options,
+          ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
+          return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
+        },
+      ),
       CatalogUpdateProduct: Effect.fn('SymmyOwnerAdapters.CatalogUpdateProduct')(function* CatalogUpdateProduct() {
         const result = yield* executeUpdateProductRecoveryWithAuthorization(
           catalogRequest,
@@ -989,6 +1021,7 @@ const recoveryReadRequestHash = Effect.fn('SymmyOwnerAdapters.recoveryReadReques
       CatalogCreateProduct: () => catalog,
       CatalogCreateVariant: () => catalog,
       CatalogCreateVariantFromProductEffect: () => Effect.fail(symmyJobWorkerInvalid()),
+      CatalogSetVariantLocalizedFacts: () => catalog,
       CatalogUpdateProduct: () => catalog,
       InventoryImport: ({ payload }) => {
         const [proposal] = payload.items;
@@ -1146,6 +1179,20 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
         },
       ),
       CatalogCreateVariantFromProductEffect: () => Effect.fail(symmyJobWorkerInvalid()),
+      CatalogSetVariantLocalizedFacts: Effect.fn('SymmyOwnerAdapters.setVariantLocalizedFacts')(
+        function* setVariantLocalizedFacts({ payload }) {
+          const result = yield* executeSetVariantLocalizedFactsWithAuthorization(
+            payload,
+            credential,
+            requestCorrelation,
+            options,
+          );
+          if (!('changed' in result)) {
+            return safeOutcome(input, 'unresolved');
+          }
+          return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
+        },
+      ),
       CatalogUpdateProduct: Effect.fn('SymmyOwnerAdapters.CatalogUpdateProduct')(
         function* CatalogUpdateProduct(intent) {
           const result = yield* executeUpdateProductWithAuthorization(
@@ -1282,6 +1329,10 @@ export const prepareSymmyCatalogPricingInventoryRequestHash = Effect.fn(
           Effect.map((identity) => computeActionRequestHash({ ...identity, principal: tenantPrincipal })),
         ),
       CatalogCreateVariantFromProductEffect: () => Effect.fail(symmyJobWorkerInvalid()),
+      CatalogSetVariantLocalizedFacts: ({ payload }) =>
+        setVariantLocalizedFactsRequestIdentity(payload).pipe(
+          Effect.map((identity) => computeActionRequestHash({ ...identity, principal: tenantPrincipal })),
+        ),
       CatalogUpdateProduct: ({ payload }) =>
         updateProductRequestIdentity(payload).pipe(
           Effect.map((identity) => computeActionRequestHash({ ...identity, principal: tenantPrincipal })),

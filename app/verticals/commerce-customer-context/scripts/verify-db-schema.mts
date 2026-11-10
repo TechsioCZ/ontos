@@ -80,6 +80,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'load_payment_term_policy_state',
   'load_purchase_currency_policy_state',
   'lock_access_grant_authority',
+  'lock_profile_ico_correlation',
   'migrate_customer_profile_ico',
   'migrate_price_group_assignments',
   'mutate_access_invitation',

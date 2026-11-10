@@ -4263,7 +4263,7 @@ it.effect('binds Organization governance read authority to the exact decoded req
 );
 
 it.effect(
-  'permits only the exact PROCESSING request and refuses Governance, changed payload, and old unrestricted V4 scope',
+  'permits the exact registered PROCESSING version and refuses a wrong version, purpose, payload, or unrestricted scope',
   () =>
     Effect.gen(function* organizationProcessingReadHashAndMode() {
       const processing = { effectId: 'effect-original', purpose: 'PROCESSING' };
@@ -4279,6 +4279,11 @@ it.effect(
             key: 'integration.symmy.symmy-source-organization-facts.read',
           },
           accessKind: 'detail',
+          accessWorkload: {
+            reason: 'Exact finite processing proof',
+            requestPurpose: 'PROCESSING',
+            workloads: ['integration.symmy.source-organization-facts.read'],
+          },
           entrypoint: defineTenantModuleEntrypoint({
             access: 'read',
             authorization: { kind: 'protected' },
@@ -4294,7 +4299,7 @@ it.effect(
           policies: [],
           readKey: 'integration.symmy.api.symmy-source-organization-facts',
           resultSchema: Schema.Array(Schema.String),
-          schemaVersion: '1',
+          schemaVersion: '2',
         },
         () => {
           handlerCalls += 1;
@@ -4303,7 +4308,7 @@ it.effect(
         () => Effect.succeed({}),
         () => ({ kind: 'module', moduleId: 'integration.symmy' }),
       );
-      const admitted = organizationProcessingReadPrincipal(computeCanonicalValueHash(processing));
+      const admitted = organizationProcessingReadPrincipal(computeCanonicalValueHash(processing), true, '2');
       const resolvedScope = preserveSystemPrincipalContextTrust(admitted, {
         ...admitted,
         correlationId: scope.correlationId,
@@ -4323,11 +4328,15 @@ it.effect(
       expect(handlerCalls).toBe(1);
       const governance = { effectId: 'effect-original', purpose: 'GOVERNANCE' };
       for (const item of [
+        { input: processing, principal: organizationProcessingReadPrincipal(computeCanonicalValueHash(processing)) },
         { input: { ...processing, effectId: 'effect-other' }, principal: admitted },
-        { input: governance, principal: organizationProcessingReadPrincipal(computeCanonicalValueHash(governance)) },
+        {
+          input: governance,
+          principal: organizationProcessingReadPrincipal(computeCanonicalValueHash(governance), true, '2'),
+        },
         {
           input: processing,
-          principal: organizationProcessingReadPrincipal(computeCanonicalValueHash(processing), false),
+          principal: organizationProcessingReadPrincipal(computeCanonicalValueHash(processing), false, '2'),
         },
       ]) {
         const denied = yield* makeHarness();

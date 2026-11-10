@@ -125,6 +125,48 @@ it.effect('loads each exact configuration resource and only its lifecycle eviden
   }),
 );
 
+const readBindingScopeVersion = (fixtureScopeVersion: 'C14_CANONICAL_V1' | null) =>
+  assortmentConfigurationReadSourceForScope(
+    transaction([
+      [
+        {
+          ...bindingRow,
+          channelResourceId: 'B2C',
+          fixtureScopeVersion,
+          marketResourceId: 'market-1',
+          storefrontResourceId: 'storefront-1',
+        },
+      ],
+      [revisionRow],
+      [],
+    ]),
+    scope,
+  ).resolve(resource('commerce.assortment.applicability-binding', 'binding-1'), scope);
+
+it.effect('retains each persisted binding scope owner representation', () =>
+  Effect.gen(function* bindingScopeOwnerRepresentation() {
+    const historical = yield* readBindingScopeVersion(null);
+    expect(historical.configuration.value).toMatchObject({
+      commercialScope: {
+        commerceMarketRef: { moduleId: 'commerce.market', resourceType: 'commerce.market.market' },
+        sellingLegalEntityRef: { moduleId: 'party.registry', resourceType: 'party.registry.legal-entity' },
+        storefrontRef: { moduleId: 'commerce.storefront', resourceType: 'commerce.storefront.storefront' },
+      },
+    });
+    const canonical = yield* readBindingScopeVersion('C14_CANONICAL_V1');
+    expect(canonical.configuration.value).toMatchObject({
+      commercialScope: {
+        commerceMarketRef: { moduleId: 'commerce.market-catalog', resourceType: 'commerce.market-catalog.market' },
+        sellingLegalEntityRef: { moduleId: 'core.identity', resourceType: 'core.identity.legal-entity' },
+        storefrontRef: {
+          moduleId: 'commerce.storefront-registry',
+          resourceType: 'commerce.storefront-registry.storefront-application',
+        },
+      },
+    });
+  }),
+);
+
 it.effect('preserves the stored selector owner and fails closed for unresolved legacy owners', () =>
   Effect.gen(function* selectorOwnerEvidence() {
     const catalogRevision = {

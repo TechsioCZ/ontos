@@ -414,19 +414,19 @@ it.effect(
       );
       expect(resumed.mode).toBe('execute');
       expect(Option.getOrUndefined(resumed.effect)).toEqual(pending);
-      const pendingAccepted = Schema.decodeUnknownSync(SymmyEffectOutcomeSchema)({
+      const pendingInvalid = Schema.decodeUnknownSync(SymmyEffectOutcomeSchema)({
         effectId: pending.ref.effectId,
         owner: 'integration.symmy',
-        status: 'accepted_change',
+        status: 'invalid',
       });
       expect(
         yield* scoped((_admission, execution) =>
-          execution.settle(job.jobId, pending.ref.effectId, resumedToken, resumed.version, pendingAccepted),
+          execution.settle(job.jobId, pending.ref.effectId, resumedToken, resumed.version, pendingInvalid),
         ),
       ).toBe(true);
-      expect(Option.getOrUndefined(yield* scoped((admission) => admission.poll(job.jobId)))?.phase).toBe(
-        'completed_all',
-      );
+      const terminalPoll = Option.getOrUndefined(yield* scoped((admission) => admission.poll(job.jobId)));
+      expect(terminalPoll?.phase).toBe('completed_partial');
+      expect(terminalPoll?.items.flatMap(({ effects }) => effects)).toContainEqual(pendingInvalid);
       return yield* Effect.void;
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
 );

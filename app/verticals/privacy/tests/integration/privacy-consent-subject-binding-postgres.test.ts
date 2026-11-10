@@ -9,6 +9,7 @@ import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platf
 import { PgClient } from '@effect/sql-pg';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
+import { jsonb, pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { Crypto, Effect, FileSystem, Layer, Option, Path, Redacted, Result, Schema, Stream } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { ChildProcess } from 'effect/process';
@@ -19,6 +20,7 @@ import { privacyRegistration } from '../../vertical.registration.ts';
 import type { ConsentDecision } from '../../shared/domain/privacy-consent-decision.ts';
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-persistence-error.ts';
 import { ConsentDecisionSchema } from '../../shared/domain/privacy-consent-decision.ts';
+import { PrivacySubjectRecordSchema } from '../../shared/domain/privacy-subject.ts';
 import {
   consentDecisions,
   consentScopeBindings,
@@ -32,8 +34,19 @@ import { currentConsentRead } from '../../src/api/current-consent.read.ts';
 
 type NativeConsentContext = Effect.Success<ReturnType<typeof makeNativeReadTestContext>>;
 
+// The baseline writer had no source identity column. Writes still use the native scoped transaction.
+const legacyPrivacySubjects = pgSchema('privacy').table('privacy_subjects', {
+  createdAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
+  legalEntityId: uuid('legal_entity_id').notNull(),
+  privacySubjectId: uuid('privacy_subject_id').notNull(),
+  subjectKind: text('subject_kind').notNull(),
+  subjectRecord: jsonb('subject_record').notNull(),
+  tenantId: uuid('tenant_id').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+});
+
 const prepareConsentSubjectFixture = Effect.fn('PrivacyConsentSubjectFixture.prepare')(
-  function* prepareConsentSubjectFixture(fixture: NativeConsentContext) {
+  function* prepareConsentSubjectFixture(fixture: NativeConsentContext, schema: 'current' | 'legacy' = 'current') {
     const crypto = yield* Crypto.Crypto;
     const nextId = () => crypto.randomUUIDv4();
     const subjectA = yield* nextId();
@@ -58,33 +71,38 @@ const prepareConsentSubjectFixture = Effect.fn('PrivacyConsentSubjectFixture.pre
         });
         const version = Option.getOrThrow(Option.fromUndefinedOr(createdPurpose.versions[0]));
         for (const subjectId of [subjectA, subjectB]) {
-          yield* owner.createSubject(
-            { legalEntityId, tenantId },
-            {
-              actionInvocationId: yield* nextId(),
-              subject: {
+          const subject = yield* Schema.decodeUnknownEffect(PrivacySubjectRecordSchema)({
+            createdAt: '2026-01-01T00:00:00Z',
+            subject: {
+              anonymousContext: {
+                addressability: 'SESSION',
+                contextRef: `session:${subjectId}`,
                 createdAt: '2026-01-01T00:00:00Z',
-                subject: {
-                  anonymousContext: {
-                    addressability: 'SESSION',
-                    contextRef: `session:${subjectId}`,
-                    createdAt: '2026-01-01T00:00:00Z',
-                    expiresAt: '2027-01-01T00:00:00Z',
-                    kind: 'ANONYMOUS_PRIVACY_CONTEXT',
-                    provenance: { method: 'SESSION', source: 'native-consent-test' },
-                  },
-                  kind: 'ANONYMOUS',
-                },
-                subjectRef: {
-                  moduleId: 'privacy.core',
-                  resourceId: subjectId,
-                  resourceType: 'privacy.core.privacy-subject',
-                  tenantId,
-                },
-                updatedAt: '2026-01-01T00:00:00Z',
+                expiresAt: '2027-01-01T00:00:00Z',
+                kind: 'ANONYMOUS_PRIVACY_CONTEXT',
+                provenance: { method: 'SESSION', source: 'native-consent-test' },
               },
+              kind: 'ANONYMOUS',
             },
-          );
+            subjectRef: {
+              moduleId: 'privacy.core',
+              resourceId: subjectId,
+              resourceType: 'privacy.core.privacy-subject',
+              tenantId,
+            },
+            updatedAt: '2026-01-01T00:00:00Z',
+          });
+          yield* schema === 'legacy'
+            ? transaction.insert(legacyPrivacySubjects).values({
+                createdAt: new Date(subject.createdAt),
+                legalEntityId,
+                privacySubjectId: subjectId,
+                subjectKind: 'ANONYMOUS',
+                subjectRecord: yield* Schema.encodeEffect(PrivacySubjectRecordSchema)(subject),
+                tenantId,
+                updatedAt: new Date(subject.updatedAt),
+              })
+            : owner.createSubject({ legalEntityId, tenantId }, { actionInvocationId: yield* nextId(), subject });
           for (const scopeRef of [mainScope, raceScope, independentScope, rollbackScope]) {
             const notice = yield* owner.createNoticeVersion(
               { legalEntityId, tenantId },
@@ -551,7 +569,7 @@ it.live(
           'objects',
         );
         expect(identity).toEqual([{ binding_absent: true, database: isolated.connections.admin.database }]);
-        expect(yield* ownerAdmin.select().from(privacySubjects)).toEqual([]);
+        expect(yield* ownerAdmin.select({ id: privacySubjects.privacySubjectId }).from(privacySubjects)).toEqual([]);
         expect(yield* ownerAdmin.select().from(consentDecisions)).toEqual([]);
         // Minimal ordinary owner privileges needed by the historical supported producers.
         // Immutable triggers and runtime RLS remain enabled throughout both migration phases.
@@ -583,7 +601,7 @@ it.live(
             subjectA,
             subjectB,
             write,
-          } = yield* prepareConsentSubjectFixture(fixture);
+          } = yield* prepareConsentSubjectFixture(fixture, 'legacy');
           // The immutable baseline writer at 0325cbf9 (recordConsentDecision .insert values)
           // admitted these individually valid decisions. Execute that small SQL ABI only on
           // the baseline schema, using actual Subject/Purpose/exact Notice producers above.

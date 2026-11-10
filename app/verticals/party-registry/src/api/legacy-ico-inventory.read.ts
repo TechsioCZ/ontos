@@ -68,6 +68,14 @@ export const legacyIcoInventoryRead = defineRead(
     ),
   (transaction, scope) =>
     Effect.succeed({
-      load: (input: LegacyIcoInventoryRequest) => loadLegacyIcoInventory(transaction, scope, input.projection),
+      load: (input: LegacyIcoInventoryRequest) =>
+        loadLegacyIcoInventory(
+          transaction,
+          scope,
+          input.projection,
+          input.includeCorrelationWitness,
+          input.verifyCorrelationWitnesses,
+          input.commitFenceChallenge,
+        ),
     }),
 );

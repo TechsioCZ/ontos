@@ -4,6 +4,7 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { commerceMarketCatalogManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
+import { assortmentFixtureMarketAssociationRead } from './src/api/assortment-fixture-market-association.read.ts';
 import { activateMarketAction } from './src/actions/activate-market.action.ts';
 import { associateStorefrontAction } from './src/actions/associate-storefront.action.ts';
 import { createMarketAction } from './src/actions/create-market.action.ts';
@@ -37,6 +38,8 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'assortment-fixture-market-association': () =>
+        import('./src/api/assortment-fixture-market-association-client.ts'),
       'current-market-catalog': () => import('./src/api/current-market-catalog-client.ts'),
       'eligible-market-tuples': () => import('./src/api/eligible-market-tuples-client.ts'),
       'market-history': () => import('./src/api/market-history-client.ts'),
@@ -70,6 +73,7 @@ export const commerceMarketCatalogRegistration = defineVerticalRuntimeRegistrati
   ],
   reads: [
     // <generated-module-registration-reads>
+    assortmentFixtureMarketAssociationRead,
     currentMarketCatalogRead,
     eligibleMarketTuplesRead,
     resolveCommerceMarketRead,

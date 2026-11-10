@@ -901,7 +901,11 @@ it.effect(
         const decision = yield* gate.decide({
           carrier: {
             accessDeclaration: declaration,
-            accessWorkload: { reason: 'Finite native organization processing read', workloads: [workloadKey] },
+            accessWorkload: {
+              reason: 'Finite native organization processing read',
+              requestPurpose: 'PROCESSING',
+              workloads: [workloadKey],
+            },
             entrypoint: { entrypointKey: 'integration.symmy.api.symmy-source-organization-facts' },
             schemaVersion: '1',
           },

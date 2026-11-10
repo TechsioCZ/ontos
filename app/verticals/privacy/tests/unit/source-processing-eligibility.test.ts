@@ -345,6 +345,32 @@ describe('current exact source processing eligibility', () => {
       }),
     ).toBe(false);
   });
+  it('does not let an independently enrolled intake source claim a concrete personal target', () => {
+    const source = { ...fixture.request.source, recordId: 'fixture:independently-enrolled-alias' };
+    const alias = Schema.decodeUnknownSync(PrivacySubjectRecordSchema)({
+      createdAt: fixture.from,
+      subject: { kind: 'SOURCE_ASSERTED', source },
+      subjectRef: fixture.context.intendedScope.subjectRef,
+      updatedAt: fixture.from,
+    });
+    const request = Schema.decodeUnknownSync(SourceProcessingEligibilityRequestSchema)({
+      consumerModuleId: 'integration.symmy',
+      operation: 'CUSTOMER_SOURCE_INTAKE',
+      source,
+      target: null,
+    });
+    expect(sourceSubjectMatchesRequest(alias, request)).toBe(true);
+    for (const kind of [
+      'RETAIL_CUSTOMER_PROFILE',
+      'COUNTERPARTY_PURCHASING_PROFILE',
+      'PARTY_CONTACT_POINT',
+      'COUNTERPARTY',
+    ] as const) {
+      expect(sourceSubjectMatchesRequest(alias, { ...request, target: { kind, resourceId: 'existing-target' } })).toBe(
+        false,
+      );
+    }
+  });
   it.effect('evaluates explicit current owner facts without fabricating consent', () =>
     run().pipe(Effect.map((result) => expect(result.outcome).toBe('ALLOWED'))),
   );
@@ -474,6 +500,7 @@ describe('current exact source processing eligibility', () => {
           items: [protection],
           sourceSubjectRefs: [fixture.context.intendedScope.subjectRef.resourceId],
         }),
+      subjectExists: () => Effect.die('Protected material must not be sent for live Party proof'),
     };
     return Effect.all([
       run(protectedServices),

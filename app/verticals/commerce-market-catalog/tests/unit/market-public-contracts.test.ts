@@ -348,6 +348,7 @@ describe('Commerce Market public contracts', () => {
     expect(Object.keys(commerceMarketCatalogManifest.publicSurface.api)).toEqual([
       'activate-market-action',
       'associate-storefront-action',
+      'assortment-fixture-market-association',
       'create-market-action',
       'current-market-catalog',
       'eligible-market-tuples',

@@ -2,9 +2,7 @@ import {
   RegisteredGatewayRouteScopeSchema,
   RegisteredGatewayWorkloadSchema,
   RegisteredGatewayPrivacyDispatchSchema,
-  privacyDispatchOperationContract,
   RegisteredGatewayOrganizationGovernanceReadSchema,
-  organizationGovernanceReadOperationContract,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type {
   RegisteredGatewayRouteScope,
@@ -20,12 +18,16 @@ import {
   WORKLOAD_GATEWAY_ASSERTION_VERSION,
   PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION,
   ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION,
+  VERSIONED_PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION,
+  VERSIONED_ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION,
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_TTL_SECONDS,
   GATEWAY_ASSERTION_VERSION,
   GatewayActorClaimSchema,
   GatewayContextResponseSchema,
   GatewayTrustedPrincipalContextSchema,
+  organizationGovernanceReadOperationContract,
+  privacyDispatchOperationContract,
 } from '@app/shared-contracts';
 import type { GatewayActorClaim, GatewayContextResponse, GatewayTrustedPrincipalContext } from '@app/shared-contracts';
 import {
@@ -297,7 +299,7 @@ const decodePrivacyDispatchIssuance = Effect.fn('GatewayIssuer.decodePrivacyDisp
       principal.principalId !== metadata.principalId ||
       principal.tenantId !== metadata.tenantId ||
       principal.legalEntityId !== metadata.governanceLegalEntityId ||
-      input.audience !== privacyDispatchOperationContract(metadata.operation).appId
+      input.audience !== privacyDispatchOperationContract(metadata.operation, metadata.target).appId
     ) {
       return yield* unavailable('principal');
     }
@@ -313,10 +315,14 @@ const finiteAssertionVersion = (
   organizationGovernanceRead: RegisteredGatewayOrganizationGovernanceRead | undefined,
 ) => {
   if (organizationGovernanceRead !== undefined) {
-    return ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION;
+    return organizationGovernanceRead.target === undefined
+      ? ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION
+      : VERSIONED_ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION;
   }
   if (privacyDispatch !== undefined) {
-    return PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION;
+    return privacyDispatch.target === undefined
+      ? PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION
+      : VERSIONED_PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION;
   }
   if (workload !== undefined) {
     return WORKLOAD_GATEWAY_ASSERTION_VERSION;
@@ -355,7 +361,7 @@ const decodeOrganizationGovernanceIssuance = Effect.fn('GatewayIssuer.decodeOrga
       principal.principalId !== metadata.principalId ||
       principal.tenantId !== metadata.tenantId ||
       principal.legalEntityId !== metadata.governanceLegalEntityId ||
-      input.audience !== organizationGovernanceReadOperationContract().appId
+      input.audience !== organizationGovernanceReadOperationContract(metadata.target).appId
     ) {
       return yield* unavailable('principal');
     }

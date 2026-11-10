@@ -12,7 +12,7 @@ import { Effect, Layer, Schema } from 'effect';
 import { comparePartyCatalog } from '../src/db/catalog.ts';
 import { PartyDatabase, PartyDatabaseLive } from '../src/db/client.ts';
 import { PARTY_REGISTRY_WORKER_PARTY_TABLES } from '../src/db/database-grants.ts';
-import { PARTY_SCHEMA_NAME, PARTY_TABLES } from '../src/db/schema.ts';
+import { partyIcoCorrelationEpochs, PARTY_SCHEMA_NAME, PARTY_TABLES } from '../src/db/schema.ts';
 import { policyMismatches, rolePrivilegeMismatches } from './database-role-contract.mts';
 
 class PartyDatabaseVerificationError extends Schema.TaggedError<PartyDatabaseVerificationError>()(
@@ -70,6 +70,10 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
   const database = yield* PartyDatabase;
 
   for (const table of PARTY_TABLES) {
+    // The catalog, policy and grant probes below verify the owner-private signing table.
+    if (table === partyIcoCorrelationEpochs) {
+      continue;
+    }
     yield* database.executor
       .select()
       .from(table)
@@ -115,10 +119,13 @@ const verification = Effect.gen(function* verifyPartyDatabase() {
   const columns = yield* database.executor
     .execute<ColumnCatalogRow>(
       sql`
-        select table_name, column_name
-        from information_schema.columns
-        where table_schema = ${PARTY_SCHEMA_NAME}
-        order by table_name, column_name
+        select relation.relname as table_name, attribute.attname as column_name
+        from pg_catalog.pg_attribute as attribute
+        join pg_catalog.pg_class as relation on relation.oid = attribute.attrelid
+        join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+        where namespace.nspname = ${PARTY_SCHEMA_NAME} and relation.relkind in (${'r'}, ${'p'})
+          and attribute.attnum > 0 and not attribute.attisdropped
+        order by relation.relname, attribute.attname
       `,
       'objects',
     )

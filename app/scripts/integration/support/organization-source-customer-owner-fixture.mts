@@ -37,6 +37,9 @@ import {
 import { OrganizationBusinessSourceIntentSchema } from '@app/privacy/api/organization-business-applicability';
 import { executeRecordPrivacyApplicabilityWithAuthorization } from '@app/privacy/api/client';
 import { seedOrganizationBusinessSourceNativeFixture } from '@app/privacy/testing/organization-business-source-native';
+import { seedSourceProcessingNativeFixture } from '@app/privacy/testing/source-processing-native';
+import { SourceProcessingContextSchema } from '@app/privacy/api/source-processing-eligibility';
+import type { SourceProcessingEligibilityRequest } from '@app/privacy/api/source-processing-eligibility';
 import { makeApiKeyGatewayNativeFixture } from '@app/shell-super-app/testing/api-key-gateway-native';
 import {
   SymmyInternalExecutionPlanSchema,
@@ -45,12 +48,13 @@ import {
 import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-job-status';
 import { SymmySourceOrganizationFactsGovernanceSelectorSchema } from '@app/symmy-integration/api/symmy-source-organization-facts';
 import { PgClient } from '@effect/sql-pg';
-import { Config, DateTime, Duration, Effect, FileSystem, Option, Redacted, Schema } from 'effect';
+import { Config, DateTime, Duration, Effect, Option, Redacted, Schedule, Schema } from 'effect';
 import { HttpBody, HttpClient } from 'effect/http';
 import {
   bindCustomerFixtureProviderKey,
   seedCustomerFixtureProviderPrincipal,
 } from './symmy-c14-customer-native-authority.mts';
+import { customerIntakeContext } from './symmy-c14-customer-rules.mts';
 import {
   buildProductOwner,
   buildProductWorker,
@@ -311,6 +315,8 @@ const receiptSchema = Schema.Struct({
 export const OrganizationSourceEffectObservationSchema = Schema.Struct({
   effectId: SymmyEffectIdSchema,
   effectKey: SymmySourceOrganizationFactsGovernanceSelectorSchema.fields.effectKey,
+  nativeStatus: Schema.OptionFromNullOr(Schema.String),
+  outcomeStatus: Schema.OptionFromNullOr(Schema.String),
   ownerInvocationId: Schema.OptionFromNullOr(Schema.String),
   ownerReceipt: Schema.Unknown,
   state: Schema.String,
@@ -416,6 +422,7 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
         yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status) values(${randomUUID()},${randomUUID()},${tenantId},${principalId},${workload},'active')`;
       }
     }
+    yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status) values(${randomUUID()},${randomUUID()},${tenantId},${integration.principalId},'privacy.core.source-processing-check','active')`;
     const key = yield* shell.issueFixtureProviderKey(integration);
     yield* bindCustomerFixtureProviderKey(admin, integration, key.providerKeyId);
     yield* key.acknowledgeBinding;
@@ -776,6 +783,32 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
     } as const;
     const runtimes = new Map<string, Effect.Success<ReturnType<typeof startProductOwner>>>();
     const artifacts = new Map<string, Effect.Success<ReturnType<typeof buildProductOwner>>>();
+    const intakeContexts: (typeof SourceProcessingContextSchema.Type)[] = [];
+    const seedIntake = Effect.fn('OrganizationSourceCustomerOwner.seedIntake')(function* seedIntake(
+      sourceOccurrenceId: string,
+      target: NonNullable<SourceProcessingEligibilityRequest['target']>,
+      uses: readonly NonNullable<SourceProcessingEligibilityRequest['organizationBusinessUse']>[],
+    ) {
+      const seeded = yield* seedSourceProcessingNativeFixture({
+        connections: isolated.connections,
+        contexts: uses.map((organizationBusinessUse) => {
+          const base = customerIntakeContext(
+            integration.principalId,
+            { ...sourceReference.source, occurrenceId: sourceOccurrenceId, recordId: sourceReference.recordId },
+            target,
+          );
+          return { ...base, request: { ...base.request, organizationBusinessUse } };
+        }),
+        contractEvidenceRef: 'INTERNAL_C14_EXACT_ORGANIZATION_INTAKE',
+        controllerRef: 'internal:organization-customer-conformance',
+        dataCategoryRefs: ['INTERNAL_C14_ORGANIZATION_CUSTOMER_BUSINESS_RECORD'],
+        governancePrincipalId: integration.issuerPrincipalId,
+        legalEntityId,
+        meaning: 'Explicit internal staging for this current canonical company and qualified source record',
+        tenantId,
+      });
+      intakeContexts.push(...seeded.contexts);
+    });
     const start = Effect.fn('OrganizationSourceCustomerOwner.start')(function* start(
       app: (typeof appIds)[number],
       extra: Readonly<Record<string, string>> = {},
@@ -796,10 +829,17 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
         yield* previous.child.kill();
         yield* previous.child.exitCode;
       }
+      const ownerEnvironment = { ...environment, ...extra, ONTOS_GATEWAY_MODULE_API_KEY: moduleKey };
+      if (app === 'privacy') {
+        const encodedIntakeContexts = yield* Schema.encodeEffect(
+          Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
+        )(intakeContexts);
+        Object.assign(ownerEnvironment, { ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: encodedIntakeContexts });
+      }
       const runtime = yield* startProductOwner({
         artifacts: artifact,
         contract,
-        environment: { ...environment, ...extra, ONTOS_GATEWAY_MODULE_API_KEY: moduleKey },
+        environment: ownerEnvironment,
         port,
         prefix: prefixes[app],
       });
@@ -809,15 +849,16 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
     for (const app of appIds) {
       yield* start(app);
     }
+    let workerDiagnostic = Effect.succeed('Worker has not started');
     const writeDiagnostics = Effect.fn('OrganizationSourceCustomerOwner.diagnostics')(function* writeDiagnostics() {
-      const fs = yield* FileSystem.FileSystem;
       for (const [app, runtime] of runtimes) {
-        yield* fs.writeFileString(`/tmp/organization-source-${app}.diag.log`, yield* runtime.diagnostic);
+        yield* Effect.logError({ app, ownerTrace: (yield* runtime.diagnostic).slice(-6000) });
       }
       yield* Effect.logError({
         gateway: yield* shell.gatewayDiagnostics(),
         issuer: yield* shell.issuerDiagnostics(),
         requests: yield* shell.requestDiagnostics(),
+        workerTrace: (yield* workerDiagnostic).slice(-6000),
       });
     });
     const client = yield* HttpClient.HttpClient;
@@ -959,25 +1000,49 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
       return yield* unavailable('The actual Symmy worker contract is missing');
     }
     const workerArtifact = yield* buildProductWorker(symmyContract);
-    const startWorker = () =>
-      startProductWorker(workerArtifact, {
+    const startWorker = Effect.fn('OrganizationSourceCustomerOwner.startWorker')(function* startWorker() {
+      const started = yield* startProductWorker(workerArtifact, {
         ...environment,
         ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_ORGANIZATION_SOURCE_WORKER',
         ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(symmyKey.secret),
       });
+      workerDiagnostic = started.diagnostic;
+      return started;
+    });
     const worker = yield* startWorker();
     const ledgerFor = (jobId: typeof receiptSchema.Type.jobId) =>
-      admin`select effect_id::text as "effectId",effect_key as "effectKey",owner_invocation_id::text as "ownerInvocationId",owner_receipt as "ownerReceipt",state from symmy_integration.job_effects where job_id=${jobId}`.pipe(
+      admin`select e.effect_id::text as "effectId",e.effect_key as "effectKey",a.status as "nativeStatus",e.outcome->>'status' as "outcomeStatus",e.owner_invocation_id::text as "ownerInvocationId",e.owner_receipt as "ownerReceipt",e.state from symmy_integration.job_effects e left join core.action_invocations a on a.action_invocation_id=e.owner_invocation_id and a.tenant_id=e.tenant_id where e.job_id=${jobId} and e.tenant_id=${tenantId} order by e.effect_key`.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(OrganizationSourceEffectObservationSchema))),
       );
-    const ledger = ledgerFor(accepted.jobId);
-    const diagnostics = Effect.all([
-      worker.diagnostic,
-      shell.gatewayDiagnostics(),
-      shell.issuerDiagnostics(),
-      shell.requestDiagnostics(),
-      ...[...runtimes.values()].map((value) => value.diagnostic),
-    ]);
+    const awaitSettled = Effect.fn('OrganizationSourceCustomerOwner.awaitSettled')(function* awaitSettled(
+      jobId: typeof receiptSchema.Type.jobId,
+      expectedEffects: number,
+    ) {
+      const observe = ledgerFor(jobId);
+      const settled = (rows: Effect.Success<typeof observe>) =>
+        rows.length === expectedEffects && rows.every(({ state }) => state === 'settled');
+      const terminal = (rows: Effect.Success<typeof observe>) =>
+        rows.length === expectedEffects && rows.every(({ state }) => state === 'settled' || state === 'blocked');
+      const rows = yield* observe.pipe(
+        Effect.repeat({ schedule: Schedule.spaced('200 millis'), until: terminal }),
+        Effect.timeoutOrElse({ duration: '120 seconds', orElse: () => observe }),
+      );
+      const acceptedStatus = Schema.is(Schema.Literals(['accepted_change', 'accepted_no_change']));
+      if (!settled(rows) || rows.some(({ outcomeStatus }) => !Option.exists(outcomeStatus, acceptedStatus))) {
+        yield* Effect.logError({
+          phase: 'organization-effect-observation',
+          rows: rows.map(({ effectKey, nativeStatus, outcomeStatus, ownerReceipt, state }) => ({
+            effectKey,
+            nativeStatus: Option.getOrNull(nativeStatus),
+            outcomeStatus: Option.getOrNull(outcomeStatus),
+            receiptPresent: ownerReceipt !== null,
+            state,
+          })),
+        });
+        yield* writeDiagnostics();
+      }
+      return rows;
+    });
     const options = (app: (typeof appIds)[number], idempotencyKey: string = randomUUID()) => ({
       baseUrl: new URL(prefixes[app], `http://127.0.0.1:${ports.get(app)}/`),
       compositionRevision: snapshot.composition.revision,
@@ -1169,13 +1234,12 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
       acceptedProfile,
       admin,
       authorize,
-      diagnostics,
+      awaitSettled,
       getCompany,
       groupSource,
       integration,
       isolated,
       key,
-      ledger,
       ledgerFor,
       legalEntityId,
       options,
@@ -1185,6 +1249,7 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
       priceEffectiveFrom,
       profile,
       readOriginalReceipt,
+      seedIntake,
       shell,
       snapshot,
       sourceReference,

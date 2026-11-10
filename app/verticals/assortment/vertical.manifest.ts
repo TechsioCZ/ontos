@@ -3,6 +3,7 @@
 // @ontos-module-id commerce.assortment
 import {
   defineOntosModuleManifest,
+  ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
   ShellPublicComponentContributionSchema,
@@ -23,6 +24,7 @@ import { assortmentRuleRevisionCreatePermission } from './shared/permissions/ass
 import { applicabilityBindingResourceDescriptor } from './shared/resources/applicability-binding.ts';
 import { closedAssortmentBoundaryResourceDescriptor } from './shared/resources/closed-assortment-boundary.ts';
 import { ConfigurationApi } from './shared/apis/configuration.ts';
+import { assortmentFixtureOwnerRequirements } from './src/adapters/assortment-fixture-owner-currentness.ts';
 import { createApplicabilityBindingAction } from './src/actions/create-applicability-binding.action.ts';
 import { createClosedAssortmentBoundaryAction } from './src/actions/create-closed-assortment-boundary.action.ts';
 import { createRuleAction } from './src/actions/create-rule.action.ts';
@@ -168,5 +170,11 @@ export const assortmentManifest = defineOntosModuleManifest({
       ],
       timelines: [],
     },
+  },
+  requirements: {
+    coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
+    intrinsic: [],
+    operations: assortmentFixtureOwnerRequirements,
+    schemaVersion: '1',
   },
 });

@@ -18,6 +18,7 @@ import {
 
 export const makeOrganizationProfileIcoApplicabilityFixture = (ids: {
   authMethod?: string;
+  effectiveFrom?: string;
   evaluatedAt?: string;
   legalEntityId: string;
   operation?: 'customer-profile-ico.read' | 'customer-profile-ico.write' | 'customer-profile-ico.migrate';
@@ -28,7 +29,7 @@ export const makeOrganizationProfileIcoApplicabilityFixture = (ids: {
   tenantId: string;
   versionId?: string;
 }) => {
-  const from = '2026-11-01T00:00:00.000Z';
+  const from = ids.effectiveFrom ?? '2026-11-01T00:00:00.000Z';
   const evaluatedAt = ids.evaluatedAt ?? '2026-11-07T12:00:00.000Z';
   const until = DateTime.formatIso(DateTime.add(DateTime.makeUnsafe(evaluatedAt), { days: 30 }));
   const purposeId = ids.purposeId ?? '71000000-0000-4000-8000-000000000010';

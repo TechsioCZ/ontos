@@ -1,6 +1,12 @@
 import { fileURLToPath } from 'node:url';
 
-import { ReadRuntime, runAction, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import {
+  loadDatabaseConfig,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+  ReadRuntime,
+  runAction,
+  TrustedPrincipalContextSchema,
+} from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { partyRegistryBackendRegistration } from '../../vertical.runtime-declaration.ts';
@@ -21,7 +27,11 @@ import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { addPartyOfficialIdentifierAction } from '../../src/actions/add-party-official-identifier.action.ts';
 import { partyOfficialIdentifierHistoryRead } from '../../src/api/party-official-identifier-history.read.ts';
 import { makePartyDatabase } from '../../src/db/client.ts';
-import { partyOfficialIdentifiers, PARTY_TABLES } from '../../src/db/schema.ts';
+import { partyOfficialIdentifiers } from '../../src/db/schema.ts';
+import {
+  makePartyReconciliationGateway,
+  preparePartyReconciliationNative,
+} from '../support/party-reconciliation-native.fixture.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -34,8 +44,8 @@ const baselineFolders = [
 ] as const;
 
 it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgrade', (suite) => {
-  suite.effect('upgrades a genuinely populated canonical-only Party history without inventing source digits', () =>
-    Effect.gen(function* populatedIdentifierUpgrade() {
+  const upgradePopulatedIdentifier = Effect.fn('OriginalIdentifierInputMigration.upgrade')(
+    function* populatedIdentifierUpgrade() {
       const isolated = yield* makeIsolatedNativeDatabaseFixture({
         mode: 'empty',
         purpose: 'stabilization-1281-party-legacy',
@@ -64,9 +74,10 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
       // Existing table CHECKs, append-only triggers and forced RLS remain installed unchanged.
       const runtimeRole = sql.identifier(isolated.connections.runtime.user);
       yield* admin.execute(sql`grant usage on schema party to ${runtimeRole}`, 'objects');
-      for (const table of PARTY_TABLES) {
-        yield* admin.execute(sql`grant select,insert,update,delete on table ${table} to ${runtimeRole}`, 'objects');
-      }
+      yield* admin.execute(
+        sql`grant select,insert on table party.parties,party.party_official_identifiers to ${runtimeRole}`,
+        'objects',
+      );
       const [beforeColumn] = yield* admin.execute<{ readonly count: number }>(
         sql`select count(*)::integer as count from information_schema.columns where table_schema='party' and table_name='party_official_identifiers' and column_name='original_input_digits'`,
         'objects',
@@ -77,6 +88,13 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
         ultramodernApiMarker.buildMarker,
       );
       yield* isolated.publishInitialComposition(snapshot);
+      const requestRole = yield* loadDatabaseConfig({
+        envPath: '/dev/null',
+        identity: PARTY_REGISTRY_REQUEST_IDENTITY,
+      });
+      const ownedRequestUrl = new URL(requestRole.connectionString);
+      expect(ownedRequestUrl.host).toBe(new URL(isolated.connections.admin.connectionString).host);
+      ownedRequestUrl.pathname = `/${isolated.connections.admin.database}`;
       const fixture = yield* Effect.acquireRelease(
         makeLiveOperationFixture({
           access: 'allowed',
@@ -85,7 +103,7 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: snapshot.composition.revision,
           ownerRegistration: partyRegistryBackendRegistration,
-          runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
+          runtimeConnectionString: Redacted.make(ownedRequestUrl.href),
         }),
         (resource) => resource.close().pipe(Effect.orDie),
       );
@@ -115,16 +133,16 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
           // the actual old columns explicitly and keeps every value parameterized.
           yield* transaction.execute(
             sql`
-            insert into party.party_official_identifiers (
-              official_identifier_id,tenant_id,party_id,identifier_type_key,namespace,normalized_value,
-              accepted_by_action_invocation_id,accepted_by_principal_id,policy_version,
-              provenance_method,provenance_source,valid_from,verification_state
-            ) values (
-              ${identifierId},${fixture.tenantId},${partyId},${identifier.identifierType},${identifier.namespace},${identifier.normalizedValue},
-              ${oldInvocationId},${fixture.manager.principalId},${'party-official-identifier.v1'},
-              ${'MANUAL'},${'pre-migration-acceptance'},${DateTime.toDateUtc(DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'))},${'UNVERIFIED'}
-            )
-          `,
+          insert into party.party_official_identifiers (
+            official_identifier_id,tenant_id,party_id,identifier_type_key,namespace,normalized_value,
+            accepted_by_action_invocation_id,accepted_by_principal_id,policy_version,
+            provenance_method,provenance_source,valid_from,verification_state
+          ) values (
+            ${identifierId},${fixture.tenantId},${partyId},${identifier.identifierType},${identifier.namespace},${identifier.normalizedValue},
+            ${oldInvocationId},${fixture.manager.principalId},${'party-official-identifier.v1'},
+            ${'MANUAL'},${'pre-migration-acceptance'},${DateTime.toDateUtc(DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'))},${'UNVERIFIED'}
+          )
+        `,
             'objects',
           );
         }),
@@ -192,20 +210,10 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
       assert.isOk(upgraded);
       expect(upgraded.originalInputDigits).toBe(null);
       expect(upgraded.normalizedValue).toBe('01000004');
-      // The populated canonical-only upgrade is proved above. Current owner operations also
-      // select structured Party names, so install only that later schema change before reuse.
-      const currentNamesFolder = '20261105082358_flashy_gravity';
-      yield* fs.makeDirectory(`${baselineDirectory}/${currentNamesFolder}`);
-      yield* fs.copyFile(
-        `${ownerDirectory}/${currentNamesFolder}/migration.sql`,
-        `${baselineDirectory}/${currentNamesFolder}/migration.sql`,
-      );
-      yield* fs.copyFile(
-        `${ownerDirectory}/${currentNamesFolder}/snapshot.json`,
-        `${baselineDirectory}/${currentNamesFolder}/snapshot.json`,
-      );
-      yield* migrate(admin, { ...migrationOptions, migrationsFolder: baselineDirectory });
-      expect((yield* journalCount())[0]?.count).toBe(5);
+      // Continue via the canonical owner CLI before invoking current governed operations.
+      const native = yield* preparePartyReconciliationNative(isolated.connections, 'migrate');
+      expect(native.partyConfiguration.connectionString === ownedRequestUrl.href).toBe(true);
+      const gateway = yield* makePartyReconciliationGateway(native, snapshot);
       const principal = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
         ...fixture.manager,
         legalEntityId: fixture.legalEntityId,
@@ -214,14 +222,17 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
       const readRuntime = yield* ReadRuntime.pipe(Effect.provideContext(context));
       const partyRef = makePartyRef(fixture.tenantId, partyId);
       const history = () =>
-        readRuntime
-          .runRead({
-            registration: partyOfficialIdentifierHistoryRead,
-            input: { partyRef },
-            principal,
-            transport: { correlationId: 'populated-identifier-upgrade' },
-          })
-          .pipe(Effect.provideContext(context));
+        gateway.verifyPrincipal(principal).pipe(
+          Effect.flatMap((verifiedPrincipal) =>
+            readRuntime.runRead({
+              registration: partyOfficialIdentifierHistoryRead,
+              input: { partyRef },
+              principal: verifiedPrincipal,
+              transport: { correlationId: 'populated-identifier-upgrade' },
+            }),
+          ),
+          Effect.provideContext(context),
+        );
       const oldHistory = yield* history();
       expect(oldHistory.items).toHaveLength(1);
       expect(oldHistory.items[0]?.originalInputDigits).toBe(null);
@@ -234,7 +245,7 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
           provenanceSource: 'post-migration-intake',
           validFrom: '2020-01-01T00:00:00.000Z',
         },
-        principal,
+        principal: yield* gateway.verifyPrincipal(principal),
         transport: {
           correlationId: 'populated-identifier-reuse',
           idempotencyKey: yield* crypto.randomUUIDv4(),
@@ -251,7 +262,11 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
       expect(retained).toHaveLength(1);
       expect(retained[0]).toEqual(upgraded);
       expect((yield* history()).items[0]?.originalInputDigits).toBe(null);
-      expect((yield* journalCount())[0]?.count).toBe(5);
-    }),
+    },
+  );
+  suite.effect(
+    'upgrades a genuinely populated canonical-only Party history without inventing source digits',
+    upgradePopulatedIdentifier,
+    120_000,
   );
 });

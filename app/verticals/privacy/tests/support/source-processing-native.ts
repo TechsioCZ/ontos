@@ -279,7 +279,7 @@ const seedNativeProcessing = Effect.fn('PrivacyNativeFixture.seedSourceProcessin
         ({ request, targetAdmission }) =>
           request.source === null ||
           (admission === undefined
-            ? request.target !== null
+            ? request.target !== null && request.organizationBusinessUse === undefined
             : !(
                 (request.target?.kind === 'RETAIL_CUSTOMER_PROFILE' &&
                   request.target.resourceId === admission.profileId) ||

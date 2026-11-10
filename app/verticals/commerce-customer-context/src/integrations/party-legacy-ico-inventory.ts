@@ -3,7 +3,11 @@ import {
   LegacyIcoInventoryRequestSchema,
   LegacyIcoInventoryResponseSchema,
 } from '@app/party-registry/apis/legacy-ico-inventory';
-import type { LegacyIcoInventoryResponse } from '@app/party-registry/apis/legacy-ico-inventory';
+import type {
+  IcoCorrelationWitness,
+  LegacyIcoInventoryRequest,
+  LegacyIcoInventoryResponse,
+} from '@app/party-registry/apis/legacy-ico-inventory';
 import { executeLegacyIcoInventoryWithAuthorization } from '@app/party-registry/apis/legacy-ico-inventory/client';
 import {
   CounterpartyMigrationCorrelationRequestSchema,
@@ -23,8 +27,45 @@ import { CustomerProfileIcoMigrationRejected } from '../../shared/domain/custome
 
 const partyAudience = 'party-registry';
 
-type InventoryOptions = Readonly<{ operationRequirementKey: string; projection?: 'ORGANIZATION_ICO_FIELDS_V1' }>;
-type CorrelationOptions = Readonly<{ operationRequirementKey: string; organizationOnly?: boolean }>;
+type InventoryOptions = Readonly<{
+  commitFenceChallenge?: string;
+  includeCorrelationWitness?: true;
+  operationRequirementKey: string;
+  projection?: 'ORGANIZATION_ICO_FIELDS_V1';
+  verifyCorrelationWitnesses?: readonly IcoCorrelationWitness[];
+}>;
+type CorrelationOptions = Readonly<{
+  includeCorrelationWitness?: true;
+  operationRequirementKey: string;
+  organizationOnly?: boolean;
+}>;
+/** Use the existing owner request unless this scope needs complete per-home proof. */
+export const profileIcoInventoryOptions = (
+  options: InventoryOptions,
+  home: string | undefined,
+  witnesses: readonly IcoCorrelationWitness[] | undefined,
+  requireWitness: boolean,
+  challenge: string | undefined,
+): InventoryOptions => {
+  if (!requireWitness) {
+    return options;
+  }
+  const proof: InventoryOptions = {
+    ...options,
+    includeCorrelationWitness: true,
+    verifyCorrelationWitnesses: (witnesses ?? []).filter((witness) => witness.legalEntityId !== home),
+  };
+  if (challenge !== undefined) {
+    Object.assign(proof, { commitFenceChallenge: challenge });
+  }
+  return proof;
+};
+
+export const profileIcoCorrelationOptions = (
+  options: CorrelationOptions,
+  requireWitness: boolean,
+): CorrelationOptions => (requireWitness ? { ...options, includeCorrelationWitness: true } : options);
+
 type OrganizationCorrelation = typeof CounterpartyMigrationCorrelationResponseSchema.Type & {
   readonly organizationProof?: (typeof CounterpartyOrganizationIcoFactsResponseSchema.members)[1]['Type'];
 };
@@ -52,9 +93,13 @@ export const commerceLegacyIcoInventoryLive = Layer.effect(
       correlate: (scope, ref, options) =>
         options?.organizationOnly === true
           ? Effect.gen(function* organizationCorrelation() {
-              const request = yield* Schema.decodeUnknownEffect(CounterpartyOrganizationIcoFactsRequestSchema)({
-                counterpartyRef: ref,
-              });
+              const candidate = { counterpartyRef: ref };
+              if (options.includeCorrelationWitness === true) {
+                Object.assign(candidate, { includeCorrelationWitness: true });
+              }
+              const request = yield* Schema.decodeUnknownEffect(CounterpartyOrganizationIcoFactsRequestSchema)(
+                candidate,
+              );
               const issued = yield* acquireDelegatedGatewayContext(
                 {
                   audience: partyAudience,
@@ -76,26 +121,37 @@ export const commerceLegacyIcoInventoryLive = Layer.effect(
                 { baseUrl: new URL(issued.apiBaseUrl), compositionRevision: issued.compositionRevision },
               );
               const result = yield* Schema.decodeUnknownEffect(CounterpartyOrganizationIcoFactsResponseSchema)(raw);
-              return result.outcome === 'CURRENT_ORGANIZATION_CUSTOMER' &&
-                result.counterpartyRef.resourceId === ref.resourceId &&
-                result.counterpartyRef.tenantId === scope.tenantId &&
-                result.partyRef.tenantId === scope.tenantId &&
-                result.legalEntityRef.resourceId === scope.legalEntityId &&
-                result.legalEntityRef.tenantId === scope.tenantId &&
-                result.currentCustomerRoleRef.tenantId === scope.tenantId
-                ? Option.some({
-                    archived: false,
-                    counterpartyRef: result.counterpartyRef,
-                    organizationProof: result,
-                    partyRef: result.partyRef,
-                    revision: result.counterpartyRevision,
-                  })
-                : Option.none();
+              if (
+                result.outcome !== 'CURRENT_ORGANIZATION_CUSTOMER' ||
+                result.counterpartyRef.resourceId !== ref.resourceId ||
+                result.counterpartyRef.tenantId !== scope.tenantId ||
+                result.partyRef.tenantId !== scope.tenantId ||
+                result.legalEntityRef.resourceId !== scope.legalEntityId ||
+                result.legalEntityRef.tenantId !== scope.tenantId ||
+                result.currentCustomerRoleRef.tenantId !== scope.tenantId
+              ) {
+                return Option.none();
+              }
+              const correlation: OrganizationCorrelation = {
+                archived: false,
+                counterpartyRef: result.counterpartyRef,
+                organizationProof: result,
+                partyRef: result.partyRef,
+                revision: result.counterpartyRevision,
+              };
+              if (result.correlationWitness !== undefined) {
+                Object.assign(correlation, { correlationWitness: result.correlationWitness });
+              }
+              return Option.some(correlation);
             }).pipe(Effect.orElseSucceed(Option.none))
           : Effect.gen(function* counterpartyCorrelation() {
-              const request = yield* Schema.decodeUnknownEffect(CounterpartyMigrationCorrelationRequestSchema)({
-                counterpartyRef: ref,
-              });
+              const candidate = { counterpartyRef: ref };
+              if (options?.includeCorrelationWitness === true) {
+                Object.assign(candidate, { includeCorrelationWitness: true });
+              }
+              const request = yield* Schema.decodeUnknownEffect(CounterpartyMigrationCorrelationRequestSchema)(
+                candidate,
+              );
               const issued = yield* acquireDelegatedGatewayContext(
                 {
                   audience: partyAudience,
@@ -127,7 +183,19 @@ export const commerceLegacyIcoInventoryLive = Layer.effect(
                 : Option.none();
             }).pipe(Effect.orElseSucceed(Option.none)),
       read: Effect.fn('CommerceLegacyIcoInventory.read')(function* readInventory(scope, options) {
-        const candidate = options?.projection === undefined ? {} : { projection: options.projection };
+        const candidate: LegacyIcoInventoryRequest = {};
+        if (options?.commitFenceChallenge !== undefined) {
+          Object.assign(candidate, { commitFenceChallenge: options.commitFenceChallenge });
+        }
+        if (options?.includeCorrelationWitness === true) {
+          Object.assign(candidate, { includeCorrelationWitness: true });
+        }
+        if (options?.projection !== undefined) {
+          Object.assign(candidate, { projection: options.projection });
+        }
+        if (options?.verifyCorrelationWitnesses !== undefined) {
+          Object.assign(candidate, { verifyCorrelationWitnesses: options.verifyCorrelationWitnesses });
+        }
         const request = yield* Schema.decodeUnknownEffect(LegacyIcoInventoryRequestSchema)(candidate).pipe(
           Effect.mapError((cause) =>
             Object.defineProperty(

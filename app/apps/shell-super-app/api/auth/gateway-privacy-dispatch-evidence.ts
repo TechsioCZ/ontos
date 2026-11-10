@@ -1,10 +1,7 @@
 import { recoverSqlTransactionError } from '@app/core-runtime';
 import { AccessDecisionGate, computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
-import {
-  privacyDispatchOperationContract,
-  RegisteredGatewayPrivacyDispatchSchema,
-} from '@app/core-runtime/auth/system-principal-context-provenance';
+import { RegisteredGatewayPrivacyDispatchSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { RegisteredGatewayPrivacyDispatch } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { CoreDatabase } from '@app/core-runtime/db/client';
 import { OperationalScopeResolver } from '@app/core-runtime/operations/context';
@@ -18,7 +15,11 @@ import {
   outboxTopic,
 } from '@app/privacy/outbox/privacy-measure-dispatched';
 import type { GatewayPrivacyDispatchSubjectSchema } from '@app/shared-contracts';
-import { decodeGatewayContextProtectedHeader, decodeSupportedGatewayContextClaims } from '@app/shared-contracts';
+import {
+  decodeGatewayContextProtectedHeader,
+  decodeSupportedGatewayContextClaims,
+  privacyDispatchOperationContract,
+} from '@app/shared-contracts';
 import { ExecuteSymmyRetentionPayloadSchema } from '@app/symmy-integration/api/execute-symmy-retention-action';
 import { SymmyJobPrivacyExecutionRequestSchema } from '@app/symmy-integration/api/symmy-job-privacy-execution';
 import { sql } from 'drizzle-orm';
@@ -26,7 +27,11 @@ import { DateTime, Effect, Match, Option, Predicate, Redacted, Schema } from 'ef
 import { jwtVerify } from 'jose';
 
 import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
-import { bindingAttestsSource, gatewayPublishedOperationAccess } from './gateway-delegation-policy.ts';
+import {
+  bindingAttestsSource,
+  gatewayPublishedOperationAccess,
+  resolvePublishedFiniteGatewayTarget,
+} from './gateway-delegation-policy.ts';
 import type { GatewayModuleBinding } from './gateway-delegation-policy.ts';
 import { delegationForbidden, delegationUnavailable, GatewayDelegationError } from './gateway-delegation-errors.ts';
 import { GatewayDelegationVerification } from './gateway-delegation-verification.ts';
@@ -168,10 +173,9 @@ const conditionalAllows = (
   source: Contract,
   consumerKey: string,
   destination: Contract,
-  operation: Operation,
+  target: ReturnType<typeof privacyDispatchOperationContract>,
   key: string | undefined,
 ): boolean => {
-  const target = privacyDispatchOperationContract(operation._tag);
   if (source.manifest.module.id === destination.manifest.module.id) {
     return key === undefined;
   }
@@ -297,7 +301,7 @@ const verifySource = Effect.fn('PrivacyDispatchEvidence.verifySource')(function*
     Effect.mapError(delegationForbidden),
   );
   if (
-    claims.ver !== 5 ||
+    !('privacyDispatch' in claims) ||
     claims.iat > Math.floor(DateTime.toEpochMillis(now) / 1000) ||
     !bindingAttestsSource(input.binding, claims, input.installed.composition.revision)
   ) {
@@ -352,7 +356,7 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
 }) {
   const { binding, installed, subject } = input;
   const source = installed.contracts.find((contract) => contract.deployment.appId === binding.sourceAppId);
-  const target = privacyDispatchOperationContract(subject.operation._tag);
+  const approvedTarget = privacyDispatchOperationContract(subject.operation._tag);
   const destination = installed.contracts.find((contract) => contract.deployment.appId === input.audience);
   const workerContract = installed.contracts.find((contract) => contract.manifest.module.id === symmyModule);
   if (
@@ -360,14 +364,18 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
     destination === undefined ||
     workerContract === undefined ||
     !assertWorkerCatalog(workerContract) ||
-    input.audience !== target.appId ||
-    destination.manifest.module.id !== target.moduleId ||
+    input.audience !== approvedTarget.appId ||
+    destination.manifest.module.id !== approvedTarget.moduleId ||
     binding.compositionRevision !== installed.composition.revision ||
-    binding.sourceBuildMarker !== source.deployment.buildMarker ||
-    gatewayPublishedOperationAccess(destination, target.entrypointKey, target.schemaVersion) !== target.access
+    binding.sourceBuildMarker !== source.deployment.buildMarker
   ) {
     return yield* delegationForbidden();
   }
+  const resolved = resolvePublishedFiniteGatewayTarget(destination, approvedTarget);
+  if (Option.isNone(resolved)) {
+    return yield* delegationForbidden();
+  }
+  const target = resolved.value;
   const admittedSource = yield* Match.value(subject.source).pipe(
     Match.tag(
       'Worker',
@@ -384,7 +392,7 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
         const row = yield* loadRow({ deliveryId: proof.deliveryId, tenantId: proof.tenantId });
         if (
           !workerClaimMatches(row, proof.claimId) ||
-          !conditionalAllows(source, workerKey, destination, subject.operation, subject.operationRequirementKey)
+          !conditionalAllows(source, workerKey, destination, target, subject.operationRequirementKey)
         ) {
           return yield* delegationForbidden();
         }
@@ -405,7 +413,7 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
             source,
             privacyDispatchOperationContract('PrivacyOutcome').entrypointKey,
             destination,
-            subject.operation,
+            target,
             subject.operationRequirementKey,
           )
         ) {
@@ -425,7 +433,7 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
       ) {
         const claims = yield* verifySource({ assertion: proof.sourceAssertion, binding, installed });
         const previous = claims.privacyDispatch;
-        const previousContract = privacyDispatchOperationContract(previous.operation);
+        const previousContract = privacyDispatchOperationContract(previous.operation, previous.target);
         const originalOperation = originalOperationFor(previous, subject.operation);
         if (
           Option.isNone(originalOperation) ||
@@ -438,7 +446,7 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
             source,
             previousContract.entrypointKey,
             destination,
-            subject.operation,
+            target,
             subject.operationRequirementKey,
           )
         ) {
@@ -479,6 +487,9 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
     taskId: row.messagePayload.handoff.taskId,
     tenantId: row.tenantId,
   };
+  if (target.schemaVersion !== approvedTarget.schemaVersion) {
+    Object.assign(base, { target });
+  }
   const metadata =
     'claimId' in admittedSource
       ? { ...base, claimId: admittedSource.claimId, workerKey, workerModuleKey: symmyModule }
@@ -486,6 +497,9 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
   const privacyDispatch = yield* Schema.decodeUnknownEffect(RegisteredGatewayPrivacyDispatchSchema)(metadata).pipe(
     Effect.mapError(delegationForbidden),
   );
+  if (privacyDispatch.target !== undefined) {
+    Object.freeze(privacyDispatch.target);
+  }
   return new AdmittedPrivacyDispatchValue(mintKey, {
     principal: Object.freeze({ ...principal }),
     privacyDispatch: Object.freeze(privacyDispatch),

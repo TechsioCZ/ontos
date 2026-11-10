@@ -1,8 +1,9 @@
 import type { ModuleEntrypointAccess } from '@app/core-runtime/module-entrypoint';
 import { RegisteredGatewayWorkloadSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
+import type { FiniteGatewayOperationTarget } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
 import { GatewayAudienceSchema } from '@app/shared-contracts';
-import { Config, Effect, Schema } from 'effect';
+import { Config, Effect, Option, Schema } from 'effect';
 
 import { delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
 
@@ -117,6 +118,32 @@ export const gatewayPublishedOperationAccess = (
     return undefined;
   }
   return action?.entrypoint.access ?? operation?.entrypoint.access;
+};
+
+/** Select one deployed version for an already approved finite capability. */
+export const resolvePublishedFiniteGatewayTarget = (
+  destination: InstalledContract,
+  approved: FiniteGatewayOperationTarget,
+) => {
+  if (destination.deployment.appId !== approved.appId || destination.manifest.module.id !== approved.moduleId) {
+    return Option.none();
+  }
+  const { actions, operationContracts } = destination.manifest.publicSurface;
+  const versions = new Set<string>();
+  for (const operation of [...actions, ...(operationContracts ?? [])]) {
+    if (operation.entrypoint.entrypointKey === approved.entrypointKey) {
+      versions.add(operation.schemaVersion);
+    }
+  }
+  const [schemaVersion] = versions;
+  if (
+    versions.size !== 1 ||
+    schemaVersion === undefined ||
+    gatewayPublishedOperationAccess(destination, approved.entrypointKey, schemaVersion) !== approved.access
+  ) {
+    return Option.none();
+  }
+  return Option.some(Object.freeze({ ...approved, schemaVersion }));
 };
 
 /** Derived only from the authenticated incoming operation and its one requested branch declaration. */

@@ -75,27 +75,8 @@ export const RegisteredGatewayRecoverySchema = Schema.Struct({
 });
 export type RegisteredGatewayRecovery = typeof RegisteredGatewayRecoverySchema.Type;
 
-const SYMMY_INTEGRATION_APP_ID = 'symmy-integration';
-const SYMMY_MODULE_ID = 'integration.symmy';
-const ORGANIZATION_SOURCE_FACTS_ENTRYPOINT = 'integration.symmy.api.symmy-source-organization-facts';
-const ORGANIZATION_SOURCE_FACTS_DECLARATION = 'integration.symmy.symmy-source-organization-facts.read';
-const ORGANIZATION_SOURCE_FACTS_WORKLOAD = 'integration.symmy.source-organization-facts.read';
-const organizationProcessingReadContract = Object.freeze({
-  access: 'read',
-  appId: SYMMY_INTEGRATION_APP_ID,
-  declarationKey: ORGANIZATION_SOURCE_FACTS_DECLARATION,
-  entrypointKey: ORGANIZATION_SOURCE_FACTS_ENTRYPOINT,
-  legalEntityScope: 'required',
-  moduleId: SYMMY_MODULE_ID,
-  schemaVersion: '1',
-  workloadKey: ORGANIZATION_SOURCE_FACTS_WORKLOAD,
-} as const);
-export const organizationProcessingReadOperationContract = () => organizationProcessingReadContract;
 export const RegisteredGatewayOrganizationProcessingReadSchema = Schema.Struct({ requestHash: RequestHashSchema });
 export type RegisteredGatewayOrganizationProcessingRead = typeof RegisteredGatewayOrganizationProcessingReadSchema.Type;
-const OrganizationProcessingReadInputMarkerSchema = Schema.Struct({ purpose: Schema.Literal('PROCESSING') });
-/** Only the discriminator is inspected here; the owner alone decodes its complete published request. */
-export const isOrganizationProcessingReadInput = Schema.is(OrganizationProcessingReadInputMarkerSchema);
 
 /** Signed by Shell only after native delivery and registered binding admission. */
 export const RegisteredGatewayWorkloadSchema = Schema.Struct({
@@ -125,10 +106,6 @@ export const RegisteredGatewayWorkloadSchema = Schema.Struct({
   Schema.makeFilter((workload) =>
     workload.organizationProcessingRead === undefined ||
     (workload.recovery === undefined &&
-      workload.entrypointKey === ORGANIZATION_SOURCE_FACTS_ENTRYPOINT &&
-      workload.declarationKey === ORGANIZATION_SOURCE_FACTS_DECLARATION &&
-      workload.workloadKey === ORGANIZATION_SOURCE_FACTS_WORKLOAD &&
-      workload.schemaVersion === '1' &&
       workload.legalEntityScope === 'required' &&
       workload.legalEntityId !== undefined)
       ? undefined
@@ -174,6 +151,9 @@ export const RegisteredGatewayRouteScopeSchema = Schema.Struct({
     ),
   ),
   principalId: PrincipalIdSchema,
+  replayIdempotencyDigest: Schema.optionalKey(
+    Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)).pipe(Schema.brand('GatewayRouteReplayDigest')),
+  ),
   routeId: decodedStringBrand(uuid, 'GatewayRouteId'),
   routeKey: decodedStringBrand(routeIdentity, 'GatewayRouteKey'),
   routeRevision: decodedStringBrand(routeIdentity, 'GatewayRouteRevision'),
@@ -191,9 +171,34 @@ export const PrivacyDispatchOperationSchema = Schema.Literals([
   'PrivacyOutcome',
 ]);
 export type PrivacyDispatchOperation = typeof PrivacyDispatchOperationSchema.Type;
-const PRIVACY_DISPATCH_WORKER_MODULE = SYMMY_MODULE_ID;
-const PRIVACY_DISPATCH_WORKER_KEY = 'integration.symmy.symmy-job-privacy-dispatch';
+const FiniteGatewayOperationTargetSchema = Schema.Struct({
+  access: Schema.Literals(['read', 'write']),
+  appId: decodedStringBrand(routeIdentity, 'FiniteGatewayTargetAppId'),
+  declarationKey: DeclarationKeySchema,
+  entrypointKey: EntrypointKeySchema,
+  legalEntityScope: Schema.Literals(['optional', 'required']),
+  moduleId: decodedStringBrand(routeIdentity, 'FiniteGatewayTargetModuleId'),
+  schemaVersion: Schema.NonEmptyString.check(Schema.isMaxLength(40), Schema.isTrimmed()),
+});
+export type FiniteGatewayOperationTarget = typeof FiniteGatewayOperationTargetSchema.Type;
+const FiniteDispatchAuthoritySchema = Schema.Struct({
+  consumerModuleKey: WorkerModuleKeySchema,
+  originActionKey: ActionKeySchema,
+  originCapabilityKey: DeclarationKeySchema,
+  producerModuleKey: WorkerModuleKeySchema,
+  subjectResourceType: routeIdentity,
+  targetAccess: Schema.Literals(['tenant-scope', 'tenant-unrestricted-list', 'delegated-actor']),
+  topic: routeIdentity,
+  workerKey: WorkerKeySchema,
+});
+type FiniteDispatchAuthority = typeof FiniteDispatchAuthoritySchema.Type;
+const SealedFiniteGatewayTargetSchema = Schema.Struct({ target: FiniteGatewayOperationTargetSchema });
+const SealedFiniteDispatchAuthoritySchema = Schema.Struct({
+  authority: FiniteDispatchAuthoritySchema,
+  target: FiniteGatewayOperationTargetSchema,
+});
 export const RegisteredGatewayPrivacyDispatchSchema = Schema.Struct({
+  authority: Schema.optionalKey(FiniteDispatchAuthoritySchema),
   claimId: Schema.optionalKey(ClaimIdSchema),
   deliveryId: decodedStringBrand(uuid, 'PrivacyDispatchDeliveryId'),
   dispatchInvocationId: AdmissionInvocationIdSchema,
@@ -206,10 +211,11 @@ export const RegisteredGatewayPrivacyDispatchSchema = Schema.Struct({
   principalId: PrincipalIdSchema,
   requestHash: RequestHashSchema,
   sourceMode: Schema.Literals(['worker', 'dispatch']),
+  target: Schema.optionalKey(FiniteGatewayOperationTargetSchema),
   taskId: decodedStringBrand(Schema.NonEmptyString, 'PrivacyTaskId'),
   tenantId: TenantIdSchema,
-  workerKey: Schema.optionalKey(Schema.Literal(PRIVACY_DISPATCH_WORKER_KEY)),
-  workerModuleKey: Schema.optionalKey(Schema.Literal(PRIVACY_DISPATCH_WORKER_MODULE)),
+  workerKey: Schema.optionalKey(WorkerKeySchema),
+  workerModuleKey: Schema.optionalKey(WorkerModuleKeySchema),
 }).check(
   Schema.makeFilter((value) => {
     if (value.sourceMode === 'worker') {
@@ -217,87 +223,20 @@ export const RegisteredGatewayPrivacyDispatchSchema = Schema.Struct({
         ? undefined
         : 'A worker Privacy dispatch requires its current native claim';
     }
-    return value.operation === 'SymmyReceipt' &&
-      value.claimId === undefined &&
-      value.workerKey === undefined &&
-      value.workerModuleKey === undefined
+    return value.claimId === undefined && value.workerKey === undefined && value.workerModuleKey === undefined
       ? undefined
       : 'Durable dispatch authority permits only its exact receipt read';
   }),
 );
 export type RegisteredGatewayPrivacyDispatch = typeof RegisteredGatewayPrivacyDispatchSchema.Type;
-interface PrivacyDispatchOperationContract {
-  readonly access: 'read' | 'write';
-  readonly appId: string;
-  readonly declarationKey: string;
-  readonly entrypointKey: string;
-  readonly legalEntityScope: 'optional' | 'required';
-  readonly moduleId: string;
-  readonly schemaVersion: '1';
-}
-const privacyDispatchContracts: Readonly<Record<PrivacyDispatchOperation, PrivacyDispatchOperationContract>> =
-  Object.freeze({
-    PrivacyEligibility: Object.freeze({
-      access: 'read',
-      appId: 'privacy',
-      declarationKey: 'privacy.core.measure-execution-eligibility.read',
-      entrypointKey: 'privacy.core.api.measure-execution-eligibility',
-      legalEntityScope: 'required',
-      moduleId: 'privacy.core',
-      schemaVersion: '1',
-    }),
-    PrivacyOutcome: Object.freeze({
-      access: 'write',
-      appId: 'privacy',
-      declarationKey: 'privacy.core.owner-execution-outcome.record',
-      entrypointKey: 'privacy.core.record-owner-execution-outcome',
-      legalEntityScope: 'required',
-      moduleId: 'privacy.core',
-      schemaVersion: '1',
-    }),
-    SymmyReceipt: Object.freeze({
-      access: 'read',
-      appId: SYMMY_INTEGRATION_APP_ID,
-      declarationKey: 'integration.symmy.privacy-measure.read-receipt',
-      entrypointKey: 'integration.symmy.api.symmy-job-privacy-execution',
-      legalEntityScope: 'optional',
-      moduleId: PRIVACY_DISPATCH_WORKER_MODULE,
-      schemaVersion: '1',
-    }),
-    SymmyRetention: Object.freeze({
-      access: 'write',
-      appId: SYMMY_INTEGRATION_APP_ID,
-      declarationKey: 'integration.symmy.symmy-retention.execute',
-      entrypointKey: 'integration.symmy.execute-symmy-retention',
-      legalEntityScope: 'optional',
-      moduleId: PRIVACY_DISPATCH_WORKER_MODULE,
-      schemaVersion: '1',
-    }),
-  });
-/** Exact finite receiver contracts, not a permission grant. */
-export const privacyDispatchOperationContract = (
-  operation: PrivacyDispatchOperation,
-): PrivacyDispatchOperationContract => privacyDispatchContracts[operation];
-
 export const RegisteredGatewayOrganizationGovernanceReadSchema = Schema.Struct({
   governanceLegalEntityId: LegalEntityIdSchema,
   principalId: PrincipalIdSchema,
   requestHash: RequestHashSchema,
+  target: Schema.optionalKey(FiniteGatewayOperationTargetSchema),
   tenantId: TenantIdSchema,
 });
 export type RegisteredGatewayOrganizationGovernanceRead = typeof RegisteredGatewayOrganizationGovernanceReadSchema.Type;
-const organizationGovernanceReadContract = Object.freeze({
-  access: 'read',
-  appId: SYMMY_INTEGRATION_APP_ID,
-  declarationKey: ORGANIZATION_SOURCE_FACTS_DECLARATION,
-  entrypointKey: ORGANIZATION_SOURCE_FACTS_ENTRYPOINT,
-  legalEntityScope: 'required',
-  moduleId: 'integration.symmy',
-  schemaVersion: '1',
-} as const);
-/** A fixed read contract only; this supplies neither source facts nor permission to obtain them. */
-export const organizationGovernanceReadOperationContract = () => organizationGovernanceReadContract;
-
 interface RedeemedGatewayProvenance {
   readonly actor?: VerifiedGatewayActor | undefined;
   readonly compositionRevision: string;
@@ -436,6 +375,11 @@ const privacyDispatchMatchesPrincipal = (
   route: RegisteredGatewayRouteScope | undefined,
 ): boolean =>
   Schema.is(RegisteredGatewayPrivacyDispatchSchema)(dispatch) &&
+  dispatch.target !== undefined &&
+  dispatch.authority !== undefined &&
+  (dispatch.sourceMode === 'dispatch' ||
+    (dispatch.workerKey === dispatch.authority.workerKey &&
+      dispatch.workerModuleKey === dispatch.authority.consumerModuleKey)) &&
   actor !== undefined &&
   workload === undefined &&
   route === undefined &&
@@ -457,7 +401,9 @@ const organizationGovernanceReadMatchesPrincipal = (
   route === undefined &&
   dispatch === undefined &&
   Schema.is(RegisteredGatewayOrganizationGovernanceReadSchema)(read) &&
-  actor?.appId === 'privacy' &&
+  read.target?.access === 'read' &&
+  read.target.legalEntityScope === 'required' &&
+  actor !== undefined &&
   (context.authMethod === 'session' || context.authMethod === 'api_key') &&
   context.authenticationNamespaceId !== undefined &&
   context.impersonatedByPrincipalId === undefined &&
@@ -465,11 +411,23 @@ const organizationGovernanceReadMatchesPrincipal = (
   context.tenantId === read.tenantId &&
   context.legalEntityId === read.governanceLegalEntityId;
 
-const freezePrivacyDispatch = (dispatch: RegisteredGatewayPrivacyDispatch | undefined) =>
-  dispatch === undefined ? undefined : Object.freeze({ ...dispatch });
-
-const freezeOrganizationGovernanceRead = (read: RegisteredGatewayOrganizationGovernanceRead | undefined) =>
-  read === undefined ? undefined : Object.freeze({ ...read });
+const freezeFiniteGatewayMetadata = <
+  Metadata extends { readonly authority?: FiniteDispatchAuthority; readonly target?: FiniteGatewayOperationTarget },
+>(
+  metadata: Metadata | undefined,
+) => {
+  if (metadata === undefined) {
+    return metadata;
+  }
+  const snapshot = { ...metadata };
+  if (metadata.target !== undefined) {
+    Object.assign(snapshot, { target: Object.freeze({ ...metadata.target }) });
+  }
+  if (metadata.authority !== undefined) {
+    Object.assign(snapshot, { authority: Object.freeze({ ...metadata.authority }) });
+  }
+  return Object.freeze(snapshot);
+};
 
 /**
  * Marks a context only after an audience-bound gateway assertion has been verified and redeemed. The
@@ -532,8 +490,8 @@ export const trustVerifiedGatewayPrincipalContext = <Context extends TrustedPrin
         ? undefined
         : Object.freeze({ appId: actor.appId, buildMarker: actor.buildMarker, principalId: actor.principalId }),
     compositionRevision,
-    organizationGovernanceRead: freezeOrganizationGovernanceRead(organizationGovernanceRead),
-    privacyDispatch: freezePrivacyDispatch(privacyDispatch),
+    organizationGovernanceRead: freezeFiniteGatewayMetadata(organizationGovernanceRead),
+    privacyDispatch: freezeFiniteGatewayMetadata(privacyDispatch),
     routeScope:
       routeScope === undefined
         ? undefined
@@ -559,8 +517,10 @@ export const readVerifiedGatewayCompositionRevision = <Context>(context: Context
 /** Returns the finite read marker only for this exact verified and redeemed human context. */
 export const readVerifiedGatewayOrganizationGovernanceRead = <Context>(
   context: Context,
-): RegisteredGatewayOrganizationGovernanceRead | undefined =>
-  readRedeemedGatewayProvenance(context)?.organizationGovernanceRead;
+): (RegisteredGatewayOrganizationGovernanceRead & typeof SealedFiniteGatewayTargetSchema.Type) | undefined => {
+  const read = readRedeemedGatewayProvenance(context)?.organizationGovernanceRead;
+  return Schema.is(SealedFiniteGatewayTargetSchema)(read) ? read : undefined;
+};
 
 /** Returns the redeemed gateway assertion carried by this exact verified context, if any. */
 export const readVerifiedGatewayScopeAssertion = <Context>(context: Context): GatewayScopeAssertion | undefined =>
@@ -576,7 +536,10 @@ export const readVerifiedGatewayWorkload = <Context>(context: Context): Register
 /** Returns only the signed finite native Privacy dispatch bound to this exact redeemed carrier. */
 export const readVerifiedGatewayPrivacyDispatch = <Context>(
   context: Context,
-): RegisteredGatewayPrivacyDispatch | undefined => readRedeemedGatewayProvenance(context)?.privacyDispatch;
+): (RegisteredGatewayPrivacyDispatch & typeof SealedFiniteDispatchAuthoritySchema.Type) | undefined => {
+  const dispatch = readRedeemedGatewayProvenance(context)?.privacyDispatch;
+  return Schema.is(SealedFiniteDispatchAuthoritySchema)(dispatch) ? dispatch : undefined;
+};
 
 /** Returns only the Shell-attested private route scope sealed on this exact redeemed carrier. */
 export const readVerifiedGatewayRouteScope = <Context>(context: Context): RegisteredGatewayRouteScope | undefined =>

@@ -4,6 +4,7 @@
   "private": true,
   "exports": {
     "./api": "./shared/api.ts",
+    "./api/assortment-fixture-market-association": "./shared/apis/assortment-fixture-market-association.ts",
     "./api/client": "./src/api/commerce-market-catalog-client.ts",
     "./api/pricing-current-market-evidence": "./shared/apis/pricing-current-market-evidence.ts",
     "./api/pricing-current-market-evidence-client": "./src/api/pricing-current-market-evidence-client.ts",

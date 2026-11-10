@@ -12,6 +12,7 @@ import { SourceProcessingContextSchema } from '@app/privacy/api';
 import { ProcessingPurposeRefSchema } from '@app/privacy/resources/processing-purpose';
 import { retireSourceProcessingNativePurpose } from '@app/privacy/testing/source-processing-governance-native';
 import { seedCommittedProfileSourceProcessingNativeFixture } from '@app/privacy/testing/source-processing-native';
+import { GatewayForbiddenProblemSchema } from '@app/shared-contracts';
 import { SymmyEffectIdSchema } from '@app/shared-contracts/symmy';
 import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-job-status';
 import { encodeSymmySourceSelector } from '@app/symmy-integration/symmy-source-selector';
@@ -31,7 +32,7 @@ import {
 } from './support/symmy-c14-customer-assignment-fixture.mts';
 import { customerFixtureUuid as uuid } from './support/symmy-c14-customer-native-authority.mts';
 import { customerWorkerKey } from './support/symmy-c14-customer-rules.mts';
-import { makeInternalMembershipAssignmentPlan } from './support/symmy-c14-membership-plan.mts';
+import { makeInternalMembershipPlan } from './support/symmy-c14-membership-plan.mts';
 import { prepareManualMembershipNativeFixture } from './support/symmy-c14-membership-manual.mts';
 import {
   issueMembershipFixtureRecovery,
@@ -255,6 +256,7 @@ it.live(
           expect(yield* observeCustomerGroupSourceNativeFixture(invalid).pipe(Effect.isFailure)).toBe(true);
         }
         const occurrenceId = yield* uuid;
+        const removalOccurrenceId = yield* uuid;
         const manual = yield* prepareManualMembershipNativeFixture(fixture);
         expect(manual.membership.management).toEqual({ kind: 'MANUAL' });
         const memberRecordId = 'INTERNAL_C14_EXPLICIT_MEMBER';
@@ -268,17 +270,20 @@ it.live(
         };
         const dataPrivacy = yield* seedCommittedProfileSourceProcessingNativeFixture({
           connections: isolated.connections,
-          contexts: (['customer-group-membership.write', 'customer-group-membership.recover'] as const).map(
-            (operation) => ({
-              authMethod: 'system',
+          contexts: [source, { ...source, occurrenceId: removalOccurrenceId }].flatMap((exactSource) =>
+            (['customer-group-membership.write', 'customer-group-membership.recover'] as const).map((operation) => ({
+              authMethod: 'system' as const,
               principalId: systemId,
               request: {
-                consumerModuleId: 'commerce.customer-context',
+                consumerModuleId: 'commerce.customer-context' as const,
                 operation,
-                source,
-                target: { kind: 'RETAIL_CUSTOMER_PROFILE', resourceId: fixture.profileReceipt.profileRef.resourceId },
+                source: exactSource,
+                target: {
+                  kind: 'RETAIL_CUSTOMER_PROFILE' as const,
+                  resourceId: fixture.profileReceipt.profileRef.resourceId,
+                },
               },
-            }),
+            })),
           ),
           contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_MEMBERSHIP_DATA_CONTRACT',
           controllerRef: 'internal:membership-conformance',
@@ -297,7 +302,7 @@ it.live(
             Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
           )([...fixture.privacy.contexts, ...dataPrivacy.contexts]),
         });
-        const memberPlan = yield* makeInternalMembershipAssignmentPlan({
+        const memberPlan = yield* makeInternalMembershipPlan({
           effectiveAt: DateTime.formatIso(yield* DateTime.now),
           groupRef: group.value.groupRef,
           manager: {
@@ -343,11 +348,11 @@ it.live(
           tenantId,
         };
         const selectedCode = encodeSymmySourceSelector(selectorScope, groupRecordId, group.value.groupRef.resourceId);
-        const submit = (code = selectedCode, idempotencyKey = 'INTERNAL_C14_SELECTED_MEMBERSHIP') =>
+        const submit = (code = selectedCode, idempotencyKey = 'INTERNAL_C14_SELECTED_MEMBERSHIP', plan = memberPlan) =>
           client.post(`${shell.baseUrl}/api/symmy/v1/customer-groups/${code}/customers/batch`, {
             body: HttpBody.jsonUnsafe({
               contractVersion: 'INTERNAL_C14',
-              plan: Schema.encodeSync(SymmyInternalExecutionPlanSchema)(memberPlan),
+              plan: Schema.encodeSync(SymmyInternalExecutionPlanSchema)(plan),
             }),
             headers: { ...headers, 'idempotency-key': idempotencyKey },
           });
@@ -497,6 +502,44 @@ it.live(
           revision: manual.membership.revision,
           state: manual.membership.state,
         });
+        const assigned = receipt.items.find((item) => item.outcome === 'ASSIGNED' && 'membership' in item);
+        assert(assigned !== undefined && 'membership' in assigned);
+        const removalPlan = yield* makeInternalMembershipPlan({
+          effectiveAt: DateTime.formatIso(yield* DateTime.now),
+          expectedRevision: assigned.membership.revision,
+          groupRef: group.value.groupRef,
+          manager: {
+            factFamily: 'CUSTOMER_GROUP_MEMBERSHIP',
+            issuer: groupSource.issuer,
+            sourceNamespace: groupSource.namespace,
+            tenantId,
+          },
+          membershipRef: assigned.membership.membershipRef,
+          operation: 'REMOVE',
+          profile: { profileKind: 'RETAIL', profileRef: fixture.profileReceipt.profileRef },
+          reason: 'INTERNAL_C14 explicit removal on the assignment-only route',
+          route: groupSource.route,
+          source: {
+            assertionId: removalOccurrenceId,
+            effectId: 'INTERNAL_C14_REMOVE_AT_ADMISSION',
+            order: 2,
+            sourceRecordId: memberRecordId,
+          },
+        });
+        const membershipInvocations = admin`select action_invocation_id from core.action_invocations where tenant_id=${tenantId} and action_key=${membershipActionKey} order by action_invocation_id`;
+        const admittedJobs = admin`select job_id from symmy_integration.import_jobs where tenant_id=${tenantId} and route_id=${memberRouteId} order by job_id`;
+        const beforeRemoval = yield* membershipInvocations;
+        const jobsBeforeRemoval = yield* admittedJobs;
+        const rejectedRemoval = yield* submit(selectedCode, 'INTERNAL_C14_SELECTED_MEMBERSHIP_REMOVE', removalPlan);
+        expect(rejectedRemoval.status).toBe(403);
+        expect(
+          yield* rejectedRemoval.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(GatewayForbiddenProblemSchema))),
+        ).toMatchObject({
+          status: 403,
+        });
+        expect(yield* membershipInvocations).toEqual(beforeRemoval);
+        expect(yield* admittedJobs).toEqual(jobsBeforeRemoval);
+        expect((yield* manual.read).memberships).toEqual(currentMemberships.memberships);
         const retired = yield* retireSourceProcessingNativePurpose({
           connections: isolated.connections,
           governancePrincipalId: fixture.governancePrincipalId,

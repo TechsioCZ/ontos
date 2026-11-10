@@ -9,6 +9,7 @@ import {
   requireScopedSourceExecutionFenceOpen,
 } from '@app/core-runtime/access/enforcement';
 import { and, eq, isNull, sql } from 'drizzle-orm';
+import type { SQLWrapper } from 'drizzle-orm';
 import { Array as EffectArray, Config, Duration, Effect, Match, Option, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import {
@@ -46,7 +47,7 @@ import {
   SymmyInventoryImportIntentSchema,
 } from '../../shared/domain/symmy-catalog-pricing-inventory-intents.ts';
 import { decodeSymmySourceSelector, verifySymmySourceSelector } from '../../shared/domain/symmy-source-selector.ts';
-import { AdmitSymmySyncResultSchema } from '../../shared/actions/admit-symmy-sync.ts';
+import { AdmitSymmySyncPayloadSchema, AdmitSymmySyncResultSchema } from '../../shared/actions/admit-symmy-sync.ts';
 import type { SymmyDecodedSourceSelector } from '../../shared/domain/symmy-source-selector.ts';
 import {
   mapSymmyPolicyFixtureIntent,
@@ -54,9 +55,10 @@ import {
   SymmyPolicyFixtureRouteKeySchema,
 } from '../../shared/domain/symmy-policy-fixture-intents.ts';
 import { symmyExecutionRegistration } from '../services/symmy-worker-identity.service.ts';
+import { SymmyRouteContextResponseSchema } from '../../shared/apis/symmy-route-context.ts';
 
 export class SymmyJobStoreError extends Schema.TaggedError<SymmyJobStoreError>()('SymmyJobStoreError', {
-  code: Schema.Literals(['route_denied', 'idempotency_conflict', 'unavailable']),
+  code: Schema.Literals(['route_denied', 'idempotency_conflict', 'stock_assertion_denied', 'unavailable']),
 }) {}
 
 export interface SymmyJobAdmissionRequest {
@@ -314,15 +316,26 @@ const requirePinnedPolicyFixture = (
     : Effect.fail(routeDenied());
 };
 
+const routeSourceAuthority = (
+  route: typeof symmyJobRoutes.$inferSelect,
+  template: SymmyFixtureExecutionPlan | null,
+) => ({
+  sourceMappingVersion: template?.sourceMappingVersion ?? route.mappingVersion,
+  sourceRouteId: template?.sourceRouteId ?? route.routeId,
+  sourceRouteRevision: template?.sourceRouteRevision ?? route.routeRevision,
+});
+
 const exactRouteProofMatches = (
   route: typeof symmyJobRoutes.$inferSelect,
   scope: OperationalScope,
   template: SymmyFixtureExecutionPlan | null,
+  idempotencyDigest?: string,
 ): boolean => {
   const proof = readVerifiedGatewayRouteScope(scope);
   if (scope.legalEntityId === undefined) {
     return proof === undefined && route.legalEntityId === null;
   }
+  const { sourceMappingVersion, sourceRouteId, sourceRouteRevision } = routeSourceAuthority(route, template);
   return (
     proof !== undefined &&
     proof.tenantId === route.tenantId &&
@@ -332,11 +345,15 @@ const exactRouteProofMatches = (
     proof.routeId === route.routeId &&
     proof.routeRevision === route.routeRevision &&
     proof.mappingVersion === route.mappingVersion &&
-    proof.sourceRouteId === (template?.sourceRouteId ?? route.routeId) &&
-    proof.sourceRouteRevision === (template?.sourceRouteRevision ?? route.routeRevision) &&
-    proof.sourceMappingVersion === (template?.sourceMappingVersion ?? route.mappingVersion)
+    (proof.replayIdempotencyDigest === undefined || proof.replayIdempotencyDigest === idempotencyDigest) &&
+    proof.sourceRouteId === sourceRouteId &&
+    proof.sourceRouteRevision === sourceRouteRevision &&
+    proof.sourceMappingVersion === sourceMappingVersion
   );
 };
+const permitsNewAdmission = (route: typeof symmyJobRoutes.$inferSelect, scope: OperationalScope, fixtureId: string) =>
+  route.fixtureIds.includes(fixtureId) && readVerifiedGatewayRouteScope(scope)?.replayIdempotencyDigest === undefined;
+const isSyncAdmissionRoute = Schema.is(AdmitSymmySyncPayloadSchema.fields.routeKey);
 
 const selectedPlanMatches = (
   input: SymmyJobAdmissionRequest,
@@ -570,6 +587,20 @@ interface SyncPrincipalFacts {
   readonly principalId: string;
   readonly tenantId: string;
 }
+const syncAdmissionKey = (
+  identity: { readonly legalEntityId?: string | null; readonly principalId: string; readonly tenantId: string },
+  routeKey: typeof symmySyncAdmissions.$inferSelect.routeKey,
+  digest: string,
+) =>
+  and(
+    eq(symmySyncAdmissions.tenantId, identity.tenantId),
+    eq(symmySyncAdmissions.routeKey, routeKey),
+    eq(symmySyncAdmissions.idempotencyDigest, digest),
+    eq(symmySyncAdmissions.principalId, identity.principalId),
+    identity.legalEntityId === null || identity.legalEntityId === undefined
+      ? isNull(symmySyncAdmissions.legalEntityId)
+      : eq(symmySyncAdmissions.legalEntityId, identity.legalEntityId),
+  );
 interface SyncPinContext {
   readonly authContextRef: string;
   readonly scope: OperationalScope;
@@ -622,7 +653,11 @@ const pinSyncItem = Effect.fn('SymmyJobStore.pinSyncItem')(function* pinSyncItem
   return { ...item, effects };
 });
 
-const configuredRouteSelector = (decoded: SymmyDecodedSourceSelector | undefined, tenantId: string) => {
+const configuredRouteSelector = (
+  decoded: SymmyDecodedSourceSelector | undefined,
+  tenantId: string,
+  plan: SQLWrapper = symmyJobRoutes.fixturePlan,
+) => {
   if (decoded === undefined) {
     return isNull(symmyJobRoutes.routeCode);
   }
@@ -630,15 +665,15 @@ const configuredRouteSelector = (decoded: SymmyDecodedSourceSelector | undefined
     Match.tag('Legacy', ({ code }) => eq(symmyJobRoutes.routeCode, code)),
     Match.tag('Qualified', ({ code, targetResourceId }) =>
       and(
-        sql`${symmyJobRoutes.fixturePlan} #>> '{selector,target,resourceId}' = ${targetResourceId}`,
+        sql`${plan} #>> '{selector,target,resourceId}' = ${targetResourceId}`,
         sql`symmy_integration.symmy_source_selector_code(
           ${tenantId}::text,
-          ${symmyJobRoutes.fixturePlan} #>> '{selector,source,issuerId}',
-          ${symmyJobRoutes.fixturePlan} #>> '{selector,source,sourceNamespace}',
-          ${symmyJobRoutes.fixturePlan} #>> '{selector,source,route,integrationRouteId}',
-          ${symmyJobRoutes.fixturePlan} #>> '{selector,kind}',
-          ${symmyJobRoutes.fixturePlan} #>> '{selector,source,sourceRecordId}',
-          ${symmyJobRoutes.fixturePlan} #>> '{selector,target,resourceId}'
+          ${plan} #>> '{selector,source,issuerId}',
+          ${plan} #>> '{selector,source,sourceNamespace}',
+          ${plan} #>> '{selector,source,route,integrationRouteId}',
+          ${plan} #>> '{selector,kind}',
+          ${plan} #>> '{selector,source,sourceRecordId}',
+          ${plan} #>> '{selector,target,resourceId}'
         ) = ${code}`,
       ),
     ),
@@ -647,7 +682,7 @@ const configuredRouteSelector = (decoded: SymmyDecodedSourceSelector | undefined
 };
 const qualifiedSelectorMatches = Effect.fn('SymmyJobStore.qualifiedSelectorMatches')(function* qualifiedSelectorMatches(
   decoded: Extract<SymmyDecodedSourceSelector, { _tag: 'Qualified' }>,
-  plan: SymmyFixtureExecutionPlan,
+  plan: Pick<SymmyFixtureExecutionPlan, 'selector'>,
   scope: OperationalScope,
 ) {
   const selected = plan.selector;
@@ -680,6 +715,7 @@ interface ConfiguredRouteContext {
   readonly issuerId: SymmyFixtureExecutionPlan['items'][number]['source']['issuerId'];
   readonly legalEntityId?: string;
   readonly mappingVersion: string;
+  readonly replayIdempotencyDigest?: NonNullable<typeof SymmyRouteContextResponseSchema.Type.replayIdempotencyDigest>;
   readonly resolvedCode?: string;
   readonly routeId: string;
   readonly routeRevision: string;
@@ -691,6 +727,116 @@ interface ConfiguredRouteContext {
   readonly sourceRouteRevision: string;
   readonly tenantId: string;
 }
+const retainedRouteContext = Effect.fn('SymmyJobStore.retainedRouteContext')(function* retainedRouteContext(
+  row: typeof symmyJobRoutes.$inferSelect,
+  original: SymmyPinnedJobPlan,
+  digest: string,
+  template: SymmyFixtureExecutionPlan | null = null,
+): Effect.fn.Return<ConfiguredRouteContext, SymmyJobStoreError> {
+  const [item] = original.items;
+  const [effect] = item.effects;
+  const { record } = effect.ref.occurrence;
+  const replayIdempotencyDigest = yield* Schema.decodeUnknownEffect(
+    SymmyRouteContextResponseSchema.fields.replayIdempotencyDigest,
+  )(digest).pipe(Effect.mapError(unavailable));
+  if (replayIdempotencyDigest === undefined || record.route.tenantId !== row.tenantId) {
+    return yield* unavailable();
+  }
+  const result: ConfiguredRouteContext = {
+    allowedOwnerOperations: [],
+    issuerId: original.selector?.source.issuerId ?? record.issuerId,
+    mappingVersion: row.mappingVersion,
+    replayIdempotencyDigest,
+    routeId: row.routeId,
+    routeRevision: row.routeRevision,
+    // The current enrollment is the authority carrier; the retained plan remains the only source for owner effects.
+    ...routeSourceAuthority(row, template),
+    sourceNamespace: original.selector?.source.sourceNamespace ?? record.sourceNamespace,
+    tenantId: row.tenantId,
+  };
+  if (row.legalEntityId !== null) {
+    Object.assign(result, { legalEntityId: row.legalEntityId });
+  }
+  if (row.routeCode !== null) {
+    Object.assign(result, { resolvedCode: row.routeCode });
+  }
+  if (original.selector !== undefined) {
+    Object.assign(result, { selector: original.selector });
+  }
+  return result;
+});
+const qualifyRetainedSyncRoute = Effect.fn('SymmyJobStore.qualifyRetainedSyncRoute')(function* qualifyRetainedSyncRoute(
+  transaction: ScopedTransactionExecutor,
+  row: typeof symmyJobRoutes.$inferSelect,
+  digest: string,
+): Effect.fn.Return<Option.Option<ConfiguredRouteContext>, SymmyJobStoreError> {
+  if (row.fixturePlan !== null || !isSyncAdmissionRoute(row.routeKey) || row.routeCode !== null) {
+    return Option.none();
+  }
+  const [saved, duplicate] = yield* transaction
+    .select({ executionPlan: symmySyncAdmissions.executionPlan })
+    .from(symmySyncAdmissions)
+    .where(and(syncAdmissionKey(row, row.routeKey, digest), isNull(symmySyncAdmissions.retentionReceipt)))
+    .limit(2)
+    .pipe(Effect.mapError(unavailable));
+  if (saved === undefined || duplicate !== undefined) {
+    return Option.none();
+  }
+  const original = yield* Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema)(saved.executionPlan).pipe(
+    Effect.mapError(unavailable),
+  );
+  return Option.some(yield* retainedRouteContext(row, original, digest));
+});
+const qualifyRetainedJobRoute = Effect.fn('SymmyJobStore.qualifyRetainedJobRoute')(function* qualifyRetainedJobRoute(
+  transaction: ScopedTransactionExecutor,
+  scope: OperationalScope,
+  routeKey: SymmyDurableRouteKey,
+  decoded: SymmyDecodedSourceSelector | undefined,
+  digest: string,
+): Effect.fn.Return<Option.Option<ConfiguredRouteContext>, SymmyJobStoreError> {
+  // Only a qualified selector can prove which replaced source the accepted job used.
+  const hasQualifiedSelector = Match.value(decoded).pipe(
+    Match.tag('Qualified', () => true),
+    Match.orElse(() => false),
+  );
+  const [saved, duplicate] = yield* transaction
+    .select({ executionPlan: symmyImportJobs.executionPlan, route: symmyJobRoutes })
+    .from(symmyImportJobs)
+    .innerJoin(
+      symmyJobRoutes,
+      and(
+        eq(symmyJobRoutes.tenantId, symmyImportJobs.tenantId),
+        eq(symmyJobRoutes.principalId, symmyImportJobs.principalId),
+        eq(symmyJobRoutes.routeKey, symmyImportJobs.routeKey),
+        sql`${symmyJobRoutes.legalEntityId} IS NOT DISTINCT FROM ${symmyImportJobs.legalEntityId}`,
+        sql`${symmyJobRoutes.routeCode} IS NOT DISTINCT FROM ${symmyImportJobs.routeCode}`,
+      ),
+    )
+    .where(
+      and(
+        eq(symmyImportJobs.tenantId, scope.tenantId),
+        eq(symmyImportJobs.principalId, scope.principalId),
+        eq(symmyImportJobs.routeKey, routeKey),
+        eq(symmyImportJobs.idempotencyDigest, digest),
+        eq(symmyJobRoutes.active, true),
+        hasQualifiedSelector ? undefined : isNull(symmyJobRoutes.fixturePlan),
+        configuredRouteSelector(decoded, scope.tenantId, symmyImportJobs.executionPlan),
+      ),
+    )
+    .limit(2)
+    .pipe(Effect.mapError(unavailable));
+  if (saved === undefined || duplicate !== undefined || saved.executionPlan === null) {
+    return Option.none();
+  }
+  const [original, template] = yield* Effect.all(
+    [
+      Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema)(saved.executionPlan).pipe(Effect.mapError(unavailable)),
+      decodeRouteTemplate(saved.route),
+    ],
+    { concurrency: 2 },
+  );
+  return Option.some(yield* retainedRouteContext(saved.route, original, digest, template));
+});
 const qualifyConfiguredRoute = Effect.fn('SymmyJobStore.qualifyConfiguredRoute')(function* qualifyConfiguredRoute(
   context: { readonly decoded: SymmyDecodedSourceSelector | undefined; readonly scope: OperationalScope },
   row: typeof symmyJobRoutes.$inferSelect,
@@ -727,10 +873,8 @@ const qualifyConfiguredRoute = Effect.fn('SymmyJobStore.qualifyConfiguredRoute')
     mappingVersion: row.mappingVersion,
     routeId: row.routeId,
     routeRevision: row.routeRevision,
-    sourceMappingVersion: plan.sourceMappingVersion ?? row.mappingVersion,
+    ...routeSourceAuthority(row, plan),
     sourceNamespace: first.source.sourceNamespace,
-    sourceRouteId: plan.sourceRouteId ?? row.routeId,
-    sourceRouteRevision: plan.sourceRouteRevision ?? row.routeRevision,
     tenantId: scope.tenantId,
   };
   if (row.routeCode !== null) {
@@ -775,8 +919,11 @@ const prepareSyncPlan = Effect.fn('SymmyJobStore.prepareSyncPlan')(function* pre
   route: typeof symmyJobRoutes.$inferSelect,
   input: SymmyJobAdmissionRequest,
   scope: OperationalScope,
-  template: SymmyFixtureExecutionPlan,
+  template: SymmyFixtureExecutionPlan | null,
 ) {
+  if (template === null || !permitsNewAdmission(route, scope, input.fixtureId ?? 'INTERNAL_C14')) {
+    return yield* routeDenied();
+  }
   if (input.routeKey === 'inventoryStockBatch' && template.inventoryBackendId === undefined) {
     return yield* routeDenied();
   }
@@ -790,7 +937,7 @@ const prepareSyncPlan = Effect.fn('SymmyJobStore.prepareSyncPlan')(function* pre
     return yield* routeDenied();
   }
   if (input.routeKey === 'inventoryStockBatch' && !stockPlanMatchesEnrollment(plan, template)) {
-    return yield* routeDenied();
+    return yield* new SymmyJobStoreError({ code: 'stock_assertion_denied' });
   }
   if (plan.items.some(({ effects }) => effects.some(({ intent }) => !syncIntentAllowed(input.routeKey, intent)))) {
     return yield* routeDenied();
@@ -851,6 +998,7 @@ interface SymmyJobStore {
   readonly readSyncAdmission: (admissionId: string) => Effect.Effect<SymmySyncAdmissionReceipt, SymmyJobStoreError>;
   readonly routeContext: (input: {
     readonly code?: string;
+    readonly replayIdempotencyKey?: string;
     readonly routeKey: SymmyDurableRouteKey;
   }) => Effect.Effect<ConfiguredRouteContext, SymmyJobStoreError>;
 }
@@ -901,7 +1049,7 @@ export const symmyJobStoreFactory = (
         (admissionInvocationId !== undefined ||
           Schema.is(SymmyPolicyFixtureRouteKeySchema)(input.routeKey) ||
           readVerifiedGatewayRouteScope(scope) !== undefined) &&
-        !exactRouteProofMatches(route, scope, template)
+        !exactRouteProofMatches(route, scope, template, idempotencyDigest)
       ) {
         return yield* routeDenied();
       }
@@ -951,7 +1099,7 @@ export const symmyJobStoreFactory = (
       if (Option.isSome(accepted)) {
         return accepted.value;
       }
-      if (!route.fixtureIds.includes(fixtureId)) {
+      if (!permitsNewAdmission(route, scope, fixtureId)) {
         return yield* routeDenied();
       }
       const preparedPlan = yield* prepareAdmissionPlan({ scope, transaction }, route, input, template);
@@ -1029,7 +1177,7 @@ export const symmyJobStoreFactory = (
       input: SymmyJobAdmissionRequest,
       admissionId: string,
     ) {
-      if (input.routeKey !== 'customerGroupsBatch' && input.routeKey !== 'inventoryStockBatch') {
+      if (!isSyncAdmissionRoute(input.routeKey)) {
         return yield* routeDenied();
       }
       const fixtureId = input.fixtureId ?? 'INTERNAL_C14';
@@ -1055,23 +1203,17 @@ export const symmyJobStoreFactory = (
         return yield* routeDenied();
       }
       yield* lockRoute(transaction, route);
-      const template = yield* decodeRouteTemplate(route);
-      if (!exactRouteProofMatches(route, scope, template)) {
-        return yield* routeDenied();
-      }
-      const callerIntent = yield* encodeCallerIntent(input, fixtureId);
+      const [template, callerIntent] = yield* Effect.all(
+        [decodeRouteTemplate(route), encodeCallerIntent(input, fixtureId)],
+        { concurrency: 2 },
+      );
       const [keyDigest, intentDigest] = yield* Effect.all([hash(input.idempotencyKey), hash(callerIntent)], {
         concurrency: 2,
       });
-      const existingWhere = and(
-        eq(symmySyncAdmissions.tenantId, scope.tenantId),
-        eq(symmySyncAdmissions.routeKey, input.routeKey),
-        eq(symmySyncAdmissions.idempotencyDigest, keyDigest),
-        eq(symmySyncAdmissions.principalId, scope.principalId),
-        scope.legalEntityId === undefined
-          ? isNull(symmySyncAdmissions.legalEntityId)
-          : eq(symmySyncAdmissions.legalEntityId, scope.legalEntityId),
-      );
+      if (!exactRouteProofMatches(route, scope, template, keyDigest)) {
+        return yield* routeDenied();
+      }
+      const existingWhere = syncAdmissionKey(scope, input.routeKey, keyDigest);
       const [existing, duplicate] = yield* transaction
         .select()
         .from(symmySyncAdmissions)
@@ -1084,9 +1226,6 @@ export const symmyJobStoreFactory = (
       if (existing !== undefined) {
         yield* verifySyncReplay(existing, intentDigest);
         return yield* syncAdmissionReceipt(transaction, existing, { invocationId: admissionId, replayed: true });
-      }
-      if (!route.fixtureIds.includes(fixtureId) || template === null) {
-        return yield* routeDenied();
       }
       const plan = yield* prepareSyncPlan(route, input, scope, template);
       const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(SymmyFixtureExecutionPlanSchema))(plan).pipe(
@@ -1239,7 +1378,7 @@ export const symmyJobStoreFactory = (
       }
       yield* lockRoute(transaction, entry.route);
       const template = yield* decodeRouteTemplate(entry.route);
-      if (!exactRouteProofMatches(entry.route, scope, template)) {
+      if (!exactRouteProofMatches(entry.route, scope, template, entry.admission.idempotencyDigest)) {
         return yield* routeDenied();
       }
       // Reading the immutable original receipt does not require the writer to remain enrolled.
@@ -1248,6 +1387,7 @@ export const symmyJobStoreFactory = (
     }),
     routeContext: Effect.fn('SymmyJobStore.routeContext')(function* routeContext(input: {
       readonly code?: string;
+      readonly replayIdempotencyKey?: string;
       readonly routeKey: SymmyDurableRouteKey;
     }) {
       const decoded =
@@ -1274,9 +1414,22 @@ export const symmyJobStoreFactory = (
       });
       const matches = checked.flatMap(Option.toArray);
       const [match] = matches;
-      if (matches.length !== 1 || match === undefined) {
+      if (matches.length === 1 && match !== undefined) {
+        return match;
+      }
+      if (matches.length > 1 || input.replayIdempotencyKey === undefined) {
         return yield* routeDenied();
       }
-      return match;
+      const digest = yield* hash(input.replayIdempotencyKey);
+      if (isSyncAdmissionRoute(input.routeKey)) {
+        const [row, competingRoute] = rows;
+        if (row === undefined || competingRoute !== undefined) {
+          return yield* routeDenied();
+        }
+        const retained = yield* qualifyRetainedSyncRoute(transaction, row, digest);
+        return yield* Effect.fromOption(retained).pipe(Effect.mapError(routeDenied));
+      }
+      const retained = yield* qualifyRetainedJobRoute(transaction, scope, input.routeKey, decoded, digest);
+      return yield* Effect.fromOption(retained).pipe(Effect.mapError(routeDenied));
     }),
   });

@@ -10,7 +10,7 @@ import {
 } from '@app/privacy/testing/source-processing-native';
 import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { assert, expect, it } from 'effect-rstest';
-import { DateTime, Effect, Match, Option, Redacted, Schema } from 'effect';
+import { DateTime, Duration, Effect, Match, Option, Redacted, Schema } from 'effect';
 import { HttpBody, HttpClient } from 'effect/http';
 import { customerFixtureUuid as uuid } from './support/symmy-c14-customer-native-authority.mts';
 import { internalCustomerSource } from './support/symmy-c14-customer-plan.mts';
@@ -194,9 +194,8 @@ it.live(
           prefix: '/privacy-api',
         });
         fixture.ownerDiagnostics.set('privacy', privacy.diagnostic);
-        yield* observeAssignmentUntil(
-          DateTime.now,
-          (now) => DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(fixture.priceGroupEffectiveFrom),
+        yield* Effect.sleep(
+          Duration.max(Duration.zero, DateTime.distance(yield* DateTime.now, fixture.priceGroupEffectiveFrom)),
         );
         const effectiveFrom = DateTime.formatIso(DateTime.add(yield* DateTime.now, { minutes: 2 }));
         const payload = {
