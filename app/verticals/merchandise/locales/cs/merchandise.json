@@ -297,9 +297,6 @@
         "description": "Produkty, ceny a skladové pohyby.",
         "detail": {
           "active": "Aktivní produkt",
-          "discardAction": "Zahodit změny",
-          "discardDescription": "Neuložené změny v tomto formuláři se ztratí.",
-          "discardKeep": "Pokračovat v úpravách",
           "tab": "Detail",
           "back": "Zpět na produkty",
           "priceExplanation": "Upravujete cenu bez DPH. Cena s DPH se vypočítá podle zvolené sazby DPH.",
@@ -434,7 +431,6 @@
         },
         "receipt": {
           "description": "Zaznamenejte příjem na sklad. Stav se přepočítá z pohybů.",
-          "discardTitle": "Zahodit neuložené změny?",
           "submit": "Zaznamenat příjem",
           "title": "Příjem zboží"
         },
