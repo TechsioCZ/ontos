@@ -28,9 +28,9 @@ export const widestSelectorOf = (entry: CatalogSnapshotEntry): RecordSelector =>
 
 /**
  * "Full access" as a role template over one pinned catalog: every capability of the catalog, with every
- * mode it declares and the widest selector it declares. Nothing is invented — a capability of a later
- * release never joins this role silently (guarantee 2), and a capability this catalog does not declare
- * cannot be named.
+ * mode it declares and the widest selector it declares. Nothing is invented — a capability this catalog
+ * does not declare cannot be named. A later release reaches this role only through release activation
+ * (`../release/activation.ts`), as an additions-only successor compiled from that release, never silently.
  *
  * Every capability is named as a switch rather than reached through a level row: a row would hand out
  * only routine capabilities at or below its level, and a new tenant's owner holds the whole catalog, not
