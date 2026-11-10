@@ -1,7 +1,7 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Context, Crypto, DateTime, Deferred, Effect, Fiber, Layer, Option, Schema } from 'effect';
+import { Context, Crypto, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -42,7 +42,8 @@ import type {
 import type { CatalogSnapshot, CatalogSnapshotEntry, Cell } from '../../src/access/model.ts';
 import { AssignmentSchema } from '../../src/access/model.ts';
 import { AccessCatalogSnapshotWriterLive } from '../../src/access/intent/catalog-snapshot-writer.ts';
-import { AccessMembershipStoreLive } from '../../src/access/intent/memberships.ts';
+import { AccessMembershipIdSchema, AccessMembershipStoreLive } from '../../src/access/intent/memberships.ts';
+import { AccessPeopleDirectory, AccessPeopleDirectoryLive } from '../../src/access/intent/people-directory.ts';
 import { AccessPeopleStore, AccessPeopleStoreLive } from '../../src/access/intent/people-store.ts';
 import { AccessProjectionCompiler } from '../../src/access/intent/projection-compiler.ts';
 import { AccessProjectionWriter, AccessProjectionWriterLive } from '../../src/access/intent/projection-writer.ts';
@@ -133,6 +134,8 @@ const owner = PrincipalIdSchema.make(uid(2));
 const colleague = PrincipalIdSchema.make(uid(3));
 const teammate = PrincipalIdSchema.make(uid(4));
 const company = LegalEntityIdSchema.make(uid(6));
+/** A second company of the tenant, so a case can show authority staying where it was granted. */
+const otherCompany = LegalEntityIdSchema.make(uid(7));
 
 /** The tenant as the product creates it: identity rows and one installed module, never any access. */
 const seedTenant = (admin: PgClient.PgClient, tenantId: TenantId) =>
@@ -141,7 +144,8 @@ const seedTenant = (admin: PgClient.PgClient, tenantId: TenantId) =>
       insertTenantStatement(tenantId),
       `insert into core.legal_entities
          (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values
-         ('${company}', '${tenantId}', 'Kancelář s.r.o.', 'CZ', '12345678', 'active')`,
+         ('${company}', '${tenantId}', 'Kancelář s.r.o.', 'CZ', '12345678', 'active'),
+         ('${otherCompany}', '${tenantId}', 'Sklad s.r.o.', 'CZ', '87654321', 'active')`,
       `insert into core.principals (tenant_id, principal_id, kind, display_name, status) values
          ('${tenantId}', '${owner}', 'human', 'Vlastník', 'active'),
          ('${tenantId}', '${colleague}', 'human', 'Kolegyně', 'active'),
@@ -193,9 +197,18 @@ interface Tenant {
   readonly cellsOf: (capabilityKey: string) => readonly Cell[];
   readonly changes: (typeof AccessChangesStore)['Service'];
   /** Creates a company role of exactly the named capability, as the role editor does, by the owner. */
-  readonly createRole: (capabilityKey: string) => Effect.Effect<{ roleId: RoleId; roleRevisionId: RoleRevisionId }>;
+  readonly createRole: (
+    capabilityKey: string,
+    legalEntityId?: LegalEntityId,
+  ) => Effect.Effect<{ roleId: RoleId; roleRevisionId: RoleRevisionId }>;
+  readonly directory: (typeof AccessPeopleDirectory)['Service'];
   readonly gate: (typeof AccessDecisionGate)['Service'];
   readonly newIncarnationId: Effect.Effect<AssignmentIncarnationId>;
+  /** Two fresh membership ids, as the BFF mints them for one admission. */
+  readonly newMembershipIds: Effect.Effect<{
+    readonly companyMembershipId: typeof AccessMembershipIdSchema.Type;
+    readonly tenantMembershipId: typeof AccessMembershipIdSchema.Type;
+  }>;
   readonly owner: OperationalScope;
   readonly people: (typeof AccessPeopleCommands)['Service'];
   readonly peopleStore: (typeof AccessPeopleStore)['Service'];
@@ -251,6 +264,7 @@ const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value
       AccessChangesStoreLive.pipe(Layer.provide(platforms)),
       AccessMembershipStoreLive.pipe(Layer.provide(platforms)),
       AccessPeopleStoreLive.pipe(Layer.provide(platforms)),
+      AccessPeopleDirectoryLive.pipe(Layer.provide(platforms)),
       Layer.succeed(
         AccessTeamStore,
         makeAccessTeamDrizzleStore({ enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT, executor }),
@@ -272,7 +286,7 @@ const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value
     const ownerScope = yield* scopeFor(tenantId, owner);
     // The owner's bootstrap is the only access the tenant starts with: the release, the scopes and its role.
     yield* Context.get(context, TenantAccessBootstrap)
-      .bootstrapTenantAccess({ legalEntityIds: [company], modules, scope: ownerScope })
+      .bootstrapTenantAccess({ legalEntityIds: [company, otherCompany], modules, scope: ownerScope })
       .pipe(
         Effect.mapError((cause) => new Error(`${cause.code}: ${cause.reason}`)),
         Effect.orDie,
@@ -283,7 +297,7 @@ const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value
     );
     const { cells } = yield* Effect.fromResult(compileFullAccessRole(release)).pipe(Effect.orDie);
     const cellsOf = (capabilityKey: string) => cells.filter((cell) => cell.capabilityKey === capabilityKey);
-    const createRole = (capabilityKey: string) => {
+    const createRole = (capabilityKey: string, legalEntityId: LegalEntityId = company) => {
       const roleCells = cellsOf(capabilityKey);
       return Effect.gen(function* createRoleEffect() {
         const [roleUuid, revisionUuid] = yield* Effect.all([crypto.randomUUIDv4(), crypto.randomUUIDv4()]);
@@ -291,7 +305,7 @@ const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value
           catalogSnapshotId: release.id,
           cells: roleCells,
           decidedAt: yield* DateTime.nowAsDate,
-          legalEntityId: company,
+          legalEntityId,
           name: `Role of ${capabilityKey}`,
           scope: ownerScope,
           targetRevisionId: RoleRevisionIdSchema.make(revisionUuid),
@@ -300,16 +314,22 @@ const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value
         return { roleId: created.roleId, roleRevisionId: created.roleRevisionId };
       }).pipe(Effect.provideContext(context), Effect.orDie);
     };
+    const newMembershipId = crypto.randomUUIDv4().pipe(
+      Effect.map((uuid) => AccessMembershipIdSchema.make(uuid)),
+      Effect.orDie,
+    );
     return yield* run({
       admin,
       cellsOf,
       changes: Context.get(context, AccessChangesStore),
       createRole,
+      directory: Context.get(context, AccessPeopleDirectory),
       gate: Context.get(context, AccessDecisionGate),
       newIncarnationId: crypto.randomUUIDv4().pipe(
         Effect.map((uuid) => AssignmentIncarnationIdSchema.make(uuid)),
         Effect.orDie,
       ),
+      newMembershipIds: Effect.all({ companyMembershipId: newMembershipId, tenantMembershipId: newMembershipId }),
       owner: ownerScope,
       people: Context.get(context, AccessPeopleCommands),
       peopleStore: Context.get(context, AccessPeopleStore),
@@ -326,8 +346,9 @@ const decide = (
   tenant: Tenant,
   carrier: typeof noteReadCarrier,
   principalId: PrincipalId,
+  legalEntityId: LegalEntityId = company,
 ): Effect.Effect<AccessDecision> =>
-  Effect.flatMap(scopeFor(tenant.tenantId, principalId, company), (scope) =>
+  Effect.flatMap(scopeFor(tenant.tenantId, principalId, legalEntityId), (scope) =>
     tenant.gate.decide({ carrier, legalEntityScope: 'required', now: decisionAt, scope }),
   );
 
@@ -370,16 +391,80 @@ const eventually = (check: Effect.Effect<boolean>, attempts = 500): Effect.Effec
 type CreatedRole = Effect.Success<ReturnType<Tenant['createRole']>>;
 
 /** One company assignment by the acting person, under a fresh incarnation. */
-const assignInCompany = (tenant: Tenant, actor: OperationalScope, principalId: PrincipalId, role: CreatedRole) =>
+const assignInCompany = (
+  tenant: Tenant,
+  actor: OperationalScope,
+  principalId: PrincipalId,
+  role: CreatedRole,
+  legalEntityId: LegalEntityId = company,
+) =>
   Effect.gen(function* assignInCompanyEffect() {
     return yield* tenant.people.assignRole(actor, {
       incarnationId: yield* tenant.newIncarnationId,
       principalId,
       roleId: role.roleId,
       roleRevisionId: role.roleRevisionId,
-      scopeId: legalEntityScopeId(tenant.tenantId, company),
+      scopeId: legalEntityScopeId(tenant.tenantId, legalEntityId),
     });
   });
+
+/** A person of the tenant, as the identity module creates them; nobody grants them access here. */
+const seedPerson = (tenant: Tenant, principalId: PrincipalId, status: 'active' | 'disabled' = 'active') =>
+  tenant.admin
+    .unsafe(
+      `insert into core.principals (tenant_id, principal_id, kind, display_name, status) values
+         ('${tenant.tenantId}', '${principalId}', 'human', 'Nováček ${principalId.slice(-4)}', '${status}')`,
+    )
+    .pipe(Effect.orDie);
+
+/** The person's company directory membership, as `core.identity.set-company-membership` records it. */
+const seedDirectory = (
+  tenant: Tenant,
+  principalId: PrincipalId,
+  status: 'invited' | 'active' | 'disabled' | 'departed',
+  legalEntityId: LegalEntityId = company,
+) =>
+  tenant.admin
+    .unsafe(
+      `insert into core.principal_company_memberships (tenant_id, legal_entity_id, principal_id, affiliation, status)
+         values ('${tenant.tenantId}', '${legalEntityId}', '${principalId}', 'employee', '${status}')`,
+    )
+    .pipe(Effect.orDie);
+
+/** One admission by the acting person, under two fresh membership ids. */
+const admit = (
+  tenant: Tenant,
+  actor: OperationalScope,
+  principalId: PrincipalId,
+  legalEntityId: LegalEntityId = company,
+) =>
+  tenant.newMembershipIds.pipe(
+    Effect.flatMap((minted) => tenant.people.admitMember(actor, { ...minted, legalEntityId, principalId })),
+  );
+
+/** The code an admission by the owner is refused with. */
+const admissionRefusal = (tenant: Tenant, principalId: PrincipalId) =>
+  Effect.flip(admit(tenant, tenant.owner, principalId)).pipe(Effect.map(({ code }) => code));
+
+interface MembershipRow {
+  readonly ended_at: Date | null;
+  readonly ended_by: string | null;
+  readonly ended_reason: string | null;
+  readonly membership_id: string;
+  readonly recorded_by: string;
+  readonly scope_id: string;
+  readonly status: string;
+}
+
+const membershipsOf = (tenant: Tenant, principalId: PrincipalId) =>
+  tenant.admin
+    .unsafe<MembershipRow>(
+      `select membership_id::text, scope_id::text, status, recorded_by::text, ended_by::text, ended_at, ended_reason
+         from core.access_memberships
+        where tenant_id = '${tenant.tenantId}' and principal_id = '${principalId}' and kind = 'member'
+        order by created_at, scope_id`,
+    )
+    .pipe(Effect.orDie);
 
 /** The capability keys of a release, in one order. */
 const keysOf = (entries: readonly CatalogSnapshotEntry[]) => entries.map(({ key }) => key).toSorted();
@@ -743,6 +828,174 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('people commands on 
           .pipe(Effect.orDie);
         const ended = yield* Effect.flip(assignCovered(role.roleRevisionId));
         expect(ended.code).toBe('access_intent_record_conflict');
+      }),
+    ),
+  );
+
+  suite.effect('admits a directory member, and the real gate follows the admission, the ending and the rejoin', () =>
+    withTenant((tenant) =>
+      Effect.gen(function* admissionFollowsTheGate() {
+        const newcomer = PrincipalIdSchema.make(uid(5));
+        const tenantScope = tenantContextScopeId(tenant.tenantId);
+        const companyScope = legalEntityScopeId(tenant.tenantId, company);
+        yield* seedPerson(tenant, newcomer);
+        yield* seedDirectory(tenant, newcomer, 'active');
+        const role = yield* tenant.createRole(NOTE_READ);
+
+        // The demo blocker: a directory member without access membership holds no role.
+        expect((yield* Effect.flip(assignInCompany(tenant, tenant.owner, newcomer, role))).code).toBe(
+          'people_holder_not_a_member',
+        );
+        // The directory is company-scoped by row security, yet a tenant-context request reads it.
+        const listed = yield* tenant.directory.companyMember(tenant.owner, company, newcomer).pipe(Effect.orDie);
+        expect(Option.getOrThrow(listed).status).toBe('active');
+
+        const admitted = yield* admit(tenant, tenant.owner, newcomer).pipe(Effect.orDie);
+        expect(admitted.membership).toEqual({ principalId: newcomer, scopeId: companyScope, status: 'active' });
+        const joined = yield* membershipsOf(tenant, newcomer);
+        expect(joined).toHaveLength(2);
+        for (const scopeId of [tenantScope, companyScope]) {
+          expect(joined.find(({ scope_id }) => scope_id === scopeId)).toMatchObject({
+            recorded_by: owner,
+            status: 'active',
+          });
+        }
+
+        yield* assignInCompany(tenant, tenant.owner, newcomer, role).pipe(Effect.orDie);
+        expect((yield* decide(tenant, noteReadCarrier, newcomer)).outcome).toBe('ALLOWED');
+        expect((yield* decide(tenant, noteReadCarrier, newcomer, otherCompany)).outcome).toBe('DENIED');
+
+        yield* tenant.people
+          .endMembership(tenant.owner, { principalId: newcomer, reason: 'Odchod z firmy', scopeId: companyScope })
+          .pipe(Effect.orDie);
+        expect((yield* decide(tenant, noteReadCarrier, newcomer)).outcome).toBe('DENIED');
+        const ended = yield* membershipsOf(tenant, newcomer);
+        const endedCompany = ended.find(({ scope_id }) => scope_id === companyScope);
+        expect(endedCompany?.status).toBe('revoked');
+        expect(endedCompany?.ended_by).toBe(owner);
+        expect(endedCompany?.ended_reason).toBe('Odchod z firmy');
+        expect(endedCompany?.ended_at).not.toBeNull();
+        // Ending the company leaves the tenant row, unattributed, and never touches the directory.
+        expect(ended.find(({ scope_id }) => scope_id === tenantScope)).toMatchObject({
+          ended_by: null,
+          status: 'active',
+        });
+        const directoryRows = yield* tenant.admin
+          .unsafe<{ readonly revision: number; readonly status: string }>(
+            `select status, revision from core.principal_company_memberships
+              where tenant_id = '${tenant.tenantId}' and principal_id = '${newcomer}'`,
+          )
+          .pipe(Effect.orDie);
+        expect(directoryRows).toEqual([{ revision: 1, status: 'active' }]);
+
+        // The guard records an end once: never re-attributed afterwards, never on a row that is not revoked.
+        const rewrite = yield* Effect.exit(
+          tenant.admin.unsafe(
+            `update core.access_memberships set ended_reason = 'Jiný důvod'
+              where membership_id = '${endedCompany?.membership_id}'`,
+          ),
+        );
+        expect(Exit.isFailure(rewrite)).toBe(true);
+        const liveEnd = yield* Effect.exit(
+          tenant.admin.unsafe(
+            `update core.access_memberships set ended_by = '${owner}', ended_at = now()
+              where tenant_id = '${tenant.tenantId}' and principal_id = '${newcomer}' and scope_id = '${tenantScope}'`,
+          ),
+        );
+        expect(Exit.isFailure(liveEnd)).toBe(true);
+
+        // A rejoin is a fresh company row; the old assignment stays ended until somebody assigns again.
+        yield* admit(tenant, tenant.owner, newcomer).pipe(Effect.orDie);
+        const rejoined = (yield* membershipsOf(tenant, newcomer)).filter(({ scope_id }) => scope_id === companyScope);
+        expect(rejoined.map(({ status }) => status)).toEqual(['revoked', 'active']);
+        expect(new Set(rejoined.map(({ membership_id }) => membership_id)).size).toBe(2);
+        expect((yield* decide(tenant, noteReadCarrier, newcomer)).outcome).toBe('DENIED');
+        yield* assignInCompany(tenant, tenant.owner, newcomer, role).pipe(Effect.orDie);
+        expect((yield* decide(tenant, noteReadCarrier, newcomer)).outcome).toBe('ALLOWED');
+      }),
+    ),
+  );
+
+  suite.effect('admits only an active human with an active directory membership of that very company', () =>
+    withTenant((tenant) =>
+      Effect.gen(function* directoryDecidesAdmission() {
+        const departed = PrincipalIdSchema.make(uid(91));
+        const invited = PrincipalIdSchema.make(uid(92));
+        const disabled = PrincipalIdSchema.make(uid(93));
+        const absent = PrincipalIdSchema.make(uid(94));
+        const otherOnly = PrincipalIdSchema.make(uid(95));
+        const people = [departed, invited, disabled, absent, otherOnly];
+        yield* seedPerson(tenant, departed);
+        yield* seedPerson(tenant, invited);
+        yield* seedPerson(tenant, disabled, 'disabled');
+        yield* seedPerson(tenant, absent);
+        yield* seedPerson(tenant, otherOnly);
+        yield* seedDirectory(tenant, departed, 'departed');
+        yield* seedDirectory(tenant, invited, 'invited');
+        yield* seedDirectory(tenant, disabled, 'active');
+        // Active in the other company only: the directory is read for the company being admitted to.
+        yield* seedDirectory(tenant, otherOnly, 'active', otherCompany);
+
+        const refusals = yield* Effect.all(people.map((principalId) => admissionRefusal(tenant, principalId)));
+        expect(refusals).toEqual(people.map(() => 'people_directory_membership_missing'));
+        // Refused inside the write transaction, so not even the tenant row it planned first landed.
+        const quoted = people.map((id) => `'${id}'`).join(', ');
+        const rows = yield* tenant.admin
+          .unsafe<{ readonly count: number }>(
+            `select count(*)::int as count from core.access_memberships
+              where tenant_id = '${tenant.tenantId}' and principal_id in (${quoted})`,
+          )
+          .pipe(Effect.orDie);
+        expect(rows).toEqual([{ count: 0 }]);
+        // The same person is admitted to the company whose directory names them.
+        yield* admit(tenant, tenant.owner, otherOnly, otherCompany).pipe(Effect.orDie);
+      }),
+    ),
+  );
+
+  suite.effect('refuses an admission that would bring back authority in another company, which stays denied', () =>
+    withTenant((tenant) =>
+      Effect.gen(function* admissionRevivesNothing() {
+        const wanderer = PrincipalIdSchema.make(uid(96));
+        const tenantScope = tenantContextScopeId(tenant.tenantId);
+        const otherScope = legalEntityScopeId(tenant.tenantId, otherCompany);
+        yield* seedPerson(tenant, wanderer);
+        yield* seedDirectory(tenant, wanderer, 'active');
+        const tenantRow = uid(97);
+        yield* tenant.admin
+          .unsafe(
+            `insert into core.access_memberships
+               (membership_id, tenant_id, scope_id, principal_id, kind, status, valid_from, recorded_by) values
+               ('${tenantRow}', '${tenant.tenantId}', '${tenantScope}', '${wanderer}', 'member', 'active',
+                now() - interval '1 day', '${owner}'),
+               ('${uid(98)}', '${tenant.tenantId}', '${otherScope}', '${wanderer}', 'member', 'active',
+                now() - interval '1 day', '${owner}')`,
+          )
+          .pipe(Effect.orDie);
+        const role = yield* tenant.createRole(NOTE_READ, otherCompany);
+        yield* assignInCompany(tenant, tenant.owner, wanderer, role, otherCompany).pipe(Effect.orDie);
+        expect((yield* decide(tenant, noteReadCarrier, wanderer, otherCompany)).outcome).toBe('ALLOWED');
+
+        // Another writer revokes the tenant row without ending what stood on it, and records no end.
+        yield* tenant.admin
+          .unsafe(`update core.access_memberships set status = 'revoked' where membership_id = '${tenantRow}'`)
+          .pipe(Effect.orDie);
+        yield* tenant.projection.reconcileTenant({ scope: tenant.owner }).pipe(Effect.orDie);
+        expect((yield* decide(tenant, noteReadCarrier, wanderer, otherCompany)).outcome).toBe('DENIED');
+
+        // Admitting them to this company would need a new tenant row, which would revive the other one.
+        const refused = yield* Effect.flip(admit(tenant, tenant.owner, wanderer));
+        expect(refused.code).toBe('people_membership_ended');
+        yield* tenant.projection.reconcileTenant({ scope: tenant.owner }).pipe(Effect.orDie);
+        expect((yield* decide(tenant, noteReadCarrier, wanderer, otherCompany)).outcome).toBe('DENIED');
+        const statuses = (yield* membershipsOf(tenant, wanderer)).map(({ scope_id, status }) => [scope_id, status]);
+        expect(statuses).toHaveLength(2);
+        expect(statuses).toEqual(
+          expect.arrayContaining([
+            [tenantScope, 'revoked'],
+            [otherScope, 'active'],
+          ]),
+        );
       }),
     ),
   );
