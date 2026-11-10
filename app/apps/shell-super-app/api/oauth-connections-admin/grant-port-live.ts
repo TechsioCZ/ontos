@@ -8,6 +8,7 @@ import {
   OperationalScopeResolver,
   oauthConnectionRevocationNotesRead,
   ReadRuntime,
+  TenantModuleStateService,
 } from '@app/core-runtime';
 import type { OperationalScope, OperationalScopeRequest } from '@app/core-runtime';
 import { SubjectAccessInspection } from '@app/core-runtime/access/enforcement';
@@ -153,6 +154,7 @@ export const GrantAdminLive = (request: GrantAdminRequest) =>
         Context.add(OAuthFlow, yield* OAuthFlow),
         Context.add(OAuthGrantOwners, yield* OAuthGrantOwners),
         Context.add(ShellInstalledModuleCatalog, yield* ShellInstalledModuleCatalog),
+        Context.add(TenantModuleStateService, yield* TenantModuleStateService),
       );
 
       /** Only a grant of the asker's own tenant and company is ever read, listed or changed through this port. */

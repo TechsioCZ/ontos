@@ -6,10 +6,12 @@
  * `evaluateLiveChecks`; the database, SpiceDB and catalog reads live in the effects below.
  */
 import {
+  decideModuleStateAccess,
   OAuthAuthenticationAudit,
   OAuthConnectionCompanies,
   openDemoAccountGrants,
   openPrincipalOperators,
+  TenantModuleStateService,
 } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { SubjectAccessInspection, SubjectInspectionUnavailable } from '@app/core-runtime/access/enforcement';
@@ -188,10 +190,22 @@ export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingA
       trace,
     );
     const { labelOf } = composedModulesOf(mcpModulesOf(sets.installed.composition));
-    const live: LiveRights = { read: sets.access, write: new Set([...sets.run, ...sets.propose]) };
+    // The gate answers over the whole composition: a tenant owner is admitted on every administration declaration,
+    // also of a module this tenant never installed. A module is usable only while the tenant's own state admits the
+    // access, exactly as its entrypoints are gated, so a connection reaches no other module.
+    const answered = [...new Set([...sets.access, ...sets.run, ...sets.propose])];
+    const states = yield* (yield* TenantModuleStateService).getTenantModuleStates(input.tenantId, answered);
+    const stateOf = new Map(states.map(({ moduleKey, state }) => [moduleKey, state]));
+    const admitted = (modules: ReadonlySet<string>, access: 'read' | 'write'): ReadonlySet<string> =>
+      new Set(
+        [...modules].filter((moduleId) => decideModuleStateAccess(stateOf.get(moduleId) ?? null, access) === 'allow'),
+      );
+    const run = admitted(sets.run, 'write');
+    const propose = admitted(sets.propose, 'write');
+    const live: LiveRights = { read: admitted(sets.access, 'read'), write: new Set([...run, ...propose]) };
     // A module the person may only propose to cannot take a direct write, so while one exists the ceiling is approval.
     // The MCP execution path enforces the same thing per call; this keeps the offer and the consent truthful.
-    const proposeOnly = [...sets.propose].some((moduleId) => !sets.run.has(moduleId));
+    const proposeOnly = [...propose].some((moduleId) => !run.has(moduleId));
     const policyCap: ConnectionWritePolicy = proposeOnly ? 'approval' : 'direct';
     return { labelOf, live, offered: offeredModules(live, policyCap, labelOf), policyCap };
   },

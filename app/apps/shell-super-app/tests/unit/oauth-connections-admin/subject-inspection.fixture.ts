@@ -1,4 +1,5 @@
 import type { ActiveApplicationCompositionSnapshot, OperationalScope } from '@app/core-runtime';
+import { OntosModuleIdSchema, TenantModuleStateService } from '@app/core-runtime';
 import {
   AccessDecisionLogBatch,
   AccessIntent,
@@ -116,9 +117,13 @@ const cellsOf = (capability: InspectionFixtureCapability | undefined, query: Cel
 /** Actual Core inspection and decision engine; only identity/intent/graph I/O is scripted. */
 export const subjectInspectionFixture = (input: {
   readonly capabilities?: readonly InspectionFixtureCapability[];
+  /** The modules the tenant has installed (active); by default every module of the composition. */
+  readonly installedModules?: readonly string[];
   /** Runs before each capability read: a test can hold it (to observe overlap) or fail it (an unreadable carrier). */
   readonly onCapabilityRead?: (capabilityKey: string) => Effect.Effect<void, AccessDecisionUnavailable>;
   readonly onScopeRead?: (principalId: string) => Effect.Effect<void>;
+  /** Tenant owners: Core answers their configure authority with the `Owner` basis, as for a stage tenant's owner. */
+  readonly owners?: readonly string[];
   readonly snapshot: ActiveApplicationCompositionSnapshot;
   readonly subjects: readonly InspectionFixtureSubject[];
 }) => {
@@ -143,7 +148,8 @@ export const subjectInspectionFixture = (input: {
               ),
             ),
           ),
-        readConfigureBases: () => Effect.succeed([]),
+        readConfigureBases: ({ actor }) =>
+          Effect.succeed(input.owners?.includes(actor) === true ? [{ _tag: 'Owner' as const }] : []),
         readConnection: () => Effect.succeed(Option.none()),
         readScope: (query) => {
           const principal = query.holders.find((holder) => holder._tag === 'Principal');
@@ -183,7 +189,21 @@ export const subjectInspectionFixture = (input: {
       };
     },
   };
-  const layer = SubjectAccessInspectionLive.pipe(
+  const installed = new Set(
+    input.installedModules ?? input.snapshot.composition.modules.map(({ moduleId }) => moduleId),
+  );
+  /** Every tenant module state read: the tenant and the module keys asked about. */
+  const stateReads: { readonly moduleKeys: readonly string[]; readonly tenantId: string }[] = [];
+  const moduleStates = Layer.mock(TenantModuleStateService, {
+    getTenantModuleStates: (tenantId, moduleKeys) =>
+      Effect.sync(() => {
+        stateReads.push({ moduleKeys: [...moduleKeys], tenantId });
+        return moduleKeys
+          .filter((moduleKey) => installed.has(moduleKey))
+          .map((moduleKey) => ({ moduleKey: OntosModuleIdSchema.make(moduleKey), state: 'active' as const }));
+      }),
+  });
+  const inspectionLayer = SubjectAccessInspectionLive.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(input.snapshot) }),
@@ -239,5 +259,5 @@ export const subjectInspectionFixture = (input: {
       ),
     ),
   );
-  return { layer, reads, requesterScopes };
+  return { layer: Layer.merge(inspectionLayer, moduleStates), reads, requesterScopes, stateReads };
 };

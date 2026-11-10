@@ -490,6 +490,89 @@ it.effect('caps the human write ceiling at approval while a module is proposable
   }),
 );
 
+/** A module this tenant never installed; the composition still publishes its administration Action. */
+const uninstalledModuleId = 'projects.core';
+
+const catalogWithUninstalledAdministration = Effect.gen(function* uninstalledAdministrationCatalog() {
+  const tasks = makeModuleContractFixture({ appId, moduleId });
+  const projects = makeModuleContractFixture({ appId: 'projects-core', moduleId: uninstalledModuleId });
+  const rebuild = Schema.decodeUnknownSync(OntosActionContractSchema)({
+    accessDeclaration: {
+      key: `${uninstalledModuleId}.search-index.rebuild`,
+      kind: 'admin',
+      modes: ['run'],
+      placement: { group: 'search', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
+    actionKey: `${uninstalledModuleId}.request-search-rebuild`,
+    auditProfile: 'standard',
+    entrypoint: {
+      access: 'write',
+      authorization: { kind: 'protected' },
+      entrypointKey: `${uninstalledModuleId}.request-search-rebuild`,
+      moduleKey: uninstalledModuleId,
+      role: 'action',
+      scope: 'tenant',
+    },
+    idempotency: 'required',
+    legalEntityScope: 'required',
+    owningModuleId: uninstalledModuleId,
+    schemaVersion: '1',
+  });
+  const snapshot = yield* makeCompositionSnapshot([
+    {
+      ...tasks,
+      manifest: {
+        ...tasks.manifest,
+        publicSurface: { ...tasks.manifest.publicSurface, actions: [action(`${moduleId}.apply-command`)] },
+      },
+    },
+    {
+      ...projects,
+      manifest: { ...projects.manifest, publicSurface: { ...projects.manifest.publicSurface, actions: [rebuild] } },
+    },
+  ]);
+  return { installed: yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot)), snapshot };
+});
+
+it.effect('offers a tenant owner only the modules its tenant has installed, not every administration carrier', () =>
+  Effect.gen(function* ownerOfOneModuleTenant() {
+    const { installed, snapshot } = yield* catalogWithUninstalledAdministration;
+    const taskKeys = installed.contracts.flatMap(({ manifest }) =>
+      manifest.publicSurface.actions.flatMap(({ accessDeclaration, owningModuleId }) =>
+        accessDeclaration === undefined || owningModuleId !== moduleId ? [] : [accessDeclaration.key],
+      ),
+    );
+    // The stage verification account owns its own tenant: Core admits an owner on every `admin` declaration of
+    // the composition, also of a module the tenant never installed. Its granted cells reach `work.tasks` only.
+    const inspection = subjectInspectionFixture({
+      capabilities: taskKeys.map((key) => ({ key, modes: ['run', 'propose'] })),
+      installedModules: [moduleId],
+      owners: [principalId],
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const authority = yield* loadActingAuthority(scope, {
+      actingKind: 'human',
+      actingPrincipalId: principalId,
+      legalEntityId,
+      tenantId,
+    }).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+    );
+    expect([...authority.live.read]).toEqual([moduleId]);
+    expect([...authority.live.write]).toEqual([moduleId]);
+    expect(authority.offered.map((module) => [module.moduleId, module.write])).toEqual([[moduleId, true]]);
+    expect(authority.policyCap).toBe('direct');
+    // One state read for every module the gate answered, so no module escapes the tenant's own installation.
+    expect(inspection.stateReads.map((read) => ({ ...read, moduleKeys: read.moduleKeys.toSorted() }))).toEqual([
+      { moduleKeys: [uninstalledModuleId, moduleId].toSorted(), tenantId },
+    ]);
+  }),
+);
+
 /** The human's read rights of each carrier's capability, so every carrier is inspected. */
 const readableCarriers = (ids: readonly string[]) =>
   ids.map((id) => ({ key: `${id}.page.open`, modes: ['run'] as const }));
