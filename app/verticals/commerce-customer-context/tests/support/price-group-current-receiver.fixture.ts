@@ -139,6 +139,7 @@ import {
   failure,
   requireCondition,
 } from './price-group-temporal-protocol.ts';
+import { RetailPartyDetailExecutor } from '../../src/integrations/retail-party-detail-executor.ts';
 
 const RequestIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('PriceGroupTemporalRequestId'),
@@ -935,6 +936,14 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
   const counterpartyFactory = Context.get(factories, ProfileCounterpartyRoleEligibilityResolverFactory);
   const ownerServices = Layer.mergeAll(
     retailResolverLayerFor(readParty),
+    // Retail profile preparation reads the Party before its owner transaction through this transport seam, over the
+    // same authority-issued Party Registry client as the in-transaction resolver.
+    Layer.succeed(
+      RetailPartyDetailExecutor,
+      RetailPartyDetailExecutor.of({
+        execute: (payload, requestCorrelation) => readParty(payload, requestCorrelation),
+      }),
+    ),
     Layer.succeed(ProfileCounterpartyRoleEligibilityResolverFactory, {
       make: (input) => counterpartyFactory.make(input, readCounterparty),
     }),
