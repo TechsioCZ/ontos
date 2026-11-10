@@ -1,6 +1,5 @@
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
-import { useHeldSnapshot } from '@app/admin-ui';
 import { Data, Effect, Match, Predicate, Random, Result, Schema } from 'effect';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, PageDataSnapshot } from '@app/shared-contracts/page-data';
@@ -616,13 +615,11 @@ export const useOrderDetail = (
       listener,
       orderId === null || scope === undefined ? undefined : { orderId, revision, scope },
     );
-  const stored = useSyncExternalStore(
+  const cached = useSyncExternalStore(
     subscribe,
     () => (scope === undefined || orderId === null ? pageDataPending : orderDetailData.snapshot(input)),
     () => pageDataPending,
   );
-  // The strict store reads as pending while it reloads this same order; the detail stays mounted until it settles.
-  const cached = useHeldSnapshot(orderDetailData.key(input), stored);
   // Each answer names the request it answers, so a newer request reads as loading without a synchronous reset.
   const [answer, setAnswer] = useState<{ readonly request: string; readonly state: OrderDetailState } | null>(null);
   const request = Result.getOrThrow(
