@@ -31,6 +31,7 @@ import {
 } from './agreements-data.ts';
 import type { AgreementsInput, RentalReferences } from './agreements-data.ts';
 import { contractTitle } from './contract-title.ts';
+import { useOpenCreated } from './use-open-created.ts';
 import { agreementDocumentState, selectorOfFields } from './document-selection.ts';
 import { termsSaveResult } from './contract-terms-draft.ts';
 import type { ContractTermsCommand } from './contract-terms-draft.ts';
@@ -149,8 +150,10 @@ export const useRecordsPage = (input: AgreementsInput) => {
   });
   /** The open contract form: a new contract, or the period of the draft contract it was opened for. */
   const [draftForm, setDraftForm] = useState<DraftForm>();
-  /** The contract a create form saved; the page opens it once the form is gone. */
-  const [created, setCreated] = useState<string>();
+  /** The contract a create form saved; the page opens it once, after the form is gone. */
+  const setCreated = useOpenCreated(draftForm !== undefined, linkedResourceId, (resourceId) => {
+    void navigate({ search: { resourceId }, to: '.' });
+  });
   const [signedReference, setSignedReference] = useState('');
   const [signedFileName, setSignedFileName] = useState('');
   const [signedBy, setSignedBy] = useState('');
@@ -184,12 +187,6 @@ export const useRecordsPage = (input: AgreementsInput) => {
   const reportFailure = (failure: { readonly _tag: string; readonly status?: number }) => {
     reportFeedback(failureFeedback(failure));
   };
-  // The created contract opens after the form is gone, so leaving the page does not ask about a saved draft.
-  useEffect(() => {
-    if (created !== undefined && created !== linkedResourceId) {
-      void navigate({ search: { resourceId: created }, to: '.' });
-    }
-  }, [created, linkedResourceId, navigate]);
   const selectContractKind = (kind: Contract['kind']) => {
     setChosenContractKind(kind);
     setRequestedRentalFeedback(undefined);
@@ -330,8 +327,8 @@ export const useRecordsPage = (input: AgreementsInput) => {
   };
   /** The create form saved `resourceId`: the form closes, then the page opens the new contract. */
   const openCreated = (resourceId: string) => {
-    setDraftForm(undefined);
     setCreated(resourceId);
+    setDraftForm(undefined);
   };
   const openTerms = () => {
     if (selected !== undefined) {
