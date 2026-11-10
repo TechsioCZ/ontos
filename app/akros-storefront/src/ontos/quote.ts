@@ -130,9 +130,10 @@ async function ownerDryRun(
     // The owner checks the market offer and prices in the market currency.
     ...(marketId === undefined ? {} : { marketId }),
   };
+  // The storefront key is admitted on merchandise's narrow storefront-order Action, not on apply-command.
   const result = (await callAction(
     "merchandise",
-    "apply-command",
+    "place-storefront-order",
     { command, expectedRevision: revision },
     // A dry run saves nothing, and OntOS refuses a reused key (409 action_already_committed): fresh key per check.
     `sf-quote-${randomUUID()}`,
