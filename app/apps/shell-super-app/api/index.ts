@@ -165,7 +165,6 @@ import {
   accessExplainDeclarations,
 } from './access-admin/explain.ts';
 import { AccessPeopleBffLive, accessAdminPeopleGroupLive, accessPeopleDeclarations } from './access-admin/people.ts';
-import { AccessCompanyDirectoryLive } from './access-admin/people-company-directory.ts';
 import { AccessAdminRolesBffLive, accessAdminRolesGroupLive, accessRolesDeclarations } from './access-admin/roles.ts';
 import {
   AccessAdminSession,
@@ -3852,10 +3851,6 @@ export const makeShellAuthenticationApiRuntime = (
   const accessAdminPeopleCommandsLive = AccessPeopleCommandsLive.pipe(
     Layer.provide(Layer.mergeAll(accessAdminStoresLive, accessAdminProjectionWriterLive)),
   );
-  // Lidé's admission candidates: each company's own directory, read in that company's scope.
-  const accessAdminCompanyDirectoryLive = AccessCompanyDirectoryLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, databaseIdentitiesLive)),
-  );
   const approvalOwnerIdentityLive = Layer.effect(
     ApprovalOwnerIdentity,
     Effect.gen(function* approvalOwnerIdentityLayer() {
@@ -3953,7 +3948,6 @@ export const makeShellAuthenticationApiRuntime = (
         accessAdminProjectionWriterLive,
         accessAdminCommandsLive,
         accessAdminPeopleCommandsLive,
-        accessAdminCompanyDirectoryLive,
         accessAdminApprovalsLive,
         AccessChangesWritesClosedLive,
         AccessPeopleWritesClosedLive,

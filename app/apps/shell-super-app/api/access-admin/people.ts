@@ -66,7 +66,6 @@ import {
   accessAdminUnavailableProblem,
   accessAdminUnprocessableProblem,
 } from './session.ts';
-import { AccessCompanyDirectory } from './people-company-directory.ts';
 import { AccessPeopleWriteAvailability } from './people-write-gate.ts';
 
 /*
@@ -611,6 +610,38 @@ const writeAllowed = Effect.fn('AccessAdminPeople.writeAllowed')(function* write
   return reach.scopeIds.size > 0;
 });
 
+/**
+ * Whether the acting person administers one scope permanently, as the tenant owner or that company's
+ * access administrator. Only they admit or end a membership there: Core refuses a delegate with
+ * people_authority_missing, so a delegation's reach alone never offers either write.
+ */
+const administersPermanently = (view: View, actor: string, scopeId: string): boolean => {
+  const usable = (record: View['administration']['tenantOwners'][number]) =>
+    String(record.principalId) === actor &&
+    record.status === 'active' &&
+    (record.membershipValidUntil === undefined || view.at < record.membershipValidUntil);
+  return (
+    view.administration.tenantOwners.some(usable) ||
+    view.administration.scopeAdministrators.some(
+      (entry) => String(entry.scopeId) === scopeId && entry.administrators.some(usable),
+    )
+  );
+};
+
+/** Whether ending a membership is open here: the gate, its reach, and permanent administration of a scope in it. */
+const endMembershipAllowed = Effect.fn('AccessAdminPeople.endMembershipAllowed')(function* endMembershipAllowedNow(
+  scope: OperationalScope,
+  view: View,
+  now: Date,
+) {
+  const gate = yield* AccessPeopleWriteAvailability;
+  if (!gate.available) {
+    return false;
+  }
+  const reach = yield* reachFor(scope, view, accessPeopleDeclarations.endMembership, now);
+  return [...reach.scopeIds].some((scopeId) => administersPermanently(view, scope.principalId, scopeId));
+});
+
 /** Whether one person holds a live 'member' row in one scope; another company's row never counts. */
 const isLiveMemberIn = (view: View, principalId: string, scopeId: string): boolean =>
   view.memberships.some(
@@ -623,35 +654,25 @@ const isLiveMemberIn = (view: View, principalId: string, scopeId: string): boole
 
 /**
  * Who may be admitted to one company: an active human its directory lists as active, holding no live
- * member row in that very company (a live row in another company does not matter).
+ * member row in that very company (a live row in another company does not matter). The directory is
+ * Core's company-scoped read, so a tenant-context request sees that company's rows; whether the person
+ * may be admitted is still Core's rule, checked again inside the admission's own transaction.
  */
 const companyCandidates = Effect.fn('AccessAdminPeople.companyCandidates')(function* companyCandidatesOf(
   scope: OperationalScope,
   view: View,
   company: { readonly legalEntityId: LegalEntityId; readonly scopeId: string },
 ) {
-  const companyDirectory = yield* AccessCompanyDirectory;
-  const listed = (yield* companyDirectory.companyMembers(scope, company.legalEntityId)).filter(
-    (member) =>
-      member.membershipStatus === 'active' &&
-      member.principalStatus === 'active' &&
-      !isLiveMemberIn(view, String(member.principalId), company.scopeId),
-  );
   const directory = yield* AccessPeopleDirectory;
-  const rows = yield* directory
-    .people(
-      scope,
-      listed.map(({ principalId }) => principalId),
-    )
+  const listed = yield* directory
+    .companyMembers(scope, company.legalEntityId)
     .pipe(Effect.mapError(directoryUnavailable));
-  const humans = new Set(
-    rows.flatMap(({ kind, principalId, status }) =>
-      kind === 'human' && status === 'active' ? [String(principalId)] : [],
-    ),
-  );
   return listed
-    .flatMap(({ displayName, principalId }) =>
-      humans.has(String(principalId))
+    .flatMap(({ displayName, principalId, principalKind, principalStatus, status }) =>
+      status === 'active' &&
+      principalKind === 'human' &&
+      principalStatus === 'active' &&
+      !isLiveMemberIn(view, String(principalId), company.scopeId)
         ? [
             {
               displayName,
@@ -669,11 +690,15 @@ const companyCandidates = Effect.fn('AccessAdminPeople.companyCandidates')(funct
 
 /**
  * Admission as the options offer it: whether the gate and this person's admit authority reach any
- * company, and the candidates of exactly those companies. A closed gate lists nobody and reads nothing.
+ * company, and the candidates of exactly those companies. A company counts only when the options
+ * list it among their scopes (`shown`) and this person administers it permanently, so the screen
+ * never offers a candidate it cannot show or Core would refuse. A closed gate lists nobody and reads
+ * nothing.
  */
 const admissionOf = Effect.fn('AccessAdminPeople.admission')(function* admissionOptions(
   scope: OperationalScope,
   view: View,
+  shown: PeopleReach,
   now: Date,
 ) {
   const gate = yield* AccessPeopleWriteAvailability;
@@ -682,7 +707,12 @@ const admissionOf = Effect.fn('AccessAdminPeople.admission')(function* admission
   }
   const reach = yield* reachFor(scope, view, accessPeopleDeclarations.admitMember, now);
   const companies = view.scopes.flatMap(({ legalEntityId, scopeId }) =>
-    legalEntityId !== undefined && reach.scopeIds.has(scopeId) ? [{ legalEntityId, scopeId: String(scopeId) }] : [],
+    legalEntityId !== undefined &&
+    reach.scopeIds.has(scopeId) &&
+    shown.scopeIds.has(scopeId) &&
+    administersPermanently(view, scope.principalId, String(scopeId))
+      ? [{ legalEntityId, scopeId: String(scopeId) }]
+      : [],
   );
   const candidates = yield* Effect.forEach(companies, (company) => companyCandidates(scope, view, company), {
     concurrency: 1,
@@ -772,11 +802,11 @@ const options = Effect.fn('AccessAdminPeople.options')(function* listPeopleOptio
       writeAllowed(scope, view, accessPeopleDeclarations.delegate, now),
       writeAllowed(scope, view, accessPeopleDeclarations.revokeDelegation, now),
       writeAllowed(scope, view, accessPeopleDeclarations.transferOwnership, now),
-      writeAllowed(scope, view, accessPeopleDeclarations.endMembership, now),
+      endMembershipAllowed(scope, view, now),
     ],
     { concurrency: 1 },
   );
-  const admission = yield* admissionOf(scope, view, now);
+  const admission = yield* admissionOf(scope, view, reach, now);
   const roles = view.roles.filter(({ role }) => roleIsReachable(reach, role.legalEntityId));
   const entryOf = new Map(catalog.map((entry) => [String(entry.key), entry] as const));
   // A tenant-wide reader is offered the release whole; a company's administrator only the

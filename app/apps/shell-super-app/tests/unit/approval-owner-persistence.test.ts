@@ -93,7 +93,12 @@ const fixture = Effect.fn('OwnerApprovalPersistenceTest.fixture')(function* pers
                 return true;
               }),
           }),
-          Layer.succeed(AccessPeopleDirectory, { people: unused, scopeLabels: unused }),
+          Layer.succeed(AccessPeopleDirectory, {
+            companyMember: unused,
+            companyMembers: unused,
+            people: unused,
+            scopeLabels: unused,
+          }),
           Layer.succeed(AccessChangesCommands, {
             adopt: unused,
             decline: unused,

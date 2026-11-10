@@ -18,7 +18,10 @@ import {
 import { AccessMembershipSchema } from '@app/core-runtime/access/intent/memberships';
 import type { AccessMembership } from '@app/core-runtime/access/intent/memberships';
 import { AccessPeopleDirectory } from '@app/core-runtime/access/intent/people-directory';
-import type { AccessPeopleDirectoryService } from '@app/core-runtime/access/intent/people-directory';
+import type {
+  AccessDirectoryCompanyMember,
+  AccessPeopleDirectoryService,
+} from '@app/core-runtime/access/intent/people-directory';
 import { AccessTeamMemberSchema, AccessTeamSchema } from '@app/core-runtime/access/intent/teams';
 import {
   AccessPeopleCommands,
@@ -30,7 +33,7 @@ import type {
   AccessPeopleView,
   PeopleCommandFailure,
 } from '@app/core-runtime/access/lifecycle/people-service';
-import { DateTime, Effect, Layer, Result, Schema } from 'effect';
+import { DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { AccessAdminProblem } from '../../shared/access-admin-api.ts';
@@ -46,8 +49,6 @@ import {
   TransferAccessOwnershipPayloadSchema,
 } from '../../shared/access-admin-api.ts';
 import { AccessAdminClock } from '../../api/access-admin/clock.ts';
-import { AccessCompanyDirectory } from '../../api/access-admin/people-company-directory.ts';
-import type { AccessCompanyDirectoryMember } from '../../api/access-admin/people-company-directory.ts';
 import type { AccessPeopleBffService } from '../../api/access-admin/people.ts';
 import { AccessPeopleBff, AccessPeopleBffLive, accessPeopleDeclarations } from '../../api/access-admin/people.ts';
 import { AccessAdminSession } from '../../api/access-admin/session.ts';
@@ -231,50 +232,69 @@ const NAMES = new Map<string, string>([
   [OWNER, 'Olga Majitelová'],
 ]);
 
-const directory: AccessPeopleDirectoryService = {
-  people: (_scope, ids) =>
-    Effect.succeed(
-      ids.flatMap((principalId) => {
-        const displayName = NAMES.get(principalId);
-        const kind = principalId === AGENT ? 'agent' : 'human';
-        return displayName === undefined ? [] : [{ displayName, kind, principalId, status: 'active' }];
-      }),
-    ),
-  scopeLabels: () =>
-    Effect.succeed({
-      companies: [
-        { legalEntityId: LegalEntityIdSchema.make(COMPANY_A), legalName: 'Firma A s.r.o.' },
-        { legalEntityId: LegalEntityIdSchema.make(COMPANY_B), legalName: 'Firma B s.r.o.' },
-      ],
-      tenantName: 'Skupina',
-    }),
-};
-
-const listed = (principalId: string, membershipStatus = 'active'): AccessCompanyDirectoryMember => ({
+const listed = (principalId: string, status = 'active'): AccessDirectoryCompanyMember => ({
+  affiliation: 'employee',
   displayName: NAMES.get(principalId) ?? principalId,
-  membershipStatus,
   principalId: PrincipalIdSchema.make(principalId),
+  principalKind: principalId === AGENT ? 'agent' : 'human',
   principalStatus: 'active',
+  status,
 });
 
 /**
  * Each company's own directory. Alice is already a live member of A; Bob is a live member of B but not
  * of A; Eva left A; the agent is no person; Dana is listed by both and admitted to neither.
  */
-const COMPANY_DIRECTORY = new Map<string, readonly AccessCompanyDirectoryMember[]>([
+const COMPANY_DIRECTORY = new Map<string, readonly AccessDirectoryCompanyMember[]>([
   [COMPANY_A, [listed(AGENT), listed(ALICE), listed(BOB), listed(DANA), listed(EVA, 'departed')]],
   [COMPANY_B, [listed(BOB), listed(DANA)]],
 ]);
 
-/** Who may do what: a tenant owner everywhere, a company administrator in company A only. */
-const PersonaSchema = Schema.Literals(['companyAdmin', 'nobody', 'owner']);
+/** The people directory, counting every company directory read into `reads`. */
+const directoryFor = (reads: { directoryReads: number }): AccessPeopleDirectoryService => {
+  const companyMembers: AccessPeopleDirectoryService['companyMembers'] = (_scope, legalEntityId) =>
+    Effect.sync(() => {
+      reads.directoryReads += 1;
+      return COMPANY_DIRECTORY.get(legalEntityId) ?? [];
+    });
+  return {
+    companyMember: (scope, legalEntityId, principalId) =>
+      companyMembers(scope, legalEntityId).pipe(
+        Effect.map((rows) => Option.fromUndefinedOr(rows.find((row) => row.principalId === principalId))),
+      ),
+    companyMembers,
+    people: (_scope, ids) =>
+      Effect.succeed(
+        ids.flatMap((principalId) => {
+          const displayName = NAMES.get(principalId);
+          const kind = principalId === AGENT ? 'agent' : 'human';
+          return displayName === undefined ? [] : [{ displayName, kind, principalId, status: 'active' }];
+        }),
+      ),
+    scopeLabels: () =>
+      Effect.succeed({
+        companies: [
+          { legalEntityId: LegalEntityIdSchema.make(COMPANY_A), legalName: 'Firma A s.r.o.' },
+          { legalEntityId: LegalEntityIdSchema.make(COMPANY_B), legalName: 'Firma B s.r.o.' },
+        ],
+        tenantName: 'Skupina',
+      }),
+  };
+};
+
+/**
+ * Who may do what: a tenant owner everywhere, a company administrator in company A only, and Bob as a
+ * delegate whose envelope the gate admits in company B although he administers nothing permanently.
+ */
+const PersonaSchema = Schema.Literals(['companyAdmin', 'delegate', 'nobody', 'owner']);
 type Persona = typeof PersonaSchema.Type;
 
 const gateFor = (persona: Persona): AccessDecisionService => {
   const base = makeTestAccessDecision();
   const allowed = (input: GateInput): boolean =>
     persona === 'owner' ||
-    (persona === 'companyAdmin' && input.legalEntityScope === 'required' && input.scope.legalEntityId === COMPANY_A);
+    (persona === 'companyAdmin' && input.legalEntityScope === 'required' && input.scope.legalEntityId === COMPANY_A) ||
+    (persona === 'delegate' && input.legalEntityScope === 'required' && input.scope.legalEntityId === COMPANY_B);
   return {
     ...base,
     decide: (input) =>
@@ -341,7 +361,7 @@ const harness = (input: {
   readonly writes?: boolean;
 }) => {
   const recorded: Recorded = { calls: [], directoryReads: 0, reconciles: 0 };
-  const actor = input.persona === 'companyAdmin' ? COMPANY_ADMIN : OWNER;
+  const actor = { companyAdmin: COMPANY_ADMIN, delegate: BOB, nobody: OWNER, owner: OWNER }[input.persona];
   const gate = gateFor(input.persona);
   const layer = AccessPeopleBffLive.pipe(
     Layer.provide(
@@ -354,14 +374,7 @@ const harness = (input: {
         }),
         Layer.succeed(AccessDecisionGate, gate),
         Layer.succeed(AccessPeopleCommands, commandsFor(recorded, input.failure)),
-        Layer.succeed(AccessPeopleDirectory, directory),
-        Layer.succeed(AccessCompanyDirectory, {
-          companyMembers: (_scope, legalEntityId) =>
-            Effect.sync(() => {
-              recorded.directoryReads += 1;
-              return COMPANY_DIRECTORY.get(legalEntityId) ?? [];
-            }),
-        }),
+        Layer.succeed(AccessPeopleDirectory, directoryFor(recorded)),
       ),
     ),
   );
@@ -801,6 +814,21 @@ it.effect('offers as admission candidates only active directory humans not yet l
     ]);
     expect(admin.recorded.directoryReads).toBe(1);
     expect([own.writeAvailability.canAdmitMember, own.writeAvailability.canEndMembership]).toEqual([true, true]);
+  }),
+);
+
+it.effect('offers a delegate neither admission nor ending, which only permanent administration may run', () =>
+  Effect.gen(function* delegateOptions() {
+    const delegate = harness({ persona: 'delegate' });
+    const offered = yield* delegate.run((bff) => bff.options(headers, { limit: 100 }));
+    // The gate reaches company B through the envelope, so the other writes stay offered there.
+    expect(offered.writeAvailability.canAssign).toBe(true);
+    expect([offered.writeAvailability.canAdmitMember, offered.writeAvailability.canEndMembership]).toEqual([
+      false,
+      false,
+    ]);
+    expect(offered.admissionCandidates).toEqual([]);
+    expect(delegate.recorded.directoryReads).toBe(0);
   }),
 );
 
