@@ -1,3 +1,4 @@
+import { requiredLabelFor } from '@app/admin-ui';
 import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -185,6 +186,17 @@ it('shows the required login controls through the UI kit', () => {
   expect(password.hasAttribute('required')).toBe(true);
   expect(submit.getAttribute('type')).toBe('submit');
   expect(screen.getByRole('link', { name: '← Back to the home page' }).getAttribute('href')).toBe('/en');
+});
+
+it('reads the required text of a required field in Czech', () => {
+  languageState.current = 'cs';
+  render(<LoginPage />);
+
+  const login = getLogin();
+  expect(document.querySelector(`label[for="${login.id}"]`)?.textContent).toContain(requiredLabelFor('cs'));
+  expect(document.querySelector(`label[for="${login.id}"]`)?.textContent).not.toContain('(required)');
+  expect(document.querySelector(`label[for="${getPassword().id}"]`)?.textContent).toContain(requiredLabelFor('cs'));
+  expect(document.body.textContent).not.toContain('(required)');
 });
 
 it('the back link hands the canonical home target to the framework link', () => {
