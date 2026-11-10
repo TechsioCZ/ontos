@@ -1,4 +1,4 @@
-import { startDraftSave } from '@app/admin-ui';
+import { draftSavable, startDraftSave } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
@@ -73,17 +73,37 @@ const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
   return { controller, sent };
 });
 
-describe('security device edit panel autosave', () => {
-  it.effect('saves a typed note after the quiet time; a blank name stays local', () =>
+describe('security device edit panel explicit save', () => {
+  it.effect('sends a typed note only on Save, once; a blank name stays local', () =>
     Effect.gen(function* typed() {
       const { controller, sent } = yield* panel('saved');
       controller.change({ ...stored, name: '' });
       controller.save();
       expect(controller.status()).toBe('invalid');
+      expect(draftSavable(controller.status())).toBe(false);
       controller.change({ ...stored, note: 'Krytá chodba, nový zámek' });
-      yield* TestClock.adjust('800 millis');
+      // Longer than any delay the panel ever saved after: typing alone sends nothing.
+      yield* TestClock.adjust('1 minute');
+      expect(sent).toEqual([]);
+      expect(controller.status()).toBe('dirty');
+      controller.save();
+      controller.save();
+      yield* Effect.yieldNow;
       expect(sent.map(({ note }) => note)).toEqual(['Krytá chodba, nový zámek']);
       expect(controller.status()).toBe('saved');
+    }),
+  );
+
+  it.effect('discard goes back to the confirmed draft and sends nothing', () =>
+    Effect.gen(function* discarded() {
+      const { controller, sent } = yield* panel('saved');
+      controller.change({ ...stored, note: 'Krytá chodba, nový zámek' });
+      expect(controller.status()).toBe('dirty');
+      controller.discard();
+      expect(controller.status()).toBe('idle');
+      expect(controller.confirmed()).toBe(stored);
+      yield* TestClock.adjust('1 minute');
+      expect(sent).toEqual([]);
     }),
   );
 

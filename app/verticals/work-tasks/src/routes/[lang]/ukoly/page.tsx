@@ -44,7 +44,7 @@ import { WorkPlanning } from './work-planning.tsx';
 import { principalKey } from '../../../../shared/assignment.ts';
 import { assignmentPatch, selectedPrincipal } from './assignment-options.ts';
 import type { TaskFormSubmission } from './task-form-dialog.tsx';
-import { isActionProposal, taskAutosaveOutcome, taskAutosaveResult } from './task-form-values.ts';
+import { isActionProposal, taskSaveOutcome, taskSaveResult } from './task-form-values.ts';
 import {
   TaskTabSchema,
   commonTransitionTargets,
@@ -873,24 +873,24 @@ const useTasksPage = (
   };
 
   /**
-   * Save of the edit panel against the revision its draft builds on. The saved task shows at once; a revision
+   * The edit panel's Save button, against the revision its draft builds on. The saved task shows at once; a revision
    * conflict goes to the panel's status line, any other failure to its message. A draft parked for approval is not
-   * saved: the status line shows it as pending, and autosave never sends that draft again.
+   * saved: the status line shows it as pending, and that draft is never sent again.
    */
-  const handleAutosave = (submission: TaskFormSubmission, expectedRevision: number) =>
+  const handleSaveEdit = (submission: TaskFormSubmission, expectedRevision: number) =>
     editor?.mode === 'edit'
       ? commandEffect(commandOf(submission, editor), expectedRevision).pipe(
           Effect.matchEffect({
             onFailure: (error) =>
               Effect.sync((): RevisionedSaveResult => {
-                const outcome = taskAutosaveOutcome(error);
+                const outcome = taskSaveOutcome(error);
                 setFormError(outcome === 'conflict' ? undefined : failureMessage(error));
                 return outcome;
               }),
             onSuccess: (result) =>
               Effect.sync((): RevisionedSaveResult => {
                 setFormError(undefined);
-                return taskAutosaveResult(result);
+                return taskSaveResult(result);
               }),
           }),
         )
@@ -935,7 +935,6 @@ const useTasksPage = (
         }
       });
     },
-    handleAutosave,
     handleBulkAssign,
     handleBulkChangeState,
     handleChangeRowState,
@@ -969,6 +968,7 @@ const useTasksPage = (
     },
     handleReload,
     handleSave: save,
+    handleSaveEdit,
     handleSelectionChange: setSelection,
     handleSortingChange: setSorting,
     loadState,
@@ -1018,11 +1018,13 @@ const TaskEditor = ({ model }: { readonly model: ReturnType<typeof useTasksPage>
       customers={model.customers}
       customersLoading={!model.lookups.customers}
       error={model.formError}
+      // One panel per task: opening another task starts a new draft instead of carrying this one over.
+      key={editing?.ref.resourceId ?? 'new'}
       lookupAccess={model.lookupAccess}
       onArchive={model.canWrite ? model.handleArchive : undefined}
-      onAutosave={model.handleAutosave}
       onClose={model.handleCloseEditor}
       onComment={model.handleComment}
+      onSaveEdit={model.handleSaveEdit}
       onSubmit={model.handleSave}
       opportunities={model.opportunities}
       opportunitiesLoading={!model.lookups.opportunities}

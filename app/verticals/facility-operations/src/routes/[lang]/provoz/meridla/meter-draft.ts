@@ -1,4 +1,4 @@
-// The meter master-data card's values: a new meter is submitted once, an existing one is autosaved.
+// The meter master-data card's values: a new meter is submitted once, an edit is sent on Uložit.
 import { Option } from 'effect';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type { PropertyRef } from '../../../../../shared/domain/common.ts';

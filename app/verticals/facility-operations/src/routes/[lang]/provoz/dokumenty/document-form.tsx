@@ -1,7 +1,14 @@
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Create / edit / amendment form for the documents agenda (S12). Upload goes through the governed FileUpload command
 // first; the returned file snapshot becomes version 1 of the new document.
-import { SaveBar, SidePanel, surfaceTileClassName, useDraftSave } from '@app/admin-ui';
+import {
+  SaveBar,
+  SidePanel,
+  UnsavedChangesDialog,
+  saveLabelsFor,
+  surfaceTileClassName,
+  useDraftSave,
+} from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -34,7 +41,8 @@ import {
   sameDocumentEditDraft,
 } from './document-draft.ts';
 import type { ContractDraft, DocumentEditDraft } from './document-draft.ts';
-import { facilityAutosaveOutcome } from '../../../../ui/facility-autosave.ts';
+import { useEditGuard } from '../../../../ui/edit-guard.tsx';
+import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
 import {
   documentCategories,
   FileTypeIcon,
@@ -56,7 +64,7 @@ export type DocumentFormMode =
   | { readonly kind: 'create' }
   | { readonly document: DocumentRecord; readonly kind: 'edit' }
   | { readonly kind: 'amend'; readonly original: DocumentRecord };
-/** Modes the create panel handles; an edit is autosaved by the edit panel instead. */
+/** Modes the create panel handles; an edit is handled by the edit panel instead. */
 type CreateDocumentFormMode = Exclude<DocumentFormMode, { readonly kind: 'edit' }>;
 
 export const documentFormKey = (mode: DocumentFormMode): string => {
@@ -589,8 +597,8 @@ const DocumentTextFields = ({
 };
 
 /**
- * Edit one stored document. Changes save themselves (debounced, on blur and on Zavřít): the title, the category, the
- * description, the links and the contract terms. A category without its required fields stays local until it is valid.
+ * Edit one stored document: the title, the category, the description, the links and the contract terms. Nothing is
+ * sent until Uložit, and a category without its required fields cannot be saved until it is valid.
  */
 const DocumentEditPanel = ({
   contracts,
@@ -607,20 +615,20 @@ const DocumentEditPanel = ({
   readonly run: (command: OpsCommand) => Effect.Effect<CommandOutcome>;
   readonly tasks: TaskOptionsState;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const properties = usePropertyOptions();
   const contacts = useContactOptions();
   const invoices = useInvoiceOptions();
   const [draft, setDraft] = useState<DocumentEditDraft>(() => documentEditDraftOf(document));
   const problems = documentEditProblems(draft);
-  const autosave = useDraftSave<DocumentEditDraft, never>({
+  const record = useDraftSave<DocumentEditDraft, never>({
     equals: sameDocumentEditDraft,
     isValid: (value) => Option.isSome(documentUpdateCommandOf(document.id, value)),
     runtime: browserRuntime,
     save: (value) =>
       Option.match(documentUpdateCommandOf(document.id, value), {
         onNone: () => Effect.succeed<SaveOutcome>('failed'),
-        onSome: (command) => facilityAutosaveOutcome(run(command)),
+        onSome: (command) => facilitySaveOutcome(run(command)),
       }),
     value: draft,
   });
@@ -635,78 +643,86 @@ const DocumentEditPanel = ({
     );
   const removeLink = (link: SubjectRef) =>
     setDraft((current) => ({ ...current, links: current.links.filter((entry) => !sameSubject(entry, link)) }));
+  const guard = useEditGuard(record, () => {
+    setDraft(record.confirmed);
+  });
+  const labels = saveLabelsFor(language);
   const close = () => {
-    onClose();
+    guard.request(onClose);
   };
-  const handleSave = autosave.save;
+  const handleSave = record.save;
   const handleReloadLatest = () => {
     const current = documentEditDraftOf(document);
-    autosave.adopt(current);
+    record.adopt(current);
     setDraft(current);
   };
-  const showErrors = autosave.status === 'invalid';
+  const showErrors = record.status === 'invalid';
   const linkableContracts = contracts.filter((entry) => entry.id !== document.id);
   return (
-    <SidePanel
-      actions={
-        <>
-          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
-          <Button onClick={close} theme="outlined" variant="secondary">
-            {t(closeLabelKey)}
-          </Button>
-        </>
-      }
-      onOpenChange={(next) => {
-        if (!next) {
-          close();
+    <>
+      <SidePanel
+        actions={
+          <>
+            <Button onClick={close} theme="outlined" variant="secondary">
+              {t(closeLabelKey)}
+            </Button>
+            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+          </>
         }
-      }}
-      open={open}
-      resizeLabel={t(closeLabelKey)}
-      size="lg"
-      title={t(`${k}.create.editTitle`)}
-    >
-      <div className="flex flex-col gap-250 py-200">
-        {problems.contract && showErrors && (
-          <StatusText showIcon status="error">
-            {t(`${k}.contract.required`)}
-          </StatusText>
-        )}
-        <DocumentTextFields
-          category={draft.category}
-          description={draft.description}
-          onCategoryChange={(category) => update({ category })}
-          onDescriptionChange={(description) => update({ description })}
-          onTitleChange={(title) => update({ title })}
-          problems={showErrors ? problems : undefined}
-          title={draft.title}
-        />
-        <DocumentLinkFields
-          category={draft.category}
-          contacts={contacts}
-          invoices={invoices}
-          linkableContracts={linkableContracts}
-          links={draft.links}
-          onAddLink={addLink}
-          onRemoveLink={removeLink}
-          properties={properties}
-          tasks={tasks}
-        />
-        {isContractCategory(draft.category) && (
-          <DocumentContractFields
-            amends={NONE}
-            amendsLocked
+        guard={guard}
+        onOpenChange={(next) => {
+          if (!next) {
+            onClose();
+          }
+        }}
+        open={open}
+        resizeLabel={t(closeLabelKey)}
+        size="lg"
+        title={t(`${k}.create.editTitle`)}
+      >
+        <div className="flex flex-col gap-250 py-200">
+          {problems.contract && showErrors && (
+            <StatusText showIcon status="error">
+              {t(`${k}.contract.required`)}
+            </StatusText>
+          )}
+          <DocumentTextFields
             category={draft.category}
-            contract={draft.contract}
-            contracts={contracts}
-            onStatusChange={(status) =>
-              setDraft((current) => ({ ...current, contract: { ...current.contract, status } }))
-            }
-            onTermChange={setTerm}
+            description={draft.description}
+            onCategoryChange={(category) => update({ category })}
+            onDescriptionChange={(description) => update({ description })}
+            onTitleChange={(title) => update({ title })}
+            problems={showErrors ? problems : undefined}
+            title={draft.title}
           />
-        )}
-      </div>
-    </SidePanel>
+          <DocumentLinkFields
+            category={draft.category}
+            contacts={contacts}
+            invoices={invoices}
+            linkableContracts={linkableContracts}
+            links={draft.links}
+            onAddLink={addLink}
+            onRemoveLink={removeLink}
+            properties={properties}
+            tasks={tasks}
+          />
+          {isContractCategory(draft.category) && (
+            <DocumentContractFields
+              amends={NONE}
+              amendsLocked
+              category={draft.category}
+              contract={draft.contract}
+              contracts={contracts}
+              onStatusChange={(status) =>
+                setDraft((current) => ({ ...current, contract: { ...current.contract, status } }))
+              }
+              onTermChange={setTerm}
+            />
+          )}
+        </div>
+      </SidePanel>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
   );
 };
 
@@ -864,8 +880,8 @@ const DocumentCreatePanel = ({
 };
 
 /**
- * Create one document (and upload its file) or a new amendment on "Uložit", or edit a stored one, which saves itself
- * while the panel is open.
+ * Create one document (and upload its file) or a new amendment on "Uložit", or edit a stored one, whose changes are
+ * sent on Uložit as well.
  */
 export const DocumentFormPanel = ({
   contracts,

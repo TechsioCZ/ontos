@@ -311,7 +311,7 @@
           "title_few": "Obrázky ({{count}})",
           "title_many": "Obrázky ({{count}})",
           "title_other": "Obrázky ({{count}})",
-          "intro": "První obrázek je hlavní a e-shop ho ukáže jako první. Pořadí změníte přetažením. Každá změna se ukládá hned.",
+          "intro": "První obrázek je hlavní a e-shop ho ukáže jako první. Pořadí změníte přetažením nebo tlačítky; nahrání, přesun i odebrání se provede hned po vaší akci.",
           "introReadOnly": "První obrázek je hlavní a e-shop ho ukáže jako první.",
           "main": "Hlavní",
           "imageAlt": "{{name}} – obrázek {{position}}",

@@ -309,7 +309,7 @@
         "gallery": {
           "title_one": "Image ({{count}})",
           "title_other": "Images ({{count}})",
-          "intro": "The first image is the main one and the storefront shows it first. Drag to change the order. Every change is saved right away.",
+          "intro": "The first image is the main one and the storefront shows it first. Drag or use the buttons to change the order; an upload, move or removal takes effect as soon as you do it.",
           "introReadOnly": "The first image is the main one and the storefront shows it first.",
           "main": "Main",
           "imageAlt": "{{name}} – image {{position}}",

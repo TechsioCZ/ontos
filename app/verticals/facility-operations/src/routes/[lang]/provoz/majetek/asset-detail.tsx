@@ -1,7 +1,15 @@
 // Asset card (S02) in a resizable SidePanel: card, value/event timeline, revisions and depreciation (S03).
-// Every action switches the panel body to its form; the footer carries Zpět + the submit button, except for the card
-// edit, which saves itself and shows the inline autosave status there. Owned by ops-assets.
-import { SaveBar, DetailList, SidePanel, formatMoney, surfaceTileClassName } from '@app/admin-ui';
+// Every action switches the panel body to its form; the footer carries Zpět + the submit button, and the card edit
+// ends it with the save bar (Uložit and the draft's status). Owned by ops-assets.
+import {
+  DetailList,
+  SaveBar,
+  SidePanel,
+  UnsavedChangesDialog,
+  formatMoney,
+  saveLabelsFor,
+  surfaceTileClassName,
+} from '@app/admin-ui';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -24,7 +32,8 @@ import type {
 } from '../../../../../shared/domain/assets.ts';
 import { assetStatusOf, currentServiceRecords, isActiveAsset } from '../../../../../shared/domain/assets.ts';
 import type { AssetCardDraft } from './asset-card-draft.ts';
-import { useAssetCardAutosave } from './asset-card-autosave.ts';
+import { useAssetCardDraft } from './asset-card-save.ts';
+import { useEditGuard } from '../../../../ui/edit-guard.tsx';
 import {
   ArchiveForm,
   AssetCardForm,
@@ -512,8 +521,8 @@ interface AssetDetailProps {
   /** Runs the command; returns true when it was saved (the page reloads data and toasts). */
   readonly onSubmit: (command: OpsCommand, successKey: string) => Effect.Effect<boolean>;
   /**
-   * The agenda's own runner: the card edit autosaves through the runner of the read its draft was built on, so a
-   * revision conflict reaches the status line.
+   * The agenda's own runner: the card edit saves through the runner of the read its draft was built on, so a
+   * revision conflict reaches the save bar.
    */
   readonly run: (command: OpsCommand) => Effect.Effect<CommandOutcome>;
   readonly state: AssetsState;
@@ -537,8 +546,11 @@ const AssetDetailContent = ({
   const k = useK();
   const [mode, setMode] = useState<DetailMode>({ kind: 'view' });
   const [tab, setTab] = useState('card');
-  // The card draft lives in the autosave hook, so the panel footer can save it and show its status.
-  const { draft, reloadLatest, save, setDraft, status } = useAssetCardAutosave({ asset, run });
+  // The card draft lives here, so the panel footer can save it and show its status.
+  const record = useAssetCardDraft({ asset, run });
+  const { draft, reloadLatest, save, setDraft, status } = record;
+  const guard = useEditGuard(record, record.discard);
+  const labels = saveLabelsFor(language);
   const changeDraft = (patch: Partial<AssetCardDraft>) => setDraft((current) => ({ ...current, ...patch }));
   const closePanel = () => {
     onClose();
@@ -590,7 +602,7 @@ const AssetDetailContent = ({
         draft={draft}
         formId={FORM_ID}
         onChange={changeDraft}
-        onSubmit={submit('messages.updated')}
+        onSubmit={save}
         state={state}
       />
     )),
@@ -694,7 +706,8 @@ const AssetDetailContent = ({
   );
 
   /**
-   * The panel footer: the card edit saves itself, so it swaps the submit button for the inline autosave status.
+   * The panel footer: the card edit ends with the save bar instead of a submit button; Zpět asks before it drops an
+   * unsaved draft.
    */
   const footerActions = () => {
     if (mode.kind === 'view') {
@@ -745,10 +758,18 @@ const AssetDetailContent = ({
     if (mode.kind === 'edit') {
       return (
         <>
-          <SaveBar onReloadLatest={reloadLatest} onSave={save} status={status} />
-          <Button onClick={() => setMode({ kind: 'view' })} theme="outlined" variant="secondary">
+          <Button
+            onClick={() => {
+              guard.request(() => {
+                setMode({ kind: 'view' });
+              });
+            }}
+            theme="outlined"
+            variant="secondary"
+          >
             {k('actions.back')}
           </Button>
+          <SaveBar labels={labels} onReloadLatest={reloadLatest} onSave={save} status={status} />
         </>
       );
     }
@@ -771,30 +792,35 @@ const AssetDetailContent = ({
   };
 
   return (
-    <SidePanel
-      actions={footerActions()}
-      className="lg:min-w-[62rem]"
-      description={
-        <span className="flex flex-wrap items-center gap-100">
-          <span className="tabular-nums">{asset.inventoryNumber}</span>
-          <span>·</span>
-          <span>{asset.location?.label ?? k('notProvided')}</span>
-          <KindBadge asset={asset} />
-          <StatusBadge asset={asset} />
-        </span>
-      }
-      onOpenChange={(next) => {
-        if (!next) {
-          closePanel();
+    <>
+      <SidePanel
+        actions={footerActions()}
+        className="lg:min-w-[62rem]"
+        description={
+          <span className="flex flex-wrap items-center gap-100">
+            <span className="tabular-nums">{asset.inventoryNumber}</span>
+            <span>·</span>
+            <span>{asset.location?.label ?? k('notProvided')}</span>
+            <KindBadge asset={asset} />
+            <StatusBadge asset={asset} />
+          </span>
         }
-      }}
-      open
-      resizeLabel={k('resize')}
-      size="xl"
-      title={mode.kind === 'view' ? asset.name : `${formTitle[mode.kind]} · ${asset.name}`}
-    >
-      {body}
-    </SidePanel>
+        // Only the card edit holds a draft; the action forms keep the panel's own protection of typed input.
+        guard={mode.kind === 'edit' ? guard : undefined}
+        onOpenChange={(next) => {
+          if (!next) {
+            closePanel();
+          }
+        }}
+        open
+        resizeLabel={k('resize')}
+        size="xl"
+        title={mode.kind === 'view' ? asset.name : `${formTitle[mode.kind]} · ${asset.name}`}
+      >
+        {body}
+      </SidePanel>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
   );
 };
 

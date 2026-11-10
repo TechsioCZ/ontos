@@ -1,6 +1,6 @@
 // Forms of the assets page. Each renders a <form id> whose submit button sits in the SidePanel footer and hands a
 // typed command to `onSubmit`; the page runs it through the governed apply-command Action. The create/edit card keeps
-// its values in the page's draft, so an edit of a stored asset saves itself. Owned by ops-assets.
+// its values in the page's draft, so an edit of a stored asset is sent by the panel's Uložit. Owned by ops-assets.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Option as EffectOption, Schema } from 'effect';
 import type { TOptions } from 'i18next';
@@ -85,7 +85,7 @@ const locationOptions = (tree: PropertyTree, none: string): Option[] => [
 export interface AssetCardFormProps extends FormProps {
   readonly asset?: Asset;
   readonly draft: AssetCardDraft;
-  /** The page owns the draft, so an edit can autosave it from the panel footer. */
+  /** The page owns the draft, so an edit is saved from the panel footer. */
   readonly onChange: (patch: Partial<AssetCardDraft>) => void;
   readonly state: AssetsState;
 }

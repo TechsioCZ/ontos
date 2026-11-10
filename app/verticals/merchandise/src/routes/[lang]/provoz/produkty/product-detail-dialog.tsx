@@ -550,6 +550,7 @@ export const ProductDetailView = ({
           </Tabs.Content>
           <Tabs.Content className="py-200" value="variants">
             <VariantsPanel
+              active={tab === 'variants'}
               canMoveStock={canMoveStock}
               canWrite={canWrite}
               key={`variants-${DateTime.formatIso(product.updatedAt)}`}
@@ -572,6 +573,7 @@ export const ProductDetailView = ({
             />
             <EshopPanel
               {...(storefrontOrigin === undefined ? {} : { storefrontOrigin })}
+              active={tab === 'eshop'}
               canWrite={canWrite}
               key={`eshop-${DateTime.formatIso(product.updatedAt)}`}
               onArchived={onBack}
@@ -583,6 +585,7 @@ export const ProductDetailView = ({
           </Tabs.Content>
           <Tabs.Content className="py-200" value="content">
             <CatalogContentPanel
+              active={tab === 'content'}
               canWrite={canWrite}
               category={category}
               hasCategoryTree={hasCategoryTree}

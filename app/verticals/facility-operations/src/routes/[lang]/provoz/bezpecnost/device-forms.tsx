@@ -1,7 +1,14 @@
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Side panels of the security agenda: device card create/edit, fault report (+ linked task), inspection, resolve.
-import { SaveBar, SidePanel, surfaceTileClassName, useDraftSave } from '@app/admin-ui';
-import type { SaveOutcome } from '@app/admin-ui';
+import {
+  SaveBar,
+  SidePanel,
+  UnsavedChangesDialog,
+  saveLabelsFor,
+  surfaceTileClassName,
+  useDraftSave,
+} from '@app/admin-ui';
+import type { SaveOutcome, UnsavedChangesGuard } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -31,7 +38,8 @@ import type { CommandOutcome, FailureReason } from '../../../../ui/use-agenda.ts
 import { addDays, createServiceTask, locationText, todayPrague, useSecurityLabel } from './security-model.ts';
 import { deviceCreateCommandOf, deviceDraftOf, deviceUpdateCommandOf, sameDeviceDraft } from './device-draft.ts';
 import type { DeviceDraft } from './device-draft.ts';
-import { facilityAutosaveOutcome } from '../../../../ui/facility-autosave.ts';
+import { useEditGuard } from '../../../../ui/edit-guard.tsx';
+import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
 
 export type RunCommand = (command: OpsCommand) => Effect.Effect<CommandOutcome>;
 type InspectionCommand = Extract<OpsCommand, { readonly _tag: 'SecurityDeviceRecordInspection' }>;
@@ -62,16 +70,19 @@ const PanelFrame = ({
   actions,
   busy = false,
   children,
+  guard,
   onClose,
   onSubmit,
   open,
   submitLabel,
   title,
 }: {
-  /** Explicit actions (an edit panel shows its autosave state instead of a submit button). */
+  /** Explicit actions (an edit panel ends them with its save bar). */
   readonly actions?: ReactNode | undefined;
   readonly busy?: boolean | undefined;
   readonly children: ReactNode;
+  /** The unsaved-changes guard of an edit panel: every dismissal asks it first. */
+  readonly guard?: UnsavedChangesGuard | undefined;
   readonly onClose: () => void;
   readonly onSubmit?: (() => void) | undefined;
   readonly open: boolean;
@@ -98,6 +109,7 @@ const PanelFrame = ({
   return (
     <SidePanel
       actions={panelActions}
+      guard={guard}
       onOpenChange={(next) => {
         if (!next) {
           onClose();
@@ -125,7 +137,7 @@ const PanelFrame = ({
   );
 };
 
-/** The fields of one device card, shared by the create panel and the autosaving edit panel. */
+/** The fields of one device card, shared by the create panel and the edit panel. */
 const DeviceFields = ({
   draft,
   k,
@@ -361,8 +373,8 @@ const DeviceCreatePanel = ({
 };
 
 /**
- * Edit one device card. Changes save themselves (debounced, on blur and on Zavřít) against the agenda revision; a
- * revision conflict offers the version someone else saved, and a taken name stays local until it is filled in.
+ * Edit one device card. Nothing is sent until Uložit; the save goes against the agenda revision, so a revision
+ * conflict offers the version someone else saved, and a card without a name cannot be saved.
  */
 const DeviceEditPanel = ({
   device,
@@ -375,13 +387,13 @@ const DeviceEditPanel = ({
   readonly open: boolean;
   readonly run: RunCommand;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const k = useSecurityLabel();
   const properties = usePropertyOptions();
   const [draft, setDraft] = useState<DeviceDraft>(() => deviceDraftOf(device));
   const set = <Key extends keyof DeviceDraft>(key: Key, value: DeviceDraft[Key]) =>
     setDraft((current) => ({ ...current, [key]: value }));
-  const autosave = useDraftSave<DeviceDraft, never>({
+  const record = useDraftSave<DeviceDraft, never>({
     equals: sameDeviceDraft,
     isValid: (value) =>
       Option.isSome(deviceUpdateCommandOf(value, device, pickedLocationOf({ device, draft: value, properties }))),
@@ -389,39 +401,48 @@ const DeviceEditPanel = ({
     save: (value) =>
       Option.match(deviceUpdateCommandOf(value, device, pickedLocationOf({ device, draft: value, properties })), {
         onNone: () => Effect.succeed<SaveOutcome>('failed'),
-        onSome: (command) => facilityAutosaveOutcome(run(command)),
+        onSome: (command) => facilitySaveOutcome(run(command)),
       }),
     value: draft,
   });
+  const guard = useEditGuard(record, () => {
+    setDraft(record.confirmed);
+  });
+  const labels = saveLabelsFor(language);
   const close = () => {
-    onClose();
+    guard.request(onClose);
   };
-  const handleSave = autosave.save;
+  const handleSave = record.save;
   const handleReloadLatest = () => {
     const current = deviceDraftOf(device);
-    autosave.adopt(current);
+    record.adopt(current);
     setDraft(current);
   };
   return (
-    <PanelFrame
-      actions={
-        <>
-          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
-          <Button onClick={close} theme="outlined" variant="secondary">
-            {t('facility-operations.common.close')}
-          </Button>
-        </>
-      }
-      onClose={close}
-      open={open}
-      title={k('edit.title')}
-    >
-      <DeviceFields draft={draft} k={k} nameMissing={autosave.status === 'invalid'} properties={properties} set={set} />
-    </PanelFrame>
+    <>
+      <PanelFrame
+        actions={
+          <>
+            <Button onClick={close} theme="outlined" variant="secondary">
+              {t('facility-operations.common.close')}
+            </Button>
+            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+          </>
+        }
+        guard={guard}
+        onClose={onClose}
+        onSubmit={handleSave}
+        open={open}
+        title={k('edit.title')}
+      >
+        <DeviceFields draft={draft} k={k} nameMissing={record.status === 'invalid'} properties={properties} set={set} />
+      </PanelFrame>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
   );
 };
 
-/** Create or edit one device card; an edit saves itself while the panel is open. */
+/** Create or edit one device card; an edit is sent on Uložit only. */
 const DeviceFormSession = ({
   device,
   onClose,

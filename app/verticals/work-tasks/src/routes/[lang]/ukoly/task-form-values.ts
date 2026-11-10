@@ -77,22 +77,21 @@ export const hasUnsavedInput = (values: FormValues, task?: Task) => !sameFormVal
 const isConflictProblem = Schema.is(ApplyCommandActionConflictProblemSchema);
 
 /**
- * How a failed autosave of the edit panel ends: the task list moved past the draft's revision is a conflict the user
+ * How a failed save of the edit panel ends: the task list moved past the draft's revision is a conflict the user
  * resolves by loading the current version; everything else (a closed task, a refusal, an outage) is a failure.
  */
-export const taskAutosaveOutcome = (error: { readonly _tag: string }): Extract<SaveOutcome, 'conflict' | 'failed'> =>
+export const taskSaveOutcome = (error: { readonly _tag: string }): Extract<SaveOutcome, 'conflict' | 'failed'> =>
   isConflictProblem(error) && error.code === 'work_revision_conflict' ? 'conflict' : 'failed';
 
 /** A command parked for approval: it was accepted, but nothing has changed yet. */
 export const isActionProposal = Schema.is(ActionProposalAcceptedSchema);
 
 /**
- * How an answered autosave ends: a committed save moves the draft to the returned revision. A change parked for
+ * How an answered save of the edit panel ends: a committed save moves the draft to the returned revision. A change parked for
  * approval is `proposed`: nothing is saved, the draft keeps its base revision and is not sent again.
  */
-export const taskAutosaveResult = (
-  result: { readonly revision: number } | ActionProposalAccepted,
-): RevisionedSaveResult => (isActionProposal(result) ? 'proposed' : result.revision);
+export const taskSaveResult = (result: { readonly revision: number } | ActionProposalAccepted): RevisionedSaveResult =>
+  isActionProposal(result) ? 'proposed' : result.revision;
 
 const ProjectSelectionSchema = Schema.Struct({ projectId: Schema.optionalKey(ProjectIdSchema) });
 /** Some(undefined) clears a selection. None rejects invalid input. Project IDs are never trimmed. */

@@ -1,10 +1,10 @@
 // @rstest-environment happy-dom
-// Mounted asset-card autosave: the actual `useAssetCardAutosave` with the real `useDraftSave` controller. Only the
+// Mounted asset-card draft: the actual `useAssetCardDraft` with the real `useDraftSave` controller. Only the
 // property-tree read and the page's governed runner are replaced, so this proves the render-phase refresh ordering
-// that the controller-level `asset-autosave-revision.test.ts` cannot: an acknowledged same-record asset that arrives
+// that the controller-level `asset-card-save-revision.test.ts` cannot: an acknowledged same-record asset that arrives
 // while the save is still pending must move the draft and its base to that read once the save settles.
-import { useAssetCardAutosave } from '../../src/routes/[lang]/provoz/majetek/asset-card-autosave.ts';
-import type { AssetCardAutosave, RunAssetCommand } from '../../src/routes/[lang]/provoz/majetek/asset-card-autosave.ts';
+import { useAssetCardDraft } from '../../src/routes/[lang]/provoz/majetek/asset-card-save.ts';
+import type { AssetCardDraftSave, RunAssetCommand } from '../../src/routes/[lang]/provoz/majetek/asset-card-save.ts';
 import { assetCardDraftOf } from '../../src/routes/[lang]/provoz/majetek/asset-card-draft.ts';
 import type { AssetCardDraft } from '../../src/routes/[lang]/provoz/majetek/asset-card-draft.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
@@ -118,14 +118,14 @@ const answerConflict = (server: AgendaServer, index: number): void => {
   browserRuntime.runSync(Deferred.succeed(replyOf(server, index), { ok: false, reason: 'conflict' }));
 };
 
-let latestAutosave: AssetCardAutosave | undefined;
+let latestDraft: AssetCardDraftSave | undefined;
 
-const autosaveOf = (): AssetCardAutosave => Option.getOrThrow(Option.fromUndefinedOr(latestAutosave));
+const draftOf = (): AssetCardDraftSave => Option.getOrThrow(Option.fromUndefinedOr(latestDraft));
 
 const Harness = ({ asset, run }: { readonly asset: Asset; readonly run: RunAssetCommand }) => {
-  const value = useAssetCardAutosave({ asset, run });
+  const value = useAssetCardDraft({ asset, run });
   useEffect(() => {
-    latestAutosave = value;
+    latestDraft = value;
   }, [value]);
   return null;
 };
@@ -189,7 +189,7 @@ const waitUntil = async (condition: () => boolean, attempt = 0): Promise<void> =
 };
 
 const type = (value: AssetCardDraft) => {
-  autosaveOf().setDraft(value);
+  draftOf().setDraft(value);
 };
 
 beforeEach(() => {
@@ -214,7 +214,7 @@ afterEach(() => {
   rstest.unstubAllGlobals();
 });
 
-describe('mounted asset card autosave against refreshed reads', () => {
+describe('mounted asset card draft against refreshed reads', () => {
   it.effect('a settled draft follows a refreshed same-record read and saves on its base', () =>
     Effect.gen(function* cleanRefresh() {
       const server = serverOf(3, atInstant);
@@ -228,18 +228,18 @@ describe('mounted asset card autosave against refreshed reads', () => {
         }),
       );
 
-      expect(autosaveOf().draft.note).toBe('Jejich poznámka');
-      expect(autosaveOf().status).toBe('idle');
+      expect(draftOf().draft.note).toBe('Jejich poznámka');
+      expect(draftOf().status).toBe('idle');
       expect(server.saves).toEqual([]);
 
       yield* Effect.promise(() =>
         act(async () => {
-          type({ ...autosaveOf().draft, responsible: 'Petr Svoboda' });
+          type({ ...draftOf().draft, responsible: 'Petr Svoboda' });
         }),
       );
       yield* Effect.promise(() =>
         act(async () => {
-          autosaveOf().save();
+          draftOf().save();
         }),
       );
       yield* Effect.promise(() => waitUntil(() => server.saves.length === 1));
@@ -250,7 +250,7 @@ describe('mounted asset card autosave against refreshed reads', () => {
           answerSaved(server, 0, { revision: 5, updatedAt: newestInstant });
         }),
       );
-      yield* Effect.promise(() => waitUntil(() => autosaveOf().status === 'saved'));
+      yield* Effect.promise(() => waitUntil(() => draftOf().status === 'saved'));
     }),
   );
 
@@ -264,7 +264,7 @@ describe('mounted asset card autosave against refreshed reads', () => {
           type({ ...assetCardDraftOf(opened), note: 'Moje poznámka' });
         }),
       );
-      expect(autosaveOf().status).toBe('dirty');
+      expect(draftOf().status).toBe('dirty');
 
       const refreshed = assetOf({ note: 'Jejich poznámka', updatedAt: later });
       yield* Effect.promise(() =>
@@ -274,10 +274,10 @@ describe('mounted asset card autosave against refreshed reads', () => {
         }),
       );
 
-      expect(autosaveOf().draft.note).toBe('Moje poznámka');
+      expect(draftOf().draft.note).toBe('Moje poznámka');
       yield* Effect.promise(() =>
         act(async () => {
-          autosaveOf().save();
+          draftOf().save();
         }),
       );
       yield* Effect.promise(() => waitUntil(() => server.saves.length === 1));
@@ -288,24 +288,24 @@ describe('mounted asset card autosave against refreshed reads', () => {
           answerConflict(server, 0);
         }),
       );
-      yield* Effect.promise(() => waitUntil(() => autosaveOf().status === 'conflict'));
+      yield* Effect.promise(() => waitUntil(() => draftOf().status === 'conflict'));
 
       yield* Effect.promise(() =>
         act(async () => {
-          autosaveOf().reloadLatest();
+          draftOf().reloadLatest();
         }),
       );
-      expect(autosaveOf().draft.note).toBe('Jejich poznámka');
-      expect(autosaveOf().status).toBe('idle');
+      expect(draftOf().draft.note).toBe('Jejich poznámka');
+      expect(draftOf().status).toBe('idle');
 
       yield* Effect.promise(() =>
         act(async () => {
-          type({ ...autosaveOf().draft, note: 'Po konfliktu' });
+          type({ ...draftOf().draft, note: 'Po konfliktu' });
         }),
       );
       yield* Effect.promise(() =>
         act(async () => {
-          autosaveOf().save();
+          draftOf().save();
         }),
       );
       yield* Effect.promise(() => waitUntil(() => server.saves.length === 2));
@@ -316,7 +316,7 @@ describe('mounted asset card autosave against refreshed reads', () => {
           answerSaved(server, 1, { revision: 5, updatedAt: newestInstant });
         }),
       );
-      yield* Effect.promise(() => waitUntil(() => autosaveOf().status === 'saved'));
+      yield* Effect.promise(() => waitUntil(() => draftOf().status === 'saved'));
     }),
   );
 
@@ -339,15 +339,15 @@ describe('mounted asset card autosave against refreshed reads', () => {
         }),
       );
 
-      expect(autosaveOf().draft).toMatchObject({ name: 'Kotel', note: 'Nový kotel' });
+      expect(draftOf().draft).toMatchObject({ name: 'Kotel', note: 'Nový kotel' });
       yield* Effect.promise(() =>
         act(async () => {
-          type({ ...autosaveOf().draft, note: 'Nový kotel 2' });
+          type({ ...draftOf().draft, note: 'Nový kotel 2' });
         }),
       );
       yield* Effect.promise(() =>
         act(async () => {
-          autosaveOf().save();
+          draftOf().save();
         }),
       );
       yield* Effect.promise(() => waitUntil(() => server.saves.length === 1));
@@ -358,7 +358,7 @@ describe('mounted asset card autosave against refreshed reads', () => {
           answerSaved(server, 0, { revision: 5, updatedAt: newestInstant });
         }),
       );
-      yield* Effect.promise(() => waitUntil(() => autosaveOf().status === 'saved'));
+      yield* Effect.promise(() => waitUntil(() => draftOf().status === 'saved'));
     }),
   );
 
@@ -374,13 +374,13 @@ describe('mounted asset card autosave against refreshed reads', () => {
       );
       yield* Effect.promise(() =>
         act(async () => {
-          autosaveOf().save();
+          draftOf().save();
         }),
       );
       yield* Effect.promise(() => waitUntil(() => server.saves.length === 1));
       expect(server.saves[0]?.expectedRevision).toBe(3);
 
-      // The action applied and the page re-read the record before the autosave controller settled.
+      // The action applied and the page re-read the record before the save controller settled.
       const acknowledged = assetOf({ note: 'Moje poznámka', updatedAt: later });
       yield* Effect.promise(() =>
         act(async () => {
@@ -390,8 +390,8 @@ describe('mounted asset card autosave against refreshed reads', () => {
           await settle();
         }),
       );
-      expect(autosaveOf().status).toBe('saving');
-      expect(autosaveOf().draft.note).toBe('Moje poznámka');
+      expect(draftOf().status).toBe('saving');
+      expect(draftOf().draft.note).toBe('Moje poznámka');
 
       yield* Effect.promise(() =>
         act(async () => {
@@ -399,17 +399,17 @@ describe('mounted asset card autosave against refreshed reads', () => {
           await settle();
         }),
       );
-      yield* Effect.promise(() => waitUntil(() => autosaveOf().status === 'saved'));
+      yield* Effect.promise(() => waitUntil(() => draftOf().status === 'saved'));
 
       // A second edit after the save settled must use the acknowledged base, not the old read's runner.
       yield* Effect.promise(() =>
         act(async () => {
-          type({ ...autosaveOf().draft, note: 'Druhá poznámka' });
+          type({ ...draftOf().draft, note: 'Druhá poznámka' });
         }),
       );
       yield* Effect.promise(() =>
         act(async () => {
-          autosaveOf().save();
+          draftOf().save();
         }),
       );
       yield* Effect.promise(() => waitUntil(() => server.saves.length === 2));
@@ -420,7 +420,83 @@ describe('mounted asset card autosave against refreshed reads', () => {
           answerSaved(server, 1, { revision: 5, updatedAt: newestInstant });
         }),
       );
-      yield* Effect.promise(() => waitUntil(() => autosaveOf().status === 'saved'));
+      yield* Effect.promise(() => waitUntil(() => draftOf().status === 'saved'));
+    }),
+  );
+
+  it.live('typing, waiting and unmounting send nothing; Save sends the draft once', () =>
+    Effect.gen(function* explicitSave() {
+      const server = serverOf(3, atInstant);
+      const view = yield* Effect.promise(() => mount(opened, runnerOf(server, { revision: 3, updatedAt: atInstant })));
+
+      yield* Effect.promise(() =>
+        act(async () => {
+          type({ ...assetCardDraftOf(opened), note: 'Moje poznámka' });
+        }),
+      );
+      expect(draftOf().status).toBe('dirty');
+      expect(draftOf().canSave).toBe(true);
+      expect(draftOf().dirty).toBe(true);
+      // Longer than any delay the card ever saved after.
+      yield* Effect.sleep('1 second');
+      yield* Effect.promise(() => act(settle));
+      expect(server.saves).toEqual([]);
+
+      yield* Effect.promise(() =>
+        act(async () => {
+          draftOf().save();
+          draftOf().save();
+        }),
+      );
+      yield* Effect.promise(() => waitUntil(() => server.saves.length === 1));
+      expect(server.saves[0]?.command).toMatchObject({ note: 'Moje poznámka' });
+      yield* Effect.promise(() =>
+        act(async () => {
+          answerSaved(server, 0, { revision: 4, updatedAt: laterInstant });
+        }),
+      );
+      yield* Effect.promise(() => waitUntil(() => draftOf().status === 'saved'));
+      expect(server.saves).toHaveLength(1);
+
+      yield* Effect.promise(() =>
+        act(async () => {
+          type({ ...draftOf().draft, note: 'Nedokončená poznámka' });
+        }),
+      );
+      view.unmount();
+      yield* Effect.sleep('1 second');
+      expect(server.saves).toHaveLength(1);
+    }),
+  );
+
+  it.effect('an invalid draft cannot be saved, and discard restores the draft without sending', () =>
+    Effect.gen(function* discardInvalid() {
+      const server = serverOf(3, atInstant);
+      yield* Effect.promise(() => mount(opened, runnerOf(server, { revision: 3, updatedAt: atInstant })));
+
+      yield* Effect.promise(() =>
+        act(async () => {
+          type({ ...assetCardDraftOf(opened), name: '' });
+        }),
+      );
+      expect(draftOf().status).toBe('invalid');
+      expect(draftOf().canSave).toBe(false);
+      yield* Effect.promise(() =>
+        act(async () => {
+          draftOf().save();
+        }),
+      );
+      expect(server.saves).toEqual([]);
+
+      yield* Effect.promise(() =>
+        act(async () => {
+          draftOf().discard();
+        }),
+      );
+      expect(draftOf().draft).toEqual(assetCardDraftOf(opened));
+      expect(draftOf().status).toBe('idle');
+      expect(draftOf().dirty).toBe(false);
+      expect(server.saves).toEqual([]);
     }),
   );
 
@@ -439,11 +515,11 @@ describe('mounted asset card autosave against refreshed reads', () => {
         }),
       );
 
-      expect(autosaveOf().draft.note).toBe('Moje nová poznámka');
+      expect(draftOf().draft.note).toBe('Moje nová poznámka');
 
       yield* Effect.promise(() =>
         act(async () => {
-          autosaveOf().save();
+          draftOf().save();
         }),
       );
       yield* Effect.promise(() => waitUntil(() => server.saves.length === 1));
@@ -454,7 +530,7 @@ describe('mounted asset card autosave against refreshed reads', () => {
           answerConflict(server, 0);
         }),
       );
-      yield* Effect.promise(() => waitUntil(() => autosaveOf().status === 'conflict'));
+      yield* Effect.promise(() => waitUntil(() => draftOf().status === 'conflict'));
     }),
   );
 });

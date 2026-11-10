@@ -26,6 +26,7 @@ import { grossUnitPriceMinor, isRealVariant } from '../../../../../shared/domain
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import { useCommandFailure } from './product-form-labels.ts';
+import { ProductTabSaveBar, useProductTabSave } from './product-tab-save.tsx';
 import type { ProductVariantDestination } from './product-variant-destination.ts';
 
 const availabilityPresentation = {
@@ -84,6 +85,7 @@ const variantDraftsOf = (product: ProductRecord): readonly VariantDraft[] => {
 };
 
 interface PanelProps {
+  readonly active?: boolean;
   readonly canMoveStock?: boolean;
   readonly canWrite: boolean;
   readonly onArchived?: () => void;
@@ -285,9 +287,45 @@ export const VariantPriceHistory = ({ product }: { readonly product: ProductReco
   );
 };
 
+const variantErrorsOf = (drafts: readonly VariantDraft[]) =>
+  drafts.map((draft) => ({
+    name: draft.name.trim() === '' || draft.name.trim().length > 100,
+    price: parseCzk(draft.priceText) === null,
+    sku: draft.sku.trim() === '' || draft.sku.trim().length > 64,
+  }));
+
+const duplicateSkuOf = (drafts: readonly VariantDraft[]) => {
+  const skus = drafts.map((draft) => draft.sku.trim().toLowerCase());
+  return skus.some((sku, index) => sku !== '' && skus.indexOf(sku) !== index);
+};
+
+const variantsInvalid = (drafts: readonly VariantDraft[]) =>
+  duplicateSkuOf(drafts) || variantErrorsOf(drafts).some((entry) => entry.name || entry.price || entry.sku);
+
+/** The variants an UpdateProduct sends for `drafts`; the product's legacy variants stay as they are. */
+const variantsOf = (drafts: readonly VariantDraft[], product: ProductRecord): ProductVariant[] => [
+  ...drafts.map((draft): ProductVariant => {
+    const original = (product.variants ?? []).find((variant) => variant.id !== undefined && variant.id === draft.id);
+    const variant: { -readonly [Key in keyof ProductVariant]: ProductVariant[Key] } = {
+      ...original,
+      active: draft.active,
+      attributes: draft.attributes.trim(),
+      name: draft.name.trim(),
+      priceMinor: parseCzk(draft.priceText) ?? 0,
+      sku: draft.sku.trim(),
+    };
+    if (draft.id !== undefined) {
+      variant.id = draft.id;
+    }
+    return variant;
+  }),
+  ...(product.variants ?? []).filter((variant) => !isRealVariant(variant)),
+];
+
 /**
- * Real variants: each has its own identity, SKU, net price (gross shown), stock and active flag. Saving sends one
- * UpdateProduct; the server keeps a per-variant price history, so a price change stays traceable.
+ * Real variants: each has its own identity, SKU, net price (gross shown), stock and active flag. Editing changes the
+ * draft only; the Save button sends one UpdateProduct. The server keeps a per-variant price history, so a price
+ * change stays traceable.
  */
 const useVariantsPanel = ({
   canWrite,
@@ -297,70 +335,32 @@ const useVariantsPanel = ({
   product,
   revision,
 }: PanelProps) => {
-  const failure = useCommandFailure();
   const [drafts, setDrafts] = useState<readonly VariantDraft[]>(() => variantDraftsOf(product));
   const [variantPage, setVariantPage] = useState(0);
   const [variantSearch, setVariantSearch] = useState('');
   const sequence = useRef(0);
-  const [busy, setBusy] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
   const records = new Map((product.variantRecords ?? []).map((record) => [record.id, record] as const));
-  const legacy = (product.variants ?? []).filter((variant) => !isRealVariant(variant));
   const patchDraft = (key: string, next: Partial<VariantDraft>) =>
     setDrafts((current) => current.map((draft) => (draft.key === key ? { ...draft, ...next } : draft)));
+  const save = useProductTabSave<readonly VariantDraft[]>({
+    commandOf: (value) => ({ _tag: 'UpdateProduct', id: product.id, patch: { variants: variantsOf(value, product) } }),
+    isValid: (value) => !variantsInvalid(value),
+    onReload,
+    onSaved: () => onCommitted('Varianty uloženy. Nové ceny uvidí zákazník v e-shopu po obnovení stránky.'),
+    reset: setDrafts,
+    revision,
+    value: drafts,
+  });
 
   const visibleDrafts = drafts.filter((draft) =>
     `${draft.name} ${draft.sku}`.toLocaleLowerCase('cs').includes(variantSearch.toLocaleLowerCase('cs')),
   );
   const pageCount = Math.max(1, Math.ceil(visibleDrafts.length / 20));
   const currentPage = Math.min(variantPage, pageCount - 1);
-  const errors = drafts.map((draft) => ({
-    name: draft.name.trim() === '' || draft.name.trim().length > 100,
-    price: parseCzk(draft.priceText) === null,
-    sku: draft.sku.trim() === '' || draft.sku.trim().length > 64,
-  }));
-  const skus = drafts.map((draft) => draft.sku.trim().toLowerCase());
-  const duplicateSku = skus.some((sku, index) => sku !== '' && skus.indexOf(sku) !== index);
-  const invalid = duplicateSku || errors.some((entry) => entry.name || entry.price || entry.sku);
-
-  const save = () => {
-    setSubmitted(true);
-    if (invalid || busy) {
-      return;
-    }
-    const variants: ProductVariant[] = [
-      ...drafts.map((draft): ProductVariant => {
-        const original = (product.variants ?? []).find(
-          (variant) => variant.id !== undefined && variant.id === draft.id,
-        );
-        const variant: { -readonly [Key in keyof ProductVariant]: ProductVariant[Key] } = {
-          ...original,
-          active: draft.active,
-          attributes: draft.attributes.trim(),
-          name: draft.name.trim(),
-          priceMinor: parseCzk(draft.priceText) ?? 0,
-          sku: draft.sku.trim(),
-        };
-        if (draft.id !== undefined) {
-          variant.id = draft.id;
-        }
-        return variant;
-      }),
-      ...legacy,
-    ];
-    setBusy(true);
-    setServerError(null);
-    runCommand({ _tag: 'UpdateProduct', id: product.id, patch: { variants } }, revision, (outcome) => {
-      setBusy(false);
-      if (!outcome.ok) {
-        setServerError(failure(outcome.reason, onReload, outcome.proposal));
-        return;
-      }
-      setSubmitted(false);
-      onCommitted('Varianty uloženy. Nové ceny uvidí zákazník v e-shopu po obnovení stránky.');
-    });
-  };
+  const errors = variantErrorsOf(drafts);
+  const duplicateSku = duplicateSkuOf(drafts);
+  // The field messages show once the draft is changed and holds the Save button back.
+  const submitted = save.draft.status === 'invalid';
 
   const addDraft = () => {
     const key = `new-${sequence.current}`;
@@ -380,7 +380,6 @@ const useVariantsPanel = ({
 
   return {
     addDraft,
-    busy,
     canMoveStock,
     canWrite,
     currentPage,
@@ -395,7 +394,6 @@ const useVariantsPanel = ({
     records,
     revision,
     save,
-    serverError,
     setVariantPage,
     setVariantSearch,
     submitted,
@@ -462,7 +460,6 @@ export const VariantsPanel = (props: PanelProps) => {
   const { t } = useModernI18n();
   const {
     addDraft,
-    busy,
     canMoveStock,
     canWrite,
     currentPage,
@@ -477,7 +474,6 @@ export const VariantsPanel = (props: PanelProps) => {
     records,
     revision,
     save,
-    serverError,
     setVariantPage,
     setVariantSearch,
     submitted,
@@ -691,19 +687,12 @@ export const VariantsPanel = (props: PanelProps) => {
           SKU variant se nesmí opakovat.
         </StatusText>
       )}
-      {serverError !== null && (
-        <StatusText showIcon status="error">
-          {serverError}
-        </StatusText>
-      )}
       {canWrite && (
-        <div className="flex flex-wrap justify-between gap-150">
+        <div className="flex flex-wrap items-center justify-between gap-150">
           <Button icon="icon-[mdi--plus]" onClick={addDraft} theme="outlined" type="button" variant="secondary">
             Přidat variantu
           </Button>
-          <Button isLoading={busy} loadingText="Ukládám…" onClick={save} type="button" variant="primary">
-            Uložit varianty
-          </Button>
+          <ProductTabSaveBar active={props.active ?? true} save={save} />
         </div>
       )}
       {(product.variantRecords ?? []).length > 0 && (
@@ -731,7 +720,19 @@ const slugFieldError = (invalid: boolean, taken: boolean) => {
   return {};
 };
 
-/** Storefront presentation: publication, slug and how availability is reported. */
+interface EshopDraft {
+  readonly published: boolean;
+  readonly slug: string;
+  readonly stockTracked: boolean;
+}
+
+const slugInvalidOf = (slug: string) => slug.trim() !== '' && !/^[a-z0-9-]{1,120}$/u.test(slug.trim());
+
+/**
+ * Storefront presentation: publication, slug and how availability is reported. Editing changes the draft only; the
+ * Save button sends one UpdateProduct, and leaving with unsaved changes asks first. Archiving a DEMO product stays its
+ * own command.
+ */
 const useEshopPanel = ({
   canWrite,
   onArchived,
@@ -742,47 +743,51 @@ const useEshopPanel = ({
   storefrontOrigin,
 }: PanelProps) => {
   const failure = useCommandFailure();
-  const [slug, setSlug] = useState(product.slug ?? '');
-  const [published, setPublished] = useState(product.published !== false);
-  const [stockTracked, setStockTracked] = useState(product.stockTracked !== false);
+  const [form, setForm] = useState<EshopDraft>(() => ({
+    published: product.published !== false,
+    slug: product.slug ?? '',
+    stockTracked: product.stockTracked !== false,
+  }));
+  const { published, slug, stockTracked } = form;
+  const setSlug = (next: string) => setForm((current) => ({ ...current, slug: next }));
+  const setPublished = (next: boolean) => setForm((current) => ({ ...current, published: next }));
+  const setStockTracked = (next: boolean) => setForm((current) => ({ ...current, stockTracked: next }));
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const storefrontHref =
     storefrontOrigin === undefined ? undefined : `${storefrontOrigin}/produkt/${product.slug ?? product.id}`;
   const [archiveReason, setArchiveReason] = useState('');
-  const slugInvalid = slug.trim() !== '' && !/^[a-z0-9-]{1,120}$/u.test(slug.trim());
+  const slugInvalid = slugInvalidOf(slug);
   // The slug the server refused because another product uses it; editing the field clears the message.
   const [takenSlug, setTakenSlug] = useState<string | null>(null);
   const slugTakenNow = takenSlug !== null && takenSlug === slug.trim();
-
-  const save = () => {
-    if (busy || slugInvalid || slugTakenNow) {
-      return;
-    }
-    setBusy(true);
-    setServerError(null);
-    const patch: { -readonly [Key in keyof ProductPatch]: ProductPatch[Key] } = {
-      published,
-      stockTracked,
-    };
-    if (slug.trim() !== '') {
-      patch.slug = slug.trim();
-    }
-    runCommand({ _tag: 'UpdateProduct', id: product.id, patch }, revision, (outcome) => {
-      setBusy(false);
-      if (!outcome.ok) {
-        // The only business refusal of this save is a slug another product already uses.
-        if (outcome.reason === 'rejected' && slug.trim() !== '' && slug.trim() !== (product.slug ?? '')) {
-          setTakenSlug(slug.trim());
-          setServerError('Adresu produktu už používá jiný produkt. Zvolte jinou adresu, nic se neuložilo.');
-          return;
-        }
-        setServerError(failure(outcome.reason, onReload, outcome.proposal));
-        return;
+  const save = useProductTabSave<EshopDraft>({
+    commandOf: (value) => {
+      const patch: { -readonly [Key in keyof ProductPatch]: ProductPatch[Key] } = {
+        published: value.published,
+        stockTracked: value.stockTracked,
+      };
+      if (value.slug.trim() !== '') {
+        patch.slug = value.slug.trim();
       }
-      onCommitted('Nastavení e-shopu uloženo.');
-    });
-  };
+      return { _tag: 'UpdateProduct', id: product.id, patch };
+    },
+    // The only business refusal of this save is a slug another product already uses.
+    failureText: (outcome, value) => {
+      const typed = value.slug.trim();
+      const taken = outcome.reason === 'rejected' && typed !== '' && typed !== (product.slug ?? '');
+      if (taken) {
+        setTakenSlug(typed);
+      }
+      return taken ? 'Adresu produktu už používá jiný produkt. Zvolte jinou adresu, nic se neuložilo.' : undefined;
+    },
+    isValid: (value) => !slugInvalidOf(value.slug) && !(takenSlug !== null && takenSlug === value.slug.trim()),
+    onReload,
+    onSaved: () => onCommitted('Nastavení e-shopu uloženo.'),
+    reset: setForm,
+    revision,
+    value: form,
+  });
 
   const archive = () => {
     setBusy(true);
@@ -925,13 +930,7 @@ export const EshopPanel = (props: PanelProps) => {
           {serverError}
         </StatusText>
       )}
-      {canWrite && (
-        <div className="flex justify-end">
-          <Button isLoading={busy} loadingText="Ukládám…" onClick={save} type="button" variant="primary">
-            Uložit nastavení e-shopu
-          </Button>
-        </div>
-      )}
+      {canWrite && <ProductTabSaveBar active={props.active ?? true} save={save} />}
     </div>
   );
 };

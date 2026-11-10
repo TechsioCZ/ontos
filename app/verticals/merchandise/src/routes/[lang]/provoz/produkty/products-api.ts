@@ -323,7 +323,7 @@ export const productDetailData = definePageData({
   runtime: browserRuntime,
 });
 
-type ProductCommand = Extract<
+export type ProductCommand = Extract<
   MerchandiseCommand,
   {
     readonly _tag:
@@ -369,38 +369,44 @@ const submitProductCommand = (command: ProductCommand, expectedRevision: number,
   );
 };
 
-/** The product workflow uses each published closed operation, with one native idempotency key per attempt. */
+/**
+ * One product command against `expectedRevision`, answered as a `CommandOutcome`; the product reads are invalidated.
+ * The product workflow uses each published closed operation, with one native idempotency key per attempt.
+ */
+export const productCommandOutcome = (
+  command: ProductCommand,
+  expectedRevision: number,
+): Effect.Effect<CommandOutcome> =>
+  newId.pipe(
+    Effect.flatMap((idempotencyKey) =>
+      submitProductCommand(command, expectedRevision, idempotencyKey).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            productListData.invalidate();
+            productDetailData.invalidate();
+            categoryChoicesData.invalidate();
+          }),
+        ),
+      ),
+    ),
+    Effect.match({
+      onFailure: (error): CommandOutcome =>
+        Schema.is(ActionProposalAcceptedSchema)(error)
+          ? { ok: false, proposal: error, reason: 'approval-required' }
+          : { ok: false, reason: commandReason(error) },
+      onSuccess: (result): CommandOutcome =>
+        result.image === undefined
+          ? { ok: true, revision: result.revision }
+          : { image: result.image, ok: true, revision: result.revision },
+    }),
+  );
+
 export const runCommand = (
   command: ProductCommand,
   expectedRevision: number,
   onOutcome: (outcome: CommandOutcome) => void,
 ): void => {
-  void browserRuntime.runPromise(
-    newId.pipe(
-      Effect.flatMap((idempotencyKey) =>
-        submitProductCommand(command, expectedRevision, idempotencyKey).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              productListData.invalidate();
-              productDetailData.invalidate();
-              categoryChoicesData.invalidate();
-            }),
-          ),
-        ),
-      ),
-      Effect.match({
-        onFailure: (error): CommandOutcome =>
-          Schema.is(ActionProposalAcceptedSchema)(error)
-            ? { ok: false, proposal: error, reason: 'approval-required' }
-            : { ok: false, reason: commandReason(error) },
-        onSuccess: (result): CommandOutcome =>
-          result.image === undefined
-            ? { ok: true, revision: result.revision }
-            : { image: result.image, ok: true, revision: result.revision },
-      }),
-      Effect.map(onOutcome),
-    ),
-  );
+  void browserRuntime.runPromise(productCommandOutcome(command, expectedRevision).pipe(Effect.map(onOutcome)));
 };
 
 /** The detail input for a route id; none for an id no product can have. */

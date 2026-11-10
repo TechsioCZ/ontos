@@ -2,15 +2,14 @@ import { startDraftSave } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { Effect, Schema } from 'effect';
-import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 import { ApplyCommandActionConflictProblemSchema } from '../../shared/apis/apply-command-action.ts';
 import { TaskSchema } from '../../shared/apis/records.ts';
 import {
   initialValues,
   sameFormValues,
-  taskAutosaveOutcome,
-  taskAutosaveResult,
+  taskSaveOutcome,
+  taskSaveResult,
 } from '../../src/routes/[lang]/ukoly/task-form-values.ts';
 import type { FormValues } from '../../src/routes/[lang]/ukoly/task-form-values.ts';
 
@@ -68,7 +67,7 @@ const conflictProblem = (code: 'work_lifecycle_conflict' | 'work_revision_confli
     type: 'about:blank',
   });
 
-describe('task edit panel autosave', () => {
+describe('task edit panel save', () => {
   it('treats an untouched draft as saved and any edited field as a change', () => {
     expect(sameFormValues(saved, initialValues(task))).toBe(true);
     expect(sameFormValues(saved, { ...saved, title: 'Saved task, revised' })).toBe(false);
@@ -81,9 +80,9 @@ describe('task edit panel autosave', () => {
   });
 
   it('turns only a revision conflict into the conflict line; a closed task or an outage is a failure', () => {
-    expect(taskAutosaveOutcome(conflictProblem('work_revision_conflict'))).toBe('conflict');
-    expect(taskAutosaveOutcome(conflictProblem('work_lifecycle_conflict'))).toBe('failed');
-    expect(taskAutosaveOutcome({ _tag: 'ApplyCommandActionUnavailableProblem' })).toBe('failed');
+    expect(taskSaveOutcome(conflictProblem('work_revision_conflict'))).toBe('conflict');
+    expect(taskSaveOutcome(conflictProblem('work_lifecycle_conflict'))).toBe('failed');
+    expect(taskSaveOutcome({ _tag: 'ApplyCommandActionUnavailableProblem' })).toBe('failed');
   });
 
   const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
@@ -96,16 +95,32 @@ describe('task edit panel autosave', () => {
     return { controller, sent };
   });
 
-  it.effect('saves a typed description after the quiet time; an empty title stays local', () =>
+  it.live('sends nothing while the draft only changes; Save sends it once; an empty title stays local', () =>
     Effect.gen(function* typed() {
       const { controller, sent } = yield* panel('saved');
       controller.change({ ...saved, title: ' ' });
       controller.save();
       expect(controller.status()).toBe('invalid');
       controller.change({ ...saved, description: 'Zavolat správci budovy' });
-      yield* TestClock.adjust('800 millis');
+      expect(controller.status()).toBe('dirty');
+      yield* Effect.sleep('1 second');
+      expect(sent).toEqual([]);
+      controller.save();
+      yield* Effect.yieldNow;
       expect(sent.map(({ description }) => description)).toEqual(['Zavolat správci budovy']);
       expect(controller.status()).toBe('saved');
+    }),
+  );
+
+  it.effect('discarding goes back to the saved task without sending', () =>
+    Effect.gen(function* discarded() {
+      const { controller, sent } = yield* panel('saved');
+      controller.change({ ...saved, priority: 'LOW' });
+      controller.discard();
+      expect(controller.status()).toBe('idle');
+      controller.save();
+      yield* Effect.yieldNow;
+      expect(sent).toEqual([]);
     }),
   );
 
@@ -117,7 +132,8 @@ describe('task edit panel autosave', () => {
       yield* Effect.yieldNow;
       expect(controller.status()).toBe('conflict');
       controller.change({ ...saved, priority: 'NORMAL' });
-      yield* TestClock.adjust('1 second');
+      controller.save();
+      yield* Effect.yieldNow;
       expect(sent).toHaveLength(1);
     }),
   );
@@ -129,11 +145,11 @@ describe('task edit panel autosave', () => {
   });
 
   it('reports a draft parked for approval as proposed; only a committed save moves the revision', () => {
-    expect(taskAutosaveResult(proposal)).toBe('proposed');
-    expect(taskAutosaveResult({ revision: 7 })).toBe(7);
+    expect(taskSaveResult(proposal)).toBe('proposed');
+    expect(taskSaveResult({ revision: 7 })).toBe(7);
   });
 
-  it.effect('shows a parked draft as pending and never proposes it again on blur, retry or close', () =>
+  it.effect('shows a parked draft as pending and never proposes it again on another Save', () =>
     Effect.gen(function* parkedOnce() {
       const { controller, sent } = yield* panel('proposed');
       const edited = { ...saved, description: 'Zavolat správci budovy' };
@@ -142,17 +158,15 @@ describe('task edit panel autosave', () => {
       yield* Effect.yieldNow;
       expect(controller.status()).toBe('proposed');
       expect(controller.confirmed()).toBe(saved);
-      // Blur, the retry control and the panel's close all flush; none of them sends the parked draft.
       controller.save();
       controller.save();
-      controller.save();
-      yield* TestClock.adjust('1 second');
+      yield* Effect.yieldNow;
       expect(sent).toEqual([edited]);
       expect(controller.status()).toBe('proposed');
     }),
   );
 
-  it.effect('still saves a committed edit and still retries a real failure', () =>
+  it.effect('saves a committed edit, and Save sends the draft again after a real failure', () =>
     Effect.gen(function* controls() {
       const committed = yield* panel('saved');
       committed.controller.change({ ...saved, title: 'Saved task, revised' });

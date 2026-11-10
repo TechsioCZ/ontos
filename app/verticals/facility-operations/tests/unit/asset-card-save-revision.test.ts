@@ -1,6 +1,6 @@
-// The asset card edit autosave against the agenda revision: a settled draft follows a fresh read of its record, while
+// The asset card edit save against the agenda revision: a settled draft follows a fresh read of its record, while
 // a draft the user is still editing keeps the revision it was built on, so a change to that record refuses the save
-// instead of silently overwriting it. The hook is a thin wrapper over `assetCardRefreshOf` and `assetCardAutosaveOf`;
+// instead of silently overwriting it. The hook is a thin wrapper over `assetCardRefreshOf` and `assetCardSaveOf`;
 // this drives those real decisions with the real DraftSaveController, exactly as the panel wires them.
 import { draftPending, startDraftSave } from '@app/admin-ui';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
@@ -10,11 +10,11 @@ import { AssetSchema } from '../../shared/domain/assets.ts';
 import type { Asset } from '../../shared/domain/assets.ts';
 import { touchedSince } from '../../shared/domain/change-log.ts';
 import {
-  assetCardAutosaveOf,
+  assetCardSaveOf,
   assetCardBaseOf,
   assetCardRefreshOf,
-} from '../../src/routes/[lang]/provoz/majetek/asset-card-autosave.ts';
-import type { AssetCardBase, RunAssetCommand } from '../../src/routes/[lang]/provoz/majetek/asset-card-autosave.ts';
+} from '../../src/routes/[lang]/provoz/majetek/asset-card-save.ts';
+import type { AssetCardBase, RunAssetCommand } from '../../src/routes/[lang]/provoz/majetek/asset-card-save.ts';
 import { assetCardDraftOf, assetCardUpdateCommandOf } from '../../src/routes/[lang]/provoz/majetek/asset-card-draft.ts';
 import type { AssetCardDraft } from '../../src/routes/[lang]/provoz/majetek/asset-card-draft.ts';
 import { assetPlacementOf } from '../../src/routes/[lang]/provoz/majetek/property-tree.ts';
@@ -124,7 +124,7 @@ const openPanel = Effect.fnUntraced(function* openPanel(
   let base: AssetCardBase = assetCardBaseOf(run, firstAsset);
   let draft = assetCardDraftOf(firstAsset);
   const options = () =>
-    assetCardAutosaveOf({
+    assetCardSaveOf({
       base: () => base,
       commandOf: (value: AssetCardDraft) =>
         assetCardUpdateCommandOf(value, asset, assetPlacementOf({ status: 'loading' }, value, asset)),
@@ -161,13 +161,13 @@ const openPanel = Effect.fnUntraced(function* openPanel(
   return {
     base: () => base,
     draft: () => draft,
-    flush: () => controller.save(),
     reloadLatest: () =>
       Effect.gen(function* reloading() {
         base = assetCardBaseOf(run, asset);
         yield* restart(assetCardDraftOf(asset));
       }),
     render,
+    save: () => controller.save(),
     status: () => controller.status(),
     type: (value: AssetCardDraft) => {
       draft = value;
@@ -176,7 +176,7 @@ const openPanel = Effect.fnUntraced(function* openPanel(
   };
 });
 
-describe('asset card autosave against the agenda revision', () => {
+describe('asset card save against the agenda revision', () => {
   it.effect('a settled draft follows a fresh read of the same record without saving', () =>
     Effect.gen(function* settled() {
       const server = serverOf(3, at);
@@ -205,7 +205,7 @@ describe('asset card autosave against the agenda revision', () => {
       yield* panel.render({ asset: edited, snapshot: snapshotOf(4, later) });
       expect(panel.draft().note).toBe('Moje poznámka');
       expect(panel.base().snapshot).toBe(openedAt);
-      panel.flush();
+      panel.save();
       yield* Effect.yieldNow;
       // The save went out with the revision the draft was built on, not the newer one the refresh brought.
       expect(server.applied).toHaveLength(1);
@@ -242,7 +242,7 @@ describe('asset card autosave against the agenda revision', () => {
       // Another asset changed: the agenda revision moves, this record does not.
       server.revision = 4;
       yield* panel.render({ asset: assetOf({ updatedAt: at }), snapshot: snapshotOf(4, later) });
-      panel.flush();
+      panel.save();
       yield* Effect.yieldNow;
       expect(server.applied[0]?.expectedRevision).toBe(3);
       expect(panel.status()).toBe('saved');

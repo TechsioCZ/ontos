@@ -11,10 +11,11 @@ import { useRef, useState } from 'react';
 import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { CategoryTrail, ProductRecord } from '../../../../../shared/apis/records.ts';
 import { CategorySearchCombobox } from './category-search-combobox.tsx';
-import { runCommand } from './products-api.ts';
-import { useCommandFailure } from './product-form-labels.ts';
+import { ProductTabSaveBar, useProductTabSave } from './product-tab-save.tsx';
 
 export interface CatalogContentPanelProps {
+  /** The editor shows this tab; the form's Save button is rendered only then. */
+  readonly active?: boolean;
   readonly canWrite: boolean;
   /** The product's tree category with its path label; null when it has none. */
   readonly category: CategoryTrail | null;
@@ -40,7 +41,61 @@ interface Flags {
   readonly isSale: boolean;
 }
 
+/** The content form's draft. `category` is the tree category picked here; `keep` keeps the product's own. */
+interface ContentDraft {
+  readonly category: CategoryTrail | null | 'keep';
+  readonly flags: Flags;
+  readonly imageAlt: string;
+  readonly parameters: readonly ParameterDraft[];
+}
+
+const contentDraftOf = (product: ProductRecord): ContentDraft => ({
+  category: 'keep',
+  flags: {
+    isAction: product.isAction === true,
+    isNew: product.isNew === true,
+    isRecommended: product.isRecommended === true,
+    isSale: product.isSale === true,
+  },
+  imageAlt: product.imageAlt ?? '',
+  parameters: (product.parameters ?? []).map((parameter, index) => ({
+    key: index,
+    label: parameter.label,
+    unit: parameter.unit,
+    value: parameter.value,
+  })),
+});
+
+const parametersInvalidOf = (parameters: readonly ParameterDraft[]) =>
+  parameters.some((parameter) => parameter.label.trim() === '' || parameter.value.trim() === '');
+
+/** The UpdateProduct patch of a content draft. */
+const contentPatchOf = (draft: ContentDraft, category: CategoryTrail | null, product: ProductRecord): ProductPatch => {
+  const picked = draft.category === 'keep' ? category : draft.category;
+  const categoryId = picked?.id ?? product.categoryId;
+  const patch: { -readonly [Key in keyof ProductPatch]: ProductPatch[Key] } = {};
+  if (categoryId !== undefined && categoryId !== product.categoryId) {
+    patch.categoryId = categoryId;
+  }
+  patch.parameters = draft.parameters.map(({ label, unit, value }) => ({
+    label: label.trim(),
+    unit: unit.trim(),
+    value: value.trim(),
+  }));
+  patch.isAction = draft.flags.isAction;
+  patch.isNew = draft.flags.isNew;
+  patch.isRecommended = draft.flags.isRecommended;
+  patch.isSale = draft.flags.isSale;
+  patch.imageAlt = draft.imageAlt.trim();
+  return patch;
+};
+
+/**
+ * Storefront content of one product. Editing changes the draft only; the Save button under the form sends it as one
+ * UpdateProduct, and leaving with unsaved changes asks first.
+ */
 export const CatalogContentPanel = ({
+  active = true,
   canWrite,
   category,
   hasCategoryTree,
@@ -50,32 +105,27 @@ export const CatalogContentPanel = ({
   revision,
 }: CatalogContentPanelProps) => {
   const { t } = useModernI18n();
-  const failure = useCommandFailure();
-  const [categoryDraft, setCategoryDraft] = useState<CategoryTrail | null>();
-  const picked = categoryDraft === undefined ? category : categoryDraft;
-  const categoryId = picked?.id ?? product.categoryId;
-  const [parameters, setParameters] = useState<readonly ParameterDraft[]>(() =>
-    (product.parameters ?? []).map((parameter, index) => ({
-      key: index,
-      label: parameter.label,
-      unit: parameter.unit,
-      value: parameter.value,
-    })),
-  );
+  const [form, setForm] = useState<ContentDraft>(() => contentDraftOf(product));
+  const picked = form.category === 'keep' ? category : form.category;
+  const { flags, imageAlt, parameters } = form;
   const nextKey = useRef((product.parameters ?? []).length);
-  const [flags, setFlags] = useState<Flags>(() => ({
-    isAction: product.isAction === true,
-    isNew: product.isNew === true,
-    isRecommended: product.isRecommended === true,
-    isSale: product.isSale === true,
-  }));
-  const [imageAlt, setImageAlt] = useState(product.imageAlt ?? '');
-  const [busy, setBusy] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
+  const setCategoryDraft = (next: CategoryTrail | null) => setForm((current) => ({ ...current, category: next }));
+  const setFlags = (update: (current: Flags) => Flags) =>
+    setForm((current) => ({ ...current, flags: update(current.flags) }));
+  const setImageAlt = (next: string) => setForm((current) => ({ ...current, imageAlt: next }));
+  const setParameters = (update: (current: readonly ParameterDraft[]) => readonly ParameterDraft[]) =>
+    setForm((current) => ({ ...current, parameters: update(current.parameters) }));
+  const save = useProductTabSave<ContentDraft>({
+    commandOf: (value) => ({ _tag: 'UpdateProduct', id: product.id, patch: contentPatchOf(value, category, product) }),
+    isValid: (value) => !parametersInvalidOf(value.parameters),
+    onReload,
+    onSaved: () => onCommitted('Obsah e-shopu uložen. Změnu uvidí zákazník po obnovení stránky.'),
+    reset: setForm,
+    revision,
+    value: form,
+  });
 
-  const parametersInvalid = parameters.some(
-    (parameter) => parameter.label.trim() === '' || parameter.value.trim() === '',
-  );
+  const parametersInvalid = parametersInvalidOf(parameters);
 
   const removeParameter = (key: number) => setParameters((current) => current.filter((entry) => entry.key !== key));
 
@@ -83,36 +133,6 @@ export const CatalogContentPanel = ({
     setParameters((current) =>
       current.map((parameter) => (parameter.key === key ? { ...parameter, ...next } : parameter)),
     );
-
-  const save = () => {
-    if (busy || parametersInvalid) {
-      return;
-    }
-    setBusy(true);
-    setServerError(null);
-    const patch: { -readonly [Key in keyof ProductPatch]: ProductPatch[Key] } = {};
-    if (categoryId !== undefined && categoryId !== product.categoryId) {
-      patch.categoryId = categoryId;
-    }
-    patch.parameters = parameters.map(({ label, unit, value }) => ({
-      label: label.trim(),
-      unit: unit.trim(),
-      value: value.trim(),
-    }));
-    patch.isAction = flags.isAction;
-    patch.isNew = flags.isNew;
-    patch.isRecommended = flags.isRecommended;
-    patch.isSale = flags.isSale;
-    patch.imageAlt = imageAlt.trim();
-    runCommand({ _tag: 'UpdateProduct', id: product.id, patch }, revision, (outcome) => {
-      setBusy(false);
-      if (!outcome.ok) {
-        setServerError(failure(outcome.reason, onReload, outcome.proposal));
-        return;
-      }
-      onCommitted('Obsah e-shopu uložen. Změnu uvidí zákazník po obnovení stránky.');
-    });
-  };
 
   const history = (product.contentHistory ?? []).toReversed();
 
@@ -276,18 +296,7 @@ export const CatalogContentPanel = ({
         </p>
       </SectionCard>
 
-      {serverError === null ? null : (
-        <StatusText showIcon status="error">
-          {serverError}
-        </StatusText>
-      )}
-      {canWrite ? (
-        <div className="flex justify-end">
-          <Button isLoading={busy} loadingText="Ukládám…" onClick={save} type="button" variant="primary">
-            Uložit obsah e-shopu
-          </Button>
-        </div>
-      ) : null}
+      {canWrite ? <ProductTabSaveBar active={active} save={save} /> : null}
 
       <SectionCard title={t('merchandise.ui.contentChangeHistory')}>
         {history.length === 0 ? (

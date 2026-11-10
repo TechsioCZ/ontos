@@ -1,6 +1,6 @@
 import { committedResult, pendingProposalMessage } from '../../../../api/action-result.ts';
 // The editable fields of a storefront category: how a draft of them is compared, validated and turned into a patch,
-// and how one draft is saved (autosave of an existing category).
+// and how one draft of an existing category is saved when the user clicks Uložit.
 import { DateTime, Effect, Match, Option, Random } from 'effect';
 import { executeManageCatalog } from '../../../../api/manage-catalog-action-client.ts';
 import type { CategoryPatch, MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
@@ -106,44 +106,44 @@ const idempotencyKey = Effect.all({ now: DateTime.now, random: Random.nextInt },
   Effect.map(({ now, random }) => `merchandise:category:${DateTime.toEpochMillis(now)}:${random}`),
 );
 
-/** One category update; the outcome tells autosave whether to retry, offer the current version or keep the draft. */
+/**
+ * One category update: the new revision once committed, `proposed` when the change was parked for approval (nothing
+ * is saved then), `conflict` when someone else changed the category meanwhile, otherwise `failed`.
+ */
 export const saveCategory = (
   command: Extract<MerchandiseCommand, { readonly _tag: 'UpdateCategory' }>,
   expectedRevision: number,
-  pending?: (message: string | null) => void,
 ): Effect.Effect<RevisionedSaveResult> =>
   idempotencyKey.pipe(
     Effect.flatMap((key) => executeManageCatalog({ command, expectedRevision }, key, { idempotencyKey: key })),
     Effect.flatMap(committedResult),
-    Effect.matchEffect({
-      onFailure: (error) =>
-        Effect.sync(() => pending?.(pendingProposalMessage(error) ?? null)).pipe(Effect.andThen(Effect.fail(error))),
-      onSuccess: Effect.succeed,
-    }),
     Effect.match({
-      onFailure: (error): RevisionedSaveResult =>
-        Match.value(error).pipe(
+      onFailure: (error): RevisionedSaveResult => {
+        if (pendingProposalMessage(error) !== undefined) {
+          return 'proposed';
+        }
+        return Match.value(error).pipe(
           Match.tag('ManageCatalogActionConflictProblem', (problem): RevisionedSaveResult =>
             problem.code === 'merchandise_lifecycle_conflict' ? 'failed' : 'conflict',
           ),
           Match.orElse((): RevisionedSaveResult => 'failed'),
-        ),
+        );
+      },
       onSuccess: ({ revision }): RevisionedSaveResult => revision,
     }),
   );
 
 /** Save of an existing category: unchanged drafts are no request at all. */
-export const autosaveCategoryEdit = (
+export const saveCategoryEdit = (
   draft: CategoryDraft,
   category: CategoryNode,
   expectedRevision: number,
-  pending?: (message: string | null) => void,
 ): Effect.Effect<RevisionedSaveResult> => {
   const patch = categoryPatchOf(draft, category);
   if (Object.keys(patch).length === 0) {
     return Effect.succeed('saved');
   }
-  return saveCategory({ _tag: 'UpdateCategory', id: category.id, patch }, expectedRevision, pending);
+  return saveCategory({ _tag: 'UpdateCategory', id: category.id, patch }, expectedRevision);
 };
 
 /** The saved category as the register has it now, so the next save builds on the revision the server confirmed. */
