@@ -1,4 +1,7 @@
+import { UnsavedChangesDialog, saveLabelsFor, useUnsavedChangesGuard } from '@app/admin-ui';
+import type { SavableDraft, SaveState } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -258,16 +261,7 @@ const anyWriteAvailable = (model: PeopleViewModel) =>
       person.delegations.some((delegation) => delegation.canRevoke),
   );
 
-const ConfirmDialog = ({
-  blocked,
-  busy,
-  onCancel,
-  onConfirm,
-  onReason,
-  pending,
-  reason,
-  stale,
-}: {
+interface ReviewDialogProps {
   readonly blocked: boolean;
   readonly busy: boolean;
   readonly onCancel: () => void;
@@ -276,9 +270,19 @@ const ConfirmDialog = ({
   readonly pending: PeoplePendingChange | null;
   readonly reason: string;
   readonly stale: boolean;
-}) => {
+}
+
+const PendingFacts = ({ pending }: { readonly pending: PeoplePendingChange | null }) => (
+  <ul className="shell:grid shell:gap-2">
+    {pending?.facts.map((fact, index) => (
+      <li key={`${index}-${fact}`}>{fact}</li>
+    ))}
+  </ul>
+);
+
+/** The confirmation of a one-click command (admission, assignment, removal): nothing typed, so nothing to keep. */
+const ConfirmDialog = ({ blocked, busy, onCancel, onConfirm, pending, stale }: ReviewDialogProps) => {
   const { t } = useModernI18n();
-  const reasonId = useId();
   return (
     <Dialog
       actions={
@@ -303,24 +307,96 @@ const ConfirmDialog = ({
       open={pending !== null}
       title={t(pending?.titleKey ?? `${prefix}.title`)}
     >
-      <ul className="shell:grid shell:gap-2">
-        {pending?.facts.map((fact, index) => (
-          <li key={`${index}-${fact}`}>{fact}</li>
-        ))}
-      </ul>
-      {pending?.command.kind === END_MEMBERSHIP ? (
-        <FormInput
-          disabled={busy}
-          id={`${reasonId}-reason`}
-          label={t(`${prefix}.endMembershipReason`)}
-          maxLength={500}
-          onChange={(event) => onReason(event.target.value)}
-          required
-          value={reason}
-        />
-      ) : null}
+      <PendingFacts pending={pending} />
       {stale ? <StatusText status="warning">{t('shell.accessAdmin.common.stalePreview')}</StatusText> : null}
     </Dialog>
+  );
+};
+
+/**
+ * Ending a membership is a confirmed command: the review names what ends with it and takes the reason, and only
+ * Potvrdit sends it. A typed reason is input, so closing with one asks the shared leave question; its Uložit sends the
+ * same reviewed end and is offered only when Potvrdit would be.
+ */
+const EndMembershipDialog = ({
+  blocked,
+  busy,
+  onCancel,
+  onConfirm,
+  onReason,
+  pending,
+  reason,
+  stale,
+}: ReviewDialogProps) => {
+  const { language, t } = useModernI18n();
+  const reasonId = useId();
+  const status: SaveState = blocked ? 'invalid' : 'dirty';
+  const draft: SavableDraft = {
+    // The end is sent at once: the question closes the review once it went out and stays when it could not.
+    afterSave: (done) => done(blocked ? status : 'saved'),
+    canSave: !blocked,
+    dirty: reason.length > 0,
+    save: onConfirm,
+    status,
+  };
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => draft.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({
+    draft,
+    navigation: blocker,
+    onDiscard: () => {
+      onReason('');
+      onCancel();
+    },
+  });
+  const close = () => guard.request(onCancel);
+  const labels = saveLabelsFor(language);
+  return (
+    <>
+      <Dialog
+        actions={
+          <>
+            <Button disabled={busy} onClick={close} type="button" variant="secondary">
+              {t('shell.accessAdmin.common.cancel')}
+            </Button>
+            <Button disabled={blocked} onClick={onConfirm} type="button">
+              {t('shell.accessAdmin.common.confirm')}
+            </Button>
+          </>
+        }
+        closeOnEscape={!busy}
+        closeOnInteractOutside={!busy}
+        customTrigger
+        hideCloseButton
+        onOpenChange={({ open }) => {
+          if (!open && !busy) {
+            close();
+          }
+        }}
+        open
+        title={t(pending?.titleKey ?? `${prefix}.title`)}
+      >
+        <form
+          className="shell:grid shell:gap-4"
+          onSubmit={(event) => {
+            // Enter never ends the membership: only Potvrdit does.
+            event.preventDefault();
+          }}
+        >
+          <PendingFacts pending={pending} />
+          <FormInput
+            disabled={busy}
+            id={`${reasonId}-reason`}
+            label={t(`${prefix}.endMembershipReason`)}
+            maxLength={500}
+            onChange={(event) => onReason(event.target.value)}
+            required
+            value={reason}
+          />
+          {stale ? <StatusText status="warning">{t('shell.accessAdmin.common.stalePreview')}</StatusText> : null}
+        </form>
+      </Dialog>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
   );
 };
 
@@ -360,6 +436,16 @@ export const PeopleView = ({
       setPending(null);
     }
   };
+  const reviewProps: ReviewDialogProps = {
+    blocked,
+    busy,
+    onCancel: () => setPending(null),
+    onConfirm: confirm,
+    onReason: setReason,
+    pending,
+    reason,
+    stale,
+  };
   return (
     <section aria-label={t(`${prefix}.title`)} className="shell:grid shell:w-full shell:max-w-5xl shell:gap-6">
       <p>{t(`${prefix}.description`)}</p>
@@ -397,16 +483,11 @@ export const PeopleView = ({
       {model.scopes.length > 0 ? (
         <PeopleEditor busy={busy} feedback={feedback} model={model} onPreview={review} onRefresh={onRefresh} />
       ) : null}
-      <ConfirmDialog
-        blocked={blocked}
-        busy={busy}
-        onCancel={() => setPending(null)}
-        onConfirm={confirm}
-        onReason={setReason}
-        pending={pending}
-        reason={reason}
-        stale={stale}
-      />
+      {pending?.command.kind === END_MEMBERSHIP ? (
+        <EndMembershipDialog {...reviewProps} />
+      ) : (
+        <ConfirmDialog {...reviewProps} />
+      )}
     </section>
   );
 };
