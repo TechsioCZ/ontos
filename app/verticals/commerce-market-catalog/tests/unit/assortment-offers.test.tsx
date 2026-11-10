@@ -6,6 +6,7 @@ import { executeManageMarkets } from '@app/merchandise/clients/manage-markets';
 import { executeRecords } from '@app/merchandise/clients/records';
 import { RecordsResponseSchema } from '@app/merchandise/contracts/records';
 import { MarketSettingsSchema } from '@app/merchandise/domain/market-offers';
+import { saveLabelsFor } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
@@ -32,6 +33,7 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   }),
 }));
 
+const labels = saveLabelsFor('cs');
 const legalEntityId = '33333333-3333-4333-8333-333333333333';
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const marketId = '30000000-0000-4000-8000-000000000001';
@@ -98,6 +100,16 @@ const forbidden: Extract<ManageMarketsFailure, { readonly _tag: 'ManageMarketsAc
   status: 403,
   title: 'Forbidden',
   type: 'https://ontos.dev/problems/forbidden',
+};
+
+/** The owner's refusal of an offer saved over a newer change by someone else. */
+const staleOffer: Extract<ManageMarketsFailure, { readonly _tag: 'ManageMarketsActionConflictProblem' }> = {
+  _tag: 'ManageMarketsActionConflictProblem',
+  code: 'merchandise_revision_conflict',
+  detail: 'The product offer in this market changed; refresh before another change',
+  status: 409,
+  title: 'Conflict',
+  type: 'https://ontos.dev/problems/conflict',
 };
 
 const commands = () => rstest.mocked(executeManageMarkets).mock.calls.length;
@@ -238,6 +250,37 @@ describe('e-shop offer switches of the price list', () => {
       expect(commands()).toBe(1);
       expect(document.body.textContent).toContain('commerce-market-catalog.failures.forbidden');
       expect(document.body.textContent).not.toContain('Uložení se nezdařilo');
+    }),
+  );
+
+  it.live('an offer read before someone else changed it is refused on Save and offers the latest version', () =>
+    Effect.gen(function* staleRead() {
+      // The server: someone withdrew SKU-1 after the page showed it as offered.
+      const server = new Map(Object.entries({ 'p-1': false, 'p-2': true }));
+      rstest.mocked(executeManageMarkets).mockImplementation(({ command }) => {
+        if (
+          command._tag === 'SetProductMarketOffer' &&
+          command.expectedOffered !== undefined &&
+          command.expectedOffered !== server.get(command.productId)
+        ) {
+          return Effect.fail(staleOffer);
+        }
+        return Effect.succeed({ entityIds: [], revision: 9 });
+      });
+      yield* Effect.promise(() => mount());
+      yield* Effect.sleep('50 millis');
+      yield* Effect.promise(settle);
+      yield* Effect.promise(() => toggle('SKU-1'));
+      yield* Effect.promise(() => clickSave());
+      yield* Effect.sleep('100 millis');
+      yield* Effect.promise(settle);
+      expect(rstest.mocked(executeManageMarkets).mock.calls.map(([payload]) => payload.command)).toEqual([
+        { _tag: 'SetProductMarketOffer', expectedOffered: true, marketId, offered: false, productId: 'p-1' },
+      ]);
+      expect(document.body.textContent).toContain(labels.conflict);
+      expect(buttons(labels.reloadLatest)).toHaveLength(1);
+      // The draft is kept: the switch still shows the unsaved change.
+      expect(switchFor('SKU-1').checked).toBe(false);
     }),
   );
 

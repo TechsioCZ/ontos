@@ -19,7 +19,7 @@ import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-prop
 import { Effect, Predicate, Schema } from 'effect';
 import { useRef, useState } from 'react';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
-import { commandOutcome, sameSectionDraft, saveSectionEffect } from './assortment-save.ts';
+import { commandOutcome, offerCommand, sameSectionDraft, saveSectionEffect } from './assortment-save.ts';
 import type { SectionDraft, SectionSteps } from './assortment-save.ts';
 import { ExceptionsBlock } from './assortment-exceptions.tsx';
 import type { SetOffer } from './assortment-exceptions.tsx';
@@ -102,8 +102,12 @@ export const PriceListEditor = ({
         configureMarketCommand({ expectedRevision, form: pricing, marketCode: market.marketCode, marketId }),
         revision,
       ).pipe(Effect.tap(noted)),
+    // Each offer names the offer it was read with, so the owner refuses it when someone changed it in the meantime.
     offer: (productId, offered) =>
-      commandOutcome({ _tag: 'SetProductMarketOffer', marketId, offered, productId }, revision).pipe(Effect.tap(noted)),
+      commandOutcome(
+        offerCommand({ marketId, offered, productId, read: serverOffersNow.get(productId) }),
+        revision,
+      ).pipe(Effect.tap(noted)),
     serverOffers: serverOffersNow,
   });
   const announce = (result: DraftSaveResult<SectionDraft>) =>

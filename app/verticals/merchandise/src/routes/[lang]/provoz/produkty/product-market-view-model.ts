@@ -42,14 +42,21 @@ export interface MarketOfferDraft {
 export const marketOffersOf = (markets: readonly ProductMarket[]): readonly MarketOfferDraft[] =>
   markets.map(({ marketId, offered }) => ({ marketId, offered }));
 
-/** One SetProductMarketOffer for every market whose offer the draft changed since the confirmed version. */
+/**
+ * One SetProductMarketOffer for every market whose offer the draft changed since the confirmed version. Each names
+ * the offer the draft was read from (`expectedOffered`), so the server refuses it when someone changed that offer
+ * in the meantime instead of overwriting their change.
+ */
 export const marketOfferCommands = (
   productId: ProductRecord['id'],
   draft: readonly MarketOfferDraft[],
   confirmed: readonly MarketOfferDraft[],
 ): readonly ProductCommand[] =>
-  draft.flatMap(({ marketId, offered }) =>
-    confirmed.some((entry) => entry.marketId === marketId && entry.offered === offered)
-      ? []
-      : [{ _tag: 'SetProductMarketOffer', marketId, offered, productId } satisfies ProductCommand],
-  );
+  draft.flatMap(({ marketId, offered }) => {
+    const read = confirmed.find((entry) => entry.marketId === marketId);
+    if (read?.offered === offered) {
+      return [];
+    }
+    const command = { _tag: 'SetProductMarketOffer', marketId, offered, productId } as const;
+    return [(read === undefined ? command : { ...command, expectedOffered: read.offered }) satisfies ProductCommand];
+  });

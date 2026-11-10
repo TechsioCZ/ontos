@@ -64,6 +64,21 @@ export const writeOutcomeEffect = (
     }),
   );
 
+/**
+ * One product's offer as the section sends it: `read` is the offer the product showed when it was changed; the owner
+ * refuses the command when that offer changed since (a conflict, never an overwrite). Unknown = not checked.
+ */
+export const offerCommand = (offer: {
+  readonly marketId: string;
+  readonly offered: boolean;
+  readonly productId: string;
+  readonly read: boolean | undefined;
+}): MarketCommandInput => {
+  const { marketId, offered, productId, read } = offer;
+  const command = { _tag: 'SetProductMarketOffer', marketId, offered, productId } as const;
+  return read === undefined ? command : { ...command, expectedOffered: read };
+};
+
 /** Sends a merchandise command over the given revision, as a screen outcome. */
 export const commandOutcome = (command: MarketCommandInput, revision: number) =>
   writeOutcomeEffect(merchandiseCommand(command, revision));

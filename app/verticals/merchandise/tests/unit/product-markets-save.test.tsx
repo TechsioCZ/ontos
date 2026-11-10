@@ -1,6 +1,6 @@
 // @rstest-environment happy-dom
 // The "Trhy" tab of the product editor: a market offer decides what a live e-shop sells, so its switch changes only
-// the draft. The tab's one Save button sends the changed offers, against the revision the draft started from, so a
+// the draft. The tab's one Save button sends the changed offers, each naming the offer the draft was read from, so a
 // newer change by someone else is refused instead of overwritten. Only the generated markets client, the i18n runtime
 // and the router blocker are replaced.
 import { saveLabelsFor } from '@app/admin-ui';
@@ -44,8 +44,11 @@ const conflict = Schema.decodeSync(ManageMarketsActionConflictProblemSchema)({
   type: 'urn:test:conflict',
 });
 
-/** The register: one revision, and a command must expect exactly the current one. */
-const register = { revision: 4 };
+/**
+ * The server: the catalogue revision and each market's offer of the product. A command naming the offer it was read
+ * from (`expectedOffered`) is refused when that offer changed since, as the merchandise owner refuses it.
+ */
+const register = { offers: new Map<string, boolean>(), revision: 4 };
 
 const sent = () =>
   rstest.mocked(executeManageMarkets).mock.calls.map(([payload]) => ({
@@ -92,14 +95,10 @@ const offerSwitch = (code: string): HTMLInputElement =>
     Option.fromNullOr(document.querySelector<HTMLInputElement>(`input[name="market-offered-${code}"]`)),
   );
 
-const saveButton = (): HTMLButtonElement =>
-  Option.getOrThrow(
-    Option.fromNullishOr(
-      [...document.querySelectorAll<HTMLButtonElement>('button')].find(
-        (button) => button.textContent?.trim() === labels.save,
-      ),
-    ),
-  );
+const buttons = (name: string): HTMLButtonElement[] =>
+  [...document.querySelectorAll<HTMLButtonElement>('button')].filter((button) => button.textContent?.trim() === name);
+
+const saveButton = (): HTMLButtonElement => Option.getOrThrow(Option.fromNullishOr(buttons(labels.save)[0]));
 
 const click = (element: HTMLElement) =>
   Effect.promise(() =>
@@ -122,13 +121,17 @@ beforeEach(() => {
   rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   rstest.resetAllMocks();
   register.revision = 4;
+  register.offers = new Map(markets.map((market) => [market.marketId, market.offered]));
   committed.length = 0;
-  rstest.mocked(executeManageMarkets).mockImplementation(({ expectedRevision }) =>
+  rstest.mocked(executeManageMarkets).mockImplementation(({ command }) =>
     Effect.suspend(() => {
-      if (expectedRevision !== register.revision) {
+      if (command._tag !== 'SetProductMarketOffer') {
+        return Effect.die('Only offers are saved here');
+      }
+      if (command.expectedOffered !== undefined && command.expectedOffered !== register.offers.get(command.marketId)) {
         return Effect.fail(conflict);
       }
-      register.revision += 1;
+      register.offers.set(command.marketId, command.offered);
       return Effect.succeed({ entityIds: [], revision: register.revision });
     }),
   );
@@ -156,15 +159,16 @@ it.effect('toggling a market offer writes nothing; Save writes the offer once', 
     yield* Effect.promise(() => waitUntil(() => committed.length === 1));
     expect(sent()).toEqual([
       {
-        command: { _tag: 'SetProductMarketOffer', marketId: PL, offered: true, productId },
+        command: { _tag: 'SetProductMarketOffer', expectedOffered: false, marketId: PL, offered: true, productId },
         expectedRevision: 4,
       },
     ]);
     expect(committed).toEqual(['merchandise.pages.products.markets.saved']);
+    expect(register.offers.get(PL)).toBe(true);
   }),
 );
 
-it.effect('one Save sends every changed market, each after the revision the previous one left', () =>
+it.effect('one Save sends every changed market once, each naming the offer it was read from', () =>
   Effect.gen(function* twoMarkets() {
     yield* Effect.promise(() => mount(4));
     yield* click(offerSwitch('AKROS-PL'));
@@ -177,23 +181,34 @@ it.effect('one Save sends every changed market, each after the revision the prev
     yield* click(saveButton());
     yield* Effect.promise(() => waitUntil(() => committed.length === 1));
     expect(sent()).toEqual([
-      { command: { _tag: 'SetProductMarketOffer', marketId: SK, offered: false, productId }, expectedRevision: 4 },
-      { command: { _tag: 'SetProductMarketOffer', marketId: PL, offered: true, productId }, expectedRevision: 5 },
+      {
+        command: { _tag: 'SetProductMarketOffer', expectedOffered: true, marketId: SK, offered: false, productId },
+        expectedRevision: 4,
+      },
+      {
+        command: { _tag: 'SetProductMarketOffer', expectedOffered: false, marketId: PL, offered: true, productId },
+        expectedRevision: 4,
+      },
     ]);
   }),
 );
 
-it.effect('a save over a newer change by someone else is refused and keeps the draft', () =>
+it.effect('a save over a newer offer change by someone else is refused and keeps the draft', () =>
   Effect.gen(function* stale() {
     yield* Effect.promise(() => mount(4));
-    // Someone else changed the catalog after the tab was read.
-    register.revision = 6;
+    // Someone else withdrew the product from AKROS-SK after the tab was read (shown as offered).
+    register.offers.set(SK, false);
+    yield* click(offerSwitch('AKROS-SK'));
     yield* click(offerSwitch('AKROS-PL'));
     yield* click(saveButton());
     yield* Effect.promise(() => waitUntil(() => (document.body.textContent ?? '').includes(labels.conflict)));
-    expect(sent()).toHaveLength(1);
-    expect(sent()[0]?.expectedRevision).toBe(4);
+    // The first offer is refused; the rest of the save is not sent.
+    expect(sent().map(({ command }) => command)).toEqual([
+      { _tag: 'SetProductMarketOffer', expectedOffered: true, marketId: SK, offered: false, productId },
+    ]);
+    expect(register.offers.get(PL)).toBe(false);
     expect(committed).toEqual([]);
     expect(offerSwitch('AKROS-PL').checked).toBe(true);
+    expect(buttons(labels.reloadLatest).length).toBe(1);
   }),
 );

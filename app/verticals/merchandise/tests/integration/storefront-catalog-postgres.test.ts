@@ -1401,6 +1401,27 @@ it.live('switches a market to selected products, guards its revision and removes
   ),
 );
 
+it.live('refuses a product offer saved over a newer offer change, and keeps calls without the read offer working', () =>
+  onCatalog((fixture) =>
+    Effect.gen(function* staleOffer() {
+      yield* runMarketCommand(fixture, halfPriceMarket);
+      const offer = { _tag: 'SetProductMarketOffer', marketId: MARKET_ID, productId: 'p2' } as const;
+      // Read as offered (whole catalogue), withdrawn against that read: accepted.
+      yield* runMarketCommand(fixture, { ...offer, expectedOffered: true, offered: false });
+      expect(yield* marketIds(fixture, MARKET_ID)).toEqual(['p1', 'p3']);
+      // A second editor still holds the old read (offered) and saves over the withdrawal: refused, nothing written.
+      const stale = yield* runMarketCommand(fixture, { ...offer, expectedOffered: true, offered: true }).pipe(
+        Effect.flip,
+      );
+      expect(Schema.is(MerchandiseRevisionConflict)(stale)).toBe(true);
+      expect(yield* marketIds(fixture, MARKET_ID)).toEqual(['p1', 'p3']);
+      // Without the read offer (agents, seed scripts) the command sets the offer as before.
+      yield* runMarketCommand(fixture, { ...offer, offered: true });
+      expect(yield* marketIds(fixture, MARKET_ID)).toContain('p2');
+    }),
+  ),
+);
+
 const marketActor = {
   principalId: '20000000-0000-4000-8000-000000000002',
   tenantId: '20000000-0000-4000-8000-000000000001',
