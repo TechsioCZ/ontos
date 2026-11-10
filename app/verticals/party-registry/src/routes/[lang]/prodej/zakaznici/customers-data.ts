@@ -869,13 +869,20 @@ export const useCustomerDetailSelection = (context?: ModulePageContext) => {
       listener,
       detail === null || scope === undefined || openingScope !== scope ? undefined : { customer: detail, scope },
     );
-  const cached = useSyncExternalStore(
-    subscribe,
-    () =>
-      detail === null || scope === undefined || openingScope !== scope
-        ? pageDataPending
-        : customerDetailData.snapshot({ customer: detail, scope }),
-    () => pageDataPending,
+  // A background reload of the open customer (freshness window, live change, settled write) keeps its last ready
+  // read on screen instead of dropping the panel to its loading state.
+  const cached = useHeldSnapshot(
+    detail === null || scope === undefined || openingScope !== scope
+      ? ''
+      : customerDetailKey({ customer: detail, scope }),
+    useSyncExternalStore(
+      subscribe,
+      () =>
+        detail === null || scope === undefined || openingScope !== scope
+          ? pageDataPending
+          : customerDetailData.snapshot({ customer: detail, scope }),
+      () => pageDataPending,
+    ),
   );
   const activeScope = useRef(scope);
   useEffect(() => {
