@@ -12,6 +12,7 @@ import { Menu } from '@techsio/ui-kit/molecules/menu';
 import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import type { SelectItem } from '@techsio/ui-kit/molecules/select';
+import { useDocumentTitle } from '@app/admin-ui';
 import { withNativeLabels } from '@app/admin-ui/select-template';
 import { Header } from '@techsio/ui-kit/organisms/header';
 import { Sidebar } from '@techsio/ui-kit/organisms/sidebar';
@@ -278,6 +279,11 @@ export const buildShellNavigation = (
     AuthenticatedDashboardLayoutProps,
     'currentEntrypointKey' | 'currentModuleId' | 'homeCurrent' | 'navigation' | 'unavailableDeployments'
   > & {
+    /**
+     * Href of the rendered page, without the language. A page that is no destination itself (a record's own page)
+     * belongs to the destination its path starts with, when neither its entrypoint nor its module names one.
+     */
+    readonly currentHref?: string | undefined;
     /** Page language; module-declared labels are shown in it. */
     readonly language: string;
     /** Destination href of a navigation whose page is still loading; it alone is current until the page settles. */
@@ -285,7 +291,7 @@ export const buildShellNavigation = (
   },
   t: Translate,
 ): ShellNavigationModel => {
-  const { currentEntrypointKey, currentModuleId, homeCurrent = true, language, pendingHref } = props;
+  const { currentEntrypointKey, currentHref, currentModuleId, homeCurrent = true, language, pendingHref } = props;
   // The composition lists only destinations the principal may open, in module order: a role never sees a menu item
   // it cannot open, and a section without destinations is not shown.
   const visible = props.navigation;
@@ -336,13 +342,28 @@ export const buildShellNavigation = (
     links: [...otherLinks, ...deploymentLinks],
   };
   const candidates = otherGroup.links.length === 0 ? sectionGroups : [...sectionGroups, otherGroup];
-  // A page's own destination wins over destinations that only share its module, so one link is current.
-  const exactMatch = candidates.some((group) => group.links.some((link) => link.entrypointMatch));
-  const settleLink = ({ entrypointMatch, moduleMatch, ...link }: MatchedNavigationLink): ShellNavigationLink => {
+  // A page's own destination wins over destinations that only share its module, and both win over the destination
+  // whose path the page's path continues (the longest one), so one link is current.
+  const links = candidates.flatMap((group) => group.links);
+  const exactMatch = links.some((link) => link.entrypointMatch);
+  const anyModuleMatch = links.some((link) => link.moduleMatch);
+  const pathMatch = (href: string | null): boolean =>
+    currentHref !== undefined && href !== null && href !== '/' && currentHref.startsWith(`${href}/`);
+  let pathParent: MatchedNavigationLink | null = null;
+  for (const link of links) {
+    if (link.enabled && pathMatch(link.href) && (link.href?.length ?? 0) > (pathParent?.href?.length ?? 0)) {
+      pathParent = link;
+    }
+  }
+  const settleLink = (matched: MatchedNavigationLink): ShellNavigationLink => {
+    const { entrypointMatch, moduleMatch, ...link } = matched;
     if (pendingHref !== undefined) {
       return { ...link, current: link.enabled && link.href === pendingHref };
     }
-    return { ...link, current: exactMatch ? entrypointMatch : moduleMatch };
+    if (exactMatch) {
+      return { ...link, current: entrypointMatch };
+    }
+    return { ...link, current: anyModuleMatch ? moduleMatch : matched === pathParent };
   };
   const groups: ShellNavigationGroup[] = candidates.map((group) => ({
     icon: group.icon,
@@ -466,6 +487,55 @@ type DashboardContextSelectorsProps = Pick<
   | 'tenantSwitchPending'
 >;
 
+/**
+ * A header button shows its name next to its icon from a breakpoint up (`md:inline`, `lg:inline`). Below it the button
+ * is icon-only and names itself in a tooltip on hover and keyboard focus, like the navigation toggle.
+ */
+const subscribeToWidth = (query: string) => (onChange: () => void) => {
+  const media = globalThis.matchMedia?.(query);
+  media?.addEventListener('change', onChange);
+  return () => media?.removeEventListener('change', onChange);
+};
+const subscribeToMediumWidth = subscribeToWidth('(min-width: 48rem)');
+const subscribeToDesktopWidth = subscribeToWidth('(min-width: 64rem)');
+const labelsShownFrom = {
+  desktop: { query: '(min-width: 64rem)', subscribe: subscribeToDesktopWidth },
+  medium: { query: '(min-width: 48rem)', subscribe: subscribeToMediumWidth },
+} as const;
+
+const HeaderButtonTooltip = ({
+  children,
+  label,
+  labelShownFrom,
+  suppressed = false,
+}: {
+  readonly children: ReactNode;
+  readonly label: string;
+  readonly labelShownFrom: keyof typeof labelsShownFrom;
+  /** Kept closed while what the button opens is open: events inside a portaled menu reach the tooltip too. */
+  readonly suppressed?: boolean;
+}) => {
+  const { query, subscribe } = labelsShownFrom[labelShownFrom];
+  const labelShown = useSyncExternalStore(
+    subscribe,
+    () => globalThis.matchMedia?.(query).matches ?? true,
+    () => true,
+  );
+  return (
+    <Tooltip
+      closeDelay={0}
+      content={label}
+      disabled={labelShown || suppressed}
+      interactive={false}
+      offset={{ crossAxis: 0, mainAxis: 8 }}
+      placement="bottom"
+      size="sm"
+    >
+      {children}
+    </Tooltip>
+  );
+};
+
 /** Tenant and legal-entity switchers; the shell keeps them at the foot of the navigation. */
 const DashboardContextSelectors = (props: DashboardContextSelectorsProps) => {
   const { t } = useModernI18n();
@@ -550,6 +620,7 @@ const DashboardAccountMenu = ({
   onLogout,
 }: Pick<AuthenticatedDashboardLayoutProps, 'identity' | 'logoutPending' | 'onLogout'>) => {
   const { t } = useModernI18n();
+  const [menuOpen, setMenuOpen] = useState(false);
   const accountItems: MenuItem[] = [
     {
       icon: 'icon-[mdi--account-cog-outline]',
@@ -566,32 +637,37 @@ const DashboardAccountMenu = ({
     },
   ];
   return (
-    <Menu
-      aria-label={t('shell.dashboard.account.label')}
-      customTrigger={
-        <Button
-          aria-label={identity.displayName}
-          className="hover:bg-overlay"
-          icon="icon-[mdi--account-circle-outline]"
-          size="sm"
-          theme="unstyled"
-          variant="secondary"
-        >
-          <span className="hidden lg:inline">{identity.displayName}</span>
-        </Button>
-      }
-      items={accountItems}
-      onSelect={({ value: action }) => {
-        if (action === 'profile') {
-          globalThis.location.assign(t('shell.profile.href'));
+    <HeaderButtonTooltip label={identity.displayName} labelShownFrom="desktop" suppressed={menuOpen}>
+      <Menu
+        aria-label={t('shell.dashboard.account.label')}
+        customTrigger={
+          <Button
+            aria-label={identity.displayName}
+            className="hover:bg-overlay"
+            icon="icon-[mdi--account-circle-outline]"
+            size="sm"
+            theme="unstyled"
+            variant="secondary"
+          >
+            <span className="hidden lg:inline">{identity.displayName}</span>
+          </Button>
         }
-        if (action === 'logout') {
-          onLogout();
-        }
-      }}
-      size="sm"
-      triggerText={identity.displayName}
-    />
+        items={accountItems}
+        onOpenChange={(details) => {
+          setMenuOpen(details.open);
+        }}
+        onSelect={({ value: action }) => {
+          if (action === 'profile') {
+            globalThis.location.assign(t('shell.profile.href'));
+          }
+          if (action === 'logout') {
+            onLogout();
+          }
+        }}
+        size="sm"
+        triggerText={identity.displayName}
+      />
+    </HeaderButtonTooltip>
   );
 };
 
@@ -776,7 +852,10 @@ const DashboardHeaderSearch = ({ compositionRevision, hidden, onSearch, scopeKey
   const [value, setValue] = useState('');
   const suggestions = useShellSearchSuggestions(compositionRevision, scopeKey);
   return hidden ? null : (
-    <Header.Container className="flex w-auto min-w-0 flex-1 items-center justify-center lg:flex-[2]" position="center">
+    <Header.Container
+      className="flex w-auto min-w-0 flex-1 items-center justify-center lg:min-w-[16rem]"
+      position="center"
+    >
       <div className="w-full max-w-xl">
         <ShellSearchBar
           onDismissSuggestions={suggestions.handleDismiss}
@@ -960,6 +1039,10 @@ const useDashboardRoutePreload = (props: AuthenticatedDashboardLayoutProps) =>
     props.logoutPending || props.tenantSwitchPending || props.legalEntitySwitchPending,
   );
 
+/** The frame's own name of the page: a status title, the current destination, or home. */
+const frameTitle = (title: string | undefined, model: ShellNavigationModel, t: Translate): string =>
+  title ?? model.current?.link.label ?? t('shell.dashboard.home.title');
+
 /**
  * Admin frame: a compact full-width top bar (brand, search, current trail, account) above a collapsible,
  * grouped navigation Sidebar. Below the Sidebar breakpoint the same panel opens as a drawer from the top bar.
@@ -980,7 +1063,13 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
     tenantSwitchPending: props.tenantSwitchPending,
   });
   const pendingHref = usePendingNavigationHref(pageLanguage);
-  const model = buildShellNavigation({ ...props, language: pageLanguage, pendingHref }, t);
+  const currentHref = useRouterState({
+    select: ({ location, resolvedLocation }) =>
+      navigationHrefFromPath((resolvedLocation ?? location).pathname, pageLanguage),
+  });
+  const model = buildShellNavigation({ ...props, currentHref, language: pageLanguage, pendingHref }, t);
+  // A record's page names the tab after the record; other pages after their destination.
+  const recordTitle = useDocumentTitle();
   const preload = useDashboardRoutePreload(props);
 
   // Back after sign-out or a tenant switch can restore this page from the back/forward cache with the old session's
@@ -1032,7 +1121,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
           here because the shell's own calm admin tokens are keyed on `:root.light[data-theme]`; the frame must keep the
           tokens working even when it is the only head source left after a route or layout transition. */}
       <Helmet htmlAttributes={staffDocumentTheme(props.currentTenantId, props.currentLegalEntityId)}>
-        <title>{`${props.title ?? model.current?.link.label ?? t('shell.dashboard.home.title')} | OntOS`}</title>
+        <title>{`${recordTitle ?? frameTitle(props.title, model, t)} | OntOS`}</title>
       </Helmet>
       {props.compositionRevision === undefined ? null : (
         <meta content={props.compositionRevision} name="ontos-composition-revision" />
@@ -1052,7 +1141,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
           style={{ height: 'var(--spacing-700)' }}
         >
           <Header.Container
-            className="flex w-auto shrink-0 flex-nowrap items-center gap-200 lg:min-w-0 lg:flex-1 lg:basis-0"
+            className="flex w-auto shrink-0 flex-nowrap items-center gap-200 lg:min-w-0 lg:shrink"
             position="start"
           >
             {/* Once sign-out has started, navigation, search and the page are hidden; only the account stays. */}
@@ -1072,11 +1161,13 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
             onSearch={props.onSearch}
             scopeKey={searchScopeKey}
           />
-          <Header.Container className="flex w-auto shrink-0 justify-end lg:flex-1 lg:basis-0" position="end">
+          <Header.Container className="flex w-auto shrink-0 justify-end" position="end">
             <Header.Actions>
               {guide === undefined || props.logoutPending ? null : (
                 <Header.ActionItem>
-                  <DemoGuideToggleButton open={guideOpen} />
+                  <HeaderButtonTooltip label={t('shell.demoGuide.title')} labelShownFrom="medium">
+                    <DemoGuideToggleButton open={guideOpen} />
+                  </HeaderButtonTooltip>
                 </Header.ActionItem>
               )}
               <Header.ActionItem data-hydrated={hydrated}>
