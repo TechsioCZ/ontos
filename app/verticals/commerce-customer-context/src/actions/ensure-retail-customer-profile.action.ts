@@ -20,7 +20,10 @@ import type {
   EnsureRetailCustomerProfileResult,
 } from '../../shared/actions/ensure-retail-customer-profile.ts';
 import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
-import { makePartyRegistryRetailPartyResolver } from '../integrations/party-registry-retail-party-resolver.ts';
+import {
+  makePartyRegistryRetailPartyResolver,
+  missingPartyTransport,
+} from '../integrations/party-registry-retail-party-resolver.ts';
 import { RetailPartyDetailExecutor } from '../integrations/retail-party-detail-executor.ts';
 import type { ProfilePersistenceDependencies } from '../persistence/profile-persistence.ts';
 import {
@@ -154,22 +157,24 @@ export const prepareRetailProfileServices: ActionServicePreflight<
     tenantId: scope.tenantId,
   };
   const transport = yield* Effect.serviceOption(RetailPartyDetailExecutor);
-  const outcome = yield* makePartyRegistryRetailPartyResolver(
-    {
-      legalEntityId,
-      principalId: scope.principalId,
-      requestCorrelation: scope.correlationId,
-      tenantId: scope.tenantId,
-    },
+  const outcome = yield* (
     Option.isNone(transport)
-      ? undefined
-      : (detailRequest, correlation) =>
-          transport.value.execute(detailRequest, correlation, {
-            actionInvocationId: context.actionInvocationId,
-            compositionRevision: context.compositionRevision,
-            scope,
-          }),
-  )(request).pipe(
+      ? missingPartyTransport()
+      : makePartyRegistryRetailPartyResolver(
+          {
+            legalEntityId,
+            principalId: scope.principalId,
+            requestCorrelation: scope.correlationId,
+            tenantId: scope.tenantId,
+          },
+          (detailRequest, correlation) =>
+            transport.value.execute(detailRequest, correlation, {
+              actionInvocationId: context.actionInvocationId,
+              compositionRevision: context.compositionRevision,
+              scope,
+            }),
+        )(request)
+  ).pipe(
     Effect.mapError((cause) =>
       Object.defineProperty(
         new EnsureRetailCustomerProfileRejected({

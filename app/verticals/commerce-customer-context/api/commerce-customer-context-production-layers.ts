@@ -14,6 +14,7 @@ import { profileReactivationEligibilityEvaluatorFactoryLive } from '../src/integ
 import { profileCounterpartyRoleEligibilityResolverFactoryLive } from '../src/profile-counterparty-role-eligibility.ts';
 import { partyRegistryGuestResolverFactoryLive } from '../src/integrations/party-registry-guest-resolver.ts';
 import { partyRegistryRetailPartyResolverFactoryLive } from '../src/integrations/party-registry-retail-party-resolver.ts';
+import { retailPartyDetailExecutorLive } from '../src/integrations/retail-party-detail-executor.ts';
 import { unavailableHistoryActionOwnerPorts, RepeatCartOwner } from '../shared/domain/history-action-ports.ts';
 import { applicationCompositionMarketReferenceOwnerDeploymentStateAuthorityLive } from './application-composition-market-reference-owner-authority.ts';
 import {
@@ -27,6 +28,7 @@ type CommerceCustomerContextOwnerRuntimeServices =
   | Layer.Success<typeof profileReactivationEligibilityEvaluatorFactoryLive>
   | Layer.Success<typeof partyRegistryGuestResolverFactoryLive>
   | Layer.Success<typeof partyRegistryRetailPartyResolverFactoryLive>
+  | Layer.Success<typeof retailPartyDetailExecutorLive>
   | Layer.Success<typeof pricingPurchaseContextVerificationLive>;
 
 type CommerceCustomerContextOwnerRuntimeDependencies =
@@ -46,6 +48,7 @@ export const commerceCustomerContextOwnerRuntimeServicesLive: Layer.Layer<
   profileReactivationEligibilityEvaluatorFactoryLive,
   partyRegistryGuestResolverFactoryLive,
   partyRegistryRetailPartyResolverFactoryLive,
+  retailPartyDetailExecutorLive,
   pricingPurchaseContextVerificationLive,
 );
 
