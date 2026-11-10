@@ -16,6 +16,8 @@ import { executeRecordStockMovement } from '../../../../api/record-stock-movemen
 import { committedResult } from '../../../../api/action-result.ts';
 import { executeRecords } from '../../../../api/records-consumer.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { useKeptDetail } from '../../../../runtime/kept-detail.ts';
+import type { DetailRead } from '../../../../runtime/kept-detail.ts';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import { ProductIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import type { ProductId, ProductRecord } from '../../../../../shared/domain/merchandise-model.ts';
@@ -629,7 +631,13 @@ export type ProductDetailState =
   | { readonly status: 'invalid' }
   | { readonly status: 'not-found' }
   | { readonly reason: FailureReason; readonly status: 'error' }
-  | { readonly product: ProductRecord; readonly response: RecordsResponse; readonly status: 'ready' };
+  | {
+      readonly product: ProductRecord;
+      /** The product shown is the last one read: reading it again failed for this reason. */
+      readonly reloadFailure?: FailureReason;
+      readonly response: RecordsResponse;
+      readonly status: 'ready';
+    };
 
 export const detailState = (
   valid: boolean,
@@ -652,6 +660,21 @@ export const detailState = (
     onNone: (): ProductDetailState => ({ status: 'not-found' }),
     onSome: (found): ProductDetailState => ({ product: found, response, status: 'ready' }),
   });
+};
+
+type ReadyProductDetail = Extract<ProductDetailState, { readonly status: 'ready' }>;
+
+/** A denied read never keeps the shown product: its fields and actions go at once. */
+const productRead = (state: ProductDetailState): DetailRead<ReadyProductDetail, FailureReason> => {
+  if (state.status === 'ready') {
+    return { kind: 'ready', ready: state };
+  }
+  if (state.status === 'loading') {
+    return { kind: 'loading' };
+  }
+  return state.status === 'error' && state.reason !== 'forbidden'
+    ? { failure: state.reason, kind: 'failed' }
+    : { kind: 'final' };
 };
 
 /** A warmed complete scoped entry is consumed in render. Missing Shell identity never reuses the detail store. */
@@ -703,10 +726,20 @@ export const useProductDetail = (
     Option.isSome(input) ? productDetailData.key(input.value) : '',
     scope === undefined ? pageDataPending : snapshot,
   );
-  if (scope === undefined) {
-    return detailState(Option.isSome(input), unscoped?.key === request ? unscoped.snapshot : pageDataPending);
+  const state =
+    scope === undefined
+      ? detailState(Option.isSome(input), unscoped?.key === request ? unscoped.snapshot : pageDataPending)
+      : detailState(Option.isSome(input), shown);
+  // A failed reload of the product already on screen keeps it, so the editor and its unsaved drafts stay.
+  const kept = useKeptDetail({
+    key: cacheKey([legalEntityId, scope ?? '', routeId]),
+    read: productRead(state),
+    same: (left, right) => left.product === right.product && left.response === right.response,
+  });
+  if (kept === null) {
+    return state;
   }
-  return detailState(Option.isSome(input), shown);
+  return kept.reloadFailure === undefined ? kept.ready : { ...kept.ready, reloadFailure: kept.reloadFailure };
 };
 
 export const productNavigationFailureKey = Match.type<Cause.TimeoutError | Cause.UnknownError>().pipe(

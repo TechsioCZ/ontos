@@ -209,6 +209,7 @@
           "firstDescription": "Create the first order and follow it through delivery.",
           "firstTitle": "There are no orders yet.",
           "forbiddenTitle": "You do not have access to this section.",
+          "reloadFailed": "The current version of the order could not be loaded. Your unsaved changes are still in the form.",
           "retry": "Try again",
           "tagFilterFailed": "Tags could not be loaded. Try again."
         },
@@ -442,7 +443,8 @@
           "tagFilterFailed": "Tags could not be loaded. Try again.",
           "notFound": "Product not found",
           "invalidId": "The product address is invalid.",
-          "loading": "Loading product…"
+          "loading": "Loading product…",
+          "reloadFailed": "The current version of the product could not be loaded. Your unsaved changes are still in the form."
         },
         "stats": {
           "lowStock": "Below minimum",
@@ -520,6 +522,7 @@
           "notOffered": "Not offered",
           "noPrice": "price not available",
           "offeredSaved": "The product is offered in market {{code}}.",
+          "saved": "The product's market offers are saved.",
           "withdrawnSaved": "The product was withdrawn from market {{code}}."
         }
       },
