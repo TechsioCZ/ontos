@@ -1,4 +1,13 @@
-import { EmptyState, PageHeader, StatCard, StatRow, Toaster, dataTableRowLabels } from '@app/admin-ui';
+import {
+  EmptyState,
+  PageHeader,
+  StatCard,
+  StatRow,
+  Toaster,
+  UnsavedChangesBoundary,
+  dataTableRowLabels,
+  useUnsavedChangesScope,
+} from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import { listCustomers } from '@app/party-registry/api/client';
 import { listOpportunities } from '@app/sales-pipeline/clients/records';
@@ -524,11 +533,16 @@ const useTasksPage = (
   // The control that opened the task panel. The panel unmounts on close, so focus goes back there explicitly.
   const panelOpener = useRef<HTMLElement | null>(null);
 
+  // The open task's unsaved changes are asked about before another task (or a new one) replaces it.
+  const editorScope = useUnsavedChangesScope();
   const openEditor = (next: Editor) => {
     // `:focus` never matches <body>, so a click that focused nothing records no opener.
-    panelOpener.current = globalThis.document.querySelector<HTMLElement>(':focus');
-    setFormError(undefined);
-    setEditor(next);
+    const opener = globalThis.document.querySelector<HTMLElement>(':focus');
+    editorScope.request(() => {
+      panelOpener.current = opener;
+      setFormError(undefined);
+      setEditor(next);
+    });
   };
 
   const closeEditor = () => {
@@ -911,6 +925,7 @@ const useTasksPage = (
     customerNames,
     customers,
     editor,
+    editorScope,
     filters,
     filtersActive,
     formError,
@@ -1298,7 +1313,9 @@ const TasksPageContent = ({
         }}
       />
 
-      <TaskEditor model={model} />
+      <UnsavedChangesBoundary scope={model.editorScope}>
+        <TaskEditor model={model} />
+      </UnsavedChangesBoundary>
     </>
   );
 };
