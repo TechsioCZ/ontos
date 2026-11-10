@@ -16,6 +16,7 @@ import {
 import { observations, reconciliationDecisions, sourceAuthorities } from '../database/schema.ts';
 import type { PaymentRefundRouteCandidate } from '../domain/refund-execution-route.ts';
 import { correctionReachOf } from '../domain/refund-prior-returns.ts';
+import { fullyDisprovenTargets } from './payment-full-disproof.ts';
 import type { PaymentReturnEvidence } from '../domain/refund-prior-returns.ts';
 
 /**
@@ -217,6 +218,8 @@ export const paymentRefundPersistenceForTransaction = (
               economicEffectKey: observations.economicEffectKey,
               observationId: observations.observationId,
               operationId: observations.operationId,
+              paymentId: observations.paymentId,
+              sourceAuthorityId: observations.sourceAuthorityId,
             })
             .from(observations)
             .where(
@@ -230,16 +233,21 @@ export const paymentRefundPersistenceForTransaction = (
             .pipe(Effect.mapError(returnEvidenceReadFailure)),
           transaction
             .select({
+              acceptanceOutcome: observations.acceptanceOutcome,
               amountMinor: observations.amountMinor,
+              capabilityCorrelated: observations.capabilityCorrelated,
               correctsObservationId: observations.correctsObservationId,
               currency: observations.currency,
+              factKind: observations.factKind,
+              paymentId: observations.paymentId,
+              sourceAuthorityId: observations.sourceAuthorityId,
             })
             .from(observations)
             .where(
               and(
                 ofPayment,
                 eq(observations.factKind, 'SOURCE_CORRECTION'),
-                eq(observations.acceptanceOutcome, 'ACCEPTED_OBSERVATION'),
+                inArray(observations.acceptanceOutcome, [...QUALIFIED_ACCEPTANCE]),
                 isNotNull(observations.correctsObservationId),
               ),
             )
@@ -247,16 +255,24 @@ export const paymentRefundPersistenceForTransaction = (
         ],
         { concurrency: 1 },
       );
+      // A fully disproven return (the shared rule, held retractions included) no longer counts at all;
+      // otherwise only accepted corrections reduce what the statement still proves.
+      const disproven = fullyDisprovenTargets(statements, corrections);
+      const standing = statements.filter((row) => !disproven.has(row.observationId));
       const attached = yield* attachedOperationsOf(
         { legalEntityId, tenantId },
-        statements.filter((row) => row.operationId === null).map((row) => row.observationId),
+        standing.filter((row) => row.operationId === null).map((row) => row.observationId),
       );
       const evidence = yield* Effect.forEach(
-        statements,
+        standing,
         (row) =>
           returnEvidenceOf(
             row,
-            corrections.filter((correction) => correction.correctsObservationId === row.observationId),
+            corrections.filter(
+              (correction) =>
+                correction.acceptanceOutcome === 'ACCEPTED_OBSERVATION' &&
+                correction.correctsObservationId === row.observationId,
+            ),
             attached.get(row.observationId),
           ),
         { concurrency: 1 },

@@ -525,6 +525,28 @@ describe('#1151 Payment evidence interpretation', () => {
         PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'CORRECTION_EXCEEDS_REMAINING_FUNDS' }),
       );
     }
+    // A reduction of a receipt that was fully disproven (and replaced) no longer counts against the funds.
+    const withRetiredReduction = (fullyDisprovenObservationIds: ReadonlySet<string>) =>
+      interpretPaymentObservation(
+        {
+          ...aggregateOf(
+            [operation('EFFECT_CONFIRMED'), refund('EFFECT_CONFIRMED')],
+            [
+              accepted('obs-retired'),
+              accepted('obs-retired-reduction', {
+                amount: czk(10_000),
+                correctsObservationId: 'obs-retired',
+                factKind: 'SOURCE_CORRECTION',
+              }),
+              accepted('obs-receipt'),
+            ],
+          ),
+          fullyDisprovenObservationIds,
+        },
+        { ...correction, amount: czk(15_000) },
+      );
+    expect(PaymentEvidenceDecision.$is('HOLD')(withRetiredReduction(new Set()))).toBe(true);
+    expect(PaymentEvidenceDecision.$is('HOLD')(withRetiredReduction(new Set(['obs-retired'])))).toBe(false);
     // A refund proven not effected reserves nothing: the reduction applies.
     const applied = interpretPaymentObservation(
       aggregateOf([operation('EFFECT_CONFIRMED'), refund('NOT_EFFECTED_CONFIRMED')], [accepted('obs-receipt')]),

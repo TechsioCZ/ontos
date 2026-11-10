@@ -252,7 +252,7 @@ export const startPaymentCollectionAction = defineAction(
       kind: 'action',
       modes: ['run', 'propose', 'approve'],
       placement: { group: 'payments', level: 'extended' },
-      risk: 'sensitive',
+      risk: 'critical',
       selectors: [],
     },
     accessEvidencePolicy: {

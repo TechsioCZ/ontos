@@ -645,7 +645,11 @@ export const paymentEvidencePersistenceForTransaction = (
         ({ operationId, row }) => interpretedViewOf(row, operationId),
         { concurrency: 1 },
       );
-      return { acceptedObservations, attachedStatements } satisfies PaymentInterpretedEvidence;
+      return {
+        acceptedObservations,
+        attachedStatements,
+        fullyDisprovenObservationIds: corrected,
+      } satisfies PaymentInterpretedEvidence;
     },
   );
 
