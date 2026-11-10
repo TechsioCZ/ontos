@@ -1,4 +1,4 @@
-// The opportunity form's values: what the create panel sends once and the edit panel autosaves.
+// The opportunity form's values: what the create panel sends once and the edit panel saves on its Uložit button.
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import { CalendarDateSchema } from '@app/shared-contracts';
 import { Effect, Option, Predicate, Schema } from 'effect';
@@ -101,18 +101,25 @@ export const opportunityUnchangedSince =
     return current !== undefined && sameOpportunityDraft(draftFrom(current), base);
   };
 
-/** An autosave of the edit panel: the new revision once saved, `conflict` for a revision conflict, else `failed`. */
-export const opportunityAutosaveResult = <E>(
+/**
+ * A save of the edit panel: the new revision once saved, `proposed` when the change awaits approval, `conflict` for a
+ * revision conflict, else `failed`.
+ */
+export const opportunitySaveResult = <E>(
   write: Effect.Effect<{ readonly revision: number }, E>,
 ): Effect.Effect<RevisionedSaveResult> =>
   write.pipe(
     Effect.match({
-      onFailure: (error): RevisionedSaveResult =>
-        Predicate.isTagged(error, 'ApplyCommandActionConflictProblem') &&
-        Predicate.hasProperty(error, 'code') &&
-        error.code === 'sales_pipeline_revision_conflict'
+      onFailure: (error): RevisionedSaveResult => {
+        if (Predicate.isTagged(error, 'ActionProposalAccepted')) {
+          return 'proposed';
+        }
+        return Predicate.isTagged(error, 'ApplyCommandActionConflictProblem') &&
+          Predicate.hasProperty(error, 'code') &&
+          error.code === 'sales_pipeline_revision_conflict'
           ? 'conflict'
-          : 'failed',
+          : 'failed';
+      },
       onSuccess: ({ revision }): RevisionedSaveResult => revision,
     }),
   );

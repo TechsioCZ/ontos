@@ -1,33 +1,26 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { SaveBar, DetailList, formatDate, useRecordDraft } from '@app/admin-ui';
-import type { SaveOutcome } from '@app/admin-ui';
+import { DetailList, SaveBar, UnsavedChangesDialog, formatDate, saveLabelsFor } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Effect, Option, Schema } from 'effect';
+import { Option } from 'effect';
 
 import type { CustomerListItem } from '../../../../api/customers-client.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { DiscardDialog } from './customer-discard-dialog.tsx';
-import { customerDetailFailureKey, saveCustomerFact } from './customers-data.ts';
-import type { CustomerDetailSnapshot, CustomerFactChange, useCustomerDetail } from './customers-data.ts';
+import { NAME_KEY, contactDraftKey, contactFieldNames, identifierDraftKey } from './customer-detail-draft.ts';
+import type { CustomerDetailSnapshot, useCustomerDetail } from './customers-data.ts';
 import {
   contactFieldsInvalid,
   customerContactEditable,
   customerContactFieldLabel,
   customerContactFields,
-  customerContactInput,
   customerContactRequiresAuthoritativeEdit,
   emptyCustomerContactFields,
-  sameContactFields,
 } from './customers-model.ts';
-import type { CustomerContactFields, CustomerContactRow, CustomerParty } from './customers-model.ts';
 
 export const CUSTOMER_DETAIL_KEY = 'party-registry.pages.customers.detail';
 const STATUS_KEY = 'party-registry.pages.customers.status';
-const addressFields = ['addressLine1', 'addressLine2', 'city', 'postalCode', 'region', 'countryCode'] as const;
 
 export type CustomerDetailModel = ReturnType<typeof useCustomerDetail>;
 
@@ -91,7 +84,7 @@ const CustomerChangeBasis = ({ evidence, onEvidenceChange, onReasonChange, reaso
       <p className="text-fg-secondary text-sm">{t(`${CUSTOMER_DETAIL_KEY}.separateSaves`)}</p>
       {!filled && (
         <StatusText showIcon size="sm" status="warning">
-          Bez dokladu a důvodu se změny neukládají
+          {t(`${CUSTOMER_DETAIL_KEY}.basisRequired`)}
         </StatusText>
       )}
       <FormInput
@@ -114,154 +107,35 @@ const CustomerChangeBasis = ({ evidence, onEvidenceChange, onReasonChange, reaso
   );
 };
 
-/** One text fact of the identity. It saves itself, and only while the change basis (evidence + reason) is filled in. */
-const TextFactField = ({
-  basisFilled,
-  id,
-  label,
-  original,
-  save,
-}: {
-  readonly basisFilled: boolean;
-  readonly id: string;
-  readonly label: string;
-  readonly original: string;
-  readonly save: (value: string) => Effect.Effect<SaveOutcome>;
-}) => {
-  const autosave = useRecordDraft<string, never>({
-    equals: (left, right) => left.trim() === right.trim(),
-    isValid: (value) => value.trim() !== '' && basisFilled,
-    runtime: browserRuntime,
-    save: (value) => save(value.trim()),
-    server: original,
-  });
-  const handleChange = (event: { target: { value: string } }) => autosave.setDraft(event.target.value);
-  const handleReloadLatest = autosave.reloadLatest;
-  const handleSave = autosave.save;
-  return (
-    <div className="flex flex-col gap-100">
-      <FormInput id={id} label={label} onChange={handleChange} required value={autosave.draft} />
-      <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
-    </div>
-  );
-};
-
-/** The contact point of one row. Same autosave, field by field, plus the registry-owned address notice. */
-const ContactFactFields = ({
-  basisFilled,
-  id,
-  registeredAddress,
-  save,
-  server,
-  type,
-}: {
-  readonly basisFilled: boolean;
-  readonly id: string;
-  readonly registeredAddress: boolean;
-  readonly save: (value: CustomerContactFields) => Effect.Effect<SaveOutcome>;
-  readonly server: CustomerContactFields;
-  readonly type: CustomerContactRow['type'];
-}) => {
-  const { t } = useModernI18n();
-  const autosave = useRecordDraft<CustomerContactFields, never>({
-    equals: sameContactFields,
-    isValid: (value) => basisFilled && !contactFieldsInvalid(type, value),
-    runtime: browserRuntime,
-    save: (value) => save(value),
-    server,
-  });
-  const handleReloadLatest = autosave.reloadLatest;
-  const handleSave = autosave.save;
-  return (
-    <>
-      <div className="grid grid-cols-1 gap-150 md:grid-cols-2">
-        {(type === 'ADDRESS' ? addressFields : (['value'] as const)).map((field) => (
-          <FormInput
-            helpText={
-              type === 'EMAIL' && field === 'value' && contactFieldsInvalid(type, autosave.draft)
-                ? 'Zadejte platný e-mail'
-                : undefined
-            }
-            id={`${id}-${field}`}
-            key={field}
-            label={t(customerContactFieldLabel(type, field))}
-            onChange={(event) => autosave.setDraft((current) => ({ ...current, [field]: event.target.value }))}
-            value={autosave.draft[field] ?? ''}
-          />
-        ))}
-      </div>
-      {registeredAddress && <StatusText status="default">{t(`${CUSTOMER_DETAIL_KEY}.registeredAddress`)}</StatusText>}
-      <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
-    </>
-  );
-};
-
-/** The identity's facts below the rename: official identifiers and contact points, each saving itself. */
+/** The identity's facts below the name: official identifiers and contact points, all part of the one draft. */
 const CustomerFacts = ({
-  basisFilled,
   detail,
-  saveFact,
   snapshot,
 }: {
-  readonly basisFilled: boolean;
   readonly detail: CustomerDetailModel;
-  readonly saveFact: (build: (owner: CustomerParty) => CustomerFactChange) => Effect.Effect<SaveOutcome>;
   readonly snapshot: CustomerDetailSnapshot;
 }) => {
   const { t } = useModernI18n();
+  const hasParty = detail.party !== undefined;
   return (
     <>
       <h3 className="font-semibold">{t(`${CUSTOMER_DETAIL_KEY}.identifiers`)}</h3>
       {snapshot.identifiers.status === 'ready' ? (
         detail.identifierRows.map(({ existing, id, type }) => {
-          const key = `identifier-${id}`;
-          const original = existing?.normalizedValue ?? '';
+          const key = identifierDraftKey(id);
           return (
             <div className="flex flex-col gap-150" key={key}>
-              {existing === undefined || detail.party === undefined ? (
-                <>
-                  <FormInput
-                    disabled={detail.party === undefined}
-                    id={key}
-                    label={t(`${CUSTOMER_DETAIL_KEY}.${type === 'ICO' ? 'companyId' : 'vatId'}`)}
-                    onChange={(event) => detail.changeDraft(key, event.target.value, original)}
-                    value={detail.value(key, original)}
-                  />
-                  <Button
-                    disabled={
-                      detail.busy || detail.stale || detail.party === undefined || detail.draft[key] === undefined
-                    }
-                    onClick={() =>
-                      detail.save(
-                        {
-                          existing,
-                          identifierType: type,
-                          kind: 'identifier',
-                          value: detail.value(key, original),
-                        },
-                        [key],
-                      )
-                    }
-                    variant="primary"
-                  >
-                    {t(`${CUSTOMER_DETAIL_KEY}.saveIdentifier`)}
-                  </Button>
-                </>
-              ) : (
-                <TextFactField
-                  basisFilled={basisFilled}
-                  id={key}
-                  label={t(`${CUSTOMER_DETAIL_KEY}.${type === 'ICO' ? 'companyId' : 'vatId'}`)}
-                  original={original}
-                  save={(next) => saveFact(() => ({ existing, identifierType: type, kind: 'identifier', value: next }))}
-                />
-              )}
+              <FormInput
+                disabled={!hasParty}
+                id={key}
+                label={t(`${CUSTOMER_DETAIL_KEY}.${type === 'ICO' ? 'companyId' : 'vatId'}`)}
+                onChange={(event) => detail.changeDraft(key, event.target.value)}
+                value={detail.value(key, existing?.normalizedValue ?? '')}
+              />
               {existing !== undefined && (
                 <Button
-                  disabled={
-                    detail.busy || detail.stale || detail.party === undefined || detail.draft[key] !== undefined
-                  }
-                  onClick={() => detail.save({ existing, kind: 'endIdentifier' }, [])}
+                  disabled={detail.busy || detail.stale || !hasParty || detail.draft[key] !== undefined}
+                  onClick={() => detail.runCommand({ existing, kind: 'endIdentifier' })}
                   theme="outlined"
                   variant="secondary"
                 >
@@ -278,73 +152,45 @@ const CustomerFacts = ({
       {snapshot.contacts.status === 'ready' ? (
         detail.contactRows.map(({ existing, id, type }) => {
           const fields = existing === undefined ? emptyCustomerContactFields(type) : customerContactFields(existing);
-          const keys = Object.keys(fields).map((field) => `${id}-${field}`);
-          const editable = customerContactEditable(existing, detail.party !== undefined);
+          const names = contactFieldNames(type);
+          const keys = names.map((field) => contactDraftKey(id, field));
+          const editable = customerContactEditable(existing, hasParty);
           const values = Object.fromEntries(
-            Object.entries(fields).map(([field, original]) => [field, detail.value(`${id}-${field}`, original)]),
+            names.map((field) => [field, detail.value(contactDraftKey(id, field), fields[field] ?? '')]),
           );
+          const emailInvalid =
+            editable &&
+            type === 'EMAIL' &&
+            keys.some((key) => detail.draft[key] !== undefined) &&
+            contactFieldsInvalid(type, values);
           return (
             <div className="flex flex-col gap-150" key={id}>
               <p className="font-medium">
                 {t(`${CUSTOMER_DETAIL_KEY}.contactTypes.${type}`)}{' '}
                 {existing === undefined ? t(`${CUSTOMER_DETAIL_KEY}.newContact`) : ''}
               </p>
-              {existing !== undefined && editable ? (
-                <ContactFactFields
-                  basisFilled={basisFilled}
-                  id={id}
-                  registeredAddress={customerContactRequiresAuthoritativeEdit(existing)}
-                  save={(next) =>
-                    saveFact(() => ({
-                      existing,
-                      kind: 'contact',
-                      value: customerContactInput(type, next, existing),
-                    }))
-                  }
-                  server={fields}
-                  type={type}
-                />
-              ) : (
-                <>
-                  <div className="grid grid-cols-1 gap-150 md:grid-cols-2">
-                    {(type === 'ADDRESS' ? addressFields : ['value']).map((field) => (
-                      <FormInput
-                        disabled={!editable}
-                        id={`${id}-${field}`}
-                        key={field}
-                        label={t(customerContactFieldLabel(type, field))}
-                        onChange={(event) =>
-                          detail.changeDraft(`${id}-${field}`, event.target.value, fields[field] ?? '')
-                        }
-                        value={values[field] ?? ''}
-                      />
-                    ))}
-                  </div>
-                  {customerContactRequiresAuthoritativeEdit(existing) && (
-                    <StatusText status="default">{t(`${CUSTOMER_DETAIL_KEY}.registeredAddress`)}</StatusText>
-                  )}
-                  <Button
-                    disabled={
-                      detail.busy || detail.stale || !editable || !keys.some((key) => detail.draft[key] !== undefined)
-                    }
-                    onClick={() =>
-                      detail.save(
-                        { existing, kind: 'contact', value: customerContactInput(type, values, existing) },
-                        keys,
-                      )
-                    }
-                    variant="primary"
-                  >
-                    {t(`${CUSTOMER_DETAIL_KEY}.saveContact`)}
-                  </Button>
-                </>
+              <div className="grid grid-cols-1 gap-150 md:grid-cols-2">
+                {names.map((field) => (
+                  <FormInput
+                    disabled={!editable}
+                    helpText={emailInvalid && field === 'value' ? t(`${CUSTOMER_DETAIL_KEY}.invalidEmail`) : undefined}
+                    id={contactDraftKey(id, field)}
+                    key={field}
+                    label={t(customerContactFieldLabel(type, field))}
+                    onChange={(event) => detail.changeDraft(contactDraftKey(id, field), event.target.value)}
+                    value={values[field] ?? ''}
+                  />
+                ))}
+              </div>
+              {customerContactRequiresAuthoritativeEdit(existing) && (
+                <StatusText status="default">{t(`${CUSTOMER_DETAIL_KEY}.registeredAddress`)}</StatusText>
               )}
               {existing !== undefined && (
                 <Button
                   disabled={
                     detail.busy || detail.stale || !editable || keys.some((key) => detail.draft[key] !== undefined)
                   }
-                  onClick={() => detail.save({ existing, kind: 'endContact' }, [])}
+                  onClick={() => detail.runCommand({ existing, kind: 'endContact' })}
                   theme="outlined"
                   variant="secondary"
                 >
@@ -361,6 +207,25 @@ const CustomerFacts = ({
   );
 };
 
+/**
+ * The one Save button of the customer detail with the draft's status. The side panel puts it last in its footer,
+ * the page below the record.
+ */
+export const CustomerDetailSaveBar = ({ detail }: { readonly detail: CustomerDetailModel }) => {
+  const { language } = useModernI18n();
+  const handleSave = detail.save;
+  const handleReloadLatest = detail.record.reloadLatest;
+  return (
+    <SaveBar
+      error={detail.saveError}
+      labels={saveLabelsFor(language)}
+      onReloadLatest={handleReloadLatest}
+      onSave={handleSave}
+      status={detail.status}
+    />
+  );
+};
+
 /** The complete customer detail body. The side panel and the full page render this one component. */
 export const CustomerDetailContent = ({
   detail,
@@ -369,15 +234,14 @@ export const CustomerDetailContent = ({
   onRetry,
   subject,
 }: CustomerDetailContentProps) => {
-  const { t } = useModernI18n();
+  const { language: i18nLanguage, t } = useModernI18n();
   const location = useRouterState({ select: (state) => state.location.pathname });
   const language = location.split('/')[1] === 'en' ? 'en' : 'cs';
   const {
     busy,
-    confirmDiscard,
     dirty,
-    discardOpen,
     evidence,
+    guard,
     history,
     identity,
     notice,
@@ -385,8 +249,7 @@ export const CustomerDetailContent = ({
     reason,
     refresh,
     requestNavigation,
-    save,
-    setDiscardOpen,
+    runCommand,
     setEvidence,
     setReason,
     snapshot,
@@ -406,27 +269,6 @@ export const CustomerDetailContent = ({
     }
     return `/${language}${path}?${params.toString()}`;
   };
-
-  /** Evidence and a reason are the change basis of a governed identity change: nothing is sent without them. */
-  const basisFilled = reason.trim() !== '' && evidence.trim() !== '';
-  const saveFact = (build: (owner: CustomerParty) => CustomerFactChange): Effect.Effect<SaveOutcome> =>
-    party === undefined
-      ? Effect.succeed<SaveOutcome>('failed')
-      : saveCustomerFact(party.partyRef, build(party), reason.trim(), evidence.trim()).pipe(
-          Effect.matchEffect({
-            onFailure: (error) =>
-              Effect.sync<SaveOutcome>(() => (customerDetailFailureKey(error) === 'conflict' ? 'conflict' : 'failed')),
-            onSuccess: (result) =>
-              Effect.sync<SaveOutcome>(() => {
-                if (Schema.is(Schema.Struct({ outcome: Schema.Literal('BLOCKED') }))(result)) {
-                  return 'failed';
-                }
-                // The detail shows what the owner now has, so the next change builds on the confirmed facts.
-                refresh();
-                return 'saved';
-              }),
-          }),
-        );
 
   return (
     <>
@@ -466,17 +308,17 @@ export const CustomerDetailContent = ({
               <CustomerIdentityNotice forbidden={identity?.status === 'forbidden'} />
             ) : (
               <>
-                <TextFactField
-                  basisFilled={basisFilled}
+                <FormInput
                   id="customer-rename"
                   label={t(`${CUSTOMER_DETAIL_KEY}.rename`)}
-                  original={name}
-                  save={(next) => saveFact((owner) => ({ kind: 'name', party: owner, value: next }))}
+                  onChange={(event) => detail.changeDraft(NAME_KEY, event.target.value)}
+                  required
+                  value={detail.value(NAME_KEY, name)}
                 />
                 <p className="text-fg-secondary text-sm">{t(`${CUSTOMER_DETAIL_KEY}.sharedIdentity`)}</p>
                 <Button
                   disabled={busy || stale || dirty}
-                  onClick={() => save({ kind: 'lifecycle', party }, [])}
+                  onClick={() => runCommand({ kind: 'lifecycle', party })}
                   theme="outlined"
                   variant="secondary"
                 >
@@ -484,7 +326,7 @@ export const CustomerDetailContent = ({
                 </Button>
               </>
             )}
-            <CustomerFacts basisFilled={basisFilled} detail={detail} saveFact={saveFact} snapshot={snapshot} />
+            <CustomerFacts detail={detail} snapshot={snapshot} />
             {/* A dated list only: with no ended fact the panel and the page render no empty section title. */}
             {history.length > 0 && (
               <>
@@ -535,13 +377,7 @@ export const CustomerDetailContent = ({
           </>
         )}
       </div>
-      <DiscardDialog
-        copyKey={CUSTOMER_DETAIL_KEY}
-        onCancel={() => setDiscardOpen(false)}
-        onConfirm={confirmDiscard}
-        onOpenChange={setDiscardOpen}
-        open={discardOpen}
-      />
+      <UnsavedChangesDialog labels={saveLabelsFor(i18nLanguage)} prompt={guard.prompt} />
     </>
   );
 };

@@ -8,7 +8,7 @@ import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
 import type { PipelineCommand } from './pipeline-api.ts';
 import { BulkByTagDialog } from './pipeline-bulk-by-tag.tsx';
 import type { BulkByTagResult } from './pipeline-bulk-by-tag.tsx';
-import type { CreateCommand, OpportunityAutosave } from './pipeline-dialogs.tsx';
+import type { CreateCommand, OpportunitySave } from './pipeline-dialogs.tsx';
 import { OpportunityFormDialog, OwnerDialog, StageDialog } from './pipeline-dialogs.tsx';
 import type { EmployeeId, OpportunityStage } from './pipeline-model.ts';
 import { toSubjectIds } from './pipeline-references.ts';
@@ -64,7 +64,7 @@ interface PipelineDialogHostProps {
   readonly onBulkByTagDone: (result: BulkByTagResult) => void;
   readonly onBulkTagsDone: () => void;
   readonly onClose: () => void;
-  readonly onFormAutosave: OpportunityAutosave;
+  readonly onFormSave: OpportunitySave;
   readonly onFormSubmit: (command: CreateCommand) => void;
   readonly onOwnerSubmit: (owner: EmployeeId | null) => void;
   readonly onStageSubmit: (stage: OpportunityStage, note: string | undefined) => void;
@@ -85,7 +85,7 @@ export const PipelineDialogHost = ({
   onBulkByTagDone,
   onBulkTagsDone,
   onClose,
-  onFormAutosave,
+  onFormSave,
   onFormSubmit,
   onOwnerSubmit,
   onStageSubmit,
@@ -134,8 +134,8 @@ export const PipelineDialogHost = ({
         customers={customers}
         employees={employees}
         initial={dialog.opportunity}
-        onAutosave={onFormAutosave}
         onOpenChange={close}
+        onSave={onFormSave}
         onSubmit={onFormSubmit}
         products={products}
         revision={revision}

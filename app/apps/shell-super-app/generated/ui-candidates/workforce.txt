@@ -8,7 +8,6 @@ align-top
 bg-base
 bg-surface
 block
-blur
 border-b
 border-border-primary
 border-collapse
@@ -45,7 +44,6 @@ py-100
 py-200
 resize
 rounded
-running
 sticky
 table
 table-fixed

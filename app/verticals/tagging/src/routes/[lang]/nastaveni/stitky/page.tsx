@@ -1,6 +1,5 @@
 import { pendingProposalMessage } from '../../../../api/action-result.ts';
 import {
-  SaveBar,
   EmptyState,
   PageHeader,
   SidePanel,
@@ -8,25 +7,20 @@ import {
   Toaster,
   dialogCloseLabel,
   paginationTranslations,
-  useRecordDraft,
 } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
-import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { modulePagePreload } from '@app/shared-contracts/page-data';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Effect, Predicate, Schema } from 'effect';
-import { useEffect, useRef, useState } from 'react';
-import { applyTaggingCommand, applyTaggingCommandIfUnchanged } from '../../../../api/records-commands.ts';
+import { useEffect, useState } from 'react';
+import { applyTaggingCommand } from '../../../../api/records-commands.ts';
 import { subjectsWithTag } from '../../../../api/records-consumer.ts';
 import { loadSubjectNames } from '../../../../api/subject-names.ts';
 import type { SubjectNames } from '../../../../api/subject-names.ts';
@@ -39,22 +33,12 @@ import {
   tagColorValue,
   useTagCatalogSnapshot,
 } from '../../../../components/tag-controls.tsx';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { subjectKindValues, tagColorValues } from '../../../../../shared/apis/records.ts';
+import { subjectKindValues } from '../../../../../shared/apis/records.ts';
 import type { SubjectId, SubjectKind, TagId, TagWithCounts } from '../../../../../shared/apis/records.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
-import {
-  createTagCommand,
-  sameTagDraft,
-  tagAutosaveResult,
-  tagDraftOf,
-  tagNameProblem,
-  tagUnchangedSince,
-  updateTagCommand,
-  validTagDraft,
-} from './tag-draft.ts';
-import type { TagDraft } from './tag-draft.ts';
+import { TagCreatePanel } from './tag-create-panel.tsx';
+import { TagEditPanel } from './tag-edit-panel.tsx';
 
 type Translate = ReturnType<typeof useModernI18n>['t'];
 
@@ -69,307 +53,12 @@ const kindsOf = (tag: TagWithCounts) => {
   return subjectKindValues.filter((kind) => applies.has(kind));
 };
 
-const toggleKind = (kinds: readonly SubjectKind[], kind: SubjectKind, checked: boolean) => {
-  const selected = new Set(kinds);
-  return subjectKindValues.filter((value) => (value === kind ? checked : selected.has(value)));
-};
-
 const CancelButton = ({ onClick }: { onClick: () => void }) => {
   const { t } = useModernI18n();
   return (
     <Button onClick={() => onClick()} theme="outlined" variant="secondary">
       {t('tagging.tags.form.cancel')}
     </Button>
-  );
-};
-
-const nameErrorKey = {
-  required: 'tagging.tags.form.nameRequired',
-  tooLong: 'tagging.tags.form.nameTooLong',
-} as const;
-
-/** The fields of one tag, shared by the create dialog and the autosaving edit panel. */
-const TagFields = ({
-  draft,
-  onChange,
-  showErrors,
-}: {
-  readonly draft: TagDraft;
-  readonly onChange: (update: (current: TagDraft) => TagDraft) => void;
-  /** Inline field errors are shown (after the first create attempt; always while editing). */
-  readonly showErrors: boolean;
-}) => {
-  const { t } = useModernI18n();
-  const nameProblem = tagNameProblem(draft);
-  const showNameError = showErrors && nameProblem !== null;
-  const showKindsError = showErrors && draft.kinds.length === 0;
-  const selectedKinds = new Set(draft.kinds);
-  const colorItems = tagColorValues.map((color) => ({
-    displayValue: t(`tagging.colors.${color}`),
-    label: (
-      <span className="flex items-center gap-100">
-        <span
-          aria-hidden
-          className="size-2.5 shrink-0 rounded-full"
-          style={{ backgroundColor: tagColorValue[color] }}
-        />
-        {t(`tagging.colors.${color}`)}
-      </span>
-    ),
-    value: color,
-  }));
-  return (
-    <>
-      <FormInput
-        autoComplete="off"
-        helpText={nameProblem !== null && showNameError ? t(nameErrorKey[nameProblem]) : undefined}
-        id="tag-name"
-        label={t('tagging.tags.form.name')}
-        name="name"
-        onChange={(event) => {
-          const { value } = event.target;
-          onChange((current) => ({ ...current, name: value }));
-        }}
-        required
-        validateStatus={showNameError ? 'error' : 'default'}
-        value={draft.name}
-      />
-      <SelectTemplate
-        items={colorItems}
-        label={t('tagging.tags.form.color')}
-        name="color"
-        onValueChange={(details) => {
-          const picked = tagColorValues.find((value) => value === details.value[0]);
-          if (picked !== undefined) {
-            onChange((current) => ({ ...current, color: picked }));
-          }
-        }}
-        placeholder={t('tagging.tags.selectPlaceholder')}
-        value={[draft.color]}
-      />
-      <FormTextarea
-        autoComplete="off"
-        id="tag-description"
-        label={t('tagging.tags.form.description')}
-        name="description"
-        onChange={(event) => {
-          const { value } = event.target;
-          onChange((current) => ({ ...current, description: value }));
-        }}
-        value={draft.description}
-      />
-      <fieldset className="flex flex-col gap-100">
-        <legend className="font-medium text-sm">{t('tagging.tags.form.kinds')}</legend>
-        {subjectKindValues.map((kind) => (
-          <FormCheckbox
-            checked={selectedKinds.has(kind)}
-            key={kind}
-            name="kinds"
-            onCheckedChange={(checked) =>
-              onChange((current) => ({ ...current, kinds: toggleKind(current.kinds, kind, checked) }))
-            }
-            value={kind}
-          >
-            {t(`tagging.kinds.${kind}`)}
-          </FormCheckbox>
-        ))}
-        {showKindsError && (
-          <StatusText showIcon status="error">
-            {t('tagging.tags.form.kindsRequired')}
-          </StatusText>
-        )}
-      </fieldset>
-    </>
-  );
-};
-
-/** Create a tag. Escape, the close button and Zrušit ask before they drop typed values. */
-const TagCreateDialog = ({ onClose }: { onClose: () => void }) => {
-  const { t } = useModernI18n();
-  const toaster = useToast();
-  const initial = tagDraftOf(null);
-  const [draft, setDraft] = useState<TagDraft>(initial);
-  const [submitted, setSubmitted] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState<string | null>(null);
-  const [discardOpen, setDiscardOpen] = useState(false);
-
-  const handleDraftChange = setDraft;
-  const requestClose = () => {
-    if (!sameTagDraft(draft, initial) && !busy) {
-      setDiscardOpen(true);
-      return;
-    }
-    onClose();
-  };
-
-  const submit = () => {
-    setSubmitted(true);
-    if (!validTagDraft(draft)) {
-      return;
-    }
-    setBusy(true);
-    setFailed(null);
-    runTagEffect(applyTaggingCommand(createTagCommand(draft)), {
-      onFailure: (error) => {
-        setBusy(false);
-        setFailed(pendingProposalMessage(error) ?? t('tagging.tags.failure'));
-      },
-      onSuccess: () => {
-        setBusy(false);
-        toaster.create({ title: t('tagging.tags.created'), type: 'success' });
-        onClose();
-      },
-    });
-  };
-
-  return (
-    <>
-      <SidePanel
-        actions={
-          <>
-            <CancelButton onClick={requestClose} />
-            <Button
-              isLoading={busy}
-              loadingText={t('tagging.tags.form.saving')}
-              onClick={() => submit()}
-              variant="primary"
-            >
-              {t('tagging.tags.form.createSubmit')}
-            </Button>
-          </>
-        }
-        onOpenChange={(next) => {
-          if (!next) {
-            requestClose();
-          }
-        }}
-        open
-        resizeLabel={t(resizeKey)}
-        size="md"
-        title={t(newTagKey)}
-      >
-        <form
-          className="flex flex-col gap-200 py-200"
-          onSubmit={(event) => {
-            event.preventDefault();
-            submit();
-          }}
-        >
-          {failed !== null && (
-            <StatusText showIcon status="error">
-              {failed}
-            </StatusText>
-          )}
-          <TagFields draft={draft} onChange={handleDraftChange} showErrors={submitted} />
-        </form>
-      </SidePanel>
-      <Dialog
-        actions={
-          <>
-            <Button onClick={() => setDiscardOpen(false)} theme="outlined" type="button" variant="secondary">
-              {t('tagging.tags.form.discardKeep')}
-            </Button>
-            <Button onClick={onClose} type="button" variant="danger">
-              {t('tagging.tags.form.discardConfirm')}
-            </Button>
-          </>
-        }
-        closeLabel={dialogCloseLabel}
-        customTrigger
-        description={t('tagging.tags.form.discardDescription')}
-        hideCloseButton
-        onOpenChange={(details) => setDiscardOpen(details.open)}
-        open={discardOpen}
-        role="alertdialog"
-        size="sm"
-        title={t('tagging.tags.form.discardTitle')}
-      />
-    </>
-  );
-};
-
-const refreshCatalog = Effect.sync(refreshTagCatalog);
-
-/**
- * Edit one existing tag. Changes save themselves (debounced, on blur and on Zavřít) only while the owner still has
- * the tag as the draft started from; when someone else changed it, the panel offers the current version instead.
- */
-const TagEditPanel = ({ onClose, tag }: { onClose: () => void; tag: TagWithCounts }) => {
-  const { t } = useModernI18n();
-  const server = tagDraftOf(tag);
-  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
-  /** The version of the tag the draft builds on: what it opened with, last saved or reloaded. */
-  const base = useRef(server);
-  const autosave = useRecordDraft<TagDraft, never>({
-    equals: sameTagDraft,
-    isValid: validTagDraft,
-    refresh: refreshCatalog,
-    runtime: browserRuntime,
-    save: (value) =>
-      tagAutosaveResult(
-        applyTaggingCommandIfUnchanged(updateTagCommand(tag.id, value), tagUnchangedSince(tag.id, base.current)).pipe(
-          Effect.matchEffect({
-            onFailure: (error) =>
-              Effect.sync(() => setPendingMessage(pendingProposalMessage(error) ?? null)).pipe(
-                Effect.andThen(Effect.fail(error)),
-              ),
-            onSuccess: Effect.succeed,
-          }),
-        ),
-      ).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            if (result === 'saved') {
-              base.current = value;
-            }
-          }),
-        ),
-      ),
-    server,
-  });
-  const settledOnServer = !autosave.pending && sameTagDraft(autosave.draft, server);
-  useEffect(() => {
-    if (settledOnServer) {
-      base.current = server;
-    }
-  }, [base, server, settledOnServer]);
-  const close = () => {
-    onClose();
-  };
-  const handleDraftChange = autosave.setDraft;
-  const handleSave = autosave.save;
-  const handleReloadLatest = autosave.reloadLatest;
-  return (
-    <SidePanel
-      actions={
-        <>
-          {pendingMessage !== null && <StatusText status="error">{pendingMessage}</StatusText>}
-          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
-          <Button onClick={close} theme="outlined" variant="secondary">
-            {t('tagging.tags.form.close')}
-          </Button>
-        </>
-      }
-      onOpenChange={(next) => {
-        if (!next) {
-          close();
-        }
-      }}
-      open
-      resizeLabel={t(resizeKey)}
-      size="md"
-      title={t('tagging.tags.edit')}
-    >
-      <form
-        className="flex flex-col gap-200 py-200"
-        onSubmit={(event) => {
-          event.preventDefault();
-        }}
-      >
-        <TagFields draft={autosave.draft} onChange={handleDraftChange} showErrors />
-      </form>
-    </SidePanel>
   );
 };
 
@@ -764,7 +453,7 @@ const TagsPageContent = () => {
           searchPlaceholder: t(searchKey),
         }}
       />
-      {editor !== null && editor.tag === null && <TagCreateDialog onClose={() => setEditor(null)} />}
+      {editor !== null && editor.tag === null && <TagCreatePanel onClose={() => setEditor(null)} />}
       {editor !== null && editor.tag !== null && (
         <TagEditPanel
           onClose={() => setEditor(null)}

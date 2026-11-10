@@ -1,5 +1,6 @@
 import { startDraftSave } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
+import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { Effect, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
@@ -8,7 +9,7 @@ import { SalesPipelineLifecycleConflictProblemSchema } from '../../shared/sales-
 import { OpportunitySchema } from '../../shared/model/opportunity.ts';
 import {
   draftFrom,
-  opportunityAutosaveResult,
+  opportunitySaveResult,
   opportunityUnchangedSince,
   sameOpportunityDraft,
   updateCommandOf,
@@ -40,6 +41,11 @@ const conflictProblem = (code: 'sales_pipeline_revision_conflict') =>
     title: 'Konflikt',
     type: 'about:blank',
   });
+const proposal = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
+  _tag: 'ActionProposalAccepted',
+  expiresAt: '2026-11-07T12:00:00Z',
+  proposalId: '20000000-0000-4000-8000-000000000001',
+});
 
 describe('opportunity edit draft', () => {
   it('ignores surrounding spaces and the line editor keys', () => {
@@ -63,12 +69,13 @@ describe('opportunity edit draft', () => {
     expect(unchanged([])).toBe(false);
   });
 
-  it.effect('adopts the returned revision and turns only a revision conflict into the conflict line', () =>
+  it.effect('maps a saved revision, a revision conflict and an approval proposal to their outcomes', () =>
     Effect.gen(function* outcomes() {
-      expect(yield* opportunityAutosaveResult(Effect.succeed({ revision: 42 }))).toBe(42);
-      expect(yield* opportunityAutosaveResult(Effect.fail(conflictProblem('sales_pipeline_revision_conflict')))).toBe(
+      expect(yield* opportunitySaveResult(Effect.succeed({ revision: 42 }))).toBe(42);
+      expect(yield* opportunitySaveResult(Effect.fail(conflictProblem('sales_pipeline_revision_conflict')))).toBe(
         'conflict',
       );
+      expect(yield* opportunitySaveResult(Effect.fail(proposal))).toBe('proposed');
       const lifecycle = yield* Schema.decodeUnknownEffect(SalesPipelineLifecycleConflictProblemSchema)({
         _tag: 'SalesPipelineLifecycleConflictProblem',
         code: 'sales_pipeline_lifecycle_conflict',
@@ -77,7 +84,7 @@ describe('opportunity edit draft', () => {
         title: 'Konflikt',
         type: 'about:blank',
       });
-      expect(yield* opportunityAutosaveResult(Effect.fail(lifecycle))).toBe('failed');
+      expect(yield* opportunitySaveResult(Effect.fail(lifecycle))).toBe('failed');
     }),
   );
 });
@@ -92,21 +99,47 @@ const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
   return { controller, sent };
 });
 
-describe('opportunity edit panel autosave', () => {
-  it.effect('saves a typed note after the quiet time; an empty title stays local', () =>
-    Effect.gen(function* typed() {
+describe('opportunity edit panel saves only on Uložit', () => {
+  it.effect('typing and waiting send nothing; one save sends the draft once', () =>
+    Effect.gen(function* typedThenSaved() {
       const { controller, sent } = yield* panel('saved');
-      controller.change({ ...saved, title: '' });
-      controller.save();
-      expect(controller.status()).toBe('invalid');
       controller.change({ ...saved, note: 'Volat dopoledne' });
-      yield* TestClock.adjust('800 millis');
+      yield* TestClock.adjust('5 seconds');
+      expect(sent).toHaveLength(0);
+      expect(controller.status()).toBe('dirty');
+      controller.save();
+      yield* Effect.yieldNow;
       expect(sent.map(({ note }) => note)).toEqual(['Volat dopoledne']);
       expect(controller.status()).toBe('saved');
+      yield* TestClock.adjust('5 seconds');
+      expect(sent).toHaveLength(1);
     }),
   );
 
-  it.effect('holds a conflicting draft instead of sending it again', () =>
+  it.effect('an empty title is never sent and keeps the save off', () =>
+    Effect.gen(function* invalid() {
+      const { controller, sent } = yield* panel('saved');
+      controller.change({ ...saved, title: '' });
+      controller.save();
+      yield* Effect.yieldNow;
+      expect(controller.status()).toBe('invalid');
+      expect(sent).toHaveLength(0);
+    }),
+  );
+
+  it.effect('discard puts the saved version back and sends nothing', () =>
+    Effect.gen(function* discard() {
+      const { controller, sent } = yield* panel('saved');
+      controller.change({ ...saved, title: 'Jiný název' });
+      controller.discard();
+      yield* TestClock.adjust('5 seconds');
+      expect(controller.status()).toBe('idle');
+      expect(controller.confirmed()).toEqual(saved);
+      expect(sent).toHaveLength(0);
+    }),
+  );
+
+  it.effect('a conflicting draft is held instead of sent again', () =>
     Effect.gen(function* conflict() {
       const { controller, sent } = yield* panel('conflict');
       controller.change({ ...saved, closeText: '2026-12-15' });
@@ -115,6 +148,19 @@ describe('opportunity edit panel autosave', () => {
       expect(controller.status()).toBe('conflict');
       controller.change({ ...saved, closeText: '2026-12-20' });
       yield* TestClock.adjust('1 second');
+      expect(sent).toHaveLength(1);
+    }),
+  );
+
+  it.effect('a proposed draft is parked and never sent again without a new Uložit', () =>
+    Effect.gen(function* proposed() {
+      const { controller, sent } = yield* panel('proposed');
+      controller.change({ ...saved, note: 'Volat dopoledne' });
+      controller.save();
+      yield* Effect.yieldNow;
+      expect(controller.status()).toBe('proposed');
+      controller.change({ ...saved, note: 'Volat večer' });
+      yield* TestClock.adjust('5 seconds');
       expect(sent).toHaveLength(1);
     }),
   );

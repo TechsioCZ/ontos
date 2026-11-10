@@ -1,14 +1,24 @@
 import { CalendarDateSchema } from '@app/shared-contracts';
-import { SaveBar, SidePanel, formatNumber, statusPresentation, useRecordDraft } from '@app/admin-ui';
+import {
+  SaveBar,
+  SidePanel,
+  UnsavedChangesDialog,
+  formatNumber,
+  saveLabelsFor,
+  statusPresentation,
+  useRecordDraft,
+  useUnsavedChangesGuard,
+} from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate } from '@app/admin-ui/select-template';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { useEffect, useId, useRef, useState } from 'react';
 import { OpportunityNoteSchema, OpportunityTitleSchema } from '../../../../../shared/model/opportunity.ts';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
@@ -371,52 +381,54 @@ const OpportunityCreatePanel = ({ busy, onOpenChange, onSubmit, serverError, ...
 };
 
 /** Saves one edit against the revision its draft builds on; `unchanged` decides whether a revision race is resent. */
-export type OpportunityAutosave = (
+export type OpportunitySave = (
   command: UpdateCommand,
   expectedRevision: number,
   unchanged: (items: readonly Opportunity[]) => boolean,
 ) => Effect.Effect<RevisionedSaveResult>;
 
 interface EditPanelProps extends OpportunityReferences {
-  readonly onAutosave: OpportunityAutosave;
   readonly onOpenChange: (open: boolean) => void;
+  readonly onSave: OpportunitySave;
   readonly opportunity: Opportunity;
   readonly revision: number;
   readonly serverError?: string | undefined;
 }
 
 /**
- * Edit an existing opportunity; the owner changes through the owner action. Changes save themselves (debounced, on
- * blur and on Zavřít) against the revision the draft builds on; when someone else changed this opportunity, the
- * panel offers the current version instead of overwriting it.
+ * Edit an existing opportunity; the owner changes through the owner action. Nothing is saved until Uložit, against the
+ * revision the draft builds on; when someone else changed this opportunity, the save bar offers the current version
+ * instead of overwriting it.
  */
 const OpportunityEditPanel = ({
-  onAutosave,
   onOpenChange,
+  onSave,
   opportunity,
   revision,
   serverError,
   ...references
 }: EditPanelProps) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const server = draftFrom(opportunity);
   /** The version of the opportunity the draft builds on: what it opened with, last saved or reloaded. */
   const base = useRef(server);
-  const rememberSaved = (value: FormDraft, result: RevisionedSaveResult) => {
-    if (result !== 'conflict' && result !== 'failed') {
-      base.current = value;
-    }
-  };
   const sendCommand = (value: FormDraft, expectedRevision: number, command: UpdateCommand) =>
-    onAutosave(command, expectedRevision, opportunityUnchangedSince(opportunity.id, base.current)).pipe(
-      Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))),
+    onSave(command, expectedRevision, opportunityUnchangedSince(opportunity.id, base.current)).pipe(
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          // Only an applied save moves the base; a proposal waits for approval and a conflict or failure changes nothing.
+          if (Predicate.isNumber(result)) {
+            base.current = value;
+          }
+        }),
+      ),
     );
   const saveDraft = (value: FormDraft, expectedRevision: number) =>
     Option.match(updateCommandOf(opportunity.id, value), {
       onNone: () => Effect.succeed<RevisionedSaveResult>('failed'),
       onSome: (command) => sendCommand(value, expectedRevision, command),
     });
-  const autosave = useRecordDraft<FormDraft, never>({
+  const record = useRecordDraft<FormDraft, never>({
     equals: sameOpportunityDraft,
     isValid: (value) => Option.isSome(updateCommandOf(opportunity.id, value)),
     revision,
@@ -424,54 +436,64 @@ const OpportunityEditPanel = ({
     save: (value, expectedRevision) => saveDraft(value, expectedRevision),
     server,
   });
-  const settledOnServer = !autosave.pending && sameOpportunityDraft(autosave.draft, server);
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
+  const settledOnServer = !record.pending && sameOpportunityDraft(record.draft, server);
   useEffect(() => {
     if (settledOnServer) {
       base.current = server;
     }
   }, [base, server, settledOnServer]);
-  const close = () => {
-    onOpenChange(false);
-  };
-  const handleChange = (next: Partial<FormDraft>) => autosave.setDraft((current) => ({ ...current, ...next }));
-  const handleSave = autosave.save;
-  const handleReloadLatest = autosave.reloadLatest;
+  const labels = saveLabelsFor(language);
+  const handleChange = (next: Partial<FormDraft>) => record.setDraft((current) => ({ ...current, ...next }));
+  const handleReloadLatest = record.reloadLatest;
+  const handleSave = record.save;
   return (
-    <SidePanel
-      actions={
-        <>
-          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
-          <Button onClick={close} theme="outlined" type="button" variant="secondary">
-            {t(`${K}.edit.close`)}
-          </Button>
-        </>
-      }
-      description={t(`${K}.edit.description`)}
-      onOpenChange={(open) => {
-        if (!open) {
-          close();
+    <>
+      <SidePanel
+        actions={
+          <>
+            <Button
+              onClick={() => guard.request(() => onOpenChange(false))}
+              theme="outlined"
+              type="button"
+              variant="secondary"
+            >
+              {t(`${K}.edit.close`)}
+            </Button>
+            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+          </>
         }
-      }}
-      open
-      resizeLabel={t(RESIZE_LABEL_KEY)}
-      size="xl"
-      title={t(`${K}.edit.title`)}
-    >
-      <form
-        className={formClassName}
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault();
+        description={t(`${K}.edit.description`)}
+        guard={guard}
+        onOpenChange={(open) => {
+          if (!open) {
+            onOpenChange(false);
+          }
         }}
+        open
+        resizeLabel={t(RESIZE_LABEL_KEY)}
+        size="xl"
+        title={t(`${K}.edit.title`)}
       >
-        {serverError !== undefined && (
-          <StatusText showIcon status="error">
-            {serverError}
-          </StatusText>
-        )}
-        <OpportunityFields {...references} draft={autosave.draft} isEdit onChange={handleChange} showErrors />
-      </form>
-    </SidePanel>
+        <form
+          className={formClassName}
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            record.save();
+          }}
+        >
+          {serverError !== undefined && (
+            <StatusText showIcon status="error">
+              {serverError}
+            </StatusText>
+          )}
+          <OpportunityFields {...references} draft={record.draft} isEdit onChange={handleChange} showErrors />
+        </form>
+      </SidePanel>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
   );
 };
 
@@ -479,19 +501,19 @@ interface OpportunityFormDialogProps extends OpportunityReferences {
   readonly busy: boolean;
   /** Present for edit; absent for create. */
   readonly initial?: Opportunity | undefined;
-  readonly onAutosave: OpportunityAutosave;
   readonly onOpenChange: (open: boolean) => void;
+  readonly onSave: OpportunitySave;
   readonly onSubmit: (command: CreateCommand) => void;
   /** Revision of the records the edited opportunity comes from. */
   readonly revision: number;
   readonly serverError?: string | undefined;
 }
 
-/** Create an opportunity, or edit one with autosave. */
+/** Create an opportunity, or edit one with an explicit Uložit. */
 export const OpportunityFormDialog = ({
   busy,
   initial,
-  onAutosave,
+  onSave,
   onSubmit,
   revision,
   ...rest
@@ -499,7 +521,7 @@ export const OpportunityFormDialog = ({
   initial === undefined ? (
     <OpportunityCreatePanel {...rest} busy={busy} onSubmit={onSubmit} />
   ) : (
-    <OpportunityEditPanel {...rest} onAutosave={onAutosave} opportunity={initial} revision={revision} />
+    <OpportunityEditPanel {...rest} onSave={onSave} opportunity={initial} revision={revision} />
   );
 
 interface StageDialogProps {

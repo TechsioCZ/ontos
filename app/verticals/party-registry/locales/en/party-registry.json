@@ -96,12 +96,6 @@
           "companyId": "IČO",
           "conflict": "Someone else changed this record in the meantime. Reload it and repeat the change.",
           "createdAt": "Created",
-          "discard": {
-            "confirm": "Discard changes",
-            "description": "Unsaved changes will be lost. Sections already saved will remain saved.",
-            "keep": "Keep editing",
-            "title": "Discard unsaved changes?"
-          },
           "email": "E-mail",
           "errorRename": "The changes could not be saved. Try again.",
           "name": "Name",
@@ -121,13 +115,11 @@
           "validation": "Check the values and provide a change reason and evidence reference.",
           "savedReloadFailed": "This section was saved, but its latest details could not be loaded. Reload before making another change. {{reason}}",
           "restoreBlocked": "An identity case must be resolved before restoration. The customer remains archived.",
-          "separateSaves": "Save each section separately. Confirmed changes remain saved if another section fails.",
+          "separateSaves": "Save your changes with the Save button. Each changed fact is written separately; if one cannot be written, the ones already written stay saved.",
           "evidence": "Supporting evidence (link or reference)",
           "reason": "Reason for change",
           "reload": "Reload detail",
           "saveName": "Save name",
-          "saveIdentifier": "Save identifier",
-          "saveContact": "Save contact",
           "sharedIdentity": "Name, identifiers, contacts and archive state belong to the shared Party. Changes affect its other commercial contexts too.",
           "archive": "Archive Party",
           "backToList": "Back to customers",
@@ -166,7 +158,9 @@
             "documents": "Documents and dossier"
           },
           "endContact": "End contact",
-          "endIdentifier": "End identifier validity"
+          "endIdentifier": "End identifier validity",
+          "basisRequired": "Changes cannot be saved without evidence and a reason.",
+          "invalidEmail": "Enter a valid e-mail address."
         },
         "detailView": {
           "group": "Detail view",
