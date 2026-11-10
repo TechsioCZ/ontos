@@ -8,6 +8,7 @@ import {
   OntosDeploymentAppIdSchema,
   ONTOS_SHELL_CONTRIBUTION_ABI,
   parseDatabaseConnectionPair,
+  TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import type { ActiveApplicationCompositionSnapshot, DatabaseConnectionPair } from '@app/core-runtime';
 import { AccessCatalogModulesSchema } from '@app/core-runtime/access/catalog';
@@ -174,6 +175,7 @@ const inspectionLayer = (input: {
       return Layer.mergeAll(
         SubjectAccessInspectionLive.pipe(Layer.provide(ports)),
         ShellInstalledModuleCatalogLive.pipe(Layer.provide(composition)),
+        TenantModuleStateServiceLive.pipe(Layer.provide(base)),
       );
     }),
   );
