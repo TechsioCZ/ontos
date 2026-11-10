@@ -23,12 +23,18 @@ const Page = () => {
     noteCreated('created');
     setFormOpen(false);
   };
+  // The controls are named by their test ids: this harness has no visible copy to translate.
+  const controls: readonly (readonly [string, () => void])[] = [
+    ['create', saveCreate],
+    ['back', () => setLinked(undefined)],
+    ['renew', () => open('successor')],
+  ];
   return (
     <>
       <output data-testid="linked">{linked ?? 'list'}</output>
-      <button aria-label="Create" data-testid="create" onClick={saveCreate} type="button" />
-      <button aria-label="Back" data-testid="back" onClick={() => setLinked(undefined)} type="button" />
-      <button aria-label="Renew" data-testid="renew" onClick={() => open('successor')} type="button" />
+      {controls.map(([id, act]) => (
+        <button aria-label={id} data-testid={id} key={id} onClick={act} type="button" />
+      ))}
     </>
   );
 };
