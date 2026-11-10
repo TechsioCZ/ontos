@@ -338,3 +338,56 @@ it.live('#1151 a collection correction is admitted against what a partially corr
     }),
   ),
 );
+
+it.live('#1151 one return restated from the collection to its REFUND is counted once by the correction admission', () =>
+  native(
+    Effect.gen(function* returnRestatedAgainstRefund() {
+      const evidence = yield* scenario();
+      const { collect, first, payment } = yield* confirmedCollect(evidence);
+      const returnKey = `gopay:refund:restated:${randomUUID()}`;
+      const returnStatement = (operationId: string) =>
+        evidence.accept(
+          gopayStatement({
+            amount: czk(60_000),
+            economicEffectKey: returnKey,
+            factKind: 'REFUND_CONFIRMED',
+            operationId,
+            paymentId: payment.paymentId,
+          }),
+        );
+      // The gateway first states the 600 CZK return against the collection...
+      const againstCollect = yield* returnStatement(collect.operationId);
+      const routeSource = yield* evidence.configureRefundRoute('erp-primary', 'refund-account-a');
+      const refund = yield* evidence.startOperation({
+        amountMinor: 60_000,
+        kind: 'REFUND',
+        operationKey: `refund-restated-${randomUUID()}`,
+        paymentId: payment.paymentId,
+        refundBasis: {
+          _tag: 'REFUNDABLE_ITEMS',
+          items: [{ amountMinor: 60_000, currency: 'CZK', itemRef: 'line-restated', sourceEvidenceRef: 'order-line' }],
+        },
+        refundExecutionRoute: yield* evidence.refundRouteOf(routeSource),
+        targetOperationId: collect.operationId,
+      });
+      yield* evidence.settle(payment.paymentId, refund.operationId, 1, 'EFFECT_CONFIRMED');
+      // ...and later the same economic effect against the Payment REFUND that executed it.
+      const againstRefund = yield* returnStatement(refund.operationId);
+      // The first statement stays held debt of its own case; the second corroborates the confirmed REFUND.
+      expect(againstCollect).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED', interpretation: 'HOLD' });
+      expect(againstRefund).toMatchObject({ acceptanceOutcome: 'ACCEPTED_OBSERVATION', interpretation: 'NO_CHANGE' });
+      // 100 CZK of the collection is disproven: 900 CZK collected still covers the one 600 CZK return.
+      const reduction = yield* evidence.accept(
+        gopayStatement({
+          amount: czk(10_000),
+          correctsObservationId: first.observationId,
+          economicEffectKey: `gopay:charge:reduced:${randomUUID()}`,
+          factKind: 'SOURCE_CORRECTION',
+          operationId: collect.operationId,
+          paymentId: payment.paymentId,
+        }),
+      );
+      expect(reduction).toMatchObject({ acceptanceOutcome: 'ACCEPTED_OBSERVATION', interpretation: 'CORRECTION' });
+    }),
+  ),
+);

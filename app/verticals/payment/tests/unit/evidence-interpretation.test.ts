@@ -13,6 +13,7 @@ import type {
   PaymentEvidenceOperationView,
   QualifiedPaymentObservation,
 } from '../../src/domain/evidence-interpretation.ts';
+import type { PaymentReturnEvidence } from '../../src/domain/refund-prior-returns.ts';
 
 const czk = (amountMinor: number) => ({ amountMinor, currency: 'CZK' as const });
 const COLLECT_ID = 'collect-1';
@@ -66,6 +67,15 @@ const uncorrelated = (): QualifiedPaymentObservation => {
   const { operationId: _correlated, ...rest } = observed({});
   return { ...rest, operationId: Option.getOrUndefined(Option.none<string>()) };
 };
+
+/** One prior return statement as the funds reader loads it; statements share one source-scoped effect. */
+const priorReturn = (observationId: string, operationId: string, amountMinor: number): PaymentReturnEvidence => ({
+  amount: czk(amountMinor),
+  economicEffectKey: 'gopay:refund:prior',
+  observationId,
+  operationId,
+  sourceBindingKey: 'gateway-binding',
+});
 
 const aggregateOf = (
   operations: readonly PaymentEvidenceOperationView[],
@@ -554,7 +564,7 @@ describe('#1151 Payment evidence interpretation', () => {
       interpretPaymentObservation(
         {
           ...aggregateOf([operation('EFFECT_CONFIRMED')], [accepted('obs-receipt')]),
-          returnStatements: [{ amount: czk(amountMinor), operationId: COLLECT_ID }],
+          returnEvidence: [priorReturn('obs-return', COLLECT_ID, amountMinor)],
         },
         { ...correction, amount: czk(20_000) },
       );
@@ -562,6 +572,48 @@ describe('#1151 Payment evidence interpretation', () => {
       PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'CORRECTION_EXCEEDS_REMAINING_FUNDS' }),
     );
     expect(PaymentEvidenceDecision.$is('CORRECTION')(withPriorReturn(80_000))).toBe(true);
+    // A prior return counts for what it still proves after its own partial corrections.
+    const correctedReturn = interpretPaymentObservation(
+      {
+        ...aggregateOf([operation('EFFECT_CONFIRMED')], [accepted('obs-receipt')]),
+        returnEvidence: [{ ...priorReturn('obs-return', COLLECT_ID, 90_000), correctedAmount: czk(20_000) }],
+      },
+      { ...correction, amount: czk(20_000) },
+    );
+    expect(PaymentEvidenceDecision.$is('CORRECTION')(correctedReturn)).toBe(true);
+    // One return first stated against the collection and later against its REFUND is one return: the
+    // counted REFUND stands for it, so a 100 CZK reduction of a 1000 CZK collection with 600 CZK returned applies.
+    const restatedAgainstRefund = interpretPaymentObservation(
+      {
+        ...aggregateOf(
+          [
+            operation('EFFECT_CONFIRMED'),
+            operation('EFFECT_CONFIRMED', {
+              amount: czk(60_000),
+              kind: 'REFUND',
+              operationId: REFUND_ID,
+              targetOperationId: COLLECT_ID,
+            }),
+          ],
+          [accepted('obs-receipt')],
+        ),
+        returnEvidence: [
+          priorReturn('obs-return-collect', COLLECT_ID, 60_000),
+          priorReturn('obs-return-refund', REFUND_ID, 60_000),
+        ],
+      },
+      { ...correction, amount: czk(10_000) },
+    );
+    expect(PaymentEvidenceDecision.$is('CORRECTION')(restatedAgainstRefund)).toBe(true);
+    // A return statement recorded against the collection is not a second receipt of that collection.
+    const withReturnOnCollect = interpretPaymentObservation(
+      aggregateOf(
+        [operation('EFFECT_CONFIRMED')],
+        [accepted('obs-receipt'), accepted('obs-return-on-collect', { factKind: 'REFUND_CONFIRMED' })],
+      ),
+      { ...correction, amount: czk(10_000) },
+    );
+    expect(PaymentEvidenceDecision.$is('CORRECTION')(withReturnOnCollect)).toBe(true);
     // A correction that was only recorded (for example of a pending statement) reduced nothing.
     const afterRecordOnly = interpretPaymentObservation(
       aggregateOf(

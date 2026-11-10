@@ -112,24 +112,6 @@ export const appliedCorrectionsOf = <Correction extends AppliedCorrectionCandida
   });
 };
 
-/**
- * The money a return statement still proves after its applied corrections: nothing (undefined) when
- * they cover it or it states no money, otherwise its stated money less the measured partial
- * corrections. Every reader of prior returns uses this one amount (#1150).
- */
-export const provenReturnAmountOf = (
-  stated: PaymentMonetaryAmount | undefined,
-  corrections: readonly (PaymentMonetaryAmount | undefined)[],
-): PaymentMonetaryAmount | undefined => {
-  const reach = correctionReachOf(stated, corrections);
-  if (reach.covered || stated === undefined) {
-    return undefined;
-  }
-  return reach.correctedAmount === undefined
-    ? stated
-    : Result.getOrUndefined(subtractAmounts(stated, reach.correctedAmount));
-};
-
 /** What a statement still proves: its stated money less the accepted partial corrections. */
 const provenAmountOf = (statement: PaymentReturnEvidence): PaymentMonetaryAmount | undefined => {
   if (statement.amount === undefined) {
@@ -213,17 +195,26 @@ const collectionReturnOf = (
   };
 };
 
+/** The prior returns of a Payment as every reader counts them (#1150). */
+interface PaymentPriorReturns {
+  /** True when a proven return cannot be assigned, measured or told apart: new returns are held. */
+  readonly ambiguous: boolean;
+  /** One confirmed return per proven economic effect that no Payment REFUND already stands for. */
+  readonly returns: readonly PaymentFundsOperation[];
+}
+
 /**
- * The funds snapshot with prior return evidence applied: each uncounted proven return becomes one
- * confirmed return of its collection; any unassignable, unmeasured or inconsistent return marks the
- * snapshot as unresolved so the shared guard holds new returns for reconciliation.
+ * The one reading of prior return evidence against the Payment's operations. A group of statements
+ * proven to be one economic effect counts once: nothing when a counted REFUND already stands for it
+ * (whichever operation its other statements name), otherwise one confirmed return of the collection
+ * it names. The funds snapshot and the correction admission both use exactly this result.
  */
-export const fundsSnapshotWithPriorReturns = (
-  snapshot: PaymentFundsSnapshot,
+export const priorReturnsOf = (
+  fundsOperations: readonly PaymentFundsOperation[],
   evidence: readonly PaymentReturnEvidence[],
-): PaymentFundsSnapshot => {
-  const operations = new Map(snapshot.operations.map((operation) => [operation.operationId, operation]));
-  const priorReturns: PaymentFundsOperation[] = [];
+): PaymentPriorReturns => {
+  const operations = new Map(fundsOperations.map((operation) => [operation.operationId, operation]));
+  const returns: PaymentFundsOperation[] = [];
   /** The proven economic effect each counted REFUND already stands for. */
   const refundEffects = new Map<string, string>();
   let ambiguous = false;
@@ -245,13 +236,26 @@ export const fundsSnapshotWithPriorReturns = (
       if (prior === undefined) {
         ambiguous = true;
       } else {
-        priorReturns.push(prior);
+        returns.push(prior);
       }
     }
   }
+  return { ambiguous, returns };
+};
+
+/**
+ * The funds snapshot with prior return evidence applied: each uncounted proven return becomes one
+ * confirmed return of its collection; any unassignable, unmeasured or inconsistent return marks the
+ * snapshot as unresolved so the shared guard holds new returns for reconciliation.
+ */
+export const fundsSnapshotWithPriorReturns = (
+  snapshot: PaymentFundsSnapshot,
+  evidence: readonly PaymentReturnEvidence[],
+): PaymentFundsSnapshot => {
+  const prior = priorReturnsOf(snapshot.operations, evidence);
   return {
     ...snapshot,
-    operations: [...snapshot.operations, ...priorReturns],
-    unresolvedEvidence: snapshot.unresolvedEvidence || ambiguous,
+    operations: [...snapshot.operations, ...prior.returns],
+    unresolvedEvidence: snapshot.unresolvedEvidence || prior.ambiguous,
   };
 };

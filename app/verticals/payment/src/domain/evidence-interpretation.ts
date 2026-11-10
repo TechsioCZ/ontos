@@ -10,6 +10,8 @@ import type {
 import type { PaymentSourceBinding } from '../../shared/domain/source-statement.ts';
 import { sameAmount } from './money.ts';
 import { decideOutcomeTransition, isDefinitiveOutcome, OutcomeTransitionDecision } from './operation-lifecycle.ts';
+import { priorReturnsOf } from './refund-prior-returns.ts';
+import type { PaymentReturnEvidence } from './refund-prior-returns.ts';
 
 /**
  * Pure interpretation of one qualified Payment Observation against the Current Payment aggregate
@@ -78,11 +80,10 @@ export interface PaymentInterpretedEvidence {
    */
   readonly fullyDisprovenObservationIds?: ReadonlySet<string>;
   /**
-   * Qualified, not fully disproven REFUND_CONFIRMED statements that name an operation directly, one per
-   * source-scoped economic effect. Those naming a COLLECT are the prior returns the funds reader counts
-   * against it whether or not their case is open (#1150).
+   * The Payment's prior return evidence exactly as the funds reader loads it (`selectReturnEvidence`).
+   * The correction admission counts it through the same rule as the funds snapshot (#1150).
    */
-  readonly returnStatements?: readonly { readonly amount: PaymentMonetaryAmount; readonly operationId: string }[];
+  readonly returnEvidence?: readonly PaymentReturnEvidence[];
 }
 
 /** The Current aggregate the interpreter reads: `PaymentAggregateRecord` operations plus the lineage. */
@@ -487,20 +488,17 @@ const reductionExceedsRemainingFunds = (
       reduced += prior.amount.amountMinor;
     }
   }
+  // Payment REFUNDs plus the prior returns the funds reader counts, read by the one shared rule: a return
+  // a counted REFUND already stands for is never added again (#1150).
+  const priorReturns = priorReturnsOf(aggregate.operations, aggregate.returnEvidence ?? []).returns;
   let returns = 0;
-  for (const other of aggregate.operations) {
+  for (const other of [...aggregate.operations, ...priorReturns]) {
     if (
       other.kind === 'REFUND' &&
       other.targetOperationId === operation.operationId &&
       other.outcome !== 'NOT_EFFECTED_CONFIRMED'
     ) {
       returns += other.amount.amountMinor;
-    }
-  }
-  // Returns stated against the collection itself count as well, exactly as the funds reader counts them.
-  for (const statement of aggregate.returnStatements ?? []) {
-    if (statement.operationId === operation.operationId) {
-      returns += statement.amount.amountMinor;
     }
   }
   return operation.amount.amountMinor - reduced < returns;
@@ -522,11 +520,16 @@ const correctionEffectFor = (
   if (!established) {
     return PaymentEvidenceDecision.CORRECTION({ ...lineage, effect: PaymentCorrectionEffect.RECORD_ONLY() });
   }
-  const otherSupport = standingObservations(aggregate, operation.operationId).some(
-    (other) =>
+  const otherSupport = standingObservations(aggregate, operation.operationId).some((other) => {
+    const support = paymentFactMeaning(other.factKind);
+    // Only a statement of this operation's own kind supports its outcome: a return stated against a
+    // collection is a prior return, never a second receipt.
+    return (
       other.observationId !== corrected.observationId &&
-      paymentFactMeaning(other.factKind)?.outcome === operation.outcome,
-  );
+      support?.kind === operation.kind &&
+      support.outcome === operation.outcome
+    );
+  });
   if (otherSupport) {
     // Other standing evidence, accepted or governed-attached, still states the outcome: neither
     // "still proven" nor "disproven" is safe.
