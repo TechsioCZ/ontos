@@ -688,6 +688,16 @@ describe('#1151 Payment evidence interpretation', () => {
     expect(interpretPaymentObservation(allDisproven, observed({ economicEffectKey: 'gopay:charge:2' }))).toEqual(
       PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'DISTINCT_ECONOMIC_EFFECT' }),
     );
+    // Once the retracted collection is resolved as not effected, a further statement of that
+    // non-execution only corroborates it: the disproven receipt opens no new debt.
+    expect(
+      interpretPaymentObservation(
+        { ...allDisproven, operations: [operation('NOT_EFFECTED_CONFIRMED')] },
+        observed({ amount: czk(100_000), factKind: 'COLLECTION_NOT_EFFECTED' }),
+      ),
+    ).toEqual(
+      PaymentEvidenceDecision.NO_CHANGE({ operationId: COLLECT_ID, reason: 'CORROBORATES_ESTABLISHED_OUTCOME' }),
+    );
     // An operation confirmed without any recorded statement still accepts its first confirmation.
     expect(
       interpretPaymentObservation(
