@@ -203,6 +203,26 @@ export const runMarketAction = <P, A, E extends ProblemLike, D extends ProblemLi
   );
 };
 
+/**
+ * The Effect form of `runMarketAction` for a draft save: never fails, answers with the outcome the screen shows. The
+ * payload is decoded with the Action's own schema first, so an invalid form never reaches the owner.
+ */
+export const marketActionEffect = <P, A, E extends ProblemLike, D extends ProblemLike>(
+  payload: Effect.Effect<P, D>,
+  execute: (
+    payload: P,
+    requestCorrelation: string,
+    options: { readonly idempotencyKey: string },
+  ) => Effect.Effect<A, E>,
+): Effect.Effect<WriteOutcome<A>> =>
+  Effect.all({ decoded: payload, id: requestId }, { concurrency: 1 }).pipe(
+    Effect.flatMap(({ decoded, id }) => execute(decoded, id, { idempotencyKey: id })),
+    Effect.match({
+      onFailure: (error): WriteOutcome<A> => ({ ok: false, reason: writeFailure(error) }),
+      onSuccess: (value): WriteOutcome<A> => ({ ok: true, value }),
+    }),
+  );
+
 /** A merchandise command in its wire form (the screens build ConfigureMarket and SetProductMarketOffer). */
 export type MarketCommandInput = (typeof ManageMarketsPayloadSchema.Encoded)['command'];
 

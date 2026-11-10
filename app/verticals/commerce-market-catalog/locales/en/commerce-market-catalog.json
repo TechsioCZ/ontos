@@ -202,7 +202,7 @@
         "configure": "Set up price list",
         "edit": "Edit price list",
         "save": "Save price list",
-        "saved": "The price list of market {{code}} has been saved.",
+        "saved": "The price list and offers of market {{code}} have been saved.",
         "summary": "{{currency}}, rate {{rate}}, rounding {{rounding}}",
         "readOnly": "Only a catalogue manager can change the price list and assortment.",
         "unavailable": "The price list and assortment could not be loaded.",
