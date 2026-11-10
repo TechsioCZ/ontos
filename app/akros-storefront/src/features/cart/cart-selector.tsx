@@ -6,7 +6,7 @@ import { Button } from "@techsio/ui-kit/atoms/button";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { RadioGroup } from "@techsio/ui-kit/molecules/radio-group";
 import { Dialog } from "@techsio/ui-kit/molecules/dialog";
-import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import { FormInput } from "@/components/form-controls";
 import { type NamedCart } from "@/features/cart/cart-collection";
 import { useCart } from "./cart-provider";
 import { useDictionary } from "@/ontos/market-context";

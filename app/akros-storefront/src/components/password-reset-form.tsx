@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
-import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import { FormInput } from "@/components/form-controls";
 import { AuthPageLink } from "@/components/auth-form";
 import type { AccountSubmissionResponse } from "@/ontos/account";
 import { useDictionary } from "@/ontos/market-context";

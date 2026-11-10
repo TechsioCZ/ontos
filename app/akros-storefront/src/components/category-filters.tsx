@@ -4,7 +4,7 @@ import { useState } from "react";
 import StoreLink from "@/components/store-link";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Link } from "@techsio/ui-kit/atoms/link";
-import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import { FormInput } from "@/components/form-controls";
 import { Select } from "@techsio/ui-kit/molecules/select";
 import { currencySymbol } from "@/lib/format";
 import type { CategoryFilters as Filters } from "@/ontos/category-filters";

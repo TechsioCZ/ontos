@@ -2,8 +2,7 @@
 
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Link } from "@/features/plain-link";
-import { FormInput } from "@techsio/ui-kit/molecules/form-input";
-import { FormTextarea } from "@techsio/ui-kit/molecules/form-textarea";
+import { FormInput, FormTextarea } from "./form-controls";
 import { useToast } from "@techsio/ui-kit/molecules/toast";
 import { Effect, Fiber } from "effect";
 import { useParams } from "next/navigation";

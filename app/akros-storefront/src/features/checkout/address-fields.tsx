@@ -1,6 +1,6 @@
 "use client";
 import Image from "next/image";
-import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import { FormInput, PhoneInputLabel } from "@/components/form-controls";
 import { PhoneInput } from "@techsio/ui-kit/molecules/phone-input";
 import { CheckoutSelect } from "./checkout-select";
 import type { CheckoutAddress, CheckoutErrors } from "@/features/checkout/checkout-state";
@@ -82,7 +82,7 @@ export function AddressFields({
         nativeValidation={false}
         validateStatus={errors[`${prefix}.phone`] ? "error" : "default"}
       >
-        <PhoneInput.Label>{fields.phone}</PhoneInput.Label>
+        <PhoneInputLabel>{fields.phone}</PhoneInputLabel>
         <PhoneInput.Control>
           <PhoneInput.CountryPicker triggerProps={{ "aria-label": fields.phonePrefix }} />
           <PhoneInput.Input placeholder={fields.phonePlaceholder} autoComplete={`${section} tel`} />

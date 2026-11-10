@@ -14,6 +14,7 @@ import type { CheckoutOptions } from "@/ontos/checkout-server";
 import { publicImage } from "@/ontos/catalog-model";
 import { cartLineKey } from "./cart-state";
 import type { CartEntry } from "./cart-state";
+import { RadioCardLabel } from "./form-controls";
 import { formatMarketAmount } from "./price-props";
 
 type ReadyOptions = Extract<CheckoutOptions, { state: "ready" }>;
@@ -50,7 +51,7 @@ export const CheckoutShipping = ({
         variant="outline"
       >
         <div className="sr-only">
-          <RadioCard.Label>{d.checkout.shipping}</RadioCard.Label>
+          <RadioCardLabel>{d.checkout.shipping}</RadioCardLabel>
         </div>
         <div className="grid min-w-0 gap-2 md:grid-cols-2">
           {options.shippingMethods.map((method) => (
