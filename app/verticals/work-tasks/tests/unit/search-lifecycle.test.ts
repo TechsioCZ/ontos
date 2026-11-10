@@ -77,6 +77,7 @@ it.layer(dependencies)('task search lifecycle', (suite) => {
           bindActionTestServices(applyCommandAction, {
             apply: () => Effect.succeed({ results: [], revision: 2 }),
             loadRecords: unused,
+            submitStorefrontInquiry: unused,
           }),
         ],
       });

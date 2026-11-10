@@ -13,6 +13,7 @@ import { AgentReviewApi } from './apis/agent-review.ts';
 import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
 import { RecordsApi } from './apis/records.ts';
 import { RequestSearchRebuildActionApi } from './apis/request-search-rebuild-action.ts';
+import { SubmitStorefrontInquiryActionApi } from './apis/submit-storefront-inquiry-action.ts';
 import { TasksSearchApi } from './apis/tasks-search.ts';
 // </generated-governed-http-api-imports>
 
@@ -43,6 +44,7 @@ export const workTasksApi = HttpApi.make('WorkTasksApi')
   .addHttpApi(ApplyCommandActionApi)
   .addHttpApi(RecordsApi)
   .addHttpApi(RequestSearchRebuildActionApi)
+  .addHttpApi(SubmitStorefrontInquiryActionApi)
   .addHttpApi(TasksSearchApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })

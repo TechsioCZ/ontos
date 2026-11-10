@@ -56,6 +56,7 @@ import { agentReviewReadApiLive } from './agent-review-read-server.ts';
 import { applyCommandActionApiLive } from './apply-command-action-server.ts';
 import { recordsReadApiLive } from './records-read-server.ts';
 import { requestSearchRebuildActionApiLive } from './request-search-rebuild-action-server.ts';
+import { submitStorefrontInquiryActionApiLive } from './submit-storefront-inquiry-action-server.ts';
 import { tasksReadApiLive } from './tasks-search-server.ts';
 // </generated-governed-http-handler-imports>
 
@@ -148,6 +149,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   applyCommandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   requestSearchRebuildActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  submitStorefrontInquiryActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   tasksReadApiLive.pipe(
     GovernedReadLayer.provide(governedReadRuntimeLive),
     GovernedReadLayer.provide(

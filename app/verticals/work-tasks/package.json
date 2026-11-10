@@ -7,14 +7,16 @@
     "./api/client": "./src/api/work-tasks-client.ts",
     "./clients/apply-command": "./src/api/apply-command-action-client.ts",
     "./clients/records": "./src/api/records-consumer.ts",
+    "./clients/submit-storefront-inquiry": "./src/api/submit-storefront-inquiry-action-client.ts",
     "./contracts/apply-command": "./shared/actions/apply-command.ts",
     "./contracts/records": "./shared/apis/records.ts",
+    "./contracts/submit-storefront-inquiry": "./shared/actions/submit-storefront-inquiry.ts",
+    "./outbox-worker-host": "./src/worker-host/entry.ts",
     "./outbox/work-tasks-search-rebuild-requested-v1": "./shared/outbox/work-tasks-search-rebuild-requested-v1.ts",
     "./outbox/work-tasks-search-refresh-requested-v1": "./shared/outbox/work-tasks-search-refresh-requested-v1.ts",
     "./resources/task": "./shared/resources/task.ts",
     "./resources/task-collection": "./shared/resources/task-collection.ts",
-    "./Route": "./src/federation-entry.tsx",
-    "./outbox-worker-host": "./src/worker-host/entry.ts"
+    "./Route": "./src/federation-entry.tsx"
   },
   "scripts": {
     "build": "pnpm --dir ../.. exec ultramodern-create ultramodern routes-generate --app work-tasks --manifest-only && modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical work-tasks --target dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app work-tasks --target dist && modern deploy --skip-build --deploy-target node",

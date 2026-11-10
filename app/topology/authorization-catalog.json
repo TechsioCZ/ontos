@@ -3,7 +3,8 @@
     "commerce.storefront-client",
     "core.identity-provider",
     "demo.crm.party-intake",
-    "demo.storefront-client"
+    "demo.storefront-client",
+    "work.storefront-client"
   ],
   "modules": [
     {
