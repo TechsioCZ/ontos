@@ -20,7 +20,7 @@ import {
 import type { DraftLine, DraftLineKind, PaymentTermDays } from '../../../../shared/domain/invoice-draft.ts';
 import { DOCUMENT_KINDS, DraftTotalsSummary, IssueDateField, issueDateProblem } from './create-invoice-fields.tsx';
 import { FinanceSaveActions, useFinanceFormSave } from './finance-form-save.tsx';
-import { useCreatedInvoiceToast } from './create-invoice-toast.tsx';
+import { useCreateInvoiceFeedback, zeroPriceChecked } from './create-invoice-toast.tsx';
 import { InvoiceLineEditor } from './invoice-line-editor.tsx';
 import { formLabelProps } from './invoice-view.ts';
 import { emptyObjectSelection, objectAnchors, ObjectFields } from './object-fields.tsx';
@@ -69,7 +69,9 @@ const CreateInvoiceForm = ({ onOpenChange, vm }: Omit<CreateInvoiceDialogProps, 
   const { createDraft, references } = vm;
   const priceList = (vm.snapshot?.state.priceList ?? []).filter((item) => item.active);
   const defaultLineKind = references.productsReadable === false ? 'free' : 'product';
-  const created = useCreatedInvoiceToast(vm);
+  const feedback = useCreateInvoiceFeedback(vm, () => onOpenChange(false));
+  /** Set by the first Uložit that finds a 0 Kč line; the next Uložit creates the draft anyway. */
+  const [zeroPriceAcknowledged, setZeroPriceAcknowledged] = useState(false);
   const lineSequence = useRef(1);
   const initial = emptyDraft(defaultLineKind);
   const [draft, setDraft] = useState<Draft>(initial);
@@ -100,9 +102,10 @@ const CreateInvoiceForm = ({ onOpenChange, vm }: Omit<CreateInvoiceDialogProps, 
     initial,
     isValid: (value) => inputOf(value) !== undefined,
     onClose: () => onOpenChange(false),
+    onFailed: feedback.failed,
     onSent: (outcome) => {
       if (outcome.ok) {
-        created(outcome.invoice);
+        feedback.created(outcome.invoice);
       }
     },
     reset: setDraft,
@@ -117,8 +120,12 @@ const CreateInvoiceForm = ({ onOpenChange, vm }: Omit<CreateInvoiceDialogProps, 
   const { issueDate } = draft;
   const dueDate = issueDate === '' ? undefined : addCalendarDays(issueDate, draft.paymentDays);
   const totals = draftTotals(draft.lines);
-  // A 0 Kč line can be a gift, so it is not an error; the form says so before Uložit creates the draft.
-  const zeroPriceWarning = inputOf(draft) !== undefined && draft.lines.some((line) => line.unitPriceMinor === 0);
+  // A 0 Kč line can be a gift, so it is not an error, but it is never saved without a second, deliberate Uložit.
+  const hasZeroPriceLine = inputOf(draft) !== undefined && draft.lines.some((line) => line.unitPriceMinor === 0);
+  const { checked, zeroPriceWarning } = zeroPriceChecked(form, hasZeroPriceLine, [
+    zeroPriceAcknowledged,
+    setZeroPriceAcknowledged,
+  ]);
   const customerError = showIssues && customerOf(draft) === undefined ? t(`${ns}.form.errorCustomer`) : undefined;
   const issueProblem = issueDateProblem(issueDate, showIssues);
   const issueDateError =
@@ -132,8 +139,11 @@ const CreateInvoiceForm = ({ onOpenChange, vm }: Omit<CreateInvoiceDialogProps, 
     return matchesSearch(label, customerQuery) ? [{ id: item.partyId, label, value: item.partyId }] : [];
   });
   const update = (patch: Partial<Draft>) => setDraft((current) => ({ ...current, ...patch }));
-  const setLines = (next: (lines: readonly DraftLine[]) => readonly DraftLine[]) =>
+  // Any change to the lines asks again before a 0 Kč line is saved.
+  const setLines = (next: (lines: readonly DraftLine[]) => readonly DraftLine[]) => {
+    setZeroPriceAcknowledged(false);
     setDraft((current) => ({ ...current, lines: next(current.lines) }));
+  };
   const addLine = () => {
     lineSequence.current += 1;
     const key = `line-${lineSequence.current}`;
@@ -149,8 +159,8 @@ const CreateInvoiceForm = ({ onOpenChange, vm }: Omit<CreateInvoiceDialogProps, 
   return (
     <>
       <SidePanel
-        actions={<FinanceSaveActions form={form} />}
-        guard={form.guard}
+        actions={<FinanceSaveActions form={checked} />}
+        guard={checked.guard}
         onOpenChange={onOpenChange}
         open
         resizeLabel={t('finance-billing.sidePanel.resize')}
@@ -275,7 +285,7 @@ const CreateInvoiceForm = ({ onOpenChange, vm }: Omit<CreateInvoiceDialogProps, 
           <DraftTotalsSummary totals={totals} zeroPriceWarning={zeroPriceWarning} />
         </form>
       </SidePanel>
-      <UnsavedChangesDialog labels={form.labels} prompt={form.guard.prompt} />
+      <UnsavedChangesDialog labels={checked.labels} prompt={checked.guard.prompt} />
     </>
   );
 };
