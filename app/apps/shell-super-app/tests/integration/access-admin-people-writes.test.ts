@@ -248,7 +248,8 @@ const admission = (accessCase: AccessAdminCase) =>
       const page = yield* decodeBody(ListAccessPeopleResponseSchema, listed.text);
       expect(page.items.map(({ principalId }) => principalId)).toContain(newcomer);
 
-      // A retry after the commit meets a moved revision, and a live member is no candidate any more.
+      // A retry after the commit meets a moved revision, and a new key for a live member is a moved row
+      // the screen repairs by re-reading (design: 409 people_membership_already_active), never a second row.
       const replay = yield* write('owner', 'admit-member', key, admitInto(newcomer, companyA, ownerRevision));
       expectStatus(replay, 409);
       const again = yield* write(
@@ -257,7 +258,7 @@ const admission = (accessCase: AccessAdminCase) =>
         'admit-newcomer-into-a-again',
         admitInto(newcomer, companyA, yield* revisionOf('owner')),
       );
-      expectStatus(again, 403);
+      expectRefusal(again, 409, 'people_membership_already_active');
       expect(yield* membershipsOf(accessCase, newcomer)).toEqual(admittedRows);
 
       // Admission grants nothing by itself; an assignment after it does, in that company only.
@@ -314,7 +315,20 @@ const coreRefusals = (accessCase: AccessAdminCase) =>
 
       // The manager's delegation names admit-member and end-membership. No command can grant that
       // (the release publishes neither key), so the fixture wrote it by SQL; the gate admits the
-      // manager in company A, and Core's permanent-authority rule is what refuses both writes.
+      // manager in company A, and Core's permanent-authority rule is what refuses both writes. The
+      // options never offer the manager either write, so the screen shows no control Core would refuse.
+      const managerOptions = yield* shell.post({
+        path: `${PEOPLE}/options`,
+        payload: { limit: 100 },
+        persona: 'manager',
+      });
+      expectStatus(managerOptions, 200);
+      const managerOffered = yield* decodeBody(ListAccessPeopleOptionsResponseSchema, managerOptions.text);
+      expect({
+        admissionCandidates: managerOffered.admissionCandidates,
+        canAdmitMember: managerOffered.writeAvailability.canAdmitMember,
+        canEndMembership: managerOffered.writeAvailability.canEndMembership,
+      }).toEqual({ admissionCandidates: [], canAdmitMember: false, canEndMembership: false });
       const managerRevision = yield* revisionOf('manager');
       const admitted = yield* write('manager', 'admit-member', 'manager-admits', {
         expectedRevision: managerRevision,
@@ -332,6 +346,51 @@ const coreRefusals = (accessCase: AccessAdminCase) =>
       });
       expectRefusal(ended, 403, 'people_authority_missing');
       expect(yield* membershipsOf(accessCase, idOf('member'))).toEqual(membersBefore);
+
+      // Skeptic S4: ending a co-administrator's company row would end their administration too, which
+      // only the tenant owner decides. The member becomes company A's second access administrator here
+      // (fixture SQL, as the seeds hold only one), so company A's own administrator may not end them.
+      const coAdmin = idOf('member');
+      const scopeA = yield* accessCase.scopeIdOf(companyA);
+      yield* rowsOf(
+        accessCase,
+        `insert into core.access_memberships
+           (membership_id, tenant_id, scope_id, principal_id, kind, status, valid_from, recorded_by)
+         values (gen_random_uuid(), '${accessCase.tenantId}', '${scopeA}', '${coAdmin}', 'access_admin', 'active',
+                 now() - interval '1 day', '${idOf('owner')}')`,
+      );
+      const coAdminBefore = yield* membershipsOf(accessCase, coAdmin);
+      const byCompanyAdmin = yield* write('companyAdmin', 'end-membership', 'company-admin-ends-co-admin', {
+        expectedRevision: yield* revisionOf('companyAdmin'),
+        principalId: coAdmin,
+        reason: LEAVER_REASON,
+        scope: company(companyA),
+      });
+      expectRefusal(byCompanyAdmin, 403, 'people_authority_missing');
+      expect(yield* membershipsOf(accessCase, coAdmin)).toEqual(coAdminBefore);
+      // The tenant owner may: the company row and the administration standing on it end together,
+      // while the co-administrator's tenant and company-B rows stay.
+      const byOwner = yield* write('owner', 'end-membership', 'owner-ends-co-admin', {
+        expectedRevision: yield* revisionOf('owner'),
+        principalId: coAdmin,
+        reason: LEAVER_REASON,
+        scope: company(companyA),
+      });
+      expectStatus(byOwner, 200);
+      const coAdminAfter = yield* membershipsOf(accessCase, coAdmin);
+      expect(
+        coAdminAfter
+          .filter(({ scope_id: scopeId }) => scopeId === scopeA)
+          .map(({ kind, status }) => ({ kind, status }))
+          .toSorted((left, right) => left.kind.localeCompare(right.kind)),
+      ).toEqual([
+        { kind: 'access_admin', status: 'revoked' },
+        { kind: 'member', status: 'revoked' },
+      ]);
+      expect(coAdminAfter.filter(({ scope_id: scopeId }) => scopeId !== scopeA).map(({ status }) => status)).toEqual([
+        'active',
+        'active',
+      ]);
     }),
   );
 
@@ -715,7 +774,7 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '180 se
     );
 
     suite.effect(
-      'Core refuses an admission that would revive lapsed authority, and a delegate who may not admit or end',
+      'Core refuses an admission that would revive lapsed authority, a delegate who may not admit or end, and a company administrator ending a co-administrator',
       () => withAccessAdminCase(coreRefusals),
       CASE_TIMEOUT,
     );
