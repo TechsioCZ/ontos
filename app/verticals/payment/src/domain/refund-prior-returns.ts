@@ -24,6 +24,11 @@ export interface PaymentReturnEvidence {
   readonly economicEffectKey: string | undefined;
   readonly observationId: string;
   readonly operationId: string | undefined;
+  /**
+   * The identity of the source binding that issued the statement. Effect keys are source-scoped: the same
+   * opaque key from two bindings is two returns (#1151).
+   */
+  readonly sourceBindingKey?: string | undefined;
 }
 
 /** How the accepted corrections of one return statement reach it (#1150). */
@@ -102,7 +107,10 @@ const describesCountedRefund = (
 const groupByEconomicEffect = (evidence: readonly PaymentReturnEvidence[]): readonly EffectGroup[] => {
   const groups = new Map<string, [PaymentReturnEvidence, ...PaymentReturnEvidence[]]>();
   for (const statement of evidence) {
-    const key = statement.economicEffectKey ?? `observation:${statement.observationId}`;
+    const key =
+      statement.economicEffectKey === undefined
+        ? `observation:${statement.observationId}`
+        : `effect:${statement.sourceBindingKey ?? ''}:${statement.economicEffectKey}`;
     const group = groups.get(key);
     if (group === undefined) {
       groups.set(key, [statement]);
