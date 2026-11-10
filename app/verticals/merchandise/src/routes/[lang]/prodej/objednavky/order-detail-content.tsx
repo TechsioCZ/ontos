@@ -152,9 +152,9 @@ const OrderHistory = ({
           </div>
           {entry.before !== undefined && entry.kind !== 'CREATED' ? (
             <div className="grid grid-cols-1 gap-50 text-sm sm:grid-cols-[auto_minmax(0,1fr)] sm:gap-x-150">
-              <span className="text-fg-secondary">{t('merchandise.pages.orders.detail.before')}</span>
+              <span className="text-fg-secondary">{t('merchandise.pages.orders.detail.previousValue')}</span>
               <span className="line-through decoration-1 opacity-70">{entry.before}</span>
-              <span className="text-fg-secondary">{t('merchandise.pages.orders.detail.after')}</span>
+              <span className="text-fg-secondary">{t('merchandise.pages.orders.detail.newValue')}</span>
               <span>{entry.after ?? '—'}</span>
             </div>
           ) : (
