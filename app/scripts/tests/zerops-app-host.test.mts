@@ -378,10 +378,8 @@ describe('derivedEnvironment', () => {
     expect(new Map(Object.entries(derivedValues)).has('ONTOS_COMMERCE_ORDER_API_BASE_URL')).toBe(true);
     expect(derivedValue(derivedValues, 'ONTOS_COMMERCE_ORDER_API_BASE_URL')).toBeUndefined();
     expect(derivedValue(derivedValues, 'ONTOS_PRICE_GROUP_CATALOG_BASE_URL')).toBeUndefined();
-    expect(derivedValue(derivedValues, 'ONTOS_ORDER_FINALIZATION_WORKER_AUTHENTICATION_NAMESPACE_ID')).toBe(
-      'ontos.staff.better-auth.v1',
-    );
-    expect(derivedValue(derivedValues, 'ONTOS_PRICING_ORDER_NAMESPACE_ID')).toBe('ontos.staff.better-auth.v1');
+    // Module calls carry the Shell-signed calling module, never a configured API-key caller namespace.
+    expect(Object.keys(derivedValues).some((key) => key.endsWith('NAMESPACE_ID'))).toBe(false);
   });
 
   it('points the composition source at the loopback control port, which is open before the public port', () => {

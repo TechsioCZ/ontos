@@ -80,11 +80,7 @@ import {
   publishApplicationCompositionAuthoritySnapshot,
 } from '../application-composition-authority-publication.mts';
 import { ApplicationCompositionLegacyOwnersLive } from '../application-composition-legacy-owners.mts';
-import {
-  CALLER_NAMESPACE_ID,
-  OWNER_RUNTIME_CONFIGURATIONS,
-  unitApiBaseUrl,
-} from '../ops/owner-runtime-configuration.mts';
+import { OWNER_RUNTIME_CONFIGURATIONS, unitApiBaseUrl } from '../ops/owner-runtime-configuration.mts';
 import { SHELL_ID, SHELL_PORT, readHostedUnits, workspaceRoot } from './hosted-units.mts';
 import type { HostedUnit } from './hosted-units.mts';
 import { STAGE_CIMD_FIXTURE_PATH, stageCimdFixtureResponse } from './stage-cimd-fixture.mts';
@@ -220,19 +216,18 @@ const STAGE_N1_PORTAL_ORIGINS = ['https://ontos-stage-n1.web-revolution.cz', 'ht
 const loopbackOrigin = (port: number) => `http://127.0.0.1:${String(port)}`;
 
 /**
- * The owner API bases and caller namespaces the shared owner runtime configuration names. Each base is the serving
- * unit's loopback origin; a unit this host does not serve leaves its base unset (undefined removes it from the child)
- * rather than pointing at an address nothing serves.
+ * The owner API bases the shared owner runtime configuration names. Each base is the serving unit's loopback origin; a
+ * unit this host does not serve leaves its base unset (undefined removes it from the child) rather than pointing at an
+ * address nothing serves.
  */
 const ownerRuntimeEnvironment = (ports: ReadonlyMap<string, number>) =>
   Object.fromEntries(
-    OWNER_RUNTIME_CONFIGURATIONS.flatMap(({ apiDependencies, callerNamespaces }) => [
-      ...apiDependencies.map(({ unitId, variable }) => {
+    OWNER_RUNTIME_CONFIGURATIONS.flatMap(({ apiDependencies }) =>
+      apiDependencies.map(({ unitId, variable }) => {
         const port = unitId === SHELL_ID ? SHELL_PORT : ports.get(unitId);
         return [variable, port === undefined ? undefined : unitApiBaseUrl(loopbackOrigin(port), unitId)] as const;
       }),
-      ...callerNamespaces.map((variable) => [variable, CALLER_NAMESPACE_ID] as const),
-    ]),
+    ),
   );
 
 /**
