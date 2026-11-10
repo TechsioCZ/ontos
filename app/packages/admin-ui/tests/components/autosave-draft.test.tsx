@@ -3,7 +3,7 @@ import { Deferred, Effect, Layer, ManagedRuntime } from 'effect';
 import { afterEach, describe, expect, it } from 'effect-rstest';
 import { AutosaveStatus } from '../../src/autosave-status.tsx';
 import { useAutosaveDraft } from '../../src/autosave.ts';
-import type { DraftSaveResult } from '../../src/autosave.ts';
+import type { DraftSaveResult, UseAutosaveDraftOptions } from '../../src/autosave.ts';
 
 const runtime = ManagedRuntime.make(Layer.empty);
 
@@ -20,11 +20,15 @@ const harness = (): Harness => ({ bases: [], expected: [], replies: [], sent: []
 interface NameFormProps {
   readonly revision?: number;
   readonly server: string;
+  /** What a settled draft becomes when it takes a newer server version. */
+  readonly takeServer?: (server: string, draft: string) => string;
   readonly test: Harness;
 }
 
-const NameForm = ({ revision = 1, server, test }: NameFormProps) => {
-  const autosave = useAutosaveDraft({
+type NameFormOptions = UseAutosaveDraftOptions<string, never>;
+
+const NameForm = ({ revision = 1, server, takeServer, test }: NameFormProps) => {
+  const options: { -readonly [Key in keyof NameFormOptions]: NameFormOptions[Key] } = {
     delayMs: 10,
     isValid: (value: string) => value.trim() !== '',
     revision,
@@ -39,7 +43,11 @@ const NameForm = ({ revision = 1, server, test }: NameFormProps) => {
         return Deferred.await(reply);
       }),
     server,
-  });
+  };
+  if (takeServer !== undefined) {
+    options.takeServer = takeServer;
+  }
+  const autosave = useAutosaveDraft(options);
   const handleBlur = autosave.flush;
   const handleReloadLatest = autosave.reloadLatest;
   const handleRetry = autosave.retry;
@@ -63,6 +71,9 @@ const answer = (test: Harness, index: number, outcome: DraftSaveResult<string>) 
 };
 
 const input = () => screen.getByLabelText<HTMLInputElement>('Název');
+
+/** A trailing remark is the form's own: it is kept over whatever name the server has. */
+const withRemark = (server: string, draft: string) => (draft.endsWith(' (ověřit)') ? `${server} (ověřit)` : server);
 
 afterEach(cleanup);
 
@@ -199,6 +210,26 @@ describe('useAutosaveDraft', () => {
       expect(test.expected).toEqual([4, 5]);
       answer(test, 1, 6);
       yield* eventually(() => expect(screen.getByText('Uloženo')).toBeTruthy());
+    }),
+  );
+
+  it.effect('lets a settled draft keep a part the server does not store when it takes a newer version', () =>
+    Effect.gen(function* keptPart() {
+      const test = harness();
+      const view = render(<NameForm revision={4} server="Akros" takeServer={withRemark} test={test} />);
+      fireEvent.change(input(), { target: { value: 'Akros (ověřit)' } });
+      fireEvent.focusOut(input());
+      yield* eventually(() => expect(test.sent).toEqual(['Akros (ověřit)']));
+      answer(test, 0, 'saved');
+      yield* eventually(() => expect(screen.getByText('Uloženo')).toBeTruthy());
+
+      view.rerender(<NameForm revision={5} server="Jejich" takeServer={withRemark} test={test} />);
+      expect(input().value).toBe('Jejich (ověřit)');
+      // The kept part is a draft over their version: it is saved against that version and its revision.
+      fireEvent.focusOut(input());
+      yield* eventually(() => expect(test.sent).toEqual(['Akros (ověřit)', 'Jejich (ověřit)']));
+      expect(test.bases[1]).toBe('Jejich');
+      expect(test.expected[1]).toBe(5);
     }),
   );
 

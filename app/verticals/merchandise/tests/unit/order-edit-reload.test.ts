@@ -371,6 +371,44 @@ describe('mounted order edit draft against a reloaded order', () => {
     }),
   );
 
+  it.effect('a typed change reason survives a reloaded order and goes out with the next edit', () =>
+    Effect.gen(function* reasonKept() {
+      const view = yield* Effect.promise(() => mount(orderOf({ updatedAt: opened }), 7));
+      // A reason alone is no edit: nothing is sent, and the draft counts as saved.
+      yield* type({ reason: 'Zákazník volal' });
+      yield* saveNow(0);
+
+      // Someone else changes the quantity: the draft takes their order and keeps the reason typed for the next edit.
+      const theirs = orderOf({ quantity: 5, updatedAt: changedElsewhere });
+      yield* view.reload(theirs, 8);
+      expect(quantityOf(draft())).toBe('5');
+      expect(draft().reason).toBe('Zákazník volal');
+
+      const saved = orderOf({ note: 'Zavolat předem', quantity: 5, updatedAt: savedHere });
+      acceptNextEdit(saved, 9);
+      yield* type({ note: 'Zavolat předem' });
+      yield* saveNow(1);
+      expect(sentEdits()).toEqual([
+        {
+          command: {
+            _tag: 'EditOrder',
+            expectedUpdatedAt: theirs.updatedAt,
+            id: 'order-1',
+            note: 'Zavolat předem',
+            reason: 'Zákazník volal',
+          },
+          expectedRevision: 8,
+          expectedUpdatedAt: changedElsewhere,
+        },
+      ]);
+
+      // The reason went into the history with that edit, so the reload after it clears the field.
+      yield* view.reload(saved, 9);
+      expect(draft().reason).toBe('');
+      expect(draft().note).toBe('Zavolat předem');
+    }),
+  );
+
   it.effect('a save that went through clears the approval notice of an earlier refused save', () =>
     Effect.gen(function* approvalNotice() {
       yield* Effect.promise(() => mount(orderOf({ updatedAt: opened }), 7));

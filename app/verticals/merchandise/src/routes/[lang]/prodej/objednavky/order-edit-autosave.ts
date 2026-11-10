@@ -103,6 +103,8 @@ interface OrderEditAutosaveOptions {
  * a live change, the freshness window), so the draft follows the order itself: an untouched draft takes the reloaded
  * order, a draft with unsaved changes stays and keeps naming the order version it was typed over. The server then
  * refuses the save when someone else changed the order meanwhile, instead of taking old lines over their change.
+ * A change reason typed for the next edit is no unsaved change of the order, so it stays in the field when the draft
+ * takes a reloaded order.
  *
  * The base the draft tracks is the order's own `updatedAt`, the precondition the server checks for an order edit;
  * the catalog revision moves with every other order and product too. Each save sends the pair read together. After a
@@ -110,6 +112,9 @@ interface OrderEditAutosaveOptions {
  */
 export const useOrderEditAutosave = ({ isValid, order, revision }: OrderEditAutosaveOptions) => {
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
+  // The change reason that went into the history with the last saved edit: the reload after that save clears it
+  // from the field, while a reason still waiting for its edit stays.
+  const [sentReason, setSentReason] = useState<string | null>(null);
   const savedOnce = useRef(false);
   // Every order version this form has seen, by its instant: a kept draft still names the one it was typed over.
   const versions = useRef(new Map<number, OrderVersion>());
@@ -139,6 +144,7 @@ export const useOrderEditAutosave = ({ isValid, order, revision }: OrderEditAuto
                 return result;
               }
               savedOnce.current = true;
+              setSentReason(command.reason ?? null);
               if (result === 'saved') {
                 return result;
               }
@@ -148,6 +154,15 @@ export const useOrderEditAutosave = ({ isValid, order, revision }: OrderEditAuto
           );
     },
     server: draftOf(order),
+    // The register keeps no reason on the order, so the reloaded order never carries the one being typed.
+    takeServer: (server, current) =>
+      current.reason.trim() === '' || current.reason.trim() === sentReason
+        ? server
+        : { ...server, reason: current.reason },
   });
+  // Once the field no longer holds the reason that was sent, the same words typed again are a new reason.
+  if (sentReason !== null && autosave.draft.reason.trim() !== sentReason) {
+    setSentReason(null);
+  }
   return { autosave, pendingMessage, savedOnce };
 };

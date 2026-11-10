@@ -434,6 +434,12 @@ export interface UseAutosaveDraftOptions<V, R> extends Omit<AutosaveOptions<V, R
   readonly save: (value: V, expectedRevision: number, confirmed: V) => Effect.Effect<DraftSaveResult<V>, never, R>;
   /** The record as the server has it now, in the draft's shape (recomputed on every render is fine). */
   readonly server: V;
+  /**
+   * What a draft with nothing pending becomes when it takes a newer server version; the server version by default.
+   * For a field the server does not store, such as a note that goes out with the next save: return the server
+   * version with that field of `draft`. The result is a draft over that server version like any typed one.
+   */
+  readonly takeServer?: (server: V, draft: V) => V;
 }
 
 export interface AutosaveDraft<V> extends Autosave<V> {
@@ -463,7 +469,7 @@ export const useAutosaveDraft = <V, R>(options: UseAutosaveDraftOptions<V, R>): 
     setSeen(server);
     const settled = !autosavePending(status) && same(draft, controller.confirmed());
     if (settled && !same(server, draft)) {
-      setDraft(server);
+      setDraft(options.takeServer?.(server, draft) ?? server);
       setGeneration(begin(server, revision));
     } else if (status === 'proposed' && same(server, draft)) {
       // The proposal was approved: the server now has this draft, so it is confirmed from that version on. The old
