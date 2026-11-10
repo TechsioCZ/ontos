@@ -33,6 +33,7 @@ const ownerMigrations = [
   'assortment',
   'tax',
   'privacy',
+  'promotion',
 ];
 const generatedOwnerMigrations = [
   'property-portfolio',
