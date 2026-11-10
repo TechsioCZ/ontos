@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Badge } from "@techsio/ui-kit/atoms/badge";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
-import { Link } from "@techsio/ui-kit/atoms/link";
+import { Link } from "@/features/plain-link";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 import { TotalsSummary } from "@techsio/ui-kit/molecules/totals-summary";

@@ -5,7 +5,7 @@ import NextLink from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Option, Schema } from "effect";
 import { Image } from "@techsio/ui-kit/atoms/image";
-import { Link } from "@techsio/ui-kit/atoms/link";
+import { Link } from "@/features/plain-link";
 import { Header } from "@techsio/ui-kit/organisms/header";
 import { Popover } from "@techsio/ui-kit/molecules/popover";
 import type { Dictionary } from "@/i18n";

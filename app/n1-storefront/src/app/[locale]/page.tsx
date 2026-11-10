@@ -1,6 +1,6 @@
 import NextImage from "next/image";
 import { Image } from "@techsio/ui-kit/atoms/image";
-import { Link } from "@techsio/ui-kit/atoms/link";
+import { Link } from "@/features/plain-link";
 import { getDictionary } from "@/i18n";
 import { getCatalog } from "@/ontos/catalog";
 import { CatalogView } from "@/features/catalog-view";

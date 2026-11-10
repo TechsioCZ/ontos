@@ -5,7 +5,7 @@ import NextImage from "next/image";
 import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 import { AvailabilityStatus } from "@techsio/ui-kit/molecules/availability-status";
 import { PriceBlock } from "@techsio/ui-kit/molecules/price-block";
-import { Link } from "@techsio/ui-kit/atoms/link";
+import { Link } from "@/features/plain-link";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import type { Dictionary } from "@/i18n";
 import type { CatalogModel } from "@/ontos/catalog-model";

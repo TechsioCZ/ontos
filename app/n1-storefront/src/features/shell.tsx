@@ -6,7 +6,7 @@ import NextLink from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Image } from "@techsio/ui-kit/atoms/image";
-import { Link } from "@techsio/ui-kit/atoms/link";
+import { Link } from "@/features/plain-link";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Header } from "@techsio/ui-kit/organisms/header";
 import { Toaster } from "@techsio/ui-kit/molecules/toast";
