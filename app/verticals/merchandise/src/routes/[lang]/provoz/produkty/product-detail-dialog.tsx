@@ -12,12 +12,12 @@ import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { selectItem } from '../../../../ui/select-item.ts';
-import { AutosaveStatus, dialogCloseLabel, formatDate, formatMoney, PageHeader, useAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { AutosaveStatus, dialogCloseLabel, formatDate, formatMoney, PageHeader, useAutosaveDraft } from '@app/admin-ui';
+import type { AutosaveOutcome, RevisionedSaveResult } from '@app/admin-ui';
 import { DateTime, Effect, Predicate, Random, Schema } from 'effect';
 import { isRealVariant } from '../../../../../shared/domain/merchandise-model.ts';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { CategoryTrail, ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
@@ -442,50 +442,60 @@ const failureOutcome = (error: CommandFailure): AutosaveOutcome =>
     ? 'conflict'
     : 'failed';
 
+/** A save whose field update went through while its price change did not: where the retry of that draft continues. */
+interface PartialSave {
+  /** The revision the draft was based on when the update was sent. */
+  readonly base: number;
+  /** The revision the update left behind. */
+  readonly revision: number;
+}
+
 /**
- * One autosave of the detail form: the changed basic fields first, then a changed price, each against the revision
- * the previous command or the page left. A conflict keeps the draft and offers the version someone else saved.
+ * One autosave of the detail form: the changed basic fields first, then a changed price. The first command expects
+ * the revision the draft is based on, the second the one the first left. A conflict keeps the draft and offers the
+ * version someone else saved.
  */
 const saveDetailEffect = (
   value: DetailDraft,
   product: ProductRecord,
-  revisionRef: { current: number },
+  expectedRevision: number,
+  partial: { current: PartialSave | null },
   pending: (message: string | null) => void,
-): Effect.Effect<AutosaveOutcome> => {
+): Effect.Effect<RevisionedSaveResult> => {
   const { patch, priceChanged, priceMinor } = detailSaveOf(value, product);
   if (Object.keys(patch).length === 0 && !priceChanged) {
     return Effect.succeed('saved');
   }
+  const from = partial.current?.base === expectedRevision ? partial.current.revision : expectedRevision;
   const update: Effect.Effect<number, CommandFailure> =
     Object.keys(patch).length === 0
-      ? Effect.succeed(revisionRef.current)
-      : runProductCommand({ _tag: 'UpdateProduct', id: product.id, patch }, revisionRef.current);
+      ? Effect.succeed(from)
+      : runProductCommand({ _tag: 'UpdateProduct', id: product.id, patch }, from);
   return update.pipe(
     Effect.flatMap((revision) => {
-      revisionRef.current = revision;
+      partial.current = { base: expectedRevision, revision };
       return priceChanged
         ? runProductCommand({ _tag: 'ChangePrice', id: product.id, priceMinor }, revision)
         : Effect.succeed(revision);
     }),
-    Effect.tap((revision) =>
-      Effect.sync(() => {
-        revisionRef.current = revision;
-      }),
-    ),
     Effect.match({
-      onFailure: (error) => {
+      onFailure: (error): RevisionedSaveResult => {
         pending(pendingProposalMessage(error) ?? null);
         return failureOutcome(error);
       },
-      onSuccess: (): AutosaveOutcome => 'saved',
+      onSuccess: (revision): RevisionedSaveResult => {
+        partial.current = null;
+        return revision;
+      },
     }),
   );
 };
 
 /**
- * Full-page product editor, keyed by product id. A product reload shows the loading state and remounts the editor,
- * so the editor's own state resets: unsaved fields that were not yet saved are reset. The active tab is not part of
- * that state; the page keeps it and passes it in, so the tab stays the same across the reload.
+ * Full-page product editor, keyed by product id. It stays mounted while its product reloads. A reloaded product
+ * replaces an untouched draft; a draft with unsaved changes stays, and its save still expects the revision it was
+ * based on, so a change someone else made in the meantime ends in a conflict instead of being overwritten. The
+ * active tab is owned by the page.
  */
 export const ProductDetailView = ({
   canWrite,
@@ -507,31 +517,29 @@ export const ProductDetailView = ({
   const k = useProductLabel();
   const { t } = useModernI18n();
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
-  const [editableDraft, setEditableDraft] = useState(() => draftOf(product));
   // Real variants are read-only on this tab and always come from the latest product.
   // Deriving them preserves unsaved detail fields when the variants tab commits a change.
-  const draft = { ...editableDraft, realVariants: (product.variants ?? []).filter(isRealVariant) };
+  const realVariants = (product.variants ?? []).filter(isRealVariant);
   const [movementDraft, setMovementDraft] = useState(EMPTY_MOVEMENT_DRAFT);
   const variantDestination = resolveProductVariantDestination(product, variantId);
-  // The revision the next save must expect: the one the page passed, then the one each save returns.
-  // The page's snapshot is the authority after a reload; a save moves it to the revision the server answered with,
-  // and a conflict is healed by reloading the product, so the next save never builds on a revision nobody has.
-  const revisionRef = useRef(revision);
-  useEffect(() => {
-    revisionRef.current = revision;
-  }, [revision]);
+  const partialSave = useRef<PartialSave | null>(null);
   // Every change of the product fields saves itself, debounced; the page re-reads the product after each save.
-  const autosave = useAutosave<DetailDraft, never>({
+  // The editor stays mounted across that reload: an untouched draft takes the reloaded product, a changed one stays
+  // and keeps expecting the revision it was based on (`useAutosaveDraft`).
+  const autosave = useAutosaveDraft<DetailDraft, never>({
     equals: sameDetailDraft,
     isValid: (value) => !detailDraftInvalid(value),
+    revision,
     runtime: browserRuntime,
-    save: (value): Effect.Effect<AutosaveOutcome> => saveDetailEffect(value, product, revisionRef, setPendingMessage),
-    value: draft,
+    save: (value, expectedRevision) =>
+      saveDetailEffect({ ...value, realVariants }, product, expectedRevision, partialSave, setPendingMessage),
+    server: draftOf(product),
   });
+  const draft = { ...autosave.draft, realVariants };
   const dirty = autosave.pending || isMovementDraftDirty(movementDraft);
   const blocker = useBlocker({ enableBeforeUnload: () => dirty, shouldBlockFn: () => dirty, withResolver: true });
   const updateDraft = (patch: Partial<DetailDraft>) => {
-    setEditableDraft((current) => ({ ...current, ...patch }));
+    autosave.setDraft((current) => ({ ...current, ...patch }));
   };
   const updateMovementDraft = (patch: Partial<MovementDraft>) => {
     setMovementDraft((current) => ({ ...current, ...patch }));
