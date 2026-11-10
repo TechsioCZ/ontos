@@ -13,7 +13,7 @@ import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { Effect, Layer, Option, Schema } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
-import { storefrontInquiryCarrier, workRecordsCarrier } from '../../shared/access-declarations.ts';
+import { workRecordsCarrier } from '../../shared/access-declarations.ts';
 import { SubmitStorefrontInquiryPayloadSchema } from '../../shared/actions/submit-storefront-inquiry.ts';
 import { TaskSchema } from '../../shared/apis/records.ts';
 import { workTasksMcpContribution } from '../../shared/mcp/contribution.ts';
@@ -98,7 +98,6 @@ const decodePayload = Schema.decodeUnknownExit(SubmitStorefrontInquiryPayloadSch
 it('declares only a workload carrier in the Work Tasks namespace, never a human capability', () => {
   expect(submitStorefrontInquiryAction.descriptor.accessDeclaration).toBeUndefined();
   expect(submitStorefrontInquiryAction.descriptor.accessWorkload?.workloads).toEqual(['work.storefront-client']);
-  expect(storefrontInquiryCarrier.accessWorkload.workloads).toEqual(['work.storefront-client']);
   expect(submitStorefrontInquiryAction.descriptor.legalEntityScope).toBe('required');
   expect(submitStorefrontInquiryAction.descriptor.idempotency).toBe('required');
 });

@@ -5,7 +5,6 @@ import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { Effect } from 'effect';
 import { OutboxPayloadSchema as SearchRefreshPayloadSchema } from '../../shared/outbox/work-tasks-search-refresh-requested-v1.ts';
-import { storefrontInquiryWorkload } from '../../shared/access-declarations.ts';
 import {
   SubmitStorefrontInquiryErrorSchema,
   SubmitStorefrontInquiryPayloadSchema,
@@ -57,7 +56,12 @@ export const submitStorefrontInquiryAction = defineAction(
       captureMode: 'metadata_only',
       policyKey: 'work.tasks.submit-storefront-inquiry.access.v1',
     },
-    accessWorkload: storefrontInquiryWorkload,
+    // The storefront BFFs file inquiries; no person or agent runs this Action, and it opens no Work Tasks read.
+    // The key sits in the module's own `work.*` namespace (O73).
+    accessWorkload: {
+      reason: 'A registered storefront BFF files a customer inquiry from its public form; no person runs this Action',
+      workloads: ['work.storefront-client'],
+    },
     actionKey: 'work.tasks.submit-storefront-inquiry',
     auditProfile: 'standard',
     domainErrorSchema: SubmitStorefrontInquiryErrorSchema,
