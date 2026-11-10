@@ -1,7 +1,11 @@
 import { SymmyRouteContextSchema } from '@app/shared-contracts/symmy';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import {
+  SymmyFixtureExecutionPlanSchema,
+  SymmyInternalExecutionPlanSchema,
+} from '../../shared/domain/symmy-job-execution.ts';
 import { decodeSymmyAssortmentRuleSource, mapSymmyAssortmentRule } from '../../shared/symmy-internal-contracts.ts';
 
 const tenantId = '3d46590b-7eae-422c-9643-e5bd5c13403b';
@@ -112,3 +116,29 @@ it.effect('rejects category hints and wildcard targets before constructing eithe
     expect(Schema.isSchemaError(wildcard)).toBe(true);
   }),
 );
+
+it('accepts the exact policy intent in operator configuration only', () => {
+  const configuredPlan = {
+    items: [
+      {
+        effects: [
+          {
+            effectKey: 'assortment',
+            intent: { _tag: 'AssortmentRuleFixture', source },
+            operation: route.allowedOwnerOperations[0],
+          },
+        ],
+        itemKey: 'rule',
+        source: {
+          entityKind: route.factFamily,
+          issuerId: route.issuerId,
+          sourceNamespace: route.sourceNamespace,
+          sourceRecordId: source.sourceRecordId,
+        },
+        sourceOccurrenceId: 'test-occurrence',
+      },
+    ],
+  };
+  expect(Result.isSuccess(Schema.decodeUnknownResult(SymmyFixtureExecutionPlanSchema)(configuredPlan))).toBe(true);
+  expect(Result.isFailure(Schema.decodeUnknownResult(SymmyInternalExecutionPlanSchema)(configuredPlan))).toBe(true);
+});
