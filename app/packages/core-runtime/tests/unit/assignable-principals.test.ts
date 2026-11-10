@@ -24,6 +24,8 @@ import {
   ModuleKeySchema,
   RecordKeySchema,
 } from '../../src/access/ids.ts';
+import type { DecisionAuthorityPort } from '../../src/access/decision/authority.ts';
+import { accessDecisionUnavailable } from '../../src/access/decision/errors.ts';
 import type { AccessEnforcementPorts } from '../../src/operations/access-gate.ts';
 import type { AccessDecisionLogEntry } from '../../src/access/enforcement/decision-log.ts';
 import type { AccessPrincipalKind } from '../../src/access/enforcement/actor.ts';
@@ -163,6 +165,9 @@ const fixture = (
     readonly connections?: readonly NonNullable<AuthoritySpec['connection']>[];
     readonly failure?: boolean;
     readonly kinds?: ReadonlyMap<string, AccessPrincipalKind>;
+    readonly nonMembers?: AuthoritySpec['nonMembers'];
+    /** Only the scope read for the evidence row fails; the engine's own scope read, which comes first, answers. */
+    readonly scopeReadFailsAfterDecision?: boolean;
   } = {},
 ) => {
   const base: AuthoritySpec = {
@@ -175,7 +180,9 @@ const fixture = (
     ],
     legalEntityScope: { _tag: 'LegalEntity', legalEntityId: LegalEntityIdSchema.make(legalEntityId), tenantId: tenant },
   };
-  const spec = options.connection === undefined ? base : { ...base, connection: options.connection };
+  const withConnection = options.connection === undefined ? base : { ...base, connection: options.connection };
+  const spec =
+    options.nonMembers === undefined ? withConnection : { ...withConnection, nonMembers: options.nonMembers };
   const authority = makeAuthority(spec);
   const check = makeCheck(options.failure === true ? { authority: spec, failure: true } : { authority: spec });
   const scopes: OperationalScope[] = [];
@@ -192,17 +199,27 @@ const fixture = (
     intent: {
       authorityFor: (scope) => {
         scopes.push(scope);
-        return options.connections === undefined
-          ? authority.port
-          : {
-              ...authority.port,
-              readConnection: (query) =>
-                Effect.succeed(
-                  Option.fromUndefinedOr(
-                    options.connections?.find((connection) => connection.connectionId === query.connectionId),
+        const port: DecisionAuthorityPort =
+          options.connections === undefined
+            ? authority.port
+            : {
+                ...authority.port,
+                readConnection: (query) =>
+                  Effect.succeed(
+                    Option.fromUndefinedOr(
+                      options.connections?.find((connection) => connection.connectionId === query.connectionId),
+                    ),
                   ),
-                ),
-            };
+              };
+        return options.scopeReadFailsAfterDecision === true
+          ? {
+              ...port,
+              readScope: (query) =>
+                check.calls.checkBulk > 0
+                  ? Effect.fail(accessDecisionUnavailable('scope read failed'))
+                  : port.readScope(query),
+            }
+          : port;
       },
     },
     principalKinds: {
@@ -338,6 +355,40 @@ it.effect(
 it.effect('transport unavailable is not an empty candidate directory', () =>
   Effect.gen(function* outage() {
     const f = fixture({ failure: true });
+    const result = yield* Effect.result(f.service.read(directory([member(2)]), eligibility()));
+    expect(Result.isFailure(result) && Schema.is(AssignablePrincipalsUnavailable)(result.failure)).toBe(true);
+  }),
+);
+
+it.effect('a company member without a live access membership is not eligible and does not fail the read', () =>
+  Effect.gen(function* withoutAccessMembership() {
+    const scopeless = member(3);
+    const f = fixture({
+      cells: [
+        cell({
+          capability: carrier.accessDeclaration.key,
+          holder: { _tag: 'Principal', principalId: PrincipalIdSchema.make(member(2).principalRef.principalId) },
+          selector: { _tag: 'entrusted' },
+        }),
+      ],
+      nonMembers: [{ _tag: 'Principal', principalId: PrincipalIdSchema.make(scopeless.principalRef.principalId) }],
+    });
+    const snapshot = directory([member(2), scopeless]);
+    expect(yield* f.service.read(snapshot, eligibility())).toEqual([
+      { displayName: member(2).displayName, principalRef: member(2).principalRef },
+    ]);
+    // The decision log needs a scope id, so only the candidate that has a scope leaves a row.
+    expect(f.entries.map(({ actor }) => actor)).toEqual([
+      { _tag: 'Principal', principalId: member(2).principalRef.principalId },
+    ]);
+    const result = yield* Effect.result(f.service.resolveAssignee(snapshot, scopeless.principalRef, eligibility()));
+    expect(Result.isFailure(result) && Schema.is(AssigneeIneligible)(result.failure)).toBe(true);
+  }),
+);
+
+it.effect('stays unavailable, not an empty directory, when the scope read for the evidence row fails', () =>
+  Effect.gen(function* evidenceOutage() {
+    const f = fixture({ scopeReadFailsAfterDecision: true });
     const result = yield* Effect.result(f.service.read(directory([member(2)]), eligibility()));
     expect(Result.isFailure(result) && Schema.is(AssignablePrincipalsUnavailable)(result.failure)).toBe(true);
   }),

@@ -135,6 +135,11 @@ export interface AuthoritySpec {
   readonly connection?: ResolvedAgentConnection;
   readonly legalEntityScope?: AccessScope;
   readonly membershipDeadlines?: readonly AuthorityDeadline[];
+  /**
+   * Holders without a live membership in the scope: a query naming any of them resolves to none, so
+   * the engine itself answers DENIED `deny.scope_mismatch`, as the real intent loader does.
+   */
+  readonly nonMembers?: readonly Holder[];
   readonly resolvedScopeId?: typeof scopeId;
   readonly teamMembers?: ReadonlyMap<string, readonly AccessTeamId[]>;
 }
@@ -181,6 +186,9 @@ export const makeAuthority = (spec: AuthoritySpec) => {
     },
     readScope: (query: ScopeQuery) => {
       calls.readScope += 1;
+      if (query.holders.some((holder) => spec.nonMembers?.some((absent) => holderEquals(absent, holder)) === true)) {
+        return Effect.succeed(Option.none());
+      }
       const resolvedScope =
         spec.legalEntityScope === undefined || query.legalEntityId === undefined ? scope : spec.legalEntityScope;
       const principalDeadlines = spec.membershipDeadlines ?? [

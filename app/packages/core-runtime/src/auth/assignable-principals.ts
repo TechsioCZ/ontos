@@ -262,7 +262,8 @@ export const makeAssignablePrincipals = (ports: AccessEnforcementPorts) => {
               };
         const { decision } = resolution;
         if (decision.outcome === 'UNAVAILABLE') {
-          return yield* unavailable();
+          // The engine swallows its port errors, so the reason codes are the only trace of what failed.
+          return yield* unavailable(decision.reasons);
         }
         if (shouldRecordDecision(decision, capability)) {
           const resolvedScope = yield* authority
@@ -277,8 +278,11 @@ export const makeAssignablePrincipals = (ports: AccessEnforcementPorts) => {
               tenantId,
             })
             .pipe(Effect.mapError(unavailable));
+          // A candidate the engine refused and who has no resolvable scope (no live access membership on
+          // its path) is not eligible; that is no outage. A decision-log row needs a scope id, so none is
+          // written. Any other decision without a scope lost it between the two reads and is not provable.
           if (Option.isNone(resolvedScope)) {
-            return yield* unavailable();
+            return decision.outcome === 'DENIED' ? false : yield* unavailable();
           }
           const entry: AccessDecisionLogEntry = {
             actor,
