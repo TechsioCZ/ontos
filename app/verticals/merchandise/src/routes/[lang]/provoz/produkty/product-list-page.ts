@@ -1,4 +1,5 @@
-// The products list read: one page of products for the filters on screen, from the strict list store.
+// The products list reads: one page of products for the filters on screen and the category filter's choices, each
+// from its strict store.
 import { useHeldSnapshot } from '@app/admin-ui';
 import { pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
@@ -8,8 +9,37 @@ import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { useSettledPageData } from '../../../../runtime/page-data-hooks.ts';
 import type { SettledPageData } from '../../../../runtime/page-data-hooks.ts';
-import { productListData, productScope } from './products-api.ts';
-import type { FailureReason, ProductListInput, ProductListQuery } from './products-api.ts';
+import { categoryChoicesData, productListData, productScope } from './products-api.ts';
+import type { CategoryChoices, FailureReason, ProductListInput, ProductListQuery } from './products-api.ts';
+
+const NO_CHOICES: CategoryChoices = { hasTree: false, labels: [] };
+
+/**
+ * The category filter's choices; reread after the category panel or a product's category changes.
+ *
+ * `hasTree` decides which filter the list request carries (a storefront tree category or a category label), so the
+ * choices must not read as none while their strict store reloads the same company: the request would lose its
+ * category, the table would load another page, and the filter control would leave the screen and come back.
+ */
+export const useCategoryChoices = (legalEntityId: string) => {
+  const snapshot = useSyncExternalStore(
+    (listener) => categoryChoicesData.subscribe(listener, legalEntityId),
+    () => categoryChoicesData.snapshot(legalEntityId),
+    () => pageDataPending,
+  );
+  useEffect(() => {
+    categoryChoicesData.ensure(legalEntityId);
+  }, [legalEntityId]);
+  // The last ready choices of the same company answer a reload; another company starts without choices, and a
+  // failed reload replaces them at once.
+  const held = useHeldSnapshot(categoryChoicesData.key(legalEntityId), snapshot);
+  return {
+    choices: held.state === 'ready' ? held.value : NO_CHOICES,
+    reload: () => {
+      browserRuntime.runFork(categoryChoicesData.refresh(legalEntityId));
+    },
+  };
+};
 
 export type ProductLoadState =
   | { readonly reason: FailureReason; readonly status: 'error' }

@@ -11,12 +11,12 @@ import { SelectTemplate } from '@app/admin-ui/select-template';
 import { PageHeader, StatCard, StatRow, formatNumber, Toaster } from '@app/admin-ui';
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
 import { Effect, Schema } from 'effect';
-import { modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
+import { modulePagePreload } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, ModulePageProps } from '@app/shared-contracts/page-data';
 import type { TanstackTable } from '@techsio/ui-kit/organisms/data-table';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { legalEntityOf } from '../../../../runtime/page-data-hooks.ts';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useState } from 'react';
 import type { BulkProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { CategoryTrail, ProductRecord, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { ProductIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
@@ -39,7 +39,7 @@ import {
   useProductDetailsPrefetch,
 } from './products-api.ts';
 import type { CategoryChoices, FailureReason, ProductListQuery, ProductSort } from './products-api.ts';
-import { useProductPage } from './product-list-page.ts';
+import { useCategoryChoices, useProductPage } from './product-list-page.ts';
 import type { ProductLoadState } from './product-list-page.ts';
 import { CategorySearchCombobox } from './category-search-combobox.tsx';
 import { useDebounced } from './product-reads.ts';
@@ -61,26 +61,6 @@ const isProductId = Schema.is(ProductIdSchema);
 const DialogKind = Schema.Literals(['create', 'receipt', 'price', 'category', 'tags']);
 /** The category filter keeps its label for assistive tech only, so it lines up with the other filter controls. */
 const srOnlyLabelProps = { className: 'sr-only' };
-
-const NO_CHOICES: CategoryChoices = { hasTree: false, labels: [] };
-
-/** The category filter's choices; reread after the category panel or a product's category changes. */
-const useCategoryChoices = (legalEntityId: string) => {
-  const snapshot = useSyncExternalStore(
-    (listener) => categoryChoicesData.subscribe(listener, legalEntityId),
-    () => categoryChoicesData.snapshot(legalEntityId),
-    () => pageDataPending,
-  );
-  useEffect(() => {
-    categoryChoicesData.ensure(legalEntityId);
-  }, [legalEntityId]);
-  return {
-    choices: snapshot.state === 'ready' ? snapshot.value : NO_CHOICES,
-    reload: () => {
-      browserRuntime.runFork(categoryChoicesData.refresh(legalEntityId));
-    },
-  };
-};
 
 /** Label filter options of a company without a storefront tree: the product category labels with their counts. */
 const labelOptions = (choices: CategoryChoices) =>
