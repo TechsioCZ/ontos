@@ -124,6 +124,13 @@ describe('#1150 Prior return evidence reduces the remaining budget', () => {
     ).toBe('UNRESOLVED_EVIDENCE');
   });
 
+  it('a return the ledger counts for another Payment proves no return here and holds new ones', () => {
+    const elsewhere = { ...statement({}), attributedElsewhere: true };
+    const snapshot = fundsSnapshotWithPriorReturns(snapshotOf([collect]), [elsewhere]);
+    expect(snapshot.operations).toEqual([collect]);
+    expect(heldReasonOf(snapshotOf([collect]), [elsewhere])).toBe('UNRESOLVED_EVIDENCE');
+  });
+
   it('no evidence leaves the funds snapshot unchanged', () => {
     const snapshot = snapshotOf([collect]);
     expect(fundsSnapshotWithPriorReturns(snapshot, [])).toEqual(snapshot);

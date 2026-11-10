@@ -1219,6 +1219,91 @@ it.live('#1150/#1152 Refund evidence from another refund route never confirms th
   ),
 );
 
+/**
+ * #1151 one economic effect counts once in the whole scope: a return that already confirmed a REFUND of
+ * one Payment is never also a prior return of another Payment's collection.
+ */
+it.live('#1151 a return counted for another Payment is unresolved debt here, never a prior return', () =>
+  native(
+    Effect.gen(function* returnAttributedToAnotherPayment() {
+      const evidence = yield* scenario();
+      const collectedPayment = Effect.fn('collectedPayment')(function* collectedPayment(operationKey: string) {
+        const payment = yield* evidence.createPayment(100_000, BANK_BINDING, 'BANK_TRANSFER_ADVANCE');
+        const collect = yield* evidence.startOperation({
+          amountMinor: 100_000,
+          binding: BANK_BINDING,
+          operationKey,
+          paymentId: payment.paymentId,
+        });
+        yield* evidence.settle(payment.paymentId, collect.operationId, 1, 'EFFECT_CONFIRMED');
+        return { collect, payment };
+      });
+      const first = yield* collectedPayment('collect-first');
+      const routeA = yield* evidence.configureRefundRoute('erp-primary', 'refund-account-a');
+      const refund = yield* evidence.inTransaction((aggregate) =>
+        aggregate.insertOperation({
+          amount: czk(60_000),
+          binding: BANK_BINDING,
+          initialOutcome: 'PENDING',
+          kind: 'REFUND',
+          materialRequest: { amountMinor: 60_000, currency: 'CZK', kind: 'REFUND' },
+          operationKey: 'refund-first',
+          paymentId: first.payment.paymentId,
+          provenance: evidence.provenance(),
+          refundBasis: itemsBasis('item-1', 60_000),
+          refundExecutionRoute: Schema.decodeUnknownSync(PaymentRefundExecutionRouteSchema)({
+            accountRef: 'refund-account-a',
+            environment: 'production',
+            routeKind: 'BANK_ACCOUNTING',
+            sourceAuthorityId: routeA,
+            sourceAuthorityRevision: 1,
+            sourceKind: 'BANK_ACCOUNTING',
+            sourceSystem: 'erp-primary',
+          }),
+          targetOperationId: first.collect.operationId,
+        }),
+      );
+      const bankReturn = (paymentId: string, operationId: string) =>
+        evidence.accept({
+          amount: czk(60_000),
+          economicEffectKey: 'erp:bank-return:17',
+          factFamily: 'REFUND_EXECUTION',
+          factKind: 'REFUND_CONFIRMED',
+          operationId,
+          paymentId,
+          source: {
+            accountRef: 'refund-account-a',
+            environment: 'production',
+            sourceKind: 'BANK_ACCOUNTING',
+            sourceSystem: 'erp-primary',
+          },
+          sourceOccurrenceId: `bank-line-${randomUUID()}`,
+          sourceRevision: 1,
+        });
+      // The bank return confirms the REFUND of the first Payment.
+      expect(yield* bankReturn(first.payment.paymentId, refund.record.operationId)).toMatchObject({
+        acceptanceOutcome: 'ACCEPTED_OBSERVATION',
+        interpretation: 'TRANSITION',
+      });
+      // The same bank return re-exported against the second Payment's collection is held...
+      const second = yield* collectedPayment('collect-second');
+      const reExported = yield* bankReturn(second.payment.paymentId, second.collect.operationId);
+      expect(reExported).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED', interpretation: 'HOLD' });
+      // ...and its case cannot be closed as "already counted": no money of the second Payment went back.
+      expect(
+        yield* failureCodeOf(
+          evidence.decide({
+            caseId: reExported.reconciliationCaseId ?? '',
+            decision: { _tag: 'CLOSE_CASE', evidenceRef: 'erp-bank-return-17' },
+            reason: 'Close the re-exported return',
+          }),
+        ),
+      ).toBe('payment_reconciliation_obligation_unresolved');
+      expect((yield* evidence.coverage(second.payment.paymentId)).startsWith('Held ')).toBe(true);
+    }),
+  ),
+);
+
 it.live('#1151 A re-issued correction of a re-exported receipt reduces the established collection once', () =>
   native(
     Effect.gen(function* correctionCountsOnce() {

@@ -13,7 +13,12 @@ import {
   PaymentSourceFactFamilySchema,
   PaymentSourceKindSchema,
 } from '../../shared/domain/payment-vocabulary.ts';
-import { observations, reconciliationDecisions, sourceAuthorities } from '../database/schema.ts';
+import {
+  economicEffectAttributions,
+  observations,
+  reconciliationDecisions,
+  sourceAuthorities,
+} from '../database/schema.ts';
 import type { PaymentRefundRouteCandidate } from '../domain/refund-execution-route.ts';
 import type { PaymentFundsSnapshot } from '../domain/coverage.ts';
 import {
@@ -107,6 +112,7 @@ const returnEvidenceOf = Effect.fn('PaymentRefundPersistence.returnEvidenceOf')(
   row: ReturnStatementRow,
   corrections: readonly CorrectionRow[],
   attachedOperationId: string | undefined,
+  attributedElsewhere: boolean,
 ) {
   const stated = yield* storedAmountOf(row).pipe(
     Effect.mapError((cause) => paymentUnavailable('Stored return evidence money is unreadable', cause)),
@@ -126,6 +132,7 @@ const returnEvidenceOf = Effect.fn('PaymentRefundPersistence.returnEvidenceOf')(
   }
   return {
     amount: Option.getOrUndefined(stated),
+    attributedElsewhere,
     correctedAmount: reach.correctedAmount,
     economicEffectKey: row.economicEffectKey ?? undefined,
     observationId: row.observationId,
@@ -223,6 +230,57 @@ export const paymentRefundPersistenceForTransaction = (
       return attached;
     },
   );
+  /**
+   * The return statements whose economic effect the scope-wide attribution ledger already counts for an
+   * operation of another Payment (#1151 "one economic effect counts once"). The ledger is append-only,
+   * so reading it needs no lock.
+   */
+  const attributedToOtherPayment = Effect.fn('PaymentRefundPersistence.attributedToOtherPayment')(
+    function* attributedToOtherPayment(
+      scope: { readonly legalEntityId: string; readonly tenantId: string },
+      paymentId: string,
+      statements: readonly ReturnStatementRow[],
+    ) {
+      const keys = [...new Set(statements.flatMap((row) => row.economicEffectKey ?? []))];
+      if (keys.length === 0) {
+        return new Set<string>();
+      }
+      const attributions = yield* transaction
+        .select({
+          accountRef: economicEffectAttributions.accountRef,
+          economicEffectKey: economicEffectAttributions.economicEffectKey,
+          environment: economicEffectAttributions.environment,
+          paymentId: economicEffectAttributions.paymentId,
+          sourceKind: economicEffectAttributions.sourceKind,
+          sourceSystem: economicEffectAttributions.sourceSystem,
+        })
+        .from(economicEffectAttributions)
+        .where(
+          and(
+            eq(economicEffectAttributions.tenantId, scope.tenantId),
+            eq(economicEffectAttributions.legalEntityId, scope.legalEntityId),
+            eq(economicEffectAttributions.factKind, 'REFUND_CONFIRMED'),
+            inArray(economicEffectAttributions.economicEffectKey, keys),
+          ),
+        )
+        .pipe(Effect.mapError(returnEvidenceReadFailure));
+      const foreign = attributions.filter((attribution) => attribution.paymentId !== paymentId);
+      return new Set(
+        statements.flatMap((row) =>
+          foreign.some(
+            (attribution) =>
+              attribution.economicEffectKey === row.economicEffectKey &&
+              attribution.sourceKind === row.sourceKind &&
+              attribution.sourceSystem === row.sourceSystem &&
+              attribution.accountRef === row.accountRef &&
+              attribution.environment === row.environment,
+          )
+            ? [row.observationId]
+            : [],
+        ),
+      );
+    },
+  );
   const selectReturnEvidence = Effect.fn('PaymentRefundPersistence.selectReturnEvidence')(
     function* selectReturnEvidence(paymentId: string) {
       const { legalEntityId, tenantId } = transaction.scope;
@@ -295,14 +353,25 @@ export const paymentRefundPersistenceForTransaction = (
       const standing = statements.filter(
         (row) => !disproven.has(row.observationId) && row.capabilityCorrelated !== false,
       );
-      const attached = yield* attachedOperationsOf(
-        { legalEntityId, tenantId },
-        standing.filter((row) => row.operationId === null).map((row) => row.observationId),
+      const [attached, elsewhere] = yield* Effect.all(
+        [
+          attachedOperationsOf(
+            { legalEntityId, tenantId },
+            standing.filter((row) => row.operationId === null).map((row) => row.observationId),
+          ),
+          attributedToOtherPayment({ legalEntityId, tenantId }, paymentId, standing),
+        ],
+        { concurrency: 1 },
       );
       const evidence = yield* Effect.forEach(
         standing,
         (row) =>
-          returnEvidenceOf(row, appliedCorrectionsOf(row.observationId, corrections), attached.get(row.observationId)),
+          returnEvidenceOf(
+            row,
+            appliedCorrectionsOf(row.observationId, corrections),
+            attached.get(row.observationId),
+            elsewhere.has(row.observationId),
+          ),
         { concurrency: 1 },
       );
       return evidence.flatMap((entry) => (entry === null ? [] : [entry]));
