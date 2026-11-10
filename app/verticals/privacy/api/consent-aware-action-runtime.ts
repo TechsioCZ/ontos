@@ -12,7 +12,7 @@ import {
 import { ConsentSelfServiceAuthority } from '../src/actions/consent-self-service-authority.ts';
 import { NoticeChannelDeliveryAuthority } from '../src/actions/record-notice-provision.action.ts';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
-import { privacyRegistration } from '../vertical.registration.ts';
+import { privacyBackendRegistration } from '../vertical.runtime-declaration.ts';
 
 /** Build the native runtime with fresh pre-transaction evidence for each invocation. */
 const privacyConsentAuthorityActionRuntimeLive: Layer.Layer<
@@ -39,7 +39,7 @@ const privacyConsentAuthorityActionRuntimeLive: Layer.Layer<
           );
           const scope = yield* Effect.scope;
           const runtimeContext = yield* Layer.buildWithScope(
-            makeActionRuntimeLive(ultramodernDeliveryUnit, privacyRegistration),
+            makeActionRuntimeLive(ultramodernDeliveryUnit, privacyBackendRegistration),
             scope,
           ).pipe(
             Effect.provideContext(Context.add(dependencies, ActionAuthorizationPreflight, execution.preflight)),
@@ -68,6 +68,6 @@ export const privacyConsentAwareActionRuntimeLive: Layer.Layer<
   | Layer.Services<ReturnType<typeof makeActionRuntimeLive>>
   | Effect.Services<typeof commerceConsentAuthorityLookup>
 > = privacyConsentAuthorityActionRuntimeLive.pipe(
-  Layer.provideMerge(makeActionRuntimeLive(ultramodernDeliveryUnit, privacyRegistration)),
+  Layer.provideMerge(makeActionRuntimeLive(ultramodernDeliveryUnit, privacyBackendRegistration)),
   Layer.provide(Layer.effect(CommerceConsentAuthorityLookup, commerceConsentAuthorityLookup)),
 );
