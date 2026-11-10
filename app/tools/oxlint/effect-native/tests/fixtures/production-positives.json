@@ -286,5 +286,9 @@
   "require-timeout-on-external-effect": {
     "count": 1,
     "file": "apps/demo/src/browser-import.ts"
+  },
+  "ui-kit-required-label": {
+    "count": 4,
+    "file": "verticals/probe/src/direct-required.tsx"
   }
 }

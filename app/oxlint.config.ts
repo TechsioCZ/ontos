@@ -219,6 +219,8 @@ const effectNativeRules = {
   'effect-native/require-context-service-for-service-interface': 'error',
   'effect-native/require-observability-layers-at-runtime-root': 'error',
   'effect-native/require-timeout-on-external-effect': 'error',
+  // Required admin fields read the required text in the page language; see packages/admin-ui/src/form-controls.tsx.
+  'effect-native/ui-kit-required-label': 'error',
 } satisfies NonNullable<Parameters<typeof defineConfig>[0]['rules']>;
 
 export default defineConfig({
