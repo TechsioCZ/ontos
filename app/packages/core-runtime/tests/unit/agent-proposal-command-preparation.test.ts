@@ -13,6 +13,7 @@ import {
   AgentProposalCommandPreparation,
   AgentProposalCommandPreparationLive,
 } from '../../src/auth/agent-proposal-command-preparation.ts';
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
 import { DatabaseIdentityEnrollmentContext } from '../../src/db/database-identities.ts';
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
@@ -281,10 +282,7 @@ for (const propose of ['allowed', 'denied'] as const) {
             database,
             {
               legalEntities: forbiddenContext,
-              modules: (target) => {
-                expect(target).toEqual({ legalEntityId, moduleIds: ['work.tasks'], principalId: agentId, tenantId });
-                return Effect.succeed([{ decision: 'allowed', key: 'work.tasks' }]);
-              },
+              modules: forbiddenContext,
               resources: forbiddenContext,
               tenants: forbiddenContext,
             },
@@ -311,11 +309,103 @@ for (const propose of ['allowed', 'denied'] as const) {
   );
 }
 
-for (const [name, execute, moduleDecision, proposerPermission, expected] of [
-  ['human execution authority', 'allowed', 'allowed', 'allowed', 'not_applicable'],
-  ['agent proposal authority is not execution', 'denied', 'allowed', 'allowed', 'denied'],
-  ['execution without module visibility', 'allowed', 'denied', 'allowed', 'denied'],
-  ['revoked proposer authority', 'allowed', 'allowed', 'denied', 'denied'],
+it.effect(
+  'a tenant owner proposes through an approval connection on the Action answer, not a legacy module tuple',
+  () =>
+    Effect.gen(function* ownerApprovalInsert() {
+      const grantId = '80000000-0000-4000-8000-000000000001';
+      // The stage owner of a one-module tenant exists only in the v2 model: it holds role cells and memberships,
+      // never the retired `module_access` relation, so that relation denies.
+      const ownerScope = {
+        ...(yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
+          authBindingId: '40000000-0000-4000-8000-000000000002',
+          authContextRef: `oauth-grant:${grantId}`,
+          authMethod: 'oauth_connection',
+          connection: {
+            clientId: 'https://claude.ai/oauth/claude-code-client-metadata',
+            clientName: 'Claude Code',
+            grantId,
+            modules: [{ access: 'write', moduleId: 'work.tasks' }],
+            writePolicy: 'approval',
+          },
+          legalEntityId,
+          principalId: humanId,
+          tenantId,
+        })),
+        correlationId: 'owner-approval-insert',
+      };
+      const payload = {
+        batchId,
+        instruction: 'Requested',
+        operation: 'insert' as const,
+        proposals: [
+          {
+            actionSlug: 'update',
+            appId: 'tasks',
+            command: { title: 'New' },
+            diff: [],
+            moduleKey: 'work.tasks',
+            proposalId,
+            reason: 'Requested',
+            risk: 'low' as const,
+            summary: 'Update',
+            targetLabel: 'Task',
+          },
+        ],
+      };
+      const database = yield* makeTestDatabase((sql) => {
+        if (sql.includes('current_setting')) {
+          return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
+        }
+        if (sql.includes('from "core"."principals"')) {
+          return Effect.succeed([{ displayName: 'Owner', kind: 'human', principalId: humanId, status: 'active' }]);
+        }
+        expect(sql.startsWith('insert')).toBe(false);
+        return Effect.succeed([]);
+      });
+      const legacyModuleQuestions: string[] = [];
+      const result = yield* Effect.gen(function* prepareInsert() {
+        const preparation = yield* AgentProposalCommandPreparation;
+        return yield* preparation.prepare({ ...preflightInput(), payload, principal: ownerScope, scope: ownerScope });
+      }).pipe(
+        Effect.provideService(
+          AgentProposalCommandPreparation,
+          yield* makePreparation(
+            database,
+            {
+              legalEntities: forbiddenContext,
+              modules: (target) => {
+                legacyModuleQuestions.push(...target.moduleIds);
+                return Effect.succeed(target.moduleIds.map((key) => ({ decision: 'denied' as const, key })));
+              },
+              resources: forbiddenContext,
+              tenants: forbiddenContext,
+            },
+            {
+              checkActionAuthorities: (query) => {
+                expect(query.scope).toBe(ownerScope);
+                return Effect.succeed(
+                  query.actionKeys.map((actionKey) => ({
+                    actionKey,
+                    execute: 'allowed' as const,
+                    propose: 'allowed' as const,
+                  })),
+                );
+              },
+              checkActionProposalPermission: forbiddenContext,
+            },
+          ),
+        ),
+      );
+      expect(result.outcome).toBe('not_applicable');
+      expect(legacyModuleQuestions).toEqual([]);
+    }),
+);
+
+for (const [name, execute, proposerPermission, expected] of [
+  ['human execution authority', 'allowed', 'allowed', 'not_applicable'],
+  ['agent proposal authority is not execution', 'denied', 'allowed', 'denied'],
+  ['revoked proposer authority', 'allowed', 'denied', 'denied'],
 ] as const) {
   it.effect(`native preparation enforces ${name}`, () =>
     Effect.gen(function* authorization() {
@@ -381,17 +471,8 @@ for (const [name, execute, moduleDecision, proposerPermission, expected] of [
             database,
             {
               legalEntities: forbiddenContext,
-              modules: (target) => {
-                expect(transactionOpen).toBe(false);
-                expect(target).toEqual({
-                  legalEntityId,
-                  moduleIds: ['work.tasks'],
-                  principalId: target.principalId,
-                  tenantId,
-                });
-                expect([humanId, agentId]).toContain(target.principalId);
-                return Effect.succeed([{ decision: moduleDecision, key: 'work.tasks' }]);
-              },
+              // The Action's own answer is its module's; the retired `module_access` relation is never asked.
+              modules: forbiddenContext,
               resources: forbiddenContext,
               tenants: forbiddenContext,
             },
@@ -414,7 +495,7 @@ for (const [name, execute, moduleDecision, proposerPermission, expected] of [
         ),
       );
       const admittedChecks = execute === 'denied' ? [humanId] : [humanId, agentId];
-      expect(checks).toEqual(moduleDecision === 'denied' ? [] : admittedChecks);
+      expect(checks).toEqual(admittedChecks);
     }),
   );
 }
@@ -554,7 +635,7 @@ for (const mismatch of ['payload', 'scope', 'composition'] as const) {
             database,
             {
               legalEntities: forbiddenContext,
-              modules: () => Effect.succeed([{ decision: 'allowed', key: 'work.tasks' }]),
+              modules: forbiddenContext,
               resources: forbiddenContext,
               tenants: forbiddenContext,
             },

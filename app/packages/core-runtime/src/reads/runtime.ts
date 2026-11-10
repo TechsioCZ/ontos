@@ -428,6 +428,12 @@ const checkAtomicPermissionTarget = <AccessValue extends (typeof ContextAccess)[
   const legalEntityId =
     target.kind === 'legal_entity' ? (target.legalEntityId ?? scope.legalEntityId ?? '') : (scope.legalEntityId ?? '');
   if (target.kind === 'legal_entity') {
+    // Selected-company access is the scope resolution's own gate question (O28): this read resolved its scope,
+    // and resolution refuses every company the principal may not select. The retired `legal_entity#access`
+    // relation is never asked for it; a v2 person holds no tuple of it.
+    if (target.permission === undefined && legalEntityId === scope.legalEntityId) {
+      return Effect.succeed('allowed');
+    }
     const decision =
       target.permission === undefined
         ? contextAccess.legalEntities({

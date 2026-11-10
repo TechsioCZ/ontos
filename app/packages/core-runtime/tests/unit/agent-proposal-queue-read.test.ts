@@ -213,6 +213,13 @@ const authority = (execute: 'allowed' | 'denied' = 'allowed'): ActionAuthoritySe
   checkActionProposalPermission: () => Effect.die('Proposal permission never authorizes queue reads'),
 });
 
+/** A person who exists only in the v2 model holds no `module_access` tuple: that retired relation denies. */
+const retiredModuleRelation = (asked: string[]) => (target: { readonly moduleIds: readonly string[] }) =>
+  Effect.sync(() => {
+    asked.push(...target.moduleIds);
+    return target.moduleIds.map((key) => ({ decision: 'denied' as const, key }));
+  });
+
 it.layer(
   Layer.mergeAll(
     NodeCrypto.layer,
@@ -485,10 +492,11 @@ it.layer(
     );
   }
 
-  suite.effect('module access is independently required even with execution rights', () =>
-    Effect.gen(function* noModuleAccess() {
+  suite.effect('decides a batch on the Actions the person may run, never on a retired legacy module tuple', () =>
+    Effect.gen(function* v2OnlyReviewer() {
       const harness = yield* makeReadTestHarness({
-        executeOwnerQuery: () => Effect.die('No module access reached SQL'),
+        executeOwnerQuery: (query) =>
+          Effect.succeed(query.sql.includes('from "core"."principals"') ? [{ principalId }] : [driverRow()]),
         operationTime,
         ownerAuthorizationDecision: 'allowed',
         permissionDecision: 'allowed',
@@ -498,23 +506,28 @@ it.layer(
         Layer.mergeAll(harness.layer, outboxWorkerCompositionLayer(yield* executableComposition())),
       );
       const contextAccess = Context.get(services, ContextAccess);
-      const failure = yield* harness.runtime
-        .runRead({
-          input: { mode: 'queue', request: {} },
-          principal: scope,
-          registration: agentProposalQueueRead,
-          transport,
-        })
-        .pipe(
-          Effect.flip,
-          Effect.provideService(ContextAccess, {
-            ...contextAccess,
-            modules: () => Effect.succeed([{ decision: 'denied', key: 'work.tasks' }]),
-          }),
-          Effect.provideService(ActionAuthority, authority()),
-          Effect.provide(services),
-        );
-      expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
+      const legacyModuleQuestions: string[] = [];
+      const read = (execute: 'allowed' | 'denied') =>
+        harness.runtime
+          .runRead({
+            input: { batchId, mode: 'batch' },
+            principal: scope,
+            registration: agentProposalQueueRead,
+            transport,
+          })
+          .pipe(
+            Effect.provideService(ContextAccess, {
+              ...contextAccess,
+              modules: retiredModuleRelation(legacyModuleQuestions),
+            }),
+            Effect.provideService(ActionAuthority, authority(execute)),
+            Effect.provide(services),
+          );
+      const allowed = yield* read('allowed');
+      expect(allowed.proposals.map((row) => row.proposalId)).toEqual([proposalId]);
+      const denied = yield* read('denied').pipe(Effect.flip);
+      expect(Schema.is(ReadPermissionDenied)(denied)).toBe(true);
+      expect(legacyModuleQuestions).toEqual([]);
     }),
   );
 

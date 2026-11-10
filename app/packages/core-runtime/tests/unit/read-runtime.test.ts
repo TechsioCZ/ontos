@@ -1778,6 +1778,65 @@ it.effect(
   }),
 );
 
+it.effect(
+  'answers selected-company access from the resolved scope and asks the legacy relation only for another company',
+  Effect.fn(function* selectedCompanyTarget() {
+    const selectedId = '00000000-0000-4000-8000-000000000004';
+    const otherId = '00000000-0000-4000-8000-000000000099';
+    const { accessDeclaration, ...unprotectedRegistration } = registration().descriptor;
+    expect(accessDeclaration?.key).toBe('core.shell.fixture.read');
+    const companyRead = (target: { readonly kind: 'legal_entity'; readonly legalEntityId?: string }) =>
+      defineRead(
+        {
+          ...unprotectedRegistration,
+          entrypoint: defineSystemModuleEntrypoint({
+            access: 'read',
+            authorization: { kind: 'authenticated_principal' },
+            entrypointKey: 'core.identity.api.selected-company-test',
+            moduleKey: 'core.identity',
+            role: 'api',
+          }),
+          legalEntityScope: 'required',
+          owningModuleKey: 'core.identity',
+          permissionTarget: 'legal_entity',
+          readKey: 'core.identity.api.selected-company-test',
+        },
+        () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
+        () => Effect.succeed({}),
+        () => target,
+      );
+    const selected = { ...scope, legalEntityId: selectedId };
+    // A person who exists only in the v2 model holds no legacy `legal_entity#member` tuple, so the legacy relation
+    // denies. Scope resolution already refused any company this person may not select (O28).
+    const asked: string[] = [];
+    const harness = yield* makeHarness({
+      onLegalEntityTarget: (id) => asked.push(id),
+      permissionDecision: 'denied',
+      resolvedScope: selected,
+    });
+    const own = yield* Effect.exit(
+      harness.runtime.runRead({
+        input: {},
+        principal: selected,
+        registration: companyRead({ kind: 'legal_entity' }),
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Exit.isSuccess(own)).toBe(true);
+    expect(asked).toEqual([]);
+    const other = yield* Effect.exit(
+      harness.runtime.runRead({
+        input: {},
+        principal: selected,
+        registration: companyRead({ kind: 'legal_entity', legalEntityId: otherId }),
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Exit.isFailure(other)).toBe(true);
+    expect(asked).toEqual([otherId]);
+  }),
+);
+
 const counterpartyReadPrincipal = (legalEntityId: string) => ({
   authBindingId: '00000000-0000-4000-8000-000000000005',
   authContextRef: 'better-auth-session:read-runtime',
