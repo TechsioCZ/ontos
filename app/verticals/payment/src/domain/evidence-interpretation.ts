@@ -2,6 +2,7 @@ import { Data, Option } from 'effect';
 
 import type { PaymentMonetaryAmount } from '../../shared/domain/payment-money.ts';
 import type {
+  PaymentCorrectionEffectKind,
   PaymentObservationFactKind,
   PaymentOperationKind,
   PaymentOperationOutcome,
@@ -43,6 +44,8 @@ export interface PaymentEvidenceOperationView {
 /** One previously accepted statement of the same Payment (immutable evidence). */
 export interface PaymentAcceptedObservationView {
   readonly amount: PaymentMonetaryAmount | undefined;
+  /** Accepted SOURCE_CORRECTION only: what it did to the Current interpretation when it was applied. */
+  readonly correctionEffect?: PaymentCorrectionEffectKind | undefined;
   readonly correctsObservationId: string | undefined;
   readonly economicEffectKey: string | undefined;
   readonly factKind: PaymentObservationFactKind;
@@ -454,11 +457,11 @@ const reductionExceedsRemainingFunds = (
 ) => {
   let reduced = reduction.amountMinor;
   for (const prior of aggregate.acceptedObservations) {
+    // Only corrections that were applied as a reduction count, exactly as the funds reader counts them.
     if (
-      prior.factKind === 'SOURCE_CORRECTION' &&
+      prior.correctionEffect === 'REDUCE_ESTABLISHED_COLLECTION' &&
       prior.operationId === operation.operationId &&
       prior.amount !== undefined &&
-      prior.amount.amountMinor < operation.amount.amountMinor &&
       !(prior.correctsObservationId !== undefined && isFullyDisproven(aggregate, prior.correctsObservationId))
     ) {
       reduced += prior.amount.amountMinor;

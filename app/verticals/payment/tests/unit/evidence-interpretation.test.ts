@@ -42,6 +42,7 @@ const accepted = (
   overrides: Partial<PaymentAcceptedObservationView> = {},
 ): PaymentAcceptedObservationView => ({
   amount: overrides.amount ?? czk(100_000),
+  correctionEffect: overrides.correctionEffect,
   correctsObservationId: overrides.correctsObservationId,
   economicEffectKey: overrides.economicEffectKey,
   factKind: overrides.factKind ?? 'COLLECTION_CONFIRMED',
@@ -535,6 +536,7 @@ describe('#1151 Payment evidence interpretation', () => {
               accepted('obs-retired'),
               accepted('obs-retired-reduction', {
                 amount: czk(10_000),
+                correctionEffect: 'REDUCE_ESTABLISHED_COLLECTION',
                 correctsObservationId: 'obs-retired',
                 factKind: 'SOURCE_CORRECTION',
               }),
@@ -547,6 +549,24 @@ describe('#1151 Payment evidence interpretation', () => {
       );
     expect(PaymentEvidenceDecision.$is('HOLD')(withRetiredReduction(new Set()))).toBe(true);
     expect(PaymentEvidenceDecision.$is('HOLD')(withRetiredReduction(new Set(['obs-retired'])))).toBe(false);
+    // A correction that was only recorded (for example of a pending statement) reduced nothing.
+    const afterRecordOnly = interpretPaymentObservation(
+      aggregateOf(
+        [operation('EFFECT_CONFIRMED')],
+        [
+          accepted('obs-pending', { factKind: 'COLLECTION_PENDING' }),
+          accepted('obs-pending-correction', {
+            amount: czk(10_000),
+            correctionEffect: 'RECORD_ONLY',
+            correctsObservationId: 'obs-pending',
+            factKind: 'SOURCE_CORRECTION',
+          }),
+          accepted('obs-receipt'),
+        ],
+      ),
+      { ...correction, amount: czk(95_000) },
+    );
+    expect(PaymentEvidenceDecision.$is('CORRECTION')(afterRecordOnly)).toBe(true);
     // A refund proven not effected reserves nothing: the reduction applies.
     const applied = interpretPaymentObservation(
       aggregateOf([operation('EFFECT_CONFIRMED'), refund('NOT_EFFECTED_CONFIRMED')], [accepted('obs-receipt')]),
