@@ -49,7 +49,7 @@ const companyRoles = {
         'obchodnik@demo.ontos',
         'Zákazníci, objednávky a obchodní případy; faktury jen čte.',
       ),
-      role('accountant', 'Účetní', 'ucetni@demo.ontos', 'Faktury a platby; ostatní agendy jen čte.'),
+      role('accountant', 'Účetní', 'ucetni@demo.ontos', 'Faktury, platby a úkoly; ostatní agendy jen čte.'),
       role('warehouse', 'Skladník', 'sklad@demo.ontos', 'Produkty, sklad a úkoly.'),
     ],
     seeded: {

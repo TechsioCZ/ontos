@@ -269,7 +269,7 @@ retained. Rental example data is added separately with `demo:seed:rental --apply
 | ---------------------- | --------------- | ----------------------------------------------------- | ----------------------------------------- |
 | `obchod@demo.ontos`    | Vedoucí obchodu | everything, plus identity admin (creates the bot key) |                                           |
 | `obchodnik@demo.ontos` | Obchodník       | customers, tagging, opportunities, tasks              | employees, products, statistics, invoices |
-| `ucetni@demo.ontos`    | Účetní          | invoices                                              | customers, statistics                     |
+| `ucetni@demo.ontos`    | Účetní          | invoices, tasks                                       | customers, statistics                     |
 | `sklad@demo.ontos`     | Skladník        | products, tasks                                       |                                           |
 | `agent-bot` (API key)  | service         | none; no reviewed workload binding                    | none on human declaration carriers        |
 

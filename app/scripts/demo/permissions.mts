@@ -246,6 +246,8 @@ export const demoRoles = {
       'finance.billing': 'write',
       'legal.agreements': 'read',
       [partyModule]: 'read',
+      // Tasks assigned to her must be workable: every task command needs work.tasks.apply-command.write.
+      'work.tasks': 'write',
     },
     proposalReview: true,
     restrictedModules: [partyModule],
