@@ -1,5 +1,9 @@
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
-import { LegacyIcoInventoryAssertionSchema } from '@app/party-registry/apis/legacy-ico-inventory';
+import {
+  IcoCorrelationWitnessesSchema,
+  LegacyIcoInventoryAssertionSchema,
+} from '@app/party-registry/apis/legacy-ico-inventory';
+import type { IcoCorrelationWitness, LegacyIcoInventoryResponse } from '@app/party-registry/apis/legacy-ico-inventory';
 import { CounterpartyMigrationCorrelationResponseSchema } from '@app/party-registry/apis/counterparty-migration-correlation';
 import { SourceProcessingEligibilityRequestSchema } from '@app/privacy/api';
 import { Schema } from 'effect';
@@ -38,11 +42,15 @@ export const CustomerProfileIcoMigrationTargetSchema = Schema.Struct({
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
   subjectResourceId: ProfileBoundedKeySchema,
 });
-export const CustomerProfileIcoMigrationInputSchema = Schema.Struct({
+const CustomerProfileIcoMigrationPlanInputSchema = Schema.Struct({
   asOf: ProfileInstantSchema,
   planId: ProfileBoundedKeySchema,
   reason: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
   sourceContext: SourceProcessingEligibilityRequestSchema.fields.source,
+});
+export const CustomerProfileIcoMigrationInputSchema = Schema.Struct({
+  ...CustomerProfileIcoMigrationPlanInputSchema.fields,
+  correlationWitnesses: Schema.optionalKey(IcoCorrelationWitnessesSchema),
 });
 export const CustomerProfileIcoMigrationRecordSchema = Schema.Struct({
   classification: Schema.Literals([
@@ -61,10 +69,12 @@ export const CustomerProfileIcoMigrationRecordSchema = Schema.Struct({
   targets: Schema.Array(CustomerProfileIcoMigrationTargetSchema),
 });
 export const CustomerProfileIcoMigrationPlanSchema = Schema.Struct({
-  ...CustomerProfileIcoMigrationInputSchema.fields,
+  ...CustomerProfileIcoMigrationPlanInputSchema.fields,
   authorityRevision: Schema.optionalKey(
     Schema.toEncoded(Schema.OptionFromNullOr(Schema.Int.check(Schema.isGreaterThan(0)))),
   ),
+  correlationCoverageVersion: Schema.optionalKey(Schema.String),
+  homeCorrelationWitnesses: Schema.optionalKey(IcoCorrelationWitnessesSchema),
   nativeTargetInventoryVersion: Schema.optionalKey(Schema.String),
   partySnapshotVersion: Schema.String,
   records: Schema.Array(CustomerProfileIcoMigrationRecordSchema),
@@ -123,6 +133,80 @@ type MigrationObservation = typeof TrustedMigrationObservationSchema.Type;
 type LegacyAssertion = typeof LegacyIcoInventoryAssertionSchema.Type;
 type MigrationTarget = typeof CustomerProfileIcoMigrationTargetSchema.Type;
 type Classification = typeof CustomerProfileIcoMigrationRecordSchema.Type.classification;
+type CorrelationCoverage = Readonly<{
+  complete: boolean;
+  foreignMatchCounts: readonly number[];
+  foreignRetailParties: ReadonlyMap<string, number>;
+  homeWitnesses: readonly IcoCorrelationWitness[];
+  version?: string;
+}>;
+
+export const requiresIcoCorrelationCoverage = (targets: readonly MigrationTarget[], home: string | undefined) =>
+  targets.some((target) => target.profileRef.kind === 'COUNTERPARTY' && target.legalEntityId !== home);
+
+/** Compare only opaque owner tokens for other homes. All writable target data comes from the live local owner reads. */
+export const observeIcoCorrelationCoverage = (
+  inventory: LegacyIcoInventoryResponse,
+  targets: readonly MigrationTarget[],
+  localTargets: readonly MigrationTarget[],
+  home: string | undefined,
+  supplied: readonly IcoCorrelationWitness[],
+): CorrelationCoverage | undefined => {
+  if (!requiresIcoCorrelationCoverage(targets, home)) {
+    return undefined;
+  }
+  const homeWitnesses = localTargets.flatMap((target) => {
+    const witness = target.partyCorrelation?.correlationWitness;
+    return target.profileRef.kind === 'COUNTERPARTY' &&
+      witness?.counterpartyId === target.subjectResourceId &&
+      witness.legalEntityId === home &&
+      witness.epoch === inventory.correlationCoverage?.epoch
+      ? [witness]
+      : [];
+  });
+  const opaqueForeign = supplied.filter((witness) => witness.legalEntityId !== home);
+  const byCounterparty = new Map(opaqueForeign.map((witness) => [witness.counterpartyId, witness] as const));
+  const foreignMatchCounts = inventory.correlationCoverage?.foreignMatchCounts ?? [];
+  const foreignRetailParties = new Map<string, number>();
+  let foreignCounterpartyCount = 0;
+  let localCounterpartyCount = 0;
+  let complete = inventory.correlationCoverage?.foreignMatchCounts !== undefined;
+  for (const target of targets) {
+    if (target.legalEntityId === home) {
+      localCounterpartyCount += Number(target.profileRef.kind === 'COUNTERPARTY');
+    } else if (target.profileRef.kind === 'RETAIL') {
+      const partyId = target.subjectResourceId;
+      foreignRetailParties.set(partyId, (foreignRetailParties.get(partyId) ?? 0) + 1);
+    } else {
+      foreignCounterpartyCount += 1;
+      const witness = byCounterparty.get(target.subjectResourceId);
+      if (
+        witness === undefined ||
+        witness.epoch !== inventory.correlationCoverage?.epoch ||
+        witness.legalEntityId !== target.legalEntityId
+      ) {
+        complete = false;
+      }
+    }
+  }
+  complete &&=
+    homeWitnesses.length === localCounterpartyCount &&
+    byCounterparty.size === opaqueForeign.length &&
+    opaqueForeign.length === foreignCounterpartyCount &&
+    foreignMatchCounts.length === inventory.assertions.length &&
+    foreignMatchCounts.every((count) => count <= foreignCounterpartyCount);
+  const coverage = { complete, foreignMatchCounts, foreignRetailParties, homeWitnesses };
+  if (!complete) {
+    return coverage;
+  }
+  return {
+    ...coverage,
+    version: computeCanonicalValueHash([
+      inventory.correlationCoverage?.epoch,
+      opaqueForeign.toSorted((left, right) => left.counterpartyId.localeCompare(right.counterpartyId)),
+    ]),
+  };
+};
 const isCurrentAt = (assertion: LegacyAssertion, observedAt: MigrationObservation['observedAt']) =>
   assertion.isCurrent &&
   assertion.state === 'ACTIVE' &&
@@ -143,16 +227,17 @@ const classifyTarget = (
   candidates: readonly MigrationTarget[],
   targets: readonly MigrationTarget[],
   trusted: MigrationObservation,
+  foreignCandidates: number,
 ): Classification => {
   if (targets.some((target) => target.profileRef.kind === 'COUNTERPARTY' && target.partyCorrelation === undefined)) {
     return 'COUNTERPARTY_CORRELATION_UNAVAILABLE';
   }
-  if (candidates.length > 1) {
+  if (candidates.length + foreignCandidates > 1) {
     return 'MULTIPLE_TARGETS';
   }
   const [target] = candidates;
   if (target === undefined) {
-    return 'NO_TARGET';
+    return foreignCandidates === 0 ? 'NO_TARGET' : 'TARGET_SCOPE_UNAUTHORIZED';
   }
   if (target.profileRef.kind === 'RETAIL' && target.legalEntityId !== trusted.legalEntityId) {
     return 'TARGET_SCOPE_UNAUTHORIZED';
@@ -173,6 +258,8 @@ const classifyAssertion = (
   targets: readonly MigrationTarget[],
   input: Pick<typeof CustomerProfileIcoMigrationInputSchema.Type, 'asOf'>,
   trusted: MigrationObservation,
+  coverage?: CorrelationCoverage,
+  assertionIndex = 0,
 ): Classification => {
   if (
     legacy.isCurrent &&
@@ -194,7 +281,13 @@ const classifyAssertion = (
   if (!hasOriginalProvenance(legacy)) {
     return 'PROVENANCE_MISSING';
   }
-  return classifyTarget(candidates, targets, trusted);
+  if (coverage !== undefined && !coverage.complete) {
+    return 'COUNTERPARTY_CORRELATION_UNAVAILABLE';
+  }
+  const foreignCandidates =
+    (coverage?.foreignMatchCounts[assertionIndex] ?? 0) +
+    (coverage?.foreignRetailParties.get(legacy.partyRef.resourceId) ?? 0);
+  return classifyTarget(candidates, targets, trusted, foreignCandidates);
 };
 
 export const classifyCustomerProfileIcoMigrationRecords = (
@@ -202,15 +295,25 @@ export const classifyCustomerProfileIcoMigrationRecords = (
   inventory: Readonly<{ assertions: readonly LegacyAssertion[] }>,
   targets: readonly MigrationTarget[],
   trusted: MigrationObservation,
+  coverage?: CorrelationCoverage,
 ) =>
-  inventory.assertions.map((legacy) => {
+  inventory.assertions.map((legacy, assertionIndex) => {
     const candidates = targets.filter((target) =>
       target.profileRef.kind === 'RETAIL'
         ? target.subjectResourceId === legacy.partyRef.resourceId
         : target.partyCorrelation?.partyRef.resourceId === legacy.partyRef.resourceId,
     );
     return {
-      classification: classifyAssertion(legacy, inventory.assertions, candidates, targets, input, trusted),
+      classification: classifyAssertion(
+        legacy,
+        inventory.assertions,
+        candidates,
+        targets,
+        input,
+        trusted,
+        coverage,
+        assertionIndex,
+      ),
       legacy,
       targets: candidates,
     };
@@ -220,6 +323,7 @@ export const customerProfileIcoMigrationInventoryVersion = (
   nativeVersion: string,
   targets: readonly MigrationTarget[],
   records: readonly (typeof CustomerProfileIcoMigrationRecordSchema.Type)[],
+  correlationCoverageVersion?: string,
 ) => {
   const profileInventory = targets.map((target) => {
     const profile = { ...target };
@@ -233,25 +337,28 @@ export const customerProfileIcoMigrationInventoryVersion = (
       selectedRevisions.push([target.profileRef.resourceId, target.currentIcoRevision]);
     }
   }
-  return computeCanonicalValueHash(
+  const profileVersion =
     selectedRevisions.length === 0
       ? [nativeVersion, profileInventory]
-      : [nativeVersion, profileInventory, selectedRevisions],
+      : [nativeVersion, profileInventory, selectedRevisions];
+  return computeCanonicalValueHash(
+    correlationCoverageVersion === undefined ? profileVersion : [profileVersion, correlationCoverageVersion],
   );
 };
 
 /** Only exact durable Party correlation counts. Equal IČO strings never nominate a profile. */
 export const classifyCustomerProfileIcoMigration = (
-  input: typeof CustomerProfileIcoMigrationInputSchema.Type,
+  input: typeof CustomerProfileIcoMigrationPlanInputSchema.Type,
   inventory: Readonly<{ assertions: readonly LegacyAssertion[]; snapshotVersion: string; tenantId: string }>,
   targets: readonly MigrationTarget[],
   targetInventoryVersion: string,
   trusted: MigrationObservation,
+  coverage?: CorrelationCoverage,
 ): CustomerProfileIcoMigrationPlan => ({
   ...input,
   authorityRevision: trusted.authorityRevision ?? null,
   partySnapshotVersion: inventory.snapshotVersion,
-  records: classifyCustomerProfileIcoMigrationRecords(input, inventory, targets, trusted),
+  records: classifyCustomerProfileIcoMigrationRecords(input, inventory, targets, trusted, coverage),
   targetInventoryVersion,
   tenantId: inventory.tenantId,
   version: 1,

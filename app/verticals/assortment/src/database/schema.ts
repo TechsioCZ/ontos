@@ -233,6 +233,7 @@ export const applicabilityBindings = assortmentSchema.table.withRLS(
     ...scopeColumns(),
     ruleRevisionId: uuid('rule_revision_id').notNull(),
     bindingKind: text('binding_kind').notNull(),
+    fixtureScopeVersion: text('fixture_scope_version').$type<'C14_CANONICAL_V1'>(),
     customerGroupResourceId: text('customer_group_resource_id'),
     subjectKind: text('subject_kind'),
     subjectResourceId: text('subject_resource_id'),
@@ -265,6 +266,16 @@ export const applicabilityBindings = assortmentSchema.table.withRLS(
       sql`(${table.bindingKind} = 'SHARED' and ${table.customerGroupResourceId} is null and ${table.subjectKind} is null and ${table.subjectResourceId} is null) or (${table.bindingKind} = 'COMMERCE_CUSTOMER_GROUP' and ${table.customerGroupResourceId} is not null and ${table.subjectKind} is null and ${table.subjectResourceId} is null) or (${table.bindingKind} = 'SUBJECT' and ${table.customerGroupResourceId} is null and ${table.subjectKind} in ('RETAIL_CUSTOMER_PROFILE', 'COUNTERPARTY') and ${table.subjectResourceId} is not null)`,
     ),
     trimmed('assortment_bindings_channel_ck', table.channelResourceId),
+    check(
+      'assortment_bindings_fixture_scope_version_ck',
+      sql`${table.fixtureScopeVersion} is null or (
+        ${table.fixtureScopeVersion} = 'C14_CANONICAL_V1'
+        and ${table.bindingKind} = 'COMMERCE_CUSTOMER_GROUP'
+        and ${table.channelResourceId} in ('B2C', 'B2B')
+        and ${table.marketResourceId} is not null
+        and ${table.storefrontResourceId} is not null
+      )`,
+    ),
     ...scopedPolicies('assortment_bindings_scope', table),
     fixtureRoutineInsert('assortment_bindings', table, table.legalEntityId),
   ],

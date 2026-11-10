@@ -251,13 +251,19 @@ const symmySyncAdmissionReadKey = 'integration.symmy.api.symmy-sync-admission';
 const routeScopeOperations = (destination: InstalledContract, route: Route, facts: RouteScopeFacts) => {
   if (destination.deployment.appId === symmyAudience) {
     if (facts.sourcePurpose === 'admit') {
+      const syncRoute = facts.routeKey === 'customerGroupsBatch' || facts.routeKey === 'inventoryStockBatch';
+      const replay = route.replayIdempotencyDigest !== undefined;
+      const replayActionKey = syncRoute ? 'integration.symmy.admit-symmy-sync' : 'integration.symmy.admit-symmy-job';
       return [
         ...destination.manifest.publicSurface.actions.flatMap((action) =>
-          symmyAdmissionActions.has(action.actionKey) && action.entrypoint.access === 'write'
+          symmyAdmissionActions.has(action.actionKey) &&
+          action.entrypoint.access === 'write' &&
+          (!replay || action.actionKey === replayActionKey)
             ? [{ entrypointKey: action.entrypoint.entrypointKey, schemaVersion: action.schemaVersion }]
             : [],
         ),
         ...(destination.manifest.publicSurface.operationContracts ?? []).flatMap((operation) =>
+          (!replay || syncRoute) &&
           operation.entrypoint.entrypointKey === symmySyncAdmissionReadKey &&
           operation.schemaVersion === '1' &&
           operation.entrypoint.access === 'read'
@@ -312,7 +318,7 @@ export const issueSymmyRouteScopeAssertion = Effect.fn('SymmyRouteScope.issueAss
   if (installed.composition.revision !== facts.compositionRevision || destination === undefined) {
     return yield* delegationForbidden();
   }
-  const routeScope = yield* Schema.decodeUnknownEffect(RegisteredGatewayRouteScopeSchema)({
+  const routeScopeInput = {
     legalEntityId: principal.legalEntityId,
     mappingVersion: route.mappingVersion,
     operations: routeScopeOperations(destination, route, facts),
@@ -324,7 +330,13 @@ export const issueSymmyRouteScopeAssertion = Effect.fn('SymmyRouteScope.issueAss
     sourceRouteId: route.sourceRouteId,
     sourceRouteRevision: route.sourceRouteRevision,
     tenantId: principal.tenantId,
-  }).pipe(Effect.mapError(delegationUnavailable));
+  };
+  if (route.replayIdempotencyDigest !== undefined) {
+    Object.assign(routeScopeInput, { replayIdempotencyDigest: route.replayIdempotencyDigest });
+  }
+  const routeScope = yield* Schema.decodeUnknownEffect(RegisteredGatewayRouteScopeSchema)(routeScopeInput).pipe(
+    Effect.mapError(delegationUnavailable),
+  );
   return yield* issueRouteScopedGatewayContextAssertion({
     audience: input.audience,
     compositionRevision: facts.compositionRevision,

@@ -19,6 +19,7 @@ import { defineOntosModuleManifest, ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY 
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 import { executePrivacyMeasureWorker } from './src/workers/execute-privacy-measure.worker.ts';
 // <generated-module-manifest-imports>
+import { customerGroupDetailRead } from './src/api/customer-group-detail.read.ts';
 import { addSavedAddressAction } from './src/actions/add-saved-address.action.ts';
 import { administerCommerceQuantityRuleAction } from './src/actions/administer-commerce-quantity-rule.action.ts';
 import { administerMarketBootstrapPolicyAction } from './src/actions/administer-market-bootstrap-policy.action.ts';
@@ -447,6 +448,11 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
     events: [],
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
+      {
+        apiKey: 'customer-group-detail',
+        operationKey: 'customerGroupDetail.execute',
+        registration: customerGroupDetailRead,
+      },
       {
         apiKey: 'migrate-organization-customer-profile-ico-action',
         operationKey: 'migrateOrganizationCustomerProfileIcoAction.execute',

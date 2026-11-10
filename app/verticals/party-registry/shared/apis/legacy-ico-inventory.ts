@@ -11,8 +11,21 @@ import {
 import { PartyRefSchema } from '../resources/party.ts';
 import { PartyOfficialIdentifierRefSchema } from '../resources/party-official-identifier.ts';
 
+const witnessId = Schema.String.check(Schema.isUUID());
+export const IcoCorrelationEpochSchema = LegacyIcoSnapshotVersionSchema;
+export const IcoCorrelationWitnessSchema = Schema.Struct({
+  counterpartyId: witnessId,
+  epoch: IcoCorrelationEpochSchema,
+  legalEntityId: witnessId,
+  signature: LegacyIcoSnapshotVersionSchema,
+});
+export type IcoCorrelationWitness = typeof IcoCorrelationWitnessSchema.Type;
+export const IcoCorrelationWitnessesSchema = Schema.Array(IcoCorrelationWitnessSchema).check(Schema.isMaxLength(4096));
 export const LegacyIcoInventoryRequestSchema = Schema.Struct({
+  commitFenceChallenge: Schema.optionalKey(witnessId),
+  includeCorrelationWitness: Schema.optionalKey(Schema.Literal(true)),
   projection: Schema.optionalKey(LegacyIcoInventoryProjectionSchema),
+  verifyCorrelationWitnesses: Schema.optionalKey(IcoCorrelationWitnessesSchema),
 });
 export type LegacyIcoInventoryRequest = typeof LegacyIcoInventoryRequestSchema.Type;
 export const LegacyIcoInventoryAssertionSchema = Schema.Struct({
@@ -43,10 +56,18 @@ export const LegacyIcoInventoryAssertionSchema = Schema.Struct({
   ]),
 });
 export type LegacyIcoInventoryAssertion = typeof LegacyIcoInventoryAssertionSchema.Type;
+export const IcoCorrelationCoverageSchema = Schema.Struct({
+  epoch: IcoCorrelationEpochSchema,
+  foreignMatchCounts: Schema.optionalKey(
+    Schema.Array(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 4096 }))),
+  ),
+});
 export const LegacyIcoInventoryResponseSchema = Schema.Struct({
   tenantId: Schema.String.check(Schema.isUUID()),
+  commitFenceHeld: Schema.optionalKey(Schema.Boolean),
   completeness: Schema.Literal('ALL_LEGACY_ICO_ASSERTIONS'),
   snapshotVersion: LegacyIcoSnapshotVersionSchema,
+  correlationCoverage: Schema.optionalKey(IcoCorrelationCoverageSchema),
   assertions: Schema.Array(LegacyIcoInventoryAssertionSchema),
   authority: Schema.Union([
     Schema.Struct({ kind: Schema.Literal('LEGACY_PARTY') }),

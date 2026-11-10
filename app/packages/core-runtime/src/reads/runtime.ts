@@ -2,12 +2,7 @@ import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import {
   readVerifiedGatewayPrivacyDispatch,
   readVerifiedGatewayOrganizationGovernanceRead,
-  readVerifiedGatewayOrganizationProcessingRead,
   readVerifiedGatewayWorkload,
-  isOrganizationProcessingReadInput,
-  organizationProcessingReadOperationContract,
-  organizationGovernanceReadOperationContract,
-  privacyDispatchOperationContract,
   decodeTrustedPrincipalContext,
   readVerifiedGatewayRecovery,
   isTrustedSupportRecoveryPrincipalContext,
@@ -676,34 +671,35 @@ interface OrganizationProcessingReadValidationInput {
   readonly decodedInput: unknown;
   readonly entrypointKey: string;
   readonly principal: TrustedPrincipalContext;
+  readonly requestPurpose: string | undefined;
   readonly schemaVersion: string;
 }
 const requireOrganizationProcessingReadInput = Effect.fn('ReadRuntime.requireOrganizationProcessingRead')(
   function* requireOrganizationProcessingReadInput(
     input: OrganizationProcessingReadValidationInput,
   ): Effect.fn.Return<void, ReadInputValidationError> {
-    const processing = readVerifiedGatewayOrganizationProcessingRead(input.principal);
-    const expected = organizationProcessingReadOperationContract();
     const workload = readVerifiedGatewayWorkload(input.principal);
+    const processing = workload?.organizationProcessingRead;
     if (processing === undefined) {
-      if (workload !== undefined && workload.recovery === undefined && input.entrypointKey === expected.entrypointKey) {
+      if (workload !== undefined && input.requestPurpose !== undefined) {
         return yield* new ReadInputValidationError({
           code: 'read_input_invalid',
-          reason: 'The workload SourceFacts Read requires finite PROCESSING authority',
+          reason: 'The declared workload Read requires finite request authority',
         });
       }
       return yield* Effect.void;
     }
     const hash = yield* computeRequiredReadQueryHash(input.decodedInput);
     if (
-      !isOrganizationProcessingReadInput(input.decodedInput) ||
-      expected.entrypointKey !== input.entrypointKey ||
-      expected.schemaVersion !== input.schemaVersion ||
+      input.requestPurpose === undefined ||
+      !Schema.is(Schema.Struct({ purpose: Schema.Literal(input.requestPurpose) }))(input.decodedInput) ||
+      workload?.entrypointKey !== input.entrypointKey ||
+      workload.schemaVersion !== input.schemaVersion ||
       hash !== processing.requestHash
     ) {
       return yield* new ReadInputValidationError({
         code: 'read_input_invalid',
-        reason: 'Organization processing authority does not match the exact PROCESSING Read request',
+        reason: 'Finite workload authority does not match the declared purpose and exact Read request',
       });
     }
     return yield* Effect.void;
@@ -1233,11 +1229,12 @@ const readRuntimeFromDependencies = <
       decodedInput,
       entrypointKey: input.registration.descriptor.entrypoint.entrypointKey,
       principal,
+      requestPurpose: input.registration.descriptor.accessWorkload?.requestPurpose,
       schemaVersion: input.registration.descriptor.schemaVersion,
     });
     const organizationRead = readVerifiedGatewayOrganizationGovernanceRead(principal);
     if (organizationRead !== undefined) {
-      const expected = organizationGovernanceReadOperationContract();
+      const expected = organizationRead.target;
       const hash = yield* computeRequiredReadQueryHash(decodedInput);
       if (
         expected.entrypointKey !== input.registration.descriptor.entrypoint.entrypointKey ||
@@ -1252,7 +1249,7 @@ const readRuntimeFromDependencies = <
     }
     const privacyDispatch = readVerifiedGatewayPrivacyDispatch(principal);
     if (privacyDispatch !== undefined) {
-      const expected = privacyDispatchOperationContract(privacyDispatch.operation);
+      const expected = privacyDispatch.target;
       const hash = yield* computeRequiredReadQueryHash(decodedInput);
       if (
         expected.access !== 'read' ||

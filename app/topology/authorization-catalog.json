@@ -11215,6 +11215,32 @@
       "descriptors": [
         {
           "accessDeclaration": {
+            "key": "commerce.market-catalog.assortment-fixture-market-association.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "assortment-fixture-market-association",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "commerce.market-catalog.api.assortment-fixture-market-association",
+            "moduleKey": "commerce.market-catalog",
+            "role": "api",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "commerce.market-catalog.home.read",
             "kind": "read",
             "modes": [

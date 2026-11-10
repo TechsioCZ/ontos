@@ -15,6 +15,7 @@ import { organizationIcoBusinessFacts } from '../../src/services/organization-ic
 
 export const makeOrganizationIcoApplicabilityFixture = (ids: {
   authMethod?: string;
+  effectiveFrom?: string;
   evaluatedAt?: string;
   legalEntityId: string;
   partyId?: string;
@@ -23,7 +24,7 @@ export const makeOrganizationIcoApplicabilityFixture = (ids: {
   tenantId: string;
   versionId?: string;
 }) => {
-  const from = '2026-11-01T00:00:00.000Z';
+  const from = ids.effectiveFrom ?? '2026-11-01T00:00:00.000Z';
   const evaluatedAt = ids.evaluatedAt ?? '2026-11-07T12:00:00.000Z';
   const until = DateTime.formatIso(DateTime.add(DateTime.makeUnsafe(evaluatedAt), { days: 30 }));
   const purposeId = ids.purposeId ?? '71000000-0000-4000-8000-000000000010';

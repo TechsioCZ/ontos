@@ -13,10 +13,7 @@ import {
   readVerifiedGatewayScopeAssertion,
   readVerifiedGatewayWorkload,
   readVerifiedGatewayPrivacyDispatch,
-  privacyDispatchOperationContract,
   readVerifiedGatewayOrganizationGovernanceRead,
-  organizationGovernanceReadOperationContract,
-  organizationProcessingReadOperationContract,
   readVerifiedGatewayOrganizationProcessingRead,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { Crypto } from 'effect';
@@ -27,6 +24,8 @@ import {
   GatewaySourceActionKeySchema,
   GatewayRecoveryIntentFields,
   GatewayPrivacyDispatchOperationSchema,
+  organizationGovernanceReadOperationContract,
+  privacyDispatchOperationContract,
 } from './gateway-context.ts';
 import { issueDelegatedGatewayContext } from './gateway-context-api-key.ts';
 import type { GatewayContextResponse, GatewayDelegatedContextRequest } from './gateway-context.ts';
@@ -292,7 +291,6 @@ const checkPrivacyWorker = Effect.fn('GatewayDelegation.checkPrivacyWorker')(fun
   if (
     fact.providerAppId !== target.appId ||
     fact.providerEntrypointKey !== target.entrypointKey ||
-    fact.providerSchemaVersion !== target.schemaVersion ||
     fact.tenantId !== context.tenantId ||
     fact.compositionRevision !== context.compositionRevision
   ) {
@@ -312,7 +310,7 @@ const checkPrivacyContinuation = Effect.fn('GatewayDelegation.checkPrivacyContin
         reason: 'A sealed finite Privacy dispatch scope and exact conditional contract are required',
       });
     }
-    const source = privacyDispatchOperationContract(metadata.operation);
+    const source = metadata.target;
     const target = privacyDispatchOperationContract(subject.operation._tag);
     const fact = yield* readModuleOperationRequirement(key, scope).pipe(
       Effect.mapError(
@@ -328,7 +326,6 @@ const checkPrivacyContinuation = Effect.fn('GatewayDelegation.checkPrivacyContin
       fact.consumerSchemaVersion !== source.schemaVersion ||
       fact.providerAppId !== target.appId ||
       fact.providerEntrypointKey !== target.entrypointKey ||
-      fact.providerSchemaVersion !== target.schemaVersion ||
       fact.compositionRevision !== readVerifiedGatewayCompositionRevision(scope) ||
       fact.tenantId !== scope.tenantId
     ) {
@@ -600,20 +597,18 @@ export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acqui
             reason: 'A finite processing Read cannot authorize onward delegation',
           });
         }
-        if (subject.processingRequestHash !== undefined) {
-          const operation = organizationProcessingReadOperationContract();
-          if (
-            sourceWorkload === undefined ||
+        if (
+          subject.processingRequestHash !== undefined &&
+          (sourceWorkload === undefined ||
             sourceWorkload.recovery !== undefined ||
             subject.recoveryRequestHash !== undefined ||
-            request.audience !== operation.appId ||
-            subject.declarationKey !== operation.declarationKey ||
-            request.legalEntityScope !== 'subject'
-          ) {
-            return yield* new GatewayDelegationSourceError({
-              reason: 'Processing request authority requires its exact scoped workload Read',
-            });
-          }
+            request.audience !== 'symmy-integration' ||
+            subject.declarationKey !== 'integration.symmy.symmy-source-organization-facts.read' ||
+            request.legalEntityScope !== 'subject')
+        ) {
+          return yield* new GatewayDelegationSourceError({
+            reason: 'Processing request authority requires its exact scoped workload Read',
+          });
         }
         if (subject.operationRequirementKey === undefined) {
           return yield* Effect.void;

@@ -1,5 +1,8 @@
 import { Schema } from 'effect';
-import { LegacyIcoInventoryAssertionSchema } from '@app/party-registry/apis/legacy-ico-inventory';
+import {
+  IcoCorrelationWitnessesSchema,
+  LegacyIcoInventoryAssertionSchema,
+} from '@app/party-registry/apis/legacy-ico-inventory';
 import { PartyOfficialIdentifierRefSchema } from '@app/party-registry/resources/party-official-identifier';
 import { CounterpartyPurchasingProfileRefSchema } from '../resources/counterparty-purchasing-profile.ts';
 import { CounterpartyOrganizationIcoFactsResponseSchema } from '@app/party-registry/apis/counterparty-organization-ico-facts';
@@ -16,10 +19,14 @@ const OpaqueIdSchema = Schema.toEncoded(
 );
 const VersionSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const AuthorityRevisionSchema = Schema.toEncoded(Schema.OptionFromNullOr(Schema.Int.check(Schema.isGreaterThan(0))));
-export const OrganizationProfileIcoMigrationInputSchema = Schema.Struct({
+const OrganizationProfileIcoMigrationPlanInputSchema = Schema.Struct({
   asOf: ProfileInstantSchema,
   planId: OpaqueIdSchema,
   sourceContext: Schema.Null,
+});
+export const OrganizationProfileIcoMigrationInputSchema = Schema.Struct({
+  ...OrganizationProfileIcoMigrationPlanInputSchema.fields,
+  correlationWitnesses: Schema.optionalKey(IcoCorrelationWitnessesSchema),
 });
 export type OrganizationProfileIcoMigrationInput = typeof OrganizationProfileIcoMigrationInputSchema.Type;
 export const OrganizationProfileIcoMigrationLegacySchema = Schema.Struct({
@@ -27,8 +34,9 @@ export const OrganizationProfileIcoMigrationLegacySchema = Schema.Struct({
   provenance: Schema.Struct({ ownerReceiptRef: PartyOfficialIdentifierRefSchema }),
 });
 export const OrganizationProfileIcoMigrationPreparedPlanSchema = Schema.Struct({
-  ...OrganizationProfileIcoMigrationInputSchema.fields,
+  ...OrganizationProfileIcoMigrationPlanInputSchema.fields,
   authorityRevision: AuthorityRevisionSchema,
+  correlationCoverageVersion: Schema.optionalKey(VersionSchema),
   nativeTargetInventoryVersion: VersionSchema,
   partySnapshotVersion: VersionSchema,
   projection: Schema.Literal(ORGANIZATION_ICO_MIGRATION_PROJECTION),
@@ -63,8 +71,10 @@ export const OrganizationProfileIcoMigrationTargetSchema = Schema.Struct({
   profileRevision: Schema.Int.check(Schema.isGreaterThan(0)),
 });
 export const OrganizationProfileIcoMigrationReportSchema = Schema.Struct({
-  ...OrganizationProfileIcoMigrationInputSchema.fields,
+  ...OrganizationProfileIcoMigrationPlanInputSchema.fields,
   authorityRevision: AuthorityRevisionSchema,
+  correlationCoverageVersion: Schema.optionalKey(VersionSchema),
+  homeCorrelationWitnesses: Schema.optionalKey(IcoCorrelationWitnessesSchema),
   nativeTargetInventoryVersion: VersionSchema,
   partySnapshotVersion: VersionSchema,
   projection: Schema.Literal(ORGANIZATION_ICO_MIGRATION_PROJECTION),

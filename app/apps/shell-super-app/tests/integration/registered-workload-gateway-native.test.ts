@@ -151,6 +151,7 @@ const sourceFactsKey = 'integration.symmy.api.symmy-source-organization-facts';
 const sourceFactsCapability = 'integration.symmy.symmy-source-organization-facts.read';
 const sourceFactsWorkload = 'integration.symmy.source-organization-facts.read';
 const sourceFactsRequirement = 'privacy.core.requirement.organization-business-source-facts';
+const sourceFactsVersion = '2';
 const privacyProviderKey = 'native-privacy-module-credential';
 const organizationBusinessEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
@@ -324,7 +325,11 @@ const processingRuntimeFixture = (
         selectors: [],
       },
       accessKind: 'detail',
-      accessWorkload: { reason: 'Exact processing facts', workloads: [sourceFactsWorkload] },
+      accessWorkload: {
+        reason: 'Exact processing facts',
+        requestPurpose: 'PROCESSING',
+        workloads: [sourceFactsWorkload],
+      },
       entrypoint: sourceFactsEntrypoint,
       evidencePolicy: { captureMode: 'metadata_only', policyKey: 'integration.symmy.native-processing-read' },
       inputSchema: SymmySourceOrganizationFactsRequestSchema,
@@ -333,7 +338,7 @@ const processingRuntimeFixture = (
       policies: [],
       readKey: sourceFactsKey,
       resultSchema: SymmySourceOrganizationFactsResponseSchema,
-      schemaVersion: '1',
+      schemaVersion: sourceFactsVersion,
     },
     () =>
       Effect.sync(() => {
@@ -516,7 +521,7 @@ const contractInputs = () => {
               apiKey: 'integration.symmy.symmy-source-organization-facts',
               entrypoint: sourceFactsEntrypoint,
               operationKey: 'symmySourceOrganizationFacts.execute',
-              schemaVersion: '1',
+              schemaVersion: sourceFactsVersion,
             },
           ],
           resourceTypes: [importJobResourceDescriptor],
@@ -718,7 +723,7 @@ const contractInputs = () => {
               entrypointKey: organizationBusinessKey,
               evidence: ['privacy.core.evidence.current-organization-source'],
               key: sourceFactsRequirement,
-              provider: { entrypointKey: sourceFactsKey, moduleId: sourceModule, schemaVersion: '1' },
+              provider: { entrypointKey: sourceFactsKey, moduleId: sourceModule, schemaVersion: sourceFactsVersion },
             },
           ],
           schemaVersion: '1',
@@ -1020,7 +1025,7 @@ it.live(
                   entrypointKey: sourceFactsKey,
                   jobKey: 'privacy.core.organization-business-source-facts',
                   legalEntityScope: 'required',
-                  schemaVersion: '1',
+                  schemaVersion: sourceFactsVersion,
                   sourceWorkloadKey: organizationBusinessWorkload,
                   workloadKey: sourceFactsWorkload,
                 },
@@ -1640,7 +1645,7 @@ it.live(
                     entrypointKey: sourceFactsKey,
                     jobKey: 'privacy.core.organization-business-source-facts',
                     legalEntityScope: 'required',
-                    schemaVersion: '2',
+                    schemaVersion: '1',
                     sourceWorkloadKey: organizationBusinessWorkload,
                     workloadKey: sourceFactsWorkload,
                   },
@@ -1792,9 +1797,10 @@ it.live(
           });
           const processingAccessWorkload = yield* Schema.decodeUnknownEffect(AccessWorkloadSchema)({
             reason: 'Exact native Privacy organization source read',
+            requestPurpose: 'PROCESSING',
             workloads: [sourceFactsWorkload],
           });
-          const exactProcessingOperation = { entrypointKey: sourceFactsKey, schemaVersion: '1' };
+          const exactProcessingOperation = { entrypointKey: sourceFactsKey, schemaVersion: sourceFactsVersion };
           const decideProcessing = (operation = exactProcessingOperation) =>
             nativeMachineGate(runtime).decide({
               carrier: {
@@ -1920,11 +1926,12 @@ it.live(
           expect(processingScope.legalEntityId).toBe(legalEntityId);
           expect(readVerifiedGatewayWorkload(processingScope)?.claimId).toBe('native-claim');
           expect(readVerifiedGatewayWorkload(processingScope)?.originalPrincipalId).toBe(originalPrincipal);
-          expect((yield* decideProcessing({ entrypointKey: sourceFactsKey, schemaVersion: '2' })).outcome).toBe(
+          expect((yield* decideProcessing({ entrypointKey: sourceFactsKey, schemaVersion: '1' })).outcome).toBe(
             'DENIED',
           );
           expect(
-            (yield* decideProcessing({ entrypointKey: `${sourceFactsKey}.write`, schemaVersion: '1' })).outcome,
+            (yield* decideProcessing({ entrypointKey: `${sourceFactsKey}.write`, schemaVersion: sourceFactsVersion }))
+              .outcome,
           ).toBe('DENIED');
           for (const denied of [
             { ...processingSubject, operationRequirementKey: 'privacy.core.requirement.unrelated' },

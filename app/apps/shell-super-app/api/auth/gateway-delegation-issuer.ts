@@ -3,9 +3,7 @@ import { admitRegisteredGatewayRecovery } from './gateway-recovery-evidence.ts';
 import {
   RegisteredGatewayWorkloadSchema,
   RegisteredGatewayPrivacyDispatchSchema,
-  privacyDispatchOperationContract,
   RegisteredGatewayOrganizationGovernanceReadSchema,
-  organizationGovernanceReadOperationContract,
   preserveSystemPrincipalContextTrust,
   readVerifiedGatewayCompositionRevision,
   readVerifiedGatewayScopeAssertion,
@@ -27,6 +25,8 @@ import {
   GatewayPrivacyDispatchSubjectSchema,
   GatewayOrganizationGovernanceReadSubjectSchema,
   GatewayTrustedPrincipalContextSchema,
+  organizationGovernanceReadOperationContract,
+  privacyDispatchOperationContract,
 } from '@app/shared-contracts';
 import { DateTime, Effect, Match, Predicate, Schema } from 'effect';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -321,15 +321,15 @@ const issueFinitePrivacyDispatch = Effect.fn('GatewayDelegation.issueFinitePriva
   }) {
     const { actor, binding, installed, now, payload } = input;
     const source = installed.contracts.find((contract) => contract.deployment.appId === binding.sourceAppId);
-    const target = privacyDispatchOperationContract(payload.subject.operation._tag);
+    const approvedTarget = privacyDispatchOperationContract(payload.subject.operation._tag);
     const destination = installed.contracts.find((contract) => contract.deployment.appId === payload.audience);
     if (
       payload.legalEntityScope !== 'subject' ||
-      payload.audience !== target.appId ||
+      payload.audience !== approvedTarget.appId ||
       installed.composition.revision !== payload.compositionRevision ||
       binding.compositionRevision !== installed.composition.revision ||
       source?.deployment.buildMarker !== binding.sourceBuildMarker ||
-      destination?.manifest.module.id !== target.moduleId
+      destination?.manifest.module.id !== approvedTarget.moduleId
     ) {
       return yield* delegationForbidden();
     }
@@ -340,10 +340,14 @@ const issueFinitePrivacyDispatch = Effect.fn('GatewayDelegation.issueFinitePriva
       subject: payload.subject,
     });
     const admitted = readAdmittedPrivacyDispatch(witness);
-    if (
-      admitted === undefined ||
-      gatewayPublishedOperationAccess(destination, target.entrypointKey, target.schemaVersion) !== target.access
-    ) {
+    if (admitted === undefined) {
+      return yield* delegationForbidden();
+    }
+    const target = privacyDispatchOperationContract(
+      admitted.privacyDispatch.operation,
+      admitted.privacyDispatch.target,
+    );
+    if (gatewayPublishedOperationAccess(destination, target.entrypointKey, target.schemaVersion) !== target.access) {
       return yield* delegationForbidden();
     }
     const moduleKeys = [source.manifest.module.id, destination.manifest.module.id];

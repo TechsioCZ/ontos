@@ -435,58 +435,60 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       sourceRouteId,
       tenantId,
     });
-    const priceGroupEffectiveFrom = DateTime.add(observedAt, { seconds: 45 });
-    const plan = yield* Schema.decodeUnknownEffect(SymmyInternalExecutionPlanSchema)({
-      items: [
-        ...(yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(customerPlan)).items,
-        ...(configuration.includePriceGroup
-          ? [
-              {
-                effects: [
-                  {
-                    effectKey: 'price-group-create',
-                    intent: {
-                      _tag: 'PriceGroupCreate',
-                      payload: {
-                        businessCode: 'INTERNAL_C14_EXPLICIT_GROUP',
-                        classificationPurpose: 'Explicit internal assignment fixture',
-                        compatibilityContracts: [
-                          { contractId: 'commerce.customer-price-group-assignment.v1', version: 1 },
-                        ],
-                        description: 'Actual native producer for the explicit Retail assignment',
-                        displayName: 'Internal explicit group',
-                        effectiveFrom: DateTime.formatIso(priceGroupEffectiveFrom),
-                        effectiveTo: null,
-                        expectedCatalogRevision: 0,
-                        reason: 'INTERNAL_C14 genuine owner producer fixture',
-                        sourceCorrelation: {
-                          issuer: internalCustomerSource.issuerId,
-                          mappingVersion: internalCustomerSource.mappingVersion,
-                          namespace: internalCustomerSource.namespace,
-                          recordKey: 'INTERNAL_C14_EXPLICIT_GROUP',
-                          routeId: sourceRouteId,
+    const priceGroupOccurrenceId = yield* uuid;
+    const planFor = Effect.fn('SymmyC14CustomerFixture.plan')(function* planFor(priceGroupEffectiveFrom: DateTime.Utc) {
+      return yield* Schema.decodeUnknownEffect(SymmyInternalExecutionPlanSchema)({
+        items: [
+          ...(yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(customerPlan)).items,
+          ...(configuration.includePriceGroup
+            ? [
+                {
+                  effects: [
+                    {
+                      effectKey: 'price-group-create',
+                      intent: {
+                        _tag: 'PriceGroupCreate',
+                        payload: {
+                          businessCode: 'INTERNAL_C14_EXPLICIT_GROUP',
+                          classificationPurpose: 'Explicit internal assignment fixture',
+                          compatibilityContracts: [
+                            { contractId: 'commerce.customer-price-group-assignment.v1', version: 1 },
+                          ],
+                          description: 'Actual native producer for the explicit Retail assignment',
+                          displayName: 'Internal explicit group',
+                          effectiveFrom: DateTime.formatIso(priceGroupEffectiveFrom),
+                          effectiveTo: null,
+                          expectedCatalogRevision: 0,
+                          reason: 'INTERNAL_C14 genuine owner producer fixture',
+                          sourceCorrelation: {
+                            issuer: internalCustomerSource.issuerId,
+                            mappingVersion: internalCustomerSource.mappingVersion,
+                            namespace: internalCustomerSource.namespace,
+                            recordKey: 'INTERNAL_C14_EXPLICIT_GROUP',
+                            routeId: sourceRouteId,
+                          },
                         },
                       },
+                      operation: {
+                        entrypointKey: priceGroupCreateAction,
+                        moduleId: priceGroupModule,
+                        schemaVersion: '1',
+                      },
                     },
-                    operation: {
-                      entrypointKey: priceGroupCreateAction,
-                      moduleId: priceGroupModule,
-                      schemaVersion: '1',
-                    },
+                  ],
+                  itemKey: 'price-group',
+                  source: {
+                    entityKind: 'PRICE_GROUP',
+                    issuerId: internalCustomerSource.issuerId,
+                    sourceNamespace: internalCustomerSource.namespace,
+                    sourceRecordId: 'INTERNAL_C14_EXPLICIT_GROUP',
                   },
-                ],
-                itemKey: 'price-group',
-                source: {
-                  entityKind: 'PRICE_GROUP',
-                  issuerId: internalCustomerSource.issuerId,
-                  sourceNamespace: internalCustomerSource.namespace,
-                  sourceRecordId: 'INTERNAL_C14_EXPLICIT_GROUP',
+                  sourceOccurrenceId: priceGroupOccurrenceId,
                 },
-                sourceOccurrenceId: yield* uuid,
-              },
-            ]
-          : []),
-      ],
+              ]
+            : []),
+        ],
+      });
     });
     const sourceIdentity = {
       issuer: internalCustomerSource.issuerId,
@@ -544,7 +546,7 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
     });
     yield* admin`insert into commerce_customer_context.customer_profile_source_routes(tenant_id,legal_entity_id,route_id,route_revision,principal_id,issuer,namespace,record_type,mapping_revision,active)
           values(${tenantId},${legalEntityId},${sourceRouteId},${internalCustomerSource.routeRevision},${systemId},${sourceIdentity.issuer},${sourceIdentity.namespace},${sourceIdentity.recordType},${internalCustomerSource.mappingVersion},true)`;
-    const encodedPlan = yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(plan);
+    const encodedPlan = yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(yield* planFor(observedAt));
     const configuredPlan = yield* Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)({
       ...encodedPlan,
       items: encodedPlan.items.map((item) => ({
@@ -580,6 +582,7 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       ONTOS_GATEWAY_PUBLIC_JWKS: shell.publicJwks,
       ONTOS_PARTY_CLIENT_SOURCE_BINDINGS: yield* json([
         { ...sourceIdentity, authMethod: 'system', principalId: systemId, tenantId },
+        { ...sourceIdentity, authMethod: 'api_key', principalId: integration.principalId, tenantId },
       ]),
       ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: yield* Schema.encodeEffect(
         Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
@@ -639,6 +642,15 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       ownerDiagnostics.set(appId, receiver.diagnostic);
       ownerRuntimes.set(appId, { artifacts, contract, moduleKey, port, receiver });
     }
+    const symmy = contracts.find(({ deployment }) => deployment.appId === symmyAppId);
+    const moduleKey = moduleKeys.get(symmyAppId);
+    assert.isOk(symmy);
+    if (moduleKey === undefined) {
+      return yield* unavailable('The actual independent module credential is missing');
+    }
+    const workerArtifact = yield* buildProductWorker(symmy);
+    const priceGroupEffectiveFrom = DateTime.add(yield* DateTime.now, { seconds: 45 });
+    const plan = yield* planFor(priceGroupEffectiveFrom);
     const client = yield* HttpClient.HttpClient;
     const headers = { 'idempotency-key': 'INTERNAL_C14_CUSTOMER_JOB', 'x-api-key': Redacted.value(key.secret) };
     const submitResponse = (idempotencyKey: string, submittedPlan = plan) =>
@@ -669,13 +681,6 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       identity: { legalEntityId, observedAt, sourceRouteId, tenantId },
       submit: submitResponse,
     });
-    const symmy = contracts.find(({ deployment }) => deployment.appId === symmyAppId);
-    const moduleKey = moduleKeys.get(symmyAppId);
-    assert.isOk(symmy);
-    if (moduleKey === undefined) {
-      return yield* unavailable('The actual independent module credential is missing');
-    }
-    const workerArtifact = yield* buildProductWorker(symmy);
     const worker = yield* startProductWorker(workerArtifact, {
       ...environment,
       ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_NATIVE_WORKER',

@@ -2,7 +2,7 @@
 import type { OperationalScope } from '@app/core-runtime';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, getColumns, sql } from 'drizzle-orm';
 import { Effect, Option, Result, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import { LegacyIcoAuthorityConflict } from '../../shared/actions/fence-legacy-ico-authority.ts';
@@ -12,12 +12,13 @@ import type {
   LegacyIcoInventoryProjection,
 } from '../../shared/actions/fence-legacy-ico-authority.ts';
 import type {
+  IcoCorrelationWitness,
   LegacyIcoInventoryAssertion,
   LegacyIcoInventoryResponse,
 } from '../../shared/apis/legacy-ico-inventory.ts';
 import { PartyPersistenceUnavailable, makePartyRef } from '../../shared/domain/identity-contracts.ts';
 import type { PartyPersistenceUnavailableError } from '../../shared/domain/identity-contracts.ts';
-import { counterparties, partyOfficialIdentifiers, partyLegacyIcoAuthorityFences } from '../db/schema.ts';
+import { counterparties, partyLegacyIcoAuthorityFences, partyOfficialIdentifiers } from '../db/schema.ts';
 import type { PartyTransaction } from '../db/types.ts';
 import type { LegacyIcoOrganizationFact } from './legacy-ico-privacy.service.ts';
 import { OrganizationIcoFieldContractVersion } from '../../shared/apis/organization-ico-facts.ts';
@@ -26,6 +27,11 @@ import { checkLegacyIcoPrivacy, PartyLegacyIcoPrivacy } from './legacy-ico-priva
 import type { CounterpartyRef } from '../../shared/resources/counterparty.ts';
 import type { CounterpartyMigrationCorrelationResponse } from '../../shared/apis/counterparty-migration-correlation.ts';
 import { lockTenantIdentityWrites } from './party-identifier-claim.service.ts';
+import {
+  decodeIcoCorrelationWitness,
+  icoCorrelationWitnessSelection,
+  observeIcoCorrelationCoverage,
+} from './ico-correlation-proof.service.ts';
 
 const unavailable = (cause?: unknown) =>
   Object.assign(
@@ -37,8 +43,8 @@ const unavailable = (cause?: unknown) =>
   );
 const conflict = (reason: string) => new LegacyIcoAuthorityConflict({ code: 'legacy_ico_authority_conflict', reason });
 const encodeFingerprint = Schema.encodeResult(Schema.fromJsonString(Schema.Json));
-const digest = (value: Schema.Json) => Hex.encode(sha256(utf8ToBytes(Result.getOrThrow(encodeFingerprint(value)))));
-
+const canonicalBytes = (value: Schema.Json) => utf8ToBytes(Result.getOrThrow(encodeFingerprint(value)));
+const digest = (value: Schema.Json) => Hex.encode(sha256(canonicalBytes(value)));
 export { PartyLegacyIcoPrivacy } from './legacy-ico-privacy.service.ts';
 
 export const authorizeLegacyIco = Effect.fn('PartyLegacyIco.authorize')(function* authorize(
@@ -133,14 +139,63 @@ export const requireLegacyIcoAuthority = Effect.fn('PartyLegacyIco.requireLegacy
   }
 });
 
+const proveIcoCorrelationCommitFence = Effect.fn('PartyLegacyIco.proveCommitFence')(function* proveCommitFence(
+  transaction: Pick<PartyTransaction, 'select'>,
+  scope: OperationalScope,
+  challenge: string,
+) {
+  if (scope.legalEntityId === undefined) {
+    return false;
+  }
+  // An unpredictable challenge held by a different transaction proves the shared PostgreSQL lock domain.
+  const tenant = `ontos.owner-fact.party-ico.correlation:${scope.tenantId}`;
+  const key = `ontos.owner-fact.party-ico.challenge:${scope.tenantId}:${scope.legalEntityId}:${challenge}`;
+  const [row] = yield* transaction
+    .select({
+      held: sql<boolean>`case when pg_try_advisory_xact_lock(hashtextextended(${key},0)) then false
+        else not pg_try_advisory_xact_lock(hashtextextended(${tenant},0)) end`,
+    })
+    .from(sql`(values (1)) as party_ico_lock_anchor(value)`)
+    .pipe(Effect.mapError(unavailable));
+  return row?.held === true;
+});
+
+const lockInventoryObservation = Effect.fn('PartyLegacyIco.lockInventoryObservation')(function* lockObservation(
+  transaction: Pick<PartyTransaction, 'select'>,
+  scope: OperationalScope,
+  challenge: string | undefined,
+  requireCorrelation: boolean,
+) {
+  if (challenge !== undefined) {
+    const held = yield* proveIcoCorrelationCommitFence(transaction, scope, challenge);
+    return held ? true : yield* unavailable();
+  }
+  yield* lockTenantIdentityWrites(transaction, scope.tenantId);
+  if (requireCorrelation) {
+    const key = `ontos.owner-fact.party-ico.correlation:${scope.tenantId}`;
+    const [row] = yield* transaction
+      .select({ held: sql<boolean>`pg_try_advisory_xact_lock_shared(hashtextextended(${key},0))` })
+      .from(sql`(values (1)) as party_ico_report_lock_anchor(value)`)
+      .pipe(Effect.mapError(unavailable));
+    if (row?.held !== true) {
+      return yield* unavailable();
+    }
+  }
+  return false;
+});
+
 /** The tenant lock makes the complete read and proof one serializable owner observation. */
 export const loadLegacyIcoInventory = Effect.fn('PartyLegacyIco.loadInventory')(function* load(
   transaction: Pick<PartyTransaction, 'select'>,
   scope: OperationalScope,
   projection?: LegacyIcoInventoryProjection,
+  includeCorrelationWitness?: true,
+  witnesses?: readonly IcoCorrelationWitness[],
+  commitFenceChallenge?: string,
 ): Effect.fn.Return<LegacyIcoInventoryResponse, PartyPersistenceUnavailableError> {
   const { tenantId } = scope;
-  yield* lockTenantIdentityWrites(transaction, tenantId);
+  const requireCorrelation = includeCorrelationWitness === true || witnesses !== undefined;
+  const commitFenceHeld = yield* lockInventoryObservation(transaction, scope, commitFenceChallenge, requireCorrelation);
   const subjects = yield* transaction
     .select({ partyId: partyOfficialIdentifiers.partyId })
     .from(partyOfficialIdentifiers)
@@ -220,13 +275,27 @@ export const loadLegacyIcoInventory = Effect.fn('PartyLegacyIco.loadInventory')(
         },
   }));
   const fence = yield* findLegacyIcoFence(transaction, tenantId);
-  return {
+  const response: LegacyIcoInventoryResponse = {
     tenantId,
     completeness: 'ALL_LEGACY_ICO_ASSERTIONS',
     snapshotVersion: legacyIcoInventorySnapshotVersion(tenantId, assertions),
     assertions,
     authority: fence === undefined ? { kind: 'LEGACY_PARTY' } : { kind: 'COMMERCE_FENCED', proof: proofFromRow(fence) },
   };
+  if (commitFenceHeld) {
+    Object.assign(response, { commitFenceHeld });
+  }
+  if (requireCorrelation) {
+    const correlationCoverage = yield* observeIcoCorrelationCoverage(
+      transaction,
+      rows.map((row) => row.officialIdentifierId),
+      witnesses,
+    );
+    if (Option.isSome(correlationCoverage)) {
+      Object.assign(response, { correlationCoverage: correlationCoverage.value });
+    }
+  }
+  return response;
 });
 
 export const legacyIcoAuthorityService = (
@@ -275,12 +344,16 @@ export const findCounterpartyMigrationCorrelation = Effect.fn('PartyLegacyIco.co
     transaction: Pick<PartyTransaction, 'select'>,
     scope: OperationalScope,
     counterpartyRef: CounterpartyRef,
+    includeCorrelationWitness?: true,
   ): Effect.fn.Return<CounterpartyMigrationCorrelationResponse | undefined, PartyPersistenceUnavailableError> {
     if (counterpartyRef.tenantId !== scope.tenantId || scope.legalEntityId === undefined) {
       return;
     }
     const [row] = yield* transaction
-      .select()
+      .select({
+        ...getColumns(counterparties),
+        correlationWitness: icoCorrelationWitnessSelection(counterparties.counterpartyId, includeCorrelationWitness),
+      })
       .from(counterparties)
       .where(
         and(
@@ -295,10 +368,10 @@ export const findCounterpartyMigrationCorrelation = Effect.fn('PartyLegacyIco.co
       return;
     }
     yield* authorizeLegacyIco(scope, 'INVENTORY', [row.partyId]);
-    return {
+    const result: CounterpartyMigrationCorrelationResponse = {
+      archived: row.archivedAt !== null,
       counterpartyRef,
       partyRef: makePartyRef(scope.tenantId, row.partyId),
-      archived: row.archivedAt !== null,
       revision: digest([
         row.tenantId,
         row.counterpartyId,
@@ -311,5 +384,14 @@ export const findCounterpartyMigrationCorrelation = Effect.fn('PartyLegacyIco.co
         row.policyVersion,
       ]),
     };
+    if (includeCorrelationWitness === true) {
+      const correlationWitness = yield* decodeIcoCorrelationWitness(row.correlationWitness).pipe(
+        Effect.mapError(unavailable),
+      );
+      if (Option.isSome(correlationWitness)) {
+        Object.assign(result, { correlationWitness: correlationWitness.value });
+      }
+    }
+    return result;
   },
 );

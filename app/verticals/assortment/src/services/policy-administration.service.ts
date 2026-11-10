@@ -3,10 +3,7 @@ import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement
 import { readVerifiedGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
-import { DateTime, Effect, Match, Option, Redacted, Result, Schema } from 'effect';
-import { Hex } from 'effect/encoding';
-import { sha256 } from '@noble/hashes/sha2.js';
-import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { DateTime, Effect, Match, Option, Redacted, Schema } from 'effect';
 import { and, desc, eq } from 'drizzle-orm';
 import type {
   AssortmentBindingAudience,
@@ -18,6 +15,8 @@ import type {
   ReplaceApplicabilityBindingPayload,
   RetireRulePayload,
 } from '../../shared/actions/policy-administration.ts';
+import { projectSymmyRuleFixtureDatabaseCommand } from '../../shared/actions/policy-administration.ts';
+import { assortmentMeaningFingerprint, ruleMeaning } from '../../shared/domain/policy-fingerprint.ts';
 import {
   applicabilityBindingEndFacts,
   applicabilityBindings,
@@ -63,40 +62,7 @@ export const bindingRef = (tenantId: string, resourceId: string) => ({
   tenantId,
 });
 
-const CanonicalJsonSchema: Schema.Codec<Schema.Json> = Schema.suspend(() =>
-  Schema.Union([
-    Schema.Null,
-    Schema.Boolean,
-    Schema.Finite,
-    Schema.String,
-    Schema.Array(CanonicalJsonSchema),
-    Schema.Record(Schema.String, CanonicalJsonSchema),
-  ]),
-);
-const CanonicalJsonRecordSchema = Schema.Record(Schema.String, CanonicalJsonSchema);
-const JsonStringSchema = Schema.fromJsonString(CanonicalJsonSchema);
-const canonicalJson = (value: Schema.Json): Schema.Json => {
-  if (Array.isArray(value)) {
-    return value.map(canonicalJson);
-  }
-  if (Schema.is(CanonicalJsonRecordSchema)(value)) {
-    return Object.fromEntries(
-      Object.entries(value)
-        .toSorted(([left], [right]) => left.localeCompare(right, 'en'))
-        .map(([key, child]) => [key, canonicalJson(child)]),
-    );
-  }
-  return value;
-};
-const canonicalize = <Value extends object>(value: Value): string => {
-  const decoded = Result.getOrThrow(Schema.decodeUnknownResult(CanonicalJsonSchema)(value));
-  return Result.getOrThrow(Schema.encodeResult(JsonStringSchema)(canonicalJson(decoded)));
-};
-
-export const assortmentMeaningFingerprint = <Value extends object>(value: Value): string => {
-  const canonical = canonicalize(value);
-  return Hex.encode(sha256(utf8ToBytes(canonical)));
-};
+export { assortmentMeaningFingerprint } from '../../shared/domain/policy-fingerprint.ts';
 
 export type PolicyConflict = Readonly<{ readonly conflict: AssortmentPolicyConflictKind; readonly kind: 'conflict' }>;
 const PolicyConflictSchema = Schema.Struct({
@@ -293,12 +259,6 @@ const selectorTenant = (selector: CreateRulePayload['selector']): string | undef
 
 const trustedTenant = (scope: OperationalScope, tenantId: string, refs: readonly (string | undefined)[]): boolean =>
   tenantId === scope.tenantId && refs.every((ref) => ref === undefined || ref === scope.tenantId);
-
-const ruleMeaning = (input: Pick<CreateRulePayload, 'effect' | 'purpose' | 'selector'>) => ({
-  effect: input.effect,
-  purpose: input.purpose,
-  selector: input.selector,
-});
 
 const audienceColumns = (audience: AssortmentBindingAudience) => {
   if (audience.kind === 'SHARED') {
@@ -1323,14 +1283,13 @@ export const assortmentSymmyRuleFixtureServiceFactory = (transaction: ScopedTran
       const admitted = yield* readScopedAdmittedWorkload(transaction, scope, assortmentSymmyRuleFixtureWorkload).pipe(
         Effect.mapError(unavailable),
       );
-      if (!admitted || source === undefined) {
+      const command = projectSymmyRuleFixtureDatabaseCommand(payload);
+      if (!admitted || source === undefined || command === null) {
         return yield* new AssortmentSymmyFixtureAccessDenied({
           code: 'assortment_symmy_fixture_access_denied',
           reason: 'The exact internal fixture is outside the approved execution scope',
         });
       }
-      const { binding, rule } = payload;
-      const meaningFingerprint = assortmentMeaningFingerprint(ruleMeaning(rule));
       const rows = yield* transaction
         .invoke(importSymmyRuleFixture, [
           actionInvocationId,
@@ -1338,19 +1297,7 @@ export const assortmentSymmyRuleFixtureServiceFactory = (transaction: ScopedTran
           source.admissionInvocationId,
           source.originalPrincipalId,
           Redacted.value(permit),
-          {
-            channel: binding.commercialScope.channelRef.resourceId,
-            effect: rule.effect,
-            effectiveFrom: DateTime.formatIso(binding.effectiveFrom),
-            fingerprint: meaningFingerprint,
-            group: binding.audience.groupRef.resourceId,
-            market: binding.commercialScope.commerceMarketRef.resourceId,
-            product: rule.selector.productRef.resourceId,
-            purpose: rule.purpose,
-            reason: rule.reason,
-            stableCode: rule.stableCode,
-            storefront: binding.commercialScope.storefrontRef.resourceId,
-          },
+          command,
         ])
         .pipe(Effect.mapError(unavailable));
       const [row] = rows;
@@ -1361,7 +1308,7 @@ export const assortmentSymmyRuleFixtureServiceFactory = (transaction: ScopedTran
             created: true,
             initialRevisionNumber: 1,
             initialRuleRevisionId: row.revision_id,
-            meaningFingerprint,
+            meaningFingerprint: command.fingerprint,
             stableRuleId: row.rule_id,
           };
     }),

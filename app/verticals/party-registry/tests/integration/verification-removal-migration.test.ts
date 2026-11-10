@@ -297,7 +297,8 @@ it.layer(nativeServices, { excludeTestServices: true })('verification removal up
 
         const composition = yield* partyCompositionSnapshot;
         yield* isolated.publishInitialComposition(composition);
-        const native = yield* preparePartyReconciliationNative(isolated.connections, 'already-migrated');
+        // The historical upgrade is pinned. Continue via the canonical CLI before invoking current code.
+        const native = yield* preparePartyReconciliationNative(isolated.connections, 'migrate');
         expect(native.partyConfiguration.database).toBe(isolated.connections.admin.database);
         const governed = yield* makeGovernedContactFixture({
           adminConnectionString: isolated.connections.admin.connectionString,

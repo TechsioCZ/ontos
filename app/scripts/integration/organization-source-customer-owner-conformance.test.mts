@@ -73,7 +73,7 @@ import { executeRecordPrivacyApplicabilityWithAuthorization } from '@app/privacy
 import type { CustomerGroupRefSchema } from '@app/commerce-customer-context/resources/customer-group';
 import { observeCustomerGroupSourceNativeFixture } from '@app/commerce-customer-context/testing/customer-group-source-observation';
 import { PriceGroupRefSchema } from '@app/price-group-catalog/resources/price-group';
-import { DateTime, Duration, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { DateTime, Duration, Effect, Layer, Match, Option, Redacted, Schedule, Schema } from 'effect';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
 import { CounterpartyPurchasingProfileRefSchema } from '@app/commerce-customer-context/resources/counterparty-purchasing-profile';
@@ -351,11 +351,14 @@ const runKnownOrganizationFollowup = Effect.fn('OrganizationSourceCustomer.known
   fixture: OrganizationFixture,
   targets: KnownOrganizationTargets,
 ) {
-  let firstStatus = yield* fixture.statusFor(fixture.accepted.jobId);
-  for (let attempt = 0; attempt < 200 && firstStatus.status !== 'completed_all'; attempt += 1) {
-    yield* Effect.sleep(Duration.millis(50));
-    firstStatus = yield* fixture.statusFor(fixture.accepted.jobId);
-  }
+  const status = fixture.statusFor(fixture.accepted.jobId);
+  const firstStatus = yield* status.pipe(
+    Effect.repeat({
+      schedule: Schedule.spaced('500 millis'),
+      until: (observed) => observed.status === 'completed_all',
+    }),
+    Effect.timeoutOrElse({ duration: '60 seconds', orElse: () => status }),
+  );
   expect(firstStatus.status).toBe('completed_all');
   yield* fixture.worker.child.kill();
   yield* fixture.worker.child.exitCode;
@@ -380,10 +383,8 @@ const runKnownOrganizationFollowup = Effect.fn('OrganizationSourceCustomer.known
   expect(historical.profileRevision).toBe(facts.profileRevision);
   expect(historical.profileRef).toEqual(facts.profileRef);
   // The catalog proves a definition current at the real operation time, independently of the later assignment schedule.
-  const priceDefinitionStart = DateTime.toDateUtc(DateTime.makeUnsafe(fixture.priceEffectiveFrom)).getTime();
-  while (DateTime.toDateUtc(yield* DateTime.now).getTime() <= priceDefinitionStart) {
-    yield* Effect.sleep(Duration.millis(250));
-  }
+  const priceDefinitionStart = DateTime.makeUnsafe(fixture.priceEffectiveFrom);
+  yield* Effect.sleep(Duration.max(Duration.zero, DateTime.distance(yield* DateTime.now, priceDefinitionStart)));
   const assignmentEffectiveFrom = DateTime.formatIso(DateTime.add(yield* DateTime.now, { minutes: 2 }));
 
   const occurrenceId = randomUUID();
@@ -485,6 +486,14 @@ const runKnownOrganizationFollowup = Effect.fn('OrganizationSourceCustomer.known
         sourceOccurrenceId: occurrenceId,
       },
     ],
+  });
+  yield* fixture.seedIntake(
+    occurrenceId,
+    { kind: 'COUNTERPARTY_PURCHASING_PROFILE', resourceId: targets.profileRef.resourceId },
+    ['GROUP_MEMBERSHIP', 'PRICE_GROUP_ASSIGNMENT'],
+  );
+  yield* fixture.start('privacy', {
+    ONTOS_PRIVACY_ORGANIZATION_BUSINESS_CONTEXTS: JSON.stringify(fixture.prepared.flatMap((policy) => policy.contexts)),
   });
   const admitted = yield* fixture.submitFor('INTERNAL_ORGANIZATION_KNOWN_TARGET_JOB', plan);
   const observe = (effectKey: string) =>
@@ -595,19 +604,7 @@ const runKnownOrganizationFollowup = Effect.fn('OrganizationSourceCustomer.known
   }
   yield* Effect.logInfo({ phase: 'known-profile-governance-accepted' });
   const worker = yield* fixture.startWorker();
-  let rows = yield* fixture.ledgerFor(admitted.jobId);
-  for (
-    let attempt = 0;
-    attempt < 600 && !(rows.length === 2 && rows.every((row) => row.state === 'settled'));
-    attempt += 1
-  ) {
-    yield* Effect.sleep(Duration.millis(50));
-    rows = yield* fixture.ledgerFor(admitted.jobId);
-  }
-  if (!rows.every((row) => row.state === 'settled')) {
-    yield* fixture.writeDiagnostics();
-    yield* Effect.logError({ rows, worker: yield* worker.diagnostic });
-  }
+  const rows = yield* fixture.awaitSettled(admitted.jobId, 2);
   expect(rows).toHaveLength(2);
   expect(rows.every((row) => row.state === 'settled')).toBe(true);
   for (const effect of rows) {
@@ -687,6 +684,11 @@ const verifyOrganizationZeroLegacyIco = Effect.fn('OrganizationSourceCustomer.ic
     purpose: FIXTURE_PURPOSE,
     tenantId: fixture.tenantId,
   });
+  yield* fixture.seedIntake(
+    fixture.sourceReference.occurrenceId,
+    { kind: 'COUNTERPARTY_PURCHASING_PROFILE', resourceId: targets.profileRef.resourceId },
+    ['COMPANY_ICO'],
+  );
   yield* fixture.start('privacy', {
     ONTOS_PRIVACY_ORGANIZATION_BUSINESS_CONTEXTS: JSON.stringify(
       [...fixture.prepared, ...known.prepared, ...known.recoveryPolicies, namePolicy].flatMap(
@@ -806,11 +808,7 @@ const verifyOrganizationZeroLegacyIco = Effect.fn('OrganizationSourceCustomer.ic
     ],
   });
   const icoJob = yield* fixture.submitFor('INTERNAL_ORGANIZATION_ICO_SET', icoPlan);
-  let icoRows = yield* fixture.ledgerFor(icoJob.jobId);
-  for (let attempt = 0; attempt < 600 && !icoRows.every((row) => row.state === 'settled'); attempt += 1) {
-    yield* Effect.sleep(Duration.millis(50));
-    icoRows = yield* fixture.ledgerFor(icoJob.jobId);
-  }
+  const icoRows = yield* fixture.awaitSettled(icoJob.jobId, 1);
   expect(icoRows).toHaveLength(1);
   expect(icoRows.every((row) => row.state === 'settled')).toBe(true);
   const icoInvocation = Option.getOrUndefined(icoRows.at(0)?.ownerInvocationId ?? Option.none());
@@ -944,6 +942,9 @@ const verifyOrganizationBusinessNameUpdate = Effect.fn('OrganizationSourceCustom
         ),
         ONTOS_PRIVACY_ORGANIZATION_PROFILE_ICO_CONTEXTS: JSON.stringify(activeIcoContexts),
       });
+    yield* fixture.seedIntake(occurrenceId, { kind: 'PARTY', resourceId: before.partyRef.resourceId }, [
+      'COMPANY_NAME',
+    ]);
     yield* restart(ico.namePolicy);
     yield* executeRecordPrivacyApplicabilityWithAuthorization(
       updatePolicy.recordPayload,
@@ -979,11 +980,7 @@ const verifyOrganizationBusinessNameUpdate = Effect.fn('OrganizationSourceCustom
       ],
     });
     const accepted = yield* fixture.submitFor('INTERNAL_ORGANIZATION_COMPANY_NAME_UPDATE', plan);
-    let rows = yield* fixture.ledgerFor(accepted.jobId);
-    for (let attempt = 0; attempt < 600 && !rows.every((row) => row.state === 'settled'); attempt += 1) {
-      yield* Effect.sleep(Duration.millis(50));
-      rows = yield* fixture.ledgerFor(accepted.jobId);
-    }
+    const rows = yield* fixture.awaitSettled(accepted.jobId, 1);
     expect(rows).toHaveLength(1);
     expect(rows.every((row) => row.state === 'settled')).toBe(true);
     const after = yield* executeCustomerProfileOrganizationIcoFactsWithAuthorization(
@@ -1181,19 +1178,7 @@ it.live(
     Effect.scoped(
       Effect.gen(function* organizationSourceCustomer() {
         const fixture = yield* makeOrganizationSourceCustomerOwnerFixture();
-        let rows = yield* fixture.ledger;
-        for (
-          let attempt = 0;
-          attempt < 600 && !(rows.length === 5 && rows.every((row) => row.state === 'settled'));
-          attempt += 1
-        ) {
-          yield* Effect.sleep(Duration.millis(50));
-          rows = yield* fixture.ledger;
-        }
-        if (rows.length !== 5 || !rows.every((row) => row.state === 'settled')) {
-          yield* fixture.writeDiagnostics();
-          yield* Effect.logError({ diagnostics: JSON.stringify(yield* fixture.diagnostics), rows });
-        }
+        const rows = yield* fixture.awaitSettled(fixture.accepted.jobId, 5);
         expect(rows).toHaveLength(5);
         expect(rows.every((row) => row.state === 'settled')).toBe(true);
         const party = rows.find((row) => row.effectKey === 'party-create');
@@ -1226,6 +1211,9 @@ it.live(
           }>`select count(*)::integer as count from core.action_invocations a join symmy_integration.job_effects e on e.owner_invocation_id=a.action_invocation_id and e.tenant_id=a.tenant_id where a.action_invocation_id=${invocationId} and a.tenant_id=${fixture.tenantId} and a.legal_entity_id=${fixture.legalEntityId} and a.principal_id=${fixture.systemId} and a.status='succeeded' and e.effect_id=${effect.effectId} and e.owner_executor_principal_id=a.principal_id and e.owner_auth_context_ref=a.auth_context_ref and e.owner_request_hash=a.request_hash and a.idempotency_key=e.effect_id::text`;
           expect(native?.count).toBe(1);
         }
+        const groupEffect = rows.find((row) => row.effectKey === 'organization-group-create');
+        expect(Option.getOrNull(groupEffect?.outcomeStatus ?? Option.none())).toBe('accepted_change');
+        expect(Option.getOrNull(groupEffect?.nativeStatus ?? Option.none())).toBe('succeeded');
         const group = yield* observeCustomerGroupSourceNativeFixture({
           adminConnectionString: Redacted.make(fixture.isolated.connections.admin.connectionString),
           legalEntityId: fixture.legalEntityId,

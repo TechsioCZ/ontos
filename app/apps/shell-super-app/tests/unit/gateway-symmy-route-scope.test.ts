@@ -63,6 +63,7 @@ const request = {
 const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
   readonly activeBinding?: boolean;
   readonly catalog?: ShellInstalledCatalog;
+  readonly replayIdempotencyDigest?: string;
   readonly responseTenant?: string;
 }) {
   const { privateKey, publicKey } = yield* Effect.promise(() =>
@@ -77,7 +78,14 @@ const fixture = Effect.fn('RouteScopeTest.fixture')(function* fixture(options: {
       body: await incoming.text(),
       url: incoming.url,
     });
-    return Response.json({ ...response, tenantId: options.responseTenant ?? response.tenantId });
+    const ownerResponse = { ...response, tenantId: options.responseTenant ?? response.tenantId };
+    if (options.replayIdempotencyDigest !== undefined) {
+      Object.assign(ownerResponse, {
+        allowedOwnerOperations: [],
+        replayIdempotencyDigest: options.replayIdempotencyDigest,
+      });
+    }
+    return Response.json(ownerResponse);
   };
   const connection = testSqlConnection((statement, parameters) =>
     Effect.succeed(
@@ -314,5 +322,43 @@ it.effect('signs only exact admission Actions and the approved v1 sync lookup fo
       sourceRouteRevision: response.sourceRouteRevision,
       tenantId: principal.tenantId,
     });
+    const replayIdempotencyDigest = 'c'.repeat(64);
+    const retained = yield* fixture({
+      catalog: { ...catalog, composition: snapshot.composition },
+      replayIdempotencyDigest,
+    });
+    const cases = [
+      {
+        operations: [
+          { entrypointKey: 'integration.symmy.admit-symmy-sync', schemaVersion: '1' },
+          { entrypointKey: 'integration.symmy.api.symmy-sync-admission', schemaVersion: '1' },
+        ],
+        routeKey: 'inventoryStockBatch',
+      },
+      {
+        operations: [{ entrypointKey: 'integration.symmy.admit-symmy-job', schemaVersion: '1' }],
+        routeKey: 'customersBatch',
+      },
+    ] as const;
+    for (const { operations, routeKey } of cases) {
+      const replay = yield* Effect.gen(function* issueRetainedAdmissionLookup() {
+        const proof = yield* acquireSymmyRouteScopeProof({
+          ...request,
+          compositionRevision: snapshot.composition.revision,
+          routeRequest: { replayIdempotencyKey: 'retained-receipt-key', routeKey },
+          sourcePurpose: 'admit',
+        });
+        return yield* issueSymmyRouteScopeAssertion(proof, { audience: 'symmy-integration', legalEntityId, principal });
+      }).pipe(Effect.provide(retained.layer));
+      const retainedToken = yield* Effect.promise(() =>
+        jwtVerify(replay.token, retained.publicKey, {
+          algorithms: ['EdDSA'],
+          audience: 'symmy-integration',
+          currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(1_700_000_001_000)),
+          issuer: 'https://shell.test',
+        }),
+      );
+      expect(retainedToken.payload['routeScope']).toMatchObject({ operations, replayIdempotencyDigest, routeKey });
+    }
   }),
 );

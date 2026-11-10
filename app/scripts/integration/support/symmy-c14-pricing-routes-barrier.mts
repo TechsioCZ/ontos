@@ -11,14 +11,15 @@ import { SymmyC14ProductFixtureUnavailable } from './symmy-c14-product-runtime.m
 const unavailable = () =>
   new SymmyC14ProductFixtureUnavailable({ message: 'The owned first-Price transport barrier is unavailable' });
 
-/** Test transport only: hold one unchanged request, then lose only its real canonical accepted ACK. */
+/** Test transport only: separately hold one Price for ACK loss and another for route deactivation. */
 export const installInternalC14PriceDispatchBarrier = Effect.fn('InternalC14PricingRoutes.barrier')(
   function* installBarrier(input: { readonly port: number; readonly targetOrigin: string }) {
     const target = yield* Schema.decodeUnknownEffect(
       Schema.String.check(Schema.isPattern(/^http:\/\/127\.0\.0\.1:\d+$/u)),
     )(input.targetOrigin);
+    const httpServer = createServer();
     const server = Context.get(
-      yield* Layer.build(NodeHttpServer.layer(createServer, { host: '127.0.0.1', port: input.port })),
+      yield* Layer.build(NodeHttpServer.layer(() => httpServer, { host: '127.0.0.1', port: input.port })),
       HttpServer.HttpServer,
     );
     const arrived = yield* Deferred.make<typeof DefinePricePayloadSchema.Type>();
@@ -26,8 +27,11 @@ export const installInternalC14PriceDispatchBarrier = Effect.fn('InternalC14Pric
       yield* Deferred.make<
         Extract<typeof DefinePriceResultSchema.Type, { readonly outcome: 'PRICE_SOURCE_ASSERTION_CANONICAL_ACCEPTED' }>
       >();
-    const released = yield* Deferred.make<true>();
-    yield* Effect.addFinalizer(() => Deferred.succeed(released, true).pipe(Effect.asVoid));
+    const released = yield* Deferred.make<boolean>();
+    const revocationArrived = yield* Deferred.make<typeof DefinePricePayloadSchema.Type>();
+    const revocationReleased = yield* Deferred.make<boolean>();
+    const revocationReply = yield* Deferred.make<{ readonly code?: string; readonly status: number }>();
+    const revocationPriceId = yield* Ref.make(Option.none<string>());
     const intercepted = yield* Ref.make(false);
     const armedPriceCommandCount = yield* Ref.make(0);
     const sourceReceiptReads = yield* Ref.make(0);
@@ -37,21 +41,31 @@ export const installInternalC14PriceDispatchBarrier = Effect.fn('InternalC14Pric
       const request = yield* HttpServerRequest.toWeb(yield* HttpServerRequest.HttpServerRequest);
       const path = new URL(request.url);
       const armed = yield* Ref.get(armedPriceId);
+      const revoke = yield* Ref.get(revocationPriceId);
       let loseAcceptedReply = false;
+      let holdForRevocation = false;
       if (path.pathname.endsWith('/reads/price-source-result-lookup')) {
         yield* Ref.update(sourceReceiptReads, (count) => count + 1);
       }
-      if (path.pathname.endsWith('/actions/define-price') && Option.isSome(armed)) {
+      if (path.pathname.endsWith('/actions/define-price') && (Option.isSome(armed) || Option.isSome(revoke))) {
         const payload = yield* Effect.tryPromise({
           catch: unavailable,
           try: async () => await Schema.decodeUnknownPromise(DefinePricePayloadSchema)(await request.clone().json()),
         });
-        if (payload.priceRef.resourceId === armed.value) {
+        if (Option.isSome(armed) && payload.priceRef.resourceId === armed.value) {
           yield* Ref.update(armedPriceCommandCount, (count) => count + 1);
           if (!(yield* Ref.getAndSet(intercepted, true))) {
             loseAcceptedReply = true;
             yield* Deferred.succeed(arrived, payload);
-            yield* Deferred.await(released);
+            if (!(yield* Deferred.await(released))) {
+              return HttpServerResponse.empty({ status: 503 });
+            }
+          }
+        }
+        if (Option.isSome(revoke) && payload.priceRef.resourceId === revoke.value) {
+          holdForRevocation = yield* Deferred.succeed(revocationArrived, payload);
+          if (holdForRevocation && !(yield* Deferred.await(revocationReleased))) {
+            return HttpServerResponse.empty({ status: 503 });
           }
         }
       }
@@ -110,6 +124,16 @@ export const installInternalC14PriceDispatchBarrier = Effect.fn('InternalC14Pric
             : Effect.void,
         ),
       );
+      if (holdForRevocation) {
+        const problem = yield* Effect.tryPromise({
+          catch: unavailable,
+          try: async () =>
+            await Schema.decodeUnknownPromise(Schema.Struct({ code: Schema.optionalKey(Schema.String) }))(
+              await response.clone().json(),
+            ),
+        }).pipe(Effect.catch(() => Effect.succeed({})));
+        yield* Deferred.succeed(revocationReply, { ...problem, status: response.status });
+      }
       if (loseAcceptedReply && response.status === 200) {
         const assessment = yield* Effect.tryPromise({
           catch: unavailable,
@@ -124,6 +148,15 @@ export const installInternalC14PriceDispatchBarrier = Effect.fn('InternalC14Pric
       return HttpServerResponse.fromWeb(response);
     });
     yield* server.serve(application);
+    // This runs before the server shutdown waits for open requests. Abandon any held
+    // request on fixture exit without forwarding it after a failed assertion.
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* closeBarrier() {
+        yield* Deferred.succeed(released, false);
+        yield* Deferred.succeed(revocationReleased, false);
+        httpServer.closeAllConnections();
+      }),
+    );
     return {
       armedPriceCommandCount: Ref.get(armedPriceCommandCount),
       armForPrice: (priceId: string) =>
@@ -134,6 +167,15 @@ export const installInternalC14PriceDispatchBarrier = Effect.fn('InternalC14Pric
       committedReplyLost: Deferred.await(committedReplyLost),
       diagnostic: Ref.get(diagnostic),
       release: Deferred.succeed(released, true),
+      revocation: {
+        armForPrice: (priceId: string) =>
+          Schema.decodeUnknownEffect(Schema.String.check(Schema.isUUID()))(priceId).pipe(
+            Effect.flatMap((id) => Ref.set(revocationPriceId, Option.some(id))),
+          ),
+        arrived: Deferred.await(revocationArrived),
+        release: Deferred.succeed(revocationReleased, true),
+        reply: Deferred.await(revocationReply),
+      },
       sourceReceiptReads: Ref.get(sourceReceiptReads),
     };
   },

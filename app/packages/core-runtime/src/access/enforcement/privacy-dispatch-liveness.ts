@@ -18,6 +18,10 @@ export interface PrivacyDispatchLiveness {
 /** Finite cross-owner Privacy dispatch evidence; the generic same-producer workload protocol stays unchanged. */
 const makePrivacyDispatchLiveness = (database: Pick<CoreDatabaseExecutor, 'transaction'>): PrivacyDispatchLiveness => ({
   read: (scope, dispatch, transaction) => {
+    const { authority } = dispatch;
+    if (authority === undefined) {
+      return Effect.succeed(false);
+    }
     const query = (current: CoreTransaction) =>
       current
         .execute<{ readonly active: boolean }>(
@@ -33,11 +37,11 @@ const makePrivacyDispatchLiveness = (database: Pick<CoreDatabaseExecutor, 'trans
           and e.domain_event_id=${dispatch.domainEventId}::uuid and a.action_invocation_id=${dispatch.dispatchInvocationId}::uuid
           and m.tenant_id=${scope.tenantId}::uuid and a.principal_id=${scope.principalId}::uuid
           and a.legal_entity_id=${dispatch.governanceLegalEntityId}::uuid and a.status='succeeded'
-          and a.action_key='privacy.core.dispatch-privacy-measure' and p.kind='human' and p.status='active'
+          and a.action_key=${authority.originActionKey} and p.kind='human' and p.status='active'
           and b.principal_id=p.principal_id and b.status='active' and b.revoked_at is null
-          and d.worker_key='integration.symmy.symmy-job-privacy-dispatch' and d.consumer_module_key='integration.symmy'
-          and m.producer_module_key='privacy.core' and m.topic='privacy.measure.dispatched'
-          and e.producer_module_key='privacy.core' and e.subject_resource_type='privacy.core.privacy-measure'
+          and d.worker_key=${authority.workerKey} and d.consumer_module_key=${authority.consumerModuleKey}
+          and m.producer_module_key=${authority.producerModuleKey} and m.topic=${authority.topic}
+          and e.producer_module_key=${authority.producerModuleKey} and e.subject_resource_type=${authority.subjectResourceType}
           and e.subject_resource_id=${dispatch.measureId}
           and (${dispatch.sourceMode}='dispatch' or (d.status='processing' and d.claimed_by=${dispatch.claimId ?? ''} and d.claim_expires_at>statement_timestamp()))
       ) as active`,

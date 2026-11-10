@@ -13,8 +13,21 @@ import { decodeSymmySourceSelector, encodeSymmySourceSelector } from '@app/symmy
 import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { assert, expect, it } from 'effect-rstest';
-import { Array as EffectArray, DateTime, Duration, Effect, Exit, Layer, Match, Order, Redacted, Schema } from 'effect';
+import {
+  Array as EffectArray,
+  Cause,
+  DateTime,
+  Duration,
+  Effect,
+  Exit,
+  Layer,
+  Match,
+  Order,
+  Redacted,
+  Schema,
+} from 'effect';
 import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
+import type { HttpClientResponse } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
 import { bootstrapInternalC14PricingRouteInputs } from './support/symmy-c14-pricing-routes-inputs.mts';
@@ -31,6 +44,10 @@ import { makeInternalC14PricingRouteFixture } from './support/symmy-c14-pricing-
 import { startProductWorker, SymmyC14ProductFixtureUnavailable } from './support/symmy-c14-product-runtime.mts';
 
 const firstPageQuery = 'limit=1&offset=0';
+const pricingFixturePurpose = 'implementation-1096-registered-workload-gateway';
+// The native Group Action rejects a start before its own operation time. Allow for Shell admission,
+// durable delivery and the protected owner request before checking the definition at its actual boundary.
+const groupScheduleLeadTime = { seconds: 15 } as const;
 const waitUntil = Effect.fn('InternalC14PricingRoutes.waitUntil')(function* waitUntil(
   at: Parameters<typeof DateTime.toEpochMillis>[0],
 ) {
@@ -181,12 +198,13 @@ const assertSelectedPriceRefusals = Effect.fn('InternalC14PricingRoutes.selected
   if (configured === undefined) {
     return yield* new SymmyC14ProductFixtureUnavailable({ message: 'The selected Pricing fixture is not enrolled' });
   }
+  const unboundLiteralCode = 'INTERNAL_C14_UNBOUND_LIST';
   yield* Effect.acquireUseRelease(
-    fixture.admin`update symmy_integration.job_routes set fixture_plan=fixture_plan-'selector'
+    fixture.admin`update symmy_integration.job_routes set fixture_plan=fixture_plan-'selector', route_code=${unboundLiteralCode}
       where tenant_id=${fixture.tenantId} and route_id=${fixture.selectedRouteId}`,
     Effect.fn('InternalC14PricingRoutes.rejectUnselectedFixture')(function* rejectUnselectedFixture() {
       const unboundFixture = yield* client.post(
-        `${fixture.shell.baseUrl}/api/symmy/v1/price-lists/${encodeURIComponent(fixture.firstRecordId)}/prices/batch`,
+        `${fixture.shell.baseUrl}/api/symmy/v1/price-lists/${unboundLiteralCode}/prices/batch`,
         {
           body: yield* HttpBody.json({ fixtureId: 'INTERNAL_C14' }),
           headers: { ...refusedHeaders, 'idempotency-key': 'INTERNAL_C14_REFUSED_UNBOUND_FIXTURE' },
@@ -195,7 +213,7 @@ const assertSelectedPriceRefusals = Effect.fn('InternalC14PricingRoutes.selected
       expect(unboundFixture.status).toBe(403);
     }),
     () =>
-      fixture.admin`update symmy_integration.job_routes set fixture_plan=${configured.plan}::jsonb
+      fixture.admin`update symmy_integration.job_routes set fixture_plan=${configured.plan}::jsonb, route_code=${fixture.firstRecordId}
       where tenant_id=${fixture.tenantId} and route_id=${fixture.selectedRouteId}`.pipe(Effect.orDie),
   );
   expect(yield* ownerCounts).toEqual(before);
@@ -222,6 +240,25 @@ const groupLookupRef = Effect.fn('InternalC14PricingRoutes.groupLookupRef')(func
   );
 });
 
+const assertWrongGroupRefused = Effect.fn('InternalC14PricingRoutes.wrongGroupRefusal')(function* wrongGroupRefusal<
+  E,
+  R,
+>(
+  response: HttpClientResponse.HttpClientResponse,
+  readStatus: (jobId: string) => Effect.Effect<typeof statusSchema.Type, E, R>,
+) {
+  if (response.status === 202) {
+    const job = yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(admitted)));
+    const refused = yield* observe('The mismatched Price Group did not settle', readStatus(job.jobId), (value) =>
+      value.status.startsWith('completed_'),
+    );
+    expect(refused.status).toBe('completed_none');
+    expect((refused.items ?? []).flatMap((item) => item.effects).map(({ status }) => status)).toEqual(['unresolved']);
+  } else {
+    expect(response.status).toBe(403);
+  }
+});
+
 it.live(
   'INTERNAL_C14 Price List routes preserve real source Group identity, paging and current read authority',
   () =>
@@ -230,22 +267,32 @@ it.live(
         const fixture = yield* makeInternalC14PricingRouteFixture();
         yield* Effect.addFinalizer((exit) =>
           Exit.isFailure(exit)
-            ? Effect.all(
-                {
-                  gateway: fixture.shell.gatewayDiagnostics(),
-                  group: fixture.groupOwner.diagnostic,
-                  issuer: fixture.shell.issuerDiagnostics(),
-                  pricing: fixture.pricingOwner.diagnostic,
-                  release: fixture.shell.releaseDiagnostics(),
-                  requests: fixture.shell.requestDiagnostics(),
-                  worker: fixture.worker.diagnostic,
-                },
-                { concurrency: 1 },
+            ? Effect.logError(
+                'INTERNAL_C14 Pricing fixture exit',
+                Cause.prettyErrors(exit.cause).map(({ name, stack }) => ({
+                  location: stack?.match(/symmy-c14-pricing-routes-[a-z-]+(?:\.test)?\.mts:\d+:\d+/u)?.[0],
+                  type: name,
+                })),
               ).pipe(
-                Effect.flatMap((diagnostics) =>
-                  Effect.logError('INTERNAL_C14 Pricing fixture failure diagnostics', diagnostics),
+                Effect.andThen(
+                  Effect.all(
+                    {
+                      gateway: fixture.shell.gatewayDiagnostics(),
+                      group: fixture.groupOwner.diagnostic,
+                      issuer: fixture.shell.issuerDiagnostics(),
+                      pricing: fixture.pricingOwner.diagnostic,
+                      release: fixture.shell.releaseDiagnostics(),
+                      requests: fixture.shell.requestDiagnostics(),
+                      worker: fixture.worker.diagnostic,
+                    },
+                    { concurrency: 1 },
+                  ).pipe(
+                    Effect.flatMap((diagnostics) =>
+                      Effect.logError('INTERNAL_C14 Pricing fixture failure diagnostics', diagnostics),
+                    ),
+                    Effect.catch(() => Effect.logError('INTERNAL_C14 Pricing fixture diagnostics unavailable')),
+                  ),
                 ),
-                Effect.catch(() => Effect.logError('INTERNAL_C14 Pricing fixture diagnostics unavailable')),
               )
             : Effect.void,
         );
@@ -439,7 +486,7 @@ it.live(
         const expectedCurrent = yield* Schema.decodeUnknownEffect(
           CreatePriceGroupDefinitionRevisionPayloadSchema.fields.expectedCurrent,
         )(current.currentEvidence);
-        const revisionAt = DateTime.add(yield* DateTime.now, { seconds: 3 });
+        const revisionAt = DateTime.add(yield* DateTime.now, groupScheduleLeadTime);
         const revisionPlan = yield* decodeInternalC14PriceGroupRevisionPlan({
           at: DateTime.formatIso(revisionAt),
           current: expectedCurrent,
@@ -466,7 +513,7 @@ it.live(
         expect(revisedProjection.price_lists).toEqual([{ ...originalGroup, name: 'Internal revised group A' }]);
         const beforeHeld = yield* readNativeCurrentGroup(fixture, originalGroupRef);
         const heldImportedAt = DateTime.formatIso(yield* DateTime.now);
-        const heldEffectiveAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, { seconds: 3 }));
+        const heldEffectiveAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, groupScheduleLeadTime));
         const missingAuthority = yield* decodeInternalC14DeferredPriceListPlan({
           at: heldEffectiveAt,
           expectedCatalogRevision: beforeHeld.currentEvidence.catalogRevision,
@@ -519,7 +566,7 @@ it.live(
         const heldGroupRef = yield* groupLookupRef(heldGroup.id, fixture.tenantId);
         const refreshed = yield* readNativeCurrentGroup(fixture, heldGroupRef);
         const importedAt = DateTime.formatIso(yield* DateTime.now);
-        const groupEffectiveAt = DateTime.add(yield* DateTime.now, { seconds: 3 });
+        const groupEffectiveAt = DateTime.add(yield* DateTime.now, groupScheduleLeadTime);
         const newPriceId = randomUUID();
         const groupRecordId = 'INTERNAL_C14_NEW_PRICE_LIST_C';
         const deferred = yield* decodeInternalC14DeferredPriceListPlan({
@@ -580,11 +627,7 @@ it.live(
           kind: 'PRICE_GROUP',
           priceGroupRef: parentReceipt.owner_receipt.priceGroupRef,
         });
-        const delayUntilGroupCurrent =
-          DateTime.toEpochMillis(groupEffectiveAt) - DateTime.toEpochMillis(yield* DateTime.now);
-        if (delayUntilGroupCurrent > 0) {
-          yield* Effect.sleep(Duration.millis(delayUntilGroupCurrent));
-        }
+        yield* waitUntil(groupEffectiveAt);
         const exactGrant = yield* decodeInternalC14CapturedPriceGrant(
           actualRequest,
           DateTime.formatIso(yield* DateTime.now),
@@ -596,7 +639,7 @@ it.live(
           operatorPrincipalId: fixture.integration.issuerPrincipalId,
           operatorProviderUserId: fixture.shell.providerUserId,
           ownedDatabase: fixture.isolated,
-          purpose: 'implementation-1096-registered-workload-gateway',
+          purpose: pricingFixturePurpose,
           runtimeConnectionString: Redacted.make(fixture.isolated.connections.runtime.connectionString),
           tenantId: fixture.tenantId,
         });
@@ -698,17 +741,20 @@ it.live(
         expect(yield* fixture.priceBarrier.sourceReceiptReads).toBeGreaterThanOrEqual(1);
 
         const selectedAt = DateTime.formatIso(yield* DateTime.now);
-        const selectedPrice = yield* decodeInternalC14SourcePricePlan({
+        const selectedPriceFacts = {
           at: selectedAt,
-          groupRef: originalGroupRef,
           importedAt: selectedAt,
           marketId: inputs.market.marketRef.resourceId,
-          occurrenceId: randomUUID(),
-          priceId: randomUUID(),
           recordId: 'INTERNAL_C14_SELECTED_PRICE_A',
           selection: inputs.readiness.selection,
           sellingLegalEntityId: fixture.legalEntityId,
           unitRef: inputs.unit.unit,
+        };
+        const selectedPrice = yield* decodeInternalC14SourcePricePlan({
+          ...selectedPriceFacts,
+          groupRef: originalGroupRef,
+          occurrenceId: randomUUID(),
+          priceId: randomUUID(),
         });
         yield* enrollInternalC14SelectedPriceRoute(fixture, selectedPrice);
         yield* assertSelectedPriceRefusals(
@@ -716,6 +762,50 @@ it.live(
           { id: originalGroup.id, priceGroupRef: originalGroupRef },
           selectedPrice.plan,
         );
+        const otherGroup = all.find(({ source_record_id }) => source_record_id === fixture.secondRecordId);
+        assert.isOk(otherGroup);
+        const wrongGroupPrice = yield* decodeInternalC14SourcePricePlan({
+          ...selectedPriceFacts,
+          groupRef: yield* groupLookupRef(otherGroup.id, fixture.tenantId),
+          occurrenceId: randomUUID(),
+          priceId: randomUUID(),
+        });
+        expect(
+          yield* bootstrapInternalC14PricingSourceAuthority({
+            grant: wrongGroupPrice.grant,
+            legalEntityId: fixture.legalEntityId,
+            operatorPrincipalId: fixture.integration.issuerPrincipalId,
+            operatorProviderUserId: fixture.shell.providerUserId,
+            ownedDatabase: fixture.isolated,
+            purpose: pricingFixturePurpose,
+            runtimeConnectionString: Redacted.make(fixture.isolated.connections.runtime.connectionString),
+            tenantId: fixture.tenantId,
+          }),
+        ).toEqual({ outcome: 'STORED' });
+        const priceOwnerCounts = fixture.admin<{ calls: number; prices: number }>`select
+          (select count(*)::integer from core.action_invocations where tenant_id=${fixture.tenantId}
+            and action_key='commerce.pricing.define-price') as calls,
+          (select count(*)::integer from pricing.prices where tenant_id=${fixture.tenantId}) as prices`;
+        const beforeWrongGroup = yield* priceOwnerCounts;
+        const wrongGroupBody = {
+          contractVersion: 'INTERNAL_C14',
+          plan: Schema.encodeSync(SymmyInternalExecutionPlanSchema)(wrongGroupPrice.plan),
+        };
+        const wrongGroupSelected = yield* client.post(
+          `${fixture.shell.baseUrl}/api/symmy/v1/price-lists/${originalGroup.id}/prices/batch`,
+          {
+            body: yield* HttpBody.json(wrongGroupBody),
+            headers: { ...headers, 'idempotency-key': 'INTERNAL_C14_REFUSED_OTHER_GROUP_SELECTED' },
+          },
+        );
+        yield* assertWrongGroupRefused(wrongGroupSelected, readStatus);
+        const wrongGroupUpsert = yield* client.post(`${fixture.shell.baseUrl}/api/symmy/v1/price-lists/batch-upsert`, {
+          body: yield* HttpBody.json(wrongGroupBody),
+          headers: { ...headers, 'idempotency-key': 'INTERNAL_C14_REFUSED_OTHER_GROUP_UPSERT' },
+        });
+        expect(wrongGroupUpsert.status).toBe(403);
+        expect(yield* priceOwnerCounts).toEqual(beforeWrongGroup);
+
         const selectedBody = {
           contractVersion: 'INTERNAL_C14',
           plan: Schema.encodeSync(SymmyInternalExecutionPlanSchema)(selectedPrice.plan),
@@ -775,6 +865,93 @@ it.live(
           count: number;
         }>`select count(*)::integer as count from core.action_invocations where tenant_id=${fixture.tenantId} and (action_key like 'commerce.customer-context.%' or action_key like '%promotion%' or action_key like 'commerce.tax.%' or action_key like 'commerce.assortment.%')`;
         expect(implicitCalls?.count).toBe(0);
+
+        const latestGroup = yield* readNativeCurrentGroup(fixture, parentReceipt.owner_receipt.priceGroupRef);
+        const revokedPriceId = randomUUID();
+        const revokedGroupEffectiveAt = DateTime.add(yield* DateTime.now, groupScheduleLeadTime);
+        const revokedPlan = yield* decodeInternalC14DeferredPriceListPlan({
+          at: DateTime.formatIso(revokedGroupEffectiveAt),
+          expectedCatalogRevision: latestGroup.currentEvidence.catalogRevision,
+          groupBusinessCode: 'INTERNAL_C14_PRICE_GROUP_REVOKED',
+          groupOccurrenceId: randomUUID(),
+          groupPurpose: 'Explicit INTERNAL_C14 route deactivation race',
+          groupRecordId: 'INTERNAL_C14_REVOKED_PRICE_LIST',
+          importedAt: DateTime.formatIso(yield* DateTime.now),
+          marketId: inputs.market.marketRef.resourceId,
+          occurrenceId: randomUUID(),
+          priceId: revokedPriceId,
+          recordId: 'INTERNAL_C14_REVOKED_PRICE',
+          selection: inputs.readiness.selection,
+          sellingLegalEntityId: fixture.legalEntityId,
+          sourceRouteId: fixture.sourceRouteId,
+          unitRef: inputs.unit.unit,
+        });
+        const { revocation } = fixture.priceBarrier;
+        yield* revocation.armForPrice(revokedPriceId);
+        const revokedJob = yield* submit('INTERNAL_C14_REVOKE_DURING_PRICE_DISPATCH', revokedPlan);
+        const heldPrice = yield* revocation.arrived.pipe(Effect.timeout('20 seconds'));
+        expect(heldPrice.priceRef.resourceId).toBe(revokedPriceId);
+        const readSettledEffects = () =>
+          fixture.admin<{
+            action_key: string;
+            effect_key: string;
+            invocation_id: string;
+            job_id: string;
+            outcome: string;
+            outcome_status: string;
+            receipt: string | null;
+            receipt_kind: string | null;
+          }>`
+            select i.action_key,e.effect_key,e.owner_invocation_id as invocation_id,e.job_id,
+              e.outcome::text as outcome,e.outcome->>'status' as outcome_status,
+              e.owner_receipt::text as receipt,e.owner_receipt->>'_tag' as receipt_kind
+            from symmy_integration.job_effects e join core.action_invocations i
+              on i.tenant_id=e.tenant_id and i.action_invocation_id=e.owner_invocation_id
+            where e.tenant_id=${fixture.tenantId} and e.state='settled' and i.status='succeeded'
+              and (e.job_id in (${deferredJob.jobId},${selectedJob.jobId})
+                or (e.job_id=${revokedJob.jobId} and e.effect_key='new-group'))
+            order by e.job_id,e.effect_key`;
+        const settledBeforeRevocation = yield* readSettledEffects();
+        expect(settledBeforeRevocation).toHaveLength(4);
+        expect(settledBeforeRevocation.every(({ outcome_status }) => outcome_status === 'accepted_change')).toBe(true);
+        expect(
+          settledBeforeRevocation.filter(({ action_key }) => action_key === 'commerce.pricing.define-price'),
+        ).toHaveLength(2);
+        expect(settledBeforeRevocation.filter(({ receipt_kind }) => receipt_kind === 'PriceGroupCreated')).toHaveLength(
+          2,
+        );
+        yield* waitUntil(revokedGroupEffectiveAt);
+        const revocationGrant = yield* decodeInternalC14CapturedPriceGrant(
+          heldPrice,
+          DateTime.formatIso(yield* DateTime.now),
+        );
+        yield* bootstrapInternalC14PricingSourceAuthority({
+          grant: revocationGrant,
+          legalEntityId: fixture.legalEntityId,
+          operatorPrincipalId: fixture.integration.issuerPrincipalId,
+          operatorProviderUserId: fixture.shell.providerUserId,
+          ownedDatabase: fixture.isolated,
+          purpose: pricingFixturePurpose,
+          runtimeConnectionString: Redacted.make(fixture.isolated.connections.runtime.connectionString),
+          tenantId: fixture.tenantId,
+        });
+        // The authenticated native request has passed the worker's route check. Commit the
+        // operator's update before forwarding that same request to the receiving Action.
+        const disabled = yield* fixture.admin<{ route_id: string }>`
+          update symmy_integration.job_routes set active=false
+          where tenant_id=${fixture.tenantId} and route_id=${fixture.routeId} and active returning route_id`;
+        expect(disabled).toEqual([{ route_id: fixture.routeId }]);
+        yield* revocation.release;
+        expect(yield* revocation.reply.pipe(Effect.timeout('20 seconds'))).toEqual({
+          code: 'action_transaction_failed',
+          status: 503,
+        });
+        expect(yield* readSettledEffects()).toEqual(settledBeforeRevocation);
+        expect(
+          yield* fixture.admin<{ count: number }>`select count(*)::integer as count from pricing.prices
+            where tenant_id=${fixture.tenantId}`,
+        ).toEqual([actualPrices]);
+
         yield* restarted.child.kill();
         yield* restarted.child.exitCode;
         yield* assertInternalC14PriceRecovery({
@@ -790,7 +967,7 @@ it.live(
           operatorPrincipalId: fixture.integration.issuerPrincipalId,
           operatorProviderUserId: fixture.shell.providerUserId,
           ownedDatabase: fixture.isolated,
-          purpose: 'implementation-1096-registered-workload-gateway',
+          purpose: pricingFixturePurpose,
           tenantId: fixture.tenantId,
         });
         yield* reader.revoke();
@@ -829,5 +1006,5 @@ it.live(
         return yield* Effect.void;
       }),
     ).pipe(Effect.provide(services)),
-  180_000,
+  420_000,
 );

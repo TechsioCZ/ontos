@@ -1,4 +1,5 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { OrganizationBusinessSourceStatement } from '@app/party-registry/apis/organization-record-facts';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -31,7 +32,13 @@ const scope = {
   audience: 'symmy-integration',
   correlationId: 'customer-intake-privacy',
 };
-const plan = (subjectRecordId: string) =>
+const personalName = { firstName: 'Personal value not needed for eligibility' };
+const companyName = { businessName: 'Fixture company name' };
+const plan = (
+  subjectRecordId: string,
+  name: { readonly businessName?: string; readonly firstName?: string } = personalName,
+  observedSubject: 'PERSON' | 'ORGANIZATION' = 'PERSON',
+) =>
   Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema)({
     items: [
       {
@@ -42,19 +49,19 @@ const plan = (subjectRecordId: string) =>
               _tag: 'PartyUpdate',
               payload: {
                 expectedRevision: 1,
-                firstName: 'Personal value not needed for eligibility',
+                ...name,
                 partyRef,
                 provenanceMethod: 'CLIENT_SOURCE_ASSERTION',
-                provenanceSource: 'fixture-source',
+                provenanceSource: routeRef,
                 subjectEvidence: [
                   {
                     kind: 'CLIENT_SOURCE_ASSERTION',
-                    observedSubject: 'PERSON',
+                    observedSubject,
                     occurrenceId,
                     recordId: subjectRecordId,
                     source,
                     sourceObservedAt: observedAt,
-                    statement: 'Fixture source assertion',
+                    statement: OrganizationBusinessSourceStatement,
                     subjectKey: subjectRecordId,
                   },
                 ],
@@ -102,6 +109,17 @@ it.effect('passes the qualified incoming alias and original Party target without
         target: { kind: 'PARTY', resourceId: partyRef.resourceId },
       },
     ]);
+  }),
+);
+
+it.effect('requires separate company-name intake only for the finite business-only payload', () =>
+  Effect.gen(function* verifyCompanyIntake() {
+    const companyPlan = yield* plan(recordId, companyName, 'ORGANIZATION');
+    const mixedPlan = yield* plan(recordId, { ...companyName, ...personalName }, 'ORGANIZATION');
+    const [company] = yield* projectSymmyCustomerIntakeRequests(scope, companyPlan);
+    const [mixed] = yield* projectSymmyCustomerIntakeRequests(scope, mixedPlan);
+    expect(company?.organizationBusinessUse).toBe('COMPANY_NAME');
+    expect(mixed?.organizationBusinessUse).toBeUndefined();
   }),
 );
 

@@ -29,6 +29,11 @@ export const AdmitSymmySyncResultSchema = Schema.Struct({
 });
 export type AdmitSymmySyncResult = typeof AdmitSymmySyncResultSchema.Type;
 export class AdmitSymmySyncRejected extends Schema.TaggedError<AdmitSymmySyncRejected>()('AdmitSymmySyncRejected', {
-  code: Schema.Literals(['symmy_sync_route_denied', 'symmy_sync_intent_conflict', 'symmy_sync_unavailable']),
+  code: Schema.Literals([
+    'symmy_sync_route_denied',
+    'symmy_sync_intent_conflict',
+    'symmy_sync_stock_assertion_denied',
+    'symmy_sync_unavailable',
+  ]),
   reason: Schema.String,
 }) {}

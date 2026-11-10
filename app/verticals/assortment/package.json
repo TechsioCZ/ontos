@@ -54,11 +54,14 @@
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
+    "@app/catalog": "workspace:*",
     "@app/commerce-customer-context": "workspace:*",
+    "@app/commerce-market-catalog": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
+    "@app/storefront-registry-contracts": "workspace:*",
     "@effect/opentelemetry": "4.0.7",
     "@effect/platform-node": "4.0.7",
     "@effect/sql-pg": "4.0.7",

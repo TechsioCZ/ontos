@@ -5,6 +5,7 @@ import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { commerceCustomerContextManifest } from './vertical.manifest.ts';
 /* jscpd:ignore-start -- generated imports intentionally mirror the manifest's generated action imports. */
 // <generated-module-registration-imports>
+import { customerGroupDetailRead } from './src/api/customer-group-detail.read.ts';
 import { addSavedAddressAction } from './src/actions/add-saved-address.action.ts';
 import { administerCommerceQuantityRuleAction } from './src/actions/administer-commerce-quantity-rule.action.ts';
 import { administerMarketBootstrapPolicyAction } from './src/actions/administer-market-bootstrap-policy.action.ts';
@@ -358,6 +359,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     savedAddressListRead,
     verifyRetailPurchasingSubjectCurrentV1Read,
     // <generated-module-registration-reads>
+    customerGroupDetailRead,
     customerGroupDefinitionSourceRead,
     customerGroupMembershipSourceReceiptRead,
     customerPriceGroupAssignmentReceiptRead,

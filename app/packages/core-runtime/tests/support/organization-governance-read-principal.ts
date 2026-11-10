@@ -22,6 +22,15 @@ export const organizationGovernanceReadPrincipal = (principal: TrustedPrincipalC
       governanceLegalEntityId: principal.legalEntityId,
       principalId: principal.principalId,
       requestHash,
+      target: {
+        access: 'read',
+        appId: 'symmy-integration',
+        declarationKey: 'integration.symmy.symmy-source-organization-facts.read',
+        entrypointKey: 'integration.symmy.api.symmy-source-organization-facts',
+        legalEntityScope: 'required',
+        moduleId: 'integration.symmy',
+        schemaVersion: '1',
+      },
       tenantId: principal.tenantId,
     }),
   );

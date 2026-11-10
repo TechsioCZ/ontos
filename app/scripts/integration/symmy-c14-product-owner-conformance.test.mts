@@ -20,7 +20,7 @@ import { grantTestTenantRoleAccess, liveFixtureSpiceDb } from '@app/core-runtime
 import { bootstrapInternalC14PricingSourceAuthority } from '@app/pricing/testing/c14-source-authority-bootstrap';
 import { bootstrapInternalC14PriceInputFacts } from '@app/pricing/testing/c14-price-input-bootstrap';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
-import { SymmyItemOutcomeSchema } from '@app/shared-contracts/symmy';
+import { SymmyEffectOutcomeSchema, SymmyItemOutcomeSchema } from '@app/shared-contracts/symmy';
 import { makeApiKeyGatewayNativeFixture } from '@app/shell-super-app/testing/api-key-gateway-native';
 import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-job-status';
 import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
@@ -103,6 +103,13 @@ const updateOperation = {
   moduleId: catalogModule,
   schemaVersion: '1',
 };
+const variantFactsWorkload = 'commerce.catalog.symmy-variant-localized-facts';
+const variantFactsRecoveryWorkload = 'commerce.catalog.symmy-variant-localized-facts-recovery';
+const variantFactsOperation = {
+  entrypointKey: 'commerce.catalog.set-variant-localized-facts',
+  moduleId: catalogModule,
+  schemaVersion: '1',
+};
 const rules = [
   {
     audience: catalogApp,
@@ -124,6 +131,13 @@ const rules = [
     entrypointKey: 'commerce.catalog.update-product',
     schemaVersion: '1',
     workloadKey: catalogImport,
+  },
+  {
+    audience: catalogApp,
+    declarationKey: 'commerce.catalog.variant-localized-facts.set',
+    entrypointKey: variantFactsOperation.entrypointKey,
+    schemaVersion: variantFactsOperation.schemaVersion,
+    workloadKey: variantFactsWorkload,
   },
   {
     audience: catalogApp,
@@ -156,6 +170,17 @@ const recoveryRules = [
 }));
 
 const historicalRecoveryRules = recoveryRules.map((rule) => ({ ...rule, allowHistoricalDeliveryRecovery: true }));
+const variantFactsRecoveryRule = {
+  audience: catalogApp,
+  declarationKey: 'commerce.catalog.set-variant-localized-facts-recovery.read',
+  entrypointKey: 'commerce.catalog.api.set-variant-localized-facts-recovery',
+  jobKey: workerKey,
+  legalEntityScope: 'forbidden' as const,
+  recoveryOf: { actionKey: variantFactsOperation.entrypointKey, jobKey: workerKey },
+  schemaVersion: '1',
+  workerKey,
+  workloadKey: variantFactsRecoveryWorkload,
+};
 const priceRecoveryRule = {
   allowHistoricalDeliveryRecovery: true,
   audience: 'pricing',
@@ -230,6 +255,12 @@ const publicJobStatusSchema = Schema.Struct({
     'indeterminate',
   ]),
 });
+const compiledShellProblemSchema = Schema.Struct({
+  code: Schema.optionalKey(Schema.String),
+  detail: Schema.String,
+  status: Schema.Int,
+  type: Schema.String,
+});
 const productReceiptSchema = Schema.Struct({
   _tag: Schema.Literal('ProductCreated'),
   actionInvocationId: ProductActionInvocationIdSchema,
@@ -238,6 +269,7 @@ const productReceiptSchema = Schema.Struct({
 });
 const ledgerSchema = Schema.Struct({
   effect_key: Schema.String,
+  outcome: Schema.OptionFromNullOr(SymmyEffectOutcomeSchema),
   owner_invocation_id: Schema.OptionFromNullOr(Schema.String),
   owner_receipt: Schema.OptionFromNullOr(Schema.Unknown),
   resolved_target: Schema.OptionFromNullOr(ProductRefSchema),
@@ -263,21 +295,87 @@ const readProjectionSchema = Schema.Struct({
   unsupported_fields: Schema.Array(Schema.String),
 });
 
+const nativeObservationAttempts = 600;
+const nativeObservationIntervalMs = 50;
+const observeOwnerResponse = (
+  output: Queue.Queue<string>,
+  type: 'committed-response-lost' | 'original-response-recovered',
+) =>
+  Effect.gen(function* actualOwnerResponseTrace() {
+    const decode = Schema.decodeUnknownOption(
+      Schema.fromJsonString(
+        Schema.Struct({
+          path: Schema.String,
+          status: Schema.Int.check(Schema.isBetween({ maximum: 299, minimum: 200 })),
+          type: Schema.Literal(type),
+        }),
+      ),
+    );
+    for (;;) {
+      const event = decode(yield* Queue.take(output));
+      if (Option.isSome(event)) {
+        return event.value;
+      }
+    }
+  });
+
+const missingVariantResponse =
+  (type: Parameters<typeof observeOwnerResponse>[1]) =>
+  ([owner, worker, ledger]: readonly [string, string, unknown]) =>
+    Effect.fail(
+      new SymmyC14ProductFixtureUnavailable({
+        message: `No localized Variant fact ${type} witness; owner: ${owner}; worker: ${worker}; ledger: ${JSON.stringify(ledger)}`,
+      }),
+    );
+
 const observeUntil = <Value, Failure, Requirements>(
   reason: string,
   observe: Effect.Effect<Value, Failure, Requirements>,
   ready: (value: Value) => boolean,
+  maximumAttempts = nativeObservationAttempts,
 ) =>
   Effect.gen(function* observeNativeState() {
-    for (let attempt = 0; attempt < 600; attempt += 1) {
+    for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
       const value = yield* observe;
       if (ready(value)) {
         return value;
       }
-      yield* Effect.sleep(Duration.millis(50));
+      yield* Effect.sleep(Duration.millis(nativeObservationIntervalMs));
     }
     return yield* new SymmyC14ProductFixtureUnavailable({ message: reason });
   });
+
+const deliveryCheckpointSchema = Schema.Struct({
+  attempts_count: Schema.Int,
+  latest_attempt: Schema.String,
+  latest_start_ms: Schema.Number,
+  next_claim_ms: Schema.Number,
+  next_delay_ms: Schema.Int,
+  status: Schema.String,
+});
+
+const readDeliveryCheckpoint = (admin: PgClient.PgClient, deliveryId: string) =>
+  admin`
+    select d.status, d.attempts_count,
+      extract(epoch from deadline.claim_at)::double precision * 1000 as next_claim_ms,
+      greatest(0, ceil(extract(epoch from (deadline.claim_at - clock_timestamp())) * 1000))::integer as next_delay_ms,
+      extract(epoch from a.started_at)::double precision * 1000 as latest_start_ms,
+      case when a.finished_at is null then 'open'
+        when a.error_message = 'Outbox Worker lease expired before completion' then 'lease_expired'
+        when a.error_message is not null then coalesce(substring(a.error_message from 'symmy_job_worker_[a-z_]+'), 'failed')
+        else 'finished'
+      end as latest_attempt
+    from core.outbox_deliveries d
+    cross join lateral (select coalesce(d.claim_expires_at, d.available_at) as claim_at) deadline
+    cross join lateral (
+      select started_at, finished_at, error_message from core.outbox_attempts
+      where outbox_delivery_id=d.outbox_delivery_id order by started_at desc limit 1
+    ) a
+    where d.outbox_delivery_id=${deliveryId}
+  `.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([deliveryCheckpointSchema]))),
+    Effect.map((rows) => rows[0]),
+  );
 
 const seedProviderHuman = Effect.fn('SymmyC14Product.seedProviderHuman')(function* seedProviderHuman(
   admin: PgClient.PgClient,
@@ -355,7 +453,13 @@ it.live(
           ownedDatabase: isolated,
           productionGate: true,
           relaySource: {
-            registeredWorkloads: [...rules, ...historicalRecoveryRules, priceRule, priceRecoveryRule],
+            registeredWorkloads: [
+              ...rules,
+              ...historicalRecoveryRules,
+              variantFactsRecoveryRule,
+              priceRule,
+              priceRecoveryRule,
+            ],
             sourceAppId: 'symmy-integration',
           },
           snapshotJson: yield* encodeProductComposition(snapshot),
@@ -403,9 +507,12 @@ it.live(
           [integration.principalId, 'integration.symmy-poll'],
           [integration.principalId, catalogImport],
           [integration.principalId, catalogRead],
+          [integration.principalId, variantFactsWorkload],
           [systemId, workerKey],
           [systemId, catalogImport],
           [systemId, catalogRead],
+          [systemId, variantFactsWorkload],
+          [systemId, variantFactsRecoveryWorkload],
           [systemId, priceWrite],
           [systemId, priceRead],
           [integration.principalId, priceWrite],
@@ -464,14 +571,15 @@ it.live(
         const encodedPlan = Schema.encodeSync(SymmyInternalExecutionPlanSchema)(plan);
         const configuredPlan = {
           ...encodedPlan,
-          items: encodedPlan.items.map((item) =>
-            item.itemKey === 'product'
-              ? {
-                  ...item,
-                  effects: [...item.effects, { effectKey: 'catalog-update-authority', operation: updateOperation }],
-                }
-              : item,
-          ),
+          items: encodedPlan.items.map((item) => ({
+            ...item,
+            effects: [
+              ...item.effects,
+              item.itemKey === 'product'
+                ? { effectKey: 'catalog-update-authority', operation: updateOperation }
+                : { effectKey: 'catalog-variant-facts-authority', operation: variantFactsOperation },
+            ],
+          })),
           sourceRouteId,
         };
         const mixedConfiguredPlan = {
@@ -709,13 +817,43 @@ it.live(
           });
         const accepted = yield* submit();
         expect(yield* submit()).toEqual(accepted);
+        yield* Effect.scoped(
+          Effect.gen(function* pollThroughCompiledShell() {
+            const assembledPoll = yield* client.get(`${shell.baseUrl}/api/symmy/v1/jobs/${accepted.jobId}`, {
+              headers,
+            });
+            expect(assembledPoll.status).toBe(200);
+            const enrolled = yield* assembledPoll.json.pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(publicJobStatusSchema)),
+            );
+            expect(enrolled.jobId).toBe(accepted.jobId);
+            expect(enrolled.status).toBe('admitted');
+            const compiled = yield* shell.startCompiledShell();
+            expect(compiled.apiPrefix).toBe('/shell-super-app-api');
+            const compiledPoll = yield* client.get(`${compiled.origin}/api/symmy/v1/jobs/${accepted.jobId}`, {
+              headers,
+            });
+            if (compiledPoll.status !== 200) {
+              const problem = yield* compiledPoll.json.pipe(
+                Effect.flatMap(Schema.decodeUnknownEffect(compiledShellProblemSchema)),
+              );
+              return yield* new SymmyC14ProductFixtureUnavailable({
+                message: `Compiled Shell poll failed: ${JSON.stringify(problem)}; trace: ${(yield* compiled.diagnostics).join(', ')}`,
+              });
+            }
+            expect(
+              yield* compiledPoll.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(publicJobStatusSchema))),
+            ).toEqual(enrolled);
+            return yield* Effect.logInfo('Compiled Shell returned the enrolled Symmy job', { status: enrolled.status });
+          }),
+        ).pipe(Effect.when(Config.Boolean('ONTOS_C14_COMPILED_SHELL_SMOKE').pipe(Config.withDefault(false))));
         const workerArtifact = yield* buildProductWorker(symmy);
         const firstWorker = yield* startProductWorker(workerArtifact, {
           ...environment,
           ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PRODUCT_FIRST_PROCESS',
         });
         const ledgerFor = (jobId: string) =>
-          admin`select effect_key,owner_invocation_id,owner_receipt,resolved_effect #> '{ref,originalTarget}' as resolved_target,state from symmy_integration.job_effects where job_id=${jobId}`.pipe(
+          admin`select effect_key,outcome,owner_invocation_id,owner_receipt,resolved_effect #> '{ref,originalTarget}' as resolved_target,state from symmy_integration.job_effects where job_id=${jobId}`.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(ledgerSchema))),
           );
         yield* observeUntil(
@@ -733,23 +871,7 @@ it.live(
             ),
           ),
         );
-        const committedLoss = yield* Effect.gen(function* actualCommittedLossTrace() {
-          const decode = Schema.decodeUnknownOption(
-            Schema.fromJsonString(
-              Schema.Struct({
-                path: Schema.String,
-                status: Schema.Int.check(Schema.isBetween({ maximum: 299, minimum: 200 })),
-                type: Schema.Literal('committed-response-lost'),
-              }),
-            ),
-          );
-          for (;;) {
-            const event = decode(yield* Queue.take(catalogReceiver.output));
-            if (Option.isSome(event)) {
-              return event.value;
-            }
-          }
-        }).pipe(
+        const committedLoss = yield* observeOwnerResponse(catalogReceiver.output, 'committed-response-lost').pipe(
           Effect.timeoutOrElse({
             duration: Duration.seconds(30),
             orElse: () =>
@@ -772,6 +894,26 @@ it.live(
           variants: number;
         }>`select (select count(*)::integer from catalog.products where tenant_id=${tenantId}) as products,(select count(*)::integer from catalog.product_variants where tenant_id=${tenantId}) as variants`;
         expect(countAfterLoss).toEqual({ products: 1, variants: 1 });
+        const deliveryFor = (jobId: string) =>
+          admin`
+          select d.outbox_delivery_id as delivery_id from core.outbox_deliveries d
+          join core.outbox_messages m on m.outbox_message_id=d.outbox_message_id
+          join core.domain_events e on e.domain_event_id=m.domain_event_id and e.tenant_id=m.tenant_id
+          join symmy_integration.import_jobs j on j.admission_invocation_id=e.action_invocation_id and j.tenant_id=e.tenant_id
+          where j.tenant_id=${tenantId} and j.job_id=${jobId} and d.worker_key=${workerKey}
+            and d.consumer_module_key='integration.symmy' and m.producer_module_key='integration.symmy'
+        `.pipe(
+            Effect.flatMap(
+              Schema.decodeUnknownEffect(
+                Schema.Tuple([Schema.Struct({ delivery_id: Schema.String.check(Schema.isUUID()) })]),
+              ),
+            ),
+            Effect.map((rows) => rows[0].delivery_id),
+          );
+        const originalDeliveryId = yield* deliveryFor(accepted.jobId);
+        const beforeRestart = yield* readDeliveryCheckpoint(admin, originalDeliveryId);
+        expect(['pending', 'processing']).toContain(beforeRestart.status);
+        expect(beforeRestart.next_delay_ms).toBeLessThanOrEqual(30_000);
         yield* fs.remove(faultMarker);
         const restarted = yield* startProductWorker(workerArtifact, {
           ...environment,
@@ -781,17 +923,29 @@ it.live(
           'The restarted actual worker did not settle the Product dependency graph',
           ledgerFor(accepted.jobId),
           (rows) => rows.length === 2 && rows.every((row) => row.state === 'settled'),
+          nativeObservationAttempts + Math.ceil(beforeRestart.next_delay_ms / nativeObservationIntervalMs),
         ).pipe(
           Effect.catchTag('SymmyC14ProductFixtureUnavailable', (failure) =>
-            restarted.diagnostic.pipe(
-              Effect.flatMap((diagnostic) =>
+            Effect.all([
+              restarted.diagnostic,
+              readDeliveryCheckpoint(admin, originalDeliveryId),
+              ledgerFor(accepted.jobId).pipe(
+                Effect.map((rows) => rows.map(({ effect_key, state }) => ({ effect_key, state }))),
+              ),
+            ]).pipe(
+              Effect.flatMap(([diagnostic, delivery, effects]) =>
                 Effect.fail(
-                  new SymmyC14ProductFixtureUnavailable({ message: `${failure.message}; worker: ${diagnostic}` }),
+                  new SymmyC14ProductFixtureUnavailable({
+                    message: `${failure.message}; worker: ${diagnostic}; delivery: ${JSON.stringify(delivery)}; effects: ${JSON.stringify(effects)}`,
+                  }),
                 ),
               ),
             ),
           ),
         );
+        const afterRestart = yield* readDeliveryCheckpoint(admin, originalDeliveryId);
+        expect(afterRestart.attempts_count).toBeGreaterThan(beforeRestart.attempts_count);
+        expect(afterRestart.latest_start_ms).toBeGreaterThanOrEqual(beforeRestart.next_claim_ms);
         const productEffect = completed.find(({ effect_key }) => effect_key === productEffectKey);
         const variantEffect = completed.find(({ effect_key }) => effect_key === 'catalog-additional-variant');
         assert.isOk(productEffect);
@@ -892,6 +1046,119 @@ it.live(
         expect(
           yield* roundTripStatus.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(publicJobStatusSchema))),
         ).toMatchObject({ status: 'completed_all' });
+        yield* Effect.gen(function* proveExistingVariantFacts() {
+          const variantSource = product.variantSources.find(
+            ({ source_record_id }) => source_record_id === internalProductSource.additionalVariantRecordId,
+          );
+          assert.isOk(variantSource);
+          const sourceVariant = product.product.variants.find(({ variantId }) => variantId === variantSource.variantId);
+          assert.isOk(sourceVariant);
+          const name = 'INTERNAL_C14 qualified existing Variant name';
+          const variantFactsPlan = (variantRef: typeof VariantRefSchema.Type) =>
+            Schema.decodeUnknownEffect(SymmyInternalExecutionPlanSchema)({
+              items: [
+                {
+                  effects: [
+                    {
+                      effectKey: 'catalog-variant-localized-facts',
+                      intent: {
+                        _tag: 'CatalogSetVariantLocalizedFacts',
+                        payload: {
+                          evidenceRefs: ['INTERNAL_C14_SOURCE_LOCALIZED_NAME_ASSERTION'],
+                          expectedRevision: 0,
+                          facts: { name },
+                          locale: 'en',
+                          productRef: product.product.productRef,
+                          reason: 'Explicit internal source declaration of localized Variant name',
+                          variantRef,
+                        },
+                      },
+                      operation: variantFactsOperation,
+                      originalTarget: variantRef,
+                    },
+                  ],
+                  itemKey: 'existing-variant',
+                  source: {
+                    entityKind: 'VARIANT',
+                    issuerId: internalProductSource.issuerId,
+                    sourceNamespace: internalProductSource.namespace,
+                    sourceRecordId: variantSource.source_record_id,
+                  },
+                  sourceOccurrenceId: randomUUID(),
+                },
+              ],
+            });
+          const mismatchedVariant = yield* submit('INTERNAL_C14_MISMATCHED_VARIANT_LOCALIZED_FACTS', {
+            contractVersion: 'INTERNAL_C14',
+            plan: Schema.encodeSync(SymmyInternalExecutionPlanSchema)(
+              yield* variantFactsPlan(originalReceipt.initialVariantRef),
+            ),
+          });
+          const mismatchedEffects = yield* observeUntil(
+            'Mismatched Variant source target did not settle without a Catalog write',
+            ledgerFor(mismatchedVariant.jobId),
+            (rows) => rows.length === 1 && rows.every((row) => row.state === 'settled'),
+          );
+          const [mismatchedEffect] = mismatchedEffects;
+          assert.isDefined(mismatchedEffect);
+          expect(Option.getOrThrow(mismatchedEffect.outcome)).toMatchObject({ status: 'unresolved' });
+          const variantFactInvocations = admin`select action_invocation_id as "invocationId",status from core.action_invocations
+    where tenant_id=${tenantId} and action_key=${variantFactsOperation.entrypointKey}`;
+          expect(yield* variantFactInvocations).toEqual([]);
+
+          yield* catalogReceiver.child.kill();
+          yield* catalogReceiver.child.exitCode;
+          yield* fs.writeFileString(faultMarker, 'INTERNAL_C14 transport fault after localized Variant fact commit');
+          const variantFactsReceiver = yield* startProductOwner({
+            artifacts: catalogArtifacts,
+            contract: catalog,
+            environment: {
+              ...environment,
+              ONTOS_C14_RESPONSE_LOSS_MARKER: faultMarker,
+              ONTOS_C14_RESPONSE_LOSS_OPERATION: 'catalog-set-variant-localized-facts',
+            },
+            port: catalogPort,
+            prefix: '/catalog-api',
+          });
+          const variantWrite = yield* submit('INTERNAL_C14_EXISTING_VARIANT_LOCALIZED_FACTS', {
+            contractVersion: 'INTERNAL_C14',
+            plan: Schema.encodeSync(SymmyInternalExecutionPlanSchema)(
+              yield* variantFactsPlan(sourceVariant.variantRef),
+            ),
+          });
+          const observeVariantResponse = (type: Parameters<typeof observeOwnerResponse>[1]) =>
+            observeOwnerResponse(variantFactsReceiver.output, type).pipe(
+              Effect.timeoutOrElse({
+                duration: Duration.seconds(30),
+                orElse: () =>
+                  Effect.all([
+                    variantFactsReceiver.diagnostic,
+                    restarted.diagnostic,
+                    ledgerFor(variantWrite.jobId),
+                  ]).pipe(Effect.flatMap(missingVariantResponse(type))),
+              }),
+            );
+          const variantLostResponse = yield* observeVariantResponse('committed-response-lost');
+          expect(variantLostResponse.path).toBe('/catalog-api/catalog/actions/set-variant-localized-facts');
+          yield* fs.remove(faultMarker);
+          const variantRecoveredResponse = yield* observeVariantResponse('original-response-recovered');
+          expect(variantRecoveredResponse.path).toBe('/catalog-api/reads/set-variant-localized-facts-recovery');
+          const variantEffects = yield* observeUntil(
+            'The original localized Variant fact did not recover after its response was lost',
+            ledgerFor(variantWrite.jobId),
+            (rows) => rows.length === 1 && rows.every((row) => row.state === 'settled'),
+          );
+          const [variantFactEffect] = variantEffects;
+          assert.isDefined(variantFactEffect);
+          expect(Option.getOrThrow(variantFactEffect.outcome)).toMatchObject({ status: 'accepted_change' });
+          expect(yield* variantFactInvocations).toEqual([
+            { invocationId: Option.getOrThrow(variantFactEffect.owner_invocation_id), status: 'succeeded' },
+          ]);
+          expect(
+            yield* admin`select variant_id as "variantId",locale,current_revision as revision,name
+    from catalog.variant_localized_facts where tenant_id=${tenantId}`,
+          ).toEqual([{ locale: 'en', name, revision: 1, variantId: sourceVariant.variantId }]);
+        });
         expect(yield* submit()).toEqual(accepted);
         const beforeMixedRead = yield* client.get(
           `${shell.baseUrl}/api/symmy/v1/admin/products?contractVersion=INTERNAL_C14`,
@@ -961,7 +1228,7 @@ it.live(
         expect(
           mixedProjection.items?.flatMap((item) => item.effects).find((effect) => effect.owner === 'commerce.pricing')
             ?.status,
-        ).toBe('conflict');
+        ).toBe('invalid');
         const [nativePriceRows] = yield* admin<{
           count: number;
         }>`select count(*)::integer as count from pricing.prices where tenant_id=${tenantId} and legal_entity_id=${governanceLegalEntityId} and price_id=${priceFailure.payload.priceRef.resourceId}`;
@@ -1164,23 +1431,6 @@ it.live(
           );
         const originalTuple = yield* invocationTuple(originalInvocationId);
         const replayTuple = yield* invocationTuple(replayInvocationId);
-        const deliveryFor = (jobId: string) =>
-          admin`
-          select d.outbox_delivery_id as delivery_id from core.outbox_deliveries d
-          join core.outbox_messages m on m.outbox_message_id=d.outbox_message_id
-          join core.domain_events e on e.domain_event_id=m.domain_event_id and e.tenant_id=m.tenant_id
-          join symmy_integration.import_jobs j on j.admission_invocation_id=e.action_invocation_id and j.tenant_id=e.tenant_id
-          where j.tenant_id=${tenantId} and j.job_id=${jobId} and d.worker_key=${workerKey}
-            and d.consumer_module_key='integration.symmy' and m.producer_module_key='integration.symmy'
-        `.pipe(
-            Effect.flatMap(
-              Schema.decodeUnknownEffect(
-                Schema.Tuple([Schema.Struct({ delivery_id: Schema.String.check(Schema.isUUID()) })]),
-              ),
-            ),
-            Effect.map((rows) => rows[0].delivery_id),
-          );
-        const originalDeliveryId = yield* deliveryFor(accepted.jobId);
         const replayDeliveryId = yield* deliveryFor(semanticReplay.jobId);
         const supportedPriceInvocationId = Option.getOrThrow(supportedPriceEffect.owner_invocation_id);
         const supportedPriceTuple = yield* invocationTuple(supportedPriceInvocationId);
@@ -1328,5 +1578,5 @@ it.live(
         expect(finalCounts).toEqual({ products: 1, variants: 2 });
       }),
     ).pipe(Effect.provide(services)),
-  180_000,
+  360_000,
 );

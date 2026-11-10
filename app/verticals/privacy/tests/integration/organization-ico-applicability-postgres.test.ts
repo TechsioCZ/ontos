@@ -1,7 +1,7 @@
 import { ReadHandlerUnavailable } from '@app/core-runtime';
 import { executeOrganizationIcoFactsWithAuthorization } from '@app/party-registry/apis/organization-ico-facts/client';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
-import { ConfigProvider, Crypto, DateTime, Effect, Option } from 'effect';
+import { Clock, ConfigProvider, Crypto, DateTime, Effect, Option } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
@@ -19,7 +19,10 @@ it.live(
   'checks native organization ICO classification without a dummy person and rechecks current revocation and hold',
   () =>
     Effect.gen(function* nativeOrganizationIco() {
-      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-11-07T12:00:00.000Z')));
+      const nativeTime = yield* Clock.Clock.defaultValue().currentTimeMillis;
+      const now = DateTime.makeUnsafe(nativeTime);
+      const effectiveFrom = DateTime.formatIso(DateTime.subtract(now, { days: 6 }));
+      yield* TestClock.setTime(nativeTime);
       const native = yield* privacyIcoNativeContext('privacy.core.organization-ico-applicability.read');
       const crypto = yield* Crypto.Crypto;
       const { principalId, tenantId } = native.principal;
@@ -30,13 +33,15 @@ it.live(
             const purposes = yield* processingPurposeRepositoryForScope(transaction, scope);
             const purpose = yield* purposes.create(tenantId, legalEntityId, yield* crypto.randomUUIDv4(), {
               businessCode: 'INTERNAL_ORG_ICO',
-              effectiveFrom: '2026-11-01T00:00:00.000Z',
+              effectiveFrom,
               governanceOwnerId: principalId,
               meaning: 'Explicit approved organization-only ICO business field classification',
             });
             const version = Option.getOrThrow(Option.fromUndefinedOr(purpose.versions.at(0)));
             const facts = makeOrganizationIcoApplicabilityFixture({
               authMethod: native.principal.authMethod,
+              effectiveFrom,
+              evaluatedAt: DateTime.formatIso(now),
               legalEntityId,
               principalId,
               purposeId: purpose.purposeRef.resourceId,
@@ -131,8 +136,8 @@ it.live(
               authorityRef: 'internal:hold-authority',
               contentScopeRefs: [fixture.context.processingScopeRef.scopeId],
               controllerRef: legalEntityId,
-              effectiveFrom: '2026-11-01T00:00:00.000Z',
-              effectiveTo: '2026-12-01T00:00:00.000Z',
+              effectiveFrom,
+              effectiveTo: DateTime.formatIso(DateTime.add(now, { days: 24 })),
               evidenceRefs: ['internal:hold-evidence'],
               holdRef: `internal:org-hold:${tenantId}`,
               policyRef: 'internal:hold-policy',
@@ -146,7 +151,7 @@ it.live(
               releaseEvidenceRefs: [],
               releaseReasonRef: null,
               releaseRef: null,
-              reviewDueAt: '2026-11-20T00:00:00.000Z',
+              reviewDueAt: DateTime.formatIso(DateTime.add(now, { days: 13 })),
               reviewedAt: null,
               reviewEvidenceRefs: [],
               reviewRef: 'internal:hold-review',

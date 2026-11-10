@@ -271,6 +271,7 @@ it.effect('refuses an ordinary scope before invoking either fixture mutation', (
     ]);
     expect(importSymmyRuleAction.descriptor.legalEntityScope).toBe('required');
     expect(importSymmyRuleAction.descriptor.accessOwnerFacts?.(input, prepared.value.scope)).toEqual({
+      'assortment.currentness.fixtureCommandFingerprint': expect.stringMatching(/^[0-9a-f]{64}$/u),
       'assortment.currentness.kind': 'assortment_fixture',
       'assortment.currentness.selectorKind': 'PRODUCT',
     });

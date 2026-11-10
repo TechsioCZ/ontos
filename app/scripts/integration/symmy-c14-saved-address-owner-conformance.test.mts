@@ -17,7 +17,10 @@ import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
 import { PgClient } from '@effect/sql-pg';
 import { SourceProcessingContextSchema } from '@app/privacy/api';
 import { ProcessingPurposeRefSchema } from '@app/privacy/resources/processing-purpose';
-import { seedCommittedProfileSourceProcessingNativeFixture } from '@app/privacy/testing/source-processing-native';
+import {
+  seedCommittedProfileSourceProcessingNativeFixture,
+  seedSourceProcessingNativeFixture,
+} from '@app/privacy/testing/source-processing-native';
 import { retireSourceProcessingNativePurpose } from '@app/privacy/testing/source-processing-governance-native';
 import { SymmyEffectIdSchema } from '@app/shared-contracts/symmy';
 import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
@@ -121,8 +124,10 @@ it.live(
         // The profile is the actual owner-issued result from the preceding native job.
         // This separate import therefore needs neither a guessed profile ID nor a guessed address ID.
         const profile = { kind: 'RETAIL' as const, profileRef: profileReceipt.profileRef };
-        const occurrences = [yield* uuid, yield* uuid, yield* uuid, yield* uuid, yield* uuid, yield* uuid, yield* uuid];
+        const unlinkedAliasOccurrenceId = yield* uuid;
+        const occurrences = [...(yield* Effect.replicateEffect(uuid, 7)), unlinkedAliasOccurrenceId];
         const aliasRecordId = 'INTERNAL_C14_ADDRESS_ALIAS';
+        const unlinkedAliasRecordId = 'INTERNAL_C14_ADDRESS_INDEPENDENT_SOURCE';
         const sourceFor = (index: number, nativeAddressId: string | null, sourceRecordId = recordId) => {
           const source = {
             effectId: 'INTERNAL_C14_ASSIGNED_AT_ADMISSION',
@@ -182,6 +187,27 @@ it.live(
           profileReceipt: proofTransport,
           tenantId,
         });
+        const unlinkedAlias = yield* seedSourceProcessingNativeFixture({
+          connections: isolated.connections,
+          contexts: [
+            customerIntakeContext(
+              integration.principalId,
+              { ...flatSource, occurrenceId: unlinkedAliasOccurrenceId, recordId: unlinkedAliasRecordId },
+              null,
+            ),
+          ],
+          contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_INDEPENDENT_SOURCE_ENROLLMENT',
+          controllerRef: 'internal:customer-conformance',
+          dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
+          governancePrincipalId,
+          legalEntityId,
+          meaning: 'Independently enrolled source lacks a native subject association to the existing Retail profile',
+          tenantId,
+        });
+        const [unlinkedAliasContext] = unlinkedAlias.contexts;
+        if (unlinkedAliasContext === undefined) {
+          return yield* unavailable('The independently enrolled source context is required');
+        }
         const privacyRuntime = ownerRuntimes.get('privacy');
         if (privacyRuntime === undefined) {
           return yield* unavailable('The actual Privacy receiver is required for SavedAddress DATA processing');
@@ -196,7 +222,18 @@ it.live(
             ONTOS_GATEWAY_MODULE_API_KEY: privacyRuntime.moduleKey,
             ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: yield* Schema.encodeEffect(
               Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
-            )([...privacy.contexts, ...dataPrivacy.contexts]),
+            )([
+              ...privacy.contexts,
+              ...dataPrivacy.contexts,
+              {
+                ...unlinkedAliasContext,
+                request: {
+                  ...unlinkedAliasContext.request,
+                  target: { kind: 'RETAIL_CUSTOMER_PROFILE', resourceId: profile.profileRef.resourceId },
+                },
+                resourceRefs: [...unlinkedAliasContext.resourceRefs, profile.profileRef.resourceId],
+              },
+            ]),
           },
           port: privacyRuntime.port,
           prefix: '/privacy-api',
@@ -533,6 +570,7 @@ it.live(
           { index: 4, sourceRecordId: recordId, status: 403 },
           { index: 5, sourceRecordId: aliasRecordId, status: 403 },
           { index: 6, sourceRecordId: recordId, status: 503 },
+          { index: 7, sourceRecordId: unlinkedAliasRecordId, status: 503 },
         ]) {
           const deniedPlan = yield* addressPlan(
             'UpdateSavedAddress',

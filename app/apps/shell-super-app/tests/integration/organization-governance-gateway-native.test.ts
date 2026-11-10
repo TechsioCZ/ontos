@@ -6,6 +6,8 @@ import {
   GatewayAssertionReplayError,
   GatewayAssertionRedemptionUnavailableError,
   PrincipalResolver,
+  ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY,
+  ONTOS_SHELL_CONTRIBUTION_ABI,
   TenantModuleStateService,
   defineAction,
   defineRead,
@@ -81,7 +83,9 @@ import { GatewayIssuer, makeGatewayIssuerLayer } from '../../api/auth/gateway-is
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import { makeAuthDatabase, AuthDatabase } from '../../api/auth/db/client.ts';
 import { issueDelegatedGatewayContextAssertion } from '../../api/auth/gateway-delegation-issuer.ts';
+import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-policy.ts';
 import { GatewayDelegationVerificationLive } from '../../api/auth/gateway-delegation-verification.ts';
+import { admitOrganizationGovernanceRead } from '../../api/auth/gateway-organization-governance-evidence.ts';
 import { GatewayOriginatorEvidenceLive } from '../../api/auth/gateway-originator-evidence.service.ts';
 import {
   GatewayDelegationExchangeLedger,
@@ -92,11 +96,13 @@ import {
   ShellInstalledModuleCatalog,
 } from '../../api/modules/installed-module-catalog.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 
 const namespaceId = 'native.organization.staff';
 const privacyKey = 'native-organization-privacy-module';
 const symmyKey = 'native-organization-symmy-module';
 const readKey = 'integration.symmy.api.symmy-source-organization-facts';
+const readVersion = '2';
 const capability = 'integration.symmy.symmy-source-organization-facts.read';
 const actionKey = 'integration.symmy.native-readonly-probe';
 const supportedStates = ['inactive', 'active', 'read_only', 'quarantined'] as const;
@@ -114,6 +120,27 @@ const actor = Schema.decodeUnknownSync(AccessActorSchema)({
   subjectWorkloads: ['integration.symmy.source-organization-facts.read'],
 });
 const receiverDeployment = { appId: 'symmy-integration', buildMarker: 'symmy-integration-build' };
+
+const privacyRequirements = {
+  coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
+  intrinsic: [],
+  operations: [
+    {
+      entrypointKey: 'privacy.core.api.organization-business-applicability',
+      key: 'privacy.core.requirement.organization-business-source-facts',
+    },
+    {
+      entrypointKey: 'privacy.core.record-privacy-applicability',
+      key: 'privacy.core.requirement.record-organization-business-source-facts',
+    },
+  ].map((requirement) => ({
+    ...requirement,
+    condition: 'privacy.core.condition.native-organization-business-facts',
+    evidence: ['privacy.core.evidence.current-organization-business-facts'],
+    provider: { entrypointKey: readKey, moduleId: 'integration.symmy', schemaVersion: readVersion },
+  })),
+  schemaVersion: '1',
+};
 
 const definitions = (calls: { actions: number; reads: number }) => {
   const read = defineRead(
@@ -140,7 +167,7 @@ const definitions = (calls: { actions: number; reads: number }) => {
       policies: [],
       readKey,
       resultSchema: SymmySourceOrganizationFactsResponseSchema,
-      schemaVersion: '1',
+      schemaVersion: readVersion,
     },
     () =>
       Effect.sync(() => {
@@ -262,7 +289,20 @@ it.live(
         const calls = { actions: 0, reads: 0 };
         const owner = definitions(calls);
         const privacy = makeModuleContractFixture({ appId: 'privacy', moduleId: 'privacy.core', supportedStates });
-        const snapshot = yield* makeCompositionSnapshot([privacy, owner.contract], 600_000);
+        const shellDeployment = { appId: 'shell-super-app' as const, buildMarker: ultramodernDeliveryUnit.buildMarker };
+        const snapshot = yield* makeCompositionSnapshot(
+          [{ ...privacy, manifest: { ...privacy.manifest, requirements: privacyRequirements } }, owner.contract],
+          600_000,
+          {
+            document: JSON.stringify({
+              contributionAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
+              coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
+              deployment: shellDeployment,
+              schemaVersion: '2',
+            }),
+            receiverDeployment: shellDeployment,
+          },
+        );
         const isolated = yield* makeIsolatedNativeDatabaseFixture({
           compositionSnapshot: snapshot,
           mode: 'schema-only',
@@ -366,18 +406,22 @@ it.live(
             use: 'sig',
           }),
         });
-        const signer = makeGatewayIssuerLayer({
-          currentTimeSeconds: DateTime.nowAsDate.pipe(Effect.map((now) => Math.floor(now.getTime() / 1000))),
-          generateJti: crypto.randomUUIDv4().pipe(Effect.orDie),
-          loadAdmission: Effect.succeed({
-            audiences: new Map([
-              ['privacy', 'privacy-build'],
-              ['symmy-integration', 'symmy-integration-build'],
-            ]),
-            revision: snapshot.composition.revision,
-          }),
-          loadConfig: Effect.succeed(signing),
-        }).pipe(Layer.provide(Layer.succeed(GatewayScopeGrantRegistrar, makeGatewayScopeGrantRegistrar(issuerClient))));
+        const signerForRevision = (revision: string) =>
+          makeGatewayIssuerLayer({
+            currentTimeSeconds: DateTime.nowAsDate.pipe(Effect.map((now) => Math.floor(now.getTime() / 1000))),
+            generateJti: crypto.randomUUIDv4().pipe(Effect.orDie),
+            loadAdmission: Effect.succeed({
+              audiences: new Map([
+                ['privacy', 'privacy-build'],
+                ['symmy-integration', 'symmy-integration-build'],
+              ]),
+              revision,
+            }),
+            loadConfig: Effect.succeed(signing),
+          }).pipe(
+            Layer.provide(Layer.succeed(GatewayScopeGrantRegistrar, makeGatewayScopeGrantRegistrar(issuerClient))),
+          );
+        const signer = signerForRevision(snapshot.composition.revision);
         const issuerService = Context.get(yield* Layer.build(signer), GatewayIssuer);
         const enforcement = AccessDecisionLive.pipe(
           Layer.provideMerge(AccessEnforcementPortsLive),
@@ -538,6 +582,35 @@ it.live(
             expect(Exit.isFailure(yield* Effect.exit(issue(subject)))).toBe(true);
             continue;
           }
+          const unpinned = yield* makeCompositionSnapshot([privacy, owner.contract], 600_000);
+          const unpinnedInstalled = yield* makeInstalledModuleCatalogLoader(Effect.succeed(unpinned));
+          const unpinnedRevision = unpinned.composition.revision;
+          const unpinnedSigner = Context.get(yield* Layer.build(signerForRevision(unpinnedRevision)), GatewayIssuer);
+          const unpinnedSource = yield* unpinnedSigner.issue({
+            audience: 'privacy',
+            compositionRevision: unpinnedRevision,
+            principal,
+          });
+          const unpinnedBinding = yield* Schema.decodeUnknownEffect(GatewayModuleBindingSchema)({
+            compositionRevision: unpinnedRevision,
+            providerKeyId: privacyKey,
+            sourceAppId: 'privacy',
+            sourceBuildMarker: 'privacy-build',
+          });
+          const unpinnedRead = yield* Effect.exit(
+            admitOrganizationGovernanceRead({
+              audience: 'symmy-integration',
+              binding: unpinnedBinding,
+              installed: unpinnedInstalled,
+              subject: { ...subject, sourceAssertion: Redacted.make(unpinnedSource.token) },
+            }).pipe(
+              Effect.provide(GatewayDelegationVerificationLive),
+              Effect.provide(services),
+              Effect.provideService(ConfigProvider.ConfigProvider, config),
+              Effect.provideService(AuthenticationNamespaceRegistry, registry),
+            ),
+          );
+          expect(Exit.isFailure(unpinnedRead)).toBe(true);
           const { authenticationNamespaceId: _namespace, ...legacyPrincipal } = principal;
           const legacy = yield* issuerService.issue({
             audience: 'privacy',
@@ -602,7 +675,23 @@ it.live(
           expect(wireRequests).toHaveLength(1);
           const sourceClaims = yield* decodeSupportedGatewayContextClaims(decodeJwt(incoming.token));
           const claims = yield* decodeSupportedGatewayContextClaims(decodeJwt(delegated.token));
-          expect(claims.ver).toBe(6);
+          expect(claims.ver).toBe(8);
+          if (claims.ver === 8) {
+            const { target, ...withoutTarget } = claims.organizationGovernanceRead;
+            for (const changed of [
+              { ...claims, ver: 6 },
+              { ...claims, organizationGovernanceRead: withoutTarget },
+              {
+                ...claims,
+                organizationGovernanceRead: {
+                  ...claims.organizationGovernanceRead,
+                  target: { ...target, entrypointKey: `${readKey}.unrelated` },
+                },
+              },
+            ]) {
+              expect(Exit.isFailure(yield* Effect.exit(decodeSupportedGatewayContextClaims(changed)))).toBe(true);
+            }
+          }
           expect(claims.iat).toBe(sourceClaims.iat);
           expect(claims.exp).toBe(sourceClaims.exp);
           expect(claims.jti).not.toBe(sourceClaims.jti);
@@ -612,6 +701,15 @@ it.live(
             governanceLegalEntityId: legalEntityId,
             principalId: human.principalId,
             requestHash,
+            target: {
+              access: 'read',
+              appId: 'symmy-integration',
+              declarationKey: capability,
+              entrypointKey: readKey,
+              legalEntityScope: 'required',
+              moduleId: 'integration.symmy',
+              schemaVersion: readVersion,
+            },
             tenantId,
           });
           expect(readVerifiedGatewayOrganizationGovernanceRead({ ...receiver })).toBeUndefined();
@@ -644,7 +742,7 @@ it.live(
             })
             .pipe(Effect.provideService(AuthenticationNamespaceRegistry, registry));
           for (const carrier of [
-            { ...owner.read.descriptor, schemaVersion: '2' },
+            { ...owner.read.descriptor, schemaVersion: '1' },
             {
               ...owner.read.descriptor,
               entrypoint: { ...owner.read.descriptor.entrypoint, entrypointKey: `${readKey}.unrelated` },

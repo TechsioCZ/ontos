@@ -2,12 +2,13 @@ import { ApplyCustomerGroupMembershipSourcePayloadSchema } from '@app/commerce-c
 import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { Effect, Schema } from 'effect';
 
-const [assignmentSchema] = ApplyCustomerGroupMembershipSourcePayloadSchema.members;
+const [assignmentSchema, removalSchema] = ApplyCustomerGroupMembershipSourcePayloadSchema.members;
+const membershipCommandSchema = Schema.Union([assignmentSchema, removalSchema]);
 
-/** Explicit PERSON assignment only; omission never becomes removal or a complete snapshot. */
-export const makeInternalMembershipAssignmentPlan = (payload: typeof assignmentSchema.Encoded) =>
-  Schema.decodeUnknownEffect(assignmentSchema)(payload).pipe(
-    Effect.flatMap(Schema.encodeEffect(assignmentSchema)),
+/** Exact PERSON membership commands for exercising assignment and explicit removal at the route boundary. */
+export const makeInternalMembershipPlan = (payload: typeof membershipCommandSchema.Encoded) =>
+  Schema.decodeUnknownEffect(membershipCommandSchema)(payload).pipe(
+    Effect.flatMap(Schema.encodeEffect(membershipCommandSchema)),
     Effect.flatMap((normalized) =>
       Schema.decodeUnknownEffect(SymmyInternalExecutionPlanSchema)({
         items: [

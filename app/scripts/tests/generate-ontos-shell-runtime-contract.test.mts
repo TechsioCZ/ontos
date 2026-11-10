@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
+import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -17,10 +18,11 @@ import {
   ShellRuntimeContractGenerationError,
 } from '../generate-ontos-shell-runtime-contract.mts';
 
+const shellAppId = 'shell-super-app';
 const topology = {
   shell: {
     deliveryUnit: { buildMarker: 'shell-generation-marker', unitId: 'app/shell-super-app' },
-    id: 'shell-super-app',
+    id: shellAppId,
     path: 'apps/shell-super-app',
   },
 };
@@ -62,6 +64,65 @@ const fixture = Effect.gen(function* makeFixture() {
 const readContract = (file: string) =>
   Effect.tryPromise(() => readFile(file, 'utf-8')).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Contract)));
 
+const localCompiledBuild = 'a'.repeat(64);
+const writeCompiledIdentity = (
+  shellDirectory: string,
+  { appId = shellAppId, buildMarker = localCompiledBuild, sourceRevision = 'workspace' } = {},
+) =>
+  Effect.gen(function* writeIdentity() {
+    const dist = path.join(shellDirectory, 'dist');
+    yield* Effect.tryPromise(() => mkdir(dist, { recursive: true }));
+    yield* Effect.tryPromise(() =>
+      writeFile(
+        path.join(dist, 'ultramodern-build.json'),
+        Schema.encodeSync(Json)({
+          deliveryUnit: {
+            appId,
+            build: buildMarker,
+            buildMarker,
+            sourceRevision,
+            unitId: 'app/shell-super-app',
+          },
+        }),
+      ),
+    );
+  });
+
+it.live('publishes the emitted Node identity for a local compiled Shell', () =>
+  Effect.gen(function* identifiesCompiledWorkspaceShell() {
+    const { shellDirectory } = yield* fixture;
+    yield* Effect.tryPromise(() => writeFile(path.join(shellDirectory, 'source.ts'), 'export const release = 2;\n'));
+    yield* writeCompiledIdentity(shellDirectory);
+    const file = yield* generateOntosShellRuntimeContract({ shellDirectory, target: 'dist' });
+    expect((yield* readContract(file)).deployment).toEqual({
+      appId: shellAppId,
+      buildMarker: localCompiledBuild,
+    });
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live('requires the matching compiled identity for a clean release', () =>
+  Effect.gen(function* validatesCompiledReleaseIdentity() {
+    const { root, shellDirectory } = yield* fixture;
+    const generate = generateOntosShellRuntimeContract({ shellDirectory, target: 'dist' });
+    const rejected = generate.pipe(Effect.flip);
+    yield* writeCompiledIdentity(shellDirectory, { appId: 'another-shell' });
+    expect((yield* rejected).message).toBe('invalid compiled Shell identity');
+    const mismatch = 'the compiled Shell identity does not match the current release';
+    yield* writeCompiledIdentity(shellDirectory);
+    expect((yield* rejected).message).toBe(mismatch);
+    const { buildMarker, sourceRevision } = resolveUltramodernReleaseIdentity({
+      generationBuildMarker: topology.shell.deliveryUnit.buildMarker,
+      unitId: topology.shell.deliveryUnit.unitId,
+      workspaceRoot: root,
+    });
+    yield* writeCompiledIdentity(shellDirectory, { sourceRevision });
+    expect((yield* rejected).message).toBe(mismatch);
+    yield* writeCompiledIdentity(shellDirectory, { buildMarker, sourceRevision });
+    expect((yield* readContract(yield* generate)).deployment).toEqual({ appId: shellAppId, buildMarker });
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.live('stamps both deployment targets with the actual immutable Shell release identity', () =>
   Effect.gen(function* identifiesPromotedShell() {
     const { root, shellDirectory } = yield* fixture;
@@ -84,7 +145,7 @@ it.live('stamps both deployment targets with the actual immutable Shell release 
     const first = yield* readContract(yield* generate('dist'));
     const cloudflare = yield* readContract(yield* generate('cloudflare-dist'));
     expect(first.schemaVersion).toBe('2');
-    expect(first.deployment.appId).toBe('shell-super-app');
+    expect(first.deployment.appId).toBe(shellAppId);
     expect(first.deployment.buildMarker).not.toBe(topology.shell.deliveryUnit.buildMarker);
     expect(cloudflare.deployment).toEqual(first.deployment);
     expect(first.coreCapabilities).toEqual([{ id: 'ontos.module-dependency-contracts', version: '1' }]);

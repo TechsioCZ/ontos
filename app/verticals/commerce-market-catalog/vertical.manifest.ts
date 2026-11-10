@@ -4,6 +4,8 @@
 import { defineOntosModuleManifest, ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
+import { AssortmentFixtureMarketAssociationApi } from './shared/apis/assortment-fixture-market-association.ts';
+import { assortmentFixtureMarketAssociationRead } from './src/api/assortment-fixture-market-association.read.ts';
 import { activateMarketAction } from './src/actions/activate-market.action.ts';
 import { associateStorefrontAction } from './src/actions/associate-storefront.action.ts';
 import { createMarketAction } from './src/actions/create-market.action.ts';
@@ -77,6 +79,7 @@ export const commerceMarketCatalogManifest: OntosModuleManifestInput = defineOnt
       // <generated-module-manifest-apis>
       'activate-market-action': ActivateMarketActionApi,
       'associate-storefront-action': AssociateStorefrontActionApi,
+      'assortment-fixture-market-association': AssortmentFixtureMarketAssociationApi,
       'create-market-action': CreateMarketActionApi,
       'current-market-catalog': CurrentMarketCatalogApi,
       'eligible-market-tuples': EligibleMarketTuplesApi,
@@ -103,6 +106,11 @@ export const commerceMarketCatalogManifest: OntosModuleManifestInput = defineOnt
     events: [],
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
+      {
+        apiKey: 'assortment-fixture-market-association',
+        operationKey: 'assortmentFixtureMarketAssociation.execute',
+        registration: assortmentFixtureMarketAssociationRead,
+      },
       {
         apiKey: 'current-market-catalog',
         operationKey: 'currentMarketCatalog.execute',

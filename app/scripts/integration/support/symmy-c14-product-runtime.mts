@@ -110,6 +110,7 @@ export const productComposition = Effect.fn('SymmyC14ProductFixture.composition'
       'commerce-customer-context',
       'privacy',
       'commerce-market-catalog',
+      ...(fixtureOwners.includes('assortment') ? ['storefront-registry'] : []),
       ...fixtureOwners,
     ],
     derivePublishedContract,
@@ -223,9 +224,22 @@ export const startProductOwner = Effect.fn('SymmyC14ProductFixture.startOwner')(
     | '/inventory-api'
     | '/assortment-api'
     | '/tax-api'
-    | '/commerce-market-catalog-api';
+    | '/commerce-market-catalog-api'
+    | '/storefront-registry-api';
 }) {
-  const child = yield* ChildProcess.make(process.execPath, [input.artifacts.receiverArtifact], {
+  // These owner fixtures use native business routes against a clone without a Portal Auth realm.
+  const portalEnvironmentKeys = [
+    'COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL',
+    'COMMERCE_PORTAL_AUTH_DATABASE_URL',
+    'COMMERCE_PORTAL_AUTH_SECRET',
+    'COMMERCE_PORTAL_AUTH_URL',
+  ];
+  const args = [
+    ...portalEnvironmentKeys.flatMap((key) => ['-u', key]),
+    process.execPath,
+    input.artifacts.receiverArtifact,
+  ];
+  const child = yield* ChildProcess.make('env', args, {
     cwd: `${c14AppRoot}/verticals/${input.contract.deployment.appId}`,
     env: {
       ...input.environment,

@@ -6,7 +6,7 @@ import {
 } from '../../src/auth/system-principal-context-provenance.ts';
 
 /** Core infrastructure fixture only; actual owner tokens are issued after independent native delivery and binding proof. */
-export const organizationProcessingReadPrincipal = (requestHash: string, restricted = true) => {
+export const organizationProcessingReadPrincipal = (requestHash: string, restricted = true, schemaVersion = '1') => {
   const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
     authContextRef: 'job:organization-processing:run:60000000-0000-4000-8000-000000000002',
     authMethod: 'system',
@@ -27,7 +27,7 @@ export const organizationProcessingReadPrincipal = (requestHash: string, restric
     originalWorkloadBindingIncarnation: '60000000-0000-4000-8000-000000000005',
     originalWorkloadKey: 'integration.source-admit',
     runReference: '60000000-0000-4000-8000-000000000002',
-    schemaVersion: '1',
+    schemaVersion,
     sourceAppId: 'source-import',
     sourceBuildMarker: 'source-build',
     sourceMode: 'worker',

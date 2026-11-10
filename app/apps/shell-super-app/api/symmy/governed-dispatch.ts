@@ -185,6 +185,9 @@ const resolveRoute = Effect.fn('SymmyGovernedDispatch.routeContext')(function* r
       ? yield* decodeSymmySourceSelector(request.code).pipe(Effect.mapError(selectorProblem))
       : undefined;
   const input = selector === undefined ? { routeKey: request.route } : { code: selector.code, routeKey: request.route };
+  if ('idempotencyKey' in request && request.idempotencyKey !== undefined) {
+    Object.assign(input, { replayIdempotencyKey: request.idempotencyKey });
+  }
   const prepared = yield* acquireScopedRouteContext(admission, input, newRequestIdentifier);
   const selectedCode =
     selector !== undefined && 'code' in request

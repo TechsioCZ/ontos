@@ -3,13 +3,16 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { SymmyRouteContextSchema, SymmyRouteRefSchema, SymmySourceRecordRefSchema } from '@app/shared-contracts/symmy';
 import { TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
+import { RegisteredGatewayRouteScopeSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { SymmyFixtureExecutionPlanSchema } from '../domain/symmy-job-execution.ts';
 import { SymmyLifecycleRouteIdSchema } from '../domain/symmy-job-notification.ts';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
+import { AdmitSymmyJobPayloadSchema } from '../domain/symmy-job-admission.ts';
 
 export const SymmyRouteContextRequestSchema = Schema.Struct({
   code: Schema.optionalKey(Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(300))),
+  replayIdempotencyKey: Schema.optionalKey(AdmitSymmyJobPayloadSchema.fields.idempotencyKey),
   routeKey: Schema.Literals([
     'adminCustomers',
     'adminProducts',
@@ -28,10 +31,11 @@ export const SymmyRouteContextRequestSchema = Schema.Struct({
 });
 export type SymmyRouteContextRequest = typeof SymmyRouteContextRequestSchema.Type;
 export const SymmyRouteContextResponseSchema = Schema.Struct({
-  allowedOwnerOperations: SymmyRouteContextSchema.fields.allowedOwnerOperations,
+  allowedOwnerOperations: Schema.Array(SymmyRouteContextSchema.fields.allowedOwnerOperations.value),
   issuerId: SymmyRouteContextSchema.fields.issuerId,
   legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
   mappingVersion: SymmyRouteContextSchema.fields.mappingVersion,
+  replayIdempotencyDigest: RegisteredGatewayRouteScopeSchema.fields.replayIdempotencyDigest,
   resolvedCode: Schema.optionalKey(
     Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(300)),
   ),
@@ -44,7 +48,14 @@ export const SymmyRouteContextResponseSchema = Schema.Struct({
   sourceRouteId: SymmyRouteRefSchema.fields.integrationRouteId.check(Schema.isUUID()),
   sourceRouteRevision: SymmyRouteContextSchema.fields.routeRevision,
   tenantId: TenantIdSchema,
-});
+}).check(
+  Schema.makeFilter(
+    ({ allowedOwnerOperations, replayIdempotencyDigest }) =>
+      (replayIdempotencyDigest === undefined
+        ? allowedOwnerOperations.length > 0
+        : allowedOwnerOperations.length === 0) || 'Only retained-receipt contexts carry no owner operations',
+  ),
+);
 
 export const SymmyRouteContextAuthenticationProblemSchema = makeProblemDetailsSchema(
   'SymmyRouteContextAuthenticationProblem',

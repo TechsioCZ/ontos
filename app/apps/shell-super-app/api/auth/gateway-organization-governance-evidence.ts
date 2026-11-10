@@ -1,28 +1,31 @@
 import { AccessDeclarationSchema, recoverSqlTransactionError } from '@app/core-runtime';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
-import {
-  organizationGovernanceReadOperationContract,
-  RegisteredGatewayOrganizationGovernanceReadSchema,
-} from '@app/core-runtime/auth/system-principal-context-provenance';
+import { RegisteredGatewayOrganizationGovernanceReadSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { RegisteredGatewayOrganizationGovernanceRead } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { CoreDatabase } from '@app/core-runtime/db/client';
 import { OperationalScopeResolver } from '@app/core-runtime/operations/context';
 import type { GatewayOrganizationGovernanceReadSubjectSchema } from '@app/shared-contracts';
-import { decodeGatewayContextProtectedHeader, decodeSupportedGatewayContextClaims } from '@app/shared-contracts';
+import {
+  decodeGatewayContextProtectedHeader,
+  decodeSupportedGatewayContextClaims,
+  organizationGovernanceReadOperationContract,
+} from '@app/shared-contracts';
 import { symmySourceOrganizationFactsAccessDeclaration } from '@app/symmy-integration/api/symmy-source-organization-facts';
 import { sql } from 'drizzle-orm';
-import { DateTime, Effect, Predicate, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Option, Predicate, Redacted, Schema } from 'effect';
 import { jwtVerify } from 'jose';
 
 import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
 import { validateDelegationAuthentication } from './gateway-delegation-authentication.service.ts';
 import { delegationForbidden, delegationUnavailable, GatewayDelegationError } from './gateway-delegation-errors.ts';
-import { bindingAttestsSource, gatewayPublishedOperationAccess } from './gateway-delegation-policy.ts';
+import { bindingAttestsSource, resolvePublishedFiniteGatewayTarget } from './gateway-delegation-policy.ts';
 import type { GatewayModuleBinding } from './gateway-delegation-policy.ts';
 import { GatewayDelegationVerification } from './gateway-delegation-verification.ts';
 
 type Subject = typeof GatewayOrganizationGovernanceReadSubjectSchema.Type;
+type InstalledContract = ShellInstalledCatalog['contracts'][number];
+type GovernanceTarget = ReturnType<typeof organizationGovernanceReadOperationContract>;
 interface Evidence {
   readonly organizationGovernanceRead: RegisteredGatewayOrganizationGovernanceRead;
   readonly principal: TrustedPrincipalContext;
@@ -32,6 +35,29 @@ interface Evidence {
 }
 const privacyApp = 'privacy';
 const privacyModule = 'privacy.core';
+const governanceSourceRequirements = [
+  {
+    consumer: 'privacy.core.api.organization-business-applicability',
+    key: 'privacy.core.requirement.organization-business-source-facts',
+  },
+  {
+    consumer: 'privacy.core.record-privacy-applicability',
+    key: 'privacy.core.requirement.record-organization-business-source-facts',
+  },
+];
+const sourcePinsGovernanceVersion = (source: InstalledContract, target: GovernanceTarget): boolean =>
+  governanceSourceRequirements.every(({ consumer, key }) => {
+    const matches = source.manifest.requirements?.operations.filter((requirement) => requirement.key === key) ?? [];
+    const [requirement] = matches;
+    return (
+      matches.length === 1 &&
+      requirement !== undefined &&
+      requirement.entrypointKey === consumer &&
+      requirement.provider.moduleId === target.moduleId &&
+      requirement.provider.entrypointKey === target.entrypointKey &&
+      requirement.provider.schemaVersion === target.schemaVersion
+    );
+  });
 const mintKey = Object.freeze({ kind: 'organization_governance_read' });
 class AdmittedOrganizationGovernanceReadValue {
   readonly #evidence: Evidence | undefined;
@@ -139,8 +165,8 @@ const validateCurrentHuman = Effect.fn('OrganizationGovernanceEvidence.currentHu
 const requireReadRights = Effect.fn('OrganizationGovernanceEvidence.readRights')(function* rights(
   principal: TrustedPrincipalContext,
   sourceKey: string,
+  target: GovernanceTarget,
 ) {
-  const target = organizationGovernanceReadOperationContract();
   const scope = yield* (yield* OperationalScopeResolver)
     .resolve({
       audience: privacyApp,
@@ -194,7 +220,7 @@ export const admitOrganizationGovernanceRead = Effect.fn('GatewayDelegation.admi
     readonly subject: Subject;
   }) {
     const { binding, installed, subject } = input;
-    const target = organizationGovernanceReadOperationContract();
+    const approvedTarget = organizationGovernanceReadOperationContract();
     const source = installed.contracts.find((contract) => contract.deployment.appId === binding.sourceAppId);
     const destination = installed.contracts.find((contract) => contract.deployment.appId === input.audience);
     if (
@@ -204,26 +230,40 @@ export const admitOrganizationGovernanceRead = Effect.fn('GatewayDelegation.admi
       source.manifest.module.id !== privacyModule ||
       binding.sourceBuildMarker !== source.deployment.buildMarker ||
       binding.compositionRevision !== installed.composition.revision ||
-      input.audience !== target.appId ||
-      destination.manifest.module.id !== target.moduleId ||
-      gatewayPublishedOperationAccess(destination, target.entrypointKey, target.schemaVersion) !== target.access ||
+      input.audience !== approvedTarget.appId ||
+      destination.manifest.module.id !== approvedTarget.moduleId ||
       destination.manifest.publicSurface.actions.some(
-        (action) => action.entrypoint.entrypointKey === target.entrypointKey,
+        (action) => action.entrypoint.entrypointKey === approvedTarget.entrypointKey,
       )
     ) {
       return yield* delegationForbidden();
     }
+    const resolved = resolvePublishedFiniteGatewayTarget(destination, approvedTarget);
+    if (Option.isNone(resolved)) {
+      return yield* delegationForbidden();
+    }
+    const target = resolved.value;
+    if (target.schemaVersion !== approvedTarget.schemaVersion && !sourcePinsGovernanceVersion(source, target)) {
+      return yield* delegationForbidden();
+    }
     const sourceProof = yield* verifySource({ assertion: subject.sourceAssertion, binding, installed });
     yield* validateCurrentHuman(sourceProof.principal);
-    yield* requireReadRights(sourceProof.principal, sourceProof.jti);
-    const organizationGovernanceRead = yield* Schema.decodeUnknownEffect(
-      RegisteredGatewayOrganizationGovernanceReadSchema,
-    )({
+    yield* requireReadRights(sourceProof.principal, sourceProof.jti, target);
+    const metadata = {
       governanceLegalEntityId: sourceProof.principal.legalEntityId,
       principalId: sourceProof.principal.principalId,
       requestHash: subject.requestHash,
       tenantId: sourceProof.principal.tenantId,
-    }).pipe(Effect.mapError(delegationForbidden));
+    };
+    if (target.schemaVersion !== approvedTarget.schemaVersion) {
+      Object.assign(metadata, { target });
+    }
+    const organizationGovernanceRead = yield* Schema.decodeUnknownEffect(
+      RegisteredGatewayOrganizationGovernanceReadSchema,
+    )(metadata).pipe(Effect.mapError(delegationForbidden));
+    if (organizationGovernanceRead.target !== undefined) {
+      Object.freeze(organizationGovernanceRead.target);
+    }
     return new AdmittedOrganizationGovernanceReadValue(mintKey, {
       organizationGovernanceRead: Object.freeze(organizationGovernanceRead),
       principal: Object.freeze({ ...sourceProof.principal }),

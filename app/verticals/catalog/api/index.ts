@@ -592,7 +592,10 @@ export const makeCatalogApiRuntime = (
     setVariantAttributeOverrideActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     setVariantAttributeOverrideRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     setVariantLocalizedFactsActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    setVariantLocalizedFactsRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    setVariantLocalizedFactsRecoveryReadApiLive.pipe(
+      GovernedReadLayer.provide(governedReadRuntimeLive),
+      Layer.provide(governedActionRuntimeLive),
+    ),
     skuLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     updateProductActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     updateProductRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

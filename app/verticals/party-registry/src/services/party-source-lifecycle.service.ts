@@ -309,12 +309,18 @@ const contactReceipt = (point: PartyContactPoint, changed: boolean) => ({
   revision: point.revision,
 });
 
+// The native command stores the outer validFrom as ISO text, while provenance is already decoded.
+const addContactPointCommandPayload = Schema.Struct({
+  ...AddContactPointPayloadSchema.fields,
+  provenance: Schema.toType(AddContactPointPayloadSchema.fields.provenance),
+});
+
 export const addContactPointSourceRecord = Effect.fn('PartySourceLifecycle.addContactPoint')(function* add(
   transaction: SourceTransaction,
   scope: OperationalScope,
   command: AddContactPointCommand,
 ) {
-  const payload = yield* Schema.decodeUnknownEffect(AddContactPointPayloadSchema)(command).pipe(
+  const payload = yield* Schema.decodeUnknownEffect(addContactPointCommandPayload)(command).pipe(
     Effect.mapError(unavailable),
   );
   const prepared = yield* prepareLifecycle(transaction, scope, { operation: 'ADD_CONTACT_POINT', payload });

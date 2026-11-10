@@ -19,6 +19,7 @@ import type {
   SymmyOwnerReceipt,
 } from '../../shared/domain/symmy-job-execution.ts';
 import type { symmyJobExecutionStore } from '../../src/persistence/symmy-job-execution-store.ts';
+import { projectSymmyExecutionJob } from '../../src/persistence/symmy-job-execution-store.ts';
 import {
   makeSymmyJobWorker,
   SymmyJobWorkerError,
@@ -26,7 +27,11 @@ import {
   SymmyWorkerIdentity,
   SymmyJobExecutionPersistence,
 } from '../../src/services/symmy-job-worker.service.ts';
-import type { SymmyEffectAdapter, SymmyOriginalEffectRecovery } from '../../src/services/symmy-job-worker.service.ts';
+import type {
+  SymmyEffectAdapter,
+  SymmyEffectAdapterInput,
+  SymmyOriginalEffectRecovery,
+} from '../../src/services/symmy-job-worker.service.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '10000000-0000-4000-8000-000000000002';
@@ -106,6 +111,14 @@ const rawContext: OutboxWorkerHandlerContext = {
 const context = attestOutboxWorkerHandlerContext(rawContext);
 const unavailable = () =>
   new SymmyJobWorkerError({ code: 'symmy_job_worker_unavailable', reason: 'Fixture unavailable' });
+const pinOriginalRequest = (pin: SymmyEffectAdapterInput['recordOwnerRequest']) =>
+  pin({
+    authContextRef: 'fixture-owner-authorization',
+    executorPrincipalId: systemId,
+    requestHash: 'a'.repeat(64),
+  });
+const loseAcknowledgement = (_effect: SymmyPinnedEffect, pin: SymmyEffectAdapterInput['recordOwnerRequest']) =>
+  pinOriginalRequest(pin).pipe(Effect.andThen(Effect.fail(unavailable())));
 const unusedInvoker: ScopedRoutineInvoker = { invoke: () => Effect.die('No direct test SQL') };
 
 const defaultExecute = (effect: SymmyPinnedEffect): Effect.Effect<SymmyExecutionOutcome, SymmyJobWorkerError> =>
@@ -137,13 +150,16 @@ const harness = () => {
   let notificationFails = false;
   const executed: SymmyPinnedEffect[] = [];
   const recovered: SymmyPinnedEffect[] = [];
-  let execute = defaultExecute;
+  let execute: (
+    effect: SymmyPinnedEffect,
+    pin: SymmyEffectAdapterInput['recordOwnerRequest'],
+  ) => ReturnType<typeof defaultExecute> = defaultExecute;
   let recover = defaultRecover;
   const adapter: SymmyEffectAdapter = {
-    execute: ({ effect }) =>
+    execute: ({ effect, recordOwnerRequest }) =>
       Effect.suspend(() => {
         executed.push(effect);
-        return execute(effect);
+        return execute(effect, recordOwnerRequest);
       }),
     operation,
     recover: ({ effect }) =>
@@ -164,7 +180,9 @@ const harness = () => {
         const version = entry.version + 1;
         job = {
           ...job,
-          effects: job.effects.map((saved) => (saved === entry ? { ...saved, state: 'attempting', version } : saved)),
+          effects: job.effects.map((saved) =>
+            saved === entry ? { ...saved, outcome: Option.none(), state: 'attempting', version } : saved,
+          ),
         };
         return { effect: Option.some(entry.effect), mode, version };
       }),
@@ -189,12 +207,31 @@ const harness = () => {
         };
         return true;
       }),
-    markIndeterminate: (_jobId: string, markedId: string) =>
+    markIndeterminate: (
+      _jobId: string,
+      markedId: string,
+      _token: string,
+      _version: number,
+      status?: 'unavailable' | 'indeterminate',
+    ) =>
       Effect.sync(() => {
         job = {
           ...job,
           effects: job.effects.map((entry) =>
-            entry.effect.ref.effectId === markedId ? { ...entry, state: 'indeterminate' } : entry,
+            entry.effect.ref.effectId === markedId
+              ? {
+                  ...entry,
+                  outcome:
+                    status === 'unavailable'
+                      ? Option.some({
+                          effectId: entry.effect.ref.effectId,
+                          owner: entry.effect.ref.operation.moduleId,
+                          status,
+                        })
+                      : Option.none(),
+                  state: 'indeterminate',
+                }
+              : entry,
           ),
         };
         return true;
@@ -439,9 +476,10 @@ describe('Symmy durable execution and original-effect recovery', () => {
   it.effect('recovers a lost acknowledgement after restart and never replays an accepted sibling', () =>
     Effect.gen(function* lostAcknowledgement() {
       const fixture = harness();
-      fixture.execute(() => Effect.fail(unavailable()));
+      fixture.execute(loseAcknowledgement);
       yield* Effect.flip((yield* fixture.makeWorker()).execute({ jobId }, context));
       expect(fixture.job().effects[1]?.state).toBe('indeterminate');
+      expect(Option.isNone(fixture.job().effects[1]?.outcome ?? Option.none())).toBe(true);
       fixture.originalEligible(false);
       fixture.routeEligible(false);
       yield* (yield* fixture.makeWorker()).execute({ jobId }, context);
@@ -451,10 +489,60 @@ describe('Symmy durable execution and original-effect recovery', () => {
     }),
   );
 
+  it.effect('retains a pre-dispatch unavailable result across failed recovery and repeated dispatch preparation', () =>
+    Effect.gen(function* unavailableBeforeDispatch() {
+      const fixture = harness();
+      fixture.execute(() => Effect.fail(unavailable()));
+      const worker = yield* fixture.makeWorker();
+      yield* Effect.flip(worker.execute({ jobId }, context));
+      const projected = yield* projectSymmyExecutionJob(fixture.job());
+      expect(projected.phase).toBe('running');
+      expect(projected.items[0].effects).toEqual([
+        { effectId: siblingId, owner: 'integration.symmy', status: 'accepted_change' },
+        { effectId, owner: 'integration.symmy', status: 'unavailable' },
+      ]);
+
+      fixture.recover(() => Effect.fail(unavailable()));
+      yield* Effect.flip(worker.execute({ jobId }, context));
+      expect(fixture.recovered.map(({ ref }) => ref.effectId)).toEqual([effectId]);
+      expect(fixture.executed.map(({ ref }) => ref.effectId)).toEqual([effectId]);
+      expect(yield* projectSymmyExecutionJob(fixture.job())).toEqual(projected);
+
+      fixture.recover(() => Effect.succeed({ status: 'not_committed' }));
+      yield* Effect.flip(worker.execute({ jobId }, context));
+      expect(fixture.recovered.map(({ ref }) => ref.effectId)).toEqual([effectId, effectId]);
+      expect(fixture.executed.map(({ ref }) => ref.effectId)).toEqual([effectId, effectId]);
+      expect(yield* projectSymmyExecutionJob(fixture.job())).toEqual(projected);
+
+      fixture.execute(loseAcknowledgement);
+      yield* Effect.flip(worker.execute({ jobId }, context));
+      const uncertain = yield* projectSymmyExecutionJob(fixture.job());
+      expect(uncertain.phase).toBe('indeterminate');
+      expect(uncertain.items[0].effects[1]?.status).toBe('indeterminate');
+    }),
+  );
+
+  it.effect('preserves legacy uncertainty when recovery fails without a known unavailable result', () =>
+    Effect.gen(function* unknownLegacyDispatch() {
+      const fixture = harness();
+      fixture.replaceJob({
+        ...initialJob,
+        effects: initialJob.effects.map((entry) =>
+          entry.effect.ref.effectId === effectId ? { ...entry, state: 'indeterminate', version: 2 } : entry,
+        ),
+      });
+      fixture.recover(() => Effect.fail(unavailable()));
+      yield* Effect.flip((yield* fixture.makeWorker()).execute({ jobId }, context));
+      expect(fixture.recovered.map(({ ref }) => ref.effectId)).toEqual([effectId]);
+      expect(fixture.executed).toHaveLength(0);
+      expect((yield* projectSymmyExecutionJob(fixture.job())).phase).toBe('indeterminate');
+    }),
+  );
+
   it.effect('requires definite not-committed recovery and fresh authorization before reusing the same effect', () =>
     Effect.gen(function* definiteRecovery() {
       const fixture = harness();
-      fixture.execute(() => Effect.fail(unavailable()));
+      fixture.execute(loseAcknowledgement);
       yield* Effect.flip((yield* fixture.makeWorker()).execute({ jobId }, context));
       fixture.recover(() => Effect.succeed({ status: 'not_committed' }));
       fixture.execute((effect) =>
@@ -476,7 +564,7 @@ describe('Symmy durable execution and original-effect recovery', () => {
   it.effect('keeps ambiguous recovery retryable without attempting another mutation', () =>
     Effect.gen(function* ambiguousRecovery() {
       const fixture = harness();
-      fixture.execute(() => Effect.fail(unavailable()));
+      fixture.execute(loseAcknowledgement);
       yield* Effect.flip((yield* fixture.makeWorker()).execute({ jobId }, context));
       fixture.recover(() => Effect.succeed({ status: 'unavailable' }));
       yield* Effect.flip((yield* fixture.makeWorker()).execute({ jobId }, context));
@@ -509,12 +597,14 @@ describe('Symmy durable execution and original-effect recovery', () => {
   it.effect('rejects a receipt for another effect without settling the original', () =>
     Effect.gen(function* wrongReceipt() {
       const fixture = harness();
-      fixture.execute(() =>
-        Effect.succeed({
-          effectId: initialJob.plan.items[0].effects[0].ref.effectId,
-          owner: 'integration.symmy',
-          status: 'accepted_change',
-        }),
+      fixture.execute((_effect, pin) =>
+        pinOriginalRequest(pin).pipe(
+          Effect.as({
+            effectId: initialJob.plan.items[0].effects[0].ref.effectId,
+            owner: 'integration.symmy',
+            status: 'accepted_change',
+          } as const),
+        ),
       );
       yield* Effect.flip((yield* fixture.makeWorker()).execute({ jobId }, context));
       expect(fixture.job().effects[1]?.state).toBe('indeterminate');
@@ -528,8 +618,8 @@ describe('Symmy durable execution and original-effect recovery', () => {
         ...initialJob,
         effects: initialJob.effects.map((saved) => ({ ...saved, outcome: Option.none(), state: 'planned' as const })),
       });
-      fixture.execute((effect) =>
-        effect.ref.effectId === siblingId ? Effect.fail(unavailable()) : defaultExecute(effect),
+      fixture.execute((effect, pin) =>
+        effect.ref.effectId === siblingId ? loseAcknowledgement(effect, pin) : defaultExecute(effect),
       );
       yield* Effect.flip((yield* fixture.makeWorker()).execute({ jobId }, context));
       expect(fixture.executed.map(({ ref }) => ref.effectId)).toEqual([siblingId, effectId]);

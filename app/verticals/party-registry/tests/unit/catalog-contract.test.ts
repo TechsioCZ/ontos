@@ -3,11 +3,18 @@ import { assert, expect, it } from 'effect-rstest';
 import { comparePartyCatalog, expectedPartyTableCatalog } from '../../src/db/catalog.ts';
 
 it('reports exact Party Registry catalog differences', () => {
-  expect(expectedPartyTableCatalog.length).toBe(20);
+  expect(expectedPartyTableCatalog.length).toBe(21);
   expect(expectedPartyTableCatalog[0]).toBe('party.counterparties');
   expect(expectedPartyTableCatalog.at(-1)).toBe('party.privacy_measure_executions');
+  expect(expectedPartyTableCatalog).toContain('party.party_ico_correlation_epochs');
   expect(comparePartyCatalog(expectedPartyTableCatalog.slice(1))).toEqual({
     missing: ['party.counterparties'],
+    unexpected: [],
+  });
+  expect(
+    comparePartyCatalog(expectedPartyTableCatalog.filter((table) => table !== 'party.party_ico_correlation_epochs')),
+  ).toEqual({
+    missing: ['party.party_ico_correlation_epochs'],
     unexpected: [],
   });
   expect(comparePartyCatalog([...expectedPartyTableCatalog, 'party.unexpected'])).toEqual({

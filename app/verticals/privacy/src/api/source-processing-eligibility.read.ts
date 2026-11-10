@@ -9,7 +9,7 @@ import {
 } from '@app/core-runtime';
 import { readVerifiedGatewayActor } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { Config, DateTime, Effect, Option, Schema } from 'effect';
+import { Config, Crypto, DateTime, Effect, Option, Schema } from 'effect';
 import {
   SourceProcessingEligibilityRequestSchema,
   SourceProcessingEligibilityResponseSchema,
@@ -50,6 +50,7 @@ import { privacyOperationRepositoryForScope } from '../persistence/privacy-opera
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
 import { processingPurposeRepositoryForScope } from '../persistence/processing-purpose-postgres-repository.ts';
 import type { ProcessingPurposeRepositoryService } from '../persistence/processing-purpose-repository.ts';
+import { hasCurrentCustomerIntakeOrganizationProof } from '../services/customer-intake-organization-proof.ts';
 
 const configuredContexts = Config.schema(
   Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema).check(Schema.isMaxLength(4096))),
@@ -165,9 +166,6 @@ export const evaluateSourceProcessingEligibility = Effect.fn('Privacy.evaluateSo
       return denied('AUTHORITY_NOT_CURRENT');
     }
     const { applicabilityAuthority, intendedScope } = context;
-    if (!(yield* services.subjectExists(intendedScope.subjectRef.resourceId, request, context.targetAdmission))) {
-      return denied('AUTHORITY_NOT_CURRENT');
-    }
     const authority = { ...applicabilityAuthority, asOf: evaluatedAt };
     const [history, policies, purpose, protections] = yield* Effect.all(
       [
@@ -253,6 +251,10 @@ export const evaluateSourceProcessingEligibility = Effect.fn('Privacy.evaluateSo
     });
     if (protectedMaterial) {
       return denied('PROTECTED_MATERIAL');
+    }
+    // A known protection also blocks Party's original-source evidence read. Apply it before requesting that proof.
+    if (!(yield* services.subjectExists(intendedScope.subjectRef.resourceId, request, context.targetAdmission))) {
+      return denied('AUTHORITY_NOT_CURRENT');
     }
     const resolved = yield* services.repository
       .resolveEligibilityInputs(scope.tenantId, scope.legalEntityId, intendedScope, evaluatedAt, authority)
@@ -457,6 +459,14 @@ export const readSourceProtections = Effect.fn('Privacy.readSourceProtections')(
   return { items, sourceSubjectRefs: [...new Set(sourceSubjectRefs)] };
 });
 
+const exactAssertedSource = (
+  subject: PrivacySubjectRecord['subject'],
+  source: SourceProcessingEligibilityRequest['source'],
+) =>
+  source !== null &&
+  subject.kind === 'SOURCE_ASSERTED' &&
+  privacySourceSubjectIdentityKey(subject.source) === privacySourceSubjectIdentityKey(source);
+
 /** Party targets must be the actual local subject Party. Source subjects match a complete
  * source locator and remain distinct from anonymous session contexts and Party identity. */
 export const sourceSubjectMatchesRequest = (
@@ -470,17 +480,12 @@ export const sourceSubjectMatchesRequest = (
       request.consumerModuleId === 'commerce.customer-context' &&
       request.operation === 'PROFILE_CREATE' &&
       request.target?.kind === 'PARTY' &&
-      request.source !== null &&
       request.partySourceReference !== undefined &&
-      subject.kind === 'SOURCE_ASSERTED' &&
-      privacySourceSubjectIdentityKey(subject.source) === privacySourceSubjectIdentityKey(request.source)
+      exactAssertedSource(subject, request.source)
     );
   }
-  if (request.source !== null && request.target === null) {
-    return (
-      subject.kind === 'SOURCE_ASSERTED' &&
-      privacySourceSubjectIdentityKey(subject.source) === privacySourceSubjectIdentityKey(request.source)
-    );
+  if (request.organizationBusinessUse !== undefined || (request.source !== null && request.target === null)) {
+    return exactAssertedSource(subject, request.source);
   }
   if (request.target?.kind === 'PARTY') {
     return (
@@ -490,9 +495,10 @@ export const sourceSubjectMatchesRequest = (
     );
   }
   if (subject.kind === 'SOURCE_ASSERTED') {
+    // A separately enrolled source can stage new input, but cannot establish who owns an existing target.
     return (
-      request.source !== null &&
-      privacySourceSubjectIdentityKey(subject.source) === privacySourceSubjectIdentityKey(request.source)
+      request.consumerModuleId !== SymmyCustomerSourceIntakeConsumerModule &&
+      exactAssertedSource(subject, request.source)
     );
   }
   if (request.source !== null) {
@@ -507,6 +513,7 @@ const sourceSubjectExists = Effect.fn('Privacy.sourceSubjectExists')(function* s
   subjectRef: string,
   request: SourceProcessingEligibilityRequest,
   repository: Pick<PrivacyOperationRepositoryService, 'resolveSourceSubjectReference'>,
+  crypto: Crypto.Crypto,
   targetAdmission?: SourceProcessingContext['targetAdmission'],
 ) {
   const rows = yield* transaction
@@ -534,6 +541,9 @@ const sourceSubjectExists = Effect.fn('Privacy.sourceSubjectExists')(function* s
     !sourceSubjectMatchesRequest(subject, request, targetAdmission)
   ) {
     return false;
+  }
+  if (request.organizationBusinessUse !== undefined) {
+    return yield* hasCurrentCustomerIntakeOrganizationProof(request, scope, crypto);
   }
   if (
     targetAdmission === 'CURRENT_SOURCE_PERSON' &&
@@ -666,6 +676,7 @@ export const sourceProcessingEligibilityRead = defineRead(
   }),
   Effect.fn('Privacy.sourceProcessingEligibilityServices')(function* sourceServices(transaction, scope) {
     yield* traceSourceStage('services-entered');
+    const crypto = yield* Crypto.Crypto;
     const contexts = yield* configuredContexts.pipe(
       Effect.mapError(sourceConfigurationUnavailable),
       Effect.tapError(() => traceSourceStage('configuration-unavailable')),
@@ -688,7 +699,7 @@ export const sourceProcessingEligibilityRead = defineRead(
         subjectRef: string,
         request: SourceProcessingEligibilityRequest,
         targetAdmission?: SourceProcessingContext['targetAdmission'],
-      ) => sourceSubjectExists(transaction, scope, subjectRef, request, repository, targetAdmission),
+      ) => sourceSubjectExists(transaction, scope, subjectRef, request, repository, crypto, targetAdmission),
     };
   }),
 );

@@ -1027,7 +1027,6 @@ export type { WorkerModuleOperationRequirementFact } from './modules/module-oper
 export {
   RegisteredGatewayPrivacyDispatchSchema,
   PrivacyDispatchOperationSchema,
-  privacyDispatchOperationContract,
   readVerifiedGatewayPrivacyDispatch,
 } from './auth/system-principal-context-provenance.ts';
 export type {
@@ -1040,7 +1039,6 @@ export type { WorkerExecutionContextFact } from './modules/module-operation-exec
 
 export {
   RegisteredGatewayOrganizationGovernanceReadSchema,
-  organizationGovernanceReadOperationContract,
   readVerifiedGatewayOrganizationGovernanceRead,
 } from './auth/system-principal-context-provenance.ts';
 export type { RegisteredGatewayOrganizationGovernanceRead } from './auth/system-principal-context-provenance.ts';
@@ -1048,6 +1046,5 @@ export type { RegisteredGatewayOrganizationGovernanceRead } from './auth/system-
 export {
   RegisteredGatewayOrganizationProcessingReadSchema,
   readVerifiedGatewayOrganizationProcessingRead,
-  organizationProcessingReadOperationContract,
 } from './auth/system-principal-context-provenance.ts';
 export type { RegisteredGatewayOrganizationProcessingRead } from './auth/system-principal-context-provenance.ts';

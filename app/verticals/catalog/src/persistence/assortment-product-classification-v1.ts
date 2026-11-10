@@ -1,5 +1,5 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
 
 import { AssortmentProductClassificationFactsV1Schema } from '../../shared/apis/assortment-product-classification-v1.ts';
@@ -9,7 +9,7 @@ import type {
   AssortmentProductClassificationV1OperationRequest,
   AssortmentProductClassificationV1ResponseSchema,
 } from '../../shared/apis/assortment-product-classification-v1.ts';
-import { productCategoryHierarchyRevisions } from '../database/schema.ts';
+import { productCategoryHierarchyRevisions, products } from '../database/schema.ts';
 import { CategoryPersistenceUnavailable } from './category-persistence.ts';
 import { categoryClassificationPersistenceForScope } from './category-classification-persistence.ts';
 
@@ -173,6 +173,7 @@ export const observeOrVerifyAssortmentProductClassificationV1: (
 export const assortmentProductClassificationV1SourceForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
+  requireActiveProduct = false,
 ): AssortmentProductClassificationV1Source => ({
   read: Effect.fn('AssortmentProductClassificationV1Source.read')(function* read(productId) {
     // The global Tenant fence covers additions to an empty Product set as well as category moves.
@@ -186,6 +187,18 @@ export const assortmentProductClassificationV1SourceForScope = (
       .pipe(Effect.mapError((cause) => categoryPersistenceUnavailable('Classification fence read failed', cause)));
     if (fence === undefined) {
       return yield* categoryPersistenceUnavailable('Classification completeness fence is missing');
+    }
+    if (requireActiveProduct) {
+      const [product] = yield* transaction
+        .select({ lifecycle: products.lifecycleState })
+        .from(products)
+        .where(and(eq(products.tenantId, scope.tenantId), eq(products.productId, productId)))
+        .for('share')
+        .limit(1)
+        .pipe(Effect.mapError((cause) => categoryPersistenceUnavailable('Product lifecycle read failed', cause)));
+      if (product?.lifecycle !== 'ACTIVE') {
+        return Option.none<Facts>();
+      }
     }
     const persistence = yield* categoryClassificationPersistenceForScope(transaction, scope);
     const result = yield* persistence.getClassification(productId);

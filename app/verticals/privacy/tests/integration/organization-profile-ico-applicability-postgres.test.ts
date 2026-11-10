@@ -1,5 +1,5 @@
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
-import { ConfigProvider, Crypto, DateTime, Effect, Option } from 'effect';
+import { Clock, ConfigProvider, Crypto, DateTime, Effect, Option } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 import { organizationProfileIcoApplicabilityRead } from '../../src/api/organization-profile-ico-applicability.read.ts';
@@ -16,7 +16,10 @@ it.live(
   'requires current native profile ICO classification and rechecks exact role revision, configuration and hold',
   () =>
     Effect.gen(function* nativeProfileIco() {
-      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-11-07T12:00:00.000Z')));
+      const nativeTime = yield* Clock.Clock.defaultValue().currentTimeMillis;
+      const now = DateTime.makeUnsafe(nativeTime);
+      const effectiveFrom = DateTime.formatIso(DateTime.subtract(now, { days: 6 }));
+      yield* TestClock.setTime(nativeTime);
       const native = yield* privacyIcoNativeContext('privacy.core.organization-profile-ico-applicability.read');
       const crypto = yield* Crypto.Crypto;
       const { principalId, tenantId } = native.principal;
@@ -27,13 +30,15 @@ it.live(
             const purposes = yield* processingPurposeRepositoryForScope(transaction, scope);
             const purpose = yield* purposes.create(tenantId, legalEntityId, yield* crypto.randomUUIDv4(), {
               businessCode: 'INTERNAL_PROFILE_ICO',
-              effectiveFrom: '2026-11-01T00:00:00.000Z',
+              effectiveFrom,
               governanceOwnerId: principalId,
               meaning: 'Explicit organization profile ICO-only field classification',
             });
             const version = Option.getOrThrow(Option.fromUndefinedOr(purpose.versions.at(0)));
             const facts = makeOrganizationProfileIcoApplicabilityFixture({
               authMethod: native.principal.authMethod,
+              effectiveFrom,
+              evaluatedAt: DateTime.formatIso(now),
               legalEntityId,
               principalId,
               purposeId: purpose.purposeRef.resourceId,
@@ -103,8 +108,8 @@ it.live(
               authorityRef: 'internal:profile-hold-authority',
               contentScopeRefs: [fixture.context.processingScopeRef.scopeId],
               controllerRef: legalEntityId,
-              effectiveFrom: '2026-11-01T00:00:00.000Z',
-              effectiveTo: '2026-12-01T00:00:00.000Z',
+              effectiveFrom,
+              effectiveTo: DateTime.formatIso(DateTime.add(now, { days: 24 })),
               evidenceRefs: ['internal:profile-hold-evidence'],
               holdRef: `internal:profile-hold:${tenantId}`,
               policyRef: 'internal:profile-hold-policy',
@@ -118,7 +123,7 @@ it.live(
               releaseEvidenceRefs: [],
               releaseReasonRef: null,
               releaseRef: null,
-              reviewDueAt: '2026-11-20T00:00:00.000Z',
+              reviewDueAt: DateTime.formatIso(DateTime.add(now, { days: 13 })),
               reviewedAt: null,
               reviewEvidenceRefs: [],
               reviewRef: 'internal:profile-hold-review',

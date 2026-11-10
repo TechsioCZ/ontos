@@ -93,6 +93,7 @@ it('owns the complete Party Registry operational catalog in the party schema', (
     'party_corrections',
     'party_create_source_receipts',
     'party_fact_assertions',
+    'party_ico_correlation_epochs',
     'party_legacy_ico_authority_fences',
     'party_match_decisions',
     'party_merges',

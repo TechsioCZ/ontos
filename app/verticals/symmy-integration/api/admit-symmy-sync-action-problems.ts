@@ -28,6 +28,7 @@ type ProblemOf<Tag extends AdmitSymmySyncActionProblem['_tag']> = Extract<
 >;
 type DomainProblemIdentity =
   | { readonly code: 'symmy_sync_intent_conflict'; readonly kind: 'conflict' }
+  | { readonly code: 'symmy_sync_stock_assertion_denied'; readonly kind: 'forbidden' }
   | { readonly code: 'symmy_sync_route_denied'; readonly kind: 'ineligible' }
   | { readonly code: 'symmy_sync_unavailable'; readonly kind: 'unavailable' };
 
@@ -48,6 +49,7 @@ const problemStatus = {
 const admitSymmySyncRejectedProblemByCode = {
   symmy_sync_intent_conflict: { code: 'symmy_sync_intent_conflict', kind: 'conflict' },
   symmy_sync_route_denied: { code: 'symmy_sync_route_denied', kind: 'ineligible' },
+  symmy_sync_stock_assertion_denied: { code: 'symmy_sync_stock_assertion_denied', kind: 'forbidden' },
   symmy_sync_unavailable: { code: 'symmy_sync_unavailable', kind: 'unavailable' },
 } as const satisfies Record<
   Extract<DomainError, { readonly _tag: 'AdmitSymmySyncRejected' }>['code'],
@@ -139,6 +141,7 @@ export const admitSymmySyncActionProblem = {
 const mapDomainIdentity = (identity: DomainProblemIdentity): AdmitSymmySyncActionProblem =>
   Match.value(identity).pipe(
     Match.when({ kind: 'conflict' as const }, (matched) => admitSymmySyncActionProblem.conflict(matched.code)),
+    Match.when({ kind: 'forbidden' as const }, (matched) => admitSymmySyncActionProblem.forbidden(matched.code)),
     Match.when({ kind: 'ineligible' as const }, (matched) => admitSymmySyncActionProblem.ineligible(matched.code)),
     Match.when({ kind: 'unavailable' as const }, (matched) => admitSymmySyncActionProblem.unavailable(matched.code)),
     Match.exhaustive,

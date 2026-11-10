@@ -4,6 +4,7 @@
   "private": true,
   "exports": {
     "./api": "./shared/api.ts",
+    "./api/assortment-product-classification-v1": "./shared/apis/assortment-product-classification-v1.ts",
     "./api/client": "./src/api/catalog-client.ts",
     "./api/pricing-purpose-equivalence": "./shared/apis/pricing-purpose-equivalence.ts",
     "./api/pricing-purpose-equivalence-client": "./src/api/pricing-purpose-equivalence-client.ts",
@@ -62,6 +63,9 @@
     "./api/update-product-recovery-client": "./src/api/update-product-recovery-client.ts",
     "./api/bind-initial-variant-source-action": "./shared/apis/bind-initial-variant-source-action.ts",
     "./api/bind-initial-variant-source-action-client": "./src/api/bind-initial-variant-source-action-client.ts",
+    "./api/set-variant-localized-facts-action": "./shared/apis/set-variant-localized-facts-action.ts",
+    "./api/set-variant-localized-facts-action-client": "./src/api/set-variant-localized-facts-action-client.ts",
+    "./api/set-variant-localized-facts-recovery-client": "./src/api/set-variant-localized-facts-recovery-client.ts",
     "./api/correct-product-action": "./shared/apis/correct-product-action.ts",
     "./api/correct-product-action-client": "./src/api/correct-product-action-client.ts",
     "./api/correct-product-recovery": "./shared/apis/correct-product-recovery.ts",

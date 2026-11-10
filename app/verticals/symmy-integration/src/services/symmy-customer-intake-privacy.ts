@@ -1,5 +1,7 @@
 import { requireModuleOperation } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
+import { OrganizationMembershipSourcePayloadSchema } from '@app/commerce-customer-context/domain/organization-membership-source';
+import { OrganizationBusinessUpdateInputSchema } from '@app/party-registry/apis/organization-record-facts';
 import {
   SourceProcessingEligibilityRequestSchema,
   SourceProcessingIdentitySchema,
@@ -122,6 +124,31 @@ const unavailable = (cause?: unknown) => {
 };
 const denied = () => new SymmyJobStoreError({ code: 'route_denied' });
 
+const rejectExtraFields = { onExcessProperty: 'error' } as const;
+const organizationBusinessUse = (
+  intent: SymmyPartyCommerceIntent,
+): NonNullable<SourceProcessingEligibilityRequest['organizationBusinessUse']> | null => {
+  if (Option.isNone(Schema.decodeUnknownOption(SymmyPartyCommerceIntentSchema, rejectExtraFields)(intent))) {
+    return null;
+  }
+  return Match.value(intent).pipe(
+    Match.tags({
+      AssignCounterpartyPriceGroup: ({ payload }) =>
+        payload.processingKind === 'ORGANIZATION_BUSINESS' ? ('PRICE_GROUP_ASSIGNMENT' as const) : null,
+      CustomerGroupMembership: ({ payload }) =>
+        Option.isSome(Schema.decodeUnknownOption(OrganizationMembershipSourcePayloadSchema, rejectExtraFields)(payload))
+          ? ('GROUP_MEMBERSHIP' as const)
+          : null,
+      OrganizationCustomerProfileIco: () => 'COMPANY_ICO' as const,
+      PartyUpdate: ({ payload }) =>
+        Option.isSome(Schema.decodeUnknownOption(OrganizationBusinessUpdateInputSchema, rejectExtraFields)(payload))
+          ? ('COMPANY_NAME' as const)
+          : null,
+    }),
+    Match.orElse(() => null),
+  );
+};
+
 const customerIntakeRequest = Effect.fn('SymmyCustomerIntakePrivacy.request')(function* projectRequest(
   plan: SymmyPinnedJobPlan,
   effect: SymmyPinnedEffect,
@@ -171,6 +198,10 @@ const customerIntakeRequest = Effect.fn('SymmyCustomerIntakePrivacy.request')(fu
   };
   if (reference !== null && reference !== undefined) {
     Object.assign(request, { partySourceReference: reference });
+  }
+  const businessUse = organizationBusinessUse(effect.intent);
+  if (businessUse !== null) {
+    Object.assign(request, { organizationBusinessUse: businessUse });
   }
   return yield* Schema.decodeUnknownEffect(SourceProcessingEligibilityRequestSchema)(request).pipe(
     Effect.mapError(unavailable),

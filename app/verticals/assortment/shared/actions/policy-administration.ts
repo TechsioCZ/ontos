@@ -11,6 +11,7 @@ import {
   AssortmentOwnerResourceRefSchema,
   CatalogProductRefSchema,
 } from '../domain/decision-contracts.ts';
+import { assortmentMeaningFingerprint, ruleMeaning } from '../domain/policy-fingerprint.ts';
 
 const ReasonSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 const ProvenanceRefSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
@@ -93,6 +94,14 @@ export const CreateApplicabilityBindingResultSchema = Schema.Struct({
 });
 
 const fixtureRefOwnerMismatch = 'The fixture reference has the wrong owner';
+const canonicalFixtureResourceId = AssortmentOwnerResourceRefSchema.fields.resourceId.check(
+  Schema.isUUID(),
+  Schema.isPattern(/^[0-9a-f-]+$/u),
+);
+const FixtureStorefrontAppIdSchema = Schema.String.check(
+  Schema.isMaxLength(100),
+  Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u),
+).pipe(Schema.brand('AssortmentFixtureStorefrontAppId'), Schema.decodeTo(Schema.String));
 
 export const ImportSymmyRulePayloadSchema = Schema.Struct({
   binding: Schema.Struct({
@@ -116,31 +125,66 @@ export const ImportSymmyRulePayloadSchema = Schema.Struct({
         ),
         resourceType: Schema.Literal('commerce.channel.channel'),
       }),
-      commerceMarketRef: Schema.Struct({
-        ...AssortmentOwnerResourceRefSchema.fields,
-        moduleId: AssortmentOwnerResourceRefSchema.fields.moduleId.check(
-          Schema.makeFilter((moduleId) => (moduleId === 'commerce.market' ? undefined : fixtureRefOwnerMismatch)),
-        ),
-        resourceType: Schema.Literal('commerce.market.market'),
-      }),
-      sellingLegalEntityRef: Schema.Struct({
-        ...AssortmentOwnerResourceRefSchema.fields,
-        moduleId: AssortmentOwnerResourceRefSchema.fields.moduleId.check(
-          Schema.makeFilter((moduleId) => (moduleId === 'party.registry' ? undefined : fixtureRefOwnerMismatch)),
-        ),
-        resourceType: Schema.Literal('party.registry.legal-entity'),
-      }),
-      storefrontRef: Schema.Struct({
-        ...AssortmentOwnerResourceRefSchema.fields,
-        moduleId: AssortmentOwnerResourceRefSchema.fields.moduleId.check(
-          Schema.makeFilter((moduleId) => (moduleId === 'commerce.storefront' ? undefined : fixtureRefOwnerMismatch)),
-        ),
-        resourceType: Schema.Literal('commerce.storefront.storefront'),
-      }),
+      commerceMarketRef: Schema.Union([
+        Schema.Struct({
+          ...AssortmentOwnerResourceRefSchema.fields,
+          moduleId: AssortmentOwnerResourceRefSchema.fields.moduleId.check(
+            Schema.makeFilter((moduleId) =>
+              moduleId === 'commerce.market-catalog' ? undefined : fixtureRefOwnerMismatch,
+            ),
+          ),
+          resourceId: canonicalFixtureResourceId,
+          resourceType: Schema.Literal('commerce.market-catalog.market'),
+        }),
+        Schema.Struct({
+          ...AssortmentOwnerResourceRefSchema.fields,
+          moduleId: AssortmentOwnerResourceRefSchema.fields.moduleId.check(
+            Schema.makeFilter((moduleId) => (moduleId === 'commerce.market' ? undefined : fixtureRefOwnerMismatch)),
+          ),
+          resourceType: Schema.Literal('commerce.market.market'),
+        }),
+      ]),
+      sellingLegalEntityRef: Schema.Union([
+        Schema.Struct({
+          ...AssortmentOwnerResourceRefSchema.fields,
+          moduleId: AssortmentOwnerResourceRefSchema.fields.moduleId.check(
+            Schema.makeFilter((moduleId) => (moduleId === 'core.identity' ? undefined : fixtureRefOwnerMismatch)),
+          ),
+          resourceId: canonicalFixtureResourceId,
+          resourceType: Schema.Literal('core.identity.legal-entity'),
+        }),
+        Schema.Struct({
+          ...AssortmentOwnerResourceRefSchema.fields,
+          moduleId: AssortmentOwnerResourceRefSchema.fields.moduleId.check(
+            Schema.makeFilter((moduleId) => (moduleId === 'party.registry' ? undefined : fixtureRefOwnerMismatch)),
+          ),
+          resourceType: Schema.Literal('party.registry.legal-entity'),
+        }),
+      ]),
+      storefrontRef: Schema.Union([
+        Schema.Struct({
+          ...AssortmentOwnerResourceRefSchema.fields,
+          moduleId: AssortmentOwnerResourceRefSchema.fields.moduleId.check(
+            Schema.makeFilter((moduleId) =>
+              moduleId === 'commerce.storefront-registry' ? undefined : fixtureRefOwnerMismatch,
+            ),
+          ),
+          resourceId: canonicalFixtureResourceId,
+          resourceType: Schema.Literal('commerce.storefront-registry.storefront-application'),
+        }),
+        Schema.Struct({
+          ...AssortmentOwnerResourceRefSchema.fields,
+          moduleId: AssortmentOwnerResourceRefSchema.fields.moduleId.check(
+            Schema.makeFilter((moduleId) => (moduleId === 'commerce.storefront' ? undefined : fixtureRefOwnerMismatch)),
+          ),
+          resourceType: Schema.Literal('commerce.storefront.storefront'),
+        }),
+      ]),
     }),
     effectiveFrom: InstantSchema,
     provenanceRef: ProvenanceRefSchema,
     reason: ReasonSchema,
+    storefrontAppId: Schema.optionalKey(FixtureStorefrontAppIdSchema),
   }),
   rule: Schema.Struct({
     ...CreateRulePayloadSchema.fields,
@@ -167,6 +211,30 @@ export const ImportSymmyRulePayloadSchema = Schema.Struct({
   }),
 );
 export type ImportSymmyRulePayload = typeof ImportSymmyRulePayloadSchema.Type;
+
+/** The exact owner document hashed by a fixture permit and passed to its guarded write. */
+export const projectSymmyRuleFixtureDatabaseCommand = ({ binding, rule }: ImportSymmyRulePayload) => {
+  const { storefrontAppId } = binding;
+  if (storefrontAppId === undefined) {
+    return null;
+  }
+  return {
+    channel: binding.commercialScope.channelRef.resourceId,
+    effect: rule.effect,
+    effectiveFrom: DateTime.formatIso(binding.effectiveFrom),
+    fingerprint: assortmentMeaningFingerprint(ruleMeaning(rule)),
+    group: binding.audience.groupRef.resourceId,
+    market: binding.commercialScope.commerceMarketRef.resourceId,
+    product: rule.selector.productRef.resourceId,
+    purpose: rule.purpose,
+    reason: rule.reason,
+    scopeVersion: 'C14_CANONICAL_V1',
+    stableCode: rule.stableCode,
+    storefront: binding.commercialScope.storefrontRef.resourceId,
+    storefrontAppId,
+  };
+};
+
 export const ImportSymmyRuleResultSchema = Schema.Struct({
   binding: CreateApplicabilityBindingResultSchema,
   rule: CreateRuleResultSchema,

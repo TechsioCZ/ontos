@@ -10,6 +10,7 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-e
 // <generated-governed-http-api-imports>
 import { ActivateMarketActionApi } from './apis/activate-market-action.ts';
 import { AssociateStorefrontActionApi } from './apis/associate-storefront-action.ts';
+import { AssortmentFixtureMarketAssociationApi } from './apis/assortment-fixture-market-association.ts';
 import { CreateMarketActionApi } from './apis/create-market-action.ts';
 import { CurrentMarketCatalogApi } from './apis/current-market-catalog.ts';
 import { EligibleMarketTuplesApi } from './apis/eligible-market-tuples.ts';
@@ -53,6 +54,7 @@ export const commerceMarketCatalogApi = HttpApi.make('CommerceMarketCatalogApi')
   // <generated-governed-http-api-additions>
   .addHttpApi(ActivateMarketActionApi)
   .addHttpApi(AssociateStorefrontActionApi)
+  .addHttpApi(AssortmentFixtureMarketAssociationApi)
   .addHttpApi(CreateMarketActionApi)
   .addHttpApi(CurrentMarketCatalogApi)
   .addHttpApi(EligibleMarketTuplesApi)

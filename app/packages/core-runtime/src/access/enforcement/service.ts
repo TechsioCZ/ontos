@@ -9,12 +9,8 @@ import {
   readVerifiedGatewayRouteScope,
   readVerifiedGatewayPrivacyDispatch,
   readVerifiedGatewayOrganizationGovernanceRead,
-  organizationGovernanceReadOperationContract,
-  organizationProcessingReadOperationContract,
-  privacyDispatchOperationContract,
 } from '../../auth/system-principal-context-provenance.ts';
 import type {
-  PrivacyDispatchOperation,
   RegisteredGatewayPrivacyDispatch,
   VerifiedGatewayActor,
 } from '../../auth/system-principal-context-provenance.ts';
@@ -493,7 +489,7 @@ const privacyDispatchCarrierMatches = (input: ExactGatewayCarrierInput): boolean
   if (privacy === undefined) {
     return true;
   }
-  const operation = privacyDispatchOperationContract(privacy.operation);
+  const operation = privacy.target;
   return (
     input.scope.tenantId === privacy.tenantId &&
     input.scope.principalId === privacy.principalId &&
@@ -510,7 +506,7 @@ const organizationGovernanceCarrierMatches = (input: ExactGatewayCarrierInput): 
   if (read === undefined) {
     return true;
   }
-  const operation = organizationGovernanceReadOperationContract();
+  const operation = read.target;
   return (
     input.scope.tenantId === read.tenantId &&
     input.scope.principalId === read.principalId &&
@@ -525,26 +521,21 @@ const hasFiniteGatewayReadOrDispatch = (scope: OperationalScope): boolean =>
   readVerifiedGatewayPrivacyDispatch(scope) !== undefined ||
   readVerifiedGatewayOrganizationGovernanceRead(scope) !== undefined;
 
-const organizationProcessingCarrierMatches = (input: ExactGatewayCarrierInput): boolean => {
+const finiteWorkloadCarrierMatches = (input: ExactGatewayCarrierInput): boolean => {
   const workload = readVerifiedGatewayWorkload(input.scope);
-  if (workload === undefined || workload.recovery !== undefined) {
+  if (workload === undefined) {
     return true;
   }
-  const target = organizationProcessingReadOperationContract();
-  if (
-    workload.entrypointKey === target.entrypointKey ||
-    input.carrier.entrypoint?.entrypointKey === target.entrypointKey
-  ) {
-    return workload.organizationProcessingRead !== undefined && input.carrier.accessDeclaration?.kind === 'read';
-  }
-  return workload.organizationProcessingRead === undefined;
+  return (
+    (workload.organizationProcessingRead !== undefined) === (input.carrier.accessWorkload?.requestPurpose !== undefined)
+  );
 };
 
 const registeredWorkloadCarrierMatches = (input: ExactGatewayCarrierInput): boolean => {
   if (
     !privacyDispatchCarrierMatches(input) ||
     !organizationGovernanceCarrierMatches(input) ||
-    !organizationProcessingCarrierMatches(input)
+    !finiteWorkloadCarrierMatches(input)
   ) {
     return false;
   }
@@ -839,9 +830,9 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
       input: GateInput,
       actor: GateActor,
       capability: DecisionCapabilityPolicy,
-      operation: PrivacyDispatchOperation,
+      access: NonNullable<RegisteredGatewayPrivacyDispatch['authority']>['targetAccess'],
     ) {
-      if (operation === 'SymmyReceipt') {
+      if (access === 'tenant-unrestricted-list') {
         const listing = yield* resolveListAccess(ports.authorityFor(input.scope), ports.check, {
           actor: actorInputOf(input.scope, undefined, actor),
           capability,
@@ -852,7 +843,7 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
           ? seamRefusal(INSUFFICIENT_GRANT)
           : listing.decision;
       }
-      if (operation === 'SymmyRetention') {
+      if (access === 'tenant-scope') {
         return yield* decideAccess(ports.authorityFor(input.scope), ports.check, {
           actor: actorInputOf(input.scope, undefined, actor),
           now: input.now,
@@ -866,7 +857,7 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
   const decidePrivacyDispatchAuthority = Effect.fn('AccessDecisionGate.privacyDispatchAuthority')(
     function* decidePrivacyDispatchAuthority(
       input: GateInput,
-      dispatch: RegisteredGatewayPrivacyDispatch,
+      dispatch: NonNullable<ReturnType<typeof readVerifiedGatewayPrivacyDispatch>>,
       actor: GateActor,
       calledBy: VerifiedGatewayActor,
     ) {
@@ -894,7 +885,7 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
         now: input.now,
         request: {
           capability: {
-            capabilityKey: CapabilityKeySchema.make('privacy.core.privacy-measure.dispatch'),
+            capabilityKey: CapabilityKeySchema.make(dispatch.authority.originCapabilityKey),
             kind: 'action',
             modes: ['run', 'propose', 'approve'],
             risk: 'critical',
@@ -910,7 +901,12 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
       if (declaration === undefined) {
         return seamRefusal(DECLARATION_MISSING);
       }
-      return yield* decidePrivacyDispatchTarget(input, actor, capabilityPolicyOf(declaration), dispatch.operation);
+      return yield* decidePrivacyDispatchTarget(
+        input,
+        actor,
+        capabilityPolicyOf(declaration),
+        dispatch.authority.targetAccess,
+      );
     },
   );
 
@@ -990,7 +986,7 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
   const decideOrganizationGovernanceRead = Effect.fn('AccessDecisionGate.organizationGovernanceRead')(
     function* decideOrganizationGovernanceRead(input: GateInput) {
       const calledBy = readVerifiedGatewayActor(input.scope);
-      if (calledBy?.appId !== 'privacy') {
+      if (calledBy === undefined) {
         return seamRefusal(ACTOR_SUBJECT_INVALID);
       }
       const subject = yield* resolveGateActor(ports.principalKinds, input.scope, { admitWorkloads: true });
