@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto } from '@effect/platform-node';
+import { and, eq } from 'drizzle-orm';
 import { Crypto, Effect } from 'effect';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -19,6 +20,7 @@ import {
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
+import { observations } from '../../src/database/schema.ts';
 import { computePaymentFunds, PaymentFundsLedger } from '../../src/domain/coverage.ts';
 import type { PaymentFundsLedgerCase } from '../../src/domain/coverage.ts';
 import { paymentFundsSnapshotOf } from '../../src/persistence/payment-aggregate-persistence.ts';
@@ -32,6 +34,7 @@ import {
   seedCoreScope,
 } from './evidence-native-support.ts';
 import type { EvidenceNativeDatabase, EvidenceScenario } from './evidence-native-support.ts';
+import { acceptReturnEvidence } from '../support/refund-native-runtime.ts';
 
 const native = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
@@ -261,6 +264,77 @@ it.live('#1151 a partial correction below a PENDING refund reservation reads Hel
       expect(yield* calculatorOf(evidence, payment.paymentId)).toBe(coverage);
       const debt = yield* evidence.debt({ paymentId: payment.paymentId });
       expect(debt.openCases.length + debt.unresolvedOperations.length).toBeGreaterThan(0);
+    }),
+  ),
+);
+
+/**
+ * #1150/#1151: the correction admission and the funds reader measure one prior return the same way.
+ * A return stated against the collection counts for what it still proves after its own partial
+ * corrections, so a collection correction that the funds reader can explain is applied, not held.
+ */
+it.live('#1151 a collection correction is admitted against what a partially corrected prior return still proves', () =>
+  native(
+    Effect.gen(function* correctedPriorReturnAdmission() {
+      const evidence = yield* scenario();
+      const { collect, first, payment } = yield* confirmedCollect(evidence);
+      const [receipt] = yield* evidence.native.coreAdmin
+        .select({ sourceAuthorityId: observations.sourceAuthorityId })
+        .from(observations)
+        .where(eq(observations.observationId, first.observationId));
+      const returnKey = `gopay:refund:prior:${randomUUID()}`;
+      // 900 CZK of the 1000 CZK collection already went back, stated against the collection itself.
+      yield* acceptReturnEvidence(evidence.native.database, evidence.scope, {
+        amountMinor: 90_000,
+        economicEffectKey: returnKey,
+        operationId: collect.operationId,
+        paymentId: payment.paymentId,
+        sourceAuthorityId: receipt?.sourceAuthorityId ?? '',
+        sourceOccurrenceId: `gopay-prior-return-${randomUUID()}`,
+      });
+      const [priorReturn] = yield* evidence.native.coreAdmin
+        .select({ observationId: observations.observationId })
+        .from(observations)
+        .where(and(eq(observations.paymentId, payment.paymentId), eq(observations.economicEffectKey, returnKey)));
+      // 200 CZK of that return statement was erroneous: 700 CZK actually went back.
+      const returnCorrection = yield* evidence.accept(
+        gopayStatement({
+          amount: czk(20_000),
+          correctsObservationId: priorReturn?.observationId ?? '',
+          economicEffectKey: `gopay:refund:prior:correction:${randomUUID()}`,
+          factKind: 'SOURCE_CORRECTION',
+          paymentId: payment.paymentId,
+        }),
+      );
+      expect(returnCorrection.acceptanceOutcome).toBe('ACCEPTED_OBSERVATION');
+      // 200 CZK of the collection is disproven: 800 CZK collected still covers the 700 CZK returned.
+      const reduction = yield* evidence.accept(
+        gopayStatement({
+          amount: czk(20_000),
+          correctsObservationId: first.observationId,
+          economicEffectKey: `gopay:charge:reduced:${randomUUID()}`,
+          factKind: 'SOURCE_CORRECTION',
+          operationId: collect.operationId,
+          paymentId: payment.paymentId,
+        }),
+      );
+      expect(reduction).toMatchObject({ acceptanceOutcome: 'ACCEPTED_OBSERVATION', interpretation: 'CORRECTION' });
+      expect(yield* evidence.coverage(payment.paymentId)).toBe(
+        'Established collected=80000 returned=70000 remaining=10000',
+      );
+      // Control: 110 CZK more would leave 690 CZK collected against 700 CZK returned, so it is held.
+      const excess = yield* evidence.accept(
+        gopayStatement({
+          amount: czk(11_000),
+          correctsObservationId: first.observationId,
+          economicEffectKey: `gopay:charge:over-reduced:${randomUUID()}`,
+          factKind: 'SOURCE_CORRECTION',
+          operationId: collect.operationId,
+          paymentId: payment.paymentId,
+        }),
+      );
+      expect(excess.interpretation).toBe('HOLD');
+      expect((yield* evidence.coverage(payment.paymentId)).startsWith('Held ')).toBe(true);
     }),
   ),
 );

@@ -77,9 +77,11 @@ export const validatePaymentAuthorization = Effect.fn('PaymentAuthorizationValid
     const proof = found.value;
     // The proof's own Payment is locked, never the presented one: a foreign binding cannot steer the lock.
     const loaded = yield* services.aggregate.loadAggregate(proof.binding.paymentId, { lock: true });
-    const validatedAt = yield* DateTime.now;
     const { payment } = loaded;
     const { snapshot } = yield* services.refunds.selectFunds(loaded).pipe(Effect.mapError(unavailable));
+    // The actual time of use is read after every wait (row lock and funds lookup), so a proof that
+    // expired meanwhile is never acknowledged.
+    const validatedAt = yield* DateTime.now;
     const localReasons: readonly PaymentAuthorizationInvalidityReason[] = [
       ...attemptMismatchReasons(proof.binding, input.binding),
       ...validityWindowReasons(proof, validatedAt),
