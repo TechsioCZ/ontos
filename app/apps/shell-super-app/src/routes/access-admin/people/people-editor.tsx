@@ -154,6 +154,51 @@ const DelegationEditor = ({
   );
 };
 
+/** Company directory people who hold no access in this company yet; admission never names a role. */
+const AdmitSection = ({
+  disabled,
+  onPreview,
+  scope,
+}: {
+  readonly disabled: boolean;
+  readonly onPreview: (change: PeoplePendingChange) => void;
+  readonly scope: PeopleScopeChoices;
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <section aria-label={t(`${prefix}.admitSection`)} className="shell:grid shell:gap-4">
+      <h3 className="shell:text-title-md">{t(`${prefix}.admitSection`)}</h3>
+      <p>{t(`${prefix}.admitHelp`)}</p>
+      {scope.candidates.length === 0 ? (
+        <StatusText>{t(`${prefix}.noCandidates`)}</StatusText>
+      ) : (
+        <ul className="shell:grid shell:gap-2">
+          {scope.candidates.map((candidate) => (
+            <li className="shell:flex shell:flex-wrap shell:items-center shell:gap-2" key={candidate.id}>
+              <span>{candidate.label}</span>
+              <Button
+                aria-label={t(`${prefix}.admitMemberNamed`, { person: candidate.label })}
+                disabled={disabled}
+                onClick={() =>
+                  onPreview({
+                    command: { kind: 'admit', personId: candidate.id, scopeId: scope.id },
+                    facts: [candidate.label, scope.label, t(`${prefix}.admitEffect`)],
+                    titleKey: `${prefix}.confirmAdmit`,
+                  })
+                }
+                type="button"
+                variant="secondary"
+              >
+                {t(`${prefix}.admitMember`)}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+};
+
 const ScopeEditor = ({
   busy,
   onPreview,
@@ -176,6 +221,9 @@ const ScopeEditor = ({
   const team = scope.teams.find((item) => item.id === teamId);
   return (
     <div className="shell:grid shell:gap-6">
+      {scope.id === 'tenant' ? null : (
+        <AdmitSection disabled={busy || !writes.admit} onPreview={onPreview} scope={scope} />
+      )}
       <PeopleChoiceField
         disabled={busy}
         items={scope.people}

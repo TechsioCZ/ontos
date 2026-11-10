@@ -1,15 +1,19 @@
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 
 import {
+  AdmitAccessMemberPayloadSchema,
   AssignAccessRolePayloadSchema,
   CreateAccessDelegationPayloadSchema,
+  EndAccessMembershipPayloadSchema,
   RevokeAccessAssignmentPayloadSchema,
   RevokeAccessDelegationPayloadSchema,
   SetAccessTeamMembershipPayloadSchema,
 } from '../../../../shared/access-admin-api.ts';
 import {
+  admitAccessMember,
   assignAccessRole,
   createAccessDelegation,
+  endAccessMembership,
   revokeAccessAssignment,
   revokeAccessDelegation,
   setAccessTeamMembership,
@@ -19,8 +23,10 @@ import { peopleScopeKey } from './people-presentation.ts';
 import type { PeopleCommand, PeopleFeedback } from './people-view-model.ts';
 
 export interface PeopleMutationPort {
+  readonly admit: typeof admitAccessMember;
   readonly assign: typeof assignAccessRole;
   readonly delegate: typeof createAccessDelegation;
+  readonly endMembership: typeof endAccessMembership;
   readonly revokeAssignment: typeof revokeAccessAssignment;
   readonly revokeDelegation: typeof revokeAccessDelegation;
   readonly team: typeof setAccessTeamMembership;
@@ -33,8 +39,10 @@ interface CommandInput {
   readonly snapshot: PeopleSnapshot;
 }
 const livePort: PeopleMutationPort = {
+  admit: admitAccessMember,
   assign: assignAccessRole,
   delegate: createAccessDelegation,
+  endMembership: endAccessMembership,
   revokeAssignment: revokeAccessAssignment,
   revokeDelegation: revokeAccessDelegation,
   team: setAccessTeamMembership,
@@ -209,6 +217,52 @@ const revokeDelegation = Effect.fn('PeopleCommands.revokeDelegation')(function* 
   return yield* port.revokeDelegation(payload, input.options);
 });
 
+const admitMember = Effect.fn('PeopleCommands.admitMember')(function* admitMemberEffect(
+  command: Extract<PeopleCommand, { kind: 'admit' }>,
+  input: CommandInput,
+  port: PeopleMutationPort,
+) {
+  const choices = input.snapshot.options;
+  const candidate = choices.admissionCandidates.find(
+    (item) => item.principalId === command.personId && item.scope.legalEntityId === command.scopeId,
+  );
+  if (!choices.writeAvailability.canAdmitMember || candidate === undefined) {
+    return yield* invalid();
+  }
+  const payload = yield* Schema.decodeEffect(AdmitAccessMemberPayloadSchema)({
+    expectedRevision: input.expectedRevision,
+    principalId: candidate.principalId,
+    scope: candidate.scope,
+  }).pipe(Effect.catchTag('SchemaError', formFailure));
+  return yield* port.admit(payload, input.options);
+});
+
+const endMembership = Effect.fn('PeopleCommands.endMembership')(function* endMembershipEffect(
+  command: Extract<PeopleCommand, { kind: 'end-membership' }>,
+  input: CommandInput,
+  port: PeopleMutationPort,
+) {
+  const membership = input.snapshot.people.items
+    .find((person) => person.principalId === command.personId)
+    ?.memberships.find(
+      (item) => item.kind === 'member' && item.status === 'active' && peopleScopeKey(item.scope) === command.scopeId,
+    );
+  const reason = command.reason.trim();
+  if (!input.snapshot.options.writeAvailability.canEndMembership || membership === undefined || reason.length === 0) {
+    return yield* invalid();
+  }
+  const payload = yield* Schema.decodeEffect(EndAccessMembershipPayloadSchema)({
+    expectedRevision: input.expectedRevision,
+    principalId: command.personId,
+    reason,
+    scope: membership.scope,
+  }).pipe(Effect.catchTag('SchemaError', formFailure));
+  return yield* port.endMembership(payload, input.options);
+});
+
+/** Core answers a sole administrator's leave with this code inside the 409's detail. */
+const ownershipTransferRequired = (detail: string) => detail.startsWith('ownership_transfer_required');
+
 /** Form checks are usability checks only; each command is independently admitted by the BFF. */
 export const submitPeopleCommand = Effect.fn('PeopleCommands.submitPeopleCommand')(
   function* submitPeopleCommandEffect(input: CommandInput, port: PeopleMutationPort = livePort) {
@@ -224,6 +278,8 @@ export const submitPeopleCommand = Effect.fn('PeopleCommands.submitPeopleCommand
       Match.when({ kind: 'team' }, (command) => changeTeam(command, input, port)),
       Match.when({ kind: 'delegate' }, (command) => delegate(command, input, port)),
       Match.when({ kind: 'revoke-delegation' }, (command) => revokeDelegation(command, input, port)),
+      Match.when({ kind: 'admit' }, (command) => admitMember(command, input, port)),
+      Match.when({ kind: 'end-membership' }, (command) => endMembership(command, input, port)),
       Match.exhaustive,
     );
     return 'saved' as const;
@@ -233,7 +289,9 @@ export const submitPeopleCommand = Effect.fn('PeopleCommands.submitPeopleCommand
     onFailure: (error): PeopleFeedback =>
       Match.value(error).pipe(
         Match.tag('PeopleFormProblem', ({ reason }) => reason),
-        Match.tag('AccessAdminConflict', () => 'conflict' as const),
+        Match.tag('AccessAdminConflict', ({ detail }) =>
+          ownershipTransferRequired(detail) ? ('ownershipTransfer' as const) : ('conflict' as const),
+        ),
         Match.tag('AccessAdminInvalidRequest', 'AccessAdminUnprocessable', () => 'invalid' as const),
         Match.tag('AccessAdminAuthenticationRequired', () => 'unauthenticated' as const),
         Match.tag('AccessAdminForbidden', () => 'forbidden' as const),

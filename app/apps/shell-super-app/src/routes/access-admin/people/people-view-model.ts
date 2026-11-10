@@ -19,10 +19,15 @@ export interface PeopleChoice {
 }
 
 export interface PeopleMembershipView {
+  /** True only for an active member row while the BFF allows ending memberships. */
+  readonly canEnd: boolean;
+  /** What ends with this membership: live roles, team places and managed delegations in the closed scopes. */
+  readonly ends: { readonly delegations: number; readonly roles: number; readonly teams: number };
   readonly expiryLabel: string | null;
   readonly id: string;
   readonly kind: 'member' | 'owner' | 'access_admin';
   readonly scope: string;
+  readonly scopeId: string;
   readonly status: 'active' | 'suspended' | 'revoked';
 }
 
@@ -63,6 +68,8 @@ export interface PeoplePersonView extends PeopleChoice {
 }
 
 export interface PeopleScopeChoices extends PeopleChoice {
+  /** Company directory people without access in this company; always empty for the tenant context. */
+  readonly candidates: readonly PeopleChoice[];
   readonly capabilities: readonly PeopleChoice[];
   readonly managers: readonly PeopleChoice[];
   readonly people: readonly PeopleChoice[];
@@ -76,8 +83,10 @@ export interface PeopleViewModel {
   readonly revision: string;
   readonly scopes: readonly PeopleScopeChoices[];
   readonly writes: {
+    readonly admit: boolean;
     readonly assign: boolean;
     readonly delegate: boolean;
+    readonly endMembership: boolean;
     readonly team: boolean;
   };
 }
@@ -110,6 +119,13 @@ export const PeopleCommandSchema = Schema.Union([
     scopeId: PeopleScopeChoiceSchema,
   }),
   Schema.Struct({ delegationId: AccessDelegationIdSchema, kind: Schema.Literal('revoke-delegation') }),
+  Schema.Struct({ kind: Schema.Literal('admit'), personId: AccessHumanIdSchema, scopeId: AccessCompanyIdSchema }),
+  Schema.Struct({
+    kind: Schema.Literal('end-membership'),
+    personId: AccessHumanIdSchema,
+    reason: Schema.String,
+    scopeId: PeopleScopeChoiceSchema,
+  }),
 ]);
 export type PeopleCommand = typeof PeopleCommandSchema.Encoded;
 export const PeopleFeedbackSchema = Schema.Literals([
@@ -117,6 +133,7 @@ export const PeopleFeedbackSchema = Schema.Literals([
   'saving',
   'saved',
   'conflict',
+  'ownershipTransfer',
   'forbidden',
   'unavailable',
   'unauthenticated',
