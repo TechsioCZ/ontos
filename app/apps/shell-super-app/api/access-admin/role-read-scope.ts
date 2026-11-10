@@ -166,11 +166,12 @@ export const roleReadScopes = Effect.fn('AccessAdminRoleReadScope.resolveMany')(
 ) {
   const gate = yield* AccessDecisionGate;
   const companies = askedCompanies(input.companies);
+  // One scope object per company, shared by every declaration: the gate groups a batch's evidence by scope
+  // identity, so a fresh object per question would write each answer in its own transaction.
+  const companyScopes = companies.map((company) => companyScopeOf(input.scope, company));
   const questions = input.declarations.flatMap((declaration) => [
     questionOf(input.scope, declaration, input.now, ADMIN_SURFACE_SCOPE),
-    ...companies.map((company) =>
-      questionOf(companyScopeOf(input.scope, company), declaration, input.now, COMPANY_SCOPE),
-    ),
+    ...companyScopes.map((companyScope) => questionOf(companyScope, declaration, input.now, COMPANY_SCOPE)),
   ]);
   const answers: readonly AccessDecision[] = questions.length === 0 ? [] : yield* gate.decideMany(questions);
   if (answers.length !== questions.length || answers.some(({ outcome }) => outcome === 'UNAVAILABLE')) {
