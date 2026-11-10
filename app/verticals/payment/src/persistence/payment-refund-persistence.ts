@@ -156,6 +156,7 @@ const returnEvidenceOf = Effect.fn('PaymentRefundPersistence.returnEvidenceOf')(
     economicEffectKey: row.economicEffectKey ?? undefined,
     observationId: row.observationId,
     operationId: row.operationId ?? attachedOperationId,
+    // NUL cannot occur in PostgreSQL text, so it separates the four binding fields unambiguously.
     sourceBindingKey: [row.sourceKind, row.sourceSystem, row.accountRef, row.environment].join('\u0000'),
   } satisfies PaymentReturnEvidence;
 });

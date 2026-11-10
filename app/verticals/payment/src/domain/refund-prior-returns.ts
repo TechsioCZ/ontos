@@ -104,21 +104,33 @@ const describesCountedRefund = (
   operation.outcome !== 'NOT_EFFECTED_CONFIRMED' &&
   (evidence.amount === undefined || sameAmount(evidence.amount, operation.amount));
 
+/**
+ * Groups statements proven to describe one economic effect: the same source binding and the same key.
+ * The identity is a pair, kept as nested maps so no separator inside a binding or a key can merge two
+ * identities. A keyless statement is its own effect.
+ */
 const groupByEconomicEffect = (evidence: readonly PaymentReturnEvidence[]): readonly EffectGroup[] => {
-  const groups = new Map<string, [PaymentReturnEvidence, ...PaymentReturnEvidence[]]>();
+  const groups: [PaymentReturnEvidence, ...PaymentReturnEvidence[]][] = [];
+  const keyed = new Map<string, Map<string, [PaymentReturnEvidence, ...PaymentReturnEvidence[]]>>();
   for (const statement of evidence) {
-    const key =
-      statement.economicEffectKey === undefined
-        ? `observation:${statement.observationId}`
-        : `effect:${statement.sourceBindingKey ?? ''}:${statement.economicEffectKey}`;
-    const group = groups.get(key);
-    if (group === undefined) {
-      groups.set(key, [statement]);
+    const { economicEffectKey } = statement;
+    if (economicEffectKey === undefined) {
+      groups.push([statement]);
     } else {
-      group.push(statement);
+      const binding = statement.sourceBindingKey ?? '';
+      const ofBinding = keyed.get(binding) ?? new Map<string, [PaymentReturnEvidence, ...PaymentReturnEvidence[]]>();
+      keyed.set(binding, ofBinding);
+      const group = ofBinding.get(economicEffectKey);
+      if (group === undefined) {
+        const created: [PaymentReturnEvidence, ...PaymentReturnEvidence[]] = [statement];
+        ofBinding.set(economicEffectKey, created);
+        groups.push(created);
+      } else {
+        group.push(statement);
+      }
     }
   }
-  return [...groups.values()];
+  return groups;
 };
 
 /** The single return of one effect group against a COLLECT of this Payment, or undefined when ambiguous. */

@@ -70,6 +70,16 @@ describe('#1150 Prior return evidence reduces the remaining budget', () => {
       sourceBindingKey: 'BANK_ACCOUNTING|erp|bank-b|production',
     };
     expect(remainingOf(snapshotOf([collect]), [fromBankA, fromBankB])).toBe(20_000);
+    // A separator inside a binding or a key never merges two identities.
+    const colonInBinding = {
+      ...statement({ economicEffectKey: 'refund-1' }),
+      sourceBindingKey: 'BANK_ACCOUNTING|erp|bank-a|production:eu',
+    };
+    const colonInKey = {
+      ...statement({ economicEffectKey: 'eu:refund-1', observationId: 'observation-2' }),
+      sourceBindingKey: 'BANK_ACCOUNTING|erp|bank-a|production',
+    };
+    expect(remainingOf(snapshotOf([collect]), [colonInBinding, colonInKey])).toBe(20_000);
     // The same binding re-exporting its own key still counts once.
     expect(remainingOf(snapshotOf([collect]), [fromBankA, { ...fromBankA, observationId: 'observation-3' }])).toBe(
       60_000,
