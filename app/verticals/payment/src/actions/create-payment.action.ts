@@ -27,14 +27,12 @@ import {
 } from '../domain/lifecycle-intent.ts';
 import { requireReleasedPurchase } from '../domain/lifecycle-purchase-guard.ts';
 import { paymentIntentViewOf } from '../domain/lifecycle-views.ts';
-import {
-  paymentAggregatePersistenceForTransaction,
-  paymentFundsSnapshotOf,
-} from '../persistence/payment-aggregate-persistence.ts';
+import { paymentAggregatePersistenceForTransaction } from '../persistence/payment-aggregate-persistence.ts';
 import type { NewPaymentInput } from '../persistence/payment-aggregate-persistence.ts';
 import { paymentLifecyclePersistenceForTransaction } from '../persistence/payment-lifecycle-persistence.ts';
 import { paymentApplicabilityPersistenceForTransaction } from '../persistence/payment-applicability-persistence.ts';
 import type { PaymentLifecycleServices } from '../persistence/payment-lifecycle-persistence.ts';
+import { paymentRefundPersistenceForTransaction } from '../persistence/payment-refund-persistence.ts';
 import { createCreatePaymentPaymentCorePaymentCreatedV1OutboxMessage } from './create-payment-payment-core-payment-created-v1.outbox-message.ts';
 import { recordPaymentAggregateReads, recordPaymentLookup } from './payment-data-access.ts';
 
@@ -96,8 +94,9 @@ const requireReleasedPredecessor = Effect.fn('CreatePaymentAction.requireRelease
         'The predecessor Payment belongs to another purchase; a successor must name a Payment of its own purchase',
       );
     }
+    const { snapshot } = yield* services.refunds.selectFunds(predecessor);
     const decision = decidePredecessorRelease({
-      funds: paymentFundsSnapshotOf(predecessor),
+      funds: snapshot,
       operations: predecessor.operations,
       predecessorPaymentId,
       successorPaymentId: yield* services.lifecycle.findSuccessorPaymentId(predecessorPaymentId),
@@ -155,7 +154,7 @@ export const handleCreatePayment = Effect.fn('CreatePaymentAction.handle')(funct
     });
   }
   // Omitting the predecessor never bypasses it: every other intent of the purchase must be released.
-  yield* requireReleasedPurchase(purchasePaymentIds, services.aggregate);
+  yield* requireReleasedPurchase(purchasePaymentIds, services);
   yield* recordPaymentAggregateReads(context, purchasePaymentIds);
   // #1147 applicability of exactly the selected branch at this execution; nothing else is selected.
   const enablements = yield* services.applicability.loadCurrentEnablements(payload.customerConfigurationId);
@@ -245,6 +244,7 @@ const lifecycleServices = (transaction: ScopedTransactionExecutor, scope: Operat
         aggregate: paymentAggregatePersistenceForTransaction(transaction),
         applicability: paymentApplicabilityPersistenceForTransaction(transaction),
         lifecycle: paymentLifecyclePersistenceForTransaction(transaction),
+        refunds: paymentRefundPersistenceForTransaction(transaction),
       });
 
 export const createPaymentAction = defineAction(

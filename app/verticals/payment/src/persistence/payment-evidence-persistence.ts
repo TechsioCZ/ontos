@@ -892,7 +892,13 @@ export const paymentEvidencePersistenceForTransaction = (
         )
         .orderBy(asc(observations.verifiedAt), asc(observations.observationId))
         .pipe(Effect.mapError(readFailure));
-      return yield* Effect.forEach(rows, observationRecordOf, { concurrency: 1 });
+      // A fully disproven statement no longer describes the economic effect (the shared full-disproof rule).
+      const disproven = yield* fullyDisprovenAmong(rows.map((row) => row.observationId));
+      return yield* Effect.forEach(
+        rows.filter((row) => !disproven.has(row.observationId)),
+        observationRecordOf,
+        { concurrency: 1 },
+      );
     },
   );
 

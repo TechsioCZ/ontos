@@ -1,8 +1,8 @@
 import { Effect, Option } from 'effect';
 
 import { paymentLifecycleConflict } from '../../shared/domain/lifecycle-conflict.ts';
-import { paymentFundsSnapshotOf } from '../persistence/payment-aggregate-persistence.ts';
 import type { PaymentAggregatePersistence } from '../persistence/payment-aggregate-persistence.ts';
+import type { PaymentRefundPersistence } from '../persistence/payment-refund-persistence.ts';
 import { decidePurchaseRelease } from './lifecycle-intent.ts';
 
 /**
@@ -13,19 +13,22 @@ import { decidePurchaseRelease } from './lifecycle-intent.ts';
 export const requireReleasedPurchase = Effect.fn('PaymentLifecycle.requireReleasedPurchase')(
   function* requireReleasedPurchase(
     purchasePaymentIds: readonly string[],
-    aggregate: PaymentAggregatePersistence,
+    services: { readonly aggregate: PaymentAggregatePersistence; readonly refunds: PaymentRefundPersistence },
     exceptPaymentId?: string,
   ) {
     const siblings = yield* Effect.forEach(
       purchasePaymentIds.filter((paymentId) => paymentId !== exceptPaymentId),
+      // The same funds snapshot as coverage and the refund guard: prior return evidence included.
       (paymentId) =>
-        aggregate.loadAggregate(paymentId).pipe(
-          Effect.map((record) => ({
-            funds: paymentFundsSnapshotOf(record),
-            operations: record.operations,
-            paymentId,
-          })),
-        ),
+        services.aggregate
+          .loadAggregate(paymentId)
+          .pipe(
+            Effect.flatMap((record) =>
+              services.refunds
+                .selectFunds(record)
+                .pipe(Effect.map(({ snapshot }) => ({ funds: snapshot, operations: record.operations, paymentId }))),
+            ),
+          ),
       { concurrency: 1 },
     );
     return yield* Option.match(decidePurchaseRelease(siblings), {

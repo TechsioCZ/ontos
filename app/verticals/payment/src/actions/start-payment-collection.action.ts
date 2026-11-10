@@ -36,6 +36,7 @@ import type { PaymentRecord } from '../persistence/payment-aggregate-persistence
 import { paymentLifecyclePersistenceForTransaction } from '../persistence/payment-lifecycle-persistence.ts';
 import { paymentApplicabilityPersistenceForTransaction } from '../persistence/payment-applicability-persistence.ts';
 import type { PaymentLifecycleServices } from '../persistence/payment-lifecycle-persistence.ts';
+import { paymentRefundPersistenceForTransaction } from '../persistence/payment-refund-persistence.ts';
 import { GatewayBindingPort } from '../ports/gateway-binding-port.ts';
 import type { PaymentGatewayAccountBinding } from '../../shared/domain/payment-execution-binding.ts';
 import { PaymentOwnerEvidenceUnavailable } from '../ports/owner-evidence-unavailable.ts';
@@ -173,7 +174,7 @@ export const handleStartPaymentCollection = Effect.fn('StartPaymentCollectionAct
     }
     yield* recordPaymentLookup(context, { paymentId: payment.paymentId, query: 'successor', resultCount: 0 });
     // A competing intent of the same purchase must not hold a live or proven collection lineage (#1145).
-    yield* requireReleasedPurchase(purchasePaymentIds, persistence, payment.paymentId);
+    yield* requireReleasedPurchase(purchasePaymentIds, context.services, payment.paymentId);
     yield* recordPaymentAggregateReads(
       context,
       purchasePaymentIds.filter((paymentId) => paymentId !== payment.paymentId),
@@ -243,6 +244,7 @@ const lifecycleServices = (transaction: ScopedTransactionExecutor, scope: Operat
         aggregate: paymentAggregatePersistenceForTransaction(transaction),
         applicability: paymentApplicabilityPersistenceForTransaction(transaction),
         lifecycle: paymentLifecyclePersistenceForTransaction(transaction),
+        refunds: paymentRefundPersistenceForTransaction(transaction),
       });
 
 export const startPaymentCollectionAction = defineAction(

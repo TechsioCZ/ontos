@@ -15,9 +15,12 @@ import {
 } from '../../shared/domain/payment-vocabulary.ts';
 import { observations, reconciliationDecisions, sourceAuthorities } from '../database/schema.ts';
 import type { PaymentRefundRouteCandidate } from '../domain/refund-execution-route.ts';
-import { correctionReachOf } from '../domain/refund-prior-returns.ts';
-import { fullyDisprovenTargets } from './payment-full-disproof.ts';
+import type { PaymentFundsSnapshot } from '../domain/coverage.ts';
+import { correctionReachOf, fundsSnapshotWithPriorReturns } from '../domain/refund-prior-returns.ts';
 import type { PaymentReturnEvidence } from '../domain/refund-prior-returns.ts';
+import { paymentFundsSnapshotOf } from './payment-aggregate-persistence.ts';
+import type { PaymentAggregateRecord } from './payment-aggregate-persistence.ts';
+import { fullyDisprovenTargets } from './payment-full-disproof.ts';
 
 /**
  * Owner-local refund reads over the Core-installed `ScopedTransactionExecutor` (#1150/#1152). The
@@ -25,7 +28,19 @@ import type { PaymentReturnEvidence } from '../domain/refund-prior-returns.ts';
  * so a concurrent revocation cannot interleave with admitting a refund under that authority. Lock
  * order matches source statement acceptance: the authority rows first, then the Payment row.
  */
+/** A loaded Payment's funds as every reader computes them: its prior return evidence and the completed snapshot. */
+export interface PaymentFundsReadout {
+  readonly evidence: readonly PaymentReturnEvidence[];
+  readonly snapshot: PaymentFundsSnapshot;
+}
+
 export interface PaymentRefundPersistence {
+  /**
+   * The one funds snapshot every reader uses (#1150): the loaded aggregate plus its prior return evidence.
+   * Coverage, proof issuance, proof validation and the refund guard all build it here, so they agree.
+   * Call with the Payment row already locked (or in a read that takes no lock) and after that lock.
+   */
+  readonly selectFunds: (aggregate: PaymentAggregateRecord) => Effect.Effect<PaymentFundsReadout, PaymentUnavailable>;
   readonly selectRefundRouteCandidates: () => Effect.Effect<readonly PaymentRefundRouteCandidate[], PaymentUnavailable>;
   /** Qualified REFUND_CONFIRMED statements of the Payment, less accepted corrections; read under its row lock. */
   readonly selectReturnEvidence: (
@@ -304,5 +319,14 @@ export const paymentRefundPersistenceForTransaction = (
       return evidence.flatMap((entry) => (entry === null ? [] : [entry]));
     },
   );
-  return Object.freeze({ selectRefundRouteCandidates, selectReturnEvidence });
+  const selectFunds = Effect.fn('PaymentRefundPersistence.selectFunds')(function* selectFunds(
+    aggregate: PaymentAggregateRecord,
+  ) {
+    const evidence = yield* selectReturnEvidence(aggregate.payment.paymentId);
+    return {
+      evidence,
+      snapshot: fundsSnapshotWithPriorReturns(paymentFundsSnapshotOf(aggregate), evidence),
+    } satisfies PaymentFundsReadout;
+  });
+  return Object.freeze({ selectFunds, selectRefundRouteCandidates, selectReturnEvidence });
 };

@@ -35,15 +35,14 @@ import {
   termSemanticOf,
 } from '../domain/authorization-currentness.ts';
 import { verifyMethodCondition } from '../domain/authorization-method-condition.ts';
-import {
-  paymentAggregatePersistenceForTransaction,
-  paymentFundsSnapshotOf,
-} from '../persistence/payment-aggregate-persistence.ts';
+import { paymentAggregatePersistenceForTransaction } from '../persistence/payment-aggregate-persistence.ts';
 import type { PaymentAggregatePersistence, PaymentRecord } from '../persistence/payment-aggregate-persistence.ts';
 import { paymentApplicabilityPersistenceForTransaction } from '../persistence/payment-applicability-persistence.ts';
 import type { PaymentApplicabilityPersistence } from '../persistence/payment-applicability-persistence.ts';
 import { paymentAuthorizationPersistenceForTransaction } from '../persistence/payment-authorization-persistence.ts';
 import type { PaymentAuthorizationPersistence } from '../persistence/payment-authorization-persistence.ts';
+import { paymentRefundPersistenceForTransaction } from '../persistence/payment-refund-persistence.ts';
+import type { PaymentRefundPersistence } from '../persistence/payment-refund-persistence.ts';
 import { PaymentOwnerEvidenceUnavailable } from '../ports/owner-evidence-unavailable.ts';
 import { createIssuePaymentAuthorizationPaymentCoreAuthorizationIssuedV1OutboxMessage } from './issue-payment-authorization-payment-core-authorization-issued-v1.outbox-message.ts';
 import { recordPaymentAggregateReads, recordPaymentLookup } from './payment-data-access.ts';
@@ -65,6 +64,7 @@ interface IssuePaymentAuthorizationServices {
   readonly aggregate: PaymentAggregatePersistence;
   readonly applicability: PaymentApplicabilityPersistence;
   readonly authorizations: PaymentAuthorizationPersistence;
+  readonly refunds: PaymentRefundPersistence;
 }
 
 type IssuePaymentAuthorizationContext = ActionHandlerContext<typeof domainEvents, IssuePaymentAuthorizationServices>;
@@ -161,7 +161,8 @@ export const handleIssuePaymentAuthorization = Effect.fn('IssuePaymentAuthorizat
     const proofKind = proofKindForMethod(payment.method);
     const condition =
       proofKind === 'PREPAID_COVERAGE'
-        ? yield* requirePrepaidCoverage(paymentFundsSnapshotOf(loaded)).pipe(
+        ? yield* context.services.refunds.selectFunds(loaded).pipe(
+            Effect.flatMap(({ snapshot }) => requirePrepaidCoverage(snapshot)),
             Effect.tap(() => requireUnheldCoverage(context, payment, binding.orderCommitmentAttemptId)),
           )
         : yield* applicability.loadCurrentEnablements(payment.customerConfigurationId).pipe(
@@ -227,6 +228,7 @@ const issuePaymentAuthorizationServices = (transaction: ScopedTransactionExecuto
         aggregate: paymentAggregatePersistenceForTransaction(transaction),
         applicability: paymentApplicabilityPersistenceForTransaction(transaction),
         authorizations: paymentAuthorizationPersistenceForTransaction(transaction),
+        refunds: paymentRefundPersistenceForTransaction(transaction),
       });
 
 export const issuePaymentAuthorizationAction = defineAction(

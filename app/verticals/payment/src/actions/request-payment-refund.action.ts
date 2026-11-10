@@ -37,11 +37,9 @@ import {
 } from '../domain/refund-admission.ts';
 import { decideRefundExecutionRoute, RefundRouteDecision } from '../domain/refund-execution-route.ts';
 import type { PaymentRefundRouteCandidate } from '../domain/refund-execution-route.ts';
-import { fundsSnapshotWithPriorReturns } from '../domain/refund-prior-returns.ts';
 import {
   computePaymentMaterialHash,
   paymentAggregatePersistenceForTransaction,
-  paymentFundsSnapshotOf,
 } from '../persistence/payment-aggregate-persistence.ts';
 import type { PaymentAggregateRecord } from '../persistence/payment-aggregate-persistence.ts';
 import { paymentRefundPersistenceForTransaction } from '../persistence/payment-refund-persistence.ts';
@@ -217,8 +215,8 @@ const handleRequestPaymentRefund = Effect.fn('RequestPaymentRefund.handle')(func
       'The operation key already identifies a materially different operation',
     );
   }
-  const returnEvidence = yield* context.services.refunds
-    .selectReturnEvidence(aggregate.payment.paymentId)
+  const { evidence: returnEvidence, snapshot: funds } = yield* context.services.refunds
+    .selectFunds(aggregate)
     .pipe(Effect.mapError(refundFailureOf));
   yield* recordPaymentLookup(context, {
     paymentId: aggregate.payment.paymentId,
@@ -229,7 +227,6 @@ const handleRequestPaymentRefund = Effect.fn('RequestPaymentRefund.handle')(func
   if (Option.isSome(heldOverlap)) {
     return yield* refundItemUnavailableConflict(heldOverlap.value);
   }
-  const funds = fundsSnapshotWithPriorReturns(paymentFundsSnapshotOf(aggregate), returnEvidence);
   const permitted = yield* requireRefundReservation(funds, {
     amount: payload.amount,
     basisKind: basis._tag,

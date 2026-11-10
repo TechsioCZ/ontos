@@ -17,13 +17,13 @@ import type { PaymentUnavailable } from '../../shared/domain/payment-unavailable
 import { coverageSummaryOf } from '../domain/lifecycle-intent.ts';
 import { paymentIntentViewOf, paymentOperationViewOf } from '../domain/lifecycle-views.ts';
 import { isUnresolvedOutcome } from '../domain/operation-lifecycle.ts';
-import {
-  paymentAggregatePersistenceForTransaction,
-  paymentFundsSnapshotOf,
-} from '../persistence/payment-aggregate-persistence.ts';
+import { paymentAggregatePersistenceForTransaction } from '../persistence/payment-aggregate-persistence.ts';
 import { paymentLifecyclePersistenceForTransaction } from '../persistence/payment-lifecycle-persistence.ts';
 import { paymentApplicabilityPersistenceForTransaction } from '../persistence/payment-applicability-persistence.ts';
 import type { PaymentLifecycleServices } from '../persistence/payment-lifecycle-persistence.ts';
+import { paymentRefundPersistenceForTransaction } from '../persistence/payment-refund-persistence.ts';
+
+type CurrentPaymentServices = PaymentLifecycleServices;
 
 const currentPaymentEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
@@ -63,9 +63,9 @@ const readFailure = <Value>(
 /** Side-effect free Current inspection: no lock, no write, no owner evidence call (#1148 R2). */
 export const readCurrentPayment = Effect.fn('CurrentPaymentRead.read')(function* readCurrentPayment(
   input: CurrentPaymentRequest,
-  services: PaymentLifecycleServices,
+  services: CurrentPaymentServices,
 ) {
-  // One transaction connection: the two reads run in order.
+  // One transaction connection: the reads run in order.
   const [aggregate, successor] = yield* readFailure(
     Effect.all(
       [
@@ -75,12 +75,13 @@ export const readCurrentPayment = Effect.fn('CurrentPaymentRead.read')(function*
       { concurrency: 1 },
     ),
   );
+  const { snapshot } = yield* readFailure(services.refunds.selectFunds(aggregate));
   const unresolvedOperationIds = aggregate.operations.flatMap((operation) =>
     isUnresolvedOutcome(operation.outcome) ? [operation.operationId] : [],
   );
   const observedAt = yield* DateTime.now;
   return {
-    coverage: coverageSummaryOf(paymentFundsSnapshotOf(aggregate)),
+    coverage: coverageSummaryOf(snapshot),
     observedAt,
     operations: aggregate.operations.map(paymentOperationViewOf),
     payment: paymentIntentViewOf(aggregate.payment),
@@ -102,10 +103,11 @@ const lifecycleServices = (transaction: ScopedTransactionExecutor, scope: Operat
           reason: 'Payment lifecycle operations require a verified Selling Legal Entity scope',
         }),
       )
-    : Effect.succeed<PaymentLifecycleServices>({
+    : Effect.succeed<CurrentPaymentServices>({
         aggregate: paymentAggregatePersistenceForTransaction(transaction),
         applicability: paymentApplicabilityPersistenceForTransaction(transaction),
         lifecycle: paymentLifecyclePersistenceForTransaction(transaction),
+        refunds: paymentRefundPersistenceForTransaction(transaction),
       });
 
 export const currentPaymentRead = defineRead(
@@ -132,7 +134,7 @@ export const currentPaymentRead = defineRead(
     resultSchema: CurrentPaymentResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<PaymentLifecycleServices>) =>
+  (input, context: ReadHandlerContext<CurrentPaymentServices>) =>
     readCurrentPayment(input, context.services).pipe(
       Effect.map((result) => ({ evidence: { resultCount: 1 + result.operations.length }, result })),
     ),

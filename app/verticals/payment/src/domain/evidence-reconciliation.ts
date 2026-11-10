@@ -19,7 +19,11 @@ import type {
   PaymentEvidenceOperationView,
   PaymentEvidenceOutcomeChange,
 } from './evidence-interpretation.ts';
-import { paymentFactMeaning, restatesEstablishedEffect } from './evidence-interpretation.ts';
+import {
+  completesCancellationContradiction,
+  paymentFactMeaning,
+  restatesEstablishedEffect,
+} from './evidence-interpretation.ts';
 import { sameAmount } from './money.ts';
 import { isAllowedOutcomeTransition, isDefinitiveOutcome } from './operation-lifecycle.ts';
 import { PAYMENT_SELECTED_CAPABILITY_SOURCES } from './source-qualification.ts';
@@ -109,7 +113,9 @@ export interface PaymentReconciliationCaseEvidence {
   readonly correctionTargetRelied?: boolean;
   /**
    * EFFECT_CONFIRMED statements only: the same economic effect (source binding, fact kind, key) already
-   * counts toward an operation of this Payment (any Payment when unassigned), so the held copy is accounted for.
+   * counts toward an operation of this Payment (any Payment when unassigned), or a held REFUND_CONFIRMED is a
+   * prior return of a COLLECT of this Payment that the funds reader already counts (#1150). Either way the
+   * held copy is accounted for.
    */
   readonly economicEffectCounted?: boolean;
   readonly factKind: PaymentObservationFactKind;
@@ -262,6 +268,26 @@ const statesDistinctEffect = (
     ),
   );
 
+/**
+ * An uncorrected statement of this operation already establishes the opposite definitive outcome. A governed
+ * attachment of the other outcome would overturn it without a full qualified disproof (#1151).
+ */
+const contradictsEstablishedOutcome = (
+  facts: PaymentReconciliationEvidenceFacts,
+  operation: PaymentReconciliationOperationView,
+  outcome: PaymentOperationOutcome,
+): boolean =>
+  facts.establishedEffects.some((established) => {
+    const establishedOutcome = paymentFactMeaning(established.factKind)?.outcome;
+    return (
+      established.operationId === operation.operationId &&
+      established.observationId !== facts.observationId &&
+      establishedOutcome !== undefined &&
+      isDefinitiveOutcome(establishedOutcome) &&
+      establishedOutcome !== outcome
+    );
+  });
+
 const decideAttach = (
   input: PaymentReconciliationDecisionInput,
   requestedOperationId: string | undefined,
@@ -311,8 +337,24 @@ const decideAttach = (
       'The evidence proves an economic effect distinct from the one that already established this operation',
     );
   }
+  if (contradictsEstablishedOutcome(facts, operation, meaning.outcome)) {
+    return reject(
+      'payment_reconciliation_evidence_not_qualified',
+      'An uncorrected statement already establishes the opposite outcome of this operation; only a full qualified disproof removes it',
+    );
+  }
   if (facts.amount !== undefined && !sameAmount(facts.amount, operation.amount)) {
     return reject('payment_reconciliation_evidence_not_qualified', 'The evidence amount differs from the operation');
+  }
+  if (
+    operation.outcome !== meaning.outcome &&
+    completesCancellationContradiction(input.operations, operation, meaning.outcome)
+  ) {
+    // A confirmed cancellation and a confirmed collection of one COLLECT contradict each other: never complete the pair.
+    return reject(
+      'payment_reconciliation_decision_not_applicable',
+      'The evidence would complete a confirmed cancellation and collection of the same COLLECT; it stays held',
+    );
   }
   if (operation.outcome !== meaning.outcome && !isAllowedOutcomeTransition(operation.outcome, meaning.outcome)) {
     return reject(
