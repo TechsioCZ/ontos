@@ -8,7 +8,7 @@ import {
   pageDataTenantScopeKey,
   pageDataWorkEvent,
 } from '@app/shared-contracts/page-data';
-import type { PageDataWork } from '@app/shared-contracts/page-data';
+import type { ModuleChangeDetail, PageDataWork } from '@app/shared-contracts/page-data';
 import { Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Result } from 'effect';
 import { afterAll, beforeAll, expect, it } from 'effect-rstest';
 
@@ -343,6 +343,90 @@ it.live('a live change revalidates only what mounted readers show and retries a 
     expect(loads()).toBe(3);
     expect(store.snapshot({ id: 'shown' })).toMatchObject({ state: 'ready', value: 'shown#3' });
     expect(store.snapshot({ id: 'hidden' })).toMatchObject({ value: 'hidden#2' });
+    unsubscribe();
+  }),
+);
+
+/** A strict store (as the admin details) mounted on one entry; `changesFrom` names the apps it shows. */
+const mountScopedStore = (scope: { readonly changesFrom?: readonly string[] }) => {
+  let loads = 0;
+  const store = definePageData({
+    ...scope,
+    key: (id: string) => id,
+    load: (id: string) =>
+      Effect.sync(() => {
+        loads += 1;
+        return `${id}#${loads}`;
+      }),
+    retainStale: false,
+    runtime,
+  });
+  const unsubscribe = store.subscribe(() => {
+    store.snapshot('shown');
+  }, 'shown');
+  return { loads: () => loads, store, unsubscribe };
+};
+
+/** The Shell's live channel reports a change of `apps`. */
+const dispatchChange = (apps: ModuleChangeDetail['apps']) => {
+  globalThis.dispatchEvent(new CustomEvent<ModuleChangeDetail>(moduleChangeEvent, { detail: { apps } }));
+};
+
+it.live('a live change from an app the store does not show leaves it untouched', () =>
+  Effect.gen(function* unrelatedChange() {
+    const scoped = mountScopedStore({ changesFrom: ['merchandise', 'party-registry'] });
+    const unscoped = mountScopedStore({});
+    yield* scoped.store.preload('shown');
+    yield* unscoped.store.preload('shown');
+    const shown = scoped.store.snapshot('shown');
+    dispatchChange(['finance-billing', 'shell']);
+    yield* Effect.sleep('10 millis');
+    expect(scoped.loads()).toBe(1);
+    expect(scoped.store.snapshot('shown')).toBe(shown);
+    // A fresh entry is served without a request: the change did not mark it stale.
+    yield* scoped.store.read('shown');
+    expect(scoped.loads()).toBe(1);
+    // A store that declares nothing keeps reacting to every change.
+    expect(unscoped.loads()).toBe(2);
+    scoped.unsubscribe();
+    unscoped.unsubscribe();
+  }),
+);
+
+it.live('a live change from a declared app reloads the store as before', () =>
+  Effect.gen(function* declaredChange() {
+    const { loads, store, unsubscribe } = mountScopedStore({ changesFrom: ['merchandise', 'party-registry'] });
+    yield* store.preload('shown');
+    dispatchChange(['party-registry']);
+    yield* Effect.sleep('10 millis');
+    expect(loads()).toBe(2);
+    expect(store.snapshot('shown')).toMatchObject({ state: 'ready', value: 'shown#2' });
+    dispatchChange(['crm', 'merchandise']);
+    yield* Effect.sleep('10 millis');
+    expect(loads()).toBe(3);
+    unsubscribe();
+  }),
+);
+
+it.live('a change without an app list, a reset and a write reload every scoped store', () =>
+  Effect.gen(function* everythingChanged() {
+    const { loads, store, unsubscribe } = mountScopedStore({ changesFrom: ['merchandise'] });
+    yield* store.preload('shown');
+    globalThis.dispatchEvent(new Event(moduleChangeEvent));
+    yield* Effect.sleep('10 millis');
+    expect(loads()).toBe(2);
+    dispatchChange('all');
+    yield* Effect.sleep('10 millis');
+    expect(loads()).toBe(3);
+    globalThis.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { other: true } }));
+    yield* Effect.sleep('10 millis');
+    expect(loads()).toBe(4);
+    globalThis.dispatchEvent(new Event(moduleWriteEvent));
+    yield* Effect.sleep('10 millis');
+    expect(loads()).toBe(5);
+    store.invalidate();
+    yield* Effect.sleep('10 millis');
+    expect(loads()).toBe(6);
     unsubscribe();
   }),
 );

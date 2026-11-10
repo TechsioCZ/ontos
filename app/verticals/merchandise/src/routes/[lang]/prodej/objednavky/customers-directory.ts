@@ -35,6 +35,7 @@ const toEntry = (item: CustomerListItem): CustomerEntry => ({
 
 /** The company's customers from party-registry, archived ones included; one entry per legal entity and document. */
 export const customerDirectoryData = definePageData({
+  changesFrom: ['party-registry'],
   key: (legalEntityId: string) => legalEntityId,
   load: () => listCustomers({ includeArchived: true, limit: 500 }).pipe(Effect.map((items) => items.map(toEntry))),
   runtime: browserRuntime,
