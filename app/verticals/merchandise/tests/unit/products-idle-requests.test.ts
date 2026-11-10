@@ -26,6 +26,7 @@ import {
   useProductDetailsPrefetch,
 } from '../../src/routes/[lang]/provoz/produkty/products-api.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
+import { LIST_WARM_ROWS } from '@app/admin-ui';
 
 rstest.mock('../../src/api/records-consumer.ts');
 
@@ -177,8 +178,8 @@ it.effect('an idle products list reloads its page and choices every 20 s and war
   Effect.gen(function* idleList() {
     yield* mount(ProductsList);
     yield* idle(5);
-    // Opening the page: the choices, the page and one warm-up read of each row's detail.
-    expect([count('choices'), count('list'), count('detail')]).toEqual([1, 1, ROWS]);
+    // Opening the page: the choices, the page and one warm-up read of each of the first rows' details (not all 25).
+    expect([count('choices'), count('list'), count('detail')]).toEqual([1, 1, LIST_WARM_ROWS]);
     reads.length = 0;
 
     yield* idle(60);
@@ -217,7 +218,7 @@ it.effect('a write that moves the revision reloads the page and warms its rows a
       categoryChoicesData.invalidate();
     });
     yield* idle(5);
-    expect([count('choices'), count('list'), count('detail')]).toEqual([1, 1, ROWS]);
+    expect([count('choices'), count('list'), count('detail')]).toEqual([1, 1, LIST_WARM_ROWS]);
   }),
 );
 

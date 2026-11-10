@@ -12,7 +12,16 @@ import {
   pageDataScopeKey,
 } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
-import { draftSavable, rowIntentProps, useHeldSnapshot, useRecordDraft, useUnsavedChangesGuard } from '@app/admin-ui';
+import {
+  draftSavable,
+  LIST_WARM_ROWS,
+  makeIntentLimiter,
+  makePointerDwell,
+  rowIntentProps,
+  useHeldSnapshot,
+  useRecordDraft,
+  useUnsavedChangesGuard,
+} from '@app/admin-ui';
 import type { BlockedNavigation, DraftSaveResult, RowIntentProps, SavableDraft, SaveState } from '@app/admin-ui';
 
 import { executeAresLookup } from '../../../../api/ares-lookup-client.ts';
@@ -298,7 +307,10 @@ export const cachedCustomerDetailByRef = (
   return detail.state === 'ready' && !detail.refreshing ? detail.value : undefined;
 };
 
-/** Visible current-page rows only. The UI owner supplies its actual paginated row model. */
+/**
+ * The first `LIST_WARM_ROWS` visible current-page rows only: each detail is four owner reads, so warming a whole page
+ * sent about a hundred reads on opening the list. The UI owner supplies its actual paginated row model.
+ */
 export const preloadCustomerDetails = (
   context: ModulePageContext | undefined,
   rows: readonly CustomerListItem[],
@@ -307,7 +319,7 @@ export const preloadCustomerDetails = (
   return scope === undefined
     ? Effect.void
     : Effect.forEach(
-        rows.slice(0, 200),
+        rows.slice(0, LIST_WARM_ROWS),
         (customer) => customerDetailData.read({ customer, scope }).pipe(Effect.ignore),
         {
           concurrency: 2,
@@ -317,7 +329,8 @@ export const preloadCustomerDetails = (
 };
 
 /**
- * Warms the visible rows' details once per batch. The batch key is the scope plus every row's detail key, which carries
+ * Warms the first visible rows' details once per batch. The batch key is the scope plus each warmed row's detail key,
+ * which carries
  * the Counterparty and the party revision: a list reload, a freshness expiry or a live change does not warm them again,
  * while a new page or a changed row does. A row opened later is warmed by its pointer or focus intent instead.
  */
@@ -327,7 +340,9 @@ export const usePrefetchCustomerDetails = (
 ): void => {
   const scope = pageDataScopeKey(context, 'party.registry');
   const selection = Result.getOrThrow(
-    Schema.encodeResult(DetailKeySchema)(rows.map((customer) => customerDetailKey({ customer, scope: scope ?? '' }))),
+    Schema.encodeResult(DetailKeySchema)(
+      rows.slice(0, LIST_WARM_ROWS).map((customer) => customerDetailKey({ customer, scope: scope ?? '' })),
+    ),
   );
   const warmed = useRef<string | undefined>(undefined);
   const preload = useEffectEvent(() => preloadCustomerDetails(context, rows));
@@ -350,12 +365,27 @@ export const usePrefetchCustomerDetails = (
   }, [scope, selection]);
 };
 
-/** Warms one row's detail on pointer or keyboard intent. A fresh entry answers without a request. */
+const customerIntentReads = makeIntentLimiter();
+const customerPointerDwell = makePointerDwell((effect) => browserRuntime.runFork(effect));
+
+/**
+ * Warms one row's detail on pointer or keyboard intent. A fresh entry answers without a request. At most two intent
+ * reads run at once; a sweep over many rows keeps only the newest waiting.
+ */
 export const prefetchCustomerDetail = (context: ModulePageContext | undefined, customer: CustomerListItem): void => {
   const scope = pageDataScopeKey(context, 'party.registry');
-  if (scope !== undefined && customerDetailData.snapshot({ customer, scope }).state !== 'ready') {
-    browserRuntime.runFork(customerDetailData.read({ customer, scope }).pipe(Effect.ignore));
+  if (scope === undefined || customerDetailData.snapshot({ customer, scope }).state === 'ready') {
+    return;
   }
+  customerIntentReads((done) => {
+    if (customerDetailData.snapshot({ customer, scope }).state === 'ready') {
+      done();
+      return;
+    }
+    browserRuntime.runFork(
+      customerDetailData.read({ customer, scope }).pipe(Effect.ignore, Effect.ensuring(Effect.sync(done))),
+    );
+  });
 };
 
 /**
@@ -371,7 +401,7 @@ export const customerDetailIntent = (
     if (customer !== undefined) {
       prefetchCustomerDetail(context, customer);
     }
-  });
+  }, customerPointerDwell);
 
 export type CustomerFactChange =
   | { readonly kind: 'name'; readonly value: string; readonly party: CustomerParty }

@@ -23,6 +23,7 @@ import {
 } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
 import type { OrdersPageInput } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
+import { LIST_WARM_ROWS } from '@app/admin-ui';
 
 rstest.mock('../../src/api/records-consumer.ts');
 rstest.mock('../../src/api/manage-catalog-action-client.ts');
@@ -154,6 +155,8 @@ const liveChange = (apps: readonly string[]) =>
 
 /** Each warmed order detail reads its products' summaries and the first line's ledger. */
 const DETAIL_READS = 2;
+/** Opening warms the first rows only (10 rows on the page, 5 warmed). */
+const WARMED = Math.min(ROWS, LIST_WARM_ROWS);
 
 beforeEach(() => {
   rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -179,7 +182,7 @@ it.effect('an idle orders list reloads its page every 20 s and warms its rows on
   Effect.gen(function* idleList() {
     yield* mount(OrdersList);
     yield* idle(5);
-    expect([count('list'), count('detail')]).toEqual([1, ROWS * DETAIL_READS]);
+    expect([count('list'), count('detail')]).toEqual([1, WARMED * DETAIL_READS]);
     reads.length = 0;
 
     yield* idle(60);
@@ -231,7 +234,7 @@ it.effect('a write that moves the revision reloads the page and warms its rows a
       orderDetailData.invalidate();
     });
     yield* idle(5);
-    expect([count('list'), count('detail')]).toEqual([1, ROWS * DETAIL_READS]);
+    expect([count('list'), count('detail')]).toEqual([1, WARMED * DETAIL_READS]);
   }),
 );
 

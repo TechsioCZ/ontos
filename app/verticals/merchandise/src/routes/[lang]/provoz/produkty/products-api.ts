@@ -1,6 +1,6 @@
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { rowIntentProps, useHeldSnapshot } from '@app/admin-ui';
+import { LIST_WARM_ROWS, makeIntentLimiter, makePointerDwell, rowIntentProps, useHeldSnapshot } from '@app/admin-ui';
 import type { RowIntentProps } from '@app/admin-ui';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
@@ -502,7 +502,7 @@ export const preloadProductDetails = (
   productScope(context) === undefined
     ? Effect.void
     : Effect.forEach(
-        rows.slice(0, 200),
+        rows.slice(0, LIST_WARM_ROWS),
         (row) =>
           Option.match(detailInput(context?.legalEntityId ?? '', row.id, context, revision), {
             onNone: () => Effect.void,
@@ -511,7 +511,10 @@ export const preloadProductDetails = (
         { concurrency: 2, discard: true },
       );
 
-/** Batches only the final current-page rows. Changing page/filter/scope cancels the previous batch and queue. */
+/**
+ * Warms the first `LIST_WARM_ROWS` final current-page rows; every other row is warmed by its intent. Changing
+ * page/filter/scope cancels the previous batch and queue.
+ */
 export const useProductDetailsPrefetch = (
   context: ModulePageContext | undefined,
   revision: number,
@@ -543,7 +546,7 @@ export const useProductDetailsPrefetch = (
     productDetailData.subscribe,
     () =>
       scope !== undefined &&
-      rows.some((row) =>
+      rows.slice(0, LIST_WARM_ROWS).some((row) =>
         Option.match(detailInput(context?.legalEntityId ?? '', row.id, context, revision), {
           onNone: () => false,
           onSome: (input) => productDetailData.snapshot(input).state !== 'ready',
@@ -579,9 +582,13 @@ export const useProductDetailsPrefetch = (
   }, [batch, needsPreload, request, scope, selection]);
 };
 
+const productIntentReads = makeIntentLimiter();
+const productPointerDwell = makePointerDwell((effect) => browserRuntime.runFork(effect));
+
 /**
  * Warms one row's detail when the user shows the intent to open it. The strict detail store does the rest: a fresh
  * entry answers at once without a request and a running read is joined, so each row has at most one read in flight.
+ * At most two intent reads run at once; a sweep over many rows keeps only the newest waiting.
  */
 export const prefetchProductDetail = (
   context: ModulePageContext | undefined,
@@ -592,9 +599,16 @@ export const prefetchProductDetail = (
     return;
   }
   const input = Option.getOrUndefined(detailInput(context?.legalEntityId ?? '', productId, context, revision));
-  if (input !== undefined && productDetailData.snapshot(input).state !== 'ready') {
-    browserRuntime.runFork(productDetailData.read(input).pipe(Effect.ignore));
+  if (input === undefined || productDetailData.snapshot(input).state === 'ready') {
+    return;
   }
+  productIntentReads((done) => {
+    if (productDetailData.snapshot(input).state === 'ready') {
+      done();
+      return;
+    }
+    browserRuntime.runFork(productDetailData.read(input).pipe(Effect.ignore, Effect.ensuring(Effect.sync(done))));
+  });
 };
 
 /** Intent prefetch of the products list: the row the user points at or focuses has its detail ready to open. */
@@ -610,7 +624,7 @@ export const productDetailIntent = (
     if (row !== undefined) {
       prefetchProductDetail(context, revision, row.id);
     }
-  });
+  }, productPointerDwell);
 
 export type ProductDetailState =
   | { readonly status: 'loading' }

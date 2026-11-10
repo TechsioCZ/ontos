@@ -33,7 +33,16 @@ export { EmptyState, type EmptyStateProps } from './empty-state.tsx';
 export { formatDate, formatDateTime, formatMoney, formatNumber, formatPercent } from './format.ts';
 export { useHeldSnapshot } from './held-snapshot.ts';
 export { PageHeader, type PageHeaderProps } from './page-header.tsx';
-export { type RowIntentProps, rowIntentProps } from './row-intent.ts';
+export {
+  INTENT_READ_CONCURRENCY,
+  LIST_WARM_ROWS,
+  makeIntentLimiter,
+  makePointerDwell,
+  POINTER_INTENT_DWELL,
+  type PointerDwell,
+  type RowIntentProps,
+  rowIntentProps,
+} from './row-intent.ts';
 export { SaveBar, type SaveBarProps } from './save-bar.tsx';
 export { type SaveLabels, saveLabels, saveLabelsFor } from './save-labels.ts';
 export { requiredLabel, requiredLabelFor } from './required-labels.ts';
