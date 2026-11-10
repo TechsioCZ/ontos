@@ -19,8 +19,10 @@ export interface PeopleChoice {
 }
 
 export interface PeopleMembershipView {
-  /** True only for an active member row while the BFF allows ending memberships. */
+  /** True only for an endable member row while the BFF allows ending memberships. */
   readonly canEnd: boolean;
+  /** A member row Core would end: active or suspended, inside its validity period when the list was read. */
+  readonly endable: boolean;
   /** What ends with this membership: live roles, team places and managed delegations in the closed scopes. */
   readonly ends: { readonly delegations: number; readonly roles: number; readonly teams: number };
   readonly expiryLabel: string | null;

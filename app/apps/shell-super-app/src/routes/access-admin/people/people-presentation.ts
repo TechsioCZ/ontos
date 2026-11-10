@@ -14,6 +14,24 @@ interface PresentationLabels {
 export const peopleScopeKey = (scope: Scope): string => (scope.kind === 'tenant' ? 'tenant' : scope.legalEntityId);
 const scopeMatches = (left: Scope, right: Scope) => peopleScopeKey(left) === peopleScopeKey(right);
 
+const ordered = (earlier: string, later: string, strict: boolean): boolean =>
+  Option.getOrElse(
+    Option.zipWith(DateTime.make(earlier), DateTime.make(later), (left, right) =>
+      strict ? DateTime.isLessThan(left, right) : DateTime.isLessThanOrEqualTo(left, right),
+    ),
+    () => false,
+  );
+
+/**
+ * A member row Core's end-membership ends for good: active or suspended, inside its validity period
+ * when the list was read. Revoked, expired and not-yet-valid rows are not ended.
+ */
+export const isEndableMembership = (membership: Person['memberships'][number], readAt: string): boolean =>
+  membership.kind === 'member' &&
+  membership.status !== 'revoked' &&
+  ordered(membership.validFrom, readAt, false) &&
+  (membership.validUntil === null || ordered(readAt, membership.validUntil, true));
+
 const presentationLookups = (snapshot: PeopleSnapshot, labels: PresentationLabels) => {
   const scopes = new Map(snapshot.options.scopes.map((item) => [peopleScopeKey(item.scope), item.label]));
   const people = new Map(
@@ -92,7 +110,8 @@ const personView = (
     id: person.principalId,
     label: person.displayName,
     memberships: person.memberships.map((membership, index) => ({
-      canEnd: writeAvailability.canEndMembership && membership.kind === 'member' && membership.status === 'active',
+      canEnd: writeAvailability.canEndMembership && isEndableMembership(membership, snapshot.readAt),
+      endable: isEndableMembership(membership, snapshot.readAt),
       ends: endedWithMembership(person, membership.scope),
       expiryLabel: membership.validUntil === null ? null : lookup.date(membership.validUntil),
       id: `${peopleScopeKey(membership.scope)}-${index}`,

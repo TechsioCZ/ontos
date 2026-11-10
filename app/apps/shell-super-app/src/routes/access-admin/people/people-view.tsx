@@ -51,7 +51,7 @@ const PersonDetails = ({
                   ? t(`${prefix}.noExpiry`)
                   : t('shell.accessAdmin.deadline.expiresAt', { date: membership.expiryLabel })}
               </span>
-              {membership.kind === 'member' && membership.status === 'active' ? (
+              {membership.endable ? (
                 <Button
                   aria-label={t(`${prefix}.endMembershipNamed`, { person: person.label, scope: membership.scope })}
                   disabled={busy || !membership.canEnd}

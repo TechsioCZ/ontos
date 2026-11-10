@@ -19,7 +19,7 @@ import {
   setAccessTeamMembership,
 } from '../../../api/auth-client.ts';
 import type { PeopleSnapshot } from '../../[lang]/access/people/people-page-model.ts';
-import { peopleScopeKey } from './people-presentation.ts';
+import { isEndableMembership, peopleScopeKey } from './people-presentation.ts';
 import type { PeopleCommand, PeopleFeedback } from './people-view-model.ts';
 
 export interface PeopleMutationPort {
@@ -245,7 +245,7 @@ const endMembership = Effect.fn('PeopleCommands.endMembership')(function* endMem
   const membership = input.snapshot.people.items
     .find((person) => person.principalId === command.personId)
     ?.memberships.find(
-      (item) => item.kind === 'member' && item.status === 'active' && peopleScopeKey(item.scope) === command.scopeId,
+      (item) => isEndableMembership(item, input.snapshot.readAt) && peopleScopeKey(item.scope) === command.scopeId,
     );
   const reason = command.reason.trim();
   if (!input.snapshot.options.writeAvailability.canEndMembership || membership === undefined || reason.length === 0) {

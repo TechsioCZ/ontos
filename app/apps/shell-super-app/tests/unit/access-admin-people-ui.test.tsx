@@ -72,6 +72,7 @@ const revision = 'people-revision-1';
 const capability = 'commerce.order.order.confirm';
 const from = '2026-10-01T00:00:00.000Z';
 const until = '2026-12-01T10:00:00.000Z';
+const read = '2026-11-01T00:00:00.000Z';
 
 const fixture = () => {
   const people = Schema.decodeUnknownSync(ListAccessPeopleResponseSchema)({
@@ -170,6 +171,7 @@ const fixture = () => {
   const snapshot: PeopleSnapshot = {
     options: Schema.encodeSync(ListAccessPeopleOptionsResponseSchema)(options),
     people: Schema.encodeSync(ListAccessPeopleResponseSchema)(people),
+    readAt: read,
   };
   return { options, people, snapshot };
 };
@@ -709,6 +711,7 @@ const admissionSnapshot = (open = true): PeopleSnapshot => {
   return {
     options: Schema.encodeSync(ListAccessPeopleOptionsResponseSchema)(options),
     people: Schema.encodeSync(ListAccessPeopleResponseSchema)(list),
+    readAt: snapshot.readAt,
   };
 };
 /** Selects a company and waits until its admission section shows the given candidate. */
@@ -786,6 +789,45 @@ it.effect('ending a membership names what ends with it and cannot be confirmed w
       { kind: 'end-membership', personId, reason: 'Left the company', scopeId: companyId },
       revision,
     );
+  }),
+);
+
+it.effect('a suspended member row is ended for good without restoring it first, as Core allows', () =>
+  Effect.gen(function* endSuspended() {
+    const open = admissionSnapshot();
+    const snapshot: PeopleSnapshot = {
+      ...open,
+      people: {
+        ...open.people,
+        items: open.people.items.map((person) => ({
+          ...person,
+          memberships: person.memberships.map((row) =>
+            row.kind === 'member' ? { ...row, status: 'suspended' as const } : row,
+          ),
+        })),
+      },
+    };
+    const view = renderPeople(snapshot);
+    fireEvent.click(screen.getByRole('button', { name: endMembershipName }));
+    const dialog = yield* Effect.promise(() => screen.findByRole('dialog'));
+    expect(
+      within(dialog).getByText(translate(`${people}.endMembershipEnds`, { delegations: 0, roles: 1, teams: 1 })),
+    ).toBeTruthy();
+    const reason = within(dialog).getByLabelText(translate(`${people}.endMembershipReason`), { exact: false });
+    fireEvent.change(reason, { target: { value: 'Left while suspended' } });
+    const confirm = within(dialog).getByRole('button', { name: 'Confirm' });
+    yield* Effect.promise(() => waitFor(() => expect(confirm.hasAttribute('disabled')).toBe(false)));
+    fireEvent.click(confirm);
+    const end: PeopleCommand = { kind: 'end-membership', personId, reason: 'Left while suspended', scopeId: companyId };
+    expect(view.onCommand).toHaveBeenCalledWith(end, revision);
+    const port = mutationPort();
+    expect(yield* submitPeopleCommand(commandInput(end, snapshot), port)).toBe('saved');
+    expect(port.endMembership.mock.calls[0]?.[0]).toEqual({
+      expectedRevision: revision,
+      principalId: personId,
+      reason: 'Left while suspended',
+      scope: company,
+    });
   }),
 );
 
