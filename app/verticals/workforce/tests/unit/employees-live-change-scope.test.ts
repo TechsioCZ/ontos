@@ -46,6 +46,10 @@ it.live('live changes of modules the employee list does not show read nothing', 
     events.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['workforce'] } }));
     yield* Effect.sleep('10 millis');
     expect(records).toHaveBeenCalledTimes(2);
+    // Core identity changes (the assignable principals the read includes) arrive as 'shell'.
+    events.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['shell'] } }));
+    yield* Effect.sleep('10 millis');
+    expect(records).toHaveBeenCalledTimes(3);
     unsubscribe();
   }),
 );

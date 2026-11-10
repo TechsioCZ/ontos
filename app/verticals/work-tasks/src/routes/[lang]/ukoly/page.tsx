@@ -185,8 +185,9 @@ interface TasksInput {
 }
 
 /** The page's primary data: loaded before the Shell reveals the page, kept per document, revalidated after writes. */
-const taskRecords = definePageData({
-  changesFrom: [ownAppId],
+export const taskRecords = definePageData({
+  // 'shell' carries Core identity changes; the read includes assignable principals and principal names.
+  changesFrom: [ownAppId, 'shell'],
   key: ({ includeArchived, legalEntityId, partyId }: TasksInput) =>
     `${legalEntityId}|${partyId ?? ''}|${includeArchived ? 'archived' : 'current'}`,
   load: ({ includeArchived, partyId }: TasksInput) =>

@@ -66,3 +66,16 @@ it.live('a live change of crm reloads the mounted CRM records', () =>
     unsubscribe();
   }),
 );
+
+it.live('a Core identity change reloads the mounted CRM records and their assignee directory', () =>
+  Effect.gen(function* identityChange() {
+    yield* crmRecordsData.preload({});
+    const unsubscribe = crmRecordsData.subscribe(() => {
+      crmRecordsData.snapshot({});
+    }, {});
+    dispatchChange(['shell']);
+    yield* Effect.sleep('10 millis');
+    expect(mocks.records).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  }),
+);

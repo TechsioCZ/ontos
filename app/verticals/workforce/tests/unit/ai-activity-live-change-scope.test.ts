@@ -29,8 +29,8 @@ afterAll(() => {
   }
 });
 
-// The AI activity feed is workforce data; a change committed by another module must not re-read it.
-it.live('AI activity reloads on workforce changes only', () =>
+// The AI activity feed shows agents' Core audit events in every module, so another module's change re-reads it.
+it.live('AI activity reloads on a change of any module', () =>
   Effect.gen(function* scopedAiActivity() {
     records.mockReset();
     records.mockReturnValue(Effect.succeed({ aiActivity: [] }));
@@ -39,10 +39,7 @@ it.live('AI activity reloads on workforce changes only', () =>
     const unsubscribe = aiActivityData.subscribe(() => {
       aiActivityData.snapshot('company-a');
     });
-    events.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['tagging'] } }));
-    yield* Effect.sleep('10 millis');
-    expect(records).toHaveBeenCalledTimes(1);
-    events.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['workforce'] } }));
+    events.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { apps: ['merchandise'] } }));
     yield* Effect.sleep('10 millis');
     expect(records).toHaveBeenCalledTimes(2);
     unsubscribe();

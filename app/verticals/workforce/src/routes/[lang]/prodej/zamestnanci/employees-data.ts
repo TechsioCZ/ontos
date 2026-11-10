@@ -17,7 +17,8 @@ export type EmployeesLoadError = typeof EmployeesLoadErrorSchema.Type;
 
 /** Every Employee the caller may see, unfiltered, so the stat tiles describe the whole team. */
 export const employeesData = definePageData({
-  changesFrom: ['workforce'],
+  // Core identity changes (invite, deactivation, rename) arrive as 'shell'; the read shows assignable principals.
+  changesFrom: ['shell', 'workforce'],
   key: (legalEntityId: string) => legalEntityId,
   load: () =>
     newRequestToken.pipe(
@@ -69,8 +70,8 @@ export class AiActivityUnavailable extends Data.TaggedError('AiActivityUnavailab
 }> {}
 
 /** The "AI aktivita" feed: secondary data, started with the page but never awaited before the reveal. */
+// No `changesFrom`: the feed shows agents' Core audit events in every module, so any module's change concerns it.
 export const aiActivityData = definePageData({
-  changesFrom: ['workforce'],
   key: (legalEntityId: string) => legalEntityId,
   load: () =>
     newRequestToken.pipe(

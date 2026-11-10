@@ -26,8 +26,8 @@ const settled = <A>(call: () => Promise<AgentPlatformResult<A>>): Effect.Effect<
   );
 
 /** The approval queue of the signed-in person (one per document; a company switch reloads the document). */
+// No `changesFrom`: proposals of every module land here and execute as that module's change, not 'shell'.
 export const agentQueueData = definePageData({
-  changesFrom: ['shell'],
   key: (request: AgentQueueRequest) =>
     [
       request.pendingOnly ?? '',
@@ -44,8 +44,8 @@ export const agentQueueData = definePageData({
 export const DEFAULT_ACTIVITY_REQUEST: AgentActivityRequest = { limit: AGENT_PAGE_SIZE };
 export const DEFAULT_QUEUE_REQUEST: AgentQueueRequest = { pendingOnly: true };
 
+// No `changesFrom`: agents act in every module, and such a change names that module's app, not 'shell'.
 export const agentActivityData = definePageData({
-  changesFrom: ['shell'],
   key: (request: AgentActivityRequest) =>
     [
       request.agentPrincipalId ?? '',
