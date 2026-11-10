@@ -7,6 +7,7 @@ import type { PaymentUnavailable } from '../../shared/domain/payment-unavailable
 import { payments } from '../database/schema.ts';
 import type { PaymentAggregatePersistence } from './payment-aggregate-persistence.ts';
 import type { PaymentApplicabilityPersistence } from './payment-applicability-persistence.ts';
+import type { PaymentRefundPersistence } from './payment-refund-persistence.ts';
 
 /**
  * Lifecycle-lane lookups over the Core-installed scoped transaction (#1148). Every query is bound to
@@ -34,6 +35,8 @@ export interface PaymentLifecycleServices {
   /** Current merchant method enablement (#1147), read for the create-time applicability decision. */
   readonly applicability: PaymentApplicabilityPersistence;
   readonly lifecycle: PaymentLifecyclePersistence;
+  /** The one funds snapshot builder (prior return evidence included) every reader shares. */
+  readonly refunds: PaymentRefundPersistence;
 }
 
 const readFailure = (cause: unknown) => paymentUnavailable('Payment lifecycle state could not be read', cause);

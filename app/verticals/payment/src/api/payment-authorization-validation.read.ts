@@ -19,15 +19,14 @@ import {
   validityWindowReasons,
 } from '../domain/authorization-currentness.ts';
 import { verifyMethodCondition } from '../domain/authorization-method-condition.ts';
-import {
-  paymentAggregatePersistenceForTransaction,
-  paymentFundsSnapshotOf,
-} from '../persistence/payment-aggregate-persistence.ts';
+import { paymentAggregatePersistenceForTransaction } from '../persistence/payment-aggregate-persistence.ts';
 import type { PaymentAggregatePersistence } from '../persistence/payment-aggregate-persistence.ts';
 import { paymentApplicabilityPersistenceForTransaction } from '../persistence/payment-applicability-persistence.ts';
 import type { PaymentApplicabilityPersistence } from '../persistence/payment-applicability-persistence.ts';
 import { paymentAuthorizationPersistenceForTransaction } from '../persistence/payment-authorization-persistence.ts';
 import type { PaymentAuthorizationPersistence } from '../persistence/payment-authorization-persistence.ts';
+import { paymentRefundPersistenceForTransaction } from '../persistence/payment-refund-persistence.ts';
+import type { PaymentRefundPersistence } from '../persistence/payment-refund-persistence.ts';
 
 const paymentAuthorizationValidationEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
@@ -41,6 +40,7 @@ interface PaymentAuthorizationValidationServices {
   readonly aggregate: PaymentAggregatePersistence;
   readonly applicability: PaymentApplicabilityPersistence;
   readonly authorizations: PaymentAuthorizationPersistence;
+  readonly refunds: PaymentRefundPersistence;
 }
 
 const unavailable = (cause: unknown) => {
@@ -79,6 +79,7 @@ export const validatePaymentAuthorization = Effect.fn('PaymentAuthorizationValid
     const loaded = yield* services.aggregate.loadAggregate(proof.binding.paymentId, { lock: true });
     const validatedAt = yield* DateTime.now;
     const { payment } = loaded;
+    const { snapshot } = yield* services.refunds.selectFunds(loaded).pipe(Effect.mapError(unavailable));
     const localReasons: readonly PaymentAuthorizationInvalidityReason[] = [
       ...attemptMismatchReasons(proof.binding, input.binding),
       ...validityWindowReasons(proof, validatedAt),
@@ -87,7 +88,7 @@ export const validatePaymentAuthorization = Effect.fn('PaymentAuthorizationValid
             condition: proof.condition,
             currentCoverageRevision: payment.coverageRevision,
             proofCoverageRevision: proof.coverageRevision,
-            snapshot: paymentFundsSnapshotOf(loaded),
+            snapshot,
           })
         : []),
     ];
@@ -178,5 +179,6 @@ export const paymentAuthorizationValidationRead = defineRead(
       aggregate: paymentAggregatePersistenceForTransaction(transaction),
       applicability: paymentApplicabilityPersistenceForTransaction(transaction),
       authorizations: paymentAuthorizationPersistenceForTransaction(transaction),
+      refunds: paymentRefundPersistenceForTransaction(transaction),
     }),
 );

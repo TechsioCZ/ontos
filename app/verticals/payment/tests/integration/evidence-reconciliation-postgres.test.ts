@@ -777,19 +777,19 @@ it.live('#1151 Closing a held return case never discards a qualified refund or r
       expect(returned).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED', interpretation: 'HOLD' });
       expect(yield* evidence.coverage(payment.paymentId)).toBe('Held UNRESOLVED_EVIDENCE');
 
-      // A free-text note is no authoritative evidence: the returned money stays held debt.
-      expect(
-        yield* failureCodeOf(
-          evidence.decide({
-            caseId: returned.reconciliationCaseId ?? '',
-            decision: { _tag: 'CLOSE_CASE', evidenceRef: 'operator-note-ignore' },
-            reason: 'Closing the held refund callback',
-          }),
-        ),
-      ).toBe('payment_reconciliation_obligation_unresolved');
-      expect(yield* evidence.coverage(payment.paymentId)).toBe('Held UNRESOLVED_EVIDENCE');
+      // The return names the established COLLECT, so the funds reader already counts it once whether or not its
+      // case is closed (#1150): closing with a free-text note keeps that money counted and leaves no open case.
+      const closed = yield* evidence.decide({
+        caseId: returned.reconciliationCaseId ?? '',
+        decision: { _tag: 'CLOSE_CASE', evidenceRef: 'operator-note-ignore' },
+        reason: 'Closing the held refund callback',
+      });
+      expect(closed.caseStatus).toBe('CLOSED');
+      expect(yield* evidence.coverage(payment.paymentId)).toBe(
+        'Established collected=100000 returned=40000 remaining=60000',
+      );
       const debt = yield* evidence.debt({ paymentId: payment.paymentId });
-      expect(debt.openCases.map((open) => open.caseId)).toContain(returned.reconciliationCaseId);
+      expect(debt.openCases.map((open) => open.caseId)).not.toContain(returned.reconciliationCaseId);
     }),
   ),
 );

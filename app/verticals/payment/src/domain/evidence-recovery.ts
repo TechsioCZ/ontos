@@ -51,7 +51,7 @@ export type PaymentRecoveryPlanCase = Data.TaggedEnum<{
     readonly executorWork: boolean;
     /** Explicit reconciliation debt must be opened (held), never a fabricated outcome. */
     readonly hold: boolean;
-    /** Transport loss of a PENDING request makes it INDETERMINATE (never NOT_EFFECTED). */
+    /** Transport loss or an overdue gateway callback makes a PENDING request INDETERMINATE (never NOT_EFFECTED). */
     readonly markIndeterminate: boolean;
     readonly mode: PaymentRecoveryMode;
     readonly modeDowngraded: boolean;
@@ -119,7 +119,10 @@ export const planPaymentRecovery = (
   return PaymentRecoveryPlan.Plan({
     executorWork: mode === 'PROVIDER_IDEMPOTENT_REPLAY' || mode === 'AUTHORITATIVE_LOOKUP',
     hold: mode === 'GOVERNED_RECONCILIATION',
-    markIndeterminate: request.trigger === 'EXECUTION_OUTCOME_UNKNOWN' && operation.outcome === 'PENDING',
+    markIndeterminate:
+      operation.outcome === 'PENDING' &&
+      (request.trigger === 'EXECUTION_OUTCOME_UNKNOWN' ||
+        (request.trigger === 'OUTCOME_OVERDUE' && isGatewayBinding(operation.binding))),
     mode,
     modeDowngraded,
     providerReplay,
