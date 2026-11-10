@@ -43,6 +43,7 @@ import { demoLegalEntityId, demoTenantId } from '../demo/fixture-ids.mts';
  */
 const foreignTenantId = '70000000-0000-4000-8000-000000000099';
 const workloadUnbound = 'deny.workload_unbound';
+const workloadForbidden = 'deny.workload_forbidden';
 const OTHER_WORKLOAD = WorkloadKeySchema.make('commerce.other-client');
 const storefrontCarrier: AccessWorkload = {
   reason: 'The shared Storefront client starts an enrollment on a visitor behalf',
@@ -232,7 +233,7 @@ it.effect('refuses a service principal on a declaration carrier, never admitting
       accessDeclaration: { key: 'demo.merchandise.apply-command.write' },
     });
     expect(decision.outcome).toBe('DENIED');
-    expect(codesOf(decision)).toEqual(['deny.workload_forbidden']);
+    expect(codesOf(decision)).toEqual([workloadForbidden]);
   }),
 );
 
@@ -241,6 +242,23 @@ it.effect('refuses a person on a workload carrier, so the workload path never wi
     const decision = yield* decideOn(demoHumanAccounts[0].principalId, storefrontCarrier);
     expect(decision.outcome).toBe('DENIED');
     expect(codesOf(decision)).toEqual(['deny.workload_only']);
+  }),
+);
+
+it.effect('refuses the agent-bot API key on owner carriers, so the sales proof expects 403 for it', () =>
+  Effect.gen(function* refusesAgentBot() {
+    // Work Tasks `apply-command` (the proof's CreateTask) and the owner records reads declare human capabilities.
+    for (const key of ['work.tasks.apply-command.write', 'demo.sales-pipeline.api-records.read']) {
+      const decision = yield* decideOn(agentBotPrincipal.principalId, undefined, { accessDeclaration: { key } });
+      expect(decision.outcome).toBe('DENIED');
+      expect(codesOf(decision)).toEqual([workloadForbidden]);
+    }
+    // The merchandise records read also admits the registered storefront workload, which the bot does not hold.
+    const merchandise = yield* decideOn(agentBotPrincipal.principalId, merchandiseCarrier, {
+      accessDeclaration: { key: 'demo.merchandise.api-records.read' },
+    });
+    expect(merchandise.outcome).toBe('DENIED');
+    expect(codesOf(merchandise)).toEqual([workloadUnbound]);
   }),
 );
 
@@ -286,7 +304,7 @@ it.effect('admits the reviewed CRM intake only on its purpose workload, not broa
     for (const key of ['demo.crm.api-records.read', 'demo.crm.apply-command.write', 'party.registry.party.create']) {
       const denied = yield* decideOn(crmPartyIntakePrincipal.principalId, undefined, { accessDeclaration: { key } });
       expect(denied.outcome).toBe('DENIED');
-      expect(codesOf(denied)).toEqual(['deny.workload_forbidden']);
+      expect(codesOf(denied)).toEqual([workloadForbidden]);
     }
   }),
 );
