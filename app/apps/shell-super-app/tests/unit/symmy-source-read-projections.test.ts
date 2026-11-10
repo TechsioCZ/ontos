@@ -26,7 +26,7 @@ import { GatewayForbiddenProblemSchema } from '@app/shared-contracts';
 import { ConfigProvider, Effect, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
-import { describe, expect, it } from 'effect-rstest';
+import { assert, describe, expect, it } from 'effect-rstest';
 
 import { SymmyCustomerIcoProjectionSchema } from '../../api/symmy/read-projection-contracts.ts';
 import { SymmyInternalReadQuerySchema, SymmyUnavailableProblemSchema } from '../../api/symmy/contract.ts';
@@ -441,6 +441,7 @@ const fixture = (
   recordKey = sourceCorrelation.recordKey,
   customerResponse?: CustomerProfileSourceResponse,
   icoResponse?: Response | FixtureOwnerReplies,
+  selectedScope = scope,
 ) => {
   const acquisitions: Parameters<NonNullable<SymmyIngressAdmission['acquireOwnerAssertion']>>[0][] = [];
   const requests: Request[] = [];
@@ -479,10 +480,10 @@ const fixture = (
         );
       }
       const source = {
-        issuerId: mode === 'foreign_product' ? 'foreign-issuer' : scope.issuerId,
+        issuerId: mode === 'foreign_product' ? 'foreign-issuer' : selectedScope.issuerId,
         mappingRevision: 'map-1',
         recordId: 'product-record',
-        recordNamespace: scope.sourceNamespace,
+        recordNamespace: selectedScope.sourceNamespace,
         routeScope: routeId,
       };
       const decoded = Schema.decodeUnknownSync(CatalogSourceProductsResponseSchema)({
@@ -517,7 +518,7 @@ const fixture = (
                   },
                   source,
                   variantId,
-                  variantSources: [],
+                  variantSources: [{ source, variantId }],
                 },
               ],
         outcome: mode === 'absent_product' ? 'NOT_FOUND' : 'FOUND',
@@ -574,7 +575,17 @@ const fixture = (
         associations:
           mode === 'empty_groups'
             ? []
-            : [{ priceGroupRef: groupRef, sourceCorrelation: { ...sourceCorrelation, recordKey } }],
+            : [
+                {
+                  priceGroupRef: groupRef,
+                  sourceCorrelation: {
+                    ...sourceCorrelation,
+                    issuer: selectedScope.issuerId,
+                    namespace: selectedScope.sourceNamespace,
+                    recordKey,
+                  },
+                },
+              ],
         count: mode === 'empty_groups' ? 0 : 1,
         limit: 1,
         offset: 0,
@@ -609,6 +620,33 @@ const withPrices = ConfigProvider.fromUnknown({
   }),
 });
 
+const projectQualifiedReadback = (selectedScope: SymmySourceReadScope) => {
+  const current = fixture(
+    'current',
+    sourceCorrelation.recordKey,
+    Schema.decodeUnknownSync(CustomerProfileSourceResponseSchema)({
+      _tag: 'PAGE',
+      items: [
+        {
+          ...customer,
+          source: {
+            ...customer.source,
+            issuer: selectedScope.issuerId,
+            namespace: selectedScope.sourceNamespace,
+          },
+        },
+      ],
+      nextCursor: null,
+    }),
+    undefined,
+    selectedScope,
+  );
+  return Effect.all({
+    customers: projectSymmySourceCustomers(selectedScope, query, current.admission, current.newRequestIdentifier),
+    products: projectSymmySourceProducts(selectedScope, query, current.admission, current.newRequestIdentifier),
+  }).pipe(Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch));
+};
+
 describe('Symmy source-qualified public owner read projections', () => {
   it.effect('exports lossless selected-path aliases for actual opaque Price Group source keys', () =>
     Effect.gen(function* opaqueGroupIdentifiers() {
@@ -637,7 +675,7 @@ describe('Symmy source-qualified public owner read projections', () => {
             groupRef.resourceId,
           ),
         ).toBe(recordKey);
-        expect(item.priceGroupRef).toEqual(groupRef);
+        expect(item).not.toHaveProperty('priceGroupRef');
       }
     }),
   );
@@ -656,7 +694,7 @@ describe('Symmy source-qualified public owner read projections', () => {
       expect(
         (yield* projectSymmySourceProducts(selected, query, products.admission, products.newRequestIdentifier).pipe(
           Effect.provideService(FetchHttpClient.Fetch, products.fakeFetch),
-        )).products[0]?.id,
+        )).products[0]?.source_record_id,
       ).toBe('product-record');
       const productsRequest = yield* Effect.fromNullishOr(products.requests[0]).pipe(Effect.orDie);
       expect(yield* Effect.promise(() => productsRequest.clone().json())).toMatchObject({ routeScope: routeId });
@@ -695,11 +733,78 @@ describe('Symmy source-qualified public owner read projections', () => {
         current.admission,
         current.newRequestIdentifier,
       ).pipe(Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch));
-      expect(result.products[0]?.id).toBe('product-record');
+      expect(result.products[0]?.id).toMatch(/^~c14r1\.[\w-]{43}$/u);
+      expect(result.products[0]).toHaveProperty('source_record_id', 'product-record');
       expect(result.products[0]?.product.lifecycle).toBe('DRAFT');
       expect(result.products[0]?.product.variants[0]?.lifecycle).toBe('WORK_IN_PROGRESS');
       expect(result.unsupported_fields).toEqual(['tax', 'assortment', 'prices', 'stock']);
       expect(current.acquisitions).toEqual([{ audience: 'catalog' }]);
+    }),
+  );
+  it.effect('keeps equal Price List literals distinct across issuers and rejects the other issuer selector', () =>
+    Effect.gen(function* qualifiedPriceSelectors() {
+      const project = (selectedScope: SymmySourceReadScope) => {
+        const current = fixture('current', sourceCorrelation.recordKey, undefined, undefined, selectedScope);
+        return projectSymmySourcePriceLists(selectedScope, query, current.admission, current.newRequestIdentifier).pipe(
+          Effect.provideService(ConfigProvider.ConfigProvider, withoutPrices),
+          Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch),
+        );
+      };
+      const otherScope = { ...scope, issuerId: 'fixture-issuer-b' };
+      const first = yield* project(scope);
+      const repeated = yield* project(scope);
+      const otherIssuer = yield* project(otherScope);
+      const [list] = first.price_lists;
+      const [otherList] = otherIssuer.price_lists;
+      assert.isOk(list);
+      assert.isOk(otherList);
+      expect(first).toEqual(repeated);
+      expect(list.source_record_id).toBe(otherList.source_record_id);
+      expect(list.id).not.toBe(otherList.id);
+      const selector = yield* decodeSymmySourceSelector(list.id);
+      const accepted = yield* verifySymmySourceSelector(
+        selector,
+        { ...scope, selectorKind: 'PRICE_GROUP' },
+        sourceCorrelation.recordKey,
+        groupRef.resourceId,
+      );
+      expect(accepted).toBe(sourceCorrelation.recordKey);
+      const rejected = yield* verifySymmySourceSelector(
+        selector,
+        { ...otherScope, selectorKind: 'PRICE_GROUP' },
+        sourceCorrelation.recordKey,
+        groupRef.resourceId,
+      ).pipe(Effect.flip);
+      expect(rejected.reason).toBe('source_scope_mismatch');
+    }),
+  );
+  it.effect('separates matching Product, Variant and Customer source literals by issuer and namespace', () =>
+    Effect.gen(function* qualifiedReadback() {
+      const first = yield* projectQualifiedReadback(scope);
+      const repeated = yield* projectQualifiedReadback({
+        ...scope,
+        mappingVersion: 'other-mapping',
+        routeId: '77777777-7777-4777-8777-777777777778',
+        sourceMappingVersion: scope.mappingVersion,
+        sourceRouteId: scope.routeId,
+      });
+      const otherIssuer = yield* projectQualifiedReadback({ ...scope, issuerId: 'fixture-issuer-b' });
+      const otherNamespace = yield* projectQualifiedReadback({ ...scope, sourceNamespace: 'other-records' });
+      expect(first).toEqual(repeated);
+      for (const result of [first, otherIssuer, otherNamespace]) {
+        expect(result.products.products[0]).toHaveProperty('source_record_id', 'product-record');
+        expect(result.products.products[0]?.variantSources[0]).toHaveProperty('source_record_id', 'product-record');
+        expect(result.customers.customers[0]).toHaveProperty('source_record_id', 'customer-record');
+      }
+      expect(
+        new Set(
+          [first, otherIssuer, otherNamespace].flatMap((result) => [
+            result.products.products[0]?.id,
+            result.products.products[0]?.variantSources[0]?.id,
+            result.customers.customers[0]?.id,
+          ]),
+        ).size,
+      ).toBe(9);
     }),
   );
   for (const [mode, tag] of [
@@ -1259,13 +1364,13 @@ describe('Symmy source-qualified public owner read projections', () => {
         );
         expect(result.price_lists[0]).toMatchObject({
           name: 'Native owner name',
-          priceGroupRef: groupRef,
           prices: { count: 0, prices: [] },
           source_record_id: sourceCorrelation.recordKey,
         });
         expect(result.count).toBe(1);
         const [first] = result.price_lists;
         expect(first).toBeDefined();
+        expect(first).not.toHaveProperty('priceGroupRef');
         const encoded = yield* Effect.fromNullishOr(first?.id).pipe(Effect.orDie);
         expect(
           yield* verifySymmySourceSelector(

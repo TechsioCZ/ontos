@@ -10,6 +10,7 @@ import {
   ASSORTMENT_TABLES,
   ASSORTMENT_TABLE_INVENTORY,
   DECISION_SET_FENCE_SOURCE_TABLES,
+  c14RuleFixturePermits,
   gatewayAssertionRedemptions,
 } from '../src/database/schema.ts';
 
@@ -37,12 +38,13 @@ interface InfrastructureRow extends Readonly<Record<string, boolean | number>> {
 }
 
 const redemptionTable = getTableConfig(gatewayAssertionRedemptions).name;
+const permitsTable = getTableConfig(c14RuleFixturePermits).name;
 const expectedTables = EffectArray.sort(
-  [...ASSORTMENT_TABLE_INVENTORY, redemptionTable].map((name) => `${ASSORTMENT_SCHEMA_NAME}.${name}`),
+  [...ASSORTMENT_TABLE_INVENTORY, redemptionTable, permitsTable].map((name) => `${ASSORTMENT_SCHEMA_NAME}.${name}`),
   Order.String,
 );
 const expectedColumns = EffectArray.sort(
-  [...ASSORTMENT_TABLES, gatewayAssertionRedemptions].flatMap((table) => {
+  [...ASSORTMENT_TABLES, gatewayAssertionRedemptions, c14RuleFixturePermits].flatMap((table) => {
     const config = getTableConfig(table);
     return config.columns.map((column) => `${config.name}.${column.name}`);
   }),
@@ -86,14 +88,22 @@ const verifyFixtureInfrastructure = Effect.gen(function* verifyAssortmentFixture
   >(
     sql`select (
       routine.prosecdef
-      and 'search_path=pg_catalog, assortment, pg_temp' = any(routine.proconfig)
+      and 'search_path=pg_catalog, pg_temp' = any(routine.proconfig)
       and 'row_security=on' = any(routine.proconfig)
       and has_function_privilege('ontos_runtime', routine.oid, 'EXECUTE')
+      and to_regprocedure('assortment.import_c14_rule_fixture(uuid,uuid,uuid,uuid,uuid,uuid,jsonb)') is null
+      and not has_function_privilege('ontos_runtime',
+        'assortment.write_c14_rule_fixture(uuid,uuid,uuid,uuid,uuid,uuid,jsonb)', 'EXECUTE')
+      and not has_table_privilege('ontos_runtime', 'assortment.c14_rule_fixture_permits',
+        'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+      and not exists(select from pg_catalog.pg_class as relation,
+        lateral pg_catalog.aclexplode(coalesce(relation.relacl, pg_catalog.acldefault('r', relation.relowner))) as acl
+        where relation.oid = 'assortment.c14_rule_fixture_permits'::regclass and acl.grantee <> relation.relowner)
       and not exists(select from pg_catalog.aclexplode(coalesce(routine.proacl, pg_catalog.acldefault('f', routine.proowner))) as acl
         where acl.grantee = 0 and acl.privilege_type = 'EXECUTE')
     ) as valid
     from pg_catalog.pg_proc as routine
-    where routine.oid = to_regprocedure('assortment.import_c14_rule_fixture(uuid,uuid,uuid,uuid,uuid,uuid,jsonb)')`,
+    where routine.oid = to_regprocedure('assortment.import_c14_rule_fixture(uuid,uuid,uuid,uuid,uuid,uuid,uuid,jsonb)')`,
     'objects',
   );
   if (!fixtureRoutine?.valid) {
@@ -143,7 +153,7 @@ const verification = Effect.gen(function* verifyAssortmentDatabase() {
 
   const [infrastructure] = yield* database.executor
     .execute<InfrastructureRow>(
-      sql`select count(distinct relation.oid)::integer as table_count, count(distinct relation.oid) filter (where relation.relrowsecurity and relation.relforcerowsecurity)::integer as force_rls_count, (select count(*)::integer from pg_catalog.pg_policy as policy inner join pg_catalog.pg_class as governed on governed.oid = policy.polrelid inner join pg_catalog.pg_namespace as governed_namespace on governed_namespace.oid = governed.relnamespace where governed_namespace.nspname = ${ASSORTMENT_SCHEMA_NAME}) as policy_count, (select count(*)::integer from pg_catalog.pg_trigger as trigger_record inner join pg_catalog.pg_class as triggered on triggered.oid = trigger_record.tgrelid inner join pg_catalog.pg_namespace as trigger_namespace on trigger_namespace.oid = triggered.relnamespace where trigger_namespace.nspname = ${ASSORTMENT_SCHEMA_NAME} and trigger_record.tgname like 'assortment_%_append_only' and not trigger_record.tgisinternal) as append_only_trigger_count, (select count(*)::integer from pg_catalog.pg_class as journal inner join pg_catalog.pg_namespace as journal_namespace on journal_namespace.oid = journal.relnamespace where journal_namespace.nspname = 'drizzle' and journal.relname = '__drizzle_migrations_assortment') as journal_count, has_schema_privilege('ontos_runtime', ${ASSORTMENT_SCHEMA_NAME}, 'CREATE') as runtime_create, bool_or(has_table_privilege('ontos_runtime', format('%I.%I', namespace.nspname, relation.relname), 'SELECT')) as runtime_select, bool_or(has_table_privilege('ontos_runtime', format('%I.%I', namespace.nspname, relation.relname), 'INSERT')) as runtime_insert, bool_or(has_table_privilege('ontos_runtime', format('%I.%I', namespace.nspname, relation.relname), 'UPDATE')) as runtime_update, bool_or(has_table_privilege('ontos_runtime', format('%I.%I', namespace.nspname, relation.relname), 'DELETE')) as runtime_delete, runtime_role.rolsuper as role_super, runtime_role.rolbypassrls as role_bypass_rls from pg_catalog.pg_class as relation inner join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace cross join pg_catalog.pg_roles as runtime_role where namespace.nspname = ${ASSORTMENT_SCHEMA_NAME} and relation.relkind in ('r', 'p') and relation.relname <> ${redemptionTable} and runtime_role.rolname = 'ontos_runtime' group by runtime_role.rolsuper, runtime_role.rolbypassrls`,
+      sql`select count(distinct relation.oid)::integer as table_count, count(distinct relation.oid) filter (where relation.relrowsecurity and relation.relforcerowsecurity)::integer as force_rls_count, (select count(*)::integer from pg_catalog.pg_policy as policy inner join pg_catalog.pg_class as governed on governed.oid = policy.polrelid inner join pg_catalog.pg_namespace as governed_namespace on governed_namespace.oid = governed.relnamespace where governed_namespace.nspname = ${ASSORTMENT_SCHEMA_NAME}) as policy_count, (select count(*)::integer from pg_catalog.pg_trigger as trigger_record inner join pg_catalog.pg_class as triggered on triggered.oid = trigger_record.tgrelid inner join pg_catalog.pg_namespace as trigger_namespace on trigger_namespace.oid = triggered.relnamespace where trigger_namespace.nspname = ${ASSORTMENT_SCHEMA_NAME} and trigger_record.tgname like 'assortment_%_append_only' and not trigger_record.tgisinternal) as append_only_trigger_count, (select count(*)::integer from pg_catalog.pg_class as journal inner join pg_catalog.pg_namespace as journal_namespace on journal_namespace.oid = journal.relnamespace where journal_namespace.nspname = 'drizzle' and journal.relname = '__drizzle_migrations_assortment') as journal_count, has_schema_privilege('ontos_runtime', ${ASSORTMENT_SCHEMA_NAME}, 'CREATE') as runtime_create, bool_or(has_table_privilege('ontos_runtime', format('%I.%I', namespace.nspname, relation.relname), 'SELECT')) as runtime_select, bool_or(has_table_privilege('ontos_runtime', format('%I.%I', namespace.nspname, relation.relname), 'INSERT')) as runtime_insert, bool_or(has_table_privilege('ontos_runtime', format('%I.%I', namespace.nspname, relation.relname), 'UPDATE')) as runtime_update, bool_or(has_table_privilege('ontos_runtime', format('%I.%I', namespace.nspname, relation.relname), 'DELETE')) as runtime_delete, runtime_role.rolsuper as role_super, runtime_role.rolbypassrls as role_bypass_rls from pg_catalog.pg_class as relation inner join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace cross join pg_catalog.pg_roles as runtime_role where namespace.nspname = ${ASSORTMENT_SCHEMA_NAME} and relation.relkind in ('r', 'p') and relation.relname not in (${redemptionTable}, ${permitsTable}) and runtime_role.rolname = 'ontos_runtime' group by runtime_role.rolsuper, runtime_role.rolbypassrls`,
       'objects',
     )
     .pipe(

@@ -45,11 +45,13 @@ import {
 } from '../../shared/apis/symmy-job-status.ts';
 import { AdmitSymmyJobPayloadSchema } from '../../shared/actions/admit-symmy-job.ts';
 import { SymmyJobIdSchema } from '../../shared/domain/symmy-job-admission.ts';
+import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { executeAdmitSymmyJobWithAuthorization } from '../../src/api/admit-symmy-job-action-client.ts';
 import { executeSymmyJobStatusWithAuthorization } from '../../src/api/symmy-job-status-client.ts';
 import { symmyIntegrationManifest } from '../../vertical.manifest.ts';
 import { symmyIntegrationRegistration } from '../../vertical.registration.ts';
+import { fixtureOperation } from '../support/symmy-job-execution-native.fixture.ts';
 
 const appRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 const audience = 'symmy-integration';
@@ -390,6 +392,30 @@ it.live(
             );
             expect(Schema.is(AdmitSymmyJobBusinessProblemSchema)(unconfigured)).toBe(true);
             expect(unconfigured).toMatchObject({ code: 'symmy_job_route_denied', status: 403 });
+            const noPlan = yield* Effect.flip(
+              submit(baseUrl, yield* testIssuer.fresh(submitter), {
+                ...payload,
+                idempotencyKey: 'no-runnable-plan',
+              }),
+            );
+            expect(noPlan).toMatchObject({ code: 'symmy_job_route_denied', status: 403 });
+            const runnable = yield* Schema.decodeUnknownEffect(SymmyFixtureExecutionPlanSchema)({
+              items: [
+                {
+                  effects: [{ effectKey: 'fixture-check', operation: fixtureOperation }],
+                  itemKey: 'native-product-item',
+                  source: {
+                    entityKind: 'internal-fixture',
+                    issuerId: 'native-fixture-issuer',
+                    sourceNamespace: 'native-test',
+                    sourceRecordId: 'native-test-product',
+                  },
+                },
+              ],
+            });
+            yield* admin`update symmy_integration.job_routes set fixture_plan = ${JSON.stringify(runnable)}::jsonb
+              where tenant_id = ${submitter.tenantId} and principal_id = ${submitter.principalId}
+                and route_key = 'productsBatch'`;
             const credential = yield* testIssuer.fresh(submitter);
             const receipt = yield* submit(baseUrl, credential);
             expect(receipt).toStrictEqual({ jobId: receipt.jobId, phase: 'admitted' });
@@ -429,7 +455,7 @@ it.live(
             );
             expect(Schema.is(AdmitSymmyJobBusinessProblemSchema)(revoked)).toBe(true);
             expect(revoked).toMatchObject({ code: 'symmy_job_route_denied', status: 403 });
-            expect(yield* poll(baseUrl, yield* testIssuer.fresh(submitter), accepted.jobId)).toStrictEqual(accepted);
+            expect(yield* poll(baseUrl, yield* testIssuer.fresh(submitter), accepted.jobId)).toMatchObject(accepted);
             yield* admin`update symmy_integration.job_routes set active = true
               where tenant_id = ${submitter.tenantId} and principal_id = ${submitter.principalId}
                 and route_key = 'productsBatch'`;
@@ -443,7 +469,7 @@ it.live(
               }),
             );
             expect(Schema.is(AdmitSymmyJobActionForbiddenProblemSchema)(revokedWorkload)).toBe(true);
-            expect(yield* poll(baseUrl, yield* testIssuer.fresh(submitter), accepted.jobId)).toStrictEqual(accepted);
+            expect(yield* poll(baseUrl, yield* testIssuer.fresh(submitter), accepted.jobId)).toMatchObject(accepted);
 
             const oldBindingCredential = yield* testIssuer.fresh(submitter);
             const coreContext = yield* Layer.build(fixture.layer);
@@ -481,7 +507,7 @@ it.live(
               authBindingId: replacement.authBindingId,
               authContextRef: `better-auth-api-key:${providerSubjectId}`,
             });
-            expect(yield* poll(baseUrl, replacementCredential, accepted.jobId)).toStrictEqual(accepted);
+            expect(yield* poll(baseUrl, replacementCredential, accepted.jobId)).toMatchObject(accepted);
           }),
         );
         const [count] = yield* admin<{

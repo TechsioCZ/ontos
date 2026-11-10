@@ -7,7 +7,7 @@ import {
   makeTestDatabaseFromClient,
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { PriceGroupIdempotencyReuseConflict } from '../../shared/domain/price-group-errors.ts';
+import { PriceGroupIdempotencyReuseConflict, PriceGroupNotFound } from '../../shared/domain/price-group-errors.ts';
 import { priceGroupCatalogRelations } from '../../src/database/schema.ts';
 import { priceGroupCatalogPersistenceFromRoutineInvoker } from '../../src/persistence/price-group-catalog-persistence.ts';
 import { priceGroupSourcePersistenceForScope } from '../../src/persistence/price-group-source-persistence.ts';
@@ -230,41 +230,71 @@ it.live('atomically correlates source groups, isolates issuers, pages and recove
         sourceOccurrenceId: 'internal-c14-definition-revision-occurrence',
       };
       const revisionInvocationId = randomUUID();
-      const revised = yield* inScope((invoker) =>
+      const revisionInput = {
+        ...input,
+        actionInvocationId: revisionInvocationId,
+        description: 'Revised internal fixture description.',
+        effectiveFrom: new Date('2026-11-07T10:00:00.000Z'),
+        expectedCurrent: {
+          catalogRevision: 1,
+          definitionRevisionId: definition.definitionRevisionId,
+          definitionRevisionNumber: definition.revisionNumber,
+          meaningFingerprint: definition.meaningFingerprint,
+          priceGroupRef: groupRef,
+        },
+        semanticDecision: {
+          comparedDefinitionRevisionId: definition.definitionRevisionId,
+          decision: 'SAME_MEANING' as const,
+        },
+        sourceCorrelation: revisionOccurrence,
+        trustedEffectiveAt: new Date('2026-11-07T10:00:00.000Z'),
+      };
+      const unrelatedSource = {
+        ...revisionOccurrence,
+        issuer: 'internal-fixture-issuer-b',
+        recordKey: 'opaque/list/unbound',
+      };
+      const unboundRevisionInvocationId = randomUUID();
+      const unboundRevisionDenied = yield* inScope((invoker) =>
         priceGroupCatalogPersistenceFromRoutineInvoker(invoker, scope).createDefinitionRevision({
-          ...input,
-          actionInvocationId: revisionInvocationId,
-          description: 'Revised internal fixture description.',
-          effectiveFrom: new Date('2026-11-07T10:00:00.000Z'),
-          expectedCurrent: {
-            catalogRevision: 1,
-            definitionRevisionId: definition.definitionRevisionId,
-            definitionRevisionNumber: definition.revisionNumber,
-            meaningFingerprint: definition.meaningFingerprint,
-            priceGroupRef: groupRef,
-          },
-          semanticDecision: { comparedDefinitionRevisionId: definition.definitionRevisionId, decision: 'SAME_MEANING' },
-          sourceCorrelation: revisionOccurrence,
-          trustedEffectiveAt: new Date('2026-11-07T10:00:00.000Z'),
+          ...revisionInput,
+          actionInvocationId: unboundRevisionInvocationId,
+          sourceCorrelation: unrelatedSource,
         }),
+      ).pipe(Effect.match({ onFailure: Schema.is(PriceGroupNotFound), onSuccess: () => false }));
+      expect(unboundRevisionDenied).toBe(true);
+      const mismatchedRevisionDenied = yield* inScope((invoker) =>
+        priceGroupCatalogPersistenceFromRoutineInvoker(invoker, scope).createDefinitionRevision({
+          ...revisionInput,
+          actionInvocationId: randomUUID(),
+          sourceCorrelation: { ...sourceCorrelation, issuer: unrelatedSource.issuer },
+        }),
+      ).pipe(Effect.match({ onFailure: Schema.is(PriceGroupNotFound), onSuccess: () => false }));
+      expect(mismatchedRevisionDenied).toBe(true);
+      const unrelatedAssociations = yield* inScope((invoker, selected) =>
+        Effect.flatMap(priceGroupSourcePersistenceForScope(invoker, selected), (service) =>
+          service.list({ ...request, issuer: unrelatedSource.issuer, recordKey: unrelatedSource.recordKey }),
+        ),
+      );
+      expect(unrelatedAssociations.associations).toEqual([]);
+      const unboundReceipt = yield* inScope((invoker, selected) =>
+        Effect.flatMap(priceGroupSourcePersistenceForScope(invoker, selected), (service) =>
+          service.recover({ actionInvocationId: unboundRevisionInvocationId }, principalId),
+        ),
+      );
+      expect(unboundReceipt).toEqual({
+        actionInvocationId: unboundRevisionInvocationId,
+        outcome: 'PRICE_GROUP_OPERATION_ABSENT',
+      });
+      const revised = yield* inScope((invoker) =>
+        priceGroupCatalogPersistenceFromRoutineInvoker(invoker, scope).createDefinitionRevision(revisionInput),
       );
       expect(revised.priceGroupRef).toEqual(groupRef);
       const replayedRevisionInvocationId = randomUUID();
       const replayedRevision = yield* inScope((invoker) =>
         priceGroupCatalogPersistenceFromRoutineInvoker(invoker, scope).createDefinitionRevision({
-          ...input,
+          ...revisionInput,
           actionInvocationId: replayedRevisionInvocationId,
-          description: 'Revised internal fixture description.',
-          effectiveFrom: new Date('2026-11-07T10:00:00.000Z'),
-          expectedCurrent: {
-            catalogRevision: 1,
-            definitionRevisionId: definition.definitionRevisionId,
-            definitionRevisionNumber: definition.revisionNumber,
-            meaningFingerprint: definition.meaningFingerprint,
-            priceGroupRef: groupRef,
-          },
-          semanticDecision: { comparedDefinitionRevisionId: definition.definitionRevisionId, decision: 'SAME_MEANING' },
-          sourceCorrelation: revisionOccurrence,
           trustedEffectiveAt: new Date('2026-11-07T11:00:00.000Z'),
         }),
       );

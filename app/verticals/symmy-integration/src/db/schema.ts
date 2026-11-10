@@ -192,11 +192,16 @@ export const symmySyncAdmissions = symmyIntegrationSchema.table.withRLS(
     principalId: uuid('principal_id').notNull(),
     retentionReceipt: jsonb('retention_receipt').$type<typeof SyncRetentionReceiptSchema.Encoded>(),
     routeId: uuid('route_id').notNull(),
+    routeKey: text('route_key', { enum: ['customerGroupsBatch', 'inventoryStockBatch'] }).notNull(),
     routeRevision: text('route_revision').notNull(),
     tenantId: uuid('tenant_id').notNull(),
   },
   (table) => [
     unique('symmy_sync_admissions_request_uq').on(table.tenantId, table.routeId, table.idempotencyDigest),
+    check(
+      'symmy_sync_admissions_route_key_ck',
+      sql`${table.routeKey} in ('customerGroupsBatch', 'inventoryStockBatch')`,
+    ),
     foreignKey({
       columns: [table.tenantId, table.routeId],
       foreignColumns: [symmyJobRoutes.tenantId, symmyJobRoutes.routeId],
@@ -256,7 +261,8 @@ export const symmyJobEffects = symmyIntegrationSchema.table.withRLS(
     ),
     check(
       'symmy_job_effects_outcome_ck',
-      sql`(${table.state} in ('settled', 'blocked')) = (${table.outcome} is not null)`,
+      sql`((${table.state} in ('settled', 'blocked')) = (${table.outcome} is not null))
+        or (${table.state} = 'indeterminate' and ${table.outcome}->>'status' is not distinct from 'unavailable')`,
     ),
     check('symmy_job_effects_blocked_ck', sql`${table.state} <> 'blocked' or ${table.outcome}->>'status' = 'denied'`),
     ...tenantRlsPolicies('symmy_job_effects_tenant', table.tenantId),

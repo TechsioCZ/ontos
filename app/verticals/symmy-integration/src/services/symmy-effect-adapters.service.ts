@@ -37,13 +37,13 @@ interface SymmyEffectAdapterInputBase {
     Option.Option<{ readonly actionInvocationId: string; readonly status: string }>,
     SymmyJobWorkerError
   >;
-  readonly recordExecutorPrincipal: (principalId: string) => Effect.Effect<void, SymmyJobWorkerError>;
   readonly recordInvocationId: (invocationId: string) => Effect.Effect<void, SymmyJobWorkerError>;
-  readonly recordOriginalRequestHash: (
-    hash: string,
-    authContextRef: string,
-  ) => Effect.Effect<void, SymmyJobWorkerError>;
   readonly recordOwnerReceipt: (receipt: SymmyOwnerReceipt) => Effect.Effect<void, SymmyJobWorkerError>;
+  readonly recordOwnerRequest: (identity: {
+    readonly authContextRef: string;
+    readonly executorPrincipalId: string;
+    readonly requestHash: string;
+  }) => Effect.Effect<void, SymmyJobWorkerError>;
   readonly recordResolvedEffect: (effect: SymmyPinnedEffect) => Effect.Effect<void, SymmyJobWorkerError>;
   readonly routeKey?: SymmyExecutionJob['routeKey'];
   readonly selector?: NonNullable<SymmyExecutionJob['plan']['selector']>;

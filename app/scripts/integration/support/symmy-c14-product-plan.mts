@@ -65,6 +65,10 @@ export const makeSymmyC14ProductPlan = (input: {
         },
         sourceOccurrenceId: input.productOccurrenceId,
         unsupportedBranches: [
+          { branchKey: 'catalog-category', kind: 'CategoryHint' },
+          { branchKey: 'catalog-attribute', kind: 'AttributeHint' },
+          { branchKey: 'catalog-media', kind: 'MediaHint' },
+          { branchKey: 'catalog-variant-update', kind: 'VariantUpdateHint' },
           { branchKey: 'source-vat-hint', kind: 'TaxHint' },
           { branchKey: 'source-category-hint', kind: 'AssortmentHint' },
         ],

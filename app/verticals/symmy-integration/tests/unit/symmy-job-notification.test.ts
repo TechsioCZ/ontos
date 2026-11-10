@@ -64,7 +64,7 @@ it.effect('uses only the pinned HTTPS recipient and a privacy-safe notification 
     settle: (settlement) =>
       Effect.sync(() => {
         settlements.push(settlement);
-        return true;
+        return { applied: true };
       }),
   };
   const transport = Layer.mergeAll(
@@ -98,13 +98,18 @@ it.effect('uses only the pinned HTTPS recipient and a privacy-safe notification 
 it.effect('retries only notification delivery with one stable key and stops at the configured bound', () => {
   const keys: (string | null)[] = [];
   let attempts = 0;
+  const wakeAtMs = 1_800_000_000_000;
+  let due = true;
   const store: SymmyJobNotificationStoreService = {
     claim: () =>
       Effect.sync(() => {
+        if (!due) {
+          return { attempt: attempts, mode: 'NOT_DUE', version: attempts, wakeAtMs };
+        }
         attempts += 1;
         return { attempt: attempts, mode: 'CLAIMED', version: attempts };
       }),
-    settle: () => Effect.succeed(true),
+    settle: () => Effect.succeed({ applied: true, wakeAtMs }),
   };
   const transport = Layer.mergeAll(
     NodeCrypto.layer,
@@ -120,11 +125,12 @@ it.effect('retries only notification delivery with one stable key and stops at t
   );
   return Effect.gen(function* verifyBoundedNotificationRetry() {
     const service = makeSymmyJobNotificationService([policy]);
-    const first = yield* service
-      .deliver(input)
-      .pipe(Effect.provideService(SymmyJobNotificationStore, store))
-      .pipe(Effect.flip);
-    expect(first).toMatchObject({ code: 'notification_retry' });
+    const deliver = service.deliver(input).pipe(Effect.provideService(SymmyJobNotificationStore, store));
+    expect(yield* deliver).toEqual({ wakeAtMs });
+    due = false;
+    expect(yield* deliver).toEqual({ wakeAtMs });
+    expect(keys).toHaveLength(1);
+    due = true;
     expect(yield* service.deliver(input).pipe(Effect.provideService(SymmyJobNotificationStore, store))).toBe(
       'exhausted',
     );
@@ -139,7 +145,7 @@ it.effect('does not send a delivered receipt again or follow a recipient redirec
   let delivered = false;
   const store: SymmyJobNotificationStoreService = {
     claim: () => Effect.succeed({ attempt: 1, mode: delivered ? 'DELIVERED' : 'CLAIMED', version: 1 }),
-    settle: () => Effect.succeed(true),
+    settle: () => Effect.succeed({ applied: true }),
   };
   const transport = Layer.mergeAll(
     NodeCrypto.layer,
@@ -175,7 +181,7 @@ it.effect('refuses ambiguous or missing recipient policy without acquiring a del
         claims += 1;
         return { attempt: 1, mode: 'CLAIMED', version: 1 };
       }),
-    settle: () => Effect.succeed(true),
+    settle: () => Effect.succeed({ applied: true }),
   };
   return Effect.gen(function* verifyNoRecipientFallback() {
     for (const policies of [[], [policy, policy]]) {
@@ -208,7 +214,7 @@ it.effect('times out a notification attempt without changing any owner effect', 
     settle: (value) =>
       Effect.sync(() => {
         settlements.push(value);
-        return true;
+        return { applied: true };
       }),
   };
   return Effect.gen(function* verifyNotificationTimeout() {
@@ -237,7 +243,7 @@ it.effect('refuses a private payload field before a callback claim or external r
         claims += 1;
         return { attempt: 1, mode: 'CLAIMED', version: 1 };
       }),
-    settle: () => Effect.succeed(true),
+    settle: () => Effect.succeed({ applied: true }),
   };
   return Effect.gen(function* verifyPrivatePayloadRefusal() {
     const unsafe = {

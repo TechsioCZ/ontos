@@ -5,6 +5,21 @@ const promotionImmutableEvidenceReason = 'Promotion immutable publication, attri
 
 export const SHARED_RUNTIME_TABLE_GRANT_EXCEPTIONS = [
   {
+    privileges: [],
+    reason: 'Only hardened trust routines may access source execution fence state',
+    table: 'core.source_execution_fences',
+  },
+  {
+    privileges: [],
+    reason: 'Only admin migrations may declare the Actions requiring an execution gate',
+    table: 'core.source_execution_gate_actions',
+  },
+  {
+    privileges: [],
+    reason: 'Only admin publication and scoped trust routines may access execution gates',
+    table: 'core.source_execution_gates',
+  },
+  {
     privileges: ['select', 'insert', 'delete'],
     reason: 'Assortment atomically redeems one-use assertions before Tenant scope without storing business data',
     table: 'assortment.gateway_assertion_redemptions',

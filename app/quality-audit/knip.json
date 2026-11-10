@@ -104,6 +104,7 @@
         "src/routes/**/route.{meta,sitemap}.{ts,mjs}",
         "*.config.{ts,mts,js,mjs}",
         "src/modern.runtime.ts",
+        "server/modern.server.ts",
         "src/worker-host/entry.ts",
         "api/backend-federation.ts",
         "api/effect-api.ts",

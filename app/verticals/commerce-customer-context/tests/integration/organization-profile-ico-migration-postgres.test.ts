@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ContextAccessLive, ReadRuntime, runAction } from '@app/core-runtime';
+import { ActionInvocationIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
@@ -14,6 +15,7 @@ import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollm
 import { CommerceLegacyIcoInventory } from '../../src/integrations/party-legacy-ico-inventory.ts';
 import { CommerceOrganizationProfileIcoEligibility } from '../../src/integrations/organization-profile-ico-eligibility.ts';
 import {
+  ChangeOrganizationCustomerProfileIcoPayloadSchema,
   OrganizationProfileIcoRejected,
   ORGANIZATION_PROFILE_ICO_FIELDS,
 } from '../../shared/domain/organization-profile-ico.ts';
@@ -24,6 +26,7 @@ import {
 } from '@app/privacy/api/organization-profile-ico-applicability';
 import { LegacyIcoInventoryResponseSchema } from '@app/party-registry/apis/legacy-ico-inventory';
 import { migrateOrganizationCustomerProfileIcoAction } from '../../src/actions/migrate-organization-customer-profile-ico.action.ts';
+import { changeOrganizationCustomerProfileIcoAction } from '../../src/actions/change-organization-customer-profile-ico.action.ts';
 import { organizationCustomerProfileIcoMigrationRead } from '../../src/api/organization-customer-profile-ico-migration.read.ts';
 import { organizationCustomerProfileIcoRead } from '../../src/api/organization-customer-profile-ico.read.ts';
 import type { MigrateOrganizationCustomerProfileIcoPayload } from '../../shared/domain/organization-profile-ico-migration.ts';
@@ -64,7 +67,10 @@ it.live(
           makeLiveOperationFixture({
             access: 'allowed',
             actionExecutor: 'manager-only',
-            actionKeys: [migrateOrganizationCustomerProfileIcoAction.descriptor.actionKey],
+            actionKeys: [
+              migrateOrganizationCustomerProfileIcoAction.descriptor.actionKey,
+              changeOrganizationCustomerProfileIcoAction.descriptor.actionKey,
+            ],
             adminConnectionString: Redacted.make(owned.connections.admin.connectionString),
             allowedAudiences: ['commerce-customer-context'],
             applicationComposition: { load: Effect.succeed(snapshot) },
@@ -110,6 +116,20 @@ it.live(
           resourceType: 'party.registry.party-official-identifier' as const,
           tenantId: fixture.tenantId,
         };
+        const lateParty = { ...partyRef, resourceId: randomUUID() };
+        const lateCounterparty = { ...counterpartyRef, resourceId: randomUUID() };
+        const lateProfile = { ...profileRef, resourceId: randomUUID() };
+        const lateAssertion = { ...assertionRef, resourceId: randomUUID() };
+        const legacy = {
+          isCurrent: true,
+          normalizedValue: '00000019',
+          originalInput: { digits: '19', kind: 'KNOWN' },
+          recordedAt: effectiveAt,
+          revision: 'c'.repeat(64),
+          state: 'ACTIVE',
+          validFrom: effectiveAt,
+          validTo: null,
+        };
         let currentCorrelationRevision = 'a'.repeat(64);
         let fenced = false;
         let mixed = false;
@@ -118,17 +138,18 @@ it.live(
         const inventory = yield* Schema.decodeUnknownEffect(LegacyIcoInventoryResponseSchema)({
           assertions: [
             {
+              ...legacy,
               assertionRef,
-              isCurrent: true,
-              normalizedValue: '00000019',
-              originalInput: { digits: '19', kind: 'KNOWN' },
               partyRef,
               provenance: { ownerReceiptRef: assertionRef },
-              recordedAt: effectiveAt,
-              revision: 'c'.repeat(64),
-              state: 'ACTIVE',
-              validFrom: effectiveAt,
-              validTo: null,
+            },
+            {
+              ...legacy,
+              assertionRef: lateAssertion,
+              normalizedValue: '27074358',
+              originalInput: { digits: '27074358', kind: 'KNOWN' },
+              partyRef: lateParty,
+              provenance: { ownerReceiptRef: lateAssertion },
             },
           ],
           authority: { kind: 'LEGACY_PARTY' },
@@ -140,14 +161,17 @@ it.live(
           ContextAccessLive,
           NodeCrypto.layer,
           Layer.succeed(CommerceLegacyIcoInventory, {
-            correlate: (_scope, ref, options) =>
-              Effect.succeed(
-                options?.organizationOnly === true && ref.resourceId === counterpartyId
+            correlate: (_scope, ref, options) => {
+              const late = ref.resourceId === lateCounterparty.resourceId;
+              const exactCounterparty = late ? lateCounterparty : counterpartyRef;
+              const exactParty = late ? lateParty : partyRef;
+              return Effect.succeed(
+                options?.organizationOnly === true && ref.resourceId === exactCounterparty.resourceId
                   ? Option.some({
                       archived: false,
-                      counterpartyRef,
+                      counterpartyRef: exactCounterparty,
                       organizationProof: {
-                        counterpartyRef,
+                        counterpartyRef: exactCounterparty,
                         counterpartyRevision: currentCorrelationRevision,
                         currentCustomerRoleRef: {
                           moduleId: 'party.registry' as const,
@@ -163,14 +187,15 @@ it.live(
                           tenantId: fixture.tenantId,
                         },
                         outcome: 'CURRENT_ORGANIZATION_CUSTOMER' as const,
-                        partyRef,
+                        partyRef: exactParty,
                         partyRevision: 1,
                       },
-                      partyRef,
+                      partyRef: exactParty,
                       revision: currentCorrelationRevision,
                     })
                   : Option.none(),
-              ),
+              );
+            },
             read: (_scope, options) => {
               observedProjections.push(options?.projection);
               return mixed
@@ -215,7 +240,7 @@ it.live(
                     evidenceRefs: ['internal-native-current-org-proof'],
                     fieldContractVersion: OrganizationProfileIcoFieldContractVersion,
                     outcome: 'NOT_APPLICABLE',
-                    partyRef,
+                    partyRef: input.profileRef.resourceId === lateProfile.resourceId ? lateParty : partyRef,
                     partyRevision: 1,
                     policyRevisions: [{ policyRef: 'internal-native-org-fields', revision: '1' }],
                     profileRef: input.profileRef,
@@ -234,17 +259,17 @@ it.live(
               transport: transport(),
             })
             .pipe(Effect.provideContext(context));
-        const apply = (input: MigrateOrganizationCustomerProfileIcoPayload) =>
+        const apply = (input: MigrateOrganizationCustomerProfileIcoPayload, request = transport()) =>
           runAction({
             payload: input,
             principal,
             registration: migrateOrganizationCustomerProfileIcoAction,
-            transport: transport(),
+            transport: request,
           }).pipe(Effect.provideContext(context));
         yield* admin`insert into commerce_customer_context.customer_profiles(tenant_id,legal_entity_id,customer_profile_id,profile_kind,lifecycle,revision) values(${fixture.tenantId}::uuid,${fixture.legalEntityId}::uuid,${profileId}::uuid,'COUNTERPARTY','ACTIVE',1)`;
         yield* admin`insert into commerce_customer_context.counterparty_purchasing_profiles(tenant_id,legal_entity_id,counterparty_purchasing_profile_id,counterparty_resource_id) values(${fixture.tenantId}::uuid,${fixture.legalEntityId}::uuid,${profileId}::uuid,${counterpartyId})`;
         const report = yield* read();
-        expect(report.records.map((record) => record.classification)).toEqual(['MATCHED']);
+        expect(report.records.map((record) => record.classification)).toEqual(['MATCHED', 'NO_TARGET']);
         expect(JSON.stringify(report)).not.toContain('actorPrincipalId');
         expect(JSON.stringify(report)).not.toContain('reason');
         expect(JSON.stringify(report)).not.toContain('organizationIcoAuthority');
@@ -300,6 +325,112 @@ it.live(
             originalInput: { digits: '19', kind: 'KNOWN' },
             provenance: { ownerReceiptRef: assertionRef },
           },
+        });
+        yield* admin`insert into commerce_customer_context.customer_profiles(tenant_id,legal_entity_id,customer_profile_id,profile_kind,lifecycle,revision) values(${fixture.tenantId}::uuid,${fixture.legalEntityId}::uuid,${lateProfile.resourceId}::uuid,'COUNTERPARTY','ACTIVE',1)`;
+        yield* admin`insert into commerce_customer_context.counterparty_purchasing_profiles(tenant_id,legal_entity_id,counterparty_purchasing_profile_id,counterparty_resource_id) values(${fixture.tenantId}::uuid,${fixture.legalEntityId}::uuid,${lateProfile.resourceId}::uuid,${lateCounterparty.resourceId})`;
+        // Model an existing profile with independent Commerce authority, without changing the
+        // production guard that otherwise fences newly enrolled profiles after cutover.
+        yield* admin`
+          update commerce_customer_context.customer_profile_ico_authority
+          set plan=jsonb_set(plan,'{migrationRequiredProfileIds}',(plan->'migrationRequiredProfileIds')-${lateProfile.resourceId}::text)
+          where tenant_id=${fixture.tenantId}::uuid and phase='COMMERCE'
+        `;
+        const reconcile = Effect.fn('OrganizationIcoTest.reconcile')(function* reconcile() {
+          const current = yield* read();
+          return {
+            ...command,
+            expectedAuthorityRevision: current.authorityRevision,
+            expectedTargetInventoryVersion: current.targetInventoryVersion,
+            operation: 'RECONCILE' as const,
+          };
+        });
+        const change = Effect.fn('OrganizationIcoTest.change')(function* change(input: {
+          readonly effectId: string;
+          readonly expectedRevision: number;
+          readonly operation: 'SET' | 'CORRECT';
+          readonly value: string;
+        }) {
+          const payload = yield* Schema.decodeUnknownEffect(ChangeOrganizationCustomerProfileIcoPayloadSchema)({
+            countryCode: 'CZ',
+            effectId: input.effectId,
+            effectiveAt,
+            expectedRevision: input.expectedRevision,
+            identifier: { identifierType: 'ICO', value: input.value },
+            operation: input.operation,
+            originalInput: input.value,
+            profileRef: lateProfile,
+          });
+          return yield* runAction({
+            payload,
+            principal,
+            registration: changeOrganizationCustomerProfileIcoAction,
+            transport: transport(),
+          }).pipe(Effect.provideContext(context));
+        });
+        const beforeSet = yield* reconcile();
+        const independentSet = randomUUID();
+        const independentCorrection = randomUUID();
+        yield* change({ effectId: independentSet, expectedRevision: 0, operation: 'SET', value: '19' });
+        expect(yield* Effect.flip(apply(beforeSet))).toMatchObject({ code: 'STALE_PLAN' });
+        expect(yield* Effect.flip(apply(yield* reconcile()))).toMatchObject({ code: 'PLAN_CONFLICT' });
+        yield* change({
+          effectId: independentCorrection,
+          expectedRevision: 1,
+          operation: 'CORRECT',
+          value: '27074358',
+        });
+        const acceptedCommand = yield* reconcile();
+        const exactRequest = transport();
+        const accepted = yield* apply(acceptedCommand, exactRequest);
+        expect(accepted.phase).toBe('COMMERCE');
+        const committed = yield* Schema.decodeUnknownEffect(
+          Schema.Struct({ code: Schema.Literal('action_already_committed'), invocationId: ActionInvocationIdSchema }),
+        )(yield* Effect.flip(apply(acceptedCommand, exactRequest)));
+        expect((yield* apply(yield* reconcile())).phase).toBe('COMMERCE');
+        const [ledger] = yield* admin<{ count: number; current_effect: string; current_invocation: string }>`
+          select count(*)::integer count,max(effect_id) filter (where is_current) current_effect,
+            max(action_invocation_id::text) filter (where is_current) current_invocation
+          from commerce_customer_context.customer_profile_ico_assertions
+          where tenant_id=${fixture.tenantId}::uuid and customer_profile_id=${lateProfile.resourceId}::uuid
+        `;
+        expect(ledger).toMatchObject({ count: 2, current_effect: independentCorrection });
+        const lateState = yield* Context.get(context, ReadRuntime)
+          .runRead({
+            input: { profileRef: lateProfile },
+            principal,
+            registration: organizationCustomerProfileIcoRead,
+            transport: transport(),
+          })
+          .pipe(Effect.provideContext(context));
+        expect(lateState).toMatchObject({
+          current: {
+            normalizedValue: '27074358',
+            provenance: {
+              ownerReceiptRef: { _tag: 'CORE_ACTION_INVOCATION', actionInvocationId: ledger?.current_invocation },
+            },
+          },
+          history: [{ normalizedValue: '00000019' }, { normalizedValue: '27074358' }],
+          revision: 2,
+        });
+        const [provenance] = yield* admin<{ count: number; reuse: unknown }>`
+          select count(*)::integer count,jsonb_agg(r.value) reuse
+          from commerce_customer_context.customer_profile_ico_authority a
+          cross join lateral jsonb_each(a.plan->'reusedCurrentAssertions') r
+          where a.tenant_id=${fixture.tenantId}::uuid
+        `;
+        expect(provenance).toMatchObject({
+          count: 1,
+          reuse: [
+            {
+              assertionRef: lateAssertion,
+              currentActionInvocationId: ledger?.current_invocation,
+              currentEffectId: independentCorrection,
+              currentRevision: 2,
+              legacyRevision: legacy.revision,
+              migrationActionInvocationId: committed.invocationId,
+              profileRef: lateProfile,
+            },
+          ],
         });
         privacyDenied = true;
         expect(yield* Effect.flip(apply({ ...command, operation: 'CUTOVER' }))).toMatchObject({

@@ -35,6 +35,7 @@ export interface AssortmentRecordRef {
 export type AssortmentCurrentnessTarget =
   | Readonly<{ readonly kind: 'assortment_configuration'; readonly resource: AssortmentRecordRef }>
   | Readonly<{ readonly kind: 'assortment_decision' }>
+  | Readonly<{ readonly kind: 'assortment_fixture'; readonly selectorKind: 'PRODUCT' }>
   | Readonly<{
       readonly kind: 'assortment_rule';
       readonly mode: 'create';
@@ -138,6 +139,7 @@ export const assortmentCurrentnessFacts = (target: AssortmentCurrentnessTarget):
       assortment_boundary: boundaryFacts,
       assortment_configuration: (value) => ({ [kindKey]: value.kind, ...recordFacts(value.resource) }),
       assortment_decision: (value) => ({ [kindKey]: value.kind }),
+      assortment_fixture: (value) => ({ [kindKey]: value.kind, [selectorKindKey]: value.selectorKind }),
       assortment_rule: ruleFacts,
     }),
   );
@@ -221,6 +223,9 @@ export const assortmentCurrentnessTargetFromFacts = (
   const selectorKind = facts[selectorKindKey] ?? 'ALL';
   if (kind === 'assortment_decision') {
     return { kind };
+  }
+  if (kind === 'assortment_fixture' && selectorKind === 'PRODUCT') {
+    return { kind, selectorKind };
   }
   if (kind === 'assortment_configuration') {
     const resource = recordFromFacts(facts);
@@ -448,6 +453,7 @@ const recordTarget = (target: AssortmentCurrentnessTarget): AssortmentRecordRef 
       assortment_boundary: (value) => (value.mode === 'create' ? null : value.boundary),
       assortment_configuration: (value) => value.resource,
       assortment_decision: () => null,
+      assortment_fixture: () => null,
       assortment_rule: () => null,
     }),
   );
@@ -470,6 +476,15 @@ export const assortmentAuthorizationCurrentForTransaction = (
     }
     if (target.kind === 'assortment_rule') {
       return ruleTargetCurrentness(transaction, scope, operationAt, target);
+    }
+    if (target.kind === 'assortment_fixture') {
+      // The atomic fixture has no recorded revision yet. Its proposed binding requires
+      // the same independent Current owner facts as ordinary binding creation.
+      return ruleTargetCurrentness(transaction, scope, operationAt, {
+        kind: 'assortment_rule',
+        mode: 'create',
+        selectorKind: target.selectorKind,
+      }).pipe(Effect.map((rule) => conjunction([rule, foreignCurrentnessUnavailable()])));
     }
     if (target.kind === 'assortment_binding' && target.mode === 'create') {
       return bindingCreateCurrentness(transaction, scope, target.ruleRevision);

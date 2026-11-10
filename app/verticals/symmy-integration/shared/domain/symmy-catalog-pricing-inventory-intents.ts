@@ -79,6 +79,12 @@ export const SymmyCatalogPricingInventoryReceiptSchema = Schema.Union([
 export type SymmyCatalogPricingInventoryReceipt = typeof SymmyCatalogPricingInventoryReceiptSchema.Type;
 
 /** Internal normalized contracts: these are explicit owner facts, not an asserted Symmy wire format. */
+export const SymmyInventoryImportIntentSchema = Schema.TaggedStruct('InventoryImport', {
+  payload: ImportSourceAssertionPayloadSchema.check(
+    Schema.makeFilter(({ items }) => items.length === 1 || 'Each replayable stock effect has exactly one source row'),
+  ),
+});
+
 export const SymmyCatalogPricingInventoryIntentSchema = Schema.Union([
   Schema.TaggedStruct('CatalogCreateProduct', { payload: CreateProductPayloadSchema }),
   Schema.TaggedStruct('CatalogCreateVariant', {
@@ -92,11 +98,7 @@ export const SymmyCatalogPricingInventoryIntentSchema = Schema.Union([
   Schema.TaggedStruct('PriceGroupRevise', { payload: CreatePriceGroupDefinitionRevisionPayloadSchema }),
   Schema.TaggedStruct('PriceDefine', { payload: DefinePricePayloadSchema }),
   Schema.TaggedStruct('PriceRevise', { payload: RevisePricePayloadSchema }),
-  Schema.TaggedStruct('InventoryImport', {
-    payload: ImportSourceAssertionPayloadSchema.check(
-      Schema.makeFilter(({ items }) => items.length === 1 || 'Each replayable stock effect has exactly one source row'),
-    ),
-  }),
+  SymmyInventoryImportIntentSchema,
   Schema.TaggedStruct('CatalogCreateVariantFromProductEffect', {
     parent: productEffectReference,
     payload: variantFromProductEffectPayload,

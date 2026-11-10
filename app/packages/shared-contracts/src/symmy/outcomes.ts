@@ -23,11 +23,12 @@ const duplicateEffect = Schema.Struct({
 const rejectedEffect = Schema.Struct({
   effectId: Schema.optionalKey(SymmyEffectIdSchema),
   owner: OntosModuleIdSchema,
-  status: Schema.Literals(['stale', 'unresolved', 'ambiguous', 'denied', 'conflict', 'unavailable']),
+  status: Schema.Literals(['stale', 'unresolved', 'ambiguous', 'denied', 'conflict', 'unavailable', 'invalid']),
 });
 
 const unsupportedEffect = Schema.Struct({
   branchId: Schema.optionalKey(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SymmyUnsupportedBranchId'))),
+  branchKind: Schema.optionalKey(Schema.Literals(['CategoryHint', 'AttributeHint', 'MediaHint', 'VariantUpdateHint'])),
   owner: OntosModuleIdSchema,
   reason: Schema.Literals(['missing_context', 'unsupported_meaning', 'owner_not_activated']),
   status: Schema.Literal('unsupported'),
@@ -39,6 +40,12 @@ const indeterminateEffect = Schema.Struct({
   status: Schema.Literal('indeterminate'),
 });
 
+const progressingEffect = Schema.Struct({
+  effectId: SymmyEffectIdSchema,
+  owner: OntosModuleIdSchema,
+  status: Schema.Literals(['waiting', 'executing']),
+});
+
 /** Safe outcomes contain opaque integration IDs and fixed codes, never owner-private values or source records. */
 export const SymmyEffectOutcomeSchema = Schema.Union([
   acceptedEffect,
@@ -46,6 +53,7 @@ export const SymmyEffectOutcomeSchema = Schema.Union([
   rejectedEffect,
   unsupportedEffect,
   indeterminateEffect,
+  progressingEffect,
 ]);
 
 export const SymmyItemOutcomeSchema = Schema.Struct({

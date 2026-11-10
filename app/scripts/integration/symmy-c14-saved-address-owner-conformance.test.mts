@@ -30,12 +30,14 @@ import {
 } from './support/symmy-c14-saved-address-recovery.mts';
 import {
   customerFixtureServices as services,
+  customerIntakeCounts,
   makeSymmyC14CustomerFixture,
+  seedCustomerIntakeProtection,
   observeCustomerFixtureUntil as observeUntil,
 } from './support/symmy-c14-customer-assignment-fixture.mts';
 import { customerFixtureUuid as uuid } from './support/symmy-c14-customer-native-authority.mts';
 import { internalCustomerSource } from './support/symmy-c14-customer-plan.mts';
-import { customerWorkerKey } from './support/symmy-c14-customer-rules.mts';
+import { customerIntakeContext, customerWorkerKey } from './support/symmy-c14-customer-rules.mts';
 import {
   SymmyC14ProductFixtureUnavailable,
   startProductOwner,
@@ -70,6 +72,7 @@ it.live(
           environment,
           flatSource,
           governancePrincipalId,
+          integration,
           isolated,
           legalEntityId,
           moduleKey,
@@ -84,6 +87,7 @@ it.live(
           sourceIdentity,
           sourceRouteId,
           submitFor,
+          submitResponse,
           symmy,
           systemId,
           tenantId,
@@ -110,17 +114,19 @@ it.live(
                 }),
               ),
             ),
+          verifyPausedIntake: true,
           workerRules: [...savedAddressWorkerRules, ...savedAddressRecoveryRules],
         });
         const runPrefix = `job:${customerWorkerKey}:run:`;
         // The profile is the actual owner-issued result from the preceding native job.
         // This separate import therefore needs neither a guessed profile ID nor a guessed address ID.
         const profile = { kind: 'RETAIL' as const, profileRef: profileReceipt.profileRef };
-        const occurrences = [yield* uuid, yield* uuid, yield* uuid, yield* uuid];
-        const sourceFor = (index: number, nativeAddressId: string | null) => {
+        const occurrences = [yield* uuid, yield* uuid, yield* uuid, yield* uuid, yield* uuid, yield* uuid, yield* uuid];
+        const aliasRecordId = 'INTERNAL_C14_ADDRESS_ALIAS';
+        const sourceFor = (index: number, nativeAddressId: string | null, sourceRecordId = recordId) => {
           const source = {
             effectId: 'INTERNAL_C14_ASSIGNED_AT_ADMISSION',
-            identity: { ...flatSource, occurrenceId: occurrences[index] },
+            identity: { ...flatSource, occurrenceId: occurrences[index], recordId: sourceRecordId },
             mappingRevision: internalCustomerSource.mappingVersion,
             order: index + 1,
             purposes: ['BILLING'] as const,
@@ -135,26 +141,37 @@ it.live(
           ${sourceIdentity.issuer},${sourceIdentity.namespace},${sourceIdentity.recordType},${internalCustomerSource.mappingVersion},true)`;
         const dataPrivacy = yield* seedCommittedProfileSourceProcessingNativeFixture({
           connections: isolated.connections,
-          contexts: occurrences.flatMap((addressOccurrenceId, index) =>
-            [
+          contexts: [
+            ...occurrences.slice(0, 4).flatMap((addressOccurrenceId, index) =>
               [
-                'saved-address-source.add',
-                'saved-address-source.update',
-                'saved-address-source.remove',
-                'saved-address-source.update',
-              ][index],
-              'saved-address-source.receipt',
-            ].map((operation) => ({
-              authMethod: 'system',
-              principalId: systemId,
-              request: {
-                consumerModuleId: commerceModuleId,
-                operation,
-                source: { ...flatSource, occurrenceId: addressOccurrenceId },
-                target: { kind: 'RETAIL_CUSTOMER_PROFILE' as const, resourceId: profile.profileRef.resourceId },
-              },
-            })),
-          ),
+                [
+                  'saved-address-source.add',
+                  'saved-address-source.update',
+                  'saved-address-source.remove',
+                  'saved-address-source.update',
+                ][index],
+                'saved-address-source.receipt',
+              ].map((operation) => ({
+                authMethod: 'system',
+                principalId: systemId,
+                request: {
+                  consumerModuleId: 'commerce.customer-context' as const,
+                  operation,
+                  source: { ...flatSource, occurrenceId: addressOccurrenceId },
+                  target: { kind: 'RETAIL_CUSTOMER_PROFILE' as const, resourceId: profile.profileRef.resourceId },
+                },
+              })),
+            ),
+            ...occurrences
+              .slice(0, 6)
+              .map((occurrenceId, index) =>
+                customerIntakeContext(
+                  integration.principalId,
+                  { ...flatSource, occurrenceId, recordId: index === 5 ? aliasRecordId : recordId },
+                  { kind: 'RETAIL_CUSTOMER_PROFILE', resourceId: profile.profileRef.resourceId },
+                ),
+              ),
+          ],
           contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_SAVED_ADDRESS_LIFECYCLE',
           controllerRef: 'internal:customer-conformance',
           dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
@@ -198,6 +215,7 @@ it.live(
             | typeof RemoveSavedAddressPayloadSchema.Encoded,
           index: number,
           target?: typeof SavedAddressRefSchema.Encoded,
+          sourceRecordId = recordId,
         ) => {
           const effect = {
             effectKey: addressOperation[tag].effectKey,
@@ -220,7 +238,7 @@ it.live(
                   entityKind: sourceIdentity.recordType,
                   issuerId: sourceIdentity.issuer,
                   sourceNamespace: sourceIdentity.namespace,
-                  sourceRecordId: recordId,
+                  sourceRecordId,
                 },
                 sourceOccurrenceId: occurrences[index],
               },
@@ -485,6 +503,59 @@ it.live(
         const [forbiddenInvocation] =
           yield* admin`select count(*)::integer as count from core.action_invocations where tenant_id=${tenantId} and idempotency_key=${forbiddenWriteKey}`;
         expect(forbiddenInvocation).toEqual({ count: 0 });
+        yield* addressWorker.child.kill();
+        yield* addressWorker.child.exitCode;
+        const pendingPlan = yield* addressPlan(
+          'UpdateSavedAddress',
+          {
+            expectedRevision: 3,
+            label: 'INTERNAL_C14 admitted before withdrawal',
+            profile,
+            reason: 'Privacy authority was current before intake but will be withdrawn before dispatch',
+            savedAddressRef,
+            source: sourceFor(3, savedAddressRef.resourceId),
+          },
+          3,
+          savedAddressRef,
+        );
+        const deniedJob = yield* submitAddress('INTERNAL_C14_ADDRESS_BEFORE_PURPOSE_RETIREMENT', pendingPlan);
+        expect(yield* effectRows(deniedJob.jobId)).toMatchObject([{ state: 'planned' }]);
+
+        const [originalContext] = privacy.contexts;
+        if (originalContext === undefined) {
+          return yield* unavailable('The original governed source subject is required');
+        }
+        yield* seedCustomerIntakeProtection(admin, originalContext);
+        const admissionCounts = customerIntakeCounts(admin, tenantId);
+        const beforeDenied = yield* admissionCounts;
+        const deniedMarker = 'INTERNAL_C14_PROTECTED_INPUT_MUST_NOT_BE_STORED';
+        for (const { index, sourceRecordId, status } of [
+          { index: 4, sourceRecordId: recordId, status: 403 },
+          { index: 5, sourceRecordId: aliasRecordId, status: 403 },
+          { index: 6, sourceRecordId: recordId, status: 503 },
+        ]) {
+          const deniedPlan = yield* addressPlan(
+            'UpdateSavedAddress',
+            {
+              expectedRevision: 3,
+              label: deniedMarker,
+              profile,
+              reason: 'Pre-storage Privacy control',
+              savedAddressRef,
+              source: sourceFor(index, savedAddressRef.resourceId, sourceRecordId),
+            },
+            index,
+            savedAddressRef,
+            sourceRecordId,
+          );
+          const response = yield* submitResponse(`INTERNAL_C14_PRE_STORAGE_PRIVACY_${index}`, deniedPlan);
+          expect(response.status).toBe(status);
+          expect(yield* response.text).not.toContain(deniedMarker);
+        }
+        expect(yield* admissionCounts).toEqual(beforeDenied);
+        for (const diagnostic of ownerDiagnostics.values()) {
+          expect(yield* diagnostic).not.toContain(deniedMarker);
+        }
         const retired = yield* retireSourceProcessingNativePurpose({
           connections: isolated.connections,
           governancePrincipalId,
@@ -515,20 +586,11 @@ it.live(
         ).pipe(Effect.flip);
         expect(deniedReceipt).toMatchObject({ status: 503 });
         expect(yield* receipts).toEqual(lifecycleRows);
-        const deniedPlan = yield* addressPlan(
-          'UpdateSavedAddress',
-          {
-            expectedRevision: 3,
-            label: 'INTERNAL_C14 prohibited resurrection',
-            profile,
-            reason: 'Current retired processing Purpose must deny this new source revision',
-            savedAddressRef,
-            source: sourceFor(3, savedAddressRef.resourceId),
-          },
-          3,
-          savedAddressRef,
-        );
-        const deniedJob = yield* submitAddress('INTERNAL_C14_ADDRESS_RETIRED_PURPOSE_UPDATE', deniedPlan);
+        const resumedWorker = yield* startProductWorker(workerArtifact, {
+          ...environment,
+          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_SAVED_ADDRESS_WITHDRAWN_PRIVACY',
+          ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
+        });
         const deniedRows = yield* observeUntil(
           admin`select a.status from core.action_invocations a join symmy_integration.job_effects e on e.effect_id::text=a.idempotency_key
           where e.job_id=${deniedJob.jobId} and a.tenant_id=${tenantId} and a.action_key='commerce.customer-context.update-saved-address'`,
@@ -551,8 +613,8 @@ it.live(
           (select count(*)::integer from party.parties where tenant_id=${tenantId}) as parties,
           (select count(*)::integer from commerce_customer_context.customer_profiles where tenant_id=${tenantId}) as profiles`;
         expect(siblings).toEqual({ parties: 1, profiles: 1 });
-        yield* addressWorker.child.kill();
-        yield* addressWorker.child.exitCode;
+        yield* resumedWorker.child.kill();
+        yield* resumedWorker.child.exitCode;
         return yield* Effect.void;
       }),
     ).pipe(Effect.provide(services)),

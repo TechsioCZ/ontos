@@ -7,12 +7,14 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
+import { readVerifiedGatewayActor } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { Config, DateTime, Effect, Option, Schema } from 'effect';
 import {
   SourceProcessingEligibilityRequestSchema,
   SourceProcessingEligibilityResponseSchema,
   SourceProcessingContextSchema,
+  SymmyCustomerSourceIntakeConsumerModule,
 } from '../../shared/apis/source-processing-eligibility.ts';
 import type {
   SourceProcessingEligibilityRequest,
@@ -648,6 +650,15 @@ export const sourceProcessingEligibilityRead = defineRead(
   ) {
     yield* traceSourceStage('evaluation-entered');
     const evaluatedAt = DateTime.formatIso(yield* DateTime.now);
+    if (
+      input.consumerModuleId === SymmyCustomerSourceIntakeConsumerModule &&
+      (context.scope.authMethod !== 'api_key' || readVerifiedGatewayActor(context.scope)?.appId !== 'symmy-integration')
+    ) {
+      return {
+        evidence: { resultCount: 1 },
+        result: { evaluatedAt, outcome: 'DENIED' as const, reason: 'AUTHORITY_NOT_CURRENT' as const },
+      };
+    }
     const result = yield* evaluateSourceProcessingEligibility(input, context.scope, context.services, evaluatedAt).pipe(
       Effect.tapError(() => traceSourceStage('eligibility-unavailable')),
     );

@@ -323,70 +323,10 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
       );
     const firstRecordId = 'CZ wholesale / žluťoučký 🧾';
     const secondRecordId = `CZ wholesale ${'B'.repeat(287)}`;
-    const at = DateTime.formatIso(DateTime.add(yield* DateTime.now, { seconds: 30 }));
-    const plan = yield* decodeInternalC14PriceGroupPlan({
-      at,
-      firstOccurrenceId: randomUUID(),
-      firstRecordId,
-      secondOccurrenceId: randomUUID(),
-      secondRecordId,
-      sourceRouteId,
-    });
-    const encoded = yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(plan);
-    const configuredPlan = yield* Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)({
-      ...encoded,
-      items: [
-        ...encoded.items.map((item) => ({
-          ...item,
-          effects: [
-            ...item.effects,
-            {
-              effectKey: 'group-revise-authority',
-              operation: {
-                entrypointKey: groupRevisionAction,
-                moduleId: groupModuleId,
-                schemaVersion: '1',
-              },
-            },
-          ],
-        })),
-        {
-          effects: [
-            {
-              effectKey: 'price-define-authority',
-              operation: {
-                entrypointKey: definePriceOperation,
-                moduleId: pricingModule,
-                schemaVersion: '2',
-              },
-            },
-            {
-              effectKey: 'price-revise-authority',
-              operation: {
-                entrypointKey: revisePriceOperation,
-                moduleId: pricingModule,
-                schemaVersion: '2',
-              },
-            },
-          ],
-          itemKey: 'price-authority',
-          source: {
-            entityKind: 'PRICE',
-            issuerId: internalPricingRouteSource.issuerId,
-            sourceNamespace: internalPricingRouteSource.namespace,
-            sourceRecordId: 'INTERNAL_C14_PRICE_ALLOWLIST',
-          },
-        },
-      ],
-      pricingSourceSystem: internalPricingNativeSourceSystem,
-      sourceRouteId,
-    });
     const lifecyclePolicy = yield* Schema.decodeUnknownEffect(SymmyJobLifecyclePolicyRefSchema)({
       policyId: 'INTERNAL_C14_PRICING_RETENTION',
       revision: '1',
     });
-    yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,legal_entity_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
-      values(${routeId},${tenantId},${legalEntityId},${integration.principalId},true,array['INTERNAL_C14'],${yield* encodeRoute(configuredPlan)}::jsonb,${internalPricingRouteSource.mappingVersion},'priceListsBatchUpsert',${internalPricingRouteSource.routeRevision},${yield* encodePolicy(lifecyclePolicy)}::jsonb)`;
     const readPlan = {
       items: [
         {
@@ -500,6 +440,66 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
       ...environment,
       ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PRICING_ROUTES',
     });
+    const at = DateTime.formatIso(DateTime.add(yield* DateTime.now, { seconds: 30 }));
+    const plan = yield* decodeInternalC14PriceGroupPlan({
+      at,
+      firstOccurrenceId: randomUUID(),
+      firstRecordId,
+      secondOccurrenceId: randomUUID(),
+      secondRecordId,
+      sourceRouteId,
+    });
+    const encoded = yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(plan);
+    const configuredPlan = yield* Schema.decodeUnknownEffect(SymmyRouteExecutionConfigurationSchema)({
+      ...encoded,
+      items: [
+        ...encoded.items.map((item) => ({
+          ...item,
+          effects: [
+            ...item.effects,
+            {
+              effectKey: 'group-revise-authority',
+              operation: {
+                entrypointKey: groupRevisionAction,
+                moduleId: groupModuleId,
+                schemaVersion: '1',
+              },
+            },
+          ],
+        })),
+        {
+          effects: [
+            {
+              effectKey: 'price-define-authority',
+              operation: {
+                entrypointKey: definePriceOperation,
+                moduleId: pricingModule,
+                schemaVersion: '2',
+              },
+            },
+            {
+              effectKey: 'price-revise-authority',
+              operation: {
+                entrypointKey: revisePriceOperation,
+                moduleId: pricingModule,
+                schemaVersion: '2',
+              },
+            },
+          ],
+          itemKey: 'price-authority',
+          source: {
+            entityKind: 'PRICE',
+            issuerId: internalPricingRouteSource.issuerId,
+            sourceNamespace: internalPricingRouteSource.namespace,
+            sourceRecordId: 'INTERNAL_C14_PRICE_ALLOWLIST',
+          },
+        },
+      ],
+      pricingSourceSystem: internalPricingNativeSourceSystem,
+      sourceRouteId,
+    });
+    yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,legal_entity_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
+      values(${routeId},${tenantId},${legalEntityId},${integration.principalId},true,array['INTERNAL_C14'],${yield* encodeRoute(configuredPlan)}::jsonb,${internalPricingRouteSource.mappingVersion},'priceListsBatchUpsert',${internalPricingRouteSource.routeRevision},${yield* encodePolicy(lifecyclePolicy)}::jsonb)`;
     return {
       admin,
       at,

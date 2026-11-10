@@ -33,7 +33,7 @@ export interface SymmyJobNotificationService {
   readonly deliver: (
     input: SymmyJobNotificationInput,
   ) => Effect.Effect<
-    'delivered' | 'exhausted',
+    'delivered' | 'exhausted' | { readonly wakeAtMs: number },
     SymmyJobNotificationError | SymmyJobLifecycleStoreError,
     Crypto.Crypto | HttpClient.HttpClient | FetchHttpClient.RequestInit | SymmyJobNotificationStore
   >;
@@ -120,7 +120,7 @@ export const makeSymmyJobNotificationService = (
       return yield* failure('notification_conflict');
     }
     if (claim.mode !== 'CLAIMED') {
-      return yield* failure('notification_retry');
+      return claim.wakeAtMs === undefined ? yield* failure('notification_retry') : { wakeAtMs: claim.wakeAtMs };
     }
     const idempotencyKey = yield* digest(
       `${input.tenantId}:${input.notification.job.id}:${policy.policyId}:${policy.revision}`,
@@ -153,10 +153,10 @@ export const makeSymmyJobNotificationService = (
       retryable: result.retryable,
       version: claim.version,
     };
-    const applied = yield* store.settle(
+    const settled = yield* store.settle(
       input.context === undefined ? settlement : { ...settlement, context: input.context },
     );
-    if (!applied) {
+    if (!settled.applied) {
       return yield* failure('notification_retry');
     }
     if (result.delivered) {
@@ -165,7 +165,7 @@ export const makeSymmyJobNotificationService = (
     if (!result.retryable || claim.attempt >= policy.maxAttempts) {
       return 'exhausted';
     }
-    return yield* failure('notification_retry');
+    return settled.wakeAtMs === undefined ? yield* failure('notification_retry') : { wakeAtMs: settled.wakeAtMs };
   }),
 });
 

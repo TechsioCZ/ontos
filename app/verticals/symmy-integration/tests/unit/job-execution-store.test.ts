@@ -38,7 +38,7 @@ const pinnedEffect = (suffix: string) => ({
 const first = pinnedEffect('6');
 const second = pinnedEffect('7');
 const outcome = { effectId: first.ref.effectId, owner: 'integration.symmy', status: 'accepted_change' };
-const execution = (secondState: 'planned' | 'indeterminate' | 'blocked' | 'settled') =>
+const execution = (secondState: 'planned' | 'attempting' | 'indeterminate' | 'blocked' | 'settled') =>
   Schema.decodeUnknownSync(SymmyExecutionJobSchema)({
     effects: [
       { effect: first, outcome, state: 'settled', version: 2 },
@@ -82,7 +82,11 @@ describe('durable job execution projection', () => {
 
   it.effect('reports a completed partial job only after every effect is settled', () =>
     Effect.gen(function* verifyCompletion() {
-      expect((yield* projectSymmyExecutionJob(execution('planned'))).phase).toBe('running');
+      const waiting = yield* projectSymmyExecutionJob(execution('planned'));
+      const executing = yield* projectSymmyExecutionJob(execution('attempting'));
+      expect(waiting.phase).toBe('running');
+      expect(waiting.items[0]?.effects[1]?.status).toBe('waiting');
+      expect(executing.items[0]?.effects[1]?.status).toBe('executing');
       expect((yield* projectSymmyExecutionJob(execution('blocked'))).phase).toBe('blocked');
       expect((yield* projectSymmyExecutionJob(execution('settled'))).phase).toBe('completed_partial');
     }),

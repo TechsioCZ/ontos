@@ -1,6 +1,5 @@
 import { defineScopedRoutine, requireModuleOperation } from '@app/core-runtime';
 import type { ReadServiceFactory } from '@app/core-runtime';
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { CounterpartyMigrationCorrelationResponseSchema } from '@app/party-registry/apis/counterparty-migration-correlation';
 import type { LegacyIcoInventoryAssertion } from '@app/party-registry/apis/legacy-ico-inventory';
 import { OrganizationProfileIcoMigrationLegacySchema } from '../../shared/domain/organization-profile-ico-migration.ts';
@@ -15,6 +14,7 @@ import {
   MigrateCustomerProfileIcoResultSchema,
   CustomerProfileIcoMigrationRejected,
   classifyCustomerProfileIcoMigration,
+  customerProfileIcoMigrationInventoryVersion,
 } from '../../shared/domain/customer-profile-ico-migration.ts';
 import type {
   CustomerProfileIcoMigrationInputSchema,
@@ -253,16 +253,27 @@ export const customerProfileIcoMigrationServices: ReadServiceFactory<
       }),
       { concurrency: 1 },
     );
-    const targetInventoryVersion = computeCanonicalValueHash([targets.result.version, authorizedTargets]);
+    const classified = classifyCustomerProfileIcoMigration(
+      input,
+      inventory,
+      authorizedTargets,
+      targets.result.version,
+      {
+        authorityRevision: targets.result.authorityRevision ?? null,
+        legalEntityId: scope.legalEntityId ?? '',
+        observedAt: now,
+      },
+    );
     return {
       inventory,
       plan: {
-        ...classifyCustomerProfileIcoMigration(input, inventory, authorizedTargets, targetInventoryVersion, {
-          authorityRevision: targets.result.authorityRevision ?? null,
-          legalEntityId: scope.legalEntityId ?? '',
-          observedAt: now,
-        }),
+        ...classified,
         nativeTargetInventoryVersion: targets.result.version,
+        targetInventoryVersion: customerProfileIcoMigrationInventoryVersion(
+          targets.result.version,
+          authorizedTargets,
+          classified.records,
+        ),
       },
       targetInventoryCount: targets.result.targets.length,
     };

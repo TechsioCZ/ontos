@@ -144,15 +144,15 @@ const makeSyncAdapterInput = Effect.fn('SymmySyncExecution.makeAdapterInput')(fu
       }
       return facts.read({ ...query, authContextRef: effect.authContextRef });
     },
-    recordExecutorPrincipal: (principalId) =>
-      principalId === effect.executorPrincipalId ? Effect.void : Effect.fail(symmyJobWorkerInvalid()),
     // The committed admission pins the native key, actor and hash; Core retains its permanent receipt.
     recordInvocationId: () => Effect.void,
-    recordOriginalRequestHash: (hash, authContextRef) =>
-      hash === effect.requestHash && authContextRef === effect.authContextRef
+    recordOwnerReceipt: () => Effect.void,
+    recordOwnerRequest: ({ authContextRef, executorPrincipalId, requestHash }) =>
+      executorPrincipalId === effect.executorPrincipalId &&
+      requestHash === effect.requestHash &&
+      authContextRef === effect.authContextRef
         ? Effect.void
         : Effect.fail(symmyJobWorkerInvalid()),
-    recordOwnerReceipt: () => Effect.void,
     recordResolvedEffect: () => Effect.fail(symmyJobWorkerInvalid()),
   };
   if (effect.executorPrincipalId !== undefined) {

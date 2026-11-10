@@ -2,6 +2,7 @@ export { OutboxClaimLostError } from './outbox-claim-lost-error.ts';
 export { OutboxHandlerExecutionError } from './outbox-handler-execution-error.ts';
 export { OutboxPayloadDecodeError } from './outbox-payload-decode-error.ts';
 export { OutboxPollerConfigError } from './outbox-poller-config-error.ts';
+export { OutboxWorkerDeferred } from './outbox-worker-deferred.ts';
 export { OutboxWorkerDescriptorError } from './outbox-worker-descriptor-error.ts';
 
 export const sanitizeOutboxErrorMessage = (message: string): string =>

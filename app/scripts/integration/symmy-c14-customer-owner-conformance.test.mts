@@ -42,6 +42,7 @@ import {
 import { makeSymmyC14CustomerRevisionPlan } from './support/symmy-c14-customer-revision-plan.mts';
 import {
   customerFixtureWorkloads,
+  customerIntakeContext,
   customerOwnerRelaySources,
   customerRecoveryRules,
   customerWorkerKey,
@@ -89,10 +90,11 @@ const customerReadbackSchema = Schema.Struct({
   contractVersion: Schema.Literal('INTERNAL_C14'),
   customers: Schema.Array(
     Schema.Struct({
-      id: Schema.String,
+      id: Schema.String.check(Schema.isPattern(/^~c14r1\.[a-zA-Z0-9_-]{43}$/u)),
       party: Schema.optionalKey(SourceProfileExportResponseSchema.members[1]),
       partyRef: PartyRefSchema,
       profile: CustomerProfileSourceItemSchema.fields.profile,
+      source_record_id: Schema.String,
     }),
   ),
   projection: Schema.Literal('customers'),
@@ -224,6 +226,7 @@ it.live(
         const privacy = yield* seedSourceProcessingNativeFixture({
           connections: isolated.connections,
           contexts: [
+            customerIntakeContext(integration.principalId, flatSource, null),
             ...(['CREATE', 'EVIDENCE_READ'] as const).map(
               (operation) =>
                 ({
@@ -630,6 +633,13 @@ it.live(
         const dataPrivacy = yield* seedCommittedProfileSourceProcessingNativeFixture({
           connections: isolated.connections,
           contexts: [
+            ...[revisedSource, readbackSource].flatMap((source) => {
+              const target = { kind: 'PARTY' as const, resourceId: partyReceipt.partyRef.resourceId };
+              return [
+                customerIntakeContext(integration.principalId, source, target),
+                customerIntakeContext(integration.principalId, source, target, partySourceReference),
+              ];
+            }),
             {
               authMethod: 'api_key',
               principalId: integration.principalId,
@@ -902,7 +912,8 @@ it.live(
         expect(readback.customers).toHaveLength(1);
         const exportedCustomer = readback.customers.at(0);
         assert.isOk(exportedCustomer);
-        expect(exportedCustomer.id).toBe(recordId);
+        expect(exportedCustomer.source_record_id).toBe(recordId);
+        expect(exportedCustomer.id).not.toBe(recordId);
         expect(exportedCustomer.partyRef).toEqual(partyReceipt.partyRef);
         expect(exportedCustomer.profile.profileRef.resourceId).toBe(profileReceipt.profileRef.resourceId);
         assert.isOk(exportedCustomer.party);
@@ -972,7 +983,7 @@ it.live(
           observedAt: yield* DateTime.now,
           occurrenceId: readbackOccurrenceId,
           partySourceReference: currentReceipt.currentAdmission.sourceReference,
-          recordId: exportedCustomer.id,
+          recordId: exportedCustomer.source_record_id,
           revision: 3,
           sourceRouteId,
           tenantId,
@@ -1017,7 +1028,7 @@ it.live(
           b.source_intent->'partySourceReference' as party_source_reference,p.first_name
           from commerce_customer_context.customer_profile_source_bindings b join party.parties p on p.tenant_id=b.tenant_id and p.party_id::text=b.party_resource_id
           where b.tenant_id=${tenantId} and b.legal_entity_id=${legalEntityId} and b.issuer=${sourceIdentity.issuer}
-          and b.namespace=${sourceIdentity.namespace} and b.record_type=${sourceIdentity.recordType} and b.record_id=${exportedCustomer.id}`;
+          and b.namespace=${sourceIdentity.namespace} and b.record_type=${sourceIdentity.recordType} and b.record_id=${exportedCustomer.source_record_id}`;
         expect(readbackBindings).toEqual([
           {
             customer_profile_id: profileReceipt.profileRef.resourceId,

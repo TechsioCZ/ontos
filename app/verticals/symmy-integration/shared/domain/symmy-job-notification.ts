@@ -88,6 +88,7 @@ export const SymmyJobNotificationClaimSchema = Schema.Struct({
   attempt: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   mode: Schema.Literals(['CLAIMED', 'DELIVERED', 'EXHAUSTED', 'BUSY', 'NOT_DUE', 'CONFLICT']),
   version: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  wakeAtMs: Schema.optionalKey(positive),
 });
 export type SymmyJobNotificationClaim = typeof SymmyJobNotificationClaimSchema.Type;
 

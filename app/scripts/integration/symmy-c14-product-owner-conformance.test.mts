@@ -247,9 +247,16 @@ const readProjectionSchema = Schema.Struct({
   contractVersion: Schema.Literal('INTERNAL_C14'),
   products: Schema.Array(
     Schema.Struct({
-      id: Schema.String,
+      id: Schema.String.check(Schema.isPattern(/^~c14r1\.[a-zA-Z0-9_-]{43}$/u)),
       product: ProductSchema,
-      variantSources: Schema.Array(Schema.Struct({ id: Schema.String, variantId: VariantRefSchema.fields.resourceId })),
+      source_record_id: Schema.String,
+      variantSources: Schema.Array(
+        Schema.Struct({
+          id: Schema.String.check(Schema.isPattern(/^~c14r1\.[a-zA-Z0-9_-]{43}$/u)),
+          source_record_id: Schema.String,
+          variantId: VariantRefSchema.fields.resourceId,
+        }),
+      ),
     }),
   ),
   projection: Schema.Literal('products'),
@@ -805,9 +812,13 @@ it.live(
           Effect.flatMap(Schema.decodeUnknownEffect(publicJobStatusSchema)),
         );
         expect(status.status).toBe('completed_partial');
-        expect(
-          (status.items ?? []).flatMap((item) => item.effects).filter((effect) => effect.status === 'unsupported'),
-        ).toHaveLength(2);
+        const unsupported = (status.items ?? [])
+          .flatMap((item) => item.effects)
+          .filter((effect) => effect.status === 'unsupported');
+        expect(unsupported).toHaveLength(6);
+        expect(unsupported.map(({ branchKind }) => branchKind)).toEqual(
+          expect.arrayContaining(['CategoryHint', 'AttributeHint', 'MediaHint', 'VariantUpdateHint']),
+        );
         const [forbiddenCalls] = yield* admin<{
           count: number;
         }>`select count(*)::integer as count from core.action_invocations where tenant_id=${tenantId} and (action_key like 'tax.%' or action_key like 'commerce.tax.%' or action_key like 'commerce.assortment.%')`;
@@ -819,14 +830,16 @@ it.live(
         expect(exported.status).toBe(200);
         const readback = yield* exported.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(readProjectionSchema)));
         expect(readback.products).toHaveLength(1);
-        const product = readback.products.find((item) => item.id === internalProductSource.productRecordId);
+        const product = readback.products.find(
+          (item) => item.source_record_id === internalProductSource.productRecordId,
+        );
         assert.isOk(product);
-        expect(product.id).toBe(internalProductSource.productRecordId);
+        expect(product.id).not.toBe(internalProductSource.productRecordId);
         expect(product.product.productRef).toEqual(originalReceipt.productRef);
         expect(product.product.variants).toHaveLength(2);
         expect(
           EffectArray.sort(
-            product.variantSources.map(({ id }) => id),
+            product.variantSources.map(({ source_record_id }) => source_record_id),
             Order.String,
           ),
         ).toEqual(
@@ -859,7 +872,7 @@ it.live(
                 entityKind: 'PRODUCT',
                 issuerId: internalProductSource.issuerId,
                 sourceNamespace: internalProductSource.namespace,
-                sourceRecordId: product.id,
+                sourceRecordId: product.source_record_id,
               },
               sourceOccurrenceId: randomUUID(),
             },
@@ -888,8 +901,11 @@ it.live(
         const beforeMixed = yield* beforeMixedRead.json.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(readProjectionSchema)),
         );
-        const currentProduct = beforeMixed.products.find((item) => item.id === internalProductSource.productRecordId);
+        const currentProduct = beforeMixed.products.find(
+          (item) => item.source_record_id === internalProductSource.productRecordId,
+        );
         assert.isOk(currentProduct);
+        expect(currentProduct.id).toBe(product.id);
         const priceFailure = yield* makeInternalC14PriceFailurePlan({
           at: DateTime.formatIso(yield* DateTime.now),
           marketId: setupFacts.market.marketRef.resourceId,
@@ -1019,7 +1035,7 @@ it.live(
         );
         const [readySourceProduct] = yield* Schema.decodeUnknownEffect(
           Schema.Tuple([readProjectionSchema.fields.products.value]),
-        )(readySourceReadback.products.filter((item) => item.id === internalReadyProductSource.recordId));
+        )(readySourceReadback.products.filter((item) => item.source_record_id === internalReadyProductSource.recordId));
         expect(readySourceProduct.product.lifecycle).toBe('DRAFT');
         expect(readySourceProduct.product.variants).toHaveLength(1);
         expect(readySourceProduct.product.variants.map((variant) => variant.lifecycle)).toEqual(['WORK_IN_PROGRESS']);

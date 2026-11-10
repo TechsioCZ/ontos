@@ -163,6 +163,7 @@ const routeOperation = Schema.Struct({
 /** Shell-attested finite operations for one admitted private route and exact company context. */
 export const RegisteredGatewayRouteScopeSchema = Schema.Struct({
   legalEntityId: LegalEntityIdSchema,
+  mappingVersion: Schema.optionalKey(routeIdentity),
   operations: Schema.Array(routeOperation).check(
     Schema.isMinLength(1),
     Schema.isMaxLength(32),
@@ -176,6 +177,7 @@ export const RegisteredGatewayRouteScopeSchema = Schema.Struct({
   routeId: decodedStringBrand(uuid, 'GatewayRouteId'),
   routeKey: decodedStringBrand(routeIdentity, 'GatewayRouteKey'),
   routeRevision: decodedStringBrand(routeIdentity, 'GatewayRouteRevision'),
+  sourceMappingVersion: Schema.optionalKey(routeIdentity),
   sourceRouteId: decodedStringBrand(uuid, 'GatewaySourceRouteId'),
   sourceRouteRevision: decodedStringBrand(routeIdentity, 'GatewaySourceRouteRevision'),
   tenantId: TenantIdSchema,

@@ -3,7 +3,7 @@ import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement
 import { readVerifiedGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
-import { DateTime, Effect, Match, Option, Result, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Redacted, Result, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
@@ -1300,6 +1300,7 @@ const importSymmyRuleFixture = defineScopedRoutine({
     { source: 'input', type: 'uuid' },
     { source: 'input', type: 'uuid' },
     { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
     { source: 'input', type: 'jsonb' },
   ],
   resultSchema: Schema.Struct({
@@ -1316,6 +1317,7 @@ export const assortmentSymmyRuleFixtureServiceFactory = (transaction: ScopedTran
     persistFixture: Effect.fn('AssortmentPolicyPersistence.persistSymmyRuleFixture')(function* persist(
       payload: ImportSymmyRulePayload,
       actionInvocationId: string,
+      permit: Redacted.Redacted,
     ) {
       const source = readVerifiedGatewayWorkload(scope);
       const admitted = yield* readScopedAdmittedWorkload(transaction, scope, assortmentSymmyRuleFixtureWorkload).pipe(
@@ -1335,6 +1337,7 @@ export const assortmentSymmyRuleFixtureServiceFactory = (transaction: ScopedTran
           scope.principalId,
           source.admissionInvocationId,
           source.originalPrincipalId,
+          Redacted.value(permit),
           {
             channel: binding.commercialScope.channelRef.resourceId,
             effect: rule.effect,

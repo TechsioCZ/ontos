@@ -41,6 +41,7 @@ import type {
   SymmyInternalPriceListsProjection,
   SymmyInternalProductsProjection,
 } from './read-projection-contracts.ts';
+import { qualifySymmyReadId } from './read-projection-contracts.ts';
 import type { SymmyIngressAdmission, SymmyOwnerAssertion } from './transport.ts';
 
 export interface SymmySourceReadScope {
@@ -189,10 +190,12 @@ export const projectSymmySourceProducts = Effect.fn('SymmyReadProjection.product
     contractVersion: 'INTERNAL_C14',
     limit: query.limit ?? 50,
     products: result.items.map((item) => ({
-      id: item.source.recordId,
+      id: qualifySymmyReadId(scope, 'PRODUCT', item.source.recordId),
       product: item.product,
+      source_record_id: item.source.recordId,
       variantSources: item.variantSources.map((variant) => ({
-        id: variant.source.recordId,
+        id: qualifySymmyReadId(scope, 'VARIANT', variant.source.recordId),
+        source_record_id: variant.source.recordId,
         variantId: variant.variantId,
       })),
     })),
@@ -428,7 +431,12 @@ const projectCustomer = Effect.fn('SymmyReadProjection.customer')(function* cust
   newRequestIdentifier: RequestIdentifier,
 ): Effect.fn.Return<CustomerRow, SymmyIngressProblem> {
   const authority = yield* customerIcoAuthority(item);
-  let result: CustomerRow = { id: item.source.recordId, partyRef: item.partyRef, profile: item.profile };
+  let result: CustomerRow = {
+    id: qualifySymmyReadId(scope, `CUSTOMER:${item.source.recordType}`, item.source.recordId),
+    partyRef: item.partyRef,
+    profile: item.profile,
+    source_record_id: item.source.recordId,
+  };
   if (Option.isSome(authority)) {
     result = yield* Match.value(authority.value).pipe(
       Match.when('PERSONAL', () =>
@@ -667,7 +675,6 @@ const projectPriceList = Effect.fn('SymmyReadProjection.priceList')(function* pr
       association.priceGroupRef.resourceId,
     ),
     name: definition.definition.displayName,
-    priceGroupRef: association.priceGroupRef,
     source_record_id: association.sourceCorrelation.recordKey,
     starts_at: definition.definition.effectivePeriod.effectiveFrom,
   };

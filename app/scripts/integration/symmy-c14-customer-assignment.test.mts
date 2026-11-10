@@ -14,7 +14,7 @@ import { DateTime, Effect, Match, Option, Redacted, Schema } from 'effect';
 import { HttpBody, HttpClient } from 'effect/http';
 import { customerFixtureUuid as uuid } from './support/symmy-c14-customer-native-authority.mts';
 import { internalCustomerSource } from './support/symmy-c14-customer-plan.mts';
-import { customerWorkerKey } from './support/symmy-c14-customer-rules.mts';
+import { customerIntakeContext, customerWorkerKey } from './support/symmy-c14-customer-rules.mts';
 import {
   SymmyC14ProductFixtureUnavailable,
   startProductOwner,
@@ -108,6 +108,7 @@ it.live(
         const policy = yield* seedCommittedProfileSourceProcessingNativeFixture({
           connections: fixture.isolated.connections,
           contexts: [
+            customerIntakeContext(fixture.integration.principalId, source, target),
             {
               authMethod: 'system',
               principalId: systemId,

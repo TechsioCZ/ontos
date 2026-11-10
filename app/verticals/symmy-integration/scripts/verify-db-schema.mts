@@ -84,16 +84,28 @@ const verification = Effect.gen(function* verifySymmySchema() {
   }
   const [runtime] = yield* client<{
     readonly journal_exists: boolean;
+    readonly route_gate_trigger_enabled: boolean;
     readonly schema_create: boolean;
     readonly schema_usage: boolean;
   }>`
     select to_regclass('drizzle.__drizzle_migrations_symmy_integration') is not null as journal_exists,
+      exists(select 1 from pg_catalog.pg_trigger t
+        where t.tgrelid = 'symmy_integration.job_routes'::regclass
+          and t.tgname = 'symmy_job_route_publish_execution_gate' and t.tgenabled = 'O'
+          and t.tgtype = 29 -- row-level AFTER INSERT, UPDATE and DELETE
+          and t.tgfoid = to_regprocedure('symmy_integration.publish_route_execution_gate()'))
+        as route_gate_trigger_enabled,
       has_schema_privilege('ontos_runtime', 'symmy_integration', 'CREATE') as schema_create,
       has_schema_privilege('ontos_runtime', 'symmy_integration', 'USAGE') as schema_usage
   `;
-  if (!runtime?.journal_exists || !runtime.schema_usage || runtime.schema_create) {
+  if (
+    !runtime?.journal_exists ||
+    !runtime.route_gate_trigger_enabled ||
+    !runtime.schema_usage ||
+    runtime.schema_create
+  ) {
     yield* new SymmySchemaVerificationError({
-      reason: 'Symmy migration journal or runtime schema privileges mismatch',
+      reason: 'Symmy migration journal, route gate trigger or runtime schema privileges mismatch',
     });
   }
   const routines = yield* client<{
@@ -122,11 +134,14 @@ const verification = Effect.gen(function* verifySymmySchema() {
     'lock_symmy_privacy_execution',
     'mark_symmy_job_effect_blocked',
     'mark_symmy_job_effect_indeterminate',
+    'mark_symmy_job_effect_unavailable',
     'pin_symmy_fixture_plan',
+    'publish_route_execution_gate',
     'purge_symmy_job_intents',
     'purge_symmy_sync_intents',
     'read_symmy_job_execution',
     'read_symmy_job_lifecycle',
+    'read_symmy_job_notification_wake',
     'read_symmy_privacy_execution',
     'read_symmy_sync_lifecycle',
     'record_symmy_owner_executor',
@@ -148,13 +163,17 @@ const verification = Effect.gen(function* verifySymmySchema() {
         routine.public_execute ||
         !routine.safe_settings ||
         routine.runtime_execute !==
-          !['symmy_original_route_active', 'erase_symmy_effect_payload', 'erase_symmy_plan_payload'].includes(
-            routine.name,
-          ) ||
+          ![
+            'publish_route_execution_gate',
+            'symmy_original_route_active',
+            'erase_symmy_effect_payload',
+            'erase_symmy_plan_payload',
+          ].includes(routine.name) ||
         routine.definer !==
           ![
             'symmy_source_selector_code',
             'pin_symmy_fixture_plan',
+            'publish_route_execution_gate',
             'symmy_original_route_active',
             'erase_symmy_effect_payload',
             'erase_symmy_plan_payload',

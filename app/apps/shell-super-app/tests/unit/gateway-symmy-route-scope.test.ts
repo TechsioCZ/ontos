@@ -300,6 +300,7 @@ it.effect('signs only exact admission Actions and the approved v1 sync lookup fo
     );
     expect(verified.payload['routeScope']).toEqual({
       legalEntityId,
+      mappingVersion: response.mappingVersion,
       operations: [
         ...admissionKeys.map((entrypointKey) => ({ entrypointKey, schemaVersion: '1' })),
         { entrypointKey: 'integration.symmy.api.symmy-sync-admission', schemaVersion: '1' },
@@ -308,6 +309,7 @@ it.effect('signs only exact admission Actions and the approved v1 sync lookup fo
       routeId: response.routeId,
       routeKey: 'customersBatch',
       routeRevision: response.routeRevision,
+      sourceMappingVersion: response.sourceMappingVersion,
       sourceRouteId: response.sourceRouteId,
       sourceRouteRevision: response.sourceRouteRevision,
       tenantId: principal.tenantId,

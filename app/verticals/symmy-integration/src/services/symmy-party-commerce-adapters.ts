@@ -132,6 +132,7 @@ import type { SymmyPartyCommerceIntent } from '../../shared/domain/symmy-party-c
 import { SymmyPinnedEffectSchema } from '../../shared/domain/symmy-job-execution.ts';
 import type { SymmyEffectAdapter, SymmyEffectAdapterInput } from './symmy-effect-adapters.service.ts';
 import { symmyJobWorkerUnavailable } from './symmy-job-worker-error.ts';
+import { readOriginalOwnerAttempt } from './symmy-owner-request-recovery.ts';
 
 const DiagnosticFailureSchema = Schema.Struct({
   _tag: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[A-Za-z][A-Za-z0-9_]{0,99}$/u))),
@@ -646,6 +647,15 @@ interface RegisteredSubjectContext {
   legalEntityId?: string;
   operationRequirementKey: string;
 }
+const originalOwnerRequestMatches = (
+  input: SymmyEffectAdapterInput,
+  candidate: { readonly authContextRef: string; readonly principalId: string },
+  requestHash: string,
+) =>
+  (input.originalExecutorPrincipalId === undefined || input.originalExecutorPrincipalId === candidate.principalId) &&
+  (input.originalAuthContextRef === undefined || input.originalAuthContextRef === candidate.authContextRef) &&
+  (input.originalRequestHash === undefined || input.originalRequestHash === requestHash);
+
 const freshOwnerContext = Effect.fn('SymmyPartyCommerceAdapters.freshContext')(function* freshOwnerContext(
   crypto: Crypto.Crypto,
   input: SymmyEffectAdapterInput,
@@ -693,7 +703,6 @@ const freshOwnerContext = Effect.fn('SymmyPartyCommerceAdapters.freshContext')(f
     if (intent === undefined) {
       return yield* symmyJobWorkerUnavailable();
     }
-    yield* input.recordExecutorPrincipal(granted.machineContext.principalId);
     const factualScope: SymmyPartyCommerceRequestScope = {
       principalId: granted.machineContext.principalId,
       tenantId: input.effect.ref.occurrence.record.route.tenantId,
@@ -701,10 +710,14 @@ const freshOwnerContext = Effect.fn('SymmyPartyCommerceAdapters.freshContext')(f
     const scope =
       input.legalEntityId === undefined ? factualScope : { ...factualScope, legalEntityId: input.legalEntityId };
     requestHash = yield* prepareSymmyPartyCommerceRequestHash(intent, scope);
-    if (input.originalRequestHash !== undefined && input.originalRequestHash !== requestHash) {
+    if (!originalOwnerRequestMatches(input, granted.machineContext, requestHash)) {
       return yield* symmyJobWorkerUnavailable();
     }
-    yield* input.recordOriginalRequestHash(requestHash, granted.machineContext.authContextRef);
+    yield* input.recordOwnerRequest({
+      authContextRef: granted.machineContext.authContextRef,
+      executorPrincipalId: granted.machineContext.principalId,
+      requestHash,
+    });
   }
   return {
     authContextRef: granted.machineContext.authContextRef,
@@ -1504,15 +1517,10 @@ const currentMembershipDefinition = Effect.fn('SymmyPartyCommerceAdapters.curren
     const payload = yield* Schema.decodeUnknownEffect(ApplyCustomerGroupMembershipSourcePayloadSchema)(
       membership.value.payload,
     ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
-    if (payload.operation === 'COMPLETE') {
+    if (payload.operation !== 'ASSIGN') {
       return yield* symmyJobWorkerUnavailable();
     }
-    const groups = Match.value(payload).pipe(
-      Match.when({ operation: 'ASSIGN' }, (value) => [value.groupRef]),
-      Match.when({ operation: 'REMOVE' }, (value) => [value.groupRef]),
-      Match.orElse((value) => value.groupRefs),
-    );
-    if (groups.length !== 1 || !groups.every((group) => Schema.toEquivalence(CustomerGroupRefSchema)(group, target))) {
+    if (!Schema.toEquivalence(CustomerGroupRefSchema)(payload.groupRef, target)) {
       return yield* symmyJobWorkerUnavailable();
     }
     const request = yield* Schema.decodeUnknownEffect(CustomerGroupDefinitionSourceRequestSchema)({
@@ -2504,52 +2512,18 @@ const recoverWithOriginalCommand = Effect.fn('SymmyPartyCommerceAdapters.recover
     operation: Operation,
     originalInput: SymmyEffectAdapterInput,
   ) {
+    const original = yield* readOriginalOwnerAttempt(originalInput);
+    if (original.status !== 'committed') {
+      return original;
+    }
     const input = yield* resolveDependencies(originalInput);
-    if (
-      input.originalExecutorPrincipalId === undefined ||
-      input.originalRequestHash === undefined ||
-      input.originalAuthContextRef === undefined
-    ) {
-      return unavailableRecovery;
+    if (input.originalInvocationId === undefined) {
+      yield* input.recordInvocationId(original.invocationId);
     }
-    const original = yield* input.readOriginalActionInvocation({
-      actionKey: input.effect.ref.operation.entrypointKey,
-      idempotencyKey: input.effect.ref.effectId,
-      originalPrincipalId: input.originalExecutorPrincipalId,
-      requestHash: input.originalRequestHash,
+    return yield* recoverIntent(crypto, operation, {
+      ...input,
+      originalInvocationId: original.invocationId,
     });
-    if (Option.isSome(original)) {
-      if (
-        input.originalInvocationId !== undefined &&
-        input.originalInvocationId !== original.value.actionInvocationId
-      ) {
-        return unavailableRecovery;
-      }
-      yield* input.recordInvocationId(original.value.actionInvocationId);
-      if (original.value.status !== 'succeeded') {
-        return unavailableRecovery;
-      }
-      // A known committed invocation is reconciled through authorized Reads only, even when they fail.
-      return yield* recoverIntent(crypto, operation, {
-        ...input,
-        originalInvocationId: original.value.actionInvocationId,
-      });
-    }
-    if (input.originalInvocationId !== undefined || !input.canExecuteNewEffects) {
-      return unavailableRecovery;
-    }
-    // An absent observation does not prove rollback. The exact original actor, body and Core key still
-    // serialize any overlapping old request; no replacement actor, target or key is introduced.
-    const retried = yield* executeIntent(crypto, operation, input);
-    if (
-      retried.status !== 'accepted_change' &&
-      retried.status !== 'accepted_no_change' &&
-      retried.status !== 'ambiguous' &&
-      retried.status !== 'unresolved'
-    ) {
-      return unavailableRecovery;
-    }
-    return { outcome: retried, status: 'settled' as const };
   },
 );
 

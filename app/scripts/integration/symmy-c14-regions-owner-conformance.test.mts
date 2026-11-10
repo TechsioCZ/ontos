@@ -45,9 +45,10 @@ const unsupportedFields = ['name', 'tax_rate', 'tax_included', 'payment_provider
 const regionSchema = Schema.Struct({
   country_codes: Schema.Tuple([Schema.Literal('CZ')]),
   currency_code: Schema.Literal('CZK'),
-  id: Schema.String,
+  id: Schema.String.check(Schema.isPattern(/^~c14r1\.[a-zA-Z0-9_-]{43}$/u)),
   market_code: Schema.Literal('INTERNAL_C14_CZ_REGION_MARKET'),
   marketRef: MarketRefSchema,
+  source_record_id: Schema.String,
 });
 const projectionSchema = Schema.Struct({
   contractVersion: Schema.Literal('INTERNAL_C14'),
@@ -315,20 +316,21 @@ it.live(
           Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema, { onExcessProperty: 'error' })),
         );
         expect(first).toMatchObject({ count: 2, limit: 1, offset: 0, unsupported_fields: unsupportedFields });
-        expect(first.regions).toEqual([
+        expect(first.regions).toMatchObject([
           {
             country_codes: ['CZ'],
             currency_code: 'CZK',
-            id: sourceRegionIds[0],
             market_code: 'INTERNAL_C14_CZ_REGION_MARKET',
             marketRef,
+            source_record_id: sourceRegionIds[0],
           },
         ]);
         const second = yield* (yield* get('limit=1&offset=1')).json.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema, { onExcessProperty: 'error' })),
         );
         expect(second.count).toBe(2);
-        expect(second.regions[0]?.id).toBe(sourceRegionIds[1]);
+        expect(second.regions[0]?.source_record_id).toBe(sourceRegionIds[1]);
+        expect(second.regions[0]?.id).not.toBe(first.regions[0]?.id);
         const end = yield* (yield* get('limit=1&offset=2')).json.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(projectionSchema, { onExcessProperty: 'error' })),
         );
