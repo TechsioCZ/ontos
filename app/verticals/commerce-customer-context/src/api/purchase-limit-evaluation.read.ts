@@ -45,7 +45,7 @@ const purchaseLimitEvaluationEntrypoint = defineTenantModuleEntrypoint({
 });
 
 /** The owner rows stay in SQL; Cart and Pricing currentness is observed only after this phase commits. */
-const loadLimitSnapshot = Effect.fn('PurchaseLimitEvaluationRead.loadSnapshot')(function* loadSnapshot(
+const loadLimitSnapshotAt = Effect.fn('PurchaseLimitEvaluationRead.loadSnapshotAt')(function* loadSnapshotAt(
   transaction: ScopedTransactionExecutor,
   scope: OperationalScope,
   compositionRevision: string | undefined,
@@ -84,6 +84,15 @@ const loadLimitSnapshot = Effect.fn('PurchaseLimitEvaluationRead.loadSnapshot')(
     { concurrency: 1 },
   );
   return { basis, policy };
+});
+/** The load phase's snapshot: the same owner read at the transaction's own instant. */
+const loadLimitSnapshot = Effect.fn('PurchaseLimitEvaluationRead.loadSnapshot')(function* loadSnapshot(
+  transaction: ScopedTransactionExecutor,
+  scope: OperationalScope,
+  compositionRevision: string | undefined,
+  input: PurchaseLimitEvaluationRequest,
+) {
+  return yield* loadLimitSnapshotAt(transaction, scope, compositionRevision, input);
 });
 type LimitSnapshot = Effect.Success<ReturnType<typeof loadLimitSnapshot>>;
 const unavailable = (cause?: unknown) =>
@@ -175,7 +184,7 @@ export const purchaseLimitEvaluationRead = defineRead(
         claim.observedAt,
       ).pipe(Effect.mapError(unavailable));
       yield* context.transaction((transaction) =>
-        loadLimitSnapshot(
+        loadLimitSnapshotAt(
           transaction,
           context.scope,
           compositionRevision,

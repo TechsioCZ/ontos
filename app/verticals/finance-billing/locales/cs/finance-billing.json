@@ -116,6 +116,7 @@
       "loadErrorDescription": "Zkontrolujte připojení a zkuste to znovu.",
       "emptyFirstTitle": "Zatím tu nejsou žádné faktury.",
       "emptyFirstDescription": "První fakturu vystavte tlačítkem Nová faktura.",
+      "emptyFirstReadOnlyDescription": "Faktury se tu objeví, jakmile je vystaví někdo s oprávněním k fakturaci.",
       "noMatches": "Žádné faktury neodpovídají filtru.",
       "noMatchesDescription": "Zkuste upravit hledání nebo stav.",
       "filters": {

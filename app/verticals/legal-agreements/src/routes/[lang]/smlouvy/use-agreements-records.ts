@@ -2,6 +2,7 @@ import { failureFeedback } from '../../../../shared/actions/apply-command.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { pageDataPending } from '@app/shared-contracts/page-data';
+import { useHeldSnapshot } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
@@ -110,10 +111,16 @@ export const useRecordsPage = (input: AgreementsInput) => {
     cancellation.current = controller;
     void browserRuntime.runPromiseExit(effect, { signal: controller.signal });
   };
-  const page = useSyncExternalStore(
-    (listener) => data.subscribe(listener, input),
-    () => data.snapshot(input),
-    () => pageDataPending,
+  // The store is strict (`retainStale: false`): every background reload (live change, 20 s freshness, a settled
+  // write) reads `pending`. Without the held snapshot `selected` turns undefined for that moment, the detail and its
+  // open forms unmount, and the terms panel comes back with a draft re-read from the reloaded contract.
+  const page = useHeldSnapshot(
+    data.key(input),
+    useSyncExternalStore(
+      (listener) => data.subscribe(listener, input),
+      () => data.snapshot(input),
+      () => pageDataPending,
+    ),
   );
   const { documentId: linkedDocumentId, resourceId: linkedResourceId, selectorIssue } = input;
   useEffect(
