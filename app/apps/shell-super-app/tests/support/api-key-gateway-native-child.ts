@@ -28,7 +28,6 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import { NodeHttpServer, NodeRuntime, NodeServices, NodeCrypto, NodeSocket } from '@effect/platform-node';
 import {
   Config,
-  ConfigProvider,
   Context,
   Crypto,
   FileSystem,
@@ -50,10 +49,12 @@ import { AuthConfig, AuthConfigLive, loadAuthConfig } from '../../api/auth/confi
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { AuthenticationServiceLive, makeAuthenticationService } from '../../api/auth/service.ts';
 import { shellAuthenticationFrameworkLive } from './shell-authentication.ts';
-import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
+import { ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
+import { loadModuleCredentialEnrolment } from '@app/core-runtime/auth/module-credentials';
+import { CoreDatabase } from '@app/core-runtime/db/client';
 import { GatewayIssuerLive } from '../../api/auth/gateway-issuer.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from '../../api/auth/authentication-namespace-registry.ts';
-import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-policy.ts';
+import { provisionModuleCredentials } from '../../api/auth/module-credential-provisioning.ts';
 import { ShellInstalledModuleCatalogLive } from '../../api/modules/installed-module-catalog.ts';
 import { AuthPersistenceLive } from '../../api/auth/runtime-infrastructure.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
@@ -65,8 +66,7 @@ import {
   ShellNativeChildReadySchema,
   ShellNativeChildResponseSchema,
   ShellNativeRelaySourceSchema,
-  ShellNativeRelaySourceIssueCommandSchema,
-  ShellNativeRelaySourceBoundCommandSchema,
+  ShellNativeRelaySourceProvisionCommandSchema,
 } from '../fixtures/api-key-gateway-native.ts';
 import { nativeShellAccessGateLive } from './native-shell-access-gate.ts';
 
@@ -153,7 +153,8 @@ const serve = Effect.scoped(
       Schema.fromJsonString(Schema.OptionFromNullOr(ShellNativeRelaySourceSchema)),
       'ONTOS_SHELL_NATIVE_RELAY_SOURCE',
     ).pipe(Config.withDefault(Option.none()), Effect.mapError(unavailable));
-    const relaySourceUser = yield* Effect.gen(function* createRelaySourceUser() {
+    // Relay scenarios also have a reader: a second person who holds no credential of the relay source.
+    const readerUser = yield* Effect.gen(function* createReaderUser() {
       if (Option.isNone(relaySource)) {
         return Option.none();
       }
@@ -176,13 +177,13 @@ const serve = Effect.scoped(
     const issuedKey = yield* Ref.make(Option.none<string>());
     const issueAttempted = yield* Ref.make(false);
     const sourceIssueAttempted = yield* Ref.make(false);
-    const issuedSourceKey = yield* Ref.make(Option.none<string>());
     const sessionCookie = yield* Ref.make(Option.none<string>());
     const sessionPrincipal = yield* Ref.make(
       Option.none<{ readonly principalId: string; readonly tenantId: string }>(),
     );
     const selectedCookies = new Map<string, string>();
     const runtimeCore = CorePersistenceLive.pipe(Layer.provide(DatabaseConfigLive));
+    const coreDatabase = Context.get(yield* Layer.build(runtimeCore), CoreDatabase);
     const runtimeResolver = PrincipalResolverLive({
       authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
     }).pipe(Layer.provide(runtimeCore));
@@ -228,27 +229,14 @@ const serve = Effect.scoped(
     if (!Schema.is(Schema.Struct({ port: Schema.Int }))(server.address)) {
       return yield* unavailable();
     }
-    const originalProvider = yield* ConfigProvider.ConfigProvider;
     const mounted = yield* Ref.make(false);
-    const mountRuntime = Effect.fn('ShellNativeChild.mountRuntime')(function* mountRuntime(bindings?: string) {
+    // The Shell derives its module bindings from the platform enrolment and the installed release, so it mounts at
+    // once; a relay source credential the platform provisions later binds without remounting.
+    const mountRuntime = Effect.fn('ShellNativeChild.mountRuntime')(function* mountRuntime() {
       if (yield* Ref.getAndSet(mounted, true)) {
         return yield* unavailable();
       }
-      const module =
-        bindings === undefined
-          ? { default: runtime }
-          : {
-              api: runtime.api,
-              layer: runtime.layer.pipe(
-                Layer.provideMerge(
-                  ConfigProvider.layer(
-                    ConfigProvider.fromEnvRecord({ ONTOS_GATEWAY_MODULE_BINDINGS: bindings }).pipe(
-                      ConfigProvider.orElse(originalProvider),
-                    ),
-                  ),
-                ),
-              ),
-            };
+      const module = { default: runtime };
       const handler = yield* Effect.acquireRelease(
         Effect.promise(resolveEffectBffModuleHandler.bind(undefined, module, {})).pipe(
           Effect.flatMap((value) => (value === null ? Effect.fail(unavailable()) : Effect.succeed(value))),
@@ -273,9 +261,7 @@ const serve = Effect.scoped(
         }),
       );
     });
-    if (Option.isNone(relaySource)) {
-      yield* mountRuntime();
-    }
+    yield* mountRuntime();
     const baseUrl = `http://127.0.0.1:${server.address.port}`;
     const sessionGateway = Effect.fn('ShellNativeChild.sessionGateway')(function* sessionGateway(
       request: typeof GatewayContextRequestSchema.Type,
@@ -341,9 +327,9 @@ const serve = Effect.scoped(
       }).pipe(Effect.provide(FetchHttpClient.layer));
       return yield* sendPrivate(writer, { _tag: 'session-gateway', gateway });
     });
-    const readiness = Option.isNone(relaySourceUser)
+    const readiness = Option.isNone(readerUser)
       ? { baseUrl, providerUserId }
-      : { baseUrl, providerUserId, relaySourceProviderUserId: relaySourceUser.value.providerUserId };
+      : { baseUrl, providerUserId, readerProviderUserId: readerUser.value.providerUserId };
     const encoded = yield* Schema.decodeUnknownEffect(ShellNativeChildReadySchema)(readiness).pipe(
       Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(ShellNativeChildReadySchema))),
     );
@@ -401,56 +387,34 @@ const serve = Effect.scoped(
           if (Schema.is(ShellNativeSessionGatewayCommandSchema)(command)) {
             return yield* sessionGateway(command.request);
           }
-          if (Schema.is(ShellNativeRelaySourceIssueCommandSchema)(command)) {
-            const actor = yield* Ref.get(sessionPrincipal);
-            if (
-              Option.isNone(relaySourceUser) ||
-              Option.isNone(actor) ||
-              actor.value.principalId === command.principalId ||
-              actor.value.tenantId !== command.tenantId ||
-              (yield* Ref.getAndSet(sourceIssueAttempted, true))
-            ) {
+          if (Schema.is(ShellNativeRelaySourceProvisionCommandSchema)(command)) {
+            if (Option.isNone(relaySource) || (yield* Ref.getAndSet(sourceIssueAttempted, true))) {
               return yield* unavailable();
             }
-            const session = yield* authentication.signIn(
-              relaySourceUser.value.email,
-              relaySourceUser.value.password,
-              new Headers({ origin: configuration.baseUrl }),
+            const { sourceAppId } = relaySource.value;
+            // The same provisioning every environment runs: platform tenant, module principal, key and binding.
+            const provisioned = yield* provisionModuleCredentials({
+              appIds: [sourceAppId],
+              operationId: yield* crypto.randomUUIDv4(),
+            }).pipe(
+              Effect.provideService(ApiKeyService, keys),
+              Effect.provideService(AuthDatabase, database),
+              Effect.provideService(CoreDatabase, coreDatabase),
             );
-            if (
-              session.identity.principalId !== command.principalId ||
-              session.identity.tenantId !== command.tenantId
-            ) {
+            const secret = provisioned.credentials.get(sourceAppId);
+            const enrolled = (yield* loadModuleCredentialEnrolment(coreDatabase.executor)).find(
+              (credential) =>
+                credential.appId === sourceAppId && provisioned.providerKeyIds.has(credential.providerKeyId),
+            );
+            if (secret === undefined || enrolled === undefined) {
               return yield* unavailable();
             }
-            const cookie = session.setCookieHeaders.map((value) => value.split(';')[0]).join('; ');
-            const issued = yield* keys.issue(new Headers({ cookie, origin: configuration.baseUrl }), {
-              issuerPrincipalId: command.principalId,
-              lifecycleOperationId: yield* crypto.randomUUIDv4(),
-              name: 'Owned Market relay source proof',
-              tenantId: command.tenantId,
-            });
-            yield* Ref.set(issuedSourceKey, Option.some(issued.providerKeyId));
             return yield* sendPrivate(writer, {
-              _tag: 'issued',
-              providerKeyId: issued.providerKeyId,
-              secret: Redacted.value(issued.secret),
+              _tag: 'provisioned',
+              principalId: enrolled.principalId,
+              providerKeyId: enrolled.providerKeyId,
+              secret: Redacted.value(secret),
             });
-          }
-          if (Schema.is(ShellNativeRelaySourceBoundCommandSchema)(command)) {
-            const sourceKey = yield* Ref.get(issuedSourceKey);
-            if (Option.isNone(relaySource) || Option.isNone(sourceKey)) {
-              return yield* unavailable();
-            }
-            const bindings = yield* Schema.decodeEffect(Schema.Array(GatewayModuleBindingSchema))([
-              { ...relaySource.value, providerKeyId: sourceKey.value },
-            ]).pipe(
-              Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(Schema.Array(GatewayModuleBindingSchema)))),
-              Effect.mapError(unavailable),
-            );
-            yield* keys.clearPendingCleanup(sourceKey.value);
-            yield* mountRuntime(bindings);
-            return yield* sendPrivate(writer, { _tag: 'ack' });
           }
           const key = yield* Ref.get(issuedKey);
           if (Option.isNone(key)) {

@@ -1,6 +1,5 @@
 // TEST infrastructure: only this child owns Shell authentication implementation.
 import {
-  ActionRuntime,
   ActiveApplicationCompositionSnapshotSchema,
   bindManagedApiKeyAction,
   bindSelfApiKeyAction,
@@ -11,12 +10,10 @@ import {
   InstalledModuleCatalogService,
   OAuthAuthenticationAuditLive,
   OAuthGrantRegistryLive,
-  PrincipalResolver,
   PrincipalResolverLive,
   runAction,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
-import type { PrincipalResolverService, TrustedPrincipalContext } from '@app/core-runtime';
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
@@ -28,7 +25,7 @@ import {
 import { NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices, NodeSocket } from '@effect/platform-node';
 import { resolveEffectBffModuleHandler } from '@modern-js/bff-effect/effect';
 import { dispatchEffectBffRequest } from '@modern-js/bff-effect/effect-edge';
-import { Config, ConfigProvider, Console, Context, Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Config, Console, Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { PgClient } from '@effect/sql-pg';
 import { Socket } from 'effect/socket';
@@ -46,8 +43,7 @@ import { makeAuthenticationService } from '../../api/auth/service.ts';
 import { OAuthConnectionHooksLive } from '../../api/oauth-connections/better-auth-hooks.ts';
 import { OAuthEndpointGuardDataLive } from '../../api/oauth-connections/grant-store.ts';
 import { ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
-import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-policy.ts';
-import { IdentityLifecycle, IdentityLifecycleLive } from '../../api/auth/identity-lifecycle.ts';
+import { provisionModuleCredentials } from '../../api/auth/module-credential-provisioning.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { createShellRuntimeContract } from '../../../../scripts/ontos-shell-runtime-contract.ts';
@@ -70,104 +66,29 @@ const partyAppId = 'party-registry';
 const startupStage = (stage: 'create-user' | 'creator-bootstrap' | 'fixture-runtime' | 'module-credential' | 'serve') =>
   Effect.tapCause(() => Console.error(`privacy-completion-shell:${stage}`));
 
-interface PartyModuleCredentialInput {
-  readonly headers: Headers;
-  readonly principal: TrustedPrincipalContext;
-  readonly resolver: PrincipalResolverService;
-  readonly suffix: string;
-  readonly tenantId: string;
-}
-/** One service principal for party-registry and one managed key bound to it through bind-managed-api-key. */
-const issuePartyModuleCredential = Effect.fn('PrivacyCompletionShell.issuePartyModuleCredential')(
-  function* issuePartyModuleCredential(input: PartyModuleCredentialInput) {
-    const lifecycle = yield* IdentityLifecycle;
-    const service = yield* lifecycle.createNonHumanPrincipal({
-      correlationId: `${input.suffix}:module:create`,
-      idempotencyKey: `${input.suffix}:module:create`,
-      payload: { displayName: 'Privacy completion party-registry module', kind: 'service' },
-      principal: input.principal,
-    });
-    const key = yield* lifecycle.issue({
-      correlationId: `${input.suffix}:module:key`,
-      idempotencyKey: `${input.suffix}:module:key`,
-      managedPrincipalId: service.principalId,
-      // A module credential is a tenant-managed key: the bind action refuses a managed key with no scope.
-      managedScope: 'tenant-managed',
-      // Better Auth's API key plugin caps key names at 32 characters.
-      name: 'Party registry module',
-      principal: input.principal,
-      requestHeaders: input.headers,
-    });
-    // Better Auth's verifyApiKey rejects keys owned by a service principal (references: 'user'), so the
-    // binding row names the provider key and the principal resolver proves its owner.
-    const binding = yield* input.resolver.loadApiKeyBindingForAdministration({
-      authBindingId: key.authBindingId,
-      principalId: service.principalId,
-      tenantId: input.tenantId,
-    });
-    const bound = yield* input.resolver.resolveBetterAuthApiKey(binding.providerSubjectId);
-    if (
-      key.cleanupPending ||
-      bound.principalId !== service.principalId ||
-      bound.tenantId !== input.tenantId ||
-      bound.authBindingId !== key.authBindingId
-    ) {
-      return yield* new PrivacyCompletionShellFailure({ reason: 'Party module key binding is unavailable' });
-    }
-    return { providerKeyId: binding.providerSubjectId, secret: key.secret };
-  },
-);
-
-/** The GatewayModuleBinding list the Shell reads from ONTOS_GATEWAY_MODULE_BINDINGS for the party-registry key. */
-const partyModuleBindings = Effect.fn('PrivacyCompletionShell.partyModuleBindings')(function* partyModuleBindings(
-  composition: typeof ActiveApplicationCompositionSnapshotSchema.Type,
-  providerKeyId: string,
+/** Party Registry's module credential, provisioned through the platform's own program. */
+const partyModuleCredential = Effect.fn('PrivacyCompletionShell.partyModuleCredential')(function* partyModuleCredential(
+  crypto: Crypto.Crypto,
 ) {
-  const partyDeployment = composition.composition.modules.find(
-    (candidate) => candidate.deployment.appId === partyAppId,
-  )?.deployment;
-  if (partyDeployment === undefined) {
-    return yield* new PrivacyCompletionShellFailure({ reason: 'Party composition deployment is unavailable' });
+  const provisioned = yield* provisionModuleCredentials({
+    appIds: [partyAppId],
+    operationId: yield* crypto.randomUUIDv4(),
+  });
+  const secret = provisioned.credentials.get(partyAppId);
+  const [providerKeyId] = provisioned.providerKeyIds;
+  if (secret === undefined || providerKeyId === undefined) {
+    return yield* new PrivacyCompletionShellFailure({ reason: 'Party module credential is unavailable' });
   }
-  return yield* Schema.decodeUnknownEffect(Schema.Array(GatewayModuleBindingSchema))([
-    {
-      compositionRevision: composition.composition.revision,
-      providerKeyId,
-      sourceAppId: partyAppId,
-      sourceBuildMarker: partyDeployment.buildMarker,
-    },
-  ]).pipe(
-    Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(Schema.Array(GatewayModuleBindingSchema)))),
-    Effect.mapError(() => new PrivacyCompletionShellFailure({ reason: 'Party module binding is invalid' })),
-  );
+  return { providerKeyId, secret };
 });
 
-/** Mounts the production Shell API with the module bindings visible to its gateway policy through ConfigProvider. */
+/** Mounts the production Shell API; it derives its module bindings from the platform's enrolment. */
 const mountShellApiHandler = Effect.fn('PrivacyCompletionShell.mountShellApiHandler')(function* mountShellApiHandler(
   accessGate: Layer.Layer<AccessDecisionGate>,
-  bindings: string,
 ) {
   const runtime = makeShellAuthenticationApiRuntime(...shellProductionRuntimeArguments, accessGate);
-  const originalProvider = yield* ConfigProvider.ConfigProvider;
   return yield* Effect.acquireRelease(
-    Effect.promise(
-      resolveEffectBffModuleHandler.bind(
-        undefined,
-        {
-          api: runtime.api,
-          layer: runtime.layer.pipe(
-            Layer.provideMerge(
-              ConfigProvider.layer(
-                ConfigProvider.fromEnvRecord({ ONTOS_GATEWAY_MODULE_BINDINGS: bindings }).pipe(
-                  ConfigProvider.orElse(originalProvider),
-                ),
-              ),
-            ),
-          ),
-        },
-        {},
-      ),
-    ).pipe(
+    Effect.promise(resolveEffectBffModuleHandler.bind(undefined, { default: runtime }, {})).pipe(
       Effect.flatMap((value) =>
         value === null
           ? Effect.fail(new PrivacyCompletionShellFailure({ reason: 'Shell API handler is unavailable' }))
@@ -408,27 +329,13 @@ const serve = Effect.scoped(
       transport: { correlationId: suffix, idempotencyKey: suffix, targetModuleKey: 'core.identity' },
     }).pipe(Effect.provideContext(fixtureContext));
     yield* keys.clearPendingCleanup(pending.providerKeyId);
-    // The party-registry module credential is minted here, so the Shell mounts with its bindings after it exists.
-    const lifecycleContext = yield* Layer.build(
-      IdentityLifecycleLive.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            Layer.succeed(ActionRuntime, Context.get(fixtureContext, ActionRuntime)),
-            Layer.succeed(ApiKeyService, keys),
-            Layer.succeed(PrincipalResolver, Context.get(resolver, PrincipalResolver)),
-          ),
-        ),
-      ),
+    // The party-registry module credential is provisioned by the platform, as on every environment.
+    const moduleCredential = yield* partyModuleCredential(crypto).pipe(
+      Effect.provideContext(fixtureContext),
+      Effect.provideService(ApiKeyService, keys),
+      Effect.provideService(AuthDatabase, database),
+      startupStage('module-credential'),
     );
-    // Actions read the fixture's own services from the calling fiber, exactly as the bindSelf fixture Action does.
-    const moduleCredential = yield* issuePartyModuleCredential({
-      headers,
-      principal: resolved.principal,
-      resolver: Context.get(resolver, PrincipalResolver),
-      suffix,
-      tenantId: fixture.tenantId,
-    }).pipe(Effect.provideContext(Context.merge(fixtureContext, lifecycleContext)), startupStage('module-credential'));
-    const moduleBindings = yield* partyModuleBindings(composition, moduleCredential.providerKeyId);
     const principal = { ...resolved.principal, legalEntityId: fixture.legalEntityId };
     const catalog = yield* makeInstalledModuleCatalogLoader(Effect.succeed(composition));
     const changePartyState = (newState: 'active' | 'inactive') =>
@@ -456,7 +363,7 @@ const serve = Effect.scoped(
       fixture.changeManagerModuleAccess(partyModule, operation);
     yield* changePartyRead('grant');
     yield* Effect.addFinalizer(() => changePartyRead('revoke').pipe(Effect.orDie));
-    const app = yield* mountShellApiHandler(Layer.succeed(AccessDecisionGate, fixtureAccessGate), moduleBindings);
+    const app = yield* mountShellApiHandler(Layer.succeed(AccessDecisionGate, fixtureAccessGate));
     const server = yield* HttpServer.HttpServer;
     yield* server.serve(
       Effect.gen(function* shellRequest() {

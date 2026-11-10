@@ -61,7 +61,8 @@ export const ShellNativeRelaySourceSchema = Schema.Struct({
 export const ShellNativeChildReadySchema = Schema.Struct({
   baseUrl: Schema.String,
   providerUserId: ProviderSubjectIdSchema,
-  relaySourceProviderUserId: Schema.optionalKey(ProviderSubjectIdSchema),
+  /** A second fixture person, the reader of relay scenarios; it holds no credential of the relay source. */
+  readerProviderUserId: Schema.optionalKey(ProviderSubjectIdSchema),
 });
 export const ShellNativeIssueCommandSchema = Schema.TaggedStruct('issue', {
   principalId: PrincipalIdSchema,
@@ -74,26 +75,28 @@ export const ShellNativeSessionGatewayResponseSchema = Schema.TaggedStruct('sess
   gateway: GatewayContextResponseSchema,
 });
 export const ShellNativeBoundCommandSchema = Schema.TaggedStruct('bound', {});
-export const ShellNativeRelaySourceIssueCommandSchema = Schema.TaggedStruct('relay-source-issue', {
-  principalId: PrincipalIdSchema,
-  tenantId: TenantIdSchema,
-});
-export const ShellNativeRelaySourceBoundCommandSchema = Schema.TaggedStruct('relay-source-bound', {});
+/** The relay source module's credential, provisioned by the platform exactly as every environment provisions it. */
+export const ShellNativeRelaySourceProvisionCommandSchema = Schema.TaggedStruct('relay-source-provision', {});
 export const ShellNativeChildCommandSchema = Schema.Union([
   ShellNativeIssueCommandSchema,
   ShellNativeSessionGatewayCommandSchema,
   ShellNativeBoundCommandSchema,
-  ShellNativeRelaySourceIssueCommandSchema,
-  ShellNativeRelaySourceBoundCommandSchema,
+  ShellNativeRelaySourceProvisionCommandSchema,
   Schema.TaggedStruct('enabled', { enabled: Schema.Boolean }),
 ]);
 export const ShellNativeIssuedResponseSchema = Schema.TaggedStruct('issued', {
   providerKeyId: ProviderSubjectIdSchema,
   secret: Schema.String,
 });
+export const ShellNativeProvisionedResponseSchema = Schema.TaggedStruct('provisioned', {
+  principalId: PrincipalIdSchema,
+  providerKeyId: ProviderSubjectIdSchema,
+  secret: Schema.String,
+});
 export const ShellNativeUnavailableResponseSchema = Schema.TaggedStruct('unavailable', {});
 export const ShellNativeChildResponseSchema = Schema.Union([
   ShellNativeIssuedResponseSchema,
+  ShellNativeProvisionedResponseSchema,
   ShellNativeSessionGatewayResponseSchema,
   Schema.TaggedStruct('ack', {}),
   ShellNativeUnavailableResponseSchema,
@@ -412,7 +415,6 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
         DATABASE_URL: Redacted.value(authRuntime.runtimeConnectionString),
         ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: sourceUrl,
         ONTOS_GATEWAY_ISSUER: issuer,
-        ONTOS_GATEWAY_MODULE_BINDINGS: '[]',
         ONTOS_GATEWAY_PRIVATE_JWK: privateJwk,
         ONTOS_GATEWAY_PUBLIC_JWKS: publicJwks,
         ONTOS_SHELL_NATIVE_RELAY_SOURCE: yield* Schema.encodeEffect(
@@ -495,52 +497,28 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
         });
       }),
       issuer,
-      issueRelaySourceAndBind: Effect.fn('ApiKeyGatewayNativeFixture.issueRelaySourceAndBind')(
-        function* issueRelaySourceAndBind(principal: TrustedPrincipalContext) {
+      providerUserId: ready.providerUserId,
+      /** The relay source module's platform-provisioned credential: its service principal, key id and key. */
+      provisionRelaySource: Effect.fn('ApiKeyGatewayNativeFixture.provisionRelaySource')(
+        function* provisionRelaySource() {
           yield* ensureOpen;
-          const actor = yield* Ref.get(boundPrincipal);
-          if (
-            relaySource === undefined ||
-            ready.relaySourceProviderUserId === undefined ||
-            Option.isNone(actor) ||
-            actor.value.principalId === principal.principalId ||
-            actor.value.tenantId !== principal.tenantId ||
-            (yield* Ref.getAndSet(sourceIssuedOnce, true))
-          ) {
+          if (relaySource === undefined || (yield* Ref.getAndSet(sourceIssuedOnce, true))) {
             return yield* unavailable();
           }
-          const issued = yield* exchange({
-            _tag: 'relay-source-issue',
-            principalId: principal.principalId,
-            tenantId: principal.tenantId,
-          });
-          if (!Schema.is(ShellNativeIssuedResponseSchema)(issued)) {
+          const provisioned = yield* exchange({ _tag: 'relay-source-provision' });
+          if (!Schema.is(ShellNativeProvisionedResponseSchema)(provisioned)) {
             return yield* unavailable();
           }
-          const sourceCredential = Redacted.make(issued.secret);
-          const runtime = yield* ActionRuntime;
-          const binding = yield* runtime.runAction({
-            payload: { providerSubjectId: issued.providerKeyId },
-            principal,
-            registration: bindSelfApiKeyAction,
-            transport: {
-              correlationId: 'native-relay-source-bind',
-              idempotencyKey: `native-relay-source-bind:${issued.providerKeyId}`,
-            },
-          });
-          yield* exchange({ _tag: 'relay-source-bound' });
           return Object.freeze({
             ...relaySource,
-            authBindingId: binding.authBindingId,
-            principalId: principal.principalId,
-            providerKeyId: issued.providerKeyId,
-            secret: sourceCredential,
+            principalId: provisioned.principalId,
+            providerKeyId: provisioned.providerKeyId,
+            secret: Redacted.make(provisioned.secret),
           });
         },
       ),
-      providerUserId: ready.providerUserId,
       publicJwks,
-      relaySourceProviderUserId: ready.relaySourceProviderUserId,
+      readerProviderUserId: ready.readerProviderUserId,
     });
   },
 );
