@@ -1,3 +1,4 @@
+import { moduleCredentialOverlay } from '@app/core-runtime/auth/hosted-module-credentials';
 import {
   OwnerActionApprovalSchemaErrorLive,
   makeOwnerActionApproveHandler,
@@ -686,7 +687,8 @@ export const makeCommerceMarketCatalogApiRuntime = (
   return assembleEffectBffRuntime({
     api: commerceMarketCatalogApi,
     handlers: resolvedApiHandlersLive,
-    transport: transportLive,
+    // In a host that serves several owners, this owner's delegated calls read its own module credential only.
+    transport: Layer.merge(transportLive, moduleCredentialOverlay(ultramodernDeliveryUnit.appId)),
   });
 };
 

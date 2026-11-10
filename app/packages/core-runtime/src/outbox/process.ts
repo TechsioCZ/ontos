@@ -1,4 +1,5 @@
 import { withWorkerRuntimeBinding } from './worker-runtime-binding.ts';
+import { moduleCredentialConfigProvider } from '../auth/hosted-module-credentials.ts';
 import type { VerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
 import {
   Array as Arr,
@@ -100,12 +101,7 @@ export interface DefineOutboxWorkerEntryInput<Registration extends AnyOutboxWork
 export interface OutboxWorkerLoopInput {
   readonly config: OutboxPollingConfig;
   readonly health?: Pick<OutboxWorkerHealth, 'cycleFailed' | 'cycleSucceeded'>;
-  /** Set by {@link hostedOutboxWorkerEntry}: the variable this owner reads as the module credential. */
-  readonly moduleCredentialVariable?: string;
 }
-
-/** The module credential variable every module deployment reads; a hosted owner reads its own instead. */
-const MODULE_CREDENTIAL_VARIABLE = 'ONTOS_GATEWAY_MODULE_API_KEY';
 
 /**
  * One MicroVertical's hosted polling loop. The host runs each entry in its own layer scope so owner layers
@@ -128,37 +124,6 @@ export interface RunOutboxWorkerHostInput<
   readonly startup?: () => Effect.Effect<void, StartupError, Scope.Scope>;
 }
 
-/**
- * Hosts one owner's entry under its own module credential. The owner's loop and the handlers it runs (not its layer
- * build), and nothing else in the host, read `ONTOS_GATEWAY_MODULE_API_KEY` as `moduleCredentialVariable` (for example
- * `ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY`). Every other owner keeps its own view of the host configuration.
- */
-export const hostedOutboxWorkerEntry = <LayerError>(
-  entry: OutboxWorkerEntry<LayerError>,
-  moduleCredentialVariable: string,
-): OutboxWorkerEntry<LayerError> =>
-  Object.freeze({
-    claimOwnerPrefix: entry.claimOwnerPrefix,
-    registrations: entry.registrations,
-    runLoop: (input: OutboxWorkerLoopInput) => entry.runLoop({ ...input, moduleCredentialVariable }),
-  });
-
-/**
- * The configuration one owner reads. A hosted owner with a module credential variable reads its own: the module
- * credential key resolves to that variable, and every other key resolves exactly as the host resolves it.
- */
-const ownerConfigProvider = (
-  host: ConfigProvider.ConfigProvider,
-  moduleCredentialVariable: string | undefined,
-): ConfigProvider.ConfigProvider => {
-  if (moduleCredentialVariable === undefined) {
-    return host;
-  }
-  return ConfigProvider.mapInput(host, (path) =>
-    path.map((segment) => (segment === MODULE_CREDENTIAL_VARIABLE ? moduleCredentialVariable : segment)),
-  );
-};
-
 export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegistration, LayerError>(
   input: DefineOutboxWorkerEntryInput<Registration, LayerError>,
 ): OutboxWorkerEntry<LayerError | ActiveApplicationCompositionUnavailableError | OutboxWorkerDescriptorError> => {
@@ -171,7 +136,7 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
   return Object.freeze({
     claimOwnerPrefix: input.claimOwnerPrefix,
     registrations: registrations.length,
-    runLoop: ({ config, health, moduleCredentialVariable }: OutboxWorkerLoopInput) => {
+    runLoop: ({ config, health }: OutboxWorkerLoopInput) => {
       const loop = Effect.gen(function* runCompiledOutboxWorkerLoop() {
         const report = yield* OutboxWorkerAdmissionReport;
         yield* report.identify({ appId: expectedDeployment.appId, buildMarker: expectedDeployment.buildMarker });
@@ -261,15 +226,16 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
           runOutboxPollingLoop(health === undefined ? pollingInput : { ...pollingInput, health }),
         );
       });
-      // The owner's loop and every handler it runs read this owner's configuration, so a hosted owner's module
-      // credential resolves to its own variable. Its layers build in their own runtime and must never read the
-      // module credential at build time; delegated calls read it per call.
+      // The owner's loop and every handler it runs read this owner's configuration: in a host sealed with its owners'
+      // module credentials, its module credential resolves to its own key and never to the shared environment. Its
+      // layers build in their own runtime and must never read the module credential at build time; delegated calls
+      // read it per call.
       const ownerLoop = ConfigProvider.ConfigProvider.pipe(
         Effect.flatMap((host) =>
           Effect.provideService(
             loop,
             ConfigProvider.ConfigProvider,
-            ownerConfigProvider(host, moduleCredentialVariable),
+            moduleCredentialConfigProvider(host, expectedDeployment.appId),
           ),
         ),
       );

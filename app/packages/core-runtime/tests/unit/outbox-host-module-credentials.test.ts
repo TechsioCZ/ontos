@@ -1,13 +1,13 @@
-import { Config, ConfigProvider, Effect, Fiber, Layer, Option, Record, Ref } from 'effect';
+import { Config, ConfigProvider, Effect, Fiber, Layer, Option, Record, Redacted, Ref } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
-import { defineOutboxWorkerEntry, hostedOutboxWorkerEntry, runOutboxWorkerHost } from '../../src/outbox/process.ts';
+import { sealHostedModuleCredentials } from '../../src/auth/hosted-module-credentials.ts';
+import { defineOutboxWorkerEntry, runOutboxWorkerHost } from '../../src/outbox/process.ts';
 import { OutboxRuntime } from '../../src/outbox/runtime.ts';
 import type { OutboxCycleResult } from '../../src/outbox/runtime.ts';
 import { outboxWorkerCompositionLayer } from '../support/outbox-worker-composition.ts';
 
-const expectedDeployment = { appId: 'worker-fixture', buildMarker: 'worker-fixture-build' };
 const MODULE_CREDENTIAL = 'ONTOS_GATEWAY_MODULE_API_KEY';
 
 const emptyResult: OutboxCycleResult = {
@@ -25,13 +25,13 @@ const emptyResult: OutboxCycleResult = {
  * records the value it resolved, or the Config failure it met.
  */
 const reportingOwner = (
-  claimOwnerPrefix: string,
+  appId: string,
   credential: Ref.Ref<string | null>,
   failure: Ref.Ref<Config.ConfigError | null>,
 ) =>
   defineOutboxWorkerEntry({
-    claimOwnerPrefix,
-    expectedDeployment,
+    claimOwnerPrefix: `${appId}-outbox-worker`,
+    expectedDeployment: { appId, buildMarker: `${appId}-build` },
     layer: Layer.succeed(OutboxRuntime, {
       matchMessages: () => Effect.succeed({ deliveriesCreated: 0, messagesMatched: 0 }),
       runCycle: () =>
@@ -71,57 +71,49 @@ const readCredential = <A>(recorded: Ref.Ref<A | null>): Effect.Effect<A> =>
     ),
   );
 
-it.effect('gives each hosted owner its own module credential, and a dedicated owner the plain one', () =>
-  Effect.gen(function* hostedOwnersReadTheirOwnCredential() {
-    const partyRegistry = yield* Ref.make<string | null>(null);
-    const partyRegistryFailure = yield* Ref.make<Config.ConfigError | null>(null);
-    const commerceOrder = yield* Ref.make<string | null>(null);
-    const commerceOrderFailure = yield* Ref.make<Config.ConfigError | null>(null);
+// Declared first: this file's process is not sealed until the next test seals it.
+it.effect('lets the owner of a dedicated, unsealed worker process read the plain module credential', () =>
+  Effect.gen(function* dedicatedOwnerReadsItsEnvironment() {
     const dedicated = yield* Ref.make<string | null>(null);
     const dedicatedFailure = yield* Ref.make<Config.ConfigError | null>(null);
     const host = yield* runOutboxWorkerHost({
-      entries: [
-        hostedOutboxWorkerEntry(
-          reportingOwner('party-registry-outbox-worker', partyRegistry, partyRegistryFailure),
-          'ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY',
-        ),
-        hostedOutboxWorkerEntry(
-          reportingOwner('commerce-order-outbox-worker', commerceOrder, commerceOrderFailure),
-          'ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER',
-        ),
-        reportingOwner('dedicated-outbox-worker', dedicated, dedicatedFailure),
-      ],
+      entries: [reportingOwner('commerce-order', dedicated, dedicatedFailure)],
     }).pipe(
       Effect.provideService(
         ConfigProvider.ConfigProvider,
         ConfigProvider.fromUnknown({
           ONTOS_GATEWAY_MODULE_API_KEY: 'plain-key-of-the-dedicated-worker',
-          ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER: 'commerce-order-key',
-          ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY: 'party-registry-key',
           OUTBOX_WORKER_POLL_INTERVAL_MS: '10',
         }),
       ),
       Effect.forkChild,
     );
-
-    expect(yield* readCredential(partyRegistry)).toBe('party-registry-key');
-    expect(yield* readCredential(commerceOrder)).toBe('commerce-order-key');
     expect(yield* readCredential(dedicated)).toBe('plain-key-of-the-dedicated-worker');
     yield* Fiber.interrupt(host);
   }),
 );
 
-it.effect('fails a hosted owner closed when its per-unit credential is absent, without reading the plain key', () =>
-  Effect.gen(function* hostedOwnerFailsClosedWithoutUnitCredential() {
-    const credential = yield* Ref.make<string | null>(null);
-    const failure = yield* Ref.make<Config.ConfigError | null>(null);
+it.effect('gives each owner of a sealed host only its own key and fails an owner without one closed', () =>
+  Effect.gen(function* hostedOwnersReadTheirOwnCredential() {
+    yield* sealHostedModuleCredentials({
+      credentials: {
+        'commerce-order': Redacted.make('commerce-order-module-key'),
+        'party-registry': Redacted.make('party-registry-module-key'),
+      },
+      schemaVersion: 1,
+    });
+    const partyRegistry = yield* Ref.make<string | null>(null);
+    const partyRegistryFailure = yield* Ref.make<Config.ConfigError | null>(null);
+    const commerceOrder = yield* Ref.make<string | null>(null);
+    const commerceOrderFailure = yield* Ref.make<Config.ConfigError | null>(null);
+    const pricing = yield* Ref.make<string | null>(null);
+    const pricingFailure = yield* Ref.make<Config.ConfigError | null>(null);
     const reads: string[] = [];
     const host = yield* runOutboxWorkerHost({
       entries: [
-        hostedOutboxWorkerEntry(
-          reportingOwner('party-registry-outbox-worker', credential, failure),
-          'ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY',
-        ),
+        reportingOwner('party-registry', partyRegistry, partyRegistryFailure),
+        reportingOwner('commerce-order', commerceOrder, commerceOrderFailure),
+        reportingOwner('pricing', pricing, pricingFailure),
       ],
     }).pipe(
       Effect.provideService(
@@ -137,10 +129,12 @@ it.effect('fails a hosted owner closed when its per-unit credential is absent, w
       Effect.forkChild,
     );
 
-    expect(yield* readCredential(failure)).toBeInstanceOf(Config.ConfigError);
-    expect(reads).toContain('ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY');
+    expect(yield* readCredential(partyRegistry)).toBe('party-registry-module-key');
+    expect(yield* readCredential(commerceOrder)).toBe('commerce-order-module-key');
+    expect(yield* readCredential(pricingFailure)).toBeInstanceOf(Config.ConfigError);
+    expect(yield* Ref.get(pricing)).toBeNull();
+    // No hosted owner ever reads the shared environment's module credential.
     expect(reads).not.toContain(MODULE_CREDENTIAL);
-    expect(yield* Ref.get(credential)).toBeNull();
     yield* Fiber.interrupt(host);
   }),
 );
