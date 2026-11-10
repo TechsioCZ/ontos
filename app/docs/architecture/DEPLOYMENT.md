@@ -303,7 +303,7 @@ Every module deployment that calls another module presents its own module creden
 3. Run `core.identity.bind-managed-api-key` with that principal ID and provider key ID. It binds the key to the principal in the same tenant.
 4. Record the key as the module's `ONTOS_GATEWAY_MODULE_API_KEY_<UNIT>` secret, and add one binding for it to `ONTOS_GATEWAY_MODULE_BINDINGS`.
 
-Stage bootstrap does not issue these keys. `stage-accounts-file.ts` declares only the external workloads (`commerce.storefront-client`, `core.identity-provider`), and a test checks that list against the carriers' `accessWorkload` declarations.
+Stage bootstrap does not issue these keys. `stage-accounts-file.ts` declares only the external workloads (`commerce.storefront-client`, `core.identity-provider`, `payment.source-ingress`), and a test checks that list against the carriers' `accessWorkload` declarations.
 
 Local development sets `ONTOS_GATEWAY_MODULE_BINDINGS=[]` (`pnpm env:local:ensure`), so local module-to-module calls stay unprovisioned and fail closed.
 
