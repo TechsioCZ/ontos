@@ -83,8 +83,10 @@ function CartQuantity({ line }: { line: CartLine }) {
         size="sm"
         allowMouseWheel={false}
         onChange={(quantity) => {
-          if (!Number.isFinite(quantity)) return;
+          // An emptied field reports NaN. Keep it as the draft, so the field stays empty while the shopper retypes;
+          // blur then restores the cart quantity.
           setDraftQuantity(quantity);
+          if (!Number.isFinite(quantity)) return;
           // Preserve unfinished typing (e.g. "2" on the way to "20" with a minimum of 10).
           if (quantity > 0 && normalizeOrderQuantity(line, quantity) === quantity) commit(quantity);
         }}
@@ -100,7 +102,9 @@ function CartQuantity({ line }: { line: CartLine }) {
               "--sf-cart-quantity-characters": Math.max(
                 2,
                 new Intl.NumberFormat("cs-CZ", { maximumFractionDigits: 6 }).format(
-                  draftQuantity ?? line.quantity,
+                  draftQuantity === null || Number.isNaN(draftQuantity)
+                    ? line.quantity
+                    : draftQuantity,
                 ).length,
               ),
             } as CSSProperties

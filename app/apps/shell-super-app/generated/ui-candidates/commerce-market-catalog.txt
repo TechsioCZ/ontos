@@ -40,7 +40,6 @@ sm:grid-cols-2
 table
 text-danger
 text-fg-secondary
-text-label-sm
 text-sm
 visible
 w-full

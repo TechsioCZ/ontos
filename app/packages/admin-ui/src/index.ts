@@ -48,7 +48,6 @@ export {
   datePickerSegmentsClassName,
   dividedListClassName,
   dividerColorClassName,
-  sidePanelPeekClassName,
   sidePanelSurfaceClassName,
   surfaceCardClassName,
   surfaceTileClassName,

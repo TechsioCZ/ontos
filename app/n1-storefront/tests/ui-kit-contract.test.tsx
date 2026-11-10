@@ -6,8 +6,8 @@ import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
 import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 
-describe("published UI-kit patch contract", () => {
-  it("keeps ordinary button sizes and makes compact button sizing exclusive", () => {
+describe("published UI-kit contract", () => {
+  it("keeps ordinary button sizing content-driven and makes compact button sizing exclusive", () => {
     const ordinary = renderToStaticMarkup(<Button size="md">Buy</Button>);
     const compact = renderToStaticMarkup(
       <Button density="compact" size="md">
@@ -19,7 +19,7 @@ describe("published UI-kit patch contract", () => {
         Detail
       </LinkButton>,
     );
-    expect(ordinary).toContain("h-form-control-md");
+    expect(ordinary).toContain("button-size-md");
     expect(ordinary).not.toContain("h-button-compact");
     expect(compact).toContain("h-button-compact-md");
     expect(compact).not.toContain("h-form-control-md");
@@ -46,7 +46,7 @@ describe("published UI-kit patch contract", () => {
     expect(html).not.toContain("density=");
   });
 
-  it("uses the published numeric trigger colour roles for both stepper buttons", () => {
+  it("keeps both numeric stepper buttons transparent with the published hover and text roles", () => {
     const html = renderToStaticMarkup(
       <NumericInput max={2} min={1} size="md" value="1">
         <NumericInput.Control>
@@ -60,11 +60,9 @@ describe("published UI-kit patch contract", () => {
       html.match(/<button[^>]*data-part="(?:decrement|increment)-trigger"[^>]*>/gu) ?? [];
     expect(triggers).toHaveLength(2);
     for (const trigger of triggers) {
-      expect(trigger).toContain("bg-numeric-input-trigger-bg");
+      expect(trigger).toContain("bg-transparent");
       expect(trigger).toContain("hover:bg-numeric-input-trigger-bg-hover");
       expect(trigger).toContain("text-numeric-input-trigger-fg");
-      expect(trigger).not.toContain("bg-transparent");
-      expect(trigger).toContain("active:bg-icon-control-bg-active");
     }
   });
 

@@ -1,5 +1,5 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import type { ReactNode } from 'react';
 
@@ -193,6 +193,21 @@ const expectDetailBody = () => {
   expect(document.body.textContent).not.toContain(counterpartyId);
   expectHumanReadable();
 };
+
+// The ui-kit Toaster shows its live region as a manual popover. Browsers have the Popover API; happy-dom does not.
+const popoverMethods = ['showPopover', 'hidePopover'] as const;
+beforeAll(() => {
+  for (const method of popoverMethods) {
+    if (!(method in HTMLElement.prototype)) {
+      Object.defineProperty(HTMLElement.prototype, method, { configurable: true, value: () => {} });
+    }
+  }
+});
+afterAll(() => {
+  for (const method of popoverMethods) {
+    Reflect.deleteProperty(HTMLElement.prototype, method);
+  }
+});
 
 beforeEach(() => {
   rstest.resetAllMocks();

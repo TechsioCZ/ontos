@@ -20,6 +20,15 @@ beforeEach(() => {
   });
 });
 
+// The UI-kit Toaster shows its live region as a manual popover. Browsers have the Popover API; jsdom does not.
+if (typeof HTMLElement !== "undefined") {
+  for (const method of ["showPopover", "hidePopover"] as const) {
+    if (!(method in HTMLElement.prototype)) {
+      Object.defineProperty(HTMLElement.prototype, method, { configurable: true, value: () => {} });
+    }
+  }
+}
+
 // Component suites render Kai's UI outside Next's RSC runtime and root layout, on the generated
 // seed catalog. Owner reads are covered by ontos-catalog/ontos-catalog-server and the page suites.
 vi.mock("@/ontos/catalog-provider", async () => {

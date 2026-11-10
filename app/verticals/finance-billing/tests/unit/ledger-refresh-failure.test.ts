@@ -203,8 +203,9 @@ const settleRefresh = (label: string) => settleLedgerReads(label, 2);
 
 describe('finance ledger after a successful empty load', () => {
   beforeEach(() => {
-    // The store draws its browser boundary from these globals; the test supplies only that shape, no DOM.
-    rstest.stubGlobal('document', {});
+    // The store draws its browser boundary from these globals; the test supplies only that shape, no DOM. The store only
+    // asks whether `document` exists; reading it as undefined keeps ui-kit overlays inline, as in server rendering.
+    Object.defineProperty(globalThis, 'document', { configurable: true, get: () => globalThis.undefined });
     rstest.stubGlobal('addEventListener', () => {});
     rstest.stubGlobal('removeEventListener', () => {});
     rstest.stubGlobal('dispatchEvent', () => true);
@@ -213,6 +214,7 @@ describe('finance ledger after a successful empty load', () => {
   });
 
   afterEach(() => {
+    Reflect.deleteProperty(globalThis, 'document');
     mocks.records.mockReset();
   });
 

@@ -35,7 +35,6 @@ const events = new EventTarget();
 const browserGlobals = {
   addEventListener: events.addEventListener.bind(events),
   dispatchEvent: events.dispatchEvent.bind(events),
-  document: {},
   matchMedia: () => ({ addEventListener: () => {}, matches: false, removeEventListener: () => {} }),
   removeEventListener: events.removeEventListener.bind(events),
 };
@@ -44,9 +43,13 @@ beforeAll(() => {
   for (const [name, value] of Object.entries(browserGlobals)) {
     Reflect.set(globalThis, name, value);
   }
+  // The page-data store only asks whether `document` exists. Reading it as undefined keeps ui-kit overlays inline, as
+  // in server rendering, because this Node render has no DOM to portal into.
+  Object.defineProperty(globalThis, 'document', { configurable: true, get: () => globalThis.undefined });
 });
 
 afterAll(() => {
+  Reflect.deleteProperty(globalThis, 'document');
   for (const name of Object.keys(browserGlobals)) {
     Reflect.deleteProperty(globalThis, name);
   }

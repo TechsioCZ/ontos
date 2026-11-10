@@ -29,7 +29,7 @@ it.each([
     expect(native?.getAttribute("aria-hidden")).toBe("true");
     expect(native?.tabIndex).toBe(-1);
     expect(native?.value).toBe(value);
-    expect(native?.textContent).toBe(value);
+    expect(native?.textContent).toBe(label);
     expect(native?.style.position).toBe("absolute");
     expect(native?.style.width).toBe("1px");
     expect(native?.style.height).toBe("1px");
