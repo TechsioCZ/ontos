@@ -112,12 +112,8 @@ export const makeTestBoundAccessGate = (
   spec: TestAccessDecisionSpec = {},
   ports: AccessEnforcementPorts = inertAccessEnforcementPorts(),
 ): TestBoundAccessGate => {
-  const scripted = makeTestAccessDecision(spec);
-  // The double reads no ports, so it states its rebind (as withScriptedRebind does): a prepared Action needs one.
-  const accessDecision: TestAccessDecision = Object.freeze({
-    ...scripted,
-    rebind: () => withScriptedRebind(scripted),
-  });
+  // The scripted double states its own rebind, which a prepared Action authority needs.
+  const accessDecision: TestAccessDecision = makeTestAccessDecision(spec);
   return Object.freeze({ accessDecision, bound: bindAccessGate(accessDecision, ports) });
 };
 
