@@ -4,6 +4,8 @@ import { createHash } from 'node:crypto';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
+  commandActionSlugOf,
+  isProposableModuleCommand,
   OntosMcpToolCatalogJsonSchema,
   ONTOS_MODULE_MCP_TOOL_CATALOG_PATH,
 } from '../../packages/core-runtime/src/modules/mcp-contribution.ts';
@@ -27,6 +29,7 @@ import {
   registrations as salesInsightsRegistrations,
 } from '../../verticals/sales-insights/tests/unit/registered-action-http-fixture.ts';
 import { merchandiseManifest } from '../../verticals/merchandise/vertical.manifest.ts';
+import { workTasksManifest } from '../../verticals/work-tasks/vertical.manifest.ts';
 import {
   cases as merchandiseCases,
   makeFixture as merchandiseFixture,
@@ -37,6 +40,7 @@ const expectedContribution = 'Expected the real owner MCP contribution';
 const catalogPath = '/.well-known/ontos-module-mcp-tools.json';
 const expectedRegistration = 'MCP route must have the actual owner registration';
 const createSlug = 'apply-command';
+const salesInsightsAppId = 'sales-insights';
 
 it.effect(
   'tagging derives MCP commands from real closed registrations and executes their published HTTP audit identities',
@@ -163,7 +167,7 @@ it.effect(
         const derived = deriveOntosMcpContribution({
           actions: manifest.publicSurface.actions,
           api: manifest.publicSurface.api,
-          appId: 'sales-insights',
+          appId: salesInsightsAppId,
           authored: manifest.publicSurface.mcp,
           moduleId: manifest.module.id,
         });
@@ -276,7 +280,7 @@ it('all five owners publish canonical clients and schema-only contracts, with no
     { owner: 'crm-activities', slugs: [createSlug] },
     { owner: 'tagging', slugs: [createSlug, 'assign-tag', 'delete-tag', 'unassign-tag', 'update-tag'] },
     { owner: 'workforce', slugs: [createSlug, 'update-employee'] },
-    { owner: 'sales-insights', slugs: [createSlug, 'assign-metric', 'change-metric-state', 'update-metric'] },
+    { owner: salesInsightsAppId, slugs: [createSlug, 'assign-metric', 'change-metric-state', 'update-metric'] },
     {
       owner: 'merchandise',
       slugs: [
@@ -303,4 +307,55 @@ it('all five owners publish canonical clients and schema-only contracts, with no
       );
     }
   }
+});
+
+const splitOwners = [
+  { appId: 'tagging', cases: taggingCases, manifest: taggingManifest },
+  { appId: 'workforce', cases: workforceCases, manifest: workforceManifest },
+  { appId: salesInsightsAppId, cases: salesInsightsCases, manifest: salesInsightsManifest },
+  { appId: 'merchandise', cases: merchandiseCases, manifest: merchandiseManifest },
+] as const;
+
+for (const { appId, cases, manifest } of splitOwners) {
+  it(`${appId} publishes which Action owns each command, so proposals and approvals address that Action`, () => {
+    const derived = deriveOntosMcpContribution({
+      actions: manifest.publicSurface.actions,
+      api: manifest.publicSurface.api,
+      appId,
+      authored: manifest.publicSurface.mcp,
+      moduleId: manifest.module.id,
+    });
+    if (derived === undefined) {
+      expect.unreachable(expectedContribution);
+    }
+    const { commandActions } = derived.contribution;
+    expect(cases.length).toBeGreaterThan(0);
+    for (const { command, slug } of cases) {
+      // Hidden commands are published too: approvals and the module's own AI engine run them.
+      expect(commandActions?.[command._tag]).toEqual([slug]);
+      expect(commandActionSlugOf(commandActions, command._tag)).toBe(slug);
+      // Decisions on the module's own AI changes stay a person's; every other command is proposable on its Action.
+      expect(isProposableModuleCommand(commandActions, slug, command)).toBe(slug !== 'review-order-changes');
+      if (slug !== createSlug) {
+        expect(isProposableModuleCommand(commandActions, createSlug, command)).toBe(false);
+      }
+    }
+  });
+}
+
+it('work tasks keeps every command on its unsplit apply-command', () => {
+  const manifest = workTasksManifest;
+  const derived = deriveOntosMcpContribution({
+    actions: manifest.publicSurface.actions,
+    api: manifest.publicSurface.api,
+    appId: 'work-tasks',
+    authored: manifest.publicSurface.mcp,
+    moduleId: manifest.module.id,
+  });
+  if (derived === undefined) {
+    expect.unreachable(expectedContribution);
+  }
+  const { commandActions } = derived.contribution;
+  expect(commandActions?.CreateTask).toEqual([createSlug]);
+  expect(isProposableModuleCommand(commandActions, createSlug, { _tag: 'CreateTask', title: 'Task' })).toBe(true);
 });

@@ -1044,6 +1044,7 @@ export {
 export { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from './modules/module-dependency-contracts.ts';
 export {
   ONTOS_MODULE_MCP_TOOL_CATALOG_PATH,
+  OntosMcpCommandActionsSchema,
   OntosMcpContributionSchema,
   OntosMcpHidden,
   OntosMcpRevisionSchema,
@@ -1052,9 +1053,14 @@ export {
   OntosMcpToolCatalogReferenceSchema,
   OntosMcpToolCatalogSchema,
   OntosMcpToolSchema,
+  commandActionSlugOf,
+  commandActionSlugsOf,
   defineOntosMcpContribution,
+  isCommandUnionAction,
+  isProposableModuleCommand,
 } from './modules/mcp-contribution.ts';
 export type {
+  OntosMcpCommandActions,
   OntosMcpCommandInput,
   OntosMcpContribution,
   OntosMcpContributionInput,

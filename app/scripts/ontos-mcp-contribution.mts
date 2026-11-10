@@ -17,6 +17,7 @@ import {
   OntosMcpToolCatalogJsonSchema,
 } from '../packages/core-runtime/src/modules/mcp-contribution.ts';
 import type {
+  OntosMcpCommandActions,
   OntosMcpContribution,
   OntosMcpContributionInput,
   OntosMcpTool,
@@ -575,7 +576,20 @@ const checkUniqueTools = (
   return Result.void;
 };
 
-const contributionOf = (authored: OntosMcpContributionInput, toolCatalog: string, toolCount: number) => {
+/** Every command tag of the command-union Actions, with the slugs of the Actions that accept it (hidden ones too). */
+const commandActionsOf = (commandActions: readonly ActionEndpoint[]): OntosMcpCommandActions =>
+  Object.fromEntries(
+    [...commandCandidatesOf(commandActions)]
+      .toSorted(([left], [right]) => left.localeCompare(right))
+      .map(([tag, candidates]) => [tag, candidates.map(({ action }) => action.slug)] as const),
+  );
+
+const contributionOf = (
+  authored: OntosMcpContributionInput,
+  toolCatalog: string,
+  toolCount: number,
+  commandActions: OntosMcpCommandActions,
+) => {
   const { revision } = authored;
   const contribution: Mutable<OntosMcpContribution> = {
     approvals: authored.approvals,
@@ -602,6 +616,9 @@ const contributionOf = (authored: OntosMcpContributionInput, toolCatalog: string
       label: { cs: authored.approvalsPage.label.cs, en: authored.approvalsPage.label.en },
       path: authored.approvalsPage.path,
     };
+  }
+  if (Object.keys(commandActions).length > 0) {
+    contribution.commandActions = commandActions;
   }
   if (authored.commandFieldLabels !== undefined) {
     contribution.commandFieldLabels = { ...authored.commandFieldLabels };
@@ -663,7 +680,7 @@ const deriveContributionResult = (
       tools: drafts.map(({ tool }, index) => ({ ...tool, inputSchema: schemas[index] ?? {} })),
     });
     const contribution = yield* Schema.decodeUnknownResult(OntosMcpContributionSchema, { onExcessProperty: 'error' })(
-      contributionOf(authored, toolCatalog, drafts.length),
+      contributionOf(authored, toolCatalog, drafts.length, commandActionsOf(commandActions)),
     );
     return {
       contribution,

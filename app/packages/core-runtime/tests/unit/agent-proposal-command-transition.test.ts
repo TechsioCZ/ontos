@@ -3,7 +3,7 @@ import { expect, it } from 'effect-rstest';
 
 import { AgentProposalCommandPayloadSchema } from '../../src/auth/agent-proposal-command-contract.ts';
 import { AgentProposalCommandError } from '../../src/auth/agent-proposal-command-error.ts';
-import { isProposableCommand } from '../../src/auth/agent-proposal-command-preparation.ts';
+import { commandActionSlugOf, isProposableModuleCommand } from '../../src/modules/mcp-contribution.ts';
 import { planProposalTransition, proposalReservationQuery } from '../../src/auth/agent-proposal-command-transition.ts';
 import { mutateAgentProposalsAction } from '../../src/modules/actions/mutate-agent-proposals.action.ts';
 import {
@@ -61,13 +61,32 @@ it('rejects caller-selected authority, unbounded batches and agent-supplied undo
   expect(Option.isNone(decode({ batchId, operation: 'execute-sql', sql: 'delete everything' }))).toBe(true);
 });
 
-it('allows exact named Actions or nonempty module commands, never nested human decision commands', () => {
-  expect(isProposableCommand('update', { title: 'New' })).toBe(true);
-  expect(isProposableCommand('update', { _tag: 'UpdateTask' })).toBe(false);
-  expect(isProposableCommand('apply-command', { _tag: 'UpdateTask' })).toBe(true);
-  expect(isProposableCommand('apply-command', { _tag: '' })).toBe(false);
-  expect(isProposableCommand('apply-command', { _tag: 'AiDecideChanges' })).toBe(false);
-  expect(isProposableCommand('apply-command', { _tag: 'AiRevertBatch' })).toBe(false);
+it('allows a tagged command only on the Action whose union owns it, never human decision commands', () => {
+  const commandActions = {
+    AiDecideChanges: ['review'],
+    CreateTask: ['apply-command'],
+    RenameTask: ['manage', 'apply-command'],
+  };
+  expect(isProposableModuleCommand(commandActions, 'update', { title: 'New' })).toBe(true);
+  expect(isProposableModuleCommand(commandActions, 'update', { _tag: 'UpdateTask' })).toBe(false);
+  expect(isProposableModuleCommand(commandActions, 'apply-command', { _tag: 'CreateTask' })).toBe(true);
+  expect(isProposableModuleCommand(commandActions, 'manage', { _tag: 'RenameTask' })).toBe(true);
+  expect(isProposableModuleCommand(commandActions, 'apply-command', { _tag: 'RenameTask' })).toBe(true);
+  expect(isProposableModuleCommand(commandActions, 'manage', { _tag: 'CreateTask' })).toBe(false);
+  expect(isProposableModuleCommand(commandActions, 'manage', { title: 'New' })).toBe(false);
+  expect(isProposableModuleCommand(commandActions, 'apply-command', { _tag: '' })).toBe(false);
+  expect(isProposableModuleCommand(commandActions, 'review', { _tag: 'AiDecideChanges' })).toBe(false);
+  expect(isProposableModuleCommand(undefined, 'apply-command', { _tag: 'CreateTask' })).toBe(false);
+  expect(isProposableModuleCommand(undefined, 'update', { title: 'New' })).toBe(true);
+});
+
+it('resolves a module-supplied command to its owning Action, the preferred one first', () => {
+  const commandActions = { RenameTask: ['manage', 'apply-command'], UpdateTask: ['manage'] };
+  expect(commandActionSlugOf(commandActions, 'UpdateTask')).toBe('manage');
+  expect(commandActionSlugOf(commandActions, 'UpdateTask', 'apply-command')).toBe('manage');
+  expect(commandActionSlugOf(commandActions, 'RenameTask', 'apply-command')).toBe('apply-command');
+  expect(commandActionSlugOf(commandActions, 'RenameTask')).toBeUndefined();
+  expect(commandActionSlugOf(commandActions, 'toString')).toBeUndefined();
 });
 
 it.effect('atomically claims one pending row under the native invocation identity', () =>

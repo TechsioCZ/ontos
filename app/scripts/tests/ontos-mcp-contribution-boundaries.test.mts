@@ -259,6 +259,8 @@ it('keeps catalog bytes, digest, command matching and optional contribution meta
     approvalReview: { path: READ_PATH, privateRecords: true },
     approvals: true,
     approvalsPage: { label: title, path: '/approvals' },
+    // Every command tag, hidden ones included, with the Action whose command union accepts it.
+    commandActions: { CancelBooking: ['execute'], KeepBooking: ['execute'] },
     commandFieldLabels: { note: 'Poznámka' },
     description: title,
     keywords: authored.keywords,
