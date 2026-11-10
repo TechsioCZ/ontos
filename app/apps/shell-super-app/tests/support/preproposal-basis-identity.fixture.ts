@@ -46,9 +46,7 @@ import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
-import { loadModuleCredentialEnrolment } from '@app/core-runtime/auth/module-credentials';
 import type { ModuleCredentialEnrolment } from '@app/core-runtime/auth/module-credentials';
-import { CoreDatabase } from '@app/core-runtime/db/client';
 
 const protocol = 'ontos.shell.preproposal-basis.identity.v1' as const;
 
@@ -249,6 +247,14 @@ export const serve = Effect.scoped(
       catch: () => unavailable('module-credential-provisioning-import'),
       try: async () => await import('../../api/auth/module-credential-provisioning.ts'),
     });
+    const { loadModuleCredentialEnrolment } = yield* Effect.tryPromise({
+      catch: () => unavailable('module-credential-enrolment-import'),
+      try: async () => await import('@app/core-runtime/auth/module-credentials'),
+    });
+    const { CoreDatabase } = yield* Effect.tryPromise({
+      catch: () => unavailable('core-database-import'),
+      try: async () => await import('@app/core-runtime/db/client'),
+    });
     const { makeIdentityLifecycleService } = yield* Effect.tryPromise({
       catch: () => unavailable('identity-lifecycle-import'),
       try: async () => await import('../../api/auth/identity-lifecycle.ts'),
@@ -264,7 +270,6 @@ export const serve = Effect.scoped(
       expectedRole: databaseConfig.expectedRole,
     });
     const persistence = CorePersistenceLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, databaseConfig)));
-    const coreDatabase = Context.get(yield* Layer.build(persistence), CoreDatabase);
     const states = TenantModuleStateServiceLive.pipe(Layer.provide(persistence));
     const gate = ModuleStateGateLive.pipe(Layer.provide(states));
     const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(gate));
@@ -424,15 +429,23 @@ export const serve = Effect.scoped(
             return yield* unavailable('original-buyer-provider-binding');
           }
           // Each calling module's credential is provisioned by the platform, exactly as on every environment.
-          const provisioned = yield* provisionModuleCredentials({
-            appIds: [...MODULE_APP_IDS],
-            operationId: yield* crypto.randomUUIDv4(),
-          }).pipe(
-            Effect.provideService(ApiKeyService, keys),
-            Effect.provideService(AuthDatabase, authDatabase),
-            Effect.provideService(CoreDatabase, coreDatabase),
+          const { enrolment, provisioned } = yield* Effect.scoped(
+            Effect.gen(function* provisionModuleCredentialsOnce() {
+              const coreDatabase = Context.get(yield* Layer.build(persistence), CoreDatabase);
+              const issued = yield* provisionModuleCredentials({
+                appIds: [...MODULE_APP_IDS],
+                operationId: yield* crypto.randomUUIDv4(),
+              }).pipe(
+                Effect.provideService(ApiKeyService, keys),
+                Effect.provideService(AuthDatabase, authDatabase),
+                Effect.provideService(CoreDatabase, coreDatabase),
+              );
+              return {
+                enrolment: yield* loadModuleCredentialEnrolment(coreDatabase.executor),
+                provisioned: issued,
+              };
+            }),
           );
-          const enrolment = yield* loadModuleCredentialEnrolment(coreDatabase.executor);
           const moduleIdentity = (appId: string) => moduleIdentityOf(provisioned, enrolment, appId);
           const cccReader = yield* moduleIdentity('commerce-customer-context');
           const pricingIssuer = yield* moduleIdentity('pricing');
