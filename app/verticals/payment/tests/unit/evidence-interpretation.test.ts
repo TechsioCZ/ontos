@@ -603,6 +603,48 @@ describe('#1151 Payment evidence interpretation', () => {
     );
   });
 
+  it('#1151 a confirmation of a collection whose every receipt was disproven is a separate charge, never corroboration', () => {
+    // Charge 1 was reduced and then fully retracted (the retraction is held): nothing standing confirms it.
+    const allDisproven = {
+      ...aggregateOf(
+        [operation('EFFECT_CONFIRMED')],
+        [
+          accepted('obs-charge-1', { economicEffectKey: 'gopay:charge:1' }),
+          accepted('obs-charge-1-reduction', {
+            amount: czk(60_000),
+            correctionEffect: 'REDUCE_ESTABLISHED_COLLECTION',
+            correctsObservationId: 'obs-charge-1',
+            factKind: 'SOURCE_CORRECTION',
+          }),
+        ],
+      ),
+      fullyDisprovenObservationIds: new Set(['obs-charge-1']),
+    };
+    expect(interpretPaymentObservation(allDisproven, observed({ economicEffectKey: 'gopay:charge:2' }))).toEqual(
+      PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'DISTINCT_ECONOMIC_EFFECT' }),
+    );
+    // An operation confirmed without any recorded statement still accepts its first confirmation.
+    expect(
+      interpretPaymentObservation(
+        aggregateOf([operation('EFFECT_CONFIRMED')]),
+        observed({ economicEffectKey: 'gopay:charge:1' }),
+      ),
+    ).toEqual(
+      PaymentEvidenceDecision.NO_CHANGE({ operationId: COLLECT_ID, reason: 'CORROBORATES_ESTABLISHED_OUTCOME' }),
+    );
+  });
+
+  it('#1150 a not-effected statement about other money than the operation never releases it', () => {
+    const pendingRefund = operation('PENDING', { amount: czk(10_000), kind: 'REFUND', operationId: 'refund-1' });
+    const notEffected = (amountMinor: number) =>
+      interpretPaymentObservation(
+        aggregateOf([operation('EFFECT_CONFIRMED'), pendingRefund]),
+        observed({ amount: czk(amountMinor), factKind: 'REFUND_NOT_EFFECTED', operationId: 'refund-1' }),
+      );
+    expect(PaymentEvidenceDecision.$is('CONFLICT')(notEffected(40_000))).toBe(true);
+    expect(PaymentEvidenceDecision.$is('TRANSITION')(notEffected(10_000))).toBe(true);
+  });
+
   it('#1151 a re-issued correction of a re-exported statement counts once; an overlapping one is held', () => {
     const correctedReceipt = aggregateOf(
       [operation('EFFECT_CONFIRMED')],
