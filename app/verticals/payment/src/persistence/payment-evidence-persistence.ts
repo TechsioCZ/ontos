@@ -260,6 +260,7 @@ const interpretedViewOf = (row: ObservationRow, operationId: string | undefined)
   amountOrUndefined(row.amountMinor, row.currency).pipe(
     Effect.map((amount): PaymentAcceptedObservationView => ({
       amount: Option.getOrUndefined(amount),
+      correctionEffect: row.correctionEffect ?? undefined,
       correctsObservationId: row.correctsObservationId ?? undefined,
       economicEffectKey: row.economicEffectKey ?? undefined,
       factKind: row.factKind,
