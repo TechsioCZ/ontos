@@ -10,7 +10,8 @@ import { Command, Flag } from 'effect/cli';
 import { Base64 } from 'effect/encoding';
 import { FetchHttpClient, HttpClient, HttpClientError } from 'effect/http';
 import type { HttpClientRequest } from 'effect/http';
-import { MerchandiseCommandSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
+import { ChangeProductImagesPayloadSchema } from '../../verticals/merchandise/shared/actions/change-product-images.ts';
+import { ManageCatalogPayloadSchema } from '../../verticals/merchandise/shared/actions/manage-catalog.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../verticals/merchandise/shared/apis/records.ts';
 import { MediaRequestSchema, MediaResponseSchema } from '../../verticals/merchandise/shared/apis/media.ts';
 import type { AkrosEncodedState } from '../../verticals/merchandise/scripts/akros-baseline.ts';
@@ -22,7 +23,7 @@ import {
   isSourcePlaceholder,
 } from '../../verticals/merchandise/scripts/akros-pseudonym.ts';
 import { akrosDemoLegalEntityId, demoTenantId } from './fixture-ids.mts';
-import { connectSeedClient, DemoSeedError } from './seed-client.mts';
+import { connectSeedClient, DemoSeedError, ownerAction } from './seed-client.mts';
 import type { SeedClient } from './seed-client.mts';
 import { seedCheckpointDirectory, seedWriteCheckpoint } from './seed-checkpoint.mts';
 import {
@@ -58,8 +59,6 @@ const PUBLIC_STOREFRONT = new Map([
 
 const Request = Schema.toEncoded(RecordsRequestSchema);
 const Response = Schema.toEncoded(RecordsResponseSchema);
-const Payload = Schema.Struct({ command: Schema.toEncoded(MerchandiseCommandSchema), expectedRevision: Schema.Int });
-const Result = Schema.Struct({ image: Schema.optionalKey(Schema.String), revision: Schema.Int });
 const MediaRequest = Schema.toEncoded(MediaRequestSchema);
 const MediaResponse = Schema.toEncoded(MediaResponseSchema);
 const Image = Schema.Struct({ bytes: Schema.Int, hash: Schema.String, source: Schema.String });
@@ -202,7 +201,8 @@ const requestDiagnostic = (request: HttpClientRequest.HttpClientRequest) => {
   const staffPhases = new Map([
     ['/shell-super-app-api/auth/gateway-context', 'gateway-assertion'],
     ['/merchandise-api/reads/records', 'owner-records'],
-    ['/merchandise-api/merchandise/actions/apply-command', 'owner-action'],
+    ['/merchandise-api/merchandise/actions/change-product-images', 'owner-action'],
+    ['/merchandise-api/merchandise/actions/manage-catalog', 'owner-action'],
   ]);
   const imagePath = /^\/(?:(?:cs|sk|en|pl)\/)?obrazky\//u.test(url.pathname);
   let requestPhase = 'other';
@@ -323,21 +323,36 @@ const readCategory = (client: SeedClient, id: string) =>
     );
     return { category, revision: page.revision };
   });
-const command = (client: SeedClient, value: (typeof Payload.Type)['command'], expectedRevision: number) =>
-  client.call(
-    'merchandise',
-    '/merchandise/actions/apply-command',
-    Payload,
-    { command: value, expectedRevision },
-    Result,
-    true,
-  );
+const changeProductImages = ownerAction('change-product-images', Schema.toEncoded(ChangeProductImagesPayloadSchema));
+const manageCatalog = ownerAction('manage-catalog', Schema.toEncoded(ManageCatalogPayloadSchema));
 /** Gallery changes re-validate against the current gallery, never against a revision. */
+const WriteResult = Schema.Struct({ image: Schema.optionalKey(Schema.String), revision: Schema.Int });
 const galleryChange = (
   client: SeedClient,
   id: string,
-  change: Extract<(typeof Payload.Type)['command'], { _tag: 'ChangeProductImages' }>['change'],
-) => command(client, { _tag: 'ChangeProductImages', change, id }, 0);
+  change: (typeof changeProductImages.payload.Type)['command']['change'],
+) =>
+  client.call(
+    'merchandise',
+    `/merchandise/actions/${changeProductImages.slug}`,
+    changeProductImages.payload,
+    { command: { _tag: 'ChangeProductImages', change, id }, expectedRevision: 0 },
+    WriteResult,
+    true,
+  );
+const manageCatalogWrite = (
+  client: SeedClient,
+  command: (typeof manageCatalog.payload.Type)['command'],
+  expectedRevision: number,
+) =>
+  client.call(
+    'merchandise',
+    `/merchandise/actions/${manageCatalog.slug}`,
+    manageCatalog.payload,
+    { command, expectedRevision },
+    WriteResult,
+    true,
+  );
 /**
  * True when the public storefront serves the path as an image to an anonymous visitor. The storefront may redirect the
  * root-relative path to its default market (`/obrazky/…` → `/cs/obrazky/…`); only same-origin redirects are followed.
@@ -763,7 +778,7 @@ const applyProduct = (client: SeedClient, root: string, entry: PlannedProduct) =
     }
     const { product: current, revision } = yield* readProduct(client, id);
     if (digest({ ...productTextPatch(current), imageSrc: current.imageSrc }) !== digest(finalPatch)) {
-      yield* command(client, { _tag: 'UpdateProduct', id, patch: finalPatch }, revision);
+      yield* manageCatalogWrite(client, { _tag: 'UpdateProduct', id, patch: finalPatch }, revision);
     }
     const { product: after } = yield* readProduct(client, id);
     if (
@@ -869,7 +884,7 @@ export const applyCategory = (
       }
       yield* catalogStep(
         { categoryId: before.id, phase: 'write-category' },
-        command(
+        manageCatalogWrite(
           client,
           { _tag: 'UpdateCategory', id: before.id, patch: intent?.patch ?? patch },
           intent?.expectedRevision ?? revision,
