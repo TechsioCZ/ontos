@@ -50,6 +50,7 @@ const owners = [
   'legal-agreements',
   'merchandise',
   partyOwner,
+  'payment',
   'payment-term-catalog',
   priceGroupOwner,
   'pricing',
@@ -94,6 +95,23 @@ for (const owner of owners) {
   }
 }
 const ownerFile = (owner: string, file: string): string => path.join(appRoot, 'verticals', owner, file);
+
+it('covers every owner whose shared API publishes the owner Action approval API', () => {
+  const verticals = path.join(appRoot, 'verticals');
+  const published = readdirSync(verticals, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .filter((owner) => {
+      try {
+        return readFileSync(path.join(verticals, owner, 'shared/api.ts'), 'utf-8').includes(
+          '.addHttpApi(OwnerActionApprovalApi)',
+        );
+      } catch {
+        return false;
+      }
+    });
+  expect([...owners].toSorted()).toEqual(published.toSorted());
+});
 const sourceOf = (owner: string, file: string): string => sources.get(ownerFile(owner, file)) ?? '';
 const redemptionContext = (owner: string, file: string) => ({
   ownerPath: path.join(appRoot, 'verticals', owner),
