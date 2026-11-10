@@ -24,7 +24,7 @@ import {
 import { ProductDetailView } from '../product-detail-dialog.tsx';
 import type { ProductDetailTab } from '../product-detail-dialog.tsx';
 import { productVariantIdFromSearch } from '../product-variant-destination.ts';
-import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
+import { RecordRouteTitle, UltramodernRouteHead } from '../../../../ultramodern-route-head';
 import csResource from '../../../../../../locales/cs/merchandise.json';
 import enResource from '../../../../../../locales/en/merchandise.json';
 import '../../../../index.css';
@@ -124,6 +124,7 @@ const ProductDetailPageContent = ({ context, legalEntityId, routeParams, search 
   return (
     <>
       <UltramodernRouteHead />
+      <RecordRouteTitle name={state.status === 'ready' ? state.product.name : undefined} />
       {/* A failed reload of the product on screen keeps the editor and its unsaved drafts; it only says so. */}
       {state.status === 'ready' && failure !== undefined && (
         <div className="flex flex-wrap items-center gap-200">
