@@ -168,7 +168,14 @@
         "selected": "Selected contact",
         "title": "Contact persons",
         "unavailableDescription": "The contact does not exist, was removed, or you do not have access to it. A salesperson only sees contacts of clients assigned to them.",
-        "unavailableTitle": "Contact unavailable"
+        "unavailableTitle": "Contact unavailable",
+        "newTitle": "New contact person",
+        "editTitle": "Edit contact person",
+        "nameRequired": "Enter a name",
+        "emailInvalid": "Invalid e-mail",
+        "saveFailed": "The contact person could not be saved.",
+        "added": "Contact person added",
+        "saved": "Contact person saved"
       },
       "fields": {
         "address": "Address",
@@ -216,7 +223,13 @@
         "responsibleSalesperson": "Responsible salesperson",
         "result": "Result",
         "searchLabel": "Search visits",
-        "searchPlaceholder": "Search records"
+        "searchPlaceholder": "Search records",
+        "planContact": "Plan a contact",
+        "contactPlanned": "Contact planned",
+        "manualPlanHint": "The salesperson's own plan, not a system recommendation.",
+        "clientSalesperson": "Client's assigned salesperson",
+        "recordFailed": "The record could not be saved.",
+        "planFailed": "Saving failed."
       }
     }
   }

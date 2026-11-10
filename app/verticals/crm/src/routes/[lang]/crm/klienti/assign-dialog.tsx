@@ -1,92 +1,95 @@
-import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { assignableSalespeople, salespersonName } from '../../../../crm/records.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { Effect } from 'effect';
 // (Re)assign a client to a salesperson — Správce / Vedoucí only (the reassignment authority
 // `demo.crm.client-owner.assign`, enforced by the reducer).
 // The reason is stored in the assignment history; past visits keep their author (C00-03).
+// Picking and typing change only the draft; the shared Save button ("Uložit", last in the footer) sends AssignClient,
+// and leaving with unsaved input asks Uložit / Zahodit změny / Zůstat.
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { dialogCloseLabel } from '@app/admin-ui';
-import { Button } from '@techsio/ui-kit/atoms/button';
+import { SelectTemplate } from '@app/admin-ui/select-template';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
-import { SelectTemplate } from '@app/admin-ui/select-template';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
+import { Option } from 'effect';
 import { useState } from 'react';
 import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { Client } from '../../../../../shared/domain/clients.ts';
+import { CrmFormSaveActions, useCrmFormSave } from '../../../../crm/form-save.tsx';
+import { assignableSalespeople, salespersonName } from '../../../../crm/records.ts';
+import type { CrmCommandSubmit } from '../../../../crm/records.ts';
 
 const NONE = 'none';
 
+interface AssignDraft {
+  readonly reason: string;
+  readonly target: string;
+}
+
+/** AssignClient for a changed owner; none while the owner is unchanged or a transfer has no reason. */
+const assignCommandOf = (client: Client, draft: AssignDraft): Option.Option<CrmCommandInput> => {
+  const current = client.ownerSalespersonId ?? NONE;
+  const reassign = client.ownerSalespersonId !== undefined;
+  if (draft.target === current || (reassign && draft.reason.trim() === '')) {
+    return Option.none();
+  }
+  const command: Extract<CrmCommandInput, { readonly _tag: 'AssignClient' }> = {
+    _tag: 'AssignClient',
+    clientId: client.id,
+  };
+  if (draft.target !== NONE) {
+    Object.assign(command, { toSalespersonId: draft.target });
+  }
+  if (draft.reason.trim() !== '') {
+    Object.assign(command, { reason: draft.reason.trim() });
+  }
+  return Option.some(command);
+};
+
 export const AssignDialog = ({
-  busy,
   client,
   onClose,
   records,
-  run,
+  submit,
 }: {
-  readonly busy: boolean;
   readonly client: Client;
   readonly onClose: () => void;
   readonly records: RecordsResponse;
-  readonly run: (command: CrmCommandInput, success: string) => Effect.Effect<boolean>;
+  readonly submit: CrmCommandSubmit;
 }) => {
   const { t } = useModernI18n();
+  const toaster = useToast();
   const current = client.ownerSalespersonId ?? NONE;
-  const [target, setTarget] = useState(current);
-  const [reason, setReason] = useState('');
-  const [touched, setTouched] = useState(false);
+  const [draft, setDraft] = useState<AssignDraft>({ reason: '', target: current });
   const reassign = client.ownerSalespersonId !== undefined;
-  const reasonMissing = reassign && reason.trim() === '';
-  const unchanged = target === current;
-  const targetName = target === NONE ? 'bez obchodníka' : (salespersonName(records, target) ?? '');
-
-  const save = () => {
-    setTouched(true);
-    if (unchanged || reasonMissing) {
-      return;
-    }
-    const command: Extract<CrmCommandInput, { readonly _tag: 'AssignClient' }> = {
-      _tag: 'AssignClient',
-      clientId: client.id,
-    };
-    if (target !== NONE) {
-      Object.assign(command, { toSalespersonId: target });
-    }
-    if (reason.trim() !== '') {
-      Object.assign(command, { reason: reason.trim() });
-    }
-    browserRuntime.runFork(
-      run(command, target === NONE ? 'Klient je nyní bez obchodníka' : `Klient přidělen: ${targetName}`).pipe(
-        Effect.tap((ok) =>
-          Effect.sync(() => {
-            if (ok) {
-              onClose();
-            }
-          }),
-        ),
-      ),
-    );
-  };
+  const form = useCrmFormSave<AssignDraft>({
+    command: (value) => assignCommandOf(client, value),
+    failureText: (message) => message ?? 'Akce se nezdařila',
+    onSaved: (value) => {
+      toaster.create({
+        title:
+          value.target === NONE
+            ? 'Klient je nyní bez obchodníka'
+            : `Klient přidělen: ${salespersonName(records, value.target) ?? ''}`,
+        type: 'success',
+      });
+      onClose();
+    },
+    submit,
+    value: draft,
+  });
+  const reasonMissing =
+    form.record.status === 'invalid' && reassign && draft.target !== current && draft.reason.trim() === '';
 
   return (
     <Dialog
-      actions={
-        <>
-          <Button onClick={onClose} theme="outlined" variant="secondary">
-            Zrušit
-          </Button>
-          <Button disabled={unchanged} isLoading={busy} loadingText="Ukládám…" onClick={save} variant="primary">
-            {reassign ? 'Převést klienta' : 'Přidělit'}
-          </Button>
-        </>
-      }
+      actions={<CrmFormSaveActions form={form} onCancel={onClose} />}
       closeLabel={dialogCloseLabel}
       customTrigger
       description={`Nyní: ${salespersonName(records, client.ownerSalespersonId) ?? 'bez obchodníka'}. Nový obchodník uvidí klienta i celou jeho historii; návštěvy zapsané dosavadním obchodníkem zůstanou s původním autorem.`}
       onOpenChange={({ open }) => {
         if (!open) {
-          onClose();
+          form.guard.request(onClose);
         }
       }}
       open
@@ -104,19 +107,19 @@ export const AssignDialog = ({
           ]}
           label={t('crm.ciClientsVisits.clients.newSalesperson')}
           name="assign-target"
-          onValueChange={(details) => setTarget(details.value[0] ?? current)}
-          value={[target]}
+          onValueChange={(details) => setDraft((value) => ({ ...value, target: details.value[0] ?? current }))}
+          value={[draft.target]}
         />
         <FormTextarea
           id="crm-assign-reason"
           label={reassign ? 'Důvod převodu (povinný)' : 'Poznámka k přidělení'}
           maxLength={4000}
-          onChange={(event) => setReason(event.target.value)}
+          onChange={(event) => setDraft((value) => ({ ...value, reason: event.target.value }))}
           placeholder={reassign ? 'např. Změna regionu, převzetí po kolegovi' : ''}
           rows={3}
-          value={reason}
+          value={draft.reason}
         />
-        {touched && reasonMissing && (
+        {reasonMissing && (
           <StatusText showIcon status="error">
             Uveďte důvod převodu, zapíše se do historie klienta.
           </StatusText>
