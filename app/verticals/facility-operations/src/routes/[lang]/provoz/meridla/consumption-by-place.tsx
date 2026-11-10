@@ -95,16 +95,20 @@ export const ConsumptionByPlace = ({
                 month: monthLabel(point.month, language),
                 state: point.anomaly ? t(`${k}.detail.series.anomaly`) : t(`${k}.detail.series.normal`),
               }))}
+              dataTableLabel={t('facility-operations.chartData.toggle')}
               formatCategory={(month) => monthTitles.get(String(month)) ?? String(month)}
               formatValue={(value) => formatQuantity(value, unit)}
               height={240}
               legend={series.some((point) => point.anomaly)}
+              legendLabel={t('facility-operations.chartData.series')}
               locale={language}
               series="state"
               stacked
               type="bar"
               x="month"
+              xLabel={t('facility-operations.chartData.category')}
               y="consumption"
+              yLabel={t('facility-operations.chartData.value')}
             />
             <p className="pt-100 text-fg-secondary text-xs">{t(`${k}.byUnit.meters`, { count: counted })}</p>
           </div>

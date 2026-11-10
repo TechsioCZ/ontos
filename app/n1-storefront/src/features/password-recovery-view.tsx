@@ -2,7 +2,7 @@
 
 import NextLink from "next/link";
 import { Button } from "@techsio/ui-kit/atoms/button";
-import { Link } from "@techsio/ui-kit/atoms/link";
+import { Link } from "@/features/plain-link";
 import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { Effect, Exit, Schema } from "effect";

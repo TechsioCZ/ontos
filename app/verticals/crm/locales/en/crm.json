@@ -1,5 +1,10 @@
 {
   "crm": {
+    "chartData": {
+      "toggle": "Show chart data",
+      "category": "Month",
+      "value": "Value"
+    },
     "title": "CRM",
     "role": "crm",
     "routeSurface": "Hanák wholesale CRM.",

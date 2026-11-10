@@ -1,5 +1,11 @@
 {
   "facility-operations": {
+    "chartData": {
+      "toggle": "Show chart data",
+      "category": "Period",
+      "value": "Consumption",
+      "series": "Series"
+    },
     "language": {
       "cs": "Czech",
       "en": "English",

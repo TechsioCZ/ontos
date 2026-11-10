@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@techsio/ui-kit/atoms/button";
-import { Link } from "@techsio/ui-kit/atoms/link";
+import { Link } from "@/features/plain-link";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { FormTextarea } from "@techsio/ui-kit/molecules/form-textarea";
 import { useToast } from "@techsio/ui-kit/molecules/toast";

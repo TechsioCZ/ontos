@@ -1,5 +1,11 @@
 {
   "facility-operations": {
+    "chartData": {
+      "toggle": "Zobrazit data grafu",
+      "category": "Období",
+      "value": "Spotřeba",
+      "series": "Řada"
+    },
     "language": {
       "cs": "Čeština",
       "en": "Angličtina",

@@ -3,7 +3,7 @@
 import NextLink from "next/link";
 import { useLayoutEffect, useState } from "react";
 import type { RefObject } from "react";
-import { Link } from "@techsio/ui-kit/atoms/link";
+import { Link } from "@/features/plain-link";
 import { Accordion } from "@techsio/ui-kit/molecules/accordion";
 import { Dialog } from "@techsio/ui-kit/molecules/dialog";
 import { VerticalNavigation } from "@techsio/ui-kit/molecules/vertical-navigation";
