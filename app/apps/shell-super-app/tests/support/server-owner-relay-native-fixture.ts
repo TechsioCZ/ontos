@@ -5,6 +5,8 @@ import {
   OntosShellRuntimeContractSchema,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
+import { loadModuleCredentialEnrolment } from '@app/core-runtime/auth/module-credentials';
+import { CoreDatabase } from '@app/core-runtime/db/client';
 import { GatewayContextV2ClaimsSchema, GatewayTrustedPrincipalContextSchema } from '@app/shared-contracts';
 import type { GatewayTrustedPrincipalContext } from '@app/shared-contracts';
 import { jwtVerify } from 'jose';
@@ -14,6 +16,10 @@ import { ChildProcess } from 'effect/process';
 import { HttpClient } from 'effect/http';
 
 import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';
+import { ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
+import { AuthConfig } from '../../api/auth/config.ts';
+import { AuthDatabase } from '../../api/auth/db/client.ts';
+import { provisionModuleCredentials } from '../../api/auth/module-credential-provisioning.ts';
 
 const SHELL_APP_ID = 'shell-super-app';
 const CUSTOMER_CONTEXT_APP_ID = 'commerce-customer-context';
@@ -115,7 +121,6 @@ interface PackagedApplicationInput {
   readonly port?: number;
   readonly relativeDirectory: string;
   readonly relaySource?: { readonly apiKey: Redacted.Redacted; readonly shellBaseUrl: string };
-  readonly sourceBindings?: Redacted.Redacted;
 }
 
 const makePackagedEnvironment = Effect.fn('ServerOwnerRelayNative.makePackagedEnvironment')(
@@ -176,10 +181,6 @@ const makePackagedEnvironment = Effect.fn('ServerOwnerRelayNative.makePackagedEn
         ONTOS_SHELL_GATEWAY_BASE_URL: input.relaySource.shellBaseUrl,
       });
     }
-    // The Shell requires an explicit enrolment; a deployment with no module credential enrols none.
-    Object.assign(environment, {
-      ONTOS_GATEWAY_MODULE_BINDINGS: Redacted.value(input.sourceBindings ?? Redacted.make('[]')),
-    });
     return environment;
   },
 );
@@ -625,5 +626,47 @@ export const runRegisteredPostalFactoryProbe = Effect.fn('ServerOwnerRelayNative
     ).pipe(
       Effect.mapError(() => new PackagedOwnerStartupError({ reason: 'Invalid closed postal probe result protocol' })),
     );
+  },
+);
+
+/**
+ * A source module's credential exactly as the platform provisions it on every boot: the platform's module principal,
+ * a key it owns and its binding. No person issues it, and the Shell derives its binding from the enrolment.
+ */
+export const provisionSourceModuleCredential = Effect.fn('ServerOwnerRelayNative.provisionSourceModuleCredential')(
+  function* provisionSourceModuleCredential(input: {
+    readonly appId: string;
+    readonly configuration: typeof AuthConfig.Service;
+    readonly database: (typeof CoreDatabase.Service)['executor'];
+    readonly persistence: typeof AuthDatabase.Service;
+  }) {
+    const crypto = yield* Crypto.Crypto;
+    const keys = yield* makeApiKeyService().pipe(
+      Effect.provideService(AuthConfig, input.configuration),
+      Effect.provideService(AuthDatabase, input.persistence),
+    );
+    const provisioned = yield* provisionModuleCredentials({
+      appIds: [input.appId],
+      operationId: yield* crypto.randomUUIDv4(),
+    }).pipe(
+      Effect.provideService(ApiKeyService, keys),
+      Effect.provideService(AuthDatabase, input.persistence),
+      Effect.provideService(CoreDatabase, { executor: input.database }),
+    );
+    const secret = provisioned.credentials.get(input.appId);
+    const enrolled = (yield* loadModuleCredentialEnrolment(input.database)).find(
+      (credential) => credential.appId === input.appId && provisioned.providerKeyIds.has(credential.providerKeyId),
+    );
+    if (secret === undefined || enrolled === undefined) {
+      return yield* new PackagedOwnerStartupError({
+        reason: `The platform issued no module credential for ${input.appId}`,
+      });
+    }
+    return {
+      authBindingId: enrolled.authBindingId,
+      providerKeyId: enrolled.providerKeyId,
+      secret,
+      serviceId: enrolled.principalId,
+    };
   },
 );
