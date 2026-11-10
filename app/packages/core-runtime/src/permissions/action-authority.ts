@@ -7,7 +7,7 @@ import {
   decodeAccessWorkload,
 } from '../authorization/access-declaration.ts';
 import type { AccessDeclarationOwner } from '../authorization/access-declaration.ts';
-import type { AccessDecisionGate, GateCarrier } from '../access/enforcement/contract.ts';
+import type { AccessDecisionGate, GateCarrier, GateInput } from '../access/enforcement/contract.ts';
 import { withOptional } from '../access/decision/optional.ts';
 import { coreActionCatalog } from '../modules/actions/catalog.ts';
 import {
@@ -162,30 +162,41 @@ export const makeActionAuthorityService = ({
   now,
 }: {
   readonly declared: ReadonlyMap<string, DeclaredActionAuthority>;
-  readonly gate: Pick<(typeof AccessDecisionGate)['Service'], 'decide'>;
+  readonly gate: Pick<(typeof AccessDecisionGate)['Service'], 'decide'> &
+    Partial<Pick<(typeof AccessDecisionGate)['Service'], 'decideMany'>>;
   readonly now: Date;
 }): ActionAuthorityService => {
-  const decideOne = (authority: DeclaredActionAuthority | undefined, scope: OperationalScope) =>
-    gate.decide({
-      carrier: authority?.carrier ?? UNDECLARED_CARRIER,
-      legalEntityScope: authority?.legalEntityScope ?? 'optional',
-      now,
-      scope,
-    });
+  const questionOf = (authority: DeclaredActionAuthority | undefined, scope: OperationalScope): GateInput => ({
+    carrier: authority?.carrier ?? UNDECLARED_CARRIER,
+    legalEntityScope: authority?.legalEntityScope ?? 'optional',
+    now,
+    scope,
+  });
 
+  /**
+   * Every named Action in ONE gate batch: the actor, scope and intent are read once and every question is answered
+   * in one engine snapshot, each exactly as a single decision and with its own evidence row. A seam that cannot
+   * answer a batch decides nothing.
+   */
   const checkActionAuthorities: ActionAuthorityService['checkActionAuthorities'] = Effect.fn(
     'ActionAuthority.checkActionAuthorities',
   )(function* checkActionAuthorities(input) {
-    const decided = yield* Effect.forEach(
-      input.actionKeys,
-      (actionKey) =>
-        decideOne(declared.get(actionKey), input.scope).pipe(
-          Effect.map((decision) => ({ actionKey, decisions: actionDecisions(decision.outcome) })),
-        ),
-      { concurrency: 1 },
+    if (input.actionKeys.length === 0) {
+      return Object.freeze([]);
+    }
+    if (gate.decideMany === undefined) {
+      return yield* authorityUnavailable('The access gate cannot answer an Action batch');
+    }
+    const decided = yield* gate.decideMany(
+      input.actionKeys.map((actionKey) => questionOf(declared.get(actionKey), input.scope)),
     );
+    if (decided.length !== input.actionKeys.length) {
+      return yield* authorityUnavailable('The access gate returned an incomplete Action batch');
+    }
     const answers: ScopedActionAuthority[] = [];
-    for (const { actionKey, decisions } of decided) {
+    for (const [index, actionKey] of input.actionKeys.entries()) {
+      const outcome = decided[index]?.outcome;
+      const decisions = outcome === undefined ? undefined : actionDecisions(outcome);
       if (decisions === undefined) {
         return yield* authorityUnavailable();
       }
@@ -197,7 +208,7 @@ export const makeActionAuthorityService = ({
   const checkActionProposalPermission: ActionAuthorityService['checkActionProposalPermission'] = Effect.fn(
     'ActionAuthority.checkProposal',
   )(function* checkActionProposalPermission(input) {
-    const decision = yield* decideOne(declared.get(input.actionKey), input.scope);
+    const decision = yield* gate.decide(questionOf(declared.get(input.actionKey), input.scope));
     const decisions = actionDecisions(decision.outcome);
     return decisions === undefined ? yield* authorityUnavailable() : decisions.propose;
   });
@@ -220,6 +231,8 @@ export const ActionAuthorityLive: Layer.Layer<
   ActionAuthority,
   Effect.gen(function* makeActionAuthorityLive() {
     const gate = yield* bindLiveAccessGate;
+    const batchGate =
+      gate.decideMany === undefined ? { decide: gate.decide } : { decide: gate.decide, decideMany: gate.decideMany };
     const composition = yield* ActiveApplicationCompositionService;
     const withDeclared = <Value, Failure, Requirements>(
       body: (declared: ReadonlyMap<string, DeclaredActionAuthority>) => Effect.Effect<Value, Failure, Requirements>,
@@ -236,7 +249,7 @@ export const ActionAuthorityLive: Layer.Layer<
         nowDate.pipe(
           Effect.flatMap((now) =>
             withDeclared((declared) =>
-              makeActionAuthorityService({ declared, gate, now }).checkActionAuthorities(input),
+              makeActionAuthorityService({ declared, gate: batchGate, now }).checkActionAuthorities(input),
             ),
           ),
         ),
@@ -244,7 +257,7 @@ export const ActionAuthorityLive: Layer.Layer<
         nowDate.pipe(
           Effect.flatMap((now) =>
             withDeclared((declared) =>
-              makeActionAuthorityService({ declared, gate, now }).checkActionProposalPermission(input),
+              makeActionAuthorityService({ declared, gate: batchGate, now }).checkActionProposalPermission(input),
             ),
           ),
         ),

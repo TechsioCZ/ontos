@@ -11,6 +11,7 @@ import type { AccessDecisionUnavailable } from '../decision/errors.ts';
 import type { LegalEntityId, PrincipalId } from '../ids.ts';
 import type { AccessPrincipalKinds } from './actor.ts';
 import type { AccessDecisionLogWriter } from './decision-log.ts';
+import type { AccessDecisionLogBatchWriter } from './decision-log-batch.ts';
 import type { AccessLegalEntityCandidates } from './legal-entities.ts';
 import type { AccessWorkloadBindings } from './workload-port.ts';
 
@@ -110,6 +111,11 @@ export interface AccessDecisionPorts {
   readonly check: DecisionCheckPort;
   /** "Proč?" evidence for denials, approvals and allowed sensitive or critical work. */
   readonly decisionLog: AccessDecisionLogWriter;
+  /**
+   * The same evidence rows of one `decideMany`, written in one transaction per request scope. A composition that
+   * omits it, such as a binding that writes into a caller's own transaction, writes each row through `decisionLog`.
+   */
+  readonly decisionLogBatch?: AccessDecisionLogBatchWriter;
   /** The tenant's companies, before the `select` check narrows them. */
   readonly legalEntities: AccessLegalEntityCandidates;
   /** The acting principal's `core.principals.kind`. */

@@ -37,8 +37,9 @@ import type {
 import { AccessDecisionGate } from './contract.ts';
 import { AccessWorkloadBindingSource } from './workload-port.ts';
 import { seamAdmission, seamDenial, seamRefusal, seamUnavailable } from './decisions.ts';
-import type { AccessDecisionDelegation } from './decision-log.ts';
+import type { AccessDecisionDelegation, AccessDecisionLogEntry } from './decision-log.ts';
 import { AccessDecisionLog, shouldRecordDecision, shouldRecordDelegatedDecision } from './decision-log.ts';
+import { AccessDecisionLogBatch } from './decision-log-batch.ts';
 import { LegalEntityCandidates } from './legal-entities.ts';
 import type { AccessWorkloadBindings, WorkloadCompanyDeclaration } from './workload-port.ts';
 
@@ -500,6 +501,91 @@ const prepareEntry = (params: {
   };
 };
 
+/** What one decision's evidence row is built from. */
+interface EvidenceParams {
+  readonly actor: EvidenceSubject;
+  readonly capability: ReturnType<typeof capabilityPolicyOf>;
+  readonly decision: AccessDecision;
+  /** The calling module of a delegated request; its evidence is always recorded (D6). */
+  readonly delegation?: AccessDecisionDelegation | undefined;
+  readonly entry: {
+    readonly mode: AccessDecisionRequest['mode'];
+    readonly onBehalfOfPrincipalId?: PrincipalId;
+    readonly scope: OperationalScope;
+    readonly scopeId: AccessScopeId;
+    readonly target?: GateInput['target'];
+  };
+  readonly now: Date;
+}
+
+/** The evidence row one decision must leave behind, or none when the decision needs no row. */
+const evidenceEntryOf = (params: EvidenceParams): AccessDecisionLogEntry | undefined => {
+  const { actor, capability, decision, delegation, entry, now } = params;
+  const evidence =
+    delegation === undefined ? shouldRecordDecision(decision, capability) : shouldRecordDelegatedDecision(decision);
+  if (!evidence) {
+    return undefined;
+  }
+  return withOptional(
+    withOptional(
+      withOptional(
+        withOptional(
+          {
+            actor: actorContextOf(actor),
+            capability,
+            decidedAt: now,
+            mode: entry.mode,
+            outcome: decision.outcome,
+            reasons: decision.reasons,
+            scope: entry.scope,
+            scopeId: entry.scopeId,
+          },
+          'admissionDeadline',
+          decision.admissionDeadline,
+        ),
+        'delegation',
+        delegation,
+      ),
+      'onBehalfOfPrincipalId',
+      entry.onBehalfOfPrincipalId,
+    ),
+    'target',
+    entry.target?.recordKey,
+  );
+};
+
+/** The evidence of one batched request; a refusal decided before the engine writes none. */
+const evidenceOfOne = (params: {
+  readonly answers: ReadonlyMap<number, AccessDecision>;
+  readonly index: number;
+  readonly one: GateInput;
+  readonly reached: ReadonlyMap<number, BatchedGate>;
+}): { readonly decision: AccessDecision; readonly evidence?: EvidenceParams } => {
+  const decision = params.answers.get(params.index) ?? seamUnavailable(IDENTITY_UNAVAILABLE);
+  const entry = params.reached.get(params.index);
+  return entry === undefined
+    ? { decision }
+    : {
+        decision,
+        evidence: {
+          actor: entry.actor,
+          capability: entry.capability,
+          decision,
+          delegation: entry.delegation,
+          entry: withOptional(
+            withOptional(
+              { mode: entry.mode, scope: params.one.scope, scopeId: entry.scopeId },
+              'onBehalfOfPrincipalId',
+              params.one.onBehalfOfPrincipalId,
+            ),
+            'target',
+            params.one.target,
+          ),
+          now: params.one.now,
+        },
+      };
+};
+
 /**
  * One instance per process, built once from its ports: every call carries its own trusted
  * `OperationalScope` (O66), and no method asks the caller for a collaborator.
@@ -706,58 +792,15 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
    * Records the evidence this decision must leave behind. A decision that cannot be recorded is not
    * taken: the caller gets a retryable UNAVAILABLE instead of an unrecorded sensitive act.
    */
-  const recordDecision = Effect.fn('AccessDecisionGate.recordDecision')(function* recordDecisionEffect(params: {
-    readonly actor: EvidenceSubject;
-    readonly capability: ReturnType<typeof capabilityPolicyOf>;
-    readonly decision: AccessDecision;
-    /** The calling module of a delegated request; its evidence is always recorded (D6). */
-    readonly delegation?: AccessDecisionDelegation | undefined;
-    readonly entry: {
-      readonly mode: AccessDecisionRequest['mode'];
-      readonly onBehalfOfPrincipalId?: PrincipalId;
-      readonly scope: OperationalScope;
-      readonly scopeId: AccessScopeId;
-      readonly target?: GateInput['target'];
-    };
-    readonly now: Date;
-  }) {
-    const { actor, capability, decision, delegation, entry, now } = params;
-    const evidence =
-      delegation === undefined ? shouldRecordDecision(decision, capability) : shouldRecordDelegatedDecision(decision);
-    if (!evidence) {
-      return decision;
+  const recordDecision = Effect.fn('AccessDecisionGate.recordDecision')(function* recordDecisionEffect(
+    params: EvidenceParams,
+  ) {
+    const entry = evidenceEntryOf(params);
+    if (entry === undefined) {
+      return params.decision;
     }
-    const recorded = yield* Effect.option(
-      ports.decisionLog.record(
-        withOptional(
-          withOptional(
-            withOptional(
-              withOptional(
-                {
-                  actor: actorContextOf(actor),
-                  capability,
-                  decidedAt: now,
-                  mode: entry.mode,
-                  outcome: decision.outcome,
-                  reasons: decision.reasons,
-                  scope: entry.scope,
-                  scopeId: entry.scopeId,
-                },
-                'admissionDeadline',
-                decision.admissionDeadline,
-              ),
-              'delegation',
-              delegation,
-            ),
-            'onBehalfOfPrincipalId',
-            entry.onBehalfOfPrincipalId,
-          ),
-          'target',
-          entry.target?.recordKey,
-        ),
-      ),
-    );
-    return Option.isNone(recorded) ? seamUnavailable(EVIDENCE_UNAVAILABLE) : decision;
+    const recorded = yield* Effect.option(ports.decisionLog.record(entry));
+    return Option.isNone(recorded) ? seamUnavailable(EVIDENCE_UNAVAILABLE) : params.decision;
   });
 
   /**
@@ -1163,34 +1206,39 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
     return entries.length === 0 ? { decisions, evidence } : { batch: { entries, scope }, decisions, evidence };
   });
 
-  /** The evidence row of one batched request; a refusal decided before the engine writes none. */
-  const recordOne = (params: {
-    readonly answers: ReadonlyMap<number, AccessDecision>;
-    readonly index: number;
-    readonly one: GateInput;
-    readonly reached: ReadonlyMap<number, BatchedGate>;
-  }): Effect.Effect<AccessDecision> => {
-    const decision = params.answers.get(params.index) ?? seamUnavailable(IDENTITY_UNAVAILABLE);
-    const entry = params.reached.get(params.index);
-    return entry === undefined
-      ? Effect.succeed(decision)
-      : recordDecision({
-          actor: entry.actor,
-          capability: entry.capability,
-          decision,
-          delegation: entry.delegation,
-          entry: withOptional(
-            withOptional(
-              { mode: entry.mode, scope: params.one.scope, scopeId: entry.scopeId },
-              'onBehalfOfPrincipalId',
-              params.one.onBehalfOfPrincipalId,
-            ),
-            'target',
-            params.one.target,
-          ),
-          now: params.one.now,
-        });
-  };
+  /**
+   * Every evidence row of one batch: through the batch writer, one transaction per request scope, when the
+   * composition provides one; otherwise each row through the single writer. A decision whose row was not kept is not
+   * taken: every decision of a scope whose rows failed becomes a retryable UNAVAILABLE, exactly as a failed single row.
+   */
+  const recordBatchEvidence = Effect.fn('AccessDecisionGate.recordBatchEvidence')(function* recordBatchEvidence(
+    answered: readonly { readonly decision: AccessDecision; readonly evidence?: EvidenceParams }[],
+  ) {
+    const batchWriter = ports.decisionLogBatch;
+    if (batchWriter === undefined) {
+      return yield* Effect.forEach(
+        answered,
+        ({ decision, evidence }) => (evidence === undefined ? Effect.succeed(decision) : recordDecision(evidence)),
+        { concurrency: 1 },
+      );
+    }
+    const entries = answered.map(({ evidence }) => (evidence === undefined ? undefined : evidenceEntryOf(evidence)));
+    const scopes = [...new Set(entries.flatMap((entry) => (entry === undefined ? [] : [entry.scope])))];
+    // One write per request scope, one after another: each is one transaction on the shared pool.
+    const written = yield* Effect.forEach(
+      scopes,
+      (scope) =>
+        Effect.option(
+          batchWriter.recordAll(entries.filter((entry): entry is AccessDecisionLogEntry => entry?.scope === scope)),
+        ).pipe(Effect.map((outcome) => ({ kept: Option.isSome(outcome), scope }))),
+      { concurrency: 1 },
+    );
+    const unrecorded = new Set(written.flatMap(({ kept, scope }) => (kept ? [] : [scope])));
+    return answered.map(({ decision }, index) => {
+      const entry = entries[index];
+      return entry !== undefined && unrecorded.has(entry.scope) ? seamUnavailable(EVIDENCE_UNAVAILABLE) : decision;
+    });
+  });
 
   /**
    * Many protected requests, one answer each: navigation and search providers ask this once per
@@ -1230,9 +1278,7 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
         }
       }
     }
-    return yield* Effect.forEach(input, (_one, index) => recordOne({ answers, index, one: _one, reached }), {
-      concurrency: 1,
-    });
+    return yield* recordBatchEvidence(input.map((one, index) => evidenceOfOne({ answers, index, one, reached })));
   });
 
   return {
@@ -1264,11 +1310,17 @@ export const AccessDecisionLive: Layer.Layer<
     // The registry is resolved where it is provided, never required: a composition that only ever
     // decides human or agent requests is complete without one, and a workload then fails closed (O73).
     const workloadBindings = yield* Effect.serviceOption(AccessWorkloadBindingSource);
+    // The batch writer is resolved where it is provided: a batch's rows then share one transaction per scope.
+    const decisionLogBatch = yield* Effect.serviceOption(AccessDecisionLogBatch);
     return makeAccessDecisionService(
       withOptional(
-        { authorityFor: intent.authorityFor, check, decisionLog, legalEntities, principalKinds },
-        'workloadBindings',
-        Option.getOrUndefined(workloadBindings),
+        withOptional(
+          { authorityFor: intent.authorityFor, check, decisionLog, legalEntities, principalKinds },
+          'workloadBindings',
+          Option.getOrUndefined(workloadBindings),
+        ),
+        'decisionLogBatch',
+        Option.getOrUndefined(decisionLogBatch),
       ),
     );
   }),
