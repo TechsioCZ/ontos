@@ -9,6 +9,8 @@ import type { UseDraftSaveOptions } from '../../src/draft-save.ts';
 import { SaveBar } from '../../src/save-bar.tsx';
 import { saveLabels } from '../../src/save-labels.ts';
 
+const copy = { unsaved: 'Unsaved' };
+
 const runtime = ManagedRuntime.make(Layer.empty);
 /** The value the form opens with, such as a default date. */
 const opened = 'next-week';
@@ -52,13 +54,13 @@ const SuggestedForm = ({ open = true, sent }: { readonly open?: boolean; readonl
         Termín
         <input onChange={(event) => setDraft(event.target.value)} value={draft} />
       </label>
-      <output aria-label="Unsaved">{record.dirty ? 'unsaved' : 'nothing to lose'}</output>
+      <output aria-label={copy.unsaved}>{record.dirty ? 'unsaved' : 'nothing to lose'}</output>
       <SaveBar onReloadLatest={constVoid} onSave={handleSave} status={record.status} />
     </>
   );
 };
 
-const unsaved = () => screen.getByLabelText('Unsaved').textContent;
+const unsaved = () => screen.getByLabelText(copy.unsaved).textContent;
 const typeDate = (value: string) => {
   fireEvent.change(screen.getByLabelText('Termín'), { target: { value } });
 };
