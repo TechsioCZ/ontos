@@ -4,7 +4,11 @@ import { describe, expect, it } from 'effect-rstest';
 import type { PaymentOperationKind, PaymentOperationOutcome } from '../../shared/domain/payment-vocabulary.ts';
 import { computePaymentFunds, PaymentFundsLedger } from '../../src/domain/coverage.ts';
 import type { PaymentFundsOperation, PaymentFundsSnapshot } from '../../src/domain/coverage.ts';
-import { correctionReachOf, fundsSnapshotWithPriorReturns } from '../../src/domain/refund-prior-returns.ts';
+import {
+  contradictsStandingReturn,
+  correctionReachOf,
+  fundsSnapshotWithPriorReturns,
+} from '../../src/domain/refund-prior-returns.ts';
 import type { PaymentReturnEvidence } from '../../src/domain/refund-prior-returns.ts';
 
 /** #1150 "Prior return evidence reduces the remaining budget": the pure prior-return rule. */
@@ -52,6 +56,13 @@ const heldReasonOf = (snapshot: PaymentFundsSnapshot, evidence: readonly Payment
   const ledger = ledgerOf(snapshot, evidence);
   return PaymentFundsLedger.$is('Held')(ledger) ? ledger.reason : undefined;
 };
+
+/** A new return statement of the effect `gopay:refund:1` as the contradiction check reads it. */
+const candidate = (amountMinor: number, sourceBindingKey = 'binding-a') => ({
+  amount: czk(amountMinor),
+  economicEffectKey: 'gopay:refund:1',
+  sourceBindingKey,
+});
 
 describe('#1150 Prior return evidence reduces the remaining budget', () => {
   it('a proven return of the collection outside any Payment REFUND is a confirmed return', () => {
@@ -129,6 +140,27 @@ describe('#1150 Prior return evidence reduces the remaining budget', () => {
     const snapshot = fundsSnapshotWithPriorReturns(snapshotOf([collect]), [elsewhere]);
     expect(snapshot.operations).toEqual([collect]);
     expect(heldReasonOf(snapshotOf([collect]), [elsewhere])).toBe('UNRESOLVED_EVIDENCE');
+  });
+
+  it('one effect stated with two amounts is never folded into the REFUND it also names', () => {
+    const snapshot = snapshotOf([collect, refund('EFFECT_CONFIRMED')]);
+    const onRefund = statement({ amountMinor: 30_000, operationId: 'refund-1' });
+    // The same key and money against the collection is the same single return...
+    expect(remainingOf(snapshot, [onRefund, statement({ amountMinor: 30_000, observationId: 'observation-2' })])).toBe(
+      70_000,
+    );
+    // ...the same key with other money contradicts it and holds new returns.
+    expect(heldReasonOf(snapshot, [onRefund, statement({ amountMinor: 50_000, observationId: 'observation-2' })])).toBe(
+      'UNRESOLVED_EVIDENCE',
+    );
+  });
+
+  it('a statement contradicts a standing return of the same source effect only when the money differs', () => {
+    const standing = [{ ...statement({ amountMinor: 60_000 }), sourceBindingKey: 'binding-a' }];
+    expect(contradictsStandingReturn(standing, candidate(40_000))).toBe(true);
+    expect(contradictsStandingReturn(standing, candidate(60_000))).toBe(false);
+    expect(contradictsStandingReturn(standing, candidate(40_000, 'binding-b'))).toBe(false);
+    expect(contradictsStandingReturn(standing, { ...candidate(40_000), observationId: 'observation-1' })).toBe(false);
   });
 
   it('no evidence leaves the funds snapshot unchanged', () => {

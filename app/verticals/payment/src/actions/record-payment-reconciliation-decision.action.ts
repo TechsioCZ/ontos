@@ -24,7 +24,11 @@ import { OutboxPayloadSchema as OperationOutcomeChangedSchema } from '../../shar
 import { computePaymentFunds, PaymentFundsLedger } from '../domain/coverage.ts';
 import { paymentFactMeaning } from '../domain/evidence-interpretation.ts';
 import { decidePaymentReconciliation, PaymentReconciliationStep } from '../domain/evidence-reconciliation.ts';
-import { fundsSnapshotWithPriorReturns } from '../domain/refund-prior-returns.ts';
+import {
+  contradictsStandingReturn,
+  fundsSnapshotWithPriorReturns,
+  returnSourceBindingKey,
+} from '../domain/refund-prior-returns.ts';
 import type {
   PaymentReconciliationCaseEvidence,
   PaymentReconciliationEvidenceFacts,
@@ -232,27 +236,37 @@ const countedTowardOf = Effect.fn('RecordPaymentReconciliationDecisionAction.cou
 
 /** Qualification facts of the attached observation: scope, ACTIVE configured authority, correction lineage. */
 /**
- * The money accepted partial corrections took away from a return statement, read by the funds reader
- * itself so attachment and funds measure the statement the same way (#1150).
+ * What the funds reader's return evidence says about a return statement, so attachment and funds
+ * measure it the same way (#1150): the money accepted partial corrections took away from it, and
+ * whether another standing statement of the same source-scoped effect states a different amount.
  */
-const returnCorrectedAmountOf = Effect.fn('RecordPaymentReconciliationDecisionAction.returnCorrectedAmount')(
-  function* returnCorrectedAmount(context: DecisionContext, observation: PaymentObservationRecord) {
-    const { observationId, paymentId } = observation;
-    if (observation.factKind !== 'REFUND_CONFIRMED' || paymentId === undefined) {
-      return Option.none<PaymentMonetaryAmount>();
-    }
-    const evidence = yield* context.services.refunds.selectReturnEvidence(paymentId);
-    yield* recordPaymentLookup(context, {
-      paymentId,
-      query: RETURN_EVIDENCE_QUERY,
-      recordId: observationId,
-      resultCount: evidence.length,
-    });
-    return Option.fromUndefinedOr(
+const returnFactsOf = Effect.fn('RecordPaymentReconciliationDecisionAction.returnFacts')(function* returnFacts(
+  context: DecisionContext,
+  observation: PaymentObservationRecord,
+) {
+  const { observationId, paymentId } = observation;
+  if (observation.factKind !== 'REFUND_CONFIRMED' || paymentId === undefined) {
+    return { contradictsStandingReturn: false, correctedAmount: Option.none<PaymentMonetaryAmount>() };
+  }
+  const evidence = yield* context.services.refunds.selectReturnEvidence(paymentId);
+  yield* recordPaymentLookup(context, {
+    paymentId,
+    query: RETURN_EVIDENCE_QUERY,
+    recordId: observationId,
+    resultCount: evidence.length,
+  });
+  return {
+    contradictsStandingReturn: contradictsStandingReturn(evidence, {
+      amount: observation.amount,
+      economicEffectKey: observation.economicEffectKey,
+      observationId,
+      sourceBindingKey: returnSourceBindingKey(observation),
+    }),
+    correctedAmount: Option.fromUndefinedOr(
       evidence.find((statement) => statement.observationId === observationId)?.correctedAmount,
-    );
-  },
-);
+    ),
+  };
+});
 
 const evidenceFactsFor = Effect.fn('RecordPaymentReconciliationDecisionAction.evidenceFacts')(function* evidenceFacts(
   context: DecisionContext,
@@ -283,12 +297,14 @@ const evidenceFactsFor = Effect.fn('RecordPaymentReconciliationDecisionAction.ev
         );
   const establishedEffects =
     observation.paymentId === undefined ? [] : yield* listEstablishedEffects(context, observation.paymentId);
+  const returnFacts = yield* returnFactsOf(context, observation);
   return Option.some<PaymentReconciliationEvidenceFacts>({
     acceptanceOutcome: observation.acceptanceOutcome,
     amount: observation.amount,
     capabilityCorrelated: observation.capabilityCorrelated,
+    contradictsStandingReturn: returnFacts.contradictsStandingReturn,
     corrected: yield* isObservationCorrected(context, observation.observationId),
-    correctedAmount: Option.getOrUndefined(yield* returnCorrectedAmountOf(context, observation)),
+    correctedAmount: Option.getOrUndefined(returnFacts.correctedAmount),
     countedToward: yield* countedTowardOf(context, observation),
     economicEffectKey: observation.economicEffectKey,
     establishedEffects,
@@ -461,8 +477,22 @@ const correctionTargetReliedOn = Effect.fn('RecordPaymentReconciliationDecisionA
       resultCount: evidence.length,
     });
     const counted = evidence.find((statement) => statement.observationId === correctedObservationId);
-    return current.value.operations.some(
-      (operation) => operation.operationId === counted?.operationId && operation.kind === 'COLLECT',
+    if (
+      current.value.operations.some(
+        (operation) => operation.operationId === counted?.operationId && operation.kind === 'COLLECT',
+      )
+    ) {
+      return true;
+    }
+    // A held statement of this Payment that is not fully disproven can still be assigned and counted
+    // later: a correction of it that was never applied stays owed until then (#1151).
+    const found = Option.getOrUndefined(yield* findObservation(context, correctedObservationId));
+    return (
+      found !== undefined &&
+      found.paymentId === paymentId &&
+      found.factKind !== 'SOURCE_CORRECTION' &&
+      found.acceptanceOutcome !== 'ACCEPTED_OBSERVATION' &&
+      !(yield* isObservationCorrected(context, correctedObservationId))
     );
   },
 );

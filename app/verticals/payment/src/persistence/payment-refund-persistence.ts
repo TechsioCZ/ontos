@@ -25,6 +25,7 @@ import {
   appliedCorrectionsOf,
   correctionReachOf,
   fundsSnapshotWithPriorReturns,
+  returnSourceBindingKey,
 } from '../domain/refund-prior-returns.ts';
 import type { PaymentReturnEvidence } from '../domain/refund-prior-returns.ts';
 import { paymentFundsSnapshotOf } from './payment-aggregate-persistence.ts';
@@ -137,8 +138,7 @@ const returnEvidenceOf = Effect.fn('PaymentRefundPersistence.returnEvidenceOf')(
     economicEffectKey: row.economicEffectKey ?? undefined,
     observationId: row.observationId,
     operationId: row.operationId ?? attachedOperationId,
-    // NUL cannot occur in PostgreSQL text, so it separates the four binding fields unambiguously.
-    sourceBindingKey: [row.sourceKind, row.sourceSystem, row.accountRef, row.environment].join('\u0000'),
+    sourceBindingKey: returnSourceBindingKey(row),
   } satisfies PaymentReturnEvidence;
 });
 
