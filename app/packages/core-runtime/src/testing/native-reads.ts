@@ -430,9 +430,10 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
   const databaseIdentities = Option.getOrElse(yield* Effect.serviceOption(DatabaseIdentityEnrollmentContext), () =>
     defineDatabaseIdentityEnrollment([]),
   );
+  // Core's bootstrap writer installs the tenant scope, which only an enrolled runtime role may do.
   yield* initializeNativeOwnerAccessScopes(
     owner !== undefined,
-    admin.executor,
+    database.executor,
     databaseIdentities,
     principal,
     legalEntityId,
