@@ -76,6 +76,36 @@ interface CorrectionRow {
 }
 
 /**
+ * The accepted corrections that each reduce a statement once. A correction re-issued under the same
+ * economic effect key (accepted again as "already corrected") is the same reduction, not another one.
+ */
+const appliedCorrectionsOf = <
+  Correction extends CorrectionRow & {
+    readonly acceptanceOutcome: string;
+    readonly economicEffectKey: string | null;
+  },
+>(
+  observationId: string,
+  corrections: readonly Correction[],
+): readonly Correction[] => {
+  const seenKeys = new Set<string>();
+  return corrections.filter((correction) => {
+    if (correction.acceptanceOutcome !== 'ACCEPTED_OBSERVATION' || correction.correctsObservationId !== observationId) {
+      return false;
+    }
+    const key = correction.economicEffectKey;
+    if (key === null) {
+      return true;
+    }
+    if (seenKeys.has(key)) {
+      return false;
+    }
+    seenKeys.add(key);
+    return true;
+  });
+};
+
+/**
  * One statement as the refund guard reads it. A statement fully covered by its accepted corrections
  * is gone (undefined). A partially corrected statement keeps its stated money and the corrected part.
  * A statement held without an operation counts toward the operation its governed attachment resulted in.
@@ -238,6 +268,7 @@ export const paymentRefundPersistenceForTransaction = (
               capabilityCorrelated: observations.capabilityCorrelated,
               correctsObservationId: observations.correctsObservationId,
               currency: observations.currency,
+              economicEffectKey: observations.economicEffectKey,
               factKind: observations.factKind,
               paymentId: observations.paymentId,
               sourceAuthorityId: observations.sourceAuthorityId,
@@ -251,6 +282,7 @@ export const paymentRefundPersistenceForTransaction = (
                 isNotNull(observations.correctsObservationId),
               ),
             )
+            .orderBy(asc(observations.verifiedAt), asc(observations.observationId))
             .pipe(Effect.mapError(returnEvidenceReadFailure)),
         ],
         { concurrency: 1 },
@@ -266,15 +298,7 @@ export const paymentRefundPersistenceForTransaction = (
       const evidence = yield* Effect.forEach(
         standing,
         (row) =>
-          returnEvidenceOf(
-            row,
-            corrections.filter(
-              (correction) =>
-                correction.acceptanceOutcome === 'ACCEPTED_OBSERVATION' &&
-                correction.correctsObservationId === row.observationId,
-            ),
-            attached.get(row.observationId),
-          ),
+          returnEvidenceOf(row, appliedCorrectionsOf(row.observationId, corrections), attached.get(row.observationId)),
         { concurrency: 1 },
       );
       return evidence.flatMap((entry) => (entry === null ? [] : [entry]));
