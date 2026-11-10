@@ -4,6 +4,7 @@ import {
   defineScopedRoutine,
   isVerifiedGatewayPrincipalContext,
   OperationContextUnavailable,
+  readVerifiedGatewayActor,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
 import type { ActionServicePreparationContext, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
@@ -18,14 +19,9 @@ import {
 } from '@app/pricing-contracts/current-pricing-decision';
 import { pricingQuotationMatchesCurrentDecision } from '@app/pricing-contracts/quotation-verification';
 import { CatalogSelectionSchema } from '@app/catalog-selection-contracts';
-import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
-import { BigDecimal, Config, Crypto, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
+import { BigDecimal, Crypto, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import type { Context } from 'effect';
-import {
-  PrincipalIdSchema,
-  TenantIdSchema,
-  AuthenticationNamespaceIdSchema,
-} from '@app/core-runtime/auth/external-identity-contracts';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Hex } from 'effect/encoding';
@@ -115,31 +111,6 @@ const basisRoutine = defineScopedRoutine({
   routineKey: 'purchasing-approval.proposal-basis-state',
   schema: 'commerce_customer_context',
 });
-const grantSchema = Schema.fromJsonString(
-  Schema.Array(
-    Schema.Struct({
-      authenticationNamespaceId: AuthenticationNamespaceIdSchema,
-      legalEntityId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('LegalEntityId')),
-      principalId: PrincipalIdSchema,
-      tenantId: TenantIdSchema,
-    }),
-  ),
-);
-const url = Schema.URLFromString.check(
-  Schema.makeFilter((value) =>
-    (value.protocol === 'https:' || value.protocol === 'http:') &&
-    value.username === '' &&
-    value.password === '' &&
-    value.search === '' &&
-    value.hash === ''
-      ? undefined
-      : 'A trusted owner URL is required',
-  ),
-);
-const gatewayConfiguration = Config.all({
-  apiKey: Config.Redacted('ONTOS_CCC_PREPROPOSAL_GATEWAY_API_KEY'),
-  shellBaseUrl: Config.schema(url, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
-});
 const digest = (value: Schema.Json) =>
   Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(value).pipe(
     Effect.map((encoded) => Hex.encode(sha256(utf8ToBytes(encoded)))),
@@ -168,7 +139,7 @@ type PreproposalOwnerCredential = Readonly<{
 const prepareCatalogLines = Effect.fn('PurchaseProposalBasis.prepareCatalogLines')(
   (
     entries: typeof PreapprovalCartObservationResponseSchema.Type.cart.entries,
-    ownerCredential: Effect.Effect<PreproposalOwnerCredential, PurchasingApprovalRejected>,
+    ownerCredential: Effect.Effect<PreproposalOwnerCredential, PurchasingApprovalRejected, Crypto.Crypto>,
     requestCorrelation: OperationalScope['correlationId'],
   ) =>
     Effect.forEach(
@@ -200,6 +171,20 @@ const prepareCatalogLines = Effect.fn('PurchaseProposalBasis.prepareCatalogLines
       { concurrency: 1 },
     ),
 );
+
+/**
+ * Pricing issues the Quotation for the basis buyer, so the verified subject of its call must be that buyer (DESIGN D8).
+ * A retained Pricing issuer must name the same buyer.
+ */
+export const verifiedPricingIssuerPrincipalId = (
+  buyerPrincipalId: string,
+  provenanceIssuerPrincipalId: string,
+  retainedIssuerPrincipalId: string | null,
+): Option.Option<string> =>
+  provenanceIssuerPrincipalId === buyerPrincipalId &&
+  (retainedIssuerPrincipalId === null || retainedIssuerPrincipalId === buyerPrincipalId)
+    ? Option.some(buyerPrincipalId)
+    : Option.none();
 
 /** A PurchaseValue retains the one publication rounding revision actually used for every line. */
 export const quotationPublicationRevision = (
@@ -278,18 +263,15 @@ const purchaseProposalBasisRemote = (scope: OperationalScope, compositionRevisio
         if (legalEntityId === undefined) {
           return yield* unavailable();
         }
-        const config = yield* gatewayConfiguration.pipe(Effect.mapError(unavailable));
-        const issued = yield* issueApiKeyGatewayContext(
+        const crypto = yield* Crypto.Crypto;
+        const issued = yield* acquireDelegatedGatewayContext(
           {
             audience,
-            compositionRevision,
-            legalEntityId,
-          },
-          {
-            apiKey: config.apiKey,
-            baseUrl: config.shellBaseUrl,
+            legalEntityScope: 'subject',
             requestCorrelation: scope.correlationId,
+            subject: { _tag: 'Assertion', scope },
           },
+          crypto,
         ).pipe(Effect.mapError(unavailable));
         if (
           issued.compositionRevision !== compositionRevision ||
@@ -298,9 +280,9 @@ const purchaseProposalBasisRemote = (scope: OperationalScope, compositionRevisio
           return yield* unavailable();
         }
         return {
-          authorization: Redacted.make(`Bearer ${issued.token}`),
+          authorization: Redacted.make(issued.authorization),
           options: {
-            baseUrl: new URL(issued.apiBaseUrl, config.shellBaseUrl),
+            baseUrl: new URL(issued.apiBaseUrl),
             compositionRevision,
           },
         };
@@ -348,19 +330,21 @@ const purchaseProposalBasisRemote = (scope: OperationalScope, compositionRevisio
           return yield* missing();
         }
         const quote = response.quotation;
-        const issuerPrincipalId = yield* Config.schema(
-          Schema.String.check(Schema.isUUID()),
-          'ONTOS_CCC_PREPROPOSAL_PRICING_ISSUER_PRINCIPAL_ID',
-        ).pipe(Effect.mapError(unavailable));
         const provenance = response.preapprovalProvenance;
         if (
           provenance === undefined ||
           provenance.sourceRef !== basis.proposal.proposalRevisionRef.resourceId ||
           provenance.sourceRevision !== '1' ||
-          provenance.issuanceInvocationId !== invocation ||
-          provenance.issuerPrincipalId !== issuerPrincipalId ||
-          (basis.pricingIssuerPrincipalId !== null && basis.pricingIssuerPrincipalId !== issuerPrincipalId)
+          provenance.issuanceInvocationId !== invocation
         ) {
+          return yield* missing();
+        }
+        const issuerPrincipalId = verifiedPricingIssuerPrincipalId(
+          basis.proposal.identity.buyer.principalId,
+          provenance.issuerPrincipalId,
+          basis.pricingIssuerPrincipalId,
+        );
+        if (Option.isNone(issuerPrincipalId)) {
           return yield* missing();
         }
         if (
@@ -375,7 +359,7 @@ const purchaseProposalBasisRemote = (scope: OperationalScope, compositionRevisio
           return yield* missing();
         }
         return {
-          issuerPrincipalId,
+          issuerPrincipalId: issuerPrincipalId.value,
           quote,
         };
       }),
@@ -399,22 +383,11 @@ export const purchaseProposalBasisService = Effect.fn('PurchaseProposalBasis.pur
       const services = yield* Effect.context<
         Effect.Services<ReturnType<typeof resolvePurchasePricingContextFromSnapshot>> | Crypto.Crypto
       >();
-      const serviceAdmission = Config.schema(grantSchema, 'ONTOS_CCC_PREPROPOSAL_SERVICE_GRANTS').pipe(
-        Effect.mapError(unavailable),
-        Effect.flatMap((grants) =>
-          scope.authMethod === 'api_key' &&
-          scope.impersonatedByPrincipalId === undefined &&
-          grants.some(
-            (grant) =>
-              grant.principalId === scope.principalId &&
-              grant.authenticationNamespaceId === scope.authenticationNamespaceId &&
-              grant.tenantId === scope.tenantId &&
-              grant.legalEntityId === legalEntityId,
-          )
-            ? Effect.void
-            : Effect.fail(rejection('PERMISSION_DENIED', 'A configured preproposal owner service is required')),
-        ),
-      );
+      // The Pricing issuer is the only module that completes a basis; it acts for the basis buyer (DESIGN D6).
+      const issuerAdmission =
+        readVerifiedGatewayActor(scope)?.appId === 'pricing' && scope.impersonatedByPrincipalId === undefined
+          ? Effect.void
+          : Effect.fail(rejection('PERMISSION_DENIED', 'The Pricing issuer must act for the basis buyer'));
       const state = (payload: Readonly<Record<string, Schema.Json>>) =>
         transaction.invoke(basisRoutine, [payload]).pipe(
           Effect.mapError(unavailable),
@@ -444,8 +417,9 @@ export const purchaseProposalBasisService = Effect.fn('PurchaseProposalBasis.pur
           ) {
             return yield* missing();
           }
+          // The subject of every basis read is its buyer; Pricing reads for that buyer, it is not a second subject.
           if (basis.proposal.identity.buyer.principalId !== scope.principalId) {
-            yield* serviceAdmission;
+            return yield* missing();
           }
           return basis;
         }),
@@ -522,7 +496,7 @@ export const purchaseProposalBasisService = Effect.fn('PurchaseProposalBasis.pur
           prepared?: PreparedBasisMutation,
         ) =>
           Effect.gen(function* commitCompletion() {
-            yield* serviceAdmission;
+            yield* issuerAdmission;
             const basis = yield* load(payload.sourceRef, payload.sourceRevision);
             if (basis.status === 'READY') {
               return yield* recoverCompletedProposalBasis(basis, payload);
@@ -602,7 +576,7 @@ export const purchaseProposalBasisService = Effect.fn('PurchaseProposalBasis.pur
           prepared?: PreparedBasisMutation,
         ) => complete(payload, invocation, prepared).pipe(Effect.provideContext(services)),
         inspectCompletion: (payload: typeof CompletePurchaseProposalBasisPayloadSchema.Type) =>
-          serviceAdmission.pipe(
+          issuerAdmission.pipe(
             Effect.andThen(
               loadRead({
                 operation: 'PRICING_INPUT',

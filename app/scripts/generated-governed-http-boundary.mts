@@ -12099,7 +12099,8 @@ const hasOwnerTaggedFailure = (owner: ReadPhaseOwner, source: string, binding: s
 
 const hasNativeRemoteReadCaptures = (source: string, body: string): boolean =>
   hasOriginalScopedFactoryType(source, 'OperationalScope') &&
-  hasRuntimeNamedSourceImport(source, 'ContextAccess', 'ContextAccess', CORE_RUNTIME_MODULE) &&
+  hasRuntimeNamedSourceImport(source, 'readVerifiedGatewayActor', 'readVerifiedGatewayActor', CORE_RUNTIME_MODULE) &&
+  hasRuntimeNamedSourceImport(source, 'Crypto', 'Crypto', 'effect') &&
   hasRuntimeNamedSourceImport(
     source,
     'isVerifiedGatewayPrincipalContext',
@@ -12118,17 +12119,29 @@ const hasNativeRemoteReadCaptures = (source: string, body: string): boolean =>
     'validateActiveApplicationCompositionSnapshot',
     ACTIVE_COMPOSITION_MODULE,
   ) &&
-  body.trimStart().startsWith('const access = yield* ContextAccess;') &&
-  /\bconst composition = yield\* ActiveApplicationCompositionService;/u.test(body) &&
+  body.trimStart().startsWith('const composition = yield* ActiveApplicationCompositionService;') &&
+  /\bconst crypto = yield\* Crypto\.Crypto;/u.test(body) &&
   hasStableReadFactoryBindings(
     normalizePureReadDestructuring(body),
     new Map([
       ['scope', 0],
       ['compositionRevision', 0],
-      ['access', 1],
       ['composition', 1],
+      ['crypto', 1],
     ]),
     '',
+  );
+
+/** Cart may only load the persisted approved identity; Order runs the whole owner protocol. */
+const hasNativeFinalizationCallerOperations = (source: string): boolean =>
+  hasExactSourceTokens(
+    tokenizeGovernedClient(constInitializer(source, 'callerOperations') ?? ''),
+    `
+    new Map([
+      ['commerce-cart', ['LOAD_APPROVED_IDENTITY']],
+      ['commerce-order', ['LOAD_APPROVED_IDENTITY', 'LOAD_PROPOSAL', 'VERIFY_PROOF', 'RESOLVE_PAYMENT_TERMS', 'REVALIDATE']],
+    ])
+  `,
   );
 
 const hasNativeAuthorizedRemoteReadFactory = (owner: ReadPhaseOwner, source: string, binding: string): boolean => {
@@ -12142,7 +12155,6 @@ const hasNativeAuthorizedRemoteReadFactory = (owner: ReadPhaseOwner, source: str
   const authorize = constInitializer(body, 'authorize');
   const active = constInitializer(body, 'activeRevision');
   const record = nativeCapturedGeneratorRecord(target.initializer);
-  const module = governedOwnerModuleId(owner.sources.get(`${owner.ownerPath}/vertical.manifest.ts`));
   const authorization = authorize === undefined ? undefined : nativePhaseGeneratorBody(authorize);
   const revision = active === undefined ? undefined : nativePhaseGeneratorBody(active);
   return (
@@ -12152,26 +12164,17 @@ const hasNativeAuthorizedRemoteReadFactory = (owner: ReadPhaseOwner, source: str
     record !== undefined &&
     hasExactSourceTokens(tokenizeGovernedClient(record), '{activeRevision, authorize, gateway, loadCandidate}') &&
     hasOwnerTaggedFailure(targetOwner, target.source, 'rejected', 'PERMISSION_DENIED') &&
+    hasNativeFinalizationCallerOperations(target.source) &&
     authorization !== undefined &&
+    // The Shell-signed calling module is the actor; installation is the module-state gate's fact (O62).
     hasExactSourceTokens(
       tokenizeGovernedClient(authorization),
       `
-      const configured = yield* grants.pipe(Effect.mapError(unavailable));
-      if (scope.authMethod !== 'api_key' || !isVerifiedGatewayPrincipalContext(scope) ||
-        scope.impersonatedByPrincipalId !== undefined || scope.legalEntityId === undefined) { return yield* rejected(); }
-      const matched = configured.filter((grant) =>
-        grant.principalId === scope.principalId && grant.authenticationNamespaceId === scope.authenticationNamespaceId &&
-        grant.tenantId === scope.tenantId && grant.legalEntityId === scope.legalEntityId && grant.operations.includes(operation));
-      const [grant] = matched;
-      if (matched.length !== 1 || grant === undefined) { return yield* rejected(); }
-      const permissions = yield* access.modules({legalEntityId: scope.legalEntityId, moduleIds: ['${module}'],
-        principalId: scope.principalId, tenantId: scope.tenantId});
-      const [permission] = permissions;
-      if (permissions.length !== 1 || permission?.key !== '${module}' || permission.decision === 'unavailable') {
-        return yield* unavailable('Owner module access is indeterminate');
-      }
-      if (permission.decision !== 'allowed') { return yield* rejected(); }
-      return grant;
+      const actor = readVerifiedGatewayActor(scope);
+      const admitted = actor !== undefined && isVerifiedGatewayPrincipalContext(scope) &&
+        scope.impersonatedByPrincipalId === undefined && scope.legalEntityId !== undefined &&
+        (callerOperations.get(actor.appId)?.includes(operation) ?? false);
+      return yield* admitted ? Effect.void : rejected();
     `,
     ) &&
     revision !== undefined &&
@@ -12290,6 +12293,7 @@ const hasOriginalRetainedRequestPredicate = (owner: ReadPhaseOwner, source: stri
         (terminal && proposal.state === 'SUPERSEDED');
       return (
         requestStateAdmitted && proposalStateAdmitted &&
+        proposal.identity.buyer.principalId === scope.principalId &&
         proposal.context.tenantId === scope.tenantId && proposal.context.sellingLegalEntityId === scope.legalEntityId &&
         proposal.identity.buyer.tenantId === scope.tenantId &&
         computePurchaseProposalCanonicalHash(proposal) === proposal.canonicalHash &&
@@ -12534,7 +12538,7 @@ const isClosedLazyPreparedReadDeclaration = (
     value.type === 'ArrowFunctionExpression' ||
     isEffectFnCallback(expression) ||
     (declaration.id.name === 'services' && /^yield\*\s*Effect\.context</u.test(expression)) ||
-    (declaration.id.name === 'serviceAdmission' && expression.startsWith('Config.schema('))
+    (declaration.id.name === 'issuerAdmission' && expression.startsWith('readVerifiedGatewayActor(scope)'))
   );
 };
 
@@ -12564,7 +12568,7 @@ const hasClosedLazyPreparedReadConstruction = (body: string): boolean => {
 const hasOriginalPreparedReadAdmission = (owner: ReadPhaseOwner, source: string, body: string): boolean => {
   const guardEnd = body.indexOf('const { legalEntityId }');
   const guard = guardEnd === -1 ? '' : body.slice(0, guardEnd);
-  const admission = constInitializer(body, 'serviceAdmission');
+  const admission = constInitializer(body, 'issuerAdmission');
   if (admission === undefined) {
     return false;
   }
@@ -12573,25 +12577,23 @@ const hasOriginalPreparedReadAdmission = (owner: ReadPhaseOwner, source: string,
         transaction.scope.legalEntityId !== scope.legalEntityId || compositionRevision === undefined ||
         !isVerifiedGatewayPrincipalContext(scope)) { return yield* unavailable(); }
     `;
+  // Only the Pricing issuer completes a basis, acting for its buyer (DESIGN D6).
   const expectedAdmission = `
-      Config.schema(grantSchema, 'ONTOS_CCC_PREPROPOSAL_SERVICE_GRANTS').pipe(
-        Effect.mapError(unavailable),
-        Effect.flatMap((grants) => scope.authMethod === 'api_key' && scope.impersonatedByPrincipalId === undefined &&
-          grants.some((grant) => grant.principalId === scope.principalId &&
-            grant.authenticationNamespaceId === scope.authenticationNamespaceId &&
-            grant.tenantId === scope.tenantId && grant.legalEntityId === legalEntityId)
-            ? Effect.void : Effect.fail(rejection('PERMISSION_DENIED', 'A configured preproposal owner service is required'))),
-      )
+      readVerifiedGatewayActor(scope)?.appId === 'pricing' && scope.impersonatedByPrincipalId === undefined
+        ? Effect.void
+        : Effect.fail(rejection('PERMISSION_DENIED', 'The Pricing issuer must act for the basis buyer'))
     `;
   return hasReadProofChecks(owner, 'prepared admission', {
     failure: originalReadCallable(owner, source, 'rejection') !== undefined,
     guard: hasExactSourceTokens(tokenizeGovernedClient(guard), expectedGuard),
-    native: hasRuntimeNamedSourceImport(
-      source,
-      'isVerifiedGatewayPrincipalContext',
-      'isVerifiedGatewayPrincipalContext',
-      CORE_RUNTIME_MODULE,
-    ),
+    native:
+      hasRuntimeNamedSourceImport(
+        source,
+        'isVerifiedGatewayPrincipalContext',
+        'isVerifiedGatewayPrincipalContext',
+        CORE_RUNTIME_MODULE,
+      ) &&
+      hasRuntimeNamedSourceImport(source, 'readVerifiedGatewayActor', 'readVerifiedGatewayActor', CORE_RUNTIME_MODULE),
     rule: hasExactSourceTokens(tokenizeGovernedClient(admission), expectedAdmission),
   });
 };
@@ -12674,7 +12676,7 @@ const hasOriginalPreparedReadState = (owner: ReadPhaseOwner, source: string, bod
       const basis = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(PurchaseProposalBasisSchema))(data).pipe(Effect.mapError(unavailable));
       if (basis.proposal.proposalRevisionRef.resourceId !== sourceRef || basis.basisRef.tenantId !== scope.tenantId ||
         basis.proposal.context.sellingLegalEntityId !== legalEntityId) { return yield* missing(); }
-      if (basis.proposal.identity.buyer.principalId !== scope.principalId) { yield* serviceAdmission; }
+      if (basis.proposal.identity.buyer.principalId !== scope.principalId) { return yield* missing(); }
       return basis;
     `,
     ) &&
@@ -12744,7 +12746,7 @@ const originalPreparedSnapshotMethod = (owner: ReadPhaseOwner, source: string, m
       ]),
       '',
     ),
-    imports: ['Effect', 'Config', 'Crypto', 'Schema', 'DateTime'].every((binding) =>
+    imports: ['Effect', 'Crypto', 'Schema', 'DateTime'].every((binding) =>
       hasRuntimeNamedSourceImport(target.source, binding, binding, 'effect'),
     ),
     scope:

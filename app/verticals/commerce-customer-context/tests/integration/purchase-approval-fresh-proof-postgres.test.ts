@@ -35,15 +35,17 @@ import type {
 } from '../../shared/domain/purchasing-approval.ts';
 
 import { revalidatePurchaseApprovalAction } from '../../src/actions/revalidate-purchase-approval.action.ts';
-import { enrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
+import { nativeTestDatabaseContainer } from '../support/native-test-database.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { makePurchasingApprovalNativeFixture } from '../support/purchasing-approval-native.ts';
 
 import { createHash, randomUUID } from 'node:crypto';
 import {
   ActionPermissionCheckError,
   ActionRuntime,
-  ContextAccess,
   isVerifiedGatewayPrincipalContext,
+  readVerifiedGatewayActor,
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionSnapshotSchema,
   ReadHandlerExecutionError,
@@ -161,6 +163,8 @@ const copyApprovalFreshMigrationJournal = Effect.fn('ApprovalFreshProofTests.cop
   expect((yield* approvalFreshJournalReceipt(target, owner)).count).toBe(0);
   const table =
     owner === 'core' ? 'drizzle.__drizzle_migrations_core' : 'drizzle.__drizzle_migrations_commerce_customer_context';
+  // The suite runs pg_dump/psql only inside the database container this run owns.
+  const container = yield* nativeTestDatabaseContainer;
   const dump = yield* ChildProcess.make(
     'docker',
     [
@@ -168,7 +172,7 @@ const copyApprovalFreshMigrationJournal = Effect.fn('ApprovalFreshProofTests.cop
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      container,
       'pg_dump',
       '--host',
       'localhost',
@@ -197,7 +201,7 @@ const copyApprovalFreshMigrationJournal = Effect.fn('ApprovalFreshProofTests.cop
       '-i',
       '-e',
       'PGPASSWORD',
-      'ontos-db',
+      container,
       'psql',
       '--host',
       'localhost',
@@ -468,7 +472,11 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
   hierarchyTtlMilliseconds?: number,
   orderBinding = false,
 ) {
-  const snapshot = yield* enrollmentApplicationCompositionSnapshot;
+  // An Order binding needs the Order module in the release, so the Shell can sign it as the calling actor.
+  const snapshot = yield* makeEnrollmentApplicationCompositionSnapshot(
+    ultramodernApiMarker.buildMarker,
+    orderBinding === true ? ['commerce-order'] : [],
+  );
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
     // Core's db:verify below checks the trust catalog against the provisioned gateway audiences.
@@ -1061,11 +1069,14 @@ it.live('serializes distinct and same fresh intents without changing request rev
   ).pipe(Effect.provide(services)),
 );
 
-/** Order and Shell replies are transport fixtures; all clients, Action gates and SQL are real. */
+/**
+ * Order and Shell replies are transport fixtures; all clients, Action gates and SQL are real. The buyer is the
+ * verified subject and the Order module the verified actor, as the Shell signs a delegated call.
+ */
 it.live('consumes an approved proof through the registered Order Action and rejects conflicting evidence', () =>
   Effect.scoped(
     Effect.gen(function* realOrderConsumptionAction() {
-      const test = yield* scenario('CURRENT', 120_000, true, undefined, true);
+      const test = yield* scenario('CURRENT', 120_000, false, undefined, true);
       test.setObservationWindow(extendedObservationSeconds);
       const proof = yield* test.check(randomUUID());
       const clock = yield* test.owner.nativeNow();
@@ -1106,12 +1117,8 @@ it.live('consumes an approved proof through the registered Order Action and reje
         ConfigProvider.fromUnknown({
           ONTOS_ACTION_TRANSACTION_IO_GUARD: true,
           ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: sourceUrl,
-          ONTOS_CCC_ORDER_CONSUMER_AUTHENTICATION_NAMESPACE_ID: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-          ONTOS_CCC_ORDER_CONSUMER_LEGAL_ENTITY_ID: test.owner.legalEntityId,
-          ONTOS_CCC_ORDER_CONSUMER_PRINCIPAL_ID: test.owner.fixture.manager.principalId,
-          ONTOS_CCC_ORDER_CONSUMER_TENANT_ID: test.owner.tenantId,
-          ONTOS_CCC_ORDER_GATEWAY_API_KEY: 'test-owned-order-api-key',
           ONTOS_COMMERCE_ORDER_API_BASE_URL: `${orderUrl}/commerce-order-api`,
+          ONTOS_GATEWAY_MODULE_API_KEY: 'test-owned-customer-context-module-key',
           ONTOS_SHELL_GATEWAY_BASE_URL: `${shellUrl}/shell-super-app-api`,
         }),
         ConfigProvider.fromEnv(),
@@ -1124,7 +1131,13 @@ it.live('consumes an approved proof through the registered Order Action and reje
         Layer.provide(ConfigProvider.layer(environment)),
       );
       const requests: Request[] = [];
-      const consume = (candidate: typeof payload, returnedEvidence: typeof evidence) =>
+      const buyer = test.owner.fixture.manager;
+      const orderForBuyer = { calledBy: 'commerce-order', subject: buyer };
+      const consume = (
+        candidate: typeof payload,
+        returnedEvidence: typeof evidence,
+        caller: { readonly calledBy?: string; readonly subject: typeof buyer },
+      ) =>
         Effect.gen(function* executeRealConsumption() {
           const body = yield* Schema.encodeEffect(CommittedOrderApprovalEvidenceResponseSchema)(returnedEvidence);
           const fetch: typeof globalThis.fetch = async (target, init) => {
@@ -1133,8 +1146,14 @@ it.live('consumes an approved proof through the registered Order Action and reje
             if (request.url === sourceUrl) {
               return new Response(sourceDocument, { headers: { 'content-type': 'application/json' } });
             }
-            if (request.url === `${shellUrl}/shell-super-app-api/auth/api-key/gateway-context`) {
-              expect(request.headers.get('x-api-key')).toBe('test-owned-order-api-key');
+            if (request.url === `${shellUrl}/shell-super-app-api/auth/delegated/gateway-context`) {
+              // Customer Context's own module credential, delegating the verified subject's assertion.
+              expect(request.headers.get('x-api-key')).toBe('test-owned-customer-context-module-key');
+              expect(await request.json()).toMatchObject({
+                audience: 'commerce-order',
+                legalEntityScope: 'subject',
+                subject: { _tag: 'Assertion' },
+              });
               return Response.json({
                 apiBaseUrl: '/commerce-order-api',
                 compositionRevision: test.snapshot.composition.revision,
@@ -1151,22 +1170,16 @@ it.live('consumes an approved proof through the registered Order Action and reje
             });
             return Response.json(body);
           };
-          const principal = yield* test.owner.authenticatedPrincipal();
+          const principal = yield* test.owner.authenticatedPrincipal(caller.subject, caller.calledBy);
           expect(isVerifiedGatewayPrincipalContext(principal)).toBe(true);
           expect(principal).toMatchObject({
             authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-            authMethod: 'api_key',
+            authMethod: 'session',
             legalEntityId: test.owner.legalEntityId,
-            principalId: test.owner.fixture.manager.principalId,
+            principalId: caller.subject.principalId,
             tenantId: test.owner.tenantId,
           });
-          const moduleDecisions = yield* Context.get(test.context, ContextAccess).modules({
-            legalEntityId: test.owner.legalEntityId,
-            moduleIds: ['commerce.customer-context'],
-            principalId: principal.principalId,
-            tenantId: test.owner.tenantId,
-          });
-          expect(moduleDecisions).toEqual([{ decision: 'allowed', key: 'commerce.customer-context' }]);
+          expect(readVerifiedGatewayActor(principal)?.appId).toBe(caller.calledBy);
           return yield* Context.get(test.context, ActionRuntime)
             .runAction({
               payload: yield* Schema.encodeEffect(ConsumeOrderPurchaseApprovalPayloadSchema)(candidate),
@@ -1189,7 +1202,20 @@ it.live('consumes an approved proof through the registered Order Action and reje
       const beforeRequest = yield* test.readRequest();
       const beforeProofs = yield* test.readProofs();
       const before = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
-      const wrongEvidence = yield* Effect.result(consume(payload, { ...evidence, proposalHash: 'a'.repeat(64) }));
+      // The buyer alone is not the Order service, and the Order service may act only for the approval's buyer.
+      for (const caller of [{ subject: buyer }, { calledBy: 'commerce-order', subject: test.owner.fixture.reader }]) {
+        const refused = yield* Effect.result(consume(payload, evidence, caller));
+        assert.isOk(Result.isFailure(refused));
+        expect(
+          yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(refused.failure),
+          `caller ${caller.calledBy ?? 'none'} for ${caller.subject.principalId}`,
+        ).toMatchObject({ code: caller.calledBy === undefined ? 'PERMISSION_DENIED' : 'COMMIT_CONFLICT' });
+        expect(yield* test.readRequest()).toEqual(beforeRequest);
+        expect(yield* test.readProofs()).toEqual(beforeProofs);
+      }
+      const wrongEvidence = yield* Effect.result(
+        consume(payload, { ...evidence, proposalHash: 'a'.repeat(64) }, orderForBuyer),
+      );
       assert.isOk(Result.isFailure(wrongEvidence));
       const failure = yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(wrongEvidence.failure);
       expect(
@@ -1200,7 +1226,7 @@ it.live('consumes an approved proof through the registered Order Action and reje
       expect(yield* test.readProofs()).toEqual(beforeProofs);
       const foreignProof = { ...payload, revalidationRef: { ...payload.revalidationRef, resourceId: randomUUID() } };
       const wrongProof = yield* Effect.result(
-        consume(foreignProof, { ...evidence, revalidationRef: foreignProof.revalidationRef }),
+        consume(foreignProof, { ...evidence, revalidationRef: foreignProof.revalidationRef }, orderForBuyer),
       );
       assert.isOk(Result.isFailure(wrongProof));
       // The unchanged native consumption routine hides unknown proofs with its canonical permission denial.
@@ -1212,21 +1238,23 @@ it.live('consumes an approved proof through the registered Order Action and reje
       const afterRefusal = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
       expect(afterRefusal.events).toEqual(before.events);
       expect(afterRefusal.outbox).toEqual(before.outbox);
-      const consumed = yield* consume(payload, evidence);
+      const consumed = yield* consume(payload, evidence, orderForBuyer);
       expect(consumed.outcome).toBe('CONSUMED');
       expect(consumed.request.consumptionProofRef).toEqual(payload.revalidationRef);
       const persisted = yield* test.readRequest();
       const afterConsumption = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
       expect(afterConsumption.events).toHaveLength(before.events.length + 1);
       expect(afterConsumption.outbox).toHaveLength(before.outbox.length + 1);
-      expect((yield* consume(payload, evidence)).outcome).toBe('ALREADY_CONSUMED');
+      expect((yield* consume(payload, evidence, orderForBuyer)).outcome).toBe('ALREADY_CONSUMED');
       expect(yield* test.readRequest()).toEqual(persisted);
       expect(yield* test.readProofs()).toEqual(beforeProofs);
       const afterReplay = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
       expect(afterReplay.events).toEqual(afterConsumption.events);
       expect(afterReplay.outbox).toEqual(afterConsumption.outbox);
       const otherOrder = { ...payload, orderRef: { ...payload.orderRef, resourceId: randomUUID() } };
-      const conflict = yield* Effect.result(consume(otherOrder, { ...evidence, orderRef: otherOrder.orderRef }));
+      const conflict = yield* Effect.result(
+        consume(otherOrder, { ...evidence, orderRef: otherOrder.orderRef }, orderForBuyer),
+      );
       assert.isOk(Result.isFailure(conflict));
       expect(yield* Schema.decodeUnknownEffect(PurchasingApprovalRejected)(conflict.failure)).toMatchObject({
         code: 'COMMIT_CONFLICT',
@@ -1236,7 +1264,7 @@ it.live('consumes an approved proof through the registered Order Action and reje
       const afterConflict = yield* test.owner.fixture.evidence(test.owner.coreEvidenceExecutor);
       expect(afterConflict.events).toEqual(afterConsumption.events);
       expect(afterConflict.outbox).toEqual(afterConsumption.outbox);
-      expect(requests.some(({ url }) => url === `${shellUrl}/shell-super-app-api/auth/api-key/gateway-context`)).toBe(
+      expect(requests.some(({ url }) => url === `${shellUrl}/shell-super-app-api/auth/delegated/gateway-context`)).toBe(
         true,
       );
       expect(

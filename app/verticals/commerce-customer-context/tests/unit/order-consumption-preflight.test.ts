@@ -1,11 +1,12 @@
 import {
   ActiveApplicationCompositionService,
-  ContextAccess,
+  TrustedPrincipalContextSchema,
   trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime';
+import type { VerifiedGatewayActor } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { CommittedOrderApprovalEvidenceResponseSchema } from '@app/commerce-order-contracts/committed-order-approval-evidence';
-import { Cause, ConfigProvider, DateTime, Effect, Exit, Layer, Schema } from 'effect';
+import { Cause, ConfigProvider, Crypto, DateTime, Effect, Exit, Layer, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
@@ -20,19 +21,23 @@ import { orderFinalizationSnapshotFixture } from './order-finalization-fixtures.
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
-const principalId = '40000000-0000-4000-8000-000000000001';
 const authenticationNamespaceId = 'ontos.shell.better-auth.v1';
 const configuration = ConfigProvider.layer(
   ConfigProvider.fromUnknown({
-    ONTOS_CCC_ORDER_CONSUMER_AUTHENTICATION_NAMESPACE_ID: authenticationNamespaceId,
-    ONTOS_CCC_ORDER_CONSUMER_LEGAL_ENTITY_ID: legalEntityId,
-    ONTOS_CCC_ORDER_CONSUMER_PRINCIPAL_ID: principalId,
-    ONTOS_CCC_ORDER_CONSUMER_TENANT_ID: tenantId,
-    ONTOS_CCC_ORDER_GATEWAY_API_KEY: 'test-only-order-key',
     ONTOS_COMMERCE_ORDER_API_BASE_URL: 'https://order.example.test/commerce-order-api',
+    ONTOS_GATEWAY_MODULE_API_KEY: 'test-only-customer-context-module-key',
     ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
   }),
 );
+const moduleActor = (appId: string): VerifiedGatewayActor => ({
+  appId,
+  buildMarker: `${appId}-build-fixture`,
+  principalId: '70000000-0000-4000-8000-000000000001',
+});
+const crypto = Crypto.make({
+  digest: () => Effect.succeed(new Uint8Array()),
+  randomBytes: (size) => new Uint8Array(size).fill(7),
+});
 
 const fixture = Effect.fn('OrderConsumptionPreflightTest.fixture')(function* fixture() {
   const snapshot = yield* makeApplicationCompositionSnapshotFixture();
@@ -55,19 +60,32 @@ const fixture = Effect.fn('OrderConsumptionPreflightTest.fixture')(function* fix
     orderRef: ref('commerce.order', 'commerce.order.order', 'order'),
     revalidationRef: ref('commerce.customer-context', 'commerce.customer-context.approval-revalidation', 'proof'),
   });
-  const scope = trustVerifiedGatewayPrincipalContext(
-    {
-      authBindingId: '30000000-0000-4000-8000-000000000001',
-      authContextRef: 'better-auth-api-key:order-consumer',
-      authenticationNamespaceId,
-      authMethod: 'api_key',
-      correlationId: 'order-consumption-preflight',
-      legalEntityId,
-      principalId,
-      tenantId,
-    },
-    compositionRevision,
-  );
+  const retained = orderFinalizationSnapshotFixture.request;
+  // The subject is the approval's buyer; the Order module is the actor the Shell signed.
+  const subject = {
+    authBindingId: '30000000-0000-4000-8000-000000000001',
+    authContextRef: 'better-auth-session:buyer',
+    authenticationNamespaceId,
+    authMethod: 'session',
+    legalEntityId,
+    principalId: retained.proposal.identity.buyer.principalId,
+    tenantId,
+  };
+  const scopeAssertion = {
+    assertion: Redacted.make('test-only-source-assertion'),
+    audience: 'commerce-customer-context',
+  };
+  const scopeActingAs = (actor?: VerifiedGatewayActor, overrides: Readonly<Record<string, string>> = {}) =>
+    trustVerifiedGatewayPrincipalContext(
+      {
+        ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({ ...subject, ...overrides }),
+        correlationId: 'order-consumption-preflight',
+      },
+      compositionRevision,
+      scopeAssertion,
+      actor,
+    );
+  const scope = scopeActingAs(moduleActor('commerce-order'));
   const preflight = getActionServicePreflight(consumeOrderPurchaseApprovalAction);
   if (preflight === undefined) {
     return yield* Effect.die('The Order consumption Action must register preparation');
@@ -79,7 +97,6 @@ const fixture = Effect.fn('OrderConsumptionPreflightTest.fixture')(function* fix
     scope,
     transaction: () => Effect.die('Immutable Order selectors must not open SQL during preparation'),
   } satisfies Parameters<typeof preflight>[1];
-  const retained = orderFinalizationSnapshotFixture.request;
   const evidence = yield* Schema.decodeUnknownEffect(Schema.toType(CommittedOrderApprovalEvidenceResponseSchema))({
     ...payload,
     buyerPrincipalId: retained.proposal.identity.buyer.principalId,
@@ -116,18 +133,21 @@ const fixture = Effect.fn('OrderConsumptionPreflightTest.fixture')(function* fix
     Layer.succeed(ActiveApplicationCompositionService, {
       load: refuseInsideDatabaseTransaction('module-transport', 'composition').pipe(Effect.as(snapshot)),
     }),
-    Layer.succeed(ContextAccess, {
-      legalEntities: () => Effect.die('Unexpected Legal Entity lookup'),
-      modules: () =>
-        refuseInsideDatabaseTransaction('spicedb', 'module admission').pipe(
-          Effect.as([{ decision: 'allowed' as const, key: 'commerce.customer-context' }]),
-        ),
-      resources: () => Effect.die('Unexpected resource lookup'),
-      tenants: () => Effect.die('Unexpected Tenant lookup'),
-    }),
+    Layer.succeed(Crypto.Crypto, crypto),
     Layer.succeed(FetchHttpClient.Fetch, fakeFetch),
   );
-  return { context, dependencies, evidence, gatewayResponse, now, payload, preflight, requests, responses };
+  return {
+    context,
+    dependencies,
+    evidence,
+    gatewayResponse,
+    now,
+    payload,
+    preflight,
+    requests,
+    responses,
+    scopeActingAs,
+  };
 });
 
 it.effect('prepares committed Order evidence through real clients with SQL released', () =>
@@ -139,9 +159,16 @@ it.effect('prepares committed Order evidence through real clients with SQL relea
     );
     expect(yield* test.preflight(test.payload, test.context).pipe(Effect.provide(test.dependencies))).toBeDefined();
     expect(test.requests.map((request) => request.url)).toEqual([
-      'https://shell.example.test/shell-super-app-api/auth/api-key/gateway-context',
+      'https://shell.example.test/shell-super-app-api/auth/delegated/gateway-context',
       'https://order.example.test/commerce-order-api/reads/committed-order-approval-evidence',
     ]);
+    // Customer Context authenticates with its own module credential and delegates the buyer's verified assertion.
+    expect(test.requests[0].headers.get('x-api-key')).toBe('test-only-customer-context-module-key');
+    expect(yield* Effect.promise(() => test.requests[0].json())).toMatchObject({
+      audience: 'commerce-order',
+      legalEntityScope: 'subject',
+      subject: { _tag: 'Assertion', sourceAssertion: 'test-only-source-assertion' },
+    });
     expect(yield* Effect.promise(() => test.requests[1].json())).toEqual({
       finalBinding: test.payload.finalBinding,
       orderRef: test.payload.orderRef,
@@ -172,11 +199,33 @@ it.effect('rejects wrong owner bindings and expired observations before opening 
         .pipe(Effect.provide(test.dependencies), Effect.flip);
       expect(failure.code).toBe('COMMIT_CONFLICT');
     }
-    const untrusted = yield* test
-      .preflight(test.payload, { ...test.context, scope: { ...test.context.scope } })
-      .pipe(Effect.provide(test.dependencies), Effect.flip);
-    expect(untrusted.code).toBe('PERMISSION_DENIED');
     expect(test.requests).toHaveLength(invalid.length * 2);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect('admits only the verified Order module acting for an unimpersonated subject', () =>
+  Effect.gen(function* actorAdmission() {
+    const test = yield* fixture();
+    const scopes = [
+      // The same fields without Core's provenance are a raw request, not a verified actor.
+      { ...test.context.scope },
+      // A verified subject without a calling module is a person, not the Order service.
+      test.scopeActingAs(),
+      // Any other module, even a verified one, may not consume an Order approval.
+      test.scopeActingAs(moduleActor('pricing')),
+      test.scopeActingAs(moduleActor('commerce-cart')),
+      test.scopeActingAs(moduleActor('commerce-order'), {
+        authMethod: 'support_impersonation',
+        impersonatedByPrincipalId: '80000000-0000-4000-8000-000000000001',
+      }),
+    ];
+    for (const scope of scopes) {
+      const failure = yield* test
+        .preflight(test.payload, { ...test.context, scope })
+        .pipe(Effect.provide(test.dependencies), Effect.flip);
+      expect(failure.code).toBe('PERMISSION_DENIED');
+    }
+    expect(test.requests).toHaveLength(0);
   }).pipe(Effect.provide(TestClock.layer())),
 );
 

@@ -309,9 +309,9 @@ for (const [file, defect, before, after] of [
   ],
   [
     approvalServiceFile,
-    'foreign authorization Context service',
-    'const access = yield* ContextAccess;',
-    'const access = yield* ForeignAccess;',
+    'foreign delegation crypto service',
+    'const crypto = yield* Crypto.Crypto;',
+    'const crypto = yield* ForeignCrypto;',
   ],
   [
     approvalServiceFile,
@@ -321,9 +321,21 @@ for (const [file, defect, before, after] of [
   ],
   [
     approvalServiceFile,
-    'inverted exact actor company',
-    'grant.legalEntityId === scope.legalEntityId',
-    'grant.legalEntityId !== scope.legalEntityId',
+    'dropped buyer subject',
+    'proposal.identity.buyer.principalId === scope.principalId &&\n    proposal.context.tenantId',
+    'proposal.context.tenantId',
+  ],
+  [
+    approvalServiceFile,
+    'Cart granted the Order protocol',
+    "['commerce-cart', ['LOAD_APPROVED_IDENTITY']]",
+    "['commerce-cart', ['LOAD_APPROVED_IDENTITY', 'REVALIDATE']]",
+  ],
+  [
+    approvalServiceFile,
+    'actor read from a foreign context',
+    'const actor = readVerifiedGatewayActor(scope);',
+    'const actor = readVerifiedGatewayActor(foreign);',
   ],
   [
     approvalServiceFile,

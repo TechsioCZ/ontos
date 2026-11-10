@@ -10,6 +10,7 @@ import {
   quotationPublicationRevision,
   recoverCompletedProposalBasis,
   samePreparedQuantity,
+  verifiedPricingIssuerPrincipalId,
   verifyPreparedBasisMutationWindow,
 } from '../../src/services/purchase-proposal-basis.service.ts';
 import { PurchaseProposalRevisionSchema } from '../../shared/domain/purchasing-approval.ts';
@@ -424,6 +425,18 @@ it.effect(
 );
 
 const publicationLine = (profileVersion: string) => ({ publicationProfile: { profileVersion } });
+
+it('accepts Pricing provenance whose issuer is the basis buyer and persists that buyer as the issuer', () => {
+  expect(Option.getOrUndefined(verifiedPricingIssuerPrincipalId(principalId, principalId, null))).toBe(principalId);
+  expect(Option.getOrUndefined(verifiedPricingIssuerPrincipalId(principalId, principalId, principalId))).toBe(
+    principalId,
+  );
+});
+
+it('denies Pricing provenance whose issuer differs from the basis buyer or from the retained issuer', () => {
+  expect(Option.isNone(verifiedPricingIssuerPrincipalId(principalId, id, null))).toBe(true);
+  expect(Option.isNone(verifiedPricingIssuerPrincipalId(principalId, principalId, id))).toBe(true);
+});
 
 it('retains only a uniform actual publication rounding revision across all quoted lines', () => {
   expect(quotationPublicationRevision([publicationLine('publication-v1'), publicationLine('publication-v1')])).toBe(
