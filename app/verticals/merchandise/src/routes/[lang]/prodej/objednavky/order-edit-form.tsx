@@ -8,18 +8,8 @@ import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { selectItem } from '../../../../ui/select-item.ts';
-import {
-  AutosaveStatus,
-  formatMoney,
-  ScrollRegion,
-  SectionCard,
-  surfaceTileClassName,
-  useAutosave,
-} from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
-import { Effect } from 'effect';
-import { useEffect, useRef, useState } from 'react';
-import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
+import { AutosaveStatus, formatMoney, ScrollRegion, SectionCard, surfaceTileClassName } from '@app/admin-ui';
+import { useRef, useState } from 'react';
 import type { Order, ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductId, ShippingMethod, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
 import { convertGrossMinor } from '../../../../../shared/domain/market-offers.ts';
@@ -31,20 +21,16 @@ import {
 } from '../../../../../shared/domain/merchandise-model.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../../../../shared/domain/order-quantity.ts';
 import { fullOrderTotals, lineGrossMinor } from '../../../../../shared/domain/order-totals.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { MONEY_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { shippingOptions } from './order-eshop.ts';
-import { draftOf, parseAmount, parseQuantity, sameOrderDraft } from './order-edit-draft.ts';
+import { addressTouched, contactTouched, draftOf, parseAmount, parseQuantity } from './order-edit-draft.ts';
 import type { Draft, DraftLine } from './order-edit-draft.ts';
-import { saveOrderEdit } from './order-edit-autosave.ts';
-import type { OrderVersion } from './order-edit-autosave.ts';
+import { useOrderEditAutosave } from './order-edit-autosave.ts';
 import { activeVariants } from './order-line-draft.ts';
 import { loadProductRecord } from '../../provoz/produkty/product-reads.ts';
 import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts';
 import { ProductSearchCombobox } from '../../provoz/produkty/product-search.tsx';
 
-type EditCommand = Extract<MerchandiseCommand, { readonly _tag: 'EditOrder' }>;
-type EditLine = NonNullable<EditCommand['lines']>[number];
 type Mutable<Value> = { -readonly [Key in keyof Value]: Value[Key] };
 
 /** A catalog CZK amount in the order's currency: market orders keep their own price list (as the server reprices). */
@@ -87,17 +73,6 @@ const sellableUnit = (product: ProductRecord, variantId: VariantId | null): Sell
       };
 };
 
-const sameAddress = (order: Order, draft: Draft) =>
-  (order.deliveryAddress?.street ?? '') === draft.street.trim() &&
-  (order.deliveryAddress?.city ?? '') === draft.city.trim() &&
-  (order.deliveryAddress?.postalCode ?? '') === draft.postalCode.trim() &&
-  (order.deliveryAddress?.country ?? '') === draft.country.trim();
-
-const sameContact = (order: Order, draft: Draft) =>
-  (order.contact?.name ?? '') === draft.name.trim() &&
-  (order.contact?.email ?? '') === draft.email.trim() &&
-  (order.contact?.phone ?? '') === draft.phone.trim();
-
 interface ParsedLine {
   readonly line: DraftLine;
   readonly price: number | null;
@@ -133,93 +108,6 @@ const previewTotals = (
   return fullOrderTotals(input);
 };
 
-const editLineOf = (
-  productId: ProductId,
-  quantity: number,
-  unitPriceMinor: number,
-  variantId: VariantId | undefined,
-): EditLine => {
-  const line: Mutable<EditLine> = { productId, quantity, unitPriceMinor };
-  if (variantId !== undefined) {
-    line.variantId = variantId;
-  }
-  return line;
-};
-
-const editAddress = (draft: Draft): NonNullable<EditCommand['deliveryAddress']> => {
-  const address: Mutable<NonNullable<EditCommand['deliveryAddress']>> = {
-    city: draft.city.trim(),
-    postalCode: draft.postalCode.trim(),
-    street: draft.street.trim(),
-  };
-  if (draft.country.trim() !== '') {
-    address.country = draft.country.trim();
-  }
-  return address;
-};
-
-const editContact = (draft: Draft): NonNullable<EditCommand['contact']> => {
-  const contact: Mutable<NonNullable<EditCommand['contact']>> = { email: draft.email.trim(), name: draft.name.trim() };
-  if (draft.phone.trim() !== '') {
-    contact.phone = draft.phone.trim();
-  }
-  return contact;
-};
-
-const editCommandOf = (
-  order: Order,
-  draft: Draft,
-  parsedLines: readonly ParsedLine[],
-  shippingPrice: number | null,
-  addressTouched: boolean,
-  contactTouched: boolean,
-): EditCommand | null => {
-  const lines = parsedLines.map(({ line, price, quantity }) =>
-    editLineOf(line.productId, quantity ?? 1, price ?? 0, line.variantId),
-  );
-  const original = order.lines.map((line) =>
-    editLineOf(line.productId, line.quantity, line.unitPriceMinor, line.variantId),
-  );
-  const linesChanged =
-    lines.length !== original.length ||
-    lines.some((line, index) => {
-      const previous = original[index];
-      return (
-        previous === undefined ||
-        line.productId !== previous.productId ||
-        line.quantity !== previous.quantity ||
-        line.unitPriceMinor !== previous.unitPriceMinor ||
-        line.variantId !== previous.variantId
-      );
-    });
-  const shippingChanged =
-    draft.shippingMethod !== null &&
-    shippingPrice !== null &&
-    (draft.shippingMethod !== order.shipping?.method || shippingPrice !== order.shipping.priceMinor);
-  const noteChanged = draft.note.trim() !== (order.note ?? '');
-  const reason = draft.reason.trim();
-  const command: Mutable<EditCommand> = { _tag: 'EditOrder', expectedUpdatedAt: order.updatedAt, id: order.id };
-  if (linesChanged) {
-    command.lines = lines;
-  }
-  if (shippingChanged && draft.shippingMethod !== null && shippingPrice !== null) {
-    command.shipping = { method: draft.shippingMethod, priceMinor: shippingPrice };
-  }
-  if (addressTouched) {
-    command.deliveryAddress = editAddress(draft);
-  }
-  if (contactTouched) {
-    command.contact = editContact(draft);
-  }
-  if (noteChanged) {
-    command.note = draft.note.trim();
-  }
-  if (reason !== '') {
-    command.reason = reason;
-  }
-  return linesChanged || shippingChanged || addressTouched || contactTouched || noteChanged ? command : null;
-};
-
 interface OrderEditFormProps {
   /** The order wrote ORDER stock movements; quantity edits then move stock the same way. */
   readonly movesStock: boolean;
@@ -237,6 +125,9 @@ interface OrderEditFormProps {
  * Admin edit of a DEMO order. Sends one EditOrder command with only the changed parts; the server recomputes the
  * totals and writes a before/after history entry per changed area. The price list never changes; when the order
  * already took goods from stock, quantity changes write the matching ORDER movements.
+ *
+ * The form stays mounted while the order reloads. `useOrderEditAutosave` owns the draft: an untouched draft takes
+ * the reloaded order, a changed one stays and saves against the order version it was typed over.
  */
 const useOrderEditForm = ({
   movesStock,
@@ -248,8 +139,6 @@ const useOrderEditForm = ({
   revision,
 }: OrderEditFormProps) => {
   const { t } = useModernI18n();
-  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Draft>(() => draftOf(order));
   const sequence = useRef(0);
   // The product picked for a new line, with its full record (variants) read on pick.
   const [pick, setPick] = useState<{
@@ -274,10 +163,6 @@ const useOrderEditForm = ({
   const unit = pickedProduct === null ? undefined : sellableUnit(pickedProduct, pickedVariantId);
   const gross = order.pricesIncludeVat === true;
   const currencyUnit = t(`merchandise.ui.currencyUnit.${orderCurrency(order)}`);
-  const patch = (next: Partial<Draft>) => setDraft((current) => ({ ...current, ...next }));
-  const patchLine = (key: string, next: Partial<DraftLine>) =>
-    patch({ lines: draft.lines.map((line) => (line.key === key ? { ...line, ...next } : line)) });
-
   const rulesFor = (line: Pick<DraftLine, 'productId' | 'variantId'>) => {
     const product = [...products, ...addedProducts].find((entry) => entry.id === line.productId);
     const stockUnit =
@@ -302,17 +187,17 @@ const useOrderEditForm = ({
       value.lines.length === 0 || parsedLines.some((entry) => entry.price === null || entry.quantity === null);
     const shippingPrice = parseAmount(value.shippingPriceText);
     const shippingInvalid = value.shippingMethod !== null && shippingPrice === null;
-    const addressTouched = !sameAddress(order, value);
+    // An address or contact left as the order has it is not sent, so only an edited one has to be complete.
+    const opened = draftOf(order);
     const addressInvalid =
-      addressTouched && [value.street, value.city, value.postalCode].some((field) => field.trim() === '');
-    const contactTouched = !sameContact(order, value);
+      addressTouched(value, opened) &&
+      [value.street, value.city, value.postalCode].some((field) => field.trim() === '');
     const contactInvalid =
-      contactTouched && (value.name.trim() === '' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(value.email.trim()));
+      contactTouched(value, opened) &&
+      (value.name.trim() === '' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(value.email.trim()));
     return {
       addressInvalid,
-      addressTouched,
       contactInvalid,
-      contactTouched,
       linesInvalid,
       parsedLines,
       shippingInvalid,
@@ -320,45 +205,19 @@ const useOrderEditForm = ({
       valid: !linesInvalid && !shippingInvalid && !addressInvalid && !contactInvalid,
     };
   };
+  const { autosave, pendingMessage, savedOnce } = useOrderEditAutosave({
+    isValid: (value) => draftValidation(value).valid,
+    order,
+    revision,
+  });
+  const { draft } = autosave;
+  const patch = (next: Partial<Draft>) => autosave.setDraft((current) => ({ ...current, ...next }));
+  const patchLine = (key: string, next: Partial<DraftLine>) =>
+    patch({ lines: draft.lines.map((line) => (line.key === key ? { ...line, ...next } : line)) });
   const { addressInvalid, contactInvalid, linesInvalid, parsedLines, shippingInvalid, shippingPrice } =
     draftValidation(draft);
 
   const preview = previewTotals(order, parsedLines, draft.shippingMethod, shippingPrice);
-
-  // `EditOrder` names the order version it was made against, so every save re-reads the version it leaves behind.
-  const savedOnce = useRef(false);
-  const version = useRef<OrderVersion>({ revision, updatedAt: order.updatedAt });
-  useEffect(() => {
-    version.current = { revision, updatedAt: order.updatedAt };
-  }, [order.updatedAt, revision]);
-  const autosave = useAutosave<Draft, never>({
-    equals: sameOrderDraft,
-    isValid: (value) => draftValidation(value).valid,
-    runtime: browserRuntime,
-    save: (value): Effect.Effect<AutosaveOutcome> => {
-      const checked = draftValidation(value);
-      const command = editCommandOf(
-        { ...order, updatedAt: version.current.updatedAt },
-        value,
-        checked.parsedLines,
-        checked.shippingPrice,
-        checked.addressTouched,
-        checked.contactTouched,
-      );
-      return command === null
-        ? Effect.succeed('saved')
-        : saveOrderEdit(command, version, setPendingMessage).pipe(
-            Effect.tap((outcome) =>
-              Effect.sync(() => {
-                if (outcome === 'saved') {
-                  savedOnce.current = true;
-                }
-              }),
-            ),
-          );
-    },
-    value: draft,
-  });
   const busy = autosave.status === 'saving';
 
   const close = () => {

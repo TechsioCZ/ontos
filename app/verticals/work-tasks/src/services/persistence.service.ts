@@ -598,6 +598,38 @@ const redactTaskLookups = (task: Task, access: WorkRecordsGrants['lookupAccess']
 };
 
 /**
+ * Assignment candidates are a picker hint; the Action re-decides every assignee it is given. When Core cannot
+ * evaluate the directory as a whole, each member is asked alone: a member that stays unevaluable is left out and
+ * logged, so one such member never withholds the records the gate has already allowed.
+ */
+const assignableCandidates = Effect.fn('Work.assignableCandidates')(function* assignableCandidates(
+  directory: AssignablePrincipalDirectory,
+  scope: OperationalScope,
+) {
+  const assignments = yield* AssignablePrincipals;
+  const eligibility = { carrier: workRecordsCarrier, scope };
+  const whole = yield* assignments.read(directory, eligibility).pipe(Effect.option);
+  if (Option.isSome(whole)) {
+    return whole.value;
+  }
+  const candidates = yield* Effect.forEach(
+    directory.members,
+    (member) =>
+      assignments
+        .read({ ...directory, members: [member] }, eligibility)
+        .pipe(
+          Effect.catchTag('AssignablePrincipalsUnavailable', (failure) =>
+            Effect.logWarning('Work assignment candidate unavailable', member.principalRef, failure).pipe(
+              Effect.as([]),
+            ),
+          ),
+        ),
+    { concurrency: 1 },
+  );
+  return candidates.flat();
+});
+
+/**
  * After commit: decode the SQL-filtered state and shape the authorized records response.
  */
 export const finishWorkRecords = Effect.fn('Work.finishRecords')(function* finishWorkRecords(
@@ -647,13 +679,7 @@ export const finishWorkRecords = Effect.fn('Work.finishRecords')(function* finis
       (request.contextResourceId === undefined ||
         task.contextRefs.some((ref) => ref.resourceId === request.contextResourceId)),
   );
-  const assignments = yield* AssignablePrincipals;
-  const assignablePrincipals = yield* assignments
-    .read(loaded.assignmentDirectory, {
-      carrier: workRecordsCarrier,
-      scope,
-    })
-    .pipe(Effect.mapError(referenceUnavailable));
+  const assignablePrincipals = yield* assignableCandidates(loaded.assignmentDirectory, scope);
   const departedPrincipalIds = new Set(
     loaded.assignmentDirectory.members.flatMap((member) =>
       member.membershipStatus === 'departed' ? [member.principalRef.principalId] : [],

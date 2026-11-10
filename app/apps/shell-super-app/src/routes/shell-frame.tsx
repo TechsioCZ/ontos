@@ -5,7 +5,6 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
 import type { IconType } from '@techsio/ui-kit/atoms/icon';
-import { Link } from '@techsio/ui-kit/atoms/link';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
@@ -74,6 +73,15 @@ interface DashboardLegalEntityItem {
 /** The access administration pages in navigation order. */
 const AccessAdministrationPageSchema = Schema.Literals(['roles', 'people', 'changes', 'approvals', 'why']);
 export type AccessAdministrationPage = typeof AccessAdministrationPageSchema.Type;
+
+/** The icon each access administration page carries in the navigation, beside the module destinations. */
+const accessAdministrationIcons = {
+  approvals: 'icon-[mdi--clipboard-check-outline]',
+  changes: 'icon-[mdi--bell-badge-outline]',
+  people: 'icon-[mdi--account-multiple-outline]',
+  roles: 'icon-[mdi--shield-account-outline]',
+  why: 'icon-[mdi--help-circle-outline]',
+} satisfies Record<AccessAdministrationPage, IconType>;
 
 export interface AuthenticatedDashboardLayoutProps {
   readonly children: ReactNode;
@@ -801,14 +809,26 @@ const AccessAdministrationNavigation = ({
 
   return (
     <section aria-label={label} className="flex flex-col gap-150">
-      <Sidebar.GroupLabel>{t('shell.accessAdmin.navigation.label')}</Sidebar.GroupLabel>
+      <Sidebar.Expanded>
+        <Sidebar.GroupLabel>{t('shell.accessAdmin.navigation.label')}</Sidebar.GroupLabel>
+      </Sidebar.Expanded>
       <nav aria-label={label}>
         <Sidebar.Menu>
           {AccessAdministrationPageSchema.literals.map((page) => (
             <Sidebar.Item key={page}>
-              <Link aria-current={currentPage === page ? 'page' : undefined} as={LocalizedLink} to={`/access/${page}`}>
-                {t(`shell.accessAdmin.navigation.${page}`)}
-              </Link>
+              <DashboardNavigationLink
+                collapsedSide
+                link={{
+                  current: currentPage === page,
+                  enabled: true,
+                  href: `/access/${page}`,
+                  icon: accessAdministrationIcons[page],
+                  key: `access-${page}`,
+                  label: t(`shell.accessAdmin.navigation.${page}`),
+                  notice: null,
+                  state: 'active',
+                }}
+              />
             </Sidebar.Item>
           ))}
         </Sidebar.Menu>

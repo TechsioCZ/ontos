@@ -1,3 +1,4 @@
+import { useHeldSnapshot } from '@app/admin-ui';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { defaultParseSearch } from '@tanstack/react-router';
@@ -116,12 +117,14 @@ export const usePipelineRecordsSnapshot = (input: PipelineRecordsInput, enabled 
 
 /**
  * Visible opportunities for the server filters, ready in the first render when the Shell prepared the page.
- * A scope/filter change or invalidation hides earlier rows until the current authorized read settles.
+ * A scope or filter change hides earlier rows until the current authorized read settles; a reload of the same
+ * read keeps them on screen until it settles.
  * A failed refresh reports its current failure rather than retaining rows from an earlier authorization.
  */
 export const usePipelineRecords = (input: PipelineRecordsInput, enabled = true) => {
   const data = useRecordsDataset(input);
-  const snapshot = useRecordsSnapshot(input, enabled, data);
+  // The strict store reads as pending while it reloads these same filters; the rows and the open detail stay mounted.
+  const snapshot = useHeldSnapshot(enabled ? data.key(input) : '', useRecordsSnapshot(input, enabled, data));
   const reload = () => {
     void browserRuntime.runPromise(data.refresh(input));
   };

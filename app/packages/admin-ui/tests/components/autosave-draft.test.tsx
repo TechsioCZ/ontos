@@ -8,12 +8,14 @@ import type { RevisionedSaveResult } from '../../src/autosave.ts';
 const runtime = ManagedRuntime.make(Layer.empty);
 
 interface Harness {
+  /** The confirmed version each save was handed. */
+  readonly bases: string[];
   readonly expected: number[];
   readonly replies: Deferred.Deferred<RevisionedSaveResult>[];
   readonly sent: string[];
 }
 
-const harness = (): Harness => ({ expected: [], replies: [], sent: [] });
+const harness = (): Harness => ({ bases: [], expected: [], replies: [], sent: [] });
 
 interface NameFormProps {
   readonly revision?: number;
@@ -27,10 +29,11 @@ const NameForm = ({ revision = 1, server, test }: NameFormProps) => {
     isValid: (value: string) => value.trim() !== '',
     revision,
     runtime,
-    save: (value: string, expectedRevision: number) =>
+    save: (value: string, expectedRevision: number, confirmed: string) =>
       Effect.suspend(() => {
         test.sent.push(value);
         test.expected.push(expectedRevision);
+        test.bases.push(confirmed);
         const reply = Deferred.makeUnsafe<RevisionedSaveResult>();
         test.replies.push(reply);
         return Deferred.await(reply);
@@ -134,6 +137,40 @@ describe('useAutosaveDraft', () => {
       view.rerender(<NameForm revision={8} server="Jejich název" test={test} />);
       fireEvent.focusOut(input());
       yield* eventually(() => expect(test.expected).toEqual([4, 6, 7]));
+    }),
+  );
+
+  it.effect('hands each save the version the server last confirmed, not the one still on the page', () =>
+    Effect.gen(function* confirmedVersion() {
+      const test = harness();
+      const view = render(<NameForm server="Akros" test={test} />);
+      const save = (value: string) => {
+        fireEvent.change(input(), { target: { value } });
+        fireEvent.focusOut(input());
+      };
+      save('Jedna');
+      yield* eventually(() => expect(test.sent).toEqual(['Jedna']));
+      answer(test, 0, 2);
+      yield* eventually(() => expect(screen.getByText('Uloženo')).toBeTruthy());
+
+      // The page still has `Akros`: its reload has not landed. A failed save does not move the base either.
+      save('Dva');
+      yield* eventually(() => expect(test.sent).toEqual(['Jedna', 'Dva']));
+      answer(test, 1, 'failed');
+      yield* eventually(() => expect(screen.getByRole('button', { name: 'zkusit znovu' })).toBeTruthy());
+      save('Tři');
+      yield* eventually(() => expect(test.sent).toEqual(['Jedna', 'Dva', 'Tři']));
+      answer(test, 2, 3);
+      yield* eventually(() => expect(screen.getByText('Uloženo')).toBeTruthy());
+      expect(test.bases).toEqual(['Akros', 'Jedna', 'Jedna']);
+
+      // A clean draft that takes a reloaded version starts over from that version.
+      view.rerender(<NameForm revision={4} server="Jejich" test={test} />);
+      expect(input().value).toBe('Jejich');
+      save('Čtyři');
+      yield* eventually(() => expect(test.sent).toHaveLength(4));
+      expect(test.bases[3]).toBe('Jejich');
+      expect(test.expected[3]).toBe(4);
     }),
   );
 

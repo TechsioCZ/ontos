@@ -1,5 +1,4 @@
-import { Config, Effect, Option, Redacted, Schema } from 'effect';
-import type { ConfigProvider } from 'effect';
+import { Config, ConfigProvider, Effect, Option, Redacted, Schema } from 'effect';
 
 export const HttpUrlSchema = Schema.URLFromString.check(
   Schema.makeFilter((url) =>
@@ -23,6 +22,16 @@ export const parseHttpUrl = <ConfigurationError>(
         url.username.length === 0 && url.password.length === 0 && url.search.length === 0 && url.hash.length === 0,
       () => malformed(),
     ),
+  );
+
+/**
+ * Where a deployment's configuration is read when its layer is built: the installed ConfigProvider, with the process
+ * environment behind it read exactly as before (an empty value stays an empty value). A host that installs no
+ * provider therefore reads the environment it was started with.
+ */
+export const deploymentConfigProvider: Effect.Effect<ConfigProvider.ConfigProvider> =
+  ConfigProvider.ConfigProvider.pipe(
+    Effect.map((installed) => ConfigProvider.orElse(installed, ConfigProvider.fromEnv({ preserveEmptyStrings: true }))),
   );
 
 const declaredValue = (configured: Option.Option<Redacted.Redacted>): boolean =>

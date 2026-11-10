@@ -301,16 +301,21 @@ export type RevisionedSaveResult = AutosaveOutcome | number;
 interface GenerationOptions<V, R> extends Omit<AutosaveOptions<V, R>, 'save'> {
   readonly revision: number;
   readonly runtime: ManagedRuntime.ManagedRuntime<R, never>;
-  readonly save: (value: V, expectedRevision: number) => Effect.Effect<RevisionedSaveResult, never, R>;
+  readonly save: (value: V, expectedRevision: number, confirmed: V) => Effect.Effect<RevisionedSaveResult, never, R>;
   readonly value: V;
 }
 
 const isOutcome = Schema.is(AutosaveOutcomeSchema);
 
-const boundTo = <V, R>(options: GenerationOptions<V, R>, base: BaseRevision): AutosaveOptions<V, R> => ({
+/** `confirmed` reads the controller's confirmed version when a save starts. */
+const boundTo = <V, R>(
+  options: GenerationOptions<V, R>,
+  base: BaseRevision,
+  confirmed: () => V,
+): AutosaveOptions<V, R> => ({
   ...options,
   save: (value) =>
-    options.save(value, base.current()).pipe(
+    options.save(value, base.current(), confirmed()).pipe(
       Effect.map((result): AutosaveOutcome => {
         if (isOutcome(result)) {
           return result;
@@ -326,12 +331,16 @@ const useGeneration = <V, R>(options: GenerationOptions<V, R>) => {
   const { runtime } = options;
   const begin = (from: V, revision: number): Generation<V, R> => {
     const base = baseRevision(revision);
-    return { base, controller: runtime.runSync(startAutosave(from, boundTo(options, base))) };
+    // Nothing is saved yet, so `from` is the confirmed version; from here on the controller knows it.
+    const startedFrom = () => from;
+    const controller = runtime.runSync(startAutosave(from, boundTo(options, base, startedFrom)));
+    controller.configure(boundTo(options, base, controller.confirmed));
+    return { base, controller };
   };
   const [generation, setGeneration] = useState(() => begin(options.value, options.revision));
   const { base, controller } = generation;
   useEffect(() => {
-    controller.configure(boundTo(options, base));
+    controller.configure(boundTo(options, base, controller.confirmed));
   }, [base, controller, options]);
   useEffect(() => {
     controller.change(options.value);
@@ -382,8 +391,12 @@ export interface UseAutosaveDraftOptions<V, R> extends Omit<AutosaveOptions<V, R
    * Sends one draft. Return the record's new revision (or `saved`), `proposed` when the change was parked for
    * approval, `conflict` for the action's revision conflict and `failed` otherwise; a defect or interruption counts
    * as `failed`.
+   *
+   * `confirmed` is the version the server last confirmed for this draft: the server version the draft started from,
+   * then the draft of every successful save. A save that sends only what changed compares the draft with it, never
+   * with page data, which still shows the version before that save until its reload lands.
    */
-  readonly save: (value: V, expectedRevision: number) => Effect.Effect<RevisionedSaveResult, never, R>;
+  readonly save: (value: V, expectedRevision: number, confirmed: V) => Effect.Effect<RevisionedSaveResult, never, R>;
   /** The record as the server has it now, in the draft's shape (recomputed on every render is fine). */
   readonly server: V;
 }

@@ -69,7 +69,7 @@ const ProductDetailPageContent = ({ context, legalEntityId, routeParams, search 
   const revisionHint = productRevisionOf(search);
   const variantId = productVariantIdFromSearch(search);
   const input = detailInput(legalEntityId, routeParams.id, context, revisionHint);
-  // The page keeps the active tab, so it survives the editor remount that a product reload causes.
+  // The page keeps the active tab, so it survives an editor remount (a failed reload, another product).
   const [tab, setTab] = useState<ProductDetailTab>(() => (variantId === undefined ? 'detail' : 'variants'));
   const [variantTabKey, setVariantTabKey] = useState(variantId);
   if (variantTabKey !== variantId) {

@@ -331,6 +331,22 @@ const startChild = Effect.fn('AppHost.startChild')(function* startChild(
   );
 });
 
+const MODULE_BINDINGS_KEY = 'ONTOS_GATEWAY_MODULE_BINDINGS';
+
+/**
+ * This host binds no module credential yet (DEPLOYMENT.md, "Not yet provisioned on this host"), so the Shell receives
+ * main's explicit enrolment for a deployment without one, `[]`. The Shell reads an absent enrolment as unavailable and
+ * then answers 503 to every API-key gateway issuance. An operator's value, stored in the Shell's owner secrets or set
+ * on the container, always wins and is passed through unchanged, so it never conflicts with this declaration.
+ */
+export const shellModuleEnrolment = (
+  shellSecrets: Readonly<Record<string, string>> | undefined,
+  containerValue: Option.Option<string>,
+): ChildEnvironment =>
+  shellSecrets?.[MODULE_BINDINGS_KEY] === undefined && Option.isNone(containerValue)
+    ? { [MODULE_BINDINGS_KEY]: '[]' }
+    : {};
+
 /** Only the single-unit Shell process can use the packaged Bun binary. Every other unit process uses Node. */
 export const startUnitProcess = (ids: readonly string[], runtime: typeof ShellRuntime.Type, env: ChildEnvironment) =>
   startChild(
@@ -699,6 +715,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     Effect.flatMap((encoded) => Schema.decodeEffect(OwnerSecretsSchema)(Redacted.value(encoded))),
     Effect.mapError(() => failure('ONTOS_OWNER_SECRETS_JSON must be an owner record of string secrets')),
   );
+  const containerModuleEnrolment = yield* Config.option(Config.String(MODULE_BINDINGS_KEY));
   const units = yield* readHostedUnits;
   const ports = new Map(units.map(({ id, port }) => [id, port]));
   const derived = derivedEnvironment(
@@ -761,7 +778,10 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     return yield* failure(`owners store different values for ${ownersEnvironment.conflicts.join(', ')}`);
   }
   const exits = [
-    yield* startUnitProcess([SHELL_ID], runtime, shellEnvironment.environment),
+    yield* startUnitProcess([SHELL_ID], runtime, {
+      ...shellModuleEnrolment(ownerSecrets[SHELL_ID], containerModuleEnrolment),
+      ...shellEnvironment.environment,
+    }),
     yield* startUnitProcess(ownerIds, runtime, ownersEnvironment.environment),
   ];
   yield* Console.log(`[app-host] Shell runtime ${runtime}; owners and Outbox runtime node`);

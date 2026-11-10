@@ -140,8 +140,8 @@ buttons therefore add only legal package multiples (including metre-based produc
 explains this before adding; grouped product summaries defer to each variant rather than
 advertising another variant’s minimum. The server still rechecks all constraints independently.
 
-`POST /api/ontos/orders` only constructs `PlaceStorefrontOrder`, through merchandise
-`apply-command`. It validates the input and delivery details, uses the fresh aggregate revision
+`POST /api/ontos/orders` and the cart quote only construct `PlaceStorefrontOrder`, through merchandise's
+`place-storefront-order` Action (the only merchandise Action the storefront key is admitted on). It validates the input and delivery details, uses the fresh aggregate revision
 and an idempotency key derived from the persisted `clientRequestId` + exact payload. The owner
 rechecks prices/stock/quantities and persists/deduplicates the order by clientRequestId. It never
 accepts a browser-requested arbitrary Action. Origin/content-type/body-size checks protect the BFF.
