@@ -15,6 +15,8 @@ import {
 } from '../domain/privacy-processing-eligibility.ts';
 
 const Ref = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
+export const SymmyCustomerSourceIntakeOperation = 'CUSTOMER_SOURCE_INTAKE';
+export const SymmyCustomerSourceIntakeConsumerModule = 'integration.symmy';
 
 /** These identifiers locate source authority; they never carry authority themselves. */
 export const SourceProcessingIdentitySchema = Schema.Struct({
@@ -22,7 +24,11 @@ export const SourceProcessingIdentitySchema = Schema.Struct({
   occurrenceId: Ref.pipe(Schema.brand('PrivacySourceOccurrenceId'), Schema.decodeTo(Schema.String)),
 });
 export const SourceProcessingEligibilityRequestSchema = Schema.Struct({
-  consumerModuleId: Schema.Literals(['party.registry', 'commerce.customer-context']),
+  consumerModuleId: Schema.Literals([
+    'party.registry',
+    'commerce.customer-context',
+    SymmyCustomerSourceIntakeConsumerModule,
+  ]),
   operation: Ref,
   partySourceReference: Schema.optionalKey(PrivacySourcePersonReferenceSchema),
   /** Null identifies a native owner operation, never an invented external issuer. */
@@ -35,12 +41,27 @@ export const SourceProcessingEligibilityRequestSchema = Schema.Struct({
           'DUPLICATE_CANDIDATE',
           'RETAIL_CUSTOMER_PROFILE',
           'COUNTERPARTY_PURCHASING_PROFILE',
+          'PARTY_CONTACT_POINT',
+          'COUNTERPARTY',
         ]),
         resourceId: Ref.pipe(Schema.brand('PrivacySourceTargetId'), Schema.decodeTo(Schema.String)),
       }),
     ),
   ),
-});
+}).check(
+  Schema.makeFilter(({ consumerModuleId, operation, source, target }) => {
+    if (consumerModuleId === SymmyCustomerSourceIntakeConsumerModule) {
+      return operation === SymmyCustomerSourceIntakeOperation && source !== null
+        ? undefined
+        : 'Symmy intake requires a qualified source and its dedicated processing operation';
+    }
+    return operation !== SymmyCustomerSourceIntakeOperation &&
+      target?.kind !== 'PARTY_CONTACT_POINT' &&
+      target?.kind !== 'COUNTERPARTY'
+      ? undefined
+      : 'Symmy intake operations and locators are reserved for the integration boundary';
+  }),
+);
 export type SourceProcessingEligibilityRequest = typeof SourceProcessingEligibilityRequestSchema.Type;
 /** Deployment-governed business-fact context, never legal basis or consent. Every entry
  * refers to an existing durable Privacy applicability decision. Reloaded on each attempt. */

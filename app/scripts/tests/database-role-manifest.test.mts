@@ -14,6 +14,11 @@ import {
 const explicitEntries = DATABASE_ROLE_GRANT_MANIFEST.flatMap((entry) => (entry.kind === 'explicit' ? [entry] : []));
 const schemaOf = (qualifiedName: string): string => qualifiedName.slice(0, qualifiedName.indexOf('.'));
 const openSourceExecutionFenceSignature = 'trust.open_source_execution_fence(uuid,uuid)';
+const openGatedSourceExecutionFenceSignature = 'trust.open_source_execution_fence(uuid,uuid,uuid,text,text)';
+const sourceExecutionGateAdminSignatures = [
+  'trust.register_source_execution_gated_action(text,text)',
+  'trust.publish_source_execution_gate(uuid,uuid,text,uuid,uuid,text,text,boolean,boolean)',
+];
 const cancelSourceExecutionFenceSignature = 'trust.cancel_source_execution_fence(uuid,uuid)';
 const lockSourceExecutionFenceSignature = 'trust.lock_source_execution_fence(uuid,uuid)';
 const readSourceExecutionFenceSignature = 'trust.read_source_execution_fence(uuid,uuid)';
@@ -21,6 +26,7 @@ const registeredWorkloadDeliverySignature = 'trust.registered_workload_delivery_
 const lockAccessScopeFenceSignature = 'trust.lock_access_scope_fence(uuid,uuid)';
 const sharedRuntimeTrustRoutines = [
   openSourceExecutionFenceSignature,
+  openGatedSourceExecutionFenceSignature,
   cancelSourceExecutionFenceSignature,
   lockSourceExecutionFenceSignature,
   readSourceExecutionFenceSignature,
@@ -35,6 +41,9 @@ it('keeps every shared runtime exception within its exact owner privileges', () 
     return;
   }
   expect(entry.tableGrantExceptions?.map(({ privileges, table }) => ({ privileges, table }))).toEqual([
+    { privileges: [], table: 'core.source_execution_fences' },
+    { privileges: [], table: 'core.source_execution_gate_actions' },
+    { privileges: [], table: 'core.source_execution_gates' },
     {
       privileges: ['select', 'insert', 'delete'],
       table: 'assortment.gateway_assertion_redemptions',
@@ -186,9 +195,13 @@ it('derives trust routine executors from the identity flags', () => {
       expect(routine.securityDefiner).toBe(true);
     } else if (
       routine.signature === openSourceExecutionFenceSignature ||
+      routine.signature === openGatedSourceExecutionFenceSignature ||
       routine.signature === cancelSourceExecutionFenceSignature
     ) {
       expect(executors, routine.signature).toEqual(['ontos_runtime']);
+      expect(routine.securityDefiner).toBe(true);
+    } else if (sourceExecutionGateAdminSignatures.includes(routine.signature)) {
+      expect(executors, routine.signature).toEqual([]);
       expect(routine.securityDefiner).toBe(true);
     } else if (routine.signature === registeredWorkloadDeliverySignature) {
       expect(executors).toEqual(EffectArray.sort(['ontos_runtime', ...gatewayGrantRoles], Order.String));
@@ -202,6 +215,8 @@ it('derives trust routine executors from the identity flags', () => {
   }
   expect(TRUST_ROUTINES.map(({ signature }) => signature)).toEqual([
     openSourceExecutionFenceSignature,
+    openGatedSourceExecutionFenceSignature,
+    ...sourceExecutionGateAdminSignatures,
     cancelSourceExecutionFenceSignature,
     lockSourceExecutionFenceSignature,
     readSourceExecutionFenceSignature,

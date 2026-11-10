@@ -506,6 +506,19 @@ it.live(
         };
         yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,principal_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
           values(${stockRouteId},${tenantId},${integration.principalId},true,array['INTERNAL_C14'],${yield* json(yield* Schema.decodeUnknownEffect(Schema.Json)(stockConfiguration))}::jsonb,${internalSyncSource.mappingVersion},'inventoryStockBatch',${internalSyncSource.routeRevision},${yield* json(stockPolicy)}::jsonb)`;
+        const otherAssertion = yield* makeInternalStockPlan(
+          { occurrenceId: stockOccurrenceId, recordId: stockRecordId },
+          { ...stockPayload, items: [{ ...stockProposal, assertionId: randomUUID() }] },
+          true,
+        );
+        const substituted = yield* client.post(`${shell.baseUrl}/api/symmy/v1/${stockPath}`, {
+          body: yield* HttpBody.json({
+            contractVersion: 'INTERNAL_C14',
+            plan: Schema.encodeSync(SymmyInternalExecutionPlanSchema)(otherAssertion),
+          }),
+          headers: { ...headers, 'idempotency-key': 'INTERNAL_C14_STOCK_WRONG_ASSERTION' },
+        });
+        expect(substituted.status).toBe(403);
         const stockResult = yield* submit(stockPath, stockRevision2Key, stockPlan);
         if (stockResult.items[0].outcome !== 'partial') {
           const diagnostics = yield* Effect.all(ownerDiagnostics);
@@ -596,6 +609,14 @@ it.live(
           stalePayload,
           false,
         );
+        const staleConfiguration = {
+          ...Schema.encodeSync(SymmyInternalExecutionPlanSchema)(stalePlan),
+          inventoryBackendId: internalStockBackendId,
+          sourceRouteId: stockLogicalRouteId,
+        };
+        yield* admin`update symmy_integration.job_routes
+          set fixture_plan = ${yield* json(yield* Schema.decodeUnknownEffect(Schema.Json)(staleConfiguration))}::jsonb
+          where tenant_id = ${tenantId} and route_id = ${stockRouteId}`;
         const stale = yield* submit(stockPath, 'INTERNAL_C14_STOCK_REVISION_1', stalePlan);
         expect(stale.items[0].outcome).toBe('not_accepted');
         expect(stale.items[0].effects[0].status).toBe('stale');

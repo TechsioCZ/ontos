@@ -1,6 +1,7 @@
 import { MarketRefSchema } from '@app/commerce-market-catalog/resources/market';
 import { PricingCurrencyCodeSchema } from '@app/pricing-contracts/current-supported-currencies';
 import { Schema } from 'effect';
+import { SymmyQualifiedReadIdSchema } from './read-projection-contracts.ts';
 
 export const SymmyRegionSourceIdSchema = Schema.String.check(
   Schema.isMinLength(1),
@@ -8,7 +9,7 @@ export const SymmyRegionSourceIdSchema = Schema.String.check(
   Schema.isTrimmed(),
 ).pipe(Schema.brand('SymmyRegionSourceId'));
 
-/** Internal projection only; the source Region identity is never a native Market identity. */
+/** Only the resolved Market reference is exposed as evidence of the configured Region mapping. */
 export const SymmyInternalRegionsProjectionSchema = Schema.Struct({
   contractVersion: Schema.Literal('INTERNAL_C14'),
   count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
@@ -19,9 +20,10 @@ export const SymmyInternalRegionsProjectionSchema = Schema.Struct({
     Schema.Struct({
       country_codes: Schema.Tuple([Schema.Literal('CZ')]),
       currency_code: PricingCurrencyCodeSchema,
-      id: SymmyRegionSourceIdSchema,
+      id: SymmyQualifiedReadIdSchema,
       market_code: Schema.String,
       marketRef: MarketRefSchema,
+      source_record_id: SymmyRegionSourceIdSchema,
     }),
   ),
   unsupported_fields: Schema.Tuple([

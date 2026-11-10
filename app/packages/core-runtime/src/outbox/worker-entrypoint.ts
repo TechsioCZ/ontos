@@ -94,6 +94,7 @@ export {
   isVerifiedOutboxWorkerHandlerContext,
 } from './definition.ts';
 export { defineOutboxWorkerCompletion, OutboxWorkerCompletionPublicationError } from './completion-publication.ts';
+export { OutboxWorkerDeferred } from './outbox-worker-deferred.ts';
 export {
   defineOutboxWorkerEntry,
   hostedOutboxWorkerEntry,

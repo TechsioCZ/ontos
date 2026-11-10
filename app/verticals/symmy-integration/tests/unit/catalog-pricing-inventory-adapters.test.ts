@@ -76,6 +76,27 @@ const variantRef = {
   resourceType: 'commerce.catalog.variant',
   tenantId,
 };
+const bindInitialVariantEffect = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+  ...effect,
+  intent: {
+    _tag: 'CatalogBindInitialVariantSource',
+    payload: {
+      evidenceRef: 'internal-variant-source-evidence',
+      expectedCreateInvocationId: invocationId,
+      initialVariantRecordId: 'initial-variant-1',
+      productSource: sourceCorrelation,
+    },
+  },
+  ref: {
+    ...effect.ref,
+    operation: {
+      entrypointKey: 'commerce.catalog.bind-initial-variant-source',
+      moduleId: 'commerce.catalog',
+      schemaVersion: '1',
+    },
+    originalTarget: productRef,
+  },
+});
 const result = {
   businessOriginalCreateInvocationId: invocationId,
   product: {
@@ -483,6 +504,7 @@ const harness = (
     readonly receipt: typeof PriceSourceResultLookupResponseSchema.Encoded;
   },
   groupReceipt?: typeof PriceGroupResultLookupResponseSchema.Encoded,
+  variantBindingReceipt?: { readonly changed?: boolean },
 ) => {
   const requests: Request[] = [];
   const events: string[] = [];
@@ -629,6 +651,11 @@ const harness = (
         }),
       );
     }
+    if (request.url.includes('bind-initial-variant-source')) {
+      return Promise.resolve(
+        Response.json({ ...variantBindingReceipt, originalCreateInvocationId: invocationId, productId, variantId }),
+      );
+    }
     return Promise.resolve(
       Response.json(request.url.includes('/actions/update-product') ? { ...result, changed: false } : result),
     );
@@ -646,18 +673,17 @@ const harness = (
     pricingSourceSystem,
     readOriginalActionInvocation: () =>
       Effect.succeed(Option.some({ actionInvocationId: invocationId, status: 'succeeded' })),
-    recordExecutorPrincipal: (id) =>
-      Effect.sync(() => {
-        events.push(`executor:${id}`);
-      }),
     recordInvocationId: (id) =>
       Effect.sync(() => {
         events.push(`invocation:${id}`);
       }),
-    recordOriginalRequestHash: () => Effect.void,
     recordOwnerReceipt: (receipt) =>
       Effect.sync(() => {
         receipts.push(receipt);
+      }),
+    recordOwnerRequest: ({ executorPrincipalId }) =>
+      Effect.sync(() => {
+        events.push(`executor:${executorPrincipalId}`);
       }),
     recordResolvedEffect: (resolved) =>
       Effect.sync(() => {
@@ -806,6 +832,8 @@ describe('Symmy native public owner adapter transport', () => {
           ...original,
           canExecuteNewEffects: false,
           originalInvocationId: groupParentInvocationId,
+          readOriginalActionInvocation: () =>
+            Effect.succeed(Option.some({ actionInvocationId: groupParentInvocationId, status: 'succeeded' })),
         });
         expect(recovered).toMatchObject({ outcome: { status: 'duplicate' }, status: 'settled' });
         expect(h.receipts).toEqual([
@@ -832,6 +860,7 @@ describe('Symmy native public owner adapter transport', () => {
           ...h.input,
           dependencies: [{ ...groupParentState, itemKey: 'decoy-group-item' }, groupParentState],
           legalEntityId,
+          routeKey: 'priceListsBatchUpsert',
         });
         expect(outcome.status).toBe('accepted_change');
         const pinned = yield* Schema.decodeUnknownEffect(SymmyPinnedEffectSchema)(h.resolvedEffects[0]);
@@ -911,7 +940,7 @@ describe('Symmy native public owner adapter transport', () => {
       }),
     );
   });
-  it.effect('settles the actual native known-invalid currency assessment as a terminal conflict', () => {
+  it.effect('settles the actual native known-invalid currency assessment as invalid', () => {
     const h = harness(false, priceDefinitionEffect(priceGroupA), productId, priceGroupA, false, {
       assessment: negativePriceAssessment,
       receipt: unavailablePriceReceipt,
@@ -920,7 +949,7 @@ describe('Symmy native public owner adapter transport', () => {
       Effect.gen(function* test() {
         const adapter = yield* h.adapter;
         const outcome = yield* adapter.execute({ ...h.input, legalEntityId });
-        expect(outcome.status).toBe('conflict');
+        expect(outcome.status).toBe('invalid');
         expect(h.events).toContain('owner-price-write');
         expect(h.events).not.toContain('owner-price-recovery');
       }),
@@ -982,7 +1011,7 @@ describe('Symmy native public owner adapter transport', () => {
       }),
     );
   });
-  it.effect('preserves held and dependency-unavailable native assessments as distinct uncertain outcomes', () =>
+  it.effect('distinguishes invalid, held and unavailable native assessments from uncertain commits', () =>
     Effect.gen(function* test() {
       const inputs = [
         {
@@ -994,13 +1023,17 @@ describe('Symmy native public owner adapter transport', () => {
           },
         },
         {
-          expected: 'indeterminate',
+          expected: 'unavailable',
           wire: {
             dependency: 'MAPPING_REGISTRY',
             outcome: 'PRICE_SOURCE_ASSERTION_DEPENDENCY_UNAVAILABLE',
             retryable: true,
             sourceAssertionId: definePriceIntent.payload.sourceAssertion.sourceAssertionId,
           },
+        },
+        {
+          expected: 'invalid',
+          wire: negativePriceAssessment,
         },
       ];
       for (const input of inputs) {
@@ -1237,6 +1270,52 @@ describe('Symmy native public owner adapter transport', () => {
       }),
     );
   });
+  it.effect.each([effect, updateEffect])(
+    'rejects a Price source occurrence for a Catalog Product write even when the qualified correlation matches',
+    (productEffect) => {
+      const priceSource = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+        ...productEffect,
+        ref: {
+          ...productEffect.ref,
+          occurrence: {
+            ...productEffect.ref.occurrence,
+            record: { ...productEffect.ref.occurrence.record, entityKind: 'PRICE' },
+          },
+        },
+      });
+      const h = harness(false, priceSource);
+      return h.provide(
+        Effect.gen(function* test() {
+          const adapter = yield* h.adapter;
+          expect(Exit.isFailure(yield* Effect.exit(adapter.execute(h.input)))).toBe(true);
+          expect(h.requests).toHaveLength(0);
+        }),
+      );
+    },
+  );
+  it.effect.each([
+    { receipt: { changed: true }, status: 'accepted_change' },
+    { receipt: { changed: false }, status: 'accepted_no_change' },
+    { receipt: {}, status: 'unresolved' },
+  ])('preserves the initial Variant binding result in native dispatch and original recovery', ({ receipt, status }) => {
+    const h = harness(false, bindInitialVariantEffect, productId, priceGroupA, false, undefined, undefined, receipt);
+    return h.provide(
+      Effect.gen(function* test() {
+        const adapter = yield* h.adapter;
+        const outcome = yield* adapter.execute(h.input);
+        const original = yield* originalProof(h.input);
+        const recovered = yield* adapter.recover({
+          ...original,
+          canExecuteNewEffects: false,
+          originalInvocationId: invocationId,
+        });
+        expect(outcome.status).toBe(status);
+        expect(recovered).toMatchObject({ outcome: { status }, status: 'settled' });
+        expect(h.events.filter((event) => event === 'owner-write')).toHaveLength(1);
+        expect(h.events.filter((event) => event === 'owner-recovery')).toHaveLength(1);
+      }),
+    );
+  });
   it.effect(
     'recovers the frozen dependent Variant directly from its original owner receipt after new writes are blocked',
     () => {
@@ -1318,6 +1397,61 @@ describe('Symmy native public owner adapter transport', () => {
       }),
     );
   });
+  it.effect.each(['priceListsBatchUpsert', 'priceListPricesBatch'] as const)(
+    'rejects a persisted direct Price command without a qualified list binding before owner dispatch',
+    (routeKey) => {
+      const h = harness(false, priceDefinitionEffect(priceGroupB), productId, priceGroupA, false, {
+        assessment: canonicalPriceAssessment,
+        receipt: originalPriceReceipt('CREATED'),
+      });
+      return h.provide(
+        Effect.gen(function* test() {
+          const adapter = yield* h.adapter;
+          const outcome = yield* adapter.execute({ ...h.input, legalEntityId, routeKey });
+          expect(outcome.status).toBe('unresolved');
+          expect(h.requests).toHaveLength(0);
+        }),
+      );
+    },
+  );
+  it.effect.each([
+    { group: priceGroupA, status: 'accepted_change', writes: 1 },
+    { group: priceGroupB, status: 'unresolved', writes: 0 },
+  ])(
+    'rechecks a resumed Price command against the admitted parent and owner association',
+    ({ group, status, writes }) => {
+      const materialized = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+        ...dependentPriceEffect,
+        intent: priceDefinitionEffect(group).intent,
+      });
+      const acceptedPlan = Schema.decodeUnknownSync(SymmyPinnedJobPlanSchema)({
+        items: [
+          { effects: [groupParentEffect], itemId: groupParentEffect.itemId, itemKey: 'group-item' },
+          { effects: [dependentPriceEffect], itemId: dependentPriceEffect.itemId, itemKey: 'price-item' },
+        ],
+      });
+      const h = harness(false, materialized, productId, priceGroupA, false, {
+        assessment: canonicalPriceAssessment,
+        receipt: originalPriceReceipt('CREATED'),
+      });
+      return h.provide(
+        Effect.gen(function* test() {
+          const adapter = yield* h.adapter;
+          const outcome = yield* adapter.execute({
+            ...h.input,
+            acceptedPlan,
+            dependencies: [groupParentState],
+            legalEntityId,
+            routeKey: 'priceListsBatchUpsert',
+          });
+          expect(outcome.status).toBe(status);
+          expect(h.events.filter((event) => event === 'owner-group-source-read')).toHaveLength(1);
+          expect(h.events.filter((event) => event === 'owner-price-write')).toHaveLength(writes);
+          expect(h.resolvedEffects).toHaveLength(0);
+        }),
+      );
+    },
+  );
   it.effect('keeps a known committed effect indeterminate when its current protected receipt Read is forbidden', () => {
     const h = harness(false, effect, productId, priceGroupA, true);
     return h.provide(
@@ -1409,6 +1543,8 @@ describe('Symmy native public owner adapter transport', () => {
             ...original,
             canExecuteNewEffects: false,
             originalInvocationId: currentInvocationId,
+            readOriginalActionInvocation: () =>
+              Effect.succeed(Option.some({ actionInvocationId: currentInvocationId, status: 'succeeded' })),
           });
           expect(recovered.status).toBe('settled');
           if (recovered.status === 'settled') {

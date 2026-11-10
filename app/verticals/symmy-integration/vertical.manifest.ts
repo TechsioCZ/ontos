@@ -263,6 +263,17 @@ export const symmyIntegrationManifest = defineOntosModuleManifest({
     operations: [
       ...ownerOperationRequirements,
       {
+        condition: 'integration.symmy.condition.personal-customer-source-intake',
+        entrypointKey: 'integration.symmy.admit-symmy-job',
+        evidence: ['integration.symmy.evidence.qualified-customer-source'],
+        key: 'integration.symmy.requirement.customer-intake-privacy',
+        provider: {
+          entrypointKey: 'privacy.core.api.source-processing-eligibility',
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
         condition: 'integration.symmy.condition.current-operational-retention-authority',
         entrypointKey: 'integration.symmy.execute-symmy-retention',
         evidence: ['integration.symmy.evidence.current-privacy-measure-authority'],

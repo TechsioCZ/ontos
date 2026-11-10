@@ -2,6 +2,8 @@
 // @ontos-action-owner commerce.assortment
 // @ontos-action-slug import-symmy-rule
 import { Config, DateTime, Effect, Schema } from 'effect';
+import { assortmentCurrentnessFacts } from '../services/assortment-currentness.ts';
+import { createRuleCurrentnessTarget } from './policy-administration-support.ts';
 import type { ActionHandlerContext, OperationalScope } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { PrincipalIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
@@ -37,6 +39,7 @@ const configuredSymmyRuleFixtures = Config.schema(
     Schema.Array(
       Schema.Struct({
         command: ImportSymmyRulePayloadSchema,
+        permit: Schema.RedactedFromValue(Schema.String.check(Schema.isUUID())),
         principalId: PrincipalIdSchema,
       }),
     ).check(Schema.isMaxLength(256)),
@@ -94,11 +97,11 @@ const authorizeSymmyRuleFixture = Effect.fn('Assortment.authorizeSymmyRuleFixtur
     ),
   );
   const commandFingerprint = symmyRuleCommandFingerprint(command);
-  const permitted = configured.some(
+  const permitted = configured.find(
     (permit) =>
       permit.principalId === scope.principalId && symmyRuleCommandFingerprint(permit.command) === commandFingerprint,
   );
-  return yield* permitted ? Effect.void : fixtureAccessDenied();
+  return permitted === undefined ? yield* fixtureAccessDenied() : permitted.permit;
 });
 
 const domainEvents = {
@@ -128,8 +131,8 @@ export const handleImportSymmyRule = Effect.fn('ImportSymmyRuleAction.handle')(f
   payload: ImportSymmyRulePayload,
   context: ActionHandlerContext<typeof domainEvents, AssortmentSymmyRuleFixtureService>,
 ) {
-  yield* authorizeSymmyRuleFixture(context.scope, payload);
-  const persisted = yield* context.services.persistFixture(payload, context.actionInvocationId);
+  const permit = yield* authorizeSymmyRuleFixture(context.scope, payload);
+  const persisted = yield* context.services.persistFixture(payload, context.actionInvocationId, permit);
   if (persisted === null) {
     return yield* fixtureAlreadyExists();
   }
@@ -164,6 +167,10 @@ export const importSymmyRuleAction = defineAction(
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.assortment.import-symmy-rule.access.v1',
+    },
+    accessOwnerFacts: (payload, scope) => {
+      createRuleCurrentnessTarget(payload.rule, scope);
+      return assortmentCurrentnessFacts({ kind: 'assortment_fixture', selectorKind: payload.rule.selector.kind });
     },
     accessWorkload: {
       reason: 'Applies one explicitly enrolled internal C14 Assortment rule fixture',

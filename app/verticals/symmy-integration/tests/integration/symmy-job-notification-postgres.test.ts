@@ -195,9 +195,9 @@ it.effect(
         .where(eq(symmyImportJobs.jobId, admitted.jobId));
       const policy = Schema.decodeUnknownSync(SymmyJobNotificationPolicySchema)({
         authorization: 'internal-callback-token',
-        initialBackoffMs: 1,
+        initialBackoffMs: 3_600_000,
         maxAttempts: 3,
-        maxBackoffMs: 10,
+        maxBackoffMs: 86_400_000,
         policyId: 'internal-policy',
         recipientId: 'internal-recipient',
         recipientUrl: 'https://lifecycle.internal.test/completed',
@@ -271,9 +271,25 @@ it.effect(
         .pipe(
           Effect.provide(notificationHttp),
           Effect.provideService(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' }),
-          Effect.flip,
         );
-      expect(first).toMatchObject({ code: 'notification_retry' });
+      const [pending] = yield* admin
+        .select()
+        .from(symmyJobNotifications)
+        .where(eq(symmyJobNotifications.jobId, admitted.jobId));
+      const dueAt = Option.getOrThrow(Option.fromNullishOr(pending)).nextAttemptAt.getTime();
+      const wakeAtMs = first === 'delivered' || first === 'exhausted' ? 0 : first.wakeAtMs;
+      expect(wakeAtMs).toBeGreaterThanOrEqual(dueAt);
+      expect(wakeAtMs).toBeLessThanOrEqual(dueAt + 1);
+      expect(
+        yield* makeSymmyJobNotificationService([policy])
+          .deliver(input)
+          .pipe(
+            Effect.provideService(SymmyJobNotificationStore, store),
+            Effect.provide(notificationHttp),
+            Effect.provideService(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' }),
+          ),
+      ).toEqual(first);
+      expect(delivered).toHaveLength(1);
       yield* admin
         .update(symmyJobNotifications)
         .set({ nextAttemptAt: sql`clock_timestamp()-interval '1 second'` })
@@ -292,6 +308,15 @@ it.effect(
           Effect.flip,
         );
       expect(lostAcknowledgement).toMatchObject({ code: 'lifecycle_store_unavailable' });
+      const busy = yield* makeSymmyJobNotificationService([policy])
+        .deliver(input)
+        .pipe(
+          Effect.provideService(SymmyJobNotificationStore, store),
+          Effect.provide(notificationHttp),
+          Effect.provideService(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' }),
+        );
+      expect(busy).toMatchObject({ wakeAtMs: expect.any(Number) });
+      expect(delivered).toHaveLength(2);
       yield* admin
         .update(symmyJobNotifications)
         .set({
@@ -339,7 +364,7 @@ it.effect(
           retryable: true,
           version: 0,
         }),
-      ).toBe(false);
+      ).toEqual({ applied: false });
 
       expect(delivered[0]?.headers.get('idempotency-key')).toBe(delivered[1]?.headers.get('idempotency-key'));
       expect(delivered[1]?.headers.get('idempotency-key')).toBe(delivered[2]?.headers.get('idempotency-key'));
@@ -496,6 +521,7 @@ it.effect(
         mappingVersion: 'v1',
         principalId,
         routeId: syncRouteId,
+        routeKey: 'customerGroupsBatch',
         routeRevision: 'v1',
         tenantId,
       });

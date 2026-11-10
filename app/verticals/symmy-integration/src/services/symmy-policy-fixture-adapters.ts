@@ -21,6 +21,7 @@ import type {
   SymmyOriginalEffectRecovery,
 } from './symmy-effect-adapters.service.ts';
 import { symmyJobWorkerInvalid, symmyJobWorkerUnavailable } from './symmy-job-worker-error.ts';
+import { readOriginalOwnerAttempt } from './symmy-owner-request-recovery.ts';
 
 const problemStatus = Schema.Struct({ status: Schema.Int });
 
@@ -131,13 +132,17 @@ const makePolicyFixtureAdapter = (
       target: {},
     });
     if (
+      (input.originalExecutorPrincipalId !== undefined && input.originalExecutorPrincipalId !== machine.principalId) ||
       (input.originalRequestHash !== undefined && input.originalRequestHash !== requestHash) ||
       (input.originalAuthContextRef !== undefined && input.originalAuthContextRef !== machine.authContextRef)
     ) {
       return yield* symmyJobWorkerInvalid();
     }
-    yield* input.recordExecutorPrincipal(machine.principalId);
-    yield* input.recordOriginalRequestHash(requestHash, machine.authContextRef);
+    yield* input.recordOwnerRequest({
+      authContextRef: machine.authContextRef,
+      executorPrincipalId: machine.principalId,
+      requestHash,
+    });
     const options = {
       baseUrl: gateway.apiBaseUrl,
       compositionRevision: gateway.compositionRevision,
@@ -197,40 +202,13 @@ const makePolicyFixtureAdapter = (
       SymmyOriginalEffectRecovery,
       ReturnType<typeof symmyJobWorkerUnavailable>
     > {
-      if (input.originalExecutorPrincipalId === undefined) {
-        return { status: input.canExecuteNewEffects ? 'not_committed' : 'unavailable' };
-      }
-      if (input.originalRequestHash === undefined || input.originalAuthContextRef === undefined) {
-        return input.canExecuteNewEffects &&
-          input.originalRequestHash === undefined &&
-          input.originalAuthContextRef === undefined &&
-          input.originalInvocationId === undefined
-          ? { status: 'retry_original_key' }
-          : { status: 'unavailable' };
-      }
-      const original = yield* input.readOriginalActionInvocation({
-        actionKey: operation.entrypointKey,
-        idempotencyKey: input.effect.ref.effectId,
-        originalPrincipalId: input.originalExecutorPrincipalId,
-        requestHash: input.originalRequestHash,
-      });
-      if (
-        input.originalInvocationId !== undefined &&
-        (Option.isNone(original) ||
-          original.value.actionInvocationId !== input.originalInvocationId ||
-          original.value.status !== 'succeeded')
-      ) {
-        return { status: 'unavailable' };
-      }
-      if (Option.isNone(original) || original.value.status === 'received' || original.value.status === 'running') {
-        return { status: input.canExecuteNewEffects ? 'retry_original_key' : 'unavailable' };
-      }
-      if (original.value.status !== 'succeeded') {
-        return { status: 'unavailable' };
+      const original = yield* readOriginalOwnerAttempt(input);
+      if (original.status !== 'committed') {
+        return original;
       }
       // Both owner Actions succeed for a fixture only after committing its write. The exact
       // historical invocation proves that outcome without a new assertion or owner request.
-      yield* input.recordInvocationId(original.value.actionInvocationId);
+      yield* input.recordInvocationId(original.invocationId);
       return { outcome: outcomeFor(input, 'accepted_change'), status: 'settled' };
     }),
   };

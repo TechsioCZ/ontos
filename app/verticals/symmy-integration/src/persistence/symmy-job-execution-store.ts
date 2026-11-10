@@ -1,7 +1,7 @@
 import { defineScopedRoutine } from '@app/core-runtime';
 import type { ScopedRoutineInvoker } from '@app/core-runtime';
 import { SymmyEffectOutcomeSchema } from '@app/shared-contracts/symmy';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
 
 import {
   SymmyEffectClaimSchema,
@@ -85,6 +85,13 @@ const markIndeterminate = defineScopedRoutine({
   resultSchema: changed,
   routineKey: 'symmy-job.mark-indeterminate',
 });
+const markUnavailable = defineScopedRoutine({
+  ...routineBase,
+  name: 'mark_symmy_job_effect_unavailable',
+  parameters: changeParameters,
+  resultSchema: changed,
+  routineKey: 'symmy-job.mark-unavailable',
+});
 const canExecute = defineScopedRoutine({
   ...routineBase,
   name: 'can_execute_symmy_job_effect',
@@ -148,7 +155,7 @@ const projectionPhase = (job: SymmyExecutionJob, acceptedCount: number) => {
     }
     return acceptedCount > 0 ? 'completed_partial' : 'completed_none';
   }
-  if (job.effects.some(({ state }) => state === 'indeterminate')) {
+  if (job.effects.some(({ outcome, state }) => state === 'indeterminate' && Option.isNone(outcome))) {
     return 'indeterminate';
   }
   if (job.effects.some(({ state }) => state === 'blocked')) {
@@ -168,7 +175,13 @@ export const projectSymmyExecutionJob: (
     if (
       states.size !== effects.length ||
       effects.some((effect) => !states.has(effect.ref.effectId)) ||
-      job.effects.some(({ outcome, state }) => (state === 'settled' || state === 'blocked') !== Option.isSome(outcome))
+      job.effects.some(({ outcome, state }) => {
+        const result = Option.getOrUndefined(outcome);
+        if (state === 'indeterminate') {
+          return result !== undefined && result.status !== 'unavailable';
+        }
+        return (state === 'settled' || state === 'blocked') !== (result !== undefined);
+      })
     ) {
       return yield* unavailable();
     }
@@ -183,7 +196,11 @@ export const projectSymmyExecutionJob: (
             (state === undefined ? undefined : Option.getOrUndefined(state.outcome)) ?? {
               effectId: effect.ref.effectId,
               owner: effect.ref.operation.moduleId,
-              status: state?.state === 'planned' ? 'unavailable' : 'indeterminate',
+              status: Match.value(state?.state).pipe(
+                Match.when('planned', () => 'waiting' as const),
+                Match.when('attempting', () => 'executing' as const),
+                Match.orElse(() => 'indeterminate' as const),
+              ),
             }
           );
         }),
@@ -223,6 +240,7 @@ interface SymmyJobExecutionStore {
     effectId: string,
     claimToken: string,
     version: number,
+    availability?: 'unavailable' | 'indeterminate',
   ) => Effect.Effect<boolean, SymmyJobExecutionStoreError>;
   readonly recordExecutor: (
     jobId: string,
@@ -238,14 +256,6 @@ interface SymmyJobExecutionStore {
     version: number,
     invocationId: string,
   ) => Effect.Effect<boolean, SymmyJobExecutionStoreError>;
-  readonly recordOriginalRequestHash: (
-    jobId: string,
-    effectId: string,
-    claimToken: string,
-    version: number,
-    requestHash: string,
-    authContextRef: string,
-  ) => Effect.Effect<boolean, SymmyJobExecutionStoreError>;
   readonly recordOwnerReceipt: (
     jobId: string,
     effectId: string,
@@ -253,6 +263,13 @@ interface SymmyJobExecutionStore {
     version: number,
     receipt: SymmyOwnerReceipt,
   ) => Effect.Effect<boolean, SymmyJobExecutionStoreError>;
+  readonly recordOwnerRequest: (
+    jobId: string,
+    effectId: string,
+    claimToken: string,
+    version: number,
+    identity: { readonly authContextRef: string; readonly executorPrincipalId: string; readonly requestHash: string },
+  ) => Effect.Effect<void, SymmyJobExecutionStoreError>;
   readonly recordResolvedEffect: (
     jobId: string,
     effectId: string,
@@ -316,9 +333,15 @@ export const symmyJobExecutionStore = (transaction: ScopedRoutineInvoker): Symmy
     effectId: string,
     claimToken: string,
     version: number,
+    availability?: 'unavailable' | 'indeterminate',
   ) {
     const [row] = yield* transaction
-      .invoke(markIndeterminate, [jobId, effectId, claimToken, version])
+      .invoke(availability === 'unavailable' ? markUnavailable : markIndeterminate, [
+        jobId,
+        effectId,
+        claimToken,
+        version,
+      ])
       .pipe(Effect.mapError(unavailable));
     return row?.applied ?? false;
   }),
@@ -346,21 +369,6 @@ export const symmyJobExecutionStore = (transaction: ScopedRoutineInvoker): Symmy
       .pipe(Effect.mapError(unavailable));
     return row?.applied ?? false;
   }),
-  recordOriginalRequestHash: Effect.fn('SymmyJobExecution.recordOriginalRequestHash')(
-    function* recordOriginalRequestHash(
-      jobId: string,
-      effectId: string,
-      claimToken: string,
-      version: number,
-      requestHash: string,
-      authContextRef: string,
-    ) {
-      const [row] = yield* transaction
-        .invoke(recordRequest, [jobId, effectId, claimToken, version, { authContextRef, requestHash }])
-        .pipe(Effect.mapError(unavailable));
-      return row?.applied ?? false;
-    },
-  ),
   recordOwnerReceipt: Effect.fn('SymmyJobExecution.recordOwnerReceipt')(function* recordOwnerReceipt(
     jobId: string,
     effectId: string,
@@ -373,6 +381,28 @@ export const symmyJobExecutionStore = (transaction: ScopedRoutineInvoker): Symmy
       .invoke(recordReceipt, [jobId, effectId, claimToken, version, encoded])
       .pipe(Effect.mapError(unavailable));
     return row?.applied ?? false;
+  }),
+  recordOwnerRequest: Effect.fn('SymmyJobExecution.recordOwnerRequest')(function* recordOwnerRequest(
+    jobId: string,
+    effectId: string,
+    claimToken: string,
+    version: number,
+    { authContextRef, executorPrincipalId, requestHash },
+  ) {
+    // Both pins share the worker's transaction. A failure in either routine rolls back the pair.
+    const [executor] = yield* transaction
+      .invoke(recordExecutor, [jobId, effectId, claimToken, version, executorPrincipalId])
+      .pipe(Effect.mapError(unavailable));
+    if (executor?.applied !== true) {
+      return yield* unavailable();
+    }
+    const [request] = yield* transaction
+      .invoke(recordRequest, [jobId, effectId, claimToken, version, { authContextRef, requestHash }])
+      .pipe(Effect.mapError(unavailable));
+    if (request?.applied !== true) {
+      return yield* unavailable();
+    }
+    return yield* Effect.void;
   }),
   recordResolvedEffect: Effect.fn('SymmyJobExecution.recordResolvedEffect')(function* recordResolvedEffect(
     jobId: string,
@@ -397,7 +427,12 @@ export const symmyJobExecutionStore = (transaction: ScopedRoutineInvoker): Symmy
     const safeOutcome = yield* Schema.decodeUnknownEffect(SymmyEffectOutcomeSchema, { onExcessProperty: 'error' })(
       outcome,
     ).pipe(Effect.mapError((cause) => storeFailure('invalid_outcome', cause)));
-    if (safeOutcome.status === 'unavailable' || safeOutcome.status === 'indeterminate') {
+    if (
+      safeOutcome.status === 'unavailable' ||
+      safeOutcome.status === 'indeterminate' ||
+      safeOutcome.status === 'waiting' ||
+      safeOutcome.status === 'executing'
+    ) {
       return yield* new SymmyJobExecutionStoreError({ code: 'invalid_outcome' });
     }
     const [row] = yield* transaction

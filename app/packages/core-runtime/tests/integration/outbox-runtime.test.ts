@@ -31,7 +31,7 @@ import { OntosOperationContractSchema } from '../../src/modules/manifest.ts';
 import { defineOutboxWorker, extractOutboxWorkerSubscriptions } from '../../src/outbox/definition.ts';
 import type { AnyOutboxWorkerRegistration, OutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import type { OutboxClaim, OutboxRepositoryService } from '../../src/outbox/repository.ts';
-import { OutboxClaimLostError } from '../../src/outbox/errors.ts';
+import { OutboxClaimLostError, OutboxWorkerDeferred } from '../../src/outbox/errors.ts';
 import { makeOutboxRepository as makeNativeOutboxRepository } from '../../src/outbox/repository.ts';
 import { makeNativeOutboxWorkerFixture } from '../support/outbox-worker-native-fixture.ts';
 import { makeOutboxRuntime } from '../../src/outbox/runtime.ts';
@@ -1261,6 +1261,76 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
         ).toEqual([]);
       }),
   );
+  suite.effect(
+    'keeps a durable worker wake pending beyond the retry budget and claims it at its due time after restart',
+    () =>
+      Effect.gen(function* resumesDurableWorkerWake() {
+        const { adminDatabase, database, tenantId } = yield* tenantFixture;
+        yield* activateConsumer(database, tenantId);
+        const message = yield* insertMessage(database, tenantId);
+        const now = advanceDate(yield* DateTime.nowAsDate, 1000);
+        const dueAt = advanceDate(now, 86_400_000);
+        const attemptNumbers: number[] = [];
+        const worker = defineOutboxWorker(
+          {
+            ...makeWorker('consumer.fixture.durable-wake', { maxAttempts: 1 }).descriptor,
+            maxDeferralMs: 86_400_000,
+          },
+          (_payload, context) =>
+            Effect.suspend(() => {
+              attemptNumbers.push(context.attemptNumber);
+              return attemptNumbers.length === 1
+                ? Effect.fail(new OutboxWorkerDeferred({ wakeAtMs: dueAt.getTime() }))
+                : Effect.void;
+            }),
+        );
+        const claimFixture = yield* publishAuthority(adminDatabase, [worker], {
+          validUntil: advanceDate(dueAt, 3_600_000),
+        });
+        const crypto = yield* Crypto.Crypto;
+        const createRuntime = () => makeOutboxRuntime(makeOutboxRepository(database, crypto, claimFixture));
+        const input = {
+          compositionRevision: claimFixture.revision,
+          maxDeliveries: 1,
+          registrations: [worker],
+          subscriptions: [worker.descriptor],
+        };
+        const first = createRuntime();
+        yield* first.matchMessages({ compositionRevision: claimFixture.revision, now });
+        expect(yield* first.runCycle({ ...input, claimOwner: 'original-worker', now })).toMatchObject({
+          claimed: 1,
+          dead: 0,
+          failed: 0,
+          retried: 1,
+        });
+        const [pending] = yield* database
+          .select()
+          .from(outboxDeliveries)
+          .where(eq(outboxDeliveries.outboxMessageId, message.messageId));
+        expect(pending).toMatchObject({ attemptsCount: 0, availableAt: dueAt, status: 'pending' });
+        const completedWake = yield* database
+          .select({ errorMessage: outboxAttempts.errorMessage, finishedAt: outboxAttempts.finishedAt })
+          .from(outboxAttempts)
+          .innerJoin(outboxDeliveries, eq(outboxAttempts.outboxDeliveryId, outboxDeliveries.outboxDeliveryId))
+          .where(eq(outboxDeliveries.outboxMessageId, message.messageId));
+        expect(completedWake).toEqual([
+          {
+            errorMessage: 'Outbox Worker deferred until its durable due time',
+            finishedAt: now,
+          },
+        ]);
+        const restarted = createRuntime();
+        expect(
+          yield* restarted.runCycle({ ...input, claimOwner: 'replacement-worker', now: advanceDate(dueAt, -1) }),
+        ).toMatchObject({ claimed: 0 });
+        expect(yield* restarted.runCycle({ ...input, claimOwner: 'replacement-worker', now: dueAt })).toMatchObject({
+          claimed: 1,
+          succeeded: 1,
+        });
+        expect(attemptNumbers).toEqual([1, 1]);
+      }),
+  );
+
   suite.effect('a long sequential production cycle persists each full lease and completion instant', () =>
     Effect.gen(function* sequentialNativeClock() {
       const { adminDatabase, configuration, database, tenantId } = yield* tenantFixture;

@@ -18,6 +18,7 @@ import type {
   SymmyExecutionJob,
   SymmyOwnerReceipt,
 } from '../../shared/domain/symmy-job-execution.ts';
+import type { symmyJobExecutionStore } from '../../src/persistence/symmy-job-execution-store.ts';
 import {
   makeSymmyJobWorker,
   SymmyJobWorkerError,
@@ -232,29 +233,6 @@ const harness = () => {
         };
         return true;
       }),
-    recordOriginalRequestHash: (
-      _jobId: string,
-      markedId: string,
-      _token: string,
-      _version: number,
-      ownerRequestHash: string,
-      ownerAuthContextRef: string,
-    ) =>
-      Effect.sync(() => {
-        job = {
-          ...job,
-          effects: job.effects.map((saved) =>
-            saved.effect.ref.effectId === markedId
-              ? {
-                  ...saved,
-                  ownerAuthContextRef: Option.some(ownerAuthContextRef),
-                  ownerRequestHash: Option.some(ownerRequestHash),
-                }
-              : saved,
-          ),
-        };
-        return true;
-      }),
     recordOwnerReceipt: (
       _jobId: string,
       markedId: string,
@@ -270,6 +248,30 @@ const harness = () => {
           ),
         };
         return true;
+      }),
+    recordOwnerRequest: (
+      _jobId: string,
+      markedId: string,
+      _token: string,
+      _version: number,
+      identity: Parameters<ReturnType<typeof symmyJobExecutionStore>['recordOwnerRequest']>[4],
+    ) =>
+      Effect.sync(() => {
+        job = {
+          ...job,
+          effects: job.effects.map((saved) =>
+            saved.effect.ref.effectId === markedId
+              ? {
+                  ...saved,
+                  ownerAuthContextRef: Option.some(identity.authContextRef),
+                  ownerExecutorPrincipalId: Schema.decodeUnknownSync(
+                    SymmyExecutionEffectStateSchema.fields.ownerExecutorPrincipalId,
+                  )(identity.executorPrincipalId),
+                  ownerRequestHash: Option.some(identity.requestHash),
+                }
+              : saved,
+          ),
+        };
       }),
     recordResolvedEffect: (
       _jobId: string,
@@ -390,7 +392,7 @@ describe('Symmy durable execution and original-effect recovery', () => {
       const fixture = harness();
       fixture.jobPresent(false);
       const failure = yield* Effect.flip((yield* fixture.makeWorker()).execute({ jobId }, context));
-      expect(failure.code).toBe('symmy_job_worker_invalid');
+      expect(failure).toMatchObject({ code: 'symmy_job_worker_invalid' });
       expect(fixture.executed).toHaveLength(0);
       expect(fixture.recovered).toHaveLength(0);
       expect(fixture.notified()).toBe(0);
@@ -407,11 +409,11 @@ describe('Symmy durable execution and original-effect recovery', () => {
       });
       const worker = yield* fixture.makeWorker();
       const firstFailure = yield* Effect.flip(worker.execute({ jobId }, context));
-      expect(firstFailure.code).toBe('symmy_job_worker_invalid');
+      expect(firstFailure).toMatchObject({ code: 'symmy_job_worker_invalid' });
       expect(fixture.executed.map(({ ref }) => ref.effectId)).toEqual([effectId]);
       expect(fixture.job().effects.map(({ state }) => state)).toEqual(['settled', 'settled']);
       const repeatedFailure = yield* Effect.flip(worker.execute({ jobId }, context));
-      expect(repeatedFailure.code).toBe('symmy_job_worker_invalid');
+      expect(repeatedFailure).toMatchObject({ code: 'symmy_job_worker_invalid' });
       expect(fixture.executed).toHaveLength(1);
       expect(fixture.recovered).toHaveLength(0);
       expect(fixture.notified()).toBe(0);
@@ -498,7 +500,7 @@ describe('Symmy durable execution and original-effect recovery', () => {
       const fixture = harness();
       yield* Effect.flip((yield* fixture.makeWorker([])).execute({ jobId }, context));
       const failure = yield* Effect.flip((yield* fixture.makeWorker()).execute({ jobId }, rawContext));
-      expect(failure.code).toBe('symmy_job_worker_invalid');
+      expect(failure).toMatchObject({ code: 'symmy_job_worker_invalid' });
       expect(fixture.job().effects[1]?.state).toBe('planned');
       expect(fixture.executed).toHaveLength(0);
     }),

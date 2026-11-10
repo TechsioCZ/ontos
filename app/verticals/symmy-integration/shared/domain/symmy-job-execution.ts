@@ -50,11 +50,19 @@ const source = Schema.Struct({
 });
 const unsupportedBranchSchema = Schema.Struct({
   branchKey: key.pipe(Schema.brand('SymmyUnsupportedBranchKey')),
-  kind: Schema.Literals(['TaxHint', 'AssortmentHint', 'ReservedQuantityHint']),
+  kind: Schema.Literals([
+    'TaxHint',
+    'AssortmentHint',
+    'ReservedQuantityHint',
+    'CategoryHint',
+    'AttributeHint',
+    'MediaHint',
+    'VariantUpdateHint',
+  ]),
 });
 const unsupportedBranches = Schema.optionalKey(
   Schema.Array(unsupportedBranchSchema).check(
-    Schema.isMaxLength(3),
+    Schema.isMaxLength(7),
     Schema.makeFilter(
       (branches) =>
         (new Set(branches.map(({ branchKey }) => branchKey)).size === branches.length &&
@@ -69,7 +77,7 @@ const pinnedUnsupportedBranches = Schema.optionalKey(
       ...unsupportedBranchSchema.fields,
       branchId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SymmyUnsupportedBranchId')),
     }),
-  ).check(Schema.isMaxLength(3)),
+  ).check(Schema.isMaxLength(7)),
 );
 
 const effectDefinition = Schema.Struct({
@@ -323,10 +331,15 @@ export const SymmyJobExecutionProjectionSchema = Schema.Struct({
   ]),
 });
 
-const unsupportedBranchOwners = {
-  AssortmentHint: 'commerce.assortment',
-  ReservedQuantityHint: 'commerce.inventory',
-  TaxHint: 'commerce.tax',
+const unsupportedCatalogMeaning = { owner: 'commerce.catalog', reason: 'unsupported_meaning' } as const;
+const unsupportedBranchOutcomes = {
+  AssortmentHint: { owner: 'commerce.assortment', reason: 'owner_not_activated' },
+  AttributeHint: { ...unsupportedCatalogMeaning, branchKind: 'AttributeHint' },
+  CategoryHint: { ...unsupportedCatalogMeaning, branchKind: 'CategoryHint' },
+  MediaHint: { ...unsupportedCatalogMeaning, branchKind: 'MediaHint' },
+  ReservedQuantityHint: { owner: 'commerce.inventory', reason: 'unsupported_meaning' },
+  TaxHint: { owner: 'commerce.tax', reason: 'owner_not_activated' },
+  VariantUpdateHint: { ...unsupportedCatalogMeaning, branchKind: 'VariantUpdateHint', reason: 'missing_context' },
 } as const;
 
 /** Unsupported source hints are immutable safe outcomes, never fictitious executable owner operations. */
@@ -335,7 +348,6 @@ export const projectSymmyUnsupportedBranches = (
 ): readonly SymmyExecutionOutcome[] =>
   (item.unsupportedBranches ?? []).map((branch) => ({
     branchId: branch.branchId,
-    owner: unsupportedBranchOwners[branch.kind],
-    reason: branch.kind === 'ReservedQuantityHint' ? 'unsupported_meaning' : 'owner_not_activated',
+    ...unsupportedBranchOutcomes[branch.kind],
     status: 'unsupported',
   }));

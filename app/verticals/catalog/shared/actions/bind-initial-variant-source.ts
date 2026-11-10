@@ -9,6 +9,8 @@ export const BindInitialVariantSourcePayloadSchema = Schema.Struct({
   productSource: CatalogSourceCorrelationSchema,
 });
 export const BindInitialVariantSourceResultSchema = Schema.Struct({
+  // Original snapshots written before this field cannot prove whether the invocation changed the binding.
+  changed: Schema.optionalKey(Schema.Boolean),
   originalCreateInvocationId: ProductUuidSchema,
   productId: ProductUuidSchema,
   variantId: ProductUuidSchema,

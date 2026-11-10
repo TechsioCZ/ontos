@@ -1,3 +1,4 @@
+import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { LegacyIcoInventoryAssertionSchema } from '@app/party-registry/apis/legacy-ico-inventory';
 import { CounterpartyMigrationCorrelationResponseSchema } from '@app/party-registry/apis/counterparty-migration-correlation';
 import { SourceProcessingEligibilityRequestSchema } from '@app/privacy/api';
@@ -26,6 +27,7 @@ export const ProfileIcoMigrationOrganizationAuthoritySchema = Schema.Struct({
 });
 
 export const CustomerProfileIcoMigrationTargetSchema = Schema.Struct({
+  currentIcoRevision: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
   legalEntityId: Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('ProfileIcoLegalEntityId'))),
   lifecycle: Schema.Literals(['ACTIVE', 'SUSPENDED', 'ARCHIVED']),
   organizationCorrelation: Schema.optionalKey(CounterpartyOrganizationIcoFactsResponseSchema.members[1]),
@@ -213,6 +215,30 @@ export const classifyCustomerProfileIcoMigrationRecords = (
       targets: candidates,
     };
   });
+
+export const customerProfileIcoMigrationInventoryVersion = (
+  nativeVersion: string,
+  targets: readonly MigrationTarget[],
+  records: readonly (typeof CustomerProfileIcoMigrationRecordSchema.Type)[],
+) => {
+  const profileInventory = targets.map((target) => {
+    const profile = { ...target };
+    delete profile.currentIcoRevision;
+    return profile;
+  });
+  const selectedRevisions: [string, number][] = [];
+  for (const record of records) {
+    const [target] = record.targets;
+    if (record.classification === 'MATCHED' && target?.currentIcoRevision !== undefined) {
+      selectedRevisions.push([target.profileRef.resourceId, target.currentIcoRevision]);
+    }
+  }
+  return computeCanonicalValueHash(
+    selectedRevisions.length === 0
+      ? [nativeVersion, profileInventory]
+      : [nativeVersion, profileInventory, selectedRevisions],
+  );
+};
 
 /** Only exact durable Party correlation counts. Equal IČO strings never nominate a profile. */
 export const classifyCustomerProfileIcoMigration = (

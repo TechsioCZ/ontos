@@ -223,9 +223,49 @@ it.effect(
       if (winnerClaim === undefined || winnerToken === undefined) {
         return yield* Effect.die('one claim must win');
       }
+      const attempt = {
+        authContextRef: 'fixture-source-owner-request',
+        executorPrincipalId: crypto.randomUUID(),
+        requestHash: 'a'.repeat(64),
+      };
+      const invalidPin = yield* scoped((_admission, execution) =>
+        execution.recordOwnerRequest(job.jobId, uncertain.ref.effectId, winnerToken, winnerClaim.version, {
+          ...attempt,
+          requestHash: 'invalid-hash',
+        }),
+      ).pipe(Effect.flip);
+      expect(invalidPin).toMatchObject({ code: 'unavailable' });
+      const afterPinRollback = yield* scoped((_admission, execution) => execution.load(job.jobId));
+      expect(
+        Option.getOrUndefined(afterPinRollback)?.effects.find(
+          ({ effect }) => effect.ref.effectId === uncertain.ref.effectId,
+        ),
+      ).toMatchObject({
+        ownerAuthContextRef: Option.none(),
+        ownerExecutorPrincipalId: Option.none(),
+        ownerRequestHash: Option.none(),
+      });
+      // An older worker could have committed only the executor before losing its lease.
       expect(
         yield* scoped((_admission, execution) =>
-          execution.markIndeterminate(job.jobId, uncertain.ref.effectId, winnerToken, winnerClaim.version),
+          execution.recordExecutor(
+            job.jobId,
+            uncertain.ref.effectId,
+            winnerToken,
+            winnerClaim.version,
+            attempt.executorPrincipalId,
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        yield* scoped((_admission, execution) =>
+          execution.markIndeterminate(
+            job.jobId,
+            uncertain.ref.effectId,
+            winnerToken,
+            winnerClaim.version,
+            'unavailable',
+          ),
         ),
       ).toBe(true);
       expect(
@@ -233,11 +273,35 @@ it.effect(
           execution.markIndeterminate(job.jobId, uncertain.ref.effectId, winnerToken, winnerClaim.version),
         ),
       ).toBe(false);
+      const unavailablePoll = Option.getOrUndefined(yield* scoped((admission) => admission.poll(job.jobId)));
+      expect(unavailablePoll?.items.flatMap(({ effects }) => effects)).toContainEqual({
+        effectId: uncertain.ref.effectId,
+        owner: uncertain.ref.operation.moduleId,
+        status: 'unavailable',
+      });
       const recoveryToken = crypto.randomUUID();
       const recovery = yield* scoped((_admission, execution) =>
         execution.claim(job.jobId, uncertain.ref.effectId, recoveryToken),
       );
       expect(recovery.mode).toBe('recover');
+      yield* scoped((_admission, execution) =>
+        execution.recordOwnerRequest(job.jobId, uncertain.ref.effectId, recoveryToken, recovery.version, attempt),
+      );
+      const conflictingPin = yield* scoped((_admission, execution) =>
+        execution.recordOwnerRequest(job.jobId, uncertain.ref.effectId, recoveryToken, recovery.version, {
+          ...attempt,
+          requestHash: 'b'.repeat(64),
+        }),
+      ).pipe(Effect.flip);
+      expect(conflictingPin).toMatchObject({ code: 'unavailable' });
+      const pinnedJob = yield* scoped((_admission, execution) => execution.load(job.jobId));
+      expect(
+        Option.getOrUndefined(pinnedJob)?.effects.find(({ effect }) => effect.ref.effectId === uncertain.ref.effectId),
+      ).toMatchObject({
+        ownerAuthContextRef: Option.some(attempt.authContextRef),
+        ownerExecutorPrincipalId: Option.some(attempt.executorPrincipalId),
+        ownerRequestHash: Option.some(attempt.requestHash),
+      });
       yield* admin
         .update(symmyJobEffects)
         .set({ leaseUntil: new Date(0) })
@@ -309,8 +373,9 @@ it.effect(
       expect(unavailable).toMatchObject({ code: 'unavailable' });
       expect(yield* scoped((admission) => admission.poll(legacy.jobId))).toEqual(
         Option.some({
+          items: [],
           jobId: legacy.jobId,
-          phase: 'admitted',
+          phase: 'blocked',
         }),
       );
       expect(

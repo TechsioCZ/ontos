@@ -66,6 +66,23 @@ export const gatewayAssertionRedemptions = assortmentSchema.table(
   ],
 );
 
+/** Only the migration identity enrolls finite internal fixture write capabilities. */
+export const c14RuleFixturePermits = assortmentSchema.table.withRLS(
+  'c14_rule_fixture_permits',
+  {
+    commandDigest: text('command_digest').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    permitDigest: text('permit_digest').primaryKey(),
+    principalId: uuid('principal_id').notNull(),
+    sourcePrincipalId: uuid('source_principal_id').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    check('assortment_c14_permits_command_digest_ck', sql`${table.commandDigest} ~ '^[0-9a-f]{64}$'`),
+    check('assortment_c14_permits_permit_digest_ck', sql`${table.permitDigest} ~ '^[0-9a-f]{64}$'`),
+  ],
+);
+
 const scopeColumns = () => ({
   tenantId: uuid('tenant_id').notNull(),
   legalEntityId: uuid('legal_entity_id').notNull(),

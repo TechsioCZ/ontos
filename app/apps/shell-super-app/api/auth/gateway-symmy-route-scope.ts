@@ -314,11 +314,13 @@ export const issueSymmyRouteScopeAssertion = Effect.fn('SymmyRouteScope.issueAss
   }
   const routeScope = yield* Schema.decodeUnknownEffect(RegisteredGatewayRouteScopeSchema)({
     legalEntityId: principal.legalEntityId,
+    mappingVersion: route.mappingVersion,
     operations: routeScopeOperations(destination, route, facts),
     principalId: principal.principalId,
     routeId: route.routeId,
     routeKey: facts.routeKey,
     routeRevision: route.routeRevision,
+    sourceMappingVersion: route.sourceMappingVersion,
     sourceRouteId: route.sourceRouteId,
     sourceRouteRevision: route.sourceRouteRevision,
     tenantId: principal.tenantId,

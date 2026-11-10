@@ -270,6 +270,10 @@ it.effect('refuses an ordinary scope before invoking either fixture mutation', (
       'commerce.assortment.symmy-fixture-rule-import',
     ]);
     expect(importSymmyRuleAction.descriptor.legalEntityScope).toBe('required');
+    expect(importSymmyRuleAction.descriptor.accessOwnerFacts?.(input, prepared.value.scope)).toEqual({
+      'assortment.currentness.kind': 'assortment_fixture',
+      'assortment.currentness.selectorKind': 'PRODUCT',
+    });
     expect(prepared.events).toHaveLength(0);
     expect(prepared.outbox).toHaveLength(0);
   }),

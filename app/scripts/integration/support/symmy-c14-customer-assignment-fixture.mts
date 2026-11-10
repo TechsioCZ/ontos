@@ -2,6 +2,8 @@ import { RetailCustomerProfileRefSchema } from '@app/commerce-customer-context/r
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { SourceProcessingContextSchema } from '@app/privacy/api';
+import type { SourceProcessingContext } from '@app/privacy/api/source-processing-eligibility';
+import { AntiResurrectionProtectionSchema } from '@app/privacy/domain/anti-resurrection';
 import { seedSourceProcessingNativeFixture } from '@app/privacy/testing/source-processing-native';
 import { makeApiKeyGatewayNativeFixture } from '@app/shell-super-app/testing/api-key-gateway-native';
 import { SymmyEffectIdSchema } from '@app/shared-contracts/symmy';
@@ -15,6 +17,7 @@ import { PgClient } from '@effect/sql-pg';
 import { assert, expect } from 'effect-rstest';
 import { Config, DateTime, Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
+import type { HttpClientResponse } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import {
   bindCustomerFixtureProviderKey as bindProviderKey,
@@ -22,12 +25,14 @@ import {
   seedCustomerFixtureProviderPrincipal as seedPrincipal,
 } from './symmy-c14-customer-native-authority.mts';
 import { internalCustomerSource, makeSymmyC14CustomerPlan } from './symmy-c14-customer-plan.mts';
+import type { InternalCustomerPlanInput } from './symmy-c14-customer-plan.mts';
 import {
   CustomerNativeProfileInvocationSchema,
   issueCustomerProfileFixtureRecovery,
 } from './symmy-c14-customer-recovery.mts';
 import {
   customerFixtureWorkloads,
+  customerIntakeContext,
   customerOwnerRelaySources,
   customerRecoveryRules,
   customerWorkerKey,
@@ -196,9 +201,103 @@ export interface SymmyC14CustomerFixtureOptions<Failure = never, Requirements = 
   readonly includePriceGroup?: boolean;
   readonly initializeScopes: (input: SymmyC14CustomerFixtureScopeInput) => Effect.Effect<void, Failure, Requirements>;
   readonly ownerRelaySources?: readonly RelaySource[];
+  readonly verifyPausedIntake?: boolean;
   readonly workerRules?: NonNullable<NonNullable<ShellFixtureOptions['relaySource']>['registeredWorkloads']>;
   readonly workloads?: readonly string[];
 }
+
+export const seedCustomerIntakeProtection = Effect.fn('SymmyC14CustomerFixture.seedIntakeProtection')(
+  function* seedIntakeProtection(admin: PgClient.PgClient, context: SourceProcessingContext) {
+    const protectedAt = DateTime.formatIso(yield* DateTime.now);
+    const { legalEntityId, tenantId } = context;
+    const protectionScope = {
+      contentScopeRefs: context.contentScopeRefs,
+      evidenceRefs: ['INTERNAL_C14_ERASURE_CONTROL'],
+      measure: 'DELETE' as const,
+      resourceRefs: context.resourceRefs,
+      subjectRef: context.intendedScope.subjectRef.resourceId,
+      tenantId,
+    };
+    const protection = yield* Schema.decodeUnknownEffect(AntiResurrectionProtectionSchema)({
+      ...protectionScope,
+      enforcementReceipt: {
+        ...protectionScope,
+        authorityRef: 'INTERNAL_C14_PRIVACY_OWNER',
+        operations: ['IMPORT', 'REPLAY', 'PROJECTION_REBUILD', 'BACKUP_RECOVERY'],
+        ownerModuleId: 'party.registry',
+        receiptRef: 'INTERNAL_C14_ERASURE_ENFORCEMENT',
+        taskId: 'INTERNAL_C14_ERASURE_TASK',
+      },
+      outcomeStatus: 'SUCCEEDED',
+      ownerExecutionOutcomeRef: 'INTERNAL_C14_ERASURE_OUTCOME',
+      protectedAt,
+      protectionId: yield* uuid,
+      sourceDecisionRef: 'INTERNAL_C14_ERASURE_DECISION',
+      sourceDecisionRevision: 1,
+    });
+    const protectionRecord = yield* Schema.encodeEffect(Schema.fromJsonString(AntiResurrectionProtectionSchema))(
+      protection,
+    );
+    yield* admin`insert into privacy.anti_resurrection_protections
+      (tenant_id,legal_entity_id,protection_id,subject_ref,measure,protected_at,protection_record)
+      values(${tenantId},${legalEntityId},${protection.protectionId},${protection.subjectRef},${protection.measure},
+        ${protectedAt}::timestamptz,${protectionRecord}::jsonb)`;
+  },
+);
+
+export const customerIntakeCounts = (admin: PgClient.PgClient, tenantId: string) => admin`select
+  (select count(*)::integer from symmy_integration.import_jobs where tenant_id=${tenantId}) as jobs,
+  (select count(*)::integer from symmy_integration.job_effects where tenant_id=${tenantId}) as effects,
+  (select count(*)::integer from core.domain_events where tenant_id=${tenantId}
+    and event_type='integration.symmy.job-admitted.v1') as events,
+  (select count(*)::integer from core.outbox_messages where tenant_id=${tenantId}
+    and producer_module_key='integration.symmy') as messages`;
+const verifyPausedCustomerIntake = Effect.fn('SymmyC14CustomerFixture.verifyPausedIntake')(function* verify<
+  Failure,
+  Requirements,
+>(input: {
+  readonly admin: PgClient.PgClient;
+  readonly contexts: readonly SourceProcessingContext[];
+  readonly deniedSource: SourceProcessingContext['request']['source'];
+  readonly identity: Omit<InternalCustomerPlanInput, 'occurrenceId' | 'recordId'>;
+  readonly submit: (
+    key: string,
+    plan: typeof SymmyInternalExecutionPlanSchema.Type,
+  ) => Effect.Effect<HttpClientResponse.HttpClientResponse, Failure, Requirements>;
+}) {
+  const { admin, contexts, deniedSource, identity, submit } = input;
+  if (deniedSource === null) {
+    return yield* Effect.void;
+  }
+  const protectedContext = contexts.find(({ request }) => request.source?.occurrenceId === deniedSource.occurrenceId);
+  if (protectedContext === undefined) {
+    return yield* unavailable('The exact blocked source fixture context is missing');
+  }
+  yield* seedCustomerIntakeProtection(admin, protectedContext);
+  const before = yield* customerIntakeCounts(admin, identity.tenantId);
+  yield* Effect.forEach(
+    [
+      { caseKey: 'PROTECTED', occurrenceId: deniedSource.occurrenceId, status: 403 },
+      { caseKey: 'UNKNOWN', occurrenceId: yield* uuid, status: 503 },
+    ],
+    Effect.fn('SymmyC14CustomerFixture.assertPausedIntakeDenial')(function* assertPausedIntakeDenial(testCase) {
+      const deniedPlan = yield* makeSymmyC14CustomerPlan({
+        ...identity,
+        occurrenceId: testCase.occurrenceId,
+        recordId: deniedSource.recordId,
+      });
+      const result = yield* submit(`INTERNAL_C14_PAUSED_INTAKE_${testCase.caseKey}`, deniedPlan);
+      expect(result.status).toBe(testCase.status);
+      expect(yield* result.text).not.toContain(deniedSource.recordId);
+    }),
+    { concurrency: 1, discard: true },
+  );
+  expect(yield* customerIntakeCounts(admin, identity.tenantId)).toEqual(before);
+  return yield* Effect.logInfo(
+    'INTERNAL_C14 paused worker kept protected and unresolved customer inputs out of durable storage',
+  );
+});
+
 const mergeRelaySources = (baseline: readonly RelaySource[], additions: readonly RelaySource[]) => {
   const byOwner = new Map<string, RelaySource>(baseline.map((source) => [source.sourceAppId, source]));
   for (const source of additions) {
@@ -396,9 +495,23 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       routeRef: sourceRouteId,
     };
     const flatSource = { ...sourceIdentity, occurrenceId, recordId };
+    const intakeContexts = [customerIntakeContext(integration.principalId, flatSource, null)];
+    const deniedSource =
+      options.verifyPausedIntake === true
+        ? { ...flatSource, occurrenceId: yield* uuid, recordId: 'INTERNAL_C14_BLOCKED_INTAKE_SOURCE' }
+        : null;
+    if (deniedSource !== null) {
+      intakeContexts.push(customerIntakeContext(integration.principalId, deniedSource, null));
+    }
     const privacy = yield* seedSourceProcessingNativeFixture({
       connections: isolated.connections,
       contexts: [
+        ...intakeContexts,
+        {
+          authMethod: 'api_key',
+          principalId: integration.principalId,
+          request: { consumerModuleId: partyModuleId, operation: 'EVIDENCE_READ', source: flatSource, target: null },
+        },
         ...(['CREATE', 'EVIDENCE_READ'] as const).map(
           (operation) =>
             ({
@@ -528,15 +641,19 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
     }
     const client = yield* HttpClient.HttpClient;
     const headers = { 'idempotency-key': 'INTERNAL_C14_CUSTOMER_JOB', 'x-api-key': Redacted.value(key.secret) };
-    const submitFor = (idempotencyKey: string, submittedPlan = plan) =>
+    const submitResponse = (idempotencyKey: string, submittedPlan = plan) =>
       Effect.gen(function* submitCustomer() {
-        const response = yield* client.post(`${shell.baseUrl}/api/symmy/v1/customers/batch`, {
+        return yield* client.post(`${shell.baseUrl}/api/symmy/v1/customers/batch`, {
           body: yield* HttpBody.json({
             contractVersion: 'INTERNAL_C14',
             plan: yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(submittedPlan),
           }),
           headers: { ...headers, 'idempotency-key': idempotencyKey },
         });
+      });
+    const submitFor = (idempotencyKey: string, submittedPlan = plan) =>
+      Effect.gen(function* submitCustomer() {
+        const response = yield* submitResponse(idempotencyKey, submittedPlan);
         if (response.status !== 202) {
           return yield* unavailable(`Actual customer admission returned ${response.status}: ${yield* response.text}`);
         }
@@ -545,6 +662,13 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
     const submit = submitFor('INTERNAL_C14_CUSTOMER_JOB');
     const accepted = yield* submit;
     expect(yield* submit).toEqual(accepted);
+    yield* verifyPausedCustomerIntake({
+      admin,
+      contexts: privacy.contexts,
+      deniedSource,
+      identity: { legalEntityId, observedAt, sourceRouteId, tenantId },
+      submit: submitResponse,
+    });
     const symmy = contracts.find(({ deployment }) => deployment.appId === symmyAppId);
     const moduleKey = moduleKeys.get(symmyAppId);
     assert.isOk(symmy);
@@ -709,6 +833,7 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       sourceIdentity,
       sourceRouteId,
       submitFor,
+      submitResponse,
       symmy,
       systemId,
       tenantId,

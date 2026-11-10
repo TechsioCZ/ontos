@@ -47,10 +47,9 @@ const originalAttempt: SymmyEffectAdapterInput = {
   effect,
   originalExecutorPrincipalId: principalId,
   readOriginalActionInvocation: () => Effect.die('There is no hash to look up'),
-  recordExecutorPrincipal: () => Effect.die('Recovery inspection cannot write'),
   recordInvocationId: () => Effect.die('Recovery inspection cannot write'),
-  recordOriginalRequestHash: () => Effect.die('Recovery inspection cannot write'),
   recordOwnerReceipt: () => Effect.die('Recovery inspection cannot write'),
+  recordOwnerRequest: () => Effect.die('Recovery inspection cannot write'),
   recordResolvedEffect: () => Effect.die('Recovery inspection cannot write'),
 };
 

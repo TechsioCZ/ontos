@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { ImportSymmyRulePayloadSchema } from '@app/assortment/actions/import-symmy-rule';
+import { findPostgresFailure } from '@app/core-runtime';
+import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { SYMMY_FIXTURE_ROUTES, SymmyRouteContextSchema } from '@app/shared-contracts/symmy';
 import {
   decodeSymmyAssortmentRuleSource,
@@ -8,7 +10,7 @@ import {
 } from '@app/symmy-integration/symmy-internal-contracts';
 import { PgClient } from '@effect/sql-pg';
 import { expect, it } from 'effect-rstest';
-import { Duration, Effect, FileSystem, Option, Queue, Redacted, Schema } from 'effect';
+import { Duration, Effect, Option, Queue, Redacted, Schema } from 'effect';
 
 import {
   SymmyC14ProductFixtureUnavailable,
@@ -22,7 +24,6 @@ import {
   initializePolicyFixtureScopes,
   makeSymmyC14PolicyClient,
   makeSymmyC14PolicyFixture,
-  observePolicyFixtureUntil,
   policyFixtureServices,
 } from './support/symmy-c14-policy-fixture.mts';
 
@@ -39,10 +40,12 @@ const lifecyclePolicy = { policyId: 'INTERNAL_C14_ASSORTMENT_RETENTION', revisio
 const fixtureId = 'INTERNAL_C14_ASSORTMENT';
 const acceptedIdempotencyKey = 'internal-assortment-accepted';
 const symmyPath = SYMMY_FIXTURE_ROUTES[routeKey].path;
-const committedLossSchema = Schema.fromJsonString(
+const ownerProblemSchema = Schema.fromJsonString(
   Schema.Struct({
     path: Schema.String,
-    type: Schema.Literal('committed-response-lost'),
+    problem: Schema.Struct({ code: Schema.String }),
+    status: Schema.Int,
+    type: Schema.Literal('owner-http-problem'),
   }),
 );
 const policyFixture = Effect.fn('SymmyC14Assortment.policyFixture')(function* policyFixture(input: {
@@ -98,19 +101,22 @@ const policyFixture = Effect.fn('SymmyC14Assortment.policyFixture')(function* po
   const { payload } = yield* mapSymmyAssortmentRule(routeContext, yield* decodeSymmyAssortmentRuleSource(source));
   return {
     command: yield* Schema.encodeEffect(ImportSymmyRulePayloadSchema)(payload),
-    expectedPolicy: {
-      binding_kind: source.audience.kind,
-      channel_resource_id: channelId,
-      customer_group_resource_id: groupId,
-      effect: source.effect,
-      effective_from: source.effectiveFrom,
-      legal_entity_id: input.sellerId,
-      market_resource_id: marketId,
-      purpose: source.purpose,
-      selector_kind: source.selector.kind,
-      selector_target_resource_id: productId,
-      stable_code: payload.rule.stableCode,
-      storefront_resource_id: storefrontId,
+    databaseCommand: {
+      channel: channelId,
+      effect: payload.rule.effect,
+      effectiveFrom: source.effectiveFrom,
+      fingerprint: computeCanonicalValueHash({
+        effect: payload.rule.effect,
+        purpose: payload.rule.purpose,
+        selector: payload.rule.selector,
+      }),
+      group: groupId,
+      market: marketId,
+      product: productId,
+      purpose: payload.rule.purpose,
+      reason: payload.rule.reason,
+      stableCode: payload.rule.stableCode,
+      storefront: storefrontId,
     },
     occurrence: {
       entityKind: 'ASSORTMENT_RULE',
@@ -123,14 +129,14 @@ const policyFixture = Effect.fn('SymmyC14Assortment.policyFixture')(function* po
   };
 });
 
-const routePlan = (fixture: Effect.Success<ReturnType<typeof policyFixture>>, reason = fixture.source.reason) =>
+const routePlan = (fixture: Effect.Success<ReturnType<typeof policyFixture>>) =>
   encodeJson({
     items: [
       {
         effects: [
           {
             effectKey: 'assortment-rule',
-            intent: { _tag: 'AssortmentRuleFixture', source: { ...fixture.source, reason } },
+            intent: { _tag: 'AssortmentRuleFixture', source: fixture.source },
             operation,
           },
         ],
@@ -142,7 +148,7 @@ const routePlan = (fixture: Effect.Success<ReturnType<typeof policyFixture>>, re
   });
 
 it.live(
-  'applies only the enrolled Assortment fixture through actual Shell and the C14 worker, and recovers the original owner commit',
+  'refuses unproven Assortment owner facts and rejects direct fixture writes under the shared runtime role',
   () =>
     Effect.scoped(
       Effect.gen(function* nativeAssortmentConformance() {
@@ -163,7 +169,6 @@ it.live(
           ownerPort,
           routeId,
           sellerId,
-          shell,
           symmy,
           symmyPort,
           system,
@@ -177,21 +182,22 @@ it.live(
         });
         yield* admin`insert into symmy_integration.job_routes(route_id,tenant_id,principal_id,legal_entity_id,active,fixture_ids,fixture_plan,mapping_version,route_key,route_revision,lifecycle_policy)
           values(${routeId},${tenantId},${integration.principalId},${sellerId},true,array[${fixtureId}],${yield* routePlan(fixture)}::jsonb,${mappingVersion},${routeKey},${fixture.routeRevision},${yield* encodeJson(lifecyclePolicy)}::jsonb)`;
-        const fs = yield* FileSystem.FileSystem;
-        const faultDirectory = yield* fs.makeTempDirectoryScoped({ prefix: 'INTERNAL_C14_ASSORTMENT_' });
-        const faultMarker = `${faultDirectory}/drop-owner-response`;
-        yield* fs.writeFileString(faultMarker, 'INTERNAL_C14 transport fault after native owner commit');
-        const permits = yield* Schema.decodeUnknownEffect(Schema.Json)([
-          { command: fixture.command, principalId: system.principalId },
+        const capability = randomUUID();
+        const permits = yield* encodeJson([
+          { command: fixture.command, permit: capability, principalId: system.principalId },
         ]);
+        const databaseCommand = yield* encodeJson(fixture.databaseCommand);
+        yield* admin`insert into assortment.c14_rule_fixture_permits
+          (tenant_id,legal_entity_id,principal_id,source_principal_id,permit_digest,command_digest)
+          values(${tenantId},${sellerId},${system.principalId},${integration.principalId},
+            encode(sha256(convert_to(${capability}::uuid::text,'UTF8')),'hex'),
+            encode(sha256(convert_to(${databaseCommand}::jsonb::text,'UTF8')),'hex'))`;
         const assortmentReceiver = yield* startProductOwner({
           artifacts: yield* buildProductOwner(ownerContract),
           contract: ownerContract,
           environment: {
             ...environment,
-            ONTOS_ASSORTMENT_SYMMY_RULE_FIXTURES: yield* encodeJson(permits),
-            ONTOS_C14_RESPONSE_LOSS_MARKER: faultMarker,
-            ONTOS_C14_RESPONSE_LOSS_OPERATION: 'assortment-import',
+            ONTOS_ASSORTMENT_SYMMY_RULE_FIXTURES: permits,
           },
           port: ownerPort,
           prefix: '/assortment-api',
@@ -204,7 +210,7 @@ it.live(
           prefix: '/symmy-integration-api',
         });
 
-        const { poll, post, submit } = yield* makeSymmyC14PolicyClient(
+        const { post, submit } = yield* makeSymmyC14PolicyClient(
           runtime,
           symmyPath,
           fixtureId,
@@ -216,37 +222,41 @@ it.live(
         expect((yield* post('unknown-fixture', { fixtureId: 'NO_SUCH_FIXTURE' })).status).toBe(403);
         expect(yield* submit(acceptedIdempotencyKey)).toEqual(accepted);
 
-        const workerArtifact = yield* buildProductWorker(symmy);
-        const firstWorker = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_ASSORTMENT_FIRST_PROCESS',
-        });
-        const failure = (reason: string, workerDiagnostic: Effect.Effect<string>) =>
-          Effect.all([
-            assortmentReceiver.diagnostic,
-            symmyReceiver.diagnostic,
-            workerDiagnostic,
-            shell.issuerDiagnostics().pipe(
-              Effect.flatMap(encodeJson),
-              Effect.orElseSucceed(() => 'Issuer diagnostics unavailable'),
-            ),
-            admin`select error_message from core.outbox_attempts where finished_at is not null order by finished_at desc limit 3`.pipe(
-              Effect.flatMap(Schema.decodeUnknownEffect(Schema.Json)),
-              Effect.flatMap(encodeJson),
-              Effect.orElseSucceed(() => 'Outbox diagnostics unavailable'),
-            ),
-          ]).pipe(
-            Effect.flatMap((diagnostics) =>
-              Effect.fail(
-                new SymmyC14ProductFixtureUnavailable({
-                  message: `${reason}; native diagnostics: ${diagnostics.join('\n')}`,
-                }),
-              ),
-            ),
+        const [admission] = yield* admin<{ admission_invocation_id: string }>`select admission_invocation_id
+          from symmy_integration.import_jobs where tenant_id=${tenantId} and job_id=${accepted.jobId}`;
+        expect(admission).toBeDefined();
+        const runtimeSql = yield* PgClient.make({ url: Redacted.make(environment.DATABASE_URL) });
+        const direct = <Value, Failure>(query: Effect.Effect<Value, Failure>) =>
+          runtimeSql.withTransaction(
+            runtimeSql`select set_config('ontos.tenant_id',${tenantId},true),
+              set_config('ontos.legal_entity_id',${sellerId},true)`.pipe(Effect.andThen(query)),
           );
-        const lostCommit = yield* Effect.gen(function* waitForLostResponse() {
+        const [fence] = yield* direct(runtimeSql<{ open: boolean }>`select
+          trust.lock_source_execution_fence(${tenantId}::uuid,${admission.admission_invocation_id}::uuid) as open`);
+        expect(fence?.open).toBe(true);
+        const expectSqlDenial = (query: Effect.Effect<unknown, unknown>) =>
+          direct(query).pipe(
+            Effect.flip,
+            Effect.map((failure) => expect(Option.getOrUndefined(findPostgresFailure(failure))?.code).toBe('42501')),
+          );
+        yield* expectSqlDenial(runtimeSql`select * from assortment.write_c14_rule_fixture(
+          ${tenantId}::uuid,${sellerId}::uuid,${randomUUID()}::uuid,${system.principalId}::uuid,
+          ${admission.admission_invocation_id}::uuid,${integration.principalId}::uuid,${databaseCommand}::jsonb)`);
+        const callFixture = (permit: string, command: string) =>
+          runtimeSql`select * from assortment.import_c14_rule_fixture(
+            ${tenantId}::uuid,${sellerId}::uuid,${randomUUID()}::uuid,${system.principalId}::uuid,
+            ${admission.admission_invocation_id}::uuid,${integration.principalId}::uuid,${permit}::uuid,${command}::jsonb)`;
+        yield* expectSqlDenial(callFixture(randomUUID(), databaseCommand));
+        const tampered = yield* encodeJson({ ...fixture.databaseCommand, reason: 'Unenrolled Assortment rule' });
+        yield* expectSqlDenial(callFixture(capability, tampered));
+
+        const worker = yield* startProductWorker(yield* buildProductWorker(symmy), {
+          ...environment,
+          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_ASSORTMENT_CURRENTNESS_PROCESS',
+        });
+        const refused = yield* Effect.gen(function* waitForOwnerRefusal() {
           for (;;) {
-            const event = Schema.decodeUnknownOption(committedLossSchema)(yield* Queue.take(assortmentReceiver.output));
+            const event = Schema.decodeUnknownOption(ownerProblemSchema)(yield* Queue.take(assortmentReceiver.output));
             if (Option.isSome(event)) {
               return event.value;
             }
@@ -255,63 +265,33 @@ it.live(
           Effect.timeoutOrElse({
             duration: Duration.seconds(35),
             orElse: () =>
-              failure('The real Assortment owner did not commit and lose its response', firstWorker.diagnostic),
+              Effect.all([assortmentReceiver.diagnostic, symmyReceiver.diagnostic, worker.diagnostic]).pipe(
+                Effect.flatMap((diagnostics) =>
+                  Effect.fail(
+                    new SymmyC14ProductFixtureUnavailable({
+                      message: `The Assortment owner did not report unavailable currentness: ${diagnostics.join(' | ')}`,
+                    }),
+                  ),
+                ),
+              ),
           }),
         );
-        expect(lostCommit.path).toBe('/assortment-api/assortment/actions/import-symmy-rule');
-
-        const readPolicy = admin`select b.binding_kind,b.channel_resource_id,b.customer_group_resource_id,
-          r.effect,to_char(b.effective_from at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as effective_from,
-          b.legal_entity_id,b.market_resource_id,r.purpose,r.selector_kind,
-          r.selector_target_resource_id,s.stable_code,b.storefront_resource_id
-          from assortment.assortment_applicability_bindings b
-          join assortment.assortment_rule_revisions r using (tenant_id,rule_revision_id)
-          join assortment.assortment_stable_rules s using (tenant_id,stable_rule_id)
-          where b.tenant_id=${tenantId}`;
-        const [committed] = yield* admin<{
-          action_invocation_id: string;
-          principal_id: string;
-        }>`select action_invocation_id,principal_id
-          from core.action_invocations where tenant_id=${tenantId} and action_key=${operation.entrypointKey} and status='succeeded'`;
-        expect(committed?.principal_id).toBe(system.principalId);
-        expect(yield* readPolicy).toEqual([fixture.expectedPolicy]);
-        yield* firstWorker.child.kill();
-        yield* firstWorker.child.exitCode;
-        yield* fs.remove(faultMarker);
-        const restarted = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_ASSORTMENT_RESTARTED_PROCESS',
+        expect(refused).toEqual({
+          path: '/assortment-api/assortment/actions/import-symmy-rule',
+          problem: { code: 'action_permission_check_failed' },
+          status: 503,
+          type: 'owner-http-problem',
         });
-        const final = yield* observePolicyFixtureUntil(
-          poll(accepted.jobId),
-          ({ status }) => status === 'completed_all',
-          failure('The restarted C14 worker did not settle the original Assortment effect', restarted.diagnostic),
-        );
-        expect(final.items).toMatchObject([{ outcome: 'accepted' }]);
-        const [ledger] = yield* admin<{ owner_invocation_id: string; state: string }>`select owner_invocation_id,state
-          from symmy_integration.job_effects where tenant_id=${tenantId} and job_id=${accepted.jobId}`;
-        expect(ledger).toEqual({ owner_invocation_id: committed?.action_invocation_id, state: 'settled' });
-        expect(yield* submit(acceptedIdempotencyKey)).toEqual(accepted);
-
-        yield* admin`update symmy_integration.job_routes set fixture_plan=${yield* routePlan(fixture, 'Unapproved altered policy')}::jsonb,
-          route_revision='INTERNAL_C14_ASSORTMENT_ROUTE_V2' where tenant_id=${tenantId} and route_id=${routeId}`;
-        const altered = yield* submit('internal-assortment-altered');
-        const denied = yield* observePolicyFixtureUntil(
-          poll(altered.jobId),
-          ({ status }) => status === 'completed_none',
-          failure('The unapproved Assortment command did not settle as denied', restarted.diagnostic),
-        );
-        expect(denied.items).toMatchObject([{ outcome: 'not_accepted' }]);
-        const [deniedEffect] = yield* admin`select outcome->>'status' as status
-          from symmy_integration.job_effects where tenant_id=${tenantId} and job_id=${altered.jobId}`;
-        expect(deniedEffect).toEqual({ status: 'denied' });
-        expect(yield* readPolicy).toEqual([fixture.expectedPolicy]);
+        yield* worker.child.kill();
+        yield* worker.child.exitCode;
+        yield* admin`update core.source_execution_fences set state='cancelled'
+          where tenant_id=${tenantId} and admission_invocation_id=${admission.admission_invocation_id}`;
+        yield* expectSqlDenial(callFixture(capability, databaseCommand));
         const [counts] = yield* admin`select
           (select count(*)::integer from assortment.assortment_stable_rules where tenant_id=${tenantId}) as rules,
           (select count(*)::integer from assortment.assortment_rule_revisions where tenant_id=${tenantId}) as revisions,
-          (select count(*)::integer from assortment.assortment_applicability_bindings where tenant_id=${tenantId}) as bindings,
-          (select count(*)::integer from core.action_invocations where tenant_id=${tenantId} and action_key=${operation.entrypointKey} and status='succeeded') as succeeded`;
-        expect(counts).toEqual({ bindings: 1, revisions: 1, rules: 1, succeeded: 1 });
+          (select count(*)::integer from assortment.assortment_applicability_bindings where tenant_id=${tenantId}) as bindings`;
+        expect(counts).toEqual({ bindings: 0, revisions: 0, rules: 0 });
         yield* admin`update symmy_integration.job_routes
           set fixture_plan=fixture_plan || jsonb_build_object('sourceRouteId',${randomUUID()}::text),
           route_revision='INTERNAL_C14_ASSORTMENT_ROUTE_V3' where tenant_id=${tenantId} and route_id=${routeId}`;

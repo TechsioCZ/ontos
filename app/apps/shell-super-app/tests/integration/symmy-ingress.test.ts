@@ -539,60 +539,72 @@ it.effect(
           sourceRouteId: logicalRouteId,
         };
         const admittedCodes: string[] = [];
-        const ownerFetch: typeof fetch = async (input, init) => {
-          const request = new Request(input, init);
-          const path = new URL(request.url).pathname;
-          if (path.endsWith('/reads/symmy-route-context')) {
-            const payload = Schema.decodeUnknownSync(SymmyRouteContextRequestSchema)(await request.json());
-            return Response.json(payload.routeKey === 'priceLists' ? listRoute : priceRoute);
-          }
-          if (path.endsWith('/reads/price-group-source-associations')) {
-            const payload = Schema.decodeUnknownSync(PriceGroupSourceAssociationsRequestSchema)(await request.json());
-            expect(payload.routeId).toBe(logicalRouteId);
-            if (payload.recordKey !== undefined) {
-              expect(payload.recordKey).toBe(sourceRecordId);
+        const ownerFetchFor =
+          (issuerId: string): typeof fetch =>
+          async (input, init) => {
+            const request = new Request(input, init);
+            const path = new URL(request.url).pathname;
+            if (path.endsWith('/reads/symmy-route-context')) {
+              const payload = Schema.decodeUnknownSync(SymmyRouteContextRequestSchema)(await request.json());
+              return Response.json(
+                payload.routeKey === 'priceLists'
+                  ? { ...listRoute, issuerId }
+                  : {
+                      ...priceRoute,
+                      issuerId,
+                      selector: { ...priceRoute.selector, source: { ...priceRoute.selector.source, issuerId } },
+                    },
+              );
             }
-            return Response.json({
-              associations: [
-                {
-                  priceGroupRef: nativePriceGroupRef,
-                  sourceCorrelation: {
-                    issuer: internalRoute.issuerId,
-                    mappingVersion: internalRoute.sourceMappingVersion,
-                    namespace: priceGroupNamespace,
-                    recordKey: sourceRecordId,
-                    routeId: logicalRouteId,
+            if (path.endsWith('/reads/price-group-source-associations')) {
+              const payload = Schema.decodeUnknownSync(PriceGroupSourceAssociationsRequestSchema)(await request.json());
+              expect(payload.routeId).toBe(logicalRouteId);
+              if (payload.recordKey !== undefined) {
+                expect(payload.recordKey).toBe(sourceRecordId);
+              }
+              return Response.json({
+                associations: [
+                  {
+                    priceGroupRef: nativePriceGroupRef,
+                    sourceCorrelation: {
+                      issuer: issuerId,
+                      mappingVersion: internalRoute.sourceMappingVersion,
+                      namespace: priceGroupNamespace,
+                      recordKey: sourceRecordId,
+                      routeId: logicalRouteId,
+                    },
                   },
-                },
-              ],
-              count: 1,
-              limit: 1,
-              offset: 0,
-            });
-          }
-          if (path.endsWith('/reads/price-group-definition')) {
-            const payload = Schema.decodeUnknownSync(PriceGroupDefinitionRequestSchema)(await request.json());
-            return Response.json(nativeGroupDefinition(payload.trustedOperationAt));
-          }
-          const payload = Schema.decodeUnknownSync(AdmitSymmyJobPayloadSchema)(await request.json());
-          admittedCodes.push(payload.code ?? '');
-          return Response.json({ jobId, phase: 'admitted' });
-        };
-        const server = yield* Effect.acquireRelease(
-          Effect.sync(() =>
-            start({
-              acquireOwnerAssertion: ({ audience }) =>
-                Effect.succeed({
-                  apiBaseUrl: moduleReleaseApiBaseUrl(audience, 'fixture-build'),
-                  assertion: Redacted.make('fresh-owned-route-assertion'),
-                  compositionRevision: revision,
-                }),
-              dispatch: makeSymmyGovernedDispatch(Effect.succeed('roundtrip-correlation')),
-              ownerFetch,
-            }),
-          ),
-          (fixture) => Effect.promise(fixture.dispose),
-        );
+                ],
+                count: 1,
+                limit: 1,
+                offset: 0,
+              });
+            }
+            if (path.endsWith('/reads/price-group-definition')) {
+              const payload = Schema.decodeUnknownSync(PriceGroupDefinitionRequestSchema)(await request.json());
+              return Response.json(nativeGroupDefinition(payload.trustedOperationAt));
+            }
+            const payload = Schema.decodeUnknownSync(AdmitSymmyJobPayloadSchema)(await request.json());
+            admittedCodes.push(payload.code ?? '');
+            return Response.json({ jobId, phase: 'admitted' });
+          };
+        const startIssuer = (issuerId: string) =>
+          Effect.acquireRelease(
+            Effect.sync(() =>
+              start({
+                acquireOwnerAssertion: ({ audience }) =>
+                  Effect.succeed({
+                    apiBaseUrl: moduleReleaseApiBaseUrl(audience, 'fixture-build'),
+                    assertion: Redacted.make('fresh-owned-route-assertion'),
+                    compositionRevision: revision,
+                  }),
+                dispatch: makeSymmyGovernedDispatch(Effect.succeed('roundtrip-correlation')),
+                ownerFetch: ownerFetchFor(issuerId),
+              }),
+            ),
+            (fixture) => Effect.promise(fixture.dispose),
+          );
+        const server = yield* startIssuer(internalRoute.issuerId);
         const get = yield* Effect.promise(() =>
           server.request(`${SYMMY_ROUTES.priceLists.path}?contractVersion=INTERNAL_C14&limit=1`, {
             headers: { 'x-api-key': validKey },
@@ -601,7 +613,9 @@ it.effect(
         );
         expect(get.status).toBe(200);
         const body = yield* Effect.promise(() => get.json());
-        const projection = yield* Schema.decodeUnknownEffect(SymmyInternalPriceListsProjectionSchema)(body);
+        const projection = yield* Schema.decodeUnknownEffect(SymmyInternalPriceListsProjectionSchema, {
+          onExcessProperty: 'error',
+        })(body);
         const [item] = projection.price_lists;
         expect(item?.source_record_id).toBe(sourceRecordId);
         const filtered = yield* Effect.promise(() =>
@@ -636,6 +650,31 @@ it.effect(
           }),
         );
         expect(post.status).toBe(202);
+        expect(admittedCodes).toEqual([registeredCode]);
+
+        const otherServer = yield* startIssuer('other-authorized-issuer');
+        const otherGet = yield* Effect.promise(() =>
+          otherServer.request(`${SYMMY_ROUTES.priceLists.path}?contractVersion=INTERNAL_C14&limit=1`, {
+            headers: { 'x-api-key': validKey },
+            method: 'GET',
+          }),
+        );
+        expect(otherGet.status).toBe(200);
+        const otherBody = yield* Effect.promise(() => otherGet.json());
+        const otherProjection = yield* Schema.decodeUnknownEffect(SymmyInternalPriceListsProjectionSchema, {
+          onExcessProperty: 'error',
+        })(otherBody);
+        const [otherItem] = otherProjection.price_lists;
+        expect(otherItem?.source_record_id).toBe(sourceRecordId);
+        expect(otherItem?.id).not.toBe(code);
+        const crossIssuerPost = yield* Effect.promise(() =>
+          otherServer.request(SYMMY_ROUTES.priceListPricesBatch.path.replace('{code}', code), {
+            ...fixtureJson,
+            headers: { ...fixtureJson.headers, 'idempotency-key': roundtripKey, 'x-api-key': validKey },
+            method: 'POST',
+          }),
+        );
+        expect(crossIssuerPost.status).toBe(403);
         expect(admittedCodes).toEqual([registeredCode]);
       }
     }),

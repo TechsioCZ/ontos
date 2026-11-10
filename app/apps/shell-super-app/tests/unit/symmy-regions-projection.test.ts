@@ -51,7 +51,7 @@ const configuration = Schema.decodeUnknownSync(SymmyRegionsProjectionConfigurati
     {
       ...scope,
       issuerId: 'internal-source-b',
-      regions: [{ currencyCode: 'CZK', marketRef, sourceRegionId: 'foreign-source-region' }],
+      regions: [{ currencyCode: 'CZK', marketRef, sourceRegionId: 'source-region-a' }],
     },
   ],
   schemaVersion: 1,
@@ -211,11 +211,11 @@ const fixture = (mode: Mode = 'current') => {
   return { acquire, acquisitions, crypto, fakeFetch, requests };
 };
 
-const runProjection = (current: ReturnType<typeof fixture>, selected = configuration) =>
+const runProjection = (current: ReturnType<typeof fixture>, selected = configuration, selectedScope = scope) =>
   TestClock.setTime(0).pipe(
     Effect.andThen(
       projectSymmyRegions(
-        { compositionRevision, configuration: selected, page: { limit: 1, offset: 0 }, scope },
+        { compositionRevision, configuration: selected, page: { limit: 1, offset: 0 }, scope: selectedScope },
         current.acquire,
       ),
     ),
@@ -230,9 +230,16 @@ describe('Symmy internal CZ region projection', () => {
       const result = yield* runProjection(current);
       expect(Schema.is(Schema.toType(SymmyInternalRegionsProjectionSchema))(result)).toBe(true);
       expect(result.count).toBe(2);
-      expect(result.regions).toEqual([
-        { country_codes: ['CZ'], currency_code: 'CZK', id: 'source-region-a', market_code: 'CZ_NATIVE', marketRef },
+      expect(result.regions).toMatchObject([
+        {
+          country_codes: ['CZ'],
+          currency_code: 'CZK',
+          market_code: 'CZ_NATIVE',
+          marketRef,
+          source_record_id: 'source-region-a',
+        },
       ]);
+      expect(result.regions[0]?.id).toMatch(/^~c14r1\.[\w-]{43}$/u);
       expect(result.unsupported_fields).toContain('payment_providers');
       expect(result.regions[0]).not.toHaveProperty('name');
       expect(result.regions[0]).not.toHaveProperty('tax_rate');
@@ -267,9 +274,24 @@ describe('Symmy internal CZ region projection', () => {
         Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch),
       );
       expect(next.count).toBe(2);
-      expect(next.regions.map(({ id }) => id)).toEqual(['source-region-b']);
+      expect(next.regions.map(({ source_record_id }) => source_record_id)).toEqual(['source-region-b']);
       expect(current.acquisitions).toHaveLength(4);
       expect(new Set(current.requests.map((request) => request.headers.get('x-correlation-id'))).size).toBe(4);
+    }),
+  );
+  it.effect('separates equal Region literals from independently authorized source routes', () =>
+    Effect.gen(function* qualifiedRegionIdentifiers() {
+      const primary = yield* runProjection(fixture());
+      const repeated = yield* runProjection(fixture());
+      const secondary = yield* runProjection(
+        fixture(),
+        configuration,
+        Schema.decodeUnknownSync(SymmyRegionsProjectionScopeSchema)({ ...scope, issuerId: 'internal-source-b' }),
+      );
+      expect(primary.regions[0]?.id).toBe(repeated.regions[0]?.id);
+      expect(primary.regions[0]?.id).not.toBe(secondary.regions[0]?.id);
+      expect(primary.regions[0]).toHaveProperty('source_record_id', 'source-region-a');
+      expect(secondary.regions[0]).toHaveProperty('source_record_id', 'source-region-a');
     }),
   );
 

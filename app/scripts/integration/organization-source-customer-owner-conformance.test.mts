@@ -123,6 +123,9 @@ const knownIntents = Schema.Union([
   OrganizationBusinessApplicabilityIntentSchema.members[10],
   OrganizationBusinessApplicabilityIntentSchema.members[11],
 ]);
+const companyProjectionIdentifiers = Schema.Struct({
+  customers: Schema.Array(Schema.Struct({ id: Schema.String.check(Schema.isPattern(/^~c14r1\.[a-zA-Z0-9_-]{43}$/u)) })),
+});
 type OrganizationFixture = Effect.Success<ReturnType<typeof makeOrganizationSourceCustomerOwnerFixture>>;
 interface KnownOrganizationTargets {
   readonly counterpartyRef: typeof CounterpartyRefSchema.Type;
@@ -836,15 +839,16 @@ const verifyOrganizationZeroLegacyIco = Effect.fn('OrganizationSourceCustomer.ic
   }
   expect(companyResponse.status).toBe(200);
   const company = yield* companyResponse.json;
+  expect(Schema.is(companyProjectionIdentifiers)(company)).toBe(true);
   expect(company).toMatchObject({
     contractVersion: 'INTERNAL_C14',
     customers: [
       {
         business_name: { outcome: 'AVAILABLE', value: 'Internal organization customer seventeen' },
         ico: { _tag: 'PRESENT', normalizedValue: '00000019' },
-        id: fixture.acceptedProfile.payload.source.recordId,
         partyRef: known.facts.partyRef,
         profile: { profileRef: { ...targets.profileRef, kind: 'COUNTERPARTY' } },
+        source_record_id: fixture.acceptedProfile.payload.source.recordId,
       },
     ],
     projection: 'customers',
@@ -1151,12 +1155,14 @@ const verifyOrganizationBusinessNameUpdate = Effect.fn('OrganizationSourceCustom
     }
     const response = yield* fixture.getCompany();
     expect(response.status).toBe(200);
-    expect(yield* response.json).toMatchObject({
+    const company = yield* response.json;
+    expect(Schema.is(companyProjectionIdentifiers)(company)).toBe(true);
+    expect(company).toMatchObject({
       customers: [
         {
           business_name: { outcome: 'AVAILABLE', value: updatedName },
           ico: { _tag: 'PRESENT', normalizedValue: '00000019' },
-          id: fixture.acceptedProfile.payload.source.recordId,
+          source_record_id: fixture.acceptedProfile.payload.source.recordId,
         },
       ],
     });

@@ -81,7 +81,11 @@ import {
   bindInitialVariantSourceRequestIdentity,
 } from '../../shared/domain/native-action-request-identity.ts';
 import { bindInitialVariantSourceRecoveryReadApiLive } from '../../api/bind-initial-variant-source-recovery-read-server.ts';
-import { BindInitialVariantSourceActionConflictProblemSchema } from '../../shared/apis/bind-initial-variant-source-action.ts';
+import {
+  BindInitialVariantSourceActionAlreadyCommittedProblemSchema,
+  BindInitialVariantSourceActionCommitIndeterminateProblemSchema,
+  BindInitialVariantSourceActionConflictProblemSchema,
+} from '../../shared/apis/bind-initial-variant-source-action.ts';
 import { bindInitialVariantSourceActionApiLive } from '../../api/bind-initial-variant-source-action-server.ts';
 import { bindInitialVariantSourceAction } from '../../src/actions/bind-initial-variant-source.action.ts';
 import { executeBindInitialVariantSourceWithAuthorization } from '../../src/api/bind-initial-variant-source-action-client.ts';
@@ -770,25 +774,70 @@ it.live(
         expect(unresolvedRead.items[0]?.variantSources).toEqual([]);
         const originalCreateInvocationId = unresolvedRead.items[0]?.originalActionInvocationId;
         assert(originalCreateInvocationId !== undefined);
-        const bound = yield* requireExecutionResult(
-          BindInitialVariantSourceResultSchema,
-          executeBindInitialVariantSourceWithAuthorization(
+        const bind = Effect.fn('IndependentCreate.bindInitialVariant')(function* bindInitialVariant(
+          sourceOccurrenceId: string,
+          idempotencyKey: string,
+        ) {
+          return yield* executeBindInitialVariantSourceWithAuthorization(
             {
               evidenceRef: 'internal-fixture:explicit-first-variant-source-proof',
               expectedCreateInvocationId: originalCreateInvocationId,
               initialVariantRecordId: 'later-explicit-key',
-              productSource: unresolvedSource,
+              productSource: { ...unresolvedSource, sourceOccurrenceId },
             },
             yield* authorization(),
             yield* nextId,
             {
               baseUrl: 'https://catalog.ontos.test',
               compositionRevision: composition.composition.revision,
-              idempotencyKey: yield* nextId,
+              idempotencyKey,
             },
-          ).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch)),
+          ).pipe(Effect.provideService(FetchHttpClient.Fetch, nativeFetch));
+        });
+        const recoverBinding = Effect.fn('IndependentCreate.recoverInitialVariant')(function* recoverInitialVariant(
+          invocationId: string,
+        ) {
+          const response = yield* read('/reads/bind-initial-variant-source-recovery', JSON.stringify({ invocationId }));
+          expect(response.status).toBe(200);
+          return yield* Schema.decodeUnknownEffect(BindInitialVariantSourceResultSchema)(
+            yield* Effect.tryPromise(() => response.json()),
+          );
+        });
+        const bindingKey = yield* nextId;
+        fixture.faultNextTransaction('lost-ack');
+        const lostBinding = yield* bind(unresolvedSource.sourceOccurrenceId, bindingKey).pipe(Effect.flip);
+        assert(Schema.is(BindInitialVariantSourceActionCommitIndeterminateProblemSchema)(lostBinding));
+        const bound = yield* recoverBinding(lostBinding.invocationId);
+        expect(bound).toEqual({
+          changed: true,
+          originalCreateInvocationId,
+          productId: unresolved.product.productRef.resourceId,
+          variantId: unresolved.variantId,
+        });
+        const repeatedBinding = yield* bind(unresolvedSource.sourceOccurrenceId, bindingKey).pipe(Effect.flip);
+        expect(Schema.is(BindInitialVariantSourceActionAlreadyCommittedProblemSchema)(repeatedBinding)).toBe(true);
+        expect(repeatedBinding).toMatchObject({ invocationId: lostBinding.invocationId });
+
+        const reused = yield* requireExecutionResult(
+          BindInitialVariantSourceResultSchema,
+          bind('internal-variant-binding-reuse', yield* nextId),
         );
-        expect(bound.variantId).toBe(unresolved.variantId);
+        expect(reused).toEqual({ ...bound, changed: false });
+        const reuseKey = yield* nextId;
+        fixture.faultNextTransaction('lost-ack');
+        const lostReuse = yield* bind('internal-variant-binding-lost-reuse', reuseKey).pipe(Effect.flip);
+        assert(Schema.is(BindInitialVariantSourceActionCommitIndeterminateProblemSchema)(lostReuse));
+        expect(lostReuse.invocationId).not.toBe(lostBinding.invocationId);
+        expect(yield* recoverBinding(lostReuse.invocationId)).toEqual(reused);
+        expect(yield* recoverBinding(lostBinding.invocationId)).toEqual(bound);
+        const legacyResult = {
+          originalCreateInvocationId,
+          productId: unresolved.product.productRef.resourceId,
+          variantId: unresolved.variantId,
+        };
+        expect(yield* Schema.decodeUnknownEffect(BindInitialVariantSourceResultSchema)(legacyResult)).toEqual(
+          legacyResult,
+        );
         const laterLookup = yield* sourceRead({
           ...source,
           entityKind: 'VARIANT',
@@ -912,19 +961,9 @@ it.live(
           .pipe(Effect.provide(fixture.layer));
         expect(afterSecondBinding).toEqual(beforeSecondBinding);
         const bindingSnapshot = (yield* observe()).snapshots.find(
-          (row) => row.actionKey === 'commerce.catalog.bind-initial-variant-source',
+          (row) => row.actionInvocationId === lostBinding.invocationId,
         );
         assert(bindingSnapshot !== undefined);
-        const bindingRecovery = yield* read(
-          '/reads/bind-initial-variant-source-recovery',
-          JSON.stringify({ invocationId: bindingSnapshot.actionInvocationId }),
-        );
-        expect(bindingRecovery.status).toBe(200);
-        expect(
-          yield* Schema.decodeUnknownEffect(BindInitialVariantSourceResultSchema)(
-            yield* Effect.tryPromise(() => bindingRecovery.json()),
-          ),
-        ).toEqual(bound);
         const dataAccessEvidence = (yield* fixture.evidence(coreEvidenceExecutor)).accesses.filter(
           (row) => row.actionInvocationId === bindingSnapshot.actionInvocationId,
         );

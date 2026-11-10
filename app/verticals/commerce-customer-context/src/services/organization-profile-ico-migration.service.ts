@@ -1,6 +1,5 @@
 import { defineScopedRoutine, requireModuleOperation } from '@app/core-runtime';
 import type { ReadServiceFactory } from '@app/core-runtime';
-import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { CommerceLegacyIcoInventory } from '../integrations/party-legacy-ico-inventory.ts';
 import { CommerceOrganizationProfileIcoEligibility } from '../integrations/organization-profile-ico-eligibility.ts';
@@ -9,6 +8,7 @@ import {
   CustomerProfileIcoMigrationTargetSchema,
   ProfileIcoMigrationOrganizationAuthoritySchema,
   classifyCustomerProfileIcoMigrationRecords,
+  customerProfileIcoMigrationInventoryVersion,
 } from '../../shared/domain/customer-profile-ico-migration.ts';
 import {
   ORGANIZATION_ICO_MIGRATION_PROJECTION,
@@ -200,19 +200,19 @@ export const organizationProfileIcoMigrationServices: ReadServiceFactory<
         reason: 'Migration cannot promote future facts',
       });
     }
-    const targetInventoryVersion = computeCanonicalValueHash([targetRow.result.version, targets]);
+    const records = classifyCustomerProfileIcoMigrationRecords(input, { assertions }, targets, {
+      authorityRevision: targetRow.result.authorityRevision ?? null,
+      legalEntityId: scope.legalEntityId ?? '',
+      observedAt: now,
+    });
     const plan = yield* Schema.decodeUnknownEffect(OrganizationProfileIcoMigrationPreparedPlanSchema)({
       ...input,
       authorityRevision: targetRow.result.authorityRevision ?? null,
       nativeTargetInventoryVersion: targetRow.result.version,
       partySnapshotVersion: inventory.snapshotVersion,
       projection: ORGANIZATION_ICO_MIGRATION_PROJECTION,
-      records: classifyCustomerProfileIcoMigrationRecords(input, { assertions }, targets, {
-        authorityRevision: targetRow.result.authorityRevision ?? null,
-        legalEntityId: scope.legalEntityId ?? '',
-        observedAt: now,
-      }),
-      targetInventoryVersion,
+      records,
+      targetInventoryVersion: customerProfileIcoMigrationInventoryVersion(targetRow.result.version, targets, records),
       tenantId: scope.tenantId,
       version: 1,
     }).pipe(Effect.mapError(unavailable));

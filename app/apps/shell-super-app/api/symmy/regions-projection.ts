@@ -16,6 +16,7 @@ import { Crypto, DateTime, Effect, Match, Redacted, Schema } from 'effect';
 import type { SymmyIngressProblem } from './contract.ts';
 import { SymmyRegionSourceIdSchema } from './regions-projection-contract.ts';
 import type { SymmyInternalRegionsProjection } from './regions-projection-contract.ts';
+import { qualifySymmyReadId } from './read-projection-contracts.ts';
 
 const scopeFields = {
   issuerId: SymmySourceRecordRefSchema.fields.issuerId,
@@ -182,6 +183,12 @@ export const projectSymmyRegionsWithCrypto = Effect.fn('SymmyRegions.project')(f
   ) {
     return yield* fail('owner_unavailable');
   }
+  const qualifier = {
+    issuerId: scope.issuerId,
+    routeId: scope.route.integrationRouteId,
+    sourceNamespace: scope.sourceNamespace,
+    tenantId: scope.route.tenantId,
+  };
   const regions = yield* Effect.forEach(
     route.regions.toSorted((left, right) => {
       if (left.sourceRegionId === right.sourceRegionId) {
@@ -218,9 +225,10 @@ export const projectSymmyRegionsWithCrypto = Effect.fn('SymmyRegions.project')(f
       const result: SymmyInternalRegionsProjection['regions'][number] = {
         country_codes: ['CZ'],
         currency_code: mapping.currencyCode,
-        id: mapping.sourceRegionId,
+        id: qualifySymmyReadId(qualifier, 'REGION', mapping.sourceRegionId),
         market_code: market.marketCode,
         marketRef: market.marketRef,
+        source_record_id: mapping.sourceRegionId,
       };
       return Effect.succeed(result);
     },

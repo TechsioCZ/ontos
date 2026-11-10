@@ -12,6 +12,7 @@ import {
 } from '../../shared/domain/symmy-job-admission.ts';
 import type { AdmitSymmyJobPayload } from '../../shared/domain/symmy-job-admission.ts';
 import { symmyJobOperationFactory } from '../auth/symmy-job-operation-factory.ts';
+import { requireSymmyCustomerIntakePrivacy } from '../services/symmy-customer-intake-privacy.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/integration-symmy-job-admitted-v1.ts';
 import { createAdmitSymmyJobIntegrationSymmyJobAdmittedV1OutboxMessage } from './admit-symmy-job-integration-symmy-job-admitted-v1.outbox-message.ts';
 
@@ -48,17 +49,9 @@ const handleAdmitSymmyJob = Effect.fn('SymmyJobAdmission.handle')(function* admi
     return yield* new AdmitSymmyJobRejected(rejected.route_denied);
   }
   const admitted = yield* context.services
-    .admit(payload, context.actionInvocationId)
+    .admit(payload, context.actionInvocationId, (plan) => requireSymmyCustomerIntakePrivacy(context.scope, plan))
     .pipe(Effect.mapError(({ code }) => new AdmitSymmyJobRejected(rejected[code])));
   if (admitted.inserted && admitted.executionReady) {
-    yield* context.services.openExecutionFence(context.actionInvocationId).pipe(
-      Effect.mapError((cause) =>
-        Object.defineProperty(new AdmitSymmyJobRejected(rejected.unavailable), 'cause', {
-          enumerable: false,
-          value: cause,
-        }),
-      ),
-    );
     const work = yield* Schema.decodeEffect(OutboxPayloadSchema)({ jobId: admitted.jobId }).pipe(
       Effect.catchTag('SchemaError', () => new AdmitSymmyJobRejected(rejected.unavailable)),
     );

@@ -45,11 +45,17 @@ import {
 import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { FetchHttpClient, HttpClient } from 'effect/http';
-import { SymmyJobNotificationLive } from '../../src/services/symmy-job-notification.service.ts';
+import {
+  makeSymmyJobNotificationService,
+  SymmyJobNotification,
+  SymmyJobNotificationLive,
+} from '../../src/services/symmy-job-notification.service.ts';
 import { SymmyJobNotificationStoreLive } from '../../src/services/symmy-job-notification-store.ts';
 
 import { AdmitSymmyJobPayloadSchema } from '../../shared/domain/symmy-job-admission.ts';
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
+import { SymmyJobNotificationPolicySchema } from '../../shared/domain/symmy-job-notification.ts';
+import type { SymmyJobNotificationPolicy } from '../../shared/domain/symmy-job-notification.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { admitSymmyJobAction } from '../../src/actions/admit-symmy-job.action.ts';
 import { symmyJobStatusRead } from '../../src/api/symmy-job-status.read.ts';
@@ -385,7 +391,17 @@ it.live(
         let cycleNumber = 0;
         // Every invocation creates fresh pools and worker services, then discards them. The native Core
         // entry verifies its release and database claim before invoking the actual registered worker.
-        const deliver = (loseResponse: boolean, systemPrincipalId = fixture.systemId) =>
+        const deliver = (
+          loseResponse: boolean,
+          systemPrincipalId = fixture.systemId,
+          options?: {
+            readonly callback: {
+              readonly policy: SymmyJobNotificationPolicy;
+              readonly transport: typeof FetchHttpClient.layer;
+            };
+            readonly now?: Date;
+          },
+        ) =>
           Effect.scoped(
             Effect.gen(function* deliverCycle() {
               const runtime = yield* PgClient.make({
@@ -402,11 +418,15 @@ it.live(
                 Layer.provideMerge(SymmyJobExecutionPersistenceLive),
                 Layer.provideMerge(Layer.succeed(SymmyEffectAdapters, adapters(loseResponse, governed))),
                 Layer.provideMerge(Layer.succeed(SymmyWorkerIdentity, identity)),
-                Layer.provideMerge(SymmyJobNotificationLive),
+                Layer.provideMerge(
+                  options === undefined
+                    ? SymmyJobNotificationLive
+                    : Layer.succeed(SymmyJobNotification, makeSymmyJobNotificationService([options.callback.policy])),
+                ),
                 Layer.provideMerge(SymmyJobNotificationStoreLive),
                 Layer.provideMerge(privacyDispatchGatewayLive),
                 Layer.provideMerge(OutboxWorkerTenantScopeLive),
-                Layer.provideMerge(FetchHttpClient.layer),
+                Layer.provideMerge(options?.callback.transport ?? FetchHttpClient.layer),
                 Layer.provideMerge(
                   Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' }),
                 ),
@@ -426,9 +446,13 @@ it.live(
               const completed = yield* Deferred.make<OutboxCycleResult, OutboxCycleError>();
               cycleNumber += 1;
               const claimOwner = `symmy-native-${cycleNumber}`;
-              const now = DateTime.toDateUtc(
-                DateTime.makeUnsafe((yield* Clock.currentTimeMillis) + cycleNumber * 3_600_000),
-              );
+              const now =
+                options?.now ??
+                DateTime.toDateUtc(
+                  DateTime.makeUnsafe(
+                    (yield* Clock.currentTimeMillis) + (options === undefined ? cycleNumber * 3_600_000 : 1000),
+                  ),
+                );
               const entry = defineOutboxWorkerEntry({
                 claimOwnerPrefix: claimOwner,
                 expectedDeployment: ultramodernApiMarker,
@@ -588,6 +612,92 @@ it.live(
           readonly count: number;
         }>`select count(*)::integer as count from symmy_integration.native_effect_receipts`;
         expect(afterReactivation?.count).toBe(6);
+        expect((yield* isolated.composition.observe()).pendingDurableWork).toEqual([]);
+
+        const notificationPin = { notificationRequested: true, policyId: 'native-callback', revision: 'v1' };
+        const [callbackRoute] = yield* admin<{ readonly routeId: string }>`
+          update symmy_integration.job_routes set lifecycle_policy = ${JSON.stringify(notificationPin)}::jsonb
+          where tenant_id = ${fixture.tenantId}
+          returning route_id as "routeId"
+        `;
+        assert.isDefined(callbackRoute);
+        const policy = yield* Schema.decodeUnknownEffect(SymmyJobNotificationPolicySchema)({
+          ...notificationPin,
+          authorization: 'native-fixture-only',
+          initialBackoffMs: 3_600_000,
+          maxAttempts: 2,
+          maxBackoffMs: 86_400_000,
+          recipientId: 'native-fixture-recipient',
+          recipientUrl: 'https://callback.internal.test/completed',
+          routeId: callbackRoute.routeId,
+          tenantId: fixture.tenantId,
+          timeoutMs: 1000,
+        });
+        const callbackKeys: (string | null)[] = [];
+        const callback = {
+          policy,
+          transport: FetchHttpClient.layer.pipe(
+            Layer.provide(
+              Layer.succeed(FetchHttpClient.Fetch, async (resource, init) => {
+                callbackKeys.push(new Request(resource, init).headers.get('idempotency-key'));
+                return new Response(null, { status: 503 });
+              }),
+            ),
+          ),
+        };
+        const withCallback = yield* admit('native-execution-callback');
+        const callbackNow = yield* DateTime.nowAsDate;
+        expect(yield* deliver(false, fixture.systemId, { callback })).toMatchObject({
+          claimed: 1,
+          dead: 0,
+          failed: 0,
+          retried: 1,
+        });
+        expect(callbackKeys).toHaveLength(1);
+        const [pending] = yield* admin<{
+          readonly attempt: number;
+          readonly availableAt: Date;
+          readonly dueAtMs: number;
+          readonly workerAttempts: number;
+        }>`
+          select n.attempt, d.available_at as "availableAt",
+            ceil(extract(epoch from n.next_attempt_at)*1000)::double precision as "dueAtMs",
+            d.attempts_count as "workerAttempts"
+          from symmy_integration.job_notifications n
+          join core.domain_events e on e.tenant_id=n.tenant_id and e.subject_resource_id=n.job_id::text
+          join core.outbox_messages m on m.domain_event_id=e.domain_event_id
+          join core.outbox_deliveries d on d.outbox_message_id=m.outbox_message_id
+          where n.job_id = ${withCallback.jobId}
+        `;
+        assert.isDefined(pending);
+        expect(pending).toMatchObject({ attempt: 1, workerAttempts: 0 });
+        expect(pending.availableAt.getTime()).toBe(pending.dueAtMs);
+        expect(pending.dueAtMs - callbackNow.getTime()).toBeGreaterThan(1_800_000);
+        const callsAfterCallback = calls.length;
+        expect(
+          yield* deliver(false, fixture.systemId, {
+            callback,
+            now: DateTime.toDateUtc(DateTime.makeUnsafe(pending.dueAtMs - 1)),
+          }),
+        ).toMatchObject({ claimed: 0 });
+        expect(callbackKeys).toHaveLength(1);
+        // PostgreSQL's clock is real. Move only the owner ledger's time into the simulated due window.
+        // The native scheduler still uses its original persisted available_at, with fresh runtime pools.
+        yield* admin`
+          update symmy_integration.job_notifications set next_attempt_at=clock_timestamp()-interval '1 second'
+          where job_id=${withCallback.jobId}
+        `;
+        expect(yield* deliver(false, fixture.systemId, { callback, now: pending.availableAt })).toMatchObject({
+          claimed: 1,
+          succeeded: 1,
+        });
+        expect(callbackKeys).toHaveLength(2);
+        expect(callbackKeys[1]).toBe(callbackKeys[0]);
+        expect(calls).toHaveLength(callsAfterCallback);
+        const [exhausted] = yield* admin<{ readonly attempt: number; readonly state: string }>`
+          select attempt,state from symmy_integration.job_notifications where job_id=${withCallback.jobId}
+        `;
+        expect(exhausted).toMatchObject({ attempt: 2, state: 'exhausted' });
         expect((yield* isolated.composition.observe()).pendingDurableWork).toEqual([]);
       }),
     ).pipe(Effect.provide(services)),

@@ -349,17 +349,13 @@ const input = (): SymmyEffectAdapterInput => ({
       calls.factReads += 1;
       return Option.fromNullishOr(calls.fact);
     }),
-  recordExecutorPrincipal: () =>
-    Effect.sync(() => {
-      calls.order.push('pin-executor');
-    }),
   recordInvocationId: () => Effect.void,
-  recordOriginalRequestHash: (hash, authContextRef) =>
+  recordOwnerReceipt: () => Effect.void,
+  recordOwnerRequest: ({ authContextRef, requestHash }) =>
     Effect.sync(() => {
-      calls.hashes.push({ authContextRef, hash });
+      calls.hashes.push({ authContextRef, hash: requestHash });
       calls.order.push('pin-request');
     }),
-  recordOwnerReceipt: () => Effect.void,
   recordResolvedEffect: () => Effect.void,
 });
 const createAdapter = Effect.gen(function* createAdapter() {
@@ -655,13 +651,13 @@ describe('governed internal Party adapter', () => {
     }).pipe(Effect.provide(nodeCryptoLayer)),
   );
 
-  it.effect('does not invoke the owner if the executor pin cannot be saved', () =>
+  it.effect('does not invoke the owner if the complete request pin cannot be saved', () =>
     Effect.gen(function* cannotPin() {
       reset();
       calls.create.mockReturnValue(Effect.succeed(created));
       const adapter = yield* createAdapter;
       const result = yield* Effect.result(
-        adapter.execute({ ...input(), recordExecutorPrincipal: () => Effect.fail(symmyJobWorkerUnavailable()) }),
+        adapter.execute({ ...input(), recordOwnerRequest: () => Effect.fail(symmyJobWorkerUnavailable()) }),
       );
       expect(Result.isFailure(result)).toBe(true);
       expect(calls.create).not.toHaveBeenCalled();
@@ -674,8 +670,11 @@ describe('governed internal Party adapter', () => {
       calls.receipt.mockReturnValue(Effect.succeed({ outcome: 'INDETERMINATE' }));
       calls.create.mockReturnValue(Effect.succeed(created));
       const adapter = yield* createAdapter;
-      const result = yield* adapter.recover(yield* withOriginalRequest(input()));
-      expect(result).toMatchObject({ outcome: { status: 'accepted_change' }, status: 'settled' });
+      const original = yield* withOriginalRequest(input());
+      expect(yield* adapter.recover(original)).toEqual({ status: 'retry_original_key' });
+      expect(calls.gateway).toHaveLength(0);
+      const result = yield* adapter.execute(original);
+      expect(result).toMatchObject({ status: 'accepted_change' });
       expect(calls.gateway).toHaveLength(1);
       expect(calls.gateway[0]?.subject).toMatchObject({
         operationRequirementKey: 'integration.symmy.requirement.worker.party.registry.create-party',
@@ -735,10 +734,9 @@ describe('governed internal Party adapter', () => {
         dependencies: [],
         effect,
         readOriginalActionInvocation: initial.readOriginalActionInvocation,
-        recordExecutorPrincipal: initial.recordExecutorPrincipal,
         recordInvocationId: initial.recordInvocationId,
-        recordOriginalRequestHash: initial.recordOriginalRequestHash,
         recordOwnerReceipt: initial.recordOwnerReceipt,
+        recordOwnerRequest: initial.recordOwnerRequest,
         recordResolvedEffect: initial.recordResolvedEffect,
       });
       expect(
@@ -768,7 +766,7 @@ describe('governed internal Party adapter', () => {
       const adapter = yield* createAdapter;
       const result = yield* adapter.execute(input());
       expect(result.status).toBe('accepted_change');
-      expect(calls.order).toEqual(['pin-executor', 'pin-request', 'owner-write']);
+      expect(calls.order).toEqual(['pin-request', 'owner-write']);
       expect(calls.hashes[0]?.hash).toMatch(/^[a-f0-9]{64}$/u);
       expect(calls.hashes[0]?.authContextRef).toBe(fixtureAuthContextRef);
       expect(calls.gateway[0]).toMatchObject({
@@ -831,14 +829,27 @@ describe('governed internal Party adapter', () => {
     }).pipe(Effect.provide(nodeCryptoLayer)),
   );
 
-  it.effect('does not retry an absent receipt without the original pinned executor', () =>
+  it.effect('allows a new exact attempt after interruption before any owner request was pinned', () =>
     Effect.gen(function* absent() {
       reset();
       calls.receipt.mockReturnValue(Effect.succeed({ outcome: 'INDETERMINATE' }));
       const adapter = yield* createAdapter;
       const result = yield* adapter.recover(input());
-      expect(result).toEqual({ status: 'unavailable' });
+      expect(result).toEqual({ status: 'not_committed' });
       expect(calls.create).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(nodeCryptoLayer)),
+  );
+  it.effect('keeps the pinned executor when recovering an old interruption between owner pins', () =>
+    Effect.gen(function* partialPin() {
+      reset();
+      const adapter = yield* createAdapter;
+      const legacy = { ...input(), originalExecutorPrincipalId: executorPrincipalId };
+      expect(yield* adapter.recover(legacy)).toEqual({ status: 'retry_original_key' });
+      expect(yield* adapter.recover({ ...legacy, originalInvocationId: invocationId })).toEqual({
+        status: 'unavailable',
+      });
+      expect(calls.factReads).toBe(0);
+      expect(calls.gateway).toHaveLength(0);
     }).pipe(Effect.provide(nodeCryptoLayer)),
   );
 });
@@ -869,7 +880,7 @@ describe('original native invocation recovery authority', () => {
       });
     }).pipe(Effect.provide(nodeCryptoLayer)),
   );
-  it.effect.each(['received', 'rejected', 'failed'])(
+  it.effect.each(['rejected', 'failed'])(
     'never invokes a write or receipt Read for a kernel invocation in %s',
     (status) =>
       Effect.gen(function* noncommittedFact() {
@@ -881,6 +892,35 @@ describe('original native invocation recovery authority', () => {
         expect(calls.create).not.toHaveBeenCalled();
         expect(calls.receipt).not.toHaveBeenCalled();
         expect(calls.gateway).toHaveLength(0);
+      }).pipe(Effect.provide(nodeCryptoLayer)),
+  );
+  it.effect.each(['received', 'running'])(
+    'lets the worker retry a kernel invocation in %s using only current exact write authority',
+    (status) =>
+      Effect.gen(function* openFact() {
+        reset();
+        calls.fact = { actionInvocationId: invocationId, status };
+        const adapter = yield* createAdapter;
+        const original = yield* withOriginalRequest({ ...input(), originalInvocationId: invocationId });
+        expect(yield* adapter.recover(original)).toEqual({ status: 'retry_original_key' });
+        expect(yield* adapter.recover({ ...original, canExecuteNewEffects: false })).toEqual({ status: 'unavailable' });
+        expect(calls.create).not.toHaveBeenCalled();
+        expect(calls.receipt).not.toHaveBeenCalled();
+        expect(calls.gateway).toHaveLength(0);
+        calls.create.mockReturnValue(
+          Effect.sync(() => {
+            calls.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+            return created;
+          }),
+        );
+        calls.receipt.mockReturnValue(Effect.succeed(originalReceipt));
+        expect(yield* adapter.execute(original)).toMatchObject({ status: 'accepted_change' });
+        expect(yield* adapter.recover({ ...original, canExecuteNewEffects: false })).toMatchObject({
+          outcome: { status: 'accepted_change' },
+          status: 'settled',
+        });
+        expect(calls.create).toHaveBeenCalledTimes(1);
+        expect(calls.create.mock.calls[0]?.[2].idempotencyKey).toBe(effectId);
       }).pipe(Effect.provide(nodeCryptoLayer)),
   );
   it.effect('fails before the owner call when an original command no longer matches its persisted request hash', () =>
@@ -997,7 +1037,7 @@ describe('immutable canonical dependency resolution', () => {
           }),
       });
       expect(result.status).toBe('accepted_change');
-      expect(calls.order).toEqual(['resolve', 'pin-executor', 'pin-request', 'owner-write']);
+      expect(calls.order).toEqual(['resolve', 'pin-request', 'owner-write']);
       expect(recorded).toMatchObject([
         {
           intent: {
@@ -1021,17 +1061,15 @@ describe('immutable canonical dependency resolution', () => {
           legalEntityId: sellingLegalEntityId,
         })
         .pipe(Effect.result);
-      const revoked = yield* adapter
-        .recover({
-          ...input(),
-          canExecuteNewEffects: false,
-          dependencies: [retailParent()],
-          effect: retailDependencyEffect,
-          legalEntityId: sellingLegalEntityId,
-        })
-        .pipe(Effect.result);
+      const revoked = yield* adapter.recover({
+        ...input(),
+        canExecuteNewEffects: false,
+        dependencies: [retailParent()],
+        effect: retailDependencyEffect,
+        legalEntityId: sellingLegalEntityId,
+      });
       expect(Result.isFailure(undeclared)).toBe(true);
-      expect(Result.isFailure(revoked)).toBe(true);
+      expect(revoked).toEqual({ status: 'unavailable' });
       expect(calls.retail).not.toHaveBeenCalled();
       expect(calls.gateway).toHaveLength(0);
     }).pipe(Effect.provide(nodeCryptoLayer)),
@@ -1132,7 +1170,7 @@ describe('finite Saved Address owner dispatch', () => {
         source: { effectId, identity: { occurrenceId: 'occurrence-1', recordId: 'customer-1' } },
       });
       expect(calls.address.mock.calls[0]?.[0].source?.nativeAddressId).toBeUndefined();
-      expect(calls.order).toEqual(['pin-executor', 'pin-request']);
+      expect(calls.order).toEqual(['pin-request']);
     }).pipe(Effect.provide(nodeCryptoLayer)),
   );
   it.effect('recovers an original reused result without creating another address', () =>
@@ -1561,7 +1599,7 @@ it.effect('pins the accepted company semantic witness before CAS, executor ident
         }),
     });
     expect(result.status).toBe('accepted_change');
-    expect(calls.order).toEqual(['resolve', 'pin-executor', 'pin-request', 'owner-write']);
+    expect(calls.order).toEqual(['resolve', 'pin-request', 'owner-write']);
     expect(recorded).toMatchObject([
       {
         intent: {

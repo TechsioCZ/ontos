@@ -29,6 +29,8 @@ export const executeSymmyJobWorker = defineOutboxWorker(
     }),
     leaseDurationMs: 30_000,
     legalEntityScope: 'forbidden',
+    // The pinned notification policy permits up to 24 hours, with one minute for clock skew.
+    maxDeferralMs: 86_460_000,
     payloadSchema: OutboxPayloadSchema,
     producerModuleKey: outboxProducerModuleKey,
     // Owner recovery remains available through an outage; Core retains the completion debt until settled.

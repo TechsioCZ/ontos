@@ -1,5 +1,9 @@
 import { TrustedPrincipalContextSchema, loadDatabaseConnectionPair } from '@app/core-runtime';
 import type { OperationContextUnavailable, OperationalScope } from '@app/core-runtime';
+import {
+  RegisteredGatewayRouteScopeSchema,
+  trustVerifiedGatewayPrincipalContext,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
 import { installOperationalScope } from '@app/core-runtime/testing/actions';
 import { NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
@@ -117,7 +121,8 @@ it.effect('retains one exact scoped job across concurrent admission, lost respon
     expect(admissions.every(({ executionReady }) => !executionReady)).toBe(true);
     expect(accepted.phase).toBe('admitted');
     const receipt = { jobId: accepted.jobId, phase: accepted.phase };
-    expect(yield* scoped(owner, (store) => store.poll(accepted.jobId))).toEqual(Option.some(receipt));
+    const unrunnableReceipt = { items: [], jobId: accepted.jobId, phase: 'blocked' };
+    expect(yield* scoped(owner, (store) => store.poll(accepted.jobId))).toEqual(Option.some(unrunnableReceipt));
     for (const caller of [otherPrincipal, otherLegalEntity, otherTenant]) {
       expect(yield* scoped(caller, (store) => store.poll(accepted.jobId))).toEqual(Option.none());
     }
@@ -132,10 +137,16 @@ it.effect('retains one exact scoped job across concurrent admission, lost respon
       .update(symmyJobRoutes)
       .set({ fixtureIds: ['internal-conflicting-example'], mappingVersion: 'mapping-v2', routeRevision: 'route-v2' })
       .where(eq(symmyJobRoutes.routeId, routeId));
-    // Withdrawing the fixture denies a new admission attempt even when the original job remains durable.
+    // Withdrawing the fixture denies fresh work while the accepted request still has a receipt.
     const freshOwner = fixtureScope(tenantId, principalId, legalEntityId);
-    const withdrawnFixture = yield* scoped(freshOwner, (store) => store.admit(request)).pipe(Effect.flip);
+    const withdrawnFixture = yield* scoped(freshOwner, (store) =>
+      store.admit({ ...request, idempotencyKey: 'new-while-withdrawn' }),
+    ).pipe(Effect.flip);
     expectJobStoreError(withdrawnFixture, 'route_denied');
+    expect(yield* scoped(freshOwner, (store) => store.admit(request))).toMatchObject({
+      inserted: false,
+      jobId: accepted.jobId,
+    });
     yield* admin
       .update(symmyJobRoutes)
       .set({ fixtureIds: routes.fixtureIds })
@@ -156,6 +167,37 @@ it.effect('retains one exact scoped job across concurrent admission, lost respon
       principalId,
       routeId,
       routeRevision: 'route-v1',
+    });
+    const signedCompanyScope = (routeRevision: string, mappingVersion: string) =>
+      trustVerifiedGatewayPrincipalContext(
+        { ...freshOwner, authenticationNamespaceId: 'internal.symmy.test' },
+        'a'.repeat(64),
+        undefined,
+        undefined,
+        undefined,
+        Schema.decodeUnknownSync(RegisteredGatewayRouteScopeSchema)({
+          legalEntityId,
+          mappingVersion,
+          operations: [{ entrypointKey: 'integration.symmy.admit-symmy-job', schemaVersion: '1' }],
+          principalId,
+          routeId,
+          routeKey: request.routeKey,
+          routeRevision,
+          sourceMappingVersion: mappingVersion,
+          sourceRouteId: routeId,
+          sourceRouteRevision: routeRevision,
+          tenantId,
+        }),
+      );
+    for (const stale of [signedCompanyScope('route-v1', 'mapping-v2'), signedCompanyScope('route-v2', 'mapping-v1')]) {
+      const staleAdmission = yield* scoped(stale, (store) =>
+        store.admit({ ...request, idempotencyKey: 'new-intent-with-stale-proof' }),
+      ).pipe(Effect.flip);
+      expectJobStoreError(staleAdmission, 'route_denied');
+    }
+    expect(yield* scoped(signedCompanyScope('route-v2', 'mapping-v2'), (store) => store.admit(request))).toMatchObject({
+      inserted: false,
+      jobId: accepted.jobId,
     });
     expect(JSON.stringify(originalRows)).not.toContain(request.idempotencyKey);
     yield* admin
@@ -185,7 +227,16 @@ it.effect('retains one exact scoped job across concurrent admission, lost respon
     const disabled = yield* scoped(owner, (store) => store.admit(request)).pipe(Effect.flip);
     expectJobStoreError(disabled, 'route_denied');
     // Separately authorized read remains usable for work already admitted before route revocation.
-    expect(yield* scoped(owner, (store) => store.poll(accepted.jobId))).toEqual(Option.some(receipt));
+    expect(yield* scoped(owner, (store) => store.poll(accepted.jobId))).toEqual(Option.some(unrunnableReceipt));
+    yield* admin
+      .update(symmyJobRoutes)
+      .set({ principalId: crypto.randomUUID() })
+      .where(eq(symmyJobRoutes.routeId, routeId));
+    yield* admin.insert(symmyJobRoutes).values({ ...routes, tenantId });
+    expect(yield* scoped(owner, (store) => store.admit(request))).toMatchObject({
+      inserted: false,
+      jobId: accepted.jobId,
+    });
     const unscoped = yield* openDatabase(connections.runtime.connectionString).pipe(
       Effect.flatMap((database) => database.select().from(symmyImportJobs)),
       Effect.scoped,

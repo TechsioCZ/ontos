@@ -227,33 +227,31 @@ export const catalogSourceCorrelationForScope = (transaction: ScopedTransactionE
     ) {
       return yield* sourceCorrelationConflict();
     }
-    const source = { ...payload.productSource, recordId: payload.initialVariantRecordId };
-    const [existing] = yield* find(source, 'VARIANT');
     const result = {
       originalCreateInvocationId: product.actionInvocationId,
       productId: product.productId,
       variantId: product.variantId,
     };
-    if (existing !== undefined) {
-      if (
-        existing.productId !== product.productId ||
-        existing.variantId !== product.variantId ||
-        existing.actionInvocationId !== product.actionInvocationId
-      ) {
-        return yield* sourceCorrelationConflict();
-      }
-      return result;
-    }
     const inserted = yield* transaction
       .insert(catalogSourceCorrelations)
       .values({ ...product, entityKind: 'VARIANT', recordId: payload.initialVariantRecordId })
       .onConflictDoNothing()
       .returning()
       .pipe(Effect.mapError(unavailable));
-    if (inserted.length !== 1) {
+    if (inserted.length === 1) {
+      return { ...result, changed: true };
+    }
+    const source = { ...payload.productSource, recordId: payload.initialVariantRecordId };
+    const [existing] = yield* find(source, 'VARIANT');
+    if (
+      existing === undefined ||
+      existing.productId !== product.productId ||
+      existing.variantId !== product.variantId ||
+      existing.actionInvocationId !== product.actionInvocationId
+    ) {
       return yield* sourceCorrelationConflict();
     }
-    return result;
+    return { ...result, changed: false };
   });
   return { bindInitialVariant, captureProduct, captureVariant, find, recoverProduct, recoverVariant };
 };

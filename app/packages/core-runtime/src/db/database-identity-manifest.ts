@@ -399,6 +399,17 @@ export const TRUST_ROUTINES: readonly TrustRoutine[] = [
   {
     executableBy: [SHARED_RUNTIME_IDENTITY.role],
     securityDefiner: true,
+    signature: 'trust.open_source_execution_fence(uuid,uuid,uuid,text,text)',
+  },
+  { executableBy: [], securityDefiner: true, signature: 'trust.register_source_execution_gated_action(text,text)' },
+  {
+    executableBy: [],
+    securityDefiner: true,
+    signature: 'trust.publish_source_execution_gate(uuid,uuid,text,uuid,uuid,text,text,boolean,boolean)',
+  },
+  {
+    executableBy: [SHARED_RUNTIME_IDENTITY.role],
+    securityDefiner: true,
     signature: 'trust.cancel_source_execution_fence(uuid,uuid)',
   },
   { executableBy: actionRunnerRoles, securityDefiner: true, signature: 'trust.lock_source_execution_fence(uuid,uuid)' },

@@ -46,12 +46,30 @@ const settle = defineScopedRoutine({
   resultSchema: Schema.Struct({ applied: Schema.Boolean }),
   routineKey: 'symmy-job.settle-notification',
 });
+const readWake = defineScopedRoutine({
+  ...base,
+  name: 'read_symmy_job_notification_wake',
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+  ],
+  resultSchema: Schema.Struct({ wake_at_ms: Schema.Int.check(Schema.isGreaterThan(0)) }),
+  routineKey: 'symmy-job.read-notification-wake',
+});
+
+const readWakeAt = (transaction: ScopedRoutineInvoker, jobId: string) =>
+  transaction.invoke(readWake, [jobId]).pipe(
+    Effect.map(([row]) => row?.wake_at_ms),
+    Effect.mapError(unavailable),
+  );
 
 export interface SymmyJobNotificationStoreService {
   readonly claim: (
     input: SymmyJobNotificationClaimInput,
   ) => Effect.Effect<SymmyJobNotificationClaim, SymmyJobLifecycleStoreError>;
-  readonly settle: (input: SymmyJobNotificationSettlement) => Effect.Effect<boolean, SymmyJobLifecycleStoreError>;
+  readonly settle: (
+    input: SymmyJobNotificationSettlement,
+  ) => Effect.Effect<{ readonly applied: boolean; readonly wakeAtMs?: number }, SymmyJobLifecycleStoreError>;
 }
 export class SymmyJobNotificationStore extends Context.Service<
   SymmyJobNotificationStore,
@@ -76,7 +94,14 @@ export const symmyJobNotificationStore = (transaction: ScopedRoutineInvoker): Sy
       if (row === undefined) {
         return yield* unavailable();
       }
-      return yield* Schema.decodeUnknownEffect(SymmyJobNotificationClaimSchema)(row).pipe(Effect.mapError(unavailable));
+      const claimed = yield* Schema.decodeUnknownEffect(SymmyJobNotificationClaimSchema)(row).pipe(
+        Effect.mapError(unavailable),
+      );
+      if (claimed.mode !== 'BUSY' && claimed.mode !== 'NOT_DUE') {
+        return claimed;
+      }
+      const wakeAtMs = yield* readWakeAt(transaction, input.jobId);
+      return wakeAtMs === undefined ? claimed : { ...claimed, wakeAtMs };
     }),
     settle: Effect.fn('SymmyJobNotificationStore.settle')(function* settleNotification(
       input: SymmyJobNotificationSettlement,
@@ -84,7 +109,12 @@ export const symmyJobNotificationStore = (transaction: ScopedRoutineInvoker): Sy
       const [row] = yield* transaction
         .invoke(settle, [input.jobId, input.claimToken, input.version, input.delivered, input.retryable])
         .pipe(Effect.mapError(unavailable));
-      return row?.applied ?? false;
+      const applied = row?.applied ?? false;
+      if (!applied || input.delivered || !input.retryable) {
+        return { applied };
+      }
+      const wakeAtMs = yield* readWakeAt(transaction, input.jobId);
+      return wakeAtMs === undefined ? { applied } : { applied, wakeAtMs };
     }),
   });
 

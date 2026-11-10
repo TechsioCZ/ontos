@@ -33,6 +33,20 @@ const routine = (name: string) =>
     schema: 'trust',
   });
 const openRoutine = routine('open_source_execution_fence');
+const openGatedRoutine = defineScopedRoutine({
+  name: 'open_source_execution_fence',
+  ownerModuleKey,
+  parameters: [
+    { source: 'tenantId', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'text' },
+    { source: 'input', type: 'text' },
+  ] as const,
+  resultSchema: Schema.Struct({ allowed: Schema.Boolean }),
+  routineKey: 'core.source-execution.open-gated-fence',
+  schema: 'trust',
+});
 const cancelRoutine = routine('cancel_source_execution_fence');
 const lockRoutine = defineScopedRoutine({
   name: 'lock_source_execution_fence',
@@ -127,6 +141,7 @@ export const openScopedSourceExecutionFence = Effect.fn('SourceExecutionFence.op
   function* openScopedSourceExecutionFence(
     transaction: ScopedTransactionExecutor,
     originalAdmissionInvocationId: string,
+    gate?: { readonly gateId: string; readonly mappingVersion: string; readonly revision: string },
   ) {
     if (
       readScopedActionInvocationId(transaction) !== originalAdmissionInvocationId ||
@@ -134,9 +149,16 @@ export const openScopedSourceExecutionFence = Effect.fn('SourceExecutionFence.op
     ) {
       return yield* unavailable();
     }
-    const rows = yield* transaction
-      .invoke(openRoutine, [originalAdmissionInvocationId])
-      .pipe(Effect.mapError(unavailable));
+    const rows = yield* (
+      gate === undefined
+        ? transaction.invoke(openRoutine, [originalAdmissionInvocationId])
+        : transaction.invoke(openGatedRoutine, [
+            originalAdmissionInvocationId,
+            gate.gateId,
+            gate.revision,
+            gate.mappingVersion,
+          ])
+    ).pipe(Effect.mapError(unavailable));
     if (rows.length !== 1 || rows[0]?.allowed !== true) {
       return yield* unavailable();
     }
