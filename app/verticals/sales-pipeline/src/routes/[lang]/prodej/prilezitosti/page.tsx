@@ -711,7 +711,11 @@ const RecordsPageContent = ({
           items={items}
           loadError={loadError}
           lookups={lookups}
-          onBack={() => goToRecords()}
+          onBack={() => {
+            // A panel switched to the full page has no `?opportunityId=`: the list URL alone would not leave it.
+            setDetailId(undefined);
+            goToRecords();
+          }}
           onEdit={(opportunity) => openDialog({ kind: 'form', opportunity })}
           onStage={(opportunity) => openStage({ mode: 'row', opportunity })}
           pending={pending}

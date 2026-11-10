@@ -113,7 +113,7 @@ export const OrderDetailDialog = ({
         }
       }}
       open
-      peek
+      peek={!editing}
       resizeLabel={t('merchandise.sidePanel.resize')}
       size="xl"
       title={orderDetailTitle({ editing, number: order.number, t })}
