@@ -1025,6 +1025,40 @@ export const readRetailProfileByParty = (
   );
 
 /**
+ * The lifecycle and revision of one Retail Customer Profile in the verified company, read through its owned routine.
+ * None when the profile does not exist; a profile under owner reconciliation is a definite answer too, never treated
+ * as current.
+ */
+export const readRetailProfileLifecycle = (
+  transaction: ProfileScopedRoutineInvoker,
+  profileId: string,
+): Effect.Effect<
+  Option.Option<{ readonly reconciling: boolean; readonly revision: number; readonly state: string }>,
+  ReadHandlerUnavailable
+> =>
+  transaction.invoke(readProfileRoutine, [profileId, 'RETAIL']).pipe(
+    Effect.mapError(readUnavailableFromRoutineFailure),
+    Effect.flatMap(([row]) => {
+      if (row === undefined || row.outcome === 'PROFILE_NOT_FOUND') {
+        return Effect.succeedNone;
+      }
+      const payload = Schema.decodeUnknownOption(ProfilePayloadSchema)(row.payload);
+      if (
+        (row.outcome !== 'PROFILE_AVAILABLE' && row.outcome !== 'PROFILE_RECONCILIATION_REQUIRED') ||
+        Option.isNone(payload) ||
+        payload.value.profileKind !== 'RETAIL'
+      ) {
+        return Effect.fail(readUnavailable('The Retail Customer Profile projection is invalid'));
+      }
+      return Effect.succeedSome({
+        reconciling: row.outcome === 'PROFILE_RECONCILIATION_REQUIRED',
+        revision: payload.value.revision,
+        state: payload.value.state,
+      });
+    }),
+  );
+
+/**
  * The Retail Portal Profile Binding this exact profile and Principal already hold, or none.
  *
  * The durable authorization operation and state travel with it; the binding transition wrote them.

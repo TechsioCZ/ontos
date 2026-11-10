@@ -123,6 +123,8 @@ const modes = [
   'wrong-source',
   'missing-predecessor',
   'failed-provider',
+  // An enrollment the Storefront client never started: a definite refusal, never an unavailable owner.
+  'missing-attempt',
 ] as const;
 type Mode = (typeof modes)[number];
 
@@ -330,7 +332,7 @@ const fixture = Effect.fn('RetailEnrollmentBinding.fixture')(function* fixture(m
       return Effect.succeed([{ originator_action_invocation_id: mode === 'missing-originator' ? null : originatorId }]);
     }
     if (statement.includes('"read_portal_enrollment_attempt"')) {
-      return Effect.succeed(journalRows(mode, restart, changed));
+      return Effect.succeed(mode === 'missing-attempt' ? [] : journalRows(mode, restart, changed));
     }
     if (statement.includes('"read_retail_enrollment_restart_context"')) {
       return Effect.succeed(nativeRestartRows(mode));
@@ -348,14 +350,26 @@ const fixture = Effect.fn('RetailEnrollmentBinding.fixture')(function* fixture(m
         },
       ]);
     }
-    if (statement.includes('from "commerce_customer_context"."customer_profiles"')) {
+    // The runtime identity reads owner tables only through their owned routines, never by direct SELECT.
+    if (statement.includes('"read_customer_profile"')) {
       return Effect.succeed([
         {
-          lifecycle: 'ACTIVE',
-          profileKind: 'RETAIL',
-          revision: changed && mode === 'stale-profile' ? 2 : 1,
+          outcome: 'PROFILE_AVAILABLE',
+          payload: {
+            createdAt: '2026-01-01T00:00:00.000Z',
+            profileId,
+            profileKind: 'RETAIL',
+            revision: changed && mode === 'stale-profile' ? 2 : 1,
+            scopeLegalEntityId: legalEntityId,
+            state: 'ACTIVE',
+            subject: { attributionKind: 'NONE', kind: 'RETAIL', partyResourceId: partyId, partyResourceRevision: null },
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          },
         },
       ]);
+    }
+    if (statement.includes('from "commerce_customer_context"."')) {
+      return Effect.die(`Owner tables are not readable directly by the runtime identity: ${statement}`);
     }
     if (statement.includes('from "core"."principal_auth_bindings"')) {
       identityLocks += 1;
