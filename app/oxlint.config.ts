@@ -401,6 +401,15 @@ export default defineConfig({
       },
     },
     {
+      // The owner-phase test hands the real Price Group preparation an executor that answers only `invoke`
+      // and an installed catalog that answers only `getByModuleId`; both doubles are intentionally narrower.
+      files: ['verticals/commerce-customer-context/tests/unit/price-group-action-preparation.test.ts'],
+      rules: {
+        'anti-slop/no-chained-type-assertions': 'off',
+        'typescript/no-unsafe-type-assertion': 'off',
+      },
+    },
+    {
       // These focused tests use inert scoped-transaction identities only to verify owner-scope forwarding; no transaction method is reached.
       files: [
         'verticals/pricing/tests/unit/current-pricing-decision-read.test.ts',

@@ -37,7 +37,8 @@ import type {
 } from '../../shared/domain/price-group-ports.ts';
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
 import { createAssignCustomerPriceGroupCommerceCustomerContextCustomerPriceGroupAssignedV1OutboxMessage } from './assign-customer-price-group.commerce-customer-context-customer-price-group-assigned-v1.outbox-message.ts';
-import { assignCustomerPriceGroupServicesForTransaction } from './price-group-action-services.ts';
+import { prepareAssignCustomerPriceGroupServices } from './price-group-action-preparation.ts';
+import { priceGroupActionServicesForTransaction } from './price-group-action-services.ts';
 
 export { AssignCustomerPriceGroupPayloadSchema } from '../../shared/actions/assign-customer-price-group.ts';
 export type { AssignCustomerPriceGroupPayload } from '../../shared/actions/assign-customer-price-group.ts';
@@ -354,5 +355,6 @@ export const assignCustomerPriceGroupAction = defineAction(
     schemaVersion: '1',
   },
   handleAssignCustomerPriceGroup,
-  assignCustomerPriceGroupServicesForTransaction,
+  priceGroupActionServicesForTransaction,
+  { prepareServices: prepareAssignCustomerPriceGroupServices },
 );

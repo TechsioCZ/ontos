@@ -36,7 +36,8 @@ import type {
 } from '../../shared/domain/price-group-ports.ts';
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
 import { createMigrateCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupMigratedV1OutboxMessage } from './migrate-counterparty-price-group.commerce-customer-context-counterparty-price-group-migrated-v1.outbox-message.ts';
-import { migrateCounterpartyPriceGroupServicesForTransaction } from './price-group-action-services.ts';
+import { prepareMigrateCounterpartyPriceGroupServices } from './price-group-action-preparation.ts';
+import { priceGroupActionServicesForTransaction } from './price-group-action-services.ts';
 import { counterpartyOwnerFacts } from './owner-access-facts.ts';
 
 const MigrateCounterpartyPriceGroupErrorSchema = Schema.Union([
@@ -366,5 +367,6 @@ export const migrateCounterpartyPriceGroupAction = defineAction(
     schemaVersion: '1',
   },
   handleMigrateCounterpartyPriceGroup,
-  migrateCounterpartyPriceGroupServicesForTransaction,
+  priceGroupActionServicesForTransaction,
+  { prepareServices: prepareMigrateCounterpartyPriceGroupServices },
 );

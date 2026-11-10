@@ -1,13 +1,11 @@
-import { OperationContextUnavailable, requireModuleOperation } from '@app/core-runtime';
+import { OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
-import type { Crypto } from 'effect';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect } from 'effect';
 import type {
   CustomerPriceGroupAssignmentStorePort,
   CustomerPriceGroupProfileValidationPort,
   PriceGroupCatalogPort,
 } from '../../shared/domain/price-group-ports.ts';
-import { priceGroupCatalogPortFromEnvironment } from '../integrations/price-group-catalog.ts';
 import {
   customerPriceGroupAssignmentStoreForTransaction,
   customerPriceGroupProfileValidationForTransaction,
@@ -22,10 +20,26 @@ export interface PriceGroupActionServices {
   readonly store: CustomerPriceGroupAssignmentStorePort;
 }
 
+/**
+ * The Price Group Catalog is another owner reached over HTTP, so it is never called from inside the Action
+ * transaction. Assign and Migrate read it in their preparation (price-group-action-preparation.ts); Remove
+ * needs no Catalog evidence at all.
+ */
+const catalogOutsidePreparation: PriceGroupCatalogPort = {
+  resolveCurrent: () =>
+    Effect.fail(
+      new CustomerPriceGroupCatalogUnavailable({
+        code: 'customer_price_group_catalog_unavailable',
+        reason: 'Price Group Catalog evidence is read only during Action preparation',
+      }),
+    ),
+};
+
+/** Owner-local services bound to the Action transaction. */
 export const priceGroupActionServicesForTransaction = (
   invoker: PriceGroupRoutineInvoker,
   scope: OperationalScope,
-): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable, Crypto.Crypto> => {
+): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable> => {
   const { legalEntityId } = scope;
   if (legalEntityId === undefined) {
     return Effect.fail(
@@ -36,99 +50,10 @@ export const priceGroupActionServicesForTransaction = (
     );
   }
   const trustedScope = { ...scope, legalEntityId };
-  return Effect.gen(function* makePriceGroupActionServices() {
-    const catalog = yield* priceGroupCatalogPortFromEnvironment({
-      requestCorrelation: scope.correlationId,
-      subject: { _tag: 'Assertion', scope },
-    });
-    return {
-      catalog,
-      now: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
-      profileValidation: customerPriceGroupProfileValidationForTransaction(invoker, trustedScope),
-      store: customerPriceGroupAssignmentStoreForTransaction(invoker, trustedScope),
-    };
+  return Effect.succeed({
+    catalog: catalogOutsidePreparation,
+    now: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
+    profileValidation: customerPriceGroupProfileValidationForTransaction(invoker, trustedScope),
+    store: customerPriceGroupAssignmentStoreForTransaction(invoker, trustedScope),
   });
 };
-
-const PriceGroupActionRequirementSchema = Schema.Literals([
-  'commerce.customer-context.requirement.assign-customer-price-group-catalog',
-  'commerce.customer-context.requirement.assign-counterparty-price-group-catalog',
-  'commerce.customer-context.requirement.migrate-customer-price-group-catalog',
-  'commerce.customer-context.requirement.migrate-counterparty-price-group-catalog',
-]);
-type PriceGroupActionRequirement = typeof PriceGroupActionRequirementSchema.Type;
-
-const withRequiredPriceGroupCatalog = (
-  services: PriceGroupActionServices,
-  requirement: PriceGroupActionRequirement,
-): PriceGroupActionServices => ({
-  ...services,
-  catalog: {
-    resolveCurrent: (...args) =>
-      requireModuleOperation(requirement).pipe(
-        Effect.mapError((cause) =>
-          Object.defineProperty(
-            new CustomerPriceGroupCatalogUnavailable({
-              code: 'customer_price_group_catalog_unavailable',
-              reason: 'Required Price Group Catalog operation is unavailable',
-            }),
-            'cause',
-            { configurable: true, value: cause },
-          ),
-        ),
-        Effect.flatMap(() => services.catalog.resolveCurrent(...args)),
-      ),
-  },
-});
-
-export const assignCustomerPriceGroupServicesForTransaction = (
-  invoker: PriceGroupRoutineInvoker,
-  scope: OperationalScope,
-): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable, Crypto.Crypto> =>
-  priceGroupActionServicesForTransaction(invoker, scope).pipe(
-    Effect.map((services) =>
-      withRequiredPriceGroupCatalog(
-        services,
-        'commerce.customer-context.requirement.assign-customer-price-group-catalog',
-      ),
-    ),
-  );
-
-export const assignCounterpartyPriceGroupServicesForTransaction = (
-  invoker: PriceGroupRoutineInvoker,
-  scope: OperationalScope,
-): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable, Crypto.Crypto> =>
-  priceGroupActionServicesForTransaction(invoker, scope).pipe(
-    Effect.map((services) =>
-      withRequiredPriceGroupCatalog(
-        services,
-        'commerce.customer-context.requirement.assign-counterparty-price-group-catalog',
-      ),
-    ),
-  );
-
-export const migrateCustomerPriceGroupServicesForTransaction = (
-  invoker: PriceGroupRoutineInvoker,
-  scope: OperationalScope,
-): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable, Crypto.Crypto> =>
-  priceGroupActionServicesForTransaction(invoker, scope).pipe(
-    Effect.map((services) =>
-      withRequiredPriceGroupCatalog(
-        services,
-        'commerce.customer-context.requirement.migrate-customer-price-group-catalog',
-      ),
-    ),
-  );
-
-export const migrateCounterpartyPriceGroupServicesForTransaction = (
-  invoker: PriceGroupRoutineInvoker,
-  scope: OperationalScope,
-): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable, Crypto.Crypto> =>
-  priceGroupActionServicesForTransaction(invoker, scope).pipe(
-    Effect.map((services) =>
-      withRequiredPriceGroupCatalog(
-        services,
-        'commerce.customer-context.requirement.migrate-counterparty-price-group-catalog',
-      ),
-    ),
-  );
