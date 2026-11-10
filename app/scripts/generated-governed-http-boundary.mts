@@ -22064,8 +22064,22 @@ const hasCapturedOwnerApprovalLayer = (
   );
 };
 
+const STRING_LIKE_LITERALS: ReadonlySet<SyntaxKind> = new Set([
+  SyntaxKind.StringLiteral,
+  SyntaxKind.NoSubstitutionTemplateLiteral,
+]);
+
+/** Every quote or backtick spelling of the approval group name, whatever call it appears in. */
+const approvalGroupLiteralCount = (source: string): number =>
+  tokenizeGovernedClient(source).filter(
+    (token) => STRING_LIKE_LITERALS.has(token.kind) && token.value === OWNER_ACTION_APPROVAL_PUBLICATION.group,
+  ).length;
+
 /** The one `HttpApiBuilder.group(<api>, 'ownerActionApprovals', ...)` call and its `.pipe(...)`. */
 const nativeApprovalHandlerRange = (source: string): SourceRange | undefined => {
+  if (approvalGroupLiteralCount(source) !== 1) {
+    return undefined;
+  }
   const groups = [
     ...maskComments(source).matchAll(
       new RegExp(

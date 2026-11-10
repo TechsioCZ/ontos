@@ -423,6 +423,11 @@ it('rejects foreign, shadowed, replaced and duplicate approval authority in the 
     root.replace(`.${inspectHandlerCall}`, ''),
     `${root}\nconst extraApprove = makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal);\n`,
     `${root}\nfunction shadow(HttpApiBuilder) {}\n`,
+    root.replace(
+      boundOwnerApprovalGroup,
+      `HttpApiBuilder.group(crmApi, \`ownerActionApprovals\`, (handlers) => handlers),\n    ${boundOwnerApprovalGroup}`,
+    ),
+    `${root}\nconst second = HttpApiBuilder.group(crmApi, \`ownerActionApprovals\`, (handlers) => handlers);\n`,
     root.replace('access/approvals/owner-runtime', 'access/approvals/foreign-runtime'),
     root.replace(
       'authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal',
