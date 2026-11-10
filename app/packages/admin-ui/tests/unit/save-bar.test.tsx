@@ -4,7 +4,7 @@ import { SaveBar } from '../../src/save-bar.tsx';
 import { saveLabelsFor } from '../../src/save-labels.ts';
 import type { SaveState } from '../../src/draft-save.ts';
 
-const states = ['idle', 'dirty', 'invalid', 'saving', 'saved', 'proposed', 'error', 'conflict'] as const;
+const states = ['idle', 'ready', 'dirty', 'invalid', 'saving', 'saved', 'proposed', 'error', 'conflict'] as const;
 
 const markup = (status: SaveState, language?: string, error?: string) =>
   renderToStaticMarkup(
@@ -42,8 +42,9 @@ describe('SaveBar', () => {
     }
   });
 
-  it('enables Save only for a changed, valid draft and after a failed save', () => {
+  it('enables Save only for a changed, valid draft (or valid opening values) and after a failed save', () => {
     expect(disabled('dirty')).toBe(false);
+    expect(disabled('ready')).toBe(false);
     expect(disabled('error')).toBe(false);
     for (const status of ['idle', 'invalid', 'saved', 'proposed', 'conflict'] as const) {
       expect(disabled(status)).toBe(true);
@@ -64,6 +65,8 @@ describe('SaveBar', () => {
     expect(markup('idle')).toContain('aria-live="polite"');
     expect(statusOf(markup('idle'))).toBe('');
     expect(statusOf(markup('dirty'))).toBe('Neuložené změny');
+    // A form that opened with values Uložit can send: nothing typed, so nothing unsaved to mention.
+    expect(statusOf(markup('ready'))).toBe('');
     expect(statusOf(markup('invalid'))).toBe('Neuložené změny – opravte zvýrazněná pole');
     expect(statusOf(markup('saving'))).toBe('');
     expect(statusOf(markup('saved'))).toBe('Uloženo');

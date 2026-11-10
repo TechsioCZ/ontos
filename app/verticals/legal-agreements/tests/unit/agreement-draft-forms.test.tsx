@@ -159,6 +159,10 @@ describe('period of a draft contract', () => {
 
         yield* type(endDate, '2028-01-31');
         expect(text()).toContain(labels.unsaved);
+        // Enter submits the form natively: it must not save.
+        field(endDate).form?.requestSubmit();
+        yield* click(field(endDate));
+        expect(text()).toContain(labels.unsaved);
         expect(sent()).toHaveLength(0);
 
         yield* click(button(labels.save));
@@ -253,6 +257,9 @@ describe('new contract', () => {
       yield* mountCreate();
       yield* pick('legal-agreements.demo.customer', 'party-1');
       expect(button(labels.save).disabled).toBe(false);
+      document.querySelector('form')?.requestSubmit();
+      yield* click(document.querySelector('form') ?? undefined);
+      expect(sent()).toHaveLength(0);
       yield* click(button(labels.save));
       yield* waitUntil(() => created.length === 1);
       expect(sent()).toHaveLength(1);

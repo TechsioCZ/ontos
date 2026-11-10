@@ -69,15 +69,18 @@ const mount = async (): Promise<View> => {
         onClose={() => {
           closed.push('close');
         }}
+        onCreate={() =>
+          Effect.sync(() => {
+            closed.push('create');
+            return 'failed' as const;
+          })
+        }
         onSaveEdit={(submission, expectedRevision) =>
           Effect.sync(() => {
             sent.push({ expectedRevision, submission });
             return answer;
           })
         }
-        onSubmit={() => {
-          closed.push('create');
-        }}
         opportunities={[]}
         opportunitiesLoading={false}
         principalNames={new Map()}

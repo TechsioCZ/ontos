@@ -1,178 +1,127 @@
+import { SaveBar, UnsavedChangesDialog, saveLabelsFor } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { useId, useState } from 'react';
 
+import { DelegationEditor } from './delegation-editor.tsx';
 import { PeopleChoiceField } from './people-choice.tsx';
-import type { PeopleChoice, PeoplePendingChange, PeopleScopeChoices, PeopleViewModel } from './people-view-model.ts';
+import { usePeopleFormSave } from './people-form-save.ts';
+import type { PeopleFormContext, PeopleReview } from './people-form-save.ts';
+import type { PeopleFeedback, PeopleScopeChoices, PeopleViewModel } from './people-view-model.ts';
 
 const prefix = 'shell.accessAdmin.people';
-const selectedLabels = (choices: readonly PeopleChoice[], selection: readonly string[]) => {
-  const selected = new Set(selection);
-  return choices.flatMap((choice) => (selected.has(choice.id) ? [choice.label] : []));
-};
+interface AssignDraft {
+  readonly expiryInput: string;
+  readonly personId: string;
+  readonly roleId: string;
+}
+const emptyAssign: AssignDraft = { expiryInput: '', personId: '', roleId: '' };
 
-const DelegationEditor = ({
+/**
+ * Assigning a role: picking the person and role and typing the end date change only the draft; Uložit opens the
+ * confirmation of the assignment, which alone sends it; Enter never does; leaving the page with input asks first.
+ */
+const AssignRoleForm = ({
+  context,
   disabled,
-  onPreview,
+  draft,
+  onChange,
   scope,
 }: {
+  readonly context: PeopleFormContext;
   readonly disabled: boolean;
-  readonly onPreview: (change: PeoplePendingChange) => void;
+  readonly draft: AssignDraft;
+  readonly onChange: (next: AssignDraft) => void;
   readonly scope: PeopleScopeChoices;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const id = useId();
-  const [managerId, setManagerId] = useState('');
-  const [people, setPeople] = useState<string[]>([]);
-  const [roles, setRoles] = useState<string[]>([]);
-  const [capabilities, setCapabilities] = useState<string[]>([]);
-  const [endsAt, setEndsAt] = useState('');
-  const [amountMinor, setAmountMinor] = useState('');
-  const [currency, setCurrency] = useState('');
-  const manager = scope.managers.find((item) => item.id === managerId);
-  return (
-    <form
-      aria-label={t(`${prefix}.delegationCreate`)}
-      className="shell:grid shell:gap-4"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (
-          disabled ||
-          manager === undefined ||
-          people.length === 0 ||
-          roles.length === 0 ||
-          capabilities.length === 0 ||
-          endsAt.length === 0
-        ) {
-          return;
-        }
-        onPreview({
+  const person = scope.people.find((item) => item.id === draft.personId);
+  const role = scope.roles.find((item) => item.id === draft.roleId);
+  const save = usePeopleFormSave({
+    empty: emptyAssign,
+    feedback: context.feedback,
+    onDiscard: () => onChange(emptyAssign),
+    onReview: (onConfirmed) => {
+      if (disabled || person === undefined || role === undefined) {
+        return;
+      }
+      context.onPreview(
+        {
           command: {
-            amountMinor,
-            capabilities,
-            currency,
-            expiryInput: endsAt,
-            kind: 'delegate',
-            managerId,
-            people,
-            roles,
+            expiryInput: draft.expiryInput,
+            kind: 'assign',
+            personId: draft.personId,
+            roleId: draft.roleId,
             scopeId: scope.id,
           },
           facts: [
+            person.label,
             scope.label,
-            manager.label,
-            ...selectedLabels(scope.people, people),
-            ...selectedLabels(scope.roles, roles),
-            ...selectedLabels(scope.capabilities, capabilities),
-            endsAt,
-            amountMinor.length > 0 ? `${amountMinor} ${currency}` : t(`${prefix}.noAmountLimit`),
+            role.label,
+            draft.expiryInput.length === 0 ? t(`${prefix}.noExpiry`) : draft.expiryInput,
           ],
-          titleKey: `${prefix}.delegationCreate`,
-        });
+          titleKey: `${prefix}.confirmAssign`,
+        },
+        onConfirmed,
+      );
+    },
+    valid: !disabled && person !== undefined && role !== undefined,
+    value: draft,
+  });
+  const labels = saveLabelsFor(language);
+  const handleRefresh = context.onRefresh;
+  return (
+    <form
+      aria-label={t(`${prefix}.assignRole`)}
+      className="shell:grid shell:gap-4"
+      onSubmit={(event) => {
+        // Enter never sends: only Uložit opens the confirmation.
+        event.preventDefault();
       }}
     >
-      <h3 className="shell:text-title-md">{t(`${prefix}.delegation`)}</h3>
-      <p>{t(`${prefix}.delegationHelp`)}</p>
-      <p>{t(`${prefix}.delegationCeiling`)}</p>
-      <PeopleChoiceField
-        disabled={disabled}
-        items={scope.managers}
-        label={t(`${prefix}.delegatedManager`)}
-        onChange={(value) => setManagerId(value[0] ?? '')}
-        value={managerId.length > 0 ? [managerId] : []}
-      />
-      <PeopleChoiceField
-        disabled={disabled}
-        items={scope.people}
-        label={t(`${prefix}.delegationPeople`)}
-        multiple
-        onChange={setPeople}
-        value={people}
-      />
+      <h3 className="shell:text-title-md">{t(`${prefix}.assignRole`)}</h3>
       <PeopleChoiceField
         disabled={disabled}
         items={scope.roles}
-        label={t(`${prefix}.delegationRoles`)}
-        multiple
-        onChange={setRoles}
-        value={roles}
-      />
-      <PeopleChoiceField
-        disabled={disabled}
-        items={scope.capabilities}
-        label={t(`${prefix}.permissions`)}
-        multiple
-        onChange={setCapabilities}
-        value={capabilities}
-      />
-      <FormInput
-        disabled={disabled}
-        id={`${id}-amount`}
-        label={t(`${prefix}.amountMinor`)}
-        min="0"
-        onChange={(event) => setAmountMinor(event.target.value)}
-        step="1"
-        type="number"
-        value={amountMinor}
-      />
-      <FormInput
-        disabled={disabled}
-        id={`${id}-currency`}
-        label={t(`${prefix}.currency`)}
-        maxLength={3}
-        onChange={(event) => setCurrency(event.target.value)}
-        pattern="[A-Z]{3}"
-        required={amountMinor.length > 0}
-        value={currency}
+        label={t(`${prefix}.role`)}
+        onChange={(value) => onChange({ ...draft, roleId: value[0] ?? '' })}
+        value={draft.roleId.length > 0 ? [draft.roleId] : []}
       />
       <FormInput
         disabled={disabled}
         helpText={t(`${prefix}.localTime`)}
         id={`${id}-expiry`}
         label={t(`${prefix}.endDate`)}
-        onChange={(event) => setEndsAt(event.target.value)}
-        required
+        onChange={(event) => onChange({ ...draft, expiryInput: event.target.value })}
         type="datetime-local"
-        value={endsAt}
+        value={draft.expiryInput}
       />
-      <Button
-        disabled={
-          disabled ||
-          manager === undefined ||
-          people.length === 0 ||
-          roles.length === 0 ||
-          capabilities.length === 0 ||
-          endsAt.length === 0
-        }
-        type="submit"
-      >
-        {t('shell.accessAdmin.common.preview')}
-      </Button>
+      <p>{t(`${prefix}.endDateHelp`)}</p>
+      <SaveBar labels={labels} onReloadLatest={handleRefresh} onSave={save.handleSave} status={save.saveState} />
+      <UnsavedChangesDialog labels={labels} prompt={save.guard.prompt} />
     </form>
   );
 };
 
 const ScopeEditor = ({
   busy,
-  onPreview,
+  context,
   scope,
   writes,
 }: {
   readonly busy: boolean;
-  readonly onPreview: (change: PeoplePendingChange) => void;
+  readonly context: PeopleFormContext;
   readonly scope: PeopleScopeChoices;
   readonly writes: PeopleViewModel['writes'];
 }) => {
   const { t } = useModernI18n();
-  const id = useId();
-  const [personId, setPersonId] = useState('');
-  const [roleId, setRoleId] = useState('');
+  const [assign, setAssign] = useState(emptyAssign);
   const [teamId, setTeamId] = useState('');
-  const [endsAt, setEndsAt] = useState('');
+  const { personId } = assign;
   const person = scope.people.find((item) => item.id === personId);
-  const role = scope.roles.find((item) => item.id === roleId);
   const team = scope.teams.find((item) => item.id === teamId);
   return (
     <div className="shell:grid shell:gap-6">
@@ -180,46 +129,16 @@ const ScopeEditor = ({
         disabled={busy}
         items={scope.people}
         label={t(`${prefix}.person`)}
-        onChange={(value) => setPersonId(value[0] ?? '')}
+        onChange={(value) => setAssign((current) => ({ ...current, personId: value[0] ?? '' }))}
         value={personId.length > 0 ? [personId] : []}
       />
-      <form
-        aria-label={t(`${prefix}.assignRole`)}
-        className="shell:grid shell:gap-4"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (busy || !writes.assign || person === undefined || role === undefined) {
-            return;
-          }
-          onPreview({
-            command: { expiryInput: endsAt, kind: 'assign', personId, roleId, scopeId: scope.id },
-            facts: [person.label, scope.label, role.label, endsAt.length === 0 ? t(`${prefix}.noExpiry`) : endsAt],
-            titleKey: `${prefix}.confirmAssign`,
-          });
-        }}
-      >
-        <h3 className="shell:text-title-md">{t(`${prefix}.assignRole`)}</h3>
-        <PeopleChoiceField
-          disabled={busy || !writes.assign}
-          items={scope.roles}
-          label={t(`${prefix}.role`)}
-          onChange={(value) => setRoleId(value[0] ?? '')}
-          value={roleId.length > 0 ? [roleId] : []}
-        />
-        <FormInput
-          disabled={busy || !writes.assign}
-          helpText={t(`${prefix}.localTime`)}
-          id={`${id}-expiry`}
-          label={t(`${prefix}.endDate`)}
-          onChange={(event) => setEndsAt(event.target.value)}
-          type="datetime-local"
-          value={endsAt}
-        />
-        <p>{t(`${prefix}.endDateHelp`)}</p>
-        <Button disabled={busy || !writes.assign || person === undefined || role === undefined} type="submit">
-          {t(`${prefix}.assignRole`)}
-        </Button>
-      </form>
+      <AssignRoleForm
+        context={context}
+        disabled={busy || !writes.assign}
+        draft={assign}
+        onChange={setAssign}
+        scope={scope}
+      />
       <div className="shell:grid shell:gap-4">
         <h3 className="shell:text-title-md">{t(`${prefix}.teams`)}</h3>
         <PeopleChoiceField
@@ -233,11 +152,14 @@ const ScopeEditor = ({
           disabled={busy || !writes.team || person === undefined || team === undefined}
           onClick={() => {
             if (person !== undefined && team !== undefined) {
-              onPreview({
-                command: { action: 'join', kind: 'team', personId, teamId },
-                facts: [person.label, scope.label, team.label],
-                titleKey: `${prefix}.teamAdd`,
-              });
+              context.onPreview(
+                {
+                  command: { action: 'join', kind: 'team', personId, teamId },
+                  facts: [person.label, scope.label, team.label],
+                  titleKey: `${prefix}.teamAdd`,
+                },
+                () => setTeamId(''),
+              );
             }
           }}
           type="button"
@@ -245,19 +167,23 @@ const ScopeEditor = ({
           {t(`${prefix}.teamAdd`)}
         </Button>
       </div>
-      <DelegationEditor disabled={busy || !writes.delegate} onPreview={onPreview} scope={scope} />
+      <DelegationEditor context={context} disabled={busy || !writes.delegate} scope={scope} />
     </div>
   );
 };
 
 export const PeopleEditor = ({
   busy,
+  feedback,
   model,
   onPreview,
+  onRefresh,
 }: {
   readonly busy: boolean;
+  readonly feedback: PeopleFeedback;
   readonly model: PeopleViewModel;
-  readonly onPreview: (change: PeoplePendingChange) => void;
+  readonly onPreview: PeopleReview;
+  readonly onRefresh: () => void;
 }) => {
   const { t } = useModernI18n();
   const [scopeId, setScopeId] = useState('');
@@ -274,7 +200,13 @@ export const PeopleEditor = ({
       {scope === undefined ? (
         <StatusText>{t(`${prefix}.chooseScope`)}</StatusText>
       ) : (
-        <ScopeEditor busy={busy} key={scope.id} onPreview={onPreview} scope={scope} writes={model.writes} />
+        <ScopeEditor
+          busy={busy}
+          context={{ feedback, onPreview, onRefresh }}
+          key={scope.id}
+          scope={scope}
+          writes={model.writes}
+        />
       )}
     </section>
   );

@@ -175,6 +175,8 @@ describe('contract terms panel with one Save button', () => {
       yield* Effect.promise(() => type(notice, '3 měsíce'));
       expect(button('Uložit').disabled).toBe(false);
       expect(text()).toContain('Neuložené změny');
+      // Enter submits the form natively: it must not save.
+      document.querySelector('form')?.requestSubmit();
       yield* Effect.sleep('1 second');
       yield* Effect.promise(() => act(settle));
       expect(sends()).toBe(0);

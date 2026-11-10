@@ -1,4 +1,4 @@
-import type { DetailViewMode } from '@app/admin-ui';
+import type { DetailViewMode, SaveOutcome } from '@app/admin-ui';
 import {
   BulkActionBar,
   DetailViewModeToggle,
@@ -35,7 +35,7 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
 import type { BulkByTagResult } from './pipeline-bulk-by-tag.tsx';
-import type { CreateCommand, OpportunitySave } from './pipeline-dialogs.tsx';
+import type { OpportunitySave } from './pipeline-dialogs.tsx';
 import { opportunitySaveResult } from './opportunity-draft.ts';
 import type { DialogState, Target } from './pipeline-dialog-host.tsx';
 import { PipelineDialogHost, ownerCommand, requestedCount, stageCommand } from './pipeline-dialog-host.tsx';
@@ -436,7 +436,31 @@ const usePipelineCommands = (revision: number, reload: () => void) => {
         Effect.tap(() => Effect.sync(() => setDialogError(undefined))),
       ),
     );
-  return { busy, dialogError, runCommand, saveEdit, setDialogError };
+  /** One command sent by a form's Uložit: its outcome drives the save bar; the message shows as its error. */
+  const sendForm = (command: PipelineCommand): Effect.Effect<SaveOutcome> =>
+    Effect.suspend(() => {
+      setBusy(true);
+      setDialogError(undefined);
+      return applyPipelineCommand(command, revision).pipe(
+        Effect.match({
+          onFailure: (error): SaveOutcome => {
+            setBusy(false);
+            setDialogError(failureMessage(error));
+            const awaitingApproval = Predicate.isTagged(error, 'ActionProposalAccepted');
+            if (!awaitingApproval) {
+              reload();
+            }
+            return awaitingApproval ? 'proposed' : 'failed';
+          },
+          onSuccess: (): SaveOutcome => {
+            setBusy(false);
+            reload();
+            return 'saved';
+          },
+        }),
+      );
+    });
+  return { busy, dialogError, runCommand, saveEdit, sendForm, setDialogError };
 };
 
 /** The open dialog with its opportunity as the list has it now, so the edit panel follows live rereads. */
@@ -570,7 +594,7 @@ const RecordsPageContent = ({
   );
   const canWrite = response?.canWrite === true;
   const revision = response?.revision ?? 0;
-  const { busy, dialogError, runCommand, saveEdit, setDialogError } = usePipelineCommands(revision, reload);
+  const { busy, dialogError, runCommand, saveEdit, sendForm, setDialogError } = usePipelineCommands(revision, reload);
 
   const items = response?.items ?? [];
   const opportunityTags = useTagsFor('opportunity', toSubjectIds(items.map((item) => item.id)));
@@ -605,11 +629,10 @@ const RecordsPageContent = ({
     setDialog(undefined);
   };
 
-  const submitForm = (command: CreateCommand) =>
-    runCommand(command, () => {
-      closeDialog();
-      toaster.create({ title: t(`${K}.toasts.created`), type: 'success' });
-    });
+  const finishCreate = () => {
+    closeDialog();
+    toaster.create({ title: t(`${K}.toasts.created`), type: 'success' });
+  };
 
   const submitStage = (stage: OpportunityStage, note: string | undefined) => {
     if (dialog?.kind !== 'stage') {
@@ -692,8 +715,9 @@ const RecordsPageContent = ({
       onBulkByTagDone={finishBulkByTag}
       onBulkTagsDone={finishBulkTags}
       onClose={closeDialog}
+      onFormCreate={sendForm}
+      onFormCreated={finishCreate}
       onFormSave={saveEdit}
-      onFormSubmit={submitForm}
       onOwnerSubmit={submitOwner}
       onStageSubmit={submitStage}
       products={products}

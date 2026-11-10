@@ -29,7 +29,7 @@ import type { useFinanceRecords } from './use-finance-records.ts';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { InvoicePrint } from './invoice-print.tsx';
 import { useInvoiceIssuer } from './use-invoice-issuer.ts';
-import { SelectTemplate } from '@app/admin-ui/select-template';
+import { DocumentKindSelect } from './document-kind-select.tsx';
 import {
   CounterpartyHistory,
   InvoiceDocuments,
@@ -448,34 +448,11 @@ const InvoiceStatusActions = (model: ReturnType<typeof useInvoiceDetailModel>) =
       )}
       {!incoming && (
         <div className="print:hidden">
-          <SelectTemplate
+          <DocumentKindSelect
             disabled={!canWrite || !isDraft || busy}
-            items={Object.entries(DOCUMENT_KIND_LABEL).map(([value, label]) => ({
-              displayValue: label,
-              label,
-              value,
-            }))}
-            label={t('finance-billing.financeUi.common.documentKind')}
-            labelProps={{ className: 'font-label text-label-sm' }}
-            onValueChange={({ value }) => {
-              const [next] = value;
-              if (
-                next === 'STANDARD' ||
-                next === 'ADVANCE' ||
-                next === 'PARTIAL' ||
-                next === 'FINAL' ||
-                next === 'RECURRING'
-              ) {
-                void financeBrowserRuntime.runPromise(
-                  vm.execute(
-                    { _tag: 'SetInvoiceDetails', documentKind: next, invoiceRef: invoice.ref },
-                    'Druh dokladu uložen',
-                  ),
-                );
-              }
-            }}
-            size="sm"
-            value={[invoice.documentKind ?? 'STANDARD']}
+            invoice={invoice}
+            kinds={DOCUMENT_KIND_LABEL}
+            vm={vm}
           />
           {(invoice.documentKind === 'FINAL' || invoice.documentKind === 'PARTIAL') && (
             <p className="mt-100 text-fg-secondary text-xs">

@@ -7,6 +7,7 @@ import { Effect, Option } from 'effect';
 import { afterEach, expect, it, rstest } from 'effect-rstest';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
+import type { CreateProjectActionCommitIndeterminateProblemSchema } from '../../shared/apis/create-project-action.ts';
 import { executeCreateProject } from '../../src/api/create-project-action-client.ts';
 import { CreateProjectForm } from '../../src/routes/[lang]/projects/create-project/create-project-form.tsx';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
@@ -137,6 +138,43 @@ it.live('typing and Enter send nothing; Uložit creates once and the page can be
       ownerPrincipalId: owner.principalId,
       prefix: 'WEB',
     });
+    expect(navigation.shouldBlock()).toBe(false);
+  }),
+);
+
+const uncertain: typeof CreateProjectActionCommitIndeterminateProblemSchema.Type = {
+  _tag: 'CreateProjectActionCommitIndeterminateProblem',
+  detail: 'uncertain',
+  invocationId: 'invocation-1',
+  resolution: 'RESOLVE_COMMIT',
+  retryCommand: false,
+  status: 503,
+  title: 'uncertain',
+  type: 'about:blank',
+};
+
+it.live('an uncertain create locks the inputs, and Uložit retries the same draft with the same key', () =>
+  Effect.gen(function* uncertainLock() {
+    rstest.mocked(executeCreateProject).mockImplementationOnce(() => Effect.fail(uncertain));
+    yield* Effect.promise(mount);
+    yield* typeInto('project-name', 'Nový web');
+    yield* typeInto('project-prefix', 'WEB');
+    yield* act$(() => buttonNamed('projects.pages.createProject.findOwners').click());
+    yield* Effect.promise(() =>
+      waitUntil(() => document.querySelector(`input[value="${owner.principalId}"]`) !== null),
+    );
+    yield* act$(() => field(`input[value="${owner.principalId}"]`).click());
+    yield* act$(() => buttonNamed(labels.save).click());
+    yield* Effect.promise(() => waitUntil(() => document.querySelector('[data-save-state="error"]') !== null));
+    expect(field('#project-name').disabled).toBe(true);
+    expect(field('#project-prefix').disabled).toBe(true);
+    expect(buttonNamed('projects.pages.createProject.findOwners').disabled).toBe(true);
+    yield* act$(() => buttonNamed(labels.save).click());
+    yield* Effect.promise(() => waitUntil(() => (document.body.textContent ?? '').includes(labels.saved)));
+    const { calls } = rstest.mocked(executeCreateProject).mock;
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.[0]).toEqual(calls[0]?.[0]);
+    expect(calls[1]?.[2]).toEqual(calls[0]?.[2]);
     expect(navigation.shouldBlock()).toBe(false);
   }),
 );

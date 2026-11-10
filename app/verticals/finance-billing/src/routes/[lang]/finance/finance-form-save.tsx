@@ -26,6 +26,8 @@ export type FinanceSendOutcome =
   | { readonly ok: true }
   | { readonly feedback: string; readonly ok: false; readonly reason?: string };
 
+export type FinanceSendFailure = Extract<FinanceSendOutcome, { readonly ok: false }>;
+
 export interface FinanceFormSaveOptions<V, O extends FinanceSendOutcome> {
   readonly equals?: (left: V, right: V) => boolean;
   /**
@@ -37,6 +39,11 @@ export interface FinanceFormSaveOptions<V, O extends FinanceSendOutcome> {
   readonly isValid: (value: V) => boolean;
   /** Leaves the form (closes its dialog or panel). Runs after a save went through and after Zahodit změny. */
   readonly onClose: () => void;
+  /**
+   * Nothing was written: for a follow-up such as a toast. A change parked for approval arrives here too, as
+   * `pendingApproval`. Called with a failed outcome only.
+   */
+  readonly onFailed?: (outcome: FinanceSendFailure) => void;
   /** The save went through; for a follow-up such as opening the created record. Called with an `ok` outcome only. */
   readonly onSent?: (outcome: O) => void;
   /** Puts `value` back into the form's own state. */
@@ -77,6 +84,10 @@ export const useFinanceFormSave = <V, O extends FinanceSendOutcome>(
       setError(null);
       options.onSent?.(outcome);
       return;
+    }
+    const failure: FinanceSendOutcome = outcome;
+    if (!failure.ok) {
+      options.onFailed?.(failure);
     }
     // The save bar reports a conflict and a change waiting for approval itself.
     setError(

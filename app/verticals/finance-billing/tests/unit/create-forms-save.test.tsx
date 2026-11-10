@@ -21,12 +21,32 @@ import {
   leaveQuestion,
   mount,
   pick,
+  pressEnter,
   saveButton,
   typeInto,
   unmountAll,
   waitUntil,
 } from './finance-form-harness.ts';
 
+interface Toast {
+  readonly title?: unknown;
+  readonly type?: unknown;
+}
+const { toasts } = rstest.hoisted(() => {
+  const recorded: Toast[] = [];
+  return { toasts: recorded };
+});
+// The toaster records what the forms announce.
+rstest.mock('@techsio/ui-kit/molecules/toast', () => ({
+  Toaster: () => null,
+  toaster: { attrs: {} },
+  useToast: () => ({
+    create: (toast: { readonly title?: unknown; readonly type?: unknown }) => {
+      toasts.push({ title: toast.title, type: toast.type });
+    },
+    dismiss: constVoid,
+  }),
+}));
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
 }));
@@ -97,7 +117,17 @@ const onOpenChange = (open: boolean) => {
 beforeEach(() => {
   rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   closes.length = 0;
+  toasts.length = 0;
 });
+
+const CREATED = 'finance-billing.faktury.form.created';
+
+const fillInvoice = (price: string) =>
+  Effect.gen(function* fill() {
+    yield* pick('finance-billing.faktury.form.customer');
+    yield* typeInto('invoice-line-description-line-1', 'Pronájem kavárny');
+    yield* typeInto('invoice-line-price-line-1', price);
+  });
 
 afterEach(() => {
   unmountAll();
@@ -189,13 +219,15 @@ describe('create forms save from Uložit only', () => {
       unmountAll();
       closes.length = 0;
       yield* mount(<CreateInvoiceDialog onOpenChange={onOpenChange} open vm={vm} />);
-      yield* pick('finance-billing.faktury.form.customer');
-      yield* typeInto('invoice-line-description-line-1', 'Pronájem kavárny');
+      yield* fillInvoice('1000');
       expect(lastFooterButton()).toBe(saveButton());
+      yield* pressEnter('invoice-line-description-line-1');
+      expect(drafts).toEqual([]);
       yield* clickSave;
       yield* waitUntil(() => closes.length === 1);
       expect(drafts).toHaveLength(1);
       expect(drafts[0]).toMatchObject({ customer: { partyId: customer.partyId }, documentKind: 'STANDARD' });
+      expect(toasts.map((toast) => toast.title)).toEqual([CREATED]);
     }),
   );
 });

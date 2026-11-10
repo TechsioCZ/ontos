@@ -1,6 +1,5 @@
 import type { IsoDate } from '../../../../../shared/domain/common.ts';
 import { Effect, Option, Result, Schema } from 'effect';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { optionalField } from '../../../../../shared/domain/common.ts';
 // S06 forms: new supplier quote, new purchase order (direct or from replenishment), supplier. ops-purchasing lane.
 import { SidePanel, surfaceTileClassName } from '@app/admin-ui';
@@ -27,9 +26,9 @@ import {
   usePurchasingT,
 } from './purchasing-model.ts';
 import type { RunCommand } from './purchasing-model.ts';
+import { FormSaveFooter, refusedOutcome, submitDone, useFormSave } from '../../../../ui/form-save.tsx';
 
 const cancelLabelKey = 'facility-operations.common.cancel';
-const savingLabelKey = 'facility-operations.common.saving';
 const closeLabelKey = 'facility-operations.common.close';
 const noteLabelKey = 'facility-operations.common.note';
 const requiredLabelKey = 'facility-operations.common.required';
@@ -200,7 +199,6 @@ interface SubmitPurchaseDocumentInput {
   readonly onCreated: (id: string) => void;
   readonly run: RunCommand;
   readonly secondDate: IsoDate;
-  readonly setBusy: (value: boolean) => void;
   readonly setError: (value: string | undefined) => void;
   readonly state: PurchasingState;
   readonly supplierId: string;
@@ -220,7 +218,6 @@ const submitPurchaseDocument = Effect.fn('FacilityOperations.Purchasing.submitPu
       onCreated,
       run,
       secondDate,
-      setBusy,
       setError,
       state,
       supplierId,
@@ -237,7 +234,7 @@ const submitPurchaseDocument = Effect.fn('FacilityOperations.Purchasing.submitPu
       (kind === 'quote' && (number.trim() === '' || date === ''))
     ) {
       setError(k('lines.invalid'));
-      return;
+      return 'failed' as const;
     }
     const optionalNote = optionalField('note', note.trim() === '' ? undefined : note.trim());
     let command: Parameters<RunCommand>[0];
@@ -245,7 +242,7 @@ const submitPurchaseDocument = Effect.fn('FacilityOperations.Purchasing.submitPu
       const warehouse = state.warehouses.find((candidate) => candidate.id === warehouseId);
       if (warehouse === undefined) {
         setError(k('lines.invalid'));
-        return;
+        return 'failed' as const;
       }
       command = {
         _tag: 'PurchaseOrderCreate',
@@ -268,19 +265,19 @@ const submitPurchaseDocument = Effect.fn('FacilityOperations.Purchasing.submitPu
         ...optionalNote,
       };
     }
-    setBusy(true);
     const outcome = yield* run(command);
-    setBusy(false);
-    if (outcome.ok) {
+    if (!outcome.ok) {
+      setError(t(failureKey(outcome.reason)));
+      return refusedOutcome(outcome);
+    }
+    return submitDone(() => {
       toast.create({
         duration: 5000,
         title: k(kind === 'order' ? 'orders.created' : 'quotes.created'),
         type: 'success',
       });
       onCreated(outcome.result.entityIds[0] ?? '');
-    } else {
-      setError(t(failureKey(outcome.reason)));
-    }
+    });
   },
 );
 
@@ -316,46 +313,34 @@ export const PurchaseDocumentPanel = ({
   const initialLineId = useId();
   const [lines, setLines] = useState<readonly DraftLine[]>(() => initialLines ?? [draftLine(initialLineId)]);
   const [error, setError] = useState<string | undefined>();
-  const [busy, setBusy] = useState(false);
-  const submit = () =>
-    submitPurchaseDocument({
-      date,
-      k,
-      kind,
-      lines,
-      note,
-      number,
-      onCreated,
-      run,
-      secondDate,
-      setBusy,
-      setError,
-      state,
-      supplierId,
-      t,
-      toast,
-      warehouseId,
-    });
+  // The order or quote is sent on Uložit only; lines handed over from a suggestion can be sent as they are.
+  const form = useFormSave({
+    savableAtOnce: initialLines !== undefined,
+    submit: () =>
+      submitPurchaseDocument({
+        date,
+        k,
+        kind,
+        lines,
+        note,
+        number,
+        onCreated,
+        run,
+        secondDate,
+        setError,
+        state,
+        supplierId,
+        t,
+        toast,
+        warehouseId,
+      }),
+    value: { date, lines, note, number, secondDate, supplierId, warehouseId },
+  });
   return (
     <SidePanel
-      actions={
-        <>
-          <Button onClick={onClose} theme="outlined" variant="secondary">
-            {t(cancelLabelKey)}
-          </Button>
-          <Button
-            isLoading={busy}
-            loadingText={t(savingLabelKey)}
-            onClick={() => {
-              browserRuntime.runFork(submit());
-            }}
-            variant="primary"
-          >
-            {kind === 'order' ? 'Založit návrh' : k('quotes.createSubmit')}
-          </Button>
-        </>
-      }
+      actions={<FormSaveFooter cancelLabel={t(cancelLabelKey)} error={error} form={form} onCancel={onClose} />}
       description={k(kind === 'order' ? 'orders.createDescription' : 'quotes.createDescription')}
+      guard={form.guard}
       onOpenChange={(open) => {
         if (!open) {
           onClose();
@@ -441,7 +426,6 @@ interface SubmitSupplierInput {
   readonly k: ReturnType<typeof usePurchasingT>;
   readonly onClose: () => void;
   readonly run: RunCommand;
-  readonly setBusy: (value: boolean) => void;
   readonly setError: (value: string | undefined) => void;
   readonly t: ReturnType<typeof useModernI18n>['t'];
   readonly toast: ReturnType<typeof useToast>;
@@ -451,7 +435,7 @@ interface SubmitSupplierInput {
 const submitSupplier = Effect.fn('FacilityOperations.Purchasing.submitSupplier')(function* submitSupplier(
   input: SubmitSupplierInput,
 ) {
-  const { k, onClose, run, setBusy, setError, t, toast, value } = input;
+  const { k, onClose, run, setError, t, toast, value } = input;
   setError(undefined);
   const lead = value('leadTimeDays');
   const leadValue = lead === '' ? undefined : Number(lead);
@@ -461,7 +445,7 @@ const submitSupplier = Effect.fn('FacilityOperations.Purchasing.submitSupplier')
     (leadValue !== undefined && !Number.isInteger(leadValue))
   ) {
     setError(k('suppliers.invalid'));
-    return;
+    return 'failed' as const;
   }
   const ico = yield* Effect.result(
     Schema.decodeEffect(Schema.OptionFromUndefinedOr(SupplierIcoSchema))(
@@ -471,9 +455,8 @@ const submitSupplier = Effect.fn('FacilityOperations.Purchasing.submitSupplier')
   if (Result.isFailure(ico)) {
     setError(k('suppliers.invalid'));
     yield* Effect.logWarning('Supplier identifier validation failed', ico.failure);
-    return;
+    return 'failed' as const;
   }
-  setBusy(true);
   const optional = (name: string) => optionalField(name, value(name) === '' ? undefined : value(name));
   const outcome = yield* run({
     _tag: 'PurchaseSupplierCreate',
@@ -485,13 +468,14 @@ const submitSupplier = Effect.fn('FacilityOperations.Purchasing.submitSupplier')
     ...optionalField('ico', Option.getOrUndefined(ico.success)),
     ...optionalField('leadTimeDays', leadValue),
   });
-  setBusy(false);
-  if (outcome.ok) {
+  if (!outcome.ok) {
+    setError(t(failureKey(outcome.reason)));
+    return refusedOutcome(outcome);
+  }
+  return submitDone(() => {
     toast.create({ duration: 5000, title: k('suppliers.created'), type: 'success' });
     onClose();
-  } else {
-    setError(t(failureKey(outcome.reason)));
-  }
+  });
 });
 
 export const SupplierPanel = ({ onClose, run }: { readonly onClose: () => void; readonly run: RunCommand }) => {
@@ -500,7 +484,6 @@ export const SupplierPanel = ({ onClose, run }: { readonly onClose: () => void; 
   const toast = useToast();
   const [values, setValues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | undefined>();
-  const [busy, setBusy] = useState(false);
   const value = (name: string) => (values[name] ?? '').trim();
   const field = (name: string, label: string, extra: { inputMode?: 'numeric'; type?: string } = {}) => (
     <FormInput
@@ -512,26 +495,15 @@ export const SupplierPanel = ({ onClose, run }: { readonly onClose: () => void; 
       {...extra}
     />
   );
-  const submit = () => submitSupplier({ k, onClose, run, setBusy, setError, t, toast, value });
+  // The supplier is created on Uložit only.
+  const form = useFormSave({
+    submit: () => submitSupplier({ k, onClose, run, setError, t, toast, value }),
+    value: values,
+  });
   return (
     <SidePanel
-      actions={
-        <>
-          <Button onClick={onClose} theme="outlined" variant="secondary">
-            {t(cancelLabelKey)}
-          </Button>
-          <Button
-            isLoading={busy}
-            loadingText={t(savingLabelKey)}
-            onClick={() => {
-              browserRuntime.runFork(submit());
-            }}
-            variant="primary"
-          >
-            {k('suppliers.createSubmit')}
-          </Button>
-        </>
-      }
+      actions={<FormSaveFooter cancelLabel={t(cancelLabelKey)} error={error} form={form} onCancel={onClose} />}
+      guard={form.guard}
       onOpenChange={(open) => {
         if (!open) {
           onClose();
@@ -566,7 +538,6 @@ interface SubmitStockItemCreationInput {
   readonly k: ReturnType<typeof usePurchasingT>;
   readonly onCreated: (id: string) => void;
   readonly run: RunCommand;
-  readonly setBusy: (value: boolean) => void;
   readonly setError: (value: string | undefined) => void;
   readonly state: PurchasingState;
   readonly t: ReturnType<typeof useModernI18n>['t'];
@@ -576,7 +547,7 @@ interface SubmitStockItemCreationInput {
 
 const submitStockItemCreation = Effect.fn('FacilityOperations.Purchasing.submitStockItemCreation')(
   function* createStockItem(input: SubmitStockItemCreationInput) {
-    const { k, onCreated, run, setBusy, setError, state, t, toast, value } = input;
+    const { k, onCreated, run, setError, state, t, toast, value } = input;
     setError(undefined);
     const minimum = Number(value('minimum'));
     const maximum = Number(value('maximum'));
@@ -586,11 +557,11 @@ const submitStockItemCreation = Effect.fn('FacilityOperations.Purchasing.submitS
       ![minimum, maximum, lead].every((entry) => Number.isInteger(entry) && entry >= 0)
     ) {
       setError(t(requiredLabelKey));
-      return;
+      return 'failed' as const;
     }
     if (maximum > 0 && maximum < minimum) {
       setError(k('items.maxBelowMin'));
-      return;
+      return 'failed' as const;
     }
     const category = value('category');
     const tracking = value('tracking');
@@ -604,13 +575,12 @@ const submitStockItemCreation = Effect.fn('FacilityOperations.Purchasing.submitS
       warehouse === undefined
     ) {
       setError(t(requiredLabelKey));
-      return;
+      return 'failed' as const;
     }
     if (supplierSelected && supplier === undefined) {
       setError(t(requiredLabelKey));
-      return;
+      return 'failed' as const;
     }
-    setBusy(true);
     const outcome = yield* run({
       _tag: 'StockItemCreate',
       category,
@@ -626,13 +596,14 @@ const submitStockItemCreation = Effect.fn('FacilityOperations.Purchasing.submitS
       ...optionalField('note', value('note') === '' ? undefined : value('note')),
       ...optionalField('lastPriceMinor', parseAmountMinor(value('price'))),
     });
-    setBusy(false);
-    if (outcome.ok) {
+    if (!outcome.ok) {
+      setError(t(failureKey(outcome.reason)));
+      return refusedOutcome(outcome);
+    }
+    return submitDone(() => {
       toast.create({ duration: 5000, title: k('items.created'), type: 'success' });
       onCreated(outcome.result.entityIds[0] ?? '');
-    } else {
-      setError(t(failureKey(outcome.reason)));
-    }
+    });
   },
 );
 
@@ -658,7 +629,6 @@ export const ItemCreatePanel = ({
     warehouseId: state.warehouses[0]?.id ?? '',
   });
   const [error, setError] = useState<string | undefined>();
-  const [busy, setBusy] = useState(false);
   const set = (name: string, next: string) => setValues((current) => ({ ...current, [name]: next }));
   const value = (name: string) => (values[name] ?? '').trim();
   const select = (
@@ -687,26 +657,15 @@ export const ItemCreatePanel = ({
       value={values[name] ?? ''}
     />
   );
-  const submit = () => submitStockItemCreation({ k, onCreated, run, setBusy, setError, state, t, toast, value });
+  // The item is created on Uložit only; the defaults it opens with are not typed input.
+  const form = useFormSave({
+    submit: () => submitStockItemCreation({ k, onCreated, run, setError, state, t, toast, value }),
+    value: values,
+  });
   return (
     <SidePanel
-      actions={
-        <>
-          <Button onClick={onClose} theme="outlined" variant="secondary">
-            {t(cancelLabelKey)}
-          </Button>
-          <Button
-            isLoading={busy}
-            loadingText={t(savingLabelKey)}
-            onClick={() => {
-              browserRuntime.runFork(submit());
-            }}
-            variant="primary"
-          >
-            {k('items.createSubmit')}
-          </Button>
-        </>
-      }
+      actions={<FormSaveFooter cancelLabel={t(cancelLabelKey)} error={error} form={form} onCancel={onClose} />}
+      guard={form.guard}
       onOpenChange={(open) => {
         if (!open) {
           onClose();

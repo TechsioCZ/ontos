@@ -1,8 +1,5 @@
-import { pipe, DateTime, Effect } from 'effect';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { pipe, DateTime } from 'effect';
 
-import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
-import { assignableSalespeople } from '../../../../crm/records.ts';
 // Client-card "Návštěvy" tab. OWNER: crm-visits. Contract: export name + ClientCardTabProps (klienti/card-tab-props.ts).
 // The card itself is a SidePanel, so everything here is inline (no stacked dialogs): summary facts, inline
 // "record visit" and "plan contact" forms, open plan items, and the client's timeline with correction history.
@@ -10,12 +7,6 @@ import { EmptyState, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
-import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 
@@ -23,20 +14,16 @@ import { lastVisitOf, nextPlanItemOf } from '../../../../../shared/domain/visits
 import type { Visit } from '../../../../../shared/domain/visits.ts';
 
 import type { ClientCardTabProps } from '../klienti/card-tab-props.ts';
-import { VisitFields, emptyVisitDraft } from './visit-panels.tsx';
-import type { VisitDraft } from './visit-panels.tsx';
+import { ClientPlanForm, ClientVisitForm } from './client-visit-forms.tsx';
 
 import { VisitTimeline } from './visit-timeline.tsx';
 import {
-  czechError,
   formatDay,
   formatVisitTime,
-  isoFromLocal,
   localDay,
   principalLabel,
   relativeDay,
   salespersonLabel,
-  shiftDay,
   sortPlanAsc,
   visitKindMeta,
   writableClients,
@@ -95,9 +82,8 @@ const InlineVisitDetail = ({
   </div>
 );
 
-const useClientVisits = ({ busy, client, records, submit }: ClientCardTabProps) => {
+const useClientVisits = ({ client, records, submit }: ClientCardTabProps) => {
   const { language } = useModernI18n();
-  const toaster = useToast();
   const today = localDay(records.now);
   const visits = records.state.visits.items.filter((visit) => visit.clientId === client.id);
   const last = lastVisitOf(visits, client.id);
@@ -106,132 +92,23 @@ const useClientVisits = ({ busy, client, records, submit }: ClientCardTabProps) 
     records.state.visits.plan.filter((item) => item.clientId === client.id && item.status === 'open'),
   );
   const canWrite = writableClients(records).some((entry) => entry.id === client.id);
-  const [form, setForm] = useState<{
-    readonly draft: VisitDraft;
-    readonly error?: string;
-    readonly mode: 'none' | 'visit' | 'plan';
-    readonly planDate: Extract<CrmCommandInput, { readonly _tag: 'PlanContact' }>['dueDate'];
-    readonly planNote: string;
-    readonly planSalesperson: string;
-    readonly submitted: boolean;
-  }>(() => ({
-    draft: emptyVisitDraft(records, client.id),
-    mode: 'none',
-    planDate: shiftDay(today, 7),
-    planNote: '',
-    planSalesperson: '',
-    submitted: false,
-  }));
-  const { draft, error, mode, planDate, planNote, planSalesperson, submitted } = form;
-  const patchForm = (patch: Partial<typeof form>) => setForm((current) => ({ ...current, ...patch }));
+  const [mode, setMode] = useState<'none' | 'visit' | 'plan'>('none');
   const [openVisitId, setOpenVisitId] = useState<string | undefined>();
   const openVisit = visits.find((visit) => visit.id === openVisitId);
 
-  const reset = () => {
-    setForm({
-      draft: emptyVisitDraft(records, client.id),
-      mode: 'none',
-      planDate: shiftDay(today, 7),
-      planNote: '',
-      planSalesperson: '',
-      submitted: false,
-    });
-  };
-  const saveVisit = () => {
-    patchForm({ submitted: true });
-    const occurredAt = isoFromLocal(draft.date, draft.time);
-    if (draft.result.trim() === '' || occurredAt === undefined) {
-      return;
-    }
-    const command: Extract<CrmCommandInput, { readonly _tag: 'RecordVisit' }> = {
-      _tag: 'RecordVisit',
-      clientId: client.id,
-      kind: draft.kind,
-      occurredAt,
-      result: draft.result.trim(),
-    };
-    if (draft.note.trim() !== '') {
-      Object.assign(command, { note: draft.note.trim() });
-    }
-    if (records.viewer.writeAll && draft.salespersonId !== '') {
-      Object.assign(command, { salespersonId: draft.salespersonId });
-    }
-    if (draft.nextStep.trim() !== '') {
-      Object.assign(command, { nextStep: draft.nextStep.trim() });
-    }
-    if (draft.nextStepDate !== '') {
-      Object.assign(command, { addToPlan: draft.addToPlan, nextStepDate: draft.nextStepDate });
-    }
-    browserRuntime.runFork(
-      submit(command).pipe(
-        Effect.tap((outcome) =>
-          Effect.sync(() => {
-            if (outcome.ok) {
-              toaster.create({ title: `${visitKindMeta[draft.kind].label} zapsán(a)`, type: 'success' });
-              reset();
-            } else {
-              patchForm({ error: czechError(outcome.message, 'Záznam se nepodařilo uložit.') });
-            }
-          }),
-        ),
-      ),
-    );
-  };
-  const savePlan = () => {
-    patchForm({ submitted: true });
-    if (!/^\d{4}-\d{2}-\d{2}$/u.test(planDate)) {
-      return;
-    }
-    const command: Extract<CrmCommandInput, { readonly _tag: 'PlanContact' }> = {
-      _tag: 'PlanContact',
-      clientId: client.id,
-      dueDate: planDate,
-    };
-    if (planNote.trim() !== '') {
-      Object.assign(command, { note: planNote.trim() });
-    }
-    if (records.viewer.writeAll && planSalesperson !== '') {
-      Object.assign(command, { salespersonId: planSalesperson });
-    }
-    browserRuntime.runFork(
-      submit(command).pipe(
-        Effect.tap((outcome) =>
-          Effect.sync(() => {
-            if (outcome.ok) {
-              toaster.create({ description: formatDay(planDate), title: 'Kontakt naplánován', type: 'success' });
-              reset();
-            } else {
-              patchForm({ error: czechError(outcome.message, 'Uložení se nezdařilo.') });
-            }
-          }),
-        ),
-      ),
-    );
-  };
-
   return {
-    busy,
     canWrite,
     client,
-    draft,
-    error,
     language,
     last,
     mode,
     next,
     openPlan,
     openVisit,
-    patchForm,
-    planDate,
-    planNote,
-    planSalesperson,
     records,
-    reset,
-    savePlan,
-    saveVisit,
-    setForm,
+    setMode,
     setOpenVisitId,
-    submitted,
+    submit,
     today,
     visits,
   };
@@ -240,31 +117,22 @@ const useClientVisits = ({ busy, client, records, submit }: ClientCardTabProps) 
 export const ClientVisitsTab = (props: ClientCardTabProps) => {
   const { t } = useModernI18n();
   const {
-    busy,
     canWrite,
     client,
-    draft,
-    error,
     language,
     last,
     mode,
     next,
     openPlan,
     openVisit,
-    patchForm,
-    planDate,
-    planNote,
-    planSalesperson,
     records,
-    reset,
-    savePlan,
-    saveVisit,
-    setForm,
+    setMode,
     setOpenVisitId,
-    submitted,
+    submit,
     today,
     visits,
   } = useClientVisits(props);
+  const closeForm = () => setMode('none');
 
   return (
     <div className="flex flex-col gap-250">
@@ -301,12 +169,12 @@ export const ClientVisitsTab = (props: ClientCardTabProps) => {
 
       {canWrite && mode === 'none' && (
         <div className="flex flex-wrap gap-100">
-          <Button icon="icon-[mdi--plus]" onClick={() => patchForm({ mode: 'visit' })} size="sm" variant="primary">
+          <Button icon="icon-[mdi--plus]" onClick={() => setMode('visit')} size="sm" variant="primary">
             Zapsat návštěvu
           </Button>
           <Button
             icon="icon-[mdi--calendar-plus]"
-            onClick={() => patchForm({ mode: 'plan' })}
+            onClick={() => setMode('plan')}
             size="sm"
             theme="outlined"
             variant="secondary"
@@ -322,96 +190,10 @@ export const ClientVisitsTab = (props: ClientCardTabProps) => {
         </div>
       )}
 
-      {mode !== 'none' && (
-        <form
-          className={`${surfaceTileClassName} flex flex-col gap-200 p-250`}
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (mode === 'visit') {
-              saveVisit();
-            } else {
-              savePlan();
-            }
-          }}
-        >
-          <span className="font-semibold text-sm">{mode === 'visit' ? 'Zapsat návštěvu' : 'Naplánovat kontakt'}</span>
-          {error !== undefined && (
-            <StatusText showIcon status="error">
-              {error}
-            </StatusText>
-          )}
-          {mode === 'visit' ? (
-            <>
-              <VisitFields
-                draft={draft}
-                idPrefix="crm-card-visit"
-                onChange={(patch) => setForm((current) => ({ ...current, draft: { ...current.draft, ...patch } }))}
-                records={records}
-                showClient={false}
-                showSalesperson={records.viewer.writeAll}
-                submitted={submitted}
-              />
-              {draft.nextStepDate !== '' && (
-                <FormCheckbox
-                  checked={draft.addToPlan}
-                  id="crm-card-visit-plan"
-                  label={t('crm.ciClientsVisits.visits.addNextStepToPlan')}
-                  onCheckedChange={(checked) =>
-                    setForm((current) => ({ ...current, draft: { ...current.draft, addToPlan: checked } }))
-                  }
-                  size="sm"
-                />
-              )}
-            </>
-          ) : (
-            <>
-              <FormInput
-                helpText={`${formatDay(planDate)} · ${relativeDay(planDate, today)}`}
-                id="crm-card-plan-date"
-                label={t('crm.ciClientsVisits.visits.contactOnDate')}
-                min={today}
-                name="dueDate"
-                onChange={(event) => patchForm({ planDate: event.target.value })}
-                required
-                size="sm"
-                type="date"
-                value={planDate}
-              />
-              <FormTextarea
-                id="crm-card-plan-note"
-                label={t('crm.ciClientsVisits.fields.note')}
-                name="note"
-                onChange={(event) => patchForm({ planNote: event.target.value })}
-                rows={2}
-                size="sm"
-                value={planNote}
-              />
-              {records.viewer.writeAll && (
-                <SelectTemplate
-                  items={[
-                    { label: 'Přidělený obchodník klienta', value: '' },
-                    ...assignableSalespeople(records).map((person) => ({ label: person.name, value: person.id })),
-                  ]}
-                  label={t('crm.ciClientsVisits.visits.responsibleSalesperson')}
-                  name="planSalesperson"
-                  onValueChange={(details) => patchForm({ planSalesperson: details.value[0] ?? '' })}
-                  size="sm"
-                  value={[planSalesperson]}
-                />
-              )}
-              <span className="text-fg-secondary text-xs">Ruční plán obchodníka, nejde o doporučení systému.</span>
-            </>
-          )}
-          <div className="flex justify-end gap-100">
-            <Button onClick={reset} size="sm" theme="outlined" variant="secondary">
-              Zrušit
-            </Button>
-            <Button isLoading={busy} loadingText="Ukládám…" size="sm" type="submit" variant="primary">
-              {mode === 'visit' ? 'Zapsat' : 'Naplánovat'}
-            </Button>
-          </div>
-        </form>
+      {mode === 'visit' && (
+        <ClientVisitForm clientId={client.id} onClose={closeForm} records={records} submit={submit} />
       )}
+      {mode === 'plan' && <ClientPlanForm clientId={client.id} onClose={closeForm} records={records} submit={submit} />}
 
       {openPlan.length > 0 && (
         <section className="flex flex-col gap-100">

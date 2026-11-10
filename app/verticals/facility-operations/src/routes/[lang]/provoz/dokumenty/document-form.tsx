@@ -44,6 +44,8 @@ import type { ContractDraft, DocumentEditDraft } from './document-draft.ts';
 import { useEditGuard } from '../../../../ui/edit-guard.tsx';
 import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
 import { useDraftBase } from '../../../../ui/draft-base.ts';
+import { FormSaveFooter, commandResult, useFormSave } from '../../../../ui/form-save.tsx';
+import type { FormSubmitResult } from '../../../../ui/form-save.tsx';
 import {
   documentCategories,
   FileTypeIcon,
@@ -153,7 +155,7 @@ const persistDocument = Effect.fn('Documents.persist')(function* persistDocument
     (category === 'amendment' && amends === NONE)
   ) {
     onFailure('required');
-    return;
+    return 'failed' as const;
   }
   onFailure();
   const common = {
@@ -170,7 +172,7 @@ const persistDocument = Effect.fn('Documents.persist')(function* persistDocument
     if (!uploaded.ok) {
       onBusy();
       onFailure(uploaded.reason === 'forbidden' ? 'forbidden' : 'upload');
-      return;
+      return 'failed' as const;
     }
     stored = uploaded.file;
   }
@@ -184,15 +186,11 @@ const persistDocument = Effect.fn('Documents.persist')(function* persistDocument
   if (Result.isFailure(command)) {
     onBusy();
     onFailure('invalid');
-    return;
+    return 'failed' as const;
   }
   const outcome = yield* run(command.success);
   onBusy();
-  if (outcome.ok) {
-    onPersisted(outcome.result.entityIds[0], 'created');
-  } else {
-    onFailure(outcome.reason);
-  }
+  return commandResult(outcome, (result) => onPersisted(result.entityIds[0], 'created'), onFailure);
 });
 
 const DocumentFilePicker = ({
@@ -799,21 +797,38 @@ const DocumentCreatePanel = ({
     }
   };
 
-  const submit = persistDocument({
-    amends,
-    category,
-    contract,
-    description,
-    file,
-    links,
-    onBusy: setBusy,
-    onFailure: setError,
-    onPersisted: (documentId, action) => {
-      toast.create({ title: t(`${k}.${action}`), type: 'success' });
-      onSaved(documentId);
-    },
-    run,
-    title,
+  // The document and its file are sent on Uložit only; an amendment opens prefilled, which Uložit can send as it is.
+  const form = useFormSave({
+    // Zahodit změny closes the panel, which unmounts the form with its input.
+    open,
+    savableAtOnce: mode.kind === 'amend',
+    submit: () =>
+      persistDocument({
+        amends,
+        category,
+        contract,
+        description,
+        file,
+        links,
+        onBusy: setBusy,
+        onFailure: setError,
+        onPersisted: (documentId, action) => {
+          toast.create({ title: t(`${k}.${action}`), type: 'success' });
+          onSaved(documentId);
+        },
+        run,
+        title,
+      }).pipe(
+        // A file the browser could not read is an upload failure, said on the form.
+        Effect.catchTag('FileReadFailed', () =>
+          Effect.sync((): FormSubmitResult => {
+            setBusy(undefined);
+            setError('upload');
+            return 'failed';
+          }),
+        ),
+      ),
+    value: { amends, category, contract, description, file, links, title },
   });
 
   const errorText = error === undefined ? undefined : documentErrorText(error, t);
@@ -825,22 +840,16 @@ const DocumentCreatePanel = ({
   return (
     <SidePanel
       actions={
-        <>
-          <Button onClick={onClose} theme="outlined" variant="secondary">
-            {t('facility-operations.common.cancel')}
-          </Button>
-          <Button
-            isLoading={busy !== undefined}
-            loadingText={busy === 'upload' ? t(`${k}.uploading`) : t('facility-operations.common.saving')}
-            onClick={() => {
-              browserRuntime.runFork(submit);
-            }}
-            variant="primary"
-          >
-            {t(`${k}.create.submit`)}
-          </Button>
-        </>
+        <FormSaveFooter
+          cancelLabel={t('facility-operations.common.cancel')}
+          error={errorText}
+          form={form}
+          onCancel={onClose}
+        >
+          {busy === 'upload' && <StatusText size="sm">{t(`${k}.uploading`)}</StatusText>}
+        </FormSaveFooter>
       }
+      guard={form.guard}
       onOpenChange={(next) => {
         if (!next) {
           onClose();
