@@ -19,7 +19,7 @@ import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';
 import { ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { AuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase } from '../../api/auth/db/client.ts';
-import { provisionModuleCredentials } from '../../api/auth/module-credential-provisioning.ts';
+import { provisionModuleCredentials } from '../../api/auth/module-credential-provisioning.service.ts';
 
 const SHELL_APP_ID = 'shell-super-app';
 const CUSTOMER_CONTEXT_APP_ID = 'commerce-customer-context';

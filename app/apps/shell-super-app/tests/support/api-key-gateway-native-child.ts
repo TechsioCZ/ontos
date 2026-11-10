@@ -54,7 +54,7 @@ import { loadModuleCredentialEnrolment } from '@app/core-runtime/auth/module-cre
 import { CoreDatabase } from '@app/core-runtime/db/client';
 import { GatewayIssuerLive } from '../../api/auth/gateway-issuer.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from '../../api/auth/authentication-namespace-registry.ts';
-import { provisionModuleCredentials } from '../../api/auth/module-credential-provisioning.ts';
+import { provisionModuleCredentials } from '../../api/auth/module-credential-provisioning.service.ts';
 import { ShellInstalledModuleCatalogLive } from '../../api/modules/installed-module-catalog.ts';
 import { AuthPersistenceLive } from '../../api/auth/runtime-infrastructure.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';

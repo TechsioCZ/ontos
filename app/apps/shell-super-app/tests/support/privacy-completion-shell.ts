@@ -43,7 +43,7 @@ import { makeAuthenticationService } from '../../api/auth/service.ts';
 import { OAuthConnectionHooksLive } from '../../api/oauth-connections/better-auth-hooks.ts';
 import { OAuthEndpointGuardDataLive } from '../../api/oauth-connections/grant-store.ts';
 import { ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
-import { provisionModuleCredentials } from '../../api/auth/module-credential-provisioning.ts';
+import { provisionModuleCredentials } from '../../api/auth/module-credential-provisioning.service.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { createShellRuntimeContract } from '../../../../scripts/ontos-shell-runtime-contract.ts';

@@ -56,7 +56,7 @@ rs.mock('@app/core-runtime/auth/module-credentials', () => ({
       }));
     }),
 }));
-rs.mock('../../api/auth/module-credential-provisioning.ts', () => ({
+rs.mock('../../api/auth/module-credential-provisioning.service.ts', () => ({
   provisionModuleCredentials: ({ appIds }: { readonly appIds: readonly string[] }) =>
     Effect.sync(() => {
       expect(appIds).toEqual(fixture.modules.map(([appId]) => appId));
@@ -336,7 +336,7 @@ afterAll(() => {
   rs.doUnmock('@app/core-runtime');
   rs.doUnmock('@app/core-runtime/db/client');
   rs.doUnmock('@app/core-runtime/auth/module-credentials');
-  rs.doUnmock('../../api/auth/module-credential-provisioning.ts');
+  rs.doUnmock('../../api/auth/module-credential-provisioning.service.ts');
   rs.doUnmock('@app/core-runtime/actions/runtime-wiring');
   rs.doUnmock('@app/core-runtime/modules/active-application-composition');
   rs.doUnmock('@app/core-runtime/modules/active-application-composition-source');

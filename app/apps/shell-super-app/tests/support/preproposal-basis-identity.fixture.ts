@@ -245,7 +245,7 @@ export const serve = Effect.scoped(
     });
     const { provisionModuleCredentials } = yield* Effect.tryPromise({
       catch: () => unavailable('module-credential-provisioning-import'),
-      try: async () => await import('../../api/auth/module-credential-provisioning.ts'),
+      try: async () => await import('../../api/auth/module-credential-provisioning.service.ts'),
     });
     const { loadModuleCredentialEnrolment } = yield* Effect.tryPromise({
       catch: () => unavailable('module-credential-enrolment-import'),

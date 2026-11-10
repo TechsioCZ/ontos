@@ -9,7 +9,7 @@ import { GatewayDelegationPolicyUnavailable } from './gateway-delegation-policy-
 export class ModuleCredentialEnrolmentSource extends Context.Service<
   ModuleCredentialEnrolmentSource,
   { readonly load: Effect.Effect<readonly ModuleCredentialEnrolment[], GatewayDelegationPolicyUnavailable> }
->()('@app/shell-super-app/api/auth/module-credential-enrolment-source/ModuleCredentialEnrolmentSource') {}
+>()('@app/shell-super-app/api/auth/module-credential-enrolment.service/ModuleCredentialEnrolmentSource') {}
 
 export const ModuleCredentialEnrolmentSourceLive = Layer.effect(
   ModuleCredentialEnrolmentSource,

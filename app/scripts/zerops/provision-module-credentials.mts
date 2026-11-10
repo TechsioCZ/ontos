@@ -24,7 +24,7 @@ import { ShellCryptoLive } from '../../apps/shell-super-app/api/auth/gateway-iss
 import {
   provisionModuleCredentials,
   retireSupersededModuleCredentials,
-} from '../../apps/shell-super-app/api/auth/module-credential-provisioning.ts';
+} from '../../apps/shell-super-app/api/auth/module-credential-provisioning.service.ts';
 import { AuthPersistenceLive } from '../../apps/shell-super-app/api/auth/runtime-infrastructure.ts';
 import { MODULE_CREDENTIAL_CALLERS, ProvisioningOutputJsonSchema } from './module-credentials.mts';
 

@@ -5,13 +5,13 @@ import { Effect, Schema } from 'effect';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import { delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
 import { GatewayDelegationPolicyUnavailable } from './gateway-delegation-policy-unavailable.ts';
-import { ModuleCredentialEnrolmentSource } from './module-credential-enrolment-source.ts';
+import { ModuleCredentialEnrolmentSource } from './module-credential-enrolment.service.ts';
 
 export { GatewayDelegationPolicyUnavailable } from './gateway-delegation-policy-unavailable.ts';
 export {
   ModuleCredentialEnrolmentSource,
   ModuleCredentialEnrolmentSourceLive,
-} from './module-credential-enrolment-source.ts';
+} from './module-credential-enrolment.service.ts';
 
 const nonEmpty = Schema.String.check(Schema.isMinLength(1));
 
