@@ -239,6 +239,7 @@ it.effect(
         'commerce-cart',
         'commerce-order',
         'payment',
+        'promotion',
       ]);
       // Controller metadata is asserted at its actual source inventory, rather than its former inline location.
       expect(
@@ -275,6 +276,7 @@ it.effect(
         'pricing',
         'privacy',
         'projects',
+        'promotion',
         'property_leasing',
         'property_portfolio',
         'storefront_registry',
@@ -333,6 +335,13 @@ it.effect(
           verifierPaths: ['verticals/pricing/scripts/verify-db-schema.mts'],
         },
         {
+          journalName: '__drizzle_migrations_promotion',
+          ownerId: 'promotion',
+          runtimeIdentityIds: ['shared_runtime'],
+          schemas: ['promotion'],
+          verifierPaths: ['verticals/promotion/scripts/verify-db-schema.mts'],
+        },
+        {
           journalName: '__drizzle_migrations_storefront_registry',
           ownerId: 'storefront-registry',
           runtimeIdentityIds: ['shared_runtime'],
@@ -368,6 +377,9 @@ it.effect(
             (requirement) => requirement.migrationName === '20261020063004_dedicated-identity-core-policies',
           )?.identityIds,
       ).toEqual(['shared_runtime', 'party_registry_request', 'party_registry_worker']);
+      expect(inventory.find((owner) => owner.ownerId === 'promotion')?.prerequisites).toEqual([
+        { migrate: true, ownerId: coreOwner, verify: true },
+      ]);
       const coreStreams = inventory.filter((owner) => owner.ownerId === coreOwner);
       expect(coreStreams).toHaveLength(1);
       for (const core of coreStreams) {

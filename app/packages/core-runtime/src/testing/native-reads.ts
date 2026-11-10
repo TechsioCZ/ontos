@@ -1,3 +1,5 @@
+import { bootstrapScopesOf, writeBootstrapScopes } from '../access/bootstrap/persistence.ts';
+import { LegalEntityIdSchema, TenantIdSchema } from '../access/ids.ts';
 import { decodeActionPayload, getActionOwnerPermissionTargetResolver } from '../actions/definition.ts';
 import type { ActionRegistration, AnyActionRegistration } from '../actions/definition.ts';
 import type { DomainEventContractMap } from '../actions/events.ts';
@@ -37,6 +39,7 @@ import {
   DatabaseIdentityEnrollmentContext,
   defineDatabaseIdentityEnrollment,
 } from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import { loadDatabaseConfig, loadDatabaseConnectionPair, parseDatabaseConnectionPair } from '../db/config.ts';
 import {
   dataAccessEvents,
@@ -49,7 +52,7 @@ import {
 } from '../db/schema.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
-import type { CoreTransaction } from '../db/types.ts';
+import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import type { ApplicationCompositionAuthorityError } from '../modules/application-composition-authority.ts';
 import type { ModuleStateGateError } from '../modules/module-state-gate-errors.ts';
 import { lockApplicationCompositionAuthority } from '../modules/application-composition-authority.ts';
@@ -184,6 +187,25 @@ const relation = (resourceType: string, resourceId: string, name: string, subjec
     resource: { objectId: resourceId, objectType: resourceType },
     subject: { object: { objectId: subjectId, objectType: subjectType } },
   });
+
+/** Only Action-capable fixtures need append-only fences; unused Read contexts retain normal cleanup. */
+const initializeNativeOwnerAccessScopes = (
+  configured: boolean,
+  executor: CoreDatabaseExecutor,
+  enrollment: DatabaseIdentityEnrollment,
+  principal: TrustedPrincipalContext,
+  legalEntityId: string,
+): Effect.Effect<void, NativeReadTestError> => {
+  if (!configured) {
+    return Effect.void;
+  }
+  const tenantId = TenantIdSchema.make(principal.tenantId);
+  return writeBootstrapScopes(
+    { enrollment, executor },
+    { ...principal, correlationId: `native-read-access-bootstrap-${principal.principalId}` },
+    { scopes: bootstrapScopesOf(tenantId, [LegalEntityIdSchema.make(legalEntityId)]), tenantId },
+  ).pipe(Effect.mapError((cause) => unavailable(cause, 'Native Read access fence initialization failed')));
+};
 
 /**
  * Isolated Core fixture for native owner Read tests. Core owns all administrative identity writes;
@@ -404,6 +426,17 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
       }),
     )
     .pipe(Effect.mapError(unavailable));
+  // An owner with dedicated database identities supplies its enrollment; Core-only owners enroll none.
+  const databaseIdentities = Option.getOrElse(yield* Effect.serviceOption(DatabaseIdentityEnrollmentContext), () =>
+    defineDatabaseIdentityEnrollment([]),
+  );
+  yield* initializeNativeOwnerAccessScopes(
+    owner !== undefined,
+    admin.executor,
+    databaseIdentities,
+    principal,
+    legalEntityId,
+  );
   const legalEntityObjectId = yield* requiredObjectId(toLegalEntityAccessObjectId(tenantId, legalEntityId));
   const moduleObjectId = yield* requiredObjectId(toModuleAccessObjectId(tenantId, legalEntityId, options.moduleId));
   remember([
@@ -434,10 +467,6 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
     { concurrency: 1 },
   );
   yield* write([...relationships.values()], v1.RelationshipUpdate_Operation.TOUCH);
-  // An owner with dedicated database identities supplies its enrollment; Core-only owners enroll none.
-  const databaseIdentities = Option.getOrElse(yield* Effect.serviceOption(DatabaseIdentityEnrollmentContext), () =>
-    defineDatabaseIdentityEnrollment([]),
-  );
   // The scope's company check is the access gate's question; this harness builds the legacy SpiceDB
   // graph only, so its scope answers exactly the company the fixture resolved.
   const { contextAccess, scopeResolver } = yield* Effect.all(

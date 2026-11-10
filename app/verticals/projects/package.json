@@ -88,6 +88,5 @@
       "schemaVersion": 2
     }
   },
-  "zephyr:dependencies": {},
-  "type": "module"
+  "zephyr:dependencies": {}
 }

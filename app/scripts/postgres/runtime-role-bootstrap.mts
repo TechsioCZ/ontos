@@ -147,6 +147,31 @@ export const tableGrantTarget = (
   return present.length === 0 ? undefined : `${privilege} (${present.map(quoteIdentifier).join(', ')})`;
 };
 
+/**
+ * Grants one table's exact privileges, column lists narrowed to the columns that exist. One GRANT carries every
+ * per-privilege column list; callers run it inside the bootstrap transaction, after revocation.
+ */
+const grantExactTable = (client: PgClient.PgClient, role: string, { columns, privileges, table }: DatabaseTableGrant) =>
+  Effect.gen(function* grantExactTableEffect() {
+    const attributes =
+      columns === undefined
+        ? []
+        : yield* query<{ attname: string }>(
+            client,
+            `select attname from pg_catalog.pg_attribute
+                where attrelid = pg_catalog.to_regclass($1) and attnum > 0 and not attisdropped`,
+            [table],
+          );
+    const existingColumns = attributes.map(({ attname }) => attname);
+    const targets = privileges.flatMap((privilege) => {
+      const target = tableGrantTarget(privilege, columns, existingColumns);
+      return target === undefined ? [] : [target];
+    });
+    if (targets.length > 0) {
+      yield* query(client, `grant ${targets.join(', ')} on table ${qualifiedRelation(table)} to ${role}`);
+    }
+  });
+
 const roleSettingStatement = (role: string, setting: string): string => {
   const separator = setting.indexOf('=');
   return `alter role ${quoteIdentifier(role)} set ${setting.slice(0, separator)} = ${setting.slice(separator + 1)}`;
@@ -249,6 +274,29 @@ export const grantSharedRuntimeRole = (
               `grant select, insert, delete on table ${qualifiedRelation(redemptions)} to ontos_runtime`,
             );
           }
+        }),
+      { concurrency: 1, discard: true },
+    );
+    if (yield* exists(client, schemaExistsQuery, 'promotion')) {
+      yield* query(client, 'revoke all on schema promotion from public, ontos_runtime');
+      yield* query(client, 'grant usage on schema promotion to ontos_runtime');
+    }
+    // Durable owner fences retain their exact migration grants after any shared-schema grants.
+    yield* Effect.forEach(
+      entry.tableGrantExceptions ?? [],
+      (grant) =>
+        Effect.gen(function* grantSharedTableExceptionEffect() {
+          const schema = grant.table.slice(0, grant.table.indexOf('.'));
+          if (
+            entry.revokedSchemas.includes(schema) ||
+            !(yield* exists(client, schemaExistsQuery, schema)) ||
+            !(yield* exists(client, tableExistsQuery, grant.table))
+          ) {
+            return;
+          }
+          const role = quoteIdentifier(entry.identity.role);
+          yield* query(client, `revoke all on table ${qualifiedRelation(grant.table)} from public, ${role}`);
+          yield* grantExactTable(client, role, grant);
         }),
       { concurrency: 1, discard: true },
     );
@@ -356,34 +404,10 @@ export const grantExplicitRole = (
     );
     yield* Effect.forEach(
       grants.tables,
-      ({ columns, privileges, table }) =>
+      (grant) =>
         Effect.gen(function* grantExplicitTableEffect() {
-          if (yield* exists(client, tableExistsQuery, table)) {
-            const attributes =
-              columns === undefined
-                ? []
-                : yield* query<{ attname: string }>(
-                    client,
-                    `select attname from pg_catalog.pg_attribute
-                where attrelid = pg_catalog.to_regclass($1) and attnum > 0 and not attisdropped`,
-                    [table],
-                  );
-            const existingColumns: string[] = [];
-            for (const { attname } of attributes) {
-              existingColumns.push(attname);
-            }
-            const targets: string[] = [];
-            for (const privilege of privileges) {
-              const target = tableGrantTarget(privilege, columns, existingColumns);
-              if (target !== undefined) {
-                targets.push(target);
-              }
-            }
-            // One GRANT accepts the same per-privilege column lists. Keep this inside the
-            // existing bootstrap transaction, after revocation and before exact assertions.
-            if (targets.length > 0) {
-              yield* query(client, `grant ${targets.join(', ')} on table ${qualifiedRelation(table)} to ${role}`);
-            }
+          if (yield* exists(client, tableExistsQuery, grant.table)) {
+            yield* grantExactTable(client, role, grant);
           }
         }),
       { concurrency: 1, discard: true },

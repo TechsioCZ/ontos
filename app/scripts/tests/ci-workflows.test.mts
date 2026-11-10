@@ -689,9 +689,42 @@ it('formats and lints every tracked file in exactly one pre-commit hook shard', 
   expect(run).toContain('lefthook run pre-commit --files-from-stdin --no-auto-install');
   expect(run.trimEnd().endsWith('git diff --exit-code HEAD')).toBe(true);
   const select = run.slice(0, run.indexOf('mise exec'));
-  const repository = fileURLToPath(new URL('../../../', import.meta.url));
+  const sourceRepository = fileURLToPath(new URL('../../../', import.meta.url));
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lint-shards-'));
+  const repository = path.join(directory, 'repository');
+  const nativeGit = '/usr/bin/git';
   try {
+    mkdirSync(repository);
+    execFileSync(nativeGit, ['init', '--quiet', repository], { env: { PATH: STEP_PATH } });
+    const sourcePaths = [
+      '.github/workflows/ultramodern-workspace-gates.yml',
+      'README.md',
+      'app/apps/shell-super-app/package.json',
+      'app/package.json',
+      'app/packages/core-runtime/package.json',
+      'app/scripts/check.mts',
+      'app/scripts/prove-cloudflare-local-topology.sh',
+      'app/verticals/catalog/package.json',
+      'lefthook.yml',
+    ];
+    for (const file of sourcePaths) {
+      const destination = path.join(repository, file);
+      mkdirSync(path.dirname(destination), { recursive: true });
+      writeFileSync(destination, readFileSync(path.join(sourceRepository, file)));
+    }
+    const specialPaths = ['app/source/with spaces.ts', 'app/source/with\nnewline.ts', 'app/source/žluťoučký.ts'];
+    const fixturePaths = [
+      ...Array.from({ length: shards * 2 + 1 }, (_, index) => `app/source/file-${index}.ts`),
+      ...specialPaths,
+    ];
+    for (const file of fixturePaths) {
+      const destination = path.join(repository, file);
+      mkdirSync(path.dirname(destination), { recursive: true });
+      writeFileSync(destination, 'export {};\n');
+    }
+    execFileSync(nativeGit, ['-C', repository, 'add', '--all'], { env: { PATH: STEP_PATH } });
+    const untrackedPath = 'app/source/untracked-negative.ts';
+    writeFileSync(path.join(repository, untrackedPath), 'export {};\n');
     const selected = Array.from({ length: shards }, (_, index) => {
       execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', select], {
         cwd: repository,
@@ -699,13 +732,18 @@ it('formats and lints every tracked file in exactly one pre-commit hook shard', 
       });
       return readFileSync(path.join(directory, 'shard-files'), 'utf-8').split('\0').filter(Boolean);
     });
-    const tracked = execFileSync('/usr/bin/git', ['ls-files', '-z'], {
+    const tracked = execFileSync(nativeGit, ['ls-files', '-z'], {
       cwd: repository,
       encoding: 'utf-8',
       maxBuffer: 8 * 1024 * 1024,
     })
       .split('\0')
       .filter(Boolean);
+    expect(tracked).toHaveLength(sourcePaths.length + fixturePaths.length);
+    for (const file of specialPaths) {
+      expect(tracked).toContain(file);
+    }
+    expect(tracked).not.toContain(untrackedPath);
     expect(sorted(selected.flat())).toEqual(sorted(tracked));
     for (const files of selected) {
       expect(files.length).toBeGreaterThan(0);

@@ -2809,6 +2809,30 @@ it.live(
 );
 
 it.live(
+  'actual Promotion readiness satisfies both framework and repository composition checks',
+  Effect.fn(function* promotionReadinessConsistency() {
+    const contract = yield* Effect.promise(() =>
+      readFile(path.join(workspaceRoot, 'verticals/promotion/shared/api.ts'), 'utf-8'),
+    );
+    const runtime = yield* Effect.promise(() =>
+      readFile(path.join(workspaceRoot, 'verticals/promotion/api/index.ts'), 'utf-8'),
+    );
+    expect(yield* microVerticalApiBaselineViolation('promotion', contract)).toBe(undefined);
+    expect(hasValidGovernedHttpCompositionRoot(contract, runtime)).toBe(true);
+    const incompatibleAlias = contract
+      .replace("import { identity } from 'effect';", "import { identity as governedHttpApiIdentity } from 'effect';")
+      .replace('.pipe(identity)', '.pipe(governedHttpApiIdentity)');
+    expect(yield* microVerticalApiBaselineViolation('promotion', incompatibleAlias)).toMatch(
+      /explicitly compose its readiness foundation API/u,
+    );
+    const missingFoundation = contract.replace('.addHttpApi(promotionFoundationApi)', '');
+    expect(yield* microVerticalApiBaselineViolation('promotion', missingFoundation)).toMatch(
+      /explicitly compose its readiness foundation API/u,
+    );
+  }),
+);
+
+it.live(
   'static validation rejects a MicroVertical root contract without readiness baseline',
   Effect.fn(function* mergedScenario1() {
     const contract = yield* Effect.promise(() =>
