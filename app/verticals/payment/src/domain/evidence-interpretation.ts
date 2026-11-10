@@ -80,6 +80,12 @@ export interface PaymentInterpretedEvidence {
    */
   readonly fullyDisprovenObservationIds?: ReadonlySet<string>;
   /**
+   * Held return statements the funds reader counts against an operation (named by their source or
+   * assigned by governance). They establish no outcome; they are here only so a correction of one finds
+   * its target and is recorded, which is what lets the funds reader reduce that return (#1150).
+   */
+  readonly priorReturnStatements?: readonly PaymentAcceptedObservationView[];
+  /**
    * The Payment's prior return evidence exactly as the funds reader loads it (`selectReturnEvidence`).
    * The correction admission counts it through the same rule as the funds snapshot (#1150).
    */
@@ -611,15 +617,30 @@ const correctsSameReceipt = (
   );
 };
 
+/**
+ * The held prior return of a collection that the correction names. Only a return counted against a
+ * COLLECT qualifies: a held statement about any other operation established nothing a correction could
+ * be applied to.
+ */
+const correctedPriorReturnOf = (aggregate: PaymentEvidenceAggregate, correction: QualifiedPaymentObservation) =>
+  (aggregate.priorReturnStatements ?? []).find(
+    (statement) =>
+      statement.observationId === correction.correctsObservationId &&
+      aggregate.operations.some(
+        (operation) => operation.operationId === statement.operationId && operation.kind === 'COLLECT',
+      ),
+  );
+
 const decideCorrection = (
   aggregate: PaymentEvidenceAggregate,
   correction: QualifiedPaymentObservation,
 ): PaymentEvidenceDecisionCase => {
   // A statement establishes Current state the same way whether it was accepted directly or counted by a
   // governed ATTACH_EVIDENCE, so its correction is applied the same way (#1151).
-  const corrected = [...aggregate.acceptedObservations, ...aggregate.attachedStatements].find(
-    (observation) => observation.observationId === correction.correctsObservationId,
-  );
+  const corrected =
+    [...aggregate.acceptedObservations, ...aggregate.attachedStatements].find(
+      (observation) => observation.observationId === correction.correctsObservationId,
+    ) ?? correctedPriorReturnOf(aggregate, correction);
   if (corrected === undefined || corrected.operationId === undefined) {
     return hold('CORRECTION_TARGET_UNKNOWN', correction.operationId);
   }

@@ -1411,6 +1411,75 @@ it.live('#1150 a return that governance assigns to its collection counts as a pr
   ),
 );
 
+/** The source takes 100 CZK back from a return statement it issued. */
+const correctReturn = (evidence: EvidenceScenario, paymentId: string, observationId: string) =>
+  evidence.accept({
+    amount: czk(10_000),
+    correctsObservationId: observationId,
+    economicEffectKey: `erp:bank-return:correction:${randomUUID()}`,
+    factFamily: 'REFUND_EXECUTION',
+    factKind: 'SOURCE_CORRECTION',
+    paymentId,
+    source: BANK_REFUND_SOURCE,
+    sourceOccurrenceId: `bank-line-${randomUUID()}`,
+    sourceRevision: 1,
+  });
+
+it.live('#1150 a partial correction of a counted prior return reduces that return, however it was assigned', () =>
+  native(
+    Effect.gen(function* correctedPriorReturn() {
+      const evidence = yield* scenario();
+      yield* evidence.configureRefundRoute('erp-primary', 'refund-account-a');
+      // One Payment whose 400 CZK return the bank named against the collection itself...
+      const named = yield* collectedBankPayment(evidence, 'collect-named');
+      const namedReturn = yield* bankReturnOf(
+        evidence,
+        'erp:bank-return:22',
+        40_000,
+      )(named.payment.paymentId, named.collect.operationId);
+      yield* closeReturnCase(evidence, namedReturn.reconciliationCaseId);
+      // ...and one whose 400 CZK return governance assigned to the collection.
+      const assigned = yield* collectedBankPayment(evidence, 'collect-assigned');
+      const assignedReturn = yield* evidence.accept({
+        amount: czk(40_000),
+        economicEffectKey: 'erp:bank-return:23',
+        factFamily: 'REFUND_EXECUTION',
+        factKind: 'REFUND_CONFIRMED',
+        paymentId: assigned.payment.paymentId,
+        source: BANK_REFUND_SOURCE,
+        sourceOccurrenceId: `bank-line-${randomUUID()}`,
+        sourceRevision: 1,
+      });
+      yield* evidence.decide({
+        caseId: assignedReturn.reconciliationCaseId ?? '',
+        decision: {
+          _tag: 'ATTACH_EVIDENCE',
+          observationId: assignedReturn.observationId,
+          operationId: assigned.collect.operationId,
+        },
+        reason: 'The bank line is a return of this collection',
+      });
+      yield* closeReturnCase(evidence, assignedReturn.reconciliationCaseId);
+      for (const [paid, statement] of [
+        [named, namedReturn],
+        [assigned, assignedReturn],
+      ] as const) {
+        expect(yield* evidence.coverage(paid.payment.paymentId)).toBe(
+          'Established collected=100000 returned=40000 remaining=60000',
+        );
+        // 100 CZK of the return did not go back: the return now proves 300 CZK.
+        expect(yield* correctReturn(evidence, paid.payment.paymentId, statement.observationId)).toMatchObject({
+          acceptanceOutcome: 'ACCEPTED_OBSERVATION',
+          interpretation: 'CORRECTION',
+        });
+        expect(yield* evidence.coverage(paid.payment.paymentId)).toBe(
+          'Established collected=100000 returned=30000 remaining=70000',
+        );
+      }
+    }),
+  ),
+);
+
 it.live('#1150 a partially retracted refund receipt never restores the full refund through attachment', () =>
   native(
     Effect.gen(function* partiallyRetractedRefundReceipt() {
