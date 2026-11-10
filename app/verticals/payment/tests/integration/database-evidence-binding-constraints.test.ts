@@ -92,11 +92,11 @@ it.live('#1149 #1151 #1153 Payment evidence the rules depend on is required by t
            insert into payment.observations (tenant_id, legal_entity_id, action_invocation_id, actor_principal_id,
              composition_revision, acceptance_outcome, account_ref, correction_effect, environment, fact_family,
              fact_kind, payment_id, received_at, source_authority_id, source_authority_revision, source_kind,
-             source_occurrence_id, source_revision, source_system, verified_at)
+             source_occurrence_id, source_revision, source_system, statement_hash, verified_at)
            select tenant_id, legal_entity_id, action_invocation_id, actor_principal_id, composition_revision,
              'ACCEPTED_OBSERVATION', account_ref, ${effect}, environment, fact_family, 'SOURCE_CORRECTION', $4::uuid,
              now(), source_authority_id, revision, source_kind, 'correction-' || gen_random_uuid(), 1, source_system,
-             now()
+             repeat('0', 64), now()
            from authority`,
           [scope.legalEntityId, scope.principalId, created.record.paymentId],
         );

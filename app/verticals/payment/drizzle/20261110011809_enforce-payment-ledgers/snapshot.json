@@ -1,10 +1,10 @@
 {
+  "id": "89905915-e7b1-44be-a21a-d6f16f3af427",
+  "prevIds": [
+    "51800c8e-8ca7-41b9-a270-877a39aa2e55"
+  ],
   "version": "8",
   "dialect": "postgres",
-  "id": "74ca3865-9db5-4acf-8e74-89272319118b",
-  "prevIds": [
-    "00000000-0000-0000-0000-000000000000"
-  ],
   "ddl": [
     {
       "name": "payment",
@@ -810,19 +810,6 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "capability_ref",
-      "entityType": "columns",
-      "schema": "payment",
-      "table": "observations"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
       "name": "correction_effect",
       "entityType": "columns",
       "schema": "payment",
@@ -1058,6 +1045,19 @@
       "generated": null,
       "identity": null,
       "name": "source_system",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "observations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "statement_hash",
       "entityType": "columns",
       "schema": "payment",
       "table": "observations"
@@ -4405,8 +4405,8 @@
       "table": "observations"
     },
     {
-      "value": "\"capability_ref\" is null or (\"source_kind\" in ('CARRIER', 'LOCAL_POS_OPERATOR') and \"capability_ref\" = btrim(\"capability_ref\") and length(\"capability_ref\") between 1 and 200)",
-      "name": "payment_observations_capability_ref_ck",
+      "value": "\"statement_hash\" ~ '^[0-9a-f]{64}$'",
+      "name": "payment_observations_statement_hash_ck",
       "entityType": "checks",
       "schema": "payment",
       "table": "observations"

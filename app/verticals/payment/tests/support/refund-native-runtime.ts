@@ -47,6 +47,9 @@ import type { PaymentTestDatabase, PaymentTestScope } from '../integration/datab
  */
 
 /** Core Action permission opened for the owner suites; authorization has its own Core suites. */
+/** Rows written directly by these helpers never replay: they carry one fixed well-formed statement hash. */
+const DIRECT_ROW_STATEMENT_HASH = '0'.repeat(64);
+
 export const refundRuntimePermission = {
   checkActionPermission: () => Effect.succeed('allowed' as const),
 };
@@ -393,6 +396,7 @@ export const acceptCollectionCorrection = Effect.fn('RefundNativeRuntime.acceptC
         sourceOccurrenceId: `correction-${input.paymentId}`,
         sourceRevision: 1,
         sourceSystem: 'erp-primary',
+        statementHash: DIRECT_ROW_STATEMENT_HASH,
         tenantId: scope.tenantId,
         verifiedAt: now,
       }),
@@ -442,6 +446,7 @@ export const acceptReturnEvidence = Effect.fn('RefundNativeRuntime.acceptReturnE
         sourceOccurrenceId: input.sourceOccurrenceId,
         sourceRevision: 1,
         sourceSystem: 'GOPAY',
+        statementHash: DIRECT_ROW_STATEMENT_HASH,
         tenantId: scope.tenantId,
         verifiedAt: now,
       }),
