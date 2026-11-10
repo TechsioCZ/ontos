@@ -1,5 +1,6 @@
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
+import { useHeldSnapshot } from '@app/admin-ui';
 import { Data, Effect, Match, Predicate, Random, Result, Schema } from 'effect';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, PageDataSnapshot } from '@app/shared-contracts/page-data';
@@ -615,11 +616,15 @@ export const useOrderDetail = (
       listener,
       orderId === null || scope === undefined ? undefined : { orderId, revision, scope },
     );
-  const cached = useSyncExternalStore(
+  const stored = useSyncExternalStore(
     subscribe,
     () => (scope === undefined || orderId === null ? pageDataPending : orderDetailData.snapshot(input)),
     () => pageDataPending,
   );
+  // The strict store reads as pending while it reloads this order, and the entry moves with the list revision. The
+  // detail and its edit form stay mounted on the last ready read of the same order in the same scope until the
+  // reload settles; the form's draft decides what a reloaded order means for it (`useOrderEditAutosave`).
+  const cached = useHeldSnapshot(Result.getOrThrow(encodeQueryIds([scope ?? '', orderId ?? ''])), stored);
   // Each answer names the request it answers, so a newer request reads as loading without a synchronous reset.
   const [answer, setAnswer] = useState<{ readonly request: string; readonly state: OrderDetailState } | null>(null);
   const request = Result.getOrThrow(
