@@ -13,6 +13,7 @@ import type { Order } from '../../shared/apis/records.ts';
 import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
 import { executeRecords } from '../../src/api/records-consumer.ts';
 import { useOrderEditAutosave } from '../../src/routes/[lang]/prodej/objednavky/order-edit-autosave.ts';
+import { addressIncomplete, contactIncomplete } from '../../src/routes/[lang]/prodej/objednavky/order-edit-draft.ts';
 import type { Draft } from '../../src/routes/[lang]/prodej/objednavky/order-edit-draft.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 
@@ -51,6 +52,13 @@ const orderOf = (fields: { readonly note?: string; readonly quantity?: number; r
     updatedAt: fields.updatedAt,
   });
 
+/** The same order before it had a delivery address. */
+const withoutAddress = (order: Order): Order => {
+  const encoded = { ...Schema.encodeSync(OrderSchema)(order) };
+  Reflect.deleteProperty(encoded, 'deliveryAddress');
+  return Schema.decodeSync(OrderSchema)(encoded);
+};
+
 const recordsWith = (order: Order, revision: number) =>
   Schema.decodeSync(RecordsResponseSchema)({
     actorPrincipalRef: {
@@ -85,14 +93,65 @@ const acceptNextEdit = (after: Order, revision: number) => {
   rstest.mocked(executeRecords).mockReturnValue(Effect.succeed(recordsWith(after, revision)));
 };
 
+const refused = Schema.decodeSync(ManageCatalogActionConflictProblemSchema)({
+  _tag: 'ManageCatalogActionConflictProblem',
+  code: 'merchandise_revision_conflict',
+  detail: 'The order changed; refresh before another edit',
+  status: 409,
+  title: 'Conflict',
+  type: 'urn:test:conflict',
+});
+
+/**
+ * A register that checks an edit the way the server does: the edit must name the version of the order the register
+ * has. `afterEdits` are the orders the register has after each accepted edit, in turn; one that carries more than
+ * the edit wrote stands for someone else's change that landed right behind it.
+ */
+const serveLikeTheRegister = (start: Order, startRevision: number, afterEdits: readonly Order[]) => {
+  const register = { accepted: 0, order: start, revision: startRevision };
+  rstest
+    .mocked(executeRecords)
+    .mockImplementation(() => Effect.sync(() => recordsWith(register.order, register.revision)));
+  rstest.mocked(executeManageCatalog).mockImplementation(({ command }) =>
+    Effect.suspend(() => {
+      const next = afterEdits[register.accepted];
+      const named = command._tag === 'EditOrder' ? command.expectedUpdatedAt : undefined;
+      if (
+        next === undefined ||
+        named === undefined ||
+        DateTime.toEpochMillis(named) !== DateTime.toEpochMillis(register.order.updatedAt)
+      ) {
+        return Effect.fail(refused);
+      }
+      register.accepted += 1;
+      register.order = next;
+      register.revision += 1;
+      return Effect.succeed({ entityIds: [], revision: register.revision });
+    }),
+  );
+  return register;
+};
+
 type OrderEdit = ReturnType<typeof useOrderEditAutosave>;
 
 let latest: OrderEdit | null = null;
 const edit = (): OrderEdit => Option.getOrThrow(Option.fromNullOr(latest));
 const draft = (): Draft => edit().autosave.draft;
 
-const Harness = ({ order, revision }: { readonly order: Order; readonly revision: number }) => {
-  const value = useOrderEditAutosave({ isValid: () => true, order, revision });
+type DraftRule = (value: Draft, confirmed: Draft) => boolean;
+const anyDraft: DraftRule = () => true;
+/** The form's rule for the parts an edit sends whole: an edited address or contact has to be complete. */
+const completeDetails: DraftRule = (value, confirmed) =>
+  !addressIncomplete(value, confirmed) && !contactIncomplete(value, confirmed);
+
+interface HarnessProps {
+  readonly isValid: DraftRule;
+  readonly order: Order;
+  readonly revision: number;
+}
+
+const Harness = ({ isValid, order, revision }: HarnessProps) => {
+  const value = useOrderEditAutosave({ isValid, order, revision });
   useEffect(() => {
     latest = value;
   }, [value]);
@@ -111,13 +170,13 @@ interface Mounted {
 
 const mounted: Mounted[] = [];
 
-const mount = async (order: Order, revision: number): Promise<Mounted> => {
+const mount = async (order: Order, revision: number, isValid: DraftRule = anyDraft): Promise<Mounted> => {
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
   const show = async (nextOrder: Order, nextRevision: number) => {
     await act(async () => {
-      root.render(createElement(Harness, { order: nextOrder, revision: nextRevision }));
+      root.render(createElement(Harness, { isValid, order: nextOrder, revision: nextRevision }));
       await settle();
     });
   };
@@ -279,6 +338,116 @@ describe('mounted order edit draft against a reloaded order', () => {
         expectedUpdatedAt: savedHere,
       });
       expect(edit().autosave.status).toBe('saved');
+    }),
+  );
+
+  it.effect('a read-back that already carries someone else change does not become the base of the kept draft', () =>
+    Effect.gen(function* raced() {
+      const mine = orderOf({ updatedAt: opened });
+      yield* Effect.promise(() => mount(mine, 7));
+      // The note is saved, and before the form reads the order back someone else changes the quantity to 5.
+      const register = serveLikeTheRegister(mine, 7, [
+        orderOf({ note: 'Zavolat předem', quantity: 5, updatedAt: changedElsewhere }),
+        orderOf({ note: 'Zavolat předem', quantity: 3, updatedAt: savedHere }),
+      ]);
+      yield* type({ note: 'Zavolat předem' });
+      yield* saveNow(1);
+      expect(edit().autosave.status).toBe('saved');
+
+      // The draft still holds the quantity the form opened with; changing it sends all the lines.
+      yield* type({ lines: draft().lines.map((line) => ({ ...line, quantityText: '3' })) });
+      yield* saveNow(2);
+
+      // The edit names the version the form saved over, so the register refuses it instead of taking 3 over their 5.
+      expect(sentEdits()[1]?.expectedUpdatedAt).toBe(opened);
+      expect(sentEdits()[1]?.expectedRevision).toBe(7);
+      expect(edit().autosave.status).toBe('conflict');
+      expect(register.order.lines[0]?.quantity).toBe(5);
+    }),
+  );
+
+  it.effect('a read-back that differs only in what the form does not edit becomes the base', () =>
+    Effect.gen(function* unrelated() {
+      const mine = orderOf({ updatedAt: opened });
+      yield* Effect.promise(() => mount(mine, 7));
+      // Someone confirms the order right behind the save: a newer version with the same editable content.
+      const confirmed = Schema.decodeSync(OrderSchema)({
+        ...Schema.encodeSync(OrderSchema)(orderOf({ note: 'Zavolat předem', updatedAt: changedElsewhere })),
+        status: 'CONFIRMED',
+      });
+      const register = serveLikeTheRegister(mine, 7, [
+        confirmed,
+        orderOf({ note: 'Zavolat předem', quantity: 3, updatedAt: savedHere }),
+      ]);
+      yield* type({ note: 'Zavolat předem' });
+      yield* saveNow(1);
+
+      yield* type({ lines: draft().lines.map((line) => ({ ...line, quantityText: '3' })) });
+      yield* saveNow(2);
+      expect(sentEdits()[1]?.expectedUpdatedAt).toBe(changedElsewhere);
+      expect(sentEdits()[1]?.expectedRevision).toBe(8);
+      expect(edit().autosave.status).toBe('saved');
+      expect(register.order.lines[0]?.quantity).toBe(3);
+    }),
+  );
+
+  it.effect('a typed change reason survives a reloaded order and goes out with the next edit', () =>
+    Effect.gen(function* reasonKept() {
+      const view = yield* Effect.promise(() => mount(orderOf({ updatedAt: opened }), 7));
+      // A reason alone is no edit: nothing is sent, and the draft counts as saved.
+      yield* type({ reason: 'Zákazník volal' });
+      yield* saveNow(0);
+
+      // Someone else changes the quantity: the draft takes their order and keeps the reason typed for the next edit.
+      const theirs = orderOf({ quantity: 5, updatedAt: changedElsewhere });
+      yield* view.reload(theirs, 8);
+      expect(quantityOf(draft())).toBe('5');
+      expect(draft().reason).toBe('Zákazník volal');
+
+      const saved = orderOf({ note: 'Zavolat předem', quantity: 5, updatedAt: savedHere });
+      acceptNextEdit(saved, 9);
+      yield* type({ note: 'Zavolat předem' });
+      yield* saveNow(1);
+      expect(sentEdits()).toEqual([
+        {
+          command: {
+            _tag: 'EditOrder',
+            expectedUpdatedAt: theirs.updatedAt,
+            id: 'order-1',
+            note: 'Zavolat předem',
+            reason: 'Zákazník volal',
+          },
+          expectedRevision: 8,
+          expectedUpdatedAt: changedElsewhere,
+        },
+      ]);
+
+      // The reason went into the history with that edit, so the reload after it clears the field.
+      yield* view.reload(saved, 9);
+      expect(draft().reason).toBe('');
+      expect(draft().note).toBe('Zavolat předem');
+    }),
+  );
+
+  it.effect('an address is checked against the saved one, not the one the page still shows', () =>
+    Effect.gen(function* validationBase() {
+      // The order has no delivery address yet; the form adds one and saves it.
+      yield* Effect.promise(() => mount(withoutAddress(orderOf({ updatedAt: opened })), 7, completeDetails));
+      acceptNextEdit(orderOf({ updatedAt: savedHere }), 8);
+      yield* type({ city: 'Brno', country: 'CZ', postalCode: '60200', street: 'Kavárna 1' });
+      yield* saveNow(1);
+      expect(edit().autosave.status).toBe('saved');
+      expect(sentEdits()[0]?.command).toMatchObject({
+        deliveryAddress: { city: 'Brno', country: 'CZ', postalCode: '60200', street: 'Kavárna 1' },
+      });
+
+      // The reload has not landed: the page still shows the order without an address. Emptying the fields again
+      // matches that order, but the edit would send the empty address over the saved one.
+      yield* type({ city: '', country: '', postalCode: '', street: '' });
+      yield* saveNow(1);
+      expect(edit().autosave.status).toBe('invalid');
+      expect(sentEdits()).toHaveLength(1);
+      expect(addressIncomplete(draft(), edit().autosave.confirmed)).toBe(true);
     }),
   );
 

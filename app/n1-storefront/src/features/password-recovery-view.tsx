@@ -4,7 +4,7 @@ import NextLink from "next/link";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Link } from "@/features/plain-link";
 import { StatusText } from "@techsio/ui-kit/atoms/status-text";
-import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import { FormInput } from "./form-controls";
 import { Effect, Exit, Schema } from "effect";
 import type { Fiber } from "effect";
 import { useEffect, useId, useRef, useState } from "react";

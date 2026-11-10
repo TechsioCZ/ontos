@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Combobox } from "@techsio/ui-kit/molecules/combobox";
 import { Button } from "@techsio/ui-kit/atoms/button";
-import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import { FormInput, Combobox } from "@/components/form-controls";
 import {
   getSuggestedAddress,
   isSmartAddressCountry,

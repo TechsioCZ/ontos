@@ -10,14 +10,13 @@ import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { PageHeader, StatCard, StatRow, formatNumber, Toaster } from '@app/admin-ui';
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
-import { Effect, Result, Schema } from 'effect';
-import { modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
+import { Effect, Schema } from 'effect';
+import { modulePagePreload } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, ModulePageProps } from '@app/shared-contracts/page-data';
 import type { TanstackTable } from '@techsio/ui-kit/organisms/data-table';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { legalEntityOf, useSettledPageData } from '../../../../runtime/page-data-hooks.ts';
-import type { SettledPageData } from '../../../../runtime/page-data-hooks.ts';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { legalEntityOf } from '../../../../runtime/page-data-hooks.ts';
+import { useState } from 'react';
 import type { BulkProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { CategoryTrail, ProductRecord, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { ProductIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
@@ -39,13 +38,9 @@ import {
   productCategoryKey,
   useProductDetailsPrefetch,
 } from './products-api.ts';
-import type {
-  CategoryChoices,
-  FailureReason,
-  ProductListInput,
-  ProductListQuery,
-  ProductSort,
-} from './products-api.ts';
+import type { CategoryChoices, FailureReason, ProductListQuery, ProductSort } from './products-api.ts';
+import { useCategoryChoices, useProductPage } from './product-list-page.ts';
+import type { ProductLoadState } from './product-list-page.ts';
 import { CategorySearchCombobox } from './category-search-combobox.tsx';
 import { useDebounced } from './product-reads.ts';
 import { ProductBulkBar } from './product-bulk-bar.tsx';
@@ -67,90 +62,6 @@ const DialogKind = Schema.Literals(['create', 'receipt', 'price', 'category', 't
 /** The category filter keeps its label for assistive tech only, so it lines up with the other filter controls. */
 const srOnlyLabelProps = { className: 'sr-only' };
 
-type LoadState =
-  | { readonly reason: FailureReason; readonly status: 'error' }
-  | { readonly query: ProductListQuery; readonly response: RecordsResponse; readonly status: 'ready' }
-  | { readonly status: 'loading' };
-
-const NO_CHOICES: CategoryChoices = { hasTree: false, labels: [] };
-
-/** The last settled read of the list; while a new query loads it stays on screen (`query` tells which it answers). */
-const productLoadState = (
-  settled: SettledPageData<ProductListInput, RecordsResponse, FailureReason> | undefined,
-): LoadState => {
-  if (settled === undefined) {
-    return { status: 'loading' };
-  }
-  const { snapshot } = settled;
-  return snapshot.state === 'failed'
-    ? { reason: snapshot.error, status: 'error' }
-    : { query: settled.input.query, response: snapshot.value, status: 'ready' };
-};
-
-const QueryIdsJson = Schema.fromJsonString(Schema.Array(Schema.String));
-const encodeQueryIds = Schema.encodeResult(QueryIdsJson);
-const decodeQueryIds = Schema.decodeResult(QueryIdsJson);
-
-/** The products page for `query`. A refresh keeps the rows on screen; only the first load shows the loading state. */
-const useProductPage = (legalEntityId: string, query: ProductListQuery, context?: ModulePageContext) => {
-  const scope = productScope(context);
-  const input: ProductListInput = { legalEntityId, query, scope };
-  const snapshot = useSyncExternalStore(
-    (listener) => productListData.subscribe(listener, input),
-    () => productListData.snapshot(input),
-    () => pageDataPending,
-  );
-  const { category, categoryId, limit, lowStockOnly, offset, search, sort } = query;
-  const taggedIdsJson = query.taggedIds === null ? null : Result.getOrThrow(encodeQueryIds(query.taggedIds));
-  // The effect owns its request object; only changed filter values ensure another entry.
-  useEffect(() => {
-    productListData.ensure({
-      legalEntityId,
-      query: {
-        category,
-        categoryId,
-        limit,
-        lowStockOnly,
-        offset,
-        search,
-        sort,
-        taggedIds: taggedIdsJson === null ? null : Result.getOrThrow(decodeQueryIds(taggedIdsJson)),
-      },
-      scope,
-    });
-  }, [category, categoryId, legalEntityId, limit, lowStockOnly, offset, scope, search, sort, taggedIdsJson]);
-  const settled = useSettledPageData(snapshot, input);
-  return {
-    reload: () => {
-      browserRuntime.runFork(productListData.refresh(input));
-    },
-    state: productLoadState(
-      settled !== undefined && settled.input.scope === scope && settled.input.legalEntityId === legalEntityId
-        ? settled
-        : undefined,
-    ),
-    viewKey: productListData.key(input),
-  };
-};
-
-/** The category filter's choices; reread after the category panel or a product's category changes. */
-const useCategoryChoices = (legalEntityId: string) => {
-  const snapshot = useSyncExternalStore(
-    (listener) => categoryChoicesData.subscribe(listener, legalEntityId),
-    () => categoryChoicesData.snapshot(legalEntityId),
-    () => pageDataPending,
-  );
-  useEffect(() => {
-    categoryChoicesData.ensure(legalEntityId);
-  }, [legalEntityId]);
-  return {
-    choices: snapshot.state === 'ready' ? snapshot.value : NO_CHOICES,
-    reload: () => {
-      browserRuntime.runFork(categoryChoicesData.refresh(legalEntityId));
-    },
-  };
-};
-
 /** Label filter options of a company without a storefront tree: the product category labels with their counts. */
 const labelOptions = (choices: CategoryChoices) =>
   choices.labels.flatMap((entry) =>
@@ -159,7 +70,7 @@ const labelOptions = (choices: CategoryChoices) =>
 
 /** With a tag filter active, row tags still loading read as loading and a failed load as error, never as no match. */
 const tableStatusFor = (
-  productsStatus: LoadState['status'],
+  productsStatus: ProductLoadState['status'],
   tagStatus: SubjectTagFilter['status'],
 ): ProductsTableStatus => {
   if (tagStatus === 'error') {

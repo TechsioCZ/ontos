@@ -7,6 +7,8 @@ export {
   type AutosaveOutcome,
   AutosaveOutcomeSchema,
   type AutosaveState,
+  type DraftSaveResult,
+  type PartlySaved,
   type RevisionedSaveResult,
   AutosaveStateSchema,
   autosavePending,

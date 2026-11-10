@@ -10,6 +10,9 @@ import { useState } from 'react';
  *
  * The store's safeguards stay intact: a different key (another record, company, principal or tenant) never shows
  * the previous record, and a failed reload, including a refused one, replaces the held value at once.
+ *
+ * The held snapshot lasts only while the reader stays on its key. Once the reader reads another key, a closed panel
+ * (a key with nothing to read) included, coming back shows what the store has, never the snapshot held earlier.
  */
 export const useHeldSnapshot = <Snapshot extends { readonly state: string }>(
   key: string,
@@ -23,5 +26,13 @@ export const useHeldSnapshot = <Snapshot extends { readonly state: string }>(
     }
     return snapshot;
   }
-  return held?.key === key && held.snapshot.state === 'ready' ? held.snapshot : snapshot;
+  if (held === undefined) {
+    return snapshot;
+  }
+  if (held.key !== key) {
+    // The reader left the held key while this one is still loading: drop it, so it cannot come back later.
+    setHeld(undefined);
+    return snapshot;
+  }
+  return held.snapshot.state === 'ready' ? held.snapshot : snapshot;
 };

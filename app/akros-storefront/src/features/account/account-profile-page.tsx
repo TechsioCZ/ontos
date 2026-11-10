@@ -5,7 +5,7 @@ import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useDictionary, useStoreHref } from "@/ontos/market-context";
 import { Button } from "@techsio/ui-kit/atoms/button";
-import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import { FormInput } from "@/components/form-controls";
 import { AccountShell } from "@/components/account-shell";
 import { CustomerNewsletterConsentForm } from "./customer-newsletter-consent";
 import { PasswordChange, requestPasswordChange } from "./password-change";

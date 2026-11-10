@@ -20,15 +20,6 @@ beforeEach(() => {
   });
 });
 
-// The UI-kit Toaster shows its live region as a manual popover. Browsers have the Popover API; jsdom does not.
-if (typeof HTMLElement !== "undefined") {
-  for (const method of ["showPopover", "hidePopover"] as const) {
-    if (!(method in HTMLElement.prototype)) {
-      Object.defineProperty(HTMLElement.prototype, method, { configurable: true, value: () => {} });
-    }
-  }
-}
-
 // The UI-kit carousel scrolls its track on mount. Browsers implement Element.scrollTo; jsdom does not.
 if (typeof Element !== "undefined" && !("scrollTo" in Element.prototype)) {
   Object.defineProperty(Element.prototype, "scrollTo", { configurable: true, value: () => {} });

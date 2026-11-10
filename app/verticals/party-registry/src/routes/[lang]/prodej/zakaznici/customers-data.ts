@@ -11,6 +11,7 @@ import {
   pageDataScopeKey,
 } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
+import { useHeldSnapshot } from '@app/admin-ui';
 
 import { executeAresLookup } from '../../../../api/ares-lookup-client.ts';
 import { executeDuplicateCandidateList } from '../../../../api/duplicate-candidate-list-client.ts';
@@ -118,6 +119,22 @@ export const customersData = definePageData({
   retainStale: false,
   runtime: browserRuntime,
 });
+
+/**
+ * The customer list as the page reads it. The strict store reads as pending while it reloads the same register
+ * (freshness window, live change, settled write); the rows and the stat tiles stay on the last ready read of the
+ * same scope until the reload settles. Another scope never reuses that read, and a failed or refused reload replaces
+ * it at once.
+ */
+export const useCustomersSnapshot = (query: string) =>
+  useHeldSnapshot(
+    query,
+    useSyncExternalStore(
+      (listener) => customersData.subscribe(listener, query),
+      () => customersData.snapshot(query),
+      (): ReturnType<typeof customersData.snapshot> => pageDataPending,
+    ),
+  );
 
 /** `preloadPage` of the customers page. */
 export const preloadCustomers = modulePagePreload((props) => customersData.preload(customersQuery(props.context)));

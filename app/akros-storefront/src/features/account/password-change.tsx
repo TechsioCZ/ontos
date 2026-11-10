@@ -2,7 +2,7 @@
 
 import { useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
-import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import { FormInput } from "@/components/form-controls";
 import { useDictionary } from "@/ontos/market-context";
 
 export interface PasswordChangeRequest {

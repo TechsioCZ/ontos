@@ -6,7 +6,7 @@ import { useDictionary, useStoreHref } from "@/ontos/market-context";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
-import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import { FormInput } from "@/components/form-controls";
 import { useCheckout } from "./checkout-provider";
 import { AddressFields } from "./address-fields";
 import { validateAddresses } from "@/features/checkout/checkout-state";

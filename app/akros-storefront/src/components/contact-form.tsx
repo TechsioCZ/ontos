@@ -2,8 +2,7 @@
 
 import { useRef, useState, type FormEvent } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
-import { FormInput } from "@techsio/ui-kit/molecules/form-input";
-import { FormTextarea } from "@techsio/ui-kit/molecules/form-textarea";
+import { FormInput, FormTextarea } from "@/components/form-controls";
 import { useBrand } from "@/brand/brand-context";
 import type { InquiryKind } from "@/ontos/inquiry-model";
 import { useDictionary } from "@/ontos/market-context";

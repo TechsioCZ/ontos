@@ -1,6 +1,6 @@
 // Draft and autosave of the product detail form: what one save sends, and which revision it expects.
 import { useAutosaveDraft } from '@app/admin-ui';
-import type { AutosaveOutcome, RevisionedSaveResult } from '@app/admin-ui';
+import type { DraftSaveResult } from '@app/admin-ui';
 import { DateTime, Effect, Predicate, Random } from 'effect';
 import { useRef, useState } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
@@ -29,24 +29,15 @@ const runProductCommand = (
     Effect.map((result) => result.revision),
   );
 
-const failureOutcome = (error: CommandFailure): AutosaveOutcome =>
+const failureOutcome = (error: CommandFailure): 'conflict' | 'failed' =>
   Predicate.isTagged(error, 'ManageCatalogActionConflictProblem') && error.code !== 'merchandise_lifecycle_conflict'
     ? 'conflict'
     : 'failed';
-
-/** A save whose field update went through while its price change did not: where the retry of that draft continues. */
-interface PartialSave {
-  /** The revision the draft was based on when the update was sent. */
-  readonly base: number;
-  /** The revision the update left behind. */
-  readonly revision: number;
-}
 
 interface DetailSaveInput {
   /** The version the server last confirmed for this draft; the save sends what differs from it. */
   readonly confirmed: DetailDraft;
   readonly expectedRevision: number;
-  readonly partial: { current: PartialSave | null };
   /** Gets the approval notice of a refused save; a save that went through clears it. */
   readonly pending: (message: string | null) => void;
   readonly productId: ProductRecord['id'];
@@ -57,41 +48,56 @@ interface DetailSaveInput {
  * One autosave of the detail form: the changed basic fields first, then a changed price. The first command expects
  * the revision the draft is based on, the second the one the first left. A conflict keeps the draft and offers the
  * version someone else saved.
+ *
+ * When the fields went through and the price did not, the server has the draft's fields with the confirmed price.
+ * The save reports that version and its revision (`PartlySaved`): the retry then sends the price alone, and a field
+ * typed back to its earlier value is sent as the change it now is, instead of comparing equal to a version the
+ * server no longer has.
  */
 const saveDetailEffect = ({
   confirmed,
   expectedRevision,
-  partial,
   pending,
   productId,
   value,
-}: DetailSaveInput): Effect.Effect<RevisionedSaveResult> => {
+}: DetailSaveInput): Effect.Effect<DraftSaveResult<DetailDraft>> => {
   const { patch, priceChanged, priceMinor } = detailSaveOf(value, confirmed);
-  if (Object.keys(patch).length === 0 && !priceChanged) {
+  const fieldsChanged = Object.keys(patch).length !== 0;
+  if (!fieldsChanged && !priceChanged) {
     return Effect.succeed('saved');
   }
-  const from = partial.current?.base === expectedRevision ? partial.current.revision : expectedRevision;
-  const update: Effect.Effect<number, CommandFailure> =
-    Object.keys(patch).length === 0
-      ? Effect.succeed(from)
-      : runProductCommand({ _tag: 'UpdateProduct', id: productId, patch }, from);
+  const refused = (error: CommandFailure) => {
+    pending(pendingProposalMessage(error) ?? null);
+    return failureOutcome(error);
+  };
+  const saved = (revision: number) => {
+    pending(null);
+    return revision;
+  };
+  const update: Effect.Effect<number, CommandFailure> = fieldsChanged
+    ? runProductCommand({ _tag: 'UpdateProduct', id: productId, patch }, expectedRevision)
+    : Effect.succeed(expectedRevision);
   return update.pipe(
-    Effect.flatMap((revision) => {
-      partial.current = { base: expectedRevision, revision };
-      return priceChanged
-        ? runProductCommand({ _tag: 'ChangePrice', id: productId, priceMinor }, revision)
-        : Effect.succeed(revision);
-    }),
-    Effect.match({
-      onFailure: (error): RevisionedSaveResult => {
-        pending(pendingProposalMessage(error) ?? null);
-        return failureOutcome(error);
-      },
-      onSuccess: (revision): RevisionedSaveResult => {
-        partial.current = null;
-        pending(null);
-        return revision;
-      },
+    Effect.matchEffect({
+      onFailure: (error) => Effect.succeed<DraftSaveResult<DetailDraft>>(refused(error)),
+      onSuccess: (revision) =>
+        priceChanged
+          ? runProductCommand({ _tag: 'ChangePrice', id: productId, priceMinor }, revision).pipe(
+              Effect.match({
+                onFailure: (error): DraftSaveResult<DetailDraft> => {
+                  const outcome = refused(error);
+                  return fieldsChanged
+                    ? {
+                        confirmed: { ...value, priceCzk: confirmed.priceCzk, priceText: confirmed.priceText },
+                        outcome,
+                        revision,
+                      }
+                    : outcome;
+                },
+                onSuccess: (next): DraftSaveResult<DetailDraft> => saved(next),
+              }),
+            )
+          : Effect.sync((): DraftSaveResult<DetailDraft> => saved(revision)),
     }),
   );
 };
@@ -121,7 +127,6 @@ export const useProductDetailAutosave = ({ product, revision }: ProductDetailAut
   // Real variants are read-only on the detail tab and always come from the latest product.
   // Deriving them preserves unsaved detail fields when the variants tab commits a change.
   const realVariants = (product.variants ?? []).filter(isRealVariant);
-  const partialSave = useRef<PartialSave | null>(null);
   const stockCommits = useRef(new Map<number, number>());
   const autosave = useAutosaveDraft<DetailDraft, never>({
     equals: sameDetailDraft,
@@ -132,7 +137,6 @@ export const useProductDetailAutosave = ({ product, revision }: ProductDetailAut
       saveDetailEffect({
         confirmed: { ...confirmed, realVariants },
         expectedRevision: afterStockCommits(stockCommits.current, expectedRevision),
-        partial: partialSave,
         pending: setPendingMessage,
         productId: product.id,
         value: { ...value, realVariants },

@@ -6,7 +6,7 @@ import { Link } from "@/features/plain-link";
 import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
 import { useToast } from "@techsio/ui-kit/molecules/toast";
-import { FormInput, FormInputRaw } from "@techsio/ui-kit/molecules/form-input";
+import { FormInput, FormInputRaw } from "./form-controls";
 import { Effect, Exit, Fiber, Struct } from "effect";
 import type { HttpClient } from "effect/http";
 import {
