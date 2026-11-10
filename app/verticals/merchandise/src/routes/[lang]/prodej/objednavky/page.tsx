@@ -43,6 +43,7 @@ import { OrderCancelDialog } from './order-cancel-dialog.tsx';
 import { OrderCreateDialog } from './order-create-dialog.tsx';
 import { selectItem } from '../../../../ui/select-item.ts';
 import { OrderDetailDialog } from './order-detail-dialog.tsx';
+import { OrderDetailPage } from './order-detail-page.tsx';
 import { orderNavigationFailureKey } from './order-navigation.ts';
 import { proposalToast, statusChangeNotification } from './order-status-notice.ts';
 import { ResetDemoDialog } from './reset-demo-dialog.tsx';
@@ -109,6 +110,13 @@ const OrdersPageQuerySchema = ordersQueryString.pipe(
     encode: SchemaGetter.encodeURLSearchParams(),
   }),
 );
+/** The order `?orderId=` names, if any. */
+const orderIdOfSearch = (searchStr: string): string | undefined =>
+  Schema.decodeOption(OrdersPageQuerySchema)(searchStr).pipe(
+    Option.flatMap((decodedSearch) => Option.fromNullishOr(decodedSearch.orderId)),
+    Option.filter((orderId) => orderId !== ''),
+    Option.getOrUndefined,
+  );
 
 const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
   const { language, t } = useModernI18n();
@@ -140,15 +148,10 @@ const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
   const [selectedOrders, setSelectedOrders] = useState<Readonly<Record<string, Order>>>({});
   const [createOpen, setCreateOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
-  // `?orderId=` (e.g. from an opportunity's related orders) opens that order's detail.
+  // In panel mode `?orderId=` (e.g. from an opportunity's related orders) opens that order in the panel.
   const initialSearch = useRouterState({ select: (router) => router.location.searchStr });
   const [detailId, setDetailId] = useState<string | null>(() =>
-    globalThis.location === undefined
-      ? null
-      : Option.match(Schema.decodeOption(OrdersPageQuerySchema)(initialSearch), {
-          onNone: () => null,
-          onSome: (decodedSearch) => decodedSearch.orderId ?? null,
-        }),
+    globalThis.location === undefined ? null : (orderIdOfSearch(initialSearch) ?? null),
   );
   const [pendingCancel, setPendingCancel] = useState<readonly Order[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -248,7 +251,8 @@ const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
     void browserRuntime.runPromise(
       Effect.tryPromise(
         navigateToOrder.bind(undefined, {
-          to: `/${language ?? 'cs'}/prodej/objednavky/${encodeURIComponent(id)}`,
+          search: { orderId: id },
+          to: `/${language ?? 'cs'}/prodej/objednavky`,
         }),
       ).pipe(
         Effect.timeout('10 seconds'),
@@ -720,6 +724,17 @@ const OrdersPageContent = (props: OrdersPageContentProps) => {
   );
 };
 
+/** With the full page chosen, `?orderId=` shows that order's page in place of the list; the panel keeps the list. */
+const OrdersRoute = ({ context, legalEntityId }: OrdersPageContentProps) => {
+  const [viewMode] = useDetailViewMode();
+  const orderId = orderIdOfSearch(useRouterState({ select: (router) => router.location.searchStr }));
+  return viewMode === 'page' && orderId !== undefined ? (
+    <OrderDetailPage context={context} key={orderId} legalEntityId={legalEntityId} orderId={orderId} />
+  ) : (
+    <OrdersPageContent context={context} legalEntityId={legalEntityId} />
+  );
+};
+
 /** The Shell prepares the first page, its header counts and the customer names before it reveals the page. */
 export const preloadPage = modulePagePreload((props) =>
   preloadOrdersPage(legalEntityOf(props), PAGE_SIZE, props.context),
@@ -732,7 +747,7 @@ export const OrdersPage = (props: Partial<ModulePageProps>) => (
     resources={merchandiseI18nResources}
     supportedLanguages={['en', 'cs']}
   >
-    <OrdersPageContent
+    <OrdersRoute
       context={props.context}
       key={pageDataScopeKey(props.context, 'demo.merchandise') ?? legalEntityOf(props)}
       legalEntityId={legalEntityOf(props)}

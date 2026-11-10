@@ -530,10 +530,6 @@
       },
       "records": {
         "title": "Objednávky a produkty"
-      },
-      "orderDetail": {
-        "title": "Objednávka",
-        "description": "Detail objednávky: položky, doprava, historie a změny."
       }
     },
     "pagination": {

@@ -526,10 +526,6 @@
       },
       "records": {
         "title": "Orders and products"
-      },
-      "orderDetail": {
-        "title": "Order",
-        "description": "Order details: items, delivery, history and changes."
       }
     },
     "pagination": {

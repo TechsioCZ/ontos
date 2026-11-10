@@ -1,50 +1,34 @@
-import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { pageDataScopeKey } from '@app/shared-contracts/page-data';
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
-import { useNavigate, useParams } from '@modern-js/plugin-tanstack/runtime';
+import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import type { RegisteredRouter } from '@tanstack/react-router';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { Effect, Option, Schema } from 'effect';
+import { Effect } from 'effect';
 import { useState } from 'react';
 import { PageHeader, Toaster } from '@app/admin-ui';
-import type { Order } from '../../../../../../shared/apis/records.ts';
-import type { OrderStatus } from '../../../../../../shared/domain/merchandise-model.ts';
-import { storefrontBrandOf } from '../../../../../../shared/domain/storefront-brand.ts';
-import { browserRuntime } from '../../../../../runtime/browser-effect-runtime.ts';
-import { legalEntityOf } from '../../../../../runtime/page-data-hooks.ts';
-import csResource from '../../../../../../locales/cs/merchandise.json';
-import enResource from '../../../../../../locales/en/merchandise.json';
-import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
-import '../../../../index.css';
-import { useCustomerDirectory } from '../customers-directory.ts';
-import { OrderCancelDialog } from '../order-cancel-dialog.tsx';
-import { OrderDetailActions, OrderDetailContent, OrderPendingBody } from '../order-detail-content.tsx';
-import { orderDetailTitle, useOrderEditing } from '../order-detail-view.ts';
-import { orderNavigationFailureKey } from '../order-navigation.ts';
-import type { PendingOrderDetail } from '../order-detail-content.tsx';
-import { proposalToast, statusChangeNotification } from '../order-status-notice.ts';
+import type { Order } from '../../../../../shared/apis/records.ts';
+import type { OrderStatus } from '../../../../../shared/domain/merchandise-model.ts';
+import { storefrontBrandOf } from '../../../../../shared/domain/storefront-brand.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { UltramodernRouteHead } from '../../../ultramodern-route-head';
+import { useCustomerDirectory } from './customers-directory.ts';
+import { OrderCancelDialog } from './order-cancel-dialog.tsx';
+import { OrderDetailActions, OrderDetailContent, OrderPendingBody } from './order-detail-content.tsx';
+import { orderDetailTitle, useOrderEditing } from './order-detail-view.ts';
+import { orderNavigationFailureKey } from './order-navigation.ts';
+import type { PendingOrderDetail } from './order-detail-content.tsx';
+import { proposalToast, statusChangeNotification } from './order-status-notice.ts';
 import {
   changeOrderStatuses,
   firstOrdersPage,
   recordsCanEditOrders,
   useOrderDetail,
   useOrders,
-} from '../orders-records.ts';
-import type { OrderDetailState } from '../orders-records.ts';
-
-const merchandiseI18nResources = {
-  cs: { merchandise: csResource },
-  en: { merchandise: enResource },
-} as const;
+} from './orders-records.ts';
+import type { OrderDetailState } from './orders-records.ts';
 
 const key = (path: string) => `merchandise.pages.orders.${path}`;
-
-/** The order id from the route. An empty id reads as no order. */
-export const OrderDetailPageRouteParams = Schema.Struct({
-  id: Schema.String.pipe(Schema.brand('OrderDetailPageIdRouteParameter')),
-});
-export type OrderDetailPageRouteParameters = typeof OrderDetailPageRouteParams.Type;
 
 /** Header title of the order page: the order number once it is known, otherwise the loading title. */
 const orderPageTitle = ({
@@ -67,14 +51,17 @@ const orderPageTitle = ({
   return t(key('detail.loadingTitle'));
 };
 
-interface OrderDetailPageContentProps {
+export interface OrderDetailPageProps {
   readonly context?: ModulePageContext | undefined;
   readonly legalEntityId: string;
-  /** Undefined when the route id is missing or invalid; such a page shows the not-found state. */
-  readonly orderId: string | undefined;
+  readonly orderId: string;
 }
 
-const OrderDetailPageContent = ({ context, legalEntityId, orderId }: OrderDetailPageContentProps) => {
+/**
+ * The full order page. The orders route shows it in place of the list while `?orderId=` names an order and the
+ * person chose the full page; it shares its content and actions with the side panel.
+ */
+export const OrderDetailPage = ({ context, legalEntityId, orderId }: OrderDetailPageProps) => {
   const { language, t } = useModernI18n();
   const navigate = useNavigate();
   const toaster = useToast();
@@ -88,7 +75,7 @@ const OrderDetailPageContent = ({ context, legalEntityId, orderId }: OrderDetail
   const canEditOrders = records === undefined ? false : recordsCanEditOrders(records);
   const canCleanupDemo = records?.canCleanupDemo === true;
   const directory = useCustomerDirectory(legalEntityId, canEditOrders);
-  const detail = useOrderDetail(orderId ?? null, version, context);
+  const detail = useOrderDetail(orderId, version, context);
   const { editing, setEditing } = useOrderEditing(detail.status === 'ready' ? detail.order.id : undefined);
   const revision = Math.max(records?.revision ?? 0, detail.status === 'ready' ? detail.revision : 0);
 
@@ -164,7 +151,7 @@ const OrderDetailPageContent = ({ context, legalEntityId, orderId }: OrderDetail
     reload();
   };
 
-  // Not-ready states reuse the panel's pending body; a missing id reads as not found.
+  // Not-ready states reuse the panel's pending body.
   const pending: PendingOrderDetail =
     detail.status === 'idle' || detail.status === 'ready' ? { status: 'not-found' } : detail;
   const title = orderPageTitle({ detail, editing, pending, t });
@@ -236,34 +223,3 @@ const OrderDetailPageContent = ({ context, legalEntityId, orderId }: OrderDetail
     </>
   );
 };
-
-export const OrderDetailPage = ({
-  context,
-  orderId,
-}: {
-  readonly context?: ModulePageContext | undefined;
-  readonly orderId: string | undefined;
-}) => (
-  <FederatedI18nBoundary
-    defaultNamespace="merchandise"
-    fallbackLanguage="en"
-    resources={merchandiseI18nResources}
-    supportedLanguages={['en', 'cs']}
-  >
-    <OrderDetailPageContent
-      context={context}
-      key={`${pageDataScopeKey(context, 'demo.merchandise') ?? ''}|${orderId ?? ''}`}
-      legalEntityId={legalEntityOf({ context })}
-      orderId={orderId}
-    />
-  </FederatedI18nBoundary>
-);
-
-const OrderDetailRoute = ({ context }: { readonly context?: ModulePageContext | undefined }) => {
-  const params: unknown = useParams({ from: '/$lang/prodej/objednavky/$id', shouldThrow: false });
-  const routeParams = Schema.decodeUnknownOption(OrderDetailPageRouteParams)(params);
-  const orderId = Option.isSome(routeParams) && routeParams.value.id !== '' ? routeParams.value.id : undefined;
-  return <OrderDetailPage context={context} orderId={orderId} />;
-};
-
-export default OrderDetailRoute;
