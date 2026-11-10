@@ -251,7 +251,8 @@ export const definePageData = <I, A, E, R>(options: {
    * Deployment app ids (`appId` of a vertical's package.json, the `<appId>` of `/module-api/<appId>/…`; `shell` for
    * Shell/Core data) whose data `load` shows: its own app plus every app it reads directly or whose data its own API
    * returns. A live change naming none of them leaves the store untouched. Omitted: every live change concerns the
-   * store. Writes (`moduleWriteEvent`, `invalidate`) and changes without an app list always concern it.
+   * store. Writes (`moduleWriteEvent`, `invalidate`) and changes without an app list always concern it. A value a
+   * mounted view shows reloads once it is 20 s old, so a write that sends no live change is not missed.
    */
   readonly changesFrom?: readonly string[];
   readonly key: (input: I) => string;
@@ -338,10 +339,33 @@ export const definePageData = <I, A, E, R>(options: {
       ),
     ).pipe(Effect.asVoid);
 
+  /** Whether a mounted reader shows `key` now: re-reading snapshots changes nothing, so no view re-renders. */
+  const shownNow = (key: string): boolean => {
+    observedKeys.clear();
+    observing = true;
+    try {
+      notify();
+    } finally {
+      observing = false;
+    }
+    const shown = observedKeys.has(key);
+    observedKeys.clear();
+    return shown;
+  };
+
   const startLoad = (entry: Entry<I, A, E>): Fiber.Fiber<void> => {
     const onExpired = (): void => {
       const key = options.key(entry.input);
-      if (options.retainStale === false && entries.get(key) === entry && (mountedKeys.get(key) ?? 0) > 0) {
+      if (entries.get(key) !== entry) {
+        return;
+      }
+      // A store that ignores unrelated live changes no longer hears every commit, so a change that never sends one
+      // (an Outbox Worker's write) is picked up by expiry, as for strict stores.
+      const shown =
+        options.retainStale === false
+          ? (mountedKeys.get(key) ?? 0) > 0
+          : changesFrom !== undefined && (mountedKeys.has(key) || (options.cancelWhenUnused !== true && shownNow(key)));
+      if (shown) {
         startLoad(entry);
       }
     };

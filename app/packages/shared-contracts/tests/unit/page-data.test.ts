@@ -11,6 +11,7 @@ import {
 } from '@app/shared-contracts/page-data';
 import type { ModuleChangeDetail, PageDataWork } from '@app/shared-contracts/page-data';
 import { Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Result } from 'effect';
+import { TestClock } from 'effect/testing';
 import { afterAll, beforeAll, expect, it } from 'effect-rstest';
 
 const events = new EventTarget();
@@ -429,6 +430,46 @@ it.live('a change without an app list, a reset and a write reload every scoped s
     yield* Effect.sleep('10 millis');
     expect(loads()).toBe(6);
     unsubscribe();
+  }),
+);
+
+it.live('a shown scoped store reloads once its value is 20 s old, as a write it never hears about may be pending', () =>
+  Effect.gen(function* scopedExpiry() {
+    const clock = ManagedRuntime.make(TestClock.layer());
+    let loads = 0;
+    // Not strict, and read as a React view reads it: the listener carries no input.
+    const store = definePageData({
+      changesFrom: ['finance-billing'],
+      key: (id: string) => id,
+      load: (id: string) =>
+        Effect.sync(() => {
+          loads += 1;
+          return `${id}#${loads}`;
+        }),
+      runtime: clock,
+    });
+    let unsubscribe = store.subscribe(() => {
+      store.snapshot('shown');
+    });
+    yield* store.preload('shown');
+    yield* store.preload('hidden');
+    expect(loads).toBe(2);
+    yield* Effect.promise(() => clock.runPromise(TestClock.adjust('20 seconds')));
+    yield* Effect.sleep('10 millis');
+    // Only the value a view shows reloads; it stays on screen meanwhile.
+    expect(loads).toBe(3);
+    expect(store.snapshot('shown')).toMatchObject({ state: 'ready', value: 'shown#3' });
+    expect(store.snapshot('hidden')).toMatchObject({ value: 'hidden#2' });
+    // Nothing shown: an expired value waits for its next reader.
+    unsubscribe();
+    unsubscribe = store.subscribe(() => {
+      // A view of another page: it reads nothing of this store.
+    });
+    yield* Effect.promise(() => clock.runPromise(TestClock.adjust('20 seconds')));
+    yield* Effect.sleep('10 millis');
+    expect(loads).toBe(3);
+    unsubscribe();
+    yield* Effect.promise(() => clock.dispose());
   }),
 );
 
