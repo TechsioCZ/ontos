@@ -754,6 +754,35 @@ describe('#1151 Payment evidence interpretation', () => {
     }
   });
 
+  it('#1151 a correction key reused against a different receipt is held, never read as a re-issue', () => {
+    // Charge 1 was fully retracted; charge 2 is another receipt of the same COLLECT.
+    const replaced = aggregateOf(
+      [operation('EFFECT_CONFIRMED')],
+      [
+        accepted('obs-charge-1', { economicEffectKey: 'gopay:charge:1' }),
+        accepted('obs-retraction-1', {
+          correctsObservationId: 'obs-charge-1',
+          economicEffectKey: 'gopay:retraction:1',
+          factKind: 'SOURCE_CORRECTION',
+        }),
+        accepted('obs-charge-2', { economicEffectKey: 'gopay:charge:2' }),
+      ],
+    );
+    expect(
+      interpretPaymentObservation(
+        replaced,
+        observed({
+          amount: czk(100_000),
+          correctsObservationId: 'obs-charge-2',
+          economicEffectKey: 'gopay:retraction:1',
+          factKind: 'SOURCE_CORRECTION',
+        }),
+      ),
+    ).toEqual(
+      PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'CORRECTION_OVERLAPS_PRIOR_CORRECTION' }),
+    );
+  });
+
   it('#1151 a further correction of an already partially corrected statement is held, never deduplicated', () => {
     const partiallyCorrected = aggregateOf(
       [operation('EFFECT_CONFIRMED', { amount: czk(10_000) })],

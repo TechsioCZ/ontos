@@ -587,6 +587,30 @@ const correctsAlreadyCorrectedEffect = (
   );
 };
 
+/**
+ * The earlier correction disproved this very statement, or another statement of the same source-scoped
+ * economic effect (a re-export of it).
+ */
+const correctsSameReceipt = (
+  aggregate: PaymentEvidenceAggregate,
+  prior: PaymentAcceptedObservationView,
+  corrected: PaymentAcceptedObservationView,
+) => {
+  if (prior.correctsObservationId === corrected.observationId) {
+    return true;
+  }
+  const priorTarget = [...aggregate.acceptedObservations, ...aggregate.attachedStatements].find(
+    (observation) => observation.observationId === prior.correctsObservationId,
+  );
+  return (
+    priorTarget !== undefined &&
+    corrected.economicEffectKey !== undefined &&
+    priorTarget.economicEffectKey === corrected.economicEffectKey &&
+    priorTarget.factKind === corrected.factKind &&
+    sameSourceBinding(priorTarget.source, corrected.source)
+  );
+};
+
 const decideCorrection = (
   aggregate: PaymentEvidenceAggregate,
   correction: QualifiedPaymentObservation,
@@ -618,16 +642,21 @@ const decideCorrection = (
       observation.factKind === 'SOURCE_CORRECTION' && observation.correctsObservationId === corrected.observationId,
   );
   // The same correction effect re-issued by the same source (e.g. for a re-exported statement) counts once.
-  const sameCorrectionEffect =
-    correction.economicEffectKey !== undefined &&
-    priorCorrections.some(
-      (prior) =>
-        sameSourceBinding(prior.source, correction.source) &&
-        prior.economicEffectKey === correction.economicEffectKey &&
-        sameOptionalAmount(prior.amount, correction.amount),
-    );
-  if (sameCorrectionEffect) {
-    return PaymentEvidenceDecision.NO_CHANGE({ operationId: corrected.operationId, reason: 'ALREADY_CORRECTED' });
+  const reissued =
+    correction.economicEffectKey === undefined
+      ? undefined
+      : priorCorrections.find(
+          (prior) =>
+            sameSourceBinding(prior.source, correction.source) &&
+            prior.economicEffectKey === correction.economicEffectKey &&
+            sameOptionalAmount(prior.amount, correction.amount),
+        );
+  if (reissued !== undefined) {
+    // It is a re-issue only when it corrects the same receipt or a re-export of it. The same correction
+    // key against another receipt would disprove that receipt silently: hold it for reconciliation.
+    return correctsSameReceipt(aggregate, reissued, corrected)
+      ? PaymentEvidenceDecision.NO_CHANGE({ operationId: corrected.operationId, reason: 'ALREADY_CORRECTED' })
+      : hold('CORRECTION_OVERLAPS_PRIOR_CORRECTION', corrected.operationId);
   }
   if (alreadyCorrected || correctsAlreadyCorrectedEffect(aggregate, corrected, priorCorrections)) {
     // Another correction of an already corrected statement, or of a statement of the same economic
