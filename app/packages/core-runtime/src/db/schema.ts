@@ -101,6 +101,9 @@ export const applicationCompositionAuthority = enableCoreGovernedRls(
       validUntil: timestamp('valid_until', { withTimezone: true }).notNull(),
       subscriptionsJson: jsonb('subscriptions_json').$type<readonly OutboxWorkerSubscription[]>().notNull(),
       updatedAt: updatedAt(),
+      // When the current revision took the authority, on the database clock. A renewal of the same revision keeps it;
+      // only a different revision (a newer release or a rollback) moves it. Module credential retirement cuts off here.
+      revisionActivatedAt: timestamp('revision_activated_at', { withTimezone: true }).defaultNow().notNull(),
     },
     (table) => [
       check('core_application_composition_authority_key_ck', sql`${table.authorityKey} = 'active'`),

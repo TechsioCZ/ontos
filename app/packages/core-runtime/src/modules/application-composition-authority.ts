@@ -443,6 +443,7 @@ export const publishApplicationCompositionAuthority = Effect.fn('ApplicationComp
           current?.revision === snapshot.composition.revision ? current.durableWorkAdmission : 'open',
         phase: current?.revision === snapshot.composition.revision ? current.phase : 'active',
         revision: snapshot.composition.revision,
+        revisionActivatedAt: sql`clock_timestamp()`,
         subscriptionsJson,
         validUntil: DateTime.toDateUtc(snapshot.validUntil),
       })
@@ -452,6 +453,9 @@ export const publishApplicationCompositionAuthority = Effect.fn('ApplicationComp
             current?.revision === snapshot.composition.revision ? current.durableWorkAdmission : 'open',
           phase: current?.revision === snapshot.composition.revision ? current.phase : 'active',
           revision: snapshot.composition.revision,
+          // A renewal keeps the moment its revision took the authority; a different revision takes it now.
+          revisionActivatedAt:
+            current?.revision === snapshot.composition.revision ? current.revisionActivatedAt : sql`clock_timestamp()`,
           subscriptionsJson,
           updatedAt: sql`clock_timestamp()`,
           validUntil: DateTime.toDateUtc(snapshot.validUntil),
