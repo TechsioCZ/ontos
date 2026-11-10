@@ -925,7 +925,8 @@ export const withAccessAdminCase = <Value, Failure>(
       );
       yield* writeEngineSchema(configuration);
 
-      const graph = yield* buildAccessGraph({ adminUrl: caseAdminUrl, configuration });
+      // Scoped intent is persisted as the enrolled runtime identity; the CI admin login only seeds rows.
+      const graph = yield* buildAccessGraph({ adminUrl: databases.runtime.connectionString, configuration });
       const moduleKeys = catalog.map((module) => module.moduleId);
       yield* labelled(
         'seed-tenant',
