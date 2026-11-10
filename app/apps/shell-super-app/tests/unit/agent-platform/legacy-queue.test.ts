@@ -52,7 +52,7 @@ const unusedCollaborators = Layer.mergeAll(
   Layer.mock(ShellInstalledModuleCatalog, {}),
 );
 
-it.effect('generates native command keys lazily and preserves decision and revert payloads', () =>
+it.effect('generates native command keys lazily and runs decisions on the Action owning the engine command', () =>
   Effect.gen(function* nativeKeys() {
     let uuidCalls = 0;
     const crypto = Crypto.make({
@@ -73,13 +73,13 @@ it.effect('generates native command keys lazily and preserves decision and rever
         principal,
         'crm',
         { _tag: 'AiDecideChanges', changeIds: ['change-a'], decision: 'approve', note: 'Reviewed' },
-        { idempotencyKey: '01010101-0101-4101-8101-010101010101' },
+        { action: {}, idempotencyKey: '01010101-0101-4101-8101-010101010101' },
       ],
       [
         principal,
         'crm',
         { _tag: 'AiRevertBatch', batchId: 'batch-a', note: 'Restore' },
-        { idempotencyKey: '02020202-0202-4202-8202-020202020202' },
+        { action: {}, idempotencyKey: '02020202-0202-4202-8202-020202020202' },
       ],
     ]);
   }).pipe(Effect.provide(unusedCollaborators)),

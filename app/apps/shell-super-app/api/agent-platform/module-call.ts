@@ -4,9 +4,15 @@ import {
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime/modules/active-application-composition';
 import type { AgentCommand } from '@app/shared-contracts/agent-proposals';
-import { Data, Effect, Option, Result, Schema } from 'effect';
+import {
+  commandActionSlugOf,
+  commandActionSlugsOf,
+  isCommandUnionAction,
+} from '@app/core-runtime/modules/mcp-contribution';
+import { Data, Effect, Option, Predicate, Result, Schema } from 'effect';
 
 import { dispatchModuleApiRequest } from '../../src/module-api/transport.ts';
+import type { McpModule } from '../mcp/catalog.ts';
 import { AgentReadRequestIdentity } from '../auth/agent-request-identity.ts';
 import { issueGatewayContextAssertion } from '../auth/gateway-issuer.ts';
 import { czechModuleFailure, isGenericProblemText } from './approval-logic.ts';
@@ -204,20 +210,65 @@ export const readModuleRecords = (principal: TrustedPrincipalContext, appId: str
 const failed = (message: string, status: number, code?: string): ModuleCommandOutcome =>
   code === undefined ? { message, ok: false, status } : { code, message, ok: false, status };
 
+/**
+ * Which module Action runs a command. `exact`: the approved proposal's own Action, authorized at submit; it runs
+ * exactly that Action or nothing. Otherwise the module supplied the command itself (undo plan, follow-up, AI change
+ * decision): the Action whose command union accepts its tag, `preferred` first; an untagged command runs as
+ * `preferred`, a named Action.
+ */
+export type ModuleCommandAction = { readonly exact: string } | { readonly preferred?: string };
+
+interface CommandTarget {
+  /** Posted as `{ command, expectedRevision }` (command-union Action) or as the payload itself (named Action). */
+  readonly envelope: boolean;
+  readonly slug: string;
+}
+
+/** The owning Action of a command, from the module's published command unions; undefined when it has none. */
+export const commandTargetOf = (
+  commandActions: McpModule['commandActions'],
+  command: AgentCommand,
+  action: ModuleCommandAction,
+): CommandTarget | undefined => {
+  const tag = command['_tag'];
+  if ('exact' in action) {
+    if (isCommandUnionAction(commandActions, action.exact)) {
+      return Predicate.isString(tag) && commandActionSlugsOf(commandActions, tag).includes(action.exact)
+        ? { envelope: true, slug: action.exact }
+        : undefined;
+    }
+    return Predicate.isUndefined(tag) ? { envelope: false, slug: action.exact } : undefined;
+  }
+  if (Predicate.isString(tag)) {
+    const slug = commandActionSlugOf(commandActions, tag, action.preferred);
+    return slug === undefined ? undefined : { envelope: true, slug };
+  }
+  return Predicate.isUndefined(tag) &&
+    action.preferred !== undefined &&
+    !isCommandUnionAction(commandActions, action.preferred)
+    ? { envelope: false, slug: action.preferred }
+    : undefined;
+};
+
+const NO_OWNING_ACTION = 'Modul nemá akci, která by tento příkaz provedla; změnu proto nelze provést.';
+
 const attemptCommand = Effect.fn('AgentPlatform.attemptCommand')(
   function* attemptCommand(
     principal: TrustedPrincipalContext,
     appId: string,
     command: AgentCommand,
-    options: { readonly actionSlug?: string; readonly referenceAudiences?: readonly string[] },
+    options: { readonly action: ModuleCommandAction; readonly referenceAudiences?: readonly string[] },
     key: string,
   ) {
-    const slug = options.actionSlug ?? 'apply-command';
-    // Named Actions (party-registry, commerce) take the stored payload as is and have no module-wide revision;
-    // apply-command modules get `{ command, expectedRevision }` with the revision read just now.
+    const records = yield* recordsReadOf(appId);
+    const target = commandTargetOf(records.module?.commandActions, command, options.action);
+    if (target === undefined) {
+      return failed(NO_OWNING_ACTION, 400);
+    }
+    // Command-union Actions get `{ command, expectedRevision }` with the revision read just now; named Actions
+    // (party-registry, commerce) take the stored payload as is and have no module-wide revision.
     let body: Schema.Json = command;
-    if (slug === 'apply-command') {
-      const records = yield* recordsReadOf(appId);
+    if (target.envelope) {
       const read = yield* callModuleAs(principal, appId, records.path, records.query);
       if (read.status !== 200) {
         return failed(problemMessage(read.body, read.status), read.status);
@@ -232,7 +283,7 @@ const attemptCommand = Effect.fn('AgentPlatform.attemptCommand')(
       options.referenceAudiences === undefined
         ? { idempotencyKey: key }
         : { idempotencyKey: key, referenceAudiences: options.referenceAudiences };
-    const write = yield* callModuleAs(principal, appId, `/${appId}/actions/${slug}`, body, callOptions);
+    const write = yield* callModuleAs(principal, appId, `/${appId}/actions/${target.slug}`, body, callOptions);
     if (write.status >= 200 && write.status < 300) {
       return { body: write.body, ok: true } satisfies ModuleCommandOutcome;
     }
@@ -244,16 +295,16 @@ const attemptCommand = Effect.fn('AgentPlatform.attemptCommand')(
 );
 
 /**
- * Runs a module's command as the given person. apply-command: reads the current revision first, then posts
- * `{ command, expectedRevision }`; named Actions are posted as stored.
- * Retries once with a fresh idempotency key when the module reports a revision conflict.
+ * Runs a module's command as the given person through the Action {@link commandTargetOf} selects: a command-union
+ * Action reads the current revision first, then gets `{ command, expectedRevision }`; a named Action gets the
+ * payload as stored. Retries once with a fresh idempotency key when the module reports a revision conflict.
  */
 export const applyModuleCommand = Effect.fn('AgentPlatform.applyModuleCommand')(function* applyModuleCommand(
   principal: TrustedPrincipalContext,
   appId: string,
   command: AgentCommand,
   options: {
-    readonly actionSlug?: string;
+    readonly action: ModuleCommandAction;
     readonly idempotencyKey: string;
     readonly referenceAudiences?: readonly string[];
   },
