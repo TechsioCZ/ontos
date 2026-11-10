@@ -182,10 +182,6 @@ const PeekExample = ({ onRowClick }: { readonly onRowClick: () => void }) => {
   );
 };
 
-/** Same selector as the `.ontos-side-peek` stop-gap rule in apps/shell-super-app/src/routes/ui-kit.css. */
-const peekBackdropSelector =
-  "[data-scope='dialog'][data-part='backdrop']:has(+ [data-scope='dialog'][data-part='positioner'] > .ontos-side-peek)";
-
 const openPeek = Effect.fn('openPeek')(function* openPeek(onRowClick: () => void) {
   render(<PeekExample onRowClick={onRowClick} />);
   fireEvent.click(screen.getByRole('button', { name: 'Open row' }));
@@ -193,29 +189,19 @@ const openPeek = Effect.fn('openPeek')(function* openPeek(onRowClick: () => void
   return dialog;
 });
 
-it.effect('keeps the default panel modal and unmarked', () =>
+it.effect('keeps the default panel modal', () =>
   Effect.gen(function* defaultPanel() {
     const { dialog } = yield* openPanel();
-    expect(dialog.classList.contains('ontos-side-peek')).toBe(false);
     expect(dialog.getAttribute('aria-modal')).toBe('true');
     expect(dialog.parentElement?.classList.contains('pointer-events-auto')).toBe(true);
   }),
 );
 
-it.effect('renders a peek panel with the marker class and the DOM the backdrop selector relies on', () =>
+it.effect('renders a peek panel as a modeless dialog without a backdrop', () =>
   Effect.gen(function* peekDom() {
     const dialog = yield* openPeek(() => {});
-    expect(dialog.classList.contains('ontos-side-peek')).toBe(true);
     expect(dialog.getAttribute('aria-modal')).toBe('false');
-    const positioner = dialog.parentElement;
-    expect(positioner?.dataset['part']).toBe('positioner');
-    // The backdrop is the element right before the positioner, and the marked content sits directly inside it.
-    const backdrop = document.querySelector<HTMLElement>(peekBackdropSelector);
-    expect(backdrop?.dataset['scope']).toBe('dialog');
-    expect(backdrop?.dataset['part']).toBe('backdrop');
-    expect(backdrop?.nextElementSibling).toBe(positioner);
-    expect(positioner?.querySelector(':scope > .ontos-side-peek')).toBe(dialog);
-    expect(document.querySelectorAll(peekBackdropSelector)).toHaveLength(1);
+    expect(document.querySelector("[data-scope='dialog'][data-part='backdrop']")).toBeNull();
   }),
 );
 

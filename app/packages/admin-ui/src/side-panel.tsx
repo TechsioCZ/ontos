@@ -6,7 +6,7 @@ import { Schema } from 'effect';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { isPanelEscape, panelContentId, readEscapeSnapshot } from './side-panel-escape.ts';
-import { sidePanelPeekClassName, sidePanelSurfaceClassName } from './ui-kit-classes.ts';
+import { sidePanelSurfaceClassName } from './ui-kit-classes.ts';
 import { useSidePanelResize } from './use-side-panel-resize.ts';
 
 const sidePanelSizeSchema = Schema.Literals(['sm', 'md', 'lg', 'xl']);
@@ -217,7 +217,6 @@ export const SidePanel = ({
   title,
 }: SidePanelProps) => {
   const id = useId();
-  const peekClassName = peek ? ` ${sidePanelPeekClassName}` : '';
   const resize = useSidePanelResize();
   useEscapeFallback(open, panelContentId(id), onOpenChange);
   const { keepsDraft, refocusDraft } = useEditedDraft(open, panelContentId(id));
@@ -231,7 +230,7 @@ export const SidePanel = ({
 
   return (
     <Dialog
-      className={`min-w-0 sm:min-w-(--container-dialog-sm) ${sidePanelSurfaceClassName} ${className ?? ''}${peekClassName}`}
+      className={`min-w-0 sm:min-w-(--container-dialog-sm) ${sidePanelSurfaceClassName} ${className ?? ''}`}
       {...(finalFocusEl === undefined ? {} : { finalFocusEl })}
       {...(initialFocusEl === undefined ? {} : { initialFocusEl })}
       {...(peek ? peekDialogProps : modalDialogProps)}
