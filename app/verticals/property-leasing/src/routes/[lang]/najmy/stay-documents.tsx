@@ -5,10 +5,9 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Option } from 'effect';
 import type { Effect, PlatformError } from 'effect';
 import { useState } from 'react';
-import type { SaveOutcome } from '@app/admin-ui';
 import type { OccupancyHistoryEntry, PreparedNotice, RegistrationSheet } from '../../../../shared/apis/records.ts';
 import { RegistrationSheetForm } from './registration-sheet-form.tsx';
-import type { OccupancyCommand } from '../../../../shared/actions/apply-command.ts';
+import type { AdditionSave } from './occupancy-command.ts';
 import { templatesFor } from './notice-templates.ts';
 import type { NoticeContext } from './notice-templates.ts';
 import { NoticeEditor } from './notice-editor.tsx';
@@ -111,7 +110,7 @@ export const RegistrationSheetCard = ({
   readonly context: NoticeContext;
   readonly newId: Effect.Effect<string, PlatformError.PlatformError>;
   /** Uložit of the sheet form: creates the sheet once. */
-  readonly onSave: (command: OccupancyCommand) => Effect.Effect<SaveOutcome>;
+  readonly onSave: AdditionSave;
   readonly sheets: readonly RegistrationSheet[];
 }) => {
   const { t } = useModernI18n();
@@ -190,7 +189,7 @@ export const NoticeCard = ({
   readonly newId: Effect.Effect<string, PlatformError.PlatformError>;
   readonly notices: readonly PreparedNotice[];
   /** Uložit of the notice editor: stores the prepared text once. */
-  readonly onSave: (command: OccupancyCommand) => Effect.Effect<SaveOutcome>;
+  readonly onSave: AdditionSave;
 }) => {
   const { t } = useModernI18n();
   const templates = templatesFor(context.record.kind);

@@ -7,7 +7,7 @@ import type { Effect, PlatformError } from 'effect';
 import type { Occupancy, RecordsResponse } from '../../../../shared/apis/records.ts';
 import type { TenantDirectoryEntry } from './lease-story.tsx';
 import { TenantDossierCard } from './tenant-dossier.tsx';
-import type { DossierSave, DossierChanges } from './tenant-dossier.tsx';
+import type { DossierLog, DossierSave, DossierChanges } from './tenant-dossier.tsx';
 
 const stateLabels = {
   ACTIVE: 'Aktivní',
@@ -62,6 +62,7 @@ export const CounterpartyDossierView = ({
   feedbackText,
   language,
   newContactId,
+  onLog,
   onSave,
   onUpdate,
   snapshot,
@@ -75,6 +76,8 @@ export const CounterpartyDossierView = ({
   readonly feedbackText: string | undefined;
   readonly language: string;
   readonly newContactId: Effect.Effect<string, PlatformError.PlatformError>;
+  /** Logs a call, e-mail, meeting or note in the timeline. */
+  readonly onLog: DossierLog;
   readonly onSave: DossierSave;
   readonly onUpdate: (changes: DossierChanges) => void;
   readonly snapshot: RecordsResponse | undefined;
@@ -130,6 +133,7 @@ export const CounterpartyDossierView = ({
                 dossier={dossier}
                 key={`counterparty:${counterpartyId}`}
                 newContactId={newContactId}
+                onLog={onLog}
                 onSave={onSave}
                 onUpdate={onUpdate}
                 revision={snapshot.revision}

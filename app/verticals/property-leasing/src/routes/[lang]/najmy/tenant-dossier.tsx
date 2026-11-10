@@ -26,6 +26,7 @@ import { timelineEntries } from './timeline-entries.ts';
 import { TenantCaseStateSchema } from '../../../../shared/apis/records.ts';
 import { contactCountLabel } from './contact-count.ts';
 import { DossierCommunication } from './dossier-communication.tsx';
+import type { DossierLog } from './dossier-communication.tsx';
 import { NewCounterpartyForm } from './new-counterparty-form.tsx';
 import type { NewCounterpartyInput } from './new-counterparty-form.tsx';
 import {
@@ -72,6 +73,8 @@ export type DossierSave = (
   expectedRevision: number,
   unchanged: UnchangedSince,
 ) => Effect.Effect<RevisionedSaveResult>;
+
+export type { DossierLog } from './dossier-communication.tsx';
 
 interface DossierDraftProps {
   readonly counterpartyId: string;
@@ -454,6 +457,7 @@ export const TenantDossierCard = ({
   dossier,
   leaseHref,
   newContactId,
+  onLog,
   onSave,
   onUpdate,
   revision,
@@ -468,6 +472,8 @@ export const TenantDossierCard = ({
   readonly dossier: TenantDossier | undefined;
   readonly leaseHref?: string | undefined;
   readonly newContactId: Effect.Effect<string, PlatformError.PlatformError>;
+  /** Logs a call, e-mail, meeting or note in the timeline. */
+  readonly onLog: DossierLog;
   /** Saves a contacts or case edit against the revision its draft builds on. */
   readonly onSave: DossierSave;
   /** Archives or restores the dossier: a command that stays explicit. */
@@ -510,7 +516,7 @@ export const TenantDossierCard = ({
           revision={revision}
           taskHref={taskHref}
         />
-        <DossierCommunication activityLabels={activityLabels} canWrite={canWrite} onSave={onSave} revision={revision} />
+        <DossierCommunication activityLabels={activityLabels} canWrite={canWrite} onSave={onLog} />
         <h3>Časová osa</h3>
         {timelineEntries(dossier?.history ?? []).map(({ entry, key }) => (
           <article className="sp-tenant-event" key={key}>

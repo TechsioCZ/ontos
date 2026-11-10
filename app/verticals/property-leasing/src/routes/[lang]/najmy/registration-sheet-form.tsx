@@ -11,7 +11,6 @@ import {
   useDraftSave,
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
-import type { SaveOutcome } from '@app/admin-ui';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
@@ -21,7 +20,9 @@ import { constVoid } from 'effect/Function';
 import { useRef, useState } from 'react';
 import type { RegistrationOccupant } from '../../../../shared/apis/records.ts';
 import { RegistrationSheetIdSchema } from '../../../../shared/apis/records.ts';
-import type { OccupancyCommand } from '../../../../shared/actions/apply-command.ts';
+import type { Feedback } from '../../../../shared/actions/apply-command.ts';
+import { additionSaveOutcome } from './occupancy-command.ts';
+import type { AdditionSave } from './occupancy-command.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import type { NoticeContext } from './notice-templates.ts';
 
@@ -80,7 +81,7 @@ export const RegistrationSheetForm = ({
   readonly newId: Effect.Effect<string, PlatformError.PlatformError>;
   readonly onClose: () => void;
   /** Sends the command that creates the sheet, once. */
-  readonly onSave: (command: OccupancyCommand) => Effect.Effect<SaveOutcome>;
+  readonly onSave: AdditionSave;
 }) => {
   const { language, t } = useModernI18n();
   const labels = saveLabelsFor(language);
@@ -94,24 +95,27 @@ export const RegistrationSheetForm = ({
   const setDraft = (next: (current: SheetDraft) => SheetDraft) =>
     setSheet((current) => ({ ...current, draft: next(current.draft) }));
   const occupantSequence = useRef(draft.occupants.length);
+  const [reason, setReason] = useState(() => Option.none<Feedback>());
   const save = useDraftSave<SheetDraft, never>({
     initial: nothingSaved,
     isValid: complete,
     opened: suggested,
     runtime: browserRuntime,
     save: (value) =>
-      newId.pipe(
-        Effect.flatMap((sheetId) =>
-          onSave({
-            _tag: 'CreateRegistrationSheet',
-            note: value.note.trim(),
-            occupancyRef: record.occupancyRef,
-            occupants: value.occupants.map(storedOccupant),
-            purpose: value.purpose,
-            sheetId: RegistrationSheetIdSchema.make(sheetId),
-          }),
+      additionSaveOutcome(
+        newId.pipe(
+          Effect.flatMap((sheetId) =>
+            onSave({
+              _tag: 'CreateRegistrationSheet',
+              note: value.note.trim(),
+              occupancyRef: record.occupancyRef,
+              occupants: value.occupants.map(storedOccupant),
+              purpose: value.purpose,
+              sheetId: RegistrationSheetIdSchema.make(sheetId),
+            }),
+          ),
         ),
-        Effect.orElseSucceed((): SaveOutcome => 'failed'),
+        setReason,
       ),
     value: draft,
   });
@@ -256,7 +260,17 @@ export const RegistrationSheetForm = ({
         <Button onClick={handleCancel} size="sm" theme="outlined" variant="secondary">
           {t('property-leasing.demo.cancel')}
         </Button>
-        <SaveBar labels={labels} onReloadLatest={constVoid} onSave={handleSave} size="sm" status={save.status} />
+        <SaveBar
+          error={Option.match(reason, {
+            onNone: () => null,
+            onSome: (value) => t(`property-leasing.demo.feedback.${value}`),
+          })}
+          labels={labels}
+          onReloadLatest={constVoid}
+          onSave={handleSave}
+          size="sm"
+          status={save.status}
+        />
       </div>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </form>

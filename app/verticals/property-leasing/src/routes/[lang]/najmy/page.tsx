@@ -67,8 +67,8 @@ import {
   occupancyEditorActions,
   occupancyEditorReducer,
 } from './editor-state.ts';
-import { createOccupancy, failedWith, saveLeaseDraft } from './occupancy-command.ts';
-import type { OccupancyOutcome } from './occupancy-command.ts';
+import { createOccupancy, failedWith, saveLeaseDraft, sendAddition, settleAddition } from './occupancy-command.ts';
+import type { AdditionSave, OccupancyOutcome } from './occupancy-command.ts';
 import { leaseDraftRecord, stayDraftRecord, updateDraftCommand } from './occupancy-draft.ts';
 import { OccupancyEditorPanel } from './occupancy-editor-panel.tsx';
 import type { OccupancySave } from './occupancy-editor-panel.tsx';
@@ -382,20 +382,24 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     );
   };
   /**
-   * Uložit of a form that adds a record to the lease or stay (a registration sheet, a prepared notice): one command,
-   * resent once against fresh records after an unrelated change, since an addition overwrites nothing; a saved one
-   * re-reads the page so the new record is listed.
+   * Uložit of a form that adds a record (a registration sheet, a prepared notice, a logged entry): one command, resent
+   * once against fresh records after an unrelated change, since an addition overwrites nothing; settled as the page's
+   * own commands are, so related lists refresh and a saved one is listed.
    */
-  const saveAddition = (command: OccupancyCommand): Effect.Effect<SaveOutcome> =>
+  const saveAddition: AdditionSave = (command) =>
     snapshot === undefined
-      ? Effect.succeed('failed')
-      : saveLeasingCommand(command, snapshot.revision, () => true, setProposal).pipe(
-          Effect.flatMap((result) =>
-            Predicate.isNumber(result)
-              ? reload().pipe(Effect.ignore, Effect.as<SaveOutcome>('saved'))
-              : Effect.succeed(result),
-          ),
-        );
+      ? Effect.succeed(failedWith('unavailable'))
+      : settleAddition(sendAddition(command, snapshot.revision), {
+          invalidate: invalidateLeaseRelated,
+          onProposal: setProposal,
+          reload: reload().pipe(Effect.ignore),
+        });
+  const logCounterpartyActivity = (counterpartyId: string) => (changes: DossierChanges) => {
+    const entry = tenantDirectory.find((item) => item.counterpartyRef.resourceId === counterpartyId);
+    return entry === undefined
+      ? Effect.succeed(failedWith('unavailable'))
+      : saveAddition({ _tag: 'UpdateCounterpartyDossier', counterpartyRef: entry.counterpartyRef, ...changes });
+  };
   const updateCounterpartyDossier = (counterpartyId: string) => (changes: DossierChanges) => {
     const entry = tenantDirectory.find((item) => item.counterpartyRef.resourceId === counterpartyId);
     if (entry !== undefined) {
@@ -709,6 +713,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     language,
     linkedCounterpartyId,
     linkedResourceId,
+    logCounterpartyActivity,
     newDraft,
     openCreated,
     openRentEditor,
@@ -1155,6 +1160,9 @@ const OccupancyRelations = ({ model, state }: OccupancyDetailProps) => {
               : `/${language}/najmy?counterpartyId=${selected.customerCounterpartyRef.resourceId}#tenant`
           }
           newContactId={newUuid}
+          onLog={(changes) =>
+            state.saveAddition({ _tag: 'UpdateTenantDossier', occupancyRef: selected.occupancyRef, ...changes })
+          }
           onSave={(changes, expectedRevision, unchanged) =>
             saveLeasingCommand(
               { _tag: 'UpdateTenantDossier', occupancyRef: selected.occupancyRef, ...changes },
@@ -1506,6 +1514,7 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
             }
             language={state.language}
             newContactId={newUuid}
+            onLog={state.logCounterpartyActivity(state.linkedCounterpartyId)}
             onSave={state.saveCounterpartyDossier(state.linkedCounterpartyId)}
             onUpdate={state.updateCounterpartyDossier(state.linkedCounterpartyId)}
             snapshot={snapshot}

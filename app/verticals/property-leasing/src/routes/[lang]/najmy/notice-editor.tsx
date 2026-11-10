@@ -4,15 +4,16 @@
 // stores; leaving the page with typed input asks first.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
-import type { SaveOutcome } from '@app/admin-ui';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Effect, PlatformError } from 'effect';
+import { Effect, Option, PlatformError } from 'effect';
 import { constVoid } from 'effect/Function';
 import { useState } from 'react';
 import { NoticeTemplateKeySchema, PreparedNoticeIdSchema } from '../../../../shared/apis/records.ts';
-import type { OccupancyCommand } from '../../../../shared/actions/apply-command.ts';
+import type { Feedback } from '../../../../shared/actions/apply-command.ts';
+import { additionSaveOutcome } from './occupancy-command.ts';
+import type { AdditionSave } from './occupancy-command.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { smsSegments, templatesFor } from './notice-templates.ts';
 import type { NoticeChannel, NoticeContext } from './notice-templates.ts';
@@ -70,7 +71,7 @@ export const NoticeEditor = ({
   readonly defaultPhone: string;
   readonly newId: Effect.Effect<string, PlatformError.PlatformError>;
   /** Sends the command that stores the notice, once. */
-  readonly onSave: (command: OccupancyCommand) => Effect.Effect<SaveOutcome>;
+  readonly onSave: AdditionSave;
 }) => {
   const { language, t } = useModernI18n();
   const labels = saveLabelsFor(language);
@@ -92,6 +93,7 @@ export const NoticeEditor = ({
     };
   };
   const draft = resolve(choice);
+  const [reason, setReason] = useState(() => Option.none<Feedback>());
   const record = useDraftSave<NoticeDraft, never>({
     initial: nothingStored,
     isValid: (value) =>
@@ -100,20 +102,22 @@ export const NoticeEditor = ({
     opened: resolve(firstChoice),
     runtime: browserRuntime,
     save: (value) =>
-      newId.pipe(
-        Effect.flatMap((noticeId) =>
-          onSave({
-            _tag: 'PrepareNotice',
-            body: value.body.trim(),
-            channel: value.channel,
-            noticeId: PreparedNoticeIdSchema.make(noticeId),
-            occupancyRef: context.record.occupancyRef,
-            recipient: value.recipient.trim(),
-            subject: value.channel === 'SMS' ? '' : value.subject.trim(),
-            templateKey: NoticeTemplateKeySchema.make(value.templateKey),
-          }),
+      additionSaveOutcome(
+        newId.pipe(
+          Effect.flatMap((noticeId) =>
+            onSave({
+              _tag: 'PrepareNotice',
+              body: value.body.trim(),
+              channel: value.channel,
+              noticeId: PreparedNoticeIdSchema.make(noticeId),
+              occupancyRef: context.record.occupancyRef,
+              recipient: value.recipient.trim(),
+              subject: value.channel === 'SMS' ? '' : value.subject.trim(),
+              templateKey: NoticeTemplateKeySchema.make(value.templateKey),
+            }),
+          ),
         ),
-        Effect.orElseSucceed((): SaveOutcome => 'failed'),
+        setReason,
       ),
     value: draft,
   });
@@ -266,7 +270,17 @@ export const NoticeEditor = ({
             Otevřít v poštovním programu →
           </a>
         )}
-        <SaveBar labels={labels} onReloadLatest={constVoid} onSave={handleSave} size="sm" status={record.status} />
+        <SaveBar
+          error={Option.match(reason, {
+            onNone: () => null,
+            onSome: (value) => t(`property-leasing.demo.feedback.${value}`),
+          })}
+          labels={labels}
+          onReloadLatest={constVoid}
+          onSave={handleSave}
+          size="sm"
+          status={record.status}
+        />
       </div>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </form>

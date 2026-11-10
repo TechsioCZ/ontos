@@ -1,16 +1,23 @@
 // Logs a call, e-mail, meeting or note in the counterparty timeline. Typing changes only the draft; the shared
-// Uložit records it once, then the form starts empty again; leaving the page with a typed summary asks first.
+// Uložit records it once, then the form starts empty again; leaving the page with a typed summary asks first. A failed
+// entry shows why and stays in the form for another Uložit.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
-import type { RevisionedSaveResult, SaveOutcome } from '@app/admin-ui';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Effect, Option, Predicate, Schema } from 'effect';
+import { Option, Schema } from 'effect';
+import type { Effect } from 'effect';
 import { constVoid } from 'effect/Function';
 import { useState } from 'react';
+import type { Feedback } from '../../../../shared/actions/apply-command.ts';
 import { TenantActivityInputSchema } from '../../../../shared/apis/records.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
-import type { DossierChanges, UnchangedSince } from './leasing-save.ts';
+import type { DossierChanges } from './leasing-save.ts';
+import { additionSaveOutcome } from './occupancy-command.ts';
+import type { OccupancyOutcome } from './occupancy-command.ts';
+
+/** Logs one entry in the timeline: an addition, sent once against the records as read now. */
+export type DossierLog = (changes: DossierChanges) => Effect.Effect<OccupancyOutcome>;
 
 type CommunicationKind = typeof TenantActivityInputSchema.fields.kind.Type;
 
@@ -22,45 +29,32 @@ interface CommunicationDraft {
 const emptyCommunication: CommunicationDraft = { kind: 'CALL', summary: '' };
 const KINDS: readonly CommunicationKind[] = ['CALL', 'EMAIL', 'MEETING', 'NOTE'];
 
-/** A logged entry only appends to the timeline, so another change of the records never conflicts with it. */
-const appendOnly: UnchangedSince = () => true;
-
 /** Two drafts are the same when they would log the same entry; the kind alone is not input yet. */
 const sameCommunication = (left: CommunicationDraft, right: CommunicationDraft) =>
   left.summary.trim() === right.summary.trim() && (left.summary.trim() === '' || left.kind === right.kind);
-
-const saveOutcomeOf = (result: RevisionedSaveResult): SaveOutcome => (Predicate.isNumber(result) ? 'saved' : result);
 
 export const DossierCommunication = ({
   activityLabels,
   canWrite,
   onSave,
-  revision,
 }: {
   /** The readable name of each kind of entry. */
   readonly activityLabels: Readonly<Record<CommunicationKind, string>>;
   readonly canWrite: boolean;
-  /** Sends one dossier change against the revision of the records. */
-  readonly onSave: (
-    changes: DossierChanges,
-    expectedRevision: number,
-    unchanged: UnchangedSince,
-  ) => Effect.Effect<RevisionedSaveResult>;
-  /** Revision of the records the dossier comes from. */
-  readonly revision: number;
+  /** Logs the entry; a logged entry only appends to the timeline, so it never waits on a newer version. */
+  readonly onSave: DossierLog;
 }) => {
   const { language, t } = useModernI18n();
   const labels = saveLabelsFor(language);
   const [draft, setDraft] = useState(emptyCommunication);
+  const [reason, setReason] = useState(() => Option.none<Feedback>());
   const record = useDraftSave<CommunicationDraft, never>({
     equals: sameCommunication,
     initial: emptyCommunication,
     isValid: (value) => value.summary.trim().length > 0,
     runtime: browserRuntime,
     save: (value) =>
-      onSave({ activity: { kind: value.kind, summary: value.summary.trim() } }, revision, appendOnly).pipe(
-        Effect.map(saveOutcomeOf),
-      ),
+      additionSaveOutcome(onSave({ activity: { kind: value.kind, summary: value.summary.trim() } }), setReason),
     value: draft,
   });
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
@@ -126,7 +120,17 @@ export const DossierCommunication = ({
         />
       </div>
       <p className="sp-tenant-muted">{t('property-leasing.dossier.communicationManual')}</p>
-      <SaveBar labels={labels} onReloadLatest={constVoid} onSave={handleSave} size="sm" status={record.status} />
+      <SaveBar
+        error={Option.match(reason, {
+          onNone: () => null,
+          onSome: (value) => t(`property-leasing.demo.feedback.${value}`),
+        })}
+        labels={labels}
+        onReloadLatest={constVoid}
+        onSave={handleSave}
+        size="sm"
+        status={record.status}
+      />
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </form>
   );

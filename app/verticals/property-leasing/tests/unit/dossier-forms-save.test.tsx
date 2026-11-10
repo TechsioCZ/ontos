@@ -3,12 +3,17 @@
 // sheet and a prepared notice save once from the shared Uložit only; typing and Enter change only the draft; leaving
 // with typed input asks first and an untouched form leaves at once. Only the i18n runtime and the router are replaced.
 import { saveLabelsFor } from '@app/admin-ui';
-import type { RevisionedSaveResult, SaveOutcome } from '@app/admin-ui';
 import { Effect, Option } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import type { OccupancyCommand } from '../../shared/actions/apply-command.ts';
 import { DossierCommunication } from '../../src/routes/[lang]/najmy/dossier-communication.tsx';
 import type { DossierChanges } from '../../src/routes/[lang]/najmy/leasing-save.ts';
+import {
+  ConflictOutcomeSchema,
+  FailedOutcomeSchema,
+  SavedOutcomeSchema,
+} from '../../src/routes/[lang]/najmy/occupancy-command.ts';
+import type { OccupancyOutcome } from '../../src/routes/[lang]/najmy/occupancy-command.ts';
 import { NewCounterpartyForm } from '../../src/routes/[lang]/najmy/new-counterparty-form.tsx';
 import type { NewCounterpartyInput } from '../../src/routes/[lang]/najmy/new-counterparty-form.tsx';
 import { NoticeEditor } from '../../src/routes/[lang]/najmy/notice-editor.tsx';
@@ -50,14 +55,24 @@ const onClose = () => {
   left.push('closed');
 };
 
+const saved = SavedOutcomeSchema.make({ resourceRef: null, revision: 8 });
 /** A save that records what it was given and answers `saved`. */
 const recording =
   <A,>(into: A[]) =>
   (value: A) =>
-    Effect.sync((): SaveOutcome => {
+    Effect.sync(() => {
       into.push(value);
-      return 'saved';
+      return 'saved' as const;
     });
+/** An addition that records what it was given and answers each outcome in turn, the last one from then on. */
+const answering =
+  <A,>(into: A[], outcomes: readonly OccupancyOutcome[]) =>
+  (value: A) =>
+    Effect.sync((): OccupancyOutcome => {
+      into.push(value);
+      return outcomes[Math.min(into.length, outcomes.length) - 1] ?? saved;
+    });
+const feedback = (reason: string) => `property-leasing.demo.feedback.${reason}`;
 /** No registry customer has the typed name. */
 const noMatch = (): string | undefined => Option.getOrUndefined(Option.none<string>());
 
@@ -78,13 +93,9 @@ afterEach(() => {
 describe('dossier and stay forms save from Uložit only', () => {
   it.effect('communication: typing and Enter log nothing; Uložit logs once and the form starts empty', () =>
     Effect.gen(function* communication() {
-      const logged: { readonly changes: DossierChanges; readonly revision: number }[] = [];
-      const onSave = (changes: DossierChanges, revision: number) =>
-        Effect.sync((): RevisionedSaveResult => {
-          logged.push({ changes, revision });
-          return 8;
-        });
-      yield* mount(<DossierCommunication activityLabels={activityLabels} canWrite onSave={onSave} revision={7} />);
+      const logged: DossierChanges[] = [];
+      const onSave = answering(logged, [saved]);
+      yield* mount(<DossierCommunication activityLabels={activityLabels} canWrite onSave={onSave} />);
       expect(navigation.shouldBlock()).toBe(false);
       yield* type('communication-summary', 'Domluva předání klíčů');
       yield* pressEnter('communication-summary');
@@ -93,9 +104,7 @@ describe('dossier and stay forms save from Uložit only', () => {
 
       yield* click(button(labels.save));
       yield* waitUntil(() => logged.length === 1);
-      expect(logged).toEqual([
-        { changes: { activity: { kind: 'CALL', summary: 'Domluva předání klíčů' } }, revision: 7 },
-      ]);
+      expect(logged).toEqual([{ activity: { kind: 'CALL', summary: 'Domluva předání klíčů' } }]);
       yield* waitUntil(() => field('communication-summary').value === '');
       expect(navigation.shouldBlock()).toBe(false);
     }),
@@ -156,7 +165,7 @@ describe('dossier and stay forms save from Uložit only', () => {
   it.effect('registration sheet: the suggested sheet closes untouched; Uložit creates it once and closes', () =>
     Effect.gen(function* sheet() {
       const sent: OccupancyCommand[] = [];
-      const onSave = recording(sent);
+      const onSave = answering(sent, [saved]);
       const form = <RegistrationSheetForm context={context} newId={newId} onClose={onClose} onSave={onSave} />;
       yield* mount(form);
       expect(navigation.shouldBlock()).toBe(false);
@@ -186,7 +195,7 @@ describe('dossier and stay forms save from Uložit only', () => {
   it.effect('notice: the template text can be stored at once; typed text asks before leaving; Uložit stores once', () =>
     Effect.gen(function* notice() {
       const sent: OccupancyCommand[] = [];
-      const onSave = recording(sent);
+      const onSave = answering(sent, [saved]);
       yield* mount(
         <NoticeEditor
           context={context}
@@ -213,6 +222,76 @@ describe('dossier and stay forms save from Uložit only', () => {
       });
       yield* waitUntil(() => !navigation.shouldBlock());
       expect(text()).not.toContain(labels.unsaved);
+    }),
+  );
+});
+
+describe('an addition that the server refuses stays in the form with the reason and can be saved again', () => {
+  const conflict = ConflictOutcomeSchema.make({});
+
+  it.effect('communication: a conflict after the resend shows why; Uložit logs the typed entry again', () =>
+    Effect.gen(function* communication() {
+      const logged: DossierChanges[] = [];
+      yield* mount(
+        <DossierCommunication activityLabels={activityLabels} canWrite onSave={answering(logged, [conflict, saved])} />,
+      );
+      yield* type('communication-summary', 'Domluva předání klíčů');
+      yield* click(button(labels.save));
+      yield* waitUntil(() => text().includes(feedback('conflict')));
+      expect(field('communication-summary').value).toBe('Domluva předání klíčů');
+      expect(button(labels.save).disabled).toBe(false);
+
+      yield* click(button(labels.save));
+      yield* waitUntil(() => logged.length === 2);
+      yield* waitUntil(() => field('communication-summary').value === '');
+      expect(text()).not.toContain(feedback('conflict'));
+    }),
+  );
+
+  it.effect('registration sheet: a refused save shows its specific reason and Uložit sends it again', () =>
+    Effect.gen(function* sheet() {
+      const sent: OccupancyCommand[] = [];
+      const forbidden = FailedOutcomeSchema.make({ reason: 'forbidden' });
+      yield* mount(
+        <RegistrationSheetForm
+          context={context}
+          newId={newId}
+          onClose={onClose}
+          onSave={answering(sent, [forbidden, conflict, saved])}
+        />,
+      );
+      yield* type('sheet-name-0', 'Jana Nováková');
+      yield* click(button(labels.save));
+      yield* waitUntil(() => text().includes(feedback('forbidden')));
+      expect(text()).not.toContain(labels.failed);
+      yield* click(button(labels.save));
+      yield* waitUntil(() => text().includes(feedback('conflict')));
+      expect(button(labels.save).disabled).toBe(false);
+      yield* click(button(labels.save));
+      yield* waitUntil(() => left.length === 1);
+      expect(sent).toHaveLength(3);
+    }),
+  );
+
+  it.effect('notice: a conflict after the resend keeps the typed text savable', () =>
+    Effect.gen(function* notice() {
+      const sent: OccupancyCommand[] = [];
+      yield* mount(
+        <NoticeEditor
+          context={context}
+          defaultEmail="najemce@dolce.cz"
+          defaultPhone=""
+          newId={newId}
+          onSave={answering(sent, [conflict, saved])}
+        />,
+      );
+      yield* type('notice-subject', 'Předání kanceláře');
+      yield* click(button(labels.save));
+      yield* waitUntil(() => text().includes(feedback('conflict')));
+      expect(field('notice-subject').value).toBe('Předání kanceláře');
+      yield* click(button(labels.save));
+      yield* waitUntil(() => sent.length === 2);
+      expect(sent[1]).toMatchObject({ subject: 'Předání kanceláře' });
     }),
   );
 });
