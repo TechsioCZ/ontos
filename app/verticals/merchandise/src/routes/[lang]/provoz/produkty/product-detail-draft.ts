@@ -119,8 +119,8 @@ const metadataOf = (draft: DetailDraft): ProductMetadata => ({
 
 const metadataEquivalent = Schema.toEquivalence(ProductMetadataSchema);
 
-const metadataChanged = (draft: DetailDraft, product: ProductRecord): boolean =>
-  !metadataEquivalent(metadataOf(draft), metadataOf(draftOf(product)));
+const metadataChanged = (draft: DetailDraft, base: DetailDraft): boolean =>
+  !metadataEquivalent(metadataOf(draft), metadataOf(base));
 
 export type DetailPatch = { -readonly [Key in keyof ProductPatch]?: ProductPatch[Key] };
 
@@ -132,29 +132,34 @@ export interface DetailSave {
   readonly priceMinor: number;
 }
 
-/** What one autosave sends: the changed basic fields, and a changed price as its own command. */
-export const detailSaveOf = (draft: DetailDraft, product: ProductRecord): DetailSave => {
-  const patch: DetailPatch = metadataChanged(draft, product) ? { ...metadataOf(draft) } : {};
-  if (draft.name.trim() !== product.name) {
+/**
+ * What one autosave sends: the basic fields that differ from `base`, and a changed price as its own command. `base`
+ * is the draft of the version the server last confirmed (`draftOf` the product the form opened with, then every
+ * saved draft), with the same real variants as `draft`. The product on the page is not the base: until the reload
+ * after the form's own save lands it still shows the version before that save.
+ */
+export const detailSaveOf = (draft: DetailDraft, base: DetailDraft): DetailSave => {
+  const patch: DetailPatch = metadataChanged(draft, base) ? { ...metadataOf(draft) } : {};
+  if (draft.name.trim() !== base.name.trim()) {
     patch.name = draft.name.trim();
   }
-  if (draft.category.trim() !== product.category) {
+  if (draft.category.trim() !== base.category.trim()) {
     patch.category = draft.category.trim();
   }
-  if (draft.unit !== product.unit) {
+  if (draft.unit !== base.unit) {
     patch.unit = draft.unit;
   }
-  if (draft.vatRate !== product.vatRate) {
+  if (draft.vatRate !== base.vatRate) {
     patch.vatRate = draft.vatRate;
   }
-  if (draft.lowStock !== product.lowStockThreshold) {
+  if (draft.lowStock !== base.lowStock) {
     patch.lowStockThreshold = draft.lowStock;
   }
-  if (draft.active !== product.active) {
+  if (draft.active !== base.active) {
     patch.active = draft.active;
   }
   const priceMinor = Math.round(draft.priceCzk * 100);
-  return { patch, priceChanged: priceMinor !== product.currentPriceMinor, priceMinor };
+  return { patch, priceChanged: priceMinor !== Math.round(base.priceCzk * 100), priceMinor };
 };
 
 const tooLong = (value: string, maximum: number): boolean => value.trim().length > maximum;
