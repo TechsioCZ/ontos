@@ -834,6 +834,25 @@ it.effect('offers as admission candidates only active directory humans not yet l
   }),
 );
 
+it.effect('answers an owner options with one gate batch for every write and one directory read per company', () =>
+  Effect.gen(function* boundedOptions() {
+    const owner = harness({ persona: 'owner' });
+    const offered = yield* owner.run((bff) => bff.options(headers, { limit: 100 }));
+    const scopes = view.scopes.length;
+    const companies = scopes - 1;
+    const writes = Object.values(offered.writeAvailability).length;
+    expect([scopes, companies, writes, offered.admissionCandidates.length]).toEqual([3, 2, 8, 3]);
+    expect(Object.values(offered.writeAvailability)).toEqual(Array.from({ length: writes }, () => true));
+    // The read's own admission asks once per scope, as every Lidé read does. Every write control is
+    // then one batch of one question per write and scope, never a single decision per write and scope,
+    // which held an owner's options for tens of seconds on a tenant with five companies.
+    expect(owner.asks.singles).toHaveLength(scopes);
+    expect(owner.asks.batches.map((batch) => batch.length)).toEqual([writes * scopes]);
+    // Candidates come from one directory read per administered company, never one per candidate.
+    expect(owner.recorded.directoryReads).toBe(companies);
+  }),
+);
+
 it.effect('offers a delegate neither admission nor ending, which only permanent administration may run', () =>
   Effect.gen(function* delegateOptions() {
     const delegate = harness({ persona: 'delegate' });
