@@ -530,6 +530,14 @@ export const customerLeaveDecision = (state: {
   return state.dirty ? 'confirm' : 'proceed';
 };
 
+const settledAutosaveStates = new Set(['idle', 'saved', 'proposed']);
+/** Inline autosave fields keep their own drafts; one whose status has not settled holds typed text not yet saved. */
+export const hasUnsettledAutosave = (root: ParentNode | null): boolean =>
+  root !== null &&
+  [...root.querySelectorAll<HTMLElement>('[data-autosave-state]')].some(
+    (status) => !settledAutosaveStates.has(status.dataset['autosaveState'] ?? ''),
+  );
+
 /** Runs `run` after the open detail's leave check. The open detail exposes it through a ref; the list page calls it. */
 export type CustomerLeaveRun = (run: () => void) => void;
 
@@ -602,8 +610,8 @@ export const useCustomerDetail = (
         run: ({ run }) => run(),
       }),
     );
-  const requestLeave = (intent: CustomerLeaveIntent) => {
-    const decision = customerLeaveDecision({ busy, dirty });
+  const requestLeave = (intent: CustomerLeaveIntent, inlineDraft = false) => {
+    const decision = customerLeaveDecision({ busy, dirty: dirty || inlineDraft });
     if (decision === 'ignore') {
       return;
     }
@@ -621,9 +629,12 @@ export const useCustomerDetail = (
     }
   };
   const requestNavigation = (href: string) => requestLeave({ href, kind: 'navigate' });
-  /** Runs `run` only after the same leave check as close: a save in flight ignores it, unsaved edits ask first. */
-  const requestLeaveThen = (run: () => void) => {
-    requestLeave({ kind: 'run', run });
+  /**
+   * Runs `run` only after the same leave check as close: a save in flight ignores it, unsaved edits ask first.
+   * `inlineDraft` reports text typed into an inline autosave field that is not saved yet.
+   */
+  const requestLeaveThen = (run: () => void, inlineDraft: boolean) => {
+    requestLeave({ kind: 'run', run }, inlineDraft);
   };
   const setDiscardOpen = (open: boolean) => {
     if (!open) {

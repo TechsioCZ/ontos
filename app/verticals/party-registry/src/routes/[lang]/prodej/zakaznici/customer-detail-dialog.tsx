@@ -1,5 +1,5 @@
 import type { RefObject } from 'react';
-import { useImperativeHandle } from 'react';
+import { useImperativeHandle, useRef } from 'react';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { SidePanel } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -7,7 +7,7 @@ import { useToast } from '@techsio/ui-kit/molecules/toast';
 
 import type { CustomerListItem } from '../../../../api/customers-client.ts';
 import { CUSTOMER_DETAIL_KEY, CustomerDetailContent } from './customer-detail-content.tsx';
-import { useCustomerDetail } from './customers-data.ts';
+import { hasUnsettledAutosave, useCustomerDetail } from './customers-data.ts';
 import type { CustomerDetailSnapshot, CustomerLeaveRun } from './customers-data.ts';
 import { customerIdentitySummary } from './customers-model.ts';
 
@@ -48,7 +48,13 @@ const CustomerDetailView = ({
   const { name } = customerIdentitySummary(customer, detail.party);
   const handleOpenChange = (open: boolean) => detail.requestClose(open);
   const { requestLeaveThen } = detail;
-  useImperativeHandle(leaveRunRef, () => requestLeaveThen, [requestLeaveThen]);
+  // Name and contact fields autosave on their own, so their unsaved text is read from the panel body.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useImperativeHandle(
+    leaveRunRef,
+    () => (run: () => void) => requestLeaveThen(run, hasUnsettledAutosave(bodyRef.current)),
+    [requestLeaveThen],
+  );
 
   return (
     <SidePanel
@@ -64,13 +70,15 @@ const CustomerDetailView = ({
       size="xl"
       title={name || t(`${CUSTOMER_DETAIL_KEY}.title`)}
     >
-      <CustomerDetailContent
-        detail={detail}
-        failure={failure}
-        initialSnapshot={initialSnapshot}
-        onRetry={onRetry}
-        subject={customer}
-      />
+      <div className="contents" ref={bodyRef}>
+        <CustomerDetailContent
+          detail={detail}
+          failure={failure}
+          initialSnapshot={initialSnapshot}
+          onRetry={onRetry}
+          subject={customer}
+        />
+      </div>
     </SidePanel>
   );
 };

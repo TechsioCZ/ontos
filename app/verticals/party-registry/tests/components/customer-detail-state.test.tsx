@@ -14,7 +14,11 @@ import { executePartyDetail } from '../../src/api/party-detail-client.ts';
 import { executePartyContactPoints } from '../../src/api/party-contact-points-client.ts';
 import { executePartyOfficialIdentifierHistory } from '../../src/api/party-official-identifier-history-client.ts';
 import { updateParty } from '../../src/api/party-command-client.ts';
-import { loadCustomerDetail, useCustomerDetail } from '../../src/routes/[lang]/prodej/zakaznici/customers-data.ts';
+import {
+  hasUnsettledAutosave,
+  loadCustomerDetail,
+  useCustomerDetail,
+} from '../../src/routes/[lang]/prodej/zakaznici/customers-data.ts';
 import { relatedCustomerUrl } from '../../src/routes/[lang]/prodej/zakaznici/customers-model.ts';
 import type { CustomerDetailSnapshot } from '../../src/routes/[lang]/prodej/zakaznici/customers-data.ts';
 import { CustomerDetailDialog } from '../../src/routes/[lang]/prodej/zakaznici/customer-detail-dialog.tsx';
@@ -329,7 +333,7 @@ it('navigates directly only when the customer editor is clean', () => {
 it('runs a deferred retarget at once when the customer editor is clean', () => {
   const { result } = renderHook(useDetail);
   const run = rstest.fn<() => void>();
-  act(() => result.current.requestLeaveThen(run));
+  act(() => result.current.requestLeaveThen(run, false));
   expect(run).toHaveBeenCalledTimes(1);
   expect(result.current.discardOpen).toBe(false);
 });
@@ -338,15 +342,42 @@ it('asks before a deferred retarget when the editor is dirty, and runs it only a
   const { result } = renderHook(useDetail);
   const run = rstest.fn<() => void>();
   act(() => result.current.changeDraft('new-PHONE-value', '+420123456789'));
-  act(() => result.current.requestLeaveThen(run));
+  act(() => result.current.requestLeaveThen(run, false));
   expect(result.current.discardOpen).toBe(true);
   expect(run).not.toHaveBeenCalled();
   act(() => result.current.setDiscardOpen(false));
   expect(run).not.toHaveBeenCalled();
-  act(() => result.current.requestLeaveThen(run));
+  act(() => result.current.requestLeaveThen(run, false));
   act(() => result.current.confirmDiscard());
   expect(run).toHaveBeenCalledTimes(1);
   expect(close).not.toHaveBeenCalled();
+});
+
+it('asks before a deferred retarget when an inline autosave field holds unsaved text', () => {
+  const { result } = renderHook(useDetail);
+  const run = rstest.fn<() => void>();
+  act(() => result.current.requestLeaveThen(run, true));
+  expect(result.current.discardOpen).toBe(true);
+  expect(run).not.toHaveBeenCalled();
+  act(() => result.current.confirmDiscard());
+  expect(run).toHaveBeenCalledTimes(1);
+});
+
+const autosaveStatuses = (states: readonly string[]) => {
+  const root = document.createElement('div');
+  for (const state of states) {
+    const status = document.createElement('div');
+    status.dataset['autosaveState'] = state;
+    root.append(status);
+  }
+  return root;
+};
+
+it('reads an unsettled inline autosave status in the panel body as unsaved text', () => {
+  expect(hasUnsettledAutosave(autosaveStatuses(['saved', 'invalid']))).toBe(true);
+  expect(hasUnsettledAutosave(autosaveStatuses(['dirty']))).toBe(true);
+  expect(hasUnsettledAutosave(autosaveStatuses(['idle', 'saved', 'proposed']))).toBe(false);
+  expect(hasUnsettledAutosave(null)).toBe(false);
 });
 
 it.effect('ignores a deferred retarget while a save is in flight', () =>
@@ -358,7 +389,7 @@ it.effect('ignores a deferred retarget while a save is in flight', () =>
     act(() => result.current.save({ kind: 'name', party, value: 'After' }, ['name']));
     expect(result.current.busy).toBe(true);
     const run = rstest.fn<() => void>();
-    act(() => result.current.requestLeaveThen(run));
+    act(() => result.current.requestLeaveThen(run, false));
     expect(run).not.toHaveBeenCalled();
     expect(result.current.discardOpen).toBe(false);
     yield* Deferred.succeed(pending, afterParty);
