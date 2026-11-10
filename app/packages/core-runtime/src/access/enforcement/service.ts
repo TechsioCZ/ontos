@@ -1167,7 +1167,7 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
     const reads = yield* Effect.forEach(
       entries,
       ([, legalEntityId]) => resolveGateScope(scope, legalEntityId, holders),
-      { concurrency: 4 },
+      { concurrency: 2 },
     );
     const preambles = new Map<string, GatePreamble>();
     for (const [index, [key]] of entries.entries()) {
@@ -1294,7 +1294,8 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
    */
   const decideMany = Effect.fn('AccessDecisionGate.decideMany')(function* decideManyGate(input: readonly GateInput[]) {
     const groups = gateGroupsOf(input);
-    const prepared = yield* Effect.forEach(groups, (group) => prepareGroup({ group, input }), { concurrency: 4 });
+    // Each group reads identity and scope through the pool: two at a time, never more of a small shared pool.
+    const prepared = yield* Effect.forEach(groups, (group) => prepareGroup({ group, input }), { concurrency: 2 });
     const batches = prepared.flatMap(({ batch }) => (batch === undefined ? [] : [batch]));
     const decided = yield* decideAccessMany(
       ports.check,

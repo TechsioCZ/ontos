@@ -1355,6 +1355,9 @@ const requiredCellQueries = (params: {
   return queries;
 };
 
+/** Pooled reads one batch runs at once; each holds one connection of the request's shared pool. */
+const BATCH_READ_CONCURRENCY = 2;
+
 /** A read cell set, or an intent read that failed: the latter is UNAVAILABLE, never empty intent. */
 type CellRead = { readonly cells: readonly AuthorityCell[] } | { readonly unreadable: true };
 
@@ -1367,8 +1370,9 @@ const readCellSets = Effect.fn('AccessDecision.readCellSets')(function* readCell
     distinct.set(cellQueryKey(query), query);
   }
   const entries = [...distinct.entries()];
+  // Each read is one pooled transaction: two at a time, so one batch never holds more of a small shared pool.
   const reads = yield* Effect.forEach(entries, ([, query]) => Effect.option(authority.readCells(query)), {
-    concurrency: 8,
+    concurrency: BATCH_READ_CONCURRENCY,
   });
   const cells = new Map<string, CellRead>();
   for (const [index, [key]] of entries.entries()) {
@@ -1377,6 +1381,38 @@ const readCellSets = Effect.fn('AccessDecision.readCellSets')(function* readCell
   }
   return cells;
 });
+
+/** Keeps a batch's one configure-bases answer for the rest of that batch, then answers with it. */
+const rememberedAnswer = <Answer>(answered: Map<string, Answer>, key: string, once: Answer): Answer => {
+  answered.set(key, once);
+  return once;
+};
+
+/**
+ * The same port, answering one configure-bases question once per batch: every `admin` entry of one actor asks the
+ * same actor, tenant and instant, so the first read is shared with the rest of this batch and never with another.
+ */
+const sharedConfigureBases = (authority: DecisionAuthorityPort): DecisionAuthorityPort => {
+  const read = authority.readConfigureBases;
+  if (read === undefined) {
+    return authority;
+  }
+  const answered = new Map<string, ReturnType<typeof read>>();
+  return {
+    ...authority,
+    readConfigureBases: (query) =>
+      Effect.suspend(() => {
+        const key = [query.tenantId, query.actor, String(DateTime.toEpochMillis(DateTime.makeUnsafe(query.at)))].join(
+          '\u0000',
+        );
+        const known = answered.get(key);
+        if (known !== undefined) {
+          return known;
+        }
+        return Effect.cached(read(query)).pipe(Effect.flatMap((once) => rememberedAnswer(answered, key, once)));
+      }),
+  };
+};
 
 /** The same port with every needed cell set already in hand: planning performs no read. */
 const preloadedAuthority = (
@@ -1494,7 +1530,7 @@ const planGroup = Effect.fn('AccessDecision.planGroup')(function* planGroupProgr
   const resolutions = yield* Effect.forEach(
     actorEntries,
     ([, { actor, now }]) => resolveActorContext(authority, actor, now),
-    { concurrency: 4 },
+    { concurrency: BATCH_READ_CONCURRENCY },
   );
   const resolutionByKey = new Map<string, ActorResolution>();
   for (const [index, [key]] of actorEntries.entries()) {
@@ -1507,10 +1543,12 @@ const planGroup = Effect.fn('AccessDecision.planGroup')(function* planGroupProgr
     guardEntry({ index, input, resolution: resolutionByKey.get(actorResolutionKey(input)) }),
   );
   const guarded = prepared.flatMap(({ guarded: entry }) => (entry === undefined ? [] : [entry]));
+  // One after another over a shared answer: only the first `admin` entry of an actor reads its configure bases.
+  const structuralAuthority = sharedConfigureBases(authority);
   const structural = yield* Effect.forEach(
     guarded,
-    (entry) => structuralAdminDecision(authority, entry.resolved, entry.request, entry.now),
-    { concurrency: 4 },
+    (entry) => structuralAdminDecision(structuralAuthority, entry.resolved, entry.request, entry.now),
+    { concurrency: 1 },
   );
   const structuralByIndex = new Map<number, AccessDecision>(
     guarded.flatMap((entry, index) =>
@@ -1530,7 +1568,9 @@ const planGroup = Effect.fn('AccessDecision.planGroup')(function* planGroupProgr
     }),
   );
   const preloaded = preloadedAuthority(authority, yield* readCellSets(authority, queries));
-  const planned = yield* Effect.forEach(roleGuarded, (entry) => planRequest(preloaded, entry), { concurrency: 4 });
+  const planned = yield* Effect.forEach(roleGuarded, (entry) => planRequest(preloaded, entry), {
+    concurrency: BATCH_READ_CONCURRENCY,
+  });
   const plannedByIndex = new Map<number, PlannedRequest>();
   for (const result of planned) {
     plannedByIndex.set(result.index, result);
@@ -1554,7 +1594,9 @@ const decideAccessManyEffect: (
   groups: readonly DecisionBatchGroup[],
 ) => Effect.Effect<readonly (readonly AccessDecision[])[]> = Effect.fn('AccessDecision.decideMany')(
   function* decideAccessManyProgram(check: DecisionCheckPort, groups: readonly DecisionBatchGroup[]) {
-    const plannedGroups = yield* Effect.forEach(groups, (group) => planGroup(group), { concurrency: 4 });
+    const plannedGroups = yield* Effect.forEach(groups, (group) => planGroup(group), {
+      concurrency: BATCH_READ_CONCURRENCY,
+    });
     // ONE snapshot for every request's items: a batch can never be answered from two views.
     const { engineFailed, evaluation } = yield* runSnapshot(
       check,
