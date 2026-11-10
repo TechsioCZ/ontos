@@ -212,9 +212,9 @@ export const MovementForm = ({
   return (
     <form
       className="flex flex-col gap-200 border-border-primary border-t pt-200"
+      // Enter in a field does not record the movement; only its button does.
       onSubmit={(event) => {
         event.preventDefault();
-        submit();
       }}
     >
       <h3 className="font-semibold text-md">{k('movements.recordTitle')}</h3>
@@ -297,7 +297,14 @@ export const MovementForm = ({
         {...fieldError(submitted, noteError)}
       />
       <div className="flex justify-end">
-        <Button isLoading={busy} loadingText={k('movements.submit')} theme="outlined" type="submit" variant="secondary">
+        <Button
+          isLoading={busy}
+          loadingText={k('movements.submit')}
+          onClick={submit}
+          theme="outlined"
+          type="button"
+          variant="secondary"
+        >
           {k('movements.submit')}
         </Button>
       </div>

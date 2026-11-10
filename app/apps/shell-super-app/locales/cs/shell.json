@@ -1172,6 +1172,8 @@
       "fullName": "Jméno a příjmení",
       "tabs": "Lidé a agenti",
       "title": "Lidé a role",
+      "membershipTitle": "Členství ve firmě",
+      "roleEditorTitle": "Přiřadit nebo odebrat roli",
       "changeReason": "Důvod změny",
       "table": {
         "actions": "Akce",

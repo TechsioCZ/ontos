@@ -8,7 +8,8 @@ import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
 import type { PipelineCommand } from './pipeline-api.ts';
 import { BulkByTagDialog } from './pipeline-bulk-by-tag.tsx';
 import type { BulkByTagResult } from './pipeline-bulk-by-tag.tsx';
-import type { CreateCommand, OpportunitySave } from './pipeline-dialogs.tsx';
+import type { OpportunitySave } from './pipeline-dialogs.tsx';
+import type { OpportunityCreate } from './opportunity-create-panel.tsx';
 import { OpportunityFormDialog, OwnerDialog, StageDialog } from './pipeline-dialogs.tsx';
 import type { EmployeeId, OpportunityStage } from './pipeline-model.ts';
 import { toSubjectIds } from './pipeline-references.ts';
@@ -64,8 +65,9 @@ interface PipelineDialogHostProps {
   readonly onBulkByTagDone: (result: BulkByTagResult) => void;
   readonly onBulkTagsDone: () => void;
   readonly onClose: () => void;
+  readonly onFormCreate: OpportunityCreate;
+  readonly onFormCreated: () => void;
   readonly onFormSave: OpportunitySave;
-  readonly onFormSubmit: (command: CreateCommand) => void;
   readonly onOwnerSubmit: (owner: EmployeeId | null) => void;
   readonly onStageSubmit: (stage: OpportunityStage, note: string | undefined) => void;
   readonly products: LoadState<readonly ProductOption[]>;
@@ -85,8 +87,9 @@ export const PipelineDialogHost = ({
   onBulkByTagDone,
   onBulkTagsDone,
   onClose,
+  onFormCreate,
+  onFormCreated,
   onFormSave,
-  onFormSubmit,
   onOwnerSubmit,
   onStageSubmit,
   products,
@@ -130,13 +133,13 @@ export const PipelineDialogHost = ({
   if (dialog.kind === 'form') {
     return (
       <OpportunityFormDialog
-        busy={busy}
         customers={customers}
         employees={employees}
         initial={dialog.opportunity}
+        onCreate={onFormCreate}
+        onCreated={onFormCreated}
         onOpenChange={close}
         onSave={onFormSave}
-        onSubmit={onFormSubmit}
         products={products}
         revision={revision}
         serverError={error}

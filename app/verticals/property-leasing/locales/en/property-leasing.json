@@ -261,7 +261,8 @@
       "timelinePlaceholder": "For example, first contact at a trade fair, interested in an office from spring",
       "directoryTitle": "Tenants, prospects and contacts",
       "search": "Search for a counterparty or contact",
-      "detailsTitle": "Counterparty details"
+      "detailsTitle": "Counterparty details",
+      "communicationManual": "Manual record. No e-mail or text message is sent."
     }
   }
 }

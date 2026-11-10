@@ -28,6 +28,8 @@ import { ChangeHistory } from '../../../../ui/change-history.tsx';
 import { isoDateLabel, parseCzk } from './assets-model.ts';
 import type { Translate } from './assets-model.ts';
 import { AreaField, ErrorLine, FormGrid, PanelForm, SelectField, TextField, optional } from './form-kit.tsx';
+import type { AssetSubmit, PanelFormEdit } from './form-kit.tsx';
+import { useDraftBase } from '../../../../ui/draft-base.ts';
 import { locationItems, owningPropertyId, usePropertyTree } from './property-tree.ts';
 
 const NONE = 'none';
@@ -58,17 +60,18 @@ const amountInput = (minor: number | undefined) =>
 
 const signedMoney = (minor: number) => `${minor > 0 ? '+' : ''}${formatMoney(minor)}`;
 
-export const InvestmentForm = ({
-  formId,
+interface InvestmentFormProps {
+  readonly investment?: Investment | undefined;
+  readonly onSubmit: AssetSubmit;
+  readonly state: AssetsState;
+}
+
+const InvestmentFields = ({
+  edit,
   investment,
   onSubmit,
   state,
-}: {
-  readonly formId: string;
-  readonly investment?: Investment;
-  readonly onSubmit: (command: OpsCommand) => void;
-  readonly state: AssetsState;
-}) => {
+}: InvestmentFormProps & { readonly edit: PanelFormEdit | undefined }) => {
   const { t } = useModernI18n();
   const k = (key: string, options?: TOptions) => t(`facility-operations.assets.${key}`, options);
   const tree = usePropertyTree();
@@ -87,20 +90,20 @@ export const InvestmentForm = ({
   const [assetId, setAssetId] = useState<AssetId | typeof NONE>(() => investment?.assetId ?? NONE);
   const [error, setError] = useState<string | undefined>();
 
-  const submit = () => {
+  const command = (): OpsCommand | undefined => {
     if (title.trim() === '' || plannedDate === '' || planned.trim() === '') {
       setError(k('form.required'));
-      return;
+      return undefined;
     }
     const plannedMinor = parseCzk(planned);
     const actualMinor = parseCzk(actual);
     if (plannedMinor === null || plannedMinor === undefined || actualMinor === null) {
       setError(k('form.invalidAmount'));
-      return;
+      return undefined;
     }
     if (status === 'done' && actualMinor === undefined) {
       setError(k('investments.form.actualRequired'));
-      return;
+      return undefined;
     }
     setError(undefined);
     const picked =
@@ -123,16 +126,32 @@ export const InvestmentForm = ({
       ...optionalField('propertyId', propertyId),
       ...optionalField('assetId', assetId === NONE ? undefined : assetId),
     };
-    onSubmit(
-      investment === undefined
-        ? { _tag: 'AssetInvestmentCreate', ...fields }
-        : { _tag: 'AssetInvestmentUpdate', investmentId: investment.id, ...fields },
-    );
+    return investment === undefined
+      ? { _tag: 'AssetInvestmentCreate', ...fields }
+      : { _tag: 'AssetInvestmentUpdate', investmentId: investment.id, ...fields };
   };
 
   const assets = state.assets.filter((asset) => isActiveAsset(asset) || asset.id === investment?.assetId);
   return (
-    <PanelForm id={formId} onSubmit={submit}>
+    <PanelForm
+      command={command}
+      edit={edit}
+      error={error}
+      onSubmit={onSubmit}
+      value={{
+        actual,
+        actualDate,
+        assetId,
+        description,
+        location,
+        planned,
+        plannedDate,
+        priority,
+        responsible,
+        status,
+        title,
+      }}
+    >
       <ErrorLine message={error} />
       <TextField
         id="investment-title"
@@ -232,6 +251,32 @@ export const InvestmentForm = ({
       {investment !== undefined && <ChangeHistory entityId={investment.id} refreshKey={investment.updatedAt} />}
     </PanelForm>
   );
+};
+
+/**
+ * Create or edit one investment plan item; Uložit sends it. An edit saves against the read its draft came from, so
+ * someone else's newer change is refused as a conflict, and "Načíst aktuální verzi" opens the latest version.
+ */
+export const InvestmentForm = ({ investment, onSubmit, state }: InvestmentFormProps) => {
+  const current =
+    investment === undefined
+      ? undefined
+      : ((state.investments ?? []).find((entry) => entry.id === investment.id) ?? investment);
+  const base = useDraftBase(current, onSubmit.run);
+  const [opened, setOpened] = useState(current);
+  const [generation, setGeneration] = useState(0);
+  const edit =
+    current === undefined
+      ? undefined
+      : {
+          onReloadLatest: () => {
+            base.rebase();
+            setOpened(current);
+            setGeneration((value) => value + 1);
+          },
+          run: base.run,
+        };
+  return <InvestmentFields edit={edit} investment={opened} key={generation} onSubmit={onSubmit} state={state} />;
 };
 
 export const InvestmentPlan = ({

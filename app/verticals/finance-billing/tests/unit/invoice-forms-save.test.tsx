@@ -14,7 +14,9 @@ import {
   clickDiscard,
   clickSave,
   fakeVm,
+  clickNamed,
   invoiceFixture,
+  labels,
   lastFooterButton,
   leaveQuestion,
   mount,
@@ -32,6 +34,10 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
 }));
 
 type Command = Parameters<FinanceViewModel['execute']>[0];
+
+const REVIEW_BACK = 'finance-billing.financeUi.payments.reviewBack';
+const REVIEW_CONFIRM = 'finance-billing.financeUi.payments.reviewConfirm';
+const paymentReview = () => document.querySelector('[data-testid="payment-review"]') !== null;
 
 const invoice = invoiceFixture();
 const smtp = { kind: 'ready', provider: { configured: true, label: null } } as const;
@@ -51,28 +57,56 @@ afterEach(() => {
 });
 
 describe('invoice extras and accounting setup save from Uložit only', () => {
-  it.live('a manual payment is recorded once by Uložit and the dialog closes', () =>
-    Effect.gen(function* step1() {
+  it.live(
+    'Uložit opens the payment review; only its confirmation records the payment once, then the dialog closes',
+    () =>
+      Effect.gen(function* step1() {
+        const sent: Command[] = [];
+        yield* mount(<InvoicePaymentForm invoice={invoice} onClose={onClose} remaining={100_000} vm={fakeVm(sent)} />);
+        expect(saveButton().disabled).toBe(true);
+        expect(lastFooterButton()).toBe(saveButton());
+
+        yield* typeInto('payment-amount', '400');
+        yield* typeInto('payment-note', 'Platba převodem');
+        expect(sent).toEqual([]);
+        yield* clickSave;
+        expect(paymentReview()).toBe(true);
+        expect(sent).toEqual([]);
+        yield* clickNamed(REVIEW_BACK);
+        expect(paymentReview()).toBe(false);
+        expect(sent).toEqual([]);
+
+        yield* clickSave;
+        yield* clickNamed(REVIEW_CONFIRM);
+        yield* waitUntil(() => closes.length === 1);
+        expect(sent).toEqual([
+          {
+            _tag: 'RecordManualPayment',
+            actorLabel: 'Jana Nováková',
+            amountMinor: 40_000,
+            invoiceRef: invoice.ref,
+            note: 'Platba převodem',
+            paidOn: '2026-10-20',
+          },
+        ]);
+      }),
+  );
+
+  it.live('Uložit in the leave question opens the review too; nothing is recorded before it is confirmed', () =>
+    Effect.gen(function* reviewOnLeave() {
       const sent: Command[] = [];
       yield* mount(<InvoicePaymentForm invoice={invoice} onClose={onClose} remaining={100_000} vm={fakeVm(sent)} />);
-      expect(saveButton().disabled).toBe(true);
-      expect(lastFooterButton()).toBe(saveButton());
-
-      yield* typeInto('payment-amount', '400');
-      yield* typeInto('payment-note', 'Platba převodem');
+      yield* typeInto('payment-amount', '250');
+      yield* clickCancel;
+      expect(leaveQuestion()).toBe(true);
+      yield* clickNamed(labels.save);
+      expect(leaveQuestion()).toBe(false);
+      expect(paymentReview()).toBe(true);
       expect(sent).toEqual([]);
-      yield* clickSave;
+      yield* clickNamed(REVIEW_CONFIRM);
       yield* waitUntil(() => closes.length === 1);
-      expect(sent).toEqual([
-        {
-          _tag: 'RecordManualPayment',
-          actorLabel: 'Jana Nováková',
-          amountMinor: 40_000,
-          invoiceRef: invoice.ref,
-          note: 'Platba převodem',
-          paidOn: '2026-10-20',
-        },
-      ]);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ _tag: 'RecordManualPayment', amountMinor: 25_000 });
     }),
   );
 

@@ -2,7 +2,6 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 // E-shop product administration: real variants (SKU, price, stock, active), publication and availability.
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Link } from '@techsio/ui-kit/atoms/link';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
@@ -14,7 +13,6 @@ import { selectItem } from '../../../../ui/select-item.ts';
 import { formatDateTime, formatMoney, ScrollRegion, SectionCard } from '@app/admin-ui';
 import { DateTime } from 'effect';
 import { useEffect, useRef, useState } from 'react';
-import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type {
   Availability,
@@ -26,6 +24,7 @@ import { grossUnitPriceMinor, isRealVariant } from '../../../../../shared/domain
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import { useCommandFailure } from './product-form-labels.ts';
+import { useCommandInputGuard } from './command-input-guard.tsx';
 import { ProductTabSaveBar, useProductTabSave } from './product-tab-save.tsx';
 import type { ProductVariantDestination } from './product-variant-destination.ts';
 
@@ -84,10 +83,12 @@ const variantDraftsOf = (product: ProductRecord): readonly VariantDraft[] => {
   return drafts;
 };
 
-interface PanelProps {
+export interface PanelProps {
   readonly active?: boolean;
   readonly canMoveStock?: boolean;
   readonly canWrite: boolean;
+  /** Product photos: every staff writer curates them, also where catalog data stays with administrators. */
+  readonly canWriteImages?: boolean;
   readonly onArchived?: () => void;
   readonly onCommitted: (message: string) => void;
   readonly onReload: () => void;
@@ -125,6 +126,15 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
   const [quantityText, setQuantityText] = useState('10');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const firstVariant = variants[0]?.id ?? '';
+  const clear = () => {
+    setVariantId(firstVariant);
+    setReason('RECEIPT');
+    setQuantityText('10');
+  };
+  // The movement keeps its own button; leaving with a half-filled one asks before the input is lost.
+  const typed = variantId !== firstVariant || reason !== 'RECEIPT' || quantityText !== '10';
+  const { dialog } = useCommandInputGuard(canWrite && typed, clear);
   if (!canWrite) {
     return null;
   }
@@ -162,6 +172,7 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
           return;
         }
         onStockCommitted?.(revision, outcome.revision);
+        clear();
         onCommitted(`Pohyb zapsán: ${variant.name} ${delta > 0 ? '+' : ''}${delta} ks`);
       },
     );
@@ -223,6 +234,7 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
           {error}
         </StatusText>
       )}
+      {dialog}
     </SectionCard>
   );
 };
@@ -707,234 +719,6 @@ export const VariantsPanel = (props: PanelProps) => {
         />
       )}
       {(product.variantRecords ?? []).length > 0 && <VariantPriceHistory product={product} />}
-    </div>
-  );
-};
-
-const slugFieldError = (invalid: boolean, taken: boolean) => {
-  if (invalid) {
-    return { helpText: 'Jen malá písmena bez diakritiky, číslice a pomlčky', validateStatus: 'error' as const };
-  }
-  if (taken) {
-    return { helpText: 'Tuto adresu už má jiný produkt', validateStatus: 'error' as const };
-  }
-  return {};
-};
-
-interface EshopDraft {
-  readonly published: boolean;
-  readonly slug: string;
-  readonly stockTracked: boolean;
-}
-
-const slugInvalidOf = (slug: string) => slug.trim() !== '' && !/^[a-z0-9-]{1,120}$/u.test(slug.trim());
-
-/**
- * Storefront presentation: publication, slug and how availability is reported. Editing changes the draft only; the
- * Save button sends one UpdateProduct, and leaving with unsaved changes asks first. Archiving a DEMO product stays its
- * own command.
- */
-const eshopDraftOf = (product: ProductRecord): EshopDraft => ({
-  published: product.published !== false,
-  slug: product.slug ?? '',
-  stockTracked: product.stockTracked !== false,
-});
-
-const useEshopPanel = ({
-  canWrite,
-  onArchived,
-  onCommitted,
-  onReload,
-  product,
-  revision,
-  storefrontOrigin,
-}: PanelProps) => {
-  const failure = useCommandFailure();
-  const [form, setForm] = useState<EshopDraft>(() => eshopDraftOf(product));
-  const { published, slug, stockTracked } = form;
-  const setSlug = (next: string) => setForm((current) => ({ ...current, slug: next }));
-  const setPublished = (next: boolean) => setForm((current) => ({ ...current, published: next }));
-  const setStockTracked = (next: boolean) => setForm((current) => ({ ...current, stockTracked: next }));
-  const [busy, setBusy] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
-  const storefrontHref =
-    storefrontOrigin === undefined ? undefined : `${storefrontOrigin}/produkt/${product.slug ?? product.id}`;
-  const [archiveReason, setArchiveReason] = useState('');
-  const slugInvalid = slugInvalidOf(slug);
-  // The slug the server refused because another product uses it; editing the field clears the message.
-  const [takenSlug, setTakenSlug] = useState<string | null>(null);
-  const slugTakenNow = takenSlug !== null && takenSlug === slug.trim();
-  const save = useProductTabSave<EshopDraft>({
-    commandOf: (value) => {
-      const patch: { -readonly [Key in keyof ProductPatch]: ProductPatch[Key] } = {
-        published: value.published,
-        stockTracked: value.stockTracked,
-      };
-      if (value.slug.trim() !== '') {
-        patch.slug = value.slug.trim();
-      }
-      return { _tag: 'UpdateProduct', id: product.id, patch };
-    },
-    // The only business refusal of this save is a slug another product already uses.
-    failureText: (outcome, value) => {
-      const typed = value.slug.trim();
-      const taken = outcome.reason === 'rejected' && typed !== '' && typed !== (product.slug ?? '');
-      if (taken) {
-        setTakenSlug(typed);
-      }
-      return taken ? 'Adresu produktu už používá jiný produkt. Zvolte jinou adresu, nic se neuložilo.' : undefined;
-    },
-    isValid: (value) => !slugInvalidOf(value.slug) && !(takenSlug !== null && takenSlug === value.slug.trim()),
-    onReload,
-    onSaved: () => onCommitted('Nastavení e-shopu uloženo.'),
-    reset: setForm,
-    revision,
-    server: eshopDraftOf(product),
-    value: form,
-  });
-
-  const archive = () => {
-    setBusy(true);
-    runCommand({ _tag: 'ArchiveDemoProduct', id: product.id, reason: archiveReason.trim() }, revision, (outcome) => {
-      setBusy(false);
-      if (!outcome.ok) {
-        setServerError(failure(outcome.reason, onReload, outcome.proposal));
-        return;
-      }
-      onCommitted('DEMO produkt archivován. Audit a skladové pohyby zachovány.');
-      onArchived?.();
-    });
-  };
-
-  return {
-    archive,
-    archiveReason,
-    busy,
-    canWrite,
-    product,
-    published,
-    save,
-    serverError,
-    setArchiveReason,
-    setPublished,
-    setSlug,
-    setStockTracked,
-    slug,
-    slugInvalid,
-    slugTakenNow,
-    stockTracked,
-    storefrontHref,
-  };
-};
-
-export const EshopPanel = (props: PanelProps) => {
-  const { t } = useModernI18n();
-  const {
-    archive,
-    archiveReason,
-    busy,
-    canWrite,
-    product,
-    published,
-    save,
-    serverError,
-    setArchiveReason,
-    setPublished,
-    setSlug,
-    setStockTracked,
-    slug,
-    slugInvalid,
-    slugTakenNow,
-    stockTracked,
-    storefrontHref,
-  } = useEshopPanel(props);
-
-  return (
-    <div className="flex flex-col gap-250">
-      <SectionCard title={t('merchandise.ui.customerProductView')}>
-        <div className="flex flex-wrap items-center gap-150">
-          <span className="font-semibold text-lg tabular-nums">
-            {product.grossPriceMinor === undefined
-              ? 'cena není dostupná'
-              : `${(product.variantRecords ?? []).length > 0 ? 'od ' : ''}${formatMoney(product.grossPriceMinor)}`}
-          </span>
-          <span className="text-fg-secondary text-sm">s DPH</span>
-          <AvailabilityBadge value={product.availability} />
-          {published && product.active ? (
-            <Badge size="sm" variant="info">
-              Zveřejněno v e-shopu
-            </Badge>
-          ) : (
-            <Badge size="sm" variant="outline">
-              Skryto v e-shopu
-            </Badge>
-          )}
-          {storefrontHref !== undefined && (
-            <Link className="ml-auto" external href={storefrontHref} target="_blank">
-              Otevřít v e-shopu
-            </Link>
-          )}
-        </div>
-      </SectionCard>
-
-      {canWrite && !product.active && product.published === false && (
-        <SectionCard title={t('merchandise.ui.archiveDemoProduct')}>
-          <p className="text-fg-secondary text-sm">
-            Produkt zmizí ze seznamu i e-shopu. Skladové pohyby, objednávky a audit zůstanou zachovány.
-          </p>
-          <FormInput
-            id="demo-archive-reason"
-            label={t('merchandise.ui.archiveReason')}
-            maxLength={500}
-            name="archiveReason"
-            onChange={(event) => setArchiveReason(event.target.value)}
-            value={archiveReason}
-          />
-          <Button
-            disabled={busy || archiveReason.trim().length < 5}
-            onClick={archive}
-            theme="outlined"
-            variant="danger"
-          >
-            Archivovat DEMO produkt
-          </Button>
-        </SectionCard>
-      )}
-      <SectionCard title={t('merchandise.ui.publicationAvailability')}>
-        <div className="flex flex-col gap-200">
-          <FormInput
-            disabled={!canWrite}
-            id="eshop-slug"
-            label={t('merchandise.ui.productSlug')}
-            name="slug"
-            onChange={(event) => setSlug(event.target.value)}
-            value={slug}
-            {...slugFieldError(slugInvalid, slugTakenNow)}
-          />
-          <Switch
-            checked={published}
-            disabled={!canWrite}
-            name="published"
-            onCheckedChange={(checked: boolean) => setPublished(checked)}
-          >
-            Zveřejnit v e-shopu
-          </Switch>
-          <Switch
-            checked={stockTracked}
-            disabled={!canWrite}
-            name="stockTracked"
-            onCheckedChange={(checked: boolean) => setStockTracked(checked)}
-          >
-            Sklad je evidovaný (vypnuto = zákazník uvidí „dostupnost nyní nelze ověřit“ a nemůže objednat)
-          </Switch>
-        </div>
-      </SectionCard>
-      {serverError !== null && (
-        <StatusText showIcon status="error">
-          {serverError}
-        </StatusText>
-      )}
-      {canWrite && <ProductTabSaveBar active={props.active ?? true} save={save} />}
     </div>
   );
 };

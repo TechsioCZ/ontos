@@ -140,6 +140,7 @@ export const PartyLinkDialog = ({
               Založit v evidenci zákazníků
             </Button>
           )}
+          {/* A command, not a form: linking applies one pick from the registry, with nothing typed to keep. */}
           <Button
             disabled={chosen === undefined || creating}
             icon="icon-[mdi--link-variant]"

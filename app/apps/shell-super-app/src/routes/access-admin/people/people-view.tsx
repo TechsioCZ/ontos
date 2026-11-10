@@ -7,6 +7,7 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { useId, useState } from 'react';
 
 import { PeopleEditor } from './people-editor.tsx';
+import type { PendingReview, PeopleReview } from './people-form-save.ts';
 import type {
   PeopleCommand,
   PeopleFeedback,
@@ -337,7 +338,7 @@ export const PeopleView = ({
   readonly onRefresh: () => void;
 }) => {
   const { t } = useModernI18n();
-  const [pending, setPending] = useState<(PeoplePendingChange & { readonly revision: string }) | null>(null);
+  const [pending, setPending] = useState<PendingReview | null>(null);
   const [reason, setReason] = useState('');
   const busy = feedback === 'saving';
   const writesAvailable = anyWriteAvailable(model);
@@ -345,12 +346,17 @@ export const PeopleView = ({
     setReason('');
     setPending({ ...change, revision: model.revision });
   };
+  const review: PeopleReview = (change, onConfirmed) => {
+    setReason('');
+    setPending({ ...change, onConfirmed, revision: model.revision });
+  };
   const stale = pending !== null && pending.revision !== model.revision;
   const command = pending === null ? null : confirmedCommand(pending.command, reason);
   const blocked = busy || stale || command === null || !writesAvailable || feedback === 'conflict';
   const confirm = () => {
     if (pending !== null && command !== null && !blocked) {
       onCommand(command, pending.revision);
+      pending.onConfirmed?.();
       setPending(null);
     }
   };
@@ -388,7 +394,9 @@ export const PeopleView = ({
           {t(`${prefix}.nextPage`)}
         </Button>
       ) : null}
-      {model.scopes.length > 0 ? <PeopleEditor busy={busy} model={model} onPreview={preview} /> : null}
+      {model.scopes.length > 0 ? (
+        <PeopleEditor busy={busy} feedback={feedback} model={model} onPreview={review} onRefresh={onRefresh} />
+      ) : null}
       <ConfirmDialog
         blocked={blocked}
         busy={busy}

@@ -156,7 +156,9 @@ export const CreateProjectForm = () => {
     },
   });
   const saving = record.status === 'saving';
-  const busy = saving || lookup === 'loading';
+  // An uncertain create may have made the project: the inputs stay locked so Uložit can only retry this same draft
+  // with its key, never send a changed one under a new key that could create a duplicate.
+  const busy = saving || lookup === 'loading' || failure === 'uncertain';
   const edit = (patch: Partial<CreateProjectDraft>) => {
     setFailure(null);
     setDraft((current) => ({ ...current, ...patch }));

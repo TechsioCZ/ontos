@@ -260,7 +260,13 @@
           "clear": "Clear selection",
           "deactivate": "Deactivate",
           "selected": "Selected: {{total}}",
-          "tags": "Tags"
+          "tags": "Tags",
+          "activateTitle": "Activate the selected products ({{total}})?",
+          "activateDescription": "The selected products ({{total}}) appear in the e-shop right away and customers can order them.",
+          "activateConfirm": "Activate ({{total}})",
+          "deactivateTitle": "Deactivate the selected products ({{total}})?",
+          "deactivateDescription": "The selected products ({{total}}) disappear from the e-shop right away and customers can no longer order them.",
+          "deactivateConfirm": "Deactivate ({{total}})"
         },
         "category": {
           "field": "New category",
@@ -306,7 +312,7 @@
         "gallery": {
           "title_one": "Image ({{count}})",
           "title_other": "Images ({{count}})",
-          "intro": "The first image is the main one and the storefront shows it first. Drag or use the buttons to change the order; an upload, move or removal takes effect as soon as you do it.",
+          "intro": "The first image is the main one and the e-shop shows it first. Drag images or use the buttons to change the order. Uploaded images, a new order and removals reach the e-shop only after you click Save.",
           "introReadOnly": "The first image is the main one and the storefront shows it first.",
           "main": "Main",
           "imageAlt": "{{name}} – image {{position}}",
@@ -332,7 +338,7 @@
           "dropzoneHint": "JPG, PNG or WebP up to 20 MB, several at once. You can also paste an image (Ctrl+V).",
           "pick": "Choose images",
           "hideNotice": "Hide notice",
-          "removed": "The image was removed.",
+          "removed": "The image is removed from the draft. It leaves the e-shop once you save.",
           "undo": "Undo",
           "uploading_one": "Uploading {{count}} image…",
           "uploading_other": "Uploading {{count}} images…",
@@ -347,7 +353,8 @@
           "tooManyFiles": "A product can have at most {{limit}} images. You can add {{remaining}} more now.",
           "fileTooLarge": "The file “{{name}}” is larger than 20 MB. Make it smaller or choose another.",
           "fileInvalidType": "The file “{{name}}” is not a JPG, PNG or WebP image.",
-          "fileRejected": "The file “{{name}}” cannot be uploaded."
+          "fileRejected": "The file “{{name}}” cannot be uploaded.",
+          "saveRejected": "The images could not be saved because one of them is no longer available. Load the latest version and try again."
         },
         "fields": {
           "category": "Category",
@@ -519,6 +526,11 @@
           "offeredSaved": "The product is offered in market {{code}}.",
           "saved": "The product's market offers are saved.",
           "withdrawnSaved": "The product was withdrawn from market {{code}}."
+        },
+        "eshop": {
+          "archiveTitle": "Archive DEMO product {{name}}?",
+          "archiveDescription": "Product {{name}} disappears from the list and the e-shop right away. Stock movements, orders and the audit trail are kept.",
+          "archiveConfirm": "Archive"
         }
       },
       "records": {

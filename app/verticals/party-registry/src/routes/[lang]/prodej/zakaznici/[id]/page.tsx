@@ -174,9 +174,14 @@ export const CustomerDetailPageRecordView = ({ onChanged, onRetry, record, stale
         title={pageTitle(subject.displayName, t(`${CUSTOMER_DETAIL_KEY}.title`))}
       />
       <SectionCard>
-        <CustomerDetailContent detail={detail} initialSnapshot={record} onRetry={refresh} subject={subject} />
-        {/* The one Save button of the page's form, last in its footer like in the side panel. */}
-        <CustomerDetailSaveBar detail={detail} />
+        {/* The one Save button of the page's form sits directly under its fields, above the related records. */}
+        <CustomerDetailContent
+          detail={detail}
+          initialSnapshot={record}
+          onRetry={refresh}
+          saveBar={<CustomerDetailSaveBar detail={detail} />}
+          subject={subject}
+        />
       </SectionCard>
     </>
   );

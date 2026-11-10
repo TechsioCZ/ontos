@@ -1,14 +1,12 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { FinanceTableScroll } from './finance-table-scroll.tsx';
-import { dialogCloseLabel, EmptyState, formatDate, formatDateTime, formatMoney, SectionCard } from '@app/admin-ui';
+import { EmptyState, formatDate, formatDateTime, formatMoney, SectionCard } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Checkbox } from '@techsio/ui-kit/atoms/checkbox';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { DateTime, Effect } from 'effect';
@@ -20,6 +18,7 @@ import { customerOf } from './invoice-view.ts';
 import { useInvoiceIssuer } from './use-invoice-issuer.ts';
 import { EXPORT_STATUS } from './invoice-extras.tsx';
 import { AccountingSetupForm, ISSUER_FIELDS, SETUP_FIELDS } from './accounting-setup-form.tsx';
+import { ExportConfirmationForm, ExportFailureForm } from './accounting-decision-forms.tsx';
 import type { SetupKey } from './accounting-setup-form.tsx';
 
 const at = (value: DateTime.Utc) => formatDateTime(DateTime.formatIso(value));
@@ -145,63 +144,6 @@ const accountingPanelHandOverProgram = Effect.fn('Finance.handOver')(function* a
   }
 });
 
-const accountingPanelMarkFailedProgram = Effect.fn('Finance.markFailed')(function* accountingPanelMarkFailedProgram(
-  context: Pick<
-    ReturnType<typeof useAccountingPanel>,
-    'failReason' | 'failTarget' | 'setFailReason' | 'setFailTarget' | 'setMessage' | 'vm'
-  >,
-) {
-  const { failReason, failTarget, setFailReason, setFailTarget, setMessage, vm } = context;
-  if (failTarget === undefined || failReason.trim() === '') {
-    return;
-  }
-  const markAccountingExportFailedCommand: FinanceCommandDraft<'MarkAccountingExportFailed'> = {
-    _tag: 'MarkAccountingExportFailed',
-    exportId: failTarget.id,
-    reason: failReason.trim(),
-  };
-  if (vm.actorLabel !== undefined) {
-    markAccountingExportFailedCommand.actorLabel = vm.actorLabel;
-  }
-  const outcome = yield* vm.execute(
-    markAccountingExportFailedCommand,
-    `Balíček ${failTarget.batchNumber} označen jako chybný`,
-  );
-  setFailTarget(undefined);
-  setFailReason('');
-  if (!outcome.ok) {
-    setMessage(panelMessage(vm, outcome));
-  }
-});
-
-const accountingPanelConfirmExportProgram = Effect.fn('Finance.confirmExport')(
-  function* accountingPanelConfirmExportProgram(
-    context: Pick<
-      ReturnType<typeof useAccountingPanel>,
-      'confirmTarget' | 'evidence' | 'setConfirmTarget' | 'setEvidence' | 'setMessage' | 'vm'
-    >,
-  ) {
-    const { confirmTarget, evidence, setConfirmTarget, setEvidence, setMessage, vm } = context;
-    if (confirmTarget === undefined || evidence.trim() === '') {
-      return;
-    }
-    const confirmAccountingExportCommand: FinanceCommandDraft<'ConfirmAccountingExport'> = {
-      _tag: 'ConfirmAccountingExport',
-      evidence: evidence.trim(),
-      exportId: confirmTarget.id,
-    };
-    if (vm.actorLabel !== undefined) {
-      confirmAccountingExportCommand.actorLabel = vm.actorLabel;
-    }
-    const outcome = yield* vm.execute(confirmAccountingExportCommand, 'Převzetí balíčku potvrzeno účetní');
-    setConfirmTarget(undefined);
-    setEvidence('');
-    if (!outcome.ok) {
-      setMessage(panelMessage(vm, outcome));
-    }
-  },
-);
-
 const useAccountingPanel = (vm: FinanceViewModel) => {
   const state = vm.snapshot?.state;
   const setup = state?.accountingSetup ?? {};
@@ -212,7 +154,6 @@ const useAccountingPanel = (vm: FinanceViewModel) => {
     (state?.accountingExports ?? []).flatMap((entry) => (entry.status === 'FAILED' ? [] : entry.invoiceResourceIds)),
   );
   const [failTarget, setFailTarget] = useState<AccountingExport>();
-  const [failReason, setFailReason] = useState('');
   const [onlyNew, setOnlyNew] = useState(true);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [format, setFormat] = useState<AccountingExportFormat>('CSV');
@@ -220,7 +161,6 @@ const useAccountingPanel = (vm: FinanceViewModel) => {
   const issuerName = useInvoiceIssuer();
   const [message, setMessage] = useState<PanelMessage>();
   const [confirmTarget, setConfirmTarget] = useState<AccountingExport>();
-  const [evidence, setEvidence] = useState('');
   // Blocks a second click in the same render tick, before vm.busy reaches this component.
   const creating = useRef(false);
   const missing = SETUP_FIELDS.filter(([key]) => setup[key] === undefined);
@@ -252,35 +192,19 @@ const useAccountingPanel = (vm: FinanceViewModel) => {
     void financeBrowserRuntime.runPromise(accountingPanelHandOverProgram({ setMessage, vm }, entry));
   };
 
-  const markFailed = (): void => {
-    void financeBrowserRuntime.runPromise(
-      accountingPanelMarkFailedProgram({ failReason, failTarget, setFailReason, setFailTarget, setMessage, vm }),
-    );
-  };
-
-  const confirmExport = (): void => {
-    void financeBrowserRuntime.runPromise(
-      accountingPanelConfirmExportProgram({ confirmTarget, evidence, setConfirmTarget, setEvidence, setMessage, vm }),
-    );
-  };
-
   return {
     candidates,
     confirmed,
-    confirmExport,
     confirmTarget,
     createExport,
     creating,
     editing,
-    evidence,
     exports,
-    failReason,
     failTarget,
     format,
     handedOver,
     handOver,
     issuerName,
-    markFailed,
     message,
     missing,
     nameOf,
@@ -288,8 +212,6 @@ const useAccountingPanel = (vm: FinanceViewModel) => {
     selected,
     setConfirmTarget,
     setEditing,
-    setEvidence,
-    setFailReason,
     setFailTarget,
     setFormat,
     setMessage,
@@ -416,6 +338,7 @@ const AccountingSelection = (model: ReturnType<typeof useAccountingPanel>) => {
                 value={[format]}
               />
             </div>
+            {/* A command, not a form: the export builds a package from the selected rows; no record is edited. */}
             <Button
               disabled={selected.size === 0 || vm.busy}
               icon="icon-[mdi--package-variant-closed]"
@@ -566,7 +489,7 @@ const AccountingHistoryStatus = ({ entry }: { readonly entry: AccountingExport }
 
 const AccountingHistory = (model: ReturnType<typeof useAccountingPanel>) => {
   const { t } = useModernI18n();
-  const { exports, handOver, setConfirmTarget, setFailReason, setFailTarget, state, vm } = model;
+  const { exports, handOver, setConfirmTarget, setFailTarget, state, vm } = model;
   return (
     <SectionCard flush title={t('finance-billing.financeUi.accounting.history')}>
       {exports.length === 0 ? (
@@ -697,10 +620,7 @@ const AccountingHistory = (model: ReturnType<typeof useAccountingPanel>) => {
                       {vm.canWrite && (entry.status === 'PREPARED' || entry.status === 'HANDED_OVER') && (
                         <Button
                           className="whitespace-nowrap"
-                          onClick={() => {
-                            setFailReason('');
-                            setFailTarget(entry);
-                          }}
+                          onClick={() => setFailTarget(entry)}
                           size="sm"
                           theme="borderless"
                           variant="secondary"
@@ -720,98 +640,6 @@ const AccountingHistory = (model: ReturnType<typeof useAccountingPanel>) => {
   );
 };
 
-const AccountingDecisions = (model: ReturnType<typeof useAccountingPanel>) => {
-  const { t } = useModernI18n();
-  const { failReason, failTarget, markFailed, setFailReason, setFailTarget, vm } = model;
-  return (
-    <Dialog
-      actions={
-        <>
-          <Button onClick={() => setFailTarget(undefined)} theme="outlined" variant="secondary">
-            Zrušit
-          </Button>
-          <Button
-            disabled={failReason.trim() === '' || vm.busy}
-            onClick={() => {
-              markFailed();
-            }}
-            variant="danger"
-          >
-            Uložit chybu
-          </Button>
-        </>
-      }
-      closeLabel={dialogCloseLabel}
-      customTrigger
-      description="Např. účetní systém import odmítl nebo v balíčku chybí doklad. Doklady z chybného balíčku lze zařadit do nového."
-      onOpenChange={(details) => {
-        if (!details.open) {
-          setFailTarget(undefined);
-        }
-      }}
-      open={failTarget !== undefined}
-      placement="center"
-      size="sm"
-      title={`Chyba předání ${failTarget?.batchNumber ?? ''}`}
-    >
-      <FormInput
-        id="export-failure"
-        label={t('finance-billing.financeUi.accounting.errorDescription')}
-        onChange={(event) => setFailReason(event.target.value)}
-        placeholder={t('finance-billing.financeUi.accounting.errorExample')}
-        size="sm"
-        value={failReason}
-      />
-    </Dialog>
-  );
-};
-
-const AccountingConfirmation = (model: ReturnType<typeof useAccountingPanel>) => {
-  const { t } = useModernI18n();
-  const { confirmExport, confirmTarget, evidence, setConfirmTarget, setEvidence, vm } = model;
-  return (
-    <Dialog
-      actions={
-        <>
-          <Button onClick={() => setConfirmTarget(undefined)} theme="outlined" variant="secondary">
-            Zrušit
-          </Button>
-          <Button
-            disabled={evidence.trim() === '' || vm.busy}
-            onClick={() => {
-              confirmExport();
-            }}
-            variant="primary"
-          >
-            Uložit potvrzení
-          </Button>
-        </>
-      }
-      closeLabel={dialogCloseLabel}
-      customTrigger
-      description="Zaznamenejte, že účetní balíček převzala, a uveďte důkaz (např. e-mail ze dne…, číslo importní dávky). OntOS tím doklady neoznačí jako zaúčtované."
-      onOpenChange={(details) => {
-        if (!details.open) {
-          setConfirmTarget(undefined);
-        }
-      }}
-      open={confirmTarget !== undefined}
-      placement="center"
-      size="sm"
-      title={`Potvrzení převzetí ${confirmTarget?.batchNumber ?? ''}`}
-    >
-      <FormInput
-        id="export-evidence"
-        label={t('finance-billing.financeUi.accounting.evidence')}
-        onChange={(event) => setEvidence(event.target.value)}
-        placeholder={t('finance-billing.financeUi.accounting.evidenceExample')}
-        size="sm"
-        value={evidence}
-      />
-    </Dialog>
-  );
-};
-
 export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
   const model = useAccountingPanel(vm);
   return (
@@ -821,8 +649,12 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
       <AccountingSelection {...model} />
 
       <AccountingHistory {...model} />
-      <AccountingDecisions {...model} />
-      <AccountingConfirmation {...model} />
+      {model.failTarget !== undefined && (
+        <ExportFailureForm entry={model.failTarget} onClose={() => model.setFailTarget(undefined)} vm={vm} />
+      )}
+      {model.confirmTarget !== undefined && (
+        <ExportConfirmationForm entry={model.confirmTarget} onClose={() => model.setConfirmTarget(undefined)} vm={vm} />
+      )}
     </div>
   );
 };

@@ -258,8 +258,8 @@ export const ContractTermsPanel = ({ contract, onClose, onProposal, revision }: 
         className="legalagreements:space-y-4 legalagreements:py-2"
         noValidate
         onSubmit={(event) => {
+          // Enter never saves: only Uložit in the panel footer sends the draft.
           event.preventDefault();
-          handleSave();
         }}
       >
         <p className={mutedClass}>{t(`${P}.terms.formHint`)}</p>

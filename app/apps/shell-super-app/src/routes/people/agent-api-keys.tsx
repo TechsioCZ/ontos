@@ -1,11 +1,9 @@
-import { dialogCloseLabel, formatDateTime } from '@app/admin-ui';
+import { formatDateTime } from '@app/admin-ui';
 import type { AgentEntity } from '@app/shared-contracts/agent-access';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import { DateTime, Effect, Fiber, Option, Redacted, Schedule, Schema } from 'effect';
@@ -21,6 +19,8 @@ import {
 } from '../../api/auth-client.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { newRequestToken } from './people-client.ts';
+import { KeyConfirmation } from './agent-key-confirmation.tsx';
+import type { KeyCommandEnd } from './agent-key-confirmation.tsx';
 
 class AgentKeyScopeError extends Schema.TaggedError<AgentKeyScopeError>()('AgentKeyScopeError', {
   reason: Schema.String,
@@ -185,10 +185,17 @@ const useAgentKeys = (principalId: AgentPrincipalId) => {
     pending.current = runRead(offset);
   };
 
-  const handleExecute = (command: KeyCommand, name: string, reason: string, onCommitted: () => void) => {
+  /** Runs one key command; false when it cannot start now. `onEnd` hears whether it committed or why it did not. */
+  const handleExecute = (
+    command: KeyCommand,
+    name: string,
+    reason: string,
+    onEnd: (end: KeyCommandEnd) => void,
+  ): boolean => {
     if (busy || needsRefresh || secret !== null) {
-      return;
+      return false;
     }
+    let committed = false;
     setBusy(true);
     setFailure(null);
     setNotice(null);
@@ -213,7 +220,8 @@ const useAgentKeys = (principalId: AgentPrincipalId) => {
             };
             setNotice(response.cleanupPending ? 'cleanupPending' : 'projectionPending');
             setNeedsRefresh(true);
-            onCommitted();
+            committed = true;
+            onEnd('saved');
           }),
         ),
         // A committed mutation is never retried, even when this subsequent projection read fails.
@@ -225,6 +233,10 @@ const useAgentKeys = (principalId: AgentPrincipalId) => {
             return Effect.sync(() => {
               setFailure(conflict ? 'conflict' : 'failed');
               setNeedsRefresh(true);
+              // A failed read after the commit does not undo it: the form already heard it was saved.
+              if (!committed) {
+                onEnd(conflict ? 'conflict' : 'failed');
+              }
             }).pipe(
               // A changed key is shown at once; the command itself is never repeated.
               Effect.andThen(conflict ? read(0).pipe(Effect.timeout(readTimeout), Effect.ignore) : Effect.void),
@@ -235,6 +247,7 @@ const useAgentKeys = (principalId: AgentPrincipalId) => {
         Effect.ensuring(Effect.sync(() => setBusy(false))),
       ),
     );
+    return true;
   };
 
   // The keys load as soon as the detail is shown and follow live changes while it stays open.
@@ -352,91 +365,6 @@ const AgentKeyRow = ({
   );
 };
 
-const KeyConfirmation = ({
-  busy,
-  command,
-  failure,
-  locked,
-  onClose,
-  onConfirm,
-}: {
-  readonly busy: boolean;
-  readonly command: KeyCommand;
-  readonly failure: ReturnType<typeof useAgentKeys>['failure'];
-  readonly locked: boolean;
-  readonly onClose: () => void;
-  readonly onConfirm: ReturnType<typeof useAgentKeys>['handleExecute'];
-}) => {
-  const { t } = useModernI18n();
-  const [name, setName] = useState(command.kind === 'rotate' ? (command.key.name ?? '') : '');
-  const [reason, setReason] = useState('');
-  const namedCommand = command.kind === 'issue' || command.kind === 'rotate';
-  const valid = (command.kind === 'issue' || reason.trim().length > 0) && (!namedCommand || name.trim().length > 0);
-  return (
-    <Dialog
-      actions={
-        <>
-          <Button disabled={busy} onClick={() => onClose()} theme="outlined" type="button" variant="secondary">
-            {t(`${copyKey}.cancel`)}
-          </Button>
-          <Button
-            disabled={!valid || locked}
-            onClick={() => {
-              if (command !== null) {
-                onConfirm(command, name.trim(), reason.trim(), onClose);
-              }
-            }}
-            type="button"
-            variant="primary"
-          >
-            {t(`${copyKey}.confirm`)}
-          </Button>
-        </>
-      }
-      closeLabel={dialogCloseLabel}
-      closeOnInteractOutside={false}
-      description={t(`${copyKey}.confirmDescription`)}
-      onOpenChange={(details) => {
-        if (!details.open && !busy) {
-          onClose();
-        }
-      }}
-      open
-      title={t(`${copyKey}.${command.kind}`)}
-    >
-      <div className="flex flex-col gap-200">
-        {namedCommand && (
-          <FormInput
-            autoComplete="off"
-            label={t(`${copyKey}.name`)}
-            maxLength={32}
-            name="keyName"
-            onChange={(event) => setName(event.target.value)}
-            required
-            value={name}
-          />
-        )}
-        {command.kind !== 'issue' && (
-          <FormTextarea
-            label={t(`${copyKey}.reason`)}
-            maxLength={500}
-            name="keyReason"
-            onChange={(event) => setReason(event.target.value)}
-            required
-            rows={2}
-            value={reason}
-          />
-        )}
-        {failure !== null && (
-          <StatusText showIcon status="error">
-            {t(`${copyKey}.${failure}`)}
-          </StatusText>
-        )}
-      </div>
-    </Dialog>
-  );
-};
-
 const AgentKeyDetail = ({ principalId }: { readonly principalId: AgentPrincipalId }) => {
   const { t } = useModernI18n();
   const state = useAgentKeys(principalId);
@@ -508,7 +436,6 @@ const AgentKeyDetail = ({ principalId }: { readonly principalId: AgentPrincipalI
           busy={state.busy}
           command={command}
           failure={state.failure}
-          locked={locked}
           onClose={() => setCommand(null)}
           onConfirm={state.handleExecute}
         />

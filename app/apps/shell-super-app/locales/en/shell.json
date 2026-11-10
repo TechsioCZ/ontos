@@ -1158,6 +1158,8 @@
       "fullName": "Full name",
       "tabs": "People and agents",
       "title": "People and roles",
+      "membershipTitle": "Company membership",
+      "roleEditorTitle": "Assign or remove a role",
       "changeReason": "Reason for change",
       "table": {
         "actions": "Actions",

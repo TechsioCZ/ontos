@@ -134,6 +134,7 @@ shrink-0
 size-8
 size-full
 sm:col-span-1
+sm:flex-nowrap
 sm:gap-x-150
 sm:grid-cols-2
 sm:grid-cols-3

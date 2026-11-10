@@ -224,7 +224,7 @@ export const VisitFields = ({
 };
 
 /** The RecordVisit command of a complete draft; none while the client, result or time is missing. */
-const recordVisitCommandOf = (
+export const recordVisitCommandOf = (
   draft: VisitDraft,
   clientId: string,
   writeAll: boolean,

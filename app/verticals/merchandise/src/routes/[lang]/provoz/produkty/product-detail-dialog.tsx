@@ -41,9 +41,9 @@ import {
 import { useProductLabel } from './product-form-labels.ts';
 import { MovementForm, MovementsTable } from './product-movements.tsx';
 import { EMPTY_MOVEMENT_DRAFT, isMovementDraftDirty } from './product-movement-draft.ts';
-import { AvailabilityBadge, EshopPanel, VariantsPanel, VariantPriceHistory } from './product-eshop.tsx';
+import { AvailabilityBadge, VariantsPanel, VariantPriceHistory } from './product-eshop.tsx';
+import { EshopPanel } from './product-eshop-panel.tsx';
 import { resolveProductVariantDestination } from './product-variant-destination.ts';
-import { ProductImageGallery } from './product-image-gallery.tsx';
 import { CatalogContentPanel } from './product-catalog-content.tsx';
 import { MarketsPanel } from './product-markets.tsx';
 import type { ProductMarket } from '../../../../../shared/domain/market-offers.ts';
@@ -562,18 +562,13 @@ export const ProductDetailView = ({
             />
           </Tabs.Content>
           <Tabs.Content className="flex flex-col gap-250 py-200" value="eshop">
-            {/* Every staff writer curates product photos, also where catalog data stays with administrators. */}
-            <ProductImageGallery
-              canWrite={canMoveStock}
-              images={product.images ?? []}
-              onChanged={onReload}
-              productId={product.id}
-              productName={product.name}
-            />
+            {/* Pictures and e-shop settings are one draft with one Uložit. Every staff writer curates product photos,
+                also where catalog data stays with administrators. */}
             <EshopPanel
               {...(storefrontOrigin === undefined ? {} : { storefrontOrigin })}
               active={tab === 'eshop'}
               canWrite={canWrite}
+              canWriteImages={canMoveStock}
               onArchived={onBack}
               onCommitted={onCommitted}
               onReload={onReload}

@@ -6,6 +6,7 @@ import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Option } from 'effect';
+import type { ReactNode } from 'react';
 
 import type { CustomerListItem } from '../../../../api/customers-client.ts';
 import { NAME_KEY, contactDraftKey, contactFieldNames, identifierDraftKey } from './customer-detail-draft.ts';
@@ -35,6 +36,11 @@ export interface CustomerDetailContentProps {
   readonly failure?: 'forbidden' | 'unavailable' | undefined;
   readonly initialSnapshot?: CustomerDetailSnapshot | undefined;
   readonly onRetry: () => void;
+  /**
+   * The page's save bar, shown directly under the editable fields and above the history and related records. The
+   * side panel leaves it out: its save bar is the last control of the panel footer.
+   */
+  readonly saveBar?: ReactNode;
   readonly subject: CustomerDetailSubject;
 }
 
@@ -209,7 +215,7 @@ const CustomerFacts = ({
 
 /**
  * The one Save button of the customer detail with the draft's status. The side panel puts it last in its footer,
- * the page below the record.
+ * the page directly under the editable fields (`CustomerDetailContent`'s `saveBar`).
  */
 export const CustomerDetailSaveBar = ({ detail }: { readonly detail: CustomerDetailModel }) => {
   const { language } = useModernI18n();
@@ -232,6 +238,7 @@ export const CustomerDetailContent = ({
   failure,
   initialSnapshot,
   onRetry,
+  saveBar,
   subject,
 }: CustomerDetailContentProps) => {
   const { language: i18nLanguage, t } = useModernI18n();
@@ -327,6 +334,7 @@ export const CustomerDetailContent = ({
               </>
             )}
             <CustomerFacts detail={detail} snapshot={snapshot} />
+            {saveBar}
             {/* A dated list only: with no ended fact the panel and the page render no empty section title. */}
             {history.length > 0 && (
               <>

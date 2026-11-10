@@ -8,7 +8,7 @@ import {
   dataTableRowLabels,
   useUnsavedChangesScope,
 } from '@app/admin-ui';
-import type { RevisionedSaveResult } from '@app/admin-ui';
+import type { RevisionedSaveResult, SaveOutcome } from '@app/admin-ui';
 import { listCustomers } from '@app/party-registry/api/client';
 import { listOpportunities } from '@app/sales-pipeline/clients/records';
 import { executeRecords as propertyRecords } from '@app/property-portfolio/clients/records';
@@ -747,30 +747,37 @@ const useTasksPage = (
   };
 
   /** Creates a task on "Vytvořit úkol". */
-  const save = (submission: TaskFormSubmission) => {
-    if (records === undefined || editor === undefined) {
-      return;
-    }
-    const command = commandOf(submission, editor);
-    const successKey = `${key}.created`;
-    setSaving(true);
-    setFormError(undefined);
-    runCommand(command, records.revision, (result) => {
-      setSaving(false);
-      if (result.ok) {
-        closeEditor();
-        setActionError(undefined);
-        toaster.create({ duration: SUCCESS_TOAST_DURATION_MS, title: t(successKey), type: 'success' });
-      } else if (result.proposed) {
-        // The creation waits for approval; keeping the form open would only invite a duplicate proposal.
-        closeEditor();
-        setActionError(undefined);
-        announceProposal();
-      } else {
-        setFormError(result.message);
-      }
-    });
-  };
+  /**
+   * The create panel's Save button. A created task, or one parked for approval, closes the panel (the panel does that
+   * once the save bar reports it); a failure keeps the draft and shows its message.
+   */
+  const save = (submission: TaskFormSubmission): Effect.Effect<SaveOutcome> =>
+    records === undefined || editor === undefined
+      ? Effect.succeed<SaveOutcome>('failed')
+      : Effect.suspend(() => {
+          setSaving(true);
+          setFormError(undefined);
+          return commandEffect(commandOf(submission, editor), records.revision).pipe(
+            Effect.match({
+              onFailure: (error): SaveOutcome => {
+                setSaving(false);
+                setFormError(failureMessage(error));
+                return 'failed';
+              },
+              onSuccess: (outcome): SaveOutcome => {
+                setSaving(false);
+                setActionError(undefined);
+                if (isActionProposal(outcome)) {
+                  // The creation waits for approval; keeping the form open would only invite a duplicate proposal.
+                  announceProposal();
+                  return 'proposed';
+                }
+                toaster.create({ duration: SUCCESS_TOAST_DURATION_MS, title: t(`${key}.created`), type: 'success' });
+                return 'saved';
+              },
+            }),
+          );
+        });
 
   const finishBulk = (outcome: CommandOutcome, summaryKey: 'assigned' | 'changed') => {
     setBulkBusy(false);
@@ -1045,8 +1052,8 @@ const TaskEditor = ({ model }: { readonly model: ReturnType<typeof useTasksPage>
       onArchive={model.canWrite ? model.handleArchive : undefined}
       onClose={model.handleCloseEditor}
       onComment={model.handleComment}
+      onCreate={model.handleSave}
       onSaveEdit={model.handleSaveEdit}
-      onSubmit={model.handleSave}
       opportunities={model.opportunities}
       opportunitiesLoading={!model.lookups.opportunities}
       principalNames={model.principalNames}

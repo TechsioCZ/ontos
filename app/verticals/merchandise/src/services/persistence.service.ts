@@ -90,7 +90,7 @@ import type { StoreScope, WorkingSet, WorkingSetRequest } from './merchandise-st
 import { realVariantsOf, stockLevelsOf, stockOnHandOf, toProductRecord, variantStockOf } from './stock-levels.ts';
 import { normalizeSearchText } from './storefront-catalog.ts';
 import { orderCustomerReferenceEligible } from '../../shared/order-customer-reference.ts';
-import { isMediaImageReference } from '../../shared/domain/product-images.ts';
+import { isMediaImageReference, mediaImageReference } from '../../shared/domain/product-images.ts';
 import { galleryAfterChange, readProductImage } from './product-media.ts';
 import {
   convertGrossMinor,
@@ -1949,6 +1949,17 @@ export const prepareMerchandiseCommand = Effect.fn('Merchandise.prepareCommandRe
   return yield* Effect.void;
 });
 
+// Storefront guests cannot know the revision; their command re-validates against the current rows.
+// An order edit carrying the order's own updatedAt conflicts only when that order changed.
+// A gallery change re-validates against the product's current gallery, so uploads never wait for a revision; a
+// `Set` saves a whole gallery draft and is refused when the catalog changed since the draft was read.
+// Market commands never touch catalog rows and guard their own market revision.
+const ownRevisionGuard = (command: Exclude<MerchandiseCommand, AiCommand>): boolean =>
+  isOrderScopedEdit(command) ||
+  isMarketCommand(command) ||
+  Predicate.isTagged(command, 'PlaceStorefrontOrder') ||
+  (Predicate.isTagged(command, 'ChangeProductImages') && !Predicate.isTagged(command.change, 'Set'));
+
 export const persistenceService = Effect.fn('Merchandise.persistenceService')(
   function* makePersistence(
     transaction: ScopedTransactionExecutor,
@@ -1995,17 +2006,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
     ) {
       // The head row lock serializes every write of this company; reads never wait for it.
       const head = yield* lockedHead(false);
-      // Storefront guests cannot know the revision; their command re-validates against the current rows.
-      // An order edit carrying the order's own updatedAt conflicts only when that order changed.
-      // A gallery change re-validates against the product's current gallery, so uploads never wait for a revision.
-      // Market commands never touch catalog rows and guard their own market revision.
-      if (
-        !isOrderScopedEdit(command) &&
-        !isMarketCommand(command) &&
-        !Predicate.isTagged(command, 'PlaceStorefrontOrder') &&
-        !Predicate.isTagged(command, 'ChangeProductImages') &&
-        head.revision !== expectedRevision
-      ) {
+      if (!ownRevisionGuard(command) && head.revision !== expectedRevision) {
         return yield* revisionConflict();
       }
       if (Predicate.isTagged(command, 'ResetDemoData')) {
@@ -2044,6 +2045,10 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           principalId: scope.principalId,
           product,
         });
+        if (Predicate.isTagged(command.change, 'Stage')) {
+          // Stored for the draft only: the product, its public gallery and the catalog revision stay as they are.
+          return { entityIds: [], image: mediaImageReference(resourceId), revision: head.revision };
+        }
         const gallery = yield* evolveMerchandiseState(
           working.state,
           { _tag: 'UpdateProduct', id: command.id, patch: { images } },
