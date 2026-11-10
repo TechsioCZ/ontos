@@ -213,8 +213,17 @@ const makeSession = (origin: string) =>
       );
     const post = <S extends Schema.Top>(path: string, schema: S, payload: S['Type']) =>
       encodeJson(schema, payload).pipe(Effect.flatMap((json) => postJson(path, json, Option.none())));
+    /**
+     * A body with a redacted field. `encodeJson` writes the redaction label for such a field; the HTTP body
+     * codec writes the value, which is what sign-in has to send.
+     */
+    const postSecret = <S extends Schema.Top>(path: string, schema: S, payload: S['Type']) =>
+      HttpClientRequest.schemaBodyJson(schema)(HttpClientRequest.post(`${origin}${API}${path}`), payload).pipe(
+        Effect.mapError(() => invalid('a planned body does not match the Shell contract')),
+        Effect.flatMap((request) => send(request, Option.none())),
+      );
     const get = (path: string) => send(HttpClientRequest.get(`${origin}${API}${path}`), Option.none());
-    return { get, post, postJson };
+    return { get, post, postJson, postSecret };
   });
 type Session = Effect.Success<ReturnType<typeof makeSession>>;
 
@@ -231,7 +240,7 @@ const expectOk =
 const signIn = (session: Session, email: string, password: Redacted.Redacted) =>
   Effect.gen(function* signInAsOwner() {
     const signedIn = yield* session
-      .post('/auth/sign-in', SignInPayloadSchema, { email, password })
+      .postSecret('/auth/sign-in', SignInPayloadSchema, { email, password })
       .pipe(Effect.flatMap(expectOk('sign-in', SignInResponseSchema)));
     const entities = yield* session
       .get('/auth/legal-entities')
