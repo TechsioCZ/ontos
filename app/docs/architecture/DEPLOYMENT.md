@@ -407,6 +407,8 @@ A vertical needs no new GitHub variables, no Zerops service and no Cloudflare co
 
 Payment is not in the release intent, so stage builds and serves no Payment owner; the migrator still applies its schema. Main's release intent leaves it out too, and its cross-owner evidence ports and `payment.source-ingress` workload have no stage provider yet. No other owner calls Payment, so only Payment's own features are unavailable.
 
+Promotion is left out of the release intent on the same terms: main's release intent omits it, and the migrator applies its `promotion` schema. Pricing treats an uninstalled Promotion module through its existing not-installed fence, so promotion contributions are unavailable and nothing else changes.
+
 ## Required smoke suite
 
 Provider readiness alone is insufficient. The post-deploy release gate exercises:
