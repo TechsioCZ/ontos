@@ -628,3 +628,53 @@ it.live('#1150 the same held prior return on the GATEWAY_OUTCOME family has a go
     }),
   ),
 );
+
+/** Tries to close the held return's case and reports the refusal code. */
+const closeHeldReturn = (
+  refundCase: RefundCase,
+  held: { readonly observationId: string; readonly reconciliationCaseId?: string | undefined },
+) =>
+  refundOutcomeOf(
+    decideReconciliation(refundCase, {
+      caseId: held.reconciliationCaseId ?? '',
+      decision: { _tag: 'CLOSE_CASE', evidenceRef: held.observationId },
+      reason: 'Close the held return as already counted',
+    }),
+  );
+
+it.live('#1150 a held return against a collection that is not proven collected cannot be closed', () =>
+  native(
+    Effect.gen(function* returnWithoutEstablishedCollection() {
+      const refundCase = yield* newRefundCase({ amountMinor: 100_000, collected: false });
+      const held = yield* priorReturnOnCollection(refundCase, 'GATEWAY_OUTCOME', 'gopay:refund:no-collection');
+      expect(held.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+      // No established collection accounts for returned money: the debt stays open.
+      expect(yield* closeHeldReturn(refundCase, held)).toBe('payment_reconciliation_obligation_unresolved');
+    }),
+  ),
+);
+
+it.live('#1150 held returns that together exceed the collection cannot be closed', () =>
+  native(
+    Effect.gen(function* returnsExceedCollection() {
+      const refundCase = yield* newRefundCase({ amountMinor: 100_000, collected: true });
+      const first = yield* priorReturnOnCollection(refundCase, 'GATEWAY_OUTCOME', 'gopay:refund:over-1');
+      const second = yield* acceptObservation(refundCase, {
+        amount: { amountMinor: 80_000, currency: 'CZK' },
+        economicEffectKey: 'gopay:refund:over-2',
+        factFamily: 'GATEWAY_OUTCOME',
+        factKind: 'REFUND_CONFIRMED',
+        operationId: refundCase.payment.collectOperationId,
+        paymentId: refundCase.payment.paymentId,
+        source: REFUND_GATEWAY_SOURCE,
+        sourceOccurrenceId: 'occ-gopay:refund:over-2',
+        sourceRevision: 0,
+      });
+      expect(second.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+      // 400 + 800 CZK returned of a 1000 CZK collection is inconsistent: neither case may close.
+      for (const held of [first, second]) {
+        expect(yield* closeHeldReturn(refundCase, held)).toBe('payment_reconciliation_obligation_unresolved');
+      }
+    }),
+  ),
+);
