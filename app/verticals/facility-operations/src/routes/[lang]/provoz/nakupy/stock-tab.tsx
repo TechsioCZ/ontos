@@ -1,16 +1,25 @@
 import { optionalField } from '../../../../../shared/domain/common.ts';
-import { Effect } from 'effect';
+import { Effect, Option } from 'effect';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Zásoby (S05): item list with stock level badges + item detail panel with ledger, plan, batches and serials.
 import {
   DetailList,
   EmptyState,
+  SaveBar,
   SectionCard,
   SidePanel,
+  UnsavedChangesDialog,
   foldSearchText,
   formatDate,
+  saveLabelsFor,
   surfaceTileClassName,
+  useDraftSave,
 } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
+import type { OpsCommand } from '../../../../../shared/agendas.ts';
+import { useDraftBase } from '../../../../ui/draft-base.ts';
+import { useEditGuard } from '../../../../ui/edit-guard.tsx';
+import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -408,57 +417,68 @@ export const MovementTable = ({
   );
 };
 
-interface SubmitStockItemInput {
-  readonly item: StockItem;
-  readonly k: ReturnType<typeof usePurchasingT>;
-  readonly onDone: () => void;
-  readonly run: RunCommand;
-  readonly setBusy: (value: boolean) => void;
-  readonly setError: (value: string | undefined) => void;
-  readonly state: PurchasingState;
-  readonly t: ReturnType<typeof useModernI18n>['t'];
-  readonly toast: ReturnType<typeof useToast>;
-  readonly values: Readonly<Record<string, string>>;
+/** The edit form's fields as typed. */
+interface ItemEditDraft {
+  readonly leadTimeDays: string;
+  readonly maximum: string;
+  readonly minimum: string;
+  readonly name: string;
+  readonly note: string;
+  readonly price: string;
+  readonly supplierId: string;
 }
-const submitStockItem = Effect.fn('FacilityOperations.Purchasing.submitStockItem')(function* updateStockItem(
-  input: SubmitStockItemInput,
-) {
-  const { item, k, onDone, run, setBusy, setError, state, t, toast, values } = input;
-  setError(undefined);
-  const minimum = Number(values['minimum']);
-  const maximum = Number(values['maximum']);
-  const lead = Number(values['leadTimeDays']);
-  const name = (values['name'] ?? '').trim();
-  if (name === '' || ![minimum, maximum, lead].every((entry) => Number.isInteger(entry) && entry >= 0)) {
-    setError(t('facility-operations.common.required'));
-    return;
-  }
-  if (maximum > 0 && maximum < minimum) {
-    setError(k('items.maxBelowMin'));
-    return;
-  }
-  const supplier = state.suppliers.find((entry) => entry.id === values['supplierId']);
-  setBusy(true);
-  const outcome = yield* run({
-    _tag: 'StockItemUpdate',
-    itemId: item.id,
-    leadTimeDays: lead,
-    maximum,
-    minimum,
-    name,
-    note: (values['note'] ?? '').trim(),
-    ...optionalField('supplierId', supplier?.id),
-    ...optionalField('lastPriceMinor', parseAmountMinor(values['price'] ?? '')),
-  });
-  setBusy(false);
-  if (outcome.ok) {
-    toast.create({ duration: 5000, title: t('facility-operations.common.saved'), type: 'success' });
-    onDone();
-  } else {
-    setError(t(failureKey(outcome.reason)));
-  }
+
+const itemEditDraftOf = (item: StockItem): ItemEditDraft => ({
+  leadTimeDays: String(item.leadTimeDays),
+  maximum: String(item.maximum),
+  minimum: String(item.minimum),
+  name: item.name,
+  note: item.note ?? '',
+  price: item.lastPriceMinor === undefined ? '' : String(item.lastPriceMinor / 100),
+  supplierId: item.supplierId ?? 'none',
 });
 
+const itemEditFields = ['leadTimeDays', 'maximum', 'minimum', 'name', 'note', 'price', 'supplierId'] as const;
+const sameItemEditDraft = (left: ItemEditDraft, right: ItemEditDraft): boolean =>
+  itemEditFields.every((field) => left[field] === right[field]);
+
+/** Why the draft cannot be saved: a missing name or count, or a maximum below the minimum. */
+const itemEditProblem = (values: ItemEditDraft): 'maxBelowMin' | 'required' | undefined => {
+  const minimum = Number(values.minimum);
+  const maximum = Number(values.maximum);
+  const lead = Number(values.leadTimeDays);
+  if (values.name.trim() === '' || ![minimum, maximum, lead].every((entry) => Number.isInteger(entry) && entry >= 0)) {
+    return 'required';
+  }
+  return maximum > 0 && maximum < minimum ? 'maxBelowMin' : undefined;
+};
+
+const stockItemCommandOf = (
+  values: ItemEditDraft,
+  item: StockItem,
+  state: PurchasingState,
+): Option.Option<OpsCommand> => {
+  if (itemEditProblem(values) !== undefined) {
+    return Option.none();
+  }
+  const supplier = state.suppliers.find((entry) => entry.id === values.supplierId);
+  return Option.some({
+    _tag: 'StockItemUpdate',
+    itemId: item.id,
+    leadTimeDays: Number(values.leadTimeDays),
+    maximum: Number(values.maximum),
+    minimum: Number(values.minimum),
+    name: values.name.trim(),
+    note: values.note.trim(),
+    ...optionalField('supplierId', supplier?.id),
+    ...optionalField('lastPriceMinor', parseAmountMinor(values.price)),
+  });
+};
+
+/**
+ * Edit of one stock item inside its panel, against the read it was opened from: nothing is sent until Uložit, a
+ * newer change by someone else refuses the save, and "Načíst nejnovější" loads it. `item` is the live record.
+ */
 const ItemEditForm = ({
   item,
   onDone,
@@ -471,36 +491,66 @@ const ItemEditForm = ({
   readonly state: PurchasingState;
 }) => {
   const k = usePurchasingT();
-  const { t } = useModernI18n();
-  const toast = useToast();
-  const [values, setValues] = useState<Record<string, string>>({
-    leadTimeDays: String(item.leadTimeDays),
-    maximum: String(item.maximum),
-    minimum: String(item.minimum),
-    name: item.name,
-    note: item.note ?? '',
-    price: item.lastPriceMinor === undefined ? '' : String(item.lastPriceMinor / 100),
-    supplierId: item.supplierId ?? 'none',
+  const { language, t } = useModernI18n();
+  const [values, setValues] = useState<ItemEditDraft>(() => itemEditDraftOf(item));
+  const set = (name: keyof ItemEditDraft, next: string) => setValues((current) => ({ ...current, [name]: next }));
+  // Saves carry the revision of the read the draft was built on, so someone else's newer change refuses them.
+  const base = useDraftBase(item, run);
+  const record = useDraftSave<ItemEditDraft, never>({
+    equals: sameItemEditDraft,
+    isValid: (value) => itemEditProblem(value) === undefined,
+    runtime: browserRuntime,
+    save: (value) =>
+      Option.match(stockItemCommandOf(value, item, state), {
+        onNone: () => Effect.succeed<SaveOutcome>('failed'),
+        onSome: (command) => base.confirm(facilitySaveOutcome(base.run(command))),
+      }),
+    value: values,
   });
-  const [error, setError] = useState<string | undefined>();
-  const [busy, setBusy] = useState(false);
-  const set = (name: string, next: string) => setValues((current) => ({ ...current, [name]: next }));
-  const submit = () => submitStockItem({ item, k, onDone, run, setBusy, setError, state, t, toast, values });
-  const input = (name: string, label: string, numeric = false) => (
+  base.sync({
+    onAdopt: () => {
+      const stored = itemEditDraftOf(item);
+      if (!sameItemEditDraft(stored, values)) {
+        record.adopt(stored);
+        setValues(stored);
+      }
+    },
+    settled: !record.pending && sameItemEditDraft(values, record.confirmed),
+  });
+  const guard = useEditGuard(record, () => {
+    setValues(record.confirmed);
+  });
+  const labels = saveLabelsFor(language);
+  const handleSave = () => {
+    record.save();
+    record.afterSave((status) => {
+      if (status === 'saved') {
+        onDone();
+      }
+    });
+  };
+  const handleReloadLatest = () => {
+    const current = itemEditDraftOf(item);
+    base.rebase();
+    record.adopt(current);
+    setValues(current);
+  };
+  const problem = record.status === 'invalid' ? itemEditProblem(values) : undefined;
+  const input = (name: keyof ItemEditDraft, label: string, numeric = false) => (
     <FormInput
       id={`item-edit-${name}`}
       inputMode={numeric ? 'numeric' : undefined}
       label={label}
       maxLength={200}
       onChange={(event) => set(name, event.target.value)}
-      value={values[name] ?? ''}
+      value={values[name]}
     />
   );
   return (
     <SectionCard title={k('items.editTitle')}>
-      {error !== undefined && (
+      {problem !== undefined && (
         <StatusText showIcon status="error">
-          {error}
+          {problem === 'required' ? t('facility-operations.common.required') : k('items.maxBelowMin')}
         </StatusText>
       )}
       {input('name', k('fields.name'))}
@@ -517,25 +567,22 @@ const ItemEditForm = ({
         onValueChange={({ value }) => set('supplierId', value[0] ?? 'none')}
         placeholder={k('placeholders.supplier')}
         size="md"
-        value={values['supplierId'] === 'none' ? [] : [values['supplierId'] ?? '']}
+        value={values.supplierId === 'none' ? [] : [values.supplierId]}
       />
       {input('note', t('facility-operations.common.note'))}
-      <div className="flex justify-end gap-100">
-        <Button onClick={onDone} size="sm" theme="outlined" variant="secondary">
+      <div className="flex flex-wrap items-center justify-end gap-100">
+        <Button onClick={() => guard.request(onDone)} size="sm" theme="outlined" variant="secondary">
           {t('facility-operations.common.cancel')}
         </Button>
-        <Button
-          isLoading={busy}
-          loadingText={t('facility-operations.common.saving')}
-          onClick={() => {
-            browserRuntime.runFork(submit());
-          }}
+        <SaveBar
+          labels={labels}
+          onReloadLatest={handleReloadLatest}
+          onSave={handleSave}
           size="sm"
-          variant="primary"
-        >
-          {t('facility-operations.common.save')}
-        </Button>
+          status={record.status}
+        />
       </div>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </SectionCard>
   );
 };
