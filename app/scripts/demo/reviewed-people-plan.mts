@@ -834,6 +834,23 @@ const rollbackPlan = (observed: ObservedState, generation: number): Planned => {
     if (issue !== undefined) {
       return halt(issue);
     }
+    // Ending the tenant row closes every company row with it, so each one Core would close must be ours too.
+    const foreignCompany = endsTenant
+      ? memberRows(person, COMPANY_SCOPE).find(
+          (row) =>
+            row.status !== 'revoked' &&
+            Option.match(row.validUntil, {
+              onNone: () => true,
+              onSome: (until) => DateTime.isGreaterThan(until, observed.at),
+            }) &&
+            !admittedByScript(row, principalId, generation),
+        )
+      : undefined;
+    if (foreignCompany !== undefined) {
+      return halt(
+        `${principalId} holds member row ${foreignCompany.membershipId} in company 0020 that this script did not admit, which ending the tenant membership would close`,
+      );
+    }
     if (endsCompany) {
       companyEnds.push(end(COMPANY_SCOPE));
     }

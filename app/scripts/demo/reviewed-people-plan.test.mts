@@ -517,6 +517,35 @@ it.effect('rolls back only the memberships its own admissions wrote, and stops b
   }),
 );
 
+it.effect('halts instead of ending its tenant row when company 0020 was admitted again through Lidé', () =>
+  Effect.gen(function* foreignCompanyRowStopsTheTenantEnd() {
+    const state = yield* desired;
+    const [obchodnik = OWNER] = PRINCIPAL_IDS;
+    const done = applied(state);
+    // The script's company row was ended in Lidé and the person admitted to company 0020 again under
+    // another id; the tenant row is still the one the script wrote.
+    const readmitted = member(COMPANY_SCOPE, 'member', stableUuid('readmitted-through-lide'));
+    const observed = {
+      ...done,
+      people: withPerson(done, obchodnik, (person) => ({
+        ...person,
+        memberships: [
+          ...person.memberships.map((row) =>
+            row.membershipId === admittedMembershipIdOf(1, obchodnik, COMPANY_SCOPE)
+              ? { ...row, status: 'revoked' as const }
+              : row,
+          ),
+          readmitted,
+        ],
+      })),
+    };
+    const planned = plan(state, observed, rollback1);
+    expect(haltOf(planned)?.reason).toContain(obchodnik);
+    expect(haltOf(planned)?.reason).toContain(readmitted.membershipId);
+    expect(Result.isFailure(planned)).toBe(true);
+  }),
+);
+
 it.effect('refuses to plan for anyone but the tenant owner of the reviewed tenant', () =>
   Effect.gen(function* ownerOnly() {
     const state = yield* desired;
