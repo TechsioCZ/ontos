@@ -18,6 +18,11 @@ import { compareAmounts, sameAmount, subtractAmounts, sumAmounts } from './money
 export interface PaymentReturnEvidence {
   /** The money the statement states; undefined when the source stated none. Identifies a counted REFUND. */
   readonly amount: PaymentMonetaryAmount | undefined;
+  /**
+   * True when the scope-wide attribution ledger already counts this economic effect for an operation of
+   * another Payment: one effect counts once, so here it is unresolved debt, never a return (#1151).
+   */
+  readonly attributedElsewhere?: boolean | undefined;
   /** Money accepted corrections took away from the statement; what remains is what it still proves (#1150). */
   readonly correctedAmount?: PaymentMonetaryAmount | undefined;
   /** Observations proven to describe the same economic effect share this key and count once. */
@@ -219,6 +224,11 @@ export const priorReturnsOf = (
   const refundEffects = new Map<string, string>();
   let ambiguous = false;
   for (const group of groupByEconomicEffect(evidence)) {
+    if (group.some((statement) => statement.attributedElsewhere === true)) {
+      // The same money already counts for another Payment: it proves no return here and holds new ones.
+      ambiguous = true;
+      continue;
+    }
     const countedRefund = group.find((statement) =>
       describesCountedRefund(
         statement,
