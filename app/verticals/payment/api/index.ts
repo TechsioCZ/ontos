@@ -1,3 +1,9 @@
+import {
+  OwnerActionApprovalSchemaErrorLive,
+  makeOwnerActionApprovalApiLive,
+} from '@app/core-runtime/access/approvals/owner-http';
+import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
+import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { paymentRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
@@ -32,7 +38,10 @@ import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from '
 import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 // <generated-governed-http-handler-support-imports>
-import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
+import {
+  ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive,
+  authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
+} from './auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
   gatewayAssertionRedemptionPgClient,
@@ -151,7 +160,26 @@ const paymentReadRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, paymentR
 /** Deployment composition seam. Cross-owner evidence ports stay fail-closed until their owners publish them. */
 const productionReadRuntimeLive = paymentReadRuntime.pipe(Layer.provideMerge(paymentUnavailableOwnerPortsLive));
 
+const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(ultramodernDeliveryUnit, paymentRegistration).pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      activeApplicationCompositionLive,
+      CorePersistenceLive,
+      ActionRepositoryLive,
+      ActionPermissionLive,
+      ContextAccessLive,
+      moduleStateGateLive,
+      moduleEntrypointGatewayLive,
+      operationalScopeResolverLive,
+      accessEnforcementLive,
+    ),
+  ),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
+  Layer.provide(databaseIdentitiesLive),
+);
+
 const paymentActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit, paymentRegistration).pipe(
+  Layer.provideMerge(ownerActionApprovalsLive),
   Layer.provide(
     Layer.mergeAll(
       activeApplicationCompositionLive,
@@ -179,7 +207,7 @@ const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedempt
 
 type PaymentApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
-  actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof productionActionRuntimeLive>>,
+  actionRuntime: Layer.Layer<ActionRuntime | OwnerActionApprovals, Layer.Error<typeof productionActionRuntimeLive>>,
   gatewayAssertionRedemption: Layer.Layer<
     GatewayAssertionRedemptionService,
     Layer.Error<typeof productionGatewayAssertionRedemptionLive>
@@ -195,6 +223,10 @@ export const makePaymentApiRuntime = (
   );
   const apiHandlersLive = Layer.mergeAll(
     paymentReadinessLayer,
+    makeOwnerActionApprovalApiLive(paymentApi, authenticateOwnerApprovalPrincipal).pipe(
+      GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
+      GovernedReadLayer.provide(governedActionRuntimeLive),
+    ),
     // <generated-governed-http-handler-layers>
     acceptPaymentObservationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     configurePaymentMethodEnablementActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

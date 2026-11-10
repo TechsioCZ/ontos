@@ -1,3 +1,4 @@
+import { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
 import { defineDatabaseIdentityEnrollment, ActionRuntime, ReadRuntime } from '@app/core-runtime';
 import { randomUUID } from 'node:crypto';
 
@@ -132,6 +133,10 @@ const mountPaymentTransport = Effect.fn('AcceptanceIngress.mount')(function* mou
     Layer.succeed(ReadRuntime, runtimes.reads).pipe(Layer.provideMerge(paymentUnavailableOwnerPortsLive)),
     Layer.mergeAll(
       Layer.succeed(ActionRuntime, runtimes.actions),
+      Layer.succeed(OwnerActionApprovals, {
+        approve: () => Effect.die('owner action approvals are outside this proof'),
+        inspect: () => Effect.die('owner action approvals are outside this proof'),
+      }),
       Layer.succeed(ActiveApplicationCompositionSource, { load: Effect.succeed(compositionDocument) }),
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({

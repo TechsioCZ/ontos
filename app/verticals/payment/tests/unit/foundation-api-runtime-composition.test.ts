@@ -1,3 +1,4 @@
+import { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
 import { randomUUID } from 'node:crypto';
 
 import { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
@@ -141,6 +142,10 @@ const mountPaymentTransport = Effect.fn('PaymentFoundationCompositionTest.mount'
     Layer.succeed(ReadRuntime, readRuntime).pipe(Layer.provideMerge(ownerPorts)),
     Layer.mergeAll(
       Layer.succeed(ActionRuntime, actionRuntime),
+      Layer.succeed(OwnerActionApprovals, {
+        approve: () => Effect.die('owner action approvals are outside this proof'),
+        inspect: () => Effect.die('owner action approvals are outside this proof'),
+      }),
       Layer.succeed(ActiveApplicationCompositionSource, { load: Effect.succeed(compositionDocument) }),
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({

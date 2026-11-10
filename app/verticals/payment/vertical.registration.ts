@@ -42,6 +42,7 @@ export const paymentRegistration = defineVerticalRuntimeRegistration({
     api: {
       // <generated-module-registration-apis>
       'current-payment': () => import('./src/api/current-payment-client.ts'),
+      'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'payment-authorization-validation': () => import('./src/api/payment-authorization-validation-client.ts'),
       'payment-history': () => import('./src/api/payment-history-client.ts'),
       'payment-method-applicability': () => import('./src/api/payment-method-applicability-client.ts'),
