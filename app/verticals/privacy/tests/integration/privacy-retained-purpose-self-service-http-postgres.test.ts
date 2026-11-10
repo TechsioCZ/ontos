@@ -1590,6 +1590,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
   };
   const commerceEnvironment = {
     ...environment,
+    COMMERCE_CORE_IDENTITY_API_KEY: Redacted.value(issued.secret),
     COMMERCE_CORE_IDENTITY_BASE_URL: `${coreOrigin}${shellGatewayContextContract.apiPrefix}`,
     COMMERCE_PORTAL_AUTH_DATABASE_URL: isolated.connections.runtime.connectionString,
     COMMERCE_PORTAL_AUTH_SECRET: `${suffix}${suffix}`,
