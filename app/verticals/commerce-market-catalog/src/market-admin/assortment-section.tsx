@@ -1,6 +1,6 @@
 // "Sortiment a ceník" of the market detail: the merchandise price list of the market and its product exceptions
 // (DESIGN 3.2). Commands go through the merchandise apply-command Action; switches are disabled for non-managers.
-import { AutosaveStatus, SectionCard, useAutosaveDraft } from '@app/admin-ui';
+import { SaveBar, SectionCard, useRecordDraft } from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import type { MarketSettings } from '@app/merchandise/domain/market-offers';
 import type { RecordsResponse } from '@app/merchandise/contracts/records';
@@ -70,7 +70,7 @@ const PriceListEditor = ({
   settings,
 }: Omit<PriceListProps, 'onDone'> & { readonly settings: MarketSettings }) => {
   const { text } = useMarketText();
-  const autosave = useAutosaveDraft<MarketPricingForm, never>({
+  const autosave = useRecordDraft<MarketPricingForm, never>({
     isValid: (value) => pricingIssues(value).length === 0,
     refresh,
     revision: settings.revision,
@@ -103,11 +103,10 @@ const PriceListEditor = ({
     });
     return <p className="text-sm">{[mode, summary].join(' · ')}</p>;
   }
-  const handleBlur = () => autosave.flush();
   const handleReloadLatest = () => autosave.reloadLatest();
-  const handleRetry = () => autosave.retry();
+  const handleSave = () => autosave.save();
   return (
-    <div className="flex flex-col gap-150" onBlur={handleBlur}>
+    <div className="flex flex-col gap-150">
       <PricingFields
         form={autosave.draft}
         issues={issues}
@@ -116,7 +115,7 @@ const PriceListEditor = ({
         showIssues={issues.length > 0}
         size="sm"
       />
-      <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+      <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
     </div>
   );
 };

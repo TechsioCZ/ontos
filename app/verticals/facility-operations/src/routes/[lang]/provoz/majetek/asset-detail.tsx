@@ -1,7 +1,7 @@
 // Asset card (S02) in a resizable SidePanel: card, value/event timeline, revisions and depreciation (S03).
 // Every action switches the panel body to its form; the footer carries Zpět + the submit button, except for the card
 // edit, which saves itself and shows the inline autosave status there. Owned by ops-assets.
-import { AutosaveStatus, DetailList, SidePanel, formatMoney, surfaceTileClassName } from '@app/admin-ui';
+import { SaveBar, DetailList, SidePanel, formatMoney, surfaceTileClassName } from '@app/admin-ui';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -538,10 +538,9 @@ const AssetDetailContent = ({
   const [mode, setMode] = useState<DetailMode>({ kind: 'view' });
   const [tab, setTab] = useState('card');
   // The card draft lives in the autosave hook, so the panel footer can save it and show its status.
-  const { draft, flush, reloadLatest, retry, setDraft, status } = useAssetCardAutosave({ asset, run });
+  const { draft, reloadLatest, save, setDraft, status } = useAssetCardAutosave({ asset, run });
   const changeDraft = (patch: Partial<AssetCardDraft>) => setDraft((current) => ({ ...current, ...patch }));
   const closePanel = () => {
-    flush();
     onClose();
   };
   const active = isActiveAsset(asset);
@@ -746,7 +745,7 @@ const AssetDetailContent = ({
     if (mode.kind === 'edit') {
       return (
         <>
-          <AutosaveStatus onReloadLatest={reloadLatest} onRetry={retry} status={status} />
+          <SaveBar onReloadLatest={reloadLatest} onSave={save} status={status} />
           <Button onClick={() => setMode({ kind: 'view' })} theme="outlined" variant="secondary">
             {k('actions.back')}
           </Button>

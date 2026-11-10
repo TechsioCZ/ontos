@@ -1,8 +1,8 @@
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Create / edit / amendment form for the documents agenda (S12). Upload goes through the governed FileUpload command
 // first; the returned file snapshot becomes version 1 of the new document.
-import { AutosaveStatus, SidePanel, surfaceTileClassName, useAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { SaveBar, SidePanel, surfaceTileClassName, useDraftSave } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -534,7 +534,6 @@ const DocumentContractFields = ({
 const DocumentTextFields = ({
   category,
   description,
-  onBlur,
   onCategoryChange,
   onDescriptionChange,
   onTitleChange,
@@ -543,7 +542,6 @@ const DocumentTextFields = ({
 }: {
   readonly category: string;
   readonly description: string;
-  readonly onBlur?: (() => void) | undefined;
   readonly onCategoryChange: (category: string) => void;
   readonly onDescriptionChange: (description: string) => void;
   readonly onTitleChange: (title: string) => void;
@@ -559,7 +557,6 @@ const DocumentTextFields = ({
         id="document-title"
         label={t(`${k}.fields.title`)}
         maxLength={300}
-        onBlur={onBlur}
         onChange={(event) => onTitleChange(event.target.value)}
         required
         value={title}
@@ -583,7 +580,6 @@ const DocumentTextFields = ({
         id="document-description"
         label={t(`${k}.fields.description`)}
         maxLength={4000}
-        onBlur={onBlur}
         onChange={(event) => onDescriptionChange(event.target.value)}
         rows={2}
         value={description}
@@ -617,13 +613,13 @@ const DocumentEditPanel = ({
   const invoices = useInvoiceOptions();
   const [draft, setDraft] = useState<DocumentEditDraft>(() => documentEditDraftOf(document));
   const problems = documentEditProblems(draft);
-  const autosave = useAutosave<DocumentEditDraft, never>({
+  const autosave = useDraftSave<DocumentEditDraft, never>({
     equals: sameDocumentEditDraft,
     isValid: (value) => Option.isSome(documentUpdateCommandOf(document.id, value)),
     runtime: browserRuntime,
     save: (value) =>
       Option.match(documentUpdateCommandOf(document.id, value), {
-        onNone: () => Effect.succeed<AutosaveOutcome>('failed'),
+        onNone: () => Effect.succeed<SaveOutcome>('failed'),
         onSome: (command) => facilityAutosaveOutcome(run(command)),
       }),
     value: draft,
@@ -640,11 +636,9 @@ const DocumentEditPanel = ({
   const removeLink = (link: SubjectRef) =>
     setDraft((current) => ({ ...current, links: current.links.filter((entry) => !sameSubject(entry, link)) }));
   const close = () => {
-    autosave.flush();
     onClose();
   };
-  const handleBlur = autosave.flush;
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   const handleReloadLatest = () => {
     const current = documentEditDraftOf(document);
     autosave.adopt(current);
@@ -656,7 +650,7 @@ const DocumentEditPanel = ({
     <SidePanel
       actions={
         <>
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
           <Button onClick={close} theme="outlined" variant="secondary">
             {t(closeLabelKey)}
           </Button>
@@ -681,7 +675,6 @@ const DocumentEditPanel = ({
         <DocumentTextFields
           category={draft.category}
           description={draft.description}
-          onBlur={handleBlur}
           onCategoryChange={(category) => update({ category })}
           onDescriptionChange={(description) => update({ description })}
           onTitleChange={(title) => update({ title })}

@@ -1,5 +1,5 @@
-import { startAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { startDraftSave } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { Effect, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
@@ -86,9 +86,9 @@ describe('task edit panel autosave', () => {
     expect(taskAutosaveOutcome({ _tag: 'ApplyCommandActionUnavailableProblem' })).toBe('failed');
   });
 
-  const panel = Effect.fnUntraced(function* panel(outcome: AutosaveOutcome) {
+  const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
     const sent: FormValues[] = [];
-    const controller = yield* startAutosave(saved, {
+    const controller = yield* startDraftSave(saved, {
       equals: sameFormValues,
       isValid: (value: FormValues) => value.title.trim() !== '',
       save: (value: FormValues) => Effect.sync(() => sent.push(value)).pipe(Effect.as(outcome)),
@@ -100,7 +100,7 @@ describe('task edit panel autosave', () => {
     Effect.gen(function* typed() {
       const { controller, sent } = yield* panel('saved');
       controller.change({ ...saved, title: ' ' });
-      controller.flush();
+      controller.save();
       expect(controller.status()).toBe('invalid');
       controller.change({ ...saved, description: 'Zavolat správci budovy' });
       yield* TestClock.adjust('800 millis');
@@ -113,7 +113,7 @@ describe('task edit panel autosave', () => {
     Effect.gen(function* conflict() {
       const { controller, sent } = yield* panel('conflict');
       controller.change({ ...saved, priority: 'LOW' });
-      controller.flush();
+      controller.save();
       yield* Effect.yieldNow;
       expect(controller.status()).toBe('conflict');
       controller.change({ ...saved, priority: 'NORMAL' });
@@ -138,14 +138,14 @@ describe('task edit panel autosave', () => {
       const { controller, sent } = yield* panel('proposed');
       const edited = { ...saved, description: 'Zavolat správci budovy' };
       controller.change(edited);
-      controller.flush();
+      controller.save();
       yield* Effect.yieldNow;
       expect(controller.status()).toBe('proposed');
       expect(controller.confirmed()).toBe(saved);
       // Blur, the retry control and the panel's close all flush; none of them sends the parked draft.
-      controller.flush();
-      controller.retry();
-      controller.flush();
+      controller.save();
+      controller.save();
+      controller.save();
       yield* TestClock.adjust('1 second');
       expect(sent).toEqual([edited]);
       expect(controller.status()).toBe('proposed');
@@ -156,15 +156,15 @@ describe('task edit panel autosave', () => {
     Effect.gen(function* controls() {
       const committed = yield* panel('saved');
       committed.controller.change({ ...saved, title: 'Saved task, revised' });
-      committed.controller.flush();
+      committed.controller.save();
       yield* Effect.yieldNow;
       expect(committed.controller.status()).toBe('saved');
       const failing = yield* panel('failed');
       failing.controller.change({ ...saved, title: 'Saved task, revised' });
-      failing.controller.flush();
+      failing.controller.save();
       yield* Effect.yieldNow;
       expect(failing.controller.status()).toBe('error');
-      failing.controller.retry();
+      failing.controller.save();
       yield* Effect.yieldNow;
       expect(failing.sent).toHaveLength(2);
     }),

@@ -32,7 +32,7 @@ const product: ProductRecord = Schema.decodeSync(ProductRecordSchema)({
 });
 const saved = draftOf(product);
 
-describe('product detail autosave draft', () => {
+describe('product detail draft', () => {
   it('treats a draft that differs only in spaces or number formatting as already saved', () => {
     expect(sameDetailDraft(saved, { ...saved, lowStockText: '03', name: 'Etiopie ', priceText: '258.040' })).toBe(true);
     expect(sameDetailDraft(saved, { ...saved, name: 'Etiopie A' })).toBe(false);

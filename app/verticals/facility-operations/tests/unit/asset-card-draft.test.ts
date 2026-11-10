@@ -1,5 +1,5 @@
-import { startAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { startDraftSave } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
@@ -95,9 +95,9 @@ describe('asset card draft', () => {
   });
 });
 
-const panel = Effect.fnUntraced(function* panel(outcome: AutosaveOutcome) {
+const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
   const sent: AssetCardDraft[] = [];
-  const controller = yield* startAutosave(stored, {
+  const controller = yield* startDraftSave(stored, {
     equals: sameAssetCardDraft,
     isValid: (value: AssetCardDraft) => Option.isSome(assetCardUpdateCommandOf(value, asset, placement)),
     save: (value: AssetCardDraft) => Effect.sync(() => sent.push(value)).pipe(Effect.as(outcome)),
@@ -110,7 +110,7 @@ describe('asset card edit autosave', () => {
     Effect.gen(function* typed() {
       const { controller, sent } = yield* panel('saved');
       controller.change({ ...stored, category: '' });
-      controller.flush();
+      controller.save();
       expect(controller.status()).toBe('invalid');
       controller.change({ ...stored, note: 'Vyměněno 2026' });
       yield* TestClock.adjust('800 millis');
@@ -123,7 +123,7 @@ describe('asset card edit autosave', () => {
     Effect.gen(function* conflict() {
       const { controller, sent } = yield* panel('conflict');
       controller.change({ ...stored, responsible: 'Petr Svoboda' });
-      controller.flush();
+      controller.save();
       yield* Effect.yieldNow;
       expect(controller.status()).toBe('conflict');
       controller.change({ ...stored, responsible: 'Petr Svoboda ml.' });

@@ -256,7 +256,7 @@ const sendCommand = (raw: PropertyCommand, expectedRevision: number) =>
   );
 
 /**
- * Autosave of an edited building or unit against the revision its draft builds on. The revision covers the whole
+ * Save of an edited building or unit against the revision its draft builds on. The revision covers the whole
  * register, so a conflict is resent once against a fresh read while `unchanged` holds for it. A change parked for
  * approval is not saved: the draft stays unconfirmed on its base revision and `onProposal` hears of it.
  */

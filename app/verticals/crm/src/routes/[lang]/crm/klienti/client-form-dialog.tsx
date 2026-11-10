@@ -7,14 +7,14 @@ import type { CrmCommandSubmit } from '../../../../crm/records.ts';
 // someone with the reassignment authority (`demo.crm.client-owner.assign`) may pick the salesperson; a
 // salesperson always creates the client for themself.
 import {
-  AutosaveStatus,
+  SaveBar,
   SidePanel,
   dialogCloseLabel,
   foldSearchText,
   surfaceTileClassName,
-  useAutosaveDraft,
+  useRecordDraft,
 } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { ActionIcon } from '@techsio/ui-kit/atoms/action-icon';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -150,11 +150,11 @@ const useClientForm = ({
   const [failure, setFailure] = useState<string | undefined>();
   // Edit mode autosaves the changed fields (UpdateClient is a patch; the CRM submit retries it on the latest
   // revision). Create mode keeps its explicit "Založit klienta" and never autosaves.
-  const autosave = useAutosaveDraft<Draft, never>({
+  const autosave = useRecordDraft<Draft, never>({
     equals: sameClientDraft,
     isValid: (value) => editing && validClientDraft(value),
     runtime: browserRuntime,
-    save: (value): Effect.Effect<AutosaveOutcome> => {
+    save: (value): Effect.Effect<SaveOutcome> => {
       if (client === undefined) {
         return Effect.succeed('failed');
       }
@@ -224,7 +224,6 @@ const useClientForm = ({
 
   const save = () => {
     if (editing) {
-      autosave.flush();
       return;
     }
     setTouched(true);
@@ -295,7 +294,6 @@ const useClientForm = ({
   ];
 
   const close = () => {
-    autosave.flush();
     onClose();
   };
 
@@ -357,7 +355,7 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
     touched,
     viewer,
   } = useClientForm(props);
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   const handleReloadLatest = autosave.reloadLatest;
 
   return (
@@ -374,7 +372,7 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
           </>
         ) : (
           <>
-            <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+            <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
             <Button onClick={close} theme="outlined" variant="secondary">
               Zavřít
             </Button>

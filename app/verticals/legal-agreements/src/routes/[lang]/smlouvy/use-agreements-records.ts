@@ -90,7 +90,7 @@ const contractReferenceAudiences = (record: Contract | undefined) => {
   return audiences;
 };
 /**
- * Autosave of the terms panel against the revision its draft builds on. The revision covers every agreement, so a
+ * Save of the terms panel against the revision its draft builds on. The revision covers every agreement, so a
  * conflict is resent once against a fresh read while `unchanged` holds for the contracts read then.
  */
 export const autosaveTerms = (

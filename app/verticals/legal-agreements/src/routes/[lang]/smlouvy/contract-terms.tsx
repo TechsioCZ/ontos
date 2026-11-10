@@ -1,12 +1,4 @@
-import {
-  AutosaveStatus,
-  DetailList,
-  SectionCard,
-  SidePanel,
-  formatDate,
-  formatMoney,
-  useAutosaveDraft,
-} from '@app/admin-ui';
+import { SaveBar, DetailList, SectionCard, SidePanel, formatDate, formatMoney, useRecordDraft } from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
@@ -182,7 +174,7 @@ const ContractTermsPanel = ({ contract, state }: { readonly contract: Contract; 
       termsUnchangedSince(contract.contractRef.resourceId, base.current),
       state.reportProposal,
     ).pipe(Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))));
-  const autosave = useAutosaveDraft<TermsDraft, never>({
+  const autosave = useRecordDraft<TermsDraft, never>({
     equals: sameTermsDraft,
     isValid: (value) => Option.isSome(termsCommandOf(contract.contractRef, value)),
     revision: state.snapshot?.revision ?? 0,
@@ -207,17 +199,15 @@ const ContractTermsPanel = ({ contract, state }: { readonly contract: Contract; 
   const change = (field: keyof TermsDraft) => (value: string) =>
     autosave.setDraft((current) => ({ ...current, [field]: value }));
   const close = () => {
-    autosave.flush();
     state.setTermsOpen(false);
   };
-  const handleBlur = autosave.flush;
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   const handleReloadLatest = autosave.reloadLatest;
   return (
     <SidePanel
       actions={
         <>
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
           <Button onClick={close} theme="outlined" variant="secondary">
             {t('legal-agreements.detail.close')}
           </Button>
@@ -240,7 +230,6 @@ const ContractTermsPanel = ({ contract, state }: { readonly contract: Contract; 
         <FormInput
           id="contract-terms-subject"
           label={t(`${P}.terms.subject`)}
-          onBlur={handleBlur}
           onChange={(event) => change('subject')(event.target.value)}
           value={draft.subject}
         />
@@ -248,14 +237,12 @@ const ContractTermsPanel = ({ contract, state }: { readonly contract: Contract; 
           <FormInput
             id="contract-terms-owner"
             label={t(`${P}.terms.responsiblePerson`)}
-            onBlur={handleBlur}
             onChange={(event) => change('responsiblePerson')(event.target.value)}
             value={draft.responsiblePerson}
           />
           <FormInput
             id="contract-terms-notice"
             label={t(`${P}.terms.noticePeriod`)}
-            onBlur={handleBlur}
             onChange={(event) => change('noticePeriod')(event.target.value)}
             value={draft.noticePeriod}
           />
@@ -266,7 +253,6 @@ const ContractTermsPanel = ({ contract, state }: { readonly contract: Contract; 
             id="contract-terms-monthly"
             inputMode="decimal"
             label={t(`${P}.terms.monthlyRentInput`)}
-            onBlur={handleBlur}
             onChange={(event) => change('monthly')(event.target.value)}
             value={draft.monthly}
             {...invalid(problems.monthly)}
@@ -275,7 +261,6 @@ const ContractTermsPanel = ({ contract, state }: { readonly contract: Contract; 
             id="contract-terms-service"
             inputMode="decimal"
             label={t(`${P}.terms.serviceChargesInput`)}
-            onBlur={handleBlur}
             onChange={(event) => change('service')(event.target.value)}
             value={draft.service}
             {...invalid(problems.service)}
@@ -285,7 +270,6 @@ const ContractTermsPanel = ({ contract, state }: { readonly contract: Contract; 
             label={t(`${P}.terms.paymentDayInput`)}
             max={31}
             min={1}
-            onBlur={handleBlur}
             onChange={(event) => change('paymentDay')(event.target.value)}
             type="number"
             value={draft.paymentDay}

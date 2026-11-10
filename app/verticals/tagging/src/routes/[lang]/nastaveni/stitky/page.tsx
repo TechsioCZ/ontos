@@ -1,6 +1,6 @@
 import { pendingProposalMessage } from '../../../../api/action-result.ts';
 import {
-  AutosaveStatus,
+  SaveBar,
   EmptyState,
   PageHeader,
   SidePanel,
@@ -8,7 +8,7 @@ import {
   Toaster,
   dialogCloseLabel,
   paginationTranslations,
-  useAutosaveDraft,
+  useRecordDraft,
 } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -91,12 +91,10 @@ const nameErrorKey = {
 /** The fields of one tag, shared by the create dialog and the autosaving edit panel. */
 const TagFields = ({
   draft,
-  onBlur,
   onChange,
   showErrors,
 }: {
   readonly draft: TagDraft;
-  readonly onBlur: () => void;
   readonly onChange: (update: (current: TagDraft) => TagDraft) => void;
   /** Inline field errors are shown (after the first create attempt; always while editing). */
   readonly showErrors: boolean;
@@ -128,7 +126,6 @@ const TagFields = ({
         id="tag-name"
         label={t('tagging.tags.form.name')}
         name="name"
-        onBlur={onBlur}
         onChange={(event) => {
           const { value } = event.target;
           onChange((current) => ({ ...current, name: value }));
@@ -155,7 +152,6 @@ const TagFields = ({
         id="tag-description"
         label={t('tagging.tags.form.description')}
         name="description"
-        onBlur={onBlur}
         onChange={(event) => {
           const { value } = event.target;
           onChange((current) => ({ ...current, description: value }));
@@ -185,10 +181,6 @@ const TagFields = ({
       </fieldset>
     </>
   );
-};
-
-const noBlur = () => {
-  // Creating saves only on "Vytvořit štítek".
 };
 
 /** Create a tag. Escape, the close button and Zrušit ask before they drop typed values. */
@@ -269,7 +261,7 @@ const TagCreateDialog = ({ onClose }: { onClose: () => void }) => {
               {failed}
             </StatusText>
           )}
-          <TagFields draft={draft} onBlur={noBlur} onChange={handleDraftChange} showErrors={submitted} />
+          <TagFields draft={draft} onChange={handleDraftChange} showErrors={submitted} />
         </form>
       </SidePanel>
       <Dialog
@@ -309,7 +301,7 @@ const TagEditPanel = ({ onClose, tag }: { onClose: () => void; tag: TagWithCount
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   /** The version of the tag the draft builds on: what it opened with, last saved or reloaded. */
   const base = useRef(server);
-  const autosave = useAutosaveDraft<TagDraft, never>({
+  const autosave = useRecordDraft<TagDraft, never>({
     equals: sameTagDraft,
     isValid: validTagDraft,
     refresh: refreshCatalog,
@@ -343,19 +335,17 @@ const TagEditPanel = ({ onClose, tag }: { onClose: () => void; tag: TagWithCount
     }
   }, [base, server, settledOnServer]);
   const close = () => {
-    autosave.flush();
     onClose();
   };
-  const handleFlush = autosave.flush;
   const handleDraftChange = autosave.setDraft;
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   const handleReloadLatest = autosave.reloadLatest;
   return (
     <SidePanel
       actions={
         <>
           {pendingMessage !== null && <StatusText status="error">{pendingMessage}</StatusText>}
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
           <Button onClick={close} theme="outlined" variant="secondary">
             {t('tagging.tags.form.close')}
           </Button>
@@ -375,10 +365,9 @@ const TagEditPanel = ({ onClose, tag }: { onClose: () => void; tag: TagWithCount
         className="flex flex-col gap-200 py-200"
         onSubmit={(event) => {
           event.preventDefault();
-          autosave.flush();
         }}
       >
-        <TagFields draft={autosave.draft} onBlur={handleFlush} onChange={handleDraftChange} showErrors />
+        <TagFields draft={autosave.draft} onChange={handleDraftChange} showErrors />
       </form>
     </SidePanel>
   );

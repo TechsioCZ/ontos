@@ -1,7 +1,7 @@
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Meter master-data form and reading form (ops-meters lane). Both write through the governed apply-command Action.
-import { AutosaveStatus, formatDate, useAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { SaveBar, formatDate, useDraftSave } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -93,25 +93,24 @@ export const MeterForm = ({
   };
 
   // An edit saves itself; a new meter card is submitted on "Založit měřidlo" only.
-  const autosave = useAutosave<MeterDraft, never>({
+  const autosave = useDraftSave<MeterDraft, never>({
     equals: sameMeterDraft,
     isValid: (value) =>
       meter !== undefined && Option.isSome(meterUpdateCommandOf(value, meter, pickedLocationOf(value))),
     runtime: browserRuntime,
     save: (value) =>
       meter === undefined
-        ? Effect.succeed<AutosaveOutcome>('failed')
+        ? Effect.succeed<SaveOutcome>('failed')
         : Option.match(meterUpdateCommandOf(value, meter, pickedLocationOf(value)), {
-            onNone: () => Effect.succeed<AutosaveOutcome>('failed'),
+            onNone: () => Effect.succeed<SaveOutcome>('failed'),
             onSome: (command) => facilityAutosaveOutcome(run(command)),
           }),
     value: draft,
   });
   const close = () => {
-    autosave.flush();
     onCancel();
   };
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   const handleReloadLatest = () => {
     const current = meterDraftOf(meter);
     autosave.adopt(current);
@@ -294,7 +293,7 @@ export const MeterForm = ({
         </div>
       ) : (
         <div className="flex flex-wrap items-center justify-end gap-100">
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
           <Button onClick={close} theme="outlined" variant="secondary">
             {t('facility-operations.common.close')}
           </Button>

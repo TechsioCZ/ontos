@@ -873,7 +873,7 @@ const useTasksPage = (
   };
 
   /**
-   * Autosave of the edit panel against the revision its draft builds on. The saved task shows at once; a revision
+   * Save of the edit panel against the revision its draft builds on. The saved task shows at once; a revision
    * conflict goes to the panel's status line, any other failure to its message. A draft parked for approval is not
    * saved: the status line shows it as pending, and autosave never sends that draft again.
    */

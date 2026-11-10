@@ -1,11 +1,11 @@
 import {
-  AutosaveStatus,
+  SaveBar,
   SidePanel,
   comboboxTranslations,
   datePickerTranslations,
   dialogCloseLabel,
   surfaceTileClassName,
-  useAutosaveDraft,
+  useRecordDraft,
 } from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -882,7 +882,7 @@ const useCreateDraft = ({ onClose, onSubmit }: ResolvedTaskFormProps): TaskDraft
  */
 const useEditDraft = (props: ResolvedTaskFormProps & { readonly task: Task }) => {
   const { onAutosave, onClose, revision, task } = props;
-  const autosave = useAutosaveDraft<FormValues, never>({
+  const autosave = useRecordDraft<FormValues, never>({
     equals: sameFormValues,
     isValid: (value) => Option.isSome(submissionOf(value, props)),
     revision,
@@ -899,10 +899,9 @@ const useEditDraft = (props: ResolvedTaskFormProps & { readonly task: Task }) =>
       // Edit errors always show.
     },
     requestClose: () => {
-      autosave.flush();
       onClose();
     },
-    send: () => autosave.flush(),
+    send: () => autosave.save(),
     setValues: autosave.setDraft,
     showErrors: true,
     values: autosave.draft,
@@ -1019,13 +1018,13 @@ const TaskCreatePanel = ({ props }: { readonly props: ResolvedTaskFormProps }) =
 
 const TaskEditPanel = ({ props }: { readonly props: ResolvedTaskFormProps & { readonly task: Task } }) => {
   const { autosave, draft } = useEditDraft(props);
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   const handleReloadLatest = autosave.reloadLatest;
   return (
     <TaskPanel
       draft={draft}
       props={props}
-      status={<AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />}
+      status={<SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />}
     />
   );
 };

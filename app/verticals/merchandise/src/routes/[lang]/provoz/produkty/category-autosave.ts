@@ -132,7 +132,7 @@ export const saveCategory = (
     }),
   );
 
-/** Autosave of an existing category: unchanged drafts are no request at all. */
+/** Save of an existing category: unchanged drafts are no request at all. */
 export const autosaveCategoryEdit = (
   draft: CategoryDraft,
   category: CategoryNode,

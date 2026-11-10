@@ -1,8 +1,8 @@
 // The asset card edit autosave against the agenda revision: a settled draft follows a fresh read of its record, while
 // a draft the user is still editing keeps the revision it was built on, so a change to that record refuses the save
 // instead of silently overwriting it. The hook is a thin wrapper over `assetCardRefreshOf` and `assetCardAutosaveOf`;
-// this drives those real decisions with the real AutosaveController, exactly as the panel wires them.
-import { autosavePending, startAutosave } from '@app/admin-ui';
+// this drives those real decisions with the real DraftSaveController, exactly as the panel wires them.
+import { draftPending, startDraftSave } from '@app/admin-ui';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import type { OpsCommand } from '../../shared/agendas.ts';
@@ -129,13 +129,13 @@ const openPanel = Effect.fnUntraced(function* openPanel(
       commandOf: (value: AssetCardDraft) =>
         assetCardUpdateCommandOf(value, asset, assetPlacementOf({ status: 'loading' }, value, asset)),
     });
-  let controller = yield* startAutosave(draft, options());
+  let controller = yield* startDraftSave(draft, options());
   /** The hook's `adopt`: a fresh controller (and draft) from the version being adopted. */
   const restart = (value: AssetCardDraft) =>
     Effect.gen(function* restarting() {
       controller.dispose();
       draft = value;
-      controller = yield* startAutosave(value, options());
+      controller = yield* startDraftSave(value, options());
     });
   /** One render with a fresh page read: the hook's own render-phase refresh decision. */
   const render = (next: { readonly asset: Asset; readonly snapshot: AgendaSnapshot }) =>
@@ -149,7 +149,7 @@ const openPanel = Effect.fnUntraced(function* openPanel(
         asset: next.asset,
         base,
         draft,
-        pending: autosavePending(controller.status()),
+        pending: draftPending(controller.status()),
         run,
       });
       ({ base } = refresh);
@@ -161,7 +161,7 @@ const openPanel = Effect.fnUntraced(function* openPanel(
   return {
     base: () => base,
     draft: () => draft,
-    flush: () => controller.flush(),
+    flush: () => controller.save(),
     reloadLatest: () =>
       Effect.gen(function* reloading() {
         base = assetCardBaseOf(run, asset);

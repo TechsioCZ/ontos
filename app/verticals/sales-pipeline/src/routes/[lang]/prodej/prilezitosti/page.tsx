@@ -415,7 +415,7 @@ const usePipelineCommands = (revision: number, reload: () => void) => {
     );
   };
   /**
-   * Autosave of the edit panel. The saved opportunity reaches the list through the live reread; a revision conflict
+   * Save of the edit panel. The saved opportunity reaches the list through the live reread; a revision conflict
    * shows in the panel's status line, any other failure as its message.
    */
   const autosave: OpportunityAutosave = (command, expectedRevision, unchanged) =>

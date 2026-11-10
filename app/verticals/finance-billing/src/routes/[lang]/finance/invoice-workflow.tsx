@@ -1,15 +1,15 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 import {
-  AutosaveStatus,
+  SaveBar,
   dialogCloseLabel,
   formatDate,
   formatDateTime,
   formatMoney,
   SectionCard,
-  useAutosaveDraft,
+  useRecordDraft,
 } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -491,14 +491,14 @@ const PaymentTermsDialog = ({
           Effect.tap((outcome) => Effect.sync(() => settle(value, outcome))),
           Effect.map(financeAutosaveOutcome),
         )
-      : Effect.succeed<AutosaveOutcome>('conflict');
-  const autosave = useAutosaveDraft<PaymentTermsDraft, never>({
+      : Effect.succeed<SaveOutcome>('conflict');
+  const autosave = useRecordDraft<PaymentTermsDraft, never>({
     equals: samePaymentTermsDraft,
     isValid: (value) => Option.isSome(paymentTermsCommandOf(invoice, value, vm.actorLabel)),
     runtime: financeBrowserRuntime,
     save: (value) =>
       Option.match(paymentTermsCommandOf(invoice, value, vm.actorLabel), {
-        onNone: () => Effect.succeed<AutosaveOutcome>('failed'),
+        onNone: () => Effect.succeed<SaveOutcome>('failed'),
         onSome: (command) => send(value, command),
       }),
     server,
@@ -514,17 +514,15 @@ const PaymentTermsDialog = ({
   const change = (field: keyof PaymentTermsDraft) => (value: string) =>
     autosave.setDraft((current) => ({ ...current, [field]: value }));
   const close = () => {
-    autosave.flush();
     onClose();
   };
-  const handleBlur = autosave.flush;
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   const handleReloadLatest = autosave.reloadLatest;
   return (
     <Dialog
       actions={
         <>
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
           <Button onClick={close} theme="outlined" variant="secondary">
             Zavřít
           </Button>
@@ -552,7 +550,6 @@ const PaymentTermsDialog = ({
         <FormInput
           id="terms-skonto-text"
           label={t('finance-billing.financeUi.paymentTerms.discountCondition')}
-          onBlur={handleBlur}
           onChange={(event) => change('skontoText')(event.target.value)}
           placeholder={t('finance-billing.financeUi.paymentTerms.discountExample')}
           size="sm"
@@ -563,7 +560,6 @@ const PaymentTermsDialog = ({
           id="terms-skonto-amount"
           inputMode="decimal"
           label={t('finance-billing.financeUi.paymentTerms.discountAmount')}
-          onBlur={handleBlur}
           onChange={(event) => change('skontoAmount')(event.target.value)}
           size="sm"
           value={draft.skontoAmount}
@@ -572,7 +568,6 @@ const PaymentTermsDialog = ({
         <FormInput
           id="terms-late-text"
           label={t('finance-billing.financeUi.paymentTerms.interestCondition')}
-          onBlur={handleBlur}
           onChange={(event) => change('lateText')(event.target.value)}
           placeholder={t('finance-billing.financeUi.paymentTerms.interestExample')}
           size="sm"
@@ -583,7 +578,6 @@ const PaymentTermsDialog = ({
           id="terms-late-amount"
           inputMode="decimal"
           label={t('finance-billing.financeUi.paymentTerms.interestAmount')}
-          onBlur={handleBlur}
           onChange={(event) => change('lateAmount')(event.target.value)}
           size="sm"
           value={draft.lateAmount}

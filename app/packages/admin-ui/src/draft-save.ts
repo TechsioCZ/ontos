@@ -1,15 +1,15 @@
-// Autosave for edit forms of existing records: the form keeps its draft, the controller decides when to send it.
-import { Duration, Effect, Equal, Exit, Option, Predicate, Schema } from 'effect';
+// Explicit save for edit forms of existing records: the form keeps its draft and nothing is sent until `save()`.
+import { Effect, Equal, Exit, Option, Predicate, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import type { Fiber, ManagedRuntime } from 'effect';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 
 /**
- * What the inline status line shows. `invalid` means a draft exists but is not sent until the form is valid;
- * `proposed` means the draft was accepted for approval and is not saved yet.
+ * What the save bar shows. `dirty` is a changed draft that can be saved, `invalid` a changed draft the form's own
+ * validation holds back; `proposed` means the draft was accepted for approval and is not saved yet.
  */
-export const AutosaveStateSchema = Schema.Literals([
+export const SaveStateSchema = Schema.Literals([
   'idle',
   'dirty',
   'invalid',
@@ -19,137 +19,142 @@ export const AutosaveStateSchema = Schema.Literals([
   'error',
   'conflict',
 ]);
-export type AutosaveState = typeof AutosaveStateSchema.Type;
+export type SaveState = typeof SaveStateSchema.Type;
 
 /**
  * Result of one save. `conflict` is the action's optimistic-concurrency refusal (the record changed since the
  * revision the draft was based on); `proposed` is a change parked for approval, which saved nothing; every other
  * failure is `failed`.
  */
-export const AutosaveOutcomeSchema = Schema.Literals(['saved', 'proposed', 'conflict', 'failed']);
-export type AutosaveOutcome = typeof AutosaveOutcomeSchema.Type;
+export const SaveOutcomeSchema = Schema.Literals(['saved', 'proposed', 'conflict', 'failed']);
+export type SaveOutcome = typeof SaveOutcomeSchema.Type;
 
-export interface AutosaveOptions<V, R> {
-  /** Quiet time after the last change before the draft is sent. */
-  readonly delayMs?: number;
+export interface DraftSaveOptions<V, R> {
   /** Whether two drafts are the same. Defaults to structural equality. */
   readonly equals?: (left: V, right: V) => boolean;
   /**
    * The form's own validation; an invalid draft is never sent. `confirmed` is the version the server last confirmed
-   * (`AutosaveController.confirmed`), for a rule that depends on what the save would send, such as a part that is
+   * (`DraftSaveController.confirmed`), for a rule that depends on what the save would send, such as a part that is
    * sent whole, and so has to be complete, once it differs from that version.
    */
   readonly isValid: (value: V, confirmed: V) => boolean;
   /**
    * Sends one draft. Map every typed failure to an outcome; a defect or interruption counts as `failed`.
-   * A follow-up save can start before React re-renders, so keep the draft's base revision in a ref that `save`
-   * reads and updates with the revision the server returns.
+   * Keep the draft's base revision in a ref that `save` reads and updates with the revision the server returns.
    */
-  readonly save: (value: V) => Effect.Effect<AutosaveOutcome, never, R>;
+  readonly save: (value: V) => Effect.Effect<SaveOutcome, never, R>;
 }
 
-export const AUTOSAVE_DELAY_MS = 800;
-/** How long "Uloženo" stays before the line goes quiet again. */
-const SAVED_VISIBLE = Duration.seconds(3);
-
 /** Statuses in which the draft differs from what the server has confirmed. Live data must not replace it then. */
-export const autosavePending = (status: AutosaveState): boolean => status !== 'idle' && status !== 'saved';
+export const draftPending = (status: SaveState): boolean => status !== 'idle' && status !== 'saved';
+
+/**
+ * Statuses in which leaving the form would lose something typed. A draft parked for approval is not one of them:
+ * it was handed over and is never sent again.
+ */
+export const draftUnsaved = (status: SaveState): boolean => draftPending(status) && status !== 'proposed';
+
+/** Statuses in which the Save button sends the draft: a changed, valid draft, or one whose last save failed. */
+export const draftSavable = (status: SaveState): boolean => status === 'dirty' || status === 'error';
 
 type Fork<R> = <A>(effect: Effect.Effect<A, never, R>) => Fiber.Fiber<A>;
 
-/** Debounce, single in-flight save and status of one edit form. */
-export class AutosaveController<V, R = never> {
-  private decay: Option.Option<Fiber.Fiber<void>> = Option.none();
+/**
+ * Draft, single in-flight save and status of one edit form. It never sends anything by itself: no timer, no blur,
+ * no unmount. `save()` is the only way a draft leaves the form.
+ */
+export class DraftSaveController<V, R = never> {
   /** Set once the form replaced this controller or went away for good: nothing is sent any more. */
   private disposed = false;
   private readonly fork: Fork<R>;
   private inFlight = false;
   private latest: V;
   private readonly listeners = new Set<() => void>();
-  private options: AutosaveOptions<V, R>;
+  private options: DraftSaveOptions<V, R>;
+  /** Callers of `afterSave` that wait for the running save. */
+  private readonly waiting = new Set<(status: SaveState) => void>();
   /** The draft last accepted for approval. It is not saved, and it is never sent again. */
   private proposed: Option.Option<V> = Option.none();
   private saved: V;
-  private state: AutosaveState = 'idle';
-  private timer: Option.Option<Fiber.Fiber<void>> = Option.none();
+  private state: SaveState = 'idle';
 
-  constructor(initial: V, options: AutosaveOptions<V, R>, fork: Fork<R>) {
+  constructor(initial: V, options: DraftSaveOptions<V, R>, fork: Fork<R>) {
     this.saved = initial;
     this.latest = initial;
     this.options = options;
     this.fork = fork;
   }
 
-  /** The form's current draft. An unchanged draft is ignored; a changed one is sent after the quiet time. */
+  /** The form's current draft. It only moves the status; a changed draft waits for `save()`. */
   readonly change = (value: V): void => {
     if (this.same(value, this.latest)) {
       return;
     }
     this.latest = value;
-    if (this.disposed) {
+    // A running save decides the status when it ends.
+    if (this.disposed || this.inFlight) {
       return;
     }
-    // A conflict holds until the server version is adopted; a running save re-checks the newest draft when it ends.
-    if (this.state === 'conflict' || this.inFlight) {
+    // A conflict holds until the server version is adopted or the draft is back at the confirmed version.
+    if (this.state === 'conflict' && !this.same(value, this.saved)) {
       return;
     }
-    this.cancelTimer();
-    if (this.same(value, this.saved)) {
-      this.setState('idle');
-      return;
-    }
-    if (this.isProposed(value)) {
-      this.setState('proposed');
-      return;
-    }
-    if (!this.options.isValid(value, this.saved)) {
-      this.setState('invalid');
-      return;
-    }
-    this.setState('dirty');
-    const delay = Duration.millis(this.options.delayMs ?? AUTOSAVE_DELAY_MS);
-    this.timer = Option.some(this.fork(Effect.sleep(delay).pipe(Effect.andThen(Effect.sync(this.flush)))));
+    this.setState(this.restingState());
   };
 
   /** Replaces the callbacks with the newest render's closures. */
-  readonly configure = (options: AutosaveOptions<V, R>): void => {
+  readonly configure = (options: DraftSaveOptions<V, R>): void => {
     this.options = options;
   };
 
-  /** Stops for good: a pending change is dropped and a running save no longer decides anything. */
+  /** Stops for good: a running save no longer decides anything. */
   readonly dispose = (): void => {
     this.disposed = true;
-    this.cancelTimer();
+    this.release();
   };
 
-  /** Sends a changed, valid draft now (blur, closing a panel). */
-  readonly flush = (): void => {
-    this.cancelTimer();
+  /**
+   * Runs `done` once the running save has ended, with the status it left; at once when no save runs. For whoever
+   * started a save and has to act on its result, such as leaving the form after it.
+   */
+  readonly afterSave = (done: (status: SaveState) => void): void => {
+    if (this.inFlight && !this.disposed) {
+      this.waiting.add(done);
+      return;
+    }
+    done(this.state);
+  };
+
+  /**
+   * The Save button: sends a changed, valid draft once. Does nothing while a save runs, on a conflict, for an
+   * unchanged or invalid draft and for a draft already parked for approval. After a failed save it sends the draft
+   * again.
+   */
+  readonly save = (): void => {
     if (this.disposed || this.state === 'conflict' || this.inFlight) {
       return;
     }
-    if (this.same(this.latest, this.saved)) {
-      if (this.state !== 'saved') {
-        this.setState('idle');
-      }
+    const resting = this.restingState();
+    if (resting === 'dirty') {
+      this.start(this.latest);
       return;
     }
-    if (this.isProposed(this.latest)) {
-      this.setState('proposed');
-      return;
+    // An unchanged draft keeps its "saved" line.
+    if (resting !== 'idle' || this.state !== 'saved') {
+      this.setState(resting);
     }
-    if (!this.options.isValid(this.latest, this.saved)) {
-      this.setState('invalid');
-      return;
-    }
-    this.start(this.latest);
   };
 
-  /** Sends the draft again after a failed save. A draft waiting for approval is not sent again. */
-  readonly retry = (): void => {
-    if (this.state === 'error') {
-      this.flush();
+  /**
+   * Drops the draft: the controller continues from the confirmed version, without an error or a conflict. The form
+   * puts the same version back on screen.
+   */
+  readonly discard = (): void => {
+    this.latest = this.saved;
+    if (this.disposed || this.inFlight) {
+      return;
     }
+    this.setState('idle');
   };
 
   /**
@@ -163,7 +168,7 @@ export class AutosaveController<V, R = never> {
   /** The draft the server last confirmed (or the version this controller started from). */
   readonly confirmed = (): V => this.saved;
 
-  readonly status = (): AutosaveState => this.state;
+  readonly status = (): SaveState => this.state;
 
   readonly subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -172,14 +177,7 @@ export class AutosaveController<V, R = never> {
     };
   };
 
-  private cancelTimer(): void {
-    if (Option.isSome(this.timer)) {
-      this.timer.value.interruptUnsafe();
-      this.timer = Option.none();
-    }
-  }
-
-  private finish(value: V, outcome: AutosaveOutcome): void {
+  private finish(value: V, outcome: SaveOutcome): void {
     this.inFlight = false;
     if (this.disposed) {
       return;
@@ -192,16 +190,12 @@ export class AutosaveController<V, R = never> {
         // Parked for approval: the confirmed version stays, and this draft is never sent again.
         this.proposed = Option.some(value);
       }
-      if (this.same(this.latest, value)) {
-        this.setState(outcome);
-      } else {
-        // Edits made while this save ran: exactly one follow-up save with the newest draft.
-        this.flush();
-      }
-      return;
+      // Edits made while this save ran stay an unsaved draft: they wait for the next click.
+      this.setState(this.same(this.latest, value) ? outcome : this.restingState());
+    } else {
+      this.setState(outcome === 'conflict' ? 'conflict' : 'error');
     }
-    this.cancelTimer();
-    this.setState(outcome === 'conflict' ? 'conflict' : 'error');
+    this.release();
   }
 
   private isProposed(value: V): boolean {
@@ -214,31 +208,36 @@ export class AutosaveController<V, R = never> {
     }
   }
 
+  /** Answers everyone who waits for the running save with the status the draft has now. */
+  private release(): void {
+    const waiting = [...this.waiting];
+    this.waiting.clear();
+    for (const done of waiting) {
+      done(this.state);
+    }
+  }
+
+  /** The status of the current draft while nothing runs and nothing failed. */
+  private restingState(): 'dirty' | 'idle' | 'invalid' | 'proposed' {
+    if (this.same(this.latest, this.saved)) {
+      return 'idle';
+    }
+    if (this.isProposed(this.latest)) {
+      return 'proposed';
+    }
+    return this.options.isValid(this.latest, this.saved) ? 'dirty' : 'invalid';
+  }
+
   private same(left: V, right: V): boolean {
     return (this.options.equals ?? Equal.equals)(left, right);
   }
 
-  private setState(next: AutosaveState): void {
-    if (Option.isSome(this.decay)) {
-      this.decay.value.interruptUnsafe();
-      this.decay = Option.none();
-    }
-    if (next === 'saved') {
-      this.decay = Option.some(this.fork(Effect.sleep(SAVED_VISIBLE).pipe(Effect.andThen(Effect.sync(this.quiet)))));
-    }
+  private setState(next: SaveState): void {
     if (this.state !== next) {
       this.state = next;
       this.notify();
     }
   }
-
-  private readonly quiet = (): void => {
-    this.decay = Option.none();
-    if (this.state === 'saved') {
-      this.state = 'idle';
-      this.notify();
-    }
-  };
 
   private start(value: V): void {
     this.inFlight = true;
@@ -252,32 +251,50 @@ export class AutosaveController<V, R = never> {
   }
 }
 
-/** A controller whose timers and saves run in the calling context, so tests drive it with `TestClock`. */
-export const startAutosave = <V, R>(initial: V, options: AutosaveOptions<V, R>) =>
+/** A controller whose saves run in the calling context, so tests answer them step by step. */
+export const startDraftSave = <V, R>(initial: V, options: DraftSaveOptions<V, R>) =>
   Effect.map(
     Effect.context<R>(),
-    (context): AutosaveController<V, R> => new AutosaveController(initial, options, Effect.runForkWith(context)),
+    (context): DraftSaveController<V, R> => new DraftSaveController(initial, options, Effect.runForkWith(context)),
   );
 
-export interface Autosave<V> {
+/** What the save bar and the unsaved-changes guard need from a draft, whatever its value is. */
+export interface SavableDraft {
   /**
-   * The form replaced its draft with `value` from the server ("Načíst aktuální verzi", or revalidated data while
-   * nothing was pending): autosave starts over from it, dropping a pending change, error or conflict.
+   * Runs `done` once the running save has ended, with the status it left; at once when no save runs. For whoever
+   * started a save and has to act on its result, such as leaving the form after it.
    */
-  readonly adopt: (value: V) => void;
-  /** Send pending changes now: call on blur and before closing a dialog or panel. */
-  readonly flush: () => void;
-  /**
-   * The draft differs from the confirmed server state (changed, invalid, saving, failed or in conflict). While it
-   * does, the form keeps its draft and base revision instead of taking revalidated page data.
-   */
-  readonly pending: boolean;
-  readonly retry: () => void;
-  readonly status: AutosaveState;
+  readonly afterSave: (done: (status: SaveState) => void) => void;
+  /** The Save button is enabled: the draft is changed and valid, or its last save failed. */
+  readonly canSave: boolean;
+  /** Leaving the form now would lose something typed (changed, invalid, saving, failed or in conflict). */
+  readonly dirty: boolean;
+  /** The Save button: sends the whole draft once. Never call it from a change, blur, close or unmount. */
+  readonly save: () => void;
+  readonly status: SaveState;
 }
 
-export interface UseAutosaveOptions<V, R> extends AutosaveOptions<V, R> {
-  /** The host's browser runtime; saves and timers run in it. */
+export interface DraftSave<V> extends SavableDraft {
+  /**
+   * The form replaced its draft with `value` from the server ("Načíst aktuální verzi", or revalidated data while
+   * nothing was pending): the draft starts over from it, dropping an unsaved change, error or conflict.
+   */
+  readonly adopt: (value: V) => void;
+  /**
+   * The version the server last confirmed, as of this render: what a save compares the draft with, and what
+   * discarding the draft goes back to. Field messages that follow the `isValid` rule read it, so they name the same
+   * fields the rule holds the draft back for.
+   */
+  readonly confirmed: V;
+  /**
+   * The draft differs from the confirmed server state (`dirty`, or parked for approval). While it does, the form
+   * keeps its draft and base revision instead of taking revalidated page data.
+   */
+  readonly pending: boolean;
+}
+
+export interface UseDraftSaveOptions<V, R> extends DraftSaveOptions<V, R> {
+  /** The host's browser runtime; saves run in it. */
   readonly runtime: ManagedRuntime.ManagedRuntime<R, never>;
   /** The form's draft. The first render's value is taken as saved. */
   readonly value: V;
@@ -302,38 +319,38 @@ const baseRevision = (initial: number): BaseRevision => {
 
 interface Generation<V, R> {
   readonly base: BaseRevision;
-  readonly controller: AutosaveController<V, R>;
+  readonly controller: DraftSaveController<V, R>;
 }
 
 /**
  * Result of a save that knows revisions: the new revision of the record when it was saved, otherwise `proposed`,
  * `conflict` or `failed` (`saved` when the save returns no revision). `proposed` keeps the base revision.
  */
-export type RevisionedSaveResult = AutosaveOutcome | number;
+export type RevisionedSaveResult = SaveOutcome | number;
 
 /**
  * Result of a save that sends several commands and stopped part-way: the server took `confirmed` and left it at
  * `revision`, and the rest of the draft ended as `outcome`. The draft stays unsaved. `confirmed` becomes the version
- * later saves are compared with and `revision` their base, so a retry sends only what is still missing, and a field
- * taken back to its value before the save is sent as the change it now is.
+ * later saves are compared with and `revision` their base, so the next save sends only what is still missing, and a
+ * field taken back to its value before the save is sent as the change it now is.
  */
 export interface PartlySaved<V> {
   readonly confirmed: V;
-  readonly outcome: Exclude<AutosaveOutcome, 'saved'>;
+  readonly outcome: Exclude<SaveOutcome, 'saved'>;
   readonly revision: number;
 }
 
 /** What a draft save answers: a `RevisionedSaveResult`, or how far a save of several commands got. */
 export type DraftSaveResult<V> = RevisionedSaveResult | PartlySaved<V>;
 
-interface GenerationOptions<V, R> extends Omit<AutosaveOptions<V, R>, 'save'> {
+interface GenerationOptions<V, R> extends Omit<DraftSaveOptions<V, R>, 'save'> {
   readonly revision: number;
   readonly runtime: ManagedRuntime.ManagedRuntime<R, never>;
   readonly save: (value: V, expectedRevision: number, confirmed: V) => Effect.Effect<DraftSaveResult<V>, never, R>;
   readonly value: V;
 }
 
-const isOutcome = Schema.is(AutosaveOutcomeSchema);
+const isOutcome = Schema.is(SaveOutcomeSchema);
 
 /** The confirmed version of one draft generation: read when a save starts, moved by a save that got part-way. */
 interface ConfirmedVersion<V> {
@@ -345,11 +362,11 @@ const boundTo = <V, R>(
   options: GenerationOptions<V, R>,
   base: BaseRevision,
   version: ConfirmedVersion<V>,
-): AutosaveOptions<V, R> => ({
+): DraftSaveOptions<V, R> => ({
   ...options,
   save: (value) =>
     options.save(value, base.current(), version.confirmed()).pipe(
-      Effect.map((result): AutosaveOutcome => {
+      Effect.map((result): SaveOutcome => {
         if (isOutcome(result)) {
           return result;
         }
@@ -371,7 +388,7 @@ const useGeneration = <V, R>(options: GenerationOptions<V, R>) => {
     const base = baseRevision(revision);
     // Nothing is saved yet, so `from` is the confirmed version; from here on the controller knows it.
     const startedFrom: ConfirmedVersion<V> = { confirm: constVoid, confirmed: () => from };
-    const controller = runtime.runSync(startAutosave(from, boundTo(options, base, startedFrom)));
+    const controller = runtime.runSync(startDraftSave(from, boundTo(options, base, startedFrom)));
     controller.configure(boundTo(options, base, controller));
     return { base, controller };
   };
@@ -380,11 +397,10 @@ const useGeneration = <V, R>(options: GenerationOptions<V, R>) => {
   useEffect(() => {
     controller.configure(boundTo(options, base, controller));
   }, [base, controller, options]);
+  // The draft only moves the status. Nothing is sent here, and nothing is sent when the form unmounts.
   useEffect(() => {
     controller.change(options.value);
   }, [controller, options.value]);
-  // Unmount (or a newer generation): send what is still pending. Nothing is pending when a generation is replaced.
-  useEffect(() => controller.flush, [controller]);
   const status = useSyncExternalStore(controller.subscribe, controller.status, controller.status);
   const restart = (value: V, revision: number) => {
     controller.dispose();
@@ -393,28 +409,31 @@ const useGeneration = <V, R>(options: GenerationOptions<V, R>) => {
   return { base, begin, controller, restart, setGeneration, status };
 };
 
-const autosaveOf = <V, R>(
-  controller: AutosaveController<V, R>,
-  status: AutosaveState,
+const draftSaveOf = <V, R>(
+  controller: DraftSaveController<V, R>,
+  status: SaveState,
   adopt: (value: V) => void,
-): Autosave<V> => ({
+): DraftSave<V> => ({
   adopt,
-  flush: controller.flush,
-  pending: autosavePending(status),
-  retry: controller.retry,
+  afterSave: controller.afterSave,
+  canSave: draftSavable(status),
+  confirmed: controller.confirmed(),
+  dirty: draftUnsaved(status),
+  pending: draftPending(status),
+  save: controller.save,
   status,
 });
 
 /**
- * Autosave for an edit form of an existing record. The draft is sent `delayMs` after the last change, on `flush()`,
- * and once more when the form unmounts.
+ * Explicit save for an edit form that keeps its own draft state. The draft is sent on `save()` only. To drop the
+ * draft, put `confirmed` back into the form's state.
  */
-export const useAutosave = <V, R>(options: UseAutosaveOptions<V, R>): Autosave<V> => {
+export const useDraftSave = <V, R>(options: UseDraftSaveOptions<V, R>): DraftSave<V> => {
   const { controller, restart, status } = useGeneration({ ...options, revision: 0, save: options.save });
-  return autosaveOf(controller, status, (value) => restart(value, 0));
+  return draftSaveOf(controller, status, (value) => restart(value, 0));
 };
 
-export interface UseAutosaveDraftOptions<V, R> extends Omit<AutosaveOptions<V, R>, 'save'> {
+export interface UseRecordDraftOptions<V, R> extends Omit<DraftSaveOptions<V, R>, 'save'> {
   /** Re-reads the record (e.g. a page-data refresh); `reloadLatest` runs it after dropping the draft. */
   readonly refresh?: Effect.Effect<void, never, R>;
   /**
@@ -423,7 +442,7 @@ export interface UseAutosaveDraftOptions<V, R> extends Omit<AutosaveOptions<V, R
    * revisions, so unrelated changes elsewhere cause no conflict.
    */
   readonly revision?: number;
-  /** The host's browser runtime; saves and timers run in it. */
+  /** The host's browser runtime; saves run in it. */
   readonly runtime: ManagedRuntime.ManagedRuntime<R, never>;
   /**
    * Sends one draft. Return the record's new revision (or `saved`), `proposed` when the change was parked for
@@ -446,12 +465,12 @@ export interface UseAutosaveDraftOptions<V, R> extends Omit<AutosaveOptions<V, R
   readonly takeServer?: (server: V, draft: V) => V;
 }
 
-export interface AutosaveDraft<V> extends Autosave<V> {
+export interface RecordDraft<V> extends DraftSave<V> {
   /**
-   * The version the server last confirmed, as of this render: what a save compares the draft with. Field messages
-   * that follow the `isValid` rule read it, so they name the same fields the rule holds the draft back for.
+   * "Zahodit změny": the draft goes back to the confirmed version, without an error or a conflict. When a newer
+   * server version arrived while the draft was unsaved, the form continues from that one.
    */
-  readonly confirmed: V;
+  readonly discard: () => void;
   readonly draft: V;
   /** "Načíst aktuální verzi": drop the draft, continue from the server version and re-read it. */
   readonly reloadLatest: () => void;
@@ -459,31 +478,48 @@ export interface AutosaveDraft<V> extends Autosave<V> {
 }
 
 /**
- * `useAutosave` plus the draft state of an edit form. When the server version changes (live revalidation, someone
+ * `useDraftSave` plus the draft state of an edit form. When the server version changes (live revalidation, someone
  * else's save) and nothing is pending, the draft follows it; while something is pending the draft stays, and a save
  * based on an outdated revision ends in `conflict`.
  */
-export const useAutosaveDraft = <V, R>(options: UseAutosaveDraftOptions<V, R>): AutosaveDraft<V> => {
+export const useRecordDraft = <V, R>(options: UseRecordDraftOptions<V, R>): RecordDraft<V> => {
   const { refresh, runtime, server } = options;
   const revision = options.revision ?? 0;
   const same = options.equals ?? Equal.equals;
   const [draft, setDraft] = useState(server);
   const [seen, setSeen] = useState(server);
+  // The confirmed version at the moment a newer server version was not taken, because the draft was pending.
+  const [passedOver, setPassedOver] = useState<Option.Option<V>>(() => Option.none());
   const { base, begin, controller, restart, setGeneration, status } = useGeneration({
     ...options,
     revision,
     value: draft,
   });
+  const settled = !draftPending(status) && same(draft, controller.confirmed());
+  const takeServerVersion = () => {
+    setDraft(options.takeServer?.(server, draft) ?? server);
+    setGeneration(begin(server, revision));
+  };
   if (!same(seen, server)) {
     setSeen(server);
-    const settled = !autosavePending(status) && same(draft, controller.confirmed());
-    if (settled && !same(server, draft)) {
-      setDraft(options.takeServer?.(server, draft) ?? server);
-      setGeneration(begin(server, revision));
+    if (settled) {
+      setPassedOver(Option.none());
+      if (!same(server, draft)) {
+        takeServerVersion();
+      }
     } else if (status === 'proposed' && same(server, draft)) {
-      // The proposal was approved: the server now has this draft, so it is confirmed from that version on. The old
-      // generation's unmount flush finds only the proposed draft and sends nothing.
+      // The proposal was approved: the server now has this draft, so it is confirmed from that version on.
+      setPassedOver(Option.none());
       setGeneration(begin(server, revision));
+    } else {
+      setPassedOver(Option.some(controller.confirmed()));
+    }
+  } else if (settled && Option.isSome(passedOver)) {
+    // The draft is clean again (discarded, or typed back). It takes the version that was passed over, unless a
+    // save of this form confirmed a newer one in the meantime: then the page data is the older of the two.
+    setPassedOver(Option.none());
+    if (same(controller.confirmed(), passedOver.value) && !same(server, draft)) {
+      takeServerVersion();
     }
   }
   useEffect(() => {
@@ -494,11 +530,15 @@ export const useAutosaveDraft = <V, R>(options: UseAutosaveDraftOptions<V, R>): 
   }, [base, controller, revision, same, server]);
   const adopt = (value: V) => {
     setDraft(value);
+    setPassedOver(Option.none());
     restart(value, revision);
   };
   return {
-    ...autosaveOf(controller, status, adopt),
-    confirmed: controller.confirmed(),
+    ...draftSaveOf(controller, status, adopt),
+    discard: () => {
+      setDraft(controller.confirmed());
+      controller.discard();
+    },
     draft,
     reloadLatest: () => {
       adopt(seen);

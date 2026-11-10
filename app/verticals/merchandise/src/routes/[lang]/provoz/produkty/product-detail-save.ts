@@ -1,8 +1,8 @@
-// Draft and autosave of the product detail form: what one save sends, and which revision it expects.
-import { useAutosaveDraft } from '@app/admin-ui';
-import type { DraftSaveResult } from '@app/admin-ui';
+// Draft and save of the product detail form: what one save sends, and which revision it expects.
+import { useRecordDraft } from '@app/admin-ui';
+import type { DraftSaveResult, SaveOutcome } from '@app/admin-ui';
 import { DateTime, Effect, Predicate, Random } from 'effect';
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import { isRealVariant } from '../../../../../shared/domain/merchandise-model.ts';
@@ -29,35 +29,41 @@ const runProductCommand = (
     Effect.map((result) => result.revision),
   );
 
-const failureOutcome = (error: CommandFailure): 'conflict' | 'failed' =>
-  Predicate.isTagged(error, 'ManageCatalogActionConflictProblem') && error.code !== 'merchandise_lifecycle_conflict'
+/**
+ * Why a command wrote nothing: parked for approval (the draft is then held and never sent again), refused because
+ * someone else changed the catalog, or failed.
+ */
+const failureOutcome = (error: CommandFailure): Exclude<SaveOutcome, 'saved'> => {
+  if (pendingProposalMessage(error) !== undefined) {
+    return 'proposed';
+  }
+  return Predicate.isTagged(error, 'ManageCatalogActionConflictProblem') &&
+    error.code !== 'merchandise_lifecycle_conflict'
     ? 'conflict'
     : 'failed';
+};
 
 interface DetailSaveInput {
   /** The version the server last confirmed for this draft; the save sends what differs from it. */
   readonly confirmed: DetailDraft;
   readonly expectedRevision: number;
-  /** Gets the approval notice of a refused save; a save that went through clears it. */
-  readonly pending: (message: string | null) => void;
   readonly productId: ProductRecord['id'];
   readonly value: DetailDraft;
 }
 
 /**
- * One autosave of the detail form: the changed basic fields first, then a changed price. The first command expects
+ * One save of the detail form: the changed basic fields first, then a changed price. The first command expects
  * the revision the draft is based on, the second the one the first left. A conflict keeps the draft and offers the
  * version someone else saved.
  *
  * When the fields went through and the price did not, the server has the draft's fields with the confirmed price.
- * The save reports that version and its revision (`PartlySaved`): the retry then sends the price alone, and a field
- * typed back to its earlier value is sent as the change it now is, instead of comparing equal to a version the
+ * The save reports that version and its revision (`PartlySaved`): the next save then sends the price alone, and a
+ * field typed back to its earlier value is sent as the change it now is, instead of comparing equal to a version the
  * server no longer has.
  */
 const saveDetailEffect = ({
   confirmed,
   expectedRevision,
-  pending,
   productId,
   value,
 }: DetailSaveInput): Effect.Effect<DraftSaveResult<DetailDraft>> => {
@@ -66,26 +72,18 @@ const saveDetailEffect = ({
   if (!fieldsChanged && !priceChanged) {
     return Effect.succeed('saved');
   }
-  const refused = (error: CommandFailure) => {
-    pending(pendingProposalMessage(error) ?? null);
-    return failureOutcome(error);
-  };
-  const saved = (revision: number) => {
-    pending(null);
-    return revision;
-  };
   const update: Effect.Effect<number, CommandFailure> = fieldsChanged
     ? runProductCommand({ _tag: 'UpdateProduct', id: productId, patch }, expectedRevision)
     : Effect.succeed(expectedRevision);
   return update.pipe(
     Effect.matchEffect({
-      onFailure: (error) => Effect.succeed<DraftSaveResult<DetailDraft>>(refused(error)),
+      onFailure: (error) => Effect.succeed<DraftSaveResult<DetailDraft>>(failureOutcome(error)),
       onSuccess: (revision) =>
         priceChanged
           ? runProductCommand({ _tag: 'ChangePrice', id: productId, priceMinor }, revision).pipe(
               Effect.match({
                 onFailure: (error): DraftSaveResult<DetailDraft> => {
-                  const outcome = refused(error);
+                  const outcome = failureOutcome(error);
                   return fieldsChanged
                     ? {
                         confirmed: { ...value, priceCzk: confirmed.priceCzk, priceText: confirmed.priceText },
@@ -94,10 +92,10 @@ const saveDetailEffect = ({
                       }
                     : outcome;
                 },
-                onSuccess: (next): DraftSaveResult<DetailDraft> => saved(next),
+                onSuccess: (next): DraftSaveResult<DetailDraft> => next,
               }),
             )
-          : Effect.sync((): DraftSaveResult<DetailDraft> => saved(revision)),
+          : Effect.succeed<DraftSaveResult<DetailDraft>>(revision),
     }),
   );
 };
@@ -108,27 +106,27 @@ const afterStockCommits = (commits: ReadonlyMap<number, number>, revision: numbe
   return next === undefined ? revision : afterStockCommits(commits, next);
 };
 
-interface ProductDetailAutosaveOptions {
+interface ProductDetailDraftOptions {
   readonly product: ProductRecord;
   /** The catalog revision `product` was read at. */
   readonly revision: number;
 }
 
 /**
- * Draft and autosave of the product detail form. The editor stays mounted while its product reloads: an untouched
- * draft takes the reloaded product, a changed one stays and keeps expecting the revision it was based on
- * (`useAutosaveDraft`), so a change someone else made in the meantime ends in a conflict instead of being overwritten.
+ * Draft and save of the product detail form. Nothing is sent until `record.save()`, the form's Save button. The
+ * editor stays mounted while its product reloads: an untouched draft takes the reloaded product, a changed one stays
+ * and keeps expecting the revision it was based on (`useRecordDraft`), so a change someone else made in the meantime
+ * ends in a conflict instead of being overwritten.
  *
  * `product` still shows the version before the form's own save until its reload lands, so a save sends what differs
  * from the version the server last confirmed, not from `product`.
  */
-export const useProductDetailAutosave = ({ product, revision }: ProductDetailAutosaveOptions) => {
-  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
+export const useProductDetailDraft = ({ product, revision }: ProductDetailDraftOptions) => {
   // Real variants are read-only on the detail tab and always come from the latest product.
   // Deriving them preserves unsaved detail fields when the variants tab commits a change.
   const realVariants = (product.variants ?? []).filter(isRealVariant);
   const stockCommits = useRef(new Map<number, number>());
-  const autosave = useAutosaveDraft<DetailDraft, never>({
+  const record = useRecordDraft<DetailDraft, never>({
     equals: sameDetailDraft,
     isValid: (value) => !detailDraftInvalid(value),
     revision,
@@ -137,7 +135,6 @@ export const useProductDetailAutosave = ({ product, revision }: ProductDetailAut
       saveDetailEffect({
         confirmed: { ...confirmed, realVariants },
         expectedRevision: afterStockCommits(stockCommits.current, expectedRevision),
-        pending: setPendingMessage,
         productId: product.id,
         value: { ...value, realVariants },
       }),
@@ -155,5 +152,5 @@ export const useProductDetailAutosave = ({ product, revision }: ProductDetailAut
       stockCommits.current.set(expectedRevision, next);
     }
   };
-  return { autosave, draft: { ...autosave.draft, realVariants }, followStockCommit, pendingMessage };
+  return { draft: { ...record.draft, realVariants }, followStockCommit, record };
 };

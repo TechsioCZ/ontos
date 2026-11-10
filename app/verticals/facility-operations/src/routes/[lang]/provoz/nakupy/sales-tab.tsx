@@ -9,7 +9,7 @@ import { optionalField } from '../../../../../shared/domain/common.ts';
 import { listCustomers } from '@app/party-registry/api/client';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import {
-  AutosaveStatus,
+  SaveBar,
   DetailList,
   EmptyState,
   SectionCard,
@@ -481,11 +481,10 @@ export const SalesQuoteFormPanel = ({
     run,
   });
   const close = () => {
-    autosave.flush();
     onClose();
   };
   const handleReloadLatest = autosave.reloadLatest;
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
 
   return (
     <SidePanel
@@ -493,7 +492,7 @@ export const SalesQuoteFormPanel = ({
         <>
           {quote !== undefined && (
             <>
-              <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+              <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
               <Button onClick={close} theme="outlined" variant="secondary">
                 {t('facility-operations.common.close')}
               </Button>

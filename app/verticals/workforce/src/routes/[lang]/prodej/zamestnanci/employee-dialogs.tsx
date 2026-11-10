@@ -1,4 +1,4 @@
-import { AutosaveStatus, SidePanel, dialogCloseLabel, useAutosaveDraft } from '@app/admin-ui';
+import { SaveBar, SidePanel, dialogCloseLabel, useRecordDraft } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -336,7 +336,6 @@ interface EmployeeFieldsProps {
   /** Set when the server reports that another Employee already uses the typed e-mail. */
   readonly emailTaken: boolean;
   readonly employee: Employee | null;
-  readonly onBlur: () => void;
   readonly onChange: (patch: Partial<EmployeeDraft>) => void;
   /** Inline field errors are shown (after the first create attempt; always while editing). */
   readonly showErrors: boolean;
@@ -349,7 +348,6 @@ const EmployeeFields = ({
   draft,
   emailTaken,
   employee,
-  onBlur,
   onChange,
   showErrors,
 }: EmployeeFieldsProps) => {
@@ -409,7 +407,6 @@ const EmployeeFields = ({
         id="employee-full-name"
         label={t(`${key}.form.fullName`)}
         name="fullName"
-        onBlur={onBlur}
         onChange={(event) => onChange({ fullName: event.target.value })}
         required
         value={draft.fullName}
@@ -421,7 +418,6 @@ const EmployeeFields = ({
         id="employee-email"
         label={t(`${key}.form.email`)}
         name="email"
-        onBlur={onBlur}
         onChange={(event) => onChange({ email: event.target.value })}
         required
         type="email"
@@ -434,7 +430,6 @@ const EmployeeFields = ({
         id="employee-phone"
         label={t(`${key}.form.phone`)}
         name="phone"
-        onBlur={onBlur}
         onChange={(event) => onChange({ phone: event.target.value })}
         type="tel"
         value={draft.phone}
@@ -461,7 +456,6 @@ const EmployeeFields = ({
         id="employee-department"
         label={t(`${key}.form.department`)}
         name="department"
-        onBlur={onBlur}
         onChange={(event) => onChange({ department: event.target.value })}
         required
         value={draft.department}
@@ -494,7 +488,7 @@ const EmployeeEditPanel = ({
   const { t } = useModernI18n();
   const [emailTaken, setEmailTaken] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
-  const autosave = useAutosaveDraft<EmployeeDraft, never>({
+  const autosave = useRecordDraft<EmployeeDraft, never>({
     equals: sameDraft,
     isValid: (value) => draftErrors(value).length === 0,
     revision,
@@ -515,17 +509,15 @@ const EmployeeEditPanel = ({
     server: draftFromEmployee(employee),
   });
   const close = () => {
-    autosave.flush();
     onClose();
   };
-  const handleBlur = autosave.flush;
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   const handleReloadLatest = autosave.reloadLatest;
   return (
     <SidePanel
       actions={
         <div className="workforce-employee-form-actions">
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
           <Button onClick={close} theme="outlined" variant="secondary">
             {t(`${key}.form.close`)}
           </Button>
@@ -548,7 +540,6 @@ const EmployeeEditPanel = ({
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
-          autosave.flush();
         }}
       >
         {serverError !== null && (
@@ -562,7 +553,6 @@ const EmployeeEditPanel = ({
           draft={autosave.draft}
           emailTaken={emailTaken}
           employee={employee}
-          onBlur={handleBlur}
           onChange={(patch) => {
             if (patch.email !== undefined) {
               setEmailTaken(false);
@@ -574,10 +564,6 @@ const EmployeeEditPanel = ({
       </form>
     </SidePanel>
   );
-};
-
-const noop = () => {
-  // Creating saves only on "Vytvořit zaměstnance".
 };
 
 const noopChange = () => {
@@ -699,7 +685,6 @@ const EmployeeCreateDialog = ({
             draft={draft}
             emailTaken={emailTaken}
             employee={null}
-            onBlur={noop}
             onChange={(patch) => {
               if (patch.email !== undefined) {
                 setEmailTaken(false);
@@ -774,7 +759,6 @@ const EmployeeReadOnlyPanel = ({
           draft={draftFromEmployee(employee)}
           emailTaken={false}
           employee={employee}
-          onBlur={noopChange}
           onChange={noopChange}
           showErrors={false}
         />

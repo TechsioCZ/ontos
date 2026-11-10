@@ -4,7 +4,7 @@ import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
-import { AutosaveStatus, SidePanel, formatDateTime, useAutosaveDraft } from '@app/admin-ui';
+import { SaveBar, SidePanel, formatDateTime, useRecordDraft } from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import { DateTime, Effect, Match, Option, Predicate } from 'effect';
 import { useState } from 'react';
@@ -85,7 +85,6 @@ const CategoryHistory = ({ selected }: { readonly selected: CategoryNode }) => (
 interface CategoryEditorProps {
   readonly draft: CategoryDraft;
   readonly nameError: 'required' | 'tooLong' | undefined;
-  readonly onBlur: () => void;
   readonly parentName: string | undefined;
   readonly patchDraft: (patch: Partial<CategoryDraft>) => void;
   readonly positionError: 'negative' | 'notWhole' | 'required' | undefined;
@@ -97,7 +96,6 @@ interface CategoryEditorProps {
 const CategoryEditor = ({
   draft,
   nameError,
-  onBlur,
   parentName,
   patchDraft,
   positionError,
@@ -132,7 +130,6 @@ const CategoryEditor = ({
         label={t('merchandise.ui.name')}
         maxLength={200}
         name="name"
-        onBlur={onBlur}
         onChange={(event) => patchDraft({ name: event.target.value })}
         required
         value={draft.name}
@@ -143,7 +140,6 @@ const CategoryEditor = ({
         label={t('merchandise.ui.categoryPageHeading')}
         maxLength={300}
         name="heading"
-        onBlur={onBlur}
         onChange={(event) => patchDraft({ heading: event.target.value })}
         value={draft.heading}
       />
@@ -152,7 +148,6 @@ const CategoryEditor = ({
         label={t('merchandise.ui.shortDescription')}
         maxLength={5000}
         name="description"
-        onBlur={onBlur}
         onChange={(event) => patchDraft({ description: event.target.value })}
         value={draft.description}
       />
@@ -161,7 +156,6 @@ const CategoryEditor = ({
         label={t('merchandise.ui.categoryDescription')}
         maxLength={50_000}
         name="longDescription"
-        onBlur={onBlur}
         onChange={(event) => patchDraft({ longDescription: event.target.value })}
         value={draft.longDescription}
       />
@@ -170,7 +164,6 @@ const CategoryEditor = ({
         inputMode="numeric"
         label={t('merchandise.ui.siblingPosition')}
         name="position"
-        onBlur={onBlur}
         onChange={(event) => patchDraft({ positionText: event.target.value })}
         value={draft.positionText}
         {...(positionError === undefined ? {} : { helpText: positionMessage, validateStatus: 'error' as const })}
@@ -223,7 +216,7 @@ interface CategoryEditPanelProps {
 const CategoryEditPanel = ({ category, onBack, onSaved, parentName, revision, siblings }: CategoryEditPanelProps) => {
   const { t } = useModernI18n();
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
-  const autosave = useAutosaveDraft<CategoryDraft, never>({
+  const autosave = useRecordDraft<CategoryDraft, never>({
     equals: sameCategoryDraft,
     isValid: (value) => Object.keys(categoryDraftErrors(value)).length === 0,
     revision,
@@ -244,18 +237,16 @@ const CategoryEditPanel = ({ category, onBack, onSaved, parentName, revision, si
   const errors = categoryDraftErrors(draft);
   const patchDraft = (patch: Partial<CategoryDraft>) => autosave.setDraft((current) => ({ ...current, ...patch }));
   const close = () => {
-    autosave.flush();
     onBack();
   };
-  const handleBlur = autosave.flush;
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   const handleReloadLatest = autosave.reloadLatest;
   return (
     <SidePanel
       actions={
         <>
           {pendingMessage !== null && <StatusText status="error">{pendingMessage}</StatusText>}
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
           <Button onClick={close} theme="outlined" variant="secondary">
             Zpět na seznam
           </Button>
@@ -276,7 +267,6 @@ const CategoryEditPanel = ({ category, onBack, onSaved, parentName, revision, si
         <CategoryEditor
           draft={draft}
           nameError={errors.name}
-          onBlur={handleBlur}
           parentName={parentName}
           patchDraft={patchDraft}
           positionError={errors.position}

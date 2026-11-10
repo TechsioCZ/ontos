@@ -2,8 +2,8 @@ import {
   UpdateTagActionConflictProblemSchema,
   UpdateTagActionUnavailableProblemSchema,
 } from '../../shared/apis/update-tag-action.ts';
-import { startAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { startDraftSave } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { DateTime, Effect, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
@@ -77,13 +77,13 @@ const isConflict = UpdateTagActionConflictProblemSchema.make({
 
 const panel = Effect.fnUntraced(function* panel(write: Effect.Effect<'applied' | 'stale', unknown>) {
   const sent: TagDraft[] = [];
-  const controller = yield* startAutosave(saved, {
+  const controller = yield* startDraftSave(saved, {
     equals: sameTagDraft,
     isValid: validTagDraft,
     save: (value: TagDraft) =>
       Effect.sync(() => sent.push(value)).pipe(
         Effect.andThen(tagAutosaveResult(write)),
-        Effect.map((result): AutosaveOutcome => (result === 'conflict' || result === 'failed' ? result : 'saved')),
+        Effect.map((result): SaveOutcome => (result === 'conflict' || result === 'failed' ? result : 'saved')),
       ),
   });
   return { controller, sent };
@@ -105,7 +105,7 @@ describe('tag edit panel autosave', () => {
     Effect.gen(function* invalid() {
       const { controller, sent } = yield* panel(Effect.succeed('applied'));
       controller.change({ ...saved, kinds: [] });
-      controller.flush();
+      controller.save();
       yield* TestClock.adjust('1 second');
       expect(sent).toEqual([]);
       expect(controller.status()).toBe('invalid');
@@ -116,13 +116,13 @@ describe('tag edit panel autosave', () => {
     Effect.gen(function* conflict() {
       const stale = yield* panel(Effect.succeed('stale'));
       stale.controller.change({ ...saved, color: 'blue' });
-      stale.controller.flush();
+      stale.controller.save();
       yield* Effect.yieldNow;
       expect(stale.controller.status()).toBe('conflict');
 
       const race = yield* panel(Effect.fail(isConflict));
       race.controller.change({ ...saved, color: 'blue' });
-      race.controller.flush();
+      race.controller.save();
       yield* Effect.yieldNow;
       expect(race.controller.status()).toBe('conflict');
 
@@ -139,7 +139,7 @@ describe('tag edit panel autosave', () => {
         ),
       );
       failed.controller.change({ ...saved, color: 'blue' });
-      failed.controller.flush();
+      failed.controller.save();
       yield* Effect.yieldNow;
       expect(failed.controller.status()).toBe('error');
     }),

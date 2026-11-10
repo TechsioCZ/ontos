@@ -1,6 +1,6 @@
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import {
-  AutosaveStatus,
+  SaveBar,
   DetailList,
   PageHeader,
   SectionCard,
@@ -11,7 +11,7 @@ import {
   formatMoney,
   surfaceCardClassName,
   surfaceTileClassName,
-  useAutosaveDraft,
+  useRecordDraft,
 } from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
@@ -860,7 +860,7 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
       rentUnchangedSince(occupancy.occupancyRef.resourceId, base.current),
       state.reportProposal,
     ).pipe(Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))));
-  const autosave = useAutosaveDraft<RentDraft, never>({
+  const autosave = useRecordDraft<RentDraft, never>({
     equals: sameRentDraft,
     isValid: (value) => Option.isSome(rentTermsOf(value)),
     revision: state.snapshot?.revision ?? 0,
@@ -885,17 +885,15 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
   const change = (field: keyof RentDraft) => (value: string) =>
     autosave.setDraft((current) => ({ ...current, [field]: value }));
   const close = () => {
-    autosave.flush();
     state.setRentEditorOpen(false);
   };
-  const handleBlur = autosave.flush;
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   const handleReloadLatest = autosave.reloadLatest;
   return (
     <SidePanel
       actions={
         <>
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
           <Button onClick={close} theme="outlined" variant="secondary">
             {t(LABEL_CLOSE)}
           </Button>
@@ -922,7 +920,6 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
             id="occupancy-rent-monthly"
             inputMode="decimal"
             label={t('property-leasing.rent.monthlyRentInput')}
-            onBlur={handleBlur}
             onChange={(event) => change('monthly')(event.target.value)}
             value={draft.monthly}
             {...invalid(problems.monthly, 'property-leasing.rent.invalidAmount')}
@@ -931,7 +928,6 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
             id="occupancy-rent-service"
             inputMode="decimal"
             label={t('property-leasing.rent.serviceChargesInput')}
-            onBlur={handleBlur}
             onChange={(event) => change('service')(event.target.value)}
             value={draft.service}
             {...invalid(problems.service, 'property-leasing.rent.invalidAmount')}
@@ -941,7 +937,6 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
             label={t('property-leasing.rent.paymentDayInput')}
             max={31}
             min={1}
-            onBlur={handleBlur}
             onChange={(event) => change('paymentDay')(event.target.value)}
             type="number"
             value={draft.paymentDay}

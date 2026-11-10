@@ -1,7 +1,7 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { czechPlural } from '@app/shared-contracts';
-import { AutosaveStatus, useAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { SaveBar, useDraftSave } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
@@ -137,13 +137,13 @@ const PeopleEditor = ({
   const base = useRef<MembershipBase>(openedBase);
   const revision = useRef(membership?.revision ?? 0);
   const [membershipDraft, setMembershipDraft] = useState<MembershipDraft>(() => membershipDraftOf(openedBase));
-  const autosave = useAutosave<MembershipDraft, HttpClient.HttpClient>({
+  const autosave = useDraftSave<MembershipDraft, HttpClient.HttpClient>({
     equals: sameMembershipDraft,
     isValid: (value) => Option.isSome(membershipEditOf(value, base.current)),
     runtime: browserRuntime,
     save: (value) =>
       Option.match(membershipEditOf(value, base.current), {
-        onNone: () => Effect.succeed<AutosaveOutcome>('saved'),
+        onNone: () => Effect.succeed<SaveOutcome>('saved'),
         onSome: (edit) =>
           changeCompanyMembership({
             affiliation: kind === 'agent' ? null : edit.affiliation,
@@ -152,7 +152,7 @@ const PeopleEditor = ({
             reason: edit.reason,
             status: edit.status,
           }).pipe(
-            Effect.map((outcome): AutosaveOutcome => {
+            Effect.map((outcome): SaveOutcome => {
               if (outcome.status === 'failed') {
                 setError(outcome.message);
                 return 'failed';
@@ -171,10 +171,9 @@ const PeopleEditor = ({
   const patchMembership = (patch: Partial<MembershipDraft>) =>
     setMembershipDraft((current) => ({ ...current, ...patch }));
   const close = () => {
-    autosave.flush();
     onClose();
   };
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   const handleReloadLatest = () => autosave.adopt(membershipDraftOf(baseOf(person)));
   const requestClose = () => {
     if (editor.kind === 'role') {
@@ -255,7 +254,7 @@ const PeopleEditor = ({
           </>
         ) : (
           <>
-            <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+            <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
             <Button onClick={close} theme="outlined" variant="secondary">
               Zavřít
             </Button>

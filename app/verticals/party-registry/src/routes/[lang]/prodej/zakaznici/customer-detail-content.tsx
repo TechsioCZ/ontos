@@ -1,7 +1,7 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { AutosaveStatus, DetailList, formatDate, useAutosaveDraft } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { SaveBar, DetailList, formatDate, useRecordDraft } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -126,9 +126,9 @@ const TextFactField = ({
   readonly id: string;
   readonly label: string;
   readonly original: string;
-  readonly save: (value: string) => Effect.Effect<AutosaveOutcome>;
+  readonly save: (value: string) => Effect.Effect<SaveOutcome>;
 }) => {
-  const autosave = useAutosaveDraft<string, never>({
+  const autosave = useRecordDraft<string, never>({
     equals: (left, right) => left.trim() === right.trim(),
     isValid: (value) => value.trim() !== '' && basisFilled,
     runtime: browserRuntime,
@@ -137,11 +137,11 @@ const TextFactField = ({
   });
   const handleChange = (event: { target: { value: string } }) => autosave.setDraft(event.target.value);
   const handleReloadLatest = autosave.reloadLatest;
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   return (
     <div className="flex flex-col gap-100">
       <FormInput id={id} label={label} onChange={handleChange} required value={autosave.draft} />
-      <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+      <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
     </div>
   );
 };
@@ -158,12 +158,12 @@ const ContactFactFields = ({
   readonly basisFilled: boolean;
   readonly id: string;
   readonly registeredAddress: boolean;
-  readonly save: (value: CustomerContactFields) => Effect.Effect<AutosaveOutcome>;
+  readonly save: (value: CustomerContactFields) => Effect.Effect<SaveOutcome>;
   readonly server: CustomerContactFields;
   readonly type: CustomerContactRow['type'];
 }) => {
   const { t } = useModernI18n();
-  const autosave = useAutosaveDraft<CustomerContactFields, never>({
+  const autosave = useRecordDraft<CustomerContactFields, never>({
     equals: sameContactFields,
     isValid: (value) => basisFilled && !contactFieldsInvalid(type, value),
     runtime: browserRuntime,
@@ -171,7 +171,7 @@ const ContactFactFields = ({
     server,
   });
   const handleReloadLatest = autosave.reloadLatest;
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   return (
     <>
       <div className="grid grid-cols-1 gap-150 md:grid-cols-2">
@@ -191,7 +191,7 @@ const ContactFactFields = ({
         ))}
       </div>
       {registeredAddress && <StatusText status="default">{t(`${CUSTOMER_DETAIL_KEY}.registeredAddress`)}</StatusText>}
-      <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+      <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
     </>
   );
 };
@@ -205,7 +205,7 @@ const CustomerFacts = ({
 }: {
   readonly basisFilled: boolean;
   readonly detail: CustomerDetailModel;
-  readonly saveFact: (build: (owner: CustomerParty) => CustomerFactChange) => Effect.Effect<AutosaveOutcome>;
+  readonly saveFact: (build: (owner: CustomerParty) => CustomerFactChange) => Effect.Effect<SaveOutcome>;
   readonly snapshot: CustomerDetailSnapshot;
 }) => {
   const { t } = useModernI18n();
@@ -409,17 +409,15 @@ export const CustomerDetailContent = ({
 
   /** Evidence and a reason are the change basis of a governed identity change: nothing is sent without them. */
   const basisFilled = reason.trim() !== '' && evidence.trim() !== '';
-  const saveFact = (build: (owner: CustomerParty) => CustomerFactChange): Effect.Effect<AutosaveOutcome> =>
+  const saveFact = (build: (owner: CustomerParty) => CustomerFactChange): Effect.Effect<SaveOutcome> =>
     party === undefined
-      ? Effect.succeed<AutosaveOutcome>('failed')
+      ? Effect.succeed<SaveOutcome>('failed')
       : saveCustomerFact(party.partyRef, build(party), reason.trim(), evidence.trim()).pipe(
           Effect.matchEffect({
             onFailure: (error) =>
-              Effect.sync<AutosaveOutcome>(() =>
-                customerDetailFailureKey(error) === 'conflict' ? 'conflict' : 'failed',
-              ),
+              Effect.sync<SaveOutcome>(() => (customerDetailFailureKey(error) === 'conflict' ? 'conflict' : 'failed')),
             onSuccess: (result) =>
-              Effect.sync<AutosaveOutcome>(() => {
+              Effect.sync<SaveOutcome>(() => {
                 if (Schema.is(Schema.Struct({ outcome: Schema.Literal('BLOCKED') }))(result)) {
                   return 'failed';
                 }

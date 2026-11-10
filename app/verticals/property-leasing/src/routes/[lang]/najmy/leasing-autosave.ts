@@ -1,4 +1,4 @@
-// Autosave of the lease screen's edit panels: one command against the revision its draft builds on.
+// Save of the lease screen's edit panels: one command against the revision its draft builds on.
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';

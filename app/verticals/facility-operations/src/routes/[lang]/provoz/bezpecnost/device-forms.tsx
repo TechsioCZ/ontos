@@ -1,7 +1,7 @@
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Side panels of the security agenda: device card create/edit, fault report (+ linked task), inspection, resolve.
-import { AutosaveStatus, SidePanel, surfaceTileClassName, useAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { SaveBar, SidePanel, surfaceTileClassName, useDraftSave } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -381,23 +381,22 @@ const DeviceEditPanel = ({
   const [draft, setDraft] = useState<DeviceDraft>(() => deviceDraftOf(device));
   const set = <Key extends keyof DeviceDraft>(key: Key, value: DeviceDraft[Key]) =>
     setDraft((current) => ({ ...current, [key]: value }));
-  const autosave = useAutosave<DeviceDraft, never>({
+  const autosave = useDraftSave<DeviceDraft, never>({
     equals: sameDeviceDraft,
     isValid: (value) =>
       Option.isSome(deviceUpdateCommandOf(value, device, pickedLocationOf({ device, draft: value, properties }))),
     runtime: browserRuntime,
     save: (value) =>
       Option.match(deviceUpdateCommandOf(value, device, pickedLocationOf({ device, draft: value, properties })), {
-        onNone: () => Effect.succeed<AutosaveOutcome>('failed'),
+        onNone: () => Effect.succeed<SaveOutcome>('failed'),
         onSome: (command) => facilityAutosaveOutcome(run(command)),
       }),
     value: draft,
   });
   const close = () => {
-    autosave.flush();
     onClose();
   };
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   const handleReloadLatest = () => {
     const current = deviceDraftOf(device);
     autosave.adopt(current);
@@ -407,7 +406,7 @@ const DeviceEditPanel = ({
     <PanelFrame
       actions={
         <>
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
           <Button onClick={close} theme="outlined" variant="secondary">
             {t('facility-operations.common.close')}
           </Button>

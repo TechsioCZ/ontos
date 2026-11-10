@@ -1,6 +1,6 @@
-// Autosave of the asset card in edit mode: one governed update per draft, its refusals on the inline status line.
-import { useAutosave } from '@app/admin-ui';
-import type { AutosaveOptions, AutosaveOutcome, AutosaveState } from '@app/admin-ui';
+// Save of the asset card in edit mode: one governed update per draft, its refusals on the inline status line.
+import { useDraftSave } from '@app/admin-ui';
+import type { DraftSaveOptions, SaveOutcome, SaveState } from '@app/admin-ui';
 import { DateTime, Effect, Option } from 'effect';
 import { useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
@@ -20,12 +20,11 @@ export type RunAssetCommand = (command: OpsCommand) => Effect.Effect<CommandOutc
 export interface AssetCardAutosave {
   /** The card's draft: the user's edits, or the version of the record a settled draft follows. */
   readonly draft: AssetCardDraft;
-  readonly flush: () => void;
   readonly pending: boolean;
   readonly reloadLatest: () => void;
-  readonly retry: () => void;
+  readonly save: () => void;
   readonly setDraft: Dispatch<SetStateAction<AssetCardDraft>>;
-  readonly status: AutosaveState;
+  readonly status: SaveState;
 }
 
 /**
@@ -82,18 +81,18 @@ export const assetCardRefreshOf = (input: {
 export const assetCardAutosaveOf = (input: {
   readonly base: () => AssetCardBase;
   readonly commandOf: (value: AssetCardDraft) => Option.Option<OpsCommand>;
-}): AutosaveOptions<AssetCardDraft, never> => ({
+}): DraftSaveOptions<AssetCardDraft, never> => ({
   equals: sameAssetCardDraft,
   isValid: (value) => Option.isSome(input.commandOf(value)),
   save: (value) =>
     Option.match(input.commandOf(value), {
-      onNone: () => Effect.succeed<AutosaveOutcome>('failed'),
+      onNone: () => Effect.succeed<SaveOutcome>('failed'),
       onSome: (command) => facilityAutosaveOutcome(input.base().run(command)),
     }),
 });
 
 /**
- * Autosave of one asset card: the draft's location resolves against the property read (the stored one while it is not
+ * Save of one asset card: the draft's location resolves against the property read (the stored one while it is not
  * ready). A settled draft follows a fresh read of its record while rendering; a draft the user is still editing keeps
  * its edits and the base of the read it was built on, so a change to that record ends in the conflict the status line
  * offers to resolve instead of overwriting the change.
@@ -113,7 +112,7 @@ export const useAssetCardAutosave = ({
   // The base of the draft generation: a fresh read never moves it while the user has unsaved work.
   const [base, setBase] = useState(() => assetCardBaseOf(run, asset));
   const options = assetCardAutosaveOf({ base: () => base, commandOf });
-  const autosave = useAutosave<AssetCardDraft, never>({
+  const autosave = useDraftSave<AssetCardDraft, never>({
     ...options,
     runtime: browserRuntime,
     save: (value) =>
@@ -128,7 +127,7 @@ export const useAssetCardAutosave = ({
       ),
     value: draft,
   });
-  const { adopt, flush, pending, retry, status } = autosave;
+  const { adopt, pending, save, status } = autosave;
   // The controller receives edits after commit; compare the draft too so a batched refresh cannot erase an edit.
   const unsettled = pending || !sameAssetCardDraft(draft, confirmed);
   // Reconsider the current read when a save settles, even if that read arrived while the save was pending.
@@ -143,7 +142,6 @@ export const useAssetCardAutosave = ({
   }
   return {
     draft,
-    flush,
     pending: unsettled,
     reloadLatest: () => {
       const stored = assetCardDraftOf(asset);
@@ -152,7 +150,7 @@ export const useAssetCardAutosave = ({
       setConfirmed(stored);
       adopt(stored);
     },
-    retry,
+    save,
     setDraft,
     status,
   };

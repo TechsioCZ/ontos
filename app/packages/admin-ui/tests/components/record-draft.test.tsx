@@ -1,11 +1,12 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Deferred, Effect, Layer, ManagedRuntime } from 'effect';
 import { afterEach, describe, expect, it } from 'effect-rstest';
-import { AutosaveStatus } from '../../src/autosave-status.tsx';
-import { useAutosaveDraft } from '../../src/autosave.ts';
-import type { DraftSaveResult, UseAutosaveDraftOptions } from '../../src/autosave.ts';
+import { SaveBar } from '../../src/save-bar.tsx';
+import { useRecordDraft } from '../../src/draft-save.ts';
+import type { DraftSaveResult, UseRecordDraftOptions } from '../../src/draft-save.ts';
 
 const runtime = ManagedRuntime.make(Layer.empty);
+const copy = { flags: 'Flags' };
 
 interface Harness {
   /** The confirmed version each save was handed. */
@@ -25,11 +26,10 @@ interface NameFormProps {
   readonly test: Harness;
 }
 
-type NameFormOptions = UseAutosaveDraftOptions<string, never>;
+type NameFormOptions = UseRecordDraftOptions<string, never>;
 
 const NameForm = ({ revision = 1, server, takeServer, test }: NameFormProps) => {
   const options: { -readonly [Key in keyof NameFormOptions]: NameFormOptions[Key] } = {
-    delayMs: 10,
     isValid: (value: string) => value.trim() !== '',
     revision,
     runtime,
@@ -47,17 +47,23 @@ const NameForm = ({ revision = 1, server, takeServer, test }: NameFormProps) => 
   if (takeServer !== undefined) {
     options.takeServer = takeServer;
   }
-  const autosave = useAutosaveDraft(options);
-  const handleBlur = autosave.flush;
-  const handleReloadLatest = autosave.reloadLatest;
-  const handleRetry = autosave.retry;
+  const record = useRecordDraft(options);
+  const handleDiscard = record.discard;
+  const handleReloadLatest = record.reloadLatest;
+  const handleSave = record.save;
   return (
     <>
       <label>
         Název
-        <input onBlur={handleBlur} onChange={(event) => autosave.setDraft(event.target.value)} value={autosave.draft} />
+        <input onChange={(event) => record.setDraft(event.target.value)} value={record.draft} />
       </label>
-      <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+      <output
+        aria-label={copy.flags}
+      >{`${record.dirty ? 'dirty' : 'clean'} ${record.canSave ? 'savable' : 'held'}`}</output>
+      <button onClick={handleDiscard} type="button">
+        Zahodit změny
+      </button>
+      <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
     </>
   );
 };
@@ -66,40 +72,160 @@ const answer = (test: Harness, index: number, outcome: DraftSaveResult<string>) 
   const reply = test.replies[index];
   expect(reply).toBeDefined();
   if (reply !== undefined) {
-    runtime.runSync(Deferred.succeed(reply, outcome));
+    act(() => {
+      runtime.runSync(Deferred.succeed(reply, outcome));
+    });
   }
 };
 
 const input = () => screen.getByLabelText<HTMLInputElement>('Název');
+const saveButton = () => screen.getByRole<HTMLButtonElement>('button', { name: /^(?:Uložit|Ukládám…)$/u });
+const flags = () => screen.getByLabelText('Flags').textContent;
+
+const type = (value: string) => {
+  fireEvent.change(input(), { target: { value } });
+};
+/** Typing and leaving the field, as a user who moves on to the next field does. */
+const typeAndLeave = (value: string) => {
+  input().focus();
+  type(value);
+  fireEvent.focusOut(input());
+};
+const clickSave = () => {
+  fireEvent.click(saveButton());
+};
+/** One explicit save of `value`: type it, then click Uložit. */
+const save = (value: string) => {
+  type(value);
+  clickSave();
+};
 
 /** A trailing remark is the form's own: it is kept over whatever name the server has. */
 const withRemark = (server: string, draft: string) => (draft.endsWith(' (ověřit)') ? `${server} (ověřit)` : server);
+
+/** Real time, longer than the delay the form used to save after. */
+const wait = (duration: `${number} millis`) => Effect.sleep(duration);
 
 afterEach(cleanup);
 
 const eventually = (assertion: () => void) => Effect.promise(() => waitFor(assertion));
 
-describe('useAutosaveDraft', () => {
-  it.effect('saves a typed change and reports Ukládám… then Uloženo', () =>
-    Effect.gen(function* saved() {
+describe('useRecordDraft', () => {
+  it.live('typing and leaving the field only changes the draft: nothing is sent after any delay', () =>
+    Effect.gen(function* noSaveOnEdit() {
       const test = harness();
       render(<NameForm server="Akros" test={test} />);
-      fireEvent.change(input(), { target: { value: 'Akros s.r.o.' } });
-      yield* eventually(() => expect(screen.getByText('Ukládám…')).toBeTruthy());
-      expect(test.sent).toEqual(['Akros s.r.o.']);
-      answer(test, 0, 'saved');
-      yield* eventually(() => expect(screen.getByText('Uloženo')).toBeTruthy());
+      expect(saveButton().disabled).toBe(true);
+      expect(flags()).toBe('clean held');
+      typeAndLeave('Akros s.r.o.');
+      yield* eventually(() => expect(screen.getByText('Neuložené změny')).toBeTruthy());
+      expect(saveButton().disabled).toBe(false);
+      expect(flags()).toBe('dirty savable');
+      fireEvent(document, new Event('visibilitychange'));
+      yield* wait('1100 millis');
+      expect(test.sent).toEqual([]);
+      expect(input().value).toBe('Akros s.r.o.');
     }),
   );
 
-  it.effect('keeps an invalid draft local', () =>
+  it.live('sends nothing when the form unmounts with unsaved changes', () =>
+    Effect.gen(function* noSaveOnUnmount() {
+      const test = harness();
+      const view = render(<NameForm server="Akros" test={test} />);
+      typeAndLeave('Akros s.r.o.');
+      yield* eventually(() => expect(screen.getByText('Neuložené změny')).toBeTruthy());
+      view.unmount();
+      yield* wait('1100 millis');
+      expect(test.sent).toEqual([]);
+    }),
+  );
+
+  it.live('one click on Uložit sends the whole draft once and reports Uloženo', () =>
+    Effect.gen(function* saved() {
+      const test = harness();
+      render(<NameForm server="Akros" test={test} />);
+      type('Akros s.r.o.');
+      yield* eventually(() => expect(saveButton().disabled).toBe(false));
+      clickSave();
+      yield* eventually(() => expect(saveButton().getAttribute('aria-busy')).toBe('true'));
+      // The button is busy: further clicks send nothing.
+      clickSave();
+      clickSave();
+      expect(test.sent).toEqual(['Akros s.r.o.']);
+      answer(test, 0, 'saved');
+      yield* eventually(() => expect(screen.getByText('Uloženo')).toBeTruthy());
+      expect(saveButton().disabled).toBe(true);
+      expect(flags()).toBe('clean held');
+      yield* wait('50 millis');
+      expect(test.sent).toEqual(['Akros s.r.o.']);
+    }),
+  );
+
+  it.effect('keeps an invalid draft local and Uložit disabled', () =>
     Effect.gen(function* invalid() {
       const test = harness();
       render(<NameForm server="Akros" test={test} />);
-      fireEvent.change(input(), { target: { value: ' ' } });
-      fireEvent.focusOut(input());
-      yield* eventually(() => expect(screen.getByText('Neuloženo – opravte zvýrazněná pole')).toBeTruthy());
+      type(' ');
+      yield* eventually(() => expect(screen.getByText('Neuložené změny – opravte zvýrazněná pole')).toBeTruthy());
+      expect(saveButton().disabled).toBe(true);
+      expect(flags()).toBe('dirty held');
+      clickSave();
       expect(test.sent).toEqual([]);
+    }),
+  );
+
+  it.effect('discard puts the confirmed version back and leaves nothing to save', () =>
+    Effect.gen(function* discarded() {
+      const test = harness();
+      render(<NameForm server="Akros" test={test} />);
+      save('Akros CZ');
+      yield* eventually(() => expect(test.sent).toEqual(['Akros CZ']));
+      answer(test, 0, 2);
+      yield* eventually(() => expect(screen.getByText('Uloženo')).toBeTruthy());
+
+      // The page still shows `Akros`; the confirmed version is what the save wrote.
+      type('Akros Praha');
+      yield* eventually(() => expect(flags()).toBe('dirty savable'));
+      fireEvent.click(screen.getByRole('button', { name: 'Zahodit změny' }));
+      expect(input().value).toBe('Akros CZ');
+      yield* eventually(() => expect(flags()).toBe('clean held'));
+      clickSave();
+      expect(test.sent).toEqual(['Akros CZ']);
+    }),
+  );
+
+  it.effect('discard after a failed save clears the error', () =>
+    Effect.gen(function* discardedError() {
+      const test = harness();
+      render(<NameForm server="Akros" test={test} />);
+      save('Akros CZ');
+      yield* eventually(() => expect(test.sent).toEqual(['Akros CZ']));
+      answer(test, 0, 'failed');
+      yield* eventually(() => expect(screen.getByText('Uložení se nezdařilo. Zkuste to znovu.')).toBeTruthy());
+      expect(saveButton().disabled).toBe(false);
+      fireEvent.click(screen.getByRole('button', { name: 'Zahodit změny' }));
+      expect(input().value).toBe('Akros');
+      yield* eventually(() => expect(screen.queryByText('Uložení se nezdařilo. Zkuste to znovu.')).toBeNull());
+      expect(saveButton().disabled).toBe(true);
+    }),
+  );
+
+  it.effect('a discarded draft takes the version someone else saved while it was unsaved', () =>
+    Effect.gen(function* discardedOverNewer() {
+      const test = harness();
+      const view = render(<NameForm revision={1} server="Akros" test={test} />);
+      type('Moje změna');
+      yield* eventually(() => expect(flags()).toBe('dirty savable'));
+      view.rerender(<NameForm revision={2} server="Jejich změna" test={test} />);
+      expect(input().value).toBe('Moje změna');
+      fireEvent.click(screen.getByRole('button', { name: 'Zahodit změny' }));
+      yield* eventually(() => expect(input().value).toBe('Jejich změna'));
+      expect(flags()).toBe('clean held');
+      // The next edit builds on their version and names its revision.
+      save('Jejich změna 2');
+      yield* eventually(() => expect(test.sent).toEqual(['Jejich změna 2']));
+      expect(test.bases).toEqual(['Jejich změna']);
+      expect(test.expected).toEqual([2]);
     }),
   );
 
@@ -115,12 +241,14 @@ describe('useAutosaveDraft', () => {
     Effect.gen(function* conflict() {
       const test = harness();
       const view = render(<NameForm server="Akros" test={test} />);
-      fireEvent.change(input(), { target: { value: 'Moje změna' } });
-      fireEvent.focusOut(input());
+      save('Moje změna');
       view.rerender(<NameForm server="Jejich změna" test={test} />);
       expect(input().value).toBe('Moje změna');
       answer(test, 0, 'conflict');
       yield* eventually(() => expect(screen.getByText('Záznam mezitím změnil někdo jiný.')).toBeTruthy());
+      // A conflict is not saved over: Uložit stays disabled until the current version is loaded.
+      expect(saveButton().disabled).toBe(true);
+      expect(flags()).toBe('dirty held');
       fireEvent.click(screen.getByRole('button', { name: 'Načíst aktuální verzi' }));
       expect(input().value).toBe('Jejich změna');
       yield* eventually(() => expect(screen.queryByText('Záznam mezitím změnil někdo jiný.')).toBeNull());
@@ -132,21 +260,19 @@ describe('useAutosaveDraft', () => {
     Effect.gen(function* revisions() {
       const test = harness();
       const view = render(<NameForm revision={4} server="Akros" test={test} />);
-      fireEvent.change(input(), { target: { value: 'Akros CZ' } });
-      fireEvent.focusOut(input());
+      save('Akros CZ');
       answer(test, 0, 5);
       yield* eventually(() => expect(screen.getByText('Uloženo')).toBeTruthy());
       // Someone else changed another record: this one is still what we saved.
       view.rerender(<NameForm revision={6} server="Akros CZ" test={test} />);
-      fireEvent.change(input(), { target: { value: 'Akros Praha' } });
-      fireEvent.focusOut(input());
+      save('Akros Praha');
       yield* eventually(() => expect(test.expected).toEqual([4, 6]));
       answer(test, 1, 7);
       yield* eventually(() => expect(screen.getByText('Uloženo')).toBeTruthy());
-      // Someone else changed this record while a draft is pending: the save keeps the old base and conflicts.
-      fireEvent.change(input(), { target: { value: 'Akros Brno' } });
+      // Someone else changed this record while a draft is unsaved: the save keeps the old base and conflicts.
+      type('Akros Brno');
       view.rerender(<NameForm revision={8} server="Jejich název" test={test} />);
-      fireEvent.focusOut(input());
+      clickSave();
       yield* eventually(() => expect(test.expected).toEqual([4, 6, 7]));
     }),
   );
@@ -155,10 +281,6 @@ describe('useAutosaveDraft', () => {
     Effect.gen(function* confirmedVersion() {
       const test = harness();
       const view = render(<NameForm server="Akros" test={test} />);
-      const save = (value: string) => {
-        fireEvent.change(input(), { target: { value } });
-        fireEvent.focusOut(input());
-      };
       save('Jedna');
       yield* eventually(() => expect(test.sent).toEqual(['Jedna']));
       answer(test, 0, 2);
@@ -168,7 +290,7 @@ describe('useAutosaveDraft', () => {
       save('Dva');
       yield* eventually(() => expect(test.sent).toEqual(['Jedna', 'Dva']));
       answer(test, 1, 'failed');
-      yield* eventually(() => expect(screen.getByRole('button', { name: 'zkusit znovu' })).toBeTruthy());
+      yield* eventually(() => expect(screen.getByText('Uložení se nezdařilo. Zkuste to znovu.')).toBeTruthy());
       save('Tři');
       yield* eventually(() => expect(test.sent).toEqual(['Jedna', 'Dva', 'Tři']));
       answer(test, 2, 3);
@@ -189,15 +311,11 @@ describe('useAutosaveDraft', () => {
     Effect.gen(function* partlySaved() {
       const test = harness();
       const view = render(<NameForm revision={4} server="Akros" test={test} />);
-      const save = (value: string) => {
-        fireEvent.change(input(), { target: { value } });
-        fireEvent.focusOut(input());
-      };
       // The save sent two commands: the first wrote `Akros CZ` and left revision 5, the second failed.
       save('Akros CZ, a.s.');
       yield* eventually(() => expect(test.sent).toEqual(['Akros CZ, a.s.']));
       answer(test, 0, { confirmed: 'Akros CZ', outcome: 'failed', revision: 5 });
-      yield* eventually(() => expect(screen.getByRole('button', { name: 'zkusit znovu' })).toBeTruthy());
+      yield* eventually(() => expect(screen.getByText('Uložení se nezdařilo. Zkuste to znovu.')).toBeTruthy());
 
       // The reload lands with what the server has now; the unsaved draft stays.
       view.rerender(<NameForm revision={5} server="Akros CZ" test={test} />);
@@ -213,12 +331,25 @@ describe('useAutosaveDraft', () => {
     }),
   );
 
+  it.effect('discard after a partly successful save goes back to what the server took', () =>
+    Effect.gen(function* partlySavedDiscard() {
+      const test = harness();
+      render(<NameForm revision={4} server="Akros" test={test} />);
+      save('Akros CZ, a.s.');
+      yield* eventually(() => expect(test.sent).toEqual(['Akros CZ, a.s.']));
+      answer(test, 0, { confirmed: 'Akros CZ', outcome: 'failed', revision: 5 });
+      yield* eventually(() => expect(screen.getByText('Uložení se nezdařilo. Zkuste to znovu.')).toBeTruthy());
+      fireEvent.click(screen.getByRole('button', { name: 'Zahodit změny' }));
+      expect(input().value).toBe('Akros CZ');
+      yield* eventually(() => expect(flags()).toBe('clean held'));
+    }),
+  );
+
   it.effect('lets a settled draft keep a part the server does not store when it takes a newer version', () =>
     Effect.gen(function* keptPart() {
       const test = harness();
       const view = render(<NameForm revision={4} server="Akros" takeServer={withRemark} test={test} />);
-      fireEvent.change(input(), { target: { value: 'Akros (ověřit)' } });
-      fireEvent.focusOut(input());
+      save('Akros (ověřit)');
       yield* eventually(() => expect(test.sent).toEqual(['Akros (ověřit)']));
       answer(test, 0, 'saved');
       yield* eventually(() => expect(screen.getByText('Uloženo')).toBeTruthy());
@@ -226,30 +357,31 @@ describe('useAutosaveDraft', () => {
       view.rerender(<NameForm revision={5} server="Jejich" takeServer={withRemark} test={test} />);
       expect(input().value).toBe('Jejich (ověřit)');
       // The kept part is a draft over their version: it is saved against that version and its revision.
-      fireEvent.focusOut(input());
+      yield* eventually(() => expect(saveButton().disabled).toBe(false));
+      clickSave();
       yield* eventually(() => expect(test.sent).toEqual(['Akros (ověřit)', 'Jejich (ověřit)']));
       expect(test.bases[1]).toBe('Jejich');
       expect(test.expected[1]).toBe(5);
     }),
   );
 
-  it.effect('keeps a draft parked for approval on its base revision and never proposes it again', () =>
+  it.effect('keeps a draft sent for approval on its base revision and never proposes it again', () =>
     Effect.gen(function* proposed() {
       const test = harness();
       const view = render(<NameForm revision={4} server="Akros" test={test} />);
-      fireEvent.change(input(), { target: { value: 'Akros CZ' } });
-      fireEvent.focusOut(input());
+      save('Akros CZ');
       answer(test, 0, 'proposed');
       yield* eventually(() =>
-        expect(screen.getByText('Čeká na schválení – změna zatím nebyla provedena')).toBeTruthy(),
+        expect(screen.getByText('Odesláno ke schválení – změna zatím nebyla provedena')).toBeTruthy(),
       );
-      expect(screen.queryByRole('button')).toBeNull();
-      fireEvent.focusOut(input());
+      // Handed over: nothing to save and nothing that leaving would lose.
+      expect(saveButton().disabled).toBe(true);
+      expect(flags()).toBe('clean held');
+      clickSave();
       // Live data does not replace the parked draft.
       view.rerender(<NameForm revision={5} server="Akros" test={test} />);
       expect(input().value).toBe('Akros CZ');
-      fireEvent.change(input(), { target: { value: 'Akros Praha' } });
-      fireEvent.focusOut(input());
+      save('Akros Praha');
       yield* eventually(() => expect(test.sent).toEqual(['Akros CZ', 'Akros Praha']));
       // The proposal saved nothing: the record still has its confirmed version, so the base follows revision 5.
       expect(test.expected).toEqual([4, 5]);
@@ -262,15 +394,14 @@ describe('useAutosaveDraft', () => {
     Effect.gen(function* approved() {
       const test = harness();
       const view = render(<NameForm revision={4} server="Akros" test={test} />);
-      fireEvent.change(input(), { target: { value: 'Akros CZ' } });
-      fireEvent.focusOut(input());
+      save('Akros CZ');
       answer(test, 0, 'proposed');
       yield* eventually(() =>
-        expect(screen.getByText('Čeká na schválení – změna zatím nebyla provedena')).toBeTruthy(),
+        expect(screen.getByText('Odesláno ke schválení – změna zatím nebyla provedena')).toBeTruthy(),
       );
       view.rerender(<NameForm revision={5} server="Akros CZ" test={test} />);
       yield* eventually(() =>
-        expect(screen.queryByText('Čeká na schválení – změna zatím nebyla provedena')).toBeNull(),
+        expect(screen.queryByText('Odesláno ke schválení – změna zatím nebyla provedena')).toBeNull(),
       );
       view.unmount();
       expect(test.sent).toEqual(['Akros CZ']);

@@ -171,7 +171,6 @@ export const OrderDetailPage = ({ context, legalEntityId, orderId }: OrderDetail
                 customers={directory}
                 editing={editing}
                 onClose={back}
-                onEditingChange={setEditing}
                 onStatus={requestStatus}
                 order={detail.order}
               />

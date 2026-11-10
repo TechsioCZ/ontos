@@ -1,5 +1,5 @@
-import { startAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { startDraftSave } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
@@ -61,9 +61,9 @@ describe('price list item draft', () => {
   });
 });
 
-const panel = Effect.fnUntraced(function* panel(outcome: AutosaveOutcome) {
+const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
   const sent: ItemDraft[] = [];
-  const controller = yield* startAutosave(saved, {
+  const controller = yield* startDraftSave(saved, {
     equals: sameItemDraft,
     isValid: (value: ItemDraft) => Option.isSome(itemCommandOf(value, item)),
     save: (value: ItemDraft) => Effect.sync(() => sent.push(value)).pipe(Effect.as(outcome)),
@@ -76,7 +76,7 @@ describe('price list item edit autosave', () => {
     Effect.gen(function* typed() {
       const { controller, sent } = yield* panel('saved');
       controller.change({ ...saved, name: '' });
-      controller.flush();
+      controller.save();
       expect(controller.status()).toBe('invalid');
       controller.change({ ...saved, price: '19 000' });
       yield* TestClock.adjust('800 millis');
@@ -89,7 +89,7 @@ describe('price list item edit autosave', () => {
     Effect.gen(function* conflict() {
       const { controller, sent } = yield* panel('conflict');
       controller.change({ ...saved, unit: 'rok' });
-      controller.flush();
+      controller.save();
       yield* Effect.yieldNow;
       expect(controller.status()).toBe('conflict');
       controller.change({ ...saved, unit: 'čtvrtletí' });
@@ -102,7 +102,7 @@ describe('price list item edit autosave', () => {
     Effect.gen(function* proposed() {
       const { controller, sent } = yield* panel(financeAutosaveOutcome({ feedback: 'pendingApproval', ok: false }));
       controller.change({ ...saved, price: '21 000' });
-      controller.flush();
+      controller.save();
       yield* Effect.yieldNow;
       expect(sent.map(({ price }) => price)).toEqual(['21 000']);
       expect(controller.status()).toBe('proposed');

@@ -29,7 +29,7 @@ import {
 } from './use-property-editor.ts';
 import type { PropertyDraft } from './use-property-editor.ts';
 import { ResponsibleEmployeesField } from './responsible-employees-field.tsx';
-import { AutosaveStatus, useAutosaveDraft } from '@app/admin-ui';
+import { SaveBar, useRecordDraft } from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import type { PropertyCommand } from '../../../../shared/actions/apply-command.ts';
 import { UnitStory, pragueToday } from './unit-story.tsx';
@@ -388,7 +388,6 @@ interface EditorFieldsProps {
   readonly errors: PropertyEditor['errors'];
   readonly fields: PropertyEditor['fields'];
   readonly model: RecordsModel;
-  readonly onBlur: () => void;
   readonly onEmployees: (value: string | string[]) => void;
   readonly onLifecycle: (value: string) => void;
   readonly onText: (field: Exclude<PropertyEditor['fields'][number], 'responsibleEmployeeIds'>, value: string) => void;
@@ -401,7 +400,6 @@ const RecordsEditorFields = ({
   errors,
   fields,
   model,
-  onBlur,
   onEmployees,
   onLifecycle,
   onText,
@@ -441,7 +439,6 @@ const RecordsEditorFields = ({
               id="property-note"
               key={field}
               label={t(`${key}.editor.note`)}
-              onBlur={onBlur}
               onChange={(event) => onText('note', event.target.value)}
               value={draft.note}
             />
@@ -453,7 +450,6 @@ const RecordsEditorFields = ({
             id={`property-${field}`}
             key={field}
             label={t(`${key}.editor.${field}`)}
-            onBlur={onBlur}
             onChange={(event) => onText(field, event.target.value)}
             required
             value={draft[field]}
@@ -484,10 +480,6 @@ const RecordsEditorFields = ({
   );
 };
 
-const noBlur = () => {
-  // A new record is saved only on "Uložit".
-};
-
 const unitFields = ['name', 'note'] as const;
 const propertyFields = ['code', 'name', 'address', 'propertyType', 'responsibleEmployeeIds', 'note'] as const;
 
@@ -510,7 +502,7 @@ const RecordsEditPanel = ({ base: opened, view }: { readonly base: PropertyDraft
     autosavePropertyEdit(command, expectedRevision, editUnchangedSince(base.current), editor.reportProposal).pipe(
       Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))),
     );
-  const autosave = useAutosaveDraft<PropertyDraft, never>({
+  const autosave = useRecordDraft<PropertyDraft, never>({
     equals: sameEditDraft,
     isValid: (value) => Option.isSome(editCommandOf(value, records)),
     revision: records?.revision ?? 0,
@@ -530,18 +522,16 @@ const RecordsEditPanel = ({ base: opened, view }: { readonly base: PropertyDraft
   }, [base, server, settledOnServer]);
   const { draft } = autosave;
   const close = () => {
-    autosave.flush();
     editor.closeEdit();
   };
-  const handleBlur = autosave.flush;
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   const handleReloadLatest = autosave.reloadLatest;
   const isUnit = draft.unit !== undefined;
   return (
     <Dialog
       actions={
         <>
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
           <Button onClick={close} theme="outlined" variant="secondary">
             {t(`${key}.editor.close`)}
           </Button>
@@ -565,7 +555,6 @@ const RecordsEditPanel = ({ base: opened, view }: { readonly base: PropertyDraft
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
-          autosave.flush();
         }}
       >
         <RecordsEditorFields
@@ -574,7 +563,6 @@ const RecordsEditPanel = ({ base: opened, view }: { readonly base: PropertyDraft
           errors={propertyDraftErrors(draft, records)}
           fields={isUnit ? unitFields : propertyFields}
           model={model}
-          onBlur={handleBlur}
           onEmployees={(value) => autosave.setDraft((current) => withResponsibleEmployees(current, value))}
           onLifecycle={(value) => autosave.setDraft((current) => withLifecycle(current, value))}
           onText={(field, value) => autosave.setDraft((current) => withTextField(current, field, value))}
@@ -649,7 +637,6 @@ const RecordsEditorForm = ({ view }: { readonly view: RecordsView }) => {
           errors={editor.errors}
           fields={editor.fields}
           model={model}
-          onBlur={noBlur}
           onEmployees={(value) => editor.changeResponsibleEmployees(value)}
           onLifecycle={(value) => editor.changeLifecycle(value)}
           onText={(field, value) => editor.change(field, value)}

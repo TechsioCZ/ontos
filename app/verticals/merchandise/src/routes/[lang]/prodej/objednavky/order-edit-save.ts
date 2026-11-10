@@ -1,8 +1,8 @@
 import { pendingProposalMessage } from '../../../../api/action-result.ts';
-// Autosave of one order edit. `EditOrder` names the order version it was made against, so the form keeps the
+// Save of one order edit. `EditOrder` names the order version it was made against, so the form keeps the
 // version its draft builds on, and after every save reads the version that save left behind.
-import { useAutosaveDraft } from '@app/admin-ui';
-import type { AutosaveOutcome, RevisionedSaveResult } from '@app/admin-ui';
+import { useRecordDraft } from '@app/admin-ui';
+import type { SaveOutcome, RevisionedSaveResult } from '@app/admin-ui';
 import { DateTime, Effect, Predicate, Random } from 'effect';
 import { useEffect, useRef, useState } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
@@ -44,17 +44,25 @@ export const readOrderVersion = (orderId: Order['id']): Effect.Effect<OrderVersi
     }),
   );
 
-/** A conflict means someone else edited the order, so the panel offers their version instead of retrying blindly. */
-const outcomeOf = (error: EditFailure): AutosaveOutcome =>
-  Predicate.isTagged(error, 'ManageCatalogActionConflictProblem') && error.code === 'merchandise_revision_conflict'
+/**
+ * Why an edit wrote nothing. A conflict means someone else edited the order, so the form offers their version
+ * instead of sending the same edit again; an edit parked for approval is held and never sent again.
+ */
+const outcomeOf = (error: EditFailure): SaveOutcome => {
+  if (pendingProposalMessage(error) !== undefined) {
+    return 'proposed';
+  }
+  return Predicate.isTagged(error, 'ManageCatalogActionConflictProblem') &&
+    error.code === 'merchandise_revision_conflict'
     ? 'conflict'
     : 'failed';
+};
 
 /**
  * The order version a saved edit left behind, or `saved` when that version is not known; otherwise why nothing was
  * saved.
  */
-export type OrderEditSaveResult = OrderVersion | AutosaveOutcome;
+export type OrderEditSaveResult = OrderVersion | SaveOutcome;
 
 /**
  * Sends one order edit against `revision` and reads the version the server has afterwards, which the next change of
@@ -64,33 +72,25 @@ export type OrderEditSaveResult = OrderVersion | AutosaveOutcome;
  * someone else that landed between the save and the read-back is in the read order too: taking its version as the
  * base would let the next save put this form's older lines over their change. Such a read, like one that failed,
  * answers `saved`: the draft keeps its base, and the next save is refused and offers the current version instead of
- * guessing. `pending` gets the approval notice of a refused save and is cleared by a save that went through.
+ * guessing.
  */
 export const saveOrderEdit = (
   command: Extract<MerchandiseCommand, { readonly _tag: 'EditOrder' }>,
   revision: number,
   isWritten: (order: Order) => boolean,
-  pending?: (message: string | null) => void,
 ): Effect.Effect<OrderEditSaveResult> =>
   editOrder(command, revision).pipe(
     Effect.flatMap(() => readOrderVersion(command.id)),
-    Effect.map((read): OrderEditSaveResult => {
-      pending?.(null);
-      return read.status === 'found' && isWritten(read.order) ? read.version : 'saved';
-    }),
-    Effect.match({
-      onFailure: (error) => {
-        pending?.(pendingProposalMessage(error) ?? null);
-        return outcomeOf(error);
-      },
-      onSuccess: (outcome) => outcome,
-    }),
+    Effect.map((read): OrderEditSaveResult =>
+      read.status === 'found' && isWritten(read.order) ? read.version : 'saved',
+    ),
+    Effect.match({ onFailure: outcomeOf, onSuccess: (outcome) => outcome }),
   );
 
 /** An order's own version as a number that only grows: the instant of its last change. */
 const versionOf = (updatedAt: Order['updatedAt']): number => DateTime.toEpochMillis(updatedAt);
 
-interface OrderEditAutosaveOptions {
+interface OrderEditDraftOptions {
   /**
    * The form's own validation; an invalid draft is never sent. `confirmed` is the draft the edit is compared with
    * (`editCommandOf`), so the rule for an edited address or contact uses the base the sent command uses.
@@ -102,10 +102,11 @@ interface OrderEditAutosaveOptions {
 }
 
 /**
- * Draft and autosave of the order edit form. The form stays mounted while its order reloads (after its own save,
- * a live change, the freshness window), so the draft follows the order itself: an untouched draft takes the reloaded
- * order, a draft with unsaved changes stays and keeps naming the order version it was typed over. The server then
- * refuses the save when someone else changed the order meanwhile, instead of taking old lines over their change.
+ * Draft and save of the order edit form. Nothing is sent until `record.save()`, the form's Save button. The form
+ * stays mounted while its order reloads (after its own save, a live change, the freshness window), so the draft
+ * follows the order itself: an untouched draft takes the reloaded order, a draft with unsaved changes stays and keeps
+ * naming the order version it was typed over. The server then refuses the save when someone else changed the order
+ * meanwhile, instead of taking old lines over their change.
  * A change reason typed for the next edit is no unsaved change of the order, so it stays in the field when the draft
  * takes a reloaded order.
  *
@@ -113,8 +114,7 @@ interface OrderEditAutosaveOptions {
  * the catalog revision moves with every other order and product too. Each save sends the pair read together. After a
  * save the base moves to the version read back only when that order is what the save wrote (`saveOrderEdit`).
  */
-export const useOrderEditAutosave = ({ isValid, order, revision }: OrderEditAutosaveOptions) => {
-  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
+export const useOrderEditDraft = ({ isValid, order, revision }: OrderEditDraftOptions) => {
   // The change reason that went into the history with the last saved edit: the reload after that save clears it
   // from the field, while a reason still waiting for its edit stays.
   const [sentReason, setSentReason] = useState<string | null>(null);
@@ -128,7 +128,7 @@ export const useOrderEditAutosave = ({ isValid, order, revision }: OrderEditAuto
       versions.current.set(key, { revision, updatedAt });
     }
   }, [revision, updatedAt]);
-  const autosave = useAutosaveDraft<Draft, never>({
+  const record = useRecordDraft<Draft, never>({
     equals: sameOrderDraft,
     isValid,
     revision: versionOf(updatedAt),
@@ -141,7 +141,7 @@ export const useOrderEditAutosave = ({ isValid, order, revision }: OrderEditAuto
       const isWritten = (read: Order) => sameOrderDraft(draftOf(read), written);
       return command === null
         ? Effect.succeed('saved')
-        : saveOrderEdit(command, base.revision, isWritten, setPendingMessage).pipe(
+        : saveOrderEdit(command, base.revision, isWritten).pipe(
             Effect.map((result): RevisionedSaveResult => {
               if (result === 'conflict' || result === 'failed' || result === 'proposed') {
                 return result;
@@ -164,8 +164,8 @@ export const useOrderEditAutosave = ({ isValid, order, revision }: OrderEditAuto
         : { ...server, reason: current.reason },
   });
   // Once the field no longer holds the reason that was sent, the same words typed again are a new reason.
-  if (sentReason !== null && autosave.draft.reason.trim() !== sentReason) {
+  if (sentReason !== null && record.draft.reason.trim() !== sentReason) {
     setSentReason(null);
   }
-  return { autosave, pendingMessage, savedOnce };
+  return { record, savedOnce };
 };

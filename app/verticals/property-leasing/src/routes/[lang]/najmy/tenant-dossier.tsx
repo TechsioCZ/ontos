@@ -1,5 +1,5 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { AutosaveStatus, DetailList, SectionCard, useAutosaveDraft } from '@app/admin-ui';
+import { SaveBar, DetailList, SectionCard, useRecordDraft } from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -105,7 +105,7 @@ const useDossierAutosave = <V,>({
     onAutosave(changes, expectedRevision, unchangedSince(base.current)).pipe(
       Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))),
     );
-  const autosave = useAutosaveDraft<V, never>({
+  const autosave = useRecordDraft<V, never>({
     equals,
     isValid: (value) => Option.isSome(changesOf(value)),
     revision,
@@ -166,13 +166,9 @@ const DossierContacts = ({
   const removeContact = (id: string) => autosave.setDraft((current) => current.filter((item) => item.id !== id));
   const appendContact = (id: string) => autosave.setDraft((current) => [...current, emptyContact(id)]);
   const toggleEditing = () => {
-    if (editing) {
-      autosave.flush();
-    }
     setEditing(!editing);
   };
-  const handleBlur = autosave.flush;
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   const handleReloadLatest = autosave.reloadLatest;
   return (
     <>
@@ -184,9 +180,7 @@ const DossierContacts = ({
           </Button>
         )}
       </div>
-      {canWrite && (
-        <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
-      )}
+      {canWrite && <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />}
       {!editing && contacts.length === 0 && (
         <p className="sp-tenant-muted">
           Kontaktní osoby zatím nejsou doplněny. Hlavní e-mail a telefon protistrany najdete v kartě výše.
@@ -221,7 +215,6 @@ const DossierContacts = ({
                 <div className="sp-tenant-fields">
                   <FormInput
                     label={t('property-leasing.registration.fullName')}
-                    onBlur={handleBlur}
                     onChange={(event) => updateContact(contact.id, 'name', event.target.value)}
                     required
                     value={contact.name}
@@ -229,13 +222,11 @@ const DossierContacts = ({
                   />
                   <FormInput
                     label={t('property-leasing.dossier.contactRole')}
-                    onBlur={handleBlur}
                     onChange={(event) => updateContact(contact.id, 'role', event.target.value)}
                     value={contact.role}
                   />
                   <FormInput
                     label={t('property-leasing.dossier.contactEmail')}
-                    onBlur={handleBlur}
                     onChange={(event) => updateContact(contact.id, 'email', event.target.value)}
                     type="email"
                     value={contact.email}
@@ -243,7 +234,6 @@ const DossierContacts = ({
                   />
                   <FormInput
                     label={t('property-leasing.dossier.contactPhone')}
-                    onBlur={handleBlur}
                     onChange={(event) => updateContact(contact.id, 'phone', event.target.value)}
                     type="tel"
                     value={contact.phone}
@@ -306,8 +296,7 @@ const DossierCase = ({
   const { draft } = autosave;
   const problems = caseProblems(draft, dossier);
   const change = (patch: Partial<CaseDraft>) => autosave.setDraft((current) => ({ ...current, ...patch }));
-  const handleBlur = autosave.flush;
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   const handleReloadLatest = autosave.reloadLatest;
   return (
     <div className="sp-tenant-contact">
@@ -337,7 +326,6 @@ const DossierCase = ({
             <FormInput
               label={t('property-leasing.dossier.caseSubject')}
               maxLength={500}
-              onBlur={handleBlur}
               onChange={(event) => change({ subject: event.target.value })}
               required
               value={draft.subject}
@@ -346,7 +334,6 @@ const DossierCase = ({
             <FormInput
               label={t('property-leasing.dossier.caseOwner')}
               maxLength={500}
-              onBlur={handleBlur}
               onChange={(event) => change({ owner: event.target.value })}
               required
               value={draft.owner}
@@ -354,7 +341,6 @@ const DossierCase = ({
             />
             <FormInput
               label={t('property-leasing.dossier.caseDeadline')}
-              onBlur={handleBlur}
               onChange={(event) => change({ deadline: event.target.value })}
               required
               type="date"
@@ -364,7 +350,6 @@ const DossierCase = ({
             <FormInput
               inputMode="decimal"
               label={t('property-leasing.dossier.optionalCaseValue')}
-              onBlur={handleBlur}
               onChange={(event) => change({ value: event.target.value })}
               value={draft.value}
               {...invalidField(problems.value, t('property-leasing.rent.invalidAmount'))}
@@ -390,7 +375,7 @@ const DossierCase = ({
                 ))}
               </select>
             </label>
-            <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+            <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
           </div>
         </>
       )}

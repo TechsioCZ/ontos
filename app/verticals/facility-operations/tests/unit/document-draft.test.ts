@@ -1,5 +1,5 @@
-import { startAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { startDraftSave } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
@@ -93,9 +93,9 @@ describe('facility autosave outcome', () => {
   );
 });
 
-const panel = Effect.fnUntraced(function* panel(outcome: AutosaveOutcome) {
+const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
   const sent: DocumentEditDraft[] = [];
-  const controller = yield* startAutosave(stored, {
+  const controller = yield* startDraftSave(stored, {
     equals: sameDocumentEditDraft,
     isValid: (value: DocumentEditDraft) => Option.isSome(documentUpdateCommandOf(documentId, value)),
     save: (value: DocumentEditDraft) => Effect.sync(() => sent.push(value)).pipe(Effect.as(outcome)),
@@ -108,7 +108,7 @@ describe('document edit panel autosave', () => {
     Effect.gen(function* typed() {
       const { controller, sent } = yield* panel('saved');
       controller.change({ ...stored, title: '' });
-      controller.flush();
+      controller.save();
       expect(controller.status()).toBe('invalid');
       controller.change({ ...stored, description: 'Příloha k podpisu' });
       yield* TestClock.adjust('800 millis');
@@ -121,7 +121,7 @@ describe('document edit panel autosave', () => {
     Effect.gen(function* conflict() {
       const { controller, sent } = yield* panel('conflict');
       controller.change({ ...stored, title: 'Nájemní smlouva R204 – oprava' });
-      controller.flush();
+      controller.save();
       yield* Effect.yieldNow;
       expect(controller.status()).toBe('conflict');
       controller.change({ ...stored, title: 'Nájemní smlouva R204 – oprava 2' });

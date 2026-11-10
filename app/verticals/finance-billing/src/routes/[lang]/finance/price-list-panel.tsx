@@ -1,15 +1,8 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { Effect, Option } from 'effect';
-import {
-  AutosaveStatus,
-  dialogCloseLabel,
-  EmptyState,
-  formatMoney,
-  SectionCard,
-  useAutosaveDraft,
-} from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { SaveBar, dialogCloseLabel, EmptyState, formatMoney, SectionCard, useRecordDraft } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -44,12 +37,10 @@ const invalidField = (invalid: boolean, message: string) =>
 /** The fields of one price list item, shared by the create dialog and the autosaving edit dialog. */
 const PriceItemFields = ({
   draft,
-  onBlur,
   onChange,
   showErrors,
 }: {
   readonly draft: ItemDraft;
-  readonly onBlur: () => void;
   readonly onChange: (patch: Partial<ItemDraft>) => void;
   readonly showErrors: boolean;
 }) => {
@@ -60,7 +51,6 @@ const PriceItemFields = ({
       <FormInput
         id="price-name"
         label={t('finance-billing.financeUi.priceList.serviceName')}
-        onBlur={onBlur}
         onChange={(event) => onChange({ name: event.target.value })}
         placeholder={t('finance-billing.financeUi.priceList.serviceExample')}
         size="sm"
@@ -71,7 +61,6 @@ const PriceItemFields = ({
         <FormInput
           id="price-code"
           label={t('finance-billing.financeUi.priceList.code')}
-          onBlur={onBlur}
           onChange={(event) => onChange({ code: event.target.value })}
           size="sm"
           value={draft.code}
@@ -79,7 +68,6 @@ const PriceItemFields = ({
         <FormInput
           id="price-unit"
           label={t('finance-billing.financeUi.priceList.unit')}
-          onBlur={onBlur}
           onChange={(event) => onChange({ unit: event.target.value })}
           placeholder={t('finance-billing.financeUi.priceList.unitExamples')}
           size="sm"
@@ -91,7 +79,6 @@ const PriceItemFields = ({
           id="price-amount"
           inputMode="decimal"
           label={t('finance-billing.financeUi.priceList.netPrice')}
-          onBlur={onBlur}
           onChange={(event) => onChange({ price: event.target.value })}
           size="sm"
           value={draft.price}
@@ -154,14 +141,14 @@ const PriceItemEditDialog = ({
           Effect.tap((outcome) => Effect.sync(() => settle(value, outcome))),
           Effect.map(financeAutosaveOutcome),
         )
-      : Effect.succeed<AutosaveOutcome>('conflict');
-  const autosave = useAutosaveDraft<ItemDraft, never>({
+      : Effect.succeed<SaveOutcome>('conflict');
+  const autosave = useRecordDraft<ItemDraft, never>({
     equals: sameItemDraft,
     isValid: (value) => Option.isSome(itemCommandOf(value, item, vm.actorLabel)),
     runtime: financeBrowserRuntime,
     save: (value) =>
       Option.match(itemCommandOf(value, item, vm.actorLabel), {
-        onNone: () => Effect.succeed<AutosaveOutcome>('failed'),
+        onNone: () => Effect.succeed<SaveOutcome>('failed'),
         onSome: (command) => send(value, command),
       }),
     server,
@@ -173,18 +160,16 @@ const PriceItemEditDialog = ({
     }
   }, [base, server, settledOnServer]);
   const close = () => {
-    autosave.flush();
     onClose();
   };
-  const handleBlur = autosave.flush;
   const handleChange = (patch: Partial<ItemDraft>) => autosave.setDraft((current) => ({ ...current, ...patch }));
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   const handleReloadLatest = autosave.reloadLatest;
   return (
     <Dialog
       actions={
         <>
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
           <Button onClick={close} theme="outlined" variant="secondary">
             {t('finance-billing.financeUi.priceList.close')}
           </Button>
@@ -209,14 +194,10 @@ const PriceItemEditDialog = ({
             {error.text}
           </StatusText>
         )}
-        <PriceItemFields draft={autosave.draft} onBlur={handleBlur} onChange={handleChange} showErrors />
+        <PriceItemFields draft={autosave.draft} onChange={handleChange} showErrors />
       </div>
     </Dialog>
   );
-};
-
-const noBlur = () => {
-  // A new item is saved only on "Uložit".
 };
 
 /** S07.R4: the company price list; invoice lines copy a snapshot of an item, discounts are approved per line. */
@@ -464,7 +445,6 @@ export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
             )}
             <PriceItemFields
               draft={draft}
-              onBlur={noBlur}
               onChange={(patch) => setDraft({ ...draft, ...patch })}
               showErrors={error?.status === 'error'}
             />

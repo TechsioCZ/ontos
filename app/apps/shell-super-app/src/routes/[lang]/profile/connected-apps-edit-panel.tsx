@@ -1,8 +1,8 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Effect } from 'effect';
 import type { ConnectionSummary } from '@app/shared-contracts/agent-access';
-import { AutosaveStatus, useAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { SaveBar, useDraftSave } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
@@ -42,12 +42,12 @@ export const ConnectedAppsEditPanel = ({
   const [failure, setFailure] = useState<string | undefined>();
   // The access of an existing connection saves itself: every choice is one narrowing the server re-checks.
   const saved = useRef(false);
-  const autosave = useAutosave<EditDraft, never>({
+  const autosave = useDraftSave<EditDraft, never>({
     isValid: (value) => draftProblem(value) === undefined,
     runtime: browserRuntime,
-    save: (value): Effect.Effect<AutosaveOutcome> =>
+    save: (value): Effect.Effect<SaveOutcome> =>
       updateConnectionAccess(draftToRequest(connection.grantId, value)).pipe(
-        Effect.map((outcome): AutosaveOutcome => {
+        Effect.map((outcome): SaveOutcome => {
           if (outcome.status === 'ok') {
             saved.current = true;
             setFailure(undefined);
@@ -73,9 +73,8 @@ export const ConnectedAppsEditPanel = ({
     setDraft((current) => setModuleChoice(current, moduleId, choice));
   };
 
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   const close = () => {
-    autosave.flush();
     if (saved.current) {
       onSaved(name);
     }
@@ -86,7 +85,7 @@ export const ConnectedAppsEditPanel = ({
     <Dialog
       actions={
         <>
-          <AutosaveStatus onReloadLatest={close} onRetry={handleRetry} status={autosave.status} />
+          <SaveBar onReloadLatest={close} onSave={handleSave} status={autosave.status} />
           <Button onClick={close} theme="outlined" variant="secondary">
             Zavřít
           </Button>

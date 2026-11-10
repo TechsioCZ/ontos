@@ -1,4 +1,4 @@
-import { AutosaveOutcomeSchema, startAutosave } from '@app/admin-ui';
+import { SaveOutcomeSchema, startDraftSave } from '@app/admin-ui';
 import { DateTime, Effect, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
@@ -39,11 +39,11 @@ it('never autosaves an edit with an empty name or a malformed e-mail', () => {
   expect(draftErrors({ ...draft, email: 'jana@' })).toContain('email');
 });
 
-const isAutosaveOutcome = Schema.is(AutosaveOutcomeSchema);
+const isAutosaveOutcome = Schema.is(SaveOutcomeSchema);
 
 const edited = Effect.fnUntraced(function* edited(outcome: CommitOutcome | number) {
   const sent: EmployeeDraft[] = [];
-  const controller = yield* startAutosave(draftFromEmployee(jana), {
+  const controller = yield* startDraftSave(draftFromEmployee(jana), {
     equals: sameDraft,
     isValid: (value: EmployeeDraft) => draftErrors(value).length === 0,
     save: (value: EmployeeDraft) =>
@@ -71,7 +71,7 @@ describe('employee edit panel autosave', () => {
     Effect.gen(function* invalid() {
       const { controller, sent } = yield* edited(13);
       controller.change({ ...draftFromEmployee(jana), email: 'jana@' });
-      controller.flush();
+      controller.save();
       yield* TestClock.adjust('1 second');
       expect(sent).toEqual([]);
       expect(controller.status()).toBe('invalid');
@@ -82,7 +82,7 @@ describe('employee edit panel autosave', () => {
     Effect.gen(function* conflict() {
       const { controller, sent } = yield* edited('conflict');
       controller.change({ ...draftFromEmployee(jana), phone: '+420 777 123 456' });
-      controller.flush();
+      controller.save();
       yield* Effect.yieldNow;
       expect(controller.status()).toBe('conflict');
       controller.change({ ...draftFromEmployee(jana), phone: '+420 777 000 000' });

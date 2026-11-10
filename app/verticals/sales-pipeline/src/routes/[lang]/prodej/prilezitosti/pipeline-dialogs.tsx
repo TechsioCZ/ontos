@@ -1,5 +1,5 @@
 import { CalendarDateSchema } from '@app/shared-contracts';
-import { AutosaveStatus, SidePanel, formatNumber, statusPresentation, useAutosaveDraft } from '@app/admin-ui';
+import { SaveBar, SidePanel, formatNumber, statusPresentation, useRecordDraft } from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -110,14 +110,12 @@ const OpportunityFields = ({
   draft,
   employees,
   isEdit,
-  onBlur,
   onChange,
   products,
   showErrors,
 }: OpportunityReferences & {
   readonly draft: FormDraft;
   readonly isEdit: boolean;
-  readonly onBlur: () => void;
   readonly onChange: (patch: Partial<FormDraft>) => void;
   /** Inline field errors show after the first create attempt and always while editing. */
   readonly showErrors: boolean;
@@ -184,7 +182,6 @@ const OpportunityFields = ({
         id="opportunity-title"
         label={t(`${K}.create.fields.title`)}
         name="title"
-        onBlur={onBlur}
         onChange={(event) => onChange({ title: event.target.value })}
         required
         validateStatus={statusOf(visible(errors.title))}
@@ -212,7 +209,6 @@ const OpportunityFields = ({
         id="opportunity-close-date"
         label={t(`${K}.create.fields.expectedClose`)}
         name="expectedCloseDate"
-        onBlur={onBlur}
         onChange={(event) => onChange({ closeText: event.target.value })}
         required
         type="date"
@@ -225,7 +221,6 @@ const OpportunityFields = ({
         id="opportunity-note"
         label={t(`${K}.create.fields.note`)}
         name="note"
-        onBlur={onBlur}
         onChange={(event) => onChange({ note: event.target.value })}
         rows={3}
         validateStatus={statusOf(visible(errors.note))}
@@ -238,10 +233,6 @@ const OpportunityFields = ({
 
 /** The scrolling form inside a panel. The small inline padding keeps focus rings from being clipped by its edge. */
 const formClassName = '-mx-100 flex min-h-0 flex-1 flex-col gap-200 overflow-y-auto px-100 py-200';
-
-const noBlur = () => {
-  // Creating sends only on "Vytvořit příležitost".
-};
 
 interface CreatePanelProps extends OpportunityReferences {
   readonly busy: boolean;
@@ -350,7 +341,6 @@ const OpportunityCreatePanel = ({ busy, onOpenChange, onSubmit, serverError, ...
             {...references}
             draft={draft}
             isEdit={false}
-            onBlur={noBlur}
             onChange={handleChange}
             showErrors={submitted}
           />
@@ -426,7 +416,7 @@ const OpportunityEditPanel = ({
       onNone: () => Effect.succeed<RevisionedSaveResult>('failed'),
       onSome: (command) => sendCommand(value, expectedRevision, command),
     });
-  const autosave = useAutosaveDraft<FormDraft, never>({
+  const autosave = useRecordDraft<FormDraft, never>({
     equals: sameOpportunityDraft,
     isValid: (value) => Option.isSome(updateCommandOf(opportunity.id, value)),
     revision,
@@ -441,18 +431,16 @@ const OpportunityEditPanel = ({
     }
   }, [base, server, settledOnServer]);
   const close = () => {
-    autosave.flush();
     onOpenChange(false);
   };
-  const handleBlur = autosave.flush;
   const handleChange = (next: Partial<FormDraft>) => autosave.setDraft((current) => ({ ...current, ...next }));
-  const handleRetry = autosave.retry;
+  const handleSave = autosave.save;
   const handleReloadLatest = autosave.reloadLatest;
   return (
     <SidePanel
       actions={
         <>
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
+          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
           <Button onClick={close} theme="outlined" type="button" variant="secondary">
             {t(`${K}.edit.close`)}
           </Button>
@@ -474,7 +462,6 @@ const OpportunityEditPanel = ({
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
-          autosave.flush();
         }}
       >
         {serverError !== undefined && (
@@ -482,14 +469,7 @@ const OpportunityEditPanel = ({
             {serverError}
           </StatusText>
         )}
-        <OpportunityFields
-          {...references}
-          draft={autosave.draft}
-          isEdit
-          onBlur={handleBlur}
-          onChange={handleChange}
-          showErrors
-        />
+        <OpportunityFields {...references} draft={autosave.draft} isEdit onChange={handleChange} showErrors />
       </form>
     </SidePanel>
   );

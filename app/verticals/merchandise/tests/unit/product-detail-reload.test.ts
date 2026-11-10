@@ -1,5 +1,5 @@
 // @rstest-environment happy-dom
-// Mounted product detail draft: the real `useProductDetailAutosave` the editor uses, with the real autosave
+// Mounted product detail draft: the real `useProductDetailDraft` the editor uses, with the real draft
 // controller and save. Only the generated catalog client is replaced, by a register that refuses every command that
 // does not expect its current revision. The editor stays mounted while its product reloads, so `product` still
 // shows the version before a save until that reload lands.
@@ -15,7 +15,7 @@ import {
 import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
 import type { ProductRecord } from '../../shared/domain/merchandise-model.ts';
 import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
-import { useProductDetailAutosave } from '../../src/routes/[lang]/provoz/produkty/product-detail-autosave.ts';
+import { useProductDetailDraft } from '../../src/routes/[lang]/provoz/produkty/product-detail-save.ts';
 import type { DetailDraft } from '../../src/routes/[lang]/provoz/produkty/product-detail-draft.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 
@@ -106,13 +106,13 @@ const sent = () =>
         };
   });
 
-type ProductEdit = ReturnType<typeof useProductDetailAutosave>;
+type ProductEdit = ReturnType<typeof useProductDetailDraft>;
 
 let latest: ProductEdit | null = null;
 const edit = (): ProductEdit => Option.getOrThrow(Option.fromNullOr(latest));
 
 const Harness = ({ product, revision }: { readonly product: ProductRecord; readonly revision: number }) => {
-  const value = useProductDetailAutosave({ product, revision });
+  const value = useProductDetailDraft({ product, revision });
   useEffect(() => {
     latest = value;
   }, [value]);
@@ -171,18 +171,18 @@ const waitUntil = async (condition: () => boolean, attempt = 0): Promise<void> =
 const type = (patch: Partial<DetailDraft>) =>
   Effect.promise(() =>
     act(async () => {
-      edit().autosave.setDraft((current) => ({ ...current, ...patch }));
+      edit().record.setDraft((current) => ({ ...current, ...patch }));
       await settle();
     }),
   );
 
-/** Blur: the pending change is sent now. Resolves once the autosave has settled. */
+/** The Save button: the changed draft is sent now. Resolves once the save has settled. */
 const saveNow = Effect.promise(async () => {
   await act(async () => {
-    edit().autosave.flush();
+    edit().record.save();
     await settle();
   });
-  await waitUntil(() => !['dirty', 'saving'].includes(edit().autosave.status));
+  await waitUntil(() => !['dirty', 'saving'].includes(edit().record.status));
 });
 
 beforeEach(() => {
@@ -208,7 +208,7 @@ describe('mounted product detail draft while its product reloads', () => {
       const view = yield* Effect.promise(() => mount(productOf({}), 1));
       yield* type({ name: 'Etiopie B' });
       yield* saveNow;
-      expect(edit().autosave.status).toBe('saved');
+      expect(edit().record.status).toBe('saved');
 
       // The reload after that save is still on its way: the page shows the product named `Etiopie`.
       yield* type({ name: 'Etiopie' });
@@ -217,7 +217,7 @@ describe('mounted product detail draft while its product reloads', () => {
         { expectedRevision: 1, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' },
         { expectedRevision: 2, patch: { name: 'Etiopie' }, tag: 'UpdateProduct' },
       ]);
-      expect(edit().autosave.status).toBe('saved');
+      expect(edit().record.status).toBe('saved');
 
       // The reload lands with what the register now has, and the field keeps what the user chose.
       yield* view.reload(productOf({}), 3);
@@ -234,7 +234,7 @@ describe('mounted product detail draft while its product reloads', () => {
       yield* type({ lowStock: 5, lowStockText: '5' });
       yield* saveNow;
       expect(sent()[1]).toEqual({ expectedRevision: 2, patch: { lowStockThreshold: 5 }, tag: 'UpdateProduct' });
-      expect(edit().autosave.status).toBe('saved');
+      expect(edit().record.status).toBe('saved');
     }),
   );
 
@@ -248,7 +248,7 @@ describe('mounted product detail draft while its product reloads', () => {
       yield* type({ name: 'Etiopie B' });
       yield* saveNow;
       expect(sent()).toEqual([{ expectedRevision: 2, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' }]);
-      expect(edit().autosave.status).toBe('saved');
+      expect(edit().record.status).toBe('saved');
     }),
   );
 
@@ -262,7 +262,7 @@ describe('mounted product detail draft while its product reloads', () => {
       yield* type({ name: 'Etiopie B' });
       yield* saveNow;
       expect(sent()).toEqual([{ expectedRevision: 1, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' }]);
-      expect(edit().autosave.status).toBe('conflict');
+      expect(edit().record.status).toBe('conflict');
     }),
   );
 
@@ -277,7 +277,7 @@ describe('mounted product detail draft while its product reloads', () => {
         { expectedRevision: 1, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' },
         { expectedRevision: 2, priceMinor: 30_000, tag: 'ChangePrice' },
       ]);
-      expect(edit().autosave.status).toBe('error');
+      expect(edit().record.status).toBe('error');
 
       // The reload lands with what the register has: the new name, the old price. The draft stays as typed.
       yield* view.reload(productOf({ name: 'Etiopie B' }), 2);
@@ -292,11 +292,11 @@ describe('mounted product detail draft while its product reloads', () => {
         { expectedRevision: 2, patch: { name: 'Etiopie' }, tag: 'UpdateProduct' },
         { expectedRevision: 3, priceMinor: 30_000, tag: 'ChangePrice' },
       ]);
-      expect(edit().autosave.status).toBe('saved');
+      expect(edit().record.status).toBe('saved');
 
       yield* view.reload(productOf({ priceMinor: 30_000 }), 4);
       expect(edit().draft.name).toBe('Etiopie');
-      expect(edit().autosave.status).toBe('saved');
+      expect(edit().record.status).toBe('saved');
     }),
   );
 
@@ -306,14 +306,14 @@ describe('mounted product detail draft while its product reloads', () => {
       register.priceChangesFail = true;
       yield* type({ name: 'Etiopie B', priceCzk: 300, priceText: '300' });
       yield* saveNow;
-      expect(edit().autosave.status).toBe('error');
+      expect(edit().record.status).toBe('error');
       yield* view.reload(productOf({ name: 'Etiopie B' }), 2);
 
       // Back to exactly what the form opened with: the register still has the changed name.
       yield* type({ name: 'Etiopie', priceCzk: 258.04, priceText: '258,04' });
       yield* saveNow;
       expect(sent().slice(2)).toEqual([{ expectedRevision: 2, patch: { name: 'Etiopie' }, tag: 'UpdateProduct' }]);
-      expect(edit().autosave.status).toBe('saved');
+      expect(edit().record.status).toBe('saved');
     }),
   );
 
@@ -323,17 +323,17 @@ describe('mounted product detail draft while its product reloads', () => {
       register.priceChangesFail = true;
       yield* type({ name: 'Etiopie B', priceCzk: 300, priceText: '300' });
       yield* saveNow;
-      expect(edit().autosave.status).toBe('error');
+      expect(edit().record.status).toBe('error');
 
       // The reload has not landed: the page still shows the old name at revision 1.
       register.priceChangesFail = false;
       yield* Effect.promise(() =>
         act(async () => {
-          edit().autosave.retry();
+          edit().record.save();
           await settle();
         }),
       );
-      yield* Effect.promise(() => waitUntil(() => edit().autosave.status === 'saved'));
+      yield* Effect.promise(() => waitUntil(() => edit().record.status === 'saved'));
       expect(sent().slice(2)).toEqual([{ expectedRevision: 2, priceMinor: 30_000, tag: 'ChangePrice' }]);
     }),
   );
@@ -345,18 +345,18 @@ describe('mounted product detail draft while its product reloads', () => {
       yield* type({ priceCzk: 300, priceText: '300' });
       yield* saveNow;
       expect(sent()).toEqual([{ expectedRevision: 1, priceMinor: 30_000, tag: 'ChangePrice' }]);
-      expect(edit().autosave.status).toBe('error');
+      expect(edit().record.status).toBe('error');
 
       // Taking the price back leaves nothing to save.
       yield* type({ priceCzk: 258.04, priceText: '258,04' });
       yield* saveNow;
       expect(sent()).toHaveLength(1);
-      expect(edit().autosave.status).toBe('idle');
+      expect(edit().record.status).toBe('idle');
     }),
   );
 
-  it.effect('a save that went through clears the approval notice of an earlier refused save', () =>
-    Effect.gen(function* approvalNotice() {
+  it.effect('a save parked for approval is held: Save does not send it again, a further edit is sent', () =>
+    Effect.gen(function* approval() {
       yield* Effect.promise(() => mount(productOf({}), 1));
       const receipt = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
         _tag: 'ActionProposalAccepted',
@@ -366,17 +366,62 @@ describe('mounted product detail draft while its product reloads', () => {
       rstest.mocked(executeManageCatalog).mockReturnValueOnce(Effect.succeed(receipt));
       yield* type({ name: 'Etiopie B' });
       yield* saveNow;
-      expect(edit().autosave.status).toBe('error');
-      expect(edit().pendingMessage).not.toBeNull();
+      expect(edit().record.status).toBe('proposed');
+      expect(edit().record.dirty).toBe(false);
+      expect(edit().record.canSave).toBe(false);
 
+      yield* saveNow;
+      expect(sent()).toHaveLength(1);
+
+      yield* type({ name: 'Etiopie C' });
+      expect(edit().record.status).toBe('dirty');
+      yield* saveNow;
+      expect(sent()).toHaveLength(2);
+      expect(edit().record.status).toBe('saved');
+    }),
+  );
+
+  it.live('typing never sends anything: not after any delay, not on unmount', () =>
+    Effect.gen(function* noAutomaticSave() {
+      const view = yield* Effect.promise(() => mount(productOf({}), 1));
+      yield* type({ name: 'Etiopie B' });
+      expect(edit().record.status).toBe('dirty');
+      expect(edit().record.dirty).toBe(true);
+      expect(edit().record.canSave).toBe(true);
+      // Longer than any debounce the form ever had.
+      yield* Effect.sleep('1 second');
+      yield* Effect.promise(() => act(settle));
+      expect(sent()).toEqual([]);
+      view.unmount();
+      yield* Effect.promise(() => act(settle));
+      expect(sent()).toEqual([]);
+    }),
+  );
+
+  it.effect('an invalid draft is held back by the Save button', () =>
+    Effect.gen(function* invalid() {
+      yield* Effect.promise(() => mount(productOf({}), 1));
+      yield* type({ name: '' });
+      expect(edit().record.status).toBe('invalid');
+      expect(edit().record.canSave).toBe(false);
+      yield* saveNow;
+      expect(sent()).toEqual([]);
+    }),
+  );
+
+  it.effect('discard puts the confirmed version back without sending anything', () =>
+    Effect.gen(function* discard() {
+      yield* Effect.promise(() => mount(productOf({}), 1));
+      yield* type({ name: 'Etiopie B' });
       yield* Effect.promise(() =>
         act(async () => {
-          edit().autosave.retry();
+          edit().record.discard();
           await settle();
         }),
       );
-      yield* Effect.promise(() => waitUntil(() => edit().autosave.status === 'saved'));
-      expect(edit().pendingMessage).toBeNull();
+      expect(edit().draft.name).toBe('Etiopie');
+      expect(edit().record.status).toBe('idle');
+      expect(sent()).toEqual([]);
     }),
   );
 });

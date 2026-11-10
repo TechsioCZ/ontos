@@ -1,4 +1,4 @@
-import type { AutosaveOutcome, RevisionedSaveResult } from '@app/admin-ui';
+import type { SaveOutcome, RevisionedSaveResult } from '@app/admin-ui';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
@@ -80,9 +80,7 @@ const isConflictProblem = Schema.is(ApplyCommandActionConflictProblemSchema);
  * How a failed autosave of the edit panel ends: the task list moved past the draft's revision is a conflict the user
  * resolves by loading the current version; everything else (a closed task, a refusal, an outage) is a failure.
  */
-export const taskAutosaveOutcome = (error: {
-  readonly _tag: string;
-}): Extract<AutosaveOutcome, 'conflict' | 'failed'> =>
+export const taskAutosaveOutcome = (error: { readonly _tag: string }): Extract<SaveOutcome, 'conflict' | 'failed'> =>
   isConflictProblem(error) && error.code === 'work_revision_conflict' ? 'conflict' : 'failed';
 
 /** A command parked for approval: it was accepted, but nothing has changed yet. */

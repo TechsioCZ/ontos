@@ -1,5 +1,5 @@
-import { startAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { startDraftSave } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
@@ -82,9 +82,9 @@ describe('opportunity edit draft', () => {
   );
 });
 
-const panel = Effect.fnUntraced(function* panel(outcome: AutosaveOutcome) {
+const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
   const sent: FormDraft[] = [];
-  const controller = yield* startAutosave(saved, {
+  const controller = yield* startDraftSave(saved, {
     equals: sameOpportunityDraft,
     isValid: (value: FormDraft) => Option.isSome(updateCommandOf(opportunity.id, value)),
     save: (value: FormDraft) => Effect.sync(() => sent.push(value)).pipe(Effect.as(outcome)),
@@ -97,7 +97,7 @@ describe('opportunity edit panel autosave', () => {
     Effect.gen(function* typed() {
       const { controller, sent } = yield* panel('saved');
       controller.change({ ...saved, title: '' });
-      controller.flush();
+      controller.save();
       expect(controller.status()).toBe('invalid');
       controller.change({ ...saved, note: 'Volat dopoledne' });
       yield* TestClock.adjust('800 millis');
@@ -110,7 +110,7 @@ describe('opportunity edit panel autosave', () => {
     Effect.gen(function* conflict() {
       const { controller, sent } = yield* panel('conflict');
       controller.change({ ...saved, closeText: '2026-12-15' });
-      controller.flush();
+      controller.save();
       yield* Effect.yieldNow;
       expect(controller.status()).toBe('conflict');
       controller.change({ ...saved, closeText: '2026-12-20' });

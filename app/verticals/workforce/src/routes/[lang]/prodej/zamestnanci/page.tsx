@@ -232,7 +232,7 @@ const execute = (command: WorkforceCommand, expectedRevision: number) =>
     Effect.flatMap(committedResult),
   );
 
-/** Autosave of the edit panel: the draft's base revision, no toast; the saved fields show on the row right away. */
+/** Save of the edit panel: the draft's base revision, no toast; the saved fields show on the row right away. */
 const autosaveCommitOf =
   (reload: () => void, showSaved: (shown: ShownEdit) => void, failed: typeof outcomeOfFailure): AutosaveCommand =>
   (command, expectedRevision, shown) =>

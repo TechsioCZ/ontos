@@ -1,5 +1,5 @@
 // A price list item as the price list dialog edits it: created once, autosaved while editing.
-import type { AutosaveOutcome } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { Option } from 'effect';
 import type { PriceListItem, VatRate } from '../../../../shared/apis/records.ts';
 import { minorToInput, parseAmountMinor } from './finance-ui.tsx';
@@ -90,7 +90,7 @@ export const itemUnchangedSince =
  */
 export const financeAutosaveOutcome = (
   outcome: { readonly ok: true } | { readonly feedback: string; readonly ok: false },
-): AutosaveOutcome => {
+): SaveOutcome => {
   if (outcome.ok) {
     return 'saved';
   }

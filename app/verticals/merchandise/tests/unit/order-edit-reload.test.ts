@@ -1,5 +1,5 @@
 // @rstest-environment happy-dom
-// Mounted order edit draft: the real `useOrderEditAutosave` the edit form uses, with the real autosave controller,
+// Mounted order edit draft: the real `useOrderEditDraft` the edit form uses, with the real draft controller,
 // command builder and `editOrder`. Only the two generated clients are replaced. The order detail keeps the form
 // mounted while its order reloads, so these prove what the draft does when the reloaded order arrives.
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
@@ -12,7 +12,7 @@ import { OrderSchema, RecordsResponseSchema } from '../../shared/apis/records.ts
 import type { Order } from '../../shared/apis/records.ts';
 import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
 import { executeRecords } from '../../src/api/records-consumer.ts';
-import { useOrderEditAutosave } from '../../src/routes/[lang]/prodej/objednavky/order-edit-autosave.ts';
+import { useOrderEditDraft } from '../../src/routes/[lang]/prodej/objednavky/order-edit-save.ts';
 import { addressIncomplete, contactIncomplete } from '../../src/routes/[lang]/prodej/objednavky/order-edit-draft.ts';
 import type { Draft } from '../../src/routes/[lang]/prodej/objednavky/order-edit-draft.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
@@ -132,11 +132,11 @@ const serveLikeTheRegister = (start: Order, startRevision: number, afterEdits: r
   return register;
 };
 
-type OrderEdit = ReturnType<typeof useOrderEditAutosave>;
+type OrderEdit = ReturnType<typeof useOrderEditDraft>;
 
 let latest: OrderEdit | null = null;
 const edit = (): OrderEdit => Option.getOrThrow(Option.fromNullOr(latest));
-const draft = (): Draft => edit().autosave.draft;
+const draft = (): Draft => edit().record.draft;
 
 type DraftRule = (value: Draft, confirmed: Draft) => boolean;
 const anyDraft: DraftRule = () => true;
@@ -151,7 +151,7 @@ interface HarnessProps {
 }
 
 const Harness = ({ isValid, order, revision }: HarnessProps) => {
-  const value = useOrderEditAutosave({ isValid, order, revision });
+  const value = useOrderEditDraft({ isValid, order, revision });
   useEffect(() => {
     latest = value;
   }, [value]);
@@ -210,19 +210,19 @@ const waitUntil = async (condition: () => boolean, attempt = 0): Promise<void> =
 const type = (patch: Partial<Draft>) =>
   Effect.promise(() =>
     act(async () => {
-      edit().autosave.setDraft((current) => ({ ...current, ...patch }));
+      edit().record.setDraft((current) => ({ ...current, ...patch }));
       await settle();
     }),
   );
 
-/** Blur: the pending change is sent now. Resolves once that many edits reached the server and the save settled. */
+/** The Save button: the changed draft is sent now. Resolves once that many edits reached the server and the save settled. */
 const saveNow = (sent: number) =>
   Effect.promise(async () => {
     await act(async () => {
-      edit().autosave.flush();
+      edit().record.save();
       await settle();
     });
-    await waitUntil(() => sentEdits().length === sent && edit().autosave.status !== 'saving');
+    await waitUntil(() => sentEdits().length === sent && edit().record.status !== 'saving');
   });
 
 const quantityOf = (value: Draft): string | undefined => value.lines[0]?.quantityText;
@@ -249,7 +249,7 @@ describe('mounted order edit draft against a reloaded order', () => {
 
       yield* view.reload(theirs, 8);
       expect(quantityOf(draft())).toBe('5');
-      expect(edit().autosave.status).toBe('idle');
+      expect(edit().record.status).toBe('idle');
 
       acceptNextEdit(orderOf({ note: 'Zavolat předem', quantity: 5, updatedAt: savedHere }), 9);
       yield* type({ note: 'Zavolat předem' });
@@ -268,7 +268,7 @@ describe('mounted order edit draft against a reloaded order', () => {
           expectedUpdatedAt: changedElsewhere,
         },
       ]);
-      expect(edit().autosave.status).toBe('saved');
+      expect(edit().record.status).toBe('saved');
     }),
   );
 
@@ -307,7 +307,7 @@ describe('mounted order edit draft against a reloaded order', () => {
           expectedUpdatedAt: opened,
         },
       ]);
-      expect(edit().autosave.status).toBe('conflict');
+      expect(edit().record.status).toBe('conflict');
       expect(draft().note).toBe('Zavolat předem');
     }),
   );
@@ -319,7 +319,7 @@ describe('mounted order edit draft against a reloaded order', () => {
       acceptNextEdit(orderOf({ note: 'Zavolat předem', updatedAt: savedHere }), 8);
       yield* type({ note: 'Zavolat předem' });
       yield* saveNow(1);
-      expect(edit().autosave.status).toBe('saved');
+      expect(edit().record.status).toBe('saved');
 
       // The reload after that save has not landed: the page still shows the order without the note.
       acceptNextEdit(orderOf({ updatedAt: '2026-10-15T10:07:00.000Z' }), 9);
@@ -337,7 +337,7 @@ describe('mounted order edit draft against a reloaded order', () => {
         expectedRevision: 8,
         expectedUpdatedAt: savedHere,
       });
-      expect(edit().autosave.status).toBe('saved');
+      expect(edit().record.status).toBe('saved');
     }),
   );
 
@@ -352,7 +352,7 @@ describe('mounted order edit draft against a reloaded order', () => {
       ]);
       yield* type({ note: 'Zavolat předem' });
       yield* saveNow(1);
-      expect(edit().autosave.status).toBe('saved');
+      expect(edit().record.status).toBe('saved');
 
       // The draft still holds the quantity the form opened with; changing it sends all the lines.
       yield* type({ lines: draft().lines.map((line) => ({ ...line, quantityText: '3' })) });
@@ -361,7 +361,7 @@ describe('mounted order edit draft against a reloaded order', () => {
       // The edit names the version the form saved over, so the register refuses it instead of taking 3 over their 5.
       expect(sentEdits()[1]?.expectedUpdatedAt).toBe(opened);
       expect(sentEdits()[1]?.expectedRevision).toBe(7);
-      expect(edit().autosave.status).toBe('conflict');
+      expect(edit().record.status).toBe('conflict');
       expect(register.order.lines[0]?.quantity).toBe(5);
     }),
   );
@@ -386,7 +386,7 @@ describe('mounted order edit draft against a reloaded order', () => {
       yield* saveNow(2);
       expect(sentEdits()[1]?.expectedUpdatedAt).toBe(changedElsewhere);
       expect(sentEdits()[1]?.expectedRevision).toBe(8);
-      expect(edit().autosave.status).toBe('saved');
+      expect(edit().record.status).toBe('saved');
       expect(register.order.lines[0]?.quantity).toBe(3);
     }),
   );
@@ -436,7 +436,7 @@ describe('mounted order edit draft against a reloaded order', () => {
       acceptNextEdit(orderOf({ updatedAt: savedHere }), 8);
       yield* type({ city: 'Brno', country: 'CZ', postalCode: '60200', street: 'Kavárna 1' });
       yield* saveNow(1);
-      expect(edit().autosave.status).toBe('saved');
+      expect(edit().record.status).toBe('saved');
       expect(sentEdits()[0]?.command).toMatchObject({
         deliveryAddress: { city: 'Brno', country: 'CZ', postalCode: '60200', street: 'Kavárna 1' },
       });
@@ -445,14 +445,14 @@ describe('mounted order edit draft against a reloaded order', () => {
       // matches that order, but the edit would send the empty address over the saved one.
       yield* type({ city: '', country: '', postalCode: '', street: '' });
       yield* saveNow(1);
-      expect(edit().autosave.status).toBe('invalid');
+      expect(edit().record.status).toBe('invalid');
       expect(sentEdits()).toHaveLength(1);
-      expect(addressIncomplete(draft(), edit().autosave.confirmed)).toBe(true);
+      expect(addressIncomplete(draft(), edit().record.confirmed)).toBe(true);
     }),
   );
 
-  it.effect('a save that went through clears the approval notice of an earlier refused save', () =>
-    Effect.gen(function* approvalNotice() {
+  it.effect('an edit parked for approval is held: Save does not send it again, a further edit is sent', () =>
+    Effect.gen(function* approval() {
       yield* Effect.promise(() => mount(orderOf({ updatedAt: opened }), 7));
       const receipt = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
         _tag: 'ActionProposalAccepted',
@@ -462,18 +462,47 @@ describe('mounted order edit draft against a reloaded order', () => {
       rstest.mocked(executeManageCatalog).mockReturnValueOnce(Effect.succeed(receipt));
       yield* type({ note: 'Zavolat předem' });
       yield* saveNow(1);
-      expect(edit().autosave.status).toBe('error');
-      expect(edit().pendingMessage).not.toBeNull();
+      expect(edit().record.status).toBe('proposed');
+      expect(edit().record.dirty).toBe(false);
+      yield* saveNow(1);
+      expect(sentEdits()).toHaveLength(1);
 
-      acceptNextEdit(orderOf({ note: 'Zavolat předem', updatedAt: savedHere }), 8);
+      acceptNextEdit(orderOf({ note: 'Zavolat předem, 2. patro', updatedAt: savedHere }), 8);
+      yield* type({ note: 'Zavolat předem, 2. patro' });
+      yield* saveNow(2);
+      yield* Effect.promise(() => waitUntil(() => edit().record.status === 'saved'));
+    }),
+  );
+
+  it.live('typing never sends an edit: not after any delay, not on unmount', () =>
+    Effect.gen(function* noAutomaticSave() {
+      const view = yield* Effect.promise(() => mount(orderOf({ updatedAt: opened }), 7));
+      yield* type({ note: 'Zavolat předem' });
+      expect(edit().record.status).toBe('dirty');
+      expect(edit().record.dirty).toBe(true);
+      // Longer than any debounce the form ever had.
+      yield* Effect.sleep('1 second');
+      yield* Effect.promise(() => act(settle));
+      expect(sentEdits()).toEqual([]);
+      view.unmount();
+      yield* Effect.promise(() => act(settle));
+      expect(sentEdits()).toEqual([]);
+    }),
+  );
+
+  it.effect('discard drops the typed change and sends nothing', () =>
+    Effect.gen(function* discard() {
+      yield* Effect.promise(() => mount(orderOf({ updatedAt: opened }), 7));
+      yield* type({ note: 'Zavolat předem' });
       yield* Effect.promise(() =>
         act(async () => {
-          edit().autosave.retry();
+          edit().record.discard();
           await settle();
         }),
       );
-      yield* Effect.promise(() => waitUntil(() => edit().autosave.status === 'saved'));
-      expect(edit().pendingMessage).toBeNull();
+      expect(draft().note).toBe('');
+      expect(edit().record.status).toBe('idle');
+      expect(sentEdits()).toEqual([]);
     }),
   );
 });

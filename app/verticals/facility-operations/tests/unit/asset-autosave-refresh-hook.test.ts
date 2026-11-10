@@ -1,5 +1,5 @@
 // @rstest-environment happy-dom
-// Mounted asset-card autosave: the actual `useAssetCardAutosave` with the real `useAutosave` controller. Only the
+// Mounted asset-card autosave: the actual `useAssetCardAutosave` with the real `useDraftSave` controller. Only the
 // property-tree read and the page's governed runner are replaced, so this proves the render-phase refresh ordering
 // that the controller-level `asset-autosave-revision.test.ts` cannot: an acknowledged same-record asset that arrives
 // while the save is still pending must move the draft and its base to that read once the save settles.
@@ -239,7 +239,7 @@ describe('mounted asset card autosave against refreshed reads', () => {
       );
       yield* Effect.promise(() =>
         act(async () => {
-          autosaveOf().flush();
+          autosaveOf().save();
         }),
       );
       yield* Effect.promise(() => waitUntil(() => server.saves.length === 1));
@@ -277,7 +277,7 @@ describe('mounted asset card autosave against refreshed reads', () => {
       expect(autosaveOf().draft.note).toBe('Moje poznámka');
       yield* Effect.promise(() =>
         act(async () => {
-          autosaveOf().flush();
+          autosaveOf().save();
         }),
       );
       yield* Effect.promise(() => waitUntil(() => server.saves.length === 1));
@@ -305,7 +305,7 @@ describe('mounted asset card autosave against refreshed reads', () => {
       );
       yield* Effect.promise(() =>
         act(async () => {
-          autosaveOf().flush();
+          autosaveOf().save();
         }),
       );
       yield* Effect.promise(() => waitUntil(() => server.saves.length === 2));
@@ -347,7 +347,7 @@ describe('mounted asset card autosave against refreshed reads', () => {
       );
       yield* Effect.promise(() =>
         act(async () => {
-          autosaveOf().flush();
+          autosaveOf().save();
         }),
       );
       yield* Effect.promise(() => waitUntil(() => server.saves.length === 1));
@@ -374,7 +374,7 @@ describe('mounted asset card autosave against refreshed reads', () => {
       );
       yield* Effect.promise(() =>
         act(async () => {
-          autosaveOf().flush();
+          autosaveOf().save();
         }),
       );
       yield* Effect.promise(() => waitUntil(() => server.saves.length === 1));
@@ -409,7 +409,7 @@ describe('mounted asset card autosave against refreshed reads', () => {
       );
       yield* Effect.promise(() =>
         act(async () => {
-          autosaveOf().flush();
+          autosaveOf().save();
         }),
       );
       yield* Effect.promise(() => waitUntil(() => server.saves.length === 2));
@@ -443,7 +443,7 @@ describe('mounted asset card autosave against refreshed reads', () => {
 
       yield* Effect.promise(() =>
         act(async () => {
-          autosaveOf().flush();
+          autosaveOf().save();
         }),
       );
       yield* Effect.promise(() => waitUntil(() => server.saves.length === 1));

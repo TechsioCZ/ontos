@@ -1,7 +1,7 @@
-import { startAutosave } from '@app/admin-ui';
+import { startDraftSave } from '@app/admin-ui';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
@@ -138,16 +138,16 @@ describe('rent terms panel', () => {
 
   it.effect('leaves the base revision alone when the autosaved rent is parked for approval', () =>
     Effect.gen(function* parked() {
-      const controller = yield* startAutosave<RentDraft, never>(rent, {
+      const controller = yield* startDraftSave<RentDraft, never>(rent, {
         equals: sameRentDraft,
         isValid: (value) => Option.isSome(rentTermsOf(value)),
         save: () =>
           leasingAutosaveResult(Effect.succeed(proposal)).pipe(
-            Effect.map((result): AutosaveOutcome => (result === 'failed' ? 'failed' : 'saved')),
+            Effect.map((result): SaveOutcome => (result === 'failed' ? 'failed' : 'saved')),
           ),
       });
       controller.change({ ...rent, monthly: '19000' });
-      controller.flush();
+      controller.save();
       yield* Effect.yieldNow;
       expect(controller.status()).toBe('error');
       expect(controller.confirmed()).toEqual(rent);
@@ -180,9 +180,9 @@ describe('dossier contacts and case', () => {
   });
 });
 
-const panel = Effect.fnUntraced(function* panel(outcome: AutosaveOutcome) {
+const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
   const sent: RentDraft[] = [];
-  const controller = yield* startAutosave(rent, {
+  const controller = yield* startDraftSave(rent, {
     equals: sameRentDraft,
     isValid: (value: RentDraft) => Option.isSome(rentTermsOf(value)),
     save: (value: RentDraft) => Effect.sync(() => sent.push(value)).pipe(Effect.as(outcome)),
@@ -195,7 +195,7 @@ describe('rent terms panel autosave', () => {
     Effect.gen(function* typed() {
       const { controller, sent } = yield* panel('saved');
       controller.change({ ...rent, paymentDay: '40' });
-      controller.flush();
+      controller.save();
       expect(controller.status()).toBe('invalid');
       controller.change({ ...rent, monthly: '19000' });
       yield* TestClock.adjust('800 millis');
@@ -208,7 +208,7 @@ describe('rent terms panel autosave', () => {
     Effect.gen(function* conflict() {
       const { controller, sent } = yield* panel('conflict');
       controller.change({ ...rent, service: '3000' });
-      controller.flush();
+      controller.save();
       yield* Effect.yieldNow;
       expect(controller.status()).toBe('conflict');
       controller.change({ ...rent, service: '3500' });
