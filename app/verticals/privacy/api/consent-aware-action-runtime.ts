@@ -12,8 +12,7 @@ import {
 import { ConsentSelfServiceAuthority } from '../src/actions/consent-self-service-authority.ts';
 import { NoticeChannelDeliveryAuthority } from '../src/actions/record-notice-provision.action.ts';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
-// The backend registration: the Action runtime needs no page or component entrypoint, so plain Node never loads UI.
-import { privacyBackendRegistration as privacyRegistration } from '../vertical.runtime-declaration.ts';
+import { privacyRegistration } from '../vertical.registration.ts';
 
 /** Build the native runtime with fresh pre-transaction evidence for each invocation. */
 const privacyConsentAuthorityActionRuntimeLive: Layer.Layer<
