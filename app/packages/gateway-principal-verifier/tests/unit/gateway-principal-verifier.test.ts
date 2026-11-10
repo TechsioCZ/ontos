@@ -8,7 +8,7 @@ import {
   readVerifiedGatewayCompositionRevision,
   readVerifiedGatewayScopeAssertion,
 } from '@app/core-runtime';
-import { Clock, ConfigProvider, Context, DateTime, Effect, Exit, Layer, Redacted, Schema } from 'effect';
+import { Cause, Clock, ConfigProvider, Context, DateTime, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it, rs } from 'effect-rstest';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
@@ -230,6 +230,52 @@ it.effect('retains deployment configuration for a lazy verifier after its provid
       }
     }),
   ),
+);
+
+it.effect('trusts only the keys of its deployment provider and refuses any other signer as invalid', () =>
+  Effect.scoped(
+    Effect.gen(function* deploymentKeysOnly() {
+      // Two signers: the deployment trusts A; the caller's ambient configuration names B.
+      const deployment = yield* makeFixture('commerce-customer-context');
+      const foreign = yield* makeFixture('commerce-customer-context');
+      const context = yield* Layer.build(
+        GatewayPrincipalVerifierLive.pipe(
+          Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(deployment.environment))),
+        ),
+      );
+      const verifier = bindGatewayPrincipalVerifier('commerce-customer-context', {
+        appId: 'commerce-customer-context',
+        buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+      });
+      const redeemed: string[] = [];
+      const present = (token: string) =>
+        verifier
+          .verifyAndRedeem(Redacted.make(`Bearer ${token}`), {
+            currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+            redemption: { consume: ({ jti }) => Effect.sync(() => redeemed.push(jti)) },
+          })
+          .pipe(
+            Effect.provideService(
+              GatewayPrincipalVerifierConfiguration,
+              Context.get(context, GatewayPrincipalVerifierConfiguration),
+            ),
+            Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(foreign.environment)),
+            Effect.exit,
+          );
+
+      const refused = yield* present(foreign.token);
+      expect(Exit.isFailure(refused)).toBe(true);
+      if (Exit.isFailure(refused)) {
+        const failure = Cause.findErrorOption(refused.cause);
+        expect(Option.isSome(failure) && isInvalidError(failure.value)).toBe(true);
+      }
+      expect(redeemed).toEqual([]);
+
+      const admitted = yield* present(deployment.token);
+      expect(Exit.isSuccess(admitted)).toBe(true);
+      expect(redeemed).toHaveLength(1);
+    }),
+  ).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
 );
 
 it.effect('admits the Shell own release and refuses a different local Shell build before redemption', () =>

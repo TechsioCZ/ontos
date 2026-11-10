@@ -1387,6 +1387,7 @@ export default apiRuntime;
 export {
   commerceCustomerContextActionRuntime,
   commerceCustomerContextReadRuntime,
+  deploymentPortalAuthRuntimeLive,
   productionActionRuntimeLive,
   productionReadRuntimeLive,
 };
