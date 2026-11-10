@@ -754,7 +754,7 @@ const isStockIntent = Schema.is(SymmyInventoryImportIntentSchema);
 const stockIntentMatchesEnrollment = (intent: EnrolledEffects[number]['intent'], allowed: EnrolledEffects) =>
   isStockIntent(intent) && allowed.some(({ intent: exact }) => isStockIntent(exact) && sameStockIntent(intent, exact));
 
-const stockPlanMatchesEnrollment = (plan: SymmyFixtureExecutionPlan, template: SymmyFixtureExecutionPlan): boolean => 
+const stockPlanMatchesEnrollment = (plan: SymmyFixtureExecutionPlan, template: SymmyFixtureExecutionPlan): boolean =>
   plan.items.every((item) =>
     template.items.some((enrolled) => {
       if (
@@ -769,8 +769,7 @@ const stockPlanMatchesEnrollment = (plan: SymmyFixtureExecutionPlan, template: S
       }
       return item.effects.every(({ intent }) => stockIntentMatchesEnrollment(intent, enrolled.effects));
     }),
-  )
-;
+  );
 
 const prepareSyncPlan = Effect.fn('SymmyJobStore.prepareSyncPlan')(function* prepareSyncPlan(
   route: typeof symmyJobRoutes.$inferSelect,
