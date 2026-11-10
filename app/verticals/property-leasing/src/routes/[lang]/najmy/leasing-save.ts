@@ -34,8 +34,8 @@ export type UnchangedSince = (records: RecordsResponse) => boolean;
 /** Told about a change that was parked for approval instead of being saved. */
 export type OnProposal = (proposal: ActionProposalAccepted) => void;
 
-/** Saves one edit of a lease-screen panel against the revision its draft builds on. */
-export type LeasingAutosave = (
+/** The Save button of a lease-screen form: one save against the revision its draft builds on. */
+export type LeasingSave = (
   command: OccupancyCommand,
   expectedRevision: number,
   unchanged: UnchangedSince,
@@ -64,10 +64,11 @@ const send = (command: OccupancyCommand, expectedRevision: number) =>
   );
 
 /**
- * An autosave outcome: the new revision once saved, `conflict` for the occupancy conflict, else `failed`. A change
- * parked for approval is not saved: the draft stays unconfirmed, its base revision stays, and `onProposal` hears of it.
+ * The outcome of one save: the new revision once saved, `conflict` for the occupancy conflict, `proposed` for a change
+ * parked for approval (not saved: the draft stays unconfirmed on its base revision and `onProposal` hears of it), else
+ * `failed`.
  */
-export const leasingAutosaveResult = <E>(
+export const leasingSaveResult = <E>(
   write: Effect.Effect<{ readonly revision: number } | ActionProposalAccepted, E>,
   onProposal?: OnProposal,
 ): Effect.Effect<RevisionedSaveResult> =>
@@ -82,7 +83,7 @@ export const leasingAutosaveResult = <E>(
       onSuccess: (result): RevisionedSaveResult => {
         if (Schema.is(ActionProposalAcceptedSchema)(result)) {
           onProposal?.(result);
-          return 'failed';
+          return 'proposed';
         }
         return result.revision;
       },
@@ -93,8 +94,8 @@ export const leasingAutosaveResult = <E>(
  * The revision covers every lease and dossier of the company, so a conflict is resent once against a fresh read while
  * `unchanged` holds for it; a change of the edited record itself stays a conflict.
  */
-export const autosaveLeasingCommand: LeasingAutosave = (command, expectedRevision, unchanged, onProposal) =>
-  leasingAutosaveResult(
+export const saveLeasingCommand: LeasingSave = (command, expectedRevision, unchanged, onProposal) =>
+  leasingSaveResult(
     send(command, expectedRevision).pipe(
       Effect.catchTag('ApplyCommandActionConflictProblem', (conflict) =>
         conflict.code === 'occupancy_conflict'

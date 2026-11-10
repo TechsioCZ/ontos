@@ -7,7 +7,10 @@ import {
   formatDateTime,
   formatMoney,
   SectionCard,
+  UnsavedChangesDialog,
+  saveLabelsFor,
   useRecordDraft,
+  useUnsavedChangesGuard,
 } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -30,7 +33,7 @@ import {
   samePaymentTermsDraft,
 } from './payment-terms-draft.ts';
 import type { PaymentTermsDraft } from './payment-terms-draft.ts';
-import { financeAutosaveOutcome } from './price-list-draft.ts';
+import { financeSaveOutcome } from './price-list-draft.ts';
 import type { CommandOutcome } from './use-finance-records.ts';
 
 const at = (value: DateTime.Utc) => formatDateTime(DateTime.formatIso(value));
@@ -452,8 +455,8 @@ const CONDITION_HINT = 'Ke schválené částce uveďte i sjednanou podmínku te
 
 /**
  * S09: agreed skonto and late-payment interest as text or a hand-approved amount; OntOS never computes them.
- * Changes save themselves (debounced, on blur and on Zavřít) only while the ledger still has the terms the draft
- * started from; when someone else changed them, the dialog offers the current version.
+ * Changes stay on screen until Uložit; leaving with unsaved changes asks first. The save is sent only while the ledger
+ * still has the terms the draft started from; when someone else changed them, the dialog offers the current version.
  */
 const PaymentTermsDialog = ({
   invoice,
@@ -464,7 +467,7 @@ const PaymentTermsDialog = ({
   readonly onClose: () => void;
   readonly vm: FinanceViewModel;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const [error, setError] = useState<string>();
   const server = paymentTermsDraftOf(invoice);
   /** The version of the terms the draft builds on: what the dialog opened with, last saved or reloaded. */
@@ -489,10 +492,10 @@ const PaymentTermsDialog = ({
     paymentTermsUnchangedSince(invoice.ref.resourceId, base.current)(vm.snapshot?.state.invoices ?? [])
       ? vm.execute(command).pipe(
           Effect.tap((outcome) => Effect.sync(() => settle(value, outcome))),
-          Effect.map(financeAutosaveOutcome),
+          Effect.map(financeSaveOutcome),
         )
       : Effect.succeed<SaveOutcome>('conflict');
-  const autosave = useRecordDraft<PaymentTermsDraft, never>({
+  const record = useRecordDraft<PaymentTermsDraft, never>({
     equals: samePaymentTermsDraft,
     isValid: (value) => Option.isSome(paymentTermsCommandOf(invoice, value, vm.actorLabel)),
     runtime: financeBrowserRuntime,
@@ -503,88 +506,93 @@ const PaymentTermsDialog = ({
       }),
     server,
   });
-  const settledOnServer = !autosave.pending && samePaymentTermsDraft(autosave.draft, server);
+  const settledOnServer = !record.pending && samePaymentTermsDraft(record.draft, server);
   useEffect(() => {
     if (settledOnServer) {
       base.current = server;
     }
   }, [base, server, settledOnServer]);
-  const { draft } = autosave;
+  const { draft } = record;
   const problems = paymentTermsProblems(draft);
   const change = (field: keyof PaymentTermsDraft) => (value: string) =>
-    autosave.setDraft((current) => ({ ...current, [field]: value }));
+    record.setDraft((current) => ({ ...current, [field]: value }));
+  const guard = useUnsavedChangesGuard({ draft: record, onDiscard: record.discard });
   const close = () => {
-    onClose();
+    guard.request(onClose);
   };
-  const handleSave = autosave.save;
-  const handleReloadLatest = autosave.reloadLatest;
+  const labels = saveLabelsFor(language);
+  const handleReloadLatest = record.reloadLatest;
+  const handleSave = record.save;
   return (
-    <Dialog
-      actions={
-        <>
-          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
-          <Button onClick={close} theme="outlined" variant="secondary">
-            Zavřít
-          </Button>
-        </>
-      }
-      closeLabel={dialogCloseLabel}
-      customTrigger
-      description="Vyplňte, co bylo sjednáno. Prázdná pole se neuloží."
-      onOpenChange={(details) => {
-        if (!details.open) {
-          close();
+    <>
+      <Dialog
+        actions={
+          <>
+            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+            <Button onClick={close} theme="outlined" variant="secondary">
+              Zavřít
+            </Button>
+          </>
         }
-      }}
-      open
-      placement="center"
-      size="md"
-      title={`Skonto a úrok z prodlení · ${numberOf(invoice)}`}
-    >
-      <div className="flex flex-col gap-150">
-        {error !== undefined && (
-          <StatusText showIcon size="sm" status="error">
-            {error}
-          </StatusText>
-        )}
-        <FormInput
-          id="terms-skonto-text"
-          label={t('finance-billing.financeUi.paymentTerms.discountCondition')}
-          onChange={(event) => change('skontoText')(event.target.value)}
-          placeholder={t('finance-billing.financeUi.paymentTerms.discountExample')}
-          size="sm"
-          value={draft.skontoText}
-          {...invalidField(problems.skontoText, CONDITION_HINT)}
-        />
-        <FormInput
-          id="terms-skonto-amount"
-          inputMode="decimal"
-          label={t('finance-billing.financeUi.paymentTerms.discountAmount')}
-          onChange={(event) => change('skontoAmount')(event.target.value)}
-          size="sm"
-          value={draft.skontoAmount}
-          {...invalidField(problems.skontoAmount, AMOUNT_HINT)}
-        />
-        <FormInput
-          id="terms-late-text"
-          label={t('finance-billing.financeUi.paymentTerms.interestCondition')}
-          onChange={(event) => change('lateText')(event.target.value)}
-          placeholder={t('finance-billing.financeUi.paymentTerms.interestExample')}
-          size="sm"
-          value={draft.lateText}
-          {...invalidField(problems.lateText, CONDITION_HINT)}
-        />
-        <FormInput
-          id="terms-late-amount"
-          inputMode="decimal"
-          label={t('finance-billing.financeUi.paymentTerms.interestAmount')}
-          onChange={(event) => change('lateAmount')(event.target.value)}
-          size="sm"
-          value={draft.lateAmount}
-          {...invalidField(problems.lateAmount, AMOUNT_HINT)}
-        />
-      </div>
-    </Dialog>
+        closeLabel={dialogCloseLabel}
+        customTrigger
+        description="Vyplňte, co bylo sjednáno. Prázdná pole se neuloží."
+        onOpenChange={(details) => {
+          if (!details.open) {
+            close();
+          }
+        }}
+        open
+        placement="center"
+        size="md"
+        title={`Skonto a úrok z prodlení · ${numberOf(invoice)}`}
+      >
+        <div className="flex flex-col gap-150">
+          {error !== undefined && (
+            <StatusText showIcon size="sm" status="error">
+              {error}
+            </StatusText>
+          )}
+          <FormInput
+            id="terms-skonto-text"
+            label={t('finance-billing.financeUi.paymentTerms.discountCondition')}
+            onChange={(event) => change('skontoText')(event.target.value)}
+            placeholder={t('finance-billing.financeUi.paymentTerms.discountExample')}
+            size="sm"
+            value={draft.skontoText}
+            {...invalidField(problems.skontoText, CONDITION_HINT)}
+          />
+          <FormInput
+            id="terms-skonto-amount"
+            inputMode="decimal"
+            label={t('finance-billing.financeUi.paymentTerms.discountAmount')}
+            onChange={(event) => change('skontoAmount')(event.target.value)}
+            size="sm"
+            value={draft.skontoAmount}
+            {...invalidField(problems.skontoAmount, AMOUNT_HINT)}
+          />
+          <FormInput
+            id="terms-late-text"
+            label={t('finance-billing.financeUi.paymentTerms.interestCondition')}
+            onChange={(event) => change('lateText')(event.target.value)}
+            placeholder={t('finance-billing.financeUi.paymentTerms.interestExample')}
+            size="sm"
+            value={draft.lateText}
+            {...invalidField(problems.lateText, CONDITION_HINT)}
+          />
+          <FormInput
+            id="terms-late-amount"
+            inputMode="decimal"
+            label={t('finance-billing.financeUi.paymentTerms.interestAmount')}
+            onChange={(event) => change('lateAmount')(event.target.value)}
+            size="sm"
+            value={draft.lateAmount}
+            {...invalidField(problems.lateAmount, AMOUNT_HINT)}
+          />
+        </div>
+      </Dialog>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
   );
 };
 

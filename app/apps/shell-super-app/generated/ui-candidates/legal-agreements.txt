@@ -9,7 +9,6 @@
 --key-variant
 --office-building-outline
 --receipt-text-outline
-blur
 hidden
 icon-[mdi--arrow-left]
 icon-[mdi--cash-multiple]

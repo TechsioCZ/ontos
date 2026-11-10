@@ -1,4 +1,5 @@
-import type { RevisionedSaveResult } from '@app/admin-ui';
+import type { RevisionedSaveResult, SaveOutcome } from '@app/admin-ui';
+import { useDraftSave } from '@app/admin-ui';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { DateTime, Effect, Match, Option, Predicate, Random, Schema } from 'effect';
@@ -14,7 +15,7 @@ import { executeRecords } from '../../../api/records-client.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 
 type Property = RecordsResponse['properties'][number];
-type EmployeeOption = Pick<Employee, 'active' | 'fullName' | 'id'>;
+export type EmployeeOption = Pick<Employee, 'active' | 'fullName' | 'id'>;
 export interface PropertyDraft {
   readonly address: string;
   readonly code: string;
@@ -208,6 +209,27 @@ export const editCommandOf = (draft: PropertyDraft, records?: RecordsResponse): 
   return Option.none();
 };
 
+/** The command that creates the building or unit a new-record draft describes. */
+export const createCommandOf = (draft: PropertyDraft): PropertyCommand =>
+  draft.unitFor === undefined
+    ? {
+        _tag: 'CreateProperty',
+        address: draft.address,
+        code: draft.code,
+        lifecycleState: draft.lifecycleState,
+        name: draft.name,
+        note: draft.note.trim() || null,
+        propertyType: draft.propertyType,
+        responsibleEmployeeIds: draft.responsibleEmployeeIds,
+      }
+    : {
+        _tag: 'CreateUnit',
+        capacity: null,
+        code: draft.code,
+        name: draft.name,
+        propertyRef: draft.unitFor.propertyRef,
+      };
+
 /** The edited record as the register has it now, in the draft's shape; undefined once it is gone. */
 export const currentEditDraft = (base: PropertyDraft, records: RecordsResponse): PropertyDraft | undefined => {
   if (base.unit !== undefined) {
@@ -260,7 +282,7 @@ const sendCommand = (raw: PropertyCommand, expectedRevision: number) =>
  * register, so a conflict is resent once against a fresh read while `unchanged` holds for it. A change parked for
  * approval is not saved: the draft stays unconfirmed on its base revision and `onProposal` hears of it.
  */
-export const autosavePropertyEdit = (
+export const savePropertyEdit = (
   raw: PropertyCommand,
   expectedRevision: number,
   unchanged: (records: RecordsResponse) => boolean,
@@ -283,20 +305,22 @@ export const autosavePropertyEdit = (
       onSuccess: (result): RevisionedSaveResult => {
         if (Schema.is(ActionProposalAcceptedSchema)(result)) {
           onProposal?.(result);
-          return 'failed';
+          return 'proposed';
         }
         return result.revision;
       },
     }),
   );
 
+export type PropertyEditor = ReturnType<typeof usePropertyEditor>;
+
 export const usePropertyEditor = (
   records: RecordsResponse | undefined,
   employees: readonly EmployeeOption[] | undefined,
   onSaved: (result: ApplyCommandResult) => void,
 ) => {
+  /** The new building or unit being entered; undefined while no create form is open. */
   const [draft, setDraft] = useState<PropertyDraft>();
-  const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<
     | 'alreadyCommitted'
@@ -309,14 +333,63 @@ export const usePropertyEditor = (
     | 'validation'
   >();
   const blocked = feedback === 'alreadyCommitted' || feedback === 'commitIndeterminate';
+  /** The existing building or unit open in the edit panel. */
+  const [editing, setEditing] = useState<PropertyDraft>();
+  const saveCreate = (value: PropertyDraft): Effect.Effect<SaveOutcome> => {
+    if (records === undefined || blocked) {
+      return Effect.succeed('failed');
+    }
+    setFeedback(undefined);
+    return sendCommand(createCommandOf(value), records.revision).pipe(
+      Effect.match({
+        onFailure: (error): SaveOutcome => {
+          setFeedback(
+            Match.value(error).pipe(
+              Match.when({ _tag: 'ApplyCommandActionAlreadyCommittedProblem' }, () => 'alreadyCommitted' as const),
+              Match.when(
+                { _tag: 'ApplyCommandActionCommitIndeterminateProblem' },
+                () => 'commitIndeterminate' as const,
+              ),
+              Match.when({ _tag: 'SchemaError' }, () => 'validation' as const),
+              Match.when({ status: 400 }, () => 'validation' as const),
+              Match.when({ status: 403 }, () => 'forbidden' as const),
+              Match.when({ status: 409 }, () => 'conflict' as const),
+              Match.when({ status: 422 }, () => 'validation' as const),
+              Match.orElse(() => 'unavailable' as const),
+            ),
+          );
+          return 'failed';
+        },
+        onSuccess: (result): SaveOutcome => {
+          setDraft(undefined);
+          // A change parked for approval is not saved yet: no saved line and no refresh of the register.
+          if (Schema.is(ActionProposalAcceptedSchema)(result)) {
+            setFeedback('approvalRequired');
+            return 'proposed';
+          }
+          setFeedback('saved');
+          onSaved(result);
+          return 'saved';
+        },
+      }),
+    );
+  };
+  /** The new-record draft: it is sent only by its Save button, and starts over from the empty draft each time. */
+  const createDraft = useDraftSave<PropertyDraft, never>({
+    equals: sameEditDraft,
+    isValid: (value) =>
+      Object.keys(propertyDraftErrors(value, records)).length === 0 &&
+      (value.unit !== undefined || value.unitFor !== undefined || employees !== undefined),
+    runtime: browserRuntime,
+    save: saveCreate,
+    value: draft ?? emptyDraft,
+  });
   const change = (field: TextField, value: string) =>
     setDraft((current) => (current === undefined ? current : withTextField(current, field, value)));
-  /** The existing building or unit open in the autosaving edit panel. */
-  const [editing, setEditing] = useState<PropertyDraft>();
   const begin = (property?: Property) => {
     setFeedback(undefined);
-    setSubmitted(false);
     if (property === undefined) {
+      createDraft.adopt(emptyDraft);
       setDraft(emptyDraft);
       return;
     }
@@ -363,48 +436,11 @@ export const usePropertyEditor = (
       ),
     );
   };
-  const save = () => {
-    if (draft === undefined || busy || blocked) {
-      return;
-    }
-    if (draft.unit === undefined && draft.unitFor === undefined && employees === undefined) {
-      setFeedback('unavailable');
-      return;
-    }
-    setSubmitted(true);
-    if (Object.keys(propertyDraftErrors(draft, records)).length > 0) {
-      setFeedback('validation');
-      return;
-    }
-    let raw: PropertyCommand = {
-      _tag: 'CreateProperty',
-      address: draft.address,
-      code: draft.code,
-      lifecycleState: draft.lifecycleState,
-      name: draft.name,
-      note: draft.note.trim() || null,
-      propertyType: draft.propertyType,
-      responsibleEmployeeIds: draft.responsibleEmployeeIds,
-    };
-    if (draft.unitFor !== undefined) {
-      raw = {
-        _tag: 'CreateUnit',
-        capacity: null,
-        code: draft.code,
-        name: draft.name,
-        propertyRef: draft.unitFor.propertyRef,
-      };
-    }
-    submit(raw);
-  };
   let visibleFields: readonly DraftField[] =
     draft?.unitFor === undefined
       ? ['code', 'name', 'address', 'propertyType', 'responsibleEmployeeIds', 'note']
       : ['code', 'name'];
   let title = 'create';
-  if (draft?.property !== undefined) {
-    title = 'edit';
-  }
   if (draft?.unitFor !== undefined) {
     title = 'createUnit';
   }
@@ -416,16 +452,15 @@ export const usePropertyEditor = (
     begin,
     beginUnit: (property: Property) => {
       setFeedback(undefined);
-      setSubmitted(false);
-      setDraft({ ...emptyDraft, unitFor: property });
+      const next: PropertyDraft = { ...emptyDraft, unitFor: property };
+      createDraft.adopt(next);
+      setDraft(next);
     },
     beginUnitEdit: (unit: Unit) => {
       setFeedback(undefined);
       setEditing(unitDraftOf(unit));
     },
-    closeEdit: () => setEditing(undefined),
-    editing,
-    errors: draft === undefined || !submitted ? {} : propertyDraftErrors(draft, records),
+    blocked,
     /** S02: a unit is taken out of service, returned to service or retired (history stays). */
     changeUnitLifecycle: (unit: Unit, lifecycleState: Unit['lifecycleState']) =>
       submit({ _tag: 'ChangeUnitLifecycle', lifecycleState, unitRef: unit.unitRef }),
@@ -433,25 +468,30 @@ export const usePropertyEditor = (
     archiveProperty: (property: Property, reason: string) =>
       submit({ _tag: 'ArchiveProperty', propertyRef: property.propertyRef, reason }),
     archiveUnit: (unit: Unit, reason: string) => submit({ _tag: 'ArchiveUnit', reason, unitRef: unit.unitRef }),
-    blocked,
-    busy,
+    busy: busy || createDraft.status === 'saving',
     cancel: () => {
       setDraft(undefined);
       setFeedback(undefined);
+      // A closed create form starts clean the next time it opens.
+      createDraft.adopt(emptyDraft);
     },
     change,
     changeLifecycle: (value: string) =>
       setDraft((current) => (current === undefined ? current : withLifecycle(current, value))),
     changeResponsibleEmployees: (value: string | string[]) =>
       setDraft((current) => (current === undefined ? current : withResponsibleEmployees(current, value))),
+    closeEdit: () => setEditing(undefined),
+    /** The new-record draft and its Save control: `createDraft.save` is the only send. */
+    createDraft,
     draft,
+    editing,
+    errors: draft === undefined || !createDraft.dirty ? {} : propertyDraftErrors(draft, records),
     feedback,
     fields: visibleFields,
-    /** An autosaved edit was parked for approval instead of being saved. */
+    /** An edit was parked for approval instead of being saved. */
     reportProposal: () => setFeedback('approvalRequired'),
     restoreProperty: (property: Property) => submit({ _tag: 'RestoreProperty', propertyRef: property.propertyRef }),
     restoreUnit: (unit: Unit) => submit({ _tag: 'RestoreUnit', unitRef: unit.unitRef }),
-    save,
     title,
     toggleLifecycle: (property: Property) =>
       submit({

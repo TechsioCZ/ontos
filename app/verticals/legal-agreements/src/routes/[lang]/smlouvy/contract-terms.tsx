@@ -1,9 +1,23 @@
-import { SaveBar, DetailList, SectionCard, SidePanel, formatDate, formatMoney, useRecordDraft } from '@app/admin-ui';
+import {
+  DetailList,
+  SaveBar,
+  SectionCard,
+  SidePanel,
+  UnsavedChangesDialog,
+  formatDate,
+  formatMoney,
+  saveLabelsFor,
+  useRecordDraft,
+  useUnsavedChangesGuard,
+} from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
+import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Effect, Option } from 'effect';
+import { Effect, Option, Predicate } from 'effect';
 import { useEffect, useRef } from 'react';
 
 import type { Contract } from '../../../../shared/apis/records.ts';
@@ -16,7 +30,7 @@ import {
   termsUnchangedSince,
 } from './contract-terms-draft.ts';
 import type { ContractTermsCommand, TermsDraft } from './contract-terms-draft.ts';
-import { autosaveTerms } from './use-agreements-records.ts';
+import { saveTerms } from './use-agreements-records.ts';
 import type { useRecordsPage } from './use-agreements-records.ts';
 
 type PageState = ReturnType<typeof useRecordsPage>;
@@ -154,30 +168,42 @@ export const ContractLinksCard = ({ state }: { readonly state: PageState }) => {
 };
 
 /**
- * The terms of the selected contract. Changes save themselves (debounced, on blur and on Zavřít) against the revision
- * the draft builds on; when someone else changed these terms, the panel offers the current version instead.
+ * The terms of the selected contract. Typing changes the draft only; the Save button sends it against the revision the
+ * draft builds on, and when someone else changed these terms, the panel offers the current version instead. Closing
+ * the panel or leaving the page with unsaved changes asks first.
  */
-const ContractTermsPanel = ({ contract, state }: { readonly contract: Contract; readonly state: PageState }) => {
-  const { t } = state;
+export interface ContractTermsPanelProps {
+  readonly contract: Contract;
+  /** Closes the panel; called once the guard let the person leave. */
+  readonly onClose: () => void;
+  /** Told about a change that was parked for approval instead of being saved. */
+  readonly onProposal?: ((proposal: ActionProposalAccepted) => void) | undefined;
+  /** Revision of the agreements the contract was read at. */
+  readonly revision: number;
+}
+
+export const ContractTermsPanel = ({ contract, onClose, onProposal, revision }: ContractTermsPanelProps) => {
+  const { language, t } = useModernI18n();
+  const labels = saveLabelsFor(language);
   const server = termsDraftOf(contract);
   /** The version of the terms the draft builds on: what the panel opened with, last saved or reloaded. */
   const base = useRef(server);
   const rememberSaved = (value: TermsDraft, result: RevisionedSaveResult) => {
-    if (result !== 'conflict' && result !== 'failed') {
+    if (Predicate.isNumber(result) || result === 'saved') {
       base.current = value;
     }
   };
   const send = (value: TermsDraft, expectedRevision: number, command: ContractTermsCommand) =>
-    autosaveTerms(
+    saveTerms(
       command,
       expectedRevision,
       termsUnchangedSince(contract.contractRef.resourceId, base.current),
-      state.reportProposal,
+      onProposal,
     ).pipe(Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))));
-  const autosave = useRecordDraft<TermsDraft, never>({
+  const record = useRecordDraft<TermsDraft, never>({
     equals: sameTermsDraft,
     isValid: (value) => Option.isSome(termsCommandOf(contract.contractRef, value)),
-    revision: state.snapshot?.revision ?? 0,
+    revision,
     runtime: browserRuntime,
     save: (value, expectedRevision) =>
       Option.match(termsCommandOf(contract.contractRef, value), {
@@ -186,38 +212,41 @@ const ContractTermsPanel = ({ contract, state }: { readonly contract: Contract; 
       }),
     server,
   });
-  const settledOnServer = !autosave.pending && sameTermsDraft(autosave.draft, server);
+  const settledOnServer = !record.pending && sameTermsDraft(record.draft, server);
   useEffect(() => {
     if (settledOnServer) {
       base.current = server;
     }
   }, [base, server, settledOnServer]);
-  const { draft } = autosave;
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
+  const { draft } = record;
   const problems = termsProblems(draft);
   const invalid = (problem: boolean) =>
     problem ? { helpText: t(`${P}.terms.invalidAmount`), validateStatus: 'error' as const } : {};
   const change = (field: keyof TermsDraft) => (value: string) =>
-    autosave.setDraft((current) => ({ ...current, [field]: value }));
-  const close = () => {
-    state.setTermsOpen(false);
+    record.setDraft((current) => ({ ...current, [field]: value }));
+  const requestClose = () => {
+    guard.request(onClose);
   };
-  const handleSave = autosave.save;
-  const handleReloadLatest = autosave.reloadLatest;
+  const handleSave = record.save;
+  const handleReloadLatest = record.reloadLatest;
   return (
     <SidePanel
       actions={
         <>
-          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
-          <Button onClick={close} theme="outlined" variant="secondary">
+          <Button onClick={requestClose} theme="outlined" variant="secondary">
             {t('legal-agreements.detail.close')}
           </Button>
+          <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
         </>
       }
       closeLabel={t('legal-agreements.detail.close')}
+      guard={guard}
       initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#contract-terms-subject')}
       onOpenChange={(open) => {
         if (!open) {
-          close();
+          onClose();
         }
       }}
       open
@@ -225,7 +254,14 @@ const ContractTermsPanel = ({ contract, state }: { readonly contract: Contract; 
       size="md"
       title={t(`${P}.terms.title`)}
     >
-      <div className="legalagreements:space-y-4 legalagreements:py-2">
+      <form
+        className="legalagreements:space-y-4 legalagreements:py-2"
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          handleSave();
+        }}
+      >
         <p className={mutedClass}>{t(`${P}.terms.formHint`)}</p>
         <FormInput
           id="contract-terms-subject"
@@ -278,12 +314,24 @@ const ContractTermsPanel = ({ contract, state }: { readonly contract: Contract; 
               : {})}
           />
         </div>
-      </div>
+      </form>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </SidePanel>
   );
 };
 
-export const ContractTermsForm = ({ state }: { readonly state: PageState }) =>
-  state.termsOpen && state.selected !== undefined ? (
-    <ContractTermsPanel contract={state.selected} key={state.selected.contractRef.resourceId} state={state} />
-  ) : null;
+export const ContractTermsForm = ({ state }: { readonly state: PageState }) => {
+  if (!state.termsOpen || state.selected === undefined) {
+    return null;
+  }
+  const handleProposal = state.reportProposal;
+  return (
+    <ContractTermsPanel
+      contract={state.selected}
+      key={state.selected.contractRef.resourceId}
+      onClose={() => state.setTermsOpen(false)}
+      onProposal={handleProposal}
+      revision={state.snapshot?.revision ?? 0}
+    />
+  );
+};

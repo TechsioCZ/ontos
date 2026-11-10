@@ -1,7 +1,6 @@
 import { startDraftSave } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
 import { DateTime, Effect, Option, Schema } from 'effect';
-import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 import { PriceListItemSchema } from '../../shared/apis/records.ts';
 import type { Invoice } from '../../shared/apis/records.ts';
@@ -11,8 +10,9 @@ import {
   paymentTermsUnchangedSince,
   samePaymentTermsDraft,
 } from '../../src/routes/[lang]/finance/payment-terms-draft.ts';
+import type { PaymentTermsDraft } from '../../src/routes/[lang]/finance/payment-terms-draft.ts';
 import {
-  financeAutosaveOutcome,
+  financeSaveOutcome,
   itemCommandOf,
   itemDraftOf,
   itemUnchangedSince,
@@ -52,16 +52,16 @@ describe('price list item draft', () => {
     expect(itemUnchangedSince(item.id, saved)([])).toBe(false);
   });
 
-  it('maps a command outcome onto autosave', () => {
-    expect(financeAutosaveOutcome({ ok: true })).toBe('saved');
-    expect(financeAutosaveOutcome({ feedback: 'conflict', ok: false })).toBe('conflict');
-    expect(financeAutosaveOutcome({ feedback: 'forbidden', ok: false })).toBe('failed');
+  it('maps a command outcome onto a save outcome', () => {
+    expect(financeSaveOutcome({ ok: true })).toBe('saved');
+    expect(financeSaveOutcome({ feedback: 'conflict', ok: false })).toBe('conflict');
+    expect(financeSaveOutcome({ feedback: 'forbidden', ok: false })).toBe('failed');
     // A change parked for approval saved nothing, and it did not fail either.
-    expect(financeAutosaveOutcome({ feedback: 'pendingApproval', ok: false })).toBe('proposed');
+    expect(financeSaveOutcome({ feedback: 'pendingApproval', ok: false })).toBe('proposed');
   });
 });
 
-const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
+const itemPanel = Effect.fnUntraced(function* itemPanel(outcome: SaveOutcome) {
   const sent: ItemDraft[] = [];
   const controller = yield* startDraftSave(saved, {
     equals: sameItemDraft,
@@ -71,39 +71,63 @@ const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
   return { controller, sent };
 });
 
-describe('price list item edit autosave', () => {
-  it.effect('saves a typed price after the quiet time; an empty name stays local', () =>
+describe('price list item edit save', () => {
+  it.live('typing and waiting sends nothing; Uložit sends the draft once', () =>
     Effect.gen(function* typed() {
-      const { controller, sent } = yield* panel('saved');
-      controller.change({ ...saved, name: '' });
-      controller.save();
-      expect(controller.status()).toBe('invalid');
+      const { controller, sent } = yield* itemPanel('saved');
       controller.change({ ...saved, price: '19 000' });
-      yield* TestClock.adjust('800 millis');
+      yield* Effect.sleep('1 second');
+      expect(sent).toEqual([]);
+      expect(controller.status()).toBe('dirty');
+      controller.save();
+      yield* Effect.sleep('10 millis');
       expect(sent.map(({ price }) => price)).toEqual(['19 000']);
       expect(controller.status()).toBe('saved');
     }),
   );
 
-  it.effect('holds a conflicting draft instead of sending it again', () =>
+  it.live('an empty name is invalid and Uložit sends nothing', () =>
+    Effect.gen(function* invalid() {
+      const { controller, sent } = yield* itemPanel('saved');
+      controller.change({ ...saved, name: '' });
+      expect(controller.status()).toBe('invalid');
+      controller.save();
+      yield* Effect.sleep('10 millis');
+      expect(sent).toEqual([]);
+    }),
+  );
+
+  it.live('discard puts the confirmed version back and sends nothing', () =>
+    Effect.gen(function* discarded() {
+      const { controller, sent } = yield* itemPanel('saved');
+      controller.change({ ...saved, unit: 'rok' });
+      controller.discard();
+      expect(controller.status()).toBe('idle');
+      controller.save();
+      yield* Effect.sleep('10 millis');
+      expect(sent).toEqual([]);
+    }),
+  );
+
+  it.live('holds a conflicting draft instead of sending it again', () =>
     Effect.gen(function* conflict() {
-      const { controller, sent } = yield* panel('conflict');
+      const { controller, sent } = yield* itemPanel('conflict');
       controller.change({ ...saved, unit: 'rok' });
       controller.save();
-      yield* Effect.yieldNow;
+      yield* Effect.sleep('10 millis');
       expect(controller.status()).toBe('conflict');
       controller.change({ ...saved, unit: 'čtvrtletí' });
-      yield* TestClock.adjust('1 second');
+      yield* Effect.sleep('1 second');
       expect(sent).toHaveLength(1);
     }),
   );
 
-  it.effect('shows a price change parked for approval as proposed, not saved or failed', () =>
+  it.live('shows a price change parked for approval as proposed, not saved or failed', () =>
     Effect.gen(function* proposed() {
-      const { controller, sent } = yield* panel(financeAutosaveOutcome({ feedback: 'pendingApproval', ok: false }));
+      const { controller, sent } = yield* itemPanel(financeSaveOutcome({ feedback: 'pendingApproval', ok: false }));
       controller.change({ ...saved, price: '21 000' });
       controller.save();
-      yield* Effect.yieldNow;
+      yield* Effect.sleep('10 millis');
       expect(sent.map(({ price }) => price)).toEqual(['21 000']);
       expect(controller.status()).toBe('proposed');
     }),
@@ -151,4 +175,41 @@ describe('payment terms draft', () => {
     expect(paymentTermsUnchangedSince(invoice.ref.resourceId, terms)([withoutTerms])).toBe(false);
     expect(samePaymentTermsDraft(terms, { ...terms, skontoText: ' 2 % při úhradě do 7 dnů ' })).toBe(true);
   });
+});
+
+const termsPanel = Effect.fnUntraced(function* termsPanel(outcome: SaveOutcome) {
+  const sent: PaymentTermsDraft[] = [];
+  const controller = yield* startDraftSave(terms, {
+    equals: samePaymentTermsDraft,
+    isValid: (value: PaymentTermsDraft) => Option.isSome(paymentTermsCommandOf(invoice, value)),
+    save: (value: PaymentTermsDraft) => Effect.sync(() => sent.push(value)).pipe(Effect.as(outcome)),
+  });
+  return { controller, sent };
+});
+
+describe('payment terms dialog save', () => {
+  it.live('typing and waiting sends nothing; Uložit sends the terms once', () =>
+    Effect.gen(function* typed() {
+      const { controller, sent } = yield* termsPanel('saved');
+      controller.change({ ...terms, lateText: '0,05 % denně' });
+      controller.change({ ...terms, lateAmount: '120', lateText: '0,05 % denně' });
+      yield* Effect.sleep('1 second');
+      expect(sent).toEqual([]);
+      controller.save();
+      yield* Effect.sleep('10 millis');
+      expect(sent).toHaveLength(1);
+      expect(sent[0]?.lateAmount).toBe('120');
+    }),
+  );
+
+  it.live('an approved amount without its condition text stays invalid and unsent', () =>
+    Effect.gen(function* invalid() {
+      const { controller, sent } = yield* termsPanel('saved');
+      controller.change({ ...terms, skontoText: '' });
+      expect(controller.status()).toBe('invalid');
+      controller.save();
+      yield* Effect.sleep('10 millis');
+      expect(sent).toEqual([]);
+    }),
+  );
 });

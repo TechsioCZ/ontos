@@ -106,7 +106,7 @@ it.effect('never turns an invalid building draft into a command', () =>
     const draft = propertyDraftOf(property);
     expect(Option.isNone(editCommandOf({ ...draft, name: '  ' }, records))).toBe(true);
     expect(Option.isNone(editCommandOf({ ...draft, responsibleEmployeeIds: [] }, records))).toBe(true);
-    // A draft without a record is a create, never an autosaved edit.
+    // A draft without a record is a create, never a saved edit.
     const { property: _record, ...withoutRecord } = draft;
     expect(Option.isNone(editCommandOf(withoutRecord, records))).toBe(true);
   }),

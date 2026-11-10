@@ -3,7 +3,6 @@ import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-prop
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import type { SaveOutcome } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
-import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 import { ApplyCommandActionConflictProblemSchema } from '../../shared/apis/apply-command-action.ts';
 import { CounterpartyIdSchema } from '../../shared/apis/records.ts';
@@ -13,15 +12,15 @@ import {
   caseDraftOf,
   caseUnchangedSince,
   contactsUnchangedSince,
-  leasingAutosaveResult,
+  leasingSaveResult,
   rentDraftOf,
   rentTermsOf,
   rentUnchangedSince,
   sameContacts,
   sameRentDraft,
   validContacts,
-} from '../../src/routes/[lang]/najmy/leasing-autosave.ts';
-import type { RentDraft } from '../../src/routes/[lang]/najmy/leasing-autosave.ts';
+} from '../../src/routes/[lang]/najmy/leasing-save.ts';
+import type { RentDraft } from '../../src/routes/[lang]/najmy/leasing-save.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const counterpartyId = '44444444-4444-4444-8444-444444444444';
@@ -113,43 +112,41 @@ describe('rent terms panel', () => {
     expect(unchanged(records({ ...lease, rentTerms: moved }, []))).toBe(false);
   });
 
-  it.effect('adopts the returned revision and turns only the occupancy conflict into the conflict line', () =>
+  it.effect('turns only the occupancy conflict into the conflict outcome and adopts the returned revision', () =>
     Effect.gen(function* outcomes() {
-      expect(yield* leasingAutosaveResult(Effect.succeed({ revision: 8 }))).toBe(8);
-      expect(yield* leasingAutosaveResult(Effect.fail(conflictProblem('occupancy_conflict')))).toBe('conflict');
-      expect(yield* leasingAutosaveResult(Effect.fail(conflictProblem('action_invocation_state_invalid')))).toBe(
-        'failed',
-      );
+      expect(yield* leasingSaveResult(Effect.succeed({ revision: 8 }))).toBe(8);
+      expect(yield* leasingSaveResult(Effect.fail(conflictProblem('occupancy_conflict')))).toBe('conflict');
+      expect(yield* leasingSaveResult(Effect.fail(conflictProblem('action_invocation_state_invalid')))).toBe('failed');
     }),
   );
 
-  it.effect('keeps a change parked for approval unsaved and reports it, but reports nothing for a commit', () =>
+  it.effect('reports a change parked for approval as proposed and reports nothing for a commit', () =>
     Effect.gen(function* outcomes() {
       const reported: ActionProposalAccepted[] = [];
       const report = (parked: ActionProposalAccepted) => {
         reported.push(parked);
       };
-      expect(yield* leasingAutosaveResult(Effect.succeed(proposal), report)).toBe('failed');
+      expect(yield* leasingSaveResult(Effect.succeed(proposal), report)).toBe('proposed');
       expect(reported).toEqual([proposal]);
-      expect(yield* leasingAutosaveResult(Effect.succeed({ resourceRef: null, revision: 9 }), report)).toBe(9);
+      expect(yield* leasingSaveResult(Effect.succeed({ resourceRef: null, revision: 9 }), report)).toBe(9);
       expect(reported).toEqual([proposal]);
     }),
   );
 
-  it.effect('leaves the base revision alone when the autosaved rent is parked for approval', () =>
+  it.effect('keeps the draft unconfirmed on its base when the rent is parked for approval', () =>
     Effect.gen(function* parked() {
       const controller = yield* startDraftSave<RentDraft, never>(rent, {
         equals: sameRentDraft,
         isValid: (value) => Option.isSome(rentTermsOf(value)),
         save: () =>
-          leasingAutosaveResult(Effect.succeed(proposal)).pipe(
-            Effect.map((result): SaveOutcome => (result === 'failed' ? 'failed' : 'saved')),
+          leasingSaveResult(Effect.succeed(proposal)).pipe(
+            Effect.map((result): SaveOutcome => (result === 'proposed' ? 'proposed' : 'failed')),
           ),
       });
       controller.change({ ...rent, monthly: '19000' });
       controller.save();
       yield* Effect.yieldNow;
-      expect(controller.status()).toBe('error');
+      expect(controller.status()).toBe('proposed');
       expect(controller.confirmed()).toEqual(rent);
     }),
   );
@@ -185,22 +182,40 @@ const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
   const controller = yield* startDraftSave(rent, {
     equals: sameRentDraft,
     isValid: (value: RentDraft) => Option.isSome(rentTermsOf(value)),
-    save: (value: RentDraft) => Effect.sync(() => sent.push(value)).pipe(Effect.as(outcome)),
+    save: (value: RentDraft) =>
+      Effect.sync(() => {
+        sent.push(value);
+      }).pipe(Effect.as(outcome)),
   });
   return { controller, sent };
 });
 
-describe('rent terms panel autosave', () => {
-  it.effect('saves a typed rent after the quiet time; an invalid day stays local', () =>
+describe('rent terms panel save', () => {
+  it.live('typing sends nothing; the save sends once; an invalid day is refused locally', () =>
     Effect.gen(function* typed() {
       const { controller, sent } = yield* panel('saved');
+      controller.change({ ...rent, monthly: '19000' });
+      yield* Effect.sleep('1 second');
+      expect(sent).toHaveLength(0);
       controller.change({ ...rent, paymentDay: '40' });
       controller.save();
       expect(controller.status()).toBe('invalid');
+      expect(sent).toHaveLength(0);
       controller.change({ ...rent, monthly: '19000' });
-      yield* TestClock.adjust('800 millis');
+      controller.save();
+      yield* Effect.yieldNow;
       expect(sent.map(({ monthly }) => monthly)).toEqual(['19000']);
       expect(controller.status()).toBe('saved');
+    }),
+  );
+
+  it.effect('discard puts the confirmed rent back and sends nothing', () =>
+    Effect.gen(function* discard() {
+      const { controller, sent } = yield* panel('saved');
+      controller.change({ ...rent, service: '3000' });
+      controller.discard();
+      expect(controller.status()).toBe('idle');
+      expect(sent).toHaveLength(0);
     }),
   );
 
@@ -212,7 +227,8 @@ describe('rent terms panel autosave', () => {
       yield* Effect.yieldNow;
       expect(controller.status()).toBe('conflict');
       controller.change({ ...rent, service: '3500' });
-      yield* TestClock.adjust('1 second');
+      controller.save();
+      yield* Effect.yieldNow;
       expect(sent).toHaveLength(1);
     }),
   );

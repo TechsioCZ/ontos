@@ -1,7 +1,18 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { Effect, Option } from 'effect';
-import { SaveBar, dialogCloseLabel, EmptyState, formatMoney, SectionCard, useRecordDraft } from '@app/admin-ui';
+import {
+  SaveBar,
+  SectionCard,
+  UnsavedChangesDialog,
+  dialogCloseLabel,
+  EmptyState,
+  formatMoney,
+  saveLabelsFor,
+  useDraftSave,
+  useRecordDraft,
+  useUnsavedChangesGuard,
+} from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -19,7 +30,7 @@ import type { CommandOutcome } from './use-finance-records.ts';
 import { FinanceTableScroll } from './finance-table-scroll.tsx';
 import {
   emptyItem,
-  financeAutosaveOutcome,
+  financeSaveOutcome,
   itemCommandOf,
   itemDraftOf,
   itemProblems,
@@ -107,8 +118,9 @@ const PriceItemFields = ({
 };
 
 /**
- * Edit one price list item. Changes save themselves (debounced, on blur and on Zavřít) only while the price list
- * still has the item as the draft started from; when someone else changed it, the dialog offers the current version.
+ * Edit one price list item. Changes stay on screen until Uložit; leaving with unsaved changes asks first. The save
+ * is sent only while the price list still has the item as the draft started from; when someone else changed it, the
+ * dialog offers the current version.
  */
 const PriceItemEditDialog = ({
   item,
@@ -119,13 +131,13 @@ const PriceItemEditDialog = ({
   readonly onClose: () => void;
   readonly vm: FinanceViewModel;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const [error, setError] = useState<FinanceNotice>();
   const server = itemDraftOf(item);
   /** The version of the item the draft builds on: what it opened with, last saved or reloaded. */
   const base = useRef(server);
   const settle = (value: ItemDraft, outcome: CommandOutcome) => {
-    // The autosave status line already reports a conflict and a proposal waiting for approval.
+    // The status line already reports a conflict and a proposal waiting for approval.
     setError(
       outcome.ok || outcome.feedback === 'conflict' || isPendingApproval(outcome)
         ? undefined
@@ -139,10 +151,10 @@ const PriceItemEditDialog = ({
     itemUnchangedSince(item.id, base.current)(vm.snapshot?.state.priceList ?? [])
       ? vm.execute(command).pipe(
           Effect.tap((outcome) => Effect.sync(() => settle(value, outcome))),
-          Effect.map(financeAutosaveOutcome),
+          Effect.map(financeSaveOutcome),
         )
       : Effect.succeed<SaveOutcome>('conflict');
-  const autosave = useRecordDraft<ItemDraft, never>({
+  const record = useRecordDraft<ItemDraft, never>({
     equals: sameItemDraft,
     isValid: (value) => Option.isSome(itemCommandOf(value, item, vm.actorLabel)),
     runtime: financeBrowserRuntime,
@@ -153,83 +165,153 @@ const PriceItemEditDialog = ({
       }),
     server,
   });
-  const settledOnServer = !autosave.pending && sameItemDraft(autosave.draft, server);
+  const settledOnServer = !record.pending && sameItemDraft(record.draft, server);
   useEffect(() => {
     if (settledOnServer) {
       base.current = server;
     }
   }, [base, server, settledOnServer]);
+  const guard = useUnsavedChangesGuard({ draft: record, onDiscard: record.discard });
   const close = () => {
-    onClose();
+    guard.request(onClose);
   };
-  const handleChange = (patch: Partial<ItemDraft>) => autosave.setDraft((current) => ({ ...current, ...patch }));
-  const handleSave = autosave.save;
-  const handleReloadLatest = autosave.reloadLatest;
+  const handleChange = (patch: Partial<ItemDraft>) => record.setDraft((current) => ({ ...current, ...patch }));
+  const labels = saveLabelsFor(language);
+  const handleReloadLatest = record.reloadLatest;
+  const handleSave = record.save;
   return (
-    <Dialog
-      actions={
-        <>
-          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
-          <Button onClick={close} theme="outlined" variant="secondary">
-            {t('finance-billing.financeUi.priceList.close')}
-          </Button>
-        </>
-      }
-      closeLabel={dialogCloseLabel}
-      customTrigger
-      description={t('finance-billing.financeUi.priceList.priceHint')}
-      onOpenChange={(details) => {
-        if (!details.open) {
-          close();
+    <>
+      <Dialog
+        actions={
+          <>
+            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+            <Button onClick={close} theme="outlined" variant="secondary">
+              {t('finance-billing.financeUi.priceList.close')}
+            </Button>
+          </>
         }
-      }}
-      open
-      placement="center"
-      size="md"
-      title={t('finance-billing.financeUi.priceList.editTitle')}
-    >
-      <div className="flex flex-col gap-150">
-        {error !== undefined && (
-          <StatusText showIcon size="sm" status={error.status}>
-            {error.text}
-          </StatusText>
-        )}
-        <PriceItemFields draft={autosave.draft} onChange={handleChange} showErrors />
-      </div>
-    </Dialog>
+        closeLabel={dialogCloseLabel}
+        customTrigger
+        description={t('finance-billing.financeUi.priceList.priceHint')}
+        onOpenChange={(details) => {
+          if (!details.open) {
+            close();
+          }
+        }}
+        open
+        placement="center"
+        size="md"
+        title={t('finance-billing.financeUi.priceList.editTitle')}
+      >
+        <div className="flex flex-col gap-150">
+          {error !== undefined && (
+            <StatusText showIcon size="sm" status={error.status}>
+              {error.text}
+            </StatusText>
+          )}
+          <PriceItemFields draft={record.draft} onChange={handleChange} showErrors />
+        </div>
+      </Dialog>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
+  );
+};
+
+/**
+ * A new price list item. The draft stays on screen until Uložit; leaving with unsaved input asks first. Uložit sends
+ * the item once and closes the dialog when the price list accepted it.
+ */
+const PriceItemCreateDialog = ({
+  initial,
+  onClose,
+  vm,
+}: {
+  readonly initial: ItemDraft;
+  readonly onClose: () => void;
+  readonly vm: FinanceViewModel;
+}) => {
+  const { language, t } = useModernI18n();
+  const [draft, setDraft] = useState<ItemDraft>(initial);
+  const [error, setError] = useState<FinanceNotice>();
+  const settle = (outcome: Parameters<typeof financeSaveOutcome>[0]) => {
+    setError(outcome.ok ? undefined : outcomeNotice(vm, outcome));
+    if (outcome.ok) {
+      onClose();
+    }
+  };
+  const settled = (outcome: Parameters<typeof financeSaveOutcome>[0]) => Effect.sync(() => settle(outcome));
+  const record = useDraftSave<ItemDraft, never>({
+    isValid: (value) => Option.isSome(itemCommandOf(value, undefined, vm.actorLabel)),
+    runtime: financeBrowserRuntime,
+    save: (value) =>
+      Option.match(itemCommandOf(value, undefined, vm.actorLabel), {
+        onNone: () => Effect.succeed<SaveOutcome>('failed'),
+        onSome: (command) =>
+          vm.execute(command, 'Položka ceníku přidána').pipe(Effect.tap(settled), Effect.map(financeSaveOutcome)),
+      }),
+    value: draft,
+  });
+  const guard = useUnsavedChangesGuard({ draft: record, onDiscard: () => setDraft(initial) });
+  const labels = saveLabelsFor(language);
+  const close = () => {
+    guard.request(onClose);
+  };
+  const handleSave = record.save;
+  return (
+    <>
+      <Dialog
+        actions={
+          <>
+            <SaveBar
+              labels={labels}
+              onReloadLatest={() => setDraft(initial)}
+              onSave={handleSave}
+              status={record.status}
+            />
+            <Button onClick={close} theme="outlined" variant="secondary">
+              {t('finance-billing.financeUi.priceList.cancel')}
+            </Button>
+          </>
+        }
+        closeLabel={dialogCloseLabel}
+        customTrigger
+        description={t('finance-billing.financeUi.priceList.priceHint')}
+        onOpenChange={(details) => {
+          if (!details.open) {
+            close();
+          }
+        }}
+        open
+        placement="center"
+        size="md"
+        title={t('finance-billing.financeUi.priceList.addTitle')}
+      >
+        <div className="flex flex-col gap-150">
+          {error !== undefined && (
+            <StatusText showIcon size="sm" status={error.status}>
+              {error.text}
+            </StatusText>
+          )}
+          <PriceItemFields
+            draft={draft}
+            onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
+            showErrors={record.status === 'invalid' || error?.status === 'error'}
+          />
+        </div>
+      </Dialog>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
   );
 };
 
 /** S07.R4: the company price list; invoice lines copy a snapshot of an item, discounts are approved per line. */
-const priceListPanelSaveProgram = Effect.fn('Finance.save')(function* priceListPanelSaveProgram(
-  context: Pick<ReturnType<typeof usePriceListPanel>, 'draft' | 'setDraft' | 'setError' | 'vm'>,
-) {
-  const { draft, setDraft, setError, vm } = context;
-  if (draft === undefined) {
-    return;
-  }
-  const command = itemCommandOf(draft, undefined, vm.actorLabel);
-  if (Option.isNone(command)) {
-    setError({ status: 'error', text: 'Vyplňte název a cenu bez DPH (např. 1 500 nebo 1 500,50).' });
-    return;
-  }
-  const outcome = yield* vm.execute(command.value, 'Položka ceníku přidána');
-  if (outcome.ok) {
-    setDraft(undefined);
-    setError(undefined);
-  } else {
-    setError(outcomeNotice(vm, outcome));
-  }
-});
-
 const usePriceListPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
   const items = (vm.snapshot?.state.priceList ?? []).toSorted(
     (left, right) => Number(right.active) - Number(left.active) || left.name.localeCompare(right.name, 'cs'),
   );
-  /** A new item being created; an existing item is edited (and autosaved) in its own dialog. */
+  /** A new item being opened; an existing item is edited in its own dialog. */
   const [draft, setDraft] = useState<ItemDraft>();
   const [editingId, setEditingId] = useState<string>();
-  const [error, setError] = useState<FinanceNotice>();
   const discounted = (vm.snapshot?.state.invoices ?? [])
     .flatMap((invoice) =>
       (invoice.businessState === 'VOIDED' ? [] : (invoice.lines ?? [])).flatMap((line) =>
@@ -237,10 +319,6 @@ const usePriceListPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
       ),
     )
     .slice(0, 12);
-
-  const save = (): void => {
-    void financeBrowserRuntime.runPromise(priceListPanelSaveProgram({ draft, setDraft, setError, vm }));
-  };
 
   const toggle = (item: PriceListItem) => {
     const upsertPriceListItemCommand: FinanceCommandDraft<'UpsertPriceListItem'> = {
@@ -261,13 +339,12 @@ const usePriceListPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
       vm.execute(upsertPriceListItemCommand, item.active ? 'Položka vyřazena z nabídky' : 'Položka znovu v nabídce'),
     );
   };
-  return { discounted, draft, editingId, error, items, save, setDraft, setEditingId, setError, toggle, vm };
+  return { discounted, draft, editingId, items, setDraft, setEditingId, toggle, vm };
 };
 
 export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
   const { t } = useModernI18n();
-  const { discounted, draft, editingId, error, items, save, setDraft, setEditingId, setError, toggle, vm } =
-    usePriceListPanel(props);
+  const { discounted, draft, editingId, items, setDraft, setEditingId, toggle, vm } = usePriceListPanel(props);
   const editing = items.find((item) => item.id === editingId);
   return (
     <div className="flex flex-col gap-500">
@@ -277,7 +354,6 @@ export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
             <Button
               icon="icon-[mdi--plus]"
               onClick={() => {
-                setError(undefined);
                 setDraft(emptyItem);
               }}
               size="sm"
@@ -406,51 +482,7 @@ export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
           </FinanceTableScroll>
         )}
       </SectionCard>
-      <Dialog
-        actions={
-          <>
-            <Button onClick={() => setDraft(undefined)} theme="outlined" variant="secondary">
-              Zrušit
-            </Button>
-            <Button
-              isLoading={vm.busy}
-              onClick={() => {
-                save();
-              }}
-              variant="primary"
-            >
-              {t('finance-billing.financeUi.priceList.save')}
-            </Button>
-          </>
-        }
-        closeLabel={dialogCloseLabel}
-        customTrigger
-        description={t('finance-billing.financeUi.priceList.priceHint')}
-        onOpenChange={(details) => {
-          if (!details.open) {
-            setDraft(undefined);
-          }
-        }}
-        open={draft !== undefined}
-        placement="center"
-        size="md"
-        title={t('finance-billing.financeUi.priceList.addTitle')}
-      >
-        {draft !== undefined && (
-          <div className="flex flex-col gap-150">
-            {error !== undefined && (
-              <StatusText showIcon size="sm" status={error.status}>
-                {error.text}
-              </StatusText>
-            )}
-            <PriceItemFields
-              draft={draft}
-              onChange={(patch) => setDraft({ ...draft, ...patch })}
-              showErrors={error?.status === 'error'}
-            />
-          </div>
-        )}
-      </Dialog>
+      {draft !== undefined && <PriceItemCreateDialog initial={draft} onClose={() => setDraft(undefined)} vm={vm} />}
       {editing !== undefined && (
         <PriceItemEditDialog item={editing} key={editing.id} onClose={() => setEditingId(undefined)} vm={vm} />
       )}

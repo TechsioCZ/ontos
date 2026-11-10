@@ -4,7 +4,7 @@ import { Effect, Schema } from 'effect';
 import { beforeEach, expect, it, rstest } from 'effect-rstest';
 import type { PropertyCommand } from '../../shared/actions/apply-command.ts';
 import { ApplyCommandActionConflictProblemSchema } from '../../shared/apis/apply-command-action.ts';
-import { autosavePropertyEdit } from '../../src/routes/[lang]/nemovitosti/use-property-editor.ts';
+import { savePropertyEdit } from '../../src/routes/[lang]/nemovitosti/use-property-editor.ts';
 
 const { apply, records } = rstest.hoisted(() => ({ apply: rstest.fn(), records: rstest.fn() }));
 
@@ -38,11 +38,11 @@ beforeEach(() => {
   records.mockReset();
 });
 
-it.effect('keeps an autosaved edit parked for approval unsaved and reports the proposal', () =>
+it.effect('keeps an edit parked for approval unsaved and reports the proposal', () =>
   Effect.gen(function* parked() {
     apply.mockReturnValue(Effect.succeed(proposal));
     const reported: ActionProposalAccepted[] = [];
-    const result = yield* autosavePropertyEdit(
+    const result = yield* savePropertyEdit(
       command,
       4,
       () => true,
@@ -50,17 +50,17 @@ it.effect('keeps an autosaved edit parked for approval unsaved and reports the p
         reported.push(value);
       },
     );
-    expect(result).toBe('failed');
+    expect(result).toBe('proposed');
     expect(reported).toEqual([proposal]);
     expect(apply).toHaveBeenCalledTimes(1);
   }),
 );
 
-it.effect('adopts the committed revision of an autosaved edit without reporting a proposal', () =>
+it.effect('adopts the committed revision of an edit without reporting a proposal', () =>
   Effect.gen(function* committed() {
     apply.mockReturnValue(Effect.succeed({ resourceRef: unitRef, revision: 5 }));
     const reported: ActionProposalAccepted[] = [];
-    const result = yield* autosavePropertyEdit(
+    const result = yield* savePropertyEdit(
       command,
       4,
       () => true,
@@ -78,7 +78,7 @@ it.effect('treats a resend after a register race that is parked for approval as 
     apply.mockReturnValueOnce(Effect.fail(conflict)).mockReturnValueOnce(Effect.succeed(proposal));
     records.mockReturnValue(Effect.succeed({ assets: [], properties: [], revision: 6, units: [] }));
     const reported: ActionProposalAccepted[] = [];
-    const result = yield* autosavePropertyEdit(
+    const result = yield* savePropertyEdit(
       command,
       4,
       () => true,
@@ -86,7 +86,7 @@ it.effect('treats a resend after a register race that is parked for approval as 
         reported.push(value);
       },
     );
-    expect(result).toBe('failed');
+    expect(result).toBe('proposed');
     expect(reported).toEqual([proposal]);
     expect(apply).toHaveBeenCalledTimes(2);
   }),

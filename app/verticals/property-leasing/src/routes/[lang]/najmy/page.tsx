@@ -6,12 +6,15 @@ import {
   SectionCard,
   SidePanel,
   StatCard,
+  UnsavedChangesDialog,
   comboboxTranslations,
   formatDate,
   formatMoney,
+  saveLabelsFor,
   surfaceCardClassName,
   surfaceTileClassName,
   useRecordDraft,
+  useUnsavedChangesGuard,
 } from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
@@ -23,7 +26,7 @@ import { modulePagePreload } from '@app/shared-contracts/page-data';
 import { createCustomer, listCustomers, loadPartiesClient } from '@app/party-registry/api/client';
 import { PartyDocuments, PropertyEquipment } from '@app/facility-operations/ui/record-discussion';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import { useBlocker, useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
@@ -57,7 +60,7 @@ import csResource from '../../../../locales/cs/property-leasing.json';
 import enResource from '../../../../locales/en/property-leasing.json';
 import '../../index.css';
 import { TenantDirectory, TenantDossierCard } from './tenant-dossier.tsx';
-import type { DossierAutosave, DossierChanges, NewCounterpartyInput } from './tenant-dossier.tsx';
+import type { DossierSave, DossierChanges, NewCounterpartyInput } from './tenant-dossier.tsx';
 import { CounterpartyDossierView } from './counterparty-dossier.tsx';
 import { NoticeCard, OccupancyHistoryCard, RegistrationSheetCard } from './stay-documents.tsx';
 import type { NoticeContext } from './notice-templates.ts';
@@ -65,15 +68,15 @@ import { OccupancyCalendar } from './occupancy-calendar.tsx';
 import './occupancy-form.css';
 import { initialEditorState, occupancyEditorActions, occupancyEditorReducer } from './editor-state.ts';
 import {
-  autosaveLeasingCommand,
+  saveLeasingCommand,
   newUuid,
   rentDraftOf,
   rentProblems,
   rentTermsOf,
   rentUnchangedSince,
   sameRentDraft,
-} from './leasing-autosave.ts';
-import type { RentDraft } from './leasing-autosave.ts';
+} from './leasing-save.ts';
+import type { RentDraft } from './leasing-save.ts';
 import type { OccupancyEditorMode } from './editor-state.ts';
 import {
   leaseInputOf,
@@ -381,13 +384,13 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
       runCommand({ _tag: 'UpdateCounterpartyDossier', counterpartyRef: entry.counterpartyRef, ...changes });
     }
   };
-  const autosaveCounterpartyDossier =
-    (counterpartyId: string): DossierAutosave =>
+  const saveCounterpartyDossier =
+    (counterpartyId: string): DossierSave =>
     (changes, expectedRevision, unchanged) => {
       const entry = tenantDirectory.find((item) => item.counterpartyRef.resourceId === counterpartyId);
       return entry === undefined
         ? Effect.succeed<RevisionedSaveResult>('failed')
-        : autosaveLeasingCommand(
+        : saveLeasingCommand(
             { _tag: 'UpdateCounterpartyDossier', counterpartyRef: entry.counterpartyRef, ...changes },
             expectedRevision,
             unchanged,
@@ -721,7 +724,6 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
   return {
     activate,
     agreements,
-    autosaveCounterpartyDossier,
     busy,
     cancelledCount,
     canWrite,
@@ -766,6 +768,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     reportProposal: setProposal,
     retry,
     runCommand,
+    saveCounterpartyDossier,
     saveDraft,
     searchGuests,
     selected,
@@ -840,27 +843,29 @@ const RentFields = ({ state }: { readonly state: ReturnType<typeof useRecordsPag
   </div>
 );
 /**
- * The agreed rent of the selected lease. Changes save themselves (debounced, on blur and on Zavřít) against the
- * revision the draft builds on; when someone else changed this rent, the panel offers the current version instead.
+ * The agreed rent of the selected lease. Edits stay on screen until Uložit is clicked, against the revision the draft
+ * builds on; when someone else changed this rent, the panel offers the current version instead. Leaving with unsaved
+ * changes asks first.
  */
 const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; readonly state: PageState }) => {
   const { t } = state;
+  const labels = saveLabelsFor(state.language);
   const server = rentDraftOf(occupancy.rentTerms);
   /** The rent the draft builds on: what the panel opened with, last saved or reloaded. */
   const base = useRef(server);
   const rememberSaved = (value: RentDraft, result: RevisionedSaveResult) => {
-    if (result !== 'conflict' && result !== 'failed') {
+    if (Predicate.isNumber(result) || result === 'saved') {
       base.current = value;
     }
   };
   const send = (value: RentDraft, expectedRevision: number, rentTerms: RentTerms) =>
-    autosaveLeasingCommand(
+    saveLeasingCommand(
       { _tag: 'SetRentTerms', occupancyRef: occupancy.occupancyRef, rentTerms },
       expectedRevision,
       rentUnchangedSince(occupancy.occupancyRef.resourceId, base.current),
       state.reportProposal,
     ).pipe(Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))));
-  const autosave = useRecordDraft<RentDraft, never>({
+  const record = useRecordDraft<RentDraft, never>({
     equals: sameRentDraft,
     isValid: (value) => Option.isSome(rentTermsOf(value)),
     revision: state.snapshot?.revision ?? 0,
@@ -872,34 +877,39 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
       }),
     server,
   });
-  const settledOnServer = !autosave.pending && sameRentDraft(autosave.draft, server);
+  const settledOnServer = !record.pending && sameRentDraft(record.draft, server);
   useEffect(() => {
     if (settledOnServer) {
       base.current = server;
     }
   }, [base, server, settledOnServer]);
-  const { draft } = autosave;
+  const { draft } = record;
   const problems = rentProblems(draft);
   const invalid = (problem: boolean, key: string) =>
     problem ? { helpText: t(key), validateStatus: 'error' as const } : {};
   const change = (field: keyof RentDraft) => (value: string) =>
-    autosave.setDraft((current) => ({ ...current, [field]: value }));
+    record.setDraft((current) => ({ ...current, [field]: value }));
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
   const close = () => {
-    state.setRentEditorOpen(false);
+    guard.request(() => {
+      state.setRentEditorOpen(false);
+    });
   };
-  const handleSave = autosave.save;
-  const handleReloadLatest = autosave.reloadLatest;
+  const handleSave = record.save;
+  const handleReloadLatest = record.reloadLatest;
   return (
     <SidePanel
       actions={
         <>
-          <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
+          <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
           <Button onClick={close} theme="outlined" variant="secondary">
             {t(LABEL_CLOSE)}
           </Button>
         </>
       }
       closeLabel={t(LABEL_CLOSE)}
+      guard={guard}
       initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#occupancy-rent-monthly')}
       onOpenChange={(open) => {
         if (!open) {
@@ -911,6 +921,7 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
       size="md"
       title={t('property-leasing.rent.formTitle')}
     >
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
       <div className="propertyleasing:space-y-4 propertyleasing:py-2">
         <p className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
           {t('property-leasing.rent.formHint')}
@@ -1211,8 +1222,8 @@ const OccupancyRelations = ({ model, state }: OccupancyDetailProps) => {
               : `/${language}/najmy?counterpartyId=${selected.customerCounterpartyRef.resourceId}#tenant`
           }
           newContactId={newUuid}
-          onAutosave={(changes, expectedRevision, unchanged) =>
-            autosaveLeasingCommand(
+          onSave={(changes, expectedRevision, unchanged) =>
+            saveLeasingCommand(
               { _tag: 'UpdateTenantDossier', occupancyRef: selected.occupancyRef, ...changes },
               expectedRevision,
               unchanged,
@@ -1708,7 +1719,7 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
             }
             language={state.language}
             newContactId={newUuid}
-            onAutosave={state.autosaveCounterpartyDossier(state.linkedCounterpartyId)}
+            onSave={state.saveCounterpartyDossier(state.linkedCounterpartyId)}
             onUpdate={state.updateCounterpartyDossier(state.linkedCounterpartyId)}
             snapshot={snapshot}
             unitName={unitName}

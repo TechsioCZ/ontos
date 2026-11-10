@@ -1,4 +1,4 @@
-// A price list item as the price list dialog edits it: created once, autosaved while editing.
+// A price list item as the price list dialog edits it: created once, saved on the explicit Uložit.
 import type { SaveOutcome } from '@app/admin-ui';
 import { Option } from 'effect';
 import type { PriceListItem, VatRate } from '../../../../shared/apis/records.ts';
@@ -85,10 +85,10 @@ export const itemUnchangedSince =
   };
 
 /**
- * A finance command outcome as autosave sees it: a write is saved, a concurrent change a conflict, a change parked
+ * A finance command outcome as a save sees it: a write is saved, a concurrent change a conflict, a change parked
  * for approval is proposed (nothing saved yet, and not a failure), anything else a failure.
  */
-export const financeAutosaveOutcome = (
+export const financeSaveOutcome = (
   outcome: { readonly ok: true } | { readonly feedback: string; readonly ok: false },
 ): SaveOutcome => {
   if (outcome.ok) {

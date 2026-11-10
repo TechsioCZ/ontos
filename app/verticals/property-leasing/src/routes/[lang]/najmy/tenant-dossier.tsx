@@ -1,11 +1,20 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { SaveBar, DetailList, SectionCard, useRecordDraft } from '@app/admin-ui';
+import {
+  DetailList,
+  SaveBar,
+  SectionCard,
+  UnsavedChangesDialog,
+  saveLabelsFor,
+  useRecordDraft,
+  useUnsavedChangesGuard,
+} from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import type { PlatformError } from 'effect';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { useEffect, useRef, useState } from 'react';
@@ -27,8 +36,8 @@ import {
   sameContacts,
   trimmedContacts,
   validContacts,
-} from './leasing-autosave.ts';
-import type { CaseDraft, DossierChanges, UnchangedSince } from './leasing-autosave.ts';
+} from './leasing-save.ts';
+import type { CaseDraft, DossierChanges, UnchangedSince } from './leasing-save.ts';
 
 const caseLabels = {
   CANCELLED: 'Zrušený',
@@ -51,7 +60,7 @@ const fold = (value: string) =>
     .normalize('NFD')
     .replaceAll(/\p{Diacritic}/gu, '')
     .toLowerCase();
-export type { DossierChanges } from './leasing-autosave.ts';
+export type { DossierChanges } from './leasing-save.ts';
 
 interface DossierSectionProps {
   readonly busy: boolean;
@@ -60,36 +69,37 @@ interface DossierSectionProps {
   readonly onUpdate: (changes: DossierChanges) => void;
 }
 
-/** Saves one dossier edit against the revision its draft builds on. */
-export type DossierAutosave = (
+/** The Save button of a dossier section: one save against the revision its draft builds on. */
+export type DossierSave = (
   changes: DossierChanges,
   expectedRevision: number,
   unchanged: UnchangedSince,
 ) => Effect.Effect<RevisionedSaveResult>;
 
-interface DossierAutosaveProps {
+interface DossierDraftProps {
   readonly counterpartyId: string;
   readonly dossier: TenantDossier | undefined;
-  readonly onAutosave: DossierAutosave;
+  readonly onSave: DossierSave;
   /** Revision of the records the dossier comes from. */
   readonly revision: number;
 }
 
 /**
- * One autosaving dossier section: its draft follows the dossier while nothing is pending and saves itself against
- * the revision it builds on; a change of the same section by someone else ends in a conflict.
+ * The draft of one dossier section: it follows the dossier while nothing is pending, and only its Save button sends it,
+ * against the revision it builds on; a change of the same section by someone else ends in a conflict. Leaving the page
+ * with unsaved changes asks first.
  */
-const useDossierAutosave = <V,>({
+const useDossierDraft = <V,>({
   changesOf,
   equals,
-  onAutosave,
+  onSave,
   revision,
   server,
   unchangedSince,
 }: {
   readonly changesOf: (value: V) => Option.Option<DossierChanges>;
   readonly equals: (left: V, right: V) => boolean;
-  readonly onAutosave: DossierAutosave;
+  readonly onSave: DossierSave;
   readonly revision: number;
   readonly server: V;
   readonly unchangedSince: (base: V) => UnchangedSince;
@@ -97,15 +107,15 @@ const useDossierAutosave = <V,>({
   /** The version of the section the draft builds on: what it opened with, last saved or reloaded. */
   const base = useRef(server);
   const rememberSaved = (value: V, result: RevisionedSaveResult) => {
-    if (result !== 'conflict' && result !== 'failed') {
+    if (Predicate.isNumber(result) || result === 'saved') {
       base.current = value;
     }
   };
   const send = (value: V, expectedRevision: number, changes: DossierChanges) =>
-    onAutosave(changes, expectedRevision, unchangedSince(base.current)).pipe(
+    onSave(changes, expectedRevision, unchangedSince(base.current)).pipe(
       Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))),
     );
-  const autosave = useRecordDraft<V, never>({
+  const record = useRecordDraft<V, never>({
     equals,
     isValid: (value) => Option.isSome(changesOf(value)),
     revision,
@@ -117,13 +127,15 @@ const useDossierAutosave = <V,>({
       }),
     server,
   });
-  const settledOnServer = !autosave.pending && equals(autosave.draft, server);
+  const settledOnServer = !record.pending && equals(record.draft, server);
   useEffect(() => {
     if (settledOnServer) {
       base.current = server;
     }
   }, [base, server, settledOnServer]);
-  return autosave;
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
+  return { guard, record };
 };
 
 /** Error props for a field, spread so `validateStatus` is absent (not undefined) when the field is valid. */
@@ -133,7 +145,7 @@ const invalidField = (invalid: boolean, message: string) =>
 const emptyContact = (id: string): TenantContact => ({ email: '', id, name: '', phone: '', role: '' });
 const caseFieldRequiredKey = 'property-leasing.dossier.caseFieldRequired';
 
-interface ContactsSectionProps extends DossierAutosaveProps {
+interface ContactsSectionProps extends DossierDraftProps {
   readonly canWrite: boolean;
   readonly newContactId: Effect.Effect<string, PlatformError.PlatformError>;
 }
@@ -143,33 +155,38 @@ const DossierContacts = ({
   counterpartyId,
   dossier,
   newContactId,
-  onAutosave,
+  onSave,
   revision,
 }: ContactsSectionProps) => {
-  const { t } = useModernI18n();
-  const autosave = useDossierAutosave({
+  const { language, t } = useModernI18n();
+  const labels = saveLabelsFor(language);
+  const { guard, record } = useDossierDraft({
     changesOf: (contacts: readonly TenantContact[]) =>
       validContacts(contacts) ? Option.some({ contacts: trimmedContacts(contacts) }) : Option.none(),
     equals: sameContacts,
-    onAutosave,
+    onSave,
     revision,
     server: dossier?.contacts ?? noContacts,
     unchangedSince: (base) => contactsUnchangedSince(counterpartyId, base),
   });
-  const contacts = autosave.draft;
+  const contacts = record.draft;
   const [editing, setEditing] = useState(false);
   const editLabel = contacts.length === 0 ? 'Přidat kontaktní osoby' : 'Upravit kontakty';
   const updateContact = (id: string, field: 'name' | 'role' | 'email' | 'phone', value: string) =>
-    autosave.setDraft((current) =>
+    record.setDraft((current) =>
       current.map((contact) => (contact.id === id ? { ...contact, [field]: value } : contact)),
     );
-  const removeContact = (id: string) => autosave.setDraft((current) => current.filter((item) => item.id !== id));
-  const appendContact = (id: string) => autosave.setDraft((current) => [...current, emptyContact(id)]);
+  const removeContact = (id: string) => record.setDraft((current) => current.filter((item) => item.id !== id));
+  const appendContact = (id: string) => record.setDraft((current) => [...current, emptyContact(id)]);
   const toggleEditing = () => {
-    setEditing(!editing);
+    if (editing) {
+      guard.request(() => setEditing(false));
+      return;
+    }
+    setEditing(true);
   };
-  const handleSave = autosave.save;
-  const handleReloadLatest = autosave.reloadLatest;
+  const handleSave = record.save;
+  const handleReloadLatest = record.reloadLatest;
   return (
     <>
       <div className="sp-tenant-heading">
@@ -180,7 +197,6 @@ const DossierContacts = ({
           </Button>
         )}
       </div>
-      {canWrite && <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />}
       {!editing && contacts.length === 0 && (
         <p className="sp-tenant-muted">
           Kontaktní osoby zatím nejsou doplněny. Hlavní e-mail a telefon protistrany najdete v kartě výše.
@@ -206,7 +222,14 @@ const DossierContacts = ({
           </div>
         ))}
       {editing && canWrite && (
-        <div className="sp-tenant-stack">
+        <form
+          className="sp-tenant-stack"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            handleSave();
+          }}
+        >
           {contacts.map((contact, index) => {
             const problems = contactProblems(contact);
             return (
@@ -260,13 +283,23 @@ const DossierContacts = ({
               Přidat kontaktní osobu
             </Button>
           </div>
-        </div>
+        </form>
       )}
+      {canWrite && (
+        <SaveBar
+          labels={labels}
+          onReloadLatest={handleReloadLatest}
+          onSave={handleSave}
+          size="sm"
+          status={record.status}
+        />
+      )}
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>
   );
 };
 
-interface CaseSectionProps extends DossierAutosaveProps {
+interface CaseSectionProps extends DossierDraftProps {
   readonly canWrite: boolean;
   readonly contractHref?: string | undefined;
   readonly counterpartyName: string;
@@ -280,24 +313,25 @@ const DossierCase = ({
   counterpartyName,
   dossier,
   leaseHref,
-  onAutosave,
+  onSave,
   revision,
   taskHref,
 }: CaseSectionProps) => {
-  const { t } = useModernI18n();
-  const autosave = useDossierAutosave({
+  const { language, t } = useModernI18n();
+  const labels = saveLabelsFor(language);
+  const { guard, record } = useDossierDraft({
     changesOf: (draft: CaseDraft) => caseChangesOf(draft, dossier),
     equals: sameCaseDraft,
-    onAutosave,
+    onSave,
     revision,
     server: caseDraftOf(dossier),
     unchangedSince: (base) => caseUnchangedSince(counterpartyId, base),
   });
-  const { draft } = autosave;
+  const { draft } = record;
   const problems = caseProblems(draft, dossier);
-  const change = (patch: Partial<CaseDraft>) => autosave.setDraft((current) => ({ ...current, ...patch }));
-  const handleSave = autosave.save;
-  const handleReloadLatest = autosave.reloadLatest;
+  const change = (patch: Partial<CaseDraft>) => record.setDraft((current) => ({ ...current, ...patch }));
+  const handleSave = record.save;
+  const handleReloadLatest = record.reloadLatest;
   return (
     <div className="sp-tenant-contact">
       <h3>Obchodní případ</h3>
@@ -321,7 +355,14 @@ const DossierCase = ({
       )}
       <DetailList items={[{ label: 'Protistrana případu', value: counterpartyName }]} />
       {canWrite && (
-        <>
+        <form
+          className="sp-tenant-stack"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            handleSave();
+          }}
+        >
           <div className="sp-tenant-fields">
             <FormInput
               label={t('property-leasing.dossier.caseSubject')}
@@ -375,10 +416,17 @@ const DossierCase = ({
                 ))}
               </select>
             </label>
-            <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
           </div>
-        </>
+          <SaveBar
+            labels={labels}
+            onReloadLatest={handleReloadLatest}
+            onSave={handleSave}
+            size="sm"
+            status={record.status}
+          />
+        </form>
       )}
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
       <div className="sp-tenant-actions">
         {contractHref !== undefined && (
           <LinkButton href={contractHref} size="sm" theme="borderless" variant="secondary">
@@ -467,7 +515,7 @@ export const TenantDossierCard = ({
   dossier,
   leaseHref,
   newContactId,
-  onAutosave,
+  onSave,
   onUpdate,
   revision,
   taskHref,
@@ -475,14 +523,14 @@ export const TenantDossierCard = ({
   readonly busy: boolean;
   readonly canWrite: boolean;
   readonly contractHref?: string | undefined;
-  /** The counterparty whose dossier this is; autosave checks its contacts and case against it. */
+  /** The counterparty whose dossier this is; a save checks its contacts and case against it. */
   readonly counterpartyId: string;
   readonly counterpartyName: string;
   readonly dossier: TenantDossier | undefined;
   readonly leaseHref?: string | undefined;
   readonly newContactId: Effect.Effect<string, PlatformError.PlatformError>;
   /** Saves a contacts or case edit against the revision its draft builds on. */
-  readonly onAutosave: DossierAutosave;
+  readonly onSave: DossierSave;
   /** Logs communication and archives: commands that stay explicit. */
   readonly onUpdate: (changes: DossierChanges) => void;
   /** Revision of the records the dossier comes from. */
@@ -509,7 +557,7 @@ export const TenantDossierCard = ({
           counterpartyId={counterpartyId}
           dossier={dossier}
           newContactId={newContactId}
-          onAutosave={onAutosave}
+          onSave={onSave}
           revision={revision}
         />
         <DossierCase
@@ -519,7 +567,7 @@ export const TenantDossierCard = ({
           counterpartyName={counterpartyName}
           dossier={dossier}
           leaseHref={leaseHref}
-          onAutosave={onAutosave}
+          onSave={onSave}
           revision={revision}
           taskHref={taskHref}
         />

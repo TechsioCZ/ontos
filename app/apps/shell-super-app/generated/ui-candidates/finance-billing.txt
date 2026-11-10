@@ -42,7 +42,6 @@
 bg-(--color-chart-series-1)
 bg-(--color-popup-bg)
 block
-blur
 border
 border-border-primary
 border-dashed

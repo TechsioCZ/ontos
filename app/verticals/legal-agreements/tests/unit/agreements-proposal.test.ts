@@ -4,7 +4,7 @@ import { Effect, Option, Schema } from 'effect';
 import { beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 
 import { termsCommandOf, termsDraftOf } from '../../src/routes/[lang]/smlouvy/contract-terms-draft.ts';
-import { autosaveTerms } from '../../src/routes/[lang]/smlouvy/use-agreements-records.ts';
+import { saveTerms } from '../../src/routes/[lang]/smlouvy/use-agreements-records.ts';
 import type { Contract } from '../../shared/apis/records.ts';
 
 const { apply, records } = rstest.hoisted(() => ({ apply: rstest.fn(), records: rstest.fn() }));
@@ -60,12 +60,12 @@ beforeEach(() => {
   records.mockReset();
 });
 
-describe('contract terms autosave with approval', () => {
+describe('contract terms save with approval', () => {
   it.effect('keeps terms parked for approval unsaved and reports the proposal', () =>
     Effect.gen(function* parked() {
       apply.mockReturnValue(Effect.succeed(proposal));
       const reported: ActionProposalAccepted[] = [];
-      const result = yield* autosaveTerms(
+      const result = yield* saveTerms(
         command,
         4,
         () => true,
@@ -73,7 +73,7 @@ describe('contract terms autosave with approval', () => {
           reported.push(value);
         },
       );
-      expect(result).toBe('failed');
+      expect(result).toBe('proposed');
       expect(reported).toEqual([proposal]);
       expect(apply).toHaveBeenCalledTimes(1);
     }),
@@ -83,7 +83,7 @@ describe('contract terms autosave with approval', () => {
     Effect.gen(function* committed() {
       apply.mockReturnValue(Effect.succeed({ resourceRef: contractRef, revision: 5 }));
       const reported: ActionProposalAccepted[] = [];
-      const result = yield* autosaveTerms(
+      const result = yield* saveTerms(
         command,
         4,
         () => true,
