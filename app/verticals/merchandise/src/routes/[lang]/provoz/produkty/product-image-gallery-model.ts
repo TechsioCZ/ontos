@@ -1,7 +1,8 @@
-// State of the product gallery editor: the saved gallery as the server last confirmed it, the order the person sees
-// (optimistic), the uploads in flight and the one removal that can still be undone. Pure, so every state is testable.
-import { Match, Schema } from 'effect';
-import { PRODUCT_GALLERY_LIMIT, moveImage } from '../../../../../shared/domain/product-images.ts';
+// State of the product gallery editor around its draft: the uploads in flight, the notices and the one removal that
+// can still be undone. The gallery itself (order, main picture, which pictures) is the draft of the "E-shop a
+// obrázky" tab and is saved with that tab's Uložit. Pure, so every state is testable.
+import { Match, Option, Schema } from 'effect';
+import { PRODUCT_GALLERY_LIMIT, moveImage, restoreImage } from '../../../../../shared/domain/product-images.ts';
 
 export const UploadPhaseSchema = Schema.Literals(['failed', 'preparing', 'uploading', 'waiting']);
 export type UploadPhase = typeof UploadPhaseSchema.Type;
@@ -20,82 +21,36 @@ export interface GalleryNotice {
   readonly message: string;
 }
 
-export const SaveStatusSchema = Schema.Literals(['error', 'idle', 'saved', 'saving']);
-export type SaveStatus = typeof SaveStatusSchema.Type;
+/** A picture taken out of the draft, which "Vrátit zpět" puts back at its place. */
+export interface RemovedImage {
+  readonly image: string;
+  readonly position: number;
+}
 
 export interface GalleryState {
-  readonly images: readonly string[];
   readonly notices: readonly GalleryNotice[];
-  readonly removed?: { readonly image: string; readonly position: number };
-  readonly saved: readonly string[];
-  readonly status: SaveStatus;
+  readonly removed?: RemovedImage;
   readonly uploads: readonly PendingUpload[];
 }
 
 export type GalleryEvent =
-  | { readonly images: readonly string[]; readonly type: 'server' }
-  | { readonly from: number; readonly to: number; readonly type: 'move' }
-  | { readonly image: string; readonly type: 'remove' }
-  | { readonly type: 'undo' }
+  | { readonly removed: RemovedImage; readonly type: 'removed' }
+  | { readonly type: 'undone' }
   | { readonly type: 'undoExpired' }
-  | { readonly type: 'saved' }
-  | { readonly message: string; readonly type: 'saveFailed' }
   | { readonly type: 'queued'; readonly uploads: readonly PendingUpload[] }
   | { readonly key: string; readonly phase: UploadPhase; readonly type: 'phase' }
   | { readonly key: string; readonly message: string; readonly type: 'uploadFailed' }
-  | { readonly image: string; readonly key: string; readonly type: 'uploaded' }
+  | { readonly key: string; readonly type: 'uploaded' }
   | { readonly key: string; readonly type: 'dismissUpload' }
   | { readonly notices: readonly GalleryNotice[]; readonly type: 'rejected' }
   | { readonly key: string; readonly type: 'dismissNotice' };
 
-export const initialGallery = (images: readonly string[]): GalleryState => ({
-  images,
-  notices: [],
-  saved: images,
-  status: 'idle',
-  uploads: [],
-});
-
-const sameOrder = (left: readonly string[], right: readonly string[]) =>
-  left.length === right.length && left.every((image, index) => image === right[index]);
+export const initialGallery = (): GalleryState => ({ notices: [], uploads: [] });
 
 /** Uploads still waiting for their turn or on the wire; a failed one only waits for the person. */
 export const activeUploads = (state: GalleryState) => state.uploads.filter((upload) => upload.phase !== 'failed');
 
 const withoutRemoved = ({ removed: _removed, ...rest }: GalleryState): GalleryState => rest;
-
-const restoreRemoved = (state: GalleryState): GalleryState => {
-  if (state.removed === undefined) {
-    return state;
-  }
-  const { image, position } = state.removed;
-  const at = Math.min(position, state.images.length);
-  return {
-    ...withoutRemoved(state),
-    images: [...state.images.slice(0, at), image, ...state.images.slice(at)],
-    status: 'saving',
-  };
-};
-
-const removeFromGallery = (state: GalleryState, image: string): GalleryState => {
-  const position = state.images.indexOf(image);
-  return position === -1
-    ? state
-    : {
-        ...state,
-        images: state.images.filter((entry) => entry !== image),
-        removed: { image, position },
-        status: 'saving',
-      };
-};
-
-const withUploaded = (state: GalleryState, image: string, key: string): GalleryState => ({
-  ...state,
-  images: state.images.includes(image) ? state.images : [...state.images, image],
-  saved: state.saved.includes(image) ? state.saved : [...state.saved, image],
-  status: 'saved',
-  uploads: state.uploads.filter((upload) => upload.key !== key),
-});
 
 const updateUpload = (state: GalleryState, key: string, change: Partial<PendingUpload>) =>
   state.uploads.map((upload) => (upload.key === key ? { ...upload, ...change } : upload));
@@ -105,40 +60,35 @@ export const galleryReducer = (state: GalleryState, event: GalleryEvent): Galler
     Match.discriminatorsExhaustive('type')({
       dismissNotice: ({ key }) => ({ ...state, notices: state.notices.filter((notice) => notice.key !== key) }),
       dismissUpload: ({ key }) => ({ ...state, uploads: state.uploads.filter((upload) => upload.key !== key) }),
-      move: ({ from, to }) => {
-        const images = moveImage(state.images, from, to);
-        return images === state.images ? state : { ...state, images, status: 'saving' as const };
-      },
-      phase: ({ key, phase }) => ({
-        ...state,
-        status: phase === 'uploading' ? 'saving' : state.status,
-        uploads: updateUpload(state, key, { phase }),
-      }),
+      phase: ({ key, phase }) => ({ ...state, uploads: updateUpload(state, key, { phase }) }),
       queued: ({ uploads }) => ({ ...state, uploads: [...state.uploads, ...uploads] }),
       rejected: ({ notices }) => ({ ...state, notices: [...state.notices, ...notices] }),
-      remove: ({ image }) => removeFromGallery(state, image),
-      saved: () => ({ ...state, saved: state.images, status: 'saved' as const }),
-      saveFailed: ({ message }) => ({
-        ...state,
-        images: state.saved,
-        notices: [...state.notices, { key: `save-${state.notices.length}`, message }],
-        status: 'error' as const,
-      }),
-      // A fresh read wins unless the person's own change is still being saved.
-      server: ({ images }) =>
-        state.status === 'saving' || sameOrder(state.saved, images)
-          ? { ...state, saved: images }
-          : { ...state, images, saved: images },
-      undo: () => restoreRemoved(state),
+      removed: ({ removed }) => ({ ...state, removed }),
       undoExpired: () => withoutRemoved(state),
-      uploaded: ({ image, key }) => withUploaded(state, image, key),
+      undone: () => withoutRemoved(state),
+      uploaded: ({ key }) => ({ ...state, uploads: state.uploads.filter((upload) => upload.key !== key) }),
       uploadFailed: ({ key, message }) => ({
         ...state,
-        status: 'error' as const,
         uploads: updateUpload(state, key, { message, phase: 'failed' }),
       }),
     }),
   );
+
+/** The draft with a stored picture added at the end; a full gallery or a picture already in it stays as it is. */
+export const withStaged = (images: readonly string[], image: string): readonly string[] =>
+  images.includes(image) || images.length >= PRODUCT_GALLERY_LIMIT ? images : [...images, image];
+
+/** The draft with one picture moved; position 0 is the main picture. */
+export const withMoved = (images: readonly string[], from: number, to: number): readonly string[] =>
+  moveImage(images, from, to);
+
+/** The draft without `image`. */
+export const withoutImage = (images: readonly string[], image: string): readonly string[] =>
+  images.filter((entry) => entry !== image);
+
+/** The draft with a removed picture back at its place. */
+export const withRestored = (images: readonly string[], removed: RemovedImage): readonly string[] =>
+  Option.getOrElse(restoreImage(images, removed.image, removed.position), () => images);
 
 /** Translates a gallery copy key (`merchandise.pages.products.gallery.*`) with its values. */
 export type GalleryTranslate = (key: string, values?: Readonly<Record<string, number | string>>) => string;

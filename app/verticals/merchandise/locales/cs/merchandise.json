@@ -260,7 +260,13 @@
           "clear": "Zrušit výběr",
           "deactivate": "Deaktivovat",
           "selected": "Vybráno: {{total}}",
-          "tags": "Štítky"
+          "tags": "Štítky",
+          "activateTitle": "Aktivovat vybrané produkty ({{total}})?",
+          "activateDescription": "Vybrané produkty ({{total}}) se hned začnou zobrazovat v e-shopu a zákazníci je budou moct objednat.",
+          "activateConfirm": "Aktivovat ({{total}})",
+          "deactivateTitle": "Deaktivovat vybrané produkty ({{total}})?",
+          "deactivateDescription": "Vybrané produkty ({{total}}) hned zmizí z e-shopu a zákazníci je nebudou moct objednat.",
+          "deactivateConfirm": "Deaktivovat ({{total}})"
         },
         "category": {
           "field": "Nová kategorie",
@@ -308,7 +314,7 @@
           "title_few": "Obrázky ({{count}})",
           "title_many": "Obrázky ({{count}})",
           "title_other": "Obrázky ({{count}})",
-          "intro": "První obrázek je hlavní a e-shop ho ukáže jako první. Pořadí změníte přetažením nebo tlačítky; nahrání, přesun i odebrání se provede hned po vaší akci.",
+          "intro": "První obrázek je hlavní a e-shop ho ukáže jako první. Pořadí změníte přetažením nebo tlačítky. Nahrané obrázky, nové pořadí i odebrání se v e-shopu projeví až po uložení tlačítkem Uložit.",
           "introReadOnly": "První obrázek je hlavní a e-shop ho ukáže jako první.",
           "main": "Hlavní",
           "imageAlt": "{{name}} – obrázek {{position}}",
@@ -334,7 +340,7 @@
           "dropzoneHint": "JPG, PNG nebo WebP do 20 MB, i více najednou. Obrázek můžete také vložit ze schránky (Ctrl+V).",
           "pick": "Vybrat obrázky",
           "hideNotice": "Skrýt upozornění",
-          "removed": "Obrázek byl odebrán.",
+          "removed": "Obrázek je odebraný z konceptu. Z e-shopu zmizí po uložení.",
           "undo": "Vrátit zpět",
           "uploading_one": "Nahrávám {{count}} obrázek…",
           "uploading_few": "Nahrávám {{count}} obrázky…",
@@ -351,7 +357,8 @@
           "tooManyFiles": "Produkt může mít nejvýše {{limit}} obrázků. Teď můžete přidat ještě {{remaining}}.",
           "fileTooLarge": "Soubor „{{name}}“ je větší než 20 MB. Zmenšete ho, nebo vyberte jiný.",
           "fileInvalidType": "Soubor „{{name}}“ není obrázek ve formátu JPG, PNG nebo WebP.",
-          "fileRejected": "Soubor „{{name}}“ nelze nahrát."
+          "fileRejected": "Soubor „{{name}}“ nelze nahrát.",
+          "saveRejected": "Obrázky se nepodařilo uložit, některý z nich už není k dispozici. Načtěte aktuální verzi a zkuste to znovu."
         },
         "fields": {
           "category": "Kategorie",
@@ -523,6 +530,11 @@
           "offeredSaved": "Produkt je v nabídce trhu {{code}}.",
           "saved": "Nabídka produktu na trzích je uložena.",
           "withdrawnSaved": "Produkt byl z nabídky trhu {{code}} vyřazen."
+        },
+        "eshop": {
+          "archiveTitle": "Archivovat DEMO produkt {{name}}?",
+          "archiveDescription": "Produkt {{name}} hned zmizí ze seznamu i z e-shopu. Skladové pohyby, objednávky a audit zůstanou zachovány.",
+          "archiveConfirm": "Archivovat"
         }
       },
       "records": {

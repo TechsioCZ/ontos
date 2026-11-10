@@ -6,6 +6,7 @@ import {
   storeLinkedMediaImage,
   unlinkMediaFromResource,
 } from '@app/core-runtime';
+import type { MediaImageUpload } from '@app/core-runtime/media/image-contract';
 import type {
   MediaRendition,
   MediaStoreUnavailable,
@@ -23,6 +24,7 @@ import {
   removeImage,
   reorderGallery,
   restoreImage,
+  setGallery,
 } from '../../shared/domain/product-images.ts';
 import type { Product } from '../../shared/domain/merchandise-model.ts';
 import { MerchandiseLifecycleConflict } from '../../shared/errors/merchandise-lifecycle-conflict.ts';
@@ -52,6 +54,22 @@ const mediaFailure = (failure: MediaStoreUnavailable | MediaUploadRejected) =>
     Match.tag('MediaUploadRejected', () => conflict('Obrázek nelze uložit')),
     Match.exhaustive,
   );
+
+/** Stores an uploaded picture as a Core Media Asset linked to the product; its reference is `media:<invocation>`. */
+const storeUploadedImage = (
+  transaction: ScopedTransactionExecutor,
+  input: { readonly actionInvocationId: string; readonly principalId: string; readonly product: Product },
+  image: MediaImageUpload,
+) =>
+  storeLinkedMediaImage(transaction, {
+    actionInvocationId: input.actionInvocationId,
+    ingestionSource: 'user',
+    // The invocation id is unique per Action and replays return the recorded result, so it names the asset.
+    mediaAssetId: input.actionInvocationId,
+    principalId: input.principalId,
+    target: target(input.product.id),
+    upload: image,
+  }).pipe(Effect.mapError(mediaFailure));
 
 /**
  * The gallery after one change. Uploads are stored and linked in Core Media before the product state changes,
@@ -94,21 +112,49 @@ export const galleryAfterChange = Effect.fn('Merchandise.galleryAfterChange')(fu
         }).pipe(Effect.mapError(mediaFailure));
         return relinked ? restoreImage(gallery, image, position) : Option.none();
       }),
-      Upload: Effect.fn('Merchandise.uploadGalleryImage')(function* upload({ image }) {
-        const reference = mediaImageReference(input.actionInvocationId);
-        const next = appendImage(gallery, reference);
+      Set: Effect.fn('Merchandise.setGallery')(function* set({ images }) {
+        const next = setGallery(gallery, images);
         if (Option.isNone(next)) {
           return next;
         }
-        yield* storeLinkedMediaImage(transaction, {
-          actionInvocationId: input.actionInvocationId,
-          ingestionSource: 'user',
-          // The invocation id is unique per Action and replays return the recorded result, so it names the asset.
-          mediaAssetId: input.actionInvocationId,
-          principalId: input.principalId,
+        // A picture that joins the gallery is an asset of this company (usually one `Stage` stored for it).
+        const joining = next.value.filter((reference) => !gallery.includes(reference));
+        const linked = yield* Effect.reduce(
+          joining,
+          () => true,
+          (allLinked: boolean, image: string) => {
+            const assetId = mediaAssetIdOf(image);
+            return !allLinked || Option.isNone(assetId)
+              ? Effect.succeed(false)
+              : relinkMediaToResource(transaction, {
+                  actionInvocationId: input.actionInvocationId,
+                  mediaAssetId: assetId.value,
+                  principalId: input.principalId,
+                  target: link,
+                }).pipe(Effect.mapError(mediaFailure));
+          },
+        );
+        if (!linked) {
+          return Option.none<readonly string[]>();
+        }
+        const dropped = gallery.filter((reference) => !next.value.includes(reference));
+        yield* unlinkMediaFromResource(transaction, {
+          mediaAssetIds: dropped.flatMap((reference) => Option.toArray(mediaAssetIdOf(reference))),
           target: link,
-          upload: image,
         }).pipe(Effect.mapError(mediaFailure));
+        return next;
+      }),
+      // Stored for the product's draft only: the public gallery stays as it is until a `Set` saves the draft.
+      Stage: Effect.fn('Merchandise.stageGalleryImage')(function* stage({ image }) {
+        yield* storeUploadedImage(transaction, input, image);
+        return Option.some(gallery);
+      }),
+      Upload: Effect.fn('Merchandise.uploadGalleryImage')(function* upload({ image }) {
+        const next = appendImage(gallery, mediaImageReference(input.actionInvocationId));
+        if (Option.isNone(next)) {
+          return next;
+        }
+        yield* storeUploadedImage(transaction, input, image);
         return next;
       }),
     }),

@@ -68,6 +68,19 @@ export const restoreImage = (
   return Option.some([...gallery.slice(0, at), reference, ...gallery.slice(at)]);
 };
 
+/**
+ * The gallery a `Set` saves: no image twice, at most `PRODUCT_GALLERY_LIMIT`. An image the gallery does not have yet
+ * must be an uploaded picture (`media:<asset>`); an outside address can only stay where it already is.
+ */
+export const setGallery = (gallery: readonly string[], images: readonly string[]): Option.Option<readonly string[]> => {
+  const current = new Set(gallery);
+  return images.length <= PRODUCT_GALLERY_LIMIT &&
+    new Set(images).size === images.length &&
+    images.every((reference) => current.has(reference) || isMediaImageReference(reference))
+    ? Option.some([...images])
+    : Option.none();
+};
+
 /** Moves one image to a new position; position 0 is the main image. */
 export const moveImage = <Value>(images: readonly Value[], from: number, to: number): readonly Value[] => {
   const moved = images[from];
