@@ -1,6 +1,7 @@
 // @rstest-environment happy-dom
 // A new meter and a meter reading are sent by the shared Uložit only: typing changes the draft, one click sends the
 // same command as the old button did, and leaving with typed input asks first while an untouched form just closes.
+import { requiredLabelFor } from '@app/admin-ui';
 import { Effect, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { createElement } from 'react';
@@ -75,6 +76,16 @@ describe('new meter', () => {
       expect(runner.sent).toHaveLength(1);
       expect(runner.sent[0]).toMatchObject({ _tag: 'MeterCreate', serialNumber: 'EL-77' });
       expect(calls).toEqual(['saved:created-1']);
+    }),
+  );
+
+  it.live('reads the required text of a required field in Czech', () =>
+    Effect.gen(function* scenario() {
+      yield* mountMeter(recordingRunner());
+      expect(document.body.textContent).toContain(requiredLabelFor('cs'));
+      expect(document.body.textContent).not.toContain('(required)');
+      const label = document.querySelector('label[for="meter-serial"]');
+      expect(label?.textContent ?? '').toContain(requiredLabelFor('cs'));
     }),
   );
 
