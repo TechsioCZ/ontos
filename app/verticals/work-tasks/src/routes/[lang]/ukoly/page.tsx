@@ -6,6 +6,7 @@ import {
   Toaster,
   UnsavedChangesBoundary,
   dataTableRowLabels,
+  useHeldSnapshot,
   useUnsavedChangesScope,
 } from '@app/admin-ui';
 import type { RevisionedSaveResult, SaveOutcome } from '@app/admin-ui';
@@ -506,10 +507,16 @@ const useTasksPage = (
   const toaster = useToast();
   const [showHidden, setShowHidden] = useState(false);
   const input: TasksInput = { includeArchived: showHidden, legalEntityId, partyId };
-  const recordsSnapshot = useSyncExternalStore(
-    taskRecords.subscribe,
-    () => taskRecords.snapshot(input),
-    () => pageDataPending,
+  // A background reload of the same list keeps the last ready one on screen, with the write access, assignees and
+  // names read from it, so an open editor never turns read-only for the length of the reload. A failed or refused
+  // reload, or another company or filter, replaces it at once.
+  const recordsSnapshot = useHeldSnapshot(
+    taskRecords.key(input),
+    useSyncExternalStore(
+      taskRecords.subscribe,
+      () => taskRecords.snapshot(input),
+      () => pageDataPending,
+    ),
   );
   useEffect(() => {
     if (!invalidFilter) {
