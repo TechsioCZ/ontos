@@ -933,6 +933,31 @@ describe('#1151 Payment evidence interpretation', () => {
         observed({ correctsObservationId: 'missing', factKind: 'SOURCE_CORRECTION' }),
       ),
     ).toEqual(PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'CORRECTION_TARGET_UNKNOWN' }));
+    // A held return counted against the collection is a correction target: the correction is recorded
+    // (the funds reader then reduces that return) and the collection's outcome does not change.
+    const heldReturn = (operationId: string) => ({
+      ...aggregateOf([
+        operation('EFFECT_CONFIRMED'),
+        operation('EFFECT_CONFIRMED', { kind: 'REFUND', operationId: REFUND_ID, targetOperationId: COLLECT_ID }),
+      ]),
+      priorReturnStatements: [accepted('obs-held-return', { factKind: 'REFUND_CONFIRMED', operationId })],
+    });
+    const returnCorrection = (operationId: string) =>
+      interpretPaymentObservation(heldReturn(operationId), {
+        ...uncorrelated(),
+        amount: czk(10_000),
+        correctsObservationId: 'obs-held-return',
+        factKind: 'SOURCE_CORRECTION',
+      });
+    expect(returnCorrection(COLLECT_ID)).toEqual(
+      PaymentEvidenceDecision.CORRECTION({
+        affectedOperationId: COLLECT_ID,
+        correctedObservationId: 'obs-held-return',
+        effect: PaymentCorrectionEffect.RECORD_ONLY(),
+      }),
+    );
+    // A held statement about a REFUND established nothing: its correction still has no target.
+    expect(PaymentEvidenceDecision.$is('HOLD')(returnCorrection(REFUND_ID))).toBe(true);
     expect(
       interpretPaymentObservation(
         aggregateOf([operation('EFFECT_CONFIRMED')], [accepted('obs-receipt')]),

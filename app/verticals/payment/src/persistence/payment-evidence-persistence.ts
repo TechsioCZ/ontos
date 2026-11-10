@@ -652,10 +652,27 @@ export const paymentEvidencePersistenceForTransaction = (
       // The prior return evidence, loaded by the funds reader itself so the correction admission and
       // the funds snapshot can never count a return differently (#1150).
       const returnEvidence = yield* paymentRefundPersistenceForTransaction(transaction).selectReturnEvidence(paymentId);
+      // Held returns the funds reader counts against an operation: correction targets only.
+      const countedOperation = new Map(
+        returnEvidence.flatMap((statement) =>
+          statement.operationId === undefined ? [] : [[statement.observationId, statement.operationId] as const],
+        ),
+      );
+      const priorReturnStatements = yield* Effect.forEach(
+        held.flatMap((row) => {
+          const operationId = attachedOperation.has(row.observationId)
+            ? undefined
+            : countedOperation.get(row.observationId);
+          return operationId === undefined ? [] : [{ operationId, row }];
+        }),
+        ({ operationId, row }) => interpretedViewOf(row, operationId),
+        { concurrency: 1 },
+      );
       return {
         acceptedObservations,
         attachedStatements,
         fullyDisprovenObservationIds: corrected,
+        priorReturnStatements,
         returnEvidence,
       } satisfies PaymentInterpretedEvidence;
     },
