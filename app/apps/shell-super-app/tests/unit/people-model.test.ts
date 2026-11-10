@@ -52,6 +52,7 @@ const assignment = (incarnationId: string, status: Assignment['status']): Assign
 /** The canonical access view of the same scope, carrying only the assignments a test declares. */
 const access = (assignments: readonly Assignment[]): PeopleAccessView => ({
   options: {
+    admissionCandidates: [],
     capabilities: [],
     managers: [],
     people: [],
@@ -60,8 +61,10 @@ const access = (assignments: readonly Assignment[]): PeopleAccessView => ({
     scopes: [],
     teams: [],
     writeAvailability: {
+      canAdmitMember: false,
       canAssign: true,
       canDelegate: false,
+      canEndMembership: false,
       canManageTeams: false,
       canRevokeDelegation: false,
       canTransferOwnership: false,

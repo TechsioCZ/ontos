@@ -743,6 +743,12 @@ export const defineAccessTables = ({ legalEntities, principals, requestRoles, te
     {
       agentId: uuid('agent_id'),
       createdAt: createdAt(),
+      /** When the revocation that ended the row was recorded; null for every other row and writer. */
+      endedAt: timestamp('ended_at', { withTimezone: true }),
+      /** The person who ended the row through the people commands; null when another writer revoked it. */
+      endedBy: uuid('ended_by'),
+      /** Why the people commands ended the row, as the ending person stated it. */
+      endedReason: text('ended_reason'),
       kind: text('kind').$type<MembershipKind>().notNull(),
       membershipId: uuid('membership_id').primaryKey(),
       principalId: uuid('principal_id'),
@@ -765,6 +771,17 @@ export const defineAccessTables = ({ legalEntities, principals, requestRoles, te
       personFk('access_memberships_principal_fk', t.tenantId, t.principalId),
       personFk('access_memberships_agent_fk', t.tenantId, t.agentId),
       personFk('access_memberships_recorder_fk', t.tenantId, t.recordedBy),
+      personFk('access_memberships_ender_fk', t.tenantId, t.endedBy),
+      // An end is recorded only on a revoked row, by a person and at an instant together; the
+      // migration's guard sets it once, on the move to 'revoked', and never changes it afterwards.
+      check(
+        'access_memberships_end_ck',
+        sql`(${t.endedBy} is null and ${t.endedAt} is null and ${t.endedReason} is null) or (${t.status} = 'revoked' and ${t.endedBy} is not null and ${t.endedAt} is not null)`,
+      ),
+      check(
+        'access_memberships_end_reason_ck',
+        sql`${t.endedReason} is null or length(${t.endedReason}) between 1 and 500`,
+      ),
       check('access_memberships_holder_xor_ck', sql`(${t.principalId} is null) <> (${t.agentId} is null)`),
       check('access_memberships_kind_ck', sql`${t.kind} in ('member', 'owner', 'access_admin')`),
       check('access_memberships_status_ck', sql`${t.status} in ('active', 'suspended', 'revoked')`),
