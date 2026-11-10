@@ -405,6 +405,8 @@ The app host serves the Shell plus every module of `topology/application-release
 
 A vertical needs no new GitHub variables, no Zerops service and no Cloudflare configuration.
 
+Payment is not in the release intent, so stage builds and serves no Payment owner; the migrator still applies its schema. Main's release intent leaves it out too, and its cross-owner evidence ports and `payment.source-ingress` workload have no stage provider yet. No other owner calls Payment, so only Payment's own features are unavailable.
+
 ## Required smoke suite
 
 Provider readiness alone is insufficient. The post-deploy release gate exercises:
