@@ -18,7 +18,7 @@ import {
   useDraftSave,
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
-import type { SaveLabels, SaveOutcome, SaveState, UnsavedChangesGuard } from '@app/admin-ui';
+import type { DraftSave, SaveLabels, SaveOutcome, SaveState, UnsavedChangesGuard } from '@app/admin-ui';
 import { useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
@@ -193,6 +193,13 @@ interface FormSaveOptions<V> {
   readonly onReload: () => void;
   /** The command went through: the page shows the toast and reloads. */
   readonly onSaved: () => void;
+  /** Whether the panel is open. A closed panel holds nothing typed, so it never asks before leaving. */
+  readonly open: boolean;
+  /**
+   * The values the form opens with when they differ from `initial` (a suggested value Uložit can send at once).
+   * They are not typed input, so leaving with them does not ask.
+   */
+  readonly opened?: V | undefined;
   /** Text of a refused save; the general failure text when it returns null. */
   readonly refused?: (outcome: Extract<CommandOutcome, { readonly ok: false }>, value: V) => string | null;
   /** Puts `value` back into the form's state. */
@@ -237,8 +244,12 @@ const useFormSave = <V,>(options: FormSaveOptions<V>) => {
     startOver();
     options.onOpenChange(false);
   };
-  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
-  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: startOver });
+  // Only what the user typed in the open panel asks before leaving: the panel stays mounted while closed, and the
+  // values it opens with are not lost input.
+  const untouched = options.opened !== undefined && options.equals(options.value, options.opened);
+  const guardDraft: DraftSave<V> = { ...record, dirty: record.dirty && options.open && !untouched };
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => guardDraft.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: guardDraft, navigation: blocker, onDiscard: startOver });
   const handleSave = () => {
     record.save();
     record.afterSave((status) => {
@@ -324,6 +335,7 @@ export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open,
     onOpenChange,
     onReload,
     onSaved: () => onCommitted(k('messages.created')),
+    open,
     // CreateProduct's only business refusal is a duplicate SKU, so the stock wording in `rejected` does not apply.
     refused: (outcome, value) => {
       if (outcome.reason !== 'rejected') {
@@ -643,6 +655,8 @@ export const PriceChangeDialog = ({
     onOpenChange,
     onReload,
     onSaved: () => onCommitted(k('messages.priceChanged')),
+    open,
+    opened: openingPercent,
     // The next open starts at 5 % again.
     reset: () => setDraft(openingPercent),
     revision,
@@ -726,6 +740,7 @@ export const CategoryDialog = ({
     onOpenChange,
     onReload,
     onSaved: () => onCommitted(k('messages.bulkUpdated')),
+    open,
     reset: setDraft,
     revision,
     value: draft,

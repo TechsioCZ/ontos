@@ -87,16 +87,30 @@ export class DraftSaveController<V, R = never> {
 
   /** The form's current draft. It only moves the status; a changed draft waits for `save()`. */
   readonly change = (value: V): void => {
-    if (this.same(value, this.latest)) {
+    const unchanged = this.same(value, this.latest);
+    // An equal draft can still carry newer data its validation reads, such as a product record that finished loading.
+    this.latest = value;
+    if (unchanged) {
+      this.revalidate();
       return;
     }
-    this.latest = value;
     // A running save decides the status when it ends.
     if (this.disposed || this.inFlight) {
       return;
     }
     // A conflict holds until the server version is adopted or the draft is back at the confirmed version.
     if (this.state === 'conflict' && !this.same(value, this.saved)) {
+      return;
+    }
+    this.setState(this.restingState());
+  };
+
+  /**
+   * Checks a changed draft against the form's validation again. The rule can read more than the draft, such as the
+   * rows a bulk form applies to, so the same draft can become valid (or invalid) without being typed again.
+   */
+  readonly revalidate = (): void => {
+    if (this.disposed || this.inFlight || (this.state !== 'dirty' && this.state !== 'invalid')) {
       return;
     }
     this.setState(this.restingState());
@@ -409,6 +423,8 @@ const useGeneration = <V, R>(options: GenerationOptions<V, R>) => {
   const { base, controller } = generation;
   useEffect(() => {
     controller.configure(boundTo(options, base, controller));
+    // The new `isValid` may answer differently for the same draft: what it reads besides the draft changed.
+    controller.revalidate();
   }, [base, controller, options]);
   // The draft only moves the status. Nothing is sent here, and nothing is sent when the form unmounts.
   useEffect(() => {

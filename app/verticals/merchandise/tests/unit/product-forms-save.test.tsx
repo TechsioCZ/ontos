@@ -49,6 +49,7 @@ const dialogProps = {
   revision: 4,
 };
 
+/** Mounts `element` and returns how to render it again with other props. */
 const mount = async (element: ReactElement) => {
   const container = document.createElement('div');
   document.body.append(container);
@@ -63,6 +64,14 @@ const mount = async (element: ReactElement) => {
       container.remove();
     });
   });
+  /** Renders the same tree again with other props, as the page does. */
+  return (next: ReactElement) =>
+    Effect.promise(() =>
+      act(async () => {
+        root.render(next);
+        await settle();
+      }),
+    );
 };
 
 const footerButtons = (): HTMLButtonElement[] =>
@@ -154,5 +163,37 @@ it.effect('the price change it opens with is sent by the first Uložit', () =>
     yield* click(saveButton());
     yield* Effect.promise(() => waitUntil(() => committed.length === 1));
     expect(sent()).toEqual([{ _tag: 'BulkUpdateProducts', ids, patch: { priceChangePercent: 5 } }]);
+  }),
+);
+
+/** Whether closing or reloading the tab would ask now. */
+const unloadAsks = (): boolean => {
+  const event = new Event('beforeunload', { cancelable: true });
+  globalThis.dispatchEvent(event);
+  return event.defaultPrevented;
+};
+
+it.effect('the price change becomes savable when rows are selected after the page mounted it', () =>
+  Effect.gen(function* lateSelection() {
+    // The products page mounts the dialog before anything is selected.
+    const rerender = yield* Effect.promise(() => mount(<PriceChangeDialog {...dialogProps} ids={[]} open={false} />));
+    yield* rerender(<PriceChangeDialog {...dialogProps} open />);
+    expect(saveButton().disabled).toBe(false);
+
+    yield* click(saveButton());
+    yield* Effect.promise(() => waitUntil(() => committed.length === 1));
+    expect(sent()).toEqual([{ _tag: 'BulkUpdateProducts', ids, patch: { priceChangePercent: 5 } }]);
+  }),
+);
+
+it.effect('the price change asks before leaving only for a percent the user typed in the open panel', () =>
+  Effect.gen(function* untouchedPrice() {
+    const rerender = yield* Effect.promise(() => mount(<PriceChangeDialog {...dialogProps} ids={[]} open={false} />));
+    expect(unloadAsks()).toBe(false);
+    yield* rerender(<PriceChangeDialog {...dialogProps} open />);
+    // The 5 % it opens with is not typed input.
+    expect(unloadAsks()).toBe(false);
+    yield* typeInto('price-percent', '7');
+    expect(unloadAsks()).toBe(true);
   }),
 );
