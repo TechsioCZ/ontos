@@ -44,35 +44,6 @@ export const returnSourceBindingKey = (source: {
   readonly sourceSystem: string;
 }): string => [source.sourceKind, source.sourceSystem, source.accountRef, source.environment].join('\u0000');
 
-/**
- * A standing return statement of the same source-scoped economic effect states other money than the
- * candidate. One effect is one amount: the candidate contradicts it and is never counted or folded in
- * (#1151 "conflicting evidence becomes held reconciliation debt").
- */
-export const contradictsStandingReturn = (
-  evidence: readonly PaymentReturnEvidence[],
-  candidate: {
-    readonly amount: PaymentMonetaryAmount | undefined;
-    readonly economicEffectKey: string | undefined;
-    readonly observationId?: string | undefined;
-    readonly sourceBindingKey: string;
-  },
-): boolean => {
-  const { amount, economicEffectKey } = candidate;
-  return (
-    amount !== undefined &&
-    economicEffectKey !== undefined &&
-    evidence.some(
-      (statement) =>
-        statement.observationId !== candidate.observationId &&
-        statement.economicEffectKey === economicEffectKey &&
-        statement.sourceBindingKey === candidate.sourceBindingKey &&
-        statement.amount !== undefined &&
-        !sameAmount(statement.amount, amount),
-    )
-  );
-};
-
 /** How the accepted corrections of one return statement reach it (#1150). */
 export interface CorrectionReach {
   /** The money a partial correction took away; absent when no measured correction reduces the statement. */
@@ -164,6 +135,38 @@ const provenAmountOf = (statement: PaymentReturnEvidence): PaymentMonetaryAmount
   }
   const remaining = subtractAmounts(statement.amount, statement.correctedAmount);
   return Result.getOrUndefined(remaining);
+};
+
+/**
+ * A standing return statement of the same source-scoped economic effect proves other money than the
+ * candidate states. One effect is one amount: the candidate contradicts it and is never counted or
+ * folded in (#1151 "conflicting evidence becomes held reconciliation debt"). The standing statement is
+ * measured by what it still proves after its applied corrections, exactly as `priorReturnsOf` groups it.
+ */
+export const contradictsStandingReturn = (
+  evidence: readonly PaymentReturnEvidence[],
+  candidate: {
+    readonly amount: PaymentMonetaryAmount | undefined;
+    readonly economicEffectKey: string | undefined;
+    readonly observationId?: string | undefined;
+    readonly sourceBindingKey: string;
+  },
+): boolean => {
+  const { amount, economicEffectKey } = candidate;
+  return (
+    amount !== undefined &&
+    economicEffectKey !== undefined &&
+    evidence.some((statement) => {
+      const proven = provenAmountOf(statement);
+      return (
+        statement.observationId !== candidate.observationId &&
+        statement.economicEffectKey === economicEffectKey &&
+        statement.sourceBindingKey === candidate.sourceBindingKey &&
+        proven !== undefined &&
+        !sameAmount(proven, amount)
+      );
+    })
+  );
 };
 
 type EffectGroup = readonly [PaymentReturnEvidence, ...PaymentReturnEvidence[]];

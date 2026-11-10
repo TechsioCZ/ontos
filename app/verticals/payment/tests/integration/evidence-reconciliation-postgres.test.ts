@@ -1569,6 +1569,31 @@ it.live('#1151 one return effect stated with two amounts is held, never folded i
   ),
 );
 
+it.live('#1150 a corrected prior return and the REFUND later confirmed for the same money are one return', () =>
+  native(
+    Effect.gen(function* correctedReturnConfirmsRefund() {
+      const evidence = yield* scenario();
+      const routeA = yield* evidence.configureRefundRoute('erp-primary', 'refund-account-a');
+      const paid = yield* collectedBankPayment(evidence, 'collect-first');
+      const refund = yield* pendingBankRefund(evidence, routeA, paid, 30_000);
+      const key = 'erp:bank-return:29';
+      // The bank first reports 400 CZK against the collection, then corrects it down to 300 CZK.
+      const first = yield* bankReturnOf(evidence, key, 40_000)(paid.payment.paymentId, paid.collect.operationId);
+      yield* closeReturnCase(evidence, first.reconciliationCaseId);
+      expect((yield* correctReturn(evidence, paid.payment.paymentId, first.observationId)).interpretation).toBe(
+        'CORRECTION',
+      );
+      // The same effect, now correlated to the 300 CZK REFUND, agrees with what the first statement still proves.
+      expect(
+        yield* bankReturnOf(evidence, key, 30_000)(paid.payment.paymentId, refund.record.operationId),
+      ).toMatchObject({ acceptanceOutcome: 'ACCEPTED_OBSERVATION', interpretation: 'TRANSITION' });
+      expect(yield* evidence.coverage(paid.payment.paymentId)).toBe(
+        'Established collected=100000 returned=30000 remaining=70000',
+      );
+    }),
+  ),
+);
+
 it.live('#1151 a copy of a confirmed return that states another amount is never closed as accounted for', () =>
   native(
     Effect.gen(function* copyWithAnotherAmount() {
