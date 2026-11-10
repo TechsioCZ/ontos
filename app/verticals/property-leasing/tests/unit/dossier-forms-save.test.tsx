@@ -1,0 +1,218 @@
+// @rstest-environment happy-dom
+// The typed forms around a lease as a person uses them: logging communication, a new counterparty, a registration
+// sheet and a prepared notice save once from the shared Uložit only; typing and Enter change only the draft; leaving
+// with typed input asks first and an untouched form leaves at once. Only the i18n runtime and the router are replaced.
+import { saveLabelsFor } from '@app/admin-ui';
+import type { RevisionedSaveResult, SaveOutcome } from '@app/admin-ui';
+import { Effect, Option } from 'effect';
+import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
+import type { OccupancyCommand } from '../../shared/actions/apply-command.ts';
+import { DossierCommunication } from '../../src/routes/[lang]/najmy/dossier-communication.tsx';
+import type { DossierChanges } from '../../src/routes/[lang]/najmy/leasing-save.ts';
+import { NewCounterpartyForm } from '../../src/routes/[lang]/najmy/new-counterparty-form.tsx';
+import type { NewCounterpartyInput } from '../../src/routes/[lang]/najmy/new-counterparty-form.tsx';
+import { NoticeEditor } from '../../src/routes/[lang]/najmy/notice-editor.tsx';
+import type { NoticeContext } from '../../src/routes/[lang]/najmy/notice-templates.ts';
+import { RegistrationSheetForm } from '../../src/routes/[lang]/najmy/registration-sheet-form.tsx';
+import { leaseDraft } from '../fixtures/occupancy-draft.ts';
+import { button, buttons, click, field, mount, text, type, unmountAll, waitUntil } from '../support/occupancy-form.tsx';
+
+interface Navigation {
+  shouldBlock: () => boolean;
+}
+const { navigation } = rstest.hoisted(() => {
+  const state: Navigation = { shouldBlock: () => false };
+  return { navigation: state };
+});
+rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useBlocker: (options: { readonly shouldBlockFn: () => boolean }) => {
+    navigation.shouldBlock = options.shouldBlockFn;
+    return { status: 'idle' };
+  },
+}));
+rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
+  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
+}));
+
+const labels = saveLabelsFor('cs');
+const CANCEL = 'property-leasing.demo.cancel';
+const activityLabels = { CALL: 'c', EMAIL: 'e', MEETING: 'm', NOTE: 'n' } as const;
+const context: NoticeContext = {
+  partyName: 'Kavárna Dolce',
+  propertyAddress: 'Dlouhá 1, Praha',
+  propertyLabel: 'Dům Dlouhá',
+  record: { ...leaseDraft, state: 'ACTIVE' },
+  unitLabel: 'Kancelář 2',
+};
+const newId = Effect.succeed('99999999-9999-4999-8999-999999999999');
+const left: string[] = [];
+const onClose = () => {
+  left.push('closed');
+};
+
+/** A save that records what it was given and answers `saved`. */
+const recording =
+  <A,>(into: A[]) =>
+  (value: A) =>
+    Effect.sync((): SaveOutcome => {
+      into.push(value);
+      return 'saved';
+    });
+/** No registry customer has the typed name. */
+const noMatch = (): string | undefined => Option.getOrUndefined(Option.none<string>());
+
+/** Enter in a field: the browser submits the field's form. */
+const pressEnter = (id: string) =>
+  click(field(id)).pipe(Effect.andThen(Effect.sync(() => field(id).form?.requestSubmit())));
+
+beforeEach(() => {
+  rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  left.length = 0;
+});
+
+afterEach(() => {
+  unmountAll();
+  rstest.unstubAllGlobals();
+});
+
+describe('dossier and stay forms save from Uložit only', () => {
+  it.effect('communication: typing and Enter log nothing; Uložit logs once and the form starts empty', () =>
+    Effect.gen(function* communication() {
+      const logged: { readonly changes: DossierChanges; readonly revision: number }[] = [];
+      const onSave = (changes: DossierChanges, revision: number) =>
+        Effect.sync((): RevisionedSaveResult => {
+          logged.push({ changes, revision });
+          return 8;
+        });
+      yield* mount(<DossierCommunication activityLabels={activityLabels} canWrite onSave={onSave} revision={7} />);
+      expect(navigation.shouldBlock()).toBe(false);
+      yield* type('communication-summary', 'Domluva předání klíčů');
+      yield* pressEnter('communication-summary');
+      expect(logged).toEqual([]);
+      expect(navigation.shouldBlock()).toBe(true);
+
+      yield* click(button(labels.save));
+      yield* waitUntil(() => logged.length === 1);
+      expect(logged).toEqual([
+        { changes: { activity: { kind: 'CALL', summary: 'Domluva předání klíčů' } }, revision: 7 },
+      ]);
+      yield* waitUntil(() => field('communication-summary').value === '');
+      expect(navigation.shouldBlock()).toBe(false);
+    }),
+  );
+
+  it.effect('new counterparty: an untouched form closes at once; Uložit creates once; typed input asks first', () =>
+    Effect.gen(function* counterparty() {
+      const created: NewCounterpartyInput[] = [];
+      const onCreate = recording(created);
+      const form = (
+        <NewCounterpartyForm error={undefined} existingHref={noMatch} onCancel={onClose} onCreate={onCreate} />
+      );
+      yield* mount(form);
+      yield* click(buttons(CANCEL).at(-1));
+      expect(left).toEqual(['closed']);
+
+      unmountAll();
+      left.length = 0;
+      yield* mount(form);
+      yield* type('counterparty-name', 'Pekárna U Mlýna');
+      yield* type('counterparty-ico', '12345678');
+      yield* pressEnter('counterparty-name');
+      expect(created).toEqual([]);
+      yield* click(buttons(CANCEL).at(-1));
+      expect(buttons(labels.discard)).toHaveLength(1);
+      yield* click(button(labels.stay));
+
+      yield* click(buttons(labels.save)[0]);
+      yield* waitUntil(() => created.length === 1);
+      expect(created[0]).toMatchObject({
+        companyId: '12345678',
+        displayName: 'Pekárna U Mlýna',
+        partyType: 'ORGANIZATION',
+      });
+      expect(navigation.shouldBlock()).toBe(false);
+    }),
+  );
+
+  it.effect('new counterparty: a name already in the registry is never created', () =>
+    Effect.gen(function* duplicate() {
+      const created: NewCounterpartyInput[] = [];
+      const onCreate = recording(created);
+      yield* mount(
+        <NewCounterpartyForm
+          error={undefined}
+          existingHref={() => '#existing'}
+          onCancel={onClose}
+          onCreate={onCreate}
+        />,
+      );
+      yield* type('counterparty-name', 'Kavárna Dolce');
+      expect(button(labels.save).disabled).toBe(true);
+      expect(document.querySelector('a[href="#existing"]')).not.toBeNull();
+      expect(created).toEqual([]);
+    }),
+  );
+
+  it.effect('registration sheet: the suggested sheet closes untouched; Uložit creates it once and closes', () =>
+    Effect.gen(function* sheet() {
+      const sent: OccupancyCommand[] = [];
+      const onSave = recording(sent);
+      const form = <RegistrationSheetForm context={context} newId={newId} onClose={onClose} onSave={onSave} />;
+      yield* mount(form);
+      expect(navigation.shouldBlock()).toBe(false);
+      yield* click(buttons(CANCEL).at(-1));
+      expect(left).toEqual(['closed']);
+
+      unmountAll();
+      left.length = 0;
+      yield* mount(form);
+      yield* type('sheet-name-0', 'Jana Nováková');
+      yield* type('sheet-document-0', 'OP 123456');
+      yield* pressEnter('sheet-name-0');
+      expect(sent).toEqual([]);
+      expect(navigation.shouldBlock()).toBe(true);
+      yield* click(button(labels.save));
+      yield* waitUntil(() => left.length === 1);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({
+        _tag: 'CreateRegistrationSheet',
+        note: '',
+        occupants: [{ identityDocument: 'OP 123456', name: 'Jana Nováková' }],
+        purpose: 'Podnikání – nájem',
+      });
+    }),
+  );
+
+  it.effect('notice: the template text can be stored at once; typed text asks before leaving; Uložit stores once', () =>
+    Effect.gen(function* notice() {
+      const sent: OccupancyCommand[] = [];
+      const onSave = recording(sent);
+      yield* mount(
+        <NoticeEditor
+          context={context}
+          defaultEmail="najemce@dolce.cz"
+          defaultPhone=""
+          newId={newId}
+          onSave={onSave}
+        />,
+      );
+      expect(navigation.shouldBlock()).toBe(false);
+      expect(button(labels.save).disabled).toBe(false);
+      yield* type('notice-subject', 'Předání kanceláře');
+      yield* pressEnter('notice-subject');
+      expect(sent).toEqual([]);
+      expect(navigation.shouldBlock()).toBe(true);
+
+      yield* click(button(labels.save));
+      yield* waitUntil(() => sent.length === 1);
+      expect(sent[0]).toMatchObject({
+        _tag: 'PrepareNotice',
+        channel: 'EMAIL',
+        recipient: 'najemce@dolce.cz',
+        subject: 'Předání kanceláře',
+      });
+      yield* waitUntil(() => !navigation.shouldBlock());
+      expect(text()).not.toContain(labels.unsaved);
+    }),
+  );
+});

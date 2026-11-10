@@ -15,7 +15,7 @@ import {
   useRecordDraft,
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
-import type { RevisionedSaveResult } from '@app/admin-ui';
+import type { RevisionedSaveResult, SaveOutcome } from '@app/admin-ui';
 import { failureFeedback } from '../../../../shared/actions/apply-command.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
@@ -381,6 +381,21 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
       ),
     );
   };
+  /**
+   * Uložit of a form that adds a record to the lease or stay (a registration sheet, a prepared notice): one command,
+   * resent once against fresh records after an unrelated change, since an addition overwrites nothing; a saved one
+   * re-reads the page so the new record is listed.
+   */
+  const saveAddition = (command: OccupancyCommand): Effect.Effect<SaveOutcome> =>
+    snapshot === undefined
+      ? Effect.succeed('failed')
+      : saveLeasingCommand(command, snapshot.revision, () => true, setProposal).pipe(
+          Effect.flatMap((result) =>
+            Predicate.isNumber(result)
+              ? reload().pipe(Effect.ignore, Effect.as<SaveOutcome>('saved'))
+              : Effect.succeed(result),
+          ),
+        );
   const updateCounterpartyDossier = (counterpartyId: string) => (changes: DossierChanges) => {
     const entry = tenantDirectory.find((item) => item.counterpartyRef.resourceId === counterpartyId);
     if (entry !== undefined) {
@@ -400,10 +415,12 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
             setProposal,
           );
     };
+  /** The counterparty the create form saved; the page opens its dossier once the form is gone. */
+  const [createdCounterparty, setCreatedCounterparty] = useState<string>();
   /** S01-01: a firm or person becomes a counterparty of this company with its first timeline note. */
-  const createCounterparty = (input: NewCounterpartyInput) => {
+  const createCounterparty = (input: NewCounterpartyInput): Effect.Effect<SaveOutcome> => {
     if (snapshot === undefined) {
-      return;
+      return Effect.succeed('failed');
     }
     setCreateError(undefined);
     setProposal(undefined);
@@ -419,71 +436,76 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     if (input.partyType === 'ORGANIZATION' && input.companyId.trim() !== '') {
       request.companyId = input.companyId.trim();
     }
-    run(
-      createCustomer(request).pipe(
-        Effect.flatMap((created) =>
-          Effect.all(
-            {
-              idempotencyKey: newUuid,
-              referenceCredentials: makeReferenceGatewayCredentials(['party-registry']),
-            },
-            { concurrency: 2 },
-          ).pipe(
-            Effect.flatMap(({ idempotencyKey, referenceCredentials }) =>
-              executeApplyCommand(
-                {
-                  command: {
-                    _tag: 'UpdateCounterpartyDossier',
-                    activity: {
-                      kind: 'NOTE',
-                      summary:
-                        input.note.trim() === ''
-                          ? `${input.partyType === 'PERSON' ? 'Osoba' : 'Firma'} založena jako protistrana Nájempark.`
-                          : input.note.trim(),
-                    },
-                    counterpartyRef: created.counterpartyRef,
+    return createCustomer(request).pipe(
+      Effect.flatMap((created) =>
+        Effect.all(
+          {
+            idempotencyKey: newUuid,
+            referenceCredentials: makeReferenceGatewayCredentials(['party-registry']),
+          },
+          { concurrency: 2 },
+        ).pipe(
+          Effect.flatMap(({ idempotencyKey, referenceCredentials }) =>
+            executeApplyCommand(
+              {
+                command: {
+                  _tag: 'UpdateCounterpartyDossier',
+                  activity: {
+                    kind: 'NOTE',
+                    summary:
+                      input.note.trim() === ''
+                        ? `${input.partyType === 'PERSON' ? 'Osoba' : 'Firma'} založena jako protistrana Nájempark.`
+                        : input.note.trim(),
                   },
-                  expectedRevision: snapshot.revision,
+                  counterpartyRef: created.counterpartyRef,
                 },
-                'property-leasing.counterparty-create',
-                { idempotencyKey, referenceCredentials },
-              ),
+                expectedRevision: snapshot.revision,
+              },
+              'property-leasing.counterparty-create',
+              { idempotencyKey, referenceCredentials },
             ),
-            Effect.map((result) => ({
-              created,
-              parked: Schema.is(ActionProposalAcceptedSchema)(result) ? result : undefined,
-            })),
           ),
+          Effect.map((result) => ({
+            created,
+            parked: Schema.is(ActionProposalAcceptedSchema)(result) ? result : undefined,
+          })),
         ),
-        Effect.match({
-          onFailure: (failure) => {
-            const status = 'status' in failure && Predicate.isNumber(failure.status) ? failure.status : undefined;
-            let message = 'Protistranu se nepodařilo uložit. Zkontrolujte údaje a zkuste to znovu.';
-            if (status === 403) {
-              message = 'Pro zakládání protistran nemáte oprávnění.';
-            } else if (Predicate.isTagged(failure, 'CustomerCreateAmbiguous')) {
-              message = 'Protistrana se shoduje s více existujícími záznamy. Vyřešte shodu v registru zákazníků.';
-            }
-            setCreateError(message);
-            setActionFeedback(status === 403 ? 'forbidden' : undefined);
-          },
-          onSuccess: ({ created, parked }) => {
-            if (parked !== undefined) {
-              // The leasing counterparty and its first note exist only once the proposal is approved.
-              setProposal(parked);
-              setActionFeedback(undefined);
-              return;
-            }
-            const url = new URL(window.location.href);
-            url.search = '';
-            url.searchParams.set('counterpartyId', created.counterpartyRef.resourceId);
-            url.hash = 'tenant';
-            window.location.assign(url);
-          },
-        }),
       ),
+      Effect.match({
+        onFailure: (failure) => {
+          const status = 'status' in failure && Predicate.isNumber(failure.status) ? failure.status : undefined;
+          let message = 'Protistranu se nepodařilo uložit. Zkontrolujte údaje a zkuste to znovu.';
+          if (status === 403) {
+            message = 'Pro zakládání protistran nemáte oprávnění.';
+          } else if (Predicate.isTagged(failure, 'CustomerCreateAmbiguous')) {
+            message = 'Protistrana se shoduje s více existujícími záznamy. Vyřešte shodu v registru zákazníků.';
+          }
+          setCreateError(message);
+          setActionFeedback(status === 403 ? 'forbidden' : undefined);
+          return 'failed';
+        },
+        onSuccess: ({ created, parked }): SaveOutcome => {
+          setActionFeedback(undefined);
+          if (parked !== undefined) {
+            // The leasing counterparty and its first note exist only once the proposal is approved.
+            setProposal(parked);
+            return 'proposed';
+          }
+          setCreatedCounterparty(created.counterpartyRef.resourceId);
+          return 'saved';
+        },
+      }),
     );
   };
+  useEffect(() => {
+    if (createdCounterparty !== undefined) {
+      const url = new URL(window.location.href);
+      url.search = '';
+      url.searchParams.set('counterpartyId', createdCounterparty);
+      url.hash = 'tenant';
+      window.location.assign(url);
+    }
+  }, [createdCounterparty]);
   const openRentEditor = () => {
     dispatchEditor(occupancyEditorActions.OPEN_RENT({ terms: Option.fromUndefinedOr(selected?.rentTerms) }));
   };
@@ -705,6 +727,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     retry,
     runCommand,
     runReload: () => run(reload()),
+    saveAddition,
     saveCounterpartyDossier,
     saveOccupancy,
     searchGuests,
@@ -1169,7 +1192,8 @@ const OccupancyRelations = ({ model, state }: OccupancyDetailProps) => {
 };
 const OccupancyDocuments = ({ model, state }: OccupancyDetailProps) => {
   const { noticeContext, occupancyId, selected, tenant, tenantDossier } = model;
-  const { busy, runCommand, snapshot, t } = state;
+  const { busy, snapshot, t } = state;
+  const handleSaveAddition = state.saveAddition;
   return (
     <>
       {snapshot !== undefined && (
@@ -1177,23 +1201,20 @@ const OccupancyDocuments = ({ model, state }: OccupancyDetailProps) => {
           busy={busy}
           canWrite={state.canWrite}
           context={noticeContext}
-          key={`sheet:${snapshot.revision}`}
           newId={newUuid}
-          onCommand={runCommand}
+          onSave={handleSaveAddition}
           sheets={(snapshot.registrationSheets ?? []).filter((sheet) => sheet.occupancyId === occupancyId)}
         />
       )}
       {snapshot !== undefined && (
         <NoticeCard
-          busy={busy}
           canWrite={state.canWrite}
           context={noticeContext}
           defaultEmail={tenant?.email ?? tenantDossier?.contacts.find((contact) => contact.email !== '')?.email ?? ''}
           defaultPhone={tenant?.phone ?? tenantDossier?.contacts.find((contact) => contact.phone !== '')?.phone ?? ''}
-          key={`notice:${snapshot.revision}`}
           newId={newUuid}
           notices={(snapshot.preparedNotices ?? []).filter((notice) => notice.occupancyId === occupancyId)}
-          onCommand={runCommand}
+          onSave={handleSaveAddition}
         />
       )}
       {selected.note !== null && (

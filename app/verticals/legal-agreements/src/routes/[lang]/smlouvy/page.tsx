@@ -5,7 +5,6 @@ import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { Match } from 'effect';
@@ -14,6 +13,7 @@ import { AgreementsDraftForm } from './agreements-draft-form.tsx';
 import { agreementsInputOf } from './agreements-data.ts';
 import type { AgreementsInput } from './agreements-data.ts';
 import { ContractLinksCard, ContractTermsCard, ContractTermsForm, contractMonthlyTotal } from './contract-terms.tsx';
+import { SignatureForm } from './signature-form.tsx';
 import { AgreementDocumentDetail, AgreementDocumentStatus } from './document-detail.tsx';
 import type { AgreementDocumentState } from './document-selection.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
@@ -202,37 +202,12 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
             ))}
           </SectionCard>
           {state.detailView.canRecordSignature && (
-            <form
-              className="legalagreements:w-full legalagreements:space-y-3"
-              onSubmit={(event) => {
-                event.preventDefault();
-                recordSignature(selected);
-              }}
-            >
-              <p className="legalagreements:text-sm">{t('legal-agreements.demo.manualSignatureHint')}</p>
-              {(
-                [
-                  ['signedBy', state.signedBy, state.setSignedBy],
-                  ['signedFileName', state.signedFileName, state.setSignedFileName],
-                  ['signedReference', state.signedReference, state.setSignedReference],
-                  ['signedOn', state.signedOn, state.setSignedOn],
-                ] as const
-              ).map(([field, value, change]) => (
-                <FormInput
-                  disabled={busy}
-                  id={`contract-${field}`}
-                  key={field}
-                  label={t(`legal-agreements.demo.${field}`)}
-                  onChange={(event) => change(event.target.value)}
-                  required
-                  type={field === 'signedOn' ? 'date' : 'text'}
-                  value={value}
-                />
-              ))}
-              <Button disabled={busy} size="sm" type="submit" variant="warning">
-                {t('legal-agreements.demo.recordSignature')}
-              </Button>
-            </form>
+            <SignatureForm
+              busy={busy}
+              key={selected.contractRef.resourceId}
+              onSave={(draft) => recordSignature(selected, draft)}
+              reload={state.refreshAgreements}
+            />
           )}
         </div>
         <div className="legalagreements:min-w-0 legalagreements:space-y-6">
