@@ -648,10 +648,43 @@ export const paymentEvidencePersistenceForTransaction = (
         ({ operationId, row }) => interpretedViewOf(row, operationId),
         { concurrency: 1 },
       );
+      // Returns stated directly against an operation, one per source-scoped effect, capability-proven
+      // where their source must prove one: what the funds reader counts as prior returns (#1150).
+      const seenReturnEffects = new Set<string>();
+      const returnRows = rows.filter((row) => {
+        if (
+          row.factKind !== 'REFUND_CONFIRMED' ||
+          row.operationId === null ||
+          corrected.has(row.observationId) ||
+          row.capabilityCorrelated === false
+        ) {
+          return false;
+        }
+        const effect =
+          row.economicEffectKey === null
+            ? `observation:${row.observationId}`
+            : [row.sourceKind, row.sourceSystem, row.accountRef, row.environment, row.economicEffectKey].join('\u0000');
+        if (seenReturnEffects.has(effect)) {
+          return false;
+        }
+        seenReturnEffects.add(effect);
+        return true;
+      });
+      const returnStatements = yield* Effect.forEach(
+        returnRows,
+        (row) =>
+          amountOrUndefined(row.amountMinor, row.currency).pipe(
+            Effect.map((amount) => ({ amount: Option.getOrUndefined(amount), operationId: row.operationId })),
+          ),
+        { concurrency: 1 },
+      );
       return {
         acceptedObservations,
         attachedStatements,
         fullyDisprovenObservationIds: corrected,
+        returnStatements: returnStatements.flatMap(({ amount, operationId }) =>
+          amount === undefined || operationId === null ? [] : [{ amount, operationId }],
+        ),
       } satisfies PaymentInterpretedEvidence;
     },
   );

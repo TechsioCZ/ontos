@@ -549,6 +549,19 @@ describe('#1151 Payment evidence interpretation', () => {
       );
     expect(PaymentEvidenceDecision.$is('HOLD')(withRetiredReduction(new Set()))).toBe(true);
     expect(PaymentEvidenceDecision.$is('HOLD')(withRetiredReduction(new Set(['obs-retired'])))).toBe(false);
+    // A return stated against the collection itself (a prior return the funds reader counts) holds it too.
+    const withPriorReturn = (amountMinor: number) =>
+      interpretPaymentObservation(
+        {
+          ...aggregateOf([operation('EFFECT_CONFIRMED')], [accepted('obs-receipt')]),
+          returnStatements: [{ amount: czk(amountMinor), operationId: COLLECT_ID }],
+        },
+        { ...correction, amount: czk(20_000) },
+      );
+    expect(withPriorReturn(90_000)).toEqual(
+      PaymentEvidenceDecision.HOLD({ operationId: COLLECT_ID, reason: 'CORRECTION_EXCEEDS_REMAINING_FUNDS' }),
+    );
+    expect(PaymentEvidenceDecision.$is('CORRECTION')(withPriorReturn(80_000))).toBe(true);
     // A correction that was only recorded (for example of a pending statement) reduced nothing.
     const afterRecordOnly = interpretPaymentObservation(
       aggregateOf(

@@ -550,6 +550,36 @@ it.live(
     ),
 );
 
+// A POS return that never proved the selected pickup capability is no counted prior return: its case stays open.
+it.live('#1152 a POS return stated without the selected pickup capability never counts as a prior return', () =>
+  nativeRoutes(
+    Effect.gen(function* uncorrelatedPosReturn() {
+      const evidence = yield* routeScenario();
+      const { collect, payment } = yield* confirmedPickupCollect(evidence);
+      yield* configurePos(evidence, 'REFUND_EXECUTION');
+      const { pickupCapabilityRef: _unproven, ...withoutCapability } = posStatement(payment.paymentId, {
+        amount: routeCzk(40_000),
+        evidenceRef: 'pos-return-unproven-1',
+        factFamily: 'REFUND_EXECUTION',
+        factKind: 'REFUND_CONFIRMED',
+        operationId: collect.operationId,
+        sourceOccurrenceId: 'pos-return-unproven-1',
+      });
+      const held = yield* recordLocal(evidence, withoutCapability);
+      expect(held.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+      expect(
+        yield* failureCodeOf(
+          evidence.decide({
+            caseId: held.reconciliationCaseId ?? '',
+            decision: { _tag: 'CLOSE_CASE', evidenceRef: 'pos-return-unproven-1' },
+            reason: 'Close the POS return as an already counted prior return',
+          }),
+        ),
+      ).toBe('payment_reconciliation_obligation_unresolved');
+    }),
+  ),
+);
+
 // ---- Economic effect ledger (#1151) harness ----
 const nativeLedger = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
