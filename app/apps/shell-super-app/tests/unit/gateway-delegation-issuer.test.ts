@@ -33,6 +33,7 @@ import {
   delegationUnavailable,
 } from '../../api/auth/gateway-delegation-errors.ts';
 import { issueDelegatedGatewayContextAssertion } from '../../api/auth/gateway-delegation-issuer.ts';
+import { ModuleCredentialEnrolmentSource } from '../../api/auth/gateway-delegation-policy.ts';
 import { GatewayDelegationVerificationLive } from '../../api/auth/gateway-delegation-verification.ts';
 import { GatewayDelegationExchangeLedger } from '../../api/auth/gateway-delegation-exchanges.service.ts';
 import { GatewayDelegationExchangeReplay } from '../../api/auth/gateway-delegation-exchange-replay.ts';
@@ -69,7 +70,6 @@ const callerIdentity: ResolvedPrincipalIdentity = {
 interface DelegationCase {
   readonly authRows?: DelegationUnitRows;
   readonly authUnavailable?: boolean;
-  readonly bindingRevision?: string;
   readonly callerKind?: 'human' | 'service';
   readonly catalogRevision?: string;
   readonly catalogUnavailable?: boolean;
@@ -280,14 +280,6 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
   const moduleStates = moduleStatesFor(snapshot.composition.modules, input.moduleState);
   const provider = ConfigProvider.fromUnknown({
     ONTOS_GATEWAY_ISSUER: issuer,
-    ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-      {
-        compositionRevision: input.bindingRevision ?? revision,
-        providerKeyId: sourceKeyId,
-        sourceAppId: 'catalog',
-        sourceBuildMarker: 'catalog-build',
-      },
-    ]),
     ONTOS_GATEWAY_PUBLIC_JWKS: input.verificationUnavailable === true ? '{"keys":[]}' : publicJwks,
   });
   const callerKeyId = input.providerKeyId ?? sourceKeyId;
@@ -301,6 +293,18 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
       Effect.provide(signer),
       Effect.provide(GatewayDelegationVerificationLive),
       Effect.provideService(ConfigProvider.ConfigProvider, provider),
+      // The platform enrolled the catalog module's credential; its binding is derived from the installed release.
+      Effect.provideService(ModuleCredentialEnrolmentSource, {
+        load: Effect.succeed([
+          {
+            appId: 'catalog',
+            authBindingId: callerIdentity.authBindingId,
+            boundAt: new Date(0),
+            principalId: callerIdentity.principalId,
+            providerKeyId: sourceKeyId,
+          },
+        ]),
+      }),
       Effect.provideService(ShellInstalledModuleCatalog, {
         load:
           input.catalogUnavailable === true
@@ -708,7 +712,7 @@ const cryptoNegatives: readonly (readonly [string, DelegationCase, GatewayDelega
   ['disabled-original-key', { authRows: [[[false, null]]] }, 'forbidden'],
   ['unavailable-verification', { verificationUnavailable: true }, 'unavailable'],
   ['unavailable-current-catalog', { catalogUnavailable: true }, 'unavailable'],
-  ['stale-current-composition', { catalogRevision: 'b'.repeat(64) }, 'reload_required'],
+  ['stale-current-composition', { catalogRevision: 'b'.repeat(64), originator: 'ok' }, 'reload_required'],
   ['denied-current-context', { contextFailure: 'denied' }, 'forbidden'],
   ['unavailable-current-context', { contextFailure: 'unavailable' }, 'unavailable'],
   ['suspended-module', { moduleState: 'suspended' }, 'forbidden'],
@@ -717,7 +721,6 @@ const cryptoNegatives: readonly (readonly [string, DelegationCase, GatewayDelega
   ['originator-denied', { originator: 'denied' }, 'forbidden'],
   ['originator-unavailable', { originator: 'unavailable' }, 'unavailable'],
   ['originator-is-the-calling-module', { originator: 'caller' }, 'forbidden'],
-  ['module-bound-to-another-release', { bindingRevision: 'b'.repeat(64), originator: 'ok' }, 'forbidden'],
 ];
 for (const [label, input, code] of cryptoNegatives) {
   it.effect(`rejects ${label} before ledger claim or signing through the actual delegation`, () =>

@@ -19,7 +19,11 @@ import {
 } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { GatewayDelegationExchangeLedgerLive } from './auth/gateway-delegation-exchanges.service.ts';
 import { issueDelegatedGatewayContextAssertion } from './auth/gateway-delegation-issuer.ts';
-import { admitIntegrationCredential, loadGatewayModuleBindings } from './auth/gateway-delegation-policy.ts';
+import {
+  admitIntegrationCredential,
+  loadGatewayModuleBindings,
+  ModuleCredentialEnrolmentSourceLive,
+} from './auth/gateway-delegation-policy.ts';
 import { GatewayOriginatorEvidenceLive } from './auth/gateway-originator-evidence.service.ts';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type {
@@ -3971,6 +3975,9 @@ export const makeShellAuthenticationApiRuntime = (
   const originatorEvidenceLayer = GatewayOriginatorEvidenceLive.pipe(
     Layer.provide(Layer.mergeAll(runtimeCorePersistenceLive, runtimeAuthPersistenceLive)),
   );
+  const moduleCredentialEnrolmentLayer = ModuleCredentialEnrolmentSourceLive.pipe(
+    Layer.provide(runtimeCorePersistenceLive),
+  );
   const handlerDependenciesLive = Layer.mergeAll(
     emailDeliveryRequestsLive,
     authenticationIsolateLive,
@@ -3987,6 +3994,7 @@ export const makeShellAuthenticationApiRuntime = (
     delegationScopeResolverLayer,
     delegationLedgerLayer,
     originatorEvidenceLayer,
+    moduleCredentialEnrolmentLayer,
     GatewayDelegationVerificationLive,
     authenticationLayer,
     runtimeAuthPersistenceLive,
