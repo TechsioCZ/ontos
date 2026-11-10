@@ -52,6 +52,7 @@ const accessRole = {
   scope: companyScope,
 } as const;
 const accessOptions: ListAccessPeopleOptionsResponse = {
+  admissionCandidates: [],
   capabilities: [],
   managers: [],
   people: [],
@@ -60,8 +61,10 @@ const accessOptions: ListAccessPeopleOptionsResponse = {
   scopes: [{ label: 'Firma', scope: companyScope }],
   teams: [],
   writeAvailability: {
+    canAdmitMember: false,
     canAssign: true,
     canDelegate: false,
+    canEndMembership: false,
     canManageTeams: false,
     canRevokeDelegation: false,
     canTransferOwnership: false,

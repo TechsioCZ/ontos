@@ -262,7 +262,20 @@
         "confirmRemove": "Odebrat roli? Přístup zanikne okamžitě.",
         "assigned": "Role byla přiřazena.",
         "removed": "Role byla odebrána.",
-        "selfReduction": "Odebrat vlastní oprávnění je vždy možné."
+        "selfReduction": "Odebrat vlastní oprávnění je vždy možné.",
+        "admitSection": "Lidé firmy bez přístupu",
+        "admitHelp": "Člen firemního adresáře získá členství ve firmě i v tenantovi. Role přidělíte zvlášť.",
+        "admitMember": "Přidat člena",
+        "admitMemberNamed": "Přidat člena: {{person}}",
+        "confirmAdmit": "Přidat osobu jako člena firmy?",
+        "admitEffect": "Získá členství ve firmě i v tenantovi, zatím bez rolí.",
+        "noCandidates": "V adresáři firmy není nikdo bez přístupu.",
+        "endMembership": "Ukončit členství",
+        "endMembershipNamed": "Ukončit členství: {{person}}, {{scope}}",
+        "confirmEndMembership": "Ukončit členství? Přístup zanikne okamžitě.",
+        "endMembershipEnds": "Skončí role: {{roles}}, týmy: {{teams}}, delegace: {{delegations}}.",
+        "endMembershipEffect": "Skončí i role, týmy a delegace v tomto rozsahu. Při novém přidání začíná bez nich.",
+        "endMembershipReason": "Důvod ukončení"
       },
       "changes": {
         "title": "Novinky v oprávněních",

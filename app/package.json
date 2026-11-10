@@ -148,6 +148,7 @@
     "demo:seed:product-images": "node scripts/demo/seed-product-images.mts",
     "demo:composition": "node scripts/siampark/development-composition.mts --environment development",
     "demo:serve": "node scripts/siampark/serve-demo.mts",
+    "demo:stage:reviewed-people": "node scripts/demo/stage-reviewed-people.mts",
     "shell:ui-candidates": "node scripts/generate-shell-ui-candidates.mts --all",
     "shell:ui-candidates:check": "node scripts/generate-shell-ui-candidates.mts --check --all",
     "lint:repository-policy": "node tools/oxlint/effect-native/repository-policy.mts"

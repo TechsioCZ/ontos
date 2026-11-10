@@ -1,8 +1,13 @@
 import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { templateDatabaseLayer, withAccessAdminCase } from '../support/access-admin-real-gate-fixture.ts';
-import type { AccessAdminCase } from '../support/access-admin-real-gate-fixture.ts';
+import { accessPeopleDeclarations } from '../../api/access-admin/people.ts';
+import {
+  TASKS_CAPABILITY_KEY,
+  accessAdminTemplateLayer,
+  withAccessAdminCase,
+} from '../support/access-admin-real-gate-fixture.ts';
+import type { AccessAdminCase, DeclarationQuestion, Persona } from '../support/access-admin-real-gate-fixture.ts';
 
 /*
  * P14 — cross-lane security integration (#1343), the real-gate spine.
@@ -24,10 +29,11 @@ import type { AccessAdminCase } from '../support/access-admin-real-gate-fixture.
  *   agent              nothing: agents are refused this surface (O67-Q5)
  *   workload           nothing: never a human administrator
  *   foreignOwner       its own tenant's authority only, never this tenant's
+ *   manager            company A only, through a delegation naming the Lidé admit and end keys
+ *   lapsed             nothing in company B while the tenant row has expired
  *
- * The HTTP half of the table (401/403/409/422/503 per surface, tenant isolation, stale preview,
- * approval single use) needs P1's registered groups and P2–P7's handlers; it lands on top of this
- * fixture once `shared/api.ts` serves them. Proposals are created by calling the owner Action with
+ * Lidé's HTTP half (every people write through the production Shell API) is
+ * `access-admin-people-writes.test.ts`. Proposals are created by calling the owner Action with
  * `transport.intent = 'propose'` (O80) and then approved and executed in the inbox — that flow is
  * the next addition to the approval scenarios below.
  */
@@ -43,7 +49,24 @@ const SPINE_DECLARATION = 'core.modules.tenant-module.change-state';
 /** A capability the release catalog publishes for every tenant. */
 const SHELL_READ_DECLARATION = 'core.shell.composition.read';
 
-it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '120 seconds' })(
+/** The Lidé membership writes: shipped by the Shell entrypoints, published in no release. */
+const MEMBERSHIP_WRITE_KEYS = [
+  'shell-super-app.access-people.admit-member',
+  'shell-super-app.access-people.end-membership',
+] as const;
+
+/** The declaration a Lidé entrypoint ships for one key, exactly as the BFF hands it to the gate. */
+const shippedDeclaration = (key: string) => {
+  const declaration = Object.values(accessPeopleDeclarations).find((candidate) => candidate.key === key);
+  if (declaration === undefined) {
+    throw new Error(`api/access-admin/people.ts ships no declaration for ${key}`);
+  }
+  return declaration;
+};
+
+type Where = Pick<DeclarationQuestion, 'legalEntityId' | 'scope'>;
+
+it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '120 seconds' })(
   'the real access gate',
   (suite) => {
     suite.effect('a bootstrapped owner may run every published administration capability', () =>
@@ -175,6 +198,58 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '120 secon
           const member = yield* accessCase.decide({ declarationKey: SPINE_DECLARATION, persona: 'member' });
           expect(member.outcome).toBe('DENIED');
           expect(accessCase.ids.get('member')?.principalId).not.toBe(accessCase.ids.get('owner')?.principalId);
+        }),
+      ),
+    );
+
+    suite.effect('a company role decides in its own company only, and an expired tenant row holds nothing', () =>
+      withAccessAdminCase((accessCase) =>
+        Effect.gen(function* seededPeopleIntent() {
+          const [companyA, companyB] = accessCase.companies;
+          const ask = (persona: Persona, legalEntityId: string | undefined) =>
+            accessCase.decide({ declarationKey: TASKS_CAPABILITY_KEY, legalEntityId, persona, scope: 'legal-entity' });
+          expect((yield* ask('manager', companyA)).outcome).toBe('ALLOWED');
+          expect((yield* ask('manager', companyB)).outcome).toBe('DENIED');
+          // The lapsed person still holds an active company-B row and B assignment; only the tenant row
+          // ended. Admission must never turn that back on (skeptic S1), so it must be DENIED here first.
+          expect((yield* ask('lapsed', companyB)).outcome).toBe('DENIED');
+        }),
+      ),
+    );
+
+    suite.effect('admitting and ending a membership is decided by administration of that scope', () =>
+      withAccessAdminCase((accessCase) =>
+        Effect.gen(function* membershipWriteDecisions() {
+          const [companyA, companyB] = accessCase.companies;
+          const tenant: Where = { scope: 'tenant' };
+          const inA: Where = { legalEntityId: companyA, scope: 'legal-entity' };
+          const inB: Where = { legalEntityId: companyB, scope: 'legal-entity' };
+          const expected: readonly (readonly [Persona, Where, 'ALLOWED' | 'DENIED'])[] = [
+            ['owner', tenant, 'ALLOWED'],
+            ['owner', inA, 'ALLOWED'],
+            ['companyAdmin', inA, 'ALLOWED'],
+            ['companyAdmin', inB, 'DENIED'],
+            ['companyAdmin', tenant, 'DENIED'],
+            ['member', inA, 'DENIED'],
+            ['agent', inA, 'DENIED'],
+            // The manager's delegation names both keys (fixture SQL; no command can grant them), so the
+            // gate admits the manager in company A. Core's own permanent-basis rule is what refuses
+            // that delegate: access-admin-people-writes.test.ts proves the 403 people_authority_missing.
+            ['manager', inA, 'ALLOWED'],
+            ['manager', inB, 'DENIED'],
+          ];
+          for (const declarationKey of MEMBERSHIP_WRITE_KEYS) {
+            const declaration = shippedDeclaration(declarationKey);
+            for (const [persona, where, outcome] of expected) {
+              const answer = yield* accessCase.decide({ declaration, declarationKey, persona, ...where });
+              expect({ declarationKey, outcome: answer.outcome, persona, where }).toEqual({
+                declarationKey,
+                outcome,
+                persona,
+                where,
+              });
+            }
+          }
         }),
       ),
     );
