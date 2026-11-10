@@ -1,10 +1,18 @@
 // "Sortiment a ceník" of the market detail: the merchandise price list of the market and its product exceptions
 // (DESIGN 3.2). Commands go through the merchandise apply-command Action; switches are disabled for non-managers.
-import { SaveBar, SectionCard, useRecordDraft } from '@app/admin-ui';
+import {
+  SaveBar,
+  SectionCard,
+  UnsavedChangesDialog,
+  saveLabelsFor,
+  useRecordDraft,
+  useUnsavedChangesGuard,
+} from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import type { MarketSettings } from '@app/merchandise/domain/market-offers';
 import type { RecordsResponse } from '@app/merchandise/contracts/records';
 import { pageDataPending } from '@app/shared-contracts/page-data';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
@@ -53,15 +61,15 @@ interface PriceListProps {
 
 const isProposal = Schema.is(ActionProposalAcceptedSchema);
 
-/** One price-list autosave: the market's new revision once committed; a change parked for approval is not saved. */
+/** One price-list save: the market's new revision once committed; a change parked for approval is 'proposed'. */
 export const priceListSaveResult = (result: MarketCommandResult): RevisionedSaveResult =>
-  isProposal(result) ? 'failed' : (result.marketRevision ?? 'saved');
+  isProposal(result) ? 'proposed' : (result.marketRevision ?? 'saved');
 
 /**
- * The configured price list: edits autosave as one ConfigureMarket over the market's own revision. An edit parked for
- * approval is not saved: the draft stays unconfirmed on its base revision and the person is told it awaits approval.
+ * The configured price list: the draft changes only on screen; Save sends one ConfigureMarket over the market's own
+ * revision. An edit parked for approval is 'proposed': the draft stays unconfirmed and is not sent again.
  */
-const PriceListEditor = ({
+export const PriceListEditor = ({
   canManage,
   market,
   onAwaitingApproval,
@@ -69,8 +77,8 @@ const PriceListEditor = ({
   revision,
   settings,
 }: Omit<PriceListProps, 'onDone'> & { readonly settings: MarketSettings }) => {
-  const { text } = useMarketText();
-  const autosave = useRecordDraft<MarketPricingForm, never>({
+  const { language, text } = useMarketText();
+  const record = useRecordDraft<MarketPricingForm, never>({
     isValid: (value) => pricingIssues(value).length === 0,
     refresh,
     revision: settings.revision,
@@ -93,7 +101,11 @@ const PriceListEditor = ({
       ),
     server: pricingFormOf(settings),
   });
-  const issues = pricingIssues(autosave.draft);
+  // Leaving the detail page with unsaved price-list changes asks first; the dialog is the one question for this form.
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
+  const labels = saveLabelsFor(language);
+  const issues = pricingIssues(record.draft);
   if (!canManage) {
     const mode = text(`form.offerMode${settings.offerMode}`);
     const summary = text('detail.assortment.summary', {
@@ -103,19 +115,21 @@ const PriceListEditor = ({
     });
     return <p className="text-sm">{[mode, summary].join(' · ')}</p>;
   }
-  const handleReloadLatest = () => autosave.reloadLatest();
-  const handleSave = () => autosave.save();
+  const handleDraftChange = record.setDraft;
+  const handleReloadLatest = record.reloadLatest;
+  const handleSave = record.save;
   return (
     <div className="flex flex-col gap-150">
       <PricingFields
-        form={autosave.draft}
+        form={record.draft}
         issues={issues}
-        onChange={(form) => autosave.setDraft(form)}
+        onChange={handleDraftChange}
         prefix="market-pricing"
         showIssues={issues.length > 0}
         size="sm"
       />
-      <SaveBar onReloadLatest={handleReloadLatest} onSave={handleSave} status={autosave.status} />
+      <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </div>
   );
 };
@@ -146,7 +160,7 @@ const PriceList = ({
       />
     );
   }
-  /** Starts the price list from the defaults (whole catalogue, catalogue prices); edits then autosave. */
+  /** Starts the price list from the defaults (whole catalogue, catalogue prices); edits are then saved with Save. */
   const configure = () => {
     setBusy(true);
     setFailure(null);
