@@ -102,12 +102,15 @@ const redemptionContext = (owner: string, file: string) => ({
 });
 const rootFile = 'api/index.ts';
 const sharedFile = 'shared/api.ts';
-const httpImport = "import { makeOwnerActionApprovalApiLive } from '@app/core-runtime/access/approvals/owner-http';";
+const httpImport =
+  "import { makeOwnerActionApproveHandler, makeOwnerActionInspectHandler } from '@app/core-runtime/access/approvals/owner-http';";
 const standaloneAuthImport =
   "import { authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal } from './auth/action-principal.ts';";
 const principalImport =
   "import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';";
-const boundOwnerApprovalHandler = 'makeOwnerActionApprovalApiLive(crmApi, authenticateOwnerApprovalPrincipal)';
+const boundOwnerApprovalGroup = "HttpApiBuilder.group(crmApi, 'ownerActionApprovals', (handlers) =>";
+const approveHandlerCall = "handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))";
+const inspectHandlerCall = "handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal))";
 const supportStart = '// <generated-governed-http-handler-support-imports>';
 const supportEnd = '// </generated-governed-http-handler-support-imports>';
 const authFixture = [
@@ -392,8 +395,7 @@ for (const owner of owners) {
 
 it('does not publish an absent readonly handler or an unused platform factory', () => {
   expect(
-    inspect('crm', sourceOf('crm', rootFile).replaceAll('makeOwnerActionApprovalApiLive', 'unusedPlatformFactory'))
-      .kind,
+    inspect('crm', sourceOf('crm', rootFile).replaceAll('makeOwnerActionApproveHandler', 'unusedPlatformFactory')).kind,
   ).toBe('invalid');
   expect(
     inspectOwnerActionApprovalMount('', '', 'availability', {
@@ -409,15 +411,18 @@ it('rejects foreign, shadowed, replaced and duplicate approval authority in the 
   const root = consolidateOwnerApprovalAuthenticationImport(sourceOf(owner, rootFile));
   for (const invalid of [
     root.replace('access/approvals/owner-http', 'access/approvals/foreign-http'),
+    root.replace(boundOwnerApprovalGroup, "HttpApiBuilder.group(foreignApi, 'ownerActionApprovals', (handlers) =>"),
+    root.replace(boundOwnerApprovalGroup, "HttpApiBuilder.group(crmApi, 'foreignApprovals', (handlers) =>"),
+    root.replace(boundOwnerApprovalGroup, "ForeignBuilder.group(crmApi, 'ownerActionApprovals', (handlers) =>"),
     root.replace(
-      boundOwnerApprovalHandler,
-      'makeOwnerActionApprovalApiLive(foreignApi, authenticateOwnerApprovalPrincipal)',
+      approveHandlerCall,
+      "handle('approve', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal))",
     ),
-    root.replace(
-      boundOwnerApprovalHandler,
-      'makeOwnerActionApprovalApiLive(authenticateOwnerApprovalPrincipal, crmApi)',
-    ),
-    root.replace(boundOwnerApprovalHandler, 'makeOwnerActionApprovalApiLive(authenticateOwnerApprovalPrincipal)'),
+    root.replace(approveHandlerCall, "handle('approve', makeOwnerActionApproveHandler(foreignAuthentication))"),
+    root.replace(approveHandlerCall, "handle('approve', makeOwnerActionApproveHandler())"),
+    root.replace(`.${inspectHandlerCall}`, ''),
+    `${root}\nconst extraApprove = makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal);\n`,
+    `${root}\nfunction shadow(HttpApiBuilder) {}\n`,
     root.replace('access/approvals/owner-runtime', 'access/approvals/foreign-runtime'),
     root.replace(
       'authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal',

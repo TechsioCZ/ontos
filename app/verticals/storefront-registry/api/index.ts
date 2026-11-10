@@ -1,6 +1,7 @@
 import {
   OwnerActionApprovalSchemaErrorLive,
-  makeOwnerActionApprovalApiLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { OwnerActionApprovals, makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
@@ -208,7 +209,11 @@ export const makeStorefrontRegistryApiRuntime = (
   );
   const apiHandlersLive = Layer.mergeAll(
     storefrontRegistryReadinessLayer,
-    makeOwnerActionApprovalApiLive(storefrontRegistryApi, authenticateOwnerApprovalPrincipal).pipe(
+    HttpApiBuilder.group(storefrontRegistryApi, 'ownerActionApprovals', (handlers) =>
+      handlers
+        .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+        .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+    ).pipe(
       GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
       GovernedReadLayer.provide(governedActionRuntimeLive),
     ),

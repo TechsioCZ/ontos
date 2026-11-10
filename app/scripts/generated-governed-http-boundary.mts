@@ -75,8 +75,10 @@ const GOVERNED_HTTP_API_IDENTITY_ALIAS = 'governedHttpApiIdentity';
 export const OWNER_ACTION_APPROVAL_PUBLICATION = {
   api: 'OwnerActionApprovalApi',
   apiModule: '@app/core-runtime/access/approvals/owner-api',
-  handler: 'makeOwnerActionApprovalApiLive',
+  approveHandler: 'makeOwnerActionApproveHandler',
+  group: 'ownerActionApprovals',
   handlerModule: '@app/core-runtime/access/approvals/owner-http',
+  inspectHandler: 'makeOwnerActionInspectHandler',
   key: 'owner-action-approvals',
   provider: 'makeOwnerActionApprovalsLive',
   providerModule: '@app/core-runtime/access/approvals/owner-runtime',
@@ -22062,9 +22064,17 @@ const hasCapturedOwnerApprovalLayer = (
   );
 };
 
-const nativeApprovalHandlerRange = (source: string, binding: string): SourceRange | undefined => {
-  const calls = [...maskNonCode(source).matchAll(new RegExp(`\\b${escapeRegExp(binding)}\\s*\\(`, 'gu'))];
-  const call = calls.length === 1 ? calls[0] : undefined;
+/** The one `HttpApiBuilder.group(<api>, 'ownerActionApprovals', ...)` call and its `.pipe(...)`. */
+const nativeApprovalHandlerRange = (source: string): SourceRange | undefined => {
+  const groups = [
+    ...maskComments(source).matchAll(
+      new RegExp(
+        `\\bHttpApiBuilder\\.group\\s*\\(\\s*[A-Za-z_$][A-Za-z0-9_$]*\\s*,\\s*['"]${OWNER_ACTION_APPROVAL_PUBLICATION.group}['"]`,
+        'gu',
+      ),
+    ),
+  ];
+  const call = groups.length === 1 ? groups[0] : undefined;
   const opening = call === undefined ? undefined : source.indexOf('(', call.index);
   const closing = opening === undefined ? undefined : matchingDelimiterEnd(source, opening, '(', ')');
   const pipe = closing === undefined ? undefined : /^\s*\.pipe\s*\(/u.exec(source.slice(closing + 1));
@@ -22127,29 +22137,72 @@ const originalApprovalHandlerProvider = (source: string, transforms: readonly st
     ? originalApprovalProvisionInput(source, transforms[1] ?? '')
     : undefined;
 
+interface OwnerApprovalHandlerBindings {
+  readonly approve: string;
+  readonly inspect: string;
+}
+
+/** Each original Core endpoint handler is called once, inside the mounted approval group. */
+const callsApprovalHandlersOnlyInGroup = (
+  source: string,
+  handlers: OwnerApprovalHandlerBindings,
+  range: SourceRange,
+): boolean =>
+  [handlers.approve, handlers.inspect].every((binding) => {
+    const calls = [...maskComments(source).matchAll(new RegExp(`\\b${escapeRegExp(binding)}\\s*\\(`, 'gu'))];
+    return calls.length === 1 && (calls[0]?.index ?? -1) > range.start && (calls[0]?.index ?? -1) < range.end;
+  });
+
+interface OwnerApprovalGroupMount {
+  readonly auth: string;
+  readonly receivingApi: string;
+}
+
+/** The exact owner group: original receiving API, fixed group name and both Core handlers. */
+const ownerApprovalGroupMount = (
+  source: string,
+  handlers: OwnerApprovalHandlerBindings,
+  base: string,
+  api: string,
+): OwnerApprovalGroupMount | undefined => {
+  const contract = OWNER_ACTION_APPROVAL_PUBLICATION;
+  const args = wholeCallArguments(base, /^HttpApiBuilder\.group\(/u, true);
+  const [receivingApi, group, build] = args?.length === 3 ? args : [];
+  const auth =
+    /\.handle\(\s*['"]approve['"]\s*,\s*[A-Za-z_$][A-Za-z0-9_$]*\(\s*(?<auth>[A-Za-z_$][A-Za-z0-9_$]*)\s*\)/u.exec(
+      build ?? '',
+    )?.groups?.auth;
+  if (receivingApi === undefined || group === undefined || build === undefined || auth === undefined) {
+    return undefined;
+  }
+  const authImport = namedSourceImport(source, auth);
+  return hasExactSourceTokens(tokenizeGovernedClient(group), `'${contract.group}'`) &&
+    hasExactSourceTokens(
+      tokenizeGovernedClient(build),
+      `(handlers) => handlers.handle('approve', ${handlers.approve}(${auth})).handle('inspect', ${handlers.inspect}(${auth}))`,
+    ) &&
+    hasRuntimeNamedSourceImport(source, 'HttpApiBuilder', 'HttpApiBuilder', EFFECT_EDGE_MODULE) &&
+    hasRuntimeNamedSourceImport(source, receivingApi, api, OWNER_SHARED_API_MODULE) &&
+    authImport?.imported === 'authenticateOperationPrincipal' &&
+    authImport.modulePath === ACTION_PRINCIPAL_MODULE
+    ? { auth, receivingApi }
+    : undefined;
+};
+
 const hasOriginalApprovalHandler = (
   source: string,
-  maker: string,
+  handlers: OwnerApprovalHandlerBindings,
   range: SourceRange,
   api: string,
   backendRegistration: string,
   context: OwnerApprovalSourceContext,
 ): boolean => {
   const pipeline = outputPipeExpression(range.value);
-  const args =
-    pipeline === undefined
-      ? undefined
-      : wholeCallArguments(pipeline.base, new RegExp(`^${escapeRegExp(maker)}\\(`, 'u'), true);
-  const auth = args?.length === 2 ? args[1] : undefined;
-  const receivingApi = args?.[0];
-  const authImport = auth === undefined ? undefined : namedSourceImport(source, auth);
+  const mount = pipeline === undefined ? undefined : ownerApprovalGroupMount(source, handlers, pipeline.base, api);
   const provider = pipeline === undefined ? undefined : originalApprovalHandlerProvider(source, pipeline.transforms);
   return (
-    auth !== undefined &&
-    receivingApi !== undefined &&
-    hasRuntimeNamedSourceImport(source, receivingApi, api, OWNER_SHARED_API_MODULE) &&
-    authImport?.imported === 'authenticateOperationPrincipal' &&
-    authImport.modulePath === ACTION_PRINCIPAL_MODULE &&
+    mount !== undefined &&
+    callsApprovalHandlersOnlyInGroup(source, handlers, range) &&
     provider !== undefined &&
     (hasOriginalApprovalProvider(source, provider, backendRegistration, context) ||
       hasCapturedOwnerApprovalLayer(source, provider, backendRegistration, context) ||
@@ -22157,9 +22210,11 @@ const hasOriginalApprovalHandler = (
     hasStableReadFactoryBindings(
       source,
       new Map([
-        [maker, 0],
-        [auth, 0],
-        [receivingApi, 0],
+        [handlers.approve, 0],
+        [handlers.inspect, 0],
+        ['HttpApiBuilder', 0],
+        [mount.auth, 0],
+        [mount.receivingApi, 0],
       ]),
       '',
     )
@@ -22179,19 +22234,29 @@ export const inspectOwnerActionApprovalMount = (
   context: OwnerApprovalSourceContext,
 ): OwnerActionApprovalMount => {
   const contract = OWNER_ACTION_APPROVAL_PUBLICATION;
-  const maker = originalPlatformImportBinding(source, contract.handler, contract.handlerModule);
-  if (maker === undefined) {
-    return source.includes(contract.handlerModule) || source.includes(contract.handler)
-      ? { kind: 'invalid', reason: 'approval handler import is not the original runtime Core export' }
+  const approve = originalPlatformImportBinding(source, contract.approveHandler, contract.handlerModule);
+  const inspect = originalPlatformImportBinding(source, contract.inspectHandler, contract.handlerModule);
+  if (approve === undefined || inspect === undefined) {
+    return [contract.handlerModule, contract.approveHandler, contract.inspectHandler].some((claim) =>
+      source.includes(claim),
+    )
+      ? { kind: 'invalid', reason: 'approval handler imports are not the original runtime Core exports' }
       : { kind: 'absent' };
   }
-  const range = nativeApprovalHandlerRange(source, maker);
+  const range = nativeApprovalHandlerRange(source);
   const api = governedApiBinding(sharedApi);
   return range !== undefined &&
     api !== undefined &&
     hasValidGovernedHttpCompositionRoot(sharedApi, source, `${toCamelCase(owner)}BackendRegistration`) &&
     hasMountedApprovalSibling(sharedApi, source, range) &&
-    hasOriginalApprovalHandler(source, maker, range, api, `${toCamelCase(owner)}BackendRegistration`, context)
+    hasOriginalApprovalHandler(
+      source,
+      { approve, inspect },
+      range,
+      api,
+      `${toCamelCase(owner)}BackendRegistration`,
+      context,
+    )
     ? { kind: 'mounted' }
     : {
         kind: 'invalid',

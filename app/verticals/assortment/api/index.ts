@@ -2,7 +2,8 @@ import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/ow
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import {
   OwnerActionApprovalSchemaErrorLive,
-  makeOwnerActionApprovalApiLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { assortmentRegistration } from '../vertical.registration.ts';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
@@ -218,7 +219,11 @@ export const makeAssortmentApiRuntime = (...args: AssortmentApiRuntimeArguments)
   );
   const apiHandlersLive = Layer.mergeAll(
     assortmentReadinessLayer,
-    makeOwnerActionApprovalApiLive(assortmentApi, authenticateOwnerApprovalPrincipal).pipe(
+    HttpApiBuilder.group(assortmentApi, 'ownerActionApprovals', (handlers) =>
+      handlers
+        .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+        .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+    ).pipe(
       GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
       GovernedReadLayer.provide(governedActionRuntimeLive),
     ),

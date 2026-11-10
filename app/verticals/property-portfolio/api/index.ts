@@ -1,6 +1,7 @@
 import {
   OwnerActionApprovalSchemaErrorLive,
-  makeOwnerActionApprovalApiLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { propertyPortfolioBackendRegistration } from '../vertical.runtime-declaration.ts';
@@ -131,7 +132,11 @@ const governedReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, pro
 );
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
-  makeOwnerActionApprovalApiLive(propertyPortfolioApi, authenticateOwnerApprovalPrincipal).pipe(
+  HttpApiBuilder.group(propertyPortfolioApi, 'ownerActionApprovals', (handlers) =>
+    handlers
+      .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+      .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+  ).pipe(
     GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
     GovernedReadLayer.provide(governedActionRuntimeLive),
   ),

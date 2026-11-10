@@ -4,7 +4,8 @@ import { staffAuthenticationNamespaceRegistryLayer } from '@app/core-runtime/aut
 import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import {
   OwnerActionApprovalSchemaErrorLive,
-  makeOwnerActionApprovalApiLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { bindGatewayPrincipalVerifier } from '../../../../packages/gateway-principal-verifier/src/server.ts';
 import { Effect, Layer, Schema } from 'effect';
@@ -44,7 +45,11 @@ export const serveNativeOwnerApprovalHttp = Effect.fn('OwnerApprovalNative.serve
       );
     const authenticate = makeMicroverticalHttpPrincipalAuthentication(verify);
     const api = OwnerActionApprovalApi.prefix(`/${input.deployment.appId}-api`);
-    const handlers = makeOwnerActionApprovalApiLive(api, authenticate).pipe(
+    const handlers = HttpApiBuilder.group(api, 'ownerActionApprovals', (group) =>
+      group
+        .handle('approve', makeOwnerActionApproveHandler(authenticate))
+        .handle('inspect', makeOwnerActionInspectHandler(authenticate)),
+    ).pipe(
       Layer.provide(OwnerActionApprovalSchemaErrorLive),
       Layer.provide(requestServices),
       HttpRouter.provideRequest(requestServices),

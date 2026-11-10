@@ -1,6 +1,7 @@
 import {
   OwnerActionApprovalSchemaErrorLive,
-  makeOwnerActionApprovalApiLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
 } from '@app/core-runtime/access/approvals/owner-http';
 import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
 import {
@@ -626,7 +627,11 @@ export const makeCommerceMarketCatalogApiRuntime = (
   const actionPrincipalVerifierLive = ActionPrincipalVerifierLive.pipe(Layer.provide(governedActionRuntimeLive));
   const apiHandlersLive = Layer.mergeAll(
     commerceMarketCatalogReadinessLayer,
-    makeOwnerActionApprovalApiLive(commerceMarketCatalogApi, authenticateOwnerApprovalPrincipal).pipe(
+    HttpApiBuilder.group(commerceMarketCatalogApi, 'ownerActionApprovals', (handlers) =>
+      handlers
+        .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+        .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+    ).pipe(
       GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
       GovernedReadLayer.provide(governedActionRuntimeLive),
     ),

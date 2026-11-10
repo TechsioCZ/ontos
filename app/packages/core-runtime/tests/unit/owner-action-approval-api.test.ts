@@ -10,7 +10,8 @@ import {
   OwnerActionApprovalRequestSchema,
 } from '@app/core-runtime/access/approvals/owner-api';
 import {
-  makeOwnerActionApprovalApiLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
   OwnerActionApprovalSchemaErrorLive,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { OwnerActionApprovals, OwnerActionApprovalError } from '@app/core-runtime/access/approvals/owner-runtime';
@@ -72,9 +73,11 @@ const unsupportedReceivingApiBindings = () => {
     ),
   );
   // @ts-expect-error The receiving API must contain the actual owner approval group.
-  makeOwnerActionApprovalApiLive(missing, authenticate);
-  // @ts-expect-error A group name alone cannot substitute for the original endpoint contracts.
-  makeOwnerActionApprovalApiLive(wrong, authenticate);
+  HttpApiBuilder.group(missing, 'ownerActionApprovals', (group) => group);
+  HttpApiBuilder.group(wrong, 'ownerActionApprovals', (group) =>
+    // @ts-expect-error A group name alone cannot substitute for the original endpoint contracts.
+    group.handle('approve', makeOwnerActionApproveHandler(authenticate)),
+  );
 };
 
 const mount = (
@@ -102,7 +105,11 @@ const mount = (
         return principal;
       }),
     );
-    const handlers = makeOwnerActionApprovalApiLive(receivingApi, authenticate).pipe(
+    const handlers = HttpApiBuilder.group(receivingApi, 'ownerActionApprovals', (group) =>
+      group
+        .handle('approve', makeOwnerActionApproveHandler(authenticate))
+        .handle('inspect', makeOwnerActionInspectHandler(authenticate)),
+    ).pipe(
       Layer.provide(OwnerActionApprovalSchemaErrorLive),
       Layer.provide(ownerServices),
       Layer.provide(verifierServices),
@@ -110,7 +117,7 @@ const mount = (
     // This root-composition type proof refuses a residual schema middleware, owner service or
     // authentication request port. Runtime HTTP assertions alone cannot prove a closed Layer.
     const closedHandlers: Layer.Layer<HttpApiGroup.Service<'ReceivingOwnerApprovalApi', 'ownerActionApprovals'>> =
-      handlers.pipe(HttpRouter.provideRequest(verifierServices));
+      handlers.pipe(HttpRouter.provideRequest(Layer.merge(verifierServices, ownerServices)));
     const unrelatedHandlers = HttpApiBuilder.group(receivingApi, 'unrelated', (group) =>
       group.handle('status', () => Effect.succeed('ok')),
     );

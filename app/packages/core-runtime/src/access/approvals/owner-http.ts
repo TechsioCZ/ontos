@@ -1,8 +1,7 @@
 import { Cause, Effect, Exit, Match, Redacted, Schema } from 'effect';
 import { HttpEffect, HttpServerResponse } from 'effect/http';
 import type { HttpServerRequest } from 'effect/http';
-import { HttpApi, HttpApiBuilder, HttpApiMiddleware } from 'effect/http-api';
-import type { HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
+import { HttpApiMiddleware } from 'effect/http-api';
 
 import type { TrustedPrincipalContext } from '../../actions/principal-context.ts';
 import { transportIdentifier } from '../../actions/string-schemas.ts';
@@ -16,56 +15,12 @@ import {
   OwnerActionApprovalSchemaErrorMiddleware,
   OwnerActionApprovalUnavailableSchema,
 } from './owner-api.ts';
-import type { OwnerActionApprovalGroupContract, OwnerActionApprovalRequest } from './owner-api.ts';
+import type { OwnerActionApprovalRequest } from './owner-api.ts';
 import type { OwnerActionApprovalError } from './owner-errors.ts';
 import { OwnerActionApprovals } from './owner-runtime.ts';
 
 type Authentication = typeof OwnerActionApprovalAuthenticationSchema.Type;
 type Unavailable = typeof OwnerActionApprovalUnavailableSchema.Type;
-
-type RoutedEndpoint<Endpoint, ApprovePath extends string, InspectPath extends string> =
-  Endpoint extends HttpApiEndpoint.HttpApiEndpoint<
-    infer Identifier,
-    infer Method,
-    infer _Path,
-    infer Params,
-    infer Query,
-    infer Payload,
-    infer Headers,
-    infer Success,
-    infer Failure,
-    infer Middleware,
-    infer MiddlewareServices
-  >
-    ? HttpApiEndpoint.HttpApiEndpoint<
-        Identifier,
-        Method,
-        Identifier extends 'approve' ? ApprovePath : InspectPath,
-        Params,
-        Query,
-        Payload,
-        Headers,
-        Success,
-        Failure,
-        Middleware,
-        MiddlewareServices
-      >
-    : never;
-type RoutedOwnerApprovalGroup<ApprovePath extends string, InspectPath extends string> = HttpApiGroup.HttpApiGroup<
-  'ownerActionApprovals',
-  RoutedEndpoint<HttpApiGroup.Endpoints<OwnerActionApprovalGroupContract>, ApprovePath, InspectPath>
->;
-/** Structural API view preserves the receiving identity and every owner endpoint schema. */
-export type OwnerActionApprovalApiBinding<
-  ApiId extends string,
-  ApprovePath extends string,
-  InspectPath extends string,
-  Groups extends HttpApiGroup.Constraint,
-> = HttpApi.HttpApi<ApiId, Groups> & {
-  readonly groups: {
-    readonly ownerActionApprovals: RoutedOwnerApprovalGroup<ApprovePath, InspectPath>;
-  };
-};
 
 /** The existing owner helper verifies and redeems its audience-bound gateway assertion. */
 export type OwnerActionApprovalHttpAuthentication<Requirements> = (
@@ -147,83 +102,69 @@ const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response)
 const challengeAuthentication = <Failure>(failure: Failure) =>
   Schema.is(OwnerActionApprovalAuthenticationSchema)(failure) ? bearerChallenge : Effect.void;
 
-/**
- * Mount on the actual owner's API. Neither operation dispatches or resolves an Action handler.
- * The root supplies OwnerActionApprovals and OwnerActionApprovalSchemaErrorLive when building
- * the group. Authentication's request ports remain explicit and use HttpRouter.provideRequest.
- */
-export const makeOwnerActionApprovalApiLive = <
-  ApiId extends string,
-  ApprovePath extends string,
-  InspectPath extends string,
-  Groups extends HttpApiGroup.Constraint,
-  Requirements,
->(
-  api: OwnerActionApprovalApiBinding<ApiId, NoInfer<ApprovePath>, NoInfer<InspectPath>, Groups> & {
-    readonly groups: {
-      readonly ownerActionApprovals: {
-        readonly endpoints: {
-          readonly approve: { readonly path: ApprovePath };
-          readonly inspect: { readonly path: InspectPath };
-        };
-      };
+/** The parts of an `ownerActionApprovals` endpoint request the handlers read. */
+interface OwnerActionApprovalEndpointRequest {
+  readonly payload: OwnerActionApprovalRequest;
+  readonly request: HttpServerRequest.HttpServerRequest;
+}
+
+const authenticatedApprovalInput = <Requirements>(
+  authenticateOperationPrincipal: OwnerActionApprovalHttpAuthentication<Requirements>,
+) =>
+  Effect.fn('OwnerActionApprovalHttp.authenticate')(function* authenticateRequest(
+    payload: OwnerActionApprovalRequest,
+    request: HttpServerRequest.HttpServerRequest,
+  ) {
+    const correlationId = yield* Schema.decodeUnknownEffect(transportIdentifier)(
+      request.headers['x-correlation-id'],
+    ).pipe(Effect.mapError(problems.invalid));
+    const principal = yield* authenticateOperationPrincipal(Redacted.make(request.headers['authorization']), problems);
+    return {
+      principal,
+      request: payload,
+      requestHeaders: { 'x-correlation-id': correlationId },
     };
-  },
+  });
+
+/**
+ * Handler for the `approve` endpoint. The owner mounts it in `HttpApiBuilder.group` on its own
+ * API, which already adds `OwnerActionApprovalApi`. It never dispatches or resolves an Action
+ * handler. The root provides OwnerActionApprovals and OwnerActionApprovalSchemaErrorLive to that
+ * group. Authentication's request ports stay explicit and use HttpRouter.provideRequest.
+ */
+export const makeOwnerActionApproveHandler = <Requirements>(
   authenticateOperationPrincipal: OwnerActionApprovalHttpAuthentication<Requirements>,
 ) => {
-  // Native single-group view, not a reconstructed descriptor: add retains the receiving group's
-  // exact object, including its real prefixes, middleware and schemas. Root annotations also apply.
-  const binding = HttpApi.make(api.identifier).add(api.groups.ownerActionApprovals).annotateMerge(api.annotations);
-  const handlers = HttpApiBuilder.group(
-    binding,
-    'ownerActionApprovals',
-    Effect.fn('OwnerActionApprovalHttp.handlers')(function* buildOwnerApprovalHandlers(
-      group: HttpApiBuilder.Handlers.FromGroup<RoutedOwnerApprovalGroup<NoInfer<ApprovePath>, NoInfer<InspectPath>>>,
-    ) {
-      const service = yield* OwnerActionApprovals;
-      const authenticate = Effect.fn('OwnerActionApprovalHttp.authenticate')(function* authenticateRequest(
-        payload: OwnerActionApprovalRequest,
-        request: HttpServerRequest.HttpServerRequest,
-      ) {
-        const correlationId = yield* Schema.decodeUnknownEffect(transportIdentifier)(
-          request.headers['x-correlation-id'],
-        ).pipe(Effect.mapError(problems.invalid));
-        const principal = yield* authenticateOperationPrincipal(
-          Redacted.make(request.headers['authorization']),
-          problems,
-        );
-        return {
-          principal,
-          request: payload,
-          requestHeaders: { 'x-correlation-id': correlationId },
-        };
-      });
-      const execute = Effect.fn('OwnerActionApprovalHttp.approve')(function* executeApprovalRequest(
-        payload: OwnerActionApprovalRequest,
-        request: HttpServerRequest.HttpServerRequest,
-      ) {
-        const input = yield* authenticate(payload, request);
-        const approved = yield* service.approve(input).pipe(Effect.mapError(mapFailure));
-        return { proposalId: approved.proposalId, status: approved.status };
-      });
-      const inspect = Effect.fn('OwnerActionApprovalHttp.inspect')(function* inspectApprovalRequest(
-        payload: OwnerActionApprovalRequest,
-        request: HttpServerRequest.HttpServerRequest,
-      ) {
-        const input = yield* authenticate(payload, request);
-        const inspection = yield* service.inspect(input).pipe(Effect.mapError(mapFailure));
-        return { canApprove: inspection.canApprove, proposalId: inspection.proposalId };
-      });
-      return group
-        .handle('approve', ({ payload, request }) =>
-          recoverDefect(execute(payload, request)).pipe(Effect.tapError(challengeAuthentication)),
-        )
-        .handle('inspect', ({ payload, request }) =>
-          recoverDefect(inspect(payload, request)).pipe(Effect.tapError(challengeAuthentication)),
-        );
-    }),
-  );
-  return handlers;
+  const authenticate = authenticatedApprovalInput(authenticateOperationPrincipal);
+  const execute = Effect.fn('OwnerActionApprovalHttp.approve')(function* executeApprovalRequest(
+    payload: OwnerActionApprovalRequest,
+    request: HttpServerRequest.HttpServerRequest,
+  ) {
+    const service = yield* OwnerActionApprovals;
+    const input = yield* authenticate(payload, request);
+    const approved = yield* service.approve(input).pipe(Effect.mapError(mapFailure));
+    return { proposalId: approved.proposalId, status: approved.status };
+  });
+  return ({ payload, request }: OwnerActionApprovalEndpointRequest) =>
+    recoverDefect(execute(payload, request)).pipe(Effect.tapError(challengeAuthentication));
+};
+
+/** Handler for the `inspect` endpoint, mounted beside `makeOwnerActionApproveHandler`. */
+export const makeOwnerActionInspectHandler = <Requirements>(
+  authenticateOperationPrincipal: OwnerActionApprovalHttpAuthentication<Requirements>,
+) => {
+  const authenticate = authenticatedApprovalInput(authenticateOperationPrincipal);
+  const inspect = Effect.fn('OwnerActionApprovalHttp.inspect')(function* inspectApprovalRequest(
+    payload: OwnerActionApprovalRequest,
+    request: HttpServerRequest.HttpServerRequest,
+  ) {
+    const service = yield* OwnerActionApprovals;
+    const input = yield* authenticate(payload, request);
+    const inspection = yield* service.inspect(input).pipe(Effect.mapError(mapFailure));
+    return { canApprove: inspection.canApprove, proposalId: inspection.proposalId };
+  });
+  return ({ payload, request }: OwnerActionApprovalEndpointRequest) =>
+    recoverDefect(inspect(payload, request)).pipe(Effect.tapError(challengeAuthentication));
 };
 
 /** The application root provides this middleware once beside the owner-bound handler Layer. */

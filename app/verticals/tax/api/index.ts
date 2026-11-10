@@ -1,6 +1,7 @@
 import {
   OwnerActionApprovalSchemaErrorLive,
-  makeOwnerActionApprovalApiLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { taxRegistration } from '../vertical.registration.ts';
@@ -175,7 +176,11 @@ export const governedActionRuntimeLive = actionRuntimeLive;
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   taxReadinessLayer,
-  makeOwnerActionApprovalApiLive(taxApi, authenticateOwnerApprovalPrincipal).pipe(
+  HttpApiBuilder.group(taxApi, 'ownerActionApprovals', (handlers) =>
+    handlers
+      .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+      .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+  ).pipe(
     GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
     GovernedReadLayer.provide(governedActionRuntimeLive),
   ),
