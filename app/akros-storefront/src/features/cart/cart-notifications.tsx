@@ -14,7 +14,9 @@ export function CartNotifications() {
   const feedbackId = `sf-cart-feedback-${owner}`;
   const removalId = `sf-cart-removal-${owner}`;
   const { purchaseError, feedback, removedItem, undoRemove, dismissRemove } = useCart();
-  const toast = useDictionary().cart.toast;
+  const dictionary = useDictionary();
+  const toast = dictionary.cart.toast;
+  const notifications = dictionary.notifications;
 
   useEffect(() => {
     let active = true;
@@ -116,7 +118,11 @@ export function CartNotifications() {
 
   return (
     <>
-      <Toaster />
+      <Toaster
+        closeLabel={notifications.close}
+        label={notifications.label}
+        loadingLabel={notifications.loading}
+      />
       {purchaseError && (
         <p
           role="alert"

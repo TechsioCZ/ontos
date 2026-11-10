@@ -314,6 +314,7 @@ export const cs = {
     standaloneItem: "samostatná položka",
     removeFailed: "Variantu se nepodařilo odebrat. Zkuste to znovu.",
   },
+  notifications: { close: "Zavřít oznámení", label: "Oznámení", loading: "Probíhá…" },
   cart: {
     title: "Nákupní košík",
     miniCart: {
