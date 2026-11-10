@@ -44,6 +44,7 @@ import { intentConflict } from './errors.ts';
 import { lockRoles, writeGrantIncarnations } from './grant-incarnations.ts';
 import type { AccessMembership } from './memberships.ts';
 import type { AccessIntentDatabase } from './persistence.ts';
+import { peopleRevisionOf } from './people-revision.ts';
 import { actorIssue, asDate, decodeStored, durable, holderColumns, runScoped, scopeIssue } from './persistence.ts';
 import type { AccessTeamMember } from './teams.ts';
 
@@ -794,8 +795,97 @@ const assignedRoleIds = (writes: readonly PeopleIntentWrite[]): readonly string[
   );
 
 export interface ApplyPeopleChangeInput {
+  /**
+   * The people revision (`peopleRevisionOf`) of the view the change was planned on. When it is given,
+   * the store re-reads the tenant's people intent under the tenant's people lock and refuses the change
+   * if anything moved since, so no rule the plan checked is decided on a view another change overtook.
+   */
+  readonly expectedRevision?: string;
   readonly writes: readonly PeopleIntentWrite[];
 }
+
+/**
+ * The namespace of the transaction lock that serializes the people changes of one tenant. The second
+ * key is the tenant id, both hashed by `hashtext`, so one tenant never waits on another.
+ */
+export const PEOPLE_CHANGE_LOCK_NAMESPACE = 'ontos.access.people-change';
+
+/**
+ * Takes the tenant's people lock for the rest of the transaction. Every planned people change commits
+ * under it, so two plans read against the same view can never both commit: the second one waits here
+ * and then meets the first one's rows in its revision check.
+ */
+const lockTenantPeople = (transaction: CoreTransaction, scope: OperationalScope) =>
+  transaction
+    .execute(
+      sql`select pg_advisory_xact_lock(hashtext(${PEOPLE_CHANGE_LOCK_NAMESPACE}), hashtext(${scope.tenantId}))`,
+      'objects',
+    )
+    .pipe(durable(PEOPLE_UNIQUE_CONSTRAINTS), Effect.asVoid);
+
+/** The people revision of the tenant as this transaction reads it, after it took the people lock. */
+const currentPeopleRevision = (transaction: CoreTransaction, scope: OperationalScope) =>
+  Effect.all(
+    [
+      transaction
+        .select({
+          id: accessMemberships.membershipId,
+          kind: accessMemberships.kind,
+          status: accessMemberships.status,
+          validFrom: accessMemberships.validFrom,
+        })
+        .from(accessMemberships)
+        .where(eq(accessMemberships.tenantId, scope.tenantId)),
+      transaction
+        .select({
+          incarnationId: accessAssignments.incarnationId,
+          roleRevisionId: accessAssignments.roleRevisionId,
+          status: accessAssignments.status,
+        })
+        .from(accessAssignments)
+        .where(eq(accessAssignments.tenantId, scope.tenantId)),
+      transaction
+        .select({ id: accessDelegations.delegationId, status: accessDelegations.status })
+        .from(accessDelegations)
+        .where(eq(accessDelegations.tenantId, scope.tenantId)),
+      transaction
+        .select({ id: accessTeamMembers.teamMemberId, teamId: accessTeamMembers.teamId })
+        .from(accessTeamMembers)
+        .where(eq(accessTeamMembers.tenantId, scope.tenantId)),
+    ],
+    { concurrency: 1 },
+  ).pipe(
+    durable(PEOPLE_UNIQUE_CONSTRAINTS),
+    Effect.map(([memberships, assignments, delegations, teamMembers]) =>
+      peopleRevisionOf({
+        assignments,
+        delegations,
+        memberships: memberships.map((row) => ({ ...row, validFrom: asDate(row.validFrom) })),
+        teamMembers,
+      }),
+    ),
+  );
+
+/** Refuses the change when the tenant's people intent moved since the view it was planned on. */
+const requirePeopleRevision = (
+  transaction: CoreTransaction,
+  scope: OperationalScope,
+  expectedRevision: string | undefined,
+): Effect.Effect<void, AccessIntentError> =>
+  expectedRevision === undefined
+    ? Effect.void
+    : currentPeopleRevision(transaction, scope).pipe(
+        Effect.flatMap((current) =>
+          current === expectedRevision
+            ? Effect.void
+            : Effect.fail(
+                intentConflict(
+                  'access_intent_record_conflict',
+                  'the people of this tenant changed after this change was planned; read them again',
+                ),
+              ),
+        ),
+      );
 
 /**
  * The people intent port. Every call names the trusted request scope it runs in (O66), so the tenant
@@ -912,7 +1002,7 @@ const makeAccessPeopleDrizzleStore = (database: AccessIntentDatabase): AccessPeo
 
   const applyPeopleChange: AccessPeopleStoreService['applyPeopleChange'] = Effect.fn(
     'AccessPeopleStore.applyPeopleChange',
-  )(function* applyPeopleChangeEffect(scope: OperationalScope, { writes }: ApplyPeopleChangeInput) {
+  )(function* applyPeopleChangeEffect(scope: OperationalScope, { expectedRevision, writes }: ApplyPeopleChangeInput) {
     const issue = writeIssue(scope, writes);
     if (issue !== null) {
       return yield* intentConflict('access_intent_scope_mismatch', issue);
@@ -921,12 +1011,17 @@ const makeAccessPeopleDrizzleStore = (database: AccessIntentDatabase): AccessPeo
       return yield* Effect.void;
     }
     const refused = yield* Ref.make(Option.none<PeopleCommandError>());
+    // The tenant's people lock first, then the revision the plan was read at, then the role locks.
     return yield* runScoped(database, scope, PEOPLE_UNIQUE_CONSTRAINTS, (transaction) =>
-      lockRoles(transaction, {
-        mode: 'share',
-        roleIds: assignedRoleIds(writes),
-        tenantId: scope.tenantId,
-      }).pipe(
+      lockTenantPeople(transaction, scope).pipe(
+        Effect.andThen(requirePeopleRevision(transaction, scope, expectedRevision)),
+        Effect.andThen(
+          lockRoles(transaction, {
+            mode: 'share',
+            roleIds: assignedRoleIds(writes),
+            tenantId: scope.tenantId,
+          }),
+        ),
         Effect.andThen(
           Effect.forEach(writes, (write) => applyWrite(transaction, scope, write, refused), {
             concurrency: 1,

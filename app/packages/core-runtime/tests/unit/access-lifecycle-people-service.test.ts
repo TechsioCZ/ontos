@@ -136,6 +136,8 @@ interface ServiceFixture {
   readonly memberships?: readonly AccessMembership[];
   /** Counts the reconciles, so a refused write is seen to project nothing. */
   readonly reconciled?: { count: number };
+  /** The people revision each write was planned at, as the store is asked to compare it. */
+  readonly revisions?: (string | undefined)[];
   /** Roles of the tenant nobody in the fixture holds. */
   readonly roles?: AccessPeopleIntent['roles'];
   readonly teams?: readonly AccessTeamWithMembers[];
@@ -183,6 +185,7 @@ const serviceOver = (holdings: readonly ReturnType<typeof holding>[], fixture: S
         (fixture.apply?.(change.writes) ?? Effect.void).pipe(
           Effect.andThen(
             Effect.sync(() => {
+              fixture.revisions?.push(change.expectedRevision);
               fixture.written?.push(...change.writes);
             }),
           ),
@@ -685,12 +688,17 @@ it.effect('ends exactly the closed scopes: one company, or the tenant and every 
     const reason = 'Moved to another employer';
 
     const companyWrites: PeopleIntentWrite[] = [];
-    const company = yield* serviceOver(holdings, { ...fixture, written: companyWrites }).endMembership(ownerScope, {
+    const revisions: (string | undefined)[] = [];
+    const companyService = serviceOver(holdings, { ...fixture, revisions, written: companyWrites });
+    const planned = yield* companyService.read(ownerScope);
+    const company = yield* companyService.endMembership(ownerScope, {
       principalId: LEAVER,
       reason,
       scopeId: scopeA,
     });
     expect(company.membership).toEqual({ principalId: LEAVER, scopeId: scopeA, status: 'revoked' });
+    // The store compares the revision of the view this ending was decided on, under the tenant's lock.
+    expect(revisions).toEqual([planned.revision]);
     // Company A only: its row with the reason, its managed delegation, assignment and team place; the
     // tenant row, company B and everything in them stay.
     expect(companyWrites).toEqual([

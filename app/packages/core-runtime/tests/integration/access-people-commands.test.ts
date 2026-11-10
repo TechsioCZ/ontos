@@ -44,7 +44,11 @@ import { AssignmentSchema } from '../../src/access/model.ts';
 import { AccessCatalogSnapshotWriterLive } from '../../src/access/intent/catalog-snapshot-writer.ts';
 import { AccessMembershipIdSchema, AccessMembershipStoreLive } from '../../src/access/intent/memberships.ts';
 import { AccessPeopleDirectory, AccessPeopleDirectoryLive } from '../../src/access/intent/people-directory.ts';
-import { AccessPeopleStore, AccessPeopleStoreLive } from '../../src/access/intent/people-store.ts';
+import {
+  AccessPeopleStore,
+  AccessPeopleStoreLive,
+  PEOPLE_CHANGE_LOCK_NAMESPACE,
+} from '../../src/access/intent/people-store.ts';
 import { AccessProjectionCompiler } from '../../src/access/intent/projection-compiler.ts';
 import { AccessProjectionWriter, AccessProjectionWriterLive } from '../../src/access/intent/projection-writer.ts';
 import { AccessTeamStore, makeAccessTeamDrizzleStore } from '../../src/access/intent/teams.ts';
@@ -465,6 +469,22 @@ const membershipsOf = (tenant: Tenant, principalId: PrincipalId) =>
         order by created_at, scope_id`,
     )
     .pipe(Effect.orDie);
+
+/** The principals holding a live tenant ownership row, in one order. */
+const liveOwnersOf = (tenant: Tenant) =>
+  tenant.admin
+    .unsafe<{ readonly principal_id: string }>(
+      `select principal_id::text from core.access_memberships
+        where tenant_id = '${tenant.tenantId}' and kind = 'owner' and status = 'active'`,
+    )
+    .pipe(
+      Effect.map((rows) => rows.map(({ principal_id }) => principal_id).toSorted()),
+      Effect.orDie,
+    );
+
+/** The refusal code of a failed people command, or nothing for one that committed. */
+const refusalCodeOf = <Value>(outcome: Exit.Exit<Value, { readonly code: string }>): readonly string[] =>
+  Exit.isFailure(outcome) ? Option.toArray(Option.map(Exit.findErrorOption(outcome), ({ code }) => code)) : [];
 
 /** The capability keys of a release, in one order. */
 const keysOf = (entries: readonly CatalogSnapshotEntry[]) => entries.map(({ key }) => key).toSorted();
@@ -996,6 +1016,56 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('people commands on 
             [otherScope, 'active'],
           ]),
         );
+      }),
+    ),
+  );
+
+  suite.effect('lets only one of two owners who end each other at once commit, so the tenant keeps an owner', () =>
+    withTenant((tenant) =>
+      Effect.gen(function* ownersEndEachOther() {
+        const tenantScope = tenantContextScopeId(tenant.tenantId);
+        // The colleague becomes the second owner, so each owner's plan sees another owner who remains.
+        yield* tenant.admin
+          .unsafe(
+            `insert into core.access_memberships
+               (membership_id, tenant_id, scope_id, principal_id, kind, status, valid_from, recorded_by) values
+               ('${uid(110)}', '${tenant.tenantId}', '${tenantScope}', '${colleague}', 'owner', 'active',
+                now() - interval '1 day', '${owner}')`,
+          )
+          .pipe(Effect.orDie);
+        expect(yield* liveOwnersOf(tenant)).toEqual([owner, colleague].toSorted());
+        const secondOwner = yield* scopeFor(tenant.tenantId, colleague);
+
+        // The test holds the tenant's people lock, so both commands read the same view, plan, and park
+        // at the lock; without that lock neither would wait and both would commit.
+        const held = yield* Deferred.make<null>();
+        const released = yield* Deferred.make<null>();
+        const holder = yield* Effect.gen(function* holdPeopleLock() {
+          yield* tenant.admin
+            .unsafe(
+              `select pg_advisory_xact_lock(hashtext('${PEOPLE_CHANGE_LOCK_NAMESPACE}'), hashtext('${tenant.tenantId}'))`,
+            )
+            .pipe(Effect.orDie);
+          yield* Deferred.succeed(held, null);
+          yield* Deferred.await(released);
+        }).pipe(tenant.admin.withTransaction, Effect.orDie, Effect.forkChild);
+        yield* Deferred.await(held);
+        const reason = 'Souběžný odchod vlastníka';
+        const endingColleague = yield* tenant.people
+          .endMembership(tenant.owner, { principalId: colleague, reason, scopeId: tenantScope })
+          .pipe(Effect.exit, Effect.forkChild);
+        const endingOwner = yield* tenant.people
+          .endMembership(secondOwner, { principalId: owner, reason, scopeId: tenantScope })
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* eventually(Effect.map(blockedBackends(tenant), (blocked) => blocked === 2));
+        yield* Deferred.succeed(released, null);
+        yield* Fiber.join(holder);
+        const outcomes = [yield* Fiber.join(endingColleague), yield* Fiber.join(endingOwner)];
+
+        // Exactly one commits; the other meets the moved revision and writes nothing.
+        expect(outcomes.filter(Exit.isSuccess)).toHaveLength(1);
+        expect(outcomes.flatMap(refusalCodeOf)).toEqual(['access_intent_record_conflict']);
+        expect(yield* liveOwnersOf(tenant)).toHaveLength(1);
       }),
     ),
   );

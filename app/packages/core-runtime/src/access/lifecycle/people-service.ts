@@ -1,7 +1,4 @@
-import { sha256 } from '@noble/hashes/sha2.js';
-import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Context, DateTime, Effect, Layer, Match, Option, Predicate, Result, Schema } from 'effect';
-import { Hex } from 'effect/encoding';
 
 import type { OperationalScope } from '../../operations/context.ts';
 import { beyondGrantorCell, coveringGrantorAssignments, delegationIsLive } from '../changes/authority.ts';
@@ -21,12 +18,13 @@ import { delegatedCellCeiling } from '../intent/delegated-cell.ts';
 import { AccessMembershipStore } from '../intent/memberships.ts';
 import type { AccessMembership, AccessMembershipId } from '../intent/memberships.ts';
 import { AccessPeopleStore } from '../intent/people-store.ts';
+import { peopleRevisionOf } from '../intent/people-revision.ts';
 import type { AccessPeopleIntent, AccessRoleWithRevision, TenantScopeRow } from '../intent/people-store.ts';
 import { AccessProjectionWriter } from '../intent/projection-writer.ts';
 import { AccessTeamStore } from '../intent/teams.ts';
 import { TenantIntentLoader } from '../intent/tenant-intent-loader.ts';
 import type { TenantIntentLoaderService } from '../intent/tenant-intent-loader.ts';
-import type { AccessTeamMember, AccessTeamMemberId, AccessTeamWithMembers } from '../intent/teams.ts';
+import type { AccessTeamMemberId, AccessTeamWithMembers } from '../intent/teams.ts';
 import type {
   AccessScope,
   AmountCeiling,
@@ -176,30 +174,6 @@ export const administrationOf = (
     tenantOwners,
     tenantScopeId,
   };
-};
-
-/**
- * The revision token of one people read: a digest of the intent a screen acts on, so a stale form is
- * refused instead of overwriting a change somebody else already made.
- */
-const revisionOf = (intent: {
-  readonly assignments: readonly Assignment[];
-  readonly delegations: readonly Delegation[];
-  readonly memberships: readonly AccessMembership[];
-  readonly teamMembers: readonly AccessTeamMember[];
-}): string => {
-  const lines = [
-    ...intent.memberships.map(
-      (membership) =>
-        `membership ${membership.id} ${membership.kind} ${membership.status} ${membership.validFrom.toISOString()}`,
-    ),
-    ...intent.assignments.map(
-      (assignment) => `assignment ${assignment.incarnationId} ${assignment.status} ${assignment.roleRevisionId}`,
-    ),
-    ...intent.delegations.map((delegation) => `delegation ${delegation.id} ${delegation.status}`),
-    ...intent.teamMembers.map((member) => `team ${member.teamId} ${member.id}`),
-  ].toSorted((left, right) => left.localeCompare(right));
-  return Hex.encode(sha256(utf8ToBytes(lines.join('\n'))));
 };
 
 const tenantOf = (scope: OperationalScope): TenantId => TenantIdSchema.make(scope.tenantId);
@@ -652,7 +626,7 @@ export const makeAccessPeopleCommands = (dependencies: {
       at,
       delegations: loaded.intent.delegations,
       memberships: loaded.memberships,
-      revision: revisionOf({
+      revision: peopleRevisionOf({
         assignments: loaded.intent.assignments,
         delegations: loaded.intent.delegations,
         memberships: loaded.memberships,
@@ -678,10 +652,15 @@ export const makeAccessPeopleCommands = (dependencies: {
   const reconcile = (scope: OperationalScope) =>
     projection.reconcileTenant({ scope }).pipe(Effect.asVoid, Effect.mapError(storeFailureOf));
 
-  /** Persist one plan in a single transaction, then reconcile and verify the tenant (D9, D24). */
-  const applyPlan = (scope: OperationalScope, planned: PeopleChangePlan) =>
+  /**
+   * Persist one plan in a single transaction, then reconcile and verify the tenant (D9, D24). The plan
+   * commits only while the tenant's people intent is still the view it was decided on: the store
+   * compares the view's revision under the tenant's people lock, so two plans read at the same instant
+   * (two owners ending each other, an ending racing a new delegation) can never both commit.
+   */
+  const applyPlan = (scope: OperationalScope, view: AccessPeopleView, planned: PeopleChangePlan) =>
     peopleStore
-      .applyPeopleChange(scope, { writes: planned.writes })
+      .applyPeopleChange(scope, { expectedRevision: view.revision, writes: planned.writes })
       .pipe(Effect.mapError(storeFailureOf), Effect.andThen(reconcile(scope)));
 
   /** The acting person's configure bases at the view's instant, as the gate reads them (O81). */
@@ -771,7 +750,7 @@ export const makeAccessPeopleCommands = (dependencies: {
           ),
       }),
     );
-    yield* applyPlan(scope, planned);
+    yield* applyPlan(scope, view, planned);
     const written = assignmentOfPlan(planned);
     return yield* Option.match(written, {
       onNone: () => receipt(scope, {}),
@@ -805,7 +784,7 @@ export const makeAccessPeopleCommands = (dependencies: {
         Option.match(basis, { onNone: () => created, onSome: (manager) => ({ ...created, manager }) }),
       ),
     );
-    yield* applyPlan(scope, planned);
+    yield* applyPlan(scope, view, planned);
     return yield* receipt(scope, { assignment: { ...assignment, status: 'revoked' } });
   });
 
@@ -833,7 +812,7 @@ export const makeAccessPeopleCommands = (dependencies: {
         tenantId: tenantOf(scope),
       }),
     );
-    yield* applyPlan(scope, planned);
+    yield* applyPlan(scope, view, planned);
     return yield* receipt(scope, {});
   });
 
@@ -910,7 +889,7 @@ export const makeAccessPeopleCommands = (dependencies: {
     const planned = yield* firstAcceptedPlan(yield* basesIn(scope, view, command.scopeId), (basis) =>
       planDelegationGrant({ ...envelope, managerAuthority: managerAuthorityOf(basis) }),
     );
-    yield* applyPlan(scope, planned);
+    yield* applyPlan(scope, view, planned);
     return yield* receipt(scope, { delegation });
   });
 
@@ -934,7 +913,7 @@ export const makeAccessPeopleCommands = (dependencies: {
         tenantId: tenantOf(scope),
       }),
     );
-    yield* applyPlan(scope, planned);
+    yield* applyPlan(scope, view, planned);
     return yield* receipt(scope, { delegation: { ...delegation, status: 'revoked' } });
   });
 
@@ -970,7 +949,7 @@ export const makeAccessPeopleCommands = (dependencies: {
       successor: command.toPrincipalId,
       tenantId: tenantOf(scope),
     }).pipe(Effect.mapError(peopleErrorOf));
-    yield* applyPlan(scope, planned);
+    yield* applyPlan(scope, view, planned);
     return yield* receipt(scope, { transferredScopeIds: command.scopeIds });
   });
 
@@ -1004,7 +983,7 @@ export const makeAccessPeopleCommands = (dependencies: {
       tenantMembershipId: command.tenantMembershipId,
     }).pipe(Effect.mapError(peopleErrorOf));
     // The plan's first write is the directory precondition, checked inside the same transaction.
-    yield* applyPlan(scope, planned);
+    yield* applyPlan(scope, view, planned);
     return yield* receipt(scope, {
       membership: { principalId: command.principalId, scopeId: company.scopeId, status: 'active' },
     });
@@ -1084,7 +1063,7 @@ export const makeAccessPeopleCommands = (dependencies: {
       teams: view.teams.map((entry) => entry.team),
       tenantId: tenantOf(scope),
     }).pipe(Effect.mapError(peopleErrorOf));
-    yield* applyPlan(scope, planned);
+    yield* applyPlan(scope, view, planned);
     return yield* receipt(scope, {
       membership: { principalId: leaver, scopeId: command.scopeId, status: 'revoked' },
     });
