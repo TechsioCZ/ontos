@@ -31,7 +31,6 @@ import type {
 } from '../../shared/domain/payment-vocabulary.ts';
 import type { PaymentAcceptedObservationView, PaymentInterpretedEvidence } from '../domain/evidence-interpretation.ts';
 import type { PaymentReconciliationEstablishedEffect } from '../domain/evidence-reconciliation.ts';
-import { appliedCorrectionsOf, provenReturnAmountOf } from '../domain/refund-prior-returns.ts';
 import {
   economicEffectAttributions,
   observations,
@@ -48,6 +47,7 @@ import { fullyDisprovenTargets } from './payment-full-disproof.ts';
 import type { DisproofCorrectionRow, DisproofTargetRow } from './payment-full-disproof.ts';
 import type { PaymentAggregatePersistence } from './payment-aggregate-persistence.ts';
 import { paymentAuthorizationProofOfRow } from './payment-authorization-persistence.ts';
+import { paymentRefundPersistenceForTransaction } from './payment-refund-persistence.ts';
 
 /**
  * Owner-local persistence of the #1151 evidence lane: accepted-observation lineage for the
@@ -649,62 +649,14 @@ export const paymentEvidencePersistenceForTransaction = (
         ({ operationId, row }) => interpretedViewOf(row, operationId),
         { concurrency: 1 },
       );
-      // Returns stated directly against an operation, one per source-scoped effect, capability-proven
-      // where their source must prove one: what the funds reader counts as prior returns (#1150).
-      const seenReturnEffects = new Set<string>();
-      const returnRows = rows.filter((row) => {
-        if (
-          row.factKind !== 'REFUND_CONFIRMED' ||
-          row.operationId === null ||
-          corrected.has(row.observationId) ||
-          row.capabilityCorrelated === false
-        ) {
-          return false;
-        }
-        const effect =
-          row.economicEffectKey === null
-            ? `observation:${row.observationId}`
-            : [row.sourceKind, row.sourceSystem, row.accountRef, row.environment, row.economicEffectKey].join('\u0000');
-        if (seenReturnEffects.has(effect)) {
-          return false;
-        }
-        seenReturnEffects.add(effect);
-        return true;
-      });
-      // What each return still proves: its stated money less its applied partial corrections, exactly
-      // as the funds reader measures it, so both readers admit the same correction (#1150).
-      const correctionRows = rows.filter((row) => row.factKind === 'SOURCE_CORRECTION');
-      const returnStatements = yield* Effect.forEach(
-        returnRows,
-        (row) =>
-          Effect.all(
-            [
-              amountOrUndefined(row.amountMinor, row.currency),
-              Effect.forEach(
-                appliedCorrectionsOf(row.observationId, correctionRows),
-                (correction) =>
-                  amountOrUndefined(correction.amountMinor, correction.currency).pipe(
-                    Effect.map(Option.getOrUndefined),
-                  ),
-                { concurrency: 1 },
-              ),
-            ],
-            { concurrency: 1 },
-          ).pipe(
-            Effect.map(([stated, corrections]) => ({
-              amount: provenReturnAmountOf(Option.getOrUndefined(stated), corrections),
-              operationId: row.operationId,
-            })),
-          ),
-        { concurrency: 1 },
-      );
+      // The prior return evidence, loaded by the funds reader itself so the correction admission and
+      // the funds snapshot can never count a return differently (#1150).
+      const returnEvidence = yield* paymentRefundPersistenceForTransaction(transaction).selectReturnEvidence(paymentId);
       return {
         acceptedObservations,
         attachedStatements,
         fullyDisprovenObservationIds: corrected,
-        returnStatements: returnStatements.flatMap(({ amount, operationId }) =>
-          amount === undefined || operationId === null ? [] : [{ amount, operationId }],
-        ),
+        returnEvidence,
       } satisfies PaymentInterpretedEvidence;
     },
   );
