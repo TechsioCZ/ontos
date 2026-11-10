@@ -334,6 +334,11 @@ const changePrincipalStatusFor = (persistence: PrincipalManagementPersistence) =
     if (Option.isNone(target) || target.value.kind === 'human') {
       return yield* invalid('The target is not a tenant-local non-human principal');
     }
+    // The platform's own principals (the release actor) are not tenant-managed: disabling one would stop the
+    // platform's work for the whole tenant, so no administrator changes their status. The database refuses it too.
+    if (target.value.kind === 'system') {
+      return yield* invalid('The platform manages its own principals');
+    }
     if (target.value.status !== input.expectedStatus) {
       return yield* conflict('The principal status changed concurrently');
     }

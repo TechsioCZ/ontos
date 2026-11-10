@@ -57,6 +57,28 @@ const repositoryForSupportParticipants = (results: readonly (readonly { readonly
 };
 const provideRepository = (service: PrincipalManagementRepositoryService) =>
   Effect.provideService(PrincipalManagementRepository, service);
+it.effect('never lets a tenant administrator change the status of a platform system principal', () =>
+  Effect.gen(function* rejectsSystemPrincipalStatusChange() {
+    const updated: string[] = [];
+    const transaction = repository({
+      loadPrincipal: () => Effect.succeed(Option.some({ kind: 'system' as const, status: 'active' as const })),
+      updatePrincipalStatus: (input) =>
+        Effect.sync(() => {
+          updated.push(input.principalId);
+          return Option.none();
+        }),
+    });
+    for (const newStatus of ['disabled', 'archived'] as const) {
+      const failure = yield* Effect.flip(
+        changePrincipalStatus({ expectedStatus: 'active', newStatus, principalId, reason: 'Stop', tenantId }).pipe(
+          provideRepository(transaction),
+        ),
+      );
+      expect(Predicate.isTagged(failure, 'IdentityTargetInvalidError')).toBe(true);
+    }
+    expect(updated).toEqual([]);
+  }),
+);
 it.effect('rejects human principal administration and managed keys targeting humans', () =>
   Effect.gen(function* rejectsHumanPrincipalAdministration() {
     const transaction = selectingPrincipal({
