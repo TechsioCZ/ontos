@@ -7,11 +7,10 @@ import {
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
 } from '@app/core-runtime';
-import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
+import { ActionPermission } from '@app/core-runtime/actions/runtime-wiring';
 import type { OperationalScope, ReadLoadContext, ReadServiceFactory } from '@app/core-runtime';
-import { DateTime, Effect } from 'effect';
+import { Effect, Struct } from 'effect';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
-import { applyCommandAction } from '../actions/apply-command.action.ts';
 import { persistenceService, filterOccupancyRecords } from '../services/persistence.service.ts';
 
 const OWNER_MODULE_KEY = 'property.leasing';
@@ -19,28 +18,26 @@ const OWNER_MODULE_KEY = 'property.leasing';
 export type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
 /**
- * The v2 decision the Action runtime takes for `apply-command` (`AccessDecisionGate.decide` over its descriptor),
- * so the UI only offers permitted actions (ADR-0030: no legacy `action` tuple exists to ask). It is a SpiceDB round
- * trip, so the reads run it in `prepare`, before their transaction opens. A read-only or approval-only MCP
- * connection never offers direct changes.
+ * Same Core decision the gateway applies to `apply-command`, so the UI only offers permitted actions. It is a
+ * SpiceDB round trip, so the reads run it in `prepare`, before their transaction opens. A read-only or
+ * approval-only MCP connection never offers direct changes.
  */
-const occupancyActionPermission = Effect.fn('PropertyLeasing.actionPermission')(function* occupancyActionPermission(
-  scope: OperationalScope,
-) {
-  const { descriptor } = applyCommandAction;
-  const gate = yield* AccessDecisionGate;
-  const decision = yield* gate.decide({
-    carrier: descriptor,
-    legalEntityScope: descriptor.legalEntityScope,
-    mode: 'run',
-    now: yield* DateTime.nowAsDate,
-    scope,
-  });
-  // An unprovable decision only hides buttons; the Action itself stays authorized by Core.
-  return decision.outcome === 'ALLOWED';
-});
+const occupancyActionPermission = (
+  scope: Pick<OperationalScope, 'principalId' | 'correlationId' | 'tenantId' | 'legalEntityId'>,
+) =>
+  ActionPermission.pipe(
+    Effect.flatMap((permission) =>
+      permission.checkActionPermission({
+        actionKey: 'property.leasing.apply-command',
+        ...Struct.pick(scope, ['correlationId', 'legalEntityId', 'principalId', 'tenantId']),
+      }),
+    ),
+    Effect.map((decision) => decision === 'allowed'),
+    // A failed capability probe only hides buttons; the Action itself stays authorized by Core.
+    Effect.orElseSucceed(() => false),
+  );
 
-export const occupancyWriteCapability = (scope: OperationalScope): Effect.Effect<boolean, never, AccessDecisionGate> =>
+export const occupancyWriteCapability = (scope: OperationalScope): Effect.Effect<boolean, never, ActionPermission> =>
   isConnectionWriteAllowed(scope, OWNER_MODULE_KEY) ? occupancyActionPermission(scope) : Effect.succeed(false);
 
 /** Also the agent review read's services: it reads leases exactly as this read does. */
