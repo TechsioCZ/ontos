@@ -617,15 +617,14 @@ const assignableCandidates = Effect.fn('Work.assignableCandidates')(function* as
   const candidates = yield* Effect.forEach(
     directory.members,
     (member) =>
-      assignments
-        .read({ ...directory, members: [member] }, eligibility)
-        .pipe(
-          Effect.catchTag('AssignablePrincipalsUnavailable', (failure) =>
-            Effect.logWarning('Work assignment candidate unavailable', member.principalRef, failure).pipe(
-              Effect.as([]),
-            ),
+      assignments.read({ ...directory, members: [member] }, eligibility).pipe(
+        Effect.catchTag('AssignablePrincipalsUnavailable', (failure) =>
+          // Core attaches the underlying cause as a non-enumerable property, so it is passed on explicitly.
+          Effect.logWarning('Work assignment candidate unavailable', member.principalRef, failure, failure.cause).pipe(
+            Effect.as([]),
           ),
         ),
+      ),
     { concurrency: 1 },
   );
   return candidates.flat();
