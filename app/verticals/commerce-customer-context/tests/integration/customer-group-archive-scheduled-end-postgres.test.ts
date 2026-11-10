@@ -90,6 +90,7 @@ import { partyRegistryGuestResolverFactoryLive } from '../../src/integrations/pa
 import { partyRegistryRetailPartyResolverFactoryLive } from '../../src/integrations/party-registry-retail-party-resolver.ts';
 import { enrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
 import { nativeTestDatabaseContainer } from '../support/native-test-database.ts';
+import { observedEligibleCounterpartyRole } from '../support/observed-counterparty-role.ts';
 
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -458,14 +459,13 @@ const nativeFixture = Effect.fn('GroupArchive.nativeFixture')(function* nativeFi
   const role = Layer.succeed(ProfileCounterpartyRoleEligibilityResolverFactory, {
     make: (scope) => (target) => {
       const known = roles.get(target.counterpartyResourceId);
-      return Effect.succeed(
-        scope.tenantId === tenantId &&
-          scope.legalEntityId === legalEntityId &&
-          target.tenantId === tenantId &&
-          known !== undefined
-          ? { managedLegalEntityId: legalEntityId, outcome: 'ELIGIBLE' as const, validUntil: null, ...known }
-          : { outcome: 'INDETERMINATE' as const },
-      );
+      // Observed like the production resolver: an ELIGIBLE answer is usable for at most 30 seconds.
+      return scope.tenantId === tenantId &&
+        scope.legalEntityId === legalEntityId &&
+        target.tenantId === tenantId &&
+        known !== undefined
+        ? observedEligibleCounterpartyRole({ managedLegalEntityId: legalEntityId, ...known })
+        : Effect.succeed({ outcome: 'INDETERMINATE' as const });
     },
   });
   const ordinary = Layer.mergeAll(

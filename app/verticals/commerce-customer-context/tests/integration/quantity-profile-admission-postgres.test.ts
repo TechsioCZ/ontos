@@ -68,6 +68,7 @@ import {
   describePriceGroupTemporalOwner,
   makePriceGroupTemporalComposition,
 } from '../support/price-group-temporal-protocol.ts';
+import { observedEligibleCounterpartyRole } from '../support/observed-counterparty-role.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -181,22 +182,18 @@ const makeQuantityProfileFixture = Effect.fn('QuantityProfileAdmissionTests.fixt
         ),
     }),
     Layer.succeed(ProfileCounterpartyRoleEligibilityResolverFactory, {
+      // Observed like the production resolver: a role without an End is usable for at most 30 seconds.
       make: (scope) => (request) =>
-        Effect.succeed(
-          request.tenantId === fixture.tenantId &&
-            scope.tenantId === fixture.tenantId &&
-            request.counterpartyResourceId === counterpartyId &&
-            [fixture.legalEntityId, secondary.legalEntityId].includes(scope.legalEntityId)
-            ? {
-                managedLegalEntityId: scope.legalEntityId,
-                outcome: 'ELIGIBLE' as const,
-                roleResourceId: roleId,
-                roleResourceRevision: '2026-01-01T00:00:00.000Z',
-                // This TEST role has no End; an omitted End is unknown, not unbounded.
-                validUntil: null,
-              }
-            : { outcome: 'INDETERMINATE' as const },
-        ),
+        request.tenantId === fixture.tenantId &&
+        scope.tenantId === fixture.tenantId &&
+        request.counterpartyResourceId === counterpartyId &&
+        [fixture.legalEntityId, secondary.legalEntityId].includes(scope.legalEntityId)
+          ? observedEligibleCounterpartyRole({
+              managedLegalEntityId: scope.legalEntityId,
+              roleResourceId: roleId,
+              roleResourceRevision: '2026-01-01T00:00:00.000Z',
+            })
+          : Effect.succeed({ outcome: 'INDETERMINATE' as const }),
     }),
     partyRegistryGuestResolverFactoryLive,
     profileReactivationEligibilityEvaluatorFactoryLive.pipe(Layer.provide(profileReconfirmationPolicyUnavailableLive)),
