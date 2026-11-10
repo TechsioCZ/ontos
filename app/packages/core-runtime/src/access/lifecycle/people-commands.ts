@@ -97,6 +97,13 @@ export const PEOPLE_COMMAND_FAILURE_CODES = [
   'people_capability_unknown',
   'people_deadline_outside_membership',
   'people_delegation_end_missing',
+  /**
+   * Admission needs an active human whose company directory membership is 'active'; an invited,
+   * disabled, departed or absent person is never admitted to access.
+   */
+  'people_directory_membership_missing',
+  /** The leaver still has live delegations they granted; those are revoked first, never cascaded. */
+  'people_granted_delegations_live',
   'people_holder_not_a_member',
   'people_holder_unknown',
   /** A lifecycle refusal without a people-specific code of its own; the reason text names the rule. */

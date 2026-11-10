@@ -11,6 +11,7 @@ import type {
   AccessScopeId,
   AssignmentIncarnationId,
   DelegationId,
+  LegalEntityId,
   PrincipalId,
   RoleId,
   RoleRevisionId,
@@ -501,18 +502,68 @@ export interface TransferOwnershipCommand {
   readonly toPrincipalId: PrincipalId;
 }
 
+/**
+ * Admits one person to one company as a plain 'member'. The tenant 'member' row is written as well
+ * when the person holds no live one, so the two minted ids are always named; the kind is never
+ * chosen by the caller, because owner and access_admin move only through ownership transfer.
+ */
+export interface AdmitMemberCommand {
+  readonly companyMembershipId: AccessMembershipId;
+  readonly legalEntityId: LegalEntityId;
+  readonly principalId: PrincipalId;
+  readonly tenantMembershipId: AccessMembershipId;
+}
+
+/**
+ * Ends one person's live 'member' row in one scope (the tenant context ends every company too). The
+ * reason is required and recorded with who ended it and when.
+ */
+export interface EndMembershipCommand {
+  readonly principalId: PrincipalId;
+  readonly reason: string;
+  readonly scopeId: AccessScopeId;
+}
+
+/** The member row an admission or an ending changed, as a write answers it. */
+export interface PeopleMembershipReceipt {
+  readonly principalId: PrincipalId;
+  readonly scopeId: AccessScopeId;
+  readonly status: AccessMembership['status'];
+}
+
 /** What a write answers: the token a screen re-reads with, and the row it changed. */
 export interface PeopleCommandReceipt {
   readonly assignment?: Assignment;
   readonly delegation?: Delegation;
+  readonly membership?: PeopleMembershipReceipt;
   readonly revision: string;
   readonly transferredScopeIds?: readonly AccessScopeId[];
 }
 
 export interface AccessPeopleCommandsService {
+  /**
+   * Admits a person to a company. Only permanent authority over that company admits. Refusals:
+   * people_membership_scope_mismatch (unknown company), people_authority_missing,
+   * people_directory_membership_missing, people_agent_holder_forbidden,
+   * people_membership_already_active and people_membership_ended (a row that is not live but not revoked).
+   */
+  readonly admitMember: (
+    scope: OperationalScope,
+    command: AdmitMemberCommand,
+  ) => Effect.Effect<PeopleCommandReceipt, PeopleCommandFailure>;
   readonly assignRole: (
     scope: OperationalScope,
     command: AssignRoleCommand,
+  ) => Effect.Effect<PeopleCommandReceipt, PeopleCommandFailure>;
+  /**
+   * Ends a person's live member row in one scope. Only permanent authority over that scope ends it, and
+   * the tenant owner when the leaver holds owner or access_admin in a closed scope. Refusals:
+   * people_membership_unknown, people_authority_missing, people_granted_delegations_live and
+   * ownership_transfer_required (with scopeIds).
+   */
+  readonly endMembership: (
+    scope: OperationalScope,
+    command: EndMembershipCommand,
   ) => Effect.Effect<PeopleCommandReceipt, PeopleCommandFailure>;
   readonly grantDelegation: (
     scope: OperationalScope,
@@ -557,6 +608,14 @@ interface LoadedPeopleIntent {
   readonly teams: readonly AccessTeamWithMembers[];
   readonly tenantScopeId: AccessScopeId;
 }
+
+// Stub until lane L1 implements admission: refuses as unavailable, so nothing is written by accident.
+const admitMemberStub = (_scope: OperationalScope, _command: AdmitMemberCommand) =>
+  refuse('access_intent_unavailable', 'Admitting a member is not available yet');
+
+// Stub until lane L1 implements ending: refuses as unavailable, so nothing is written by accident.
+const endMembershipStub = (_scope: OperationalScope, _command: EndMembershipCommand) =>
+  refuse('access_intent_unavailable', 'Ending a membership is not available yet');
 
 export const makeAccessPeopleCommands = (dependencies: {
   readonly loader: Pick<TenantIntentLoaderService, 'loadConfigureBases'>;
@@ -904,7 +963,9 @@ export const makeAccessPeopleCommands = (dependencies: {
   });
 
   return Object.freeze({
+    admitMember: admitMemberStub,
     assignRole,
+    endMembership: endMembershipStub,
     grantDelegation,
     read,
     readCatalog,
