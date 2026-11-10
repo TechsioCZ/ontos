@@ -1,4 +1,3 @@
-import { moduleCredentialOverlay } from '@app/core-runtime/auth/hosted-module-credentials';
 import {
   OwnerActionApprovalSchemaErrorLive,
   makeOwnerActionApproveHandler,
@@ -220,8 +219,6 @@ export const makeCrmApiRuntime = () =>
   assembleEffectBffRuntime({
     api: crmApi,
     handlers: governedResolvedApiHandlersLive,
-    // In a host that serves several owners, this owner's delegated calls read its own module credential only.
-    transport: moduleCredentialOverlay(governedActionDeliveryUnit.appId),
   });
 const apiRuntime = makeCrmApiRuntime();
 

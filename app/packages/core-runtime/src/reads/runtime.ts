@@ -1,3 +1,4 @@
+import { moduleCredentialOverlay } from '../auth/hosted-module-credentials.ts';
 import {
   loadModuleOperationAdmission,
   captureShellSystemReadRegistrations,
@@ -2115,48 +2116,53 @@ export const makeReadRuntimeLive = (
   expectedDeployment: typeof OntosDeploymentIdentitySchema.Type,
   hosting?: VerticalRuntimeRegistration | { readonly shellSystemReads: ShellSystemReadRegistrations },
 ) =>
-  Layer.effect(
-    ReadRuntime,
-    Effect.gen(function* makeOwnedReadRuntimeService() {
-      const applicationComposition = yield* ActiveApplicationCompositionService;
-      const {
-        accessDecision,
-        contextAccess,
-        database,
-        databaseIdentities,
-        gateway,
-        ownerAuthorizationOverlay,
-        principalKinds,
-        scopeResolver,
-      } = yield* readRuntimeDependencies;
-      const ownerRegistration = hosting !== undefined && 'shellSystemReads' in hosting ? undefined : hosting;
-      const shellSystemReads =
-        hosting !== undefined && 'shellSystemReads' in hosting ? hosting.shellSystemReads : undefined;
-      const options: ReadRuntimeOptions =
-        ownerRegistration === undefined
-          ? {
-              accessDecision,
-              applicationComposition,
-              databaseIdentities,
-              expectedDeployment,
-              ownerAuthorizationOverlay,
-              principalKinds,
-            }
-          : {
-              accessDecision,
-              applicationComposition,
-              databaseIdentities,
-              expectedDeployment,
-              ownerAuthorizationOverlay,
-              ownerRegistration,
-              principalKinds,
-            };
-      return readRuntimeFromDependencies(
-        database,
-        gateway,
-        scopeResolver,
-        contextAccess,
-        shellSystemReads === undefined ? options : { ...options, shellSystemReads },
-      );
-    }),
+  Layer.merge(
+    Layer.effect(
+      ReadRuntime,
+      Effect.gen(function* makeOwnedReadRuntimeService() {
+        const applicationComposition = yield* ActiveApplicationCompositionService;
+        const {
+          accessDecision,
+          contextAccess,
+          database,
+          databaseIdentities,
+          gateway,
+          ownerAuthorizationOverlay,
+          principalKinds,
+          scopeResolver,
+        } = yield* readRuntimeDependencies;
+        const ownerRegistration = hosting !== undefined && 'shellSystemReads' in hosting ? undefined : hosting;
+        const shellSystemReads =
+          hosting !== undefined && 'shellSystemReads' in hosting ? hosting.shellSystemReads : undefined;
+        const options: ReadRuntimeOptions =
+          ownerRegistration === undefined
+            ? {
+                accessDecision,
+                applicationComposition,
+                databaseIdentities,
+                expectedDeployment,
+                ownerAuthorizationOverlay,
+                principalKinds,
+              }
+            : {
+                accessDecision,
+                applicationComposition,
+                databaseIdentities,
+                expectedDeployment,
+                ownerAuthorizationOverlay,
+                ownerRegistration,
+                principalKinds,
+              };
+        return readRuntimeFromDependencies(
+          database,
+          gateway,
+          scopeResolver,
+          contextAccess,
+          shellSystemReads === undefined ? options : { ...options, shellSystemReads },
+        );
+      }),
+    ),
+    // The owner's own module credential: in a host that serves several owners, the handlers this runtime serves
+    // read only the key the host handed this deployment, never the shared environment.
+    moduleCredentialOverlay(expectedDeployment.appId),
   );

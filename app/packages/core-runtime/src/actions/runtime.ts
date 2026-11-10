@@ -1,3 +1,4 @@
+import { moduleCredentialOverlay } from '../auth/hosted-module-credentials.ts';
 import {
   loadModuleOperationAdmission,
   operationCatalogLoader,
@@ -3461,16 +3462,24 @@ export const makeActionRuntimeLive = (
   expectedDeployment: typeof OntosDeploymentIdentitySchema.Type,
   ownerRegistration?: VerticalRuntimeRegistration,
 ) =>
-  Layer.effect(
-    ActionRuntime,
-    Effect.gen(function* makeActionRuntimeService() {
-      const databaseIdentities = yield* DatabaseIdentityEnrollmentContext;
-      const applicationComposition = yield* ActiveApplicationCompositionService;
-      const ownerAuthorizationOverlay = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
-      const authorizationPreflight = yield* Effect.serviceOption(ActionAuthorizationPreflight);
-      const mandateDispatcher = yield* Effect.serviceOption(ActionMandateDispatcher);
-      const [database, repository, permission, moduleEntrypointGateway, moduleStateGate, scopeResolver, contextAccess] =
-        yield* Effect.all(
+  Layer.merge(
+    Layer.effect(
+      ActionRuntime,
+      Effect.gen(function* makeActionRuntimeService() {
+        const databaseIdentities = yield* DatabaseIdentityEnrollmentContext;
+        const applicationComposition = yield* ActiveApplicationCompositionService;
+        const ownerAuthorizationOverlay = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
+        const authorizationPreflight = yield* Effect.serviceOption(ActionAuthorizationPreflight);
+        const mandateDispatcher = yield* Effect.serviceOption(ActionMandateDispatcher);
+        const [
+          database,
+          repository,
+          permission,
+          moduleEntrypointGateway,
+          moduleStateGate,
+          scopeResolver,
+          contextAccess,
+        ] = yield* Effect.all(
           [
             CoreDatabaseService,
             ActionRepository,
@@ -3482,31 +3491,35 @@ export const makeActionRuntimeLive = (
           ] as const,
           { concurrency: 7 },
         );
-      const accessDecision = yield* bindLiveActionAccessGate;
-      let runtimeOptions: ActionRuntimeOptions = {
-        accessDecision,
-        applicationComposition,
-        contextAccess,
-        databaseIdentities,
-        expectedDeployment,
-        moduleEntrypointGateway,
-        moduleStateGate,
-        ownerAuthorizationOverlay: Option.isSome(ownerAuthorizationOverlay)
-          ? ownerAuthorizationOverlay.value
-          : failClosedOwnerAuthorizationOverlay,
-        resolveCompositionRevision: makeActionCompositionRevisionResolver(applicationComposition, expectedDeployment),
-      };
-      if (ownerRegistration !== undefined) {
-        runtimeOptions = { ...runtimeOptions, ownerRegistration };
-      }
-      if (Option.isSome(authorizationPreflight)) {
-        runtimeOptions = { ...runtimeOptions, authorizationPreflight: authorizationPreflight.value };
-      }
-      if (Option.isSome(mandateDispatcher)) {
-        runtimeOptions = { ...runtimeOptions, mandateDispatch: mandateDispatcher.value };
-      }
-      return makeActionRuntime(database, repository, permission, scopeResolver, runtimeOptions);
-    }),
+        const accessDecision = yield* bindLiveActionAccessGate;
+        let runtimeOptions: ActionRuntimeOptions = {
+          accessDecision,
+          applicationComposition,
+          contextAccess,
+          databaseIdentities,
+          expectedDeployment,
+          moduleEntrypointGateway,
+          moduleStateGate,
+          ownerAuthorizationOverlay: Option.isSome(ownerAuthorizationOverlay)
+            ? ownerAuthorizationOverlay.value
+            : failClosedOwnerAuthorizationOverlay,
+          resolveCompositionRevision: makeActionCompositionRevisionResolver(applicationComposition, expectedDeployment),
+        };
+        if (ownerRegistration !== undefined) {
+          runtimeOptions = { ...runtimeOptions, ownerRegistration };
+        }
+        if (Option.isSome(authorizationPreflight)) {
+          runtimeOptions = { ...runtimeOptions, authorizationPreflight: authorizationPreflight.value };
+        }
+        if (Option.isSome(mandateDispatcher)) {
+          runtimeOptions = { ...runtimeOptions, mandateDispatch: mandateDispatcher.value };
+        }
+        return makeActionRuntime(database, repository, permission, scopeResolver, runtimeOptions);
+      }),
+    ),
+    // The owner's own module credential: in a host that serves several owners, the handlers this runtime serves
+    // read only the key the host handed this deployment, never the shared environment.
+    moduleCredentialOverlay(expectedDeployment.appId),
   );
 
 export const runAction = <

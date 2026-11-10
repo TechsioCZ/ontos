@@ -1,9 +1,13 @@
 import { ownerModuleCredentialConfigProvider } from '@app/core-runtime/auth/hosted-module-credentials';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
-import { Config, ConfigProvider, Effect, Redacted, Schema } from 'effect';
-import type { Layer } from 'effect';
+import { Config, ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
 import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { expect, it } from 'effect-rstest';
+
+/** Stands in for the read or Action runtime service a handler layer is provided with. */
+class OwnerRuntimeProbe extends Context.Service<OwnerRuntimeProbe, { readonly owner: string }>()(
+  'ModuleCredentialOverlayRuntimeTest/OwnerRuntimeProbe',
+) {}
 
 const CredentialApi = HttpApi.make('credential-probe').add(
   HttpApiGroup.make('probe').add(HttpApiEndpoint.get('credential', '/credential', { success: Schema.String })),
@@ -23,7 +27,12 @@ const hosted = new Map([
 
 const answerOf = (overlay: Layer.Layer<never>) =>
   Effect.gen(function* probeCredential() {
-    const runtime = assembleEffectBffRuntime({ api: CredentialApi, handlers, transport: overlay });
+    // As Core's read and Action runtime factories carry it: merged into a runtime the owner's handlers are built with.
+    const runtimeDependency = Layer.merge(Layer.succeed(OwnerRuntimeProbe, { owner: 'probe' }), overlay);
+    const runtime = assembleEffectBffRuntime({
+      api: CredentialApi,
+      handlers: handlers.pipe(Layer.provide(runtimeDependency)),
+    });
     const web = yield* Effect.acquireRelease(
       Effect.sync(() => runtime.createHandler()),
       (handler) => Effect.promise(async () => await handler.dispose()),
@@ -34,7 +43,7 @@ const answerOf = (overlay: Layer.Layer<never>) =>
     );
   }).pipe(Effect.scoped);
 
-it.live("serves each owner's request handlers its own hosted module credential from the runtime overlay", () =>
+it.live("serves each owner's request handlers its own hosted module credential from the handler overlay", () =>
   Effect.gen(function* ownerRequestsReadOwnCredential() {
     const environment = ConfigProvider.fromUnknown({ ONTOS_GATEWAY_MODULE_API_KEY: 'shared-environment-key' });
     const overlayOf = (appId: string) =>
