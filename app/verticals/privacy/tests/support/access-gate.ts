@@ -7,7 +7,11 @@ import {
   makeTestAccessDecision,
 } from '@app/core-runtime/access/enforcement';
 import type { AccessDecisionService, TestAccessDecision, TestGateAnswer } from '@app/core-runtime/access/enforcement';
-import { inertAccessEnforcementPorts, makeTestOperationalScopeAccess } from '@app/core-runtime/testing/access-gate';
+import {
+  inertAccessEnforcementPorts,
+  makeTestOperationalScopeAccess,
+  withScriptedRebind,
+} from '@app/core-runtime/testing/access-gate';
 import { Layer } from 'effect';
 
 import { DecisionCheck } from '../../../../packages/core-runtime/src/access/decision/engine.ts';
@@ -42,12 +46,13 @@ export const makePrivacyCompletionAccessGate = (
   // request itself selected; only an explicit denial would refuse it.
   const scopeAccess = makeTestOperationalScopeAccess();
   const ports = inertAccessEnforcementPorts();
-  const service: AccessDecisionService = {
+  // The scripted gate reads no ports, so it states its rebind: a prepared Action authority needs one.
+  const service: AccessDecisionService = withScriptedRebind({
     decide: gate.decide,
     decideMany: gate.decideMany,
     list: gate.list,
     selectableLegalEntities: scopeAccess.selectableLegalEntities,
-  };
+  });
   return Object.freeze({
     asked: gate,
     layer: Layer.mergeAll(
