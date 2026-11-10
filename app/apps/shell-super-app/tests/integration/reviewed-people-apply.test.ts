@@ -31,7 +31,7 @@ import {
   SaveAccessRoleEditResponseSchema,
 } from '../../shared/access-admin-api.ts';
 import { shellAuthenticationApiContract } from '../../shared/api.ts';
-import { templateDatabaseLayer, withAccessAdminCase } from '../support/access-admin-real-gate-fixture.ts';
+import { accessAdminTemplateLayer, withAccessAdminCase } from '../support/access-admin-real-gate-fixture.ts';
 import type { AccessAdminCase } from '../support/access-admin-real-gate-fixture.ts';
 
 /*
@@ -171,7 +171,7 @@ const saveStepOf = (role: DesiredRole, roleId: (typeof AccessRoleSchema.Type)['i
     roleKey: role.key,
   });
 
-it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '300 seconds' })(
+it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '300 seconds' })(
   'the reviewed people apply through the Shell API',
   (suite) => {
     suite.effect(
