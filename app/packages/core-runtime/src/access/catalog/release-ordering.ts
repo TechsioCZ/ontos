@@ -1,26 +1,30 @@
 import { Option, Schema } from 'effect';
 
-import type { CatalogSnapshot } from '../model.ts';
-import { catalogReleaseLines } from './release.ts';
+import type { CatalogSnapshot, CatalogSnapshotEntry } from '../model.ts';
 
 /**
- * Where one candidate release stands against what is already published (D3). A release is never un-published
- * and the newest release is the one every adoption and every new role pins, so a candidate only becomes the
- * newest release when it is new and not narrower than the newest one: an older deployment that starts again
- * while a newer one serves (a restart during an overlapping deploy) can never move the catalog back.
+ * Where one candidate release stands against what is already published (D3). A deployment carries no ordering the
+ * platform can trust (no build sequence reaches the running release, and a restarted older container activates
+ * again), so the order is decided by content, conservatively: a candidate becomes the newest release only when it
+ * is new and *covers* the newest release — every capability the newest release declares is still declared with at
+ * least the same modes and record selectors, or is claimed by the candidate's own declared lineage (`renamedFrom`,
+ * `splitFrom`). Published releases therefore only ever widen or move capabilities along declared lineage:
  *
- * - `Publish`: unpublished and not narrower than the newest release; it becomes the newest release.
+ * - `Publish`: unpublished, and it covers the newest release; it becomes the newest release.
  * - `Current`: it is the newest release already; nothing is published and the tenants still follow it.
- * - `Superseded`: an older catalog. `published_before`: it was a release once and something newer followed
- *   it. `narrower_than_newest`: every entry it declares is in the newest release, which declares more — the
- *   catalog of a deployment older than the newest release, or a release that would only remove
- *   capabilities. Nothing is published and no tenant changes; a removal is published with the next release
- *   that also adds or changes something, and until then the removed entries stay inert.
+ * - `Superseded/published_before`: it was a release once and another one followed it; nothing changes.
+ * - `Superseded/not_a_successor`: it drops or narrows something the newest release declares without lineage —
+ *   the catalog of an older deployment, or a deployment that removes capabilities. Nothing is published and no
+ *   tenant changes. A plain removal therefore never reaches a release: the removed entry stays in the newest
+ *   release and is inert, because the gate only ever decides a declaration the running code presents.
+ *
+ * The rule cannot tell an older deployment that only adds capabilities from a newer one; such a catalog may be
+ * published, and then it only adds capabilities, which no running code can use unless it declares them.
  */
 export const CatalogReleaseOrderingSchema = Schema.Union([
   Schema.TaggedStruct('Publish', {}),
   Schema.TaggedStruct('Current', {}),
-  Schema.TaggedStruct('Superseded', { reason: Schema.Literals(['narrower_than_newest', 'published_before']) }),
+  Schema.TaggedStruct('Superseded', { reason: Schema.Literals(['not_a_successor', 'published_before']) }),
 ]);
 export type CatalogReleaseOrdering = typeof CatalogReleaseOrderingSchema.Type;
 
@@ -32,7 +36,38 @@ export interface CatalogReleaseOrderingInput {
   readonly publishedDigests: ReadonlySet<string>;
 }
 
-/** Content decides, never "differs": the same content is the same release, and an older one never wins. */
+const includesAll = (wider: readonly string[], narrower: readonly string[]): boolean => {
+  const offered = new Set(wider);
+  return narrower.every((value) => offered.has(value));
+};
+
+/** The capability keys a candidate takes over through its own declared lineage. */
+const claimedByLineage = (entries: readonly CatalogSnapshotEntry[]): ReadonlySet<string> => {
+  const claimed = new Set<string>();
+  for (const { lineage } of entries) {
+    for (const key of lineage?.renamedFrom ?? []) {
+      claimed.add(key);
+    }
+    if (lineage?.splitFrom !== undefined) {
+      claimed.add(lineage.splitFrom);
+    }
+  }
+  return claimed;
+};
+
+/** Whether every capability the newest release declares survives, at least as wide, in the candidate. */
+export const coversRelease = (candidate: CatalogSnapshot, newest: CatalogSnapshot): boolean => {
+  const byKey = new Map(candidate.entries.map((entry) => [entry.key, entry] as const));
+  const claimed = claimedByLineage(candidate.entries);
+  return newest.entries.every((entry) => {
+    const successor = byKey.get(entry.key);
+    return successor === undefined
+      ? claimed.has(entry.key)
+      : includesAll(successor.modes, entry.modes) && includesAll(successor.selectors, entry.selectors);
+  });
+};
+
+/** Content decides, never "differs": the same content is the same release, and a narrower one never wins. */
 export const orderCatalogRelease = (input: CatalogReleaseOrderingInput): CatalogReleaseOrdering =>
   Option.match(input.newest, {
     onNone: (): CatalogReleaseOrdering => ({ _tag: 'Publish' }),
@@ -44,9 +79,6 @@ export const orderCatalogRelease = (input: CatalogReleaseOrderingInput): Catalog
       if (input.publishedDigests.has(candidate.digest)) {
         return { _tag: 'Superseded', reason: 'published_before' };
       }
-      const newestLines = new Set(catalogReleaseLines(newest.entries));
-      return catalogReleaseLines(candidate.entries).every((line) => newestLines.has(line))
-        ? { _tag: 'Superseded', reason: 'narrower_than_newest' }
-        : { _tag: 'Publish' };
+      return coversRelease(candidate, newest) ? { _tag: 'Publish' } : { _tag: 'Superseded', reason: 'not_a_successor' };
     },
   });

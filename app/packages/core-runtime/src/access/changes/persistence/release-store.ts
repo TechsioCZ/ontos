@@ -55,6 +55,10 @@ export interface AccessReleaseStoreService {
   ) => Effect.Effect<CatalogReleaseActivation, AccessChangesStoreError>;
   /** Creates the tenant's release actor when it is missing and refuses an identity that is not one. */
   readonly ensureReleaseActor: (input: EnsureReleaseActorInput) => Effect.Effect<void, AccessChangesStoreError>;
+  /** The published releases with these identifiers, with their entries; unknown identifiers are skipped. */
+  readonly loadReleases: (
+    ids: readonly CatalogSnapshotId[],
+  ) => Effect.Effect<readonly CatalogSnapshot[], AccessChangesStoreError>;
   /** The same ordering as `activateRelease`, read-only: what an activation would do, for a dry run. */
   readonly previewRelease: (
     candidate: CatalogSnapshot,
