@@ -19,7 +19,7 @@ import {
 } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { GatewayDelegationExchangeLedgerLive } from './auth/gateway-delegation-exchanges.service.ts';
 import { issueDelegatedGatewayContextAssertion } from './auth/gateway-delegation-issuer.ts';
-import { loadGatewayModuleBindings } from './auth/gateway-delegation-policy.ts';
+import { admitIntegrationCredential, loadGatewayModuleBindings } from './auth/gateway-delegation-policy.ts';
 import { GatewayOriginatorEvidenceLive } from './auth/gateway-originator-evidence.service.ts';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type {
@@ -2461,7 +2461,8 @@ const requireGatewayRelease = Effect.fn('ShellGateway.requireRelease')(function*
   return catalog.composition.revision;
 });
 
-const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(function* issueApiKeyContextEffect(
+/** Mints a subject's gateway context for an integration API key; a module credential is never such a key. */
+export const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(function* issueApiKeyContextEffect(
   payload: ApiKeyGatewayContextRequest,
   rawKey: string | undefined,
   request: RequestWithHeaders,
@@ -2475,6 +2476,14 @@ const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(function
   const verified = yield* keys.verify(rawKey).pipe(
     observeGatewayPhase('key-verify'),
     Effect.catch((error) => failApiKeyGatewayProblem(apiKeyProviderGatewayProblem(error))),
+  );
+  // A module credential acts only through the delegated endpoint, which names the subject it acts for.
+  yield* admitIntegrationCredential(verified.providerKeyId).pipe(
+    Effect.catchTag('GatewayDelegationError', (error) =>
+      failApiKeyGatewayProblem(
+        error.code === 'forbidden' ? gatewayForbiddenProblem() : gatewayAuthenticationUnavailableProblem(),
+      ),
+    ),
   );
   const identity = yield* resolver.resolveBetterAuthApiKey(verified.providerKeyId).pipe(
     observeGatewayPhase('principal-resolve'),
