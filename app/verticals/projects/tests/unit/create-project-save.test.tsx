@@ -2,7 +2,7 @@
 // The create-project form sends its create only from the shared Save button ("Uložit"): typing and Enter change only
 // the draft, an untouched form leaves without asking, and leaving with typed input asks first. Only the generated
 // clients, the i18n runtime and the router blocker are replaced.
-import { saveLabelsFor } from '@app/admin-ui';
+import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
 import { Effect, Option } from 'effect';
 import { afterEach, expect, it, rstest } from 'effect-rstest';
 import { act } from 'react';
@@ -139,6 +139,17 @@ it.live('typing and Enter send nothing; Uložit creates once and the page can be
       prefix: 'WEB',
     });
     expect(navigation.shouldBlock()).toBe(false);
+  }),
+);
+
+it.live('reads the required text of a required field in Czech', () =>
+  Effect.gen(function* requiredText() {
+    yield* Effect.promise(mount);
+    const label = Option.getOrThrow(
+      Option.fromNullishOr(document.querySelector<HTMLLabelElement>('label[for="project-name"]')),
+    );
+    expect(label.textContent).toContain(requiredLabelFor('cs'));
+    expect(document.body.textContent).not.toContain('(required)');
   }),
 );
 
