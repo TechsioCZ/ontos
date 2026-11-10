@@ -1604,6 +1604,9 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
         gatewayApiKey: Redacted.value(issued.secret),
       },
     }),
+    // Commerce's own module credential, which the Shell attests to Commerce's release: the Ensure Action reads
+    // the Party through delegated gateway context before its transaction.
+    ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(moduleIssued.secret),
     ONTOS_RETAINED_CONSENT_SERVER_SCOPE: JSON.stringify({
       compositionRevision: initialSnapshot.composition.revision,
       legalEntityId: fixture.legalEntityId,
