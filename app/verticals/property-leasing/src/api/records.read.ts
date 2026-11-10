@@ -24,21 +24,24 @@ export type Services = Effect.Success<ReturnType<typeof persistenceService>>;
  * trip, so the reads run it in `prepare`, before their transaction opens. A read-only or approval-only MCP
  * connection never offers direct changes.
  */
-const occupancyActionPermission = Effect.fn('PropertyLeasing.actionPermission')(function* occupancyActionPermission(
-  scope: OperationalScope,
-) {
-  const { descriptor } = applyCommandAction;
-  const gate = yield* AccessDecisionGate;
-  const decision = yield* gate.decide({
-    carrier: descriptor,
-    legalEntityScope: descriptor.legalEntityScope,
-    mode: 'run',
-    now: yield* DateTime.nowAsDate,
-    scope,
-  });
-  // An unprovable decision only hides buttons; the Action itself stays authorized by Core.
-  return decision.outcome === 'ALLOWED';
-});
+const occupancyActionPermission = (scope: OperationalScope) =>
+  AccessDecisionGate.pipe(
+    Effect.flatMap((gate) =>
+      DateTime.nowAsDate.pipe(
+        Effect.flatMap((now) =>
+          gate.decide({
+            carrier: applyCommandAction.descriptor,
+            legalEntityScope: applyCommandAction.descriptor.legalEntityScope,
+            mode: 'run',
+            now,
+            scope,
+          }),
+        ),
+      ),
+    ),
+    // An unprovable decision only hides buttons; the Action itself stays authorized by Core.
+    Effect.map((decision) => decision.outcome === 'ALLOWED'),
+  );
 
 export const occupancyWriteCapability = (scope: OperationalScope): Effect.Effect<boolean, never, AccessDecisionGate> =>
   isConnectionWriteAllowed(scope, OWNER_MODULE_KEY) ? occupancyActionPermission(scope) : Effect.succeed(false);
