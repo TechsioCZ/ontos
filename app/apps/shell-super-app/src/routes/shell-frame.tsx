@@ -179,7 +179,11 @@ export interface ShellNavigationModel {
 
 type Translate = (key: string) => string;
 
-/** Staff links share the idle queue; intent promotes a queued destination without duplicating its router flight. */
+/**
+ * Staff links prepare their destination (its module code and primary data) on intent only: pointer, focus or touch.
+ * Preparing every rendered link in the background loaded the code and reads of modules the page does not show, about
+ * fifty reads of other modules on each full page load.
+ */
 export const ShellRouteLink = ({
   href: _unusedHref,
   ...props
@@ -239,11 +243,6 @@ export const ShellRouteLink = ({
       }}
       prefetch="none"
       preload={false}
-      ref={(element: HTMLAnchorElement | null) => {
-        if (element !== null) {
-          prepare(element, 'background');
-        }
-      }}
     />
   );
 };

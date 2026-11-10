@@ -9,7 +9,7 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router';
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Deferred, Effect } from 'effect';
 import { afterAll, afterEach, beforeAll, expect, it, rstest } from 'effect-rstest';
 
@@ -55,7 +55,7 @@ afterEach(() => {
 });
 
 it.live(
-  'prepares every rendered Home card concurrently through the native router, isolates replay and joins a click',
+  'prepares no Home card on render, then each pointed card concurrently through the native router, and joins a click',
   () =>
     Effect.gen(function* homeCardPreparation() {
       yield* staffRoutePreloads.invalidate;
@@ -142,6 +142,13 @@ it.live(
           router={router}
         />,
       );
+      // Rendering the cards prepares none of their destinations (the seeded gateway context answers locally).
+      yield* Effect.sleep('20 millis');
+      expect(destinationLoader).not.toHaveBeenCalled();
+      expect(platformFetch).not.toHaveBeenCalled();
+      for (const link of screen.getAllByRole('link')) {
+        fireEvent.mouseEnter(link);
+      }
       yield* Effect.promise(() => waitFor(() => expect(platformFetch).toHaveBeenCalledTimes(3)));
       expect(destinationLoader).toHaveBeenCalledTimes(3);
       expect(globalThis.localStorage.getItem(manifestKey)).toBeNull();
