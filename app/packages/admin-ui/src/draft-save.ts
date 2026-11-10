@@ -315,7 +315,7 @@ export interface DraftSave<V> extends SavableDraft {
   readonly pending: boolean;
 }
 
-export interface UseDraftSaveOptions<V, R> extends DraftSaveOptions<V, R> {
+export interface UseDraftSaveOptions<V, R> extends Omit<DraftSaveOptions<V, R>, 'save'> {
   /**
    * The version the draft starts from, when it is not the first render's draft: a create form passes its empty form,
    * so the values it opens with already count as a draft the Save button sends.
@@ -333,6 +333,11 @@ export interface UseDraftSaveOptions<V, R> extends DraftSaveOptions<V, R> {
   readonly opened?: V | undefined;
   /** The host's browser runtime; saves run in it. */
   readonly runtime: ManagedRuntime.ManagedRuntime<R, never>;
+  /**
+   * Sends one draft (see `DraftSaveOptions.save`). A save of several commands that stopped after some of them went
+   * through returns `PartlySaved`: its `confirmed` becomes the version later saves and "Zahodit změny" go back to.
+   */
+  readonly save: (value: V) => Effect.Effect<SaveOutcome | PartlySaved<V>, never, R>;
   /** The form's draft. Without `initial`, the first render's value is taken as saved. */
   readonly value: V;
 }

@@ -5,11 +5,12 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { formatMoney, SectionCard } from '@app/admin-ui';
+import { Match, Option } from 'effect';
 import { useState } from 'react';
 import { AvailabilityBadge } from './product-eshop.tsx';
 import type { PanelProps } from './product-eshop.tsx';
 import { DemoArchiveSection, PublicationSection } from './product-eshop-sections.tsx';
-import { eshopCommandsOf, eshopDraftOf, sameImages, slugInvalidOf } from './product-eshop-draft.ts';
+import { eshopCommandsOf, eshopDraftOf, eshopPartlyConfirmed, slugInvalidOf } from './product-eshop-draft.ts';
 import type { EshopDraft } from './product-eshop-draft.ts';
 import { useProductLabel } from './product-form-labels.ts';
 import { ProductImageGallery } from './product-image-gallery.tsx';
@@ -31,21 +32,31 @@ const useEshopPanel = ({ onCommitted, onReload, product, revision }: EshopPanelP
   const [takenSlug, setTakenSlug] = useState<string | null>(null);
   const save = useProductTabSave<EshopDraft>({
     commandOf: (value, confirmed) => eshopCommandsOf(product.id, value, confirmed),
-    // The business refusals of this save: a slug another product already uses, or a picture no longer available.
-    failureText: (outcome, value) => {
-      const typed = value.slug.trim();
-      const taken = outcome.reason === 'rejected' && typed !== '' && typed !== (product.slug ?? '');
-      if (taken) {
-        setTakenSlug(typed);
-        return 'Adresu produktu už používá jiný produkt. Zvolte jinou adresu, nic se neuložilo.';
-      }
-      return outcome.reason === 'rejected' && !sameImages(value.images, product.images ?? [])
-        ? k('gallery.saveRejected')
-        : undefined;
-    },
+    // The business refusals of this save, named after the command the server refused: a slug another product already
+    // uses (the settings), or a picture no longer available (the gallery). Settings that went through before a refused
+    // gallery stay saved (`partlyConfirmed`), so their slug is never reported as taken.
+    failureText: (outcome, value, refused) =>
+      Option.liftPredicate(refused, () => outcome.reason === 'rejected').pipe(
+        Option.flatMap((command) =>
+          Match.value(command).pipe(
+            Match.tag('ChangeProductImages', () => Option.some(k('gallery.saveRejected'))),
+            Match.tag('UpdateProduct', () => {
+              const typed = value.slug.trim();
+              if (typed === '' || typed === (product.slug ?? '')) {
+                return Option.none<string>();
+              }
+              setTakenSlug(typed);
+              return Option.some('Adresu produktu už používá jiný produkt. Zvolte jinou adresu, nic se neuložilo.');
+            }),
+            Match.orElse(() => Option.none<string>()),
+          ),
+        ),
+        Option.getOrUndefined,
+      ),
     isValid: (value) => !slugInvalidOf(value.slug) && !(takenSlug !== null && takenSlug === value.slug.trim()),
     onReload,
     onSaved: () => onCommitted('Nastavení e-shopu uloženo.'),
+    partlyConfirmed: eshopPartlyConfirmed,
     reset: setForm,
     revision,
     server: eshopDraftOf(product),

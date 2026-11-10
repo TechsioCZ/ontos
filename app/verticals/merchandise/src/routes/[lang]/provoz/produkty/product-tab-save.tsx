@@ -3,7 +3,7 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
-import type { DraftSave, SaveOutcome, UnsavedChangesGuard } from '@app/admin-ui';
+import type { DraftSave, PartlySaved, SaveOutcome, UnsavedChangesGuard } from '@app/admin-ui';
 import { Array as Arr, Effect, Equal, Option } from 'effect';
 import { useEffect, useRef, useState } from 'react';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -22,24 +22,35 @@ const tabSaveOutcome = (outcome: CommandOutcome): SaveOutcome => {
   return outcome.reason === 'conflict' ? 'conflict' : 'failed';
 };
 
-/**
- * Sends `commands` one after another, each against the revision the previous one left. It stops at the first refused
- * one; `committed` is the revision the commands that went through left (the base when none did).
- */
+/** How far one save got: the commands that went through, the revision they left and how the last one ended. */
+interface CommandsRun {
+  /** The revision the commands that went through left (the base when none did). */
+  readonly committed: number;
+  readonly outcome: CommandOutcome;
+  /** The command the server refused, when one was. */
+  readonly refused: ProductCommand | null;
+  readonly sent: readonly ProductCommand[];
+}
+
+/** Sends `commands` one after another, each against the revision the previous one left; stops at the first refusal. */
 const runCommands = (
   commands: readonly ProductCommand[],
   revision: number,
-): Effect.Effect<{ readonly committed: number; readonly outcome: CommandOutcome }> => {
+  sent: readonly ProductCommand[] = [],
+): Effect.Effect<CommandsRun> => {
   const [first, ...rest] = commands;
   if (first === undefined) {
-    return Effect.succeed({ committed: revision, outcome: { ok: true, revision } });
+    return Effect.succeed({ committed: revision, outcome: { ok: true, revision }, refused: null, sent });
   }
   return productCommandOutcome(first, revision).pipe(
-    Effect.flatMap((outcome) =>
-      outcome.ok && rest.length > 0
-        ? runCommands(rest, outcome.revision)
-        : Effect.succeed({ committed: outcome.ok ? outcome.revision : revision, outcome }),
-    ),
+    Effect.flatMap((outcome) => {
+      if (!outcome.ok) {
+        return Effect.succeed({ committed: revision, outcome, refused: first, sent });
+      }
+      return rest.length > 0
+        ? runCommands(rest, outcome.revision, [...sent, first])
+        : Effect.succeed({ committed: outcome.revision, outcome, refused: null, sent: [...sent, first] });
+    }),
   );
 };
 
@@ -49,14 +60,27 @@ export interface ProductTabSaveOptions<V> {
    * is the version the server last confirmed, so only what changed since has to be sent.
    */
   readonly commandOf: (value: V, confirmed: V) => ProductCommand | readonly ProductCommand[];
-  /** Text of a refused save; the general failure text when it returns undefined. */
-  readonly failureText?: (outcome: Extract<CommandOutcome, { readonly ok: false }>, value: V) => string | undefined;
+  /**
+   * Text of a refused save; the general failure text when it returns undefined. `refused` is the command the server
+   * refused, so the text names that part of the draft, not one that went through before it.
+   */
+  readonly failureText?: (
+    outcome: Extract<CommandOutcome, { readonly ok: false }>,
+    value: V,
+    refused: ProductCommand,
+  ) => string | undefined;
   /** The form's own validation; an invalid draft is never sent and keeps the Save button disabled. */
   readonly isValid: (value: V) => boolean;
   /** Re-reads the product, after "Načíst aktuální verzi". */
   readonly onReload: () => void;
   /** The saved draft was committed (the page re-reads the product). */
   readonly onSaved: () => void;
+  /**
+   * What the server has after `sent` went through and a later command of the same save was refused: the draft's
+   * parts those commands wrote, the confirmed version's others. The next save then sends only what is still missing,
+   * and "Zahodit změny" goes back to it. Without it, such a save is reported as a plain failure.
+   */
+  readonly partlyConfirmed?: (value: V, confirmed: V, sent: readonly ProductCommand[]) => V;
   /** Puts `value` (the confirmed version) back into the form's state. */
   readonly reset: (value: V) => void;
   /** The catalog revision the command is sent against. */
@@ -97,28 +121,27 @@ export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): Produc
     runtime: browserRuntime,
     save: (value) =>
       runCommands(Arr.ensure(options.commandOf(value, confirmedNow.current)), base.current).pipe(
-        Effect.tap(({ committed }) =>
-          Effect.sync(() => {
-            // Commands that went through before a refused one moved the revision; a retry starts after them.
-            base.current = Math.max(base.current, committed);
-          }),
-        ),
-        Effect.map(({ outcome }) => outcome),
-        Effect.tap((outcome) =>
-          Effect.sync(() => {
-            if (outcome.ok) {
-              base.current = outcome.revision;
-              setError(null);
-              options.onSaved();
-              return;
-            }
-            setError(
-              options.failureText?.(outcome, value) ??
-                (outcome.reason === 'rejected' ? label('messages.rejected') : label('messages.failed')),
-            );
-          }),
-        ),
-        Effect.map(tabSaveOutcome),
+        Effect.map(({ committed, outcome, refused, sent }): SaveOutcome | PartlySaved<V> => {
+          // Commands that went through before a refused one moved the revision; a retry starts after them.
+          base.current = Math.max(base.current, committed);
+          if (outcome.ok) {
+            base.current = outcome.revision;
+            setError(null);
+            options.onSaved();
+            return 'saved';
+          }
+          setError(
+            (refused === null ? undefined : options.failureText?.(outcome, value, refused)) ??
+              (outcome.reason === 'rejected' ? label('messages.rejected') : label('messages.failed')),
+          );
+          const result = tabSaveOutcome(outcome);
+          if (sent.length === 0 || options.partlyConfirmed === undefined || result === 'saved') {
+            return result;
+          }
+          const confirmed = options.partlyConfirmed(value, confirmedNow.current, sent);
+          confirmedNow.current = confirmed;
+          return { confirmed, outcome: result, revision: committed };
+        }),
       ),
     value: options.value,
   });

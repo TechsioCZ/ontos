@@ -209,6 +209,7 @@ export const ImportPanel = (props: Parameters<typeof useImportPanel>[0]) => {
           <Button onClick={onClose} theme="outlined" variant="secondary">
             Zrušit
           </Button>
+          {/* A command, not a form: the import sends a previewed file once; nothing here edits a stored record. */}
           <Button
             disabled={preview === undefined || preview.parsed.fileError !== undefined || okRows === 0}
             icon="icon-[mdi--database-import-outline]"

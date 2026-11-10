@@ -10,7 +10,10 @@ import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ChangeProductImagesActionConflictProblemSchema } from '../../shared/apis/change-product-images-action.ts';
+import {
+  ChangeProductImagesActionConflictProblemSchema,
+  ChangeProductImagesActionIneligibleProblemSchema,
+} from '../../shared/apis/change-product-images-action.ts';
 import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
 import { executeChangeProductImages } from '../../src/api/change-product-images-action-client.ts';
 import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
@@ -54,6 +57,7 @@ const labels = saveLabelsFor('cs');
 const copy = {
   moveLater: 'merchandise.pages.products.gallery.moveLaterLabel',
   remove: 'merchandise.pages.products.gallery.removeLabel',
+  saveRejected: 'merchandise.pages.products.gallery.saveRejected',
 };
 
 const first = 'https://www.akros.cz/data/product/first.jpg';
@@ -114,7 +118,22 @@ const upload: MediaImageUpload = {
   full: { contentBase64: 'AA==', height: 1, width: 1 },
 };
 
-const mount = async () => {
+const ineligible = Schema.decodeSync(ChangeProductImagesActionIneligibleProblemSchema)({
+  _tag: 'ChangeProductImagesActionIneligibleProblem',
+  code: 'merchandise_reference_ineligible',
+  detail: 'Gone',
+  status: 422,
+  title: 'Ineligible',
+  type: 'urn:test:ineligible',
+});
+
+const settingsSaves = () =>
+  rstest.mocked(executeManageCatalog).mock.calls.map(([payload]) => ({
+    command: payload.command,
+    expectedRevision: payload.expectedRevision,
+  }));
+
+const mountWith = async ({ canWrite }: { readonly canWrite: boolean }) => {
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
@@ -122,7 +141,7 @@ const mount = async () => {
     await act(async () => {
       root.render(
         <EshopPanel
-          canWrite={false}
+          canWrite={canWrite}
           canWriteImages
           onCommitted={(message) => {
             committed.push(message);
@@ -146,6 +165,7 @@ const mount = async () => {
   });
   return { rerender: show };
 };
+const mount = () => mountWith({ canWrite: false });
 
 const buttons = (name: string): HTMLButtonElement[] =>
   [...document.querySelectorAll<HTMLButtonElement>('button')].filter((button) => button.textContent?.trim() === name);
@@ -170,6 +190,16 @@ const waitUntil = async (condition: () => boolean, attempt = 0): Promise<void> =
   await act(settle);
   await waitUntil(condition, attempt + 1);
 };
+
+const typeInto = (id: string, value: string) =>
+  Effect.promise(() =>
+    act(async () => {
+      const input = Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLInputElement>(`#${id}`)));
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await settle();
+    }),
+  );
 
 /** Picks a file in the picker's own input (not the form field), as the browser would. */
 const pick = (file: File) =>
@@ -273,4 +303,31 @@ it.effect('an untouched gallery leaves without asking', () =>
     // A blocked navigation of an untouched tab is not answered by its question.
     expect(buttons(labels.stay)).toHaveLength(0);
   }),
+);
+
+it.effect(
+  'settings saved before a refused gallery stay saved; the gallery reason shows and Uložit retries it alone',
+  () =>
+    Effect.gen(function* partlySaved() {
+      rstest.mocked(executeManageCatalog).mockReturnValue(Effect.succeed({ entityIds: [], revision: 8 }));
+      rstest.mocked(executeChangeProductImages).mockReturnValueOnce(Effect.fail(ineligible));
+      yield* Effect.promise(() => mountWith({ canWrite: true }));
+      yield* typeInto('eshop-slug', 'etiopie-250');
+      yield* click(labelled(copy.remove));
+      yield* click(button(labels.save));
+      yield* Effect.promise(() => waitUntil(() => (document.body.textContent ?? '').includes(copy.saveRejected)));
+      expect(settingsSaves()).toHaveLength(1);
+      expect(committed).toEqual([]);
+      // The slug went through: it is not reported as taken, and Uložit stays usable for the gallery.
+      expect(document.querySelector('[aria-invalid="true"]')).toBeNull();
+      expect(button(labels.save).disabled).toBe(false);
+
+      yield* click(button(labels.save));
+      yield* Effect.promise(() => waitUntil(() => committed.length === 1));
+      expect(settingsSaves()).toHaveLength(1);
+      expect(gallerySaves()).toEqual([
+        { change: { _tag: 'Set', images: [second] }, expectedRevision: 8 },
+        { change: { _tag: 'Set', images: [second] }, expectedRevision: 8 },
+      ]);
+    }),
 );

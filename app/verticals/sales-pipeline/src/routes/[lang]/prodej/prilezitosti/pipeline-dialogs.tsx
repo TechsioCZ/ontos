@@ -37,6 +37,7 @@ import {
   statusOf,
 } from './opportunity-fields.tsx';
 import type { OpportunityReferences } from './opportunity-fields.tsx';
+import { useCommandInputGuard } from './command-input-guard.tsx';
 
 export type { CreateCommand } from './opportunity-fields.tsx';
 
@@ -201,7 +202,11 @@ interface StageDialogProps {
   readonly showNote: boolean;
 }
 
-/** Change stage for one opportunity (with note) or for a bulk selection (stage only). */
+// A command, not a form: a stage change is a state transition with its own button, not an edit of stored fields.
+/**
+ * Change stage for one opportunity (with note) or for a bulk selection (stage only). Leaving with a typed note asks
+ * first; closing without one leaves at once.
+ */
 export const StageDialog = ({
   busy,
   currentStage,
@@ -226,6 +231,8 @@ export const StageDialog = ({
   }));
   const noteText = note.trim();
   const noteError = isValidNote(noteText) ? undefined : t(`${K}.create.errors.noteTooLong`);
+  const { dialog, guard } = useCommandInputGuard(showNote && noteText !== '', () => setNote(''));
+  const close = () => guard.request(() => onOpenChange(false));
 
   const submit = () => {
     if (busy) {
@@ -242,7 +249,7 @@ export const StageDialog = ({
     <SidePanel
       actions={
         <>
-          <Button onClick={() => onOpenChange(false)} theme="outlined" type="button" variant="secondary">
+          <Button onClick={close} theme="outlined" type="button" variant="secondary">
             {t(`${K}.stageDialog.cancel`)}
           </Button>
           <Button
@@ -258,7 +265,12 @@ export const StageDialog = ({
         </>
       }
       description={description}
-      onOpenChange={onOpenChange}
+      guard={guard}
+      onOpenChange={(open) => {
+        if (!open) {
+          onOpenChange(false);
+        }
+      }}
       open
       resizeLabel={t(RESIZE_LABEL_KEY)}
       size="lg"
@@ -316,6 +328,7 @@ export const StageDialog = ({
           />
         )}
       </form>
+      {dialog}
     </SidePanel>
   );
 };
@@ -331,6 +344,7 @@ interface OwnerDialogProps {
   readonly serverError?: string | undefined;
 }
 
+// A command, not a form: the owner action reassigns from one pick, with nothing typed that a draft would keep.
 /** Assign or clear the owner (`Nepřiřazeno` clears it). */
 export const OwnerDialog = ({
   busy,

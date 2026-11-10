@@ -338,6 +338,7 @@ const AccountingSelection = (model: ReturnType<typeof useAccountingPanel>) => {
                 value={[format]}
               />
             </div>
+            {/* A command, not a form: the export builds a package from the selected rows; no record is edited. */}
             <Button
               disabled={selected.size === 0 || vm.busy}
               icon="icon-[mdi--package-variant-closed]"

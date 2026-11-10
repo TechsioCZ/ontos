@@ -1,4 +1,5 @@
 // The draft of the "E-shop a obrázky" tab and the commands one Uložit sends for it.
+import { Predicate } from 'effect';
 import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductCommand } from './products-api.ts';
@@ -49,3 +50,13 @@ export const eshopCommandsOf = (
   }
   return commands;
 };
+
+/**
+ * What the server has when the settings of one save went through and its gallery was refused: the draft's settings
+ * with the confirmed gallery. A retry then sends the gallery alone.
+ */
+export const eshopPartlyConfirmed = (
+  value: EshopDraft,
+  confirmed: EshopDraft,
+  sent: readonly ProductCommand[],
+): EshopDraft => (sent.some(Predicate.isTagged('UpdateProduct')) ? { ...value, images: confirmed.images } : confirmed);
