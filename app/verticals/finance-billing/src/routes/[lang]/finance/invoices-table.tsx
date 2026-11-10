@@ -427,7 +427,13 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
           if (filterActive) {
             return <EmptyState description={t(`${ns}.noMatchesDescription`)} title={t(`${ns}.noMatches`)} />;
           }
-          return <EmptyState description={t(`${ns}.emptyFirstDescription`)} title={t(`${ns}.emptyFirstTitle`)} />;
+          // Only a user who sees "Nová faktura" is told to use it; a reader learns where invoices come from instead.
+          return (
+            <EmptyState
+              description={t(canWrite ? `${ns}.emptyFirstDescription` : `${ns}.emptyFirstReadOnlyDescription`)}
+              title={t(`${ns}.emptyFirstTitle`)}
+            />
+          );
         }}
         {...rowActionsProps}
         size="sm"

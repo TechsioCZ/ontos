@@ -233,6 +233,28 @@ describe('finance ledger after a successful empty load', () => {
     }),
   );
 
+  it.live('promises the create button only to a user who can write', () =>
+    Effect.gen(function* emptyByPermission() {
+      const createHint = 'finance-billing.faktury.emptyFirstDescription';
+      const readOnlyHint = 'finance-billing.faktury.emptyFirstReadOnlyDescription';
+      yield* preload('ledger-empty-writer');
+      const writer = renderLedger();
+      expect(writer.vm.canWrite).toBe(true);
+      expect({ create: writer.html.includes(createHint), readOnly: writer.html.includes(readOnlyHint) }).toEqual({
+        create: true,
+        readOnly: false,
+      });
+
+      yield* preload('ledger-empty-reader', {}, { ...emptyLedger, canWrite: false });
+      const reader = renderLedger();
+      expect(reader.vm.canWrite).toBe(false);
+      expect({ create: reader.html.includes(createHint), readOnly: reader.html.includes(readOnlyHint) }).toEqual({
+        create: false,
+        readOnly: true,
+      });
+    }),
+  );
+
   it.live('shows loading, not an empty ledger, before the first read settles', () =>
     Effect.sync(() => {
       mocks.location.search = { partyId: 'ledger-refresh-pending' };

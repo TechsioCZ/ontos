@@ -3,6 +3,7 @@ import { CounterpartyRefSchema } from '@app/party-registry/resources/counterpart
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { definePageData, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, PageDataSnapshot } from '@app/shared-contracts/page-data';
+import { useHeldSnapshot } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { defaultParseSearch } from '@tanstack/react-router';
@@ -466,11 +467,16 @@ export const useFinanceRecords = ({ scope }: { readonly scope: string | undefine
   const request = searchInvalid ? Option.none() : customerInvoiceRequest(partyId, counterpartyId, tenantId);
   /** The cached ledger this page shows: none without a verified scope, so no other scope's entry is ever read. */
   const ledgerInput = scopedRecordsRequest(scope, request);
-  const recordsSnapshot = useSyncExternalStore(
+  const requestKey = Option.match(ledgerInput, { onNone: () => 'invalid', onSome: scopedRecordsKey });
+  const storeSnapshot = useSyncExternalStore(
     financeRecords.subscribe,
     () => (Option.isSome(ledgerInput) ? financeRecords.snapshot(ledgerInput.value) : pageDataPending),
     pendingRecords,
   );
+  // The ledger is strict (`retainStale: false`): every background reload (a live change, the 20 s freshness, a
+  // settled write) reads `pending`. Without the held snapshot the plan, price list, accounting and recurring tabs
+  // unmount for that moment and their open forms lose what the user typed. A failed or denied read still replaces it.
+  const recordsSnapshot = useHeldSnapshot(requestKey, storeSnapshot);
   const snapshot = readyRecords(recordsSnapshot);
   /** Latest snapshot of this scope, so consecutive commands use the revision the previous one produced. */
   const latestSnapshot = () =>
@@ -484,7 +490,6 @@ export const useFinanceRecords = ({ scope }: { readonly scope: string | undefine
   const [confirmTarget, setConfirmTarget] = useState<Invoice>();
   /** True while the open detail is a history entry this page pushed, so closing it can step back instead. */
   const detailPushed = useRef(false);
-  const requestKey = Option.match(ledgerInput, { onNone: () => 'invalid', onSome: scopedRecordsKey });
   const detailKey = `${requestKey}:${requestedId ?? ''}`;
   const currentInvoiceDetail = financeInvoiceDetailState({
     feedback,
@@ -551,10 +556,10 @@ export const useFinanceRecords = ({ scope }: { readonly scope: string | undefine
       scope,
       searchInvalid ? Option.none() : customerInvoiceRequest(partyId, counterpartyId, tenantId),
     );
-    if (Option.isSome(current) && recordsSnapshot.state !== 'failed') {
+    if (Option.isSome(current) && storeSnapshot.state !== 'failed') {
       financeRecords.ensure(current.value);
     }
-  }, [counterpartyId, partyId, recordsSnapshot.state, scope, searchInvalid, tenantId]);
+  }, [counterpartyId, partyId, storeSnapshot.state, scope, searchInvalid, tenantId]);
 
   /** Retry after a failed load; the outcome shows through the ledger's own state. */
   const reload = () => {
