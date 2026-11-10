@@ -1,5 +1,11 @@
 {
   "finance-billing": {
+    "chartData": {
+      "toggle": "Zobrazit data grafu",
+      "category": "Měsíc",
+      "value": "Částka",
+      "series": "Řada"
+    },
     "language": {
       "cs": "Čeština",
       "en": "Angličtina",

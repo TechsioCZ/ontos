@@ -1,5 +1,10 @@
 {
   "sales-insights": {
+    "chartData": {
+      "toggle": "Show chart data",
+      "category": "Group",
+      "value": "Value"
+    },
     "language": {
       "cs": "Czech",
       "en": "English",

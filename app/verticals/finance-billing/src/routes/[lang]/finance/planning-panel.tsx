@@ -412,16 +412,20 @@ const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
             <Chart
               ariaLabel={t(`${chartKey}.flowAria`)}
               data={flowRows}
+              dataTableLabel={t('finance-billing.chartData.toggle')}
               formatCategory={monthTitle}
               formatTooltipValue={tooltipKc}
               formatValue={axisKc}
               height={260}
+              legendLabel={t('finance-billing.chartData.series')}
               locale={language}
               series="series"
               stacked
               type="bar"
               x="label"
+              xLabel={t('finance-billing.chartData.category')}
               y="value"
+              yLabel={t('finance-billing.chartData.value')}
             />
           </div>
           <div className="flex flex-col gap-100">
@@ -440,6 +444,7 @@ const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
               <Chart
                 ariaLabel={t(`${chartKey}.balanceAria`)}
                 data={balanceRows}
+                dataTableLabel={t('finance-billing.chartData.toggle')}
                 formatCategory={monthTitle}
                 formatTooltipValue={(value) => formatMoney(Math.round(value) * 100)}
                 formatValue={axisKc}
@@ -449,7 +454,9 @@ const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
                 type="line"
                 valueLabel={t(`${chartKey}.balanceTitle`)}
                 x="label"
+                xLabel={t('finance-billing.chartData.category')}
                 y="value"
+                yLabel={t(`${chartKey}.balanceTitle`)}
               />
             )}
           </div>

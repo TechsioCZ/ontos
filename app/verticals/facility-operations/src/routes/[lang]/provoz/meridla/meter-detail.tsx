@@ -489,15 +489,19 @@ export const MeterDetail = ({
           <Chart
             ariaLabel={t(`${k}.detail.chartAria`, { serial: meter.serialNumber })}
             data={chartData}
+            dataTableLabel={t('facility-operations.chartData.toggle')}
             formatValue={(value) => formatQuantity(value, meter.unit)}
             height={200}
             legend={hasAnomaly}
+            legendLabel={t('facility-operations.chartData.series')}
             locale={language}
             series="series"
             stacked
             type="bar"
             x="period"
+            xLabel={t('facility-operations.chartData.category')}
             y="consumption"
+            yLabel={t('facility-operations.chartData.value')}
           />
         )}
         {otherUnits.length > 0 && (
