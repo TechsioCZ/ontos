@@ -116,6 +116,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     ),
   ).toEqual({
     activatePrincipalBinding: '/auth/identity/external/bindings/activate',
+    admitAccessMember: '/shell/access/people/admit-member',
     agentActivity: '/agent-platform/activity',
     agentDecide: '/agent-platform/decide',
     agentQueue: '/agent-platform/queue',
@@ -140,6 +141,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     decideAccessChanges: '/shell/access/changes/decide',
     demoAccountCapability: '/auth/identity/demo-accounts/capability',
     documentContext: '/shell/document-context',
+    endAccessMembership: '/shell/access/people/end-membership',
     executeAccessApproval: '/shell/access/approvals/execute',
     executeLegalEntityDetail: '/core/reads/legal-entity-detail',
     explainAccess: '/shell/access/explain',

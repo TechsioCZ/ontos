@@ -162,6 +162,8 @@ const commandsFor = (frozen: FrozenCommandRecord) =>
           Layer.succeed(AccessApprovalsInbox, inboxOver(frozen)),
           Layer.succeed(AccessChangesCommands, changes),
           Layer.succeed(AccessPeopleDirectory, {
+            companyMember: () => Effect.succeed(Option.none()),
+            companyMembers: () => Effect.succeed([]),
             people: () => Effect.succeed([]),
             scopeLabels: () => Effect.succeed({ companies: [] }),
           }),

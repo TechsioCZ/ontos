@@ -89,6 +89,7 @@ beforeEach(() => {
       status: 'ok',
       value: {
         options: {
+          admissionCandidates: [],
           capabilities: [],
           managers: [],
           people: [],
@@ -97,8 +98,10 @@ beforeEach(() => {
           scopes: [],
           teams: [],
           writeAvailability: {
+            canAdmitMember: false,
             canAssign: false,
             canDelegate: false,
+            canEndMembership: false,
             canManageTeams: false,
             canRevokeDelegation: false,
             canTransferOwnership: false,

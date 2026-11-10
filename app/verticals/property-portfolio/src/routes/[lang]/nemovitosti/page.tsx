@@ -29,7 +29,14 @@ import {
 } from './use-property-editor.ts';
 import type { PropertyDraft } from './use-property-editor.ts';
 import { ResponsibleEmployeesField } from './responsible-employees-field.tsx';
-import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useRecordDraft, useUnsavedChangesGuard } from '@app/admin-ui';
+import {
+  SaveBar,
+  UnsavedChangesDialog,
+  saveLabelsFor,
+  useHeldSnapshot,
+  useRecordDraft,
+  useUnsavedChangesGuard,
+} from '@app/admin-ui';
 import type { RevisionedSaveResult, SavableDraft } from '@app/admin-ui';
 import type { PropertyCommand } from '../../../../shared/actions/apply-command.ts';
 import { UnitStory, pragueToday } from './unit-story.tsx';
@@ -81,10 +88,16 @@ const usePropertyRecords = (input: RecordsInput) => {
   const search = readPropertySearch(Schema.is(PropertySearchInputSchema)(rawSearch) ? rawSearch : null);
   const { resourceId } = search;
   const key = 'property-portfolio.pages.records';
-  const snapshot = useSyncExternalStore(
-    (listener) => propertyRecords.subscribe(listener, input),
-    () => propertyRecords.snapshot(input),
-    () => pageDataPending,
+  // The register is strict (`retainStale: false`): every background reload (a live change, the 20 s freshness, a
+  // settled write) reads `pending`. Without the held snapshot the workspace and its open edit dialog unmount for that
+  // moment and lose what the user typed. A failed or denied read still replaces it.
+  const snapshot = useHeldSnapshot(
+    propertyRecords.key(input),
+    useSyncExternalStore(
+      (listener) => propertyRecords.subscribe(listener, input),
+      () => propertyRecords.snapshot(input),
+      () => pageDataPending,
+    ),
   );
   const { scope } = input;
   const ensureRecords = useEffectEvent((currentScope: string) =>

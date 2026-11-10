@@ -116,6 +116,7 @@
       "loadErrorDescription": "Check your connection and try again.",
       "emptyFirstTitle": "No invoices yet.",
       "emptyFirstDescription": "Create the first invoice using New invoice.",
+      "emptyFirstReadOnlyDescription": "Invoices appear here once someone with billing rights issues them.",
       "noMatches": "No invoices match the filter.",
       "noMatchesDescription": "Try a different search or status.",
       "filters": {

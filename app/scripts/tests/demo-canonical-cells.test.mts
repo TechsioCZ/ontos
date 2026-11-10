@@ -8,7 +8,7 @@ import { buildAccessCatalogRelease } from '@app/core-runtime/access/catalog';
 import { ModuleKeySchema } from '@app/core-runtime/access/ids';
 
 import { bootstrapDemoPermissionContexts } from '../demo/reset-permissions.mts';
-import { demoTenantId } from '../demo/fixture-ids.mts';
+import { demoLegalEntityId, demoTenantId } from '../demo/fixture-ids.mts';
 
 import { readAccessCatalogArtifact } from '../authorization-catalog-artifact.mts';
 import { policyReleaseEntries, policyRoleCellRows } from '../demo/access-policy.mts';
@@ -161,6 +161,20 @@ it.effect('keeps generic Party Create but no retired purpose cells in the unchan
     const owner = yield* Effect.fromResult(compileFullAccessRole(release));
     expect(owner.cells.some(({ capabilityKey }) => retiredPurposeKeys.has(capabilityKey))).toBe(false);
     expect(owner.cells.some(({ capabilityKey }) => capabilityKey === 'party.registry.party.create')).toBe(true);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('lets the accountant read and work the Tasks assigned to her in Obchodní firma', () =>
+  Effect.gen(function* accountantTaskCells() {
+    const catalog = yield* releaseEntries;
+    const accounting = reviewedDemoAssignments().filter(({ roleKey }) => roleKey === 'accounting');
+    expect(accounting.map(({ legalEntityId }) => legalEntityId)).toEqual([demoLegalEntityId]);
+    for (const { role } of accounting) {
+      const cells = yield* Effect.fromResult(policyRoleCellRows(role, catalog));
+      for (const capabilityKey of ['work.tasks.api-records.read', 'work.tasks.apply-command.write']) {
+        expect(cells).toContainEqual({ capabilityKey, mode: 'run', selector: 'all' });
+      }
+    }
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
