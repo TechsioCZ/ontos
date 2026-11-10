@@ -25,8 +25,8 @@ import { SymmyPolicyFixtureIntentSchema } from './symmy-policy-fixture-intents.t
 export const SymmyOwnerIntentSchema = Schema.Union([
   SymmyCatalogPricingInventoryIntentSchema,
   SymmyPartyCommerceIntentSchema,
-  SymmyPolicyFixtureIntentSchema,
 ]);
+const fixtureOwnerIntent = Schema.Union([SymmyOwnerIntentSchema, SymmyPolicyFixtureIntentSchema]);
 export const SymmyOwnerReceiptSchema = Schema.Union([
   SymmyCatalogPricingInventoryReceiptSchema,
   SymmyPartyCommerceOwnerReceiptSchema,
@@ -137,26 +137,25 @@ export const symmyPlanDependenciesValid = (
   return remaining.size === 0;
 };
 
-/** Operator-owned synthetic source plans. No request payload can register or change one. */
-export const SymmyFixtureExecutionPlanSchema = Schema.Struct({
+const executionPlanItem = Schema.Struct({
+  effects: Schema.NonEmptyArray(effectDefinition).check(Schema.isMaxLength(32)),
+  itemKey: itemKeySchema,
+  source,
+  sourceOccurrenceId: Schema.optionalKey(
+    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed()).pipe(
+      Schema.brand('SymmySourceOccurrenceId'),
+    ),
+  ),
+  unsupportedBranches,
+});
+
+const executionPlanDefinition = Schema.Struct({
   inventoryBackendId: Schema.optionalKey(
     Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed()).pipe(
       Schema.brand('SymmyInventoryBackendId'),
     ),
   ),
-  items: Schema.NonEmptyArray(
-    Schema.Struct({
-      effects: Schema.NonEmptyArray(effectDefinition).check(Schema.isMaxLength(32)),
-      itemKey: itemKeySchema,
-      source,
-      sourceOccurrenceId: Schema.optionalKey(
-        Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed()).pipe(
-          Schema.brand('SymmySourceOccurrenceId'),
-        ),
-      ),
-      unsupportedBranches,
-    }),
-  ).check(Schema.isMaxLength(16)),
+  items: Schema.NonEmptyArray(executionPlanItem).check(Schema.isMaxLength(16)),
   pricingSourceSystem: Schema.optionalKey(
     DefinePricePayloadSchema.fields.sourceAssertion.fields.sourceRecord.fields.sourceSystem,
   ),
@@ -164,15 +163,29 @@ export const SymmyFixtureExecutionPlanSchema = Schema.Struct({
   sourceMappingVersion: Schema.optionalKey(SymmyOwnerEffectRefSchema.fields.mappingVersion),
   sourceRouteId: Schema.optionalKey(routeIdSchema),
   sourceRouteRevision: Schema.optionalKey(SymmyOwnerEffectRefSchema.fields.routeRevision),
-}).check(
-  Schema.makeFilter(
-    ({ items }) =>
-      (new Set(items.map(({ itemKey }) => itemKey)).size === items.length && symmyPlanDependenciesValid(items)) ||
-      'Fixture item and effect keys must be distinct within their scope',
-  ),
+});
+const validPlanGraph = Schema.makeFilter(
+  ({ items }: { readonly items: Parameters<typeof symmyPlanDependenciesValid>[0] }) =>
+    (new Set(items.map(({ itemKey }) => itemKey)).size === items.length && symmyPlanDependenciesValid(items)) ||
+    'Fixture item and effect keys must be distinct within their scope',
 );
+
+/** Operator-owned synthetic source plans. No request payload can register or change one. */
+export const SymmyFixtureExecutionPlanSchema = Schema.Struct({
+  ...executionPlanDefinition.fields,
+  items: Schema.NonEmptyArray(
+    Schema.Struct({
+      ...executionPlanItem.fields,
+      effects: Schema.NonEmptyArray(
+        Schema.Struct({ ...effectDefinition.fields, intent: Schema.optionalKey(fixtureOwnerIntent) }),
+      ).check(Schema.isMaxLength(32)),
+    }),
+  ).check(Schema.isMaxLength(16)),
+}).check(validPlanGraph);
+
 /** Explicit normalized internal business inputs; real Symmy wire acceptance is separate. */
-export const SymmyInternalExecutionPlanSchema = SymmyFixtureExecutionPlanSchema.check(
+export const SymmyInternalExecutionPlanSchema = executionPlanDefinition.check(
+  validPlanGraph,
   Schema.makeFilter(
     ({
       inventoryBackendId,
@@ -191,8 +204,7 @@ export const SymmyInternalExecutionPlanSchema = SymmyFixtureExecutionPlanSchema.
         selector === undefined &&
         items.every(
           ({ effects, sourceOccurrenceId }) =>
-            sourceOccurrenceId !== undefined &&
-            effects.every(({ intent }) => intent !== undefined && !Schema.is(SymmyPolicyFixtureIntentSchema)(intent)),
+            sourceOccurrenceId !== undefined && effects.every(({ intent }) => intent !== undefined),
         )) ||
       'Every internal owner effect requires a finite typed intent',
   ),
@@ -209,7 +221,7 @@ export const SymmyPinnedEffectSchema = Schema.Struct({
   effectKey: effectKeySchema,
   executorBindingIncarnation: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))),
   executorPrincipalId: Schema.optionalKey(PrincipalIdSchema),
-  intent: effectDefinition.fields.intent,
+  intent: Schema.optionalKey(fixtureOwnerIntent),
   itemId: itemIdSchema,
   originalInvocationId: Schema.optionalKey(
     Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SymmyOwnerActionInvocationId')),
