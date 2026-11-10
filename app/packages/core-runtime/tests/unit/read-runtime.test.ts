@@ -49,13 +49,14 @@ import type {
   OwnerAuthorizationOverlayService,
 } from '../../src/access/enforcement/owner-overlay.ts';
 import { allowOwnerAuthorizationOverlay } from '../../src/access/enforcement/owner-overlay.ts';
+import type { AccessPrincipalKind, AccessPrincipalKinds } from '../../src/access/enforcement/actor.ts';
 import {
   defineRead,
   defineReadOwnerPermission,
   defineReadConditionalPermission,
   defineReadResourcePermission,
 } from '../../src/reads/definition.ts';
-import type { ReadServiceFactory } from '../../src/reads/definition.ts';
+import type { ReadServiceFactory, ResolvedReadPermissionTarget } from '../../src/reads/definition.ts';
 import type { ReadFinishContext, ReadLoadContext, ReadPrepareContext } from '../../src/reads/context.ts';
 import {
   ReadHandlerNotFound,
@@ -172,6 +173,7 @@ const makeHarness = Effect.fn(function* makeHarness(
     readonly ownerPermissionKey?: string;
     readonly ownerPermissionResponse?: 'empty';
     readonly permissionDecision?: 'allowed' | 'denied' | 'unavailable';
+    readonly principalKinds?: AccessPrincipalKinds;
     readonly readCompositionAuthority?: () => ReadAuthorityFixture | 'missing';
     readonly resolvedScope?: typeof scope & {
       readonly legalEntityId?: string;
@@ -339,6 +341,9 @@ const makeHarness = Effect.fn(function* makeHarness(
   };
   if (options.applicationComposition !== undefined) {
     ownedRuntimeOptions = { ...ownedRuntimeOptions, applicationComposition: options.applicationComposition };
+  }
+  if (options.principalKinds !== undefined) {
+    ownedRuntimeOptions = { ...ownedRuntimeOptions, principalKinds: options.principalKinds };
   }
   const constructRuntime = (ownerRegistration?: VerticalRuntimeRegistration) => {
     const runtimeOptions =
@@ -1778,62 +1783,114 @@ it.effect(
   }),
 );
 
+/** Core's principal kind of the acting principal, as the access gate reads it. */
+const principalKindsOf = (kind: AccessPrincipalKind | undefined): AccessPrincipalKinds => ({
+  readKind: () => Effect.succeed(Option.fromUndefinedOr(kind)),
+});
+
+const selectedCompanyRead = (target: ResolvedReadPermissionTarget) => {
+  const { accessDeclaration, ...unprotectedRegistration } = registration().descriptor;
+  expect(accessDeclaration?.key).toBe('core.shell.fixture.read');
+  return defineRead(
+    {
+      ...unprotectedRegistration,
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'read',
+        authorization: { kind: 'authenticated_principal' },
+        entrypointKey: 'core.identity.api.selected-company-test',
+        moduleKey: 'core.identity',
+        role: 'api',
+      }),
+      legalEntityScope: 'required',
+      owningModuleKey: 'core.identity',
+      permissionTarget: 'legal_entity',
+      readKey: 'core.identity.api.selected-company-test',
+    },
+    () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
+    () => Effect.succeed({}),
+    () => target,
+  );
+};
+
+const selectedCompanyId = '00000000-0000-4000-8000-000000000004';
+const otherCompanyId = '00000000-0000-4000-8000-000000000099';
+const selectedCompanyScope = { ...scope, legalEntityId: selectedCompanyId };
+
+/** A legacy target run once: the outcome and every company the retired relation was asked about, with its permission. */
+const runSelectedCompanyRead = Effect.fn(function* runSelectedCompanyRead(
+  target: ResolvedReadPermissionTarget,
+  kind: AccessPrincipalKind | undefined,
+) {
+  // A person who exists only in the v2 model holds no legacy `legal_entity#member` tuple: the relation denies.
+  const asked: string[] = [];
+  let permission: string | undefined;
+  const harness = yield* makeHarness({
+    onLegalEntityPermission: (requested) => {
+      permission = requested;
+    },
+    onLegalEntityTarget: (id) => asked.push(id),
+    permissionDecision: 'denied',
+    principalKinds: principalKindsOf(kind),
+    resolvedScope: selectedCompanyScope,
+  });
+  const outcome = yield* Effect.exit(
+    harness.runtime.runRead({
+      input: {},
+      principal: selectedCompanyScope,
+      registration: selectedCompanyRead(target),
+      transport: { correlationId: scope.correlationId },
+    }),
+  );
+  return { asked, outcome, permission };
+});
+
+const deniedByLegacyRelation = (outcome: Exit.Exit<unknown, unknown>): boolean =>
+  Exit.isFailure(outcome) && Option.exists(Cause.findErrorOption(outcome.cause), Schema.is(ReadPermissionDenied));
+
 it.effect(
-  'answers selected-company access from the resolved scope and asks the legacy relation only for another company',
-  Effect.fn(function* selectedCompanyTarget() {
-    const selectedId = '00000000-0000-4000-8000-000000000004';
-    const otherId = '00000000-0000-4000-8000-000000000099';
-    const { accessDeclaration, ...unprotectedRegistration } = registration().descriptor;
-    expect(accessDeclaration?.key).toBe('core.shell.fixture.read');
-    const companyRead = (target: { readonly kind: 'legal_entity'; readonly legalEntityId?: string }) =>
-      defineRead(
-        {
-          ...unprotectedRegistration,
-          entrypoint: defineSystemModuleEntrypoint({
-            access: 'read',
-            authorization: { kind: 'authenticated_principal' },
-            entrypointKey: 'core.identity.api.selected-company-test',
-            moduleKey: 'core.identity',
-            role: 'api',
-          }),
-          legalEntityScope: 'required',
-          owningModuleKey: 'core.identity',
-          permissionTarget: 'legal_entity',
-          readKey: 'core.identity.api.selected-company-test',
-        },
-        () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
-        () => Effect.succeed({}),
-        () => target,
-      );
-    const selected = { ...scope, legalEntityId: selectedId };
-    // A person who exists only in the v2 model holds no legacy `legal_entity#member` tuple, so the legacy relation
-    // denies. Scope resolution already refused any company this person may not select (O28).
-    const asked: string[] = [];
-    const harness = yield* makeHarness({
-      onLegalEntityTarget: (id) => asked.push(id),
-      permissionDecision: 'denied',
-      resolvedScope: selected,
-    });
-    const own = yield* Effect.exit(
-      harness.runtime.runRead({
-        input: {},
-        principal: selected,
-        registration: companyRead({ kind: 'legal_entity' }),
-        transport: { correlationId: scope.correlationId },
-      }),
+  "answers a person's own selected company from the resolved scope, never the retired company relation",
+  Effect.fn(function* personInSelectedCompany() {
+    // Scope resolution already refused any company this person may not select (O28).
+    const own = yield* runSelectedCompanyRead({ kind: 'legal_entity' }, 'human');
+    expect(Exit.isSuccess(own.outcome)).toBe(true);
+    expect(own.asked).toEqual([]);
+  }),
+);
+
+it.effect(
+  'asks the retired company relation for another company and for an explicit permission on the own company',
+  Effect.fn(function* legacyTargetsStayLegacy() {
+    const other = yield* runSelectedCompanyRead({ kind: 'legal_entity', legalEntityId: otherCompanyId }, 'human');
+    expect(deniedByLegacyRelation(other.outcome)).toBe(true);
+    expect(other.asked).toEqual([otherCompanyId]);
+    const explicit = yield* runSelectedCompanyRead({ kind: 'legal_entity', permission: 'manage_people' }, 'human');
+    expect(deniedByLegacyRelation(explicit.outcome)).toBe(true);
+    expect(explicit.asked).toEqual([selectedCompanyId]);
+    expect(explicit.permission).toBe('manage_people');
+  }),
+);
+
+it.effect(
+  'keeps the retired company relation for a workload, an agent or an unreadable kind in its own company',
+  Effect.fn(function* nonPersonInSelectedCompany() {
+    // A workload behind a verified module call may select every company of its tenant, so its scope proves nothing.
+    for (const kind of ['service', 'agent', undefined] as const) {
+      const run = yield* runSelectedCompanyRead({ kind: 'legal_entity' }, kind);
+      expect(deniedByLegacyRelation(run.outcome)).toBe(true);
+      expect(run.asked).toEqual([selectedCompanyId]);
+    }
+  }),
+);
+
+it.effect(
+  'never answers a bare company alternative inside any_of from the resolved scope',
+  Effect.fn(function* selectedCompanyAlternative() {
+    const run = yield* runSelectedCompanyRead(
+      { kind: 'any_of', targets: [{ kind: 'legal_entity' }, { kind: 'module', moduleId: 'core.identity' }] },
+      'human',
     );
-    expect(Exit.isSuccess(own)).toBe(true);
-    expect(asked).toEqual([]);
-    const other = yield* Effect.exit(
-      harness.runtime.runRead({
-        input: {},
-        principal: selected,
-        registration: companyRead({ kind: 'legal_entity', legalEntityId: otherId }),
-        transport: { correlationId: scope.correlationId },
-      }),
-    );
-    expect(Exit.isFailure(other)).toBe(true);
-    expect(asked).toEqual([otherId]);
+    expect(deniedByLegacyRelation(run.outcome)).toBe(true);
+    expect(run.asked).toEqual([selectedCompanyId]);
   }),
 );
 

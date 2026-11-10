@@ -24,7 +24,9 @@ import type { ListAccessResolution } from '../access/decision/engine.ts';
 import { capabilityPolicyOf } from '../access/enforcement/capability.ts';
 import { withOptional } from '../access/decision/optional.ts';
 import type { ListAccessPredicate } from '../access/decision/list-access.ts';
-import { ModuleKeySchema, RecordKeySchema } from '../access/ids.ts';
+import { ModuleKeySchema, PrincipalIdSchema, RecordKeySchema, TenantIdSchema } from '../access/ids.ts';
+import { AccessPrincipalKindSource } from '../access/enforcement/actor.ts';
+import type { AccessPrincipalKinds } from '../access/enforcement/actor.ts';
 import type { BoundAccessGate } from '../operations/access-gate.ts';
 import { bindLiveAccessGate } from '../operations/access-gate.ts';
 import type { ActionPolicyTarget } from '../actions/policy.ts';
@@ -158,8 +160,23 @@ export interface ReadRuntimeOptions {
   readonly onStage?: (stage: ReadRuntimeStage) => void;
   readonly ownerAuthorizationOverlay?: (typeof OwnerAuthorizationOverlay)['Service'];
   readonly ownerRegistration?: VerticalRuntimeRegistration;
+  /**
+   * Core's principal-kind reader. Only with it can a person's selected-company target be answered by the scope
+   * resolution; without it every legacy target keeps its legacy relation check.
+   */
+  readonly principalKinds?: AccessPrincipalKinds;
   readonly shellSystemReads?: ShellSystemReadRegistrations;
 }
+
+/**
+ * The primary target asks only whether the principal may act in its own selected company: a bare `legal_entity`
+ * target, never an `any_of` alternative, an explicit permission or another company.
+ */
+const isSelectedCompanyTarget = (target: ResolvedReadPermissionTarget, scope: OperationalScope): boolean =>
+  target.kind === 'legal_entity' &&
+  target.permission === undefined &&
+  scope.legalEntityId !== undefined &&
+  (target.legalEntityId ?? scope.legalEntityId) === scope.legalEntityId;
 
 const stableTargetKey = (value: string): boolean => value.length > 0 && value.length <= 300;
 const targetLegalEntityIdIsValid = Schema.is(Schema.String.check(Schema.isUUID()));
@@ -428,12 +445,6 @@ const checkAtomicPermissionTarget = <AccessValue extends (typeof ContextAccess)[
   const legalEntityId =
     target.kind === 'legal_entity' ? (target.legalEntityId ?? scope.legalEntityId ?? '') : (scope.legalEntityId ?? '');
   if (target.kind === 'legal_entity') {
-    // Selected-company access is the scope resolution's own gate question (O28): this read resolved its scope,
-    // and resolution refuses every company the principal may not select. The retired `legal_entity#access`
-    // relation is never asked for it; a v2 person holds no tuple of it.
-    if (target.permission === undefined && legalEntityId === scope.legalEntityId) {
-      return Effect.succeed('allowed');
-    }
     const decision =
       target.permission === undefined
         ? contextAccess.legalEntities({
@@ -1450,14 +1461,38 @@ const readRuntimeFromDependencies = <
     });
 
     /** Transitional: the legacy checks of a read still on a legacy kind; removed with those kinds (C03b). */
+    /**
+     * A person's selected-company access is the scope resolution's own gate question (O28): this read resolved its
+     * scope, and resolution refuses every company the person may not select. A v2 person holds no tuple of the
+     * retired `legal_entity#access` relation, so it is not asked for them. Only a principal Core reads as human is
+     * answered here; a workload, an agent or an unreadable kind keeps the legacy relation check.
+     */
+    const isPersonInSelectedCompany = Effect.fn('ReadRuntime.isPersonInSelectedCompany')(
+      function* isPersonInSelectedCompanyEffect(target: ResolvedReadPermissionTarget, readScope: OperationalScope) {
+        if (options.principalKinds === undefined || !isSelectedCompanyTarget(target, readScope)) {
+          return false;
+        }
+        const kind = yield* options.principalKinds
+          .readKind({
+            principalId: PrincipalIdSchema.make(readScope.principalId),
+            scope: readScope,
+            tenantId: TenantIdSchema.make(readScope.tenantId),
+          })
+          .pipe(Effect.option);
+        return Option.contains(Option.flatten(kind), 'human');
+      },
+    );
+
     const checkLegacyReadAuthorization = Effect.fn('ReadRuntime.checkLegacyReadAuthorization')(
       function* checkLegacyReadAuthorizationEffect(legacy: LegacyReadAuthorization, readScope: OperationalScope) {
-        const permissionDecision = yield* checkPermissionTarget(
-          contextAccess,
-          readScope,
-          legacy.permissionTarget,
-          input.registration.descriptor.legalEntityScope === 'forbidden',
-        );
+        const permissionDecision = (yield* isPersonInSelectedCompany(legacy.permissionTarget, readScope))
+          ? 'allowed'
+          : yield* checkPermissionTarget(
+              contextAccess,
+              readScope,
+              legacy.permissionTarget,
+              input.registration.descriptor.legalEntityScope === 'forbidden',
+            );
         const resourcePermissionDecision: PermissionDecision = Option.isSome(legacy.resourcePermissionTarget)
           ? yield* checkAtomicPermissionTarget(
               contextAccess,
@@ -2035,6 +2070,7 @@ const readRuntimeDependencies = Effect.gen(function* readRuntimeDependencies() {
   const scopeResolver = yield* OperationalScopeResolver;
   const contextAccess = yield* ContextAccess;
   const accessDecision = yield* bindLiveAccessGate;
+  const principalKinds = yield* AccessPrincipalKindSource;
   return {
     accessDecision,
     contextAccess,
@@ -2044,6 +2080,7 @@ const readRuntimeDependencies = Effect.gen(function* readRuntimeDependencies() {
     ownerAuthorizationOverlay: Option.isSome(ownerAuthorizationOverlay)
       ? ownerAuthorizationOverlay.value
       : failClosedOwnerAuthorizationOverlay,
+    principalKinds,
     scopeResolver,
   };
 });
@@ -2060,12 +2097,14 @@ export const ReadRuntimeLive = Layer.effect(
         databaseIdentities,
         gateway,
         ownerAuthorizationOverlay,
+        principalKinds,
         scopeResolver,
       }) =>
         readRuntimeFromDependencies(database, gateway, scopeResolver, contextAccess, {
           accessDecision,
           databaseIdentities,
           ownerAuthorizationOverlay,
+          principalKinds,
         }),
     ),
   ),
@@ -2087,6 +2126,7 @@ export const makeReadRuntimeLive = (
         databaseIdentities,
         gateway,
         ownerAuthorizationOverlay,
+        principalKinds,
         scopeResolver,
       } = yield* readRuntimeDependencies;
       const ownerRegistration = hosting !== undefined && 'shellSystemReads' in hosting ? undefined : hosting;
@@ -2100,6 +2140,7 @@ export const makeReadRuntimeLive = (
               databaseIdentities,
               expectedDeployment,
               ownerAuthorizationOverlay,
+              principalKinds,
             }
           : {
               accessDecision,
@@ -2108,6 +2149,7 @@ export const makeReadRuntimeLive = (
               expectedDeployment,
               ownerAuthorizationOverlay,
               ownerRegistration,
+              principalKinds,
             };
       return readRuntimeFromDependencies(
         database,
