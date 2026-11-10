@@ -7,6 +7,7 @@ import type {
   Class as AstClass,
   MemberExpression,
   Expression,
+  Node,
   Function as AstFunction,
   ParamPattern,
   Program,
@@ -72,6 +73,11 @@ export class PreparationSource {
   readonly executorEscapes = new Map<PreparationFunction, Map<string, boolean>>();
   resolveCallable?: (expression: Expression) => ResolvedPreparation | undefined;
   provesGuardWrapper?: (expression: Expression) => boolean;
+  // Lookup indexes only: `resolve` and `calledOnly` answer the same questions as a
+  // full scan, without rescanning every binding and identifier of large modules.
+  readonly #bindingsByName = new Map<string, Binding[]>();
+  #indexedBindings = 0;
+  #identifiersByName: Map<string, Extract<Node, { type: 'Identifier' }>[]> | undefined;
 
   constructor(file: string, source: string) {
     const parsed = parseSync(file, source, { astType: 'ts', lang: file.endsWith('.tsx') ? 'tsx' : 'ts' });
@@ -245,9 +251,36 @@ export class PreparationSource {
     }
   }
 
+  #named(name: string): readonly Binding[] {
+    for (; this.#indexedBindings < this.bindings.length; this.#indexedBindings += 1) {
+      const binding = this.bindings[this.#indexedBindings];
+      if (binding !== undefined) {
+        const named = this.#bindingsByName.get(binding.name) ?? [];
+        named.push(binding);
+        this.#bindingsByName.set(binding.name, named);
+      }
+    }
+    return this.#bindingsByName.get(name) ?? [];
+  }
+
+  #identifiers(name: string): readonly Extract<Node, { type: 'Identifier' }>[] {
+    if (this.#identifiersByName === undefined) {
+      const identifiers = new Map<string, Extract<Node, { type: 'Identifier' }>[]>();
+      new Visitor({
+        Identifier: (node) => {
+          const named = identifiers.get(node.name) ?? [];
+          named.push(node);
+          identifiers.set(node.name, named);
+        },
+      }).visit(this.program);
+      this.#identifiersByName = identifiers;
+    }
+    return this.#identifiersByName.get(name) ?? [];
+  }
+
   resolve(name: string, at: Span): Binding | undefined {
     const candidates = EffectArray.sort(
-      this.bindings.filter((binding) => binding.name === name && contains(binding.scope, at)),
+      this.#named(name).filter((binding) => contains(binding.scope, at)),
       Order.mapInput(Order.Number, (binding: Binding) => binding.scope.end - binding.scope.start),
     );
     const [first, second] = candidates;
@@ -427,11 +460,9 @@ export class PreparationSource {
   calledOnly(binding: Binding, within: Span, requireBoundary = false): boolean {
     let called = false;
     let escaped = false;
-    new Visitor({
-      Identifier: (node) => {
-        if (node.start === binding.declaration.start || this.resolve(node.name, node) !== binding) {
-          return;
-        }
+    // Only an identifier spelled like the binding can resolve to it.
+    for (const node of this.#identifiers(binding.name)) {
+      if (node.start !== binding.declaration.start && this.resolve(node.name, node) === binding) {
         const call = this.calls.find(
           (candidate) => candidate.callee === node || this.isSnapshotCallback(candidate, node),
         );
@@ -447,8 +478,8 @@ export class PreparationSource {
           );
         called ||= call !== undefined;
         escaped ||= call === undefined || !contains(within, node) || !bounded;
-      },
-    }).visit(this.program);
+      }
+    }
     return called && !escaped;
   }
 }

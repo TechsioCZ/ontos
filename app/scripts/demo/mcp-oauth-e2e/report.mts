@@ -1,4 +1,4 @@
-import { Cause, Clock, Console, DateTime, Effect, FileSystem, Option, Schema } from 'effect';
+import { Cause, Clock, Console, DateTime, Effect, FileSystem, Match, Option, Schema } from 'effect';
 
 const StepResultSchema = Schema.Struct({
   detail: Schema.String,
@@ -46,6 +46,29 @@ interface StepOutcome<A> {
   readonly pass: boolean;
   readonly value?: A;
 }
+
+/**
+ * What happened to the rotated-out refresh token. `NotReplayed` means the rotation was never recorded, so the old
+ * token was never presented; that is a failed check, not evidence that the server accepted it.
+ */
+const OldRefreshReplaySchema = Schema.Union([
+  Schema.TaggedStruct('Accepted', {}),
+  Schema.TaggedStruct('NotReplayed', {}),
+  Schema.TaggedStruct('Rejected', {}),
+]);
+export type OldRefreshReplay = typeof OldRefreshReplaySchema.Type;
+
+/** Verdict of a step that must prove the old refresh token is rejected. Only a real rejection passes. */
+export const oldRefreshVerdict = (replay: OldRefreshReplay): { readonly detail: string; readonly pass: boolean } =>
+  Match.value(replay).pipe(
+    Match.tag('Accepted', () => ({ detail: 'starý refresh token prošel', pass: false })),
+    Match.tag('NotReplayed', () => ({
+      detail: 'rotace selhala, replay starého refresh tokenu neproveden',
+      pass: false,
+    })),
+    Match.tag('Rejected', () => ({ detail: 'invalid_grant', pass: true })),
+    Match.exhaustive,
+  );
 
 export class Recorder {
   readonly steps: StepResult[] = [];

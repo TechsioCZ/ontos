@@ -77,8 +77,19 @@ export type InquiryOutcome =
   | { readonly state: "sent"; readonly taskId: string }
   | { readonly state: "invalid" | "forbidden" | "unavailable" | "unconfirmed" };
 
+/**
+ * `conflict` and `committed` are the two owner refusals answered by one resend (see `sendInquiry`); they never
+ * reach the customer.
+ */
 export class InquiryFailure extends Schema.TaggedError<InquiryFailure>()("InquiryFailure", {
-  reason: Schema.Literals(["invalid", "forbidden", "unavailable", "unconfirmed", "conflict"]),
+  reason: Schema.Literals([
+    "invalid",
+    "forbidden",
+    "unavailable",
+    "unconfirmed",
+    "conflict",
+    "committed",
+  ]),
 }) {}
 
 /** Untrusted form data is decoded at the browser/framework channel boundary. */

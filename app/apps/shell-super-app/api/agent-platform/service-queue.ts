@@ -24,8 +24,9 @@ import type {
   AgentQueueRequest,
 } from '@app/shared-contracts/agent-proposals';
 import { agentCommandDiff } from '@app/shared-contracts/agent-diff';
-import { DateTime, Effect, Match, Option, Predicate, Schema, Struct } from 'effect';
+import { DateTime, Effect, Option, Schema, Struct } from 'effect';
 
+import { isProposableModuleCommand } from '@app/core-runtime/modules/mcp-contribution';
 import type { AgentProposalCommandPayload } from '@app/core-runtime';
 
 import { AgentActionRequestIdentity } from '../auth/agent-action-request-identity.ts';
@@ -63,23 +64,11 @@ import {
   principalNames,
 } from './proposal-store.ts';
 
-const HUMAN_ONLY_COMMANDS: ReadonlySet<string> = new Set(['AiDecideChanges', 'AiRevertBatch']);
 const DEFAULT_ACTION_SLUG = 'apply-command';
-/** Named Action slugs, e.g. `update-party`; `apply-command` is the default command envelope. */
-const ACTION_SLUG = /^[a-z][a-z0-9-]{0,99}$/u;
 const REVIEW_PATH = `/cs${AGENT_APPROVALS_PATH}`;
 /** Module reviews and owner-engine records reads of one activity page; a composition has only a few of each. */
 const MODULE_READ_CONCURRENCY = 4;
 const NO_DECIDER = 'Návrhy agentů schvalují jen lidé s oprávněním k zápisu v některém modulu firmy.';
-
-const agentCommandAllowed = (actionSlug: string, command: AgentCommand) =>
-  ACTION_SLUG.test(actionSlug) &&
-  (actionSlug === DEFAULT_ACTION_SLUG
-    ? Match.value(command['_tag']).pipe(
-        Match.when(Match.nonEmptyString, (value) => !HUMAN_ONLY_COMMANDS.has(value)),
-        Match.orElse(() => false),
-      )
-    : Predicate.isUndefined(command['_tag']));
 
 const moduleTextsOf = (composed: ComposedModules) => ({
   commandFieldLabelsOf: (appId: string) => composed.byAppId(appId)?.commandFieldLabels ?? {},
@@ -172,9 +161,16 @@ const submitTracedProposals = Effect.fn('AgentPlatform.submitTracedProposals')(f
     if (!modules.access.has(module.moduleKey)) {
       return yield* new AgentPlatformForbidden({ reason: `Agent nemá přístup k modulu ${module.label}.` });
     }
+    if (composedModule.commandActions === undefined) {
+      // A stale contract publishes no command map: which Action owns which command is unknown, so nothing passes.
+      return yield* new AgentPlatformInvalid({
+        reason: `Modul ${module.label} teď návrhy agentů nepřijímá: jeho nasazení nezveřejňuje, která akce provádí který příkaz.`,
+      });
+    }
     const actionSlug = proposal.actionSlug ?? DEFAULT_ACTION_SLUG;
-    // apply-command needs a command `_tag`; a named Action (party-registry, commerce) takes its payload without one.
-    if (!agentCommandAllowed(actionSlug, proposal.command)) {
+    // A tagged command only for the Action whose command union accepts it; an untagged payload only for an Action
+    // without one. The caller was authorized for exactly this Action, and approval runs exactly this Action.
+    if (!isProposableModuleCommand(composedModule.commandActions, actionSlug, proposal.command)) {
       return yield* new AgentPlatformInvalid({ reason: `Návrh ${index + 1} nemá povolený příkaz modulu.` });
     }
     const review = reviews.get(module.appId);

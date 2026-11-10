@@ -1,7 +1,8 @@
 import type { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { ApplyCommandPayloadSchema as CaseCommand } from '../../verticals/sales-pipeline/shared/actions/apply-command.ts';
 import { cancelStageQaOrder } from '../demo/cancel-stage-qa-order.mts';
-import { MerchandiseCommandSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
+import { ChangeOrderStatusPayloadSchema } from '../../verticals/merchandise/shared/actions/change-order-status.ts';
+import { ManageCatalogPayloadSchema } from '../../verticals/merchandise/shared/actions/manage-catalog.ts';
 import {
   MerchandiseStateSchema,
   RecordsRequestSchema as MerchandiseRead,
@@ -44,10 +45,12 @@ import {
   requireSeedMatch,
   uniqueSeedRecord,
 } from '../demo/rental-seed.mts';
-import { connectSeedClient, DemoSeedError, validateSeedTarget } from '../demo/seed-client.mts';
+import { connectSeedClient, DemoSeedError, ownerAction, validateSeedTarget } from '../demo/seed-client.mts';
 
 const ownerApi = '/owner-api';
 const applyCommandPath = '/actions/apply-command';
+const manageCatalogPath = '/actions/manage-catalog';
+const changeOrderStatusPath = '/actions/change-order-status';
 const recordsPath = '/reads/records';
 const seedTestInstant = '2026-10-23T12:00:00Z';
 const seedTestDate = '2026-10-23';
@@ -299,7 +302,12 @@ it.effect('does not retry a conflicting write and preserves the revision used to
     });
     const failure = yield* Effect.gen(function* write() {
       const client = yield* connect();
-      return yield* client.apply(propertyAudience, Empty, {}, 7);
+      return yield* client.apply(
+        propertyAudience,
+        ownerAction('apply-command', Schema.Struct({ command: Empty, expectedRevision: Schema.Int })),
+        {},
+        7,
+      );
     }).pipe(Effect.provideService(HttpClient.HttpClient, http), Effect.flip);
     expect(Schema.is(DemoSeedError)(failure)).toBe(true);
     expect(writes).toEqual(['{"command":{},"expectedRevision":7}']);
@@ -321,7 +329,12 @@ it.effect('stops at denied authorization without sending a write to an owner', (
     });
     const failure = yield* Effect.gen(function* write() {
       const client = yield* connect();
-      return yield* client.apply(propertyAudience, Empty, {}, 0);
+      return yield* client.apply(
+        propertyAudience,
+        ownerAction('apply-command', Schema.Struct({ command: Empty, expectedRevision: Schema.Int })),
+        {},
+        0,
+      );
     }).pipe(Effect.provideService(HttpClient.HttpClient, http), Effect.flip);
     expect(Schema.is(DemoSeedError)(failure)).toBe(true);
     expect(ownerPaths).toEqual([]);
@@ -901,11 +914,8 @@ it.effect('repairs every stock page through native updates and reruns without mo
             Response.json({ products: records.slice(offset, offset + (view?.limit ?? 250)), revision }),
           );
         }
-        if (url.pathname.endsWith(applyCommandPath)) {
-          const payload = decodeSeedBody(
-            Schema.Struct({ command: MerchandiseCommandSchema, expectedRevision: Schema.Int }),
-            body,
-          );
+        if (url.pathname.endsWith(manageCatalogPath)) {
+          const payload = decodeSeedBody(ManageCatalogPayloadSchema, body);
           expect(payload.expectedRevision).toBe(revision);
           const result = yield* evolveMerchandiseState(state, payload.command, {
             actor: { principalId: demoId('test', 'stock-owner'), tenantId: target.tenantId },
@@ -984,15 +994,12 @@ it.effect('cancels only the exact QA order through native staff status change, w
             }),
           );
         }
-        if (url.pathname.endsWith(applyCommandPath)) {
+        if (url.pathname.endsWith(changeOrderStatusPath)) {
           const body = Match.value(request.body).pipe(
             Match.tag('Uint8Array', ({ body: bytes }) => new TextDecoder().decode(bytes)),
             Match.orElse(() => '{}'),
           );
-          const payload = decodeSeedBody(
-            Schema.Struct({ command: MerchandiseCommandSchema, expectedRevision: Schema.Int }),
-            body,
-          );
+          const payload = decodeSeedBody(ChangeOrderStatusPayloadSchema, body);
           expect(payload.expectedRevision).toBe(revision);
           const result = yield* evolveMerchandiseState(state, payload.command, {
             actor,

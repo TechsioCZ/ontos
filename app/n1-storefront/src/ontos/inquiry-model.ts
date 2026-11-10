@@ -1,5 +1,5 @@
-import { ApplyCommandPayloadSchema } from "@app/work-tasks/contracts/apply-command";
-import type { ApplyCommandPayload } from "@app/work-tasks/contracts/apply-command";
+import { SubmitStorefrontInquiryPayloadSchema } from "@app/work-tasks/contracts/submit-storefront-inquiry";
+import type { SubmitStorefrontInquiryPayload } from "@app/work-tasks/contracts/submit-storefront-inquiry";
 import { Effect, Schema } from "effect";
 import { getDictionary } from "../i18n";
 import type { ProductDetailModel } from "./catalog-model";
@@ -41,11 +41,11 @@ export const resolveInquiryProduct = (
   return Effect.succeed(context);
 };
 
-export const makeInquiryCommand = (
-  inquiry: Inquiry,
-  revision: number,
-  context?: InquiryProductContext,
-) => {
+/**
+ * The complete `work.tasks.submit-storefront-inquiry` payload: task text plus the inquiry, nothing else (the owner
+ * refuses every other field). A text beyond the owner's limits is invalid input; nothing is clipped.
+ */
+export const makeInquiryPayload = (inquiry: Inquiry, context?: InquiryProductContext) => {
   if (
     (inquiry.product === undefined) !== (context === undefined) ||
     (inquiry.product !== undefined &&
@@ -76,35 +76,39 @@ export const makeInquiryCommand = (
           productName: context.productName,
           productSlug: context.productSlug,
         };
-  return Schema.decodeUnknownEffect(ApplyCommandPayloadSchema)({
-    command: {
-      _tag: "CreateTask",
-      description: [
-        `Kontakt: ${inquiry.name} <${inquiry.email}>`,
-        ...(inquiry.phone ? [`Telefon: ${inquiry.phone}`] : []),
-        ...inquiryVariantDescription(context, inquiry.locale),
-        "",
-        inquiry.message,
-      ].join("\n"),
-      priority: "NORMAL",
-      storefrontInquiry,
-      title: subject,
-    },
-    expectedRevision: revision,
+  return Schema.decodeUnknownEffect(SubmitStorefrontInquiryPayloadSchema)({
+    description: [
+      `Kontakt: ${inquiry.name} <${inquiry.email}>`,
+      ...(inquiry.phone ? [`Telefon: ${inquiry.phone}`] : []),
+      ...inquiryVariantDescription(context, inquiry.locale),
+      "",
+      inquiry.message,
+    ].join("\n"),
+    storefrontInquiry,
+    title: subject,
   }).pipe(Effect.mapError(() => new InquiryFailure({ reason: "invalid" })));
 };
 
-/** An unknown write outcome is terminal; only an explicit optimistic-lock refusal can be repeated. */
+/** The key of a submission's first write. The inquiry request id, not this key, is what prevents a second task. */
+export const inquiryIdempotencyKey = (requestId: string) => `n1-inquiry-${requestId}`;
+
+/**
+ * One write, and at most one resend under a new idempotency key for the two refusals that call for it: the key has
+ * already committed (`committed`: the owner then answers the task this request id created) or two first tasks of a
+ * company raced (`conflict`). The request id never changes, so no resend can create a second task. Every other
+ * refusal and every unknown outcome is terminal.
+ */
 export const sendInquiry = <R>(
   inquiry: Inquiry,
   owner: {
-    readonly apply: (payload: ApplyCommandPayload) => Effect.Effect<string, InquiryFailure, R>;
     readonly product?: (
       selector: InquiryProduct,
     ) => Effect.Effect<InquiryProductContext, InquiryFailure, R>;
-    readonly revision: Effect.Effect<number, InquiryFailure, R>;
+    readonly submit: (
+      payload: SubmitStorefrontInquiryPayload,
+      idempotencyKey: string,
+    ) => Effect.Effect<string, InquiryFailure, R>;
   },
-  attempt = 0,
 ): Effect.Effect<{ taskId: string }, InquiryFailure, R> =>
   Effect.gen(function* sendInquiryProgram() {
     const context =
@@ -113,38 +117,46 @@ export const sendInquiry = <R>(
         : yield* owner.product === undefined
             ? Effect.fail(new InquiryFailure({ reason: "invalid" }))
             : owner.product(inquiry.product);
-    // Validate the complete command before even reading the task owner's revision.
-    const validated = yield* makeInquiryCommand(inquiry, 0, context);
-    const revision = yield* owner.revision;
-    const payload = { ...validated, expectedRevision: revision };
-    return yield* owner.apply(payload).pipe(
-      Effect.map((taskId) => ({ taskId })),
-      Effect.catch((error) =>
-        error.reason === "conflict" && attempt < 2
-          ? sendInquiry(inquiry, owner, attempt + 1)
-          : Effect.fail(
-              error.reason === "conflict" ? new InquiryFailure({ reason: "unavailable" }) : error,
-            ),
-      ),
+    // Validate the complete payload before reaching the task owner.
+    const payload = yield* makeInquiryPayload(inquiry, context);
+    const key = inquiryIdempotencyKey(inquiry.requestId);
+    const taskId = yield* owner.submit(payload, key).pipe(
+      Effect.catch((error) => {
+        if (error.reason !== "committed" && error.reason !== "conflict") {
+          return Effect.fail(error);
+        }
+        const saved = error.reason === "committed";
+        return owner.submit(payload, `${key}-${crypto.randomUUID()}`).pipe(
+          Effect.mapError((resent) => {
+            // A committed key means a saved task: a failed read-back must never read as "not sent".
+            if (saved || resent.reason === "committed") {
+              return new InquiryFailure({ reason: "unconfirmed" });
+            }
+            // Both writes were definitely refused; the customer may send the form again.
+            return resent.reason === "conflict"
+              ? new InquiryFailure({ reason: "unavailable" })
+              : resent;
+          }),
+        );
+      }),
     );
+    return { taskId };
   });
 
 /** A successful transport response alone is insufficient evidence of this customer's saved task. */
 export const confirmInquiryTask = (
   result: {
-    readonly task?: {
-      readonly ref: { readonly resourceId: string; readonly tenantId: string };
-      readonly storefrontInquiry?: { readonly requestId: string };
-    };
+    readonly requestId?: string;
+    readonly taskRef?: { readonly resourceId: string; readonly tenantId: string };
   },
   tenantId: string,
   requestId: string,
 ) =>
-  result.task !== undefined &&
-  result.task.ref.resourceId.length > 0 &&
-  result.task.ref.tenantId === tenantId &&
-  result.task.storefrontInquiry?.requestId === requestId
-    ? Effect.succeed(result.task.ref.resourceId)
+  result.taskRef !== undefined &&
+  result.taskRef.resourceId.length > 0 &&
+  result.taskRef.tenantId === tenantId &&
+  result.requestId === requestId
+    ? Effect.succeed(result.taskRef.resourceId)
     : Effect.fail(new InquiryFailure({ reason: "unconfirmed" }));
 
 /** Compare complete origins; neither an alternate port nor a protocol downgrade is accepted. */

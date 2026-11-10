@@ -154,6 +154,8 @@ const runFollowUp = Effect.fn('AgentPlatform.runFollowUp')(function* runFollowUp
     commands ?? [],
     (command, index) =>
       applyModuleCommand(caller.principal, row.appId, command, {
+        // The module's own follow-up: the Action that owns its command, the approved one first.
+        action: { preferred: row.actionSlug },
         idempotencyKey: `agent-proposal-${row.proposalId}-follow-up-${index}`,
         referenceAudiences: [...new Set([...row.referenceAudiences, ...followUp.referenceAudiences])],
       }).pipe(Effect.ignore),
@@ -201,8 +203,9 @@ const revertRow = Effect.fn('AgentPlatform.revertRow')(function* revertRow(
   yield* Effect.forEach(
     plan.commands,
     Effect.fn('AgentPlatform.revertCommand')(function* revertCommand(command, index) {
+      // The module's undo command may belong to another Action than the approved one (create -> update).
       const outcome = yield* applyModuleCommand(caller.principal, row.appId, command, {
-        actionSlug: row.actionSlug,
+        action: { preferred: row.actionSlug },
         idempotencyKey: `agent-revert-${row.proposalId}-${index}`,
         ...audiencesOf(row),
       });
@@ -238,8 +241,9 @@ const approveCoreRow = Effect.fn('AgentPlatform.approveCoreRow')(function* appro
   }
   yield* requireCurrentProposalClaim(caller.principal, claim, 'claim-approval');
   const plan = revertPlanOf(reviewed);
+  // Exactly the Action and command authorized at submit and claimed above; never another Action.
   const outcome = yield* applyModuleCommand(caller.principal, row.appId, row.command, {
-    actionSlug: row.actionSlug,
+    action: { exact: row.actionSlug },
     idempotencyKey: `agent-proposal-${row.proposalId}`,
     ...audiencesOf(row),
   });

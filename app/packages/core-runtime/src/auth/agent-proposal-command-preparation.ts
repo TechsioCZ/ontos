@@ -1,4 +1,4 @@
-import { Clock, Context, Effect, Layer, Match, Option, Predicate, Ref, Schema } from 'effect';
+import { Clock, Context, Effect, Layer, Option, Ref, Schema } from 'effect';
 
 import { ActionPermissionCheckError } from '../actions/errors.ts';
 import { computeCanonicalValueHash, recoverSqlTransactionError } from '../actions/repository.ts';
@@ -10,6 +10,7 @@ import {
   validateActiveApplicationCompositionSnapshot,
 } from '../modules/active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
+import { isProposableModuleCommand } from '../modules/mcp-contribution.ts';
 import type { OperationalScope } from '../operations/context.ts';
 // The pure tag, not the catalog-backed implementation: this module is reached from the Core Action
 // catalog (via `mutate-agent-proposals.action.ts`), so importing the implementation would cycle.
@@ -94,15 +95,6 @@ export const proposalLifecycleAdministrator = Effect.fn('AgentProposalCommand.li
   },
 );
 
-const humanOnlyCommands = new Set(['AiDecideChanges', 'AiRevertBatch']);
-export const isProposableCommand = (actionSlug: string, command: Readonly<Record<string, Schema.Json>>) =>
-  actionSlug === 'apply-command'
-    ? Match.value(command['_tag']).pipe(
-        Match.when(Match.nonEmptyString, (tag) => !humanOnlyCommands.has(tag)),
-        Match.orElse(() => false),
-      )
-    : Predicate.isUndefined(command['_tag']);
-
 const targetsOf = (payload: AgentProposalCommandPayload, snapshot: AgentProposalCommandSnapshot) => {
   const targetId = proposalCommandTargetId(payload);
   const rows = Option.isSome(targetId)
@@ -128,7 +120,8 @@ const resolveActions = (targets: ReturnType<typeof targetsOf>, active: ActiveSna
     if (
       release?.moduleId !== target.moduleKey ||
       contract?.manifest.publicSurface.mcp?.approvals !== true ||
-      !isProposableCommand(target.actionSlug, target.command)
+      // The command must belong to the exact Action it is authorized and later executed as.
+      !isProposableModuleCommand(contract.manifest.publicSurface.mcp.commandActions, target.actionSlug, target.command)
     ) {
       return Option.none<readonly string[]>();
     }

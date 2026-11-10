@@ -4,7 +4,8 @@
     "core.identity-provider",
     "demo.crm.party-intake",
     "demo.storefront-client",
-    "payment.source-ingress"
+    "payment.source-ingress",
+    "work.storefront-client"
   ],
   "modules": [
     {

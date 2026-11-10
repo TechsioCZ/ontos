@@ -182,6 +182,8 @@ export const prepareAgentPlatformBatch = (intentFile: string) =>
         legalEntityId,
         proposals: [
           {
+            // ChangePrice belongs to the catalog Action, not the create-only `apply-command`.
+            actionSlug: 'manage-catalog',
             appId: 'merchandise',
             command: { _tag: 'ChangePrice', id: product.id, priceMinor: newPriceMinor },
             diff: [

@@ -13,7 +13,7 @@ import { Command, Flag } from 'effect/cli';
 import { Base64 } from 'effect/encoding';
 import { FetchHttpClient } from 'effect/http';
 
-import { MerchandiseCommandSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
+import { ChangeProductImagesPayloadSchema } from '../../verticals/merchandise/shared/actions/change-product-images.ts';
 import { akrosDemoLegalEntityId, demoTenantId, eshopDemoLegalEntityId } from './fixture-ids.mts';
 import { connectSeedClient, DemoSeedError, validateSeedTarget } from './seed-client.mts';
 import type { SeedClient } from './seed-client.mts';
@@ -43,7 +43,7 @@ const Records = Schema.Struct({
 });
 type SeedProduct = (typeof Records.Type)['products'][number];
 
-const Payload = Schema.Struct({ command: Schema.toEncoded(MerchandiseCommandSchema), expectedRevision: Schema.Int });
+const Payload = Schema.toEncoded(ChangeProductImagesPayloadSchema);
 const Result = Schema.Struct({ image: Schema.optionalKey(Schema.String), revision: Schema.Int });
 
 const appRoot = new URL('../../', import.meta.url).pathname;
@@ -72,7 +72,7 @@ type ImageChange = Extract<(typeof Payload.Type)['command'], { readonly _tag: 'C
 const change = (client: SeedClient, id: string, imageChange: ImageChange) =>
   client.call(
     'merchandise',
-    '/merchandise/actions/apply-command',
+    '/merchandise/actions/change-product-images',
     Payload,
     { command: { _tag: 'ChangeProductImages', change: imageChange, id }, expectedRevision: 0 },
     Result,

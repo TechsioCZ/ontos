@@ -8,7 +8,20 @@ export interface InquirySubmission {
   message: string;
   productId?: string;
 }
-const uuid = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu;
+/** Identity of the product the owner resolved for a product question. Never taken from the browser. */
+export interface InquiryProduct {
+  productId: string;
+  productName: string;
+  productSlug: string;
+}
+/** Payload of the Work Tasks action `work.tasks.submit-storefront-inquiry`. The owner refuses any other field. */
+export interface InquiryActionPayload {
+  title: string;
+  description: string;
+  storefrontInquiry: InquirySubmission & Partial<InquiryProduct>;
+}
+// A versioned RFC UUID, as the task owner requires for the request id that deduplicates a submission.
+const uuid = /^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/iu;
 /** Only customer-authored fields cross this boundary. Tenant, task owner and product labels are server-owned. */
 export function parseInquirySubmission(value: unknown): InquirySubmission | null {
   if (value === null || typeof value !== "object") return null;
@@ -56,5 +69,58 @@ export function inquiryTaskTitle(inquiry: InquirySubmission): string {
       : inquiry.kind === "PRODUCT_QUESTION"
         ? "Dotaz na produkt"
         : "Kontaktní dotaz";
-  return `${label}: ${inquiry.subject}`.slice(0, 200);
+  return `${label}: ${inquiry.subject}`;
+}
+
+const within = (value: string, min: number, max: number) =>
+  value.length >= min && value.length <= max;
+
+/**
+ * The complete action payload, or null when a text would exceed the owner's limit (title 200, description 2000,
+ * product labels 300). Nothing is clipped: the customer is asked to shorten the input instead.
+ */
+export function inquiryActionPayload(
+  inquiry: InquirySubmission,
+  owned?: InquiryProduct,
+): InquiryActionPayload | null {
+  if ((inquiry.productId === undefined) !== (owned === undefined)) return null;
+  const product =
+    owned === undefined
+      ? undefined
+      : {
+          productId: owned.productId,
+          productName: owned.productName.trim(),
+          productSlug: owned.productSlug.trim(),
+        };
+  const title = inquiryTaskTitle(inquiry);
+  const description = [
+    `Kontakt: ${inquiry.name} <${inquiry.email}>`,
+    ...(product ? [`Produkt: ${product.productName}`] : []),
+    "",
+    inquiry.message,
+  ].join("\n");
+  if (
+    !within(title, 1, 200) ||
+    !within(description, 1, 2000) ||
+    (product !== undefined &&
+      !(
+        within(product.productId, 1, 300) &&
+        within(product.productName, 1, 300) &&
+        within(product.productSlug, 1, 300)
+      ))
+  )
+    return null;
+  return {
+    title,
+    description,
+    storefrontInquiry: {
+      requestId: inquiry.requestId,
+      kind: inquiry.kind,
+      name: inquiry.name,
+      email: inquiry.email,
+      subject: inquiry.subject,
+      message: inquiry.message,
+      ...product,
+    },
+  };
 }

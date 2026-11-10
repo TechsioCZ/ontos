@@ -1,10 +1,47 @@
 import "server-only";
 import { getBrand } from "@/brand";
-import { createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { readProducts } from "@/ontos/catalog-server";
-import { callAction, OntosError, readRecords } from "@/ontos/gateway";
+import { callAction, OntosError } from "@/ontos/gateway";
 import { guard, jsonBody, problem, RequestError, requestDictionary } from "@/ontos/http";
-import { inquiryTaskTitle, parseInquirySubmission } from "@/ontos/inquiry-model";
+import {
+  inquiryActionPayload,
+  parseInquirySubmission,
+  type InquiryActionPayload,
+  type InquiryProduct,
+} from "@/ontos/inquiry-model";
+
+/**
+ * Work Tasks refusals that are answered by sending the same inquiry once more under a new idempotency key:
+ * the key already committed (the owner then answers the task this request id created), or two first tasks of
+ * a company raced. The request id stays the same, so the owner can never create a second task.
+ */
+const ALREADY_COMMITTED = "action_already_committed";
+const RESENT_ONCE = new Set([ALREADY_COMMITTED, "work_revision_conflict"]);
+const refusal = (error: unknown) =>
+  OntosError.is(error) && error.status === 409 ? error.code : undefined;
+
+/** The only Work Tasks surface a storefront key is admitted on: no records read, no caller revision. */
+const fileInquiry = async (payload: InquiryActionPayload): Promise<unknown> => {
+  const key = `sf-inquiry-${payload.storefrontInquiry.requestId}`;
+  const send = (idempotencyKey: string) =>
+    callAction("work-tasks", "submit-storefront-inquiry", payload, idempotencyKey);
+  try {
+    return await send(key);
+  } catch (first) {
+    const code = refusal(first);
+    // Every other refusal, and every unknown outcome, is final for this request.
+    if (code === undefined || !RESENT_ONCE.has(code)) throw first;
+    try {
+      return await send(`${key}-${randomUUID()}`);
+    } catch (second) {
+      // A committed key means a saved task: a failed read-back must never read as "not sent".
+      if (code === ALREADY_COMMITTED || refusal(second) === ALREADY_COMMITTED)
+        throw new Error("Inquiry task was saved but its reference was not confirmed");
+      throw second;
+    }
+  }
+};
 
 export async function POST(request: Request) {
   const t = requestDictionary(request);
@@ -13,7 +50,7 @@ export async function POST(request: Request) {
     const inquiry = parseInquirySubmission(await jsonBody(request, t));
     if (inquiry === null) throw new RequestError(400, t.server.inquiry.invalid);
     // Resolve product identity now: a stale browser label or a caller-supplied URL is never persisted.
-    let product: { productId: string; productSlug: string; productName: string } | undefined;
+    let product: InquiryProduct | undefined;
     if (inquiry.productId !== undefined) {
       const page = await readProducts(
         { productIds: [inquiry.productId], pageSize: 1 },
@@ -24,48 +61,17 @@ export async function POST(request: Request) {
       if (record === undefined) throw new RequestError(404, t.server.inquiry.productGone);
       product = { productId: record.id, productSlug: record.slug, productName: record.name };
     }
-    const command = {
-      _tag: "CreateTask",
-      title: inquiryTaskTitle(inquiry),
-      description: [
-        `Kontakt: ${inquiry.name} <${inquiry.email}>`,
-        ...(product ? [`Produkt: ${product.productName}`] : []),
-        "",
-        inquiry.message,
-      ].join("\n"),
-      priority: "NORMAL",
-      storefrontInquiry: { ...inquiry, ...product },
-    };
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const snapshot = (await readRecords("work-tasks", "records", {})) as { revision: number };
-      if (!Number.isSafeInteger(snapshot.revision))
-        throw new Error("Task owner returned no revision");
-      const payload = { command, expectedRevision: snapshot.revision };
-      const digest = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
-      try {
-        const result = (await callAction(
-          "work-tasks",
-          "apply-command",
-          payload,
-          `sf-inquiry-${inquiry.requestId}-${digest}`,
-        )) as { task?: { ref?: { resourceId?: string } } };
-        const taskId = result.task?.ref?.resourceId;
-        if (typeof taskId !== "string" || taskId === "")
-          throw new Error("Task persistence was not confirmed");
-        return Response.json({ taskId }, { headers: { "cache-control": "no-store" } });
-      } catch (error) {
-        // Only a definite optimistic-lock refusal is retried. Never repeat a command with an unknown outcome.
-        if (
-          OntosError.is(error) &&
-          error.status === 409 &&
-          error.code === "work_revision_conflict" &&
-          attempt < 2
-        )
-          continue;
-        throw error;
-      }
-    }
-    throw new Error("Inquiry owner is busy");
+    // The owner refuses a text beyond its limits; ask the customer to shorten it instead of clipping it.
+    const payload = inquiryActionPayload(inquiry, product);
+    if (payload === null) throw new RequestError(400, t.server.inquiry.invalid);
+    const result = (await fileInquiry(payload)) as {
+      requestId?: unknown;
+      taskRef?: { resourceId?: unknown };
+    } | null;
+    const taskId = result?.taskRef?.resourceId;
+    if (result?.requestId !== inquiry.requestId || typeof taskId !== "string" || taskId === "")
+      throw new Error("Task persistence was not confirmed");
+    return Response.json({ taskId }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     if (OntosError.is(error) && error.status === 403) {
       console.error("[AKROS] Inquiry owner authorization denied");

@@ -706,6 +706,8 @@ export const akrosStorefrontPrincipal = {
 
 /** The declared workload of the shared Storefront client (O73). */
 export const STOREFRONT_CLIENT_WORKLOAD = 'commerce.storefront-client';
+/** The declared workload of a storefront that files customer inquiries as Work Tasks (O73). */
+export const STOREFRONT_INQUIRY_WORKLOAD = 'work.storefront-client';
 /** The declared workload of the external identity provider that reserves and activates bindings (O73). */
 export const IDENTITY_PROVIDER_WORKLOAD = 'core.identity-provider';
 /** Exact owner-declared purpose key shared by CRM intake and its delegated Party calls. */
@@ -729,6 +731,8 @@ export interface ReviewedWorkloadBinding {
  *   (`commerce.customer-context.start-portal-enrollment`, `…-transition.claim`, and the delegated
  *   `party.registry.party.create` / `ensure-retail-customer-profile` / `bind-retail-portal-profile`
  *   subjects) — all of which declare `commerce.storefront-client`;
+ * - ŠroubShop's storefront files its contact and product-question form as `work.tasks.submit-storefront-inquiry`,
+ *   which declares `work.storefront-client` (Kavárna's storefront has no inquiry form, so it is not bound);
  * - the Commerce customer portal is also the external identity provider that reserves and activates
  *   principal bindings (`core.identity.reserve-principal-binding`, `…-binding.activate` and the
  *   `core.identity` external-identity reads), which declare `core.identity-provider`.
@@ -843,6 +847,7 @@ export const crmPartyIntakePrincipal = {
 export const reviewedWorkloadBindings = (): readonly ReviewedWorkloadBinding[] => [
   { principalId: storefrontPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
   { principalId: akrosStorefrontPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
+  { principalId: akrosStorefrontPrincipal.principalId, workloadKey: STOREFRONT_INQUIRY_WORKLOAD },
   { principalId: commercePortalPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
   { principalId: commercePortalPrincipal.principalId, workloadKey: IDENTITY_PROVIDER_WORKLOAD },
   { principalId: crmPartyIntakePrincipal.principalId, workloadKey: CRM_PARTY_INTAKE_WORKLOAD },

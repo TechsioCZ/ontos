@@ -4,14 +4,14 @@
  * Without --apply, validates existing bindings and reports missing employees without writing.
  */
 import { NodeServices } from '@effect/platform-node';
-import { WorkforceCommandSchema } from '../../verticals/workforce/shared/actions/apply-command.ts';
+import { ApplyCommandPayloadSchema } from '../../verticals/workforce/shared/actions/apply-command.ts';
 import { EmployeeSchema } from '../../verticals/workforce/shared/apis/records.ts';
 import { Config, Console, Effect, Exit, FileSystem, Layer, Redacted, Schema } from 'effect';
 import { Argument, Command, Flag } from 'effect/cli';
 import { FetchHttpClient } from 'effect/http';
 
 import { akrosDemoLegalEntityId, crmDemoLegalEntityId, demoId, demoTenantId } from './fixture-ids.mts';
-import { connectSeedClient, DemoSeedError, validateSeedTarget } from './seed-client.mts';
+import { connectSeedClient, DemoSeedError, ownerAction, validateSeedTarget } from './seed-client.mts';
 import type { SeedClient } from './seed-client.mts';
 import { seedCheckpointDirectory, seedWriteCheckpoint } from './seed-checkpoint.mts';
 
@@ -72,7 +72,7 @@ const companies = {
   },
 } as const;
 const WorkforceRecords = Schema.Struct({ items: Schema.Array(Schema.toEncoded(EmployeeSchema)), revision: Schema.Int });
-const commandSchema = Schema.toEncoded(WorkforceCommandSchema);
+const createEmployee = ownerAction('apply-command', Schema.toEncoded(ApplyCommandPayloadSchema));
 
 /** Workforce departments and job roles are organizational labels only. Core accounts/rights are never changed. */
 export const seedCompanyEmployees = (client: SeedClient, companyKey: keyof typeof companies, apply: boolean) =>
@@ -103,7 +103,7 @@ export const seedCompanyEmployees = (client: SeedClient, companyKey: keyof typeo
         const { key: _key, ...fields } = employee;
         yield* client.apply(
           'workforce',
-          commandSchema,
+          createEmployee,
           {
             _tag: 'CreateEmployee',
             ...fields,

@@ -2053,3 +2053,14 @@ Po převzetí94 upstream commitů na ffe48b6f2 a standardní instalaci UI kitu
 a kontrola447 kanonických tokenů. Živé GUI průchody výše předcházely této
 aktualizaci knihovny; jejich přesná verze není zaměňovaná za nový browser
 průchod na0.59. Všechny nové aplikační a testové změny tohoto celku jsou N1.
+
+Kontaktní formulář přešel na Action `work.tasks.submit-storefront-inquiry`
+(viz INTEGRATION.md, Kontaktní formulář a dotaz na produkt). Dřívější záznamy
+o čtení `records` před zápisem, čerstvé assertion „po redeemed read“ a
+opakování revision conflictu přes `apply-command`/`CreateTask` popisují
+nahrazenou cestu, kterou OntOS servisnímu klíči odmítá. Nově: žádné čtení
+Work Tasks, jedna assertion na zápis, nejvýše jedno opakování s novým klíčem
+a stejným `requestId`. Ověřeno jen cílenými testy `tests/inquiry.test.ts` a
+`tests/inquiry-server.test.ts` (57/57), typy a lintem balíčku; skutečný N1
+zápis na stage neproběhl a navázání workloadu `work.storefront-client` tím
+není ověřené.

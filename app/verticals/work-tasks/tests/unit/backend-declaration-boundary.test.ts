@@ -13,6 +13,7 @@ import {
 } from '../../vertical.runtime-declaration.ts';
 import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
 import { requestSearchRebuildAction } from '../../src/actions/request-search-rebuild.action.ts';
+import { submitStorefrontInquiryAction } from '../../src/actions/submit-storefront-inquiry.action.ts';
 import { agentReviewRead } from '../../src/api/agent-review.read.ts';
 import { recordsRead } from '../../src/api/records.read.ts';
 import { taskCollectionResourceDescriptor } from '../../shared/resources/task-collection.ts';
@@ -23,7 +24,7 @@ import { workTasksMcpContribution } from '../../shared/mcp/contribution.ts';
 
 describe('work.tasks backend and full publication boundary', () => {
   it('shares genuine Action, Read and Worker registrations across both views', () => {
-    const expectedActions = [applyCommandAction, requestSearchRebuildAction];
+    const expectedActions = [applyCommandAction, requestSearchRebuildAction, submitStorefrontInquiryAction];
     expect(getVerticalRuntimeActions(backendRegistration)).toEqual(expectedActions);
     expect(getVerticalRuntimeActions(registration)).toEqual(expectedActions);
     for (const [index, action] of getVerticalRuntimeActions(backendRegistration).entries()) {

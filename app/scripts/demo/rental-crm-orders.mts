@@ -1,10 +1,10 @@
-import { CrmCommandSchema } from '../../verticals/crm/shared/actions/apply-command.ts';
+import { ApplyCommandPayloadSchema } from '../../verticals/crm/shared/actions/apply-command.ts';
 import { Console, DateTime, Effect, Schema } from 'effect';
 
 import { EntityIdSchema, ShortTextSchema } from '../../verticals/crm/shared/domain/common.ts';
 
 import { demoId } from './fixture-ids.mts';
-import { DemoSeedError } from './seed-client.mts';
+import { DemoSeedError, ownerAction } from './seed-client.mts';
 import type { SeedClient } from './seed-client.mts';
 
 const source = 'Správa pronájmů';
@@ -40,7 +40,7 @@ const Records = Schema.Struct({
     }),
   }),
 });
-const command = Schema.toEncoded(CrmCommandSchema);
+const applyCrm = ownerAction('apply-command', Schema.toEncoded(ApplyCommandPayloadSchema));
 const header =
   'zdroj;id_objednavky;cislo_objednavky;datum_objednavky;id_zakaznika;nazev_zakaznika;castka;mena;stav;cas_udalosti;id_udalosti';
 const csvCell = (value: string) => `"${value.replaceAll('"', '""')}"`;
@@ -109,7 +109,7 @@ export const seedRentalCrmOrders = (client: SeedClient, asOf: Date) =>
       if (links.length === 0) {
         yield* client.apply(
           'crm',
-          command,
+          applyCrm,
           { _tag: 'LinkExternalCustomer', clientId, externalCustomerId: clientId, source },
           snapshot.revision,
         );
@@ -162,7 +162,7 @@ export const seedRentalCrmOrders = (client: SeedClient, asOf: Date) =>
     if (rows.length > 0) {
       yield* client.apply(
         'crm',
-        command,
+        applyCrm,
         {
           _tag: 'ImportOrdersCsv',
           csv: [header, ...rows].join('\n'),

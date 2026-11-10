@@ -9,9 +9,10 @@
  * carries only the module texts; the Shell loads a module's tools when its MCP endpoint needs them. Core and the
  * Shell never name a vertical, a tool or a schema.
  */
-import { Result, Schema } from 'effect';
+import { Match, Predicate, Result, Schema } from 'effect';
 
 const nonEmpty = Schema.String.check(Schema.isMinLength(1));
+const ActionSlugSchema = nonEmpty.check(Schema.isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u));
 
 export const OntosMcpTextSchema = Schema.Struct({
   cs: nonEmpty.check(Schema.isMaxLength(400)),
@@ -135,12 +136,98 @@ export const OntosMcpToolCatalogReferenceSchema = Schema.Struct({
 });
 export type OntosMcpToolCatalogReference = typeof OntosMcpToolCatalogReferenceSchema.Type;
 
+/**
+ * Every command tag of the module's command-union Actions (`{ command, expectedRevision }`), hidden commands
+ * included, with the slugs of the Actions whose command union accepts it. Derived from the published Action payloads,
+ * so the platform addresses a stored command to the Action that owns it without naming any module. Always published
+ * (`{}` without command unions); a contract without it is stale and its module accepts no proposal.
+ */
+export const OntosMcpCommandActionsSchema = Schema.Record(
+  nonEmpty,
+  Schema.Array(ActionSlugSchema).check(Schema.isMinLength(1)),
+);
+export type OntosMcpCommandActions = typeof OntosMcpCommandActionsSchema.Type;
+
+/** Decisions on the module's own AI change engine are a person's, never an agent proposal. */
+const HUMAN_ONLY_COMMANDS: ReadonlySet<string> = new Set(['AiDecideChanges', 'AiRevertBatch']);
+
+/** Slugs of the module's Actions whose command union accepts `tag` (empty: none). */
+export const commandActionSlugsOf = (
+  commandActions: OntosMcpCommandActions | undefined,
+  tag: string,
+): readonly string[] =>
+  commandActions !== undefined && Object.hasOwn(commandActions, tag) ? (commandActions[tag] ?? []) : [];
+
+/** The Action takes a command envelope `{ command, expectedRevision }` rather than its payload as is. */
+export const isCommandUnionAction = (commandActions: OntosMcpCommandActions | undefined, actionSlug: string): boolean =>
+  Object.values(commandActions ?? {}).some((slugs) => slugs.includes(actionSlug));
+
+/** A payload that is itself a command envelope: a `command` object carrying a `_tag`, revision or not. */
+const isCommandEnvelope = Schema.is(Schema.Struct({ command: Schema.Struct({ _tag: Schema.Json }) }));
+
+/**
+ * Whether `payload` may run as the module's named Action `actionSlug` as is. Only with the module's published
+ * command map (an absent map is a stale contract: nothing is known, so nothing passes), only for an Action without a
+ * command union, and never for a payload that wraps a command envelope itself: a command is valid only tagged, on
+ * the Action whose published union owns its tag.
+ */
+export const isNamedActionPayload = (
+  commandActions: OntosMcpCommandActions | undefined,
+  actionSlug: string,
+  payload: Readonly<Record<string, Schema.Json>>,
+): boolean =>
+  commandActions !== undefined &&
+  Predicate.isUndefined(payload['_tag']) &&
+  !isCommandEnvelope(payload) &&
+  !isCommandUnionAction(commandActions, actionSlug);
+
+/**
+ * Whether an agent may propose `command` for the module's Action `actionSlug`: a tagged command only for an Action
+ * whose published command union accepts that tag (never an AI change decision), an untagged payload only as a
+ * {@link isNamedActionPayload}. A module without a published command map accepts no proposal.
+ */
+export const isProposableModuleCommand = (
+  commandActions: OntosMcpCommandActions | undefined,
+  actionSlug: string,
+  command: Readonly<Record<string, Schema.Json>>,
+): boolean => {
+  const tag = command['_tag'];
+  if (Predicate.isUndefined(tag)) {
+    return isNamedActionPayload(commandActions, actionSlug, command);
+  }
+  return Match.value(tag).pipe(
+    Match.when(
+      Match.nonEmptyString,
+      (value) => !HUMAN_ONLY_COMMANDS.has(value) && commandActionSlugsOf(commandActions, value).includes(actionSlug),
+    ),
+    Match.orElse(() => false),
+  );
+};
+
+/**
+ * The Action that runs a command the module supplied itself (undo plan, follow-up, AI change decision): `preferred`
+ * when its command union accepts the tag, otherwise the only Action that does; undefined when none or several do.
+ */
+export const commandActionSlugOf = (
+  commandActions: OntosMcpCommandActions | undefined,
+  tag: string,
+  preferred?: string,
+): string | undefined => {
+  const slugs = commandActionSlugsOf(commandActions, tag);
+  if (preferred !== undefined && slugs.includes(preferred)) {
+    return preferred;
+  }
+  return slugs.length === 1 ? slugs[0] : undefined;
+};
+
 export const OntosMcpContributionSchema = Schema.Struct({
   agentAdministrationPage: Schema.optionalKey(shellPagePath),
   approvalReview: Schema.optionalKey(OntosMcpApprovalReviewSchema),
   approvalsPage: Schema.optionalKey(OntosMcpApprovalsPageSchema),
   /** Proposals for this module may go to the platform approval queue („Ke schválení“). */
   approvals: Schema.Boolean,
+  /** See {@link OntosMcpCommandActionsSchema}; absent only in a stale contract, whose module accepts no proposal. */
+  commandActions: Schema.optionalKey(OntosMcpCommandActionsSchema),
   commandFieldLabels: Schema.optionalKey(OntosMcpCommandFieldLabelsSchema),
   description: OntosMcpTextSchema,
   /** Search words (Czech and English) for capability search. */
@@ -224,7 +311,7 @@ export interface OntosMcpContributionInput {
 // Import-time authoring checks require nonempty text; the serialized codec applies its length limit.
 const RequiredMcpTextSchema = Schema.Struct({ cs: nonEmpty, en: nonEmpty });
 const isText = Schema.is(RequiredMcpTextSchema);
-const isActionSlug = Schema.is(nonEmpty.check(Schema.isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u)));
+const isActionSlug = Schema.is(ActionSlugSchema);
 
 class OntosMcpContributionError extends Schema.TaggedError<OntosMcpContributionError>()('OntosMcpContributionError', {
   message: Schema.String,

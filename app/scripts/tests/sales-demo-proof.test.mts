@@ -83,7 +83,7 @@ it.effect('re-reads revision and uses a new invocation key after a revision conf
       return Effect.succeed(HttpClientResponse.fromWeb(request, response));
     });
     const result = yield* principal()
-      .apply('tagging', { _tag: 'DeleteTag', id: 'tag-1' })
+      .apply('tagging', 'delete-tag', { _tag: 'DeleteTag', id: 'tag-1' })
       .pipe(Effect.provideService(HttpClient.HttpClient, client));
     expect(result.status).toBe(200);
     expect(reads).toBe(2);

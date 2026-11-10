@@ -50,13 +50,15 @@ const bulkTaskIdsSchema = Schema.Array(TaskRefSchema.fields.resourceId).check(
   Schema.isMaxLength(200),
   Schema.isUnique(),
 );
+export const CreateTaskCommandSchema = Schema.TaggedStruct('CreateTask', {
+  storefrontInquiry: Schema.optionalKey(StorefrontInquirySchema),
+  ...editableFields,
+  contextRefs: Schema.optionalKey(Schema.Array(ContextRefSchema).check(Schema.isMaxLength(12))),
+  title: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+});
+export type CreateTaskCommand = typeof CreateTaskCommandSchema.Type;
 export const SingleWorkCommandSchema = Schema.Union([
-  Schema.TaggedStruct('CreateTask', {
-    storefrontInquiry: Schema.optionalKey(StorefrontInquirySchema),
-    ...editableFields,
-    contextRefs: Schema.optionalKey(Schema.Array(ContextRefSchema).check(Schema.isMaxLength(12))),
-    title: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  }),
+  CreateTaskCommandSchema,
   Schema.TaggedStruct('UpdateTask', {
     ...editableFields,
     contextRefs: Schema.optionalKey(Schema.Array(ContextRefSchema).check(Schema.isMaxLength(12))),

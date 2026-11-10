@@ -36,12 +36,53 @@ import {
 import { makeTestDatabase } from '../support/database.ts';
 import { makeOutboxWorkerComposition, outboxWorkerCompositionLayer } from '../support/outbox-worker-composition.ts';
 
-const compositionFixture = () => {
+/** A protected Action of the fixture module, published at `/<appId>/actions/<slug>`. */
+const taskAction = (slug: string) =>
+  ({
+    // A v2 protected Action: the capability lives in the declaration, never in a legacy
+    // `action_execution` provisioning intent (O62).
+    accessDeclaration: {
+      key: `work.tasks.task.${slug}`,
+      kind: 'action',
+      modes: ['run'],
+      placement: { group: 'tasks', level: 'basic' },
+      risk: 'routine',
+      selectors: [],
+    },
+    actionKey: `work.tasks.${slug}`,
+    auditProfile: 'standard',
+    entrypoint: {
+      access: 'write',
+      authorization: { kind: 'protected' },
+      entrypointKey: `work.tasks.${slug}`,
+      moduleKey: 'work.tasks',
+      role: 'action',
+      scope: 'tenant',
+    },
+    idempotency: 'required',
+    legalEntityScope: 'required',
+    owningModuleId: 'work.tasks',
+    schemaVersion: '1',
+  }) as const;
+
+const compositionFixture = (
+  slugs: readonly string[] = ['update'],
+  /** `stale`: a contract from before the module published its command map. */
+  commandActions: Readonly<Record<string, readonly string[]>> | 'stale' = {},
+) => {
   const base = makeOutboxWorkerComposition([{ appId: 'tasks', moduleId: 'work.tasks' }]);
   const release = base.modules.at(0);
   if (release === undefined) {
     throw new TypeError('Expected fixture release');
   }
+  const tasksMcp = {
+    approvals: true,
+    description: { cs: 'Tasks', en: 'Tasks' },
+    keywords: '',
+    label: { cs: 'Tasks', en: 'Tasks' },
+    toolCatalog: { path: '/.well-known/ontos-module-mcp-tools.json', sha256: 'a'.repeat(64), toolCount: 0 },
+  } as const;
+  const mcp = commandActions === 'stale' ? tasksMcp : { ...tasksMcp, commandActions };
   const codec = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
   const contract = Schema.decodeSync(codec)(release.contractDocument);
   const contractDocument = Schema.encodeSync(codec)(
@@ -51,41 +92,8 @@ const compositionFixture = () => {
         ...contract.manifest,
         publicSurface: {
           ...contract.manifest.publicSurface,
-          actions: [
-            {
-              // A v2 protected Action: the capability lives in the declaration, never in a legacy
-              // `action_execution` provisioning intent (O62).
-              accessDeclaration: {
-                key: 'work.tasks.task.update',
-                kind: 'action',
-                modes: ['run'],
-                placement: { group: 'tasks', level: 'basic' },
-                risk: 'routine',
-                selectors: [],
-              },
-              actionKey: 'work.tasks.update',
-              auditProfile: 'standard',
-              entrypoint: {
-                access: 'write',
-                authorization: { kind: 'protected' },
-                entrypointKey: 'work.tasks.update',
-                moduleKey: 'work.tasks',
-                role: 'action',
-                scope: 'tenant',
-              },
-              idempotency: 'required',
-              legalEntityScope: 'required',
-              owningModuleId: 'work.tasks',
-              schemaVersion: '1',
-            },
-          ],
-          mcp: {
-            approvals: true,
-            description: { cs: 'Tasks', en: 'Tasks' },
-            keywords: '',
-            label: { cs: 'Tasks', en: 'Tasks' },
-            toolCatalog: { path: '/.well-known/ontos-module-mcp-tools.json', sha256: 'a'.repeat(64), toolCount: 0 },
-          },
+          actions: slugs.map(taskAction),
+          mcp,
         },
       },
     }),
@@ -126,6 +134,7 @@ const makePreparation = Effect.fn('AgentProposalCommandPreparationTest.make')(fu
   database: (typeof CoreDatabase.Service)['executor'],
   contextAccess: typeof ContextAccess.Service,
   authority: typeof ActionAuthority.Service,
+  fixture: typeof composition = composition,
 ) {
   const services = yield* Layer.build(
     AgentProposalCommandPreparationLive.pipe(
@@ -133,7 +142,7 @@ const makePreparation = Effect.fn('AgentProposalCommandPreparationTest.make')(fu
         Layer.mergeAll(
           Layer.succeed(CoreDatabase, { executor: database }),
           Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
-          outboxWorkerCompositionLayer(composition),
+          outboxWorkerCompositionLayer(fixture),
           Layer.succeed(ContextAccess, contextAccess),
           Layer.succeed(ActionAuthority, authority),
         ),
@@ -305,6 +314,126 @@ for (const propose of ['allowed', 'denied'] as const) {
       );
       expect(result.outcome).toBe(propose === 'allowed' ? 'not_applicable' : 'denied');
       expect(duplicateReads).toBe(1);
+    }),
+  );
+}
+
+// `apply-command` keeps creation only; renaming moved to its own command-union Action `manage`, and decisions on the
+// module's own AI changes to `review`.
+const splitComposition = compositionFixture(['apply-command', 'manage', 'review', 'update'], {
+  AiDecideChanges: ['review'],
+  CreateTask: ['apply-command'],
+  RenameTask: ['manage'],
+});
+const decision = { _tag: 'AiDecideChanges', changeIds: ['c-1'], decision: 'approve' };
+for (const [name, actionSlug, command, expectedActions, fixture] of [
+  [
+    'a split command on the Action that owns it',
+    'manage',
+    { _tag: 'RenameTask', title: 'New' },
+    ['work.tasks.manage'],
+    'published',
+  ],
+  [
+    'a command of an unsplit apply-command',
+    'apply-command',
+    { _tag: 'CreateTask', title: 'New' },
+    ['work.tasks.apply-command'],
+    'published',
+  ],
+  ['a named Action payload', 'update', { title: 'New' }, ['work.tasks.update'], 'published'],
+  [
+    'a split command addressed to apply-command',
+    'apply-command',
+    { _tag: 'RenameTask', title: 'New' },
+    [],
+    'published',
+  ],
+  ['a command its named Action does not own', 'manage', { _tag: 'CreateTask', title: 'New' }, [], 'published'],
+  ['a tagged command on a named Action', 'update', { _tag: 'RenameTask', title: 'New' }, [], 'published'],
+  [
+    'a self-wrapped human-only decision on its Action',
+    'review',
+    { command: decision, expectedRevision: 3 },
+    [],
+    'published',
+  ],
+  ['a self-wrapped human-only decision on a named Action', 'update', { command: decision }, [], 'published'],
+  [
+    'a self-wrapped ordinary command',
+    'apply-command',
+    { command: { _tag: 'CreateTask' }, expectedRevision: 1 },
+    [],
+    'published',
+  ],
+  ['any payload of a module whose contract has no command map', 'update', { title: 'New' }, [], 'stale'],
+] as const) {
+  it.effect(`agent submission of ${name} asks only the owning Action`, () =>
+    Effect.gen(function* splitSubmit() {
+      const agentScope = { ...scope, principalId: agentId };
+      const payload = {
+        batchId,
+        instruction: 'Requested',
+        operation: 'insert' as const,
+        proposals: [
+          {
+            actionSlug,
+            appId: 'tasks',
+            command,
+            diff: [],
+            moduleKey: 'work.tasks',
+            proposalId,
+            reason: 'Requested',
+            risk: 'low' as const,
+            summary: 'Change',
+            targetLabel: 'Task',
+          },
+        ],
+      };
+      const database = yield* makeTestDatabase((sql) => {
+        if (sql.includes('current_setting')) {
+          return Effect.succeed([{ legal_entity_id: legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
+        }
+        if (sql.includes('from "core"."principals"')) {
+          return Effect.succeed([{ displayName: 'Agent', kind: 'agent', principalId: agentId, status: 'active' }]);
+        }
+        expect(sql.startsWith('insert')).toBe(false);
+        return Effect.succeed([]);
+      });
+      const asked: string[][] = [];
+      const result = yield* Effect.gen(function* prepareInsert() {
+        const preparation = yield* AgentProposalCommandPreparation;
+        return yield* preparation.prepare({ ...preflightInput(), payload, principal: agentScope, scope: agentScope });
+      }).pipe(
+        Effect.provideService(
+          AgentProposalCommandPreparation,
+          yield* makePreparation(
+            database,
+            {
+              legalEntities: forbiddenContext,
+              modules: forbiddenContext,
+              resources: forbiddenContext,
+              tenants: forbiddenContext,
+            },
+            {
+              checkActionAuthorities: (query) => {
+                asked.push([...query.actionKeys]);
+                return Effect.succeed(
+                  query.actionKeys.map((actionKey) => ({
+                    actionKey,
+                    execute: 'denied' as const,
+                    propose: 'allowed' as const,
+                  })),
+                );
+              },
+              checkActionProposalPermission: forbiddenContext,
+            },
+            fixture === 'published' ? splitComposition : compositionFixture(['update'], fixture),
+          ),
+        ),
+      );
+      expect(result.outcome).toBe(expectedActions.length === 0 ? 'denied' : 'not_applicable');
+      expect(asked).toEqual(expectedActions.length === 0 ? [] : [expectedActions]);
     }),
   );
 }

@@ -13,6 +13,7 @@ const WON_INVOICE_TIMEOUT_MS = 30_000;
 const BILLING = 'finance-billing';
 const WORK = 'work-tasks';
 const PIPELINE = 'sales-pipeline';
+const APPLY_COMMAND = 'apply-command';
 const ProofLegalEntityId = Schema.toEncoded(Schema.String.pipe(Schema.brand('DemoProofLegalEntityId')));
 const ProofProductId = Schema.toEncoded(Schema.String.pipe(Schema.brand('DemoProofProductId')));
 const ProofPartyId = Schema.toEncoded(Schema.String.pipe(Schema.brand('DemoProofPartyId')));
@@ -211,22 +212,23 @@ export const makePrincipalClient = (shellUrl: string, credential: Redacted.Redac
         }
         return yield* Schema.decodeUnknownEffect(schema)(result.body);
       });
-    const sendCommand = (audience: string, command: ProofCommand) =>
+    /** `action` is the owner Action slug that accepts the command's tag (e.g. `manage-catalog` for ChangePrice). */
+    const sendCommand = (audience: string, action: string, command: ProofCommand) =>
       Effect.gen(function* sendCommandProgram() {
         const current = yield* read(audience);
         const expectedRevision =
           current.status === 200 ? (yield* Schema.decodeUnknownEffect(Revision)(current.body)).revision : 0;
         return yield* call(
           audience,
-          `/${audience}/actions/apply-command`,
+          `/${audience}/actions/${action}`,
           ApplyCommand,
           { command, expectedRevision },
           { 'idempotency-key': randomUUID() },
         );
       });
-    const apply = (audience: string, command: ProofCommand) =>
+    const apply = (audience: string, action: string, command: ProofCommand) =>
       Effect.gen(function* applyCommand() {
-        const send = sendCommand(audience, command);
+        const send = sendCommand(audience, action, command);
         const first = yield* send;
         const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(first.body);
         return first.status === 409 && encoded.includes('revision') ? yield* send : first;
@@ -309,7 +311,7 @@ const proveInvoice = (headOfSales: ProofPrincipal) =>
       `opportunity "${opportunity.title}" (${opportunity.id}), stage ${opportunity.stage}, ${opportunity.lines.length} line(s)`,
     );
 
-    const won = yield* headOfSales.apply(PIPELINE, {
+    const won = yield* headOfSales.apply(PIPELINE, APPLY_COMMAND, {
       _tag: 'ChangeOpportunityStage',
       id: opportunity.id,
       note: 'prove-sales-demo: WON',
@@ -350,7 +352,7 @@ const proveInvoice = (headOfSales: ProofPrincipal) =>
           invoice.totalMinor === expected.totalMinor,
         `${czk(invoice.totalMinor)} = ${czk(expected.subtotalMinor)} + DPH ${czk(expected.vatMinor)}`,
       );
-      const replay = yield* headOfSales.apply(BILLING, {
+      const replay = yield* headOfSales.apply(BILLING, APPLY_COMMAND, {
         _tag: 'CreateInvoiceFromOpportunity',
         lines: asInvoiceLines(opportunity.lines),
         opportunityId: opportunity.id,
@@ -427,7 +429,7 @@ const provePrice = (
       const newPrice = Math.round(productBefore.currentPriceMinor * 1.1);
       const billingSnapshot = yield* headOfSales.records(BILLING, BillingRecords);
       const invoiceSnapshot = billingSnapshot.state.invoices.find((item) => item.opportunityId === opportunity.id);
-      const changed = yield* headOfSales.apply('merchandise', {
+      const changed = yield* headOfSales.apply('merchandise', 'manage-catalog', {
         _tag: 'ChangePrice',
         id: productBefore.id,
         priceMinor: newPrice,
@@ -473,7 +475,10 @@ const provePermissions = (
   Effect.gen(function* provePermissionsProgram() {
     yield* Console.log('\n— Requirement 10: permissions for employees and the bot');
     if (invoice !== undefined) {
-      const confirm = yield* salesRep.apply(BILLING, { _tag: 'ConfirmInvoice', invoiceRef: invoice.ref });
+      const confirm = yield* salesRep.apply(BILLING, APPLY_COMMAND, {
+        _tag: 'ConfirmInvoice',
+        invoiceRef: invoice.ref,
+      });
       yield* check('obchodnik@ ConfirmInvoice → 403', confirm.status === 403, brief(confirm));
     }
     const warehousePipeline = yield* warehouse.read(PIPELINE);
@@ -488,7 +493,7 @@ const provePermissions = (
       const metricSource = yield* bot.read(audience);
       yield* check(`bot read ${audience} (metrics source) → 200`, metricSource.status === 200, brief(metricSource));
     }
-    const botTask = yield* bot.apply(WORK, {
+    const botTask = yield* bot.apply(WORK, APPLY_COMMAND, {
       _tag: 'CreateTask',
       description: 'Vytvořeno skriptem prove-sales-demo (agent-bot).',
       partyId: opportunity.partyId,
@@ -497,10 +502,13 @@ const provePermissions = (
     });
     yield* check('bot CreateTask → 200', botTask.status === 200, brief(botTask));
     if (invoice !== undefined) {
-      const botConfirm = yield* bot.apply(BILLING, { _tag: 'ConfirmInvoice', invoiceRef: invoice.ref });
+      const botConfirm = yield* bot.apply(BILLING, APPLY_COMMAND, {
+        _tag: 'ConfirmInvoice',
+        invoiceRef: invoice.ref,
+      });
       yield* check('bot billing ConfirmInvoice → 403', botConfirm.status === 403, brief(botConfirm));
     }
-    const botDraft = yield* bot.apply(BILLING, {
+    const botDraft = yield* bot.apply(BILLING, APPLY_COMMAND, {
       _tag: 'CreateInvoiceFromOpportunity',
       lines: asInvoiceLines(opportunity.lines),
       opportunityId: randomUUID(),
@@ -508,10 +516,10 @@ const provePermissions = (
     });
     yield* check('bot billing CreateInvoiceFromOpportunity → 403', botDraft.status === 403, brief(botDraft));
     // A random tag id: the guard must refuse before any state is loaded, and a broken guard cannot delete real data.
-    const botDeleteTag = yield* bot.apply('tagging', { _tag: 'DeleteTag', id: randomUUID() });
+    const botDeleteTag = yield* bot.apply('tagging', 'delete-tag', { _tag: 'DeleteTag', id: randomUUID() });
     yield* check('bot tagging DeleteTag → 403', botDeleteTag.status === 403, brief(botDeleteTag));
     if (productBefore !== undefined) {
-      const botPrice = yield* bot.apply('merchandise', {
+      const botPrice = yield* bot.apply('merchandise', 'manage-catalog', {
         _tag: 'ChangePrice',
         id: productBefore.id,
         priceMinor: productBefore.currentPriceMinor,
