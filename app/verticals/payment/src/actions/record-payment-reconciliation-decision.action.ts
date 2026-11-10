@@ -16,6 +16,7 @@ import type {
 import { PaymentEvidenceRejected, paymentEvidenceRejected } from '../../shared/domain/evidence-contract.ts';
 import type { PaymentReconciliationDecisionBody } from '../../shared/domain/evidence-contract.ts';
 import { PaymentConflict } from '../../shared/domain/payment-conflict.ts';
+import type { PaymentMonetaryAmount } from '../../shared/domain/payment-money.ts';
 import type { PaymentExecutionProvenance } from '../../shared/domain/payment-provenance.ts';
 import { PaymentRejected } from '../../shared/domain/payment-rejected.ts';
 import { PaymentUnavailable, paymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
@@ -227,6 +228,29 @@ const countedTowardOf = Effect.fn('RecordPaymentReconciliationDecisionAction.cou
 });
 
 /** Qualification facts of the attached observation: scope, ACTIVE configured authority, correction lineage. */
+/**
+ * The money accepted partial corrections took away from a return statement, read by the funds reader
+ * itself so attachment and funds measure the statement the same way (#1150).
+ */
+const returnCorrectedAmountOf = Effect.fn('RecordPaymentReconciliationDecisionAction.returnCorrectedAmount')(
+  function* returnCorrectedAmount(context: DecisionContext, observation: PaymentObservationRecord) {
+    const { observationId, paymentId } = observation;
+    if (observation.factKind !== 'REFUND_CONFIRMED' || paymentId === undefined) {
+      return Option.none<PaymentMonetaryAmount>();
+    }
+    const evidence = yield* context.services.refunds.selectReturnEvidence(paymentId);
+    yield* recordPaymentLookup(context, {
+      paymentId,
+      query: 'return-evidence',
+      recordId: observationId,
+      resultCount: evidence.length,
+    });
+    return Option.fromUndefinedOr(
+      evidence.find((statement) => statement.observationId === observationId)?.correctedAmount,
+    );
+  },
+);
+
 const evidenceFactsFor = Effect.fn('RecordPaymentReconciliationDecisionAction.evidenceFacts')(function* evidenceFacts(
   context: DecisionContext,
   body: PaymentReconciliationDecisionBody,
@@ -261,6 +285,7 @@ const evidenceFactsFor = Effect.fn('RecordPaymentReconciliationDecisionAction.ev
     amount: observation.amount,
     capabilityCorrelated: observation.capabilityCorrelated,
     corrected: yield* isObservationCorrected(context, observation.observationId),
+    correctedAmount: Option.getOrUndefined(yield* returnCorrectedAmountOf(context, observation)),
     countedToward: yield* countedTowardOf(context, observation),
     economicEffectKey: observation.economicEffectKey,
     establishedEffects,

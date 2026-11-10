@@ -1373,6 +1373,59 @@ it.live('#1151 a prior return claimed for a collection still confirms the REFUND
   ),
 );
 
+it.live('#1150 a partially retracted refund receipt never restores the full refund through attachment', () =>
+  native(
+    Effect.gen(function* partiallyRetractedRefundReceipt() {
+      const evidence = yield* scenario();
+      const routeA = yield* evidence.configureRefundRoute('erp-primary', 'refund-account-a');
+      const paid = yield* collectedBankPayment(evidence, 'collect-first');
+      const refund = yield* pendingBankRefund(evidence, routeA, paid);
+      const receipt = yield* bankReturnOf(evidence, 'erp:bank-return:20')(
+        paid.payment.paymentId,
+        refund.record.operationId,
+      );
+      expect(receipt.interpretation).toBe('TRANSITION');
+      // 100 CZK of the 600 CZK return did not go back: the source corrects its receipt.
+      const correction = yield* evidence.accept({
+        amount: czk(10_000),
+        correctsObservationId: receipt.observationId,
+        economicEffectKey: 'erp:bank-return:20:correction',
+        factFamily: 'REFUND_EXECUTION',
+        factKind: 'SOURCE_CORRECTION',
+        paymentId: paid.payment.paymentId,
+        source: BANK_REFUND_SOURCE,
+        sourceOccurrenceId: `bank-line-${randomUUID()}`,
+        sourceRevision: 1,
+      });
+      expect(correction).toMatchObject({ acceptanceOutcome: 'ACCEPTED_OBSERVATION', interpretation: 'CORRECTION' });
+      const debt = yield* evidence.debt({ paymentId: paid.payment.paymentId });
+      expect(debt.unresolvedOperations.map((operation) => operation.operationId)).toEqual([refund.record.operationId]);
+      // The receipt now proves 500 CZK: governance cannot use it to confirm the 600 CZK refund again.
+      const caseId = debt.openCases[0]?.caseId ?? '';
+      expect(debt.openCases).toHaveLength(1);
+      yield* evidence.decide({
+        caseId,
+        decision: { _tag: 'CLASSIFY_CONFLICT' },
+        reason: 'The source corrected its refund receipt',
+      });
+      expect(
+        yield* failureCodeOf(
+          evidence.decide({
+            caseId,
+            decision: {
+              _tag: 'ATTACH_EVIDENCE',
+              observationId: receipt.observationId,
+              operationId: refund.record.operationId,
+            },
+            reason: 'Re-attach the original refund receipt',
+          }),
+        ),
+      ).toBe('payment_reconciliation_evidence_not_qualified');
+      expect((yield* evidence.coverage(paid.payment.paymentId)).startsWith('Held ')).toBe(true);
+    }),
+  ),
+);
+
 it.live('#1151 A re-issued correction of a re-exported receipt reduces the established collection once', () =>
   native(
     Effect.gen(function* correctionCountsOnce() {

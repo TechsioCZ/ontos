@@ -177,6 +177,10 @@ describe('#1151 governed reconciliation decisions', () => {
     expect(rejectionCode(decide(attach, 'CONFLICT', Option.some(facts({ corrected: true }))))).toBe(
       'payment_reconciliation_evidence_not_qualified',
     );
+    // A partially retracted statement proves less than it states: it cannot confirm the whole operation.
+    expect(rejectionCode(decide(attach, 'CONFLICT', Option.some(facts({ correctedAmount: czk(10_000) }))))).toBe(
+      'payment_reconciliation_evidence_not_qualified',
+    );
     expect(rejectionCode(decide(attach, 'CONFLICT', Option.some(facts({ paymentId: 'payment-2' }))))).toBe(
       'payment_reconciliation_evidence_not_qualified',
     );
