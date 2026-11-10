@@ -198,6 +198,16 @@ const main = Effect.scoped(
       yield* runAppScript('verticals/commerce-customer-context/scripts/verify-portal-auth-db-schema.mts');
     }
     yield* runAppScript('scripts/verify-application-db-schema.mts');
+    // Access catalog release activation: publishes the deployed catalog when it is newer, lets "Plný přístup"
+    // follow it and records Novinky for every other role. It never fails the release: authorization then stays
+    // at the previous release, which keeps every new capability denied, and the next activation retries.
+    yield* runAppScript('scripts/activate-access-catalog-release.mts').pipe(
+      Effect.catch((error) =>
+        Effect.logError(
+          `ACCESS CATALOG RELEASE ACTIVATION FAILED (${error.message}); authorization stays at the previous release until the next activation`,
+        ),
+      ),
+    );
     if (!(yield* migrateOnce)) {
       yield* serveReadiness(yield* migratorPort);
     }
