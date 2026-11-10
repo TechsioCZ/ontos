@@ -89,6 +89,31 @@ describe('autosave', () => {
     }),
   );
 
+  it.effect('validates a draft against the version the server last confirmed', () =>
+    Effect.gen(function* confirmedBase() {
+      const checked: string[] = [];
+      // A rule that depends on what the save would send: a name may only grow from the confirmed one.
+      const controller = yield* startAutosave(draft('Akros'), {
+        isValid: (value: Draft, confirmed: Draft) => {
+          checked.push(`${value.name} over ${confirmed.name}`);
+          return value.name.startsWith(confirmed.name);
+        },
+        save: () => Effect.succeed('saved' as const),
+      });
+      controller.change(draft('Akros CZ'));
+      controller.flush();
+      yield* Effect.yieldNow;
+      expect(controller.status()).toBe('saved');
+
+      // `Akros` was valid over the version the form opened with; over the saved `Akros CZ` it is not.
+      controller.change(draft('Akros'));
+      expect(controller.status()).toBe('invalid');
+      expect(checked.at(-1)).toBe('Akros over Akros CZ');
+      controller.flush();
+      expect(controller.status()).toBe('invalid');
+    }),
+  );
+
   it.effect('shows a failed save as an error and sends the same draft again on retry', () =>
     Effect.gen(function* failure() {
       const { controller, reply, sent } = yield* setup();

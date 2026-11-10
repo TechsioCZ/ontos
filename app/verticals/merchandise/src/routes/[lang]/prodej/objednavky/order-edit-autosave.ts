@@ -91,8 +91,11 @@ export const saveOrderEdit = (
 const versionOf = (updatedAt: Order['updatedAt']): number => DateTime.toEpochMillis(updatedAt);
 
 interface OrderEditAutosaveOptions {
-  /** The form's own validation; an invalid draft is never sent. */
-  readonly isValid: (value: Draft) => boolean;
+  /**
+   * The form's own validation; an invalid draft is never sent. `confirmed` is the draft the edit is compared with
+   * (`editCommandOf`), so the rule for an edited address or contact uses the base the sent command uses.
+   */
+  readonly isValid: (value: Draft, confirmed: Draft) => boolean;
   readonly order: Order;
   /** The catalog revision `order` was read at. */
   readonly revision: number;

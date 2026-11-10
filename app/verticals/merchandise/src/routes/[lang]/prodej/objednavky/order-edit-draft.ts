@@ -139,10 +139,23 @@ const sameTexts = (left: readonly string[], right: readonly string[]): boolean =
   left.length === right.length && left.every((text, index) => text === right[index]);
 
 /** The delivery address was edited: it is then sent whole, and has to be complete. */
-export const addressTouched = (draft: Draft, base: Draft): boolean => !sameTexts(addressOf(draft), addressOf(base));
+const addressTouched = (draft: Draft, base: Draft): boolean => !sameTexts(addressOf(draft), addressOf(base));
 
 /** The contact was edited: it is then sent whole, and has to carry a name and an e-mail. */
-export const contactTouched = (draft: Draft, base: Draft): boolean => !sameTexts(contactOf(draft), contactOf(base));
+const contactTouched = (draft: Draft, base: Draft): boolean => !sameTexts(contactOf(draft), contactOf(base));
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
+
+/**
+ * An edited address that cannot be sent: it is sent whole, so the street, city and postal code have to be there.
+ * `base` is the draft the edit is compared with (`editCommandOf`); an address left as `base` has it is not sent.
+ */
+export const addressIncomplete = (draft: Draft, base: Draft): boolean =>
+  addressTouched(draft, base) && [draft.street, draft.city, draft.postalCode].some((field) => field.trim() === '');
+
+/** An edited contact that cannot be sent: it is sent whole, so it has to carry a name and an e-mail. */
+export const contactIncomplete = (draft: Draft, base: Draft): boolean =>
+  contactTouched(draft, base) && (draft.name.trim() === '' || !EMAIL.test(draft.email.trim()));
 
 const editAddress = (draft: Draft): NonNullable<EditCommand['deliveryAddress']> => {
   const address: Mutable<NonNullable<EditCommand['deliveryAddress']>> = {

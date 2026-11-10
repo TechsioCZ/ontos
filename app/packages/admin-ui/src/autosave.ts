@@ -34,8 +34,12 @@ export interface AutosaveOptions<V, R> {
   readonly delayMs?: number;
   /** Whether two drafts are the same. Defaults to structural equality. */
   readonly equals?: (left: V, right: V) => boolean;
-  /** The form's own validation; an invalid draft is never sent. */
-  readonly isValid: (value: V) => boolean;
+  /**
+   * The form's own validation; an invalid draft is never sent. `confirmed` is the version the server last confirmed
+   * (`AutosaveController.confirmed`), for a rule that depends on what the save would send, such as a part that is
+   * sent whole, and so has to be complete, once it differs from that version.
+   */
+  readonly isValid: (value: V, confirmed: V) => boolean;
   /**
    * Sends one draft. Map every typed failure to an outcome; a defect or interruption counts as `failed`.
    * A follow-up save can start before React re-renders, so keep the draft's base revision in a ref that `save`
@@ -98,7 +102,7 @@ export class AutosaveController<V, R = never> {
       this.setState('proposed');
       return;
     }
-    if (!this.options.isValid(value)) {
+    if (!this.options.isValid(value, this.saved)) {
       this.setState('invalid');
       return;
     }
@@ -134,7 +138,7 @@ export class AutosaveController<V, R = never> {
       this.setState('proposed');
       return;
     }
-    if (!this.options.isValid(this.latest)) {
+    if (!this.options.isValid(this.latest, this.saved)) {
       this.setState('invalid');
       return;
     }
@@ -443,6 +447,11 @@ export interface UseAutosaveDraftOptions<V, R> extends Omit<AutosaveOptions<V, R
 }
 
 export interface AutosaveDraft<V> extends Autosave<V> {
+  /**
+   * The version the server last confirmed, as of this render: what a save compares the draft with. Field messages
+   * that follow the `isValid` rule read it, so they name the same fields the rule holds the draft back for.
+   */
+  readonly confirmed: V;
   readonly draft: V;
   /** "Načíst aktuální verzi": drop the draft, continue from the server version and re-read it. */
   readonly reloadLatest: () => void;
@@ -489,6 +498,7 @@ export const useAutosaveDraft = <V, R>(options: UseAutosaveDraftOptions<V, R>): 
   };
   return {
     ...autosaveOf(controller, status, adopt),
+    confirmed: controller.confirmed(),
     draft,
     reloadLatest: () => {
       adopt(seen);

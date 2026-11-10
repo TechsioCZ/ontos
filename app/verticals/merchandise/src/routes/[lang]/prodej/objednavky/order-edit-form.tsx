@@ -23,7 +23,7 @@ import { isOrderQuantityValid, orderQuantityRules } from '../../../../../shared/
 import { fullOrderTotals, lineGrossMinor } from '../../../../../shared/domain/order-totals.ts';
 import { MONEY_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { shippingOptions } from './order-eshop.ts';
-import { addressTouched, contactTouched, draftOf, parseAmount, parseQuantity } from './order-edit-draft.ts';
+import { addressIncomplete, contactIncomplete, parseAmount, parseQuantity } from './order-edit-draft.ts';
 import type { Draft, DraftLine } from './order-edit-draft.ts';
 import { useOrderEditAutosave } from './order-edit-autosave.ts';
 import { activeVariants } from './order-line-draft.ts';
@@ -172,8 +172,11 @@ const useOrderEditForm = ({
     );
     return orderQuantityRules(stockUnit ?? { stockOnHand: 1_000_000 }, movesStock ? (original?.quantity ?? 0) : 0);
   };
-  /** Everything one draft needs: its parsed lines, what is invalid, and whether it may be sent at all. */
-  const draftValidation = (value: Draft) => {
+  /**
+   * Everything one draft needs: its parsed lines, what is invalid, and whether it may be sent at all. `confirmed` is
+   * the draft the server last confirmed, which the sent edit is compared with.
+   */
+  const draftValidation = (value: Draft, confirmed: Draft) => {
     const parsedLines = value.lines.map((line) => {
       const quantity = parseQuantity(line.quantityText);
       const original = order.lines.find(
@@ -187,14 +190,11 @@ const useOrderEditForm = ({
       value.lines.length === 0 || parsedLines.some((entry) => entry.price === null || entry.quantity === null);
     const shippingPrice = parseAmount(value.shippingPriceText);
     const shippingInvalid = value.shippingMethod !== null && shippingPrice === null;
-    // An address or contact left as the order has it is not sent, so only an edited one has to be complete.
-    const opened = draftOf(order);
-    const addressInvalid =
-      addressTouched(value, opened) &&
-      [value.street, value.city, value.postalCode].some((field) => field.trim() === '');
-    const contactInvalid =
-      contactTouched(value, opened) &&
-      (value.name.trim() === '' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(value.email.trim()));
+    // An address or contact left as the server last confirmed it is not sent, so only an edited one has to be
+    // complete. The order on the page is not that base: until the reload after the form's own save lands it still
+    // shows the version before that save, and the edit is compared with the confirmed draft (`editCommandOf`).
+    const addressInvalid = addressIncomplete(value, confirmed);
+    const contactInvalid = contactIncomplete(value, confirmed);
     return {
       addressInvalid,
       contactInvalid,
@@ -206,7 +206,7 @@ const useOrderEditForm = ({
     };
   };
   const { autosave, pendingMessage, savedOnce } = useOrderEditAutosave({
-    isValid: (value) => draftValidation(value).valid,
+    isValid: (value, confirmed) => draftValidation(value, confirmed).valid,
     order,
     revision,
   });
@@ -214,8 +214,10 @@ const useOrderEditForm = ({
   const patch = (next: Partial<Draft>) => autosave.setDraft((current) => ({ ...current, ...next }));
   const patchLine = (key: string, next: Partial<DraftLine>) =>
     patch({ lines: draft.lines.map((line) => (line.key === key ? { ...line, ...next } : line)) });
-  const { addressInvalid, contactInvalid, linesInvalid, parsedLines, shippingInvalid, shippingPrice } =
-    draftValidation(draft);
+  const { addressInvalid, contactInvalid, linesInvalid, parsedLines, shippingInvalid, shippingPrice } = draftValidation(
+    draft,
+    autosave.confirmed,
+  );
 
   const preview = previewTotals(order, parsedLines, draft.shippingMethod, shippingPrice);
   const busy = autosave.status === 'saving';

@@ -13,6 +13,7 @@ import type { Order } from '../../shared/apis/records.ts';
 import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
 import { executeRecords } from '../../src/api/records-consumer.ts';
 import { useOrderEditAutosave } from '../../src/routes/[lang]/prodej/objednavky/order-edit-autosave.ts';
+import { addressIncomplete, contactIncomplete } from '../../src/routes/[lang]/prodej/objednavky/order-edit-draft.ts';
 import type { Draft } from '../../src/routes/[lang]/prodej/objednavky/order-edit-draft.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 
@@ -50,6 +51,13 @@ const orderOf = (fields: { readonly note?: string; readonly quantity?: number; r
     totalVatMinor: 42,
     updatedAt: fields.updatedAt,
   });
+
+/** The same order before it had a delivery address. */
+const withoutAddress = (order: Order): Order => {
+  const encoded = { ...Schema.encodeSync(OrderSchema)(order) };
+  Reflect.deleteProperty(encoded, 'deliveryAddress');
+  return Schema.decodeSync(OrderSchema)(encoded);
+};
 
 const recordsWith = (order: Order, revision: number) =>
   Schema.decodeSync(RecordsResponseSchema)({
@@ -130,8 +138,20 @@ let latest: OrderEdit | null = null;
 const edit = (): OrderEdit => Option.getOrThrow(Option.fromNullOr(latest));
 const draft = (): Draft => edit().autosave.draft;
 
-const Harness = ({ order, revision }: { readonly order: Order; readonly revision: number }) => {
-  const value = useOrderEditAutosave({ isValid: () => true, order, revision });
+type DraftRule = (value: Draft, confirmed: Draft) => boolean;
+const anyDraft: DraftRule = () => true;
+/** The form's rule for the parts an edit sends whole: an edited address or contact has to be complete. */
+const completeDetails: DraftRule = (value, confirmed) =>
+  !addressIncomplete(value, confirmed) && !contactIncomplete(value, confirmed);
+
+interface HarnessProps {
+  readonly isValid: DraftRule;
+  readonly order: Order;
+  readonly revision: number;
+}
+
+const Harness = ({ isValid, order, revision }: HarnessProps) => {
+  const value = useOrderEditAutosave({ isValid, order, revision });
   useEffect(() => {
     latest = value;
   }, [value]);
@@ -150,13 +170,13 @@ interface Mounted {
 
 const mounted: Mounted[] = [];
 
-const mount = async (order: Order, revision: number): Promise<Mounted> => {
+const mount = async (order: Order, revision: number, isValid: DraftRule = anyDraft): Promise<Mounted> => {
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
   const show = async (nextOrder: Order, nextRevision: number) => {
     await act(async () => {
-      root.render(createElement(Harness, { order: nextOrder, revision: nextRevision }));
+      root.render(createElement(Harness, { isValid, order: nextOrder, revision: nextRevision }));
       await settle();
     });
   };
@@ -406,6 +426,28 @@ describe('mounted order edit draft against a reloaded order', () => {
       yield* view.reload(saved, 9);
       expect(draft().reason).toBe('');
       expect(draft().note).toBe('Zavolat předem');
+    }),
+  );
+
+  it.effect('an address is checked against the saved one, not the one the page still shows', () =>
+    Effect.gen(function* validationBase() {
+      // The order has no delivery address yet; the form adds one and saves it.
+      yield* Effect.promise(() => mount(withoutAddress(orderOf({ updatedAt: opened })), 7, completeDetails));
+      acceptNextEdit(orderOf({ updatedAt: savedHere }), 8);
+      yield* type({ city: 'Brno', country: 'CZ', postalCode: '60200', street: 'Kavárna 1' });
+      yield* saveNow(1);
+      expect(edit().autosave.status).toBe('saved');
+      expect(sentEdits()[0]?.command).toMatchObject({
+        deliveryAddress: { city: 'Brno', country: 'CZ', postalCode: '60200', street: 'Kavárna 1' },
+      });
+
+      // The reload has not landed: the page still shows the order without an address. Emptying the fields again
+      // matches that order, but the edit would send the empty address over the saved one.
+      yield* type({ city: '', country: '', postalCode: '', street: '' });
+      yield* saveNow(1);
+      expect(edit().autosave.status).toBe('invalid');
+      expect(sentEdits()).toHaveLength(1);
+      expect(addressIncomplete(draft(), edit().autosave.confirmed)).toBe(true);
     }),
   );
 
