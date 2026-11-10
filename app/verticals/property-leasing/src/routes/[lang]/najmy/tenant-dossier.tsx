@@ -13,7 +13,7 @@ import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { Effect, Option, Predicate, Schema } from 'effect';
 import type { PlatformError } from 'effect';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';

@@ -2,6 +2,7 @@ import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import {
   SaveBar,
   DetailList,
+  DocumentTitle,
   PageHeader,
   SectionCard,
   SidePanel,
@@ -956,6 +957,7 @@ const OccupancyDetailHeader = ({ model, state }: OccupancyDetailProps) => {
     tenant?.displayName === null || tenant?.displayName === undefined ? '' : ` · ${tenant.displayName}`;
   return (
     <>
+      <DocumentTitle title={`${unitName(selected.unitRef.resourceId)}${tenantSuffix}`} />
       <div>
         <LinkButton
           href={`/${language}/najmy`}
