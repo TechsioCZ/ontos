@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto } from '@effect/platform-node';
 import { Crypto, DateTime, Effect, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
@@ -23,7 +24,15 @@ import type { PaymentAuthorizationValidationRequest } from '../../shared/apis/pa
 import type { PaymentAuthorizationBinding } from '../../shared/domain/authorization-proof.ts';
 import { issuePaymentAuthorizationAction } from '../../src/actions/issue-payment-authorization.action.ts';
 import { currentPaymentRead } from '../../src/api/current-payment.read.ts';
-import { paymentAuthorizationValidationRead } from '../../src/api/payment-authorization-validation.read.ts';
+import {
+  paymentAuthorizationValidationRead,
+  validatePaymentAuthorization,
+} from '../../src/api/payment-authorization-validation.read.ts';
+import { paymentAggregatePersistenceForTransaction } from '../../src/persistence/payment-aggregate-persistence.ts';
+import { paymentApplicabilityPersistenceForTransaction } from '../../src/persistence/payment-applicability-persistence.ts';
+import { paymentAuthorizationPersistenceForTransaction } from '../../src/persistence/payment-authorization-persistence.ts';
+import { paymentRefundPersistenceForTransaction } from '../../src/persistence/payment-refund-persistence.ts';
+import type { PaymentRefundPersistence } from '../../src/persistence/payment-refund-persistence.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 import { makeAuthorizationOwnerEvidenceFixture } from '../support/authorization-owner-evidence.fixture.ts';
 import { refundCaseFor } from '../support/refund-action-driver.ts';
@@ -32,6 +41,7 @@ import {
   loadPaymentAggregate,
   refundRuntimeContextAccess,
   refundRuntimePermission,
+  withScopedTransaction,
 } from '../support/refund-native-runtime.ts';
 import type { RefundNativeRuntime } from '../support/refund-native-runtime.ts';
 import { paymentTestRelations } from './database-fixture.ts';
@@ -113,9 +123,10 @@ const prepaidBindingOf = Effect.fn('FundsSnapshotTest.prepaidBindingOf')(functio
 const issuePrepaidProof = Effect.fn('FundsSnapshotTest.issuePrepaidProof')(function* issuePrepaidProof(
   refundCase: RefundCase,
   binding: PaymentAuthorizationBinding,
+  validitySeconds = 300,
 ) {
   const owner = yield* makeAuthorizationOwnerEvidenceFixture;
-  const request: IssuePaymentAuthorizationPayload = { binding, issuanceKey: randomUUID(), validitySeconds: 300 };
+  const request: IssuePaymentAuthorizationPayload = { binding, issuanceKey: randomUUID(), validitySeconds };
   const encoded = yield* Schema.encodeEffect(IssuePaymentAuthorizationPayloadSchema)(request);
   return yield* refundCase.native.actionRuntime
     .runAction({
@@ -162,4 +173,39 @@ it.live(
         expect(validation.outcome).toBe('VALID');
       }),
     ),
+);
+
+/** The real refund persistence, whose funds lookup returns when the clock has reached `answeredAt`. */
+const refundsAnsweringAt = (refunds: PaymentRefundPersistence, answeredAt: DateTime.Utc): PaymentRefundPersistence => ({
+  ...refunds,
+  selectFunds: (aggregate) =>
+    refunds.selectFunds(aggregate).pipe(Effect.tap(() => TestClock.setTime(DateTime.toEpochMillis(answeredAt)))),
+});
+
+it.live('#1149 a prepaid proof that expires while the funds are read is not acknowledged as VALID', () =>
+  native(
+    Effect.gen(function* prepaidExpiresDuringFundsLookup() {
+      const refundCase = yield* refundCaseFor(yield* nativeRuntime, { amountMinor: 100_000, collected: true });
+      const binding = yield* prepaidBindingOf(refundCase, 'attempt-slow-funds');
+      const issued = yield* issuePrepaidProof(refundCase, binding);
+      const { authorizationId, expiresAt, issuedAt } = issued.proof;
+      const owner = yield* makeAuthorizationOwnerEvidenceFixture;
+      // The handler with its real owner persistence. The test clock starts inside the validity window
+      // and passes the expiry while the funds are read.
+      const validation = yield* Effect.gen(function* validateWhileFundsAreRead() {
+        yield* TestClock.setTime(DateTime.toEpochMillis(issuedAt) + 1000);
+        return yield* withScopedTransaction(refundCase.native.database, refundCase.scope, (transaction) => {
+          const refunds = paymentRefundPersistenceForTransaction(transaction);
+          return validatePaymentAuthorization({ authorizationId, binding }, refundCase.scope, {
+            aggregate: paymentAggregatePersistenceForTransaction(transaction),
+            applicability: paymentApplicabilityPersistenceForTransaction(transaction),
+            authorizations: paymentAuthorizationPersistenceForTransaction(transaction),
+            refunds: refundsAnsweringAt(refunds, expiresAt),
+          }).pipe(Effect.provide(owner.layer));
+        });
+      }).pipe(Effect.provide(TestClock.layer()));
+      expect(validation).toMatchObject({ outcome: 'NOT_VALID', reasons: ['EXPIRED'] });
+      expect(DateTime.isGreaterThanOrEqualTo(validation.validatedAt, expiresAt)).toBe(true);
+    }),
+  ),
 );

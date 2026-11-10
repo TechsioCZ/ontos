@@ -31,6 +31,7 @@ import type {
 } from '../../shared/domain/payment-vocabulary.ts';
 import type { PaymentAcceptedObservationView, PaymentInterpretedEvidence } from '../domain/evidence-interpretation.ts';
 import type { PaymentReconciliationEstablishedEffect } from '../domain/evidence-reconciliation.ts';
+import { appliedCorrectionsOf, provenReturnAmountOf } from '../domain/refund-prior-returns.ts';
 import {
   economicEffectAttributions,
   observations,
@@ -670,11 +671,30 @@ export const paymentEvidencePersistenceForTransaction = (
         seenReturnEffects.add(effect);
         return true;
       });
+      // What each return still proves: its stated money less its applied partial corrections, exactly
+      // as the funds reader measures it, so both readers admit the same correction (#1150).
+      const correctionRows = rows.filter((row) => row.factKind === 'SOURCE_CORRECTION');
       const returnStatements = yield* Effect.forEach(
         returnRows,
         (row) =>
-          amountOrUndefined(row.amountMinor, row.currency).pipe(
-            Effect.map((amount) => ({ amount: Option.getOrUndefined(amount), operationId: row.operationId })),
+          Effect.all(
+            [
+              amountOrUndefined(row.amountMinor, row.currency),
+              Effect.forEach(
+                appliedCorrectionsOf(row.observationId, correctionRows),
+                (correction) =>
+                  amountOrUndefined(correction.amountMinor, correction.currency).pipe(
+                    Effect.map(Option.getOrUndefined),
+                  ),
+                { concurrency: 1 },
+              ),
+            ],
+            { concurrency: 1 },
+          ).pipe(
+            Effect.map(([stated, corrections]) => ({
+              amount: provenReturnAmountOf(Option.getOrUndefined(stated), corrections),
+              operationId: row.operationId,
+            })),
           ),
         { concurrency: 1 },
       );

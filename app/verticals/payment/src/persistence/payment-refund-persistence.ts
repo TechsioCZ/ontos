@@ -16,7 +16,11 @@ import {
 import { observations, reconciliationDecisions, sourceAuthorities } from '../database/schema.ts';
 import type { PaymentRefundRouteCandidate } from '../domain/refund-execution-route.ts';
 import type { PaymentFundsSnapshot } from '../domain/coverage.ts';
-import { correctionReachOf, fundsSnapshotWithPriorReturns } from '../domain/refund-prior-returns.ts';
+import {
+  appliedCorrectionsOf,
+  correctionReachOf,
+  fundsSnapshotWithPriorReturns,
+} from '../domain/refund-prior-returns.ts';
 import type { PaymentReturnEvidence } from '../domain/refund-prior-returns.ts';
 import { paymentFundsSnapshotOf } from './payment-aggregate-persistence.ts';
 import type { PaymentAggregateRecord } from './payment-aggregate-persistence.ts';
@@ -93,36 +97,6 @@ interface CorrectionRow {
   readonly correctsObservationId: string | null;
   readonly currency: string | null;
 }
-
-/**
- * The accepted corrections that each reduce a statement once. A correction re-issued under the same
- * economic effect key (accepted again as "already corrected") is the same reduction, not another one.
- */
-const appliedCorrectionsOf = <
-  Correction extends CorrectionRow & {
-    readonly acceptanceOutcome: string;
-    readonly economicEffectKey: string | null;
-  },
->(
-  observationId: string,
-  corrections: readonly Correction[],
-): readonly Correction[] => {
-  const seenKeys = new Set<string>();
-  return corrections.filter((correction) => {
-    if (correction.acceptanceOutcome !== 'ACCEPTED_OBSERVATION' || correction.correctsObservationId !== observationId) {
-      return false;
-    }
-    const key = correction.economicEffectKey;
-    if (key === null) {
-      return true;
-    }
-    if (seenKeys.has(key)) {
-      return false;
-    }
-    seenKeys.add(key);
-    return true;
-  });
-};
 
 /**
  * One statement as the refund guard reads it. A statement fully covered by its accepted corrections

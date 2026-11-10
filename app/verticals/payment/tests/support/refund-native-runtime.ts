@@ -153,7 +153,7 @@ export const seedRefundActor = Effect.fn('RefundNativeRuntime.seedActor')(functi
 });
 
 /** Foundation owner persistence inside one Core-scoped transaction, exactly as Actions receive it. */
-const withScopedTransaction = <Value, Failure>(
+export const withScopedTransaction = <Value, Failure>(
   database: PaymentTestDatabase,
   scope: PaymentTestScope,
   operation: (transaction: Effect.Success<ReturnType<typeof installOperationalScope>>) => Effect.Effect<Value, Failure>,

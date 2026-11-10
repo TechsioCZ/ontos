@@ -80,6 +80,56 @@ export const correctionReachOf = (
   return order.success >= 0 ? COVERED : { correctedAmount: total.success, covered: false };
 };
 
+/** One stored correction as the shared reduction rule reads it. */
+interface AppliedCorrectionCandidate {
+  readonly acceptanceOutcome: string;
+  readonly correctsObservationId: string | null;
+  readonly economicEffectKey: string | null;
+}
+
+/**
+ * The accepted corrections that each reduce a statement once. A correction re-issued under the same
+ * economic effect key (accepted again as "already corrected") is the same reduction, not another one.
+ */
+export const appliedCorrectionsOf = <Correction extends AppliedCorrectionCandidate>(
+  observationId: string,
+  corrections: readonly Correction[],
+): readonly Correction[] => {
+  const seenKeys = new Set<string>();
+  return corrections.filter((correction) => {
+    if (correction.acceptanceOutcome !== 'ACCEPTED_OBSERVATION' || correction.correctsObservationId !== observationId) {
+      return false;
+    }
+    const key = correction.economicEffectKey;
+    if (key === null) {
+      return true;
+    }
+    if (seenKeys.has(key)) {
+      return false;
+    }
+    seenKeys.add(key);
+    return true;
+  });
+};
+
+/**
+ * The money a return statement still proves after its applied corrections: nothing (undefined) when
+ * they cover it or it states no money, otherwise its stated money less the measured partial
+ * corrections. Every reader of prior returns uses this one amount (#1150).
+ */
+export const provenReturnAmountOf = (
+  stated: PaymentMonetaryAmount | undefined,
+  corrections: readonly (PaymentMonetaryAmount | undefined)[],
+): PaymentMonetaryAmount | undefined => {
+  const reach = correctionReachOf(stated, corrections);
+  if (reach.covered || stated === undefined) {
+    return undefined;
+  }
+  return reach.correctedAmount === undefined
+    ? stated
+    : Result.getOrUndefined(subtractAmounts(stated, reach.correctedAmount));
+};
+
 /** What a statement still proves: its stated money less the accepted partial corrections. */
 const provenAmountOf = (statement: PaymentReturnEvidence): PaymentMonetaryAmount | undefined => {
   if (statement.amount === undefined) {
