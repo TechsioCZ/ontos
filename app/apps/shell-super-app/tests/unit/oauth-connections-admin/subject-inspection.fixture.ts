@@ -121,6 +121,11 @@ export const subjectInspectionFixture = (input: {
   readonly installedModules?: readonly string[];
   /** Runs before each capability read: a test can hold it (to observe overlap) or fail it (an unreadable carrier). */
   readonly onCapabilityRead?: (capabilityKey: string) => Effect.Effect<void, AccessDecisionUnavailable>;
+  /**
+   * Runs before an evidence write is counted (writes numbered from 1): a test can hold it or fail it. A write that
+   * fails or is interrupted here counts nothing.
+   */
+  readonly onEvidenceWrite?: (write: number) => Effect.Effect<void, AccessDecisionUnavailable>;
   readonly onScopeRead?: (principalId: string) => Effect.Effect<void>;
   /** Tenant owners: Core answers their configure authority with the `Owner` basis, as for a stage tenant's owner. */
   readonly owners?: readonly string[];
@@ -130,6 +135,9 @@ export const subjectInspectionFixture = (input: {
   const requesterScopes: OperationalScope[] = [];
   /** Every scripted port call, so a test can bound the round trips one inspection makes. */
   const reads = { cells: 0, engine: 0, evidenceRows: 0, evidenceWrites: 0, facts: 0, kind: 0, scope: 0 };
+  let writeAttempts = 0;
+  /** The rows of each evidence write that completed, by the order writes were started (1-based attempt). */
+  const writtenRows = new Map<number, number>();
   const subjectOf = (principalId: string) => input.subjects.find((subject) => subject.principalId === principalId);
   const companyScopeId = AccessScopeIdSchema.make('00000000-0000-4000-8000-000000000018');
   const tenantScopeId = AccessScopeIdSchema.make('00000000-0000-4000-8000-000000000019');
@@ -248,16 +256,25 @@ export const subjectInspectionFixture = (input: {
         }),
         Layer.succeed(AccessDecisionLogBatch, {
           recordAll: (entries) =>
-            Effect.sync(() => {
-              reads.evidenceWrites += 1;
-              reads.evidenceRows += entries.length;
-              for (const { scope } of entries) {
-                requesterScopes.push(scope);
-              }
-            }),
+            Effect.suspend(() => {
+              writeAttempts += 1;
+              const attempt = writeAttempts;
+              return (input.onEvidenceWrite?.(attempt) ?? Effect.void).pipe(Effect.as(attempt));
+            }).pipe(
+              Effect.flatMap((attempt) =>
+                Effect.sync(() => {
+                  writtenRows.set(attempt, entries.length);
+                  reads.evidenceWrites += 1;
+                  reads.evidenceRows += entries.length;
+                  for (const { scope } of entries) {
+                    requesterScopes.push(scope);
+                  }
+                }),
+              ),
+            ),
         }),
       ),
     ),
   );
-  return { layer: Layer.merge(inspectionLayer, moduleStates), reads, requesterScopes, stateReads };
+  return { layer: Layer.merge(inspectionLayer, moduleStates), reads, requesterScopes, stateReads, writtenRows };
 };

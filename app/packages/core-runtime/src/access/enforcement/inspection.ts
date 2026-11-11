@@ -708,9 +708,11 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
   });
 
   /**
-   * The stages of one description over one session. A stage's evidence is written while the next stage reads; every
-   * write is awaited before the inspection answers, on success and on failure, so every row a taken decision leaves is
-   * written either way. A read started ahead keeps its outcome for the stage that asks it and never fails it here.
+   * The stages of one description over one session. A stage's evidence is written while the next stage reads. A
+   * write, once started, cannot be interrupted (neither by a failed sibling write nor by the request going away), and
+   * every write is awaited before the inspection answers, on success and on failure, so every row a taken decision
+   * leaves is written either way. One failed write never cancels another; the first failure is reported once all have
+   * settled. A read started ahead keeps its outcome for the stage that asks it and never fails it here.
    */
   const stagedInspection = Effect.fn('SubjectInspection.staged')(function* stagedInspection<A, E, R>(
     input: SubjectInspectionInput,
@@ -722,19 +724,21 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
     const remember = (fiber: Fiber.Fiber<void, SubjectInspectionUnavailable>) => writes.push(fiber);
     const session = sessionOf(input, {
       ahead: (read) => read.pipe(Effect.ignore, Effect.forkIn(scope), Effect.asVoid),
-      record: (rows) => recordNow(rows).pipe(Effect.forkIn(scope), Effect.map(remember), Effect.asVoid),
+      record: (rows) =>
+        Effect.uninterruptible(recordNow(rows)).pipe(Effect.forkIn(scope), Effect.map(remember), Effect.asVoid),
     });
     const outcome = yield* body({
       capabilities: (asked) => inspectBatch({ ...input, ...asked }, catalog, session),
       prepare: (asked) => prepareContexts({ ...input, ...asked }, catalog, session),
       scope: inspectScope(input, session),
     }).pipe(Effect.exit);
-    const written = yield* Effect.exit(Fiber.joinAll(writes));
+    const written = yield* Fiber.awaitAll(writes);
     if (Exit.isFailure(outcome)) {
       return yield* Effect.failCause(outcome.cause);
     }
-    if (Exit.isFailure(written)) {
-      return yield* Effect.failCause(written.cause);
+    const failedWrite = written.find((exit) => Exit.isFailure(exit));
+    if (failedWrite !== undefined && Exit.isFailure(failedWrite)) {
+      return yield* Effect.failCause(failedWrite.cause);
     }
     return outcome.value;
   });

@@ -14,7 +14,8 @@ import {
 } from '@app/core-runtime/access/enforcement';
 import type { SubjectInspectionStages } from '@app/core-runtime/access/enforcement';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
-import { Effect, Layer, Predicate, Ref, Result, Schema } from 'effect';
+import { Effect, Fiber, Layer, Predicate, Ref, Result, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
 import { ActionPermissionCheckError } from '../../../../../packages/core-runtime/src/actions/errors.ts';
@@ -1220,5 +1221,94 @@ it.effect('writes the same evidence as the unshared stages when the second batch
       rows: unshared.reads.evidenceRows,
       writes: unshared.reads.evidenceWrites,
     });
+  }),
+);
+
+/** Two modules of two Actions each, nobody granted: every asked Action is refused, so both batches leave evidence. */
+const refusedTwoBatchCatalog = actionModulesCatalog({
+  'alpha.mod': [moduleAction('alpha.mod', 'alpha.mod.first'), moduleAction('alpha.mod', 'alpha.mod.second')],
+  'beta.mod': [moduleAction('beta.mod', 'beta.mod.first'), moduleAction('beta.mod', 'beta.mod.second')],
+});
+
+/** Moves the test clock 5 ms at a time, letting forked work run in between, until `done` holds (at most 1 s). */
+const advanceUntil = (done: () => boolean, step = 0): Effect.Effect<void> =>
+  step >= 200 || done()
+    ? Effect.void
+    : Effect.yieldNow.pipe(
+        Effect.andThen(TestClock.adjust('5 millis')),
+        Effect.andThen(Effect.suspend(() => advanceUntil(done, step + 1))),
+      );
+
+/** Moves the test clock until `fiber` has finished (at most 1 s of test time). */
+const advanceUntilDone = (fiber: Fiber.Fiber<unknown, unknown>) => advanceUntil(() => fiber.pollUnsafe() !== undefined);
+
+/** The evidence rows of each write a full description of `refusedTwoBatchCatalog` makes, without any write hook. */
+const referenceWrites = Effect.gen(function* referenceWrites() {
+  const { installed, snapshot } = yield* refusedTwoBatchCatalog;
+  const inspection = subjectInspectionFixture({ snapshot, subjects: [{ legalEntityId, principalId, tenantId }] });
+  yield* subjectModuleAccess(humanRequest).pipe(
+    Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+    Effect.provide(inspection.layer),
+  );
+  return { first: inspection.writtenRows.get(1) ?? -1, second: inspection.writtenRows.get(2) ?? -1 };
+});
+
+it.effect('a failed evidence write never cancels the other batch write: every write settles before the failure', () =>
+  Effect.gen(function* failedWriteDoesNotCancel() {
+    const reference = yield* referenceWrites;
+    const { installed, snapshot } = yield* refusedTwoBatchCatalog;
+    // Batch one's write fails after 20 ms; batch two's write, already started, needs 60 ms and succeeds.
+    const inspection = subjectInspectionFixture({
+      onEvidenceWrite: (write) =>
+        write === 1
+          ? Effect.sleep('20 millis').pipe(Effect.andThen(Effect.fail(accessDecisionUnavailable('write refused'))))
+          : Effect.sleep('60 millis'),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const described = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+      Effect.flip,
+      Effect.forkChild,
+    );
+    yield* advanceUntilDone(described);
+    const failure = yield* Fiber.join(described);
+    expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
+    // Batch two's rows were written in full, exactly as an undisturbed description writes them.
+    expect(reference.second).toBeGreaterThan(0);
+    expect([...inspection.writtenRows]).toEqual([[2, reference.second]]);
+  }),
+);
+
+it.effect('a request that goes away mid-description still lets every started evidence write settle', () =>
+  Effect.gen(function* abortedDescription() {
+    const reference = yield* referenceWrites;
+    const { installed, snapshot } = yield* refusedTwoBatchCatalog;
+    const writesStarted = { count: 0 };
+    const inspection = subjectInspectionFixture({
+      onEvidenceWrite: () =>
+        Effect.sync(() => {
+          writesStarted.count += 1;
+        }).pipe(Effect.andThen(Effect.sleep('50 millis'))),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const fiber = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+      Effect.forkChild,
+    );
+    // Both batches have run and their writes are in flight when the request is cut off. The interruption waits for
+    // the started writes, which settle once their 50 ms have passed.
+    yield* advanceUntil(() => inspection.writtenRows.size === 0 && writesStarted.count === 2);
+    const interruption = yield* Effect.forkChild(Fiber.interrupt(fiber));
+    yield* advanceUntilDone(interruption);
+    yield* Fiber.join(interruption);
+    // No answer is returned, but every started write committed: both batches' rows are there.
+    expect([...inspection.writtenRows]).toEqual([
+      [1, reference.first],
+      [2, reference.second],
+    ]);
   }),
 );
