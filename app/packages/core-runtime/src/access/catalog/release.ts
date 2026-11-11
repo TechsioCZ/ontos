@@ -9,7 +9,7 @@ import type { AccessCatalogReleaseError } from './errors.ts';
 import { collectAccessCatalog } from '../../authorization/access-declaration.ts';
 import { projectPublishedCatalog } from '../changes/publication.ts';
 import type { PublishedDescriptorInput } from '../changes/publication.ts';
-import type { CatalogDigest, CatalogSnapshotId, ModuleKey } from '../ids.ts';
+import type { CatalogDigest, CatalogSnapshotId } from '../ids.ts';
 import { CatalogDigestSchema, CatalogSnapshotIdSchema, ModuleKeySchema } from '../ids.ts';
 import type { CatalogSnapshot, CatalogSnapshotEntry } from '../model.ts';
 import { ACCESS_MODEL_PARSE_OPTIONS, CatalogSnapshotSchema } from '../model.ts';
@@ -20,11 +20,12 @@ import { stableUuid } from './stable-id.ts';
  * revision pins it, so the builder is pure: declarations of the modules a tenant has installed go in,
  * the immutable snapshot that role cells are validated against comes out.
  *
- * Publication is decided here, once: the initial release publishes every declaration of the installed
- * modules (O67-Q7), because nothing has been configured yet. A declaration the module has not
- * published stays a correct declaration and simply is not in the release (O1) — after the initial
- * release, later capabilities arrive through Novinky and an explicit adoption, never by rebuilding
- * the snapshot a role was already pinned to.
+ * Publication is decided here: the initial release publishes every declaration of the bootstrapping
+ * tenant's installed modules (O67-Q7), because nothing has been configured yet, and every later release is
+ * the deployment's own catalog, published at release activation (`release-activation.ts`). A declaration the
+ * module has not published stays a correct declaration and simply is not in a release (O1). A published
+ * release never rewrites the snapshot a role revision is pinned to: "Plný přístup" follows a later release
+ * through a successor revision, and every other role adopts it through Novinky.
  *
  * The identity of a release is its content: entry order, digest and identifier all derive from the
  * snapshot entries, so building the same declarations twice yields the same release instead of a
@@ -32,8 +33,11 @@ import { stableUuid } from './stable-id.ts';
  */
 
 export interface BuildAccessCatalogReleaseInput {
-  /** The tenant's module installations; a module that is not installed contributes no declaration. */
-  readonly installedModuleKeys: readonly ModuleKey[];
+  /**
+   * The tenant's module installations; a module that is not installed contributes no declaration. They are
+   * decoded here, so a nameless installation can never be filtered by text.
+   */
+  readonly installedModuleKeys: readonly string[];
   /** Every module the running composition declares, installed or not. */
   readonly modules: readonly AccessCatalogModule[];
   /** The instant the release is published at; Core mints it, the builder never reads a clock. */
@@ -197,3 +201,26 @@ export const buildAccessCatalogRelease = (
         ),
       );
 };
+
+export interface BuildDeploymentCatalogReleaseInput {
+  /** Every module the deployed catalog declares (`topology/authorization-catalog.json`). */
+  readonly modules: readonly AccessCatalogModule[];
+  /** The instant the release is published at; Core mints it, the builder never reads a clock. */
+  readonly publishedAt: Date;
+}
+
+/**
+ * The release a deployment brings at activation: every declaration of every module it declares. A release
+ * is global and shared by every tenant, so it cannot depend on which tenant happens to have installed what;
+ * installation keeps deciding use at decision time ("Uninstall stops every use and keeps configuration"),
+ * and a module a tenant installs later is then grantable at once instead of after the next deployment.
+ * Only the initial release of an empty catalog keeps publishing the bootstrapping tenant's installations.
+ */
+export const buildDeploymentCatalogRelease = (
+  input: BuildDeploymentCatalogReleaseInput,
+): Result.Result<CatalogSnapshot, AccessCatalogReleaseError> =>
+  buildAccessCatalogRelease({
+    installedModuleKeys: input.modules.map(({ moduleId }) => moduleId),
+    modules: input.modules,
+    publishedAt: input.publishedAt,
+  });
