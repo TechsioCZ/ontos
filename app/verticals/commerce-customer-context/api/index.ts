@@ -39,9 +39,10 @@ import {
 } from './portal-auth/verification-http/problems.ts';
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
+import type {
+  ActiveApplicationCompositionService} from '@app/core-runtime/modules/active-application-composition';
 import {
-  ActiveApplicationCompositionConfigLive,
-  ActiveApplicationCompositionService,
+  ActiveApplicationCompositionConfigLive
 } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
@@ -89,10 +90,6 @@ import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Context, Layer as GovernedReadLayer, Logger, Option, Redacted, References, Schema, Tracer } from 'effect';
-import {
-  PartyRegistryRetailPartyResolverFactory,
-  preparedRetailPartyResolution,
-} from '../src/integrations/party-registry-retail-party-resolver.ts';
 import { RetailPartyDetailExecutor } from '../src/integrations/retail-party-detail-executor.ts';
 import { retailEnrollmentTargetIdentityLive } from '../src/integrations/retail-enrollment-binding-live.ts';
 import { CommercePortalAuthDatabaseLive } from '../src/portal-auth/persistence/portal-auth-database.ts';
@@ -692,7 +689,6 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
     const existingRuntime = yield* ActionRuntime;
     const existingPreflight = yield* ActionAuthorizationPreflight;
     const preparation = yield* CommerceEnrollmentOwnerTransitionPreparation;
-    const compositions = yield* ActiveApplicationCompositionService;
     const dispatcher = yield* ActionMandateDispatcher;
     const retailPartyTransport = yield* RetailPartyDetailExecutor;
     const dependencies = yield* Effect.context<
@@ -707,15 +703,9 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
             scope,
           ).pipe(Effect.provideService(CommerceEnrollmentOwnerTransitionPreparation, preparation));
           const execution = Context.get(executionContext, CommerceEnrollmentPreparedOwnerExecutionService);
-          const retailParty = yield* preparedRetailPartyResolution.pipe(
-            Effect.provideService(ActiveApplicationCompositionService, compositions),
-            Effect.provideService(RetailPartyDetailExecutor, retailPartyTransport),
-          );
-          const preflight = composeActionAuthorizationPreflights([
-            execution.preflight,
-            retailParty.preflight,
-            existingPreflight,
-          ]);
+          // Retail Party evidence is acquired once by the Action's registered prepareServices,
+          // after authorization and before Core opens the business transaction.
+          const preflight = composeActionAuthorizationPreflights([execution.preflight, existingPreflight]);
           const runtimeContext = yield* Layer.buildWithScope(
             Layer.fresh(makeActionRuntimeLive(ultramodernDeliveryUnit, commerceCustomerContextRegistration)),
             scope,
@@ -727,7 +717,6 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
             .runAction(input)
             .pipe(
               Effect.provideService(CommerceEnrollmentPreparedOwnerCapability, execution.capability),
-              Effect.provideService(PartyRegistryRetailPartyResolverFactory, retailParty.factory),
               Effect.provideService(RetailPartyDetailExecutor, retailPartyTransport),
             );
         }),
