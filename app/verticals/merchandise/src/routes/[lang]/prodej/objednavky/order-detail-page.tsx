@@ -70,7 +70,8 @@ export const OrderDetailPage = ({ context, legalEntityId, orderId }: OrderDetail
   const [busy, setBusy] = useState(false);
   const [pendingCancel, setPendingCancel] = useState<readonly Order[] | null>(null);
   // The detail read does not carry the permissions, so the order list supplies them. One row keeps that read small.
-  const list = useOrders(legalEntityId, firstOrdersPage(1), context);
+  // The page shows neither the rows nor the header counts, so it warms no rows and reads no counts.
+  const list = useOrders(legalEntityId, firstOrdersPage(1), context, { counts: false, warm: false });
   const records = list.state.kind === 'ready' ? list.state.records : undefined;
   const canWrite = records?.canWrite === true;
   const canEditOrders = records === undefined ? false : recordsCanEditOrders(records);
