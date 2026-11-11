@@ -198,13 +198,14 @@ done
 #     reach each process only on its private channel, file descriptor 3: a private FIFO for a calling module's server,
 #     a pipe for the Outbox host. No key is ever in an environment variable, an argument or a file.
 MODULE_CALLERS=" $(node -e 'import("./scripts/zerops/module-credentials.mts").then((m) => console.log(m.MODULE_CREDENTIAL_CALLERS.join(" ")))') "
-CHANNEL_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ontos-demo-channels.XXXXXX")"
-chmod 700 "$CHANNEL_DIR"
+# shellcheck source=module-credential-channels.sh
+. "$APP/scripts/demo/module-credential-channels.sh"
 is_caller() { case "$MODULE_CALLERS" in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
-hand_over() { # hand_over <app-id>: write that module's handover line to its channel, then remove the FIFO's name
-  printf '%s' "$MODULE_CREDENTIALS" | "${WITH_ENV[@]}" node scripts/zerops/module-credential-handover.mts handover "$1" \
-    >"$CHANNEL_DIR/$1" || say "WARN no module credential handed over to $1"
-  rm -f "$CHANNEL_DIR/$1"
+hand_over_credential() { # hand_over_credential <app-id>: that module's handover line from this shell's memory
+  local line
+  line="$(printf '%s' "$MODULE_CREDENTIALS" | "${WITH_ENV[@]}" node scripts/zerops/module-credential-handover.mts handover "$1")" ||
+    { say "WARN no module credential issued for $1"; return 1; }
+  hand_over "$1" "$line"
 }
 
 # 5. Servers. Each runs in its own process group so down.sh can stop the whole tree.
@@ -220,7 +221,7 @@ start() { # start <name> <command...>
 start_module() { # start_module <app-id> <directory>: a module's own server; a calling module holds only its own key
   if is_caller "$1"; then
     # The server keeps its channel open (read-write, so it never sees an end); hand_over fills it later.
-    rm -f "$CHANNEL_DIR/$1" && mkfifo -m 600 "$CHANNEL_DIR/$1"
+    channel_open "$1"
     ONTOS_MODULE_CREDENTIAL_HANDOVER=fd3 start "$1" "${WITH_ENV[@]}" node scripts/demo/serve-module.mts "$1" "$2" \
       3<>"$CHANNEL_DIR/$1"
   else
@@ -259,7 +260,7 @@ MODULE_CREDENTIALS="$(ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="http://127.0.0.1
   --operation="$(uuidgen | tr '[:upper:]' '[:lower:]')" --host="local-demo:$(hostname -s)" 3>&1 1>&2)" ||
   die "module credential provisioning failed"
 for id in "${VERTICALS[@]}"; do
-  if is_caller "$id"; then hand_over "$id"; fi
+  if is_caller "$id"; then hand_over_credential "$id" || true; fi
 done
 
 # Sales reset discovers native Action ownership from the published composition, including its
@@ -335,7 +336,7 @@ restart_server() { # restart_server <name> <directory>
     for _ in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || break; sleep .3; done
   fi
   start_module "$1" "$2"
-  if is_caller "$1"; then hand_over "$1"; fi
+  if is_caller "$1"; then hand_over_credential "$1" || true; fi
 }
 restart_server shell-super-app apps/shell-super-app
 wait_http "http://127.0.0.1:$SHELL_PORT/.well-known/ontos-shell-runtime.json" 180 shell-super-app
