@@ -1,4 +1,4 @@
-import { DateTime, Deferred, Effect, Fiber, Option, Schema } from 'effect';
+import { Clock, DateTime, Deferred, Effect, Fiber, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -7,7 +7,13 @@ import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/
 import { defineOutboxWorker } from '../../src/outbox/definition.ts';
 import { PersistenceFailure } from '../../src/database/persistence-failure.ts';
 import { OutboxPollerConfigError } from '../../src/outbox/errors.ts';
-import { parseOutboxPollingConfig, runOutboxPollingLoop } from '../../src/outbox/poller.ts';
+import {
+  IDLE_BACKOFF_FACTOR,
+  nextPollDelayMs,
+  parseOutboxPollingConfig,
+  repeatWithIdleBackoff,
+  runOutboxPollingLoop,
+} from '../../src/outbox/poller.ts';
 import type { OutboxCycleRunner } from '../../src/outbox/poller.ts';
 import type { OutboxClaim, OutboxRepositoryService } from '../../src/outbox/repository.ts';
 import { makeOutboxRuntime, OutboxRuntime } from '../../src/outbox/runtime.ts';
@@ -157,7 +163,7 @@ it.effect('runs immediately, survives a typed cycle failure, and continues polli
       runCycle,
     ).pipe(Effect.forkChild);
 
-    yield* TestClock.adjust('20 millis');
+    yield* TestClock.adjust('30 millis');
     yield* Fiber.interrupt(running);
     expect(calls, 'polling loop did not continue').toBe(3);
     expect(healthTransitions).toEqual(['failed', 'ready', 'ready']);
@@ -190,7 +196,7 @@ it.effect('admits every new cycle while preserving the revision already supplied
 
     yield* Deferred.await(firstCycle);
     activeRevision = 'b'.repeat(64);
-    yield* TestClock.adjust('20 millis');
+    yield* TestClock.adjust('30 millis');
     yield* Fiber.interrupt(running);
 
     expect(admissions).toBe(3);
@@ -235,7 +241,7 @@ it.effect('does not claim during unavailable admission and marks the next admitt
       runCycle,
     ).pipe(Effect.forkChild);
 
-    yield* TestClock.adjust('20 millis');
+    yield* TestClock.adjust('30 millis');
     yield* Fiber.interrupt(running);
 
     expect(admissions).toBe(3);
@@ -297,5 +303,93 @@ it.effect('the default poller preserves operation time across a slow sequential 
     yield* Fiber.interrupt(running);
     expect(claimedAt).toEqual([0, 8000]);
     expect(completedAt).toEqual([8000, 16_000]);
+  }),
+);
+
+it('idle polls wait the interval, then double up to the cap; a poll that found work is followed at once', () => {
+  expect(IDLE_BACKOFF_FACTOR).toBe(2);
+  expect([0, 1, 2, 3, 4, 100, Number.MAX_SAFE_INTEGER].map((streak) => nextPollDelayMs(streak, 1000))).toEqual([
+    0, 1000, 2000, 2000, 2000, 2000, 2000,
+  ]);
+  expect(nextPollDelayMs(1, 10)).toBe(10);
+  expect(nextPollDelayMs(5, 10)).toBe(20);
+});
+
+/** The poll instants (TestClock milliseconds) of one loop whose `found` decides, per call, whether it found work. */
+const pollInstants = (found: (call: number) => boolean, intervalMs: number) =>
+  Effect.gen(function* recordPolls() {
+    const start = yield* Clock.currentTimeMillis;
+    const instants: number[] = [];
+    const fiber = yield* repeatWithIdleBackoff(
+      Clock.currentTimeMillis.pipe(
+        Effect.map((now) => {
+          instants.push(now - start);
+          return found(instants.length);
+        }),
+      ),
+      intervalMs,
+    ).pipe(Effect.forkChild);
+    return { fiber, instants };
+  });
+
+it.effect('an idle loop backs off to the cap and stays there', () =>
+  Effect.gen(function* idleBackoff() {
+    const { fiber, instants } = yield* pollInstants(() => false, 100);
+    yield* TestClock.adjust('1100 millis');
+    yield* Fiber.interrupt(fiber);
+    expect(instants).toEqual([0, 100, 300, 500, 700, 900, 1100]);
+  }),
+);
+
+it.effect('found work makes the next poll immediate and resets the idle wait', () =>
+  Effect.gen(function* workResets() {
+    // Idle three times, then two polls that find work, then idle again.
+    const { fiber, instants } = yield* pollInstants((call) => call === 4 || call === 5, 100);
+    yield* TestClock.adjust('1000 millis');
+    yield* Fiber.interrupt(fiber);
+    expect(instants).toEqual([0, 100, 300, 500, 500, 500, 600, 800, 1000]);
+  }),
+);
+
+it.effect("a draining loop does not delay another loop's idle polling", () =>
+  Effect.gen(function* noStarvation() {
+    const busy = yield* pollInstants((call) => call <= 3, 100);
+    const idle = yield* pollInstants(() => false, 100);
+    yield* TestClock.adjust('500 millis');
+    yield* Fiber.interrupt(busy.fiber);
+    yield* Fiber.interrupt(idle.fiber);
+    // The busy loop drained its three polls that found work and then backed off on its own schedule.
+    expect(busy.instants.length).toBeGreaterThanOrEqual(5);
+    expect(idle.instants).toEqual([0, 100, 300, 500]);
+  }),
+);
+
+it.effect('a cycle that claimed work is followed at once; a failed cycle backs off like an idle one', () =>
+  Effect.gen(function* cycleActivity() {
+    const start = yield* Clock.currentTimeMillis;
+    const instants: number[] = [];
+    const outcomes = ['claimed', 'empty', 'failed', 'claimed', 'empty'] as const;
+    const runCycle: OutboxCycleRunner<typeof registration, never> = () =>
+      Effect.gen(function* recordCycle() {
+        instants.push((yield* Clock.currentTimeMillis) - start);
+        const outcome = outcomes[instants.length - 1] ?? 'empty';
+        if (outcome === 'failed') {
+          return yield* new PersistenceFailure({ cause: 'controlled', reason: 'controlled test failure' });
+        }
+        return outcome === 'claimed' ? { ...emptyResult, claimed: 1, succeeded: 1 } : emptyResult;
+      });
+    const running = yield* runOutboxPollingLoop(
+      {
+        admitComposition: Effect.succeed('a'.repeat(64)),
+        config: { claimOwner: 'consumer:test', maxDeliveries: 10, pollIntervalMs: 10 },
+        registrations: [registration],
+        subscriptions: [registration.descriptor],
+      },
+      runCycle,
+    ).pipe(Effect.forkChild);
+    yield* TestClock.adjust('100 millis');
+    yield* Fiber.interrupt(running);
+    // claimed@0 → at once; empty@0 → 10; failed@10 → 20; claimed@30 → at once; empty@30 → 10; then 20 apart.
+    expect(instants).toEqual([0, 0, 10, 30, 30, 40, 60, 80, 100]);
   }),
 );

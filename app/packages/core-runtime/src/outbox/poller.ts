@@ -140,6 +140,44 @@ interface AdmittedCycle {
 const hasActivity = (result: OutboxCycleResult): boolean =>
   result.messagesMatched > 0 || result.deliveriesCreated > 0 || result.claimed > 0;
 
+/** Idle polling settles at this multiple of the configured interval (2 s at the 1 s default). */
+export const IDLE_BACKOFF_FACTOR = 2;
+const MAX_IDLE_STREAK = 32;
+
+/**
+ * The wait before the next poll. A poll that found work is followed at once, so a burst drains without pauses. Each
+ * consecutive poll that found nothing (or failed) doubles the wait, from the configured interval up to
+ * {@link IDLE_BACKOFF_FACTOR} times it. This is idle pacing only: the retry delay of a failed delivery is its
+ * `available_at`, written by the repository, and is not affected.
+ */
+export const nextPollDelayMs = (idleStreak: number, pollIntervalMs: number): number =>
+  idleStreak <= 0
+    ? 0
+    : Math.min(pollIntervalMs * IDLE_BACKOFF_FACTOR, pollIntervalMs * 2 ** (Math.min(idleStreak, MAX_IDLE_STREAK) - 1));
+
+/** The idle pacing as a Schedule over each poll's answer to "did this poll find work". */
+export const idleBackoffSchedule = (pollIntervalMs: number): Schedule.Schedule<number, boolean> =>
+  Schedule.fromStep(
+    Effect.sync(() => {
+      let idleStreak = 0;
+      return (_now: number, found: boolean) => {
+        idleStreak = found ? 0 : Math.min(idleStreak + 1, MAX_IDLE_STREAK);
+        const step: [number, Duration.Duration] = [
+          idleStreak,
+          Duration.millis(nextPollDelayMs(idleStreak, pollIntervalMs)),
+        ];
+        return Effect.succeed(step);
+      };
+    }),
+  );
+
+/** Runs `poll` forever; it reports whether it found work, which resets the idle wait to nothing. */
+export const repeatWithIdleBackoff = <Failure, Requirements>(
+  poll: Effect.Effect<boolean, Failure, Requirements>,
+  pollIntervalMs: number,
+): Effect.Effect<void, Failure, Requirements> =>
+  Effect.repeat(poll, idleBackoffSchedule(pollIntervalMs)).pipe(Effect.asVoid);
+
 export function runOutboxPollingLoop<Registration extends AnyOutboxWorkerRegistration>(
   input: RunOutboxPollingLoopInput<Registration>,
 ): Effect.Effect<void, never, OutboxRuntime | OutboxWorkerRequirements<Registration>>;
@@ -206,17 +244,18 @@ export function runOutboxPollingLoop<Registration extends AnyOutboxWorkerRegistr
             }),
           ],
           { concurrency: 1 },
-        ),
-      onSuccess: () => Effect.void,
+        ).pipe(Effect.as(false)),
+      onSuccess: ({ result }) => Effect.succeed(hasActivity(result)),
     }),
   );
 
-  return tick.pipe(
-    observeRuntimeJob(
-      'outbox-poll',
-      input.registrations.map((registration) => registration.descriptor.workerKey).join(','),
+  return repeatWithIdleBackoff(
+    tick.pipe(
+      observeRuntimeJob(
+        'outbox-poll',
+        input.registrations.map((registration) => registration.descriptor.workerKey).join(','),
+      ),
     ),
-    Effect.repeat(Schedule.spaced(Duration.millis(input.config.pollIntervalMs))),
-    Effect.asVoid,
+    input.config.pollIntervalMs,
   );
 }
