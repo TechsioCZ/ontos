@@ -1,13 +1,19 @@
 import { defineRule } from '@oxlint/plugins';
 import type { ESTree } from '@oxlint/plugins';
 
+import { matchesGlobs, scopePath } from '../shared/paths.ts';
+
 /**
  * ui-kit's label-bearing form controls read an English "(required)" to screen readers after the label of a required
  * field unless they get a translation. `@app/admin-ui/form-controls` re-exports them with the page language's text,
  * so a required admin field must use those. Reported: a JSX element with a `required` attribute, or with spread props
  * that may carry one (a local wrapper passing its props on), whose tag (or the root of a compound tag such as
  * `DatePicker.Root`) is a value import from one of these ui-kit modules.
+ * Scope is the administration source namespaces: apps, verticals and shared packages. Standalone storefronts
+ * supply their own page-language context and must not be directed to import administration controls.
  */
+const ADMIN_SOURCE_PATHS = ['apps/**', 'verticals/**', 'packages/**'] as const;
+
 const labelledControlModules: ReadonlySet<string> = new Set([
   '@techsio/ui-kit/atoms/label',
   '@techsio/ui-kit/molecules/cascade-select',
@@ -45,6 +51,8 @@ export const rule = defineRule({
     },
   },
   create(context) {
+    if (!matchesGlobs(scopePath(context.filename), ADMIN_SOURCE_PATHS)) return {};
+
     const imported = new Set<string>();
     return {
       ImportDeclaration(node) {
