@@ -1,10 +1,12 @@
 import { moduleWriteEvent } from '@app/shared-contracts/page-data';
-import { Deferred, Effect, Fiber, Schema } from 'effect';
+import { Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
 
 import * as actualAuthClient from '../../../src/api/auth-client.ts' with { rstest: 'importActual' };
-import { installBrowserRequestCache } from '../../../src/routes/browser-request-cache.ts';
+import { clearBrowserRequestCache, installBrowserRequestCache } from '../../../src/routes/browser-request-cache.ts';
 import {
+  documentGatewayAssertion,
   resetDocumentGatewayAssertions,
   seedDocumentGatewayAssertions,
   warmDocumentGatewayAssertions,
@@ -229,6 +231,95 @@ it.live('lets each remote ask alone when the batch fails', () =>
     const answer = yield* askAssertion({ audience: 'failing-a', compositionRevision: revision });
     expect(answer).toEqual({ body: withoutAudience(assertion('failing-a')), status: 200 });
     expect(gatewayRequests()).toHaveLength(1);
+  }),
+);
+
+it.live('never holds an embedded token again once a context boundary or another revision dropped the held set', () =>
+  Effect.gen(function* embeddedOnce() {
+    yield* resetDocumentGatewayAssertions;
+    const embedded = assertion('embedded-once');
+    issueDocumentGatewayContextsMock.mockReturnValue(Effect.succeed({ assertions: [] }));
+    let issued = 0;
+    platformFetch.mockImplementation(async () => {
+      issued += 1;
+      return Response.json({ ...withoutAudience(embedded), token: `embedded-fresh-${issued}` });
+    });
+    yield* seedDocumentGatewayAssertions(revision, [embedded]);
+    const first = yield* askAssertion({ audience: embedded.audience, compositionRevision: revision });
+    expect(first.body.token).toBe(embedded.token);
+    // A boundary that does not reload the document (a company switch that failed) drops the held set, and the Shell
+    // renders again from the same server-rendered model. Its owner has already redeemed this token: a 401.
+    yield* clearBrowserRequestCache;
+    yield* seedDocumentGatewayAssertions(revision, [embedded]);
+    const afterBoundary = yield* askAssertion({ audience: embedded.audience, compositionRevision: revision });
+    expect(afterBoundary.body.token).not.toBe(embedded.token);
+    // A loader that saw another revision replaces the held set; the document's own revision renders again.
+    yield* warmDocumentGatewayAssertions(otherRevision, []);
+    yield* seedDocumentGatewayAssertions(revision, [embedded]);
+    const afterRevision = yield* askAssertion({ audience: embedded.audience, compositionRevision: revision });
+    expect(afterRevision.body.token).not.toBe(embedded.token);
+  }),
+);
+
+it.effect('hands out an assertion only while more than the margin of its lifetime is left', () =>
+  Effect.gen(function* margin() {
+    yield* resetDocumentGatewayAssertions;
+    issueDocumentGatewayContextsMock.mockReturnValue(Effect.succeed({ assertions: [] }));
+    // The test clock starts at 0: 16 s of lifetime, the margin is 15 s.
+    const justUsable = assertion('margin-usable', 16);
+    const atMargin = assertion('margin-reached', 16);
+    yield* seedDocumentGatewayAssertions(revision, [justUsable, atMargin]);
+    yield* TestClock.adjust('999 millis');
+    expect(yield* documentGatewayAssertion(justUsable.audience, revision)).toEqual(
+      Option.some(withoutAudience(justUsable)),
+    );
+    yield* TestClock.adjust('1 millis');
+    expect(yield* documentGatewayAssertion(atMargin.audience, revision)).toEqual(Option.none());
+    // The expiring one was renewed with the others in one batch, not handed out.
+    expect(issueDocumentGatewayContextsMock).toHaveBeenCalledTimes(1);
+    expect(issueDocumentGatewayContextsMock.mock.calls[0]?.[0]).toEqual({
+      audiences: [justUsable.audience, atMargin.audience],
+      compositionRevision: revision,
+    });
+  }),
+);
+
+it.live('answers no remote with an assertion of a context that ended while its batch was on the way', () =>
+  Effect.gen(function* boundaryMidFlight() {
+    yield* resetDocumentGatewayAssertions;
+    const release = yield* Deferred.make<boolean>();
+    issueDocumentGatewayContextsMock.mockReturnValue(
+      Deferred.await(release).pipe(Effect.as({ assertions: [assertion('mid-flight')] })),
+    );
+    yield* warmDocumentGatewayAssertions(revision, ['mid-flight']);
+    const asking = yield* askAssertion({ audience: 'mid-flight', compositionRevision: revision }).pipe(
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* Effect.sleep('50 millis');
+    yield* clearBrowserRequestCache;
+    yield* Deferred.succeed(release, true);
+    expect(Exit.isFailure(yield* Fiber.await(asking))).toBe(true);
+    expect(gatewayRequests()).toHaveLength(0);
+  }),
+);
+
+it.live('asks no further batch for a release the Shell no longer issues for', () =>
+  Effect.gen(function* retiredRelease() {
+    const retired = 'c'.repeat(64);
+    issueDocumentGatewayContextsMock.mockReturnValue(Effect.fail({ _tag: 'GatewayReloadRequiredProblem' }));
+    platformFetch.mockImplementation(async () => Response.json({ title: 'Reload required' }, { status: 409 }));
+    yield* warmDocumentGatewayAssertions(retired, ['retired-a', 'retired-b']);
+    const answers = yield* Effect.forEach(
+      ['retired-a', 'retired-b', 'retired-a'],
+      (audience) => askAssertion({ audience, compositionRevision: retired }),
+      { concurrency: 1 },
+    );
+    expect(answers.map(({ status }) => status)).toEqual([409, 409, 409]);
+    // The single issuer still answers each remote, which then asks for a reload; no batch repeats the refusal.
+    expect(issueDocumentGatewayContextsMock).toHaveBeenCalledTimes(1);
+    expect(gatewayRequests()).toHaveLength(3);
+    yield* warmDocumentGatewayAssertions(retired, ['retired-c']);
+    expect(issueDocumentGatewayContextsMock).toHaveBeenCalledTimes(1);
   }),
 );
 
