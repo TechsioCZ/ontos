@@ -16,12 +16,16 @@ export interface McpRequestTiming {
   readonly ms: number;
 }
 
+/** The client's first connect, including the `server/discover` it sends while connecting. */
+const CONNECT = 'connect';
 const DISCOVER = 'server/discover';
 const LIST_TOOLS = 'tools/list';
 const CALL_TOOL = 'tools/call';
 
 /** Longest acceptable time of one authenticated request, by MCP method. */
 const MCP_LATENCY_BUDGET_MS = new Map([
+  // What a real client waits for while connecting (Claude Code gives up after 5 s).
+  [CONNECT, 5000],
   [DISCOVER, 3000],
   [CALL_TOOL, 10_000],
   [LIST_TOOLS, 3000],
@@ -103,16 +107,21 @@ export const connectMcp = (serverUrl: string, accessToken: Redacted.Redacted) =>
       { name: 'ontos-oauth-e2e', version: '1.0.0' },
       { versionNegotiation: { mode: { pin: MODERN_PROTOCOL_VERSION } } },
     );
-    // Connection setup (TLS, the connect-time probe, a cold start) is not timed; the request itself is, below.
-    yield* Effect.tryPromise({
-      catch: (cause) => new McpTransportFailure({ cause }),
-      try: async () =>
-        await client.connect(
-          new StreamableHTTPClientTransport(new URL(serverUrl), {
-            requestInit: { headers: { authorization: `Bearer ${Redacted.value(accessToken)}` } },
-          }),
-        ),
-    }).pipe(
+    // The first connect (TLS, the connect-time `server/discover`, a cold start) is its own sample, against the real
+    // client's limit; the warm requests that follow are timed on their own.
+    yield* timedRequest(
+      client,
+      CONNECT,
+      Effect.tryPromise({
+        catch: (cause) => new McpTransportFailure({ cause }),
+        try: async () =>
+          await client.connect(
+            new StreamableHTTPClientTransport(new URL(serverUrl), {
+              requestInit: { headers: { authorization: `Bearer ${Redacted.value(accessToken)}` } },
+            }),
+          ),
+      }),
+    ).pipe(
       Effect.andThen(discoverOnce(client)),
       Effect.asVoid,
       Effect.onError(() =>
@@ -127,7 +136,8 @@ export const connectMcp = (serverUrl: string, accessToken: Redacted.Redacted) =>
   });
 
 /**
- * Every request of this client within its method's budget, each miss measured once more: `server/discover` and
+ * Every request of this client within its method's budget. The first connect has one sample only: a real client
+ * gives up on it, so a slow connect fails as it is. Each warm miss is measured once more: `server/discover` and
  * `tools/list` repeat themselves, a tool call is re-measured with the read-only `ontos_whoami`, so no write repeats.
  */
 export const confirmLatency = (client: Client) =>
@@ -136,7 +146,7 @@ export const confirmLatency = (client: Client) =>
     const misses = overBudget(first);
     const again = new Map<string, number>();
     yield* Effect.forEach(
-      misses,
+      misses.filter(({ method }) => method !== CONNECT),
       ({ method }) => {
         let probe: Effect.Effect<unknown, unknown> = discoverOnce(client);
         if (method === LIST_TOOLS) {

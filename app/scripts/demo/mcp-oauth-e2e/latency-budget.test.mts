@@ -48,3 +48,15 @@ it('fails a miss only when its second sample misses too, or could not be taken',
   // A second sample that could not be taken does not excuse the miss.
   expect(confirmedSlow(misses, new Map([[LIST, 800]]))).toEqual([`${CALL} 10001 ms, znovu – ms > 10000 ms`]);
 });
+
+it('fails a slow first connect on its one sample, against the real client limit of 5 s', () => {
+  const connect = [
+    { method: 'connect', ms: 5001 },
+    { method: 'server/discover', ms: 90 },
+  ];
+  const misses = overBudget(connect);
+  expect(misses).toEqual([{ budget: 5000, method: 'connect', ms: 5001 }]);
+  // The connect is never measured again, so its miss stands.
+  expect(confirmedSlow(misses, new Map())).toEqual(['connect 5001 ms, znovu – ms > 5000 ms']);
+  expect(overBudget([{ method: 'connect', ms: 4999 }])).toEqual([]);
+});
