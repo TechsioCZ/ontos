@@ -31,14 +31,20 @@ import {
 
 const appRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 
-/** Exact public provider contracts keep intrinsic compatibility separate from the test Privacy port. */
+/** Published provider surfaces keep intrinsic compatibility separate from the test Privacy port. */
 export const makePartyReconciliationComposition = Effect.fn('PartyReconciliation.publishedComposition')(
   function* publishedComposition() {
     const fs = yield* FileSystem.FileSystem;
     const contracts = yield* Effect.forEach(['party-registry', 'privacy'], (appId) =>
-      fs
-        .readFileString(`${appRoot}verticals/${appId}/dist/public/.well-known/ontos-module-manifest.json`)
-        .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema)))),
+      fs.readFileString(`${appRoot}verticals/${appId}/dist/public/.well-known/ontos-module-manifest.json`).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))),
+        // The test HTTP handler and its issuer share the source-loaded Party build identity.
+        Effect.map((contract) =>
+          contract.deployment.appId === ultramodernApiMarker.appId
+            ? { ...contract, deployment: { ...contract.deployment, buildMarker: ultramodernApiMarker.buildMarker } }
+            : contract,
+        ),
+      ),
     );
     const document = yield* fs.readFileString(
       `${appRoot}apps/shell-super-app/dist/public/.well-known/ontos-shell-runtime.json`,

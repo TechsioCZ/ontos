@@ -403,14 +403,14 @@ export const onboardCounterpartyCustomerSourceRecord = Effect.fn('PartySourceLif
     payload: CounterpartyCustomerOnboardPayload,
     command: CustomerOnboardInput,
   ) {
-    const request = yield* Schema.encodeEffect(PartySourceLifecycleInputSchema)({
-      operation: 'ONBOARD_COUNTERPARTY_CUSTOMER',
-      payload,
-    }).pipe(Effect.mapError(unavailable));
-    const prepared = yield* prepareLifecycle(transaction, scope, {
-      operation: 'ONBOARD_COUNTERPARTY_CUSTOMER',
-      payload,
-    }).pipe(withPartyClientSourceRequest(request));
+    const input = { operation: 'ONBOARD_COUNTERPARTY_CUSTOMER', payload } as const;
+    const prepare = prepareLifecycle(transaction, scope, input);
+    const prepared = yield* payload.sourceReference === undefined
+      ? prepare
+      : Schema.encodeEffect(PartySourceLifecycleInputSchema)(input).pipe(
+          Effect.mapError(unavailable),
+          Effect.flatMap((request) => prepare.pipe(withPartyClientSourceRequest(request))),
+        );
     if (prepared?.receipt !== undefined) {
       return SourceOnboardReplaySchema.make({
         result: yield* Schema.decodeUnknownEffect(CounterpartyCustomerOnboardResultSchema)(
