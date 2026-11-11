@@ -45,6 +45,9 @@ const permissionshipOf = (response: v1.CheckBulkPermissionsPair['response']): Ac
 };
 
 /** The engine port over one transport; `toCheckBulkRequest` is the compiler-owned request shape. */
+/** The span of one SpiceDB bulk check call. */
+export const SPICEDB_CHECK_SPAN = 'AccessDecision.spicedbCheckBulk';
+
 export const enginePortOf = (rpc: SpiceDbRpc): DecisionCheckPort => ({
   checkBulk: (items) =>
     rpc.checkBulkPermissions(toCheckBulkRequest(items)).pipe(
@@ -52,6 +55,8 @@ export const enginePortOf = (rpc: SpiceDbRpc): DecisionCheckPort => ({
       Effect.map((response): readonly { readonly permissionship: AccessCheckPermissionship }[] =>
         response.pairs.map(({ response: item }) => ({ permissionship: permissionshipOf(item) })),
       ),
+      // One span per engine round trip, so a request can count and time its SpiceDB calls.
+      Effect.withSpan(SPICEDB_CHECK_SPAN),
     ),
 });
 
