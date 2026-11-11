@@ -6,8 +6,16 @@
       "commands": "pnpm typecheck\npnpm typecheck:lint-rules\npnpm test:lint-rules\npnpm lint:repository-policy\npnpm api:check:ontos\n"
     },
     {
-      "name": "Repository Tooling Tests",
-      "commands": "pnpm test:scripts\n"
+      "name": "Repository Tooling Tests (1/3)",
+      "commands": "pnpm test:scripts --shard 1/3\n"
+    },
+    {
+      "name": "Repository Tooling Tests (2/3)",
+      "commands": "pnpm test:scripts --shard 2/3\n"
+    },
+    {
+      "name": "Repository Tooling Tests (3/3)",
+      "commands": "pnpm test:scripts --shard 3/3\n"
     },
     {
       "name": "Module Entrypoint, Deployment Impact Planner, and Codesmith Generation Tests",
