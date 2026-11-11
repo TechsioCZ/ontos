@@ -8,7 +8,7 @@ import {
 } from "@app/merchandise/contracts/apply-command";
 import type { ApplyCommandResult } from "@app/merchandise/contracts/apply-command";
 import { StorefrontMarketSchema } from "@app/merchandise/domain/market-offers";
-import { Clock, Effect, Match, Predicate, Schema, Struct } from "effect";
+import { Effect, Match, Predicate, Schema, Struct } from "effect";
 import type { Cause } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { CartQuoteDiagnosticSchema, CartQuoteRequestSchema, CartQuoteSchema } from "./cart-quote";
@@ -16,7 +16,8 @@ import type { CartQuoteRequest, CartScope } from "./cart-quote";
 import { readConfiguration } from "./config";
 import type { StorefrontConfiguration } from "./config";
 import { readOwner } from "./gateway";
-import { MarketCatalogSchema, selectMarket } from "./market";
+import { selectMarket } from "./market";
+import { readCurrentMarketCatalog } from "./market-catalog-read";
 
 export class CartQuoteFailure extends Schema.TaggedError<CartQuoteFailure>()("CartQuoteFailure", {
   diagnostic: Schema.optionalKey(CartQuoteDiagnosticSchema),
@@ -51,15 +52,8 @@ const sameScope = (left: CartScope, right: CartScope) =>
   left.currency === right.currency;
 const readQuoteContext = (config: StorefrontConfiguration, locale: string) =>
   Effect.gen(function* readQuoteContextProgram() {
-    const now = yield* Clock.currentTimeMillis;
-    const catalog = yield* readOwner(
-      config,
-      "commerce-market-catalog",
-      "current-market-catalog",
-      { at: new Date(now).toISOString() },
-      MarketCatalogSchema,
-    );
-    const market = yield* selectMarket(catalog, config, locale, now);
+    const { markets, now } = yield* readCurrentMarketCatalog(config);
+    const market = yield* selectMarket(markets, config, locale, now);
     const snapshot = yield* readOwner(
       config,
       "merchandise",
