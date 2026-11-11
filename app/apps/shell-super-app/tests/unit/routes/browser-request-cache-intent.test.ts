@@ -37,7 +37,9 @@ rstest.mock('../../../src/api/auth-client.ts', () => ({ issueDocumentGatewayCont
 
 const revision = 'a'.repeat(64);
 const audience = 'intent-fixture';
-const token = 'intent-fixture-token';
+/** The document never holds an embedded token twice, so each case embeds its own. */
+let token = 'intent-fixture-token';
+let embedded = 0;
 const base = `/shell-super-app-api/module-api/${audience}/build/fixture`;
 const manifestKey = 'ontos.page-reads.v1:/en/home';
 const platformFetch = rstest.fn<typeof globalThis.fetch>();
@@ -78,6 +80,8 @@ beforeEach(async () => {
   globalThis.history.replaceState(null, '', '/en/home');
   globalThis.localStorage.clear();
   platformFetch.mockReset();
+  embedded += 1;
+  token = `intent-fixture-token-${embedded}`;
   issueDocumentGatewayContexts.mockReturnValue(Effect.succeed({ assertions: [] }));
   platformFetch.mockImplementation(async () => Response.json({ value: 'fresh' }));
   await browserRuntime.runPromise(

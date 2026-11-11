@@ -1,5 +1,5 @@
 import { observeRuntimeJob } from '@app/core-runtime/observability/runtime-jobs';
-import type { DatabaseConfigError } from '@app/core-runtime';
+import type { DatabaseConfigError, DatabaseConnectionError } from '@app/core-runtime';
 import type { dispatchEmailBatch } from '@app/email-delivery/dispatcher';
 import type { DeliveryReadScope, listDeliveries } from '@app/email-delivery/deliveries';
 import { emailEnvironment, emailTransport } from '@app/email-delivery/transport';
@@ -26,12 +26,15 @@ type EmailDeliveryRead = ReturnType<typeof listDeliveries>;
 interface EmailDeliveryRequestOperations {
   readonly dispatch: Effect.Effect<
     Effect.Success<typeof dispatchEmailBatch>,
-    Effect.Error<typeof dispatchEmailBatch> | DatabaseConfigError,
+    Effect.Error<typeof dispatchEmailBatch> | DatabaseConfigError | DatabaseConnectionError,
     Crypto.Crypto
   >;
   readonly list: (
     query: EmailDeliveryQuery,
-  ) => Effect.Effect<Effect.Success<EmailDeliveryRead>, Effect.Error<EmailDeliveryRead> | DatabaseConfigError>;
+  ) => Effect.Effect<
+    Effect.Success<EmailDeliveryRead>,
+    Effect.Error<EmailDeliveryRead> | DatabaseConfigError | DatabaseConnectionError
+  >;
 }
 
 /** The application root supplies delivery operations scoped to each request; acquiring the service opens no database pool. */

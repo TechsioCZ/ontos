@@ -140,8 +140,16 @@ interface AdmittedCycle {
 const hasActivity = (result: OutboxCycleResult): boolean =>
   result.messagesMatched > 0 || result.deliveriesCreated > 0 || result.claimed > 0;
 
+/**
+ * Whether the next poll may follow at once. A cycle whose every claimed delivery failed paces like an idle one, so a
+ * handler that keeps failing under a zero initial retry backoff waits at least one interval between attempts instead
+ * of repolling hot until its last attempt.
+ */
+const foundWork = (result: OutboxCycleResult): boolean =>
+  hasActivity(result) && !(result.failed > 0 && result.succeeded === 0);
+
 /** Idle polling settles at this multiple of the configured interval (2 s at the 1 s default). */
-export const IDLE_BACKOFF_FACTOR = 2;
+const IDLE_BACKOFF_FACTOR = 2;
 const MAX_IDLE_STREAK = 32;
 
 /**
@@ -150,13 +158,13 @@ const MAX_IDLE_STREAK = 32;
  * {@link IDLE_BACKOFF_FACTOR} times it. This is idle pacing only: the retry delay of a failed delivery is its
  * `available_at`, written by the repository, and is not affected.
  */
-export const nextPollDelayMs = (idleStreak: number, pollIntervalMs: number): number =>
+const nextPollDelayMs = (idleStreak: number, pollIntervalMs: number): number =>
   idleStreak <= 0
     ? 0
     : Math.min(pollIntervalMs * IDLE_BACKOFF_FACTOR, pollIntervalMs * 2 ** (Math.min(idleStreak, MAX_IDLE_STREAK) - 1));
 
 /** The idle pacing as a Schedule over each poll's answer to "did this poll find work". */
-export const idleBackoffSchedule = (pollIntervalMs: number): Schedule.Schedule<number, boolean> =>
+const idleBackoffSchedule = (pollIntervalMs: number): Schedule.Schedule<number, boolean> =>
   Schedule.fromStep(
     Effect.sync(() => {
       let idleStreak = 0;
@@ -245,7 +253,7 @@ export function runOutboxPollingLoop<Registration extends AnyOutboxWorkerRegistr
           ],
           { concurrency: 1 },
         ).pipe(Effect.as(false)),
-      onSuccess: ({ result }) => Effect.succeed(hasActivity(result)),
+      onSuccess: ({ result }) => Effect.succeed(foundWork(result)),
     }),
   );
 

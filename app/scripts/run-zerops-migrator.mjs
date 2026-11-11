@@ -5,13 +5,16 @@ import { createServer } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Cause, Config, Effect, Exit, Option } from 'effect';
+import { Cause, Config, Duration, Effect, Exit, Option } from 'effect';
 
+import { accessReleaseActivationArguments } from './access-release-activation-child.mts';
 import { loadOptionalCommercePortalAuthDatabaseConfig } from '../verticals/commerce-customer-context/scripts/portal-auth-database-config.mts';
 
 const appDirectory = fileURLToPath(new URL('../', import.meta.url));
 const { spawn } = process.getBuiltinModule('node:child_process');
 const migratorPort = Config.Int('MIGRATOR_PORT').pipe(Config.withDefault(8080));
+/** How long the access catalog release activation may take before the release goes on without it. */
+const ACCESS_RELEASE_ACTIVATION_BUDGET = Duration.minutes(5);
 // The app host runs the same chain once before it publishes; the standalone migrator stays up for readiness.
 const migrateOnce = Config.Boolean('MIGRATOR_ONCE').pipe(Config.withDefault(false));
 
@@ -199,6 +202,21 @@ const main = Effect.scoped(
       yield* runAppScript('verticals/commerce-customer-context/scripts/verify-portal-auth-db-schema.mts');
     }
     yield* runAppScript('scripts/verify-application-db-schema.mts');
+    // Access catalog release activation: publishes the deployed catalog when it is newer, lets "Plný přístup"
+    // follow it and records Novinky for every other role. It never fails the release: authorization then stays
+    // at the previous release, which keeps every new capability denied, and the next activation retries. It is
+    // bounded, and its child process is stopped on expiry, so an unreachable engine never holds a deployment.
+    yield* Effect.scoped(run(process.execPath, [...accessReleaseActivationArguments(appDirectory)])).pipe(
+      Effect.timeoutOrElse({
+        duration: ACCESS_RELEASE_ACTIVATION_BUDGET,
+        orElse: () => Effect.fail(new MigratorError('the activation exceeded its time budget')),
+      }),
+      Effect.catch((error) =>
+        Effect.logError(
+          `ACCESS CATALOG RELEASE ACTIVATION FAILED (${error.message}); authorization stays at the previous release until the next activation`,
+        ),
+      ),
+    );
     if (!(yield* migrateOnce)) {
       yield* serveReadiness(yield* migratorPort);
     }
