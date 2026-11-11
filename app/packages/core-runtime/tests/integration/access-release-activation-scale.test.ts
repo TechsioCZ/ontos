@@ -1,8 +1,11 @@
+import { fileURLToPath } from 'node:url';
+
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Console, Crypto, DateTime, Duration, Effect, FileSystem, Layer, Path, Result, Schema } from 'effect';
+import { Console, Crypto, DateTime, Duration, Effect, Stream, FileSystem, Layer, Path, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { ChildProcess } from 'effect/process';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { TenantAccessBootstrap, TenantAccessBootstrapLive } from '../../src/access/bootstrap/index.ts';
@@ -65,6 +68,12 @@ const EXTRA_ROLES = 5;
 const SCENARIO_TIMEOUT_MILLIS = 300_000;
 
 const EPOCH = DateTime.toDateUtc(DateTime.makeUnsafe('1970-01-01T00:00:00Z'));
+
+/** The application directory and the activation script, as `run-zerops-migrator.mjs` starts it. */
+const appDirectory = fileURLToPath(new URL('../../../../', import.meta.url));
+const activationScript = fileURLToPath(
+  new URL('../../../../scripts/activate-access-catalog-release.mts', import.meta.url),
+);
 
 const catalogUrl = new URL('../../../../topology/authorization-catalog.json', import.meta.url);
 
@@ -132,7 +141,7 @@ interface StageTenant {
 
 /** One database and SpiceDB with the v2 schema: the composition the migrator's activation builds. */
 const withDatabase = <Value, Failure, Requirements>(
-  run: (admin: PgClient.PgClient) => Effect.Effect<Value, Failure, Requirements>,
+  run: (admin: PgClient.PgClient, databaseUrl: string) => Effect.Effect<Value, Failure, Requirements>,
 ) =>
   Effect.gen(function* scaleScenario() {
     const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
@@ -148,7 +157,8 @@ const withDatabase = <Value, Failure, Requirements>(
       maxConnections: 2,
     });
     yield* createTemplateDatabase(admin);
-    const runtime = yield* makeTestPgClient(replacedDatabase(connections.runtime.connectionString, database), {
+    const databaseUrl = replacedDatabase(connections.runtime.connectionString, database);
+    const runtime = yield* makeTestPgClient(databaseUrl, {
       maxConnections: 2,
     });
     const executor = yield* makeTestDatabaseFromClient(runtime, coreRelations);
@@ -181,7 +191,7 @@ const withDatabase = <Value, Failure, Requirements>(
       AccessProjectionWriterLive.pipe(Layer.provide(stores)),
     );
     const context = yield* Layer.build(Layer.mergeAll(base, TenantAccessBootstrapLive.pipe(Layer.provide(base))));
-    return yield* run(admin).pipe(Effect.provideContext(context));
+    return yield* run(admin, databaseUrl).pipe(Effect.provideContext(context));
   }).pipe(Effect.scoped);
 
 /** One stage-shaped tenant on the older deployment: its companies, its installed modules and its bootstrap. */
@@ -325,6 +335,67 @@ it.layer(NodeServices.layer, { excludeTestServices: true })(
                 };
               }),
             });
+            return yield* Effect.void;
+          }),
+        ),
+      SCENARIO_TIMEOUT_MILLIS,
+    );
+
+    suite.effect(
+      'activates through the real script exactly as the migrator starts it: no argument, its environment',
+      () =>
+        withDatabase((admin, databaseUrl) =>
+          Effect.gen(function* migratorPath() {
+            const full = yield* deployedModules;
+            const older = olderDeploymentOf(full, STAGE_INITIAL_CAPABILITIES);
+            const fullRelease = releaseOf(full);
+            const addedCells =
+              Result.getOrThrow(compileFullAccessRole(fullRelease)).cells.length -
+              Result.getOrThrow(compileFullAccessRole(releaseOf(older))).cells.length;
+            const { tenant } = yield* bootstrapStageTenant(admin, older, 1);
+            // `run-zerops-migrator.mjs`: this Node, the script, no argument, the application directory, and the
+            // migrator's environment with this suite's private database as the runtime identity's address.
+            const start = Effect.scoped(
+              Effect.gen(function* startActivation() {
+                const child = yield* ChildProcess.make(process.execPath, [activationScript], {
+                  cwd: appDirectory,
+                  env: { DATABASE_URL: databaseUrl },
+                  extendEnv: true,
+                  forceKillAfter: '1 second',
+                  stderr: 'pipe',
+                  stdin: 'ignore',
+                  stdout: 'pipe',
+                });
+                const [code, stdout, stderr] = yield* Effect.all(
+                  [
+                    child.exitCode,
+                    child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+                    child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+                  ],
+                  { concurrency: 'unbounded' },
+                );
+                return { code: Number(code), output: `${stdout}${stderr}` };
+              }),
+            );
+            const first = yield* start;
+            expect(first.output).not.toContain('ACCESS CATALOG RELEASE ACTIVATION FAILED');
+            expect(first.code).toBe(0);
+            expect(first.output).toMatch(
+              new RegExp(
+                `deployed catalog [0-9a-f-]+: published; newest release [0-9a-f-]+: ${String(fullRelease.entries.length)} capabilities \\(previous release ${String(STAGE_INITIAL_CAPABILITIES)}\\)`,
+                'u',
+              ),
+            );
+            expect(first.output).toContain(
+              `tenant ${tenant.tenantId}: followed; "Plný přístup" found, +${String(addedCells)} cells; Novinky 0;`,
+            );
+            // The next deployment of the same catalog, or a restart: current, and the tenant has nothing to take.
+            const again = yield* start;
+            expect(again.code).toBe(0);
+            expect(again.output).toContain(': Current; newest release');
+            expect(again.output).toContain(
+              `tenant ${tenant.tenantId}: unchanged; "Plný přístup" found, +0 cells; Novinky 0;`,
+            );
             return yield* Effect.void;
           }),
         ),
