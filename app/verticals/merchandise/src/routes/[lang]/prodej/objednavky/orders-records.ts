@@ -419,8 +419,20 @@ interface WarmOrderDetail {
 }
 const WARM_ORDER_DETAILS = 256;
 const warmOrderDetails = MutableRef.make<ReadonlyMap<string, WarmOrderDetail>>(new Map());
+/**
+ * The detail input of each warm-up still under way. The full order page has no list row to take the revision from;
+ * with this one it opens the very entry being read and joins that read instead of loading the order again by id.
+ */
+interface WarmingOrderDetail {
+  readonly input: OrderDetailInput;
+  readonly key: string;
+  /** Warm-ups of this entry running now: the list's and an opening's join the same read. */
+  readonly runs: number;
+}
+const warmingOrderDetails = MutableRef.make<ReadonlyMap<string, WarmingOrderDetail>>(new Map());
 const forgetAllWarmOrderDetails = (): void => {
   MutableRef.set(warmOrderDetails, new Map());
+  MutableRef.set(warmingOrderDetails, new Map());
 };
 const warmDetailId = (scope: string, orderId: string): string => Result.getOrThrow(encodeQueryIds([scope, orderId]));
 
@@ -455,11 +467,33 @@ const rememberWarmOrderDetail = (input: OrderDetailInput, value: OrderDetailValu
   MutableRef.set(warmOrderDetails, new Map([...others, [id, warm] as const].slice(-WARM_ORDER_DETAILS)));
 };
 
+/**
+ * Counts a warm-up of `input` in (`started`) or out. A newer entry of the order replaces the count of an older one;
+ * the order is no longer warming once its last warm-up of the entry ends. Bounded like the warm copies.
+ */
+const markWarming = (input: OrderDetailInput, started: boolean): void => {
+  const id = warmDetailId(input.scope, input.orderId);
+  const key = orderDetailData.key(input);
+  const current = MutableRef.get(warmingOrderDetails);
+  const known = current.get(id);
+  const runs = (known?.key === key ? known.runs : 0) + (started ? 1 : -1);
+  if (!started && known?.key !== key) {
+    return;
+  }
+  const others = [...current].filter(([other]) => other !== id);
+  MutableRef.set(
+    warmingOrderDetails,
+    new Map(runs > 0 ? [...others, [id, { input, key, runs }] as const].slice(-WARM_ORDER_DETAILS) : others),
+  );
+};
+
 /** Reads one order's detail for a warm-up and remembers it for an opening that comes later. */
 const warmOrderDetail = (input: OrderDetailInput): Effect.Effect<void> =>
-  orderDetailData.read(input).pipe(
+  Effect.sync(() => markWarming(input, true)).pipe(
+    Effect.andThen(orderDetailData.read(input)),
     Effect.tap((value) => Effect.sync(() => rememberWarmOrderDetail(input, value))),
     Effect.ignore,
+    Effect.ensuring(Effect.sync(() => markWarming(input, false))),
   );
 
 /**
@@ -499,6 +533,21 @@ export const prefetchOrderDetail = (input: OrdersPageInput, records: RecordsResp
     }
     browserRuntime.runFork(warmOrderDetail(detail).pipe(Effect.ensuring(Effect.sync(done))));
   });
+};
+
+/**
+ * Keeps the read of an order the list is leaving for running. Opening a row on the full order page replaces the list,
+ * which stops its warm-up and with it a read of that row still under way; this read takes it over (or starts it from
+ * the list's rows), so the order page joins it instead of reading the order again. Call it before navigating.
+ */
+export const openOrderDetail = (input: OrdersPageInput, records: RecordsResponse, orderId: string): void => {
+  if (input.scope === undefined) {
+    return;
+  }
+  const detail: OrderDetailInput = { orderId, revision: records.revision, scope: input.scope, source: input };
+  if (orderDetailData.snapshot(detail).state !== 'ready') {
+    browserRuntime.runFork(warmOrderDetail(detail));
+  }
 };
 
 /** Intent prefetch of the orders table: `orders` are its rows in table order (no client sorting). */
@@ -864,6 +913,14 @@ const useDetailRevision = (
   return revision;
 };
 
+/** The last warm-up of an order: its copy, and the revision of the warm-up still under way or of that copy. */
+const warmUpOf = (detailId: string | undefined) => {
+  const warm = detailId === undefined ? undefined : MutableRef.get(warmOrderDetails).get(detailId);
+  const warming = detailId === undefined ? undefined : MutableRef.get(warmingOrderDetails).get(detailId);
+  // A warm-up under way reads the list's current revision; a finished copy may be of an older one.
+  return { warm, warmRevision: warming?.input.revision ?? warm?.input.revision };
+};
+
 /**
  * Nothing of this order shown yet and its warmed entry has aged: the warm copy of the same entry stands in while the
  * detail reads it again. A failed or refused read replaces it at once, as it replaces a held read.
@@ -890,12 +947,8 @@ export const useOrderDetail = (
   const list = currentSource === undefined ? pageDataPending : ordersPageData.snapshot(currentSource);
   const summary = listedSummary(orderId, scope, list);
   const detailId = warmDetailId(scope ?? '', orderId ?? '');
-  const warm = orderId === null || scope === undefined ? undefined : MutableRef.get(warmOrderDetails).get(detailId);
-  const revision = useDetailRevision(
-    detailId,
-    list.state === 'ready' ? list.value.revision : undefined,
-    warm?.input.revision,
-  );
+  const { warm, warmRevision } = warmUpOf(orderId === null || scope === undefined ? undefined : detailId);
+  const revision = useDetailRevision(detailId, list.state === 'ready' ? list.value.revision : undefined, warmRevision);
   const input: OrderDetailInput = {
     orderId: orderId ?? '',
     revision,
