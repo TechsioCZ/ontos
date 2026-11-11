@@ -347,6 +347,18 @@ const partyContactPointExecutorForScope =
       }),
     );
 
+export const preparePartyAddressSourceForScope = (
+  payload: PartyBackedAddressPayload,
+  scope: OperationalScope,
+  crypto: Crypto.Crypto,
+  requirementKey?: PartyAddressRequirementKey,
+) =>
+  preparePartyAddressSource(
+    payload,
+    scope.correlationId,
+    partyContactPointExecutorForScope(scope, crypto, requirementKey),
+  );
+
 export const partyBackedAddressSourceValidatorForScope = (
   scope: OperationalScope,
   crypto: Crypto.Crypto,
