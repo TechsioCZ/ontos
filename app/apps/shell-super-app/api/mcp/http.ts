@@ -204,7 +204,8 @@ export const serveMcp = <Failure, Requirements>(deps: McpEndpointDeps<Failure, R
     // The SDK calls back with Promises; tools and logs run with the services of this request.
     const services = yield* Effect.context();
     const run = Effect.runPromiseWith(services);
-    // Set by the factory when the connection could not be described; answered as HTTP 401/503 below.
+    // Set by the factory when the connection could not be described. The factory then serves no tool at all and
+    // the endpoint answers HTTP 401/503 below in place of the SDK's answer: an expected refusal, not an error.
     let refused: 'invalid' | 'unavailable' | undefined;
     let describedMs: number | undefined;
     const describedServer = Effect.gen(function* describeServer() {
@@ -212,7 +213,7 @@ export const serveMcp = <Failure, Requirements>(deps: McpEndpointDeps<Failure, R
       describedMs = Duration.toMillis(elapsed);
       if (described.kind !== 'ok') {
         refused = described.kind;
-        return yield* Effect.die(`MCP connection could not be described (${described.kind})`);
+        return buildMcpServer([], { run, sdk });
       }
       return buildMcpServer(described.tools, { run, sdk });
     });
@@ -255,6 +256,12 @@ export const serveMcp = <Failure, Requirements>(deps: McpEndpointDeps<Failure, R
         }),
       ),
     );
+    let answered = response;
+    if (refused === 'invalid') {
+      answered = unauthorizedResponse(config.prmUrl, true);
+    } else if (refused === 'unavailable') {
+      answered = unavailableResponse();
+    }
     yield* Effect.logInfo('mcp.request').pipe(
       Effect.annotateLogs({
         authMs: Duration.toMillis(authenticated),
@@ -263,14 +270,12 @@ export const serveMcp = <Failure, Requirements>(deps: McpEndpointDeps<Failure, R
         mcpMethod: request.headers.get('mcp-method') ?? null,
         method: request.method,
         ms: Duration.toMillis(elapsed),
-        status: refused ?? response.status,
+        refusal: refused ?? null,
+        status: answered.status,
       }),
     );
-    if (refused === 'invalid') {
-      return unauthorizedResponse(config.prmUrl, true);
-    }
-    if (refused === 'unavailable') {
-      return unavailableResponse();
+    if (refused !== undefined) {
+      return answered;
     }
     const adapted = HttpServerResponse.raw(response, { headers: PUBLIC_CORS_HEADERS }).pipe(HttpServerResponse.toWeb);
     if ((response.headers.get('content-type') ?? '').includes('text/event-stream')) {

@@ -7,7 +7,7 @@ import {
   StreamableHTTPClientTransport,
 } from '@modelcontextprotocol/client';
 import { AgentProposalSubmitResponseSchema, AgentQueueResponseSchema } from '@app/shared-contracts/agent-proposals';
-import { Crypto, Effect, FiberSet, Schema } from 'effect';
+import { Crypto, Effect, FiberSet, Logger, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { ShellCryptoLive } from '../../../api/auth/gateway-issuer.ts';
@@ -393,19 +393,38 @@ describe('describing the connection only for a request that needs its tools', ()
 
   it.effect('answers tools/list with 401 or 503 when the connection can no longer be described', () =>
     Effect.gen(function* refusedDescription() {
+      const entries: unknown[] = [];
+      const captured = Logger.layer([
+        Logger.make((options) => {
+          entries.push(Logger.formatStructured.log(options));
+        }),
+      ]);
       const revoked = yield* (yield* endpoint({
         backend: fakeBackend([]),
         describes: 'invalid',
         description: connectionDescription(),
-      }))(modernRequest('tools/list'));
+      }))(modernRequest('tools/list')).pipe(Effect.provide(captured));
       expect(revoked.status).toBe(401);
       expect(revoked.headers.get('www-authenticate')).toContain('error="invalid_token"');
+      const calls: Recorded[] = [];
       const down = yield* (yield* endpoint({
-        backend: fakeBackend([]),
+        backend: fakeBackend(calls),
         describes: 'unavailable',
         description: connectionDescription(),
-      }))(modernRequest('tools/call', { tool: 'ontos_whoami' }));
+      }))(modernRequest('tools/call', { tool: 'fixture_notes__read_records' })).pipe(Effect.provide(captured));
       expect(down.status).toBe(503);
+      expect(calls).toEqual([]);
+      // An expected refusal is logged with the HTTP status actually returned and its own reason, never as an error.
+      expect(entries).toEqual([
+        expect.objectContaining({
+          annotations: expect.objectContaining({ refusal: 'invalid', status: 401 }),
+          message: 'mcp.request',
+        }),
+        expect.objectContaining({
+          annotations: expect.objectContaining({ refusal: 'unavailable', status: 503 }),
+          message: 'mcp.request',
+        }),
+      ]);
       // Discovery does not depend on the description, so it still answers.
       const discovered = yield* (yield* endpoint({
         backend: fakeBackend([]),
@@ -413,6 +432,24 @@ describe('describing the connection only for a request that needs its tools', ()
         description: connectionDescription(),
       }))(modernRequest('server/discover'));
       expect(discovered.status).toBe(200);
+    }),
+  );
+});
+
+describe('a request whose Mcp-Method header names another method than its body', () => {
+  it.effect('is refused with 400 before any description or tool runs', () =>
+    Effect.gen(function* mismatchedMethodHeader() {
+      const described = { count: 0 };
+      const calls: Recorded[] = [];
+      const handler = yield* endpoint({ backend: fakeBackend(calls), described, description: connectionDescription() });
+      const smuggled = modernRequest('tools/call', { tool: 'fixture_notes__read_records' });
+      // The header claims discovery, which needs no description; the body asks for a tool call.
+      smuggled.headers.set('mcp-method', 'server/discover');
+      const response = yield* handler(smuggled);
+      expect(response.status).toBe(400);
+      expect(yield* Effect.promise(() => response.json())).toMatchObject({ error: { code: -32_020 } });
+      expect(described.count).toBe(0);
+      expect(calls).toEqual([]);
     }),
   );
 });
