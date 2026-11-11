@@ -1,9 +1,9 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "4c7d4004-156c-4e33-b663-858831e63970",
+  "id": "fb9ef0bc-8125-4f95-9e4a-7b28b5553c48",
   "prevIds": [
-    "1f9d6ae3-5323-4dc1-aaae-a0997a6ff9e9"
+    "012cdf04-b59e-4382-9f09-883cb6607b10"
   ],
   "ddl": [
     {
@@ -11005,6 +11005,34 @@
       "method": "btree",
       "concurrently": false,
       "name": "core_outbox_messages_unmatched_idx",
+      "entityType": "indexes",
+      "schema": "core",
+      "table": "outbox_messages"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "domain_event_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_outbox_messages_tenant_domain_event_idx",
       "entityType": "indexes",
       "schema": "core",
       "table": "outbox_messages"
