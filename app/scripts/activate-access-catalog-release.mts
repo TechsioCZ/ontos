@@ -3,17 +3,23 @@
  * Release activation of the access catalog (ADR-0030, Novinky): `packages/core-runtime/src/access/release/activation.ts`.
  *
  *   node scripts/activate-access-catalog-release.mts            # publish when newer, let "Plný přístup" follow it
- *   node scripts/activate-access-catalog-release.mts --dry-run  # the same plan, read-only
+ *   node scripts/activate-access-catalog-release.mts --dry-run  # the same decision and plan, without a write
+ *
+ * Both print the ordering decision (`published`, `Current`, `published_before`, `not_a_successor`) and, per active
+ * tenant, whether it has an untouched "Plný přístup" to follow, the cells it gains and the Novinky items it gets.
+ * They exit 0 only when the deployed catalog is `published` or `Current` and every tenant took it.
  *
  * The migrator runs it once per activation, after every migration and before the release takes the authority; a
  * local stack runs it after its permission bootstrap. It reads the deployed catalog as data (the committed
  * `topology/authorization-catalog.json`, decoded through Core's own schema), connects with the runtime identity
- * (`DATABASE_URL`) and projects through the one Core writer into SpiceDB (`SPICEDB_*`). It prints counts, the
- * release identity and capability keys only. A failed tenant exits 1; the migrator reports it and keeps the release
- * booting, because authorization then simply stays at the previous release.
+ * (`DATABASE_URL`) and projects through the one Core writer into SpiceDB (`SPICEDB_*`); `--dry-run` needs only
+ * `DATABASE_URL`, reads in read-only transactions and never reaches the engine. It prints counts, the
+ * release identity and capability keys only. A failed tenant or a catalog that is not `published`/`Current` exits 1;
+ * the migrator reports it and keeps the release booting, because authorization then simply stays at the previous
+ * release.
  */
 import { NodeServices } from '@effect/platform-node';
-import { Config, Console, Effect, Exit, FileSystem, Layer, Match, Path, Redacted, Schema } from 'effect';
+import { Config, Console, Effect, Exit, FileSystem, Layer, Match, Option, Path, Redacted, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../database/identity-enrollment.ts';
@@ -27,10 +33,13 @@ import {
   AccessReleaseStoreLive,
 } from '../packages/core-runtime/src/access/changes/persistence/drizzle-store.ts';
 import { AccessProjectionCompiler } from '../packages/core-runtime/src/access/intent/projection-compiler.ts';
-import { AccessProjectionWriterLive } from '../packages/core-runtime/src/access/intent/projection-writer.ts';
+import {
+  AccessProjectionWriter,
+  AccessProjectionWriterLive,
+} from '../packages/core-runtime/src/access/intent/projection-writer.ts';
 import { TenantIntentLoaderLive } from '../packages/core-runtime/src/access/intent/tenant-intent-loader.ts';
 import { AccessWriteJournalStoreLive } from '../packages/core-runtime/src/access/lifecycle/persistence/journal-store.ts';
-import { activateCatalogRelease } from '../packages/core-runtime/src/access/release/activation.ts';
+import { activateCatalogRelease, planCatalogRelease } from '../packages/core-runtime/src/access/release/activation.ts';
 import type { CatalogReleaseActivationReport } from '../packages/core-runtime/src/access/release/activation.ts';
 import { CoreDatabaseLive } from '../packages/core-runtime/src/db/client.ts';
 import { DatabaseConfig, parseDatabaseConfig } from '../packages/core-runtime/src/db/config.ts';
@@ -64,13 +73,28 @@ const deployedModules = Effect.gen(function* readDeployedCatalog() {
   return artifact.modules;
 });
 
-/** The runtime identity, the access stores and the one projection writer, composed once for this process. */
-const ActivationRuntimeLive = Layer.unwrap(
-  Effect.gen(function* activationRuntime() {
+/** The runtime identity: the one database connection both the plan and the activation use. */
+const DatabaseRuntimeLive = Layer.unwrap(
+  Effect.gen(function* databaseRuntime() {
     const url = yield* Config.Redacted('DATABASE_URL').pipe(Effect.mapError(() => failure('DATABASE_URL is required')));
     const configuration = yield* parseDatabaseConfig({ DATABASE_URL: Redacted.value(url) }).pipe(
       Effect.mapError(() => failure('DATABASE_URL is not a runtime database address')),
     );
+    return Layer.mergeAll(
+      CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, configuration))),
+      makeDatabaseIdentityEnrollmentLive(APP_DATABASE_IDENTITY_ENROLLMENT),
+    );
+  }),
+);
+
+/** What a dry run reads with: the access stores over the database, and nothing that can reach the engine. */
+const PlanRuntimeLive = Layer.mergeAll(AccessChangesStoreLive, AccessReleaseStoreLive).pipe(
+  Layer.provideMerge(DatabaseRuntimeLive),
+);
+
+/** The activation adds the engine and the one projection writer. */
+const ActivationRuntimeLive = Layer.unwrap(
+  Effect.gen(function* activationRuntime() {
     const spiceDb = yield* loadSpiceDbConfig().pipe(Effect.mapError(() => failure('The SpiceDB settings are missing')));
     const engine = Layer.effect(
       AccessProjectionCompiler,
@@ -79,27 +103,22 @@ const ActivationRuntimeLive = Layer.unwrap(
         (transport) => Effect.sync(() => transport.close()),
       ).pipe(Effect.map(makeAccessProjectionCompiler)),
     );
-    const platform = Layer.mergeAll(
-      CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, configuration))),
-      makeDatabaseIdentityEnrollmentLive(APP_DATABASE_IDENTITY_ENROLLMENT),
-      engine,
+    const stores = Layer.mergeAll(TenantIntentLoaderLive, AccessWriteJournalStoreLive, PlanRuntimeLive).pipe(
+      Layer.provideMerge(Layer.merge(DatabaseRuntimeLive, engine)),
     );
-    const stores = Layer.mergeAll(
-      TenantIntentLoaderLive,
-      AccessWriteJournalStoreLive,
-      AccessChangesStoreLive,
-      AccessReleaseStoreLive,
-    ).pipe(Layer.provideMerge(platform));
     return Layer.mergeAll(stores, AccessProjectionWriterLive.pipe(Layer.provide(stores)));
   }),
 );
 
+/** The ordering decision as the operator reads it. */
 const orderingLabel = (report: CatalogReleaseActivationReport): string =>
   Match.value(report.ordering).pipe(
-    Match.tag('Publish', () => 'published'),
-    Match.tag('Current', () => 'current'),
-    Match.tag('Superseded', ({ reason }) => `superseded (${reason}); no tenant changed`),
-    Match.exhaustive,
+    Match.tagsExhaustive({
+      Current: () => 'Current',
+      NotASuccessor: () => 'not_a_successor',
+      Publish: () => 'published',
+      PublishedBefore: () => 'published_before',
+    }),
   );
 
 const previousNote = (report: CatalogReleaseActivationReport): string =>
@@ -108,7 +127,9 @@ const previousNote = (report: CatalogReleaseActivationReport): string =>
 const tenantLine = (tenant: CatalogReleaseActivationReport['tenants'][number]): string => {
   const parts = [
     `tenant ${tenant.tenantId}: ${tenant.outcome}`,
-    `"Plný přístup" +${String(tenant.presetCellsAdded)} cells`,
+    tenant.presetFound
+      ? `"Plný přístup" found, +${String(tenant.presetCellsAdded)} cells`
+      : '"Plný přístup" none to follow',
     `Novinky ${String(tenant.items)}`,
   ];
   if (tenant.inertKeys.length > 0) {
@@ -120,17 +141,51 @@ const tenantLine = (tenant: CatalogReleaseActivationReport['tenants'][number]): 
   return `[access-release] ${parts.join('; ')}`;
 };
 
+const SHOWN_UNCOVERED_KEYS = 5;
+
+/**
+ * A deployment whose catalog does not become or stay the newest release changes nothing — and says so as a failed
+ * activation, so the migrator's report shows it and nobody mistakes it for a release that took effect.
+ */
+const supersededReason = (report: CatalogReleaseActivationReport): Option.Option<string> =>
+  Match.value(report.ordering).pipe(
+    Match.tagsExhaustive({
+      Current: () => Option.none<string>(),
+      NotASuccessor: ({ uncoveredKeys }) => {
+        const shown = uncoveredKeys.slice(0, SHOWN_UNCOVERED_KEYS).join(', ');
+        const more = uncoveredKeys.length > SHOWN_UNCOVERED_KEYS ? ', …' : '';
+        return Option.some(
+          [
+            `the deployed catalog ${report.deployedReleaseId} is not a successor of the newest release ${report.releaseId}:`,
+            `it lacks or narrows ${String(uncoveredKeys.length)} of its capabilities (${shown}${more}).`,
+            'Nothing was published and no tenant changed; every later deployment lacking them is refused the same way',
+            'until an operator resolves it (docs/architecture/AUTHORIZATION.md, "Release activation").',
+          ].join(' '),
+        );
+      },
+      Publish: () => Option.none<string>(),
+      PublishedBefore: () =>
+        Option.some(
+          `the deployed catalog ${report.deployedReleaseId} was published before and the newer release ${report.releaseId} serves; nothing changed`,
+        ),
+    }),
+  );
+
 /** Counts, the release identity and capability keys only: nothing here is a secret or a person's data. */
 const printReport = Effect.fn('AccessCatalogReleaseActivation.print')(function* printReport(
   report: CatalogReleaseActivationReport,
   dryRun: boolean,
 ) {
-  const prefix = dryRun ? 'dry run: ' : '';
+  const prefix = dryRun ? 'dry run (nothing written): ' : '';
   yield* Console.log(
-    `[access-release] ${prefix}release ${report.releaseId} ${orderingLabel(report)}: ${String(report.entries)} capabilities${previousNote(report)}`,
+    `[access-release] ${prefix}deployed catalog ${report.deployedReleaseId}: ${orderingLabel(report)}; newest release ${report.releaseId}: ${String(report.entries)} capabilities${previousNote(report)}`,
   );
   for (const tenant of report.tenants) {
     yield* Console.log(tenantLine(tenant));
+  }
+  const superseded = supersededReason(report);
+  if (Option.isSome(superseded)) {
+    return yield* failure(superseded.value);
   }
   const failed = report.tenants.filter(({ outcome }) => outcome === 'failed');
   if (failed.length > 0) {
@@ -141,23 +196,34 @@ const printReport = Effect.fn('AccessCatalogReleaseActivation.print')(function* 
   return report;
 });
 
-const activate = Effect.fn('AccessCatalogReleaseActivation.run')(function* activateDeployedCatalog(dryRun: boolean) {
+/**
+ * A dry run never reaches the engine: the plan never reconciles, and the writer a dry run is composed with
+ * refuses every use, so neither the SpiceDB settings nor a connection is needed for it.
+ */
+const DryRunRuntimeLive = Layer.merge(
+  PlanRuntimeLive,
+  Layer.succeed(AccessProjectionWriter, {
+    reconcileTenant: () => Effect.die(failure('a dry run never writes the projection')),
+  }),
+);
+
+const run = Effect.fn('AccessCatalogReleaseActivation.run')(function* runDeployedCatalog(dryRun: boolean) {
   const modules = yield* deployedModules;
-  const report = yield* activateCatalogRelease({ dryRun, modules }).pipe(
+  const report = yield* (dryRun ? planCatalogRelease({ modules }) : activateCatalogRelease({ modules })).pipe(
     Effect.mapError((cause) => failure(cause.reason)),
   );
   return yield* printReport(report, dryRun);
 });
 
 const command = Command.make('activate-access-catalog-release', { dryRun: Flag.Boolean('dry-run') }, ({ dryRun }) =>
-  activate(dryRun).pipe(
+  run(dryRun).pipe(
     Effect.tapError((problem) =>
       Console.error(
         `[access-release] ACCESS CATALOG RELEASE ACTIVATION FAILED: ${Schema.is(AccessCatalogReleaseActivationFailure)(problem) ? problem.reason : 'unexpected failure'}`,
       ),
     ),
   ),
-).pipe(Command.provide(ActivationRuntimeLive));
+).pipe(Command.provide(({ dryRun }) => (dryRun ? DryRunRuntimeLive : ActivationRuntimeLive)));
 
 if (import.meta.main) {
   const exit = await Effect.runPromiseExit(
