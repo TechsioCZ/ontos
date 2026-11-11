@@ -25,11 +25,24 @@ describe("N1 identity isolation", () => {
       }),
     );
   }
+  /* oxlint-disable sonarjs/no-clear-text-protocols -- These cases prove which plain-http origins are refused or allowed. */
   for (const shellUrl of [
     "http://external.example",
     "https://user:secret@example.com",
     "https://example.com/other",
     "https://example.com/?secret=x",
+    // Plain http beyond loopback is the one Zerops-internal origin only; no look-alike reaches it.
+    "http://app",
+    "http://app:80",
+    "http://app:3001",
+    "http://app.:3000",
+    "http://app.evil.com",
+    "http://app.evil.com:3000",
+    "http://app:3000@evil.com",
+    "http://evil.com/app",
+    "http://evil.com:3000",
+    "http://app:3000/shell",
+    "ftp://app:3000",
   ]) {
     it.effect(`rejects unsafe origin ${shellUrl}`, () =>
       Effect.gen(function* rejectsUnsafeOrigin() {
@@ -40,6 +53,23 @@ describe("N1 identity isolation", () => {
       }),
     );
   }
+  for (const [shellUrl, origin] of [
+    ["http://app:3000", "http://app:3000"],
+    ["http://app:3000/", "http://app:3000"],
+    // Hosts are case-insensitive; URL parsing lower-cases them before the exact allow-list comparison.
+    ["http://APP:3000", "http://app:3000"],
+    ["http://localhost:3020", "http://localhost:3020"],
+    ["http://127.0.0.1:3020", "http://127.0.0.1:3020"],
+    ["https://ontos-stage.web-revolution.cz", "https://ontos-stage.web-revolution.cz"],
+  ] as const) {
+    it.effect(`accepts the allowed Shell origin ${shellUrl}`, () =>
+      Effect.gen(function* acceptsAllowedOrigin() {
+        const config = yield* readConfiguration({ ...valid, ONTOS_SHELL_URL: shellUrl });
+        expect(config.shellUrl).toBe(origin);
+      }),
+    );
+  }
+  /* oxlint-enable sonarjs/no-clear-text-protocols */
   it.effect("binds N1 to the explicitly configured context", () =>
     Effect.gen(function* acceptsOwnContext() {
       const config = yield* readConfiguration(valid);

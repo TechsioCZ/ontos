@@ -6,6 +6,16 @@ class StorefrontConfigurationUnavailable extends Schema.TaggedError<StorefrontCo
 ) {}
 
 const uuid = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu;
+const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "[::1]"]);
+/**
+ * Plain-http Shell origins outside loopback: only the Zerops project-internal `app` service on its pinned port, the
+ * address the AKROS and shop storefronts already use. Compared as a whole parsed origin, so a look-alike host, another
+ * port or userinfo never matches. URL parsing lower-cases the host, so `http://APP:3000` is the same service.
+ */
+const INTERNAL_HTTP_ORIGINS: ReadonlySet<string> = new Set([
+  // oxlint-disable-next-line sonarjs/no-clear-text-protocols -- The Zerops project-internal service address is plain http by design; it is never reachable from outside the project.
+  "http://app:3000",
+]);
 
 /** N1 has no implicit AKROS identity, credential, seller or market. */
 export const readConfiguration = (env: Readonly<Record<string, string | undefined>>) =>
@@ -30,9 +40,10 @@ export const readConfiguration = (env: Readonly<Record<string, string | undefine
       catch: () => new StorefrontConfigurationUnavailable({ field: "ONTOS_SHELL_URL" }),
       try: () => new URL(env.ONTOS_SHELL_URL ?? "http://localhost:3020"),
     });
-    const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(shellUrl.hostname);
+    const plainHttpAllowed =
+      LOOPBACK_HOSTNAMES.has(shellUrl.hostname) || INTERNAL_HTTP_ORIGINS.has(shellUrl.origin);
     if (
-      (shellUrl.protocol !== "https:" && !(shellUrl.protocol === "http:" && loopback)) ||
+      (shellUrl.protocol !== "https:" && !(shellUrl.protocol === "http:" && plainHttpAllowed)) ||
       shellUrl.username ||
       shellUrl.password ||
       shellUrl.search ||
