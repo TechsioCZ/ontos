@@ -51,12 +51,14 @@ it('keeps both runtime settings under supervisor control rather than owner secre
 
 it.live('spawns only the isolated Shell with Bun, preserving arguments, environment and scoped exit handling', () =>
   Effect.gen(function* unitSpawning() {
-    for (const [ids, runtime, expectedCommand] of [
-      [[SHELL_ID], 'bun', path.join(workspaceRoot, '.zerops/bun/bin/bun')],
-      [[SHELL_ID], 'node', process.execPath],
-      [['crm', 'party-registry'], 'bun', process.execPath],
-      [['crm'], 'bun', process.execPath],
-      [[SHELL_ID, 'crm'], 'bun', process.execPath],
+    const memoryBytes = 4 * 1024 * 1024 * 1024;
+    for (const [ids, runtime, expectedCommand, heap] of [
+      [[SHELL_ID], 'bun', path.join(workspaceRoot, '.zerops/bun/bin/bun'), []],
+      [[SHELL_ID], 'node', process.execPath, ['--max-old-space-size=1024']],
+      [['crm', 'party-registry'], 'bun', process.execPath, []],
+      [['crm', 'party-registry'], 'node', process.execPath, []],
+      [['crm'], 'bun', process.execPath, []],
+      [[SHELL_ID, 'crm'], 'bun', process.execPath, []],
     ] as const) {
       let spawned = false;
       const spawnerLayer = Layer.effect(
@@ -68,7 +70,11 @@ it.live('spawns only the isolated Shell with Bun, preserving arguments, environm
               Match.tag('StandardCommand', (standard) => {
                 spawned = true;
                 expect(standard.command).toBe(expectedCommand);
-                expect(standard.args).toEqual([path.join(workspaceRoot, 'scripts/zerops/serve-units.mts'), ...ids]);
+                expect(standard.args).toEqual([
+                  ...heap,
+                  path.join(workspaceRoot, 'scripts/zerops/serve-units.mts'),
+                  ...ids,
+                ]);
                 expect(standard.options).toMatchObject({
                   cwd: workspaceRoot,
                   env: { NODE_ENV: 'production' },
@@ -85,9 +91,14 @@ it.live('spawns only the isolated Shell with Bun, preserving arguments, environm
           );
         }),
       ).pipe(Layer.provide(NodeServices.layer));
-      const exit = yield* startUnitProcess(ids, runtime, {
-        NODE_ENV: 'production',
-      }).pipe(Effect.flatten, Effect.scoped, Effect.provide(spawnerLayer), Effect.exit);
+      const exit = yield* startUnitProcess(
+        ids,
+        runtime,
+        {
+          NODE_ENV: 'production',
+        },
+        memoryBytes,
+      ).pipe(Effect.flatten, Effect.scoped, Effect.provide(spawnerLayer), Effect.exit);
       expect(spawned).toBe(true);
       expect(Exit.isFailure(exit)).toBe(true);
     }
@@ -108,7 +119,7 @@ it.effect('fails a missing Bun binary without retrying the Shell on Node', () =>
         }),
       );
     });
-    const failure = yield* startUnitProcess([SHELL_ID], 'bun', {}).pipe(
+    const failure = yield* startUnitProcess([SHELL_ID], 'bun', {}, 4 * 1024 * 1024 * 1024).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.flip,
     );

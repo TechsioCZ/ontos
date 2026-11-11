@@ -8,14 +8,15 @@ services:
   - hostname: app
     type: alpine/nodejs@26
     enableSubdomainAccess: true
-    # Owner render resources are lazy and immutable asset metadata is cached. The measured login bursts fit
-    # a 2.5 GiB floor; keep 0.5 GiB free and allow growth to 4 GiB instead of relying on swap.
+    # The Shell, the owners, the Outbox worker and the host share one container. At a 2.5 GiB floor it throttled
+    # at memory.high and swapped with no users (2026-11-11), so RAM is fixed at 4 GiB; the host derives each child's
+    # heap limit from it (scripts/zerops/heap-limits.mts).
     # Reserve one CPU for the Shell, owners and Outbox while every menu destination is prefetched.
     verticalAutoscaling:
       cpuMode: DEDICATED
       minCpu: 1
       maxCpu: 1
-      minRam: 2.5
+      minRam: 4
       maxRam: 4
       minFreeRamGB: 0.5
       minDisk: 10

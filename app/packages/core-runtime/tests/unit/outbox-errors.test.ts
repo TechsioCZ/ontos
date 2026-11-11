@@ -124,25 +124,34 @@ checkErrorContract(
   },
 );
 
+/** The unfenced idle probe that precedes the match transaction; the transaction's own read locks its rows. */
+const isUnmatchedProbe = (statement: string) =>
+  statement.includes('from "core"."outbox_messages"') && !statement.includes('for update');
+
 it.layer(NodeCrypto.layer)('outbox repository failures', (suite) => {
-  suite.effect('BEGIN failure preserves the native driver cause without observing authority or owner data', () =>
-    Effect.gen(function* persistenceFailureCarriesCause() {
-      const driverError = new SqlError({
-        reason: new ConnectionError({ cause: new Error('private repository defect') }),
-      });
-      const statements: string[] = [];
-      const executor = yield* makeTestDatabase((statement) => {
-        statements.push(statement);
-        return Effect.fail(driverError);
-      });
-      const failure = yield* makeOutboxRepository(executor, yield* Crypto.Crypto)
-        .matchUnmatched('a'.repeat(64), DateTime.toDateUtc(DateTime.makeUnsafe('2026-08-03T10:00:00Z')))
-        .pipe(Effect.flip);
-      expect(failure).toBeInstanceOf(PersistenceFailure);
-      expect(failure.reason).toBe('The Outbox Worker persistence operation failed');
-      expect(failure.cause).toBe(driverError);
-      expect(statements).toEqual(['BEGIN']);
-    }),
+  suite.effect(
+    'BEGIN failure after the idle probe preserves the native driver cause without observing authority or owner data',
+    () =>
+      Effect.gen(function* persistenceFailureCarriesCause() {
+        const driverError = new SqlError({
+          reason: new ConnectionError({ cause: new Error('private repository defect') }),
+        });
+        const statements: string[] = [];
+        const executor = yield* makeTestDatabase((statement) => {
+          statements.push(statement);
+          // The unfenced probe finds an unmatched message, so matching opens its transaction.
+          return isUnmatchedProbe(statement) ? Effect.succeed([{ messageId: 'message' }]) : Effect.fail(driverError);
+        });
+        const failure = yield* makeOutboxRepository(executor, yield* Crypto.Crypto)
+          .matchUnmatched('a'.repeat(64), DateTime.toDateUtc(DateTime.makeUnsafe('2026-08-03T10:00:00Z')))
+          .pipe(Effect.flip);
+        expect(failure).toBeInstanceOf(PersistenceFailure);
+        expect(failure.reason).toBe('The Outbox Worker persistence operation failed');
+        expect(failure.cause).toBe(driverError);
+        expect(statements).toHaveLength(2);
+        expect(isUnmatchedProbe(statements[0] ?? '')).toBe(true);
+        expect(statements[1]).toBe('BEGIN');
+      }),
   );
 
   suite.effect('fenced owner-query failure retains the Drizzle wrapper and exact native driver cause', () =>
@@ -153,6 +162,9 @@ it.layer(NodeCrypto.layer)('outbox repository failures', (suite) => {
       const statements: string[] = [];
       const executor = yield* makeTestDatabase((statement) => {
         statements.push(statement);
+        if (isUnmatchedProbe(statement)) {
+          return Effect.succeed([{ messageId: 'message' }]);
+        }
         if (statement.includes('from "core"."outbox_messages"')) {
           return Effect.fail(driverError);
         }
@@ -179,13 +191,14 @@ it.layer(NodeCrypto.layer)('outbox repository failures', (suite) => {
         expect.unreachable('The query cause must contain the original typed SQL failure');
       }
       expect(reason.error).toBe(driverError);
-      expect(statements).toHaveLength(5);
-      expect(statements[0]).toBe('BEGIN');
-      expect(statements[1]).toContain('pg_advisory_xact_lock_shared');
-      expect(statements[1]).toContain("current_setting('transaction_isolation')");
-      expect(statements[2]).toContain('from "core"."application_composition_authority"');
-      expect(statements[3]).toContain('from "core"."outbox_messages"');
-      expect(statements[4]).toBe('ROLLBACK');
+      expect(statements).toHaveLength(6);
+      expect(isUnmatchedProbe(statements[0] ?? '')).toBe(true);
+      expect(statements[1]).toBe('BEGIN');
+      expect(statements[2]).toContain('pg_advisory_xact_lock_shared');
+      expect(statements[2]).toContain("current_setting('transaction_isolation')");
+      expect(statements[3]).toContain('from "core"."application_composition_authority"');
+      expect(statements[4]).toContain('from "core"."outbox_messages"');
+      expect(statements[5]).toBe('ROLLBACK');
     }),
   );
 });

@@ -721,6 +721,9 @@ export const outboxMessages = enableCoreGovernedRls(
       index('core_outbox_messages_unmatched_idx')
         .on(table.createdAt)
         .where(sql`${table.matchedAt} is null`),
+      // Completing a delivery walks its stream from the tenant's checkpoint by event sequence; without this the
+      // event-to-message step scanned every Outbox message (also covers the domain-event foreign key).
+      index('core_outbox_messages_tenant_domain_event_idx').on(table.tenantId, table.domainEventId),
       foreignKey({
         columns: [table.tenantId, table.domainEventId],
         foreignColumns: [domainEvents.tenantId, domainEvents.domainEventId],

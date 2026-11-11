@@ -262,6 +262,30 @@ const observeClaims = (
       .pipe(Effect.tap((option) => (Option.isSome(option) ? Deferred.succeed(entered, option.value) : Effect.void))),
 });
 
+/** The SQL text of every statement `effect` runs. */
+const statementsOf = <Value, Failure>(effect: Effect.Effect<Value, Failure>) =>
+  Effect.gen(function* traceStatements() {
+    const spans: Tracer.Span[] = [];
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        spans.push(span);
+        return span;
+      },
+    });
+    const exit = yield* Effect.exit(effect.pipe(Effect.provideService(Tracer.Tracer, tracer)));
+    const statements = spans.flatMap((span) =>
+      Option.toArray(Schema.decodeUnknownOption(Schema.String)(span.attributes.get('db.query.text'))),
+    );
+    return { exit, statements };
+  });
+/** Whether these statements took the composition fence. */
+const fenced = (statements: readonly string[]) =>
+  statements.some(
+    (statement) =>
+      statement.includes('pg_advisory_xact_lock_shared') || statement.includes('application_composition_authority'),
+  );
+
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
@@ -368,8 +392,12 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
             const statement = Schema.decodeUnknownOption(Schema.String)(span.attributes.get('db.query.text'));
             return Option.toArray(statement.pipe(Option.filter((text) => text.includes('tenant_module_states'))));
           });
-          expect(stateQueries).toHaveLength(1);
-          expect(stateQueries[0]).toContain('outbox_deliveries');
+          // The unlocked idle probe, then the one locked claim query that also checks every intrinsic provider.
+          expect(stateQueries).toHaveLength(2);
+          expect(stateQueries.filter((text) => text.includes('skip locked'))).toHaveLength(1);
+          for (const text of stateQueries) {
+            expect(text).toContain('outbox_deliveries');
+          }
           const [delivery] = yield* database
             .select()
             .from(outboxDeliveries)
@@ -541,6 +569,50 @@ it.layer(nativeServices, { excludeTestServices: true })('outbox runtime', (suite
       );
       expect(consumerClaim?.workerKey).toBe('consumer.fixture.local');
       expect(reportingClaim?.workerKey).toBe('reporting.fixture.local');
+    }),
+  );
+  suite.effect('an idle poll does not take the composition fence; waiting work still requires it', () =>
+    Effect.gen(function* idlePollSkipsFence() {
+      const { adminDatabase, database, tenantId } = yield* tenantFixture;
+      yield* activateConsumer(database, tenantId);
+      const registration = makeWorker('consumer.fixture.idle-probe');
+      const claimFixture = yield* publishAuthority(adminDatabase, [registration]);
+      const unapproved = 'f'.repeat(64);
+      const repository = makeOutboxRepository(database, yield* Crypto.Crypto, claimFixture);
+      const now = advanceDate(yield* DateTime.nowAsDate, 1000);
+      // Nothing waits: one unfenced statement each. Matching never reaches the fence, so even an unapproved revision is
+      // answered with "nothing to do"; the claim still admits its revision in process before any SQL.
+      const idleMatch = yield* statementsOf(repository.matchUnmatched(unapproved, now));
+      expect(idleMatch.exit).toStrictEqual(Exit.succeed({ deliveriesCreated: 0, messagesMatched: 0 }));
+      expect(idleMatch.statements).toHaveLength(1);
+      const idleClaim = yield* statementsOf(
+        repository.claimNext([registration], 'idle-worker', now, claimFixture.revision),
+      );
+      expect(idleClaim.exit).toStrictEqual(Exit.succeed(Option.none()));
+      expect(idleClaim.statements).toHaveLength(1);
+      expect(fenced(idleClaim.statements)).toBe(false);
+      const unadmitted = yield* statementsOf(repository.claimNext([registration], 'stale-worker', now, unapproved));
+      expect(Exit.isFailure(unadmitted.exit)).toBe(true);
+      expect(unadmitted.statements).toEqual([]);
+
+      yield* insertMessage(database, tenantId);
+      expect(
+        Schema.is(ApplicationCompositionAuthorityError)(yield* Effect.flip(repository.matchUnmatched(unapproved, now))),
+      ).toBe(true);
+      const match = yield* statementsOf(repository.matchUnmatched(claimFixture.revision, now));
+      expect(match.exit).toStrictEqual(Exit.succeed({ deliveriesCreated: 1, messagesMatched: 1 }));
+      expect(fenced(match.statements)).toBe(true);
+      // A delivery that is not yet due is not work either.
+      const early = yield* statementsOf(
+        repository.claimNext([registration], 'early-worker', advanceDate(now, -60_000), claimFixture.revision),
+      );
+      expect(early.exit).toStrictEqual(Exit.succeed(Option.none()));
+      expect(fenced(early.statements)).toBe(false);
+      const claim = yield* statementsOf(
+        repository.claimNext([registration], 'current-worker', now, claimFixture.revision),
+      );
+      expect(Exit.isSuccess(claim.exit) && Option.isSome(claim.exit.value)).toBe(true);
+      expect(fenced(claim.statements)).toBe(true);
     }),
   );
   suite.effect('keeps messages unmatched while authority is missing, expired, or superseded and resumes safely', () =>

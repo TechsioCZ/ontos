@@ -1,0 +1,1 @@
+CREATE INDEX "core_outbox_messages_tenant_domain_event_idx" ON "core"."outbox_messages" ("tenant_id","domain_event_id");

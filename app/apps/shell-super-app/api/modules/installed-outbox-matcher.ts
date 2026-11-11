@@ -1,5 +1,5 @@
 import { observeRuntimeJob } from '@app/core-runtime/observability/runtime-jobs';
-import { matchOutboxMessages } from '@app/core-runtime';
+import { matchOutboxMessages, repeatWithIdleBackoff } from '@app/core-runtime';
 import type {
   ApplicationCompositionAuthorityError,
   MatchOutboxMessagesInput,
@@ -8,7 +8,7 @@ import type {
   PersistenceFailure,
   OutboxWorkerDescriptorError,
 } from '@app/core-runtime';
-import { Duration, Effect, Layer, Schedule } from 'effect';
+import { Effect, Layer } from 'effect';
 
 import { installedModuleCatalog } from './installed-module-catalog.ts';
 import type { ShellInstalledModuleCatalog, ShellInstalledCatalog } from './installed-module-catalog.ts';
@@ -61,15 +61,19 @@ const installedOutboxMatcherTick = installedModuleCatalog.pipe(
   ),
   Effect.matchEffect({
     onFailure: (error) =>
-      Effect.annotateLogs(Effect.logError('Installed Outbox catalog matching failed'), { errorTag: error._tag }),
-    onSuccess: () => Effect.void,
+      Effect.annotateLogs(Effect.logError('Installed Outbox catalog matching failed'), { errorTag: error._tag }).pipe(
+        Effect.as(false),
+      ),
+    onSuccess: (result) => Effect.succeed(result.messagesMatched > 0),
   }),
 );
 
-const installedOutboxMatcherLoop = installedOutboxMatcherTick.pipe(
-  observeRuntimeJob('outbox-match'),
-  Effect.repeat(Schedule.spaced(Duration.millis(1000))),
-  Effect.asVoid,
+/** A match that found messages is followed at once; idle matching backs off from 1 s to 2 s. */
+export const INSTALLED_OUTBOX_MATCH_INTERVAL_MS = 1000;
+
+const installedOutboxMatcherLoop = repeatWithIdleBackoff(
+  installedOutboxMatcherTick.pipe(observeRuntimeJob('outbox-match')),
+  INSTALLED_OUTBOX_MATCH_INTERVAL_MS,
 );
 
 export const InstalledOutboxMatcherLive: Layer.Layer<never, never, OutboxRuntime | ShellInstalledModuleCatalog> =
