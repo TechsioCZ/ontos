@@ -65,6 +65,7 @@ export const GATEWAY_MODULE_BINDINGS_VARIABLE = 'ONTOS_GATEWAY_MODULE_BINDINGS';
 export const moduleCredentialVariable = (unitId: string): string =>
   `${GATEWAY_MODULE_API_KEY_VARIABLE}_${unitId.replaceAll('-', '_').toUpperCase()}`;
 
+const ASSORTMENT_UNIT = 'assortment';
 const CART_UNIT = 'commerce-cart';
 const CUSTOMER_CONTEXT_UNIT = 'commerce-customer-context';
 const ORDER_UNIT = 'commerce-order';
@@ -95,6 +96,14 @@ export const SHELL_OPERATOR_VALUES: readonly OperatorValue[] = [moduleBindings(G
  * deployment contract test derives the callers from source and fails when an entry is missing.
  */
 export const OWNER_RUNTIME_CONFIGURATIONS: readonly OwnerRuntimeConfiguration[] = [
+  {
+    apiDependencies: [shellGateway],
+    credentialVariables: [],
+    moduleCredentialHolders: SERVICE_AND_WORKER,
+    moduleCredentialVariable: moduleCredentialVariable(ASSORTMENT_UNIT),
+    operatorValues: [],
+    unitId: ASSORTMENT_UNIT,
+  },
   {
     apiDependencies: [byUrl(CATALOG_UNIT, 'ONTOS_CATALOG_API_BASE_URL'), customerContextApi, shellGateway],
     credentialVariables: [],

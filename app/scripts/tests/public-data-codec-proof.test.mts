@@ -637,7 +637,7 @@ const identityFiles = [
   partyIdentityFile,
   commerceIdentityFile,
 ];
-it('proves every one of the thirty actual published native request metadata codecs', () => {
+it('proves every published native request metadata codec in the owner inventory', () => {
   let count = 0;
   for (const file of identityFiles) {
     for (const match of (sources.get(file) ?? '').matchAll(/export const (?<name>\w+RequestIdentity)\s*=/gu)) {
@@ -645,7 +645,7 @@ it('proves every one of the thirty actual published native request metadata code
       expect(contextualProof(file, match.groups?.name ?? ''), `${file}:${match.groups?.name ?? ''}`).toBe(true);
     }
   }
-  expect(count).toBe(30);
+  expect(count).toBe(31);
 });
 
 it('keeps literal version specialization bounded to its genuine parameter constraint', () => {

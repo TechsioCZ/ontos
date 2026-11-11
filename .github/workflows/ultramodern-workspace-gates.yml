@@ -727,13 +727,13 @@ jobs:
           APP_ENV_PATH: /dev/null
           SPICEDB_DATABASE_PASSWORD: spicedb
           PACKAGE_FILTERS: ${{ matrix.package-filters }}
+          ROOT_RSTEST_SHARD: ${{ matrix.root-rstest-shard }}
           ROOT_SUITE: ${{ matrix.root-suite }}
           RSTEST_SHARD: ${{ matrix.rstest-shard }}
-        # Same commands as `pnpm test:integration`, restricted to this shard's packages and, for a package
-        # too large for one job, to one Rstest shard of its test files.
+        # Same commands as `pnpm test:integration`, with separate Rstest shards for the root and large packages.
         run: |
           if [[ "$ROOT_SUITE" == true ]]; then
-            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1
+            mise exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 ${ROOT_RSTEST_SHARD:+--shard "$ROOT_RSTEST_SHARD"}
           fi
           if [[ -n "$PACKAGE_FILTERS" ]]; then
             # shellcheck disable=SC2086 # PACKAGE_FILTERS is a list of separate pnpm filter arguments.

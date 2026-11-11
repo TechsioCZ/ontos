@@ -1,5 +1,5 @@
-import { OntosModuleDeploymentContractSchema } from '@app/core-runtime';
 import type { ApplicationComposition } from '@app/core-runtime';
+import { OntosModuleDeploymentContractSchema } from '@app/core-runtime/modules/manifest';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type {
   RegisteredGatewayRouteScope,
