@@ -9,7 +9,7 @@ import {
 import type { SubjectInspectionInput, SubjectInspectionStages } from '@app/core-runtime/access/enforcement';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
 import type { AgentProposalSubmitRequest } from '@app/shared-contracts/agent-proposals';
-import { Clock, Data, DateTime, Effect, Ref } from 'effect';
+import { Clock, Data, DateTime, Effect, Exit, Ref } from 'effect';
 
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
@@ -416,7 +416,13 @@ const askInStages = Effect.fn('AgentPlatform.subjectAccessStages')(function* ask
           actionKeys: [...new Set(actions.map(({ actionKey }) => actionKey))],
           questions: carriers.map(carrierQuestion),
         })
-        .pipe(Effect.ignoreCause({ log: 'Warn', message: 'Preparing a staged description failed' })),
+        // The failure itself is never logged: a wrapped database error may quote data, so only the fact is.
+        .pipe(
+          Effect.exit,
+          Effect.flatMap((prepared) =>
+            Exit.isFailure(prepared) ? Effect.logWarning('Preparing a staged description failed') : Effect.void,
+          ),
+        ),
     ],
     { concurrency: 2 },
   );

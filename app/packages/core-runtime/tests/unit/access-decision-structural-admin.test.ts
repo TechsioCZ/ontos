@@ -871,6 +871,41 @@ for (const joined of [false, true]) {
   );
 }
 
+for (const joined of [false, true]) {
+  it.effect(
+    `decides one request for an agent's two sides ${joined ? "one after the other through a caller's transaction" : 'together on the pool'}`,
+    () =>
+      Effect.gen(function* decideSides() {
+        // The single-request path reads the request cells of both sides exactly as the list and batch paths do.
+        const spec = {
+          cells: [cell({ capability: otherKey }), cell({ capability: otherKey, holder: agentHolder() })],
+          connection: connect({
+            ceiling: { cells: [{ capabilityKey: otherKey, mode: 'run' as const, selector: { _tag: 'all' as const } }] },
+          }),
+        };
+        const counter = { now: 0, peak: 0 };
+        const counted = inFlightCounted(makeAuthority(spec).port, counter);
+        const decision = yield* decideAccess(
+          withOptional(counted, 'readsThroughCallerTransaction', joined ? (true as const) : undefined),
+          makeCheck({ authority: spec }).port,
+          {
+            actor: {
+              actor: { _tag: 'Agent', agentId: agent, connectionId, consentRevision: 1, principalId: person },
+              tenantId: tenant,
+            },
+            now,
+            request: {
+              capability: { ...policy, capabilityKey: otherKey, kind: 'action', risk: 'routine' },
+              mode: 'run',
+            },
+          },
+        );
+        expect(decision.outcome).toBe('ALLOWED');
+        expect(counter.peak).toBe(joined ? 1 : 2);
+      }),
+  );
+}
+
 const archiveKey: CapabilityKey = capability('core.access.roles.archive');
 /** Two routine keys a person holds through role cells in company A: nothing is decided structurally. */
 const routineCase = () => {

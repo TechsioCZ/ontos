@@ -739,7 +739,8 @@ const readRequestCells = (
           Effect.map((cells): SideCells => ({ cells, holder: holderFor(resolved, side), side })),
         ),
       ),
-      { concurrency: 2 },
+      // A port reading through a caller's transaction serves one read at a time on its one connection.
+      { concurrency: authority.readsThroughCallerTransaction === true ? 1 : 2 },
     ),
   );
 
@@ -756,7 +757,8 @@ const readParentCells = (
           Effect.map((cells): SideCells => ({ cells, holder: holderFor(resolved, side), side })),
         ),
       ),
-      { concurrency: 2 },
+      // A port reading through a caller's transaction serves one read at a time on its one connection.
+      { concurrency: authority.readsThroughCallerTransaction === true ? 1 : 2 },
     ),
   );
 
