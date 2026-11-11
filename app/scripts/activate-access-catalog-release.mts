@@ -131,7 +131,11 @@ const tenantLine = (tenant: CatalogReleaseActivationReport['tenants'][number]): 
       ? `"Plný přístup" found, +${String(tenant.presetCellsAdded)} cells`
       : '"Plný přístup" none to follow',
     `Novinky ${String(tenant.items)}`,
+    `${String(tenant.elapsedMillis)} ms`,
   ];
+  if (tenant.outcome !== 'planned') {
+    parts.push(`SpiceDB +${String(tenant.relationshipTouches)}/-${String(tenant.relationshipDeletions)}`);
+  }
   if (tenant.inertKeys.length > 0) {
     parts.push(`inert ${tenant.inertKeys.join(',')}`);
   }
