@@ -62,8 +62,11 @@ export const timedDescription = Effect.fn('Mcp.timedDescription')(function* time
     };
     return opened;
   };
-  // The request's own tracer keeps its context hook (span propagation of an exporter, for example).
-  const counting = Tracer.make(tracer.context === undefined ? { span } : { context: tracer.context, span });
+  // The request's own tracer keeps its context hook (span propagation of an exporter, for example), called on that
+  // tracer as its own method, never on the counting one.
+  const counting = Tracer.make(
+    tracer.context === undefined ? { span } : { context: tracer.context.bind(tracer), span },
+  );
   const value = yield* effect.pipe(Effect.withTracer(counting));
   const timing: DescriptionTiming = {
     cellsMs: Math.round(ms.cells),

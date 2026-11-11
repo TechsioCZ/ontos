@@ -67,3 +67,27 @@ it.effect("keeps the request tracer's context hook while it counts the descripti
     expect(hookedInside).toBeGreaterThan(0);
   }),
 );
+
+/** A tracer whose context hook keeps state on itself, as a class-based exporter's does. */
+class StatefulTracer implements Tracer.Tracer {
+  hooked = 0;
+  readonly parent: Tracer.Tracer;
+  constructor(parent: Tracer.Tracer) {
+    this.parent = parent;
+  }
+  span(options: Parameters<Tracer.Tracer['span']>[0]) {
+    return this.parent.span(options);
+  }
+  context<X>(primitive: Tracer.EffectPrimitive<X>, fiber: Parameters<NonNullable<Tracer.Tracer['context']>>[1]): X {
+    this.hooked += 1;
+    return primitive['~effect/Effect/evaluate'](fiber);
+  }
+}
+
+it.effect("calls the request tracer's context hook on that tracer itself", () =>
+  Effect.gen(function* contextHookBound() {
+    const stateful = new StatefulTracer(yield* Effect.tracer);
+    yield* timedDescription(span('postgres')).pipe(Effect.withTracer(stateful));
+    expect(stateful.hooked).toBeGreaterThan(0);
+  }),
+);
