@@ -126,6 +126,19 @@ const newerDeployment: readonly AccessCatalogModule[] = [
   },
 ];
 
+/** The guard tests' deployment: it adds a record-scoped read that declares no `all`. */
+const scopedSummary: AccessDeclarationInput = { ...read, key: SUMMARY, selectors: ['assigned', 'team'] };
+const guardDeployment: readonly AccessCatalogModule[] = [
+  {
+    descriptors: [
+      { accessDeclaration: read, entrypoint: readEntrypoint },
+      { accessDeclaration: approve, entrypoint: approveEntrypoint },
+      { accessDeclaration: scopedSummary, entrypoint: summaryEntrypoint },
+    ],
+    moduleId: MODULE,
+  },
+];
+
 const readCarrier = { accessDeclaration: decodeAccessDeclarationOrThrow(read, readEntrypoint) };
 const approveCarrier = { accessDeclaration: decodeAccessDeclarationOrThrow(approve, approveEntrypoint) };
 
@@ -325,7 +338,7 @@ const decodeHeldCells = Schema.decodeUnknownSync(
 );
 
 const activate = (modules: readonly AccessCatalogModule[], tenantId: TenantId) =>
-  activateCatalogRelease({ dryRun: false, modules }).pipe(
+  activateCatalogRelease({ modules }).pipe(
     Effect.orDie,
     Effect.map((report) => ({
       report,
@@ -349,7 +362,7 @@ it.layer(NodeServices.layer)('access catalog release activation', (suite) => {
         expect(report.entries).toBe(2);
         expect(report.previousEntries).toBe(1);
         // The approval Action declares run and propose: two new cells, in one successor of the preset.
-        expect(tenant).toMatchObject({ items: 1, outcome: 'followed', presetCellsAdded: 2 });
+        expect(tenant).toMatchObject({ items: 1, outcome: 'followed', presetCellsAdded: 2, presetFound: true });
 
         // Every holder of the preset, in the tenant and in every company where the role is held, may now approve.
         expect(yield* decide(approveCarrier, yield* scopeFor(tenantId, owner))).toBe('ALLOWED');
@@ -405,7 +418,7 @@ it.layer(NodeServices.layer)('access catalog release activation', (suite) => {
 
         // An older deployment starting again while the newer one serves: published before, superseded.
         const older = yield* activate(olderDeployment, tenantId);
-        expect(older.report.ordering).toEqual({ _tag: 'Superseded', reason: 'published_before' });
+        expect(older.report.ordering).toEqual({ _tag: 'PublishedBefore' });
         expect(older.report.releaseId).toBe(first.report.releaseId);
         expect(older.report.tenants).toEqual([]);
 
@@ -448,7 +461,7 @@ it.layer(NodeServices.layer)('access catalog release activation', (suite) => {
           .pipe(Effect.orDie);
 
         const { tenant } = yield* activate(newerDeployment, tenantId);
-        expect(tenant).toMatchObject({ outcome: 'followed', presetCellsAdded: 0 });
+        expect(tenant).toMatchObject({ outcome: 'followed', presetCellsAdded: 0, presetFound: false });
         expect((tenant?.items ?? 0) > 0).toBe(true);
         const after = yield* changes.loadTenantChanges(ownerScope).pipe(Effect.orDie);
         expect(findRole(after.roles, bootstrapped.roleId)?.revision).toMatchObject({
@@ -515,7 +528,7 @@ it.layer(NodeServices.layer)('access catalog release activation', (suite) => {
           },
         ];
         const older = yield* activate(olderNeverPublished, tenantId);
-        expect(older.report.ordering).toEqual({ _tag: 'Superseded', reason: 'not_a_successor' });
+        expect(older.report.ordering).toEqual({ _tag: 'NotASuccessor', uncoveredKeys: [AUTHORIZE] });
         expect(older.report.releaseId).toBe(renamed.report.releaseId);
         expect(older.report.tenants).toEqual([]);
         // The newer deployment restarting finds its own release current.
@@ -540,7 +553,7 @@ it.layer(NodeServices.layer)('access catalog release activation', (suite) => {
     withTenant((tenantId, admin) =>
       Effect.gen(function* databaseGuard() {
         const bootstrapped = yield* tenantOnOlderRelease(tenantId, admin);
-        const { report } = yield* activate(newerDeployment, tenantId);
+        const { report } = yield* activate(guardDeployment, tenantId);
         const actor = releaseActorId(tenantId);
         const rows = (sql: string) => admin.unsafe(sql).pipe(Effect.orDie);
         const refused = (statement: string) => refusedBy(admin, statement);
@@ -625,7 +638,30 @@ it.layer(NodeServices.layer)('access catalog release activation', (suite) => {
         ] as const) {
           expect(yield* refused(revision({ author, cells: held, id, number: 3 }))).toBe(true);
         }
-        // An amount ceiling the preset held may never be narrowed.
+        // Added cells: exactly {capabilityKey, mode, selector: {_tag}}, a declared selector (`all` only where the
+        // capability declares it or no selector at all), and every slot once.
+        // The preset already holds the widest declared selector (`team`); `assigned` is a declared slot it lacks.
+        const team = { capabilityKey: SUMMARY, mode: 'run', selector: { _tag: 'assigned' } };
+        const addedCells: readonly (readonly [number, readonly unknown[]])[] = [
+          [410, [...held, { capabilityKey: SUMMARY, mode: 'run', selector: { _tag: 'all' } }]],
+          [411, [...held, { ...team, note: 'extra' }]],
+          [412, [...held, { ...team, selector: { _tag: 'assigned', recordKeys: ['a'] } }]],
+          [413, [...held, { ...team, selector: { _tag: 'targets', recordKeys: ['a'] } }]],
+          [414, [...held, team, team]],
+          [415, [...held, { ...team, amountCeiling: { currency: 'CZK', limitMinor: 1 } }]],
+        ];
+        for (const [id, cells] of addedCells) {
+          expect(yield* refused(revision({ author: actor, cells, id, number: 3 }))).toBe(true);
+        }
+        // The one write it accepts: the untouched preset kept field for field, gaining a declared slot.
+        expect(yield* refused(revision({ author: actor, cells: [...held, team], id: 416, number: 3 }))).toBe(false);
+        // A person's later revision ends "untouched" whatever provenance it claims: no follow on top of it.
+        const changed = held.filter((cell) => cell.capabilityKey !== APPROVE);
+        yield* rows(revision({ author: owner, cells: changed, id: 417, number: 4 }));
+        expect(yield* refused(revision({ author: actor, cells: changed, id: 418, number: 5 }))).toBe(true);
+        expect(yield* refused(revision({ author: actor, cells: [...changed, team], id: 419, number: 5 }))).toBe(true);
+
+        // An amount ceiling a preset held from its first revision may never be narrowed.
         const capped = {
           amountCeiling: { currency: 'CZK', limitMinor: 100_000 },
           capabilityKey: APPROVE,
@@ -636,21 +672,28 @@ it.layer(NodeServices.layer)('access catalog release activation', (suite) => {
           ...held.filter((cell) => !(cell.capabilityKey === APPROVE && cell.mode === 'run')),
           capped,
         ];
-        yield* rows(revision({ author: owner, cells: withCeiling, id: 407, number: 3 }));
+        yield* rows(`insert into core.access_roles (role_id, tenant_id, name, created_by) values
+          ('${uid(66)}', '${tenantId}', 'Se stropem', '${owner}')`);
+        yield* rows(revision({ author: owner, cells: withCeiling, id: 166, number: 1, role: uid(66) }));
         const narrowed = withCeiling.map((cell) =>
           cell === capped ? { ...capped, amountCeiling: { currency: 'CZK', limitMinor: 1 } } : cell,
         );
-        expect(yield* refused(revision({ author: actor, cells: narrowed, id: 408, number: 4 }))).toBe(true);
-        // The one write it accepts: the untouched preset kept field for field.
-        expect(yield* refused(revision({ author: actor, cells: withCeiling, id: 409, number: 4 }))).toBe(false);
+        expect(yield* refused(revision({ author: actor, cells: narrowed, id: 266, number: 2, role: uid(66) }))).toBe(
+          true,
+        );
+        expect(yield* refused(revision({ author: actor, cells: withCeiling, id: 366, number: 2, role: uid(66) }))).toBe(
+          false,
+        );
 
-        // The release actor's own row: no status change while the tenant is active, no role change, no delete.
-        expect(yield* refused(`update core.principals set status = 'disabled' where principal_id = '${actor}'`)).toBe(
-          true,
-        );
-        expect(yield* refused(`update core.principals set platform_role = null where principal_id = '${actor}'`)).toBe(
-          true,
-        );
+        // The release actor's own row: no status change while the tenant is active or suspended, no other status
+        // than archived, no kind, tenant or disabled-time change, no role change, no delete.
+        const actorUpdate = (set: string) => `update core.principals set ${set} where principal_id = '${actor}'`;
+        expect(yield* refused(actorUpdate(`status = 'disabled'`))).toBe(true);
+        expect(yield* refused(actorUpdate(`status = 'archived'`))).toBe(true);
+        expect(yield* refused(actorUpdate('platform_role = null'))).toBe(true);
+        expect(yield* refused(actorUpdate(`kind = 'service', platform_role = null`))).toBe(true);
+        expect(yield* refused(actorUpdate('disabled_at = now()'))).toBe(true);
+        expect(yield* refused(actorUpdate(`tenant_id = '${otherTenant}'`))).toBe(true);
         expect(
           yield* refused(
             `update core.principals set platform_role = 'access_release_actor' where principal_id = '${owner}'`,
@@ -658,11 +701,18 @@ it.layer(NodeServices.layer)('access catalog release activation', (suite) => {
         ).toBe(true);
         // Once it authored a revision, the revision keeps it: it cannot be deleted either.
         expect(yield* refused(`delete from core.principals where principal_id = '${actor}'`)).toBe(true);
-        // A tenant that has ended may archive it.
-        yield* rows(`update core.tenants set status = 'archived' where tenant_id = '${tenantId}'`);
-        expect(yield* refused(`update core.principals set status = 'archived' where principal_id = '${actor}'`)).toBe(
-          false,
+        // Other system principals are kept the same way.
+        expect(yield* refused(`update core.principals set status = 'disabled' where principal_id = '${uid(80)}'`)).toBe(
+          true,
         );
+        // A suspended tenant has not ended.
+        yield* rows(`update core.tenants set status = 'suspended' where tenant_id = '${tenantId}'`);
+        expect(yield* refused(actorUpdate(`status = 'archived'`))).toBe(true);
+        // A tenant that has ended may archive it, and only archive it.
+        yield* rows(`update core.tenants set status = 'archived' where tenant_id = '${tenantId}'`);
+        expect(yield* refused(actorUpdate(`status = 'disabled'`))).toBe(true);
+        expect(yield* refused(actorUpdate('disabled_at = now()'))).toBe(true);
+        expect(yield* refused(actorUpdate(`status = 'archived'`))).toBe(false);
       }),
     ),
   );
