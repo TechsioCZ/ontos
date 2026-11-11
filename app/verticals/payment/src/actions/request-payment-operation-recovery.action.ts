@@ -3,7 +3,7 @@
 // @ontos-action-slug request-payment-operation-recovery
 import type { ActionHandlerContext, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { OperationContextUnavailable, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 
 import {
   RequestPaymentOperationRecoveryPayloadSchema,
@@ -13,7 +13,12 @@ import type {
   RequestPaymentOperationRecoveryPayload,
   RequestPaymentOperationRecoveryResult,
 } from '../../shared/actions/request-payment-operation-recovery.ts';
-import { PaymentEvidenceRejected, paymentEvidenceRejected } from '../../shared/domain/evidence-contract.ts';
+import {
+  PaymentEvidenceRejected,
+  paymentEvidenceRejected,
+  PaymentProviderReplayGuaranteeSchema,
+} from '../../shared/domain/evidence-contract.ts';
+import { PaymentGatewayAccountBindingSchema } from '../../shared/domain/payment-execution-binding.ts';
 import { PaymentConflict } from '../../shared/domain/payment-conflict.ts';
 import type { PaymentExecutionProvenance } from '../../shared/domain/payment-provenance.ts';
 import { PaymentRejected, paymentRejected } from '../../shared/domain/payment-rejected.ts';
@@ -21,10 +26,14 @@ import { PaymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import { OutboxPayloadSchema as OperationRecoveryRequestedSchema } from '../../shared/outbox/payment-core-operation-recovery-requested-v1.ts';
 import { planPaymentRecovery, PaymentRecoveryPlan } from '../domain/evidence-recovery.ts';
 import type { PaymentRecoveryPlanCase } from '../domain/evidence-recovery.ts';
+import { isDefinitiveOutcome } from '../domain/operation-lifecycle.ts';
 import { paymentAggregatePersistenceForTransaction } from '../persistence/payment-aggregate-persistence.ts';
 import { paymentEvidencePersistenceForTransaction } from '../persistence/payment-evidence-persistence.ts';
 import type { PaymentEvidenceActionServices } from '../persistence/payment-evidence-persistence.ts';
 import type { PaymentOperationRecord } from '../persistence/payment-aggregate-persistence.ts';
+import type { PaymentOwnerScope } from '../ports/owner-evidence-unavailable.ts';
+import { PaymentProviderReplayEvidencePort } from '../ports/provider-replay-evidence-port.ts';
+import type { PaymentProviderReplayEvidenceService } from '../ports/provider-replay-evidence-port.ts';
 import { recordPaymentAggregateReads } from './payment-data-access.ts';
 import { createRequestPaymentOperationRecoveryPaymentCoreOperationRecoveryRequestedV1OutboxMessage } from './request-payment-operation-recovery-payment-core-operation-recovery-requested-v1.outbox-message.ts';
 
@@ -40,7 +49,12 @@ const RequestPaymentOperationRecoveryErrorSchema = Schema.Union([
   PaymentEvidenceRejected,
 ]);
 
-type RecoveryContext = ActionHandlerContext<typeof domainEvents, PaymentEvidenceActionServices>;
+interface RecoveryServices extends PaymentEvidenceActionServices {
+  readonly replayEvidence: Option.Option<PaymentProviderReplayEvidenceService>;
+  readonly scope: PaymentOwnerScope;
+}
+
+type RecoveryContext = ActionHandlerContext<typeof domainEvents, RecoveryServices>;
 type ExecutablePlan = Extract<PaymentRecoveryPlanCase, { readonly _tag: 'Plan' }>;
 
 const provenanceOf = (context: RecoveryContext): PaymentExecutionProvenance => ({
@@ -50,21 +64,55 @@ const provenanceOf = (context: RecoveryContext): PaymentExecutionProvenance => (
 });
 
 /** Private owner service factory: Core's scoped executor never becomes a handler service itself. */
-const paymentEvidenceServices = (
+const paymentEvidenceServices = Effect.fn('RequestPaymentOperationRecoveryAction.services')(function* makeServices(
   transaction: ScopedTransactionExecutor,
   scope: OperationalScope,
-): Effect.Effect<PaymentEvidenceActionServices, OperationContextUnavailable> =>
-  scope.legalEntityId === undefined
-    ? Effect.fail(
-        new OperationContextUnavailable({
-          code: 'operation_context_unavailable',
-          reason: 'Payment evidence operations require a trusted Selling Legal Entity',
-        }),
-      )
-    : Effect.succeed({
-        aggregate: paymentAggregatePersistenceForTransaction(transaction),
-        evidence: paymentEvidencePersistenceForTransaction(transaction),
-      });
+) {
+  if (scope.legalEntityId === undefined) {
+    return yield* new OperationContextUnavailable({
+      code: 'operation_context_unavailable',
+      reason: 'Payment evidence operations require a trusted Selling Legal Entity',
+    });
+  }
+  return {
+    aggregate: paymentAggregatePersistenceForTransaction(transaction),
+    evidence: paymentEvidencePersistenceForTransaction(transaction),
+    replayEvidence: yield* Effect.serviceOption(PaymentProviderReplayEvidencePort),
+    scope: { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId },
+  } satisfies RecoveryServices;
+});
+
+const decodeReplayGuarantee = Schema.decodeUnknownOption(PaymentProviderReplayGuaranteeSchema);
+
+const readProviderGuarantee = (
+  operation: PaymentOperationRecord,
+  payload: RequestPaymentOperationRecoveryPayload,
+  services: RecoveryServices,
+) => {
+  if (
+    Option.isNone(services.replayEvidence) ||
+    !Schema.is(PaymentGatewayAccountBindingSchema)(operation.binding) ||
+    isDefinitiveOutcome(operation.outcome) ||
+    operation.outcome === 'CONFLICT' ||
+    payload.trigger === 'LOOKUP_AUTHORITY_UNAVAILABLE' ||
+    (payload.requestedMode !== undefined && payload.requestedMode !== 'PROVIDER_IDEMPOTENT_REPLAY')
+  ) {
+    return Effect.succeedNone;
+  }
+  return services.replayEvidence.value
+    .readGuarantee({
+      binding: operation.binding,
+      materialHash: operation.materialHash,
+      operationId: operation.operationId,
+      operationKind: operation.kind,
+      paymentId: operation.paymentId,
+      scope: services.scope,
+    })
+    .pipe(
+      Effect.map(Option.flatMap(decodeReplayGuarantee)),
+      Effect.catchTag('PaymentUnavailable', () => Effect.succeedNone),
+    );
+};
 
 const requireOperation = (operations: readonly PaymentOperationRecord[], operationId: string) => {
   const operation = operations.find((candidate) => candidate.operationId === operationId);
@@ -96,14 +144,21 @@ export const handleRequestPaymentOperationRecovery = Effect.fn('RequestPaymentOp
     payload: RequestPaymentOperationRecoveryPayload,
     context: RecoveryContext,
   ) {
-    const { aggregate, evidence } = context.services;
+    const { aggregate, evidence, scope } = context.services;
     const provenance = provenanceOf(context);
     const current = yield* aggregate.loadAggregate(payload.paymentId, { lock: true });
     yield* recordPaymentAggregateReads(context, [current.payment.paymentId]);
     const operation = yield* requireOperation(current.operations, payload.operationId);
+    const guarantee = Option.getOrUndefined(yield* readProviderGuarantee(operation, payload, context.services));
     const now = yield* DateTime.now;
     const plan = yield* requireExecutablePlan(
-      planPaymentRecovery(operation, { now, requestedMode: payload.requestedMode, trigger: payload.trigger }),
+      planPaymentRecovery(operation, {
+        guarantee,
+        now,
+        requestedMode: payload.requestedMode,
+        scope,
+        trigger: payload.trigger,
+      }),
     );
     const recovery = yield* evidence.insertRecoveryRequest({
       binding: operation.binding,
@@ -133,8 +188,10 @@ export const handleRequestPaymentOperationRecovery = Effect.fn('RequestPaymentOp
         provenance,
       });
     }
+    const replayGuarantee = plan.mode === 'PROVIDER_IDEMPOTENT_REPLAY' ? guarantee : undefined;
     const result: RequestPaymentOperationRecoveryResult = {
       executorWorkAdmitted: plan.executorWork,
+      executorWorkTracked: replayGuarantee !== undefined,
       heldForReconciliation: plan.hold,
       modeDowngraded: plan.modeDowngraded,
       operationId: operation.operationId,
@@ -149,7 +206,7 @@ export const handleRequestPaymentOperationRecovery = Effect.fn('RequestPaymentOp
       recoveryMode: plan.mode,
       requestedAt: recovery.requestedAt,
     };
-    const eventPayload = {
+    const recoveryPayload = {
       amount: operation.amount,
       binding: operation.binding,
       materialHash: operation.materialHash,
@@ -164,6 +221,10 @@ export const handleRequestPaymentOperationRecovery = Effect.fn('RequestPaymentOp
       provenance,
       recoveryId: recovery.recoveryId,
     };
+    const eventPayload =
+      replayGuarantee === undefined
+        ? recoveryPayload
+        : { ...recoveryPayload, providerReplayGuarantee: replayGuarantee };
     const event = yield* context.addDomainEvent({
       eventType: RECOVERY_REQUESTED,
       payloadJson: eventPayload,
@@ -177,6 +238,7 @@ export const handleRequestPaymentOperationRecovery = Effect.fn('RequestPaymentOp
       yield* context.addOutboxMessage(
         event,
         createRequestPaymentOperationRecoveryPaymentCoreOperationRecoveryRequestedV1OutboxMessage(eventPayload),
+        replayGuarantee === undefined ? undefined : { consumerModuleKey: MODULE_KEY },
       );
     }
     return result;

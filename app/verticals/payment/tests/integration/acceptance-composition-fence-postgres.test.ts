@@ -300,6 +300,20 @@ it.live(
       Effect.gen(function* compositionFence() {
         const payment = yield* isolatedPayment();
         const transport = yield* mountPaymentTransport(payment);
+        yield* payment.evidence.configureSource({
+          factFamily: 'BANK_ACCOUNTING_RECEIPT',
+          method: 'BANK_TRANSFER_ADVANCE',
+          reason: 'Accounting owns bank receipts',
+          refundRoute: false,
+          source: {
+            accountRef: 'composition-fence-bank-account',
+            environment: 'production',
+            sourceKind: 'BANK_ACCOUNTING',
+            sourceSystem: 'erp-bank',
+          },
+          status: 'ACTIVE',
+          submitterPrincipalIds: [payment.scope.principalId],
+        });
         const target = yield* payment.evidence.createPayment(100_000, BANK_BINDING, 'BANK_TRANSFER_ADVANCE');
         /** The three declared entrypoint classes, each against a fresh Payment for the write. */
         const matrix = Effect.gen(function* callMatrix() {

@@ -18,12 +18,14 @@ import {
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
+import type { PaymentBankAccountingReceiptBinding } from '../../shared/domain/payment-execution-binding.ts';
 import type { PaymentObservationFactKind } from '../../shared/domain/payment-vocabulary.ts';
 import { paymentUnavailableOwnerPortsLive } from '../../api/payment-production-layers.ts';
 import { startPaymentCollectionAction } from '../../src/actions/start-payment-collection.action.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 import { makeTestScope } from './database-fixture.ts';
 import {
+  BANK_BINDING,
   COMPOSITION_R1,
   COMPOSITION_R2,
   evidenceAllowedPermission,
@@ -111,7 +113,7 @@ const gopayStatement = (fields: {
   readonly correctsObservationId?: string;
   readonly economicEffectKey?: string;
   readonly factKind: PaymentObservationFactKind;
-  readonly operationId: string;
+  readonly operationId?: string;
   readonly paymentId: string;
 }) => ({
   factFamily: 'GATEWAY_OUTCOME' as const,
@@ -193,6 +195,19 @@ it.live('#1151 Late collection success for a not-effected attempt after a live r
       const evidence = yield* scenario();
       const { first, payment } = yield* retriedCollection(evidence);
 
+      const ambiguous = yield* evidence.accept(
+        gopayStatement({
+          amount: czk(100_000),
+          economicEffectKey: 'gopay:payment:attempt-1',
+          factKind: 'COLLECTION_CONFIRMED',
+          paymentId: payment.paymentId,
+        }),
+      );
+      expect(ambiguous).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED', interpretation: 'HOLD' });
+      expect(ambiguous.operationId).toBeUndefined();
+      expect(ambiguous.reconciliationCaseId).toBeDefined();
+      expect(ambiguous.outcomeChange).toBeUndefined();
+
       // GoPay later reports that attempt 1 did collect after all, while attempt 2 is still pending.
       const late = yield* evidence.accept(
         gopayStatement({
@@ -210,6 +225,80 @@ it.live('#1151 Late collection success for a not-effected attempt after a live r
         ['collect-attempt-2', 'PENDING'],
       ]);
       yield* expectConflictDebt(evidence, payment.paymentId, first.operationId, late);
+    }),
+  ),
+);
+
+it.live('#1152 bank receipt proves its original source but cannot select between two collection attempts', () =>
+  native(
+    Effect.gen(function* bankReceiptAcrossRetries() {
+      const evidence = yield* scenario();
+      const source = {
+        accountRef: 'account-original',
+        environment: 'production',
+        sourceKind: 'BANK_ACCOUNTING',
+        sourceSystem: 'bank-erp',
+      } as const;
+      const method = 'BANK_TRANSFER_ADVANCE';
+      const factFamily = 'BANK_ACCOUNTING_RECEIPT';
+      const authority = yield* evidence.configureSource({
+        factFamily,
+        method,
+        reason: 'Original receipt authority',
+        refundRoute: false,
+        source,
+        status: 'ACTIVE',
+        submitterPrincipalIds: [evidence.scope.principalId],
+      });
+      const payment = yield* evidence.createPayment(100_000, BANK_BINDING, method);
+      const binding: PaymentBankAccountingReceiptBinding = {
+        _tag: 'BANK_ACCOUNTING_RECEIPT',
+        receiptAuthority: {
+          accountRef: source.accountRef,
+          environment: source.environment,
+          sourceAuthorityId: authority.sourceAuthorityId,
+          sourceSystem: source.sourceSystem,
+        },
+      };
+      const start = (operationKey: string) =>
+        evidence.startOperation({ amountMinor: 100_000, binding, operationKey, paymentId: payment.paymentId });
+      const first = yield* start('collect-attempt-1');
+      yield* evidence.settle(payment.paymentId, first.operationId, 1, 'NOT_EFFECTED_CONFIRMED');
+      const retry = yield* start('collect-attempt-2');
+      const receipt = {
+        amount: czk(100_000),
+        economicEffectKey: 'bank-receipt-original',
+        factFamily,
+        factKind: 'COLLECTION_CONFIRMED',
+        paymentId: payment.paymentId,
+        source,
+        sourceOccurrenceId: 'receipt-without-attempt',
+        sourceRevision: 1,
+      } as const;
+
+      const held = yield* evidence.accept(receipt);
+      expect(held).toMatchObject({
+        acceptanceOutcome: 'HELD_UNRESOLVED',
+        interpretation: 'HOLD',
+        sourceAuthorityId: authority.sourceAuthorityId,
+      });
+      expect(held.operationId).toBeUndefined();
+      expect(held.reconciliationCaseId).toBeDefined();
+      expect(yield* outcomesOf(evidence, payment.paymentId)).toEqual([
+        ['collect-attempt-1', 'NOT_EFFECTED_CONFIRMED'],
+        ['collect-attempt-2', 'PENDING'],
+      ]);
+
+      const exact = yield* evidence.accept({
+        ...receipt,
+        operationId: retry.operationId,
+        sourceOccurrenceId: 'receipt-with-exact-attempt',
+      });
+      expect(exact).toMatchObject({
+        acceptanceOutcome: 'ACCEPTED_OBSERVATION',
+        operationId: retry.operationId,
+        outcomeChange: { to: 'EFFECT_CONFIRMED' },
+      });
     }),
   ),
 );

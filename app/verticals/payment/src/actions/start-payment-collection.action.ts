@@ -19,9 +19,18 @@ import {
 } from '../../shared/domain/lifecycle-collection-refused.ts';
 import { PaymentLifecycleConflict, paymentLifecycleConflict } from '../../shared/domain/lifecycle-conflict.ts';
 import { PaymentConflict, paymentConflict } from '../../shared/domain/payment-conflict.ts';
+import {
+  isBankAccountingReceiptBinding,
+  sameBankReceiptAuthority,
+} from '../../shared/domain/payment-execution-binding.ts';
+import type {
+  PaymentBankAccountingReceiptBinding,
+  PaymentBankReceiptAuthority,
+  PaymentGatewayAccountBinding,
+} from '../../shared/domain/payment-execution-binding.ts';
 import type { PaymentExecutionProvenance } from '../../shared/domain/payment-provenance.ts';
 import { PaymentRejected } from '../../shared/domain/payment-rejected.ts';
-import { PaymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
+import { PaymentUnavailable, paymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import { OutboxPayloadSchema as OperationRequestedPayloadSchema } from '../../shared/outbox/payment-core-operation-requested-v1.ts';
 import { collectionMaterialRequest, collectionMatchesPayment } from '../domain/lifecycle-intent.ts';
 import { requireReleasedPurchase } from '../domain/lifecycle-purchase-guard.ts';
@@ -32,13 +41,13 @@ import {
   computePaymentMaterialHash,
   paymentAggregatePersistenceForTransaction,
 } from '../persistence/payment-aggregate-persistence.ts';
-import type { PaymentRecord } from '../persistence/payment-aggregate-persistence.ts';
+import type { PaymentAggregateRecord, PaymentRecord } from '../persistence/payment-aggregate-persistence.ts';
 import { paymentLifecyclePersistenceForTransaction } from '../persistence/payment-lifecycle-persistence.ts';
 import { paymentApplicabilityPersistenceForTransaction } from '../persistence/payment-applicability-persistence.ts';
 import type { PaymentLifecycleServices } from '../persistence/payment-lifecycle-persistence.ts';
 import { paymentRefundPersistenceForTransaction } from '../persistence/payment-refund-persistence.ts';
+import { selectBankReceiptAuthorities } from '../persistence/payment-source-persistence.ts';
 import { GatewayBindingPort } from '../ports/gateway-binding-port.ts';
-import type { PaymentGatewayAccountBinding } from '../../shared/domain/payment-execution-binding.ts';
 import { PaymentOwnerEvidenceUnavailable } from '../ports/owner-evidence-unavailable.ts';
 import { recordPaymentAggregateReads, recordPaymentLookup } from './payment-data-access.ts';
 import { createStartPaymentCollectionPaymentCoreOperationRequestedV1OutboxMessage } from './start-payment-collection-payment-core-operation-requested-v1.outbox-message.ts';
@@ -82,19 +91,59 @@ const verifyGatewayBinding = Effect.fn('StartPaymentCollectionAction.verifyGatew
   },
 );
 
-const requireCurrentBinding = (payment: PaymentRecord) =>
-  Match.valueTags(payment.executionBinding, {
-    BANK_ACCOUNTING_RECEIPT: () => Effect.void,
-    COD_DELIVERY_OFFER: () => Effect.void,
-    GATEWAY_ACCOUNT: (binding) => verifyGatewayBinding(payment, binding),
-    PICKUP_CAPABILITY: () => Effect.void,
+interface StartCollectionServices extends PaymentLifecycleServices {
+  readonly selectReceiptAuthorities: (
+    method: 'BANK_TRANSFER_ADVANCE' | 'DEFERRED_INVOICE',
+  ) => Effect.Effect<readonly PaymentBankReceiptAuthority[], PaymentUnavailable>;
+}
+
+type StartCollectionContext = ActionHandlerContext<typeof domainEvents, StartCollectionServices>;
+
+const resolveBankBinding = Effect.fn('StartPaymentCollectionAction.resolveBankBinding')(function* resolveBankBinding(
+  aggregate: PaymentAggregateRecord,
+  binding: PaymentBankAccountingReceiptBinding,
+  context: StartCollectionContext,
+) {
+  const { method, paymentId } = aggregate.payment;
+  if (method !== 'BANK_TRANSFER_ADVANCE' && method !== 'DEFERRED_INVOICE') {
+    return yield* paymentUnavailable('The Payment method has no bank receipt authority');
+  }
+  const priorCollect = aggregate.operations.find((operation) => operation.kind === 'COLLECT');
+  const original = priorCollect?.binding ?? binding;
+  if (
+    !isBankAccountingReceiptBinding(original) ||
+    (priorCollect !== undefined && original.receiptAuthority === undefined)
+  ) {
+    return yield* paymentUnavailable('The original collection has no provable bank receipt authority');
+  }
+  const candidates = yield* context.services.selectReceiptAuthorities(method);
+  yield* recordPaymentLookup(context, { paymentId, query: 'source-authorities', resultCount: candidates.length });
+  const { receiptAuthority } = original;
+  if (receiptAuthority !== undefined) {
+    return candidates.some((candidate) => sameBankReceiptAuthority(receiptAuthority, candidate))
+      ? original
+      : yield* paymentUnavailable('The original bank receipt authority is unavailable');
+  }
+  const [only] = candidates;
+  if (only === undefined || candidates.length !== 1) {
+    return yield* paymentUnavailable('The bank receipt authority could not be uniquely resolved');
+  }
+  return { ...binding, receiptAuthority: only };
+});
+
+const resolveCollectionBinding = (aggregate: PaymentAggregateRecord, context: StartCollectionContext) => {
+  const { payment } = aggregate;
+  const binding = payment.executionBinding;
+  return Match.valueTags(binding, {
+    BANK_ACCOUNTING_RECEIPT: (bank) => resolveBankBinding(aggregate, bank, context),
+    COD_DELIVERY_OFFER: (offer) => Effect.succeed(offer),
+    GATEWAY_ACCOUNT: (gateway) => verifyGatewayBinding(payment, gateway).pipe(Effect.as(gateway)),
+    PICKUP_CAPABILITY: (pickup) => Effect.succeed(pickup),
   });
+};
 
 export const handleStartPaymentCollection = Effect.fn('StartPaymentCollectionAction.handle')(
-  function* startPaymentCollection(
-    payload: StartPaymentCollectionPayload,
-    context: ActionHandlerContext<typeof domainEvents, PaymentLifecycleServices>,
-  ) {
+  function* startPaymentCollection(payload: StartPaymentCollectionPayload, context: StartCollectionContext) {
     const { aggregate: persistence, lifecycle } = context.services;
     const provenance: PaymentExecutionProvenance = {
       actionInvocationId: context.actionInvocationId,
@@ -117,8 +166,10 @@ export const handleStartPaymentCollection = Effect.fn('StartPaymentCollectionAct
     });
     yield* recordPaymentLookup(context, { query: 'purchase-intents', resultCount: purchasePaymentIds.length });
     yield* recordPaymentAggregateReads(context, [payment.paymentId]);
-    const materialRequest = collectionMaterialRequest(payment.paymentId, payload, payment.executionBinding);
-    const materialHash = yield* computePaymentMaterialHash(materialRequest);
+    const keyedOperation = aggregate.operations.find((operation) => operation.operationKey === payload.operationKey);
+    const materialHash = yield* computePaymentMaterialHash(
+      collectionMaterialRequest(payment.paymentId, payload, keyedOperation?.binding ?? payment.executionBinding),
+    );
     const admission = decideOperationAdmission(aggregate.operations, {
       kind: 'COLLECT',
       materialHash,
@@ -180,14 +231,14 @@ export const handleStartPaymentCollection = Effect.fn('StartPaymentCollectionAct
       purchasePaymentIds.filter((paymentId) => paymentId !== payment.paymentId),
     );
     // 4. Operation-specific owner evidence (H1094-01=A): only the gateway branch needs C17 here.
-    yield* requireCurrentBinding(payment);
+    const binding = yield* resolveCollectionBinding(aggregate, context);
     // 5. Insert under the same lock; the partial unique index is the database backstop.
     const inserted = yield* persistence.insertOperation({
       amount: payment.amount,
-      binding: payment.executionBinding,
+      binding,
       initialOutcome: 'PENDING',
       kind: 'COLLECT',
-      materialRequest,
+      materialRequest: collectionMaterialRequest(payment.paymentId, payload, binding),
       operationKey: payload.operationKey,
       paymentId: payment.paymentId,
       provenance,
@@ -240,11 +291,12 @@ const lifecycleServices = (transaction: ScopedTransactionExecutor, scope: Operat
           reason: 'Payment lifecycle operations require a verified Selling Legal Entity scope',
         }),
       )
-    : Effect.succeed<PaymentLifecycleServices>({
+    : Effect.succeed<StartCollectionServices>({
         aggregate: paymentAggregatePersistenceForTransaction(transaction),
         applicability: paymentApplicabilityPersistenceForTransaction(transaction),
         lifecycle: paymentLifecyclePersistenceForTransaction(transaction),
         refunds: paymentRefundPersistenceForTransaction(transaction),
+        selectReceiptAuthorities: (method) => selectBankReceiptAuthorities(transaction, method),
       });
 
 export const startPaymentCollectionAction = defineAction(

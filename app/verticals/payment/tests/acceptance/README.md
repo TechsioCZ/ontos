@@ -1,10 +1,33 @@
 # Payment owner acceptance evidence (#1153)
 
-This is the per-capability evidence matrix the #1153 Definition of done asks for. It lists only test
-results that were actually run. It is Payment **owner** evidence. It is not provider conformance and not a
-production journey claim.
+This is the per-capability evidence matrix for #1153. Each result describes the test boundary and the
+owner dependencies exercised by that run. The baseline matrix records the original C16 run.
 
-## Baseline of this run
+## Follow-up on `feat/c16-payment`
+
+The follow-up starts at `498732eb290f4e7f2aef8d6999071fe2112acf2a`. The original matrix below describes the
+earlier run. The owner boundaries for the follow-up are:
+
+| Boundary           | Implementation and required owner evidence                                                                                                                                                                                                                                                                                   |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Terms and purchase | The default Payment runtime uses the governed Customer Context term adapter. It verifies the exact purchase, buyer, Storefront, amount, correlation and term selection through the Checkout evidence contract before calling Customer Context. Customer Context resolves C15 semantics and its own Current policy.           |
+| Commitment Attempt | New proof issuance and Current validation verify the original Attempt, selected Payment, purchasing scope, payable, term and frozen time through the owner contract. The proof retains the original owner reference. Historical rows remain readable, with no Current proof supplied for legacy rows without that reference. |
+| Manual refund      | The existing local evidence Action verifies terminal and unknown outcomes and corrections against the original executor's retained record. The verifier supplies the governed destination reference and the exact refund, original collection, immutable material, route, scope and source occurrence.                       |
+| Provider recovery  | A registered recovery Action can admit an exact replay using C17's retained original dispatch guarantee. Replay uses the original binding, request and idempotency key, and checks its window again at dispatch. Core requires a matching completion subscriber for the admitted revision.                                   |
+| Staff refund       | The registered refund Action supplies its exact Payment target to Core. Native authorization tests use real role cells, access projection and SpiceDB.                                                                                                                                                                       |
+
+Production activation of these paths requires Checkout purchasing evidence, the Order Attempt owner,
+the manual executor's evidence verifier and the C17 adapter. Test fixtures supply these deferred owner
+contracts. Provider sandbox conformance is tracked by #1159. The proof expiry policy and the behavior of
+separate receipt exports without a common transaction identifier remain separate questions.
+
+Run `pnpm --filter @app/payment test:unit` and
+`pnpm --filter @app/payment test:integration --pool.maxWorkers 1` against a migrated local database.
+The native suite exercises verified purchase facts, frozen Attempt time, retained manual refund
+destination, staff target enforcement, and provider recovery across a matched delivery, lease expiry,
+worker restart and R1 drain. The follow-up PR records the tested revision and results.
+
+## Original C16 run
 
 | Item                                          | Value                                            |
 | --------------------------------------------- | ------------------------------------------------ |
@@ -14,11 +37,11 @@ production journey claim.
 | `pnpm --filter @app/payment test:unit`        | 21 files, 229/229 passed                         |
 | `pnpm --filter @app/payment test:integration` | 20 files, 174/174 passed                         |
 
-### Failing at the time of this run
+### Failures in the original run
 
 None. Both suites passed in full in this run.
 
-## What is real and what is a fixture
+## Original test boundaries
 
 | Boundary                                                                                                                               | In these tests                                                                                                                                                             |
 | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -104,9 +127,7 @@ U = `tests/unit`, I = `tests/integration`.
 | An unsafe unresolved task still prevents false completion         | I acceptance-composition-fence-postgres: `#1153 An unsafe unresolved task still prevents false completion…` (real Core close admission, drain, drain poll, seal and Outbox matcher: the INDETERMINATE COLLECT is Core durable work of R1, so R1 neither drains nor seals, before or after the Outbox rows are matched); I `#1151 Closing admission retains unresolved accepted work…`; I `#1151 Late callback is admitted by a compatible new runtime…` (the unknown effect is tracked under R2 and released by the proven outcome) | pass / pass / pass |
 | Owner tests are not reported as provider conformance              | this file                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | see below          |
 
-## Outstanding completion dependencies
-
-These limits are still true:
+## Dependencies recorded in the baseline run
 
 - **Owner ports fail closed in production.** `api/payment-production-layers.ts` wires every downstream owner
   port (C15 term + CCC entitlement, C17 gateway binding, Delivery COD capability, pickup capability, #331

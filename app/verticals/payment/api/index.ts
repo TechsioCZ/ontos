@@ -37,7 +37,7 @@ import {
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
 } from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
-import { paymentUnavailableOwnerPortsLive } from './payment-production-layers.ts';
+import { paymentProductionOwnerPortsLive } from './payment-production-layers.ts';
 import {
   paymentCorsAllowedHeaders,
   paymentCorsAllowedMethods,
@@ -142,8 +142,8 @@ const paymentReadRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, paymentR
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provide(activeApplicationCompositionLive),
 );
-/** Deployment composition seam. Cross-owner evidence ports stay fail-closed until their owners publish them. */
-const productionReadRuntimeLive = paymentReadRuntime.pipe(Layer.provideMerge(paymentUnavailableOwnerPortsLive));
+const paymentOwnerEvidenceLive = paymentProductionOwnerPortsLive.pipe(Layer.provide(nodeCryptoLayer));
+const productionReadRuntimeLive = paymentReadRuntime.pipe(Layer.provideMerge(paymentOwnerEvidenceLive));
 
 const paymentActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit, paymentRegistration).pipe(
   Layer.provide(
@@ -161,7 +161,7 @@ const paymentActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit, paym
   ),
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
 );
-const productionActionRuntimeLive = paymentActionRuntime.pipe(Layer.provideMerge(paymentUnavailableOwnerPortsLive));
+const productionActionRuntimeLive = paymentActionRuntime.pipe(Layer.provideMerge(paymentOwnerEvidenceLive));
 
 const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
   Layer.provide(GatewayAssertionRedemptionDatabaseLive),

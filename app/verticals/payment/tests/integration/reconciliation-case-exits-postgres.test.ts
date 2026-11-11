@@ -23,14 +23,13 @@ import type { RecordPaymentLocalEvidencePayloadSchema } from '../../shared/actio
 import type { PaymentExecutionBinding } from '../../shared/domain/payment-execution-binding.ts';
 import { PaymentRefundBasisSchema } from '../../shared/domain/payment-refund-basis.ts';
 import type { PaymentSourceBinding } from '../../shared/domain/source-statement.ts';
-import { configurePaymentSourceAuthorityAction } from '../../src/actions/configure-payment-source-authority.action.ts';
 import { recordPaymentLocalEvidenceAction } from '../../src/actions/record-payment-local-evidence.action.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 import { acceptObservation, decideReconciliation, refundCaseFor } from '../support/refund-action-driver.ts';
 import type { RefundCase } from '../support/refund-action-driver.ts';
 import { refundRuntimeContextAccess, refundRuntimePermission, seedPayment } from '../support/refund-native-runtime.ts';
 import type { RefundNativeRuntime, SeedPaymentOptions } from '../support/refund-native-runtime.ts';
-import { failureCodeOf, makeTestScope, paymentTestRelations, randomUuid } from './database-fixture.ts';
+import { failureCodeOf, makeTestScope, paymentTestRelations } from './database-fixture.ts';
 import {
   COMPOSITION_R1,
   COMPOSITION_R2,
@@ -296,6 +295,20 @@ it.live(
           }),
         );
         expect(held).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED' });
+        const caseId = held.reconciliationCaseId ?? '';
+        expect(
+          yield* reasonOf(
+            evidence.decide({
+              caseId,
+              decision: {
+                _tag: 'ATTACH_EVIDENCE',
+                observationId: held.observationId,
+                operationId: collect.operationId,
+              },
+              reason: 'Proposed correlation without an updated source statement',
+            }),
+          ),
+        ).toBe('payment_reconciliation_decision_not_applicable');
         // Revision 2 of the same occurrence proves the same effect for the Payment.
         expect(
           yield* acceptedAs(
@@ -312,14 +325,6 @@ it.live(
           ),
         ).toBe('ACCEPTED_OBSERVATION/TRANSITION');
         expect(yield* operationOutcome(evidence, payment.paymentId, collect.operationId)).toBe('EFFECT_CONFIRMED');
-        const caseId = held.reconciliationCaseId ?? '';
-        yield* reasonOf(
-          evidence.decide({
-            caseId,
-            decision: { _tag: 'ATTACH_EVIDENCE', observationId: held.observationId, operationId: collect.operationId },
-            reason: 'Revision 2 proves the same effect',
-          }),
-        );
         const close = yield* reasonOf(
           evidence.decide({
             caseId,
@@ -444,6 +449,7 @@ const configurePos = (evidence: EvidenceScenario, factFamily: 'LOCAL_POS_COLLECT
   evidence.configureSource({
     factFamily,
     method: 'PAY_ON_PICKUP_OR_ON_SITE',
+    pickupCapabilityRef: pickupBinding.pickupCapabilityRef,
     reason: `Store POS ${factFamily}`,
     refundRoute: factFamily === 'REFUND_EXECUTION',
     source: posOperator,
@@ -636,32 +642,19 @@ interface TwoPayments {
   readonly second: { readonly collectOperationId: string; readonly paymentId: string };
 }
 
-const configureSource = Effect.fn('EffectLedger.configureSource')(function* configureSource(
-  refundCase: RefundCase,
-  source: typeof erpBank | typeof backupBank,
-) {
-  const key = yield* randomUuid;
-  yield* refundCase.native.actionRuntime.runAction({
-    payload: {
-      factFamily: 'BANK_ACCOUNTING_RECEIPT',
-      method: 'BANK_TRANSFER_ADVANCE',
-      reason: 'The ERP bank account reports bank-transfer receipts',
-      refundRoute: false,
-      source,
-      status: 'ACTIVE',
-      submitterPrincipalIds: [refundCase.scope.principalId],
-    },
-    principal: refundCase.principal,
-    registration: configurePaymentSourceAuthorityAction,
-    transport: { correlationId: 'payment-effect-ledger', idempotencyKey: key },
-  });
-});
-
 /** Two pending bank-transfer Payments of one Tenant / Selling Legal Entity and the ERP receipt authority. */
 const twoBankTransferPayments = Effect.fn('EffectLedger.twoPayments')(function* twoPayments() {
-  const refundCase = yield* refundCaseFor(yield* nativeLedgerRuntime, { ...bankTransferPayment, gatewayRoute: false });
+  const refundCase = yield* refundCaseFor(yield* nativeLedgerRuntime, {
+    ...bankTransferPayment,
+    gatewayRoute: false,
+    receiptSource: {
+      ...erpBank,
+      factFamily: 'BANK_ACCOUNTING_RECEIPT',
+      method: 'BANK_TRANSFER_ADVANCE',
+      refundRoute: false,
+    },
+  });
   const second = yield* seedPayment(refundCase.native.database, refundCase.scope, bankTransferPayment);
-  yield* configureSource(refundCase, erpBank);
   return { first: refundCase.payment, refundCase, second } satisfies TwoPayments;
 });
 

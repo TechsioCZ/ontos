@@ -34,9 +34,11 @@ export interface ReadTestOwnerQuery {
 export interface ReadTestHarnessOptions {
   /** The access gate's scripted answer for every protected Read (a v2 carrier decides here). */
   readonly access?: TestAccessOutcome | Readonly<Record<string, TestAccessOutcome>>;
+  readonly applicationComposition?: ReadRuntimeOptions['applicationComposition'];
   readonly compositionRevision?: string;
   /** Explicit driver rows for owner SQL; unexpected statements must fail rather than supply empty. */
   readonly executeOwnerQuery: (query: ReadTestOwnerQuery) => Effect.Effect<readonly object[], SqlError>;
+  readonly expectedDeployment?: ReadRuntimeOptions['expectedDeployment'];
   /** Observes the owner overlay input the runtime builds inside the transaction and answers it (O70). */
   readonly onOwnerAuthorization?: (input: OwnerAuthorizationInput) => OwnerAuthorizationDecision;
   readonly operationTime: Date;
@@ -226,7 +228,7 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       ),
     recheckWrite: () => Effect.void,
   });
-  const runtimeOptions: ReadRuntimeOptions = {
+  let runtimeOptions: ReadRuntimeOptions = {
     accessDecision: makeScriptedBoundAccessGate(options.access ?? options.permissionDecision ?? 'denied').bound,
     onStage: (stage) => {
       stages.push(stage);
@@ -236,15 +238,16 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
         Effect.succeed(options.onOwnerAuthorization?.(input) ?? options.ownerAuthorizationDecision ?? 'denied'),
     },
   };
-  const runtime = makeReadRuntime(
-    { executor },
-    gateway,
-    scopeResolver,
-    contextAccess,
-    options.ownerRegistration === undefined
-      ? runtimeOptions
-      : { ...runtimeOptions, ownerRegistration: options.ownerRegistration },
-  );
+  if (options.applicationComposition !== undefined) {
+    runtimeOptions = { ...runtimeOptions, applicationComposition: options.applicationComposition };
+  }
+  if (options.expectedDeployment !== undefined) {
+    runtimeOptions = { ...runtimeOptions, expectedDeployment: options.expectedDeployment };
+  }
+  if (options.ownerRegistration !== undefined) {
+    runtimeOptions = { ...runtimeOptions, ownerRegistration: options.ownerRegistration };
+  }
+  const runtime = makeReadRuntime({ executor }, gateway, scopeResolver, contextAccess, runtimeOptions);
   return {
     layer: Layer.mergeAll(Layer.succeed(ReadRuntime, runtime), Layer.succeed(ContextAccess, contextAccess)),
     runtime,
