@@ -1,5 +1,5 @@
 import { Client, isSpecType, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-import { Array as EffectArray, Effect, Option, Redacted, Schema } from 'effect';
+import { Array as EffectArray, Duration, Effect, Option, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
 import { proofToolCall } from './tool-call.mts';
 
@@ -10,22 +10,74 @@ class McpTransportFailure extends Schema.TaggedError<McpTransportFailure>()('Mcp
   cause: Schema.Defect(),
 }) {}
 
-/** The server speaks the current MCP revision only, so every client pins it. */
+/** One authenticated MCP request of a proof client: its method and the time until the SDK had its answer. */
+export interface McpRequestTiming {
+  readonly method: string;
+  readonly ms: number;
+}
+
+const DISCOVER = 'server/discover';
+const LIST_TOOLS = 'tools/list';
+const CALL_TOOL = 'tools/call';
+
+/** Longest acceptable time of one authenticated request, by MCP method. */
+const MCP_LATENCY_BUDGET_MS = new Map([
+  [DISCOVER, 3000],
+  [CALL_TOOL, 10_000],
+  [LIST_TOOLS, 3000],
+]);
+
+/** The requests over their budget, as `method ms` lines (empty when every request is within it). */
+export const overBudget = (timings: readonly McpRequestTiming[]): readonly string[] =>
+  timings.flatMap(({ method, ms }) => {
+    const budget = MCP_LATENCY_BUDGET_MS.get(method);
+    return budget !== undefined && ms > budget ? [`${method} ${ms} ms > ${budget} ms`] : [];
+  });
+
+/** The slowest request of each method, as `method max ms (count)`. */
+export const latencySummary = (timings: readonly McpRequestTiming[]): string =>
+  [...Map.groupBy(timings, ({ method }) => method)]
+    .map(([method, entries]) => `${method} max ${Math.max(...entries.map(({ ms }) => ms))} ms (${entries.length}×)`)
+    .join(', ');
+
+/** Every timed request of each proof client, in the order it was sent. */
+const clientTimings = new WeakMap<Client, McpRequestTiming[]>();
+
+/** The requests this client has sent so far (connect = `server/discover`, list, calls). */
+export const timingsOf = (client: Client): readonly McpRequestTiming[] => clientTimings.get(client) ?? [];
+
+/** Runs one request of `client` and records how long it took. */
+const timedRequest = <A, E, R>(client: Client, method: string, request: Effect.Effect<A, E, R>) =>
+  Effect.timed(request).pipe(
+    Effect.map(([elapsed, value]) => {
+      const timings = clientTimings.get(client) ?? [];
+      timings.push({ method, ms: Math.round(Duration.toMillis(elapsed)) });
+      clientTimings.set(client, timings);
+      return value;
+    }),
+  );
+
+/** The server speaks the current MCP revision only, so every client pins it. Its requests are timed. */
 export const connectMcp = (serverUrl: string, accessToken: Redacted.Redacted) =>
   Effect.gen(function* connectClient() {
     const client = new Client(
       { name: 'ontos-oauth-e2e', version: '1.0.0' },
       { versionNegotiation: { mode: { pin: MODERN_PROTOCOL_VERSION } } },
     );
-    yield* Effect.tryPromise({
-      catch: (cause) => new McpTransportFailure({ cause }),
-      try: async () =>
-        await client.connect(
-          new StreamableHTTPClientTransport(new URL(serverUrl), {
-            requestInit: { headers: { authorization: `Bearer ${Redacted.value(accessToken)}` } },
-          }),
-        ),
-    }).pipe(
+    // A pinned 2026-07-28 client connects with exactly one `server/discover`.
+    yield* timedRequest(
+      client,
+      DISCOVER,
+      Effect.tryPromise({
+        catch: (cause) => new McpTransportFailure({ cause }),
+        try: async () =>
+          await client.connect(
+            new StreamableHTTPClientTransport(new URL(serverUrl), {
+              requestInit: { headers: { authorization: `Bearer ${Redacted.value(accessToken)}` } },
+            }),
+          ),
+      }),
+    ).pipe(
       Effect.onError(() =>
         Effect.tryPromise({
           catch: (cause) => new McpTransportFailure({ cause }),
@@ -36,6 +88,14 @@ export const connectMcp = (serverUrl: string, accessToken: Redacted.Redacted) =>
     const protocolVersion = client.getNegotiatedProtocolVersion();
     return { client, protocolVersion };
   });
+
+/** The client's tools (`tools/list`), timed. */
+export const listTools = (client: Client) =>
+  timedRequest(
+    client,
+    LIST_TOOLS,
+    Effect.tryPromise(async () => await client.listTools()),
+  );
 
 /** Closes the foreign MCP client in its caller's fiber. */
 export const closeMcpClient = (client: Client) => Effect.tryPromise(async () => await client.close());
@@ -56,7 +116,11 @@ export const callJson = (client: Client, name: string, args: ToolArguments = {})
     const result = yield* proofToolCall(
       name,
       args,
-      Effect.tryPromise(async () => await client.callTool({ arguments: args, name })),
+      timedRequest(
+        client,
+        CALL_TOOL,
+        Effect.tryPromise(async () => await client.callTool({ arguments: args, name })),
+      ),
     );
     const content = EffectArray.isArray(result.content) ? result.content : [];
     const text = content
@@ -76,7 +140,7 @@ export const callJson = (client: Client, name: string, args: ToolArguments = {})
 const ToolListSchema = Schema.Struct({
   id: Schema.Literal(1),
   jsonrpc: Schema.Literal('2.0'),
-  method: Schema.Literal('tools/list'),
+  method: Schema.Literal(LIST_TOOLS),
   params: Schema.Struct({}),
 });
 
@@ -93,7 +157,7 @@ export const rawMcpStatus = (serverUrl: string, accessToken: Option.Option<Redac
     const encoded = yield* HttpClientRequest.schemaBodyJson(ToolListSchema)(request, {
       id: 1,
       jsonrpc: '2.0',
-      method: 'tools/list',
+      method: LIST_TOOLS,
       params: {},
     });
     const response = yield* http.execute(encoded);
