@@ -111,6 +111,9 @@ const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options
         if (selected === undefined || claimed) {
           return [];
         }
+        // This fixture has no Core consumer module row. Never fabricate a
+        // candidate that a required installation join would have discarded.
+        expect(statement).not.toContain('inner join "core"."tenant_module_states"');
         return [
           {
             actionInvocationId: invocationId,
@@ -392,6 +395,33 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
       );
       expect(admission.intrinsic.get(moduleKey)).toEqual(['provider.tenant-control']);
       expect(yield* isGenuineCoreOutboxWorker(tenantWorker)).toBe(false);
+      const statements: string[] = [];
+      const database = yield* makeTestDatabase((statement) =>
+        Effect.sync(() => {
+          statements.push(statement);
+          if (statement.includes("current_setting('transaction_isolation')")) {
+            return [{ isolation: 'read committed' }];
+          }
+          if (statement.includes('from "core"."application_composition_authority"')) {
+            return [{ phase: 'active', revision: fixture.revision, subscriptionsJson: [], unexpired: true }];
+          }
+          return [];
+        }),
+      );
+      const repository = makeOutboxRepository(database, yield* Crypto.Crypto);
+      yield* fixture.bind(
+        [tenantWorker],
+        repository.claimNext(
+          [tenantWorker],
+          'tenant-worker-control',
+          DateTime.toDateUtc(DateTime.makeUnsafe(0)),
+          fixture.revision,
+        ),
+      );
+      const claim = statements.find((statement) => statement.includes('skip locked'));
+      expect(claim).toContain('inner join "core"."tenant_module_states"');
+      expect(claim).toContain('for update skip locked');
+      expect(claim).toContain('exists (select 1 from "core"."tenant_module_states"');
       const recreated = defineOutboxWorker(tenantWorker.descriptor, () => Effect.void);
       const refusal = yield* fixture.bind(
         [tenantWorker],
@@ -408,9 +438,9 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
       expect(fixture.failures).toEqual([]);
       expect(fixture.results[0]?.claimed).toBe(0);
       const claim = fixture.statements.find(({ sql }) => sql.includes('skip locked'));
-      expect(claim?.sql).toContain('inner join "core"."tenant_module_states"');
+      expect(claim?.sql).not.toContain('inner join "core"."tenant_module_states"');
       expect(claim?.sql).toContain('from "core"."tenants"');
-      expect(claim?.params).toContain('active');
+      expect(claim?.sql).toContain('"core"."tenants"."status" = \'active\'');
       for (const worker of workers) {
         expect(claim?.params).toContain(worker.descriptor.workerKey);
       }

@@ -17,6 +17,7 @@ import {
 } from '../db/schema.ts';
 import type { CoreTransaction, CoreDbExecutor } from '../db/types.ts';
 import { tenantStatesAllowingAccess } from '../modules/module-state-gate.ts';
+import { isGenuineCoreOutboxWorker } from '../modules/module-operation-execution.ts';
 import {
   ApplicationCompositionAuthorityError,
   lockApplicationCompositionAuthority,
@@ -149,11 +150,22 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
             }),
         ),
       );
+      const coreWorkers = yield* Effect.forEach(registrations, isGenuineCoreOutboxWorker, { concurrency: 1 }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ApplicationCompositionAuthorityError({
+              cause,
+              code: 'application_composition_authority_unavailable',
+              reason: 'The Core worker identity could not be verified',
+            }),
+        ),
+      );
+      const coreOnly = coreWorkers.every(Boolean);
       return yield* executor
         .transaction(
           Effect.fn('claimNextEffect')(function* claimNextEffect(transaction: CoreTransaction) {
             yield* lockApplicationCompositionAuthority(transaction, compositionRevision, 'worker');
-            const candidates = yield* transaction
+            const query = transaction
               .select({
                 actionInvocationId: domainEvents.actionInvocationId,
                 attemptsCount: outboxDeliveries.attemptsCount,
@@ -172,14 +184,20 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
               .from(outboxDeliveries)
               .innerJoin(outboxMessages, eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId))
               .innerJoin(domainEvents, eq(domainEvents.domainEventId, outboxMessages.domainEventId))
-              .innerJoin(
-                tenantModuleStates,
-                and(
-                  eq(tenantModuleStates.tenantId, outboxMessages.tenantId),
-                  eq(tenantModuleStates.moduleKey, outboxDeliveries.consumerModuleKey),
-                  inArray(tenantModuleStates.state, BACKGROUND_ELIGIBLE_STATES),
-                ),
-              )
+              .$dynamic();
+            // Genuine Core workers belong to Shell, not a tenant-installed module.
+            // Other workers retain their consumer-state join and its row lock.
+            const eligible = coreOnly
+              ? query
+              : query.innerJoin(
+                  tenantModuleStates,
+                  and(
+                    eq(tenantModuleStates.tenantId, outboxMessages.tenantId),
+                    eq(tenantModuleStates.moduleKey, outboxDeliveries.consumerModuleKey),
+                    inArray(tenantModuleStates.state, BACKGROUND_ELIGIBLE_STATES),
+                  ),
+                );
+            const candidates = yield* eligible
               .where(
                 and(
                   inArray(outboxDeliveries.workerKey, [...byWorkerKey.keys()]),
