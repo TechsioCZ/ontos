@@ -93,6 +93,10 @@ const signIn = async (page: Page, language: Language, credentials: Authenticatio
   await form.getByLabel(labels.password).fill(credentials.password);
   await form.getByRole('button', { name: labels.signIn }).click();
   await expect(page).toHaveURL(new RegExp(`/${language}/?$`, 'u'));
+  // The URL changes before the client hands the login screen over to the signed-in frame ("Opening the app…").
+  // That hand-off waits on the session's company, composition and context reads, which take seconds on a cold
+  // server; the caller's 5 s assertions must measure the rendered frame, not that hand-off.
+  await page.locator('input[name="login"]').waitFor({ state: 'detached' });
 };
 
 /** The browser person this suite drives: the E2E login fixture's own human, in its own tenant. */
