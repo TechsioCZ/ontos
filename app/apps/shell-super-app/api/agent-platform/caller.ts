@@ -6,7 +6,7 @@ import {
   SubjectAccessInspection,
   SubjectInspectionUnavailable,
 } from '@app/core-runtime/access/enforcement';
-import type { SubjectInspectionInput } from '@app/core-runtime/access/enforcement';
+import type { SubjectInspectionInput, SubjectInspectionStages } from '@app/core-runtime/access/enforcement';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
 import type { AgentProposalSubmitRequest } from '@app/shared-contracts/agent-proposals';
 import { Clock, Data, DateTime, Effect, Ref } from 'effect';
@@ -376,40 +376,53 @@ const countInspection = (
     inspectionCalls: current.inspectionCalls + 1,
   }));
 
-/**
- * Read-only connection-ceiling hints. No subject scope, credential or execution authority is returned; the installed
- * catalog is returned only so the caller names the modules from the same load the hints were taken against.
- *
- * A module is usable, writable or proposable as soon as ONE of its carriers or Actions is admitted, so the hints ask
- * only what can still change them: first one Action of every module (both modes), then the remaining Actions of a
- * module whose run or propose answer is still open and the carriers of a module that is not yet usable. The sets are
- * exactly those of asking everything; each asked question is decided and evidenced as alone. At most three inspection
- * calls, whatever the catalog size: the subject's scope and one or two capability batches. Executing an Action never
- * relies on these hints; the gate decides it on its own.
- */
-export const subjectModuleAccess = Effect.fn('AgentPlatform.subjectModuleAccess')(function* subjectModuleAccessEffect(
-  input: SubjectInspectionInput,
-  trace?: Ref.Ref<SubjectAccessTrace>,
-) {
-  const progress = trace ?? (yield* Ref.make(emptySubjectAccessTrace));
-  const inspection = yield* SubjectAccessInspection;
-  const installed = yield* tracedPhase(
-    progress,
-    'modules',
-    (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError((cause) => new AgentStoreUnavailable({ cause }))),
-  );
-  yield* countInspection(progress, {});
-  const selected = yield* tracedPhase(progress, 'scope', inspection.scope(input));
-  const access = new Set<string>();
-  const propose = new Set<string>();
-  const run = new Set<string>();
-  if (selected.decision === 'denied') {
-    return { access, inspectionOnly: true as const, installed, propose, run };
+/** One carrier asked as a capability question. Visibility of a selector-bearing read is a LIST question. */
+const carrierQuestion = (carrier: ModuleCarrier) => ({
+  carrier: { accessDeclaration: carrier.declaration },
+  legalEntityScope: carrier.legalEntityScope,
+  listing: carrier.declaration?.kind === 'read' && carrier.declaration.selectors.length > 0,
+});
+
+/** The scope, then the first Action of every module, then what is still open; the sets fill as answers arrive. */
+const askInStages = Effect.fn('AgentPlatform.subjectAccessStages')(function* askInStages(context: {
+  readonly access: Set<string>;
+  readonly input: SubjectInspectionInput;
+  readonly installed: ShellInstalledCatalog;
+  readonly progress: Ref.Ref<SubjectAccessTrace>;
+  readonly propose: Set<string>;
+  readonly run: Set<string>;
+  readonly stages: SubjectInspectionStages;
+}) {
+  const { access, installed, progress, propose, run, stages } = context;
+  // The questions come from the installed catalogue; the stages answer them in the release they verify. Both must be
+  // one release, or the hints would name modules of one release with answers of another.
+  if (stages.revision !== installed.composition.revision) {
+    return yield* new SubjectInspectionUnavailable({ reason: 'Composition changed during subject inspection' });
   }
   const carriers = moduleCarriers(installed);
   const actions = installed.contracts.flatMap(({ manifest }) =>
     manifest.publicSurface.actions.filter((action) => action.legalEntityScope !== 'forbidden'),
   );
+  yield* countInspection(progress, {});
+  // While the scope is inspected, the subject is resolved in every company context the batches may ask in; nothing
+  // is decided or recorded there, and preparing never fails: a context that cannot be resolved fails only the batch
+  // that asks it, exactly where resolving it in that batch would have failed.
+  const [selected] = yield* Effect.all(
+    [
+      tracedPhase(progress, 'scope', stages.scope),
+      // Preparing only reads ahead: even a defect in it never fails a description the stages can answer.
+      stages
+        .prepare({
+          actionKeys: [...new Set(actions.map(({ actionKey }) => actionKey))],
+          questions: carriers.map(carrierQuestion),
+        })
+        .pipe(Effect.ignoreCause({ log: 'Warn', message: 'Preparing a staged description failed' })),
+    ],
+    { concurrency: 2 },
+  );
+  if (selected.decision === 'denied') {
+    return 'denied' as const;
+  }
   // Every distinct Action key with the modules that own it, and each module's keys in declaration order.
   const ownersOf = new Map<string, Set<string>>();
   const keysOf = new Map<string, string[]>();
@@ -428,15 +441,9 @@ export const subjectModuleAccess = Effect.fn('AgentPlatform.subjectModuleAccess'
     asked: readonly ModuleCarrier[],
   ) {
     yield* countInspection(progress, { actions: actionKeys.length, carriers: asked.length });
-    const inspected = yield* inspection.capabilities({
-      ...input,
+    const inspected = yield* stages.capabilities({
       actionKeys,
-      questions: asked.map((carrier) => ({
-        carrier: { accessDeclaration: carrier.declaration },
-        legalEntityScope: carrier.legalEntityScope,
-        // Visibility for a selector-bearing read is a LIST question, not a targetless record decision.
-        listing: carrier.declaration?.kind === 'read' && carrier.declaration.selectors.length > 0,
-      })),
+      questions: asked.map(carrierQuestion),
     });
     if (inspected.answers.length !== asked.length) {
       return yield* new SubjectInspectionUnavailable({ reason: 'Module inspection returned incomplete authority' });
@@ -476,7 +483,7 @@ export const subjectModuleAccess = Effect.fn('AgentPlatform.subjectModuleAccess'
   });
   const firstKeys = [...new Set([...keysOf.values()].flatMap((keys) => keys.slice(0, 1)))];
   const settled = (moduleId: string) => run.has(moduleId) && propose.has(moduleId);
-  const batches = yield* tracedPhase(
+  yield* tracedPhase(
     progress,
     'capabilities',
     Effect.gen(function* askOpenQuestions() {
@@ -494,14 +501,38 @@ export const subjectModuleAccess = Effect.fn('AgentPlatform.subjectModuleAccess'
       return firstKeys.length > 0 ? 2 : 1;
     }),
   );
-  // Two batches must describe one release: a composition published between them refuses the hints.
-  if (batches > 1) {
-    const after = yield* (yield* ShellInstalledModuleCatalog).load.pipe(
-      Effect.mapError((cause) => new AgentStoreUnavailable({ cause })),
-    );
-    if (after.composition.revision !== installed.composition.revision) {
-      return yield* new SubjectInspectionUnavailable({ reason: 'Composition changed during subject inspection' });
-    }
-  }
+  return 'described' as const;
+});
+
+/**
+ * Read-only connection-ceiling hints. No subject scope, credential or execution authority is returned; the installed
+ * catalog is returned only so the caller names the modules from the same load the hints were taken against.
+ *
+ * A module is usable, writable or proposable as soon as ONE of its carriers or Actions is admitted, so the hints ask
+ * only what can still change them: first one Action of every module (both modes), then the remaining Actions of a
+ * module whose run or propose answer is still open and the carriers of a module that is not yet usable. The sets are
+ * exactly those of asking everything; each asked question is decided and evidenced as alone. At most three inspection
+ * calls, whatever the catalog size: the subject's scope and one or two capability batches. Executing an Action never
+ * relies on these hints; the gate decides it on its own.
+ */
+export const subjectModuleAccess = Effect.fn('AgentPlatform.subjectModuleAccess')(function* subjectModuleAccessEffect(
+  input: SubjectInspectionInput,
+  trace?: Ref.Ref<SubjectAccessTrace>,
+) {
+  const progress = trace ?? (yield* Ref.make(emptySubjectAccessTrace));
+  const inspection = yield* SubjectAccessInspection;
+  const installed = yield* tracedPhase(
+    progress,
+    'modules',
+    (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError((cause) => new AgentStoreUnavailable({ cause }))),
+  );
+  const access = new Set<string>();
+  const propose = new Set<string>();
+  const run = new Set<string>();
+  // The scope and both batches are stages of ONE inspection: one subject resolution per company context and one
+  // composition-revision check for the whole description, as when everything was asked in one batch.
+  yield* inspection.staged(input, (stages) =>
+    askInStages({ access, input, installed, progress, propose, run, stages }),
+  );
   return { access, inspectionOnly: true as const, installed, propose, run };
 });

@@ -12,8 +12,10 @@ import {
   SubjectAccessInspection,
   SubjectInspectionUnavailable,
 } from '@app/core-runtime/access/enforcement';
+import type { SubjectInspectionStages } from '@app/core-runtime/access/enforcement';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
-import { Effect, Layer, Predicate, Ref, Result, Schema } from 'effect';
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Predicate, Ref, Result, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
 import { ActionPermissionCheckError } from '../../../../../packages/core-runtime/src/actions/errors.ts';
@@ -892,7 +894,12 @@ it.effect('denies a foreign-tenant subject without changing the requester tenant
 );
 
 /** One routine run Action of `owner`, under an access key unique within that module. */
-const moduleAction = (owner: string, actionKey: string, owningModuleId = owner): OntosActionContract => {
+const moduleAction = (
+  owner: string,
+  actionKey: string,
+  owningModuleId = owner,
+  legalEntityScope: OntosActionContract['legalEntityScope'] = 'required',
+): OntosActionContract => {
   actionFixtureSequence += 1;
   return Schema.decodeUnknownSync(OntosActionContractSchema)({
     accessDeclaration: {
@@ -914,7 +921,7 @@ const moduleAction = (owner: string, actionKey: string, owningModuleId = owner):
       scope: 'tenant',
     },
     idempotency: 'required',
-    legalEntityScope: 'required',
+    legalEntityScope,
     owningModuleId,
     schemaVersion: '1',
   });
@@ -1113,6 +1120,22 @@ const withUnavailableRun = (answered: BatchAnswer, actionKey: string): BatchAnsw
   ),
 });
 
+/** Stages whose first capability batch answers `actionKey` unavailable; `batches` counts the batches asked. */
+const unavailableInFirstBatch = (
+  stages: SubjectInspectionStages,
+  batches: { count: number },
+  actionKey: string,
+): SubjectInspectionStages => ({
+  ...stages,
+  capabilities: (asked) =>
+    stages.capabilities(asked).pipe(
+      Effect.map((answered) => {
+        batches.count += 1;
+        return batches.count > 1 ? answered : withUnavailableRun(answered, actionKey);
+      }),
+    ),
+});
+
 it.effect('never reads an unavailable first-batch Action answer as denied, even when the next batch would allow', () =>
   Effect.gen(function* unavailableAnswerFailsClosed() {
     const { installed, keyOf, snapshot } = yield* actionModulesCatalog({
@@ -1124,20 +1147,15 @@ it.effect('never reads an unavailable first-batch Action answer as denied, even 
       subjects: [{ legalEntityId, principalId, tenantId }],
     });
     // The first capability batch answers alpha's first key `unavailable`; a later batch would answer it allowed.
-    let batches = 0;
+    const batches = { count: 0 };
     const answeringUnavailableOnce = Layer.effect(
       SubjectAccessInspection,
       Effect.gen(function* unavailableOnce() {
         const service = yield* SubjectAccessInspection;
         return {
           ...service,
-          capabilities: (input: Parameters<typeof service.capabilities>[0]) =>
-            service.capabilities(input).pipe(
-              Effect.map((answered) => {
-                batches += 1;
-                return batches > 1 ? answered : withUnavailableRun(answered, 'alpha.mod.first');
-              }),
-            ),
+          staged: (input, body) =>
+            service.staged(input, (stages) => body(unavailableInFirstBatch(stages, batches, 'alpha.mod.first'))),
         };
       }),
     ).pipe(Layer.provideMerge(inspection.layer));
@@ -1147,6 +1165,467 @@ it.effect('never reads an unavailable first-batch Action answer as denied, even 
       Effect.flip,
     );
     expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
-    expect(batches).toBe(1);
+    expect(batches.count).toBe(1);
+  }),
+);
+
+/**
+ * The published stages without sharing: `staged` answered by the plain calls, each resolving the subject on its own
+ * and writing its evidence before it answers. The reference a staged description must equal.
+ */
+type InspectionService = (typeof SubjectAccessInspection)['Service'];
+
+/** Stages answered by the plain calls of `service`; only the verified revision comes from the staged inspection. */
+const plainStagesOf = (
+  service: InspectionService,
+  input: Parameters<InspectionService['staged']>[0],
+  revision: string,
+): SubjectInspectionStages => ({
+  capabilities: (asked) => service.capabilities({ ...input, ...asked }),
+  prepare: () => Effect.void,
+  revision,
+  scope: service.scope(input),
+});
+
+const plainStages = (inspection: ReturnType<typeof subjectInspectionFixture>) =>
+  Layer.effect(
+    SubjectAccessInspection,
+    Effect.gen(function* plainStagedInspection() {
+      const service = yield* SubjectAccessInspection;
+      return {
+        ...service,
+        staged: (input, body) => service.staged(input, ({ revision }) => body(plainStagesOf(service, input, revision))),
+      };
+    }),
+  ).pipe(Layer.provideMerge(inspection.layer));
+
+it.effect('writes the same evidence as the unshared stages when the second batch fails', () =>
+  Effect.gen(function* evidenceOfAFailedDescription() {
+    // alpha's first Action is refused (a refusal leaves evidence); its second key cannot be read in batch two.
+    const { installed, keyOf, snapshot } = yield* actionModulesCatalog({
+      'alpha.mod': [moduleAction('alpha.mod', 'alpha.mod.first'), moduleAction('alpha.mod', 'alpha.mod.second')],
+    });
+    const broken = keyOf.get('alpha.mod.second') ?? '';
+    const fixture = () =>
+      subjectInspectionFixture({
+        capabilities: [{ key: broken, modes: ['run'] as const }],
+        onCapabilityRead: (key) =>
+          key === broken ? Effect.fail(accessDecisionUnavailable('second key unreadable')) : Effect.void,
+        snapshot,
+        subjects: [{ legalEntityId, principalId, tenantId }],
+      });
+    const shared = fixture();
+    const unshared = fixture();
+    const catalogLoad = { load: Effect.succeed(installed) };
+    const failure = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, catalogLoad),
+      Effect.provide(shared.layer),
+      Effect.flip,
+    );
+    const reference = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, catalogLoad),
+      Effect.provide(plainStages(unshared)),
+      Effect.flip,
+    );
+    expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
+    expect(Predicate.isTagged(reference, 'SubjectInspectionUnavailable')).toBe(true);
+    // Every row of every decision taken is written, before the hints fail, exactly as the unshared stages write them.
+    expect(shared.reads.evidenceRows).toBeGreaterThan(0);
+    expect({ rows: shared.reads.evidenceRows, writes: shared.reads.evidenceWrites }).toEqual({
+      rows: unshared.reads.evidenceRows,
+      writes: unshared.reads.evidenceWrites,
+    });
+  }),
+);
+
+/** Two modules of two Actions each, nobody granted: every asked Action is refused, so both batches leave evidence. */
+const refusedTwoBatchCatalog = actionModulesCatalog({
+  'alpha.mod': [moduleAction('alpha.mod', 'alpha.mod.first'), moduleAction('alpha.mod', 'alpha.mod.second')],
+  'beta.mod': [moduleAction('beta.mod', 'beta.mod.first'), moduleAction('beta.mod', 'beta.mod.second')],
+});
+
+/** Moves the test clock 5 ms at a time, letting forked work run in between, until `done` holds (at most 1 s). */
+const advanceUntil = (done: () => boolean, step = 0): Effect.Effect<void> =>
+  step >= 200 || done()
+    ? Effect.void
+    : Effect.yieldNow.pipe(
+        Effect.andThen(TestClock.adjust('5 millis')),
+        Effect.andThen(Effect.suspend(() => advanceUntil(done, step + 1))),
+      );
+
+/** Moves the test clock until `fiber` has finished (at most 1 s of test time). */
+const advanceUntilDone = (fiber: Fiber.Fiber<unknown, unknown>) => advanceUntil(() => fiber.pollUnsafe() !== undefined);
+
+it.effect('reports the failed stage, not a failed evidence write, and lets that write settle first', () =>
+  Effect.gen(function* stageAndWriteFail() {
+    // alpha's first Action is refused in batch one, whose evidence write then fails; batch two cannot read its key.
+    const { installed, keyOf, snapshot } = yield* actionModulesCatalog({
+      'alpha.mod': [moduleAction('alpha.mod', 'alpha.mod.first'), moduleAction('alpha.mod', 'alpha.mod.second')],
+    });
+    const broken = keyOf.get('alpha.mod.second') ?? '';
+    const settled = { write: false };
+    const inspection = subjectInspectionFixture({
+      capabilities: [{ key: broken, modes: ['run'] as const }],
+      onCapabilityRead: (key) =>
+        key === broken ? Effect.fail(accessDecisionUnavailable('second key unreadable')) : Effect.void,
+      onEvidenceWrite: () =>
+        Effect.sleep('40 millis').pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              settled.write = true;
+            }),
+          ),
+          Effect.andThen(Effect.fail(accessDecisionUnavailable('write refused'))),
+        ),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const described = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+      Effect.flip,
+      Effect.forkChild,
+    );
+    yield* advanceUntilDone(described);
+    const failure = yield* Fiber.join(described);
+    expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
+    // The unreadable key's answer, never the write's refusal; and the write had settled before the answer.
+    expect(failure.cause).toEqual([{ code: 'unavailable.intent' }]);
+    expect(settled.write).toBe(true);
+  }),
+);
+
+/** The evidence rows of each write a full description of `refusedTwoBatchCatalog` makes, without any write hook. */
+const referenceWrites = Effect.gen(function* referenceWrites() {
+  const { installed, snapshot } = yield* refusedTwoBatchCatalog;
+  const inspection = subjectInspectionFixture({ snapshot, subjects: [{ legalEntityId, principalId, tenantId }] });
+  yield* subjectModuleAccess(humanRequest).pipe(
+    Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+    Effect.provide(inspection.layer),
+  );
+  return { first: inspection.writtenRows.get(1) ?? -1, second: inspection.writtenRows.get(2) ?? -1 };
+});
+
+it.effect('a failed evidence write never cancels the other batch write: every write settles before the failure', () =>
+  Effect.gen(function* failedWriteDoesNotCancel() {
+    const reference = yield* referenceWrites;
+    const { installed, snapshot } = yield* refusedTwoBatchCatalog;
+    // Batch one's write fails after 20 ms; batch two's write, already started, needs 60 ms and succeeds.
+    const inspection = subjectInspectionFixture({
+      onEvidenceWrite: (write) =>
+        write === 1
+          ? Effect.sleep('20 millis').pipe(Effect.andThen(Effect.fail(accessDecisionUnavailable('write refused'))))
+          : Effect.sleep('60 millis'),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const described = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+      Effect.flip,
+      Effect.forkChild,
+    );
+    yield* advanceUntilDone(described);
+    const failure = yield* Fiber.join(described);
+    expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
+    // Batch two's rows were written in full, exactly as an undisturbed description writes them.
+    expect(reference.second).toBeGreaterThan(0);
+    expect([...inspection.writtenRows]).toEqual([[2, reference.second]]);
+  }),
+);
+
+it.effect('a request that goes away mid-description still lets every started evidence write settle', () =>
+  Effect.gen(function* abortedDescription() {
+    const reference = yield* referenceWrites;
+    const { installed, snapshot } = yield* refusedTwoBatchCatalog;
+    const writesStarted = { count: 0 };
+    const inspection = subjectInspectionFixture({
+      onEvidenceWrite: () =>
+        Effect.sync(() => {
+          writesStarted.count += 1;
+        }).pipe(Effect.andThen(Effect.sleep('50 millis'))),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const fiber = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+      Effect.forkChild,
+    );
+    // Both batches have run and their writes are in flight when the request is cut off. The interruption waits for
+    // the started writes, which settle once their 50 ms have passed.
+    yield* advanceUntil(() => inspection.writtenRows.size === 0 && writesStarted.count === 2);
+    const interruption = yield* Effect.forkChild(Fiber.interrupt(fiber));
+    yield* advanceUntilDone(interruption);
+    yield* Fiber.join(interruption);
+    // No answer is returned, but every started write committed: both batches' rows are there.
+    expect([...inspection.writtenRows]).toEqual([
+      [1, reference.first],
+      [2, reference.second],
+    ]);
+  }),
+);
+
+it.effect('fails the description when an evidence write outlives its deadline, and never answers without it', () =>
+  Effect.gen(function* boundedWrite() {
+    const { installed, snapshot } = yield* refusedTwoBatchCatalog;
+    // Batch one's write waits a minute (an exhausted pool, say); nothing but its own deadline can end that wait.
+    const inspection = subjectInspectionFixture({
+      onEvidenceWrite: (write) => (write === 1 ? Effect.sleep('60 seconds') : Effect.void),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const described = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+      Effect.flip,
+      Effect.forkChild,
+    );
+    yield* advanceUntil(() => inspection.writtenRows.has(2));
+    yield* TestClock.adjust('10 seconds');
+    yield* advanceUntilDone(described);
+    const answeredByDeadline = described.pollUnsafe() !== undefined;
+    // Let a write the deadline did not end finish, so the test never hangs on it.
+    yield* TestClock.adjust('60 seconds');
+    yield* advanceUntilDone(described);
+    expect(answeredByDeadline).toBe(true);
+    const failure = yield* Fiber.join(described);
+    expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
+    expect(inspection.writtenRows.has(1)).toBe(false);
+  }),
+);
+
+/** A module with one Action asked in the tenant context and one asked in the company. */
+const tenantAndCompanyCatalog = actionModulesCatalog({
+  'alpha.mod': [
+    moduleAction('alpha.mod', 'alpha.mod.tenant-wide', 'alpha.mod', 'optional'),
+    moduleAction('alpha.mod', 'alpha.mod.in-company'),
+  ],
+});
+const otherCompany = '71000000-0000-4000-8000-000000000099';
+
+/** Counts the reads in flight at once; each counted read yields first, so concurrent reads overlap. */
+const inFlightReads = (counter: { now: number; peak: number }) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      counter.now += 1;
+      counter.peak = Math.max(counter.peak, counter.now);
+    }),
+    () => Effect.forEach(Array.from({ length: 5 }), () => Effect.yieldNow, { discard: true }),
+    () =>
+      Effect.sync(() => {
+        counter.now -= 1;
+      }),
+  );
+
+it.effect('a staged description never holds more than two pooled intent reads at once, in any stage', () =>
+  Effect.gen(function* stagedPermits() {
+    // Two modules, each with Actions asked in the tenant context and in the company: several reads per stage.
+    const { installed, snapshot } = yield* actionModulesCatalog({
+      'alpha.mod': [
+        moduleAction('alpha.mod', 'alpha.mod.tenant-one', 'alpha.mod', 'optional'),
+        moduleAction('alpha.mod', 'alpha.mod.tenant-two', 'alpha.mod', 'optional'),
+        moduleAction('alpha.mod', 'alpha.mod.company-one'),
+        moduleAction('alpha.mod', 'alpha.mod.company-two'),
+      ],
+      'beta.mod': [
+        moduleAction('beta.mod', 'beta.mod.tenant-one', 'beta.mod', 'optional'),
+        moduleAction('beta.mod', 'beta.mod.company-one'),
+        moduleAction('beta.mod', 'beta.mod.company-two'),
+      ],
+    });
+    const counter = { now: 0, peak: 0 };
+    const inspection = subjectInspectionFixture({
+      onCapabilityRead: () => inFlightReads(counter),
+      onScopeRead: () => inFlightReads(counter),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+    );
+    expect(inspection.reads.cells).toBeGreaterThan(2);
+    expect(counter.peak).toBeLessThanOrEqual(2);
+  }),
+);
+
+it.effect(
+  'answers a denied scope as denied, with the plain path evidence, although preparing another context failed',
+  () =>
+    Effect.gen(function* preparedFailureUnderDeniedScope() {
+      const { installed, snapshot } = yield* tenantAndCompanyCatalog;
+      // The person belongs to another company, so the scope check denies; the tenant context cannot even be read.
+      const fixture = () =>
+        subjectInspectionFixture({
+          onScopeRead: (_principal, company) =>
+            company === undefined ? Effect.fail(accessDecisionUnavailable('tenant context unreadable')) : Effect.void,
+          snapshot,
+          subjects: [{ legalEntityId: otherCompany, principalId, tenantId }],
+        });
+      const staged = fixture();
+      const unshared = fixture();
+      const catalogLoad = { load: Effect.succeed(installed) };
+      const hints = yield* subjectModuleAccess(humanRequest).pipe(
+        Effect.provideService(ShellInstalledModuleCatalog, catalogLoad),
+        Effect.provide(staged.layer),
+      );
+      const reference = yield* subjectModuleAccess(humanRequest).pipe(
+        Effect.provideService(ShellInstalledModuleCatalog, catalogLoad),
+        Effect.provide(plainStages(unshared)),
+      );
+      expect(sortedHints(hints)).toEqual({ access: [], propose: [], run: [] });
+      expect(sortedHints(hints)).toEqual(sortedHints(reference));
+      expect(staged.reads.evidenceRows).toBe(unshared.reads.evidenceRows);
+    }),
+);
+
+/** The real stages, except that preparing dies of a defect outside any context resolution. */
+const withDyingPrepare = (stages: SubjectInspectionStages): SubjectInspectionStages => ({
+  ...stages,
+  prepare: () => Effect.die('prepare defect'),
+});
+
+/** The staged inspection with `withDyingPrepare` stages. */
+const dyingPrepare = (inspection: ReturnType<typeof subjectInspectionFixture>) =>
+  Layer.effect(
+    SubjectAccessInspection,
+    Effect.gen(function* dyingPrepareInspection() {
+      const service = yield* SubjectAccessInspection;
+      return {
+        ...service,
+        staged: (input, body) => service.staged(input, (stages) => body(withDyingPrepare(stages))),
+      };
+    }),
+  ).pipe(Layer.provideMerge(inspection.layer));
+
+for (const company of [otherCompany, legalEntityId]) {
+  it.effect(
+    `answers exactly as the unshared stages when preparing dies (${company === legalEntityId ? 'allowed' : 'denied'} scope)`,
+    () =>
+      Effect.gen(function* prepareDefect() {
+        const { installed, snapshot } = yield* tenantAndCompanyCatalog;
+        const fixture = () =>
+          subjectInspectionFixture({ snapshot, subjects: [{ legalEntityId: company, principalId, tenantId }] });
+        const catalogLoad = { load: Effect.succeed(installed) };
+        const hints = yield* subjectModuleAccess(humanRequest).pipe(
+          Effect.provideService(ShellInstalledModuleCatalog, catalogLoad),
+          Effect.provide(dyingPrepare(fixture())),
+        );
+        const reference = yield* subjectModuleAccess(humanRequest).pipe(
+          Effect.provideService(ShellInstalledModuleCatalog, catalogLoad),
+          Effect.provide(plainStages(fixture())),
+        );
+        expect(sortedHints(hints)).toEqual(sortedHints(reference));
+      }),
+  );
+}
+
+it.effect('a scope check waiting on a shared resolution gets its own answer when the preparing caller fails', () =>
+  Effect.gen(function* preparingCallerFails() {
+    const { snapshot } = yield* tenantAndCompanyCatalog;
+    // The company read is slow; the tenant context fails at once. Preparing starts both before the scope check asks.
+    const fixture = subjectInspectionFixture({
+      onScopeRead: (_principal, company) =>
+        company === undefined
+          ? Effect.fail(accessDecisionUnavailable('tenant context unreadable'))
+          : Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow, { discard: true }),
+      snapshot,
+      subjects: [{ legalEntityId: otherCompany, principalId, tenantId }],
+    });
+    const outcome = yield* Effect.gen(function* stagedScope() {
+      const inspection = yield* SubjectAccessInspection;
+      return yield* inspection.staged(humanRequest, (stages) =>
+        Effect.all(
+          [
+            stages.prepare({ actionKeys: ['alpha.mod.tenant-wide', 'alpha.mod.in-company'], questions: [] }),
+            stages.scope,
+          ],
+          { concurrency: 2 },
+        ),
+      );
+    }).pipe(Effect.provide(fixture.layer), Effect.exit);
+    // The scope check answers as alone: the person is not in this company. Never an interruption or a failure.
+    expect(Exit.isSuccess(outcome) ? outcome.value[1].decision : Cause.pretty(outcome.cause)).toBe('denied');
+  }),
+);
+
+it.effect('a waiter on a shared resolution gets a definite answer when the caller that started it is interrupted', () =>
+  Effect.gen(function* firstCallerInterrupted() {
+    const { snapshot } = yield* tenantAndCompanyCatalog;
+    const entered = yield* Deferred.make<boolean>();
+    const release = yield* Deferred.make<boolean>();
+    const fixture = subjectInspectionFixture({
+      // The company read waits until the test releases it.
+      onScopeRead: (_principal, company) =>
+        company === undefined
+          ? Effect.void
+          : Deferred.succeed(entered, true).pipe(Effect.andThen(Deferred.await(release)), Effect.asVoid),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const outcome = yield* Effect.gen(function* twoCallers() {
+      const inspection = yield* SubjectAccessInspection;
+      return yield* inspection.staged(humanRequest, (stages) =>
+        Effect.gen(function* interruptTheFirst() {
+          const first = yield* Effect.forkChild(stages.scope);
+          yield* Deferred.await(entered);
+          const second = yield* Effect.forkChild(stages.scope.pipe(Effect.timeout('1 second'), Effect.exit));
+          yield* Fiber.interrupt(first);
+          yield* Deferred.succeed(release, true);
+          // A hang would end at the timeout, never stall the suite.
+          yield* TestClock.adjust('2 seconds');
+          return yield* Fiber.join(second);
+        }),
+      );
+    }).pipe(Effect.provide(fixture.layer));
+    expect(Exit.isSuccess(outcome) ? outcome.value.decision : Cause.pretty(outcome.cause)).toBe('allowed');
+  }),
+);
+
+it.effect('fails a description when a release is published while its staged inspection runs', () =>
+  Effect.gen(function* releaseMidDescription() {
+    const { installed, snapshot } = yield* refusedTwoBatchCatalog;
+    const { snapshot: published } = yield* actionModulesCatalog({
+      'alpha.mod': [moduleAction('alpha.mod', 'alpha.mod.first')],
+    });
+    expect(published.composition.revision).not.toBe(snapshot.composition.revision);
+    // The inspection starts on the installed composition; every later load sees the newly published release.
+    const inspection = subjectInspectionFixture({
+      loadedSnapshot: (load) => (load === 1 ? snapshot : published),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const failure = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+      Effect.flip,
+    );
+    expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
+    // The decisions it took still left their evidence before it failed.
+    expect(inspection.reads.evidenceRows).toBeGreaterThan(0);
+  }),
+);
+
+it.effect('refuses hints when a release is published between the installed catalogue and the staged inspection', () =>
+  Effect.gen(function* releaseChangedUnderneath() {
+    // The caller loaded the installed catalogue of one release; the inspection answers in the next one.
+    const { installed } = yield* actionModulesCatalog({ 'alpha.mod': [moduleAction('alpha.mod', 'alpha.mod.first')] });
+    const { snapshot: published } = yield* actionModulesCatalog({
+      'alpha.mod': [moduleAction('alpha.mod', 'alpha.mod.first'), moduleAction('alpha.mod', 'alpha.mod.second')],
+    });
+    expect(published.composition.revision).not.toBe(installed.composition.revision);
+    const inspection = subjectInspectionFixture({
+      snapshot: published,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const failure = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+      Effect.flip,
+    );
+    expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
+    // Refused before any question: nothing was decided, so nothing was recorded.
+    expect(inspection.reads.evidenceWrites).toBe(0);
   }),
 );

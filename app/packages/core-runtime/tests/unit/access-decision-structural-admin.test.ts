@@ -1,10 +1,11 @@
-import { Effect, Option } from 'effect';
+import { Cause, Effect, Exit, Option } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { AccessConfigureBasis } from '../../src/access/changes/authority.ts';
 import type { AccessDecision, DecisionCapabilityPolicy } from '../../src/access/decision/contract.ts';
 import type { AuthorityDeadline, ResolvedAccessScope } from '../../src/access/decision/authority.ts';
-import { decideAccess, decideAccessMany } from '../../src/access/decision/engine.ts';
+import { decideAccess, decideAccessMany, resolveListAccess } from '../../src/access/decision/engine.ts';
+import { accessDecisionUnavailable } from '../../src/access/decision/errors.ts';
 import { explainAccess } from '../../src/access/decision/explain.ts';
 import { withOptional } from '../../src/access/decision/optional.ts';
 import type { AccessScopeId, CapabilityKey } from '../../src/access/ids.ts';
@@ -15,9 +16,11 @@ import type { AccessDeclaration, AccessDeclarationInput } from '../../src/author
 import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
 import {
   agent,
+  agentHolder,
   at,
   capability,
   cell,
+  connect,
   connectionId,
   makeAuthority,
   makeCheck,
@@ -675,3 +678,266 @@ it.effect('answers a marked surface in one batch exactly as one request on its o
     ]);
   }),
 );
+
+for (const batchReads of [false, true]) {
+  it.effect(
+    `a defect in the cell read of a structurally decided request never touches the rest of the batch (${batchReads ? 'batched' : 'single'} reads)`,
+    () =>
+      Effect.gen(function* containedSpeculativeRead() {
+        // The owner's admin key is decided structurally; the routine key needs its role cell.
+        const granted = cell({ capability: otherKey });
+        const spec = withOptional(
+          { batchReads, cells: [granted], legalEntityScope: companyScopeOf(companyA) },
+          'configureBases',
+          [owner] as const,
+        );
+        const routine: DecisionCapabilityPolicy = {
+          ...policy,
+          capabilityKey: otherKey,
+          kind: 'action',
+          risk: 'routine',
+        };
+        const requests = [policy, routine].map((one) => ({
+          actor: actorIn(companyA),
+          now,
+          request: { capability: one, mode: 'run' as const },
+        }));
+        // Reading the admin key's cells dies: only a read of every guarded request's cells asks for them.
+        const base = makeAuthority(spec).port;
+        const { readCellsMany } = base;
+        const dying = withOptional(
+          {
+            ...base,
+            readCells: (query: Parameters<typeof base.readCells>[0]) =>
+              query.capabilityKey === adminKey ? Effect.die('cell read of the admin key') : base.readCells(query),
+          },
+          'readCellsMany',
+          readCellsMany === undefined
+            ? undefined
+            : (queries: Parameters<typeof readCellsMany>[0]) =>
+                queries.some((query) => query.capabilityKey === adminKey)
+                  ? Effect.die('cell read of the admin key')
+                  : readCellsMany(queries),
+        );
+        const [answers] = yield* decideAccessMany(makeCheck({ authority: spec }).port, [
+          { authority: dying, inputs: requests },
+        ]);
+        const single = yield* Effect.forEach(
+          requests,
+          (input) => decideAccess(makeAuthority(spec).port, makeCheck({ authority: spec }).port, input),
+          { concurrency: 1 },
+        );
+        expect(answers?.map(verdictOf)).toEqual(single.map(verdictOf));
+        expect(answers?.map(({ reasons }) => reasons[0]?.code)).toEqual(['structural.owner', 'allow.granted']);
+      }),
+  );
+}
+
+/** The port with every read counted while it is in flight; each read yields so concurrent reads can overlap. */
+const inFlightCounted = (port: ReturnType<typeof makeAuthority>['port'], counter: { now: number; peak: number }) => {
+  const counted = <A, E>(read: Effect.Effect<A, E>): Effect.Effect<A, E> =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        counter.now += 1;
+        counter.peak = Math.max(counter.peak, counter.now);
+      }),
+      () =>
+        Effect.forEach(Array.from({ length: 5 }), () => Effect.yieldNow, { discard: true }).pipe(Effect.andThen(read)),
+      () =>
+        Effect.sync(() => {
+          counter.now -= 1;
+        }),
+    );
+  const { readCellsMany, readConfigureBases } = port;
+  return withOptional(
+    withOptional(
+      {
+        readCells: (query: Parameters<typeof port.readCells>[0]) => counted(port.readCells(query)),
+        readConnection: (query: Parameters<typeof port.readConnection>[0]) => counted(port.readConnection(query)),
+        readScope: (query: Parameters<typeof port.readScope>[0]) => counted(port.readScope(query)),
+        readTeamIds: (query: Parameters<typeof port.readTeamIds>[0]) => counted(port.readTeamIds(query)),
+      },
+      'readCellsMany',
+      readCellsMany === undefined
+        ? undefined
+        : (queries: Parameters<typeof readCellsMany>[0]) => counted(readCellsMany(queries)),
+    ),
+    'readConfigureBases',
+    readConfigureBases === undefined
+      ? undefined
+      : (query: Parameters<typeof readConfigureBases>[0]) => counted(readConfigureBases(query)),
+  );
+};
+
+it.effect('one gate batch never holds more than two pooled intent reads at once, however many groups it plans', () =>
+  Effect.gen(function* boundedReads() {
+    // Two groups, each with a structurally decided admin key and role-cell keys: every read could overlap.
+    const granted = [otherKey, capability('core.access.roles.archive')].map((key) => cell({ capability: key }));
+    const spec = withOptional({ cells: granted, legalEntityScope: companyScopeOf(companyA) }, 'configureBases', [
+      owner,
+    ] as const);
+    const counter = { now: 0, peak: 0 };
+    const requests = [
+      policy,
+      ...granted.map(({ capabilityKey }) => ({
+        ...policy,
+        capabilityKey,
+        kind: 'action' as const,
+        risk: 'routine' as const,
+      })),
+    ].map((one) => ({
+      actor: actorIn(companyA),
+      now,
+      request: { capability: one, mode: 'run' as const },
+    }));
+    const groups = [0, 1].map(() => ({
+      authority: inFlightCounted(makeAuthority(spec).port, counter),
+      inputs: requests,
+    }));
+    const answers = yield* decideAccessMany(makeCheck({ authority: spec }).port, groups);
+    expect(answers.map((group) => group.map(({ reasons }) => reasons[0]?.code))).toEqual([
+      ['structural.owner', 'allow.granted', 'allow.granted'],
+      ['structural.owner', 'allow.granted', 'allow.granted'],
+    ]);
+    // The documented bound of a batch on the request's shared pool.
+    expect(counter.peak).toBeLessThanOrEqual(2);
+  }),
+);
+
+it.effect("a gate batch over a caller's transaction holds one intent read at a time", () =>
+  Effect.gen(function* joinedReadsSerial() {
+    // The same two-group batch as above, but its ports read through one transaction a caller owns.
+    const granted = [otherKey, capability('core.access.roles.archive')].map((key) => cell({ capability: key }));
+    const spec = withOptional({ cells: granted, legalEntityScope: companyScopeOf(companyA) }, 'configureBases', [
+      owner,
+    ] as const);
+    const counter = { now: 0, peak: 0 };
+    const requests = [
+      policy,
+      ...granted.map(({ capabilityKey }) => ({
+        ...policy,
+        capabilityKey,
+        kind: 'action' as const,
+        risk: 'routine' as const,
+      })),
+    ].map((one) => ({ actor: actorIn(companyA), now, request: { capability: one, mode: 'run' as const } }));
+    const groups = [0, 1].map(() => ({
+      authority: {
+        ...inFlightCounted(makeAuthority(spec).port, counter),
+        readsThroughCallerTransaction: true as const,
+      },
+      inputs: requests,
+    }));
+    const answers = yield* decideAccessMany(makeCheck({ authority: spec }).port, groups);
+    expect(answers.map((group) => group.map(({ reasons }) => reasons[0]?.code))).toEqual([
+      ['structural.owner', 'allow.granted', 'allow.granted'],
+      ['structural.owner', 'allow.granted', 'allow.granted'],
+    ]);
+    // Each read installs its scope with its own statement on the one connection: they never overlap.
+    expect(counter.peak).toBe(1);
+  }),
+);
+
+for (const joined of [false, true]) {
+  it.effect(
+    `lists an agent's two sides ${joined ? "one after the other through a caller's transaction" : 'together on the pool'}`,
+    () =>
+      Effect.gen(function* listSides() {
+        // An agent reads its own cells and its person's: two sides, each with its own cell and team reads.
+        const spec = {
+          cells: [cell({ capability: otherKey }), cell({ capability: otherKey, holder: agentHolder() })],
+          connection: connect({
+            ceiling: { cells: [{ capabilityKey: otherKey, mode: 'run' as const, selector: { _tag: 'all' as const } }] },
+          }),
+        };
+        const counter = { now: 0, peak: 0 };
+        const counted = inFlightCounted(makeAuthority(spec).port, counter);
+        const resolution = yield* resolveListAccess(
+          withOptional(counted, 'readsThroughCallerTransaction', joined ? (true as const) : undefined),
+          makeCheck({ authority: spec }).port,
+          {
+            actor: {
+              actor: { _tag: 'Agent', agentId: agent, connectionId, consentRevision: 1, principalId: person },
+              tenantId: tenant,
+            },
+            capability: { ...policy, capabilityKey: otherKey, kind: 'action', risk: 'routine' },
+            mode: 'run',
+            now,
+          },
+        );
+        expect(resolution.decision.outcome).toBe('ALLOWED');
+        expect(counter.peak).toBe(joined ? 1 : 2);
+      }),
+  );
+}
+
+const archiveKey: CapabilityKey = capability('core.access.roles.archive');
+/** Two routine keys a person holds through role cells in company A: nothing is decided structurally. */
+const routineCase = () => {
+  const granted = [otherKey, archiveKey].map((key) => cell({ capability: key }));
+  const spec = { cells: granted, legalEntityScope: companyScopeOf(companyA) };
+  const requests = granted.map(({ capabilityKey }) => ({
+    actor: actorIn(companyA),
+    now,
+    request: {
+      capability: { ...policy, capabilityKey, kind: 'action' as const, risk: 'routine' as const },
+      mode: 'run' as const,
+    },
+  }));
+  return { requests, spec };
+};
+
+it.effect('re-reads only the cell set the read ahead could not read, and keeps the ones it did', () =>
+  Effect.gen(function* partialReRead() {
+    const { requests, spec } = routineCase();
+    const base = makeAuthority(spec).port;
+    const reads = new Map<string, number>();
+    // The read ahead fails (an unreadable intent, not a defect) for one key only; a second read of it succeeds.
+    const flaky = {
+      ...base,
+      readCells: (query: Parameters<typeof base.readCells>[0]) =>
+        Effect.suspend(() => {
+          const count = (reads.get(query.capabilityKey) ?? 0) + 1;
+          reads.set(query.capabilityKey, count);
+          return query.capabilityKey === otherKey && count === 1
+            ? Effect.fail(accessDecisionUnavailable('first read of one key'))
+            : base.readCells(query);
+        }),
+    };
+    const [answers] = yield* decideAccessMany(makeCheck({ authority: spec }).port, [
+      { authority: flaky, inputs: requests },
+    ]);
+    expect(answers?.map(({ reasons }) => reasons[0]?.code)).toEqual(['allow.granted', 'allow.granted']);
+    expect(Object.fromEntries(reads)).toEqual({ [archiveKey]: 1, [otherKey]: 2 });
+  }),
+);
+
+for (const batchReads of [false, true]) {
+  it.effect(
+    `raises a defect in a cell set a request needs, on the read ahead and the re-read alike (${batchReads ? 'batched' : 'single'} reads)`,
+    () =>
+      Effect.gen(function* neededDefect() {
+        const { requests, spec } = routineCase();
+        const base = makeAuthority({ ...spec, batchReads }).port;
+        const { readCellsMany } = base;
+        const dying = withOptional(
+          {
+            ...base,
+            readCells: (query: Parameters<typeof base.readCells>[0]) =>
+              query.capabilityKey === otherKey ? Effect.die('cell read of a needed key') : base.readCells(query),
+          },
+          'readCellsMany',
+          readCellsMany === undefined
+            ? undefined
+            : (queries: Parameters<typeof readCellsMany>[0]) =>
+                queries.some((query) => query.capabilityKey === otherKey)
+                  ? Effect.die('cell read of a needed key')
+                  : readCellsMany(queries),
+        );
+        const exit = yield* Effect.exit(
+          decideAccessMany(makeCheck({ authority: spec }).port, [{ authority: dying, inputs: requests }]),
+        );
+        expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+      }),
+  );
+}

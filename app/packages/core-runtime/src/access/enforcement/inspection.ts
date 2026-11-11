@@ -1,4 +1,5 @@
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { Cause, DateTime, Deferred, Duration, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
+import type { Scope } from 'effect';
 
 import { readVerifiedGatewayCompositionRevision } from '../../auth/system-principal-context-provenance.ts';
 import type { LegalEntityId } from '../ids.ts';
@@ -28,6 +29,7 @@ import type { AccessDecisionLogEntry } from './decision-log.ts';
 import { seamDenial, seamRefusal } from './decisions.ts';
 import { SubjectInspectionUnavailable } from './inspection-contract.ts';
 import type {
+  SubjectInspectionStages,
   SubjectAccessInspectionService,
   SubjectCapabilityAnswer,
   SubjectCapabilityInspectionInput,
@@ -65,6 +67,9 @@ const agentContext = Schema.decodeUnknownOption(agentContextSchema);
 const unavailable = (cause?: unknown) =>
   new SubjectInspectionUnavailable({ cause, reason: 'Subject inspection is unavailable' });
 
+/** How long one staged evidence write may take, a wait for a pooled connection included. */
+const EVIDENCE_WRITE_DEADLINE = Duration.seconds(10);
+
 const SCOPE_MISMATCH = 'deny.scope_mismatch';
 const PRINCIPAL_FORBIDDEN = 'deny.principal_kind_forbidden';
 
@@ -101,26 +106,69 @@ interface PendingQuestion {
   readonly resolved: ResolvedActor;
 }
 
-/** One read per distinct query within one batch; a failed read stays failed for the whole batch. */
-const onceEach = <Query, Value, Failure>(
+/** The resolution of the subject in one company context: its decision when refused, or what decisions are taken in. */
+type ContextResolution =
+  | {
+      readonly actor?: undefined;
+      readonly authority: DecisionAuthorityPort;
+      readonly decision: AccessDecision;
+      readonly resolved?: undefined;
+    }
+  | {
+      readonly actor: ActorContextInput;
+      readonly authority: DecisionAuthorityPort;
+      readonly decision?: undefined;
+      readonly now: Date;
+      readonly resolved: ResolvedActor;
+    };
+
+/** What one inspection's questions share; see `sessionOf`. */
+interface InspectionSession {
+  /** Starts a read a later stage will ask for without waiting on it; a plain inspection starts nothing. */
+  readonly ahead: <A, E>(read: Effect.Effect<A, E>) => Effect.Effect<void>;
+  readonly authority: DecisionAuthorityPort;
+  /** Writes one batch's evidence rows (in one transaction); a staged inspection waits for every write at its end. */
+  readonly record: (rows: readonly AccessDecisionLogEntry[]) => Effect.Effect<void, SubjectInspectionUnavailable>;
+  readonly resolveIn: (
+    legalEntityId: LegalEntityId | undefined,
+  ) => Effect.Effect<ContextResolution, SubjectInspectionUnavailable>;
+}
+
+/** Runs `effect` (interruptibly) and always completes `deferred` with its exit, an interruption included. */
+const settledInto = <Value, Failure>(
+  deferred: Deferred.Deferred<Value, Failure>,
+  effect: Effect.Effect<Value, Failure>,
+) => Effect.uninterruptible(Effect.onExit(Effect.interruptible(effect), (exit) => Deferred.done(deferred, exit)));
+
+/**
+ * One shared answer per key, also for callers that ask at the same time. The read of a key runs in ONE fiber of
+ * `scope` that no caller owns: every caller, the first included, only waits for it, so a caller that is interrupted
+ * (or whose sibling failed) stops waiting without cancelling the read another caller waits for. The entry and its
+ * fiber are created together, uninterruptibly, and the fiber completes the entry on every exit, so a waiter always
+ * gets a definite outcome; the read itself stays interruptible and ends with the scope at the latest.
+ */
+const sharedPerKey = <Query, Value, Failure>(
   keyOf: (query: Query) => string,
   read: (query: Query) => Effect.Effect<Value, Failure>,
+  scope: Scope.Scope,
 ): ((query: Query) => Effect.Effect<Value, Failure>) => {
-  const reads = new Map<string, Effect.Effect<Value, Failure>>();
+  const reads = new Map<string, Deferred.Deferred<Value, Failure>>();
   return (query) =>
-    Effect.suspend(() => {
-      const key = keyOf(query);
-      const known = reads.get(key);
-      if (known !== undefined) {
-        return known;
-      }
-      return Effect.cached(read(query)).pipe(
-        Effect.flatMap((once) => {
-          reads.set(key, once);
-          return once;
-        }),
-      );
-    });
+    Effect.uninterruptibleMask((restore) =>
+      Effect.suspend(() => {
+        const key = keyOf(query);
+        const known = reads.get(key);
+        if (known !== undefined) {
+          return restore(Deferred.await(known));
+        }
+        const deferred = Deferred.makeUnsafe<Value, Failure>();
+        reads.set(key, deferred);
+        return settledInto(deferred, read(query)).pipe(
+          Effect.forkIn(scope),
+          Effect.andThen(restore(Deferred.await(deferred))),
+        );
+      }),
+    );
 };
 
 const scopeQueryKey = (query: ScopeQuery): string =>
@@ -131,31 +179,39 @@ const scopeQueryKey = (query: ScopeQuery): string =>
  * holder, capability and mode, the configure bases at one instant — is read once instead of once per question. Only
  * for the batch it is made for, never across requests; the agent connection and team reads stay fresh per call.
  */
-const batchAuthorityOf = (authority: DecisionAuthorityPort): DecisionAuthorityPort =>
+const batchAuthorityOf = (authority: DecisionAuthorityPort, scope: Scope.Scope): DecisionAuthorityPort =>
   withOptional(
     withOptional(
-      {
-        readCells: onceEach(
-          (query: AuthorityCellQuery) =>
-            [query.tenantId, query.scopeId, holderIdOf(query.holder), query.capabilityKey, query.mode].join('\u0000'),
-          authority.readCells,
-        ),
-        readConnection: authority.readConnection,
-        readScope: onceEach(scopeQueryKey, authority.readScope),
-        readTeamIds: authority.readTeamIds,
-      },
-      // The engine reads one batch's cell sets in one call; each set is still read once per batch.
-      'readCellsMany',
-      authority.readCellsMany,
+      withOptional(
+        {
+          readCells: sharedPerKey(
+            (query: AuthorityCellQuery) =>
+              [query.tenantId, query.scopeId, holderIdOf(query.holder), query.capabilityKey, query.mode].join('\u0000'),
+            authority.readCells,
+            scope,
+          ),
+          readConnection: authority.readConnection,
+          readScope: sharedPerKey(scopeQueryKey, authority.readScope, scope),
+          readTeamIds: authority.readTeamIds,
+        },
+        // The engine reads one batch's cell sets in one call; each set is still read once per batch.
+        'readCellsMany',
+        authority.readCellsMany,
+      ),
+      'readConfigureBases',
+      authority.readConfigureBases === undefined
+        ? undefined
+        : sharedPerKey(
+            (query: { readonly actor: string; readonly at: Date; readonly tenantId: string }) =>
+              [query.tenantId, query.actor, String(DateTime.toEpochMillis(DateTime.makeUnsafe(query.at)))].join(
+                '\u0000',
+              ),
+            authority.readConfigureBases,
+            scope,
+          ),
     ),
-    'readConfigureBases',
-    authority.readConfigureBases === undefined
-      ? undefined
-      : onceEach(
-          (query: { readonly actor: string; readonly at: Date; readonly tenantId: string }) =>
-            [query.tenantId, query.actor, String(DateTime.toEpochMillis(DateTime.makeUnsafe(query.at)))].join('\u0000'),
-          authority.readConfigureBases,
-        ),
+    'readsThroughCallerTransaction',
+    authority.readsThroughCallerTransaction,
   );
 
 /** Each Action is asked in both modes, in this order. */
@@ -212,6 +268,42 @@ const entryOf = (pending: PendingQuestion, decision: AccessDecision): AccessDeci
     'admissionDeadline',
     decision.admissionDeadline,
   );
+
+/** The distinct company contexts the decided questions of a batch are asked in, keyed by company ('' = tenant). */
+const contextsOf = (staged: readonly StagedQuestion[]): readonly (readonly [string, LegalEntityId | undefined])[] => {
+  const distinct = new Map<string, LegalEntityId | undefined>();
+  for (const entry of staged) {
+    if (entry.answer === undefined) {
+      distinct.set(entry.legalEntityId ?? '', entry.legalEntityId);
+    }
+  }
+  return [...distinct.entries()];
+};
+
+/** A batch's capability questions and both modes of every named Action, as the current catalog declares them. */
+const batchQuestionsOf = (
+  input: SubjectInspectionInput & {
+    readonly actionKeys: readonly string[];
+    readonly questions: readonly SubjectCapabilityQuestion[];
+  },
+  catalog: SubjectInspectionCatalog,
+) => {
+  const context = { queryScope: input.queryScope, requesterScope: input.requesterScope, subject: input.subject };
+  const capabilityQuestions = input.questions.map(({ listing, ...question }) => ({
+    listing,
+    question: { ...question, ...context },
+  }));
+  const actionQuestions = input.actionKeys.flatMap((actionKey) => {
+    const authority = catalog.actions.get(actionKey);
+    const question = {
+      ...context,
+      carrier: authority?.carrier ?? {},
+      legalEntityScope: authority?.legalEntityScope ?? 'optional',
+    };
+    return ACTION_MODES.map((mode) => ({ listing: false, question: { ...question, mode } }));
+  });
+  return { actionQuestions, capabilityQuestions };
+};
 
 /** No OperationalScope is constructed here. The subject is only a canonical engine actor. */
 export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): SubjectAccessInspectionService => {
@@ -317,13 +409,14 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
   const resolve = Effect.fn('SubjectInspection.resolve')(function* resolve(
     input: SubjectInspectionInput,
     authority: DecisionAuthorityPort,
+    instant: Effect.Effect<Date>,
     legalEntityId?: LegalEntityId,
   ) {
     const selected = yield* actorFor(input, legalEntityId);
     if (selected.actor === undefined) {
       return { authority, decision: selected.decision ?? seamRefusal(PRINCIPAL_FORBIDDEN) };
     }
-    const now = yield* DateTime.nowAsDate;
+    const now = yield* instant;
     const resolution = yield* resolveActorContext(authority, selected.actor, now);
     if (resolution.unavailable !== undefined) {
       return yield* unavailable();
@@ -335,21 +428,78 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
     return { actor: selected.actor, authority, now, resolved: resolution.resolved };
   });
 
-  /** One resolution per distinct company context of a batch, never one per question. */
-  const resolveContexts = Effect.fn('SubjectInspection.resolveContexts')(function* resolveContexts(
+  /**
+   * What the questions of one inspection share: one batch intent port (a read its questions share is read once) and
+   * one subject resolution per company context, taken at one instant. A plain call makes its own; the stages of one
+   * staged inspection share one, exactly as the questions of one batch share it. Never shared across inspections.
+   */
+  const recordNow = (rows: readonly AccessDecisionLogEntry[]) =>
+    ports.decisionLog.recordAll(rows).pipe(Effect.mapError(unavailable));
+
+  /**
+   * A staged write: the request going away never cancels it, but its deadline does, and then the inspection fails.
+   * The write runs in a fiber of its own that only its timer interrupts, and the caller waits for it, uninterruptibly.
+   * Nothing else bounds it: the pool's connect timeout covers opening a connection, not waiting for a free one.
+   */
+  const recordWithinDeadline = (rows: readonly AccessDecisionLogEntry[]) =>
+    Effect.uninterruptible(
+      Effect.gen(function* boundedWrite() {
+        const write = yield* Effect.forkDetach(recordNow(rows), { uninterruptible: false });
+        const timer = yield* Effect.forkDetach(
+          Effect.sleep(EVIDENCE_WRITE_DEADLINE).pipe(Effect.andThen(Fiber.interrupt(write))),
+          {
+            uninterruptible: false,
+          },
+        );
+        const written = yield* Fiber.await(write);
+        yield* Fiber.interrupt(timer);
+        return yield* Exit.isFailure(written) && Cause.hasInterruptsOnly(written.cause)
+          ? Effect.fail(unavailable('The evidence of this inspection was not written before its deadline'))
+          : written;
+      }),
+    );
+
+  const sessionOf = (
     input: SubjectInspectionInput,
-    authority: DecisionAuthorityPort,
+    scope: Scope.Scope,
+    staged?: Pick<InspectionSession, 'ahead' | 'record'>,
+  ): InspectionSession => {
+    const authority = batchAuthorityOf(ports.authorityFor(input.requesterScope), scope);
+    // Every context of one inspection is decided at the one instant its first resolution takes, as the questions of
+    // one batch always were. The instant is taken fresh by each inspection (each call, or each staged description),
+    // never shared across them; a later stage decides at that instant, so one description answers for one instant.
+    const instant = sharedPerKey(
+      (key: 'now') => key,
+      () => DateTime.nowAsDate,
+      scope,
+    );
+    return {
+      ahead: staged?.ahead ?? (() => Effect.void),
+      authority,
+      record: staged?.record ?? recordNow,
+      resolveIn: sharedPerKey(
+        (legalEntityId: LegalEntityId | undefined) => legalEntityId ?? '',
+        (legalEntityId: LegalEntityId | undefined) => resolve(input, authority, instant('now'), legalEntityId),
+        scope,
+      ),
+    };
+  };
+
+  /** A plain call's own session, whose shared reads end with the call. */
+  const withSession = <A, E, R>(
+    input: SubjectInspectionInput,
+    use: (session: InspectionSession) => Effect.Effect<A, E, R>,
+  ) => Effect.scoped(Effect.scope.pipe(Effect.flatMap((scope) => use(sessionOf(input, scope)))));
+
+  /** One resolution per distinct company context of a batch (or of a staged inspection), never one per question. */
+  const resolveContexts = Effect.fn('SubjectInspection.resolveContexts')(function* resolveContexts(
+    session: InspectionSession,
     staged: readonly StagedQuestion[],
   ) {
-    const distinct = new Map<string, LegalEntityId | undefined>();
-    for (const entry of staged) {
-      if (entry.answer === undefined) {
-        distinct.set(entry.legalEntityId ?? '', entry.legalEntityId);
-      }
-    }
-    const entries = [...distinct.entries()];
-    const resolved = yield* Effect.forEach(entries, ([, legalEntityId]) => resolve(input, authority, legalEntityId), {
-      concurrency: 1,
+    const entries = contextsOf(staged);
+    // Distinct contexts are independent reads: two at a time, the same bound the engine keeps on the shared pool.
+    const resolved = yield* Effect.forEach(entries, ([, legalEntityId]) => session.resolveIn(legalEntityId), {
+      concurrency: 2,
     });
     return new Map(
       entries.flatMap(([key], index) => {
@@ -413,11 +563,11 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
    * rows of the decisions that were taken are written; an allowed LIST without a predicate fails it as well.
    */
   const evaluateMany = Effect.fn('SubjectInspection.evaluateMany')(function* evaluateMany(
-    input: SubjectInspectionInput,
     questions: readonly { readonly listing: boolean; readonly question: SubjectCapabilityInspectionInput }[],
+    session: InspectionSession,
   ) {
     const staged = questions.map(({ listing, question }) => stageOf(question, listing));
-    const contexts = yield* resolveContexts(input, batchAuthorityOf(ports.authorityFor(input.requesterScope)), staged);
+    const contexts = yield* resolveContexts(session, staged);
     const pending: PendingQuestion[] = [];
     const answers = staged.map((entry): AnswerSlot => {
       if (entry.answer !== undefined) {
@@ -452,7 +602,7 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
         : [];
     });
     if (evidence.length > 0) {
-      yield* ports.decisionLog.recordAll(evidence).pipe(Effect.mapError(unavailable));
+      yield* session.record(evidence);
     }
     const engineAnswers = decided.flatMap((answer) => (answer === undefined ? [] : [answer]));
     if (engineAnswers.length !== pending.length) {
@@ -478,9 +628,9 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
     });
   });
 
-  const checked = Effect.fn('SubjectInspection.checked')(function* checked<A>(
+  const checked = Effect.fn('SubjectInspection.checked')(function* checked<A, E, R>(
     input: SubjectInspectionInput,
-    body: (catalog: SubjectInspectionCatalog) => Effect.Effect<A, SubjectInspectionUnavailable>,
+    body: (catalog: SubjectInspectionCatalog) => Effect.Effect<A, E, R>,
   ) {
     const before = yield* current(input);
     return yield* body(before).pipe(
@@ -496,12 +646,15 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
     );
   });
 
-  const inspectScope = Effect.fn('SubjectInspection.scope')(function* inspectScope(input: SubjectInspectionInput) {
+  const inspectScope = Effect.fn('SubjectInspection.scope')(function* inspectScope(
+    input: SubjectInspectionInput,
+    session: InspectionSession,
+  ) {
     const selected = gateScopeOf(
       input.requesterScope.legalEntityId === undefined ? 'optional' : 'required',
       input.requesterScope,
     );
-    const prepared = yield* resolve(input, ports.authorityFor(input.requesterScope), selected.legalEntityId);
+    const prepared = yield* session.resolveIn(selected.legalEntityId);
     if (prepared.resolved === undefined || prepared.actor === undefined) {
       return {
         decision: 'denied' as const,
@@ -558,22 +711,10 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
       readonly questions: readonly SubjectCapabilityQuestion[];
     },
     catalog: SubjectInspectionCatalog,
+    session: InspectionSession,
   ) {
-    const context = { queryScope: input.queryScope, requesterScope: input.requesterScope, subject: input.subject };
-    const capabilityQuestions = input.questions.map(({ listing, ...question }) => ({
-      listing,
-      question: { ...question, ...context },
-    }));
-    const actionQuestions = input.actionKeys.flatMap((actionKey) => {
-      const authority = catalog.actions.get(actionKey);
-      const question = {
-        ...context,
-        carrier: authority?.carrier ?? {},
-        legalEntityScope: authority?.legalEntityScope ?? 'optional',
-      };
-      return ACTION_MODES.map((mode) => ({ listing: false, question: { ...question, mode } }));
-    });
-    const answers = yield* evaluateMany(input, [...capabilityQuestions, ...actionQuestions]);
+    const { actionQuestions, capabilityQuestions } = batchQuestionsOf(input, catalog);
+    const answers = yield* evaluateMany([...capabilityQuestions, ...actionQuestions], session);
     const offset = capabilityQuestions.length;
     // A missing or UNAVAILABLE answer is `unavailable`, never `denied`, so no caller can read it as a refusal.
     const answerOf = (index: number): SubjectActionAnswer => {
@@ -594,8 +735,95 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
     };
   });
 
+  /** Resolves the subject in every company context these questions are asked in; decides and records nothing. */
+  const prepareContexts = Effect.fn('SubjectInspection.prepare')(function* prepareContexts(
+    input: SubjectInspectionInput & {
+      readonly actionKeys: readonly string[];
+      readonly questions: readonly SubjectCapabilityQuestion[];
+    },
+    catalog: SubjectInspectionCatalog,
+    session: InspectionSession,
+  ) {
+    const { actionQuestions, capabilityQuestions } = batchQuestionsOf(input, catalog);
+    const staged = [...capabilityQuestions, ...actionQuestions].map(({ listing, question }) =>
+      stageOf(question, listing),
+    );
+    // Every context is started; one that cannot be resolved fails only the stage that later asks it (that stage
+    // waits for the same shared resolution), so preparing never fails or cancels anything itself.
+    const prepared = yield* Effect.forEach(
+      contextsOf(staged),
+      ([key, legalEntityId]) =>
+        session.resolveIn(legalEntityId).pipe(
+          Effect.exit,
+          Effect.map((exit) => [key, exit] as const),
+        ),
+      { concurrency: 2 },
+    );
+    const contexts = new Map(
+      prepared.flatMap(([key, exit]) => (Exit.isSuccess(exit) ? [[key, exit.value] as const] : [])),
+    );
+    // An admin question is decided from the person's configure bases, read at the context's resolution instant: the
+    // same read a later batch asks, started now so that batch does not wait on it (the batch port shares it).
+    const adminContexts = new Set(
+      staged.flatMap((entry) =>
+        entry.answer === undefined && entry.capability.kind === 'admin' ? [entry.legalEntityId ?? ''] : [],
+      ),
+    );
+    const { readConfigureBases } = session.authority;
+    if (readConfigureBases === undefined) {
+      return;
+    }
+    yield* Effect.forEach(
+      [...adminContexts].flatMap((key) => {
+        const context = contexts.get(key);
+        const actor = context?.actor?.actor;
+        return context?.resolved === undefined || !Predicate.isTagged(actor, 'Principal')
+          ? []
+          : [{ actor: actor.principalId, at: context.now, tenantId: context.resolved.scope.tenantId }];
+      }),
+      (query) => session.ahead(readConfigureBases(query)),
+      { concurrency: 1, discard: true },
+    );
+  });
+
+  /**
+   * The stages of one description over one session. A stage's evidence is written while the next stage reads. A
+   * write, once started, cannot be interrupted (neither by a failed sibling write nor by the request going away), and
+   * every write is awaited before the inspection answers, on success and on failure, so every row a taken decision
+   * leaves is written either way. One failed write never cancels another; the first failure is reported once all have
+   * settled. A read started ahead keeps its outcome for the stage that asks it and never fails it here.
+   */
+  const stagedInspection = Effect.fn('SubjectInspection.staged')(function* stagedInspection<A, E, R>(
+    input: SubjectInspectionInput,
+    catalog: SubjectInspectionCatalog,
+    body: (stages: SubjectInspectionStages) => Effect.Effect<A, E, R>,
+  ) {
+    const scope = yield* Effect.scope;
+    const writes: Fiber.Fiber<void, SubjectInspectionUnavailable>[] = [];
+    const remember = (fiber: Fiber.Fiber<void, SubjectInspectionUnavailable>) => writes.push(fiber);
+    const session = sessionOf(input, scope, {
+      ahead: (read) => read.pipe(Effect.ignore, Effect.forkIn(scope), Effect.asVoid),
+      record: (rows) => recordWithinDeadline(rows).pipe(Effect.forkIn(scope), Effect.map(remember), Effect.asVoid),
+    });
+    const outcome = yield* body({
+      capabilities: (asked) => inspectBatch({ ...input, ...asked }, catalog, session),
+      prepare: (asked) => prepareContexts({ ...input, ...asked }, catalog, session),
+      revision: catalog.revision,
+      scope: inspectScope(input, session),
+    }).pipe(Effect.exit);
+    const written = yield* Fiber.awaitAll(writes);
+    if (Exit.isFailure(outcome)) {
+      return yield* Effect.failCause(outcome.cause);
+    }
+    const failedWrite = written.find((exit) => Exit.isFailure(exit));
+    if (failedWrite !== undefined && Exit.isFailure(failedWrite)) {
+      return yield* Effect.failCause(failedWrite.cause);
+    }
+    return outcome.value;
+  });
+
   const single = (input: SubjectCapabilityInspectionInput, listing: boolean) =>
-    evaluateMany(input, [{ listing, question: input }]).pipe(
+    withSession(input, (session) => evaluateMany([{ listing, question: input }], session)).pipe(
       Effect.flatMap(([answer]) =>
         answer === undefined
           ? Effect.fail(unavailable('Subject inspection returned no answer'))
@@ -606,11 +834,12 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
   return Object.freeze<SubjectAccessInspectionService>({
     actions: (input) =>
       checked(input, (catalog) =>
-        inspectBatch({ ...input, questions: [] }, catalog).pipe(
+        withSession(input, (session) => inspectBatch({ ...input, questions: [] }, catalog, session)).pipe(
           Effect.map(({ authorities }) => ({ authorities, inspectionOnly: true as const })),
         ),
       ),
-    capabilities: (input) => checked(input, (catalog) => inspectBatch(input, catalog)),
+    capabilities: (input) =>
+      checked(input, (catalog) => withSession(input, (session) => inspectBatch(input, catalog, session))),
     inspect: (input) =>
       checked(input, () =>
         single(input, false).pipe(Effect.map(({ decision }) => ({ decision, inspectionOnly: true as const }))),
@@ -620,6 +849,7 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
         single(input, true).pipe(Effect.map((result): SubjectListInspection => ({ inspectionOnly: true, ...result }))),
       ),
 
-    scope: (input) => checked(input, () => inspectScope(input)),
+    scope: (input) => checked(input, () => withSession(input, (session) => inspectScope(input, session))),
+    staged: (input, body) => checked(input, (catalog) => Effect.scoped(stagedInspection(input, catalog, body))),
   });
 };

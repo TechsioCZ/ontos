@@ -1,4 +1,4 @@
-import { Context, DateTime, Effect, Match, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Exit, Match, Option, Schema, Semaphore } from 'effect';
 import type { Array as Arr } from 'effect';
 
 import type { AccessScopeId, CapabilityKey, LegalEntityId, PrincipalId, RecordKey } from '../ids.ts';
@@ -25,8 +25,11 @@ import type {
   ActorResolution,
   AuthorityCell,
   AuthorityCellQuery,
+  ConnectionQuery,
   DecisionAuthorityPort,
   ResolvedActor,
+  ScopeQuery,
+  TeamMembershipQuery,
 } from './authority.ts';
 import { decisionReason, earliestDeadline, sameRecord } from './contract.ts';
 import type {
@@ -1306,9 +1309,12 @@ const cellQueryOf = (params: {
       };
 };
 
-/** One cell set per holder, capability and mode, whatever request or side asked for it. */
+/**
+ * One cell set per tenant, access scope, holder, capability and mode, whatever request or side asked for it. One batch
+ * can ask the same holder and capability in two companies, and each company's scope has cells of its own.
+ */
 const cellQueryKey = (query: AuthorityCellQuery): string =>
-  [holderIdOf(query.holder), query.capabilityKey, query.mode].join('\u0000');
+  [query.tenantId, query.scopeId, holderIdOf(query.holder), query.capabilityKey, query.mode].join('\u0000');
 
 /** The cell sets one request needs, so the whole batch reads each of them exactly once. */
 const requiredCellQueries = (params: {
@@ -1355,11 +1361,46 @@ const requiredCellQueries = (params: {
   return queries;
 };
 
+/** The same port, every read taking one of the batch's permits while it runs. */
+const permittedReads = (authority: DecisionAuthorityPort, permits: Semaphore.Semaphore): DecisionAuthorityPort => {
+  const { readCellsMany, readConfigureBases } = authority;
+  return withOptional(
+    withOptional(
+      {
+        readCells: (query: AuthorityCellQuery) => permits.withPermit(authority.readCells(query)),
+        readConnection: (query: ConnectionQuery) => permits.withPermit(authority.readConnection(query)),
+        readScope: (query: ScopeQuery) => permits.withPermit(authority.readScope(query)),
+        readTeamIds: (query: TeamMembershipQuery) => permits.withPermit(authority.readTeamIds(query)),
+      },
+      'readCellsMany',
+      readCellsMany === undefined
+        ? undefined
+        : (queries: readonly AuthorityCellQuery[]) => permits.withPermit(readCellsMany(queries)),
+    ),
+    'readConfigureBases',
+    readConfigureBases === undefined
+      ? undefined
+      : (query: Parameters<typeof readConfigureBases>[0]) => permits.withPermit(readConfigureBases(query)),
+  );
+};
+
+/** The cell sets one guarded request needs. */
+const cellQueriesOf = (entry: GuardedRequest): readonly AuthorityCellQuery[] =>
+  requiredCellQueries({
+    modes: entry.modes,
+    parentRead: entry.parentRead,
+    request: entry.request,
+    resolved: entry.resolved,
+  });
+
 /** Pooled reads one batch runs at once; each holds one connection of the request's shared pool. */
 const BATCH_READ_CONCURRENCY = 2;
 
 /** A read cell set, or an intent read that failed: the latter is UNAVAILABLE, never empty intent. */
 type CellRead = { readonly cells: readonly AuthorityCell[] } | { readonly unreadable: true };
+
+/** Whether a read cell set is there and readable. */
+const isReadable = (read: CellRead | undefined): boolean => read !== undefined && 'cells' in read;
 
 const readCellSets = Effect.fn('AccessDecision.readCellSets')(function* readCellSetsProgram(
   authority: DecisionAuthorityPort,
@@ -1555,10 +1596,19 @@ const planGroup = Effect.fn('AccessDecision.planGroup')(function* planGroupProgr
   const guarded = prepared.flatMap(({ guarded: entry }) => (entry === undefined ? [] : [entry]));
   // One after another over a shared answer: only the first `admin` entry of an actor reads its configure bases.
   const structuralAuthority = sharedConfigureBases(authority);
-  const structural = yield* Effect.forEach(
-    guarded,
-    (entry) => structuralAdminDecision(structuralAuthority, entry.resolved, entry.request, entry.now),
-    { concurrency: 1 },
+  // The structural answers and the cell sets are independent reads, so they overlap. Cell sets are read ahead for
+  // every guarded request; a request the structural check decides simply leaves its sets unused (no decision, no
+  // row). That read ahead is speculative: its failure or defect is kept, never raised, and decides nothing below.
+  const [structural, ahead] = yield* Effect.all(
+    [
+      Effect.forEach(
+        guarded,
+        (entry) => structuralAdminDecision(structuralAuthority, entry.resolved, entry.request, entry.now),
+        { concurrency: 1 },
+      ),
+      readCellSets(authority, guarded.flatMap(cellQueriesOf)).pipe(Effect.exit),
+    ],
+    { concurrency: BATCH_READ_CONCURRENCY },
   );
   const structuralByIndex = new Map<number, AccessDecision>(
     guarded.flatMap((entry, index) =>
@@ -1569,15 +1619,16 @@ const planGroup = Effect.fn('AccessDecision.planGroup')(function* planGroupProgr
     ),
   );
   const roleGuarded = guarded.filter((entry) => !structuralByIndex.has(entry.index));
-  const queries = roleGuarded.flatMap((entry) =>
-    requiredCellQueries({
-      modes: entry.modes,
-      parentRead: entry.parentRead,
-      request: entry.request,
-      resolved: entry.resolved,
-    }),
+  // The structural answers are authoritative. The cell sets the remaining requests need come from the read ahead
+  // where it read them; exactly the sets it could not read (all of them after a defect) are read now, and a failure
+  // or defect of that read decides as when nothing was read ahead.
+  const readAhead = Exit.isSuccess(ahead) ? ahead.value : new Map<string, CellRead>();
+  const missing = roleGuarded.flatMap((entry) =>
+    cellQueriesOf(entry).filter((query) => !isReadable(readAhead.get(cellQueryKey(query)))),
   );
-  const preloaded = preloadedAuthority(authority, yield* readCellSets(authority, queries));
+  const cellSets =
+    missing.length === 0 ? readAhead : new Map([...readAhead, ...(yield* readCellSets(authority, missing))]);
+  const preloaded = preloadedAuthority(authority, cellSets);
   const planned = yield* Effect.forEach(roleGuarded, (entry) => planRequest(preloaded, entry), {
     concurrency: BATCH_READ_CONCURRENCY,
   });
@@ -1604,9 +1655,17 @@ const decideAccessManyEffect: (
   groups: readonly DecisionBatchGroup[],
 ) => Effect.Effect<readonly (readonly AccessDecision[])[]> = Effect.fn('AccessDecision.decideMany')(
   function* decideAccessManyProgram(check: DecisionCheckPort, groups: readonly DecisionBatchGroup[]) {
-    const plannedGroups = yield* Effect.forEach(groups, (group) => planGroup(group), {
-      concurrency: BATCH_READ_CONCURRENCY,
-    });
+    // However its groups and reads overlap, one batch holds at most BATCH_READ_CONCURRENCY pooled reads at once,
+    // and one read at a time when any of its ports reads through a caller's transaction: each such read installs
+    // its scope with its own statement on that one connection, so two must never interleave.
+    const permits = yield* Semaphore.make(
+      groups.some(({ authority }) => authority.readsThroughCallerTransaction === true) ? 1 : BATCH_READ_CONCURRENCY,
+    );
+    const plannedGroups = yield* Effect.forEach(
+      groups,
+      (group) => planGroup({ ...group, authority: permittedReads(group.authority, permits) }),
+      { concurrency: BATCH_READ_CONCURRENCY },
+    );
     // ONE snapshot for every request's items: a batch can never be answered from two views.
     const { engineFailed, evaluation } = yield* runSnapshot(
       check,
@@ -1859,9 +1918,10 @@ const readListSides: (
     capability: DecisionCapabilityPolicy,
     modes: EvaluationModes,
   ) {
+    // The sides overlap on pooled reads, but never through a caller's one transaction (see DecisionAuthorityPort).
     const reads = yield* Effect.all(
       sidesOf(resolved).map((side) => readSideWithTeams(authority, resolved, capability, modes.effectiveMode, side)),
-      { concurrency: 2 },
+      { concurrency: authority.readsThroughCallerTransaction === true ? 1 : 2 },
     );
     const readSides: ReadSide[] = [];
     for (const read of reads) {

@@ -1,13 +1,17 @@
-import { Effect } from 'effect';
+import { Effect, Option } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import type { ActorContextInput, DecisionAuthorityPort } from '../../src/access/decision/authority.ts';
+import type {
+  ActorContextInput,
+  AuthorityCellQuery,
+  DecisionAuthorityPort,
+} from '../../src/access/decision/authority.ts';
 import type { AccessDecision, DecisionCapabilityPolicy } from '../../src/access/decision/contract.ts';
 import { decideAccess, decideAccessMany } from '../../src/access/decision/engine.ts';
 import type { DecisionInput } from '../../src/access/decision/engine.ts';
 import { accessDecisionUnavailable } from '../../src/access/decision/errors.ts';
 import { withOptional } from '../../src/access/decision/optional.ts';
-import { ModuleKeySchema } from '../../src/access/ids.ts';
+import { AccessScopeIdSchema, LegalEntityIdSchema, ModuleKeySchema } from '../../src/access/ids.ts';
 import {
   agent,
   agentHolder,
@@ -25,6 +29,7 @@ import {
   principalHolder,
   record,
   recordTarget,
+  scopeId,
   team,
   tenant,
 } from './access-decision-support.ts';
@@ -406,3 +411,69 @@ it.effect('resolves the actor and reads each cell set once for a page of request
     expect(authority.calls.readConnection).toBe(0);
   }),
 );
+
+/*
+ * One batch can ask the same capability for the same holder in two companies (a connection description asks every
+ * company it may act in). Each company has its own access scope and its own role cells, so each must be answered from
+ * its own cell set: here only company A's scope grants VOID.
+ */
+const companyA = LegalEntityIdSchema.make('00000000-0000-4000-8000-0000000001a1');
+const companyB = LegalEntityIdSchema.make('00000000-0000-4000-8000-0000000001b1');
+const scopeOfCompany = new Map([
+  // The check's grant objects live in the support scope, so company A is that scope.
+  [companyA, scopeId],
+  [companyB, AccessScopeIdSchema.make('00000000-0000-4000-8000-0000000001b2')],
+]);
+const grantedOnlyInA = (batchReads: boolean): DecisionAuthorityPort => {
+  const { port } = makeAuthority({ cells: [voidCell] });
+  const cellsIn = (query: AuthorityCellQuery) =>
+    query.scopeId === scopeOfCompany.get(companyA) ? [voidCell].filter(() => query.capabilityKey === VOID) : [];
+  const scoped: DecisionAuthorityPort = {
+    ...port,
+    readCells: (query) => Effect.succeed(cellsIn(query)),
+    readScope: (query) =>
+      port.readScope(query).pipe(
+        Effect.map(
+          Option.map((resolved) => {
+            const legalEntityId = query.legalEntityId ?? companyA;
+            return {
+              ...resolved,
+              scope: { _tag: 'LegalEntity' as const, legalEntityId, tenantId: tenant },
+              scopeId: scopeOfCompany.get(legalEntityId) ?? resolved.scopeId,
+            };
+          }),
+        ),
+      ),
+  };
+  return withOptional(
+    scoped,
+    'readCellsMany',
+    batchReads ? (queries: readonly AuthorityCellQuery[]) => Effect.succeed(queries.map(cellsIn)) : undefined,
+  );
+};
+
+const askIn = (legalEntityId: typeof companyA): DecisionInput => ({
+  actor: { ...human, legalEntityId },
+  now,
+  request: { capability: policy(VOID), mode: 'run' },
+});
+
+for (const batchReads of [false, true]) {
+  it.effect(
+    `answers one capability in two companies from each company's own cells (${batchReads ? 'batched' : 'single'} reads)`,
+    () =>
+      Effect.gen(function* perCompanyCells() {
+        for (const order of [
+          [companyA, companyB],
+          [companyB, companyA],
+        ] as const) {
+          const [answers = []] = yield* decideAccessMany(makeCheck({ authority: { cells: [voidCell] } }).port, [
+            { authority: grantedOnlyInA(batchReads), inputs: order.map(askIn) },
+          ]);
+          const verdicts = new Map(order.map((company, index) => [company, answers[index]?.outcome]));
+          expect(verdicts.get(companyA)).toBe('ALLOWED');
+          expect(verdicts.get(companyB)).toBe('DENIED');
+        }
+      }),
+  );
+}
