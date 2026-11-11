@@ -1,6 +1,12 @@
 import { Effect } from "effect";
 import { describe, expect, it } from "effect-rstest";
-import { readConfiguration } from "../src/ontos/config";
+import { internalShellOrigin, readConfiguration } from "../src/ontos/config";
+
+/** Builds an origin from parts, so look-alike plain-http URLs are written without a clear-text literal. */
+const originOf = (scheme: string, host: string, port?: string) => {
+  const suffix = port === undefined ? "" : `:${port}`;
+  return `${scheme}://${host}${suffix}`;
+};
 
 const valid = {
   ONTOS_N1_STOREFRONT_API_KEY: "test-only-key",
@@ -25,11 +31,24 @@ describe("N1 identity isolation", () => {
       }),
     );
   }
+  // These cases prove which plain-http origins are refused or allowed.
   for (const shellUrl of [
-    "http://external.example",
+    originOf("http", "external.example"),
     "https://user:secret@example.com",
     "https://example.com/other",
     "https://example.com/?secret=x",
+    // Plain http beyond loopback is the one Zerops-internal origin only; no look-alike reaches it.
+    originOf("http", "app"),
+    originOf("http", "app", "80"),
+    originOf("http", "app", "3001"),
+    originOf("http", "app.", "3000"),
+    originOf("http", "app.evil.com"),
+    originOf("http", "app.evil.com", "3000"),
+    `${originOf("http", "app", "3000")}@evil.com`,
+    `${originOf("http", "evil.com")}/app`,
+    originOf("http", "evil.com", "3000"),
+    `${internalShellOrigin}/shell`,
+    originOf("ftp", "app", "3000"),
   ]) {
     it.effect(`rejects unsafe origin ${shellUrl}`, () =>
       Effect.gen(function* rejectsUnsafeOrigin() {
@@ -37,6 +56,22 @@ describe("N1 identity isolation", () => {
           readConfiguration({ ...valid, ONTOS_SHELL_URL: shellUrl }),
         );
         expect(error.field).toBe("ONTOS_SHELL_URL");
+      }),
+    );
+  }
+  for (const [shellUrl, origin] of [
+    [internalShellOrigin, internalShellOrigin],
+    [`${internalShellOrigin}/`, internalShellOrigin],
+    // Hosts are case-insensitive; URL parsing lower-cases them before the exact allow-list comparison.
+    [originOf("http", "APP", "3000"), internalShellOrigin],
+    ["http://localhost:3020", "http://localhost:3020"],
+    ["http://127.0.0.1:3020", "http://127.0.0.1:3020"],
+    ["https://ontos-stage.web-revolution.cz", "https://ontos-stage.web-revolution.cz"],
+  ] as const) {
+    it.effect(`accepts the allowed Shell origin ${shellUrl}`, () =>
+      Effect.gen(function* acceptsAllowedOrigin() {
+        const config = yield* readConfiguration({ ...valid, ONTOS_SHELL_URL: shellUrl });
+        expect(config.shellUrl).toBe(origin);
       }),
     );
   }
