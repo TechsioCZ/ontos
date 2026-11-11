@@ -12,6 +12,7 @@ import {
   SubjectAccessInspection,
   SubjectInspectionUnavailable,
 } from '@app/core-runtime/access/enforcement';
+import type { SubjectInspectionStages } from '@app/core-runtime/access/enforcement';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
 import { Effect, Layer, Predicate, Ref, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -1113,6 +1114,22 @@ const withUnavailableRun = (answered: BatchAnswer, actionKey: string): BatchAnsw
   ),
 });
 
+/** Stages whose first capability batch answers `actionKey` unavailable; `batches` counts the batches asked. */
+const unavailableInFirstBatch = (
+  stages: SubjectInspectionStages,
+  batches: { count: number },
+  actionKey: string,
+): SubjectInspectionStages => ({
+  ...stages,
+  capabilities: (asked) =>
+    stages.capabilities(asked).pipe(
+      Effect.map((answered) => {
+        batches.count += 1;
+        return batches.count > 1 ? answered : withUnavailableRun(answered, actionKey);
+      }),
+    ),
+});
+
 it.effect('never reads an unavailable first-batch Action answer as denied, even when the next batch would allow', () =>
   Effect.gen(function* unavailableAnswerFailsClosed() {
     const { installed, keyOf, snapshot } = yield* actionModulesCatalog({
@@ -1124,20 +1141,15 @@ it.effect('never reads an unavailable first-batch Action answer as denied, even 
       subjects: [{ legalEntityId, principalId, tenantId }],
     });
     // The first capability batch answers alpha's first key `unavailable`; a later batch would answer it allowed.
-    let batches = 0;
+    const batches = { count: 0 };
     const answeringUnavailableOnce = Layer.effect(
       SubjectAccessInspection,
       Effect.gen(function* unavailableOnce() {
         const service = yield* SubjectAccessInspection;
         return {
           ...service,
-          capabilities: (input: Parameters<typeof service.capabilities>[0]) =>
-            service.capabilities(input).pipe(
-              Effect.map((answered) => {
-                batches += 1;
-                return batches > 1 ? answered : withUnavailableRun(answered, 'alpha.mod.first');
-              }),
-            ),
+          staged: (input, body) =>
+            service.staged(input, (stages) => body(unavailableInFirstBatch(stages, batches, 'alpha.mod.first'))),
         };
       }),
     ).pipe(Layer.provideMerge(inspection.layer));
@@ -1147,6 +1159,66 @@ it.effect('never reads an unavailable first-batch Action answer as denied, even 
       Effect.flip,
     );
     expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
-    expect(batches).toBe(1);
+    expect(batches.count).toBe(1);
+  }),
+);
+
+/**
+ * The published stages without sharing: `staged` answered by the plain calls, each resolving the subject on its own
+ * and writing its evidence before it answers. The reference a staged description must equal.
+ */
+const plainStages = (inspection: ReturnType<typeof subjectInspectionFixture>) =>
+  Layer.effect(
+    SubjectAccessInspection,
+    Effect.gen(function* plainStagedInspection() {
+      const service = yield* SubjectAccessInspection;
+      return {
+        ...service,
+        staged: (input, body) =>
+          body({
+            capabilities: (asked) => service.capabilities({ ...input, ...asked }),
+            prepare: () => Effect.void,
+            scope: service.scope(input),
+          }),
+      };
+    }),
+  ).pipe(Layer.provideMerge(inspection.layer));
+
+it.effect('writes the same evidence as the unshared stages when the second batch fails', () =>
+  Effect.gen(function* evidenceOfAFailedDescription() {
+    // alpha's first Action is refused (a refusal leaves evidence); its second key cannot be read in batch two.
+    const { installed, keyOf, snapshot } = yield* actionModulesCatalog({
+      'alpha.mod': [moduleAction('alpha.mod', 'alpha.mod.first'), moduleAction('alpha.mod', 'alpha.mod.second')],
+    });
+    const broken = keyOf.get('alpha.mod.second') ?? '';
+    const fixture = () =>
+      subjectInspectionFixture({
+        capabilities: [{ key: broken, modes: ['run'] as const }],
+        onCapabilityRead: (key) =>
+          key === broken ? Effect.fail(accessDecisionUnavailable('second key unreadable')) : Effect.void,
+        snapshot,
+        subjects: [{ legalEntityId, principalId, tenantId }],
+      });
+    const shared = fixture();
+    const unshared = fixture();
+    const catalogLoad = { load: Effect.succeed(installed) };
+    const failure = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, catalogLoad),
+      Effect.provide(shared.layer),
+      Effect.flip,
+    );
+    const reference = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, catalogLoad),
+      Effect.provide(plainStages(unshared)),
+      Effect.flip,
+    );
+    expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
+    expect(Predicate.isTagged(reference, 'SubjectInspectionUnavailable')).toBe(true);
+    // Every row of every decision taken is written, before the hints fail, exactly as the unshared stages write them.
+    expect(shared.reads.evidenceRows).toBeGreaterThan(0);
+    expect({ rows: shared.reads.evidenceRows, writes: shared.reads.evidenceWrites }).toEqual({
+      rows: unshared.reads.evidenceRows,
+      writes: unshared.reads.evidenceWrites,
+    });
   }),
 );

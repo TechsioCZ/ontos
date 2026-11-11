@@ -1555,10 +1555,28 @@ const planGroup = Effect.fn('AccessDecision.planGroup')(function* planGroupProgr
   const guarded = prepared.flatMap(({ guarded: entry }) => (entry === undefined ? [] : [entry]));
   // One after another over a shared answer: only the first `admin` entry of an actor reads its configure bases.
   const structuralAuthority = sharedConfigureBases(authority);
-  const structural = yield* Effect.forEach(
-    guarded,
-    (entry) => structuralAdminDecision(structuralAuthority, entry.resolved, entry.request, entry.now),
-    { concurrency: 1 },
+  // The structural answers and the cell sets are independent reads, so they overlap. Cell sets are read for every
+  // guarded request; a request the structural check decides simply leaves its sets unused (no decision, no row).
+  const [structural, cellSets] = yield* Effect.all(
+    [
+      Effect.forEach(
+        guarded,
+        (entry) => structuralAdminDecision(structuralAuthority, entry.resolved, entry.request, entry.now),
+        { concurrency: 1 },
+      ),
+      readCellSets(
+        authority,
+        guarded.flatMap((entry) =>
+          requiredCellQueries({
+            modes: entry.modes,
+            parentRead: entry.parentRead,
+            request: entry.request,
+            resolved: entry.resolved,
+          }),
+        ),
+      ),
+    ],
+    { concurrency: BATCH_READ_CONCURRENCY },
   );
   const structuralByIndex = new Map<number, AccessDecision>(
     guarded.flatMap((entry, index) =>
@@ -1569,15 +1587,7 @@ const planGroup = Effect.fn('AccessDecision.planGroup')(function* planGroupProgr
     ),
   );
   const roleGuarded = guarded.filter((entry) => !structuralByIndex.has(entry.index));
-  const queries = roleGuarded.flatMap((entry) =>
-    requiredCellQueries({
-      modes: entry.modes,
-      parentRead: entry.parentRead,
-      request: entry.request,
-      resolved: entry.resolved,
-    }),
-  );
-  const preloaded = preloadedAuthority(authority, yield* readCellSets(authority, queries));
+  const preloaded = preloadedAuthority(authority, cellSets);
   const planned = yield* Effect.forEach(roleGuarded, (entry) => planRequest(preloaded, entry), {
     concurrency: BATCH_READ_CONCURRENCY,
   });

@@ -127,6 +127,33 @@ export interface SubjectAccessInspectionService {
   readonly scope: (
     input: SubjectInspectionInput,
   ) => Effect.Effect<SubjectScopeInspection, SubjectInspectionUnavailable>;
+  /**
+   * One description in stages: `scope` and any number of `capabilities` batches about ONE subject, where a later
+   * stage depends on an earlier answer. Every question is answered and evidenced exactly as in the single calls;
+   * the stages share one subject resolution per company context (one instant) and one batch intent port, as the
+   * questions of one batch do, and one composition-revision check spans them all. Never shared across calls.
+   */
+  readonly staged: <A, E, R>(
+    input: SubjectInspectionInput,
+    body: (stages: SubjectInspectionStages) => Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | SubjectInspectionUnavailable, R>;
+}
+
+/** The stages of one staged inspection; see `SubjectAccessInspectionService['staged']`. */
+export interface SubjectInspectionStages {
+  readonly capabilities: (asked: {
+    readonly actionKeys: readonly string[];
+    readonly questions: readonly SubjectCapabilityQuestion[];
+  }) => Effect.Effect<SubjectCapabilityBatchInspection, SubjectInspectionUnavailable>;
+  /**
+   * Resolves the subject in every company context these questions would be asked in, so a later stage does not wait
+   * for it. Decides nothing and records no evidence.
+   */
+  readonly prepare: (asked: {
+    readonly actionKeys: readonly string[];
+    readonly questions: readonly SubjectCapabilityQuestion[];
+  }) => Effect.Effect<void, SubjectInspectionUnavailable>;
+  readonly scope: Effect.Effect<SubjectScopeInspection, SubjectInspectionUnavailable>;
 }
 
 export class SubjectAccessInspection extends Context.Service<SubjectAccessInspection, SubjectAccessInspectionService>()(

@@ -56,6 +56,7 @@ import {
 } from '../../api/modules/installed-module-catalog.ts';
 import { loadActingAuthority } from '../../api/oauth-connections/connection-service.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { delayedTcpProxy } from '../support/delayed-tcp-proxy.ts';
 import {
   buildAccessGraph,
   replacedDatabase,
@@ -99,7 +100,26 @@ const installedComposition = Effect.gen(function* installedComposition() {
 interface SpanRecord {
   readonly ms: number;
   readonly name: string;
+  /** The names of the span's ancestors, nearest first (test diagnostics only). */
+  readonly parents: readonly string[];
+  /** Start instant in milliseconds, process-relative; only differences between records are meaningful. */
+  readonly startMs: number;
 }
+
+/** The named ancestors of a span, nearest first, at most eight. */
+const ancestorsOf = (parent: Option.Option<Tracer.AnySpan>): readonly string[] => {
+  const names: string[] = [];
+  let current = parent;
+  while (Option.isSome(current) && names.length < 8) {
+    const span = current.value;
+    if (span._tag !== 'Span') {
+      break;
+    }
+    names.push(span.name);
+    current = span.parent;
+  }
+  return names;
+};
 
 /** A tracer that keeps every finished span's name and duration; database and engine calls are spans of their own. */
 const recordingTracer = (records: SpanRecord[]) =>
@@ -109,7 +129,12 @@ const recordingTracer = (records: SpanRecord[]) =>
       const end = span.end.bind(span);
       span.end = (endTime, exit) => {
         end(endTime, exit);
-        records.push({ ms: Number(endTime - options.startTime) / 1e6, name: options.name });
+        records.push({
+          ms: Number(endTime - options.startTime) / 1e6,
+          name: options.name,
+          parents: ancestorsOf(options.parent),
+          startMs: Number(options.startTime) / 1e6,
+        });
       };
       return span;
     },
@@ -126,20 +151,65 @@ const countedCheck = (port: DecisionCheckPort, counters: Counters): DecisionChec
     Effect.suspend(() => {
       counters.checkBulk += 1;
       counters.checkItems += items.length;
-      return port.checkBulk(items);
+      return port.checkBulk(items).pipe(Effect.withSpan('spicedb.checkBulk'));
     }),
 });
+
+/** `staged` answered by the plain scope and capability calls, each resolving the subject and writing on its own. */
+const unsharedStages = Layer.effect(
+  SubjectAccessInspection,
+  Effect.gen(function* unsharedInspection() {
+    const service = yield* SubjectAccessInspection;
+    return {
+      ...service,
+      staged: (input, body) =>
+        body({
+          capabilities: (asked) => service.capabilities({ ...input, ...asked }),
+          prepare: () => Effect.void,
+          scope: service.scope(input),
+        }),
+    };
+  }),
+);
 
 /** The Shell's inspection composition over this case's runtime database role, SpiceDB and the installed release. */
 const inspectionLayer = (input: {
   readonly authorityCase: AuthorityCase;
   readonly counters: Counters;
+  /** Test-only network latency: PostgreSQL and SpiceDB reached through a proxy adding this delay per round trip. */
+  readonly delayMs?: number;
+  /** The published stages without sharing: `staged` answered by the plain calls (the equivalence reference). */
+  readonly plainStages?: boolean;
   readonly snapshot: ActiveApplicationCompositionSnapshot;
 }) =>
   Layer.unwrap(
     Effect.gen(function* buildInspection() {
-      const database = yield* makeCoreDatabase(input.authorityCase.runtime);
-      const configuration = yield* loadSpiceDbConfig();
+      const direct = yield* loadSpiceDbConfig();
+      let { runtime } = input.authorityCase;
+      let configuration = direct;
+      if (input.delayMs !== undefined) {
+        const { delayMs } = input;
+        const databaseUrl = new URL(runtime.connectionString);
+        const databasePort = yield* delayedTcpProxy({
+          delayMs,
+          host: databaseUrl.hostname,
+          port: Number(databaseUrl.port),
+        });
+        databaseUrl.hostname = '127.0.0.1';
+        databaseUrl.port = String(databasePort);
+        // Only the runtime side is used; the pair still needs a distinct administrator identity to parse.
+        const adminUrl = new URL(databaseUrl.href);
+        adminUrl.username = 'delayed_proxy_admin';
+        const pair = yield* parseDatabaseConnectionPair({
+          DATABASE_ADMIN_URL: adminUrl.href,
+          DATABASE_URL: databaseUrl.href,
+        });
+        ({ runtime } = pair);
+        const [spiceHost = 'localhost', spicePort = '50051'] = direct.endpoint.split(':');
+        const spiceDbPort = yield* delayedTcpProxy({ delayMs, host: spiceHost, port: Number(spicePort) });
+        configuration = { ...direct, endpoint: `localhost:${spiceDbPort}` };
+      }
+      const database = yield* makeCoreDatabase(runtime);
       const rpc = yield* Effect.acquireRelease(
         Effect.sync(() => spiceDbTransport.open(configuration, SPICEDB_CHECK_TIMEOUT_MS)),
         (opened) => Effect.sync(() => opened.close()),
@@ -172,8 +242,9 @@ const inspectionLayer = (input: {
         Layer.succeed(DecisionCheck, countedCheck(enginePortOf(rpc), input.counters)),
         composition,
       ).pipe(Layer.provideMerge(base));
+      const inspection = SubjectAccessInspectionLive.pipe(Layer.provide(ports));
       return Layer.mergeAll(
-        SubjectAccessInspectionLive.pipe(Layer.provide(ports)),
+        input.plainStages === true ? unsharedStages.pipe(Layer.provide(inspection)) : inspection,
         ShellInstalledModuleCatalogLive.pipe(Layer.provide(composition)),
         TenantModuleStateServiceLive.pipe(Layer.provide(base)),
       );
@@ -372,6 +443,9 @@ const countOf = (spans: ReadonlyMap<string, { readonly count: number }>, name: s
 const measured = <A, E, R>(input: {
   readonly authorityCase: AuthorityCase;
   readonly correlationId: string;
+  /** Test-only per-round-trip delay to PostgreSQL and SpiceDB; absent, both are reached directly. */
+  readonly delayMs?: number;
+  readonly plainStages?: boolean;
   readonly read: Effect.Effect<A, E, R>;
   readonly snapshot: ActiveApplicationCompositionSnapshot;
 }) =>
@@ -383,11 +457,29 @@ const measured = <A, E, R>(input: {
     const value = yield* input.read.pipe(
       Effect.withSpan('measured.read'),
       Effect.withTracer(recordingTracer(records)),
-      Effect.provide(inspectionLayer({ authorityCase: input.authorityCase, counters, snapshot: input.snapshot })),
+      Effect.provide(
+        inspectionLayer({
+          authorityCase: input.authorityCase,
+          counters,
+          ...withOptional(
+            { plainStages: input.plainStages === true, snapshot: input.snapshot },
+            'delayMs',
+            input.delayMs,
+          ),
+        }),
+      ),
     );
     const cpu = process.cpuUsage(cpuBefore);
     const [rows] = yield* input.authorityCase.admin.unsafe<{ readonly count: number }>(
       `select count(*)::int as count from core.access_decision_logs where correlation_id = '${input.correlationId}'`,
+    );
+    // Every row's content: all columns except its own id, the correlation it was tagged with and its instant.
+    const contents = yield* input.authorityCase.admin.unsafe<{ readonly content: string }>(
+      `select concat_ws('|', actor_principal_id, actor_json::text, capability_key, mode, outcome, reasons_json::text,
+                        scope_id, coalesce(target::text, '-'), tenant_id, coalesce(admission_deadline::text, '-'),
+                        coalesce(delegate_app_id::text, '-'), coalesce(delegate_principal_id::text, '-'),
+                        coalesce(on_behalf_of_principal_id::text, '-'), coalesce(operation_id::text, '-')) as content
+         from core.access_decision_logs where correlation_id = '${input.correlationId}' order by content`,
     );
     const spans = tally(records);
     return {
@@ -395,9 +487,11 @@ const measured = <A, E, R>(input: {
       cellReads: countOf(spans, 'TenantIntentLoader.loadAuthorityCells'),
       counters,
       cpuMs: Math.round((cpu.user + cpu.system) / 1000),
+      decisionRowContents: contents.map(({ content }) => content),
       decisionRows: rows?.count ?? -1,
       // Wall time of the read itself, from the span the recording tracer closed around it.
       ms: Math.round(spans.get('measured.read')?.ms ?? -1),
+      records,
       spans,
       statements: countOf(spans, 'postgres'),
       transactions: countOf(spans, 'sql.transaction'),
@@ -555,11 +649,49 @@ const expectSameHints = (input: {
     expect(sortedSet(hints.value.run)).toEqual(sortedSet(reference.value.run));
     expect(sortedSet(hints.value.propose)).toEqual(sortedSet(reference.value.propose));
     expect(hints.decisionRows).toBeLessThanOrEqual(reference.decisionRows);
+    // The staged description against the same stages asked one call at a time (no shared resolution, each batch
+    // writing before it answers): the same hints, and the same evidence rows, row for row.
+    const unshared = yield* measured({
+      authorityCase: input.authorityCase,
+      correlationId: `unshared-${input.principalId}`,
+      plainStages: true,
+      read: subjectModuleAccess(yield* inspectionOf(`unshared-${input.principalId}`)),
+      snapshot: input.snapshot,
+    });
+    expect(sortedSet(hints.value.access)).toEqual(sortedSet(unshared.value.access));
+    expect(sortedSet(hints.value.run)).toEqual(sortedSet(unshared.value.run));
+    expect(sortedSet(hints.value.propose)).toEqual(sortedSet(unshared.value.propose));
+    expect(hints.decisionRows).toBe(unshared.decisionRows);
+    expect(hints.decisionRowContents).toEqual(unshared.decisionRowContents);
     return { hints, reference };
   });
 
+/** The owner's connection description, measured with `delayMs` added to every round trip. */
+const describeOwnerAt = Effect.fn('test.describeOwnerAt')(function* describeOwnerAt(input: {
+  readonly authorityCase: AuthorityCase;
+  readonly delayMs: number;
+  readonly snapshot: ActiveApplicationCompositionSnapshot;
+}) {
+  const { companyId, owner, tenantId } = input.authorityCase;
+  const correlationId = `owner-round-trips-${input.delayMs}`;
+  const asker = yield* sessionScope({ correlationId, legalEntityId: companyId, principalId: owner, tenantId });
+  return yield* measured({
+    authorityCase: input.authorityCase,
+    correlationId,
+    delayMs: input.delayMs,
+    read: loadActingAuthority(asker, {
+      actingKind: 'human',
+      actingPrincipalId: owner,
+      legalEntityId: companyId,
+      tenantId,
+    }),
+    snapshot: input.snapshot,
+  });
+});
+
 const reportPath = Config.option(Config.String('ACTING_AUTHORITY_REPORT'));
 const ownerReportPath = Config.option(Config.String('OWNER_AUTHORITY_REPORT'));
+const roundTripReportPath = Config.option(Config.String('ROUND_TRIP_REPORT'));
 
 it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 seconds' })(
   'acting authority over the installed release',
@@ -749,6 +881,56 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
             }).pipe(Effect.provide(NodeServices.layer)),
           1,
           'propose',
+        ),
+      300_000,
+    );
+
+    // Stage reaches PostgreSQL and SpiceDB over the network: every round trip that waits on the one before it adds
+    // the network delay. Measured through a delaying proxy at 0 ms and 5 ms per round trip, the difference divided by
+    // the delay is the number of sequential round trips one description makes.
+    suite.effect(
+      "counts the sequential round trips of a full-access owner's connection description",
+      () =>
+        withAuthorityCase(
+          'work.tasks',
+          (authorityCase) =>
+            Effect.gen(function* ownerRoundTrips() {
+              const snapshot = yield* installedComposition;
+              const describeAt = (delayMs: number) => describeOwnerAt({ authorityCase, delayMs, snapshot });
+              // A warm-up through the proxy, so connection setup is not counted as a round trip of the description.
+              yield* describeAt(0);
+              const at0 = yield* describeAt(0);
+              const at5 = yield* describeAt(5);
+              const sequentialRoundTrips = Math.round((at5.ms - at0.ms) / 5);
+              expect(at5.value.live.read).toEqual(at0.value.live.read);
+              const path = yield* roundTripReportPath;
+              if (Option.isSome(path)) {
+                const origin = Math.min(...at5.records.map(({ startMs }) => startMs));
+                const fileSystem = yield* FileSystem.FileSystem;
+                yield* fileSystem.writeFileString(
+                  path.value,
+                  yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+                    at0: reportOf(at0),
+                    at5: reportOf(at5),
+                    sequentialRoundTrips,
+                    timeline: at5.records
+                      .filter(({ name }) => !name.startsWith('Schema') && !name.startsWith('measured'))
+                      .toSorted((left, right) => left.startMs - right.startMs)
+                      .map(({ ms, name, parents, startMs }) => ({
+                        ms: Math.round(ms),
+                        name,
+                        parents,
+                        t: Math.round(startMs - origin),
+                      })),
+                  }),
+                );
+              }
+              // Before the shared stages this description made about 200 sequential round trips; now under 100. The
+              // bound leaves room for timing noise, never for a stage or a per-context resolution that waits again.
+              expect(sequentialRoundTrips).toBeLessThanOrEqual(120);
+              expect(at5.transactions).toBeLessThanOrEqual(14);
+            }).pipe(Effect.provide(NodeServices.layer)),
+          3,
         ),
       300_000,
     );
