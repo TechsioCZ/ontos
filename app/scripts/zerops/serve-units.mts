@@ -13,13 +13,14 @@ import { startProcessCompositionValidation } from './process-composition-validat
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { NodeRuntime, NodeServices } from '@effect/platform-node';
+import { NodeRuntime } from '@effect/platform-node';
 import { Console, Effect, Layer, Predicate, Schema } from 'effect';
 import { Argument, Command } from 'effect/cli';
 
 import { UNIT_ENTRY, readHostedUnits, workspaceRoot } from './hosted-units.mts';
 import type { HostedUnit } from './hosted-units.mts';
 import { receiveModuleCredentialHandover } from './module-credentials.mts';
+import { NoSubprocessServicesLive } from './no-subprocess-services.mts';
 import { ownerWarmState } from './owner-warm-state.mts';
 
 export class ServeUnitsError extends Schema.TaggedError<ServeUnitsError>()('ServeUnitsError', {
@@ -85,7 +86,8 @@ if (import.meta.main) {
     Effect.andThen(
       Effect.andThen(startProcessDatabasePools, startProcessCompositionValidation),
       Layer.build(
-        Layer.effectDiscard(Command.run({ version: '1.0.0' })(command)).pipe(Layer.provide(NodeServices.layer)),
+        // This process keeps its credential channel open on file descriptor 3, which a subprocess would inherit.
+        Layer.effectDiscard(Command.run({ version: '1.0.0' })(command)).pipe(Layer.provide(NoSubprocessServicesLive)),
       ),
     ).pipe(Effect.scoped),
   );
