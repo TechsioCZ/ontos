@@ -263,6 +263,8 @@ export interface ModuleCredentialPass {
   readonly operationId: string;
   readonly outcome: 'denied' | 'failed' | 'succeeded';
   readonly outcomeCode: string;
+  /** Issue passes only: keys that could not be bound and then could not be disabled either. */
+  readonly undisabled?: readonly string[];
 }
 
 /**
@@ -289,6 +291,7 @@ export const recordModuleCredentialPass = Effect.fn('ModuleCredentials.recordPas
             failed: [...pass.failed],
             hostId: pass.hostId,
             operationId: pass.operationId,
+            undisabled: [...(pass.undisabled ?? [])],
           },
           outcome: pass.outcome,
           outcomeCode: pass.outcomeCode,

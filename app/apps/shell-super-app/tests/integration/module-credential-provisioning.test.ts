@@ -8,7 +8,7 @@ import { Clock, Duration, Effect, Exit, Layer, Redacted, Schema, Stream } from '
 import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 
-import { ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
+import { ApiKeyProviderUnavailableError, ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { GatewayDelegationError } from '../../api/auth/gateway-delegation-errors.ts';
@@ -84,7 +84,7 @@ const platform = Effect.gen(function* platformDatabase() {
     Layer.succeed(CoreDatabase, { executor: coreDatabase }),
   );
   const catalog = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
-  return { adminDatabase, catalog, configuration, coreDatabase, isolated, keys, services, snapshot };
+  return { adminDatabase, authDatabase, catalog, configuration, coreDatabase, isolated, keys, services, snapshot };
 });
 
 const verifies = (keys: typeof ApiKeyService.Service, secret: Redacted.Redacted) =>
@@ -318,6 +318,108 @@ it.live('provisions, attests, retires and audits platform module credentials acr
       expect(revoked.filter(({ status }) => status === 'revoked')).toHaveLength(APP_IDS.length * 6);
     }),
   ).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer))),
+);
+
+it.live(
+  'disables a superseded key before revoking its binding, and reports a key it could neither bind nor disable',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* disableFirst() {
+        const { adminDatabase, authDatabase, catalog, coreDatabase, keys } = yield* platform;
+        const release: ModuleCredentialRelease = {
+          ...moduleCredentialReleaseOf(catalog),
+          buildMarkers: { ...moduleCredentialReleaseOf(catalog).buildMarkers, [NOT_INSTALLED]: 'commerce-cart-build' },
+        };
+        const servicesWith = (apiKeys: typeof ApiKeyService.Service) =>
+          Layer.mergeAll(
+            Layer.succeed(ApiKeyService, apiKeys),
+            Layer.succeed(AuthDatabase, authDatabase),
+            Layer.succeed(CoreDatabase, { executor: coreDatabase }),
+          );
+        const issueWith = (apiKeys: typeof ApiKeyService.Service, hostId: string) =>
+          provisionModuleCredentials({ appIds: APP_IDS, hostId, operationId: crypto.randomUUID(), release }).pipe(
+            Effect.provide(servicesWith(apiKeys)),
+          );
+        const bindingStatus = (providerKeyId: string) =>
+          coreDatabase
+            .select({ status: principalAuthBindings.status })
+            .from(principalAuthBindings)
+            .where(eq(principalAuthBindings.providerSubjectId, providerKeyId))
+            .pipe(Effect.map(([row]) => row?.status));
+
+        // Host A issues before its release takes the authority; host B, after it, retires A's keys.
+        const hostA = yield* issueWith(keys, 'host-a');
+        yield* Effect.sleep(Duration.millis(20));
+        yield* adminDatabase
+          .update(applicationCompositionAuthority)
+          .set({ phase: 'active', revision: release.compositionRevision, revisionActivatedAt: sql`clock_timestamp()` })
+          .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+        const hostB = yield* issueWith(keys, 'host-b');
+        const statusAtDisable: (string | undefined)[] = [];
+        const recordingKeys: typeof ApiKeyService.Service = {
+          ...keys,
+          setEnabled: (providerKeyId, enabled) =>
+            bindingStatus(providerKeyId).pipe(
+              Effect.orDie,
+              Effect.tap((status) => Effect.sync(() => statusAtDisable.push(status))),
+              Effect.andThen(keys.setEnabled(providerKeyId, enabled)),
+            ),
+        };
+        const retired = yield* retireSupersededModuleCredentials({
+          compositionRevision: release.compositionRevision,
+          current: hostB.providerKeyIds,
+          hostId: 'host-b',
+          operationId: crypto.randomUUID(),
+        }).pipe(Effect.provide(servicesWith(recordingKeys)));
+        expect(retired.retired).toBe(APP_IDS.length);
+        // Every key was disabled while its binding was still active: nothing can use it in between.
+        expect(statusAtDisable).toEqual(APP_IDS.map(() => 'active'));
+        for (const providerKeyId of hostA.providerKeyIds) {
+          expect(yield* bindingStatus(providerKeyId)).toBe('revoked');
+        }
+
+        // A key that cannot be bound (its id is already bound) and then cannot be disabled is reported, not ignored.
+        const [alreadyBound] = [...hostB.providerKeyIds];
+        const failingKeys: typeof ApiKeyService.Service = {
+          ...keys,
+          issueServerOwned: (input) =>
+            keys
+              .issueServerOwned(input)
+              .pipe(
+                Effect.map((issued) =>
+                  input.name === 'module:catalog' && alreadyBound !== undefined
+                    ? { ...issued, providerKeyId: alreadyBound }
+                    : issued,
+                ),
+              ),
+          setEnabled: (providerKeyId, enabled) =>
+            providerKeyId === alreadyBound
+              ? Effect.fail(
+                  new ApiKeyProviderUnavailableError({
+                    code: 'api_key_provider_unavailable',
+                    reason: 'The provider refuses this test key',
+                  }),
+                )
+              : keys.setEnabled(providerKeyId, enabled),
+        };
+        const operationId = crypto.randomUUID();
+        const pass = yield* provisionModuleCredentials({
+          appIds: APP_IDS,
+          hostId: 'host-c',
+          operationId,
+          release,
+        }).pipe(Effect.provide(servicesWith(failingKeys)));
+        expect(pass.failedAppIds).toEqual(['catalog']);
+        const [audit] = yield* coreDatabase
+          .select({ evidence: auditEvents.evidenceJson, outcome: auditEvents.outcome })
+          .from(auditEvents)
+          .where(
+            and(eq(auditEvents.tenantId, PLATFORM_TENANT.tenantId), eq(auditEvents.targetResourceId, operationId)),
+          );
+        expect(audit?.outcome).toBe('failed');
+        expect(JSON.stringify(audit?.evidence)).toContain(`"undisabled":["${alreadyBound ?? ''}"]`);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer))),
 );
 
 it.live('runs the provisioning program as the runtime role and hands its keys over only on the private channel', () =>

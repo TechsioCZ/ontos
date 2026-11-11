@@ -17,7 +17,7 @@ import type {
   ModuleCredentialPass,
 } from '@app/core-runtime/auth/module-credentials';
 import { eq } from 'drizzle-orm';
-import { DateTime, Effect, Option, Result, Schema } from 'effect';
+import { DateTime, Effect, Exit, Option, Result, Schema } from 'effect';
 import type { Redacted } from 'effect';
 
 import { ApiKeyService } from './api-key-service.ts';
@@ -95,6 +95,22 @@ export const provisionModuleCredentials = Effect.fn('ModuleCredentialProvisionin
       .transaction((transaction) => ensurePlatformTenant(transaction))
       .pipe(Effect.mapError(unavailable('The platform tenant could not be ensured')));
     const appIds = [...new Set(input.appIds)].toSorted();
+    // Keys this pass issued, could not bind and then could not disable: reported in the audit, never silent.
+    const undisabled: string[] = [];
+    const disableOrReport = (appId: string, providerKeyId: string) =>
+      keys.setEnabled(providerKeyId, false).pipe(
+        Effect.exit,
+        Effect.flatMap((disabled) => {
+          if (Exit.isSuccess(disabled)) {
+            return Effect.void;
+          }
+          undisabled.push(providerKeyId);
+          return Effect.logError('A module credential that could not be bound could not be disabled either', {
+            appId,
+            providerKeyId,
+          });
+        }),
+      );
     const provisionModule = Effect.fn('ModuleCredentialProvisioning.provisionModule')(function* provisionModule(
       appId: string,
     ) {
@@ -131,7 +147,8 @@ export const provisionModuleCredentials = Effect.fn('ModuleCredentialProvisionin
         .pipe(
           Effect.andThen(attestKey(issued.providerKeyId, attestation)),
           Effect.mapError(unavailable(`The module credential of ${appId} could not be bound and attested`)),
-          Effect.tapError(() => keys.setEnabled(issued.providerKeyId, false).pipe(Effect.ignore)),
+          // The key must not stay usable: disable it, and if even that fails, report it rather than swallow it.
+          Effect.tapError(() => disableOrReport(appId, issued.providerKeyId)),
         );
       return { appId, providerKeyId: issued.providerKeyId, secret: issued.secret };
     });
@@ -158,6 +175,7 @@ export const provisionModuleCredentials = Effect.fn('ModuleCredentialProvisionin
       operationId: input.operationId,
       outcome: failedAppIds.length === 0 ? 'succeeded' : 'failed',
       outcomeCode: failedAppIds.length === 0 ? 'module_credentials_issued' : 'module_credentials_partially_issued',
+      undisabled,
     });
     return {
       credentials,
@@ -222,25 +240,27 @@ export const retireSupersededModuleCredentials = Effect.fn('ModuleCredentialProv
     const retireOne = Effect.fn('ModuleCredentialProvisioning.retireOne')(function* retireOne(
       credential: ModuleCredentialEnrolment,
     ) {
-      return yield* database.executor
-        .transaction(
-          Effect.fn('ModuleCredentialProvisioning.revokeWhileHoldingAuthority')(
-            function* revokeWhileHoldingAuthority(transaction) {
-              // The authority is re-read with each revocation: a host that lost it in the meantime stops retiring.
-              const still = yield* loadCompositionAuthorityActivation(transaction);
-              if (Option.isNone(still) || still.value.revision !== input.compositionRevision) {
-                return false;
-              }
-              yield* revokeModuleCredential(transaction, credential);
-              return true;
-            },
+      // The key is disabled first: once it fails verification nothing can use it, whatever happens to its binding.
+      // Only then is the binding revoked, and only while this release still holds the authority.
+      return yield* keys.setEnabled(credential.providerKeyId, false).pipe(
+        Effect.andThen(
+          database.executor.transaction(
+            Effect.fn('ModuleCredentialProvisioning.revokeWhileHoldingAuthority')(
+              function* revokeWhileHoldingAuthority(transaction) {
+                // The authority is re-read with each revocation: a host that lost it in the meantime stops retiring.
+                const still = yield* loadCompositionAuthorityActivation(transaction);
+                if (Option.isNone(still) || still.value.revision !== input.compositionRevision) {
+                  return false;
+                }
+                yield* revokeModuleCredential(transaction, credential);
+                return true;
+              },
+            ),
           ),
-        )
-        .pipe(
-          Effect.tap((revoked) => (revoked ? keys.setEnabled(credential.providerKeyId, false) : Effect.void)),
-          Effect.mapError(unavailable('A superseded module credential could not be retired')),
-          Effect.result,
-        );
+        ),
+        Effect.mapError(unavailable('A superseded module credential could not be retired')),
+        Effect.result,
+      );
     });
     const outcomes = yield* Effect.forEach(superseded, retireOne, { concurrency: 1 });
     const retired = superseded.filter((_, index) => {
