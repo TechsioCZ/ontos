@@ -132,3 +132,34 @@ it.live('a refused reload takes the held rows away at once', () =>
     yield* Effect.promise(() => waitFor(() => expect(result.current).toBe('failed')));
   }),
 );
+
+it.effect('a list reopened after its rows went stale shows them at once and reloads once', () =>
+  Effect.gen(function* reopenedList() {
+    // The freshness window (20 s) has to pass while the list is not mounted, so this case runs on a fake clock.
+    rstest.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      yield* customersData.read(customersQuery(company));
+      const first = renderHook(useTable, { initialProps: { context: company } });
+      expect(first.result.current).toBe('rows:Before');
+      first.unmount();
+
+      yield* Effect.promise(() => act(() => rstest.advanceTimersByTimeAsync(30_000)));
+      const loadsBefore = rstest.mocked(executeCustomerList).mock.calls.length;
+      shown.length = 0;
+      const second = renderHook(useTable, { initialProps: { context: company } });
+      // The first render already has the rows.
+      expect(shown[0]).toBe('rows:Before');
+      expect(shown).not.toContain('pending');
+      // The page's own mount effect (`ensure(query)`) starts the one background reload that follows.
+      act(() => {
+        customersData.ensure(customersQuery(company));
+      });
+      yield* Effect.promise(() => act(() => rstest.advanceTimersByTimeAsync(1000)));
+      expect(rstest.mocked(executeCustomerList).mock.calls.length - loadsBefore).toBe(1);
+      expect(second.result.current).toBe('rows:Before');
+      second.unmount();
+    } finally {
+      rstest.useRealTimers();
+    }
+  }),
+);

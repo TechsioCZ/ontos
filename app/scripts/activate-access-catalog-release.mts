@@ -20,7 +20,21 @@
  * release.
  */
 import { NodeServices } from '@effect/platform-node';
-import { Config, Console, Effect, Exit, FileSystem, Layer, Match, Option, Path, Redacted, Schema } from 'effect';
+import {
+  Cause,
+  Config,
+  Console,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Match,
+  Option,
+  Path,
+  Predicate,
+  Redacted,
+  Schema,
+} from 'effect';
 import { Command, Flag } from 'effect/cli';
 
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../database/identity-enrollment.ts';
@@ -220,19 +234,30 @@ const run = Effect.fn('AccessCatalogReleaseActivation.run')(function* runDeploye
   return yield* printReport(report, dryRun);
 });
 
-const command = Command.make('activate-access-catalog-release', { dryRun: Flag.Boolean('dry-run') }, ({ dryRun }) =>
-  run(dryRun).pipe(
-    Effect.tapError((problem) =>
-      Console.error(
-        `[access-release] ACCESS CATALOG RELEASE ACTIVATION FAILED: ${Schema.is(AccessCatalogReleaseActivationFailure)(problem) ? problem.reason : 'unexpected failure'}`,
-      ),
-    ),
-  ),
+/** `--dry-run` is optional: the migrator starts this script with no argument at all (`run-zerops-migrator.mjs`). */
+export const command = Command.make(
+  'activate-access-catalog-release',
+  { dryRun: Flag.Boolean('dry-run').pipe(Flag.withDefault(false)) },
+  ({ dryRun }) => run(dryRun),
 ).pipe(Command.provide(({ dryRun }) => (dryRun ? DryRunRuntimeLive : ActivationRuntimeLive)));
+
+/** The one loud line for every failure: arguments, settings, the runtime it is composed with, or the run itself. */
+const failureReason = (cause: Cause.Cause<unknown>): string => {
+  const problem = Cause.squash(cause);
+  if (Schema.is(AccessCatalogReleaseActivationFailure)(problem)) {
+    return problem.reason;
+  }
+  return Predicate.hasProperty(problem, '_tag') ? `unexpected failure (${String(problem._tag)})` : 'unexpected failure';
+};
 
 if (import.meta.main) {
   const exit = await Effect.runPromiseExit(
-    Command.run(command, { version: '1.0.0' }).pipe(Effect.provide(NodeServices.layer)),
+    Command.run(command, { version: '1.0.0' }).pipe(
+      Effect.tapCause((cause) =>
+        Console.error(`[access-release] ACCESS CATALOG RELEASE ACTIVATION FAILED: ${failureReason(cause)}`),
+      ),
+      Effect.provide(NodeServices.layer),
+    ),
   );
   process.exitCode = Exit.isFailure(exit) ? 1 : 0;
 }

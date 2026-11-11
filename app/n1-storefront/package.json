@@ -21,6 +21,7 @@
     "@app/work-tasks": "catalog:",
     "@modern-js/bff-effect": "catalog:ultramodern",
     "@techsio/ui-kit": "catalog:",
+    "@zag-js/dom-query": "1.47.0",
     "effect": "4.0.7",
     "next": "16.3.8",
     "react": "19.3.0",

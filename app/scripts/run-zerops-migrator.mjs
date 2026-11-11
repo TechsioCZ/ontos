@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { Cause, Config, Duration, Effect, Exit, Option } from 'effect';
 
+import { accessReleaseActivationArguments } from './access-release-activation-child.mts';
 import { loadOptionalCommercePortalAuthDatabaseConfig } from '../verticals/commerce-customer-context/scripts/portal-auth-database-config.mts';
 
 const appDirectory = fileURLToPath(new URL('../', import.meta.url));
@@ -205,7 +206,7 @@ const main = Effect.scoped(
     // follow it and records Novinky for every other role. It never fails the release: authorization then stays
     // at the previous release, which keeps every new capability denied, and the next activation retries. It is
     // bounded, and its child process is stopped on expiry, so an unreachable engine never holds a deployment.
-    yield* Effect.scoped(runAppScript('scripts/activate-access-catalog-release.mts')).pipe(
+    yield* Effect.scoped(run(process.execPath, [...accessReleaseActivationArguments(appDirectory)])).pipe(
       Effect.timeoutOrElse({
         duration: ACCESS_RELEASE_ACTIVATION_BUDGET,
         orElse: () => Effect.fail(new MigratorError('the activation exceeded its time budget')),

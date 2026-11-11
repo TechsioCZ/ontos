@@ -7,7 +7,11 @@ import { asc } from 'drizzle-orm';
 import { DateTime, Effect, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
+import {
+  MerchandiseCommandSchema,
+  MerchandiseLifecycleConflict,
+  MerchandiseNotFound,
+} from '../../shared/actions/apply-command.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { StorefrontCatalogQuerySchema } from '../../shared/apis/records.ts';
 import {
@@ -593,6 +597,137 @@ it.live('UpdateCategory without a rename leaves every product row alone', () =>
       const after = yield* rowsOf(fixture);
       expect(after.categories.find((row) => row.id === 'c')?.heading).toBe('Metrické šrouby DIN');
       expect(after.products).toEqual(before.products);
+    }),
+  ),
+);
+
+it.live('secondary membership persists through locked working sets and filters without duplicate products', () =>
+  withMerchandise(decodeState(richInput), (fixture) =>
+    Effect.gen(function* categoryMembershipPersistence() {
+      yield* runCommand(fixture, {
+        _tag: 'CreateCategory',
+        id: 'secondary',
+        name: 'Sport',
+        parentId: null,
+        slug: 'sport',
+      });
+      const before = yield* rowsOf(fixture);
+      yield* runCommand(fixture, {
+        _tag: 'UpdateProduct',
+        id: 'p1',
+        patch: { additionalCategoryIds: ['secondary'] },
+      });
+      const stored = yield* rowsOf(fixture);
+      const row = yield* requiredFixtureValue(productRow(stored, 'p1'));
+      expect(row.categoryId).toBe('c');
+      expect(row.categoryPathIds).toEqual(['c', 'r', 'secondary']);
+      expect(decodeProductDocument(row.document).additionalCategoryIds).toEqual(['secondary']);
+      const snapshot = yield* requiredFixtureValue(yield* readSnapshot(fixture.db, fixture.scope));
+      expect(snapshot.state.products.find((product) => product.id === 'p1')?.additionalCategoryIds).toEqual([
+        'secondary',
+      ]);
+      const page = yield* storefrontProducts(fixture.db, fixture.scope, {
+        query: Schema.decodeSync(StorefrontCatalogQuerySchema)({ categorySlug: 'sport', fields: 'card' }),
+      });
+      expect(page.total).toBe(1);
+      expect(page.products.map((product) => product.id)).toEqual(['p1']);
+      // A move with no new additional field must load and retain the stored secondary category.
+      yield* runCommand(fixture, { _tag: 'UpdateProduct', id: 'p1', patch: { categoryId: 'r' } });
+      const moved = yield* rowsOf(fixture);
+      expect((yield* requiredFixtureValue(productRow(moved, 'p1'))).categoryPathIds).toEqual(['r', 'secondary']);
+      expect(moved.variants).toEqual(before.variants);
+      expect(moved.tiers).toEqual(before.tiers);
+      expect(moved.movements).toEqual(before.movements);
+      expect(moved.orders).toEqual(before.orders);
+      yield* runCommand(fixture, { _tag: 'UpdateProduct', id: 'p1', patch: { additionalCategoryIds: [] } });
+      const removed = yield* storefrontProducts(fixture.db, fixture.scope, {
+        query: Schema.decodeSync(StorefrontCatalogQuerySchema)({ categorySlug: 'sport', fields: 'card' }),
+      });
+      expect(removed.total).toBe(0);
+    }),
+  ),
+);
+
+it.live('Bulk native memberships commit one scoped delta and roll back entirely on a later invalid primary', () =>
+  withMerchandise(decodeState(richInput), (fixture) =>
+    Effect.gen(function* bulkCategoryMembershipPersistence() {
+      yield* runCommand(fixture, {
+        _tag: 'CreateCategory',
+        id: 'secondary',
+        name: 'Sport',
+        parentId: null,
+        slug: 'sport',
+      });
+      const before = yield* rowsOf(fixture);
+      // p1 has a valid primary; p2's legacy primary x is absent from the category table.
+      const failure = yield* runCommand(fixture, {
+        _tag: 'BulkUpdateProducts',
+        ids: ['p1', 'p2'],
+        patch: { additionalCategoryIds: ['secondary'] },
+      }).pipe(Effect.flip);
+      expect(Schema.is(MerchandiseLifecycleConflict)(failure)).toBe(true);
+      expect(yield* rowsOf(fixture)).toEqual(before);
+      const missingProduct = yield* runCommand(fixture, {
+        _tag: 'BulkUpdateProducts',
+        ids: ['p1', 'missing'],
+        patch: { additionalCategoryIds: ['secondary'] },
+      }).pipe(Effect.flip);
+      expect(Schema.is(MerchandiseNotFound)(missingProduct)).toBe(true);
+      expect(yield* rowsOf(fixture)).toEqual(before);
+      const missingCategory = yield* runCommand(fixture, {
+        _tag: 'BulkUpdateProducts',
+        ids: ['p1', 'p3'],
+        patch: { additionalCategoryIds: ['missing'] },
+      }).pipe(Effect.flip);
+      expect(Schema.is(MerchandiseLifecycleConflict)(missingCategory)).toBe(true);
+      expect(yield* rowsOf(fixture)).toEqual(before);
+      const result = yield* runCommand(fixture, {
+        _tag: 'BulkUpdateProducts',
+        ids: ['p1', 'p1', 'p3'],
+        patch: { additionalCategoryIds: ['secondary'], categoryId: 'r' },
+      });
+      expect(result.revision).toBe((before.head?.revision ?? -1) + 1);
+      expect(result.change.entityIds).toEqual(['p1', 'p3']);
+      const after = yield* rowsOf(fixture);
+      for (const id of ['p1', 'p3']) {
+        const row = yield* requiredFixtureValue(productRow(after, id));
+        const document = decodeProductDocument(row.document);
+        expect(row.categoryId).toBe('r');
+        expect(row.categoryPathIds).toEqual(['r', 'secondary']);
+        expect(document.additionalCategoryIds).toEqual(['secondary']);
+        expect(document.contentHistory?.at(-1)?.fields).toContain('Další kategorie');
+        expect(row.currentPriceMinor).toBe((yield* requiredFixtureValue(productRow(before, id))).currentPriceMinor);
+      }
+      expect(after.products.filter((row) => !['p1', 'p3'].includes(row.id))).toEqual(
+        before.products.filter((row) => !['p1', 'p3'].includes(row.id)),
+      );
+      expect(after.variants).toEqual(before.variants);
+      expect(after.tiers).toEqual(before.tiers);
+      expect(after.movements).toEqual(before.movements);
+      expect(after.orders).toEqual(before.orders);
+      const page = yield* storefrontProducts(fixture.db, fixture.scope, {
+        query: Schema.decodeSync(StorefrontCatalogQuerySchema)({ categorySlug: 'sport', fields: 'card' }),
+      });
+      expect(page.total).toBe(2);
+      expect(new Set(page.products.map((product) => product.id))).toEqual(new Set(['p1', 'p3']));
+      yield* runCommand(fixture, {
+        _tag: 'BulkUpdateProducts',
+        ids: ['p1', 'p3'],
+        patch: { categoryId: 'c' },
+      });
+      const moved = yield* rowsOf(fixture);
+      for (const id of ['p1', 'p3']) {
+        expect((yield* requiredFixtureValue(productRow(moved, id))).categoryPathIds).toEqual(['c', 'r', 'secondary']);
+      }
+      yield* runCommand(fixture, {
+        _tag: 'BulkUpdateProducts',
+        ids: ['p1', 'p3'],
+        patch: { additionalCategoryIds: [] },
+      });
+      const removed = yield* storefrontProducts(fixture.db, fixture.scope, {
+        query: Schema.decodeSync(StorefrontCatalogQuerySchema)({ categorySlug: 'sport', fields: 'card' }),
+      });
+      expect(removed.total).toBe(0);
     }),
   ),
 );

@@ -17,6 +17,7 @@ import {
 import { executeRecords } from '../../src/api/records-consumer.ts';
 import {
   firstOrdersPage,
+  forgetRememberedOrders,
   orderCountsData,
   orderDetailData,
   ordersPageData,
@@ -187,6 +188,7 @@ const mount = (context: ModulePageContext, offset: number): Effect.Effect<Mounte
 /** An order command settled, or a live change arrived: the strict stores drop what they have and read again. */
 const invalidate = Effect.promise(async () => {
   await act(async () => {
+    forgetRememberedOrders();
     ordersPageData.invalidate();
     orderCountsData.invalidate();
     orderDetailData.invalidate();
@@ -200,6 +202,7 @@ const before = 'rows:ORD-1,ORD-2|write|shipped:3';
 beforeEach(() => {
   rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   rstest.resetAllMocks();
+  forgetRememberedOrders();
   orderDetailData.invalidate();
   ordersPageData.invalidate();
   orderCountsData.invalidate();

@@ -1,5 +1,18 @@
 import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
-import { Data, DateTime, Effect, Exit, Match, Option, Predicate, Random, Ref, Result, Schema } from 'effect';
+import {
+  Data,
+  DateTime,
+  Effect,
+  Exit,
+  Match,
+  MutableRef,
+  Option,
+  Predicate,
+  Random,
+  Ref,
+  Result,
+  Schema,
+} from 'effect';
 import { constVoid } from 'effect/Function';
 
 import {
@@ -141,6 +154,9 @@ export const customersData = definePageData({
   runtime: browserRuntime,
 });
 
+/** Last ready reads of the customer list per scope, kept for a list reopened after a full customer page. */
+const customersListMemory = MutableRef.make(new Map<string, ReturnType<typeof customersData.snapshot>>());
+
 /**
  * The customer list as the page reads it. The strict store reads as pending while it reloads the same register
  * (freshness window, live change, settled write); the rows and the stat tiles stay on the last ready read of the
@@ -155,6 +171,8 @@ export const useCustomersSnapshot = (query: string) =>
       () => customersData.snapshot(query),
       (): ReturnType<typeof customersData.snapshot> => pageDataPending,
     ),
+    // A list reopened after a full customer page starts from its last ready read.
+    { memory: MutableRef.get(customersListMemory) },
   );
 
 /** `preloadPage` of the customers page. */

@@ -69,7 +69,13 @@ import { resetToAkrosBaseline } from './akros-demo-reset.ts';
 import { applyMerchandiseAiCommand, isMerchandiseAiCommand } from './ai-changes.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
 import { storefrontBrandOf } from '../../shared/domain/storefront-brand.ts';
-import { assignCategory, createCategoryCommand, updateCategoryCommand, withContentHistory } from './catalog-content.ts';
+import {
+  assignCategory,
+  assignCategoryMemberships,
+  createCategoryCommand,
+  updateCategoryCommand,
+  withContentHistory,
+} from './catalog-content.ts';
 import {
   categoryTrailsOf,
   categoryTree,
@@ -445,6 +451,8 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
   );
 });
 
+const missingPrimaryCategoryReason = 'Další kategorie vyžadují hlavní kategorii';
+
 const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
   state: MerchandiseState,
   value: CommandOf<'CreateProduct'>,
@@ -460,9 +468,9 @@ const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
   if (value.slug !== undefined && slugTaken(state.products, value.slug, id)) {
     return yield* conflict('Another product already uses this storefront slug');
   }
-  const { _tag, priceMinor, variants, ...fields } = value;
+  const { _tag, additionalCategoryIds, priceMinor, variants, ...fields } = value;
   void _tag;
-  const product: Mutable<Product> = {
+  let product: Mutable<Product> = {
     ...fields,
     createdAt: input.now,
     currentPriceMinor: priceMinor,
@@ -471,6 +479,14 @@ const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
     slug: value.slug ?? newProductSlug(state.products, value.name, value.sku),
     updatedAt: input.now,
   };
+  if (additionalCategoryIds !== undefined) {
+    if (value.categoryId === undefined) {
+      return yield* conflict(missingPrimaryCategoryReason);
+    }
+    product = {
+      ...(yield* assignCategoryMemberships(product, value.categoryId, additionalCategoryIds, state.categories)),
+    };
+  }
   if (variants !== undefined) {
     product.variants = yield* normalizeVariants(product, variants, input);
   }
@@ -498,7 +514,13 @@ const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updatePro
     return yield* conflict('Another product already uses this storefront slug');
   }
   // categoryPathIds is server-derived; categoryId moves the product inside the storefront category tree.
-  const { categoryId: patchCategoryId, categoryPathIds: _clientPath, variants: patchVariants, ...patch } = value.patch;
+  const {
+    additionalCategoryIds: patchAdditionalCategoryIds,
+    categoryId: patchCategoryId,
+    categoryPathIds: _clientPath,
+    variants: patchVariants,
+    ...patch
+  } = value.patch;
   void _clientPath;
   const variants =
     patchVariants === undefined ? product.variants : yield* normalizeVariants(product, patchVariants, input);
@@ -510,10 +532,21 @@ const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updatePro
   if (patch.images !== undefined) {
     merged.imageSrc = patch.images[0] ?? '';
   }
-  const categorized =
-    patchCategoryId === undefined || patchCategoryId === product.categoryId
-      ? merged
-      : yield* assignCategory(merged, patchCategoryId, state.categories);
+  let categorized: Product = merged;
+  if (patchAdditionalCategoryIds !== undefined) {
+    const primaryCategoryId = patchCategoryId ?? product.categoryId;
+    if (primaryCategoryId === undefined) {
+      return yield* conflict(missingPrimaryCategoryReason);
+    }
+    categorized = yield* assignCategoryMemberships(
+      merged,
+      primaryCategoryId,
+      patchAdditionalCategoryIds,
+      state.categories,
+    );
+  } else if (patchCategoryId !== undefined && patchCategoryId !== product.categoryId) {
+    categorized = yield* assignCategory(merged, patchCategoryId, state.categories);
+  }
   const withVariants: Product = variants === undefined ? categorized : { ...categorized, variants };
   const updated = withContentHistory(product, withVariants, input);
   const entity = yield* entityIdOf(product.id);
@@ -574,13 +607,27 @@ const editBulkProduct = Effect.fn('Merchandise.editBulkProduct')(function* editB
   input: MerchandiseCommandInput,
 ) {
   const product = yield* findProduct(state.products, id);
-  const { priceChangePercent, ...fields } = patch;
+  const { additionalCategoryIds, categoryId, priceChangePercent, ...fields } = patch;
+  const nativeCategories = categoryId !== undefined || additionalCategoryIds !== undefined;
   const edited: Product = { ...product, ...fields, updatedAt: input.now };
+  let categorized = edited;
+  if (nativeCategories) {
+    const primaryCategoryId = categoryId ?? product.categoryId;
+    if (primaryCategoryId === undefined) {
+      return yield* conflict(missingPrimaryCategoryReason);
+    }
+    categorized = yield* assignCategoryMemberships(
+      edited,
+      primaryCategoryId,
+      additionalCategoryIds ?? product.additionalCategoryIds ?? [],
+      state.categories,
+    );
+  }
   const priced =
     priceChangePercent === undefined
-      ? edited
-      : repriced(edited, percentChangedPriceMinor(product.currentPriceMinor, priceChangePercent), input);
-  return withProduct(state, priced);
+      ? categorized
+      : repriced(categorized, percentChangedPriceMinor(product.currentPriceMinor, priceChangePercent), input);
+  return withProduct(state, nativeCategories ? withContentHistory(product, priced, input) : priced);
 });
 
 /** All-or-nothing: an unknown id fails the whole command, so the result list always matches the request. */
@@ -589,6 +636,12 @@ const bulkUpdateProducts = Effect.fn('Merchandise.bulkUpdateProducts')(function*
   value: CommandOf<'BulkUpdateProducts'>,
   input: MerchandiseCommandInput,
 ) {
+  if (
+    value.patch.category !== undefined &&
+    (value.patch.categoryId !== undefined || value.patch.additionalCategoryIds !== undefined)
+  ) {
+    return yield* conflict('Popisnou kategorii nelze kombinovat s přiřazením do stromu kategorií');
+  }
   const ids = [...new Set(value.ids)];
   const next = yield* Effect.reduce(
     ids,
@@ -1760,7 +1813,17 @@ export const workingSetRequestOf = (
   Match.value(command).pipe(
     Match.tagsExhaustive({
       ArchiveDemoProduct: (value): WorkingSetRequest => ({ productIds: [value.id] }),
-      BulkUpdateProducts: (value): WorkingSetRequest => ({ productIds: value.ids }),
+      BulkUpdateProducts: (value): WorkingSetRequest => {
+        const request: Mutable<WorkingSetRequest> = { productIds: value.ids };
+        if (value.patch.categoryId !== undefined || value.patch.additionalCategoryIds !== undefined) {
+          request.categoryIds = [
+            ...(value.patch.categoryId === undefined ? [] : [value.patch.categoryId]),
+            ...(value.patch.additionalCategoryIds ?? []),
+          ];
+          request.productCategoryMemberships = true;
+        }
+        return request;
+      },
       ChangeOrderStatus: (value): WorkingSetRequest => ({ movements: true, orderIds: [value.id] }),
       ChangePrice: (value): WorkingSetRequest => ({ productIds: [value.id] }),
       ChangeProductImages: (value): WorkingSetRequest => ({ productIds: [value.id] }),
@@ -1773,13 +1836,24 @@ export const workingSetRequestOf = (
         orderIds: [value.id],
         productIds: value.lines.map((line) => line.productId),
       }),
-      CreateProduct: (value): WorkingSetRequest => ({
-        productIds: [resourceId],
-        productKeys: {
-          sku: value.sku,
-          ...(value.slug === undefined ? { slugPrefix: productSlugBase(value.name, value.sku) } : { slug: value.slug }),
-        },
-      }),
+      CreateProduct: (value): WorkingSetRequest => {
+        const request: Mutable<WorkingSetRequest> = {
+          productIds: [resourceId],
+          productKeys: {
+            sku: value.sku,
+            ...(value.slug === undefined
+              ? { slugPrefix: productSlugBase(value.name, value.sku) }
+              : { slug: value.slug }),
+          },
+        };
+        if (value.additionalCategoryIds !== undefined) {
+          request.categoryIds = [
+            ...(value.categoryId === undefined ? [] : [value.categoryId]),
+            ...value.additionalCategoryIds,
+          ];
+        }
+        return request;
+      },
       EditOrder: (value): WorkingSetRequest => ({
         movements: true,
         orderIds: [value.id],
@@ -1803,8 +1877,12 @@ export const workingSetRequestOf = (
         if (value.patch.slug !== undefined) {
           request.productKeys = { slug: value.patch.slug };
         }
-        if (value.patch.categoryId !== undefined) {
-          request.categoryIds = [value.patch.categoryId];
+        if (value.patch.categoryId !== undefined || value.patch.additionalCategoryIds !== undefined) {
+          request.categoryIds = [
+            ...(value.patch.categoryId === undefined ? [] : [value.patch.categoryId]),
+            ...(value.patch.additionalCategoryIds ?? []),
+          ];
+          request.productCategoryMemberships = true;
         }
         return request;
       },

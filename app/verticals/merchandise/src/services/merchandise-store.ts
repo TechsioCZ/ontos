@@ -721,6 +721,8 @@ export interface WorkingSetRequest {
   readonly movements?: boolean;
   readonly orderClientRequestId?: string;
   readonly orderIds?: readonly string[];
+  /** Category edits also need the loaded product's current primary/additional ids under this locked head. */
+  readonly productCategoryMemberships?: boolean;
   readonly productIds?: readonly string[];
   /** Products that could collide with a new SKU or storefront slug (case-insensitive). */
   readonly productKeys?: { readonly sku?: string; readonly slug?: string; readonly slugPrefix?: string };
@@ -807,6 +809,19 @@ const productKeyFilters = (keys: WorkingSetRequest['productKeys']): SQL[] => {
   return filters;
 };
 
+const categoryIdsForWorkingSet = (request: WorkingSetRequest, loadedProducts: readonly Product[]) => {
+  if (request.productCategoryMemberships !== true) {
+    return request.categoryIds;
+  }
+  return [
+    ...(request.categoryIds ?? []),
+    ...loadedProducts.flatMap((product) => [
+      ...(product.categoryId === undefined ? [] : [product.categoryId]),
+      ...(product.additionalCategoryIds ?? []),
+    ]),
+  ];
+};
+
 /** Loads the rows `request` names under the locked head row. */
 export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(function* loadWorkingSet(
   db: MerchandiseDb,
@@ -879,10 +894,14 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
           'Stock movements could not be read',
         )
       : [];
+  const categoryIds = categoryIdsForWorkingSet(
+    request,
+    loaded.map(({ product }) => product),
+  );
   const [movements, loadedCategories] = yield* Effect.all(
     [
       query(Effect.forEach(movementRows, decodeMovementRow, { concurrency: 1 }), 'Stored movement does not decode'),
-      loadAncestorCategories(db, scope, request.categoryIds),
+      loadAncestorCategories(db, scope, categoryIds),
     ],
     { concurrency: 1 },
   );
@@ -909,7 +928,7 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
         )).length > 0
       : undefined;
   let state: MerchandiseState = { movements, orders: loadedOrders, products: loaded.map((entry) => entry.product) };
-  if (request.categoryIds !== undefined) {
+  if (categoryIds !== undefined) {
     state = { ...state, categories: loadedCategories };
   }
   if (request.aiChanges === true && head.aiChanges !== undefined) {

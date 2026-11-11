@@ -188,6 +188,19 @@ export const orderCountsData = definePageData({
   runtime: browserRuntime,
 });
 
+/** Last ready reads of the orders list and of its counts, kept for a list reopened after a full order page. */
+const ordersListMemory = MutableRef.make(new Map<string, ReturnType<typeof ordersPageData.snapshot>>());
+const ordersCountsMemory = MutableRef.make(new Map<string, ReturnType<typeof orderCountsData.snapshot>>());
+
+/**
+ * Drops what a reopened orders list may show from before a write. An owner-local write may end without the Shell's
+ * write event (an uncertain outcome), so the write path calls this as well.
+ */
+export const forgetRememberedOrders = (): void => {
+  MutableRef.get(ordersListMemory).clear();
+  MutableRef.get(ordersCountsMemory).clear();
+};
+
 /** The page the orders list opens with: no filters, newest first. */
 export const firstOrdersPage = (limit: number): OrdersQuery => ({
   customerPartyIds: [],
@@ -528,6 +541,7 @@ const submitCommand = Effect.fn('OrdersRecords.submitCommand')(function* submitC
     Effect.flatMap(committedResult),
     Effect.ensuring(
       Effect.sync(() => {
+        forgetRememberedOrders();
         ordersPageData.invalidate();
         orderDetailData.invalidate();
       }),
@@ -704,8 +718,9 @@ export const useOrders = (
   // The strict stores read as pending while they reload (freshness window, live change, settled write). The table
   // keeps the last ready read of the same request and the header its counts until the reload settles; another
   // request never reuses them, and a failed or refused reload replaces them at once.
-  const shownPage = useHeldSnapshot(ordersPageData.key(input), page);
-  const shownCounts = useHeldSnapshot(countsKey, counts);
+  // The list and its counts start from their last ready read when reopened after a full order page (`memory`).
+  const shownPage = useHeldSnapshot(ordersPageData.key(input), page, { memory: MutableRef.get(ordersListMemory) });
+  const shownCounts = useHeldSnapshot(countsKey, counts, { memory: MutableRef.get(ordersCountsMemory) });
   const settled = useSettledPageData(shownPage, input);
   // One warm-up per request, list revision and rows. The strict detail entries read as pending again once their 20 s
   // freshness window passes or a live change arrives, and each reload of the page settles as a new snapshot; warming

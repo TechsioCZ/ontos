@@ -16,6 +16,9 @@ export const makeAuthBlurValidation = <Field extends string>() => {
   };
   return {
     finish,
+    finishOnPointerLeave(pointerType: string) {
+      return pointerType === "mouse" ? finish() : null;
+    },
     start() {
       const result = finish();
       pointerActive = true;

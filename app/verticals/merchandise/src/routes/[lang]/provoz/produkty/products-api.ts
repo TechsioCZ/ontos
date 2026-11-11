@@ -5,7 +5,7 @@ import type { RowIntentProps } from '@app/admin-ui';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import type { TanstackTable } from '@techsio/ui-kit/organisms/data-table';
-import { Effect, Match, Option, Random, Result, Schema } from 'effect';
+import { Effect, Match, MutableRef, Option, Random, Result, Schema } from 'effect';
 import type { Cause } from 'effect';
 import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
@@ -244,6 +244,17 @@ export const productListData = definePageData({
   runtime: browserRuntime,
 });
 
+/** Last ready reads of the products list, kept for a list reopened while its strict store reloads. */
+export const productListMemory = MutableRef.make(new Map<string, ReturnType<typeof productListData.snapshot>>());
+
+/**
+ * Drops what a reopened products list may show from before a write. A write may end without the Shell's write event
+ * (an uncertain outcome), so the write path calls this as well.
+ */
+export const forgetRememberedProducts = (): void => {
+  MutableRef.get(productListMemory).clear();
+};
+
 /** The page the products list opens with: no filters, default sort. */
 export const firstProductPage = (limit: number): ProductListQuery => ({
   category: null,
@@ -388,6 +399,7 @@ export const productCommandOutcome = (
       submitProductCommand(command, expectedRevision, idempotencyKey).pipe(
         Effect.ensuring(
           Effect.sync(() => {
+            forgetRememberedProducts();
             productListData.invalidate();
             productDetailData.invalidate();
             categoryChoicesData.invalidate();
