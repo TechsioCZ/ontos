@@ -1,10 +1,11 @@
-import { Effect, Option } from 'effect';
+import { Cause, Effect, Exit, Option } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { AccessConfigureBasis } from '../../src/access/changes/authority.ts';
 import type { AccessDecision, DecisionCapabilityPolicy } from '../../src/access/decision/contract.ts';
 import type { AuthorityDeadline, ResolvedAccessScope } from '../../src/access/decision/authority.ts';
 import { decideAccess, decideAccessMany } from '../../src/access/decision/engine.ts';
+import { accessDecisionUnavailable } from '../../src/access/decision/errors.ts';
 import { explainAccess } from '../../src/access/decision/explain.ts';
 import { withOptional } from '../../src/access/decision/optional.ts';
 import type { AccessScopeId, CapabilityKey } from '../../src/access/ids.ts';
@@ -834,3 +835,74 @@ it.effect("a gate batch over a caller's transaction holds one intent read at a t
     expect(counter.peak).toBe(1);
   }),
 );
+
+const archiveKey: CapabilityKey = capability('core.access.roles.archive');
+/** Two routine keys a person holds through role cells in company A: nothing is decided structurally. */
+const routineCase = () => {
+  const granted = [otherKey, archiveKey].map((key) => cell({ capability: key }));
+  const spec = { cells: granted, legalEntityScope: companyScopeOf(companyA) };
+  const requests = granted.map(({ capabilityKey }) => ({
+    actor: actorIn(companyA),
+    now,
+    request: {
+      capability: { ...policy, capabilityKey, kind: 'action' as const, risk: 'routine' as const },
+      mode: 'run' as const,
+    },
+  }));
+  return { requests, spec };
+};
+
+it.effect('re-reads only the cell set the read ahead could not read, and keeps the ones it did', () =>
+  Effect.gen(function* partialReRead() {
+    const { requests, spec } = routineCase();
+    const base = makeAuthority(spec).port;
+    const reads = new Map<string, number>();
+    // The read ahead fails (an unreadable intent, not a defect) for one key only; a second read of it succeeds.
+    const flaky = {
+      ...base,
+      readCells: (query: Parameters<typeof base.readCells>[0]) =>
+        Effect.suspend(() => {
+          const count = (reads.get(query.capabilityKey) ?? 0) + 1;
+          reads.set(query.capabilityKey, count);
+          return query.capabilityKey === otherKey && count === 1
+            ? Effect.fail(accessDecisionUnavailable('first read of one key'))
+            : base.readCells(query);
+        }),
+    };
+    const [answers] = yield* decideAccessMany(makeCheck({ authority: spec }).port, [
+      { authority: flaky, inputs: requests },
+    ]);
+    expect(answers?.map(({ reasons }) => reasons[0]?.code)).toEqual(['allow.granted', 'allow.granted']);
+    expect(Object.fromEntries(reads)).toEqual({ [archiveKey]: 1, [otherKey]: 2 });
+  }),
+);
+
+for (const batchReads of [false, true]) {
+  it.effect(
+    `raises a defect in a cell set a request needs, on the read ahead and the re-read alike (${batchReads ? 'batched' : 'single'} reads)`,
+    () =>
+      Effect.gen(function* neededDefect() {
+        const { requests, spec } = routineCase();
+        const base = makeAuthority({ ...spec, batchReads }).port;
+        const { readCellsMany } = base;
+        const dying = withOptional(
+          {
+            ...base,
+            readCells: (query: Parameters<typeof base.readCells>[0]) =>
+              query.capabilityKey === otherKey ? Effect.die('cell read of a needed key') : base.readCells(query),
+          },
+          'readCellsMany',
+          readCellsMany === undefined
+            ? undefined
+            : (queries: Parameters<typeof readCellsMany>[0]) =>
+                queries.some((query) => query.capabilityKey === otherKey)
+                  ? Effect.die('cell read of a needed key')
+                  : readCellsMany(queries),
+        );
+        const exit = yield* Effect.exit(
+          decideAccessMany(makeCheck({ authority: spec }).port, [{ authority: dying, inputs: requests }]),
+        );
+        expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+      }),
+  );
+}

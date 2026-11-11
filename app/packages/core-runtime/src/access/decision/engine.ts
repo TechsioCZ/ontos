@@ -1620,12 +1620,14 @@ const planGroup = Effect.fn('AccessDecision.planGroup')(function* planGroupProgr
   );
   const roleGuarded = guarded.filter((entry) => !structuralByIndex.has(entry.index));
   // The structural answers are authoritative. The cell sets the remaining requests need come from the read ahead
-  // when it read every one of them; otherwise exactly those sets are read now, as when nothing was read ahead.
-  const needed = roleGuarded.flatMap(cellQueriesOf);
+  // where it read them; exactly the sets it could not read (all of them after a defect) are read now, and a failure
+  // or defect of that read decides as when nothing was read ahead.
+  const readAhead = Exit.isSuccess(ahead) ? ahead.value : new Map<string, CellRead>();
+  const missing = roleGuarded.flatMap((entry) =>
+    cellQueriesOf(entry).filter((query) => !isReadable(readAhead.get(cellQueryKey(query)))),
+  );
   const cellSets =
-    Exit.isSuccess(ahead) && needed.every((query) => isReadable(ahead.value.get(cellQueryKey(query))))
-      ? ahead.value
-      : yield* readCellSets(authority, needed);
+    missing.length === 0 ? readAhead : new Map([...readAhead, ...(yield* readCellSets(authority, missing))]);
   const preloaded = preloadedAuthority(authority, cellSets);
   const planned = yield* Effect.forEach(roleGuarded, (entry) => planRequest(preloaded, entry), {
     concurrency: BATCH_READ_CONCURRENCY,
