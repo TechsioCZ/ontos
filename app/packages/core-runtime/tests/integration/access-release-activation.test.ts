@@ -40,7 +40,7 @@ import { TenantIntentLoaderLive } from '../../src/access/intent/tenant-intent-lo
 import { AccessWriteJournalStoreLive } from '../../src/access/lifecycle/persistence/journal-store.ts';
 import { CellSchema } from '../../src/access/model.ts';
 import type { Cell } from '../../src/access/model.ts';
-import { activateCatalogRelease, releaseActorId } from '../../src/access/release/activation.ts';
+import { activateCatalogRelease, planCatalogRelease, releaseActorId } from '../../src/access/release/activation.ts';
 import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
 import type { AccessCatalogModule, AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
@@ -356,6 +356,24 @@ it.layer(NodeServices.layer)('access catalog release activation', (suite) => {
         // The older release declares no approval: nobody may approve, and the clerk may read.
         expect(yield* decide(approveCarrier, yield* ownerIn(companyA))).toBe('DENIED');
         expect(yield* decide(readCarrier, clerkInTenant)).toBe('ALLOWED');
+
+        // The dry run shows the same decision and plan, and writes nothing: the activation after it still publishes.
+        const preview = yield* planCatalogRelease({ modules: newerDeployment }).pipe(Effect.orDie);
+        expect(preview.ordering).toEqual({ _tag: 'Publish' });
+        expect(preview.tenants.find((entry) => entry.tenantId === tenantId)).toMatchObject({
+          items: 1,
+          outcome: 'planned',
+          presetCellsAdded: 2,
+          presetFound: true,
+        });
+        const unwritten = yield* admin
+          .unsafe(
+            `select (select count(*) from core.access_catalog_snapshots)::int as releases,
+                    (select count(*) from core.principals where principal_id = '${releaseActorId(tenantId)}')::int as actors,
+                    (select count(*) from core.access_change_items where tenant_id = '${tenantId}')::int as items`,
+          )
+          .pipe(Effect.orDie);
+        expect(unwritten).toEqual([{ actors: 0, items: 0, releases: 1 }]);
 
         const { report, tenant } = yield* activate(newerDeployment, tenantId);
         expect(report.ordering).toEqual({ _tag: 'Publish' });
