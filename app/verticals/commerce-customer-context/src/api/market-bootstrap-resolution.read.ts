@@ -273,11 +273,11 @@ export const marketBootstrapResolutionRead = defineRead(
   {
     // Nothing of this owner is read inside the Read's own transaction: the Market owner is a remote call, which never
     // runs while a database transaction is open.
-    load: () => Effect.void,
+    load: (input: MarketBootstrapResolutionRequest) => Effect.succeed(input),
     // After commit: the Market owner calls, and the one owner-state read between them in its own short transaction.
     finish: Effect.fn('MarketBootstrapResolutionRead.finish')(function* finish(
       input: MarketBootstrapResolutionRequest,
-      context: ReadFinishContext<undefined, void>,
+      context: ReadFinishContext<undefined, MarketBootstrapResolutionRequest>,
     ) {
       const crypto = yield* Crypto.Crypto;
       const market = marketBootstrapMarketPortFromPublishedClient(context.scope, crypto);
@@ -334,5 +334,55 @@ export const marketBootstrapResolutionRead = defineRead(
       return yield* handleMarketBootstrapResolution(input, { ...context, services });
     }),
   },
-  () => Effect.void,
+  Effect.fn('MarketBootstrapResolutionRead.serviceFactory')(
+    function* marketBootstrapResolutionServiceFactory(transaction, scope) {
+      const repository = yield* customerCommercePolicyRepositoryForScope(transaction, scope);
+      const crypto = yield* Crypto.Crypto;
+      const market = marketBootstrapMarketPortFromPublishedClient(scope, crypto);
+      const requiredMarket: MarketBootstrapMarketPortService = {
+        eligibleTuples: (...args) =>
+          requireModuleOperation('commerce.customer-context.requirement.bootstrap-eligible').pipe(
+            Effect.mapError((cause) =>
+              Object.defineProperty(
+                new MarketBootstrapDependencyUnavailable({
+                  dependency: 'MARKET',
+                  reason: 'Required Market eligibility operation is unavailable',
+                  retryable: true,
+                }),
+                'cause',
+                { configurable: true, value: cause },
+              ),
+            ),
+            Effect.flatMap(() => market.eligibleTuples(...args)),
+          ),
+        resolveMarket: (...args) =>
+          requireModuleOperation('commerce.customer-context.requirement.bootstrap-resolve').pipe(
+            Effect.mapError((cause) =>
+              Object.defineProperty(
+                new MarketBootstrapDependencyUnavailable({
+                  dependency: 'MARKET',
+                  reason: 'Required Market resolution operation is unavailable',
+                  retryable: true,
+                }),
+                'cause',
+                { configurable: true, value: cause },
+              ),
+            ),
+            Effect.flatMap(() => market.resolveMarket(...args)),
+          ),
+      };
+      return marketBootstrapResolutionServices(requiredMarket, (sellerIds, at) =>
+        repository.loadCurrentMarketBootstrapPolicyCandidates(sellerIds, at).pipe(
+          Effect.mapError((cause) => {
+            const failure = new MarketBootstrapDependencyUnavailable({
+              dependency: 'POLICY',
+              reason: 'The Current Market bootstrap policy owner is unavailable',
+              retryable: true,
+            });
+            return Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
+          }),
+        ),
+      );
+    },
+  ),
 );
