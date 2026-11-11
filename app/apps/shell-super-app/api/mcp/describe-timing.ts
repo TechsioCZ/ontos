@@ -53,17 +53,17 @@ export const timedDescription = Effect.fn('Mcp.timedDescription')(function* time
       counts.spicedbCalls += part === 'spicedb' ? 1 : 0;
     }
   };
-  const counting = Tracer.make({
-    span: (options) => {
-      const span = tracer.span(options);
-      const end = span.end.bind(span);
-      span.end = (endTime, exit) => {
-        end(endTime, exit);
-        count(options.name, Number(endTime - options.startTime) / 1e6);
-      };
-      return span;
-    },
-  });
+  const span: Tracer.Tracer['span'] = (options) => {
+    const opened = tracer.span(options);
+    const end = opened.end.bind(opened);
+    opened.end = (endTime, exit) => {
+      end(endTime, exit);
+      count(options.name, Number(endTime - options.startTime) / 1e6);
+    };
+    return opened;
+  };
+  // The request's own tracer keeps its context hook (span propagation of an exporter, for example).
+  const counting = Tracer.make(tracer.context === undefined ? { span } : { context: tracer.context, span });
   const value = yield* effect.pipe(Effect.withTracer(counting));
   const timing: DescriptionTiming = {
     cellsMs: Math.round(ms.cells),

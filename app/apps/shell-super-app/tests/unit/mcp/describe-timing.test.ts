@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Tracer } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { timedDescription } from '../../../api/mcp/describe-timing.ts';
@@ -37,5 +37,33 @@ it.effect('counts the round trips and sums the parts of one description from its
     ]) {
       expect(Number.isInteger(ms) && ms >= 0).toBe(true);
     }
+  }),
+);
+
+it.effect("keeps the request tracer's context hook while it counts the description's spans", () =>
+  Effect.gen(function* contextHookKept() {
+    const parent = yield* Effect.tracer;
+    let inside = false;
+    let hookedInside = 0;
+    const hooked = Tracer.make({
+      context: (primitive, fiber) => {
+        hookedInside += inside ? 1 : 0;
+        return primitive['~effect/Effect/evaluate'](fiber);
+      },
+      span: (options) => parent.span(options),
+    });
+    yield* timedDescription(
+      Effect.sync(() => {
+        inside = true;
+      }).pipe(
+        Effect.andThen(span('postgres')),
+        Effect.andThen(
+          Effect.sync(() => {
+            inside = false;
+          }),
+        ),
+      ),
+    ).pipe(Effect.withTracer(hooked));
+    expect(hookedInside).toBeGreaterThan(0);
   }),
 );
