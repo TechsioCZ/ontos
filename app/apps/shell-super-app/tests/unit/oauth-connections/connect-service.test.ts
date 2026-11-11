@@ -37,6 +37,7 @@ import { OAuthFlow } from '../../../api/oauth-connections/oauth-flow.ts';
 import type { OAuthFlowService, VerifiedOAuthQuery } from '../../../api/oauth-connections/oauth-flow.ts';
 import { toGrantRow } from '../../../api/oauth-connections/grant-store.ts';
 import { makeCompositionSnapshot } from '../../fixtures/application-composition.ts';
+import { SubjectAccessInspection } from '@app/core-runtime/access/enforcement';
 import { subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
 import { grantRegistryFixture, retainedGrant } from './grant-registry-fixture.ts';
 
@@ -364,10 +365,39 @@ const draftRow = (createdAt: Date, overrides: Partial<OAuthGrantRecord> = {}): O
  * The approval's dependencies: a fresh draft (`draftOverrides` on top), the authority the subjects give, and every
  * write recorded in `writes` instead of performed. A refusal that wrote anything is visible in `writes`.
  */
+/** Inspection calls one step made: one authority description is one scope call and at most two capability batches. */
+interface InspectionCalls {
+  capabilities: number;
+  scope: number;
+}
+
+/** The fixture's real inspection, counting each call it answers. */
+const countingInspection = (inspection: ReturnType<typeof subjectInspectionFixture>, calls: InspectionCalls) =>
+  Layer.effect(
+    SubjectAccessInspection,
+    Effect.gen(function* countedInspection() {
+      const service = yield* SubjectAccessInspection;
+      return {
+        ...service,
+        capabilities: (input: Parameters<typeof service.capabilities>[0]) =>
+          Effect.suspend(() => {
+            calls.capabilities += 1;
+            return service.capabilities(input);
+          }),
+        scope: (input: Parameters<typeof service.scope>[0]) =>
+          Effect.suspend(() => {
+            calls.scope += 1;
+            return service.scope(input);
+          }),
+      };
+    }),
+  ).pipe(Layer.provideMerge(inspection.layer));
+
 const approvalLayers = (
   draftOverrides: Partial<OAuthGrantRecord>,
   writes: string[],
   subjects: Parameters<typeof subjectInspectionFixture>[0]['subjects'] = [],
+  calls?: InspectionCalls,
 ) =>
   Effect.gen(function* approvalDependencies() {
     const row = draftRow(yield* DateTime.nowAsDate, draftOverrides);
@@ -391,7 +421,7 @@ const approvalLayers = (
             }),
         }),
       ),
-      inspection.layer,
+      countingInspection(inspection, calls ?? { capabilities: 0, scope: 0 }),
       makeInstalledModuleCatalogLayer(Effect.succeed(snapshot)),
       Layer.succeed(OAuthAuthenticationAudit, {
         record: () =>
@@ -459,13 +489,35 @@ it.effect('approval re-checks the drafted modules against current authority and 
   Effect.gen(function* withdrawnRightRefused() {
     // The person's subject is no longer offered any module, so the draft's `crm` read is not within authority now.
     const writes: string[] = [];
-    const layer = yield* approvalLayers({}, writes, []);
+    const calls: InspectionCalls = { capabilities: 0, scope: 0 };
+    const layer = yield* approvalLayers({}, writes, [], calls);
     const refused = yield* approve(approvalSession, approveRequest).pipe(Effect.provide(layer), Effect.result);
     expect(Result.isFailure(refused)).toBe(true);
     if (Result.isFailure(refused)) {
       expect(refused.failure).toStrictEqual(new ConnectionInvalid({ code: 'modules_invalid' }));
     }
     expect(writes).toStrictEqual([]);
+    // The approval describes the person's live authority once; a person outside the company stops at the scope.
+    expect(calls).toStrictEqual({ capabilities: 0, scope: 1 });
+  }),
+);
+
+it.effect('approval describes a member of the company once: one scope and at most two capability batches', () =>
+  Effect.gen(function* approvalDescribesOnce() {
+    // A member of the company who holds no right: the description runs in full and finds nothing to offer.
+    const writes: string[] = [];
+    const calls: InspectionCalls = { capabilities: 0, scope: 0 };
+    const layer = yield* approvalLayers(
+      {},
+      writes,
+      [{ legalEntityId: companyUuid, principalId: personUuid, tenantId: tenantUuid }],
+      calls,
+    );
+    const refused = yield* approve(approvalSession, approveRequest).pipe(Effect.provide(layer), Effect.result);
+    expect(Result.isFailure(refused)).toBe(true);
+    expect(writes).toStrictEqual([]);
+    expect(calls.scope).toBe(1);
+    expect(calls.capabilities).toBeLessThanOrEqual(2);
   }),
 );
 

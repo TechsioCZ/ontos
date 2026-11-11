@@ -129,6 +129,8 @@ export const connect = (overrides: Partial<ResolvedAgentConnection> = {}): Resol
 export interface AuthoritySpec {
   /** The agent's own membership end dates; they default to the person's, as in a real scope. */
   readonly agentMembershipDeadlines?: readonly AuthorityDeadline[];
+  /** The port also offers the batched cell read, answering each query exactly as `readCells` does. */
+  readonly batchReads?: boolean;
   readonly cells: readonly AuthorityCell[];
   readonly configureBases?: readonly AccessConfigureBasis[];
   readonly configureUnavailable?: boolean;
@@ -146,6 +148,7 @@ export interface AuthoritySpec {
 
 export interface AuthorityCalls {
   readCells: number;
+  readCellsMany: number;
   readConfigureBases: number;
   readConnection: number;
   readScope: number;
@@ -157,22 +160,23 @@ export const holderId = (holder: Holder): string => holderIdOf(holder);
 export const makeAuthority = (spec: AuthoritySpec) => {
   const calls: AuthorityCalls = {
     readCells: 0,
+    readCellsMany: 0,
     readConfigureBases: 0,
     readConnection: 0,
     readScope: 0,
     readTeamIds: 0,
   };
-  const port: DecisionAuthorityPort = {
+  const cellsOf = (query: AuthorityCellQuery) =>
+    spec.cells.filter(
+      (candidate) =>
+        holderId(candidate.holder) === holderId(query.holder) &&
+        candidate.capabilityKey === query.capabilityKey &&
+        candidate.mode === query.mode,
+    );
+  const single: DecisionAuthorityPort = {
     readCells: (query: AuthorityCellQuery) => {
       calls.readCells += 1;
-      return Effect.succeed(
-        spec.cells.filter(
-          (candidate) =>
-            holderId(candidate.holder) === holderId(query.holder) &&
-            candidate.capabilityKey === query.capabilityKey &&
-            candidate.mode === query.mode,
-        ),
-      );
+      return Effect.succeed(cellsOf(query));
     },
     readConfigureBases: () => {
       calls.readConfigureBases += 1;
@@ -216,6 +220,16 @@ export const makeAuthority = (spec: AuthoritySpec) => {
       return Effect.succeed(spec.teamMembers?.get(holderId(query.holder)) ?? []);
     },
   };
+  const port: DecisionAuthorityPort =
+    spec.batchReads === true
+      ? {
+          ...single,
+          readCellsMany: (queries) => {
+            calls.readCellsMany += 1;
+            return Effect.succeed(queries.map(cellsOf));
+          },
+        }
+      : single;
   return { calls, port };
 };
 

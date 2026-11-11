@@ -32,6 +32,7 @@ import { ProposalSchema } from '../../src/access/model.ts';
 import { capabilityPolicyOf } from '../../src/access/enforcement/capability.ts';
 import { prepareEngineEvidence } from '../../src/access/enforcement/prepared-check.ts';
 import { accessDecisionUnavailable } from '../../src/access/decision/errors.ts';
+import type { DecisionAuthorityPort } from '../../src/access/decision/authority.ts';
 import { makeAccessDecisionService } from '../../src/access/enforcement/service.ts';
 import {
   LegalEntityIdSchema,
@@ -625,34 +626,88 @@ it.effect('rechecks every durable bound question through the canonical planner a
   }),
 );
 
-for (const capability of [
-  `${ownerKey}.record.change`,
-  `${ownerKey}.record.write-salary`,
-  `${ownerKey}.record.read`,
-  `${ownerKey}.record.read-salary`,
-]) {
-  it.effect(`a different live grant never rescues the lost bound ${capability} authority`, () =>
-    Effect.gen(function* originalIncarnationRequired() {
-      const fixture = yield* makeFixture('approver');
-      const original = fixture.spec.cells.find((candidate) => candidate.capabilityKey === capability);
-      const replacement = cell({ capability, mode: original?.mode ?? 'approve' });
-      const authority = makeAuthority({
-        ...fixture.spec,
-        cells: [...fixture.spec.cells.filter((candidate) => candidate.capabilityKey !== capability), replacement],
-      }).port;
-      const failure = yield* recheckActionAuthorityV2({
-        authority,
-        check: fixture.check,
-        command: fixture.command,
-        expectation: fixture.expectation,
-        now,
-        proof: fixture.proof,
-        scope,
-      }).pipe(Effect.flip);
-      expect(failure._tag).toBe('ActionPermissionDenied');
-    }),
-  );
+for (const batchReads of [false, true]) {
+  const reads = batchReads ? 'batched cell reads' : 'single cell reads';
+  for (const capability of [
+    `${ownerKey}.record.change`,
+    `${ownerKey}.record.write-salary`,
+    `${ownerKey}.record.read`,
+    `${ownerKey}.record.read-salary`,
+  ]) {
+    it.effect(`a different live grant never rescues the lost bound ${capability} authority (${reads})`, () =>
+      Effect.gen(function* originalIncarnationRequired() {
+        const fixture = yield* makeFixture('approver');
+        const original = fixture.spec.cells.find((candidate) => candidate.capabilityKey === capability);
+        const replacement = cell({ capability, mode: original?.mode ?? 'approve' });
+        const authority = makeAuthority({
+          ...fixture.spec,
+          batchReads,
+          cells: [...fixture.spec.cells.filter((candidate) => candidate.capabilityKey !== capability), replacement],
+        }).port;
+        const failure = yield* recheckActionAuthorityV2({
+          authority,
+          check: fixture.check,
+          command: fixture.command,
+          expectation: fixture.expectation,
+          now,
+          proof: fixture.proof,
+          scope,
+        }).pipe(Effect.flip);
+        expect(failure._tag).toBe('ActionPermissionDenied');
+      }),
+    );
+  }
 }
+
+it.effect('keeps the batched cell read of an approval recheck and still proves the intact saved authority', () =>
+  Effect.gen(function* batchedRecheck() {
+    const fixture = yield* makeFixture('approver');
+    const authority = makeAuthority({ ...fixture.spec, batchReads: true });
+    const live = yield* recheckActionAuthorityV2({
+      authority: authority.port,
+      check: fixture.check,
+      command: fixture.command,
+      expectation: fixture.expectation,
+      now,
+      proof: fixture.proof,
+      scope,
+    });
+    expect(live).toEqual(fixture.proof);
+    expect(authority.calls.readCellsMany).toBeGreaterThan(0);
+  }),
+);
+
+it.effect('a batched read that offers a live cell of another assignment never rescues a revoked saved witness', () =>
+  Effect.gen(function* hostileBatchRead() {
+    const fixture = yield* makeFixture('approver');
+    const capability = `${ownerKey}.record.change`;
+    const original = fixture.spec.cells.find((candidate) => candidate.capabilityKey === capability);
+    // The saved witness is revoked: the single read no longer offers it. The batched read answers every query
+    // with every live cell of the holder, including a cell of a different assignment for the revoked capability.
+    const live = [
+      ...fixture.spec.cells.filter((candidate) => candidate.capabilityKey !== capability),
+      cell({ capability, mode: original?.mode ?? 'approve' }),
+    ];
+    const revoked = makeAuthority({
+      ...fixture.spec,
+      cells: fixture.spec.cells.filter((candidate) => candidate.capabilityKey !== capability),
+    }).port;
+    const authority: DecisionAuthorityPort = {
+      ...revoked,
+      readCellsMany: (queries) => Effect.succeed(queries.map(() => live)),
+    };
+    const failure = yield* recheckActionAuthorityV2({
+      authority,
+      check: fixture.check,
+      command: fixture.command,
+      expectation: fixture.expectation,
+      now,
+      proof: fixture.proof,
+      scope,
+    }).pipe(Effect.flip);
+    expect(failure._tag).toBe('ActionPermissionDenied');
+  }),
+);
 
 it.effect('distinguishes lost membership, expired deadlines, foreign scope and unavailable current facts', () =>
   Effect.gen(function* currentBoundAuthorityFailures() {

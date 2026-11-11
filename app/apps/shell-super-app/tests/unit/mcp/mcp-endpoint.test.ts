@@ -7,12 +7,12 @@ import {
   StreamableHTTPClientTransport,
 } from '@modelcontextprotocol/client';
 import { AgentProposalSubmitResponseSchema, AgentQueueResponseSchema } from '@app/shared-contracts/agent-proposals';
-import { Crypto, Effect, FiberSet, Schema } from 'effect';
+import { Crypto, Effect, FiberSet, Logger, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { ShellCryptoLive } from '../../../api/auth/gateway-issuer.ts';
 import { serveMcp, serveMcpMetadata } from '../../../api/mcp/http.ts';
-import type { McpEndpointConfig } from '../../../api/mcp/http.ts';
+import type { McpConnectionTools, McpEndpointConfig } from '../../../api/mcp/http.ts';
 import { buildConnectionTools } from '../../../api/mcp/tools.ts';
 import type { McpBackend, ModuleAnswer, ToolSpec } from '../../../api/mcp/types.ts';
 import { rootRouteTarget } from '../../../shared/mcp-resource.ts';
@@ -96,6 +96,10 @@ const shellCrypto = Effect.service(Crypto.Crypto).pipe(Effect.provide(ShellCrypt
 
 const endpoint = Effect.fn('mcpEndpointTest.endpoint')(function* endpoint(options: {
   readonly backend: McpBackend;
+  /** Counts the connection descriptions the endpoint asks for. */
+  readonly described?: { count: number };
+  /** What describing the connection answers (default: its tools). */
+  readonly describes?: 'invalid' | 'ok' | 'unavailable';
   readonly description: ReturnType<typeof connectionDescription>;
   readonly token?: string;
 }) {
@@ -107,15 +111,25 @@ const endpoint = Effect.fn('mcpEndpointTest.endpoint')(function* endpoint(option
           clientId: options.description.client.clientId,
           grantId: options.description.grantId,
           kind: 'ok' as const,
-          tools: () =>
-            buildConnectionTools({
-              backend: options.backend,
-              catalog: fixtureCatalog(),
-              crypto,
-              description: options.description,
-              prmUrl: CONFIG.prmUrl,
-              publicOrigin: CONFIG.publicOrigin,
-            }),
+          tools: Effect.sync((): McpConnectionTools => {
+            if (options.described !== undefined) {
+              options.described.count += 1;
+            }
+            const describes = options.describes ?? 'ok';
+            return describes === 'ok'
+              ? {
+                  kind: 'ok',
+                  tools: buildConnectionTools({
+                    backend: options.backend,
+                    catalog: fixtureCatalog(),
+                    crypto,
+                    description: options.description,
+                    prmUrl: CONFIG.prmUrl,
+                    publicOrigin: CONFIG.publicOrigin,
+                  }),
+                }
+              : { kind: describes };
+          }),
         });
       }
       if (token === 'down') {
@@ -216,15 +230,17 @@ describe('current stateless Streamable HTTP revision', () => {
       const crypto = yield* shellCrypto;
       let active = true;
       let authenticationCalls = 0;
-      const tools = () =>
-        buildConnectionTools({
+      const tools = Effect.sync(() => ({
+        kind: 'ok' as const,
+        tools: buildConnectionTools({
           backend: fakeBackend([]),
           catalog: fixtureCatalog(),
           crypto,
           description: connectionDescription(),
           prmUrl: CONFIG.prmUrl,
           publicOrigin: CONFIG.publicOrigin,
-        });
+        }),
+      }));
       const serve = serveMcp({
         authenticate: () =>
           Effect.sync(() => {
@@ -293,6 +309,147 @@ describe('current stateless Streamable HTTP revision', () => {
         id: 1,
         jsonrpc: '2.0',
       });
+    }),
+  );
+});
+
+/** One stateless 2026-07-28 request as a conforming client sends it; `omit` drops one part of it. */
+const modernRequest = (
+  method: string,
+  options: { readonly omit?: 'capabilities' | 'mcp-method'; readonly tool?: string } = {},
+) => {
+  const headers = new Headers({
+    accept: 'application/json, text/event-stream',
+    authorization: 'Bearer good',
+    'content-type': 'application/json',
+    'mcp-protocol-version': PROTOCOL_VERSION,
+  });
+  if (options.omit !== 'mcp-method') {
+    headers.set('mcp-method', method);
+  }
+  if (options.tool !== undefined) {
+    headers.set('mcp-name', options.tool);
+  }
+  const envelope = { [CLIENT_INFO_META_KEY]: CLIENT_INFO, [PROTOCOL_VERSION_META_KEY]: PROTOCOL_VERSION };
+  const meta = options.omit === 'capabilities' ? envelope : { ...envelope, [CLIENT_CAPABILITIES_META_KEY]: {} };
+  const params = options.tool === undefined ? { _meta: meta } : { _meta: meta, arguments: {}, name: options.tool };
+  return new Request(CONFIG.resource, {
+    body: JSON.stringify({ id: 1, jsonrpc: '2.0', method, params }),
+    headers,
+    method: 'POST',
+  });
+};
+
+describe('describing the connection only for a request that needs its tools', () => {
+  it.effect('answers discovery and every protocol error without describing the connection', () =>
+    Effect.gen(function* discoveryWithoutDescription() {
+      const described = { count: 0 };
+      const handler = yield* endpoint({ backend: fakeBackend([]), described, description: connectionDescription() });
+      const discovered = yield* handler(modernRequest('server/discover'));
+      expect(discovered.status).toBe(200);
+      const body = yield* Effect.promise(() => discovered.json());
+      expect(body).toMatchObject({
+        id: 1,
+        result: { capabilities: { tools: { listChanged: true } }, supportedVersions: [PROTOCOL_VERSION] },
+      });
+      expect(body.result.instructions).toContain('ontos_whoami');
+      // The probe shapes the stage answered slowly: each is a protocol error, answered before any description.
+      const missingCapabilities = yield* handler(modernRequest('server/discover', { omit: 'capabilities' }));
+      expect(missingCapabilities.status).toBe(400);
+      const missingMethodHeader = yield* handler(modernRequest('server/discover', { omit: 'mcp-method' }));
+      expect(missingMethodHeader.status).toBe(400);
+      expect(yield* Effect.promise(() => missingMethodHeader.json())).toMatchObject({ error: { code: -32_020 } });
+      const legacy = yield* handler(
+        new Request(CONFIG.resource, {
+          body: JSON.stringify({
+            id: 1,
+            jsonrpc: '2.0',
+            method: 'initialize',
+            params: { capabilities: {}, clientInfo: CLIENT_INFO, protocolVersion: '2025-11-25' },
+          }),
+          headers: {
+            accept: 'application/json, text/event-stream',
+            authorization: 'Bearer good',
+            'content-type': 'application/json',
+            'mcp-protocol-version': PROTOCOL_VERSION,
+          },
+          method: 'POST',
+        }),
+      );
+      expect(legacy.status).toBe(400);
+      expect(described.count).toBe(0);
+
+      const listed = yield* handler(modernRequest('tools/list'));
+      expect(listed.status).toBe(200);
+      expect(yield* Effect.promise(() => listed.json())).toMatchObject({
+        result: { tools: expect.arrayContaining([expect.objectContaining({ name: 'fixture_notes__read_records' })]) },
+      });
+      expect(described.count).toBe(1);
+      const called = yield* handler(modernRequest('tools/call', { tool: 'ontos_whoami' }));
+      expect(called.status).toBe(200);
+      expect(described.count).toBe(2);
+    }),
+  );
+
+  it.effect('answers tools/list with 401 or 503 when the connection can no longer be described', () =>
+    Effect.gen(function* refusedDescription() {
+      const entries: unknown[] = [];
+      const captured = Logger.layer([
+        Logger.make((options) => {
+          entries.push(Logger.formatStructured.log(options));
+        }),
+      ]);
+      const revoked = yield* (yield* endpoint({
+        backend: fakeBackend([]),
+        describes: 'invalid',
+        description: connectionDescription(),
+      }))(modernRequest('tools/list')).pipe(Effect.provide(captured));
+      expect(revoked.status).toBe(401);
+      expect(revoked.headers.get('www-authenticate')).toContain('error="invalid_token"');
+      const calls: Recorded[] = [];
+      const down = yield* (yield* endpoint({
+        backend: fakeBackend(calls),
+        describes: 'unavailable',
+        description: connectionDescription(),
+      }))(modernRequest('tools/call', { tool: 'fixture_notes__read_records' })).pipe(Effect.provide(captured));
+      expect(down.status).toBe(503);
+      expect(calls).toEqual([]);
+      // An expected refusal is logged with the HTTP status actually returned and its own reason, never as an error.
+      expect(entries).toEqual([
+        expect.objectContaining({
+          annotations: expect.objectContaining({ refusal: 'invalid', status: 401 }),
+          message: 'mcp.request',
+        }),
+        expect.objectContaining({
+          annotations: expect.objectContaining({ refusal: 'unavailable', status: 503 }),
+          message: 'mcp.request',
+        }),
+      ]);
+      // Discovery does not depend on the description, so it still answers.
+      const discovered = yield* (yield* endpoint({
+        backend: fakeBackend([]),
+        describes: 'unavailable',
+        description: connectionDescription(),
+      }))(modernRequest('server/discover'));
+      expect(discovered.status).toBe(200);
+    }),
+  );
+});
+
+describe('a request whose Mcp-Method header names another method than its body', () => {
+  it.effect('is refused with 400 before any description or tool runs', () =>
+    Effect.gen(function* mismatchedMethodHeader() {
+      const described = { count: 0 };
+      const calls: Recorded[] = [];
+      const handler = yield* endpoint({ backend: fakeBackend(calls), described, description: connectionDescription() });
+      const smuggled = modernRequest('tools/call', { tool: 'fixture_notes__read_records' });
+      // The header claims discovery, which needs no description; the body asks for a tool call.
+      smuggled.headers.set('mcp-method', 'server/discover');
+      const response = yield* handler(smuggled);
+      expect(response.status).toBe(400);
+      expect(yield* Effect.promise(() => response.json())).toMatchObject({ error: { code: -32_020 } });
+      expect(described.count).toBe(0);
+      expect(calls).toEqual([]);
     }),
   );
 });

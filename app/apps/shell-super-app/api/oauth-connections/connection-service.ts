@@ -217,6 +217,13 @@ export interface LiveConnection {
   readonly grant: GrantRow;
 }
 
+/** An active grant whose live checks passed now: who it acts for and the scope its authority is asked in. */
+export interface LiveGrant {
+  readonly grant: GrantRow;
+  readonly names: PrincipalNames;
+  readonly requesterScope: OperationalScope;
+}
+
 const sameConnectionScope = (scope: OperationalScope, grant: GrantRow): boolean =>
   scope.tenantId === grant.tenantId && scope.legalEntityId === grant.legalEntityId;
 
@@ -288,13 +295,14 @@ export const revokeConnection = Effect.fn('OAuthConnectionService.revokeConnecti
 });
 
 /**
- * Live check and description of an active grant, on every call. A failed check revokes the grant when the verdict
- * says so and then fails with `ConnectionUnauthorized`.
+ * Live check of an active grant, on every call: the grant, its user, acting principal, binding, company selection
+ * and (for an agent) its company and operator. A failed check revokes the grant when the verdict says so and then
+ * fails with `ConnectionUnauthorized`. It does not describe the grant's authority (`describeLiveGrant`).
  *
  * `asker` is the trusted scope of the person whose surface reads the grant; absent, the request is the
  * connection's own (an MCP call), and the acting principal is evaluated in the connection's own scope.
  */
-export const loadLiveConnection = Effect.fn('OAuthConnectionService.loadLiveConnection')(function* loadLiveConnection(
+export const checkLiveGrant = Effect.fn('OAuthConnectionService.checkLiveGrant')(function* checkLiveGrant(
   grantId: string,
   asker?: OperationalScope,
 ) {
@@ -358,6 +366,20 @@ export const loadLiveConnection = Effect.fn('OAuthConnectionService.loadLiveConn
     }
     return yield* new ConnectionUnauthorized({ code: verdict.code });
   }
+  const live: LiveGrant = { grant, names, requesterScope };
+  return live;
+});
+
+/**
+ * The current description of a grant that passed `checkLiveGrant`: its acting authority over the installed modules,
+ * narrowed by the grant's own ceiling and write policy. Nothing is cached; every call asks the gate again.
+ */
+export const describeLiveGrant = Effect.fn('OAuthConnectionService.describeLiveGrant')(function* describeLiveGrant({
+  grant,
+  names,
+  requesterScope,
+}: LiveGrant) {
+  const agent = grant.actingKind === 'agent';
   const authority = yield* loadActingAuthority(requesterScope, {
     actingKind: grant.actingKind,
     actingPrincipalId: grant.actingPrincipalId,
@@ -406,6 +428,14 @@ export const loadLiveConnection = Effect.fn('OAuthConnectionService.loadLiveConn
   };
   const live: LiveConnection = { description, grant };
   return live;
+});
+
+/** Live check and description of an active grant, on every call (`checkLiveGrant`, then `describeLiveGrant`). */
+export const loadLiveConnection = Effect.fn('OAuthConnectionService.loadLiveConnection')(function* loadLiveConnection(
+  grantId: string,
+  asker?: OperationalScope,
+) {
+  return yield* describeLiveGrant(yield* checkLiveGrant(grantId, asker));
 });
 
 const summaryOf = (

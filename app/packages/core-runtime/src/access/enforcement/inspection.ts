@@ -132,16 +132,21 @@ const scopeQueryKey = (query: ScopeQuery): string =>
  */
 const batchAuthorityOf = (authority: DecisionAuthorityPort): DecisionAuthorityPort =>
   withOptional(
-    {
-      readCells: onceEach(
-        (query: AuthorityCellQuery) =>
-          [query.tenantId, query.scopeId, holderIdOf(query.holder), query.capabilityKey, query.mode].join('\u0000'),
-        authority.readCells,
-      ),
-      readConnection: authority.readConnection,
-      readScope: onceEach(scopeQueryKey, authority.readScope),
-      readTeamIds: authority.readTeamIds,
-    },
+    withOptional(
+      {
+        readCells: onceEach(
+          (query: AuthorityCellQuery) =>
+            [query.tenantId, query.scopeId, holderIdOf(query.holder), query.capabilityKey, query.mode].join('\u0000'),
+          authority.readCells,
+        ),
+        readConnection: authority.readConnection,
+        readScope: onceEach(scopeQueryKey, authority.readScope),
+        readTeamIds: authority.readTeamIds,
+      },
+      // The engine reads one batch's cell sets in one call; each set is still read once per batch.
+      'readCellsMany',
+      authority.readCellsMany,
+    ),
     'readConfigureBases',
     authority.readConfigureBases === undefined
       ? undefined

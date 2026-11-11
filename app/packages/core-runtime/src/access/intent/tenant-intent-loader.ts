@@ -49,6 +49,7 @@ import type {
   TeamMembershipQuery,
 } from '../decision/authority.ts';
 import { earliestDeadline } from '../decision/contract.ts';
+import { holderIdOf } from '../decision/selector.ts';
 import {
   AccessScopeIdSchema,
   AgentConnectionIdSchema,
@@ -125,6 +126,14 @@ export interface TenantIntentLoaderService {
     scope: OperationalScope,
     query: AuthorityCellQuery,
   ) => Effect.Effect<readonly AuthorityCell[], AccessIntentError>;
+  /**
+   * `loadAuthorityCells` for many queries in ONE transaction, answered in the asked order: each answer is exactly
+   * what that query alone would read at the same instant.
+   */
+  readonly loadAuthorityCellsMany: (
+    scope: OperationalScope,
+    queries: readonly AuthorityCellQuery[],
+  ) => Effect.Effect<readonly (readonly AuthorityCell[])[], AccessIntentError>;
   /** Same owner, scope-admin and delegated bases used by change commands (O81). */
   readonly loadConfigureBases: (
     scope: OperationalScope,
@@ -830,13 +839,13 @@ const makeIntentLoaderOver = (
   });
 
   /**
-   * The catalog entries the pinned revisions reference, newest release first per key (O1); with a
-   * capability key, only that capability's entry.
+   * The catalog entries the pinned revisions reference, newest release first per key (O1); with
+   * capability keys, only those capabilities' entries.
    */
   const readCatalogEntries = Effect.fn('TenantIntentLoader.readCatalogEntries')(function* readCatalogEntriesEffect(
     transaction: CoreTransaction,
     snapshotIds: readonly string[],
-    capabilityKey?: string,
+    capabilityKeys?: readonly string[],
   ) {
     const ids = [...new Set(snapshotIds)];
     if (ids.length === 0) {
@@ -862,7 +871,9 @@ const makeIntentLoaderOver = (
           .where(
             and(
               inArray(accessCatalogEntries.catalogSnapshotId, ids),
-              capabilityKey === undefined ? undefined : eq(accessCatalogEntries.capabilityKey, capabilityKey),
+              capabilityKeys === undefined
+                ? undefined
+                : inArray(accessCatalogEntries.capabilityKey, [...new Set(capabilityKeys)]),
             ),
           ),
       ],
@@ -899,21 +910,22 @@ const makeIntentLoaderOver = (
     } satisfies AuthorityCell;
   });
 
-  /** The exact cells one holder holds for one capability and mode, each with its own end (D6). */
-  const readAuthorityCells = Effect.fn('TenantIntentLoader.readAuthorityCells')(function* readAuthorityCellsEffect(
+  /** One holder's cells in one scope, for each of `queries` (all of that tenant, scope and holder). */
+  const readHolderCells = Effect.fn('TenantIntentLoader.readHolderCells')(function* readHolderCellsEffect(
     transaction: CoreTransaction,
-    query: AuthorityCellQuery,
+    queries: readonly [AuthorityCellQuery, ...AuthorityCellQuery[]],
     at: Date,
   ) {
+    const [holderQuery] = queries;
     const rows = yield* transaction
       .select(assignmentColumns)
       .from(accessAssignments)
       .where(
         and(
-          eq(accessAssignments.tenantId, query.tenantId),
-          eq(accessAssignments.scopeId, query.scopeId),
+          eq(accessAssignments.tenantId, holderQuery.tenantId),
+          eq(accessAssignments.scopeId, holderQuery.scopeId),
           eq(accessAssignments.status, 'active'),
-          holderMatch(accessAssignments.principalId, accessAssignments.agentId, query.holder),
+          holderMatch(accessAssignments.principalId, accessAssignments.agentId, holderQuery.holder),
           lte(accessAssignments.validFrom, at),
           // A cell is usable from its start to its end, both compared with the transaction time the
           // decision itself will use, so intent and answer can never disagree (D6).
@@ -921,7 +933,7 @@ const makeIntentLoaderOver = (
         ),
       );
     if (rows.length === 0) {
-      return [];
+      return queries.map((): readonly AuthorityCell[] => []);
     }
     const [revisions, grants, delegationRows] = yield* Effect.all(
       [
@@ -930,24 +942,26 @@ const makeIntentLoaderOver = (
           .from(accessRoleRevisions)
           .where(
             and(
-              eq(accessRoleRevisions.tenantId, query.tenantId),
+              eq(accessRoleRevisions.tenantId, holderQuery.tenantId),
               inArray(accessRoleRevisions.roleRevisionId, [...new Set(rows.map((row) => row.roleRevisionId))]),
             ),
           ),
         transaction
           .select({
+            capabilityKey: accessGrantIncarnations.capabilityKey,
             grantIncarnationId: accessGrantIncarnations.grantIncarnationId,
+            mode: accessGrantIncarnations.mode,
             roleId: accessGrantIncarnations.roleId,
             slot: accessGrantIncarnations.slot,
           })
           .from(accessGrantIncarnations)
           .where(
             and(
-              eq(accessGrantIncarnations.tenantId, query.tenantId),
-              eq(accessGrantIncarnations.scopeId, query.scopeId),
+              eq(accessGrantIncarnations.tenantId, holderQuery.tenantId),
+              eq(accessGrantIncarnations.scopeId, holderQuery.scopeId),
               eq(accessGrantIncarnations.status, 'active'),
-              eq(accessGrantIncarnations.capabilityKey, query.capabilityKey),
-              eq(accessGrantIncarnations.mode, query.mode),
+              inArray(accessGrantIncarnations.capabilityKey, [...new Set(queries.map((query) => query.capabilityKey))]),
+              inArray(accessGrantIncarnations.mode, [...new Set(queries.map((query) => query.mode))]),
               inArray(accessGrantIncarnations.roleId, [...new Set(rows.map((row) => row.roleId))]),
             ),
           ),
@@ -956,7 +970,7 @@ const makeIntentLoaderOver = (
           .from(accessDelegations)
           .where(
             and(
-              eq(accessDelegations.tenantId, query.tenantId),
+              eq(accessDelegations.tenantId, holderQuery.tenantId),
               inArray(accessDelegations.delegationId, [
                 ...new Set(rows.flatMap((row) => (row.delegatedBy === null ? [] : [row.delegatedBy]))),
               ]),
@@ -975,7 +989,7 @@ const makeIntentLoaderOver = (
     );
     const liveDelegations = yield* Effect.forEach(delegationRows, (row) => delegationOf(row), { concurrency: 1 });
     // Whether a delegation's money limit applies is the catalog's to say (D10b), so a delegated read
-    // loads the asked capability's entry from the releases its held revisions pin.
+    // loads the asked capabilities' entries from the releases its held revisions pin.
     const delegatedRevisionIds = new Set(delegatedRows.map((row) => row.roleRevisionId));
     const entries =
       delegatedRows.length === 0
@@ -985,24 +999,101 @@ const makeIntentLoaderOver = (
             revisions.flatMap((revision) =>
               delegatedRevisionIds.has(revision.roleRevisionId) ? [revision.catalogSnapshotId] : [],
             ),
-            query.capabilityKey,
+            queries.map((query) => query.capabilityKey),
           );
-    const candidates = cellCandidates({
-      amountGoverned: Option.map(
-        Option.fromUndefinedOr(entries.find((entry) => entry.key === query.capabilityKey)),
-        (entry) => entry.amountInput !== undefined,
-      ),
-      capabilityKey: query.capabilityKey,
-      delegationById: new Map(liveDelegations.map((delegation) => [delegation.id, delegation] as const)),
-      envelopeByAssignment: new Map(envelopes.flat()),
-      grantOfCell: new Map(grants.map((grant) => [`${grant.roleId}|${grant.slot}`, grant.grantIncarnationId])),
-      holder: query.holder,
-      mode: query.mode,
-      revisionById: new Map(revisions.map((revision) => [revision.roleRevisionId, revision])),
-      rows,
-    });
-    return yield* Effect.forEach(candidates, (candidate) => decodeAuthorityCell(candidate), { concurrency: 1 });
+    const delegationById = new Map(liveDelegations.map((delegation) => [delegation.id, delegation] as const));
+    const envelopeByAssignment = new Map(envelopes.flat());
+    // Each revision's cells by capability and mode, so a query reads only its own cells, not the whole revision.
+    const revisionsByCapability = new Map<string, Map<string, RevisionRow>>();
+    for (const revision of revisions) {
+      const cellsByCapability = new Map<string, Cell[]>();
+      for (const cell of revision.cellsJson) {
+        const key = `${cell.capabilityKey}\u0000${cell.mode}`;
+        const known = cellsByCapability.get(key);
+        if (known === undefined) {
+          cellsByCapability.set(key, [cell]);
+        } else {
+          known.push(cell);
+        }
+      }
+      for (const [key, cells] of cellsByCapability) {
+        const narrowed = revisionsByCapability.get(key) ?? new Map<string, RevisionRow>();
+        narrowed.set(revision.roleRevisionId, { ...revision, cellsJson: cells });
+        revisionsByCapability.set(key, narrowed);
+      }
+    }
+    // A revision without a cell of the asked capability and mode still stands: it simply offers no cell.
+    const revisionsOf = (key: string): ReadonlyMap<string, RevisionRow> =>
+      new Map(
+        revisions.map((revision) => [
+          revision.roleRevisionId,
+          revisionsByCapability.get(key)?.get(revision.roleRevisionId) ?? { ...revision, cellsJson: [] },
+        ]),
+      );
+    const grantsByCapability = new Map<string, Map<string, string>>();
+    for (const grant of grants) {
+      const key = `${grant.capabilityKey}\u0000${grant.mode}`;
+      const known = grantsByCapability.get(key) ?? new Map<string, string>();
+      known.set(`${grant.roleId}|${grant.slot}`, grant.grantIncarnationId);
+      grantsByCapability.set(key, known);
+    }
+    return yield* Effect.forEach(
+      queries,
+      (query) => {
+        const candidates = cellCandidates({
+          amountGoverned: Option.map(
+            Option.fromUndefinedOr(entries.find((entry) => entry.key === query.capabilityKey)),
+            (entry) => entry.amountInput !== undefined,
+          ),
+          capabilityKey: query.capabilityKey,
+          delegationById,
+          envelopeByAssignment,
+          grantOfCell: grantsByCapability.get(`${query.capabilityKey}\u0000${query.mode}`) ?? new Map<string, string>(),
+          holder: query.holder,
+          mode: query.mode,
+          revisionById: revisionsOf(`${query.capabilityKey}\u0000${query.mode}`),
+          rows,
+        });
+        return Effect.forEach(candidates, (candidate) => decodeAuthorityCell(candidate), { concurrency: 1 });
+      },
+      { concurrency: 1 },
+    );
   });
+
+  /**
+   * The exact cells one holder holds for each asked capability and mode, each with its own end (D6), answered in
+   * the asked order. Every query of one tenant, scope and holder shares its assignment, revision, grant, delegation
+   * and catalog reads, so a batch costs a fixed number of statements however many capabilities it names.
+   */
+  const readAuthorityCellsMany = Effect.fn('TenantIntentLoader.readAuthorityCellsMany')(
+    function* readAuthorityCellsManyEffect(
+      transaction: CoreTransaction,
+      queries: readonly AuthorityCellQuery[],
+      at: Date,
+    ) {
+      const groups = new Map<string, [AuthorityCellQuery, ...AuthorityCellQuery[]]>();
+      for (const query of queries) {
+        const key = [query.tenantId, query.scopeId, holderIdOf(query.holder)].join('\u0000');
+        const group = groups.get(key);
+        if (group === undefined) {
+          groups.set(key, [query]);
+        } else {
+          group.push(query);
+        }
+      }
+      // One holder after another inside this one transaction, each with its fixed set of statements.
+      const groupList = [...groups.values()];
+      const answers = yield* Effect.forEach(groupList, (group) => readHolderCells(transaction, group, at), {
+        concurrency: 1,
+      });
+      const answered = new Map<AuthorityCellQuery, readonly AuthorityCell[]>(
+        groupList.flatMap((group, groupIndex) =>
+          group.map((query, index) => [query, answers[groupIndex]?.[index] ?? []] as const),
+        ),
+      );
+      return queries.map((query) => answered.get(query) ?? []);
+    },
+  );
 
   /** The agent's fresh connection: its consented ceiling comes from the revision it is at (D13). */
   const readAgentConnection = Effect.fn('TenantIntentLoader.readConnection')(function* readAgentConnectionEffect(
@@ -1291,7 +1382,22 @@ const makeIntentLoaderOver = (
   )(function* loadAuthorityCellsEffect(scope: OperationalScope, query: AuthorityCellQuery) {
     yield* assertScope(scope, query.tenantId);
     return yield* readScoped<readonly AuthorityCell[]>(scope, (transaction, at) =>
-      readAuthorityCells(transaction, query, at),
+      readAuthorityCellsMany(transaction, [query], at).pipe(Effect.map(([cells = []]) => cells)),
+    );
+  });
+
+  const loadAuthorityCellsMany: TenantIntentLoaderService['loadAuthorityCellsMany'] = Effect.fn(
+    'TenantIntentLoader.loadAuthorityCellsMany',
+  )(function* loadAuthorityCellsManyEffect(scope: OperationalScope, queries: readonly AuthorityCellQuery[]) {
+    yield* Effect.forEach(new Set(queries.map((query) => query.tenantId)), (tenantId) => assertScope(scope, tenantId), {
+      concurrency: 1,
+      discard: true,
+    });
+    if (queries.length === 0) {
+      return [];
+    }
+    return yield* readScoped<readonly (readonly AuthorityCell[])[]>(scope, (transaction, at) =>
+      readAuthorityCellsMany(transaction, queries, at),
     );
   });
 
@@ -1354,6 +1460,7 @@ const makeIntentLoaderOver = (
     joined: (transaction: CoreTransaction) =>
       makeIntentLoaderOver(callerTransactions(transaction, enrollment), enrollment),
     loadAuthorityCells,
+    loadAuthorityCellsMany,
     loadConfigureBases,
     loadConnection,
     loadProjection,
