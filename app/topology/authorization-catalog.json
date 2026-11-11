@@ -17227,7 +17227,9 @@
               "level": "manage"
             },
             "risk": "critical",
-            "selectors": []
+            "selectors": [
+              "all"
+            ]
           },
           "accessFieldGroups": [],
           "entrypoint": {

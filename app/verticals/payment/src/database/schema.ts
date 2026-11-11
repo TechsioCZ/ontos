@@ -184,6 +184,7 @@ export const sourceAuthorities = paymentSchema.table.withRLS(
     environment: text('environment').notNull(),
     factFamily: text('fact_family').$type<PaymentSourceFactFamily>().notNull(),
     method: text('method').$type<PaymentMethod>(),
+    pickupCapabilityRef: text('pickup_capability_ref'),
     reason: text('reason').notNull(),
     refundRoute: boolean('refund_route').notNull(),
     revision: integer('revision').notNull(),
@@ -200,6 +201,7 @@ export const sourceAuthorities = paymentSchema.table.withRLS(
         table.legalEntityId,
         table.factFamily,
         table.method,
+        table.pickupCapabilityRef,
         table.sourceKind,
         table.sourceSystem,
         table.accountRef,
@@ -220,6 +222,12 @@ export const sourceAuthorities = paymentSchema.table.withRLS(
       sql`${table.status} in (${literalList(PAYMENT_SOURCE_AUTHORITY_STATUSES)})`,
     ),
     check('payment_source_authorities_revision_ck', sql`${table.revision} > 0`),
+    check(
+      'payment_source_authorities_pickup_capability_ck',
+      sql`${table.pickupCapabilityRef} is null or (${table.sourceKind} = 'LOCAL_POS_OPERATOR'
+        and ${table.pickupCapabilityRef} = btrim(${table.pickupCapabilityRef})
+        and length(${table.pickupCapabilityRef}) between 1 and 200)`,
+    ),
     opaqueCheck('payment_source_authorities_system_ck', table.sourceSystem),
     opaqueCheck('payment_source_authorities_account_ck', table.accountRef),
     opaqueCheck('payment_source_authorities_environment_ck', table.environment),

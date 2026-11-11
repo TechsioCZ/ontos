@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto } from '@effect/platform-node';
+import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { Crypto, Deferred, Effect, Fiber, Layer, Option, Result, Schema } from 'effect';
 import type { Scope } from 'effect';
@@ -9,6 +10,7 @@ import { expect, it } from 'effect-rstest';
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
+import type { ActionRuntimeOptions } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import {
   accessScopeFences,
   accessScopes,
@@ -30,6 +32,7 @@ import {
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
+import { paymentProductionOwnerPortsLive } from '../../api/payment-production-layers.ts';
 import { PaymentMethodNotApplicable } from '../../shared/domain/lifecycle-method-not-applicable.ts';
 import {
   PaymentCoverageEstablishedSchema,
@@ -42,6 +45,7 @@ import type { PaymentMethod, PaymentOperationOutcome } from '../../shared/domain
 import { createPaymentAction } from '../../src/actions/create-payment.action.ts';
 import { startPaymentCollectionAction } from '../../src/actions/start-payment-collection.action.ts';
 import { currentPaymentRead } from '../../src/api/current-payment.read.ts';
+import { PaymentTermOwnerTransport } from '../../src/integrations/payment-term-evidence.ts';
 import {
   operationOutcomeTransitions,
   paymentOperations,
@@ -51,14 +55,20 @@ import {
 import type { PaymentAggregatePersistence } from '../../src/persistence/payment-aggregate-persistence.ts';
 import { PaymentTermEvidencePort } from '../../src/ports/payment-term-evidence-port.ts';
 import type { PaymentTermPurchase } from '../../src/ports/payment-term-evidence-port.ts';
+import { PaymentPurchaseEvidencePort } from '../../src/ports/purchase-evidence-port.ts';
 import { paymentApplicabilityPersistenceForTransaction } from '../../src/persistence/payment-applicability-persistence.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
+import { immediateSnapshot } from '../support/applicability-owner-evidence.fixture.ts';
 import {
   LIFECYCLE_GATEWAY_BINDING,
   lifecycleTermSnapshot,
   makeLifecycleOwnerContractFixture,
 } from '../support/lifecycle-owner-contract.fixture.ts';
 import type { LifecycleOwnerContractState } from '../support/lifecycle-owner-contract.fixture.ts';
+import {
+  makePaymentTermOwnerComposition,
+  paymentTermFixtureDeployment,
+} from '../support/payment-term-owner-composition.fixture.ts';
 import { configuredRefundExecutionRouteFor } from '../support/refund-execution-route.fixture.ts';
 import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import {
@@ -127,6 +137,7 @@ type LifecycleNativeDatabase = Effect.Success<typeof lifecycleNativeDatabase>;
 const makeLifecycleRuntimes = Effect.fn('LifecycleNative.makeRuntimes')(function* makeLifecycleRuntimes(
   native: LifecycleNativeDatabase,
   compositionRevision: string,
+  composition: Pick<ActionRuntimeOptions, 'applicationComposition' | 'expectedDeployment'> = {},
 ) {
   const crypto = yield* Crypto.Crypto;
   const accessDecision = makeScriptedBoundAccessGate('allowed').bound;
@@ -142,6 +153,7 @@ const makeLifecycleRuntimes = Effect.fn('LifecycleNative.makeRuntimes')(function
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
       resolveCompositionRevision: () => Effect.succeed(compositionRevision),
+      ...composition,
     },
   );
   const reads = makeReadRuntime(
@@ -463,6 +475,97 @@ it.live('#1148 the same intent key recovers the same Payment; a changed meaning 
           }),
         ),
       ).toBe('payment_intent_material_conflict');
+      expect(yield* paymentRows(scenario)).toHaveLength(1);
+      expect(yield* outboxPayloads(scenario.native, scenario.scope.tenantId, PAYMENT_CREATED)).toHaveLength(1);
+    }),
+  ),
+);
+
+it.live('#1148 creates bank transfer with exact Checkout facts and refuses a forged correlation or amount', () =>
+  runNative(
+    Effect.gen(function* governedPurchaseCreation() {
+      const scenario = yield* lifecycleScenario();
+      yield* enableMethod(scenario.native, scenario.scope, CUSTOMER_CONFIGURATION, 'BANK_TRANSFER_ADVANCE');
+      const composition = yield* makePaymentTermOwnerComposition();
+      const { revision } = composition.composition;
+      yield* installPaymentTestCompositionAuthority(revision);
+      const { actions } = yield* makeLifecycleRuntimes(scenario.native, revision, {
+        applicationComposition: { load: Effect.succeed(composition) },
+        expectedDeployment: paymentTermFixtureDeployment,
+      });
+      const storefrontId = 'storefront-intent-owner';
+      const principal = trustVerifiedGatewayPrincipalContext(
+        { ...scenario.principal, trustedStorefrontId: storefrontId },
+        revision,
+      );
+      const purchasingContext: PaymentPurchasingContext = {
+        ...purchasingContextFor(scenario.scope, 'exact-purchase'),
+        subject: { guestEvidenceRef: 'checkout-guest-fact', guestSessionRef: 'checkout-guest-session', kind: 'GUEST' },
+      };
+      const payableAmount = { amountMinor: 100_000, currency: 'CZK' } as const;
+      const payload = scenario.intent({
+        payableAmount,
+        purchasingContext,
+        selection: { method: 'BANK_TRANSFER_ADVANCE' },
+      });
+      let resolvedTerms = 0;
+      const transport = Layer.succeed(PaymentTermOwnerTransport, {
+        acquire: () =>
+          Effect.succeed({
+            apiBaseUrl: 'https://gateway.test/commerce-customer-context/',
+            authorization: 'Bearer fixture-ccc',
+            compositionRevision: revision,
+            expiresAt: 1_800_000_000,
+          }),
+        executeGuest: (request) => {
+          resolvedTerms += 1;
+          return Effect.succeed({
+            _tag: 'EXPLICIT_CHOICE',
+            customerPaymentTermsRevision: null,
+            definition: immediateSnapshot(payload.paymentTermRef),
+            policyRevision: 'policy-1',
+            policySource: 'storefront',
+            purchasingContextRevision: request.purchasingContext.contextRevision,
+            resolvedAt: request.at,
+          });
+        },
+        executeProfile: () => Effect.die('A Guest purchase cannot use the profile term route'),
+      });
+      const checkout = Layer.succeed(PaymentPurchaseEvidencePort, {
+        readCurrent: () =>
+          Effect.succeed({
+            ...scenario.scope,
+            customerConfigurationId: payload.customerConfigurationId,
+            evidenceRef: 'fixture-checkout-purchase',
+            payableAmount,
+            paymentTermRef: payload.paymentTermRef,
+            purchaseCorrelationId: payload.purchaseCorrelationId,
+            purchasingContext,
+            storefrontId,
+          }),
+      });
+      const create = (input: typeof payload) =>
+        actions.runAction({
+          payload: input,
+          principal,
+          registration: createPaymentAction,
+          transport: { correlationId: 'payment-governed-create', idempotencyKey: randomUUID() },
+        });
+      const owners = paymentProductionOwnerPortsLive.pipe(Layer.provide(Layer.mergeAll(checkout, transport)));
+      const missing = yield* create(payload).pipe(Effect.provide(paymentProductionOwnerPortsLive), Effect.flip);
+      expect(missing).toMatchObject({ outcome: 'UNAVAILABLE_TO_VERIFY' });
+      const foreignCorrelation = { ...payload, purchaseCorrelationId: 'forged-purchase' };
+      const wrongAmount = { ...payload, payableAmount: { ...payload.payableAmount, amountMinor: 1 } };
+      for (const forged of [foreignCorrelation, wrongAmount]) {
+        const failure = yield* create(forged).pipe(Effect.provide(owners), Effect.flip);
+        expect(failure).toMatchObject({ outcome: 'UNAVAILABLE_TO_VERIFY' });
+      }
+      expect(resolvedTerms).toBe(0);
+      expect(yield* paymentRows(scenario)).toHaveLength(0);
+      const created = yield* create(payload).pipe(Effect.provide(owners));
+      expect(created.payment.amount).toEqual(payload.payableAmount);
+      expect(created.payment.purchaseCorrelationId).toBe(payload.purchaseCorrelationId);
+      expect(resolvedTerms).toBe(1);
       expect(yield* paymentRows(scenario)).toHaveLength(1);
       expect(yield* outboxPayloads(scenario.native, scenario.scope.tenantId, PAYMENT_CREATED)).toHaveLength(1);
     }),

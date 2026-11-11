@@ -1,9 +1,11 @@
 import { NodeCrypto } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
+import { readVerifiedGatewayCompositionRevision, trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
+import type { ReadTestHarnessOptions } from '@app/core-runtime/testing/reads';
 import { PaymentTermDefinitionSnapshotSchema } from '@app/payment-term-catalog-contracts/payment-term';
-import { DateTime, Deferred, Effect, Fiber, Match, Option, Predicate, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Fiber, Layer, Match, Option, Predicate, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -18,16 +20,21 @@ import { paymentUnavailable, PaymentUnavailable } from '../../shared/domain/paym
 import type { PaymentMethod } from '../../shared/domain/payment-vocabulary.ts';
 import { configurePaymentMethodEnablementAction } from '../../src/actions/configure-payment-method-enablement.action.ts';
 import { paymentMethodApplicabilityRead } from '../../src/api/payment-method-applicability.read.ts';
+import { paymentProductionOwnerPortsLive } from '../../api/payment-production-layers.ts';
+import { PaymentTermOwnerTransport } from '../../src/integrations/payment-term-evidence.ts';
 import { paymentApplicabilityPersistenceForTransaction } from '../../src/persistence/payment-applicability-persistence.ts';
 import type {
   ConfigurePaymentMethodEnablementInput,
   PaymentApplicabilityPersistence,
 } from '../../src/persistence/payment-applicability-persistence.ts';
+import { PaymentPurchaseEvidencePort } from '../../src/ports/purchase-evidence-port.ts';
+import type { PaymentPurchaseEvidence } from '../../src/ports/purchase-evidence-port.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 import {
   applicabilityOwnerEvidenceFixture,
   codSupported,
   GOPAY_PRODUCTION,
+  immediateSnapshot,
   netDaysSnapshot,
   notUsableTerm,
   OWNER_EVIDENCE_UNAVAILABLE,
@@ -36,6 +43,10 @@ import {
   termRefFor,
   usableTerm,
 } from '../support/applicability-owner-evidence.fixture.ts';
+import {
+  makePaymentTermOwnerComposition,
+  paymentTermFixtureDeployment,
+} from '../support/payment-term-owner-composition.fixture.ts';
 import {
   failureCodeOf,
   inScope,
@@ -481,7 +492,14 @@ const positionalRow = (row: readonly unknown[]) => Object.fromEntries(row.map((v
 /** Fixed trusted operation time for the scripted Core admission SQL; evaluation uses the real clock. */
 const readOperationTime = DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-09T00:00:00.000Z'));
 
-const readHarness = (client: PgClient.PgClient, scope: PaymentTestScope) =>
+const readHarness = (
+  client: PgClient.PgClient,
+  scope: PaymentTestScope,
+  composition: Pick<
+    ReadTestHarnessOptions,
+    'applicationComposition' | 'compositionRevision' | 'expectedDeployment'
+  > = {},
+) =>
   makeReadTestHarness({
     access: 'allowed',
     // Owner SQL runs on native PostgreSQL as the runtime role under the harness's validated scope.
@@ -501,9 +519,180 @@ const readHarness = (client: PgClient.PgClient, scope: PaymentTestScope) =>
     ownerAuthorizationDecision: 'allowed',
     ownerRegistration: paymentRegistration,
     scope: operationalScopeOf(scope),
+    ...composition,
   }).pipe(Effect.provide(NodeCrypto.layer));
 
 describe('#1147 R1 payment-method-applicability through the Core Read runtime', () => {
+  it.live('#1147 qualifies exact member and Guest terms through the governed Payment adapter', () =>
+    Effect.scoped(
+      Effect.gen(function* governedTermResolution() {
+        const { runtime, runtimeClient } = yield* nativeDatabase;
+        const scope = yield* makeTestScope;
+        const buyerId = yield* randomUuid;
+        const storefrontId = 'storefront-term-owner';
+        const customerConfigurationId = 'cc-governed-bank';
+        const paymentTermRef = termRefFor(scope.tenantId, yield* randomUuid);
+        for (const method of ['BANK_TRANSFER_ADVANCE', 'DEFERRED_INVOICE'] as const) {
+          const enablement = yield* configureInput(scope, {
+            customerConfigurationId,
+            enabled: true,
+            expectedRevision: Option.none(),
+            method,
+            reason: `Enable ${method}`,
+          });
+          yield* withApplicability(runtime, scope, (persistence) => persistence.configureEnablement(enablement));
+        }
+
+        const composition = yield* makePaymentTermOwnerComposition();
+        const compositionRevision = composition.composition.revision;
+        const harness = yield* readHarness(runtimeClient, scope, {
+          applicationComposition: { load: Effect.succeed(composition) },
+          compositionRevision,
+          expectedDeployment: paymentTermFixtureDeployment,
+        });
+        const base = purchasingContextFor(scope.tenantId, buyerId);
+        const counterparty = {
+          counterpartyRef: {
+            moduleId: 'party.registry',
+            resourceId: yield* randomUuid,
+            resourceType: 'party.registry.counterparty',
+            tenantId: scope.tenantId,
+          },
+          kind: 'COUNTERPARTY',
+        } as const;
+        const retail = {
+          ...base,
+          subject: {
+            kind: 'PROFILE',
+            profileRef: {
+              moduleId: 'commerce.customer-context',
+              resourceId: buyerId,
+              resourceType: 'commerce.customer-context.retail-customer-profile',
+              tenantId: scope.tenantId,
+            },
+          },
+        } as const;
+        const guest = {
+          ...base,
+          subject: { guestEvidenceRef: 'guest-owner-fact', guestSessionRef: 'guest-session', kind: 'GUEST' },
+        } as const;
+        const amount = { amountMinor: 25_000, currency: 'CZK' } as const;
+        // Authentication itself is outside this fixture. Core must still preserve its verified provenance.
+        const principal = trustVerifiedGatewayPrincipalContext(
+          { ...principalOf(scope), trustedStorefrontId: storefrontId },
+          compositionRevision,
+        );
+        const read = (
+          purchasingContext: PaymentMethodApplicabilityRequest['purchasingContext'],
+          payable: number = amount.amountMinor,
+          method: 'BANK_TRANSFER_ADVANCE' | 'DEFERRED_INVOICE' = 'BANK_TRANSFER_ADVANCE',
+        ) =>
+          harness.runtime.runRead({
+            input: {
+              amount: { ...amount, amountMinor: payable },
+              branches: [{ method }],
+              customerConfigurationId,
+              paymentTermRef,
+              purchasingContext,
+            },
+            principal,
+            registration: paymentMethodApplicabilityRead,
+            transport: { correlationId: 'payment-applicability-governed-terms' },
+          });
+        const production = paymentProductionOwnerPortsLive.pipe(Layer.provide(NodeCrypto.layer));
+        const absent = yield* read(retail).pipe(Effect.provide(production));
+        expect(absent.branches[0]?.outcome).toBe('UNAVAILABLE_TO_VERIFY');
+
+        const resolved = {
+          _tag: 'EXPLICIT_CHOICE',
+          definition: immediateSnapshot(paymentTermRef),
+          policyRevision: 'policy-1',
+          policySource: 'storefront',
+          purchasingContextRevision: base.contextRevision,
+          resolvedAt: '2026-11-09T00:00:00.000Z',
+        } as const;
+        const calls: string[] = [];
+        const transport = Layer.succeed(PaymentTermOwnerTransport, {
+          acquire: ({ audience, subject }) => {
+            expect(audience).toBe('commerce-customer-context');
+            const delegatedScope = Match.value(subject).pipe(
+              Match.tag('Assertion', ({ scope: original }) => original),
+              Match.orElse(() => null),
+            );
+            expect(delegatedScope).toMatchObject(principal);
+            expect(readVerifiedGatewayCompositionRevision(delegatedScope)).toBe(compositionRevision);
+            return Effect.succeed({
+              apiBaseUrl: 'https://gateway.test/commerce-customer-context/',
+              authorization: 'Bearer fixture-ccc',
+              compositionRevision,
+              expiresAt: 1_800_000_000,
+            });
+          },
+          executeGuest: (request) => {
+            calls.push('guest');
+            expect(request).toMatchObject({ explicitChoice: paymentTermRef, purchasingContext: { storefrontId } });
+            return Effect.succeed({ ...resolved, customerPaymentTermsRevision: null });
+          },
+          executeProfile: (request) => {
+            if (request.authorizationSubject.kind === 'COUNTERPARTY') {
+              calls.push('counterparty');
+              expect(request.authorizationSubject).toEqual(counterparty);
+              return Effect.succeed({
+                ...resolved,
+                customerPaymentTermsRevision: 1,
+                definition: netDaysSnapshot(paymentTermRef, 14),
+              });
+            }
+            calls.push('retail');
+            expect(request).toMatchObject({
+              authorizationSubject: { kind: 'RETAIL' },
+              explicitChoice: paymentTermRef,
+              profileRef: retail.subject.profileRef,
+              purchasingContext: { storefrontId },
+            });
+            return Effect.succeed({ ...resolved, customerPaymentTermsRevision: 1 });
+          },
+        });
+        const withPurchase = (
+          purchasingContext: PaymentPurchaseEvidence['purchasingContext'],
+          authorizationSubject?: PaymentPurchaseEvidence['authorizationSubject'],
+        ) => {
+          const purchase: PaymentPurchaseEvidence = {
+            ...scope,
+            customerConfigurationId,
+            evidenceRef: 'fixture-current-purchase',
+            payableAmount: amount,
+            paymentTermRef,
+            purchaseCorrelationId: 'fixture-correlation',
+            purchasingContext,
+            storefrontId,
+          };
+          const verified = authorizationSubject === undefined ? purchase : { ...purchase, authorizationSubject };
+          return production.pipe(
+            Layer.provide(transport),
+            Layer.provide(Layer.succeed(PaymentPurchaseEvidencePort, { readCurrent: () => Effect.succeed(verified) })),
+          );
+        };
+        const retailOwners = withPurchase(retail, { kind: 'RETAIL' });
+        const forged = yield* read(retail, amount.amountMinor + 1).pipe(Effect.provide(retailOwners));
+        expect(forged.branches[0]?.outcome).toBe('UNAVAILABLE_TO_VERIFY');
+        expect(calls).toEqual([]);
+        const exact = yield* read(retail).pipe(Effect.provide(retailOwners));
+        expect(exact.branches[0]?.outcome).toBe('AVAILABLE');
+        const guestResult = yield* read(guest).pipe(Effect.provide(withPurchase(guest)));
+        expect(guestResult.branches[0]?.outcome).toBe('AVAILABLE');
+        const retailDeferred = yield* read(retail, amount.amountMinor, 'DEFERRED_INVOICE').pipe(
+          Effect.provide(retailOwners),
+        );
+        expect(retailDeferred.branches[0]?.outcome).toBe('INCOMPATIBLE_TERM');
+        const counterpartyDeferred = yield* read(base, amount.amountMinor, 'DEFERRED_INVOICE').pipe(
+          Effect.provide(withPurchase(base, counterparty)),
+        );
+        expect(counterpartyDeferred.branches[0]?.outcome).toBe('AVAILABLE');
+        expect(calls).toEqual(['retail', 'guest', 'counterparty']);
+      }),
+    ),
+  );
   it.live(
     '#1147 R1 evaluates native Current enablement per branch (COD outage, bank AVAILABLE) and writes nothing',
     () =>

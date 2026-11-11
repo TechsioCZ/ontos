@@ -18,19 +18,21 @@ import {
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
-import type { AcceptPaymentObservationPayloadSchema } from '../../shared/actions/accept-payment-observation.ts';
+import { AcceptPaymentObservationPayloadSchema } from '../../shared/actions/accept-payment-observation.ts';
 import type { RecordPaymentLocalEvidencePayloadSchema } from '../../shared/actions/record-payment-local-evidence.ts';
 import type { PaymentExecutionBinding } from '../../shared/domain/payment-execution-binding.ts';
 import { PaymentRefundBasisSchema } from '../../shared/domain/payment-refund-basis.ts';
 import type { PaymentSourceBinding } from '../../shared/domain/source-statement.ts';
-import { configurePaymentSourceAuthorityAction } from '../../src/actions/configure-payment-source-authority.action.ts';
 import { recordPaymentLocalEvidenceAction } from '../../src/actions/record-payment-local-evidence.action.ts';
+import { paymentSourceStatementMaterial } from '../../src/domain/source-qualification.ts';
+import { computePaymentMaterialHash } from '../../src/persistence/payment-aggregate-persistence.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
-import { failureCodeOf, makeTestScope, paymentTestRelations, randomUuid } from './database-fixture.ts';
+import { failureCodeOf, makeTestScope, paymentTestRelations } from './database-fixture.ts';
 import { acceptObservation, refundCaseFor } from '../support/refund-action-driver.ts';
 import type { RefundCase } from '../support/refund-action-driver.ts';
 import { refundRuntimeContextAccess, refundRuntimePermission, seedPayment } from '../support/refund-native-runtime.ts';
 import type { RefundNativeRuntime, SeedPaymentOptions } from '../support/refund-native-runtime.ts';
+import { configuredRefundExecutionRouteFor } from '../support/refund-execution-route.fixture.ts';
 import {
   COMPOSITION_R1,
   COMPOSITION_R2,
@@ -259,31 +261,19 @@ interface TwoPayments {
   readonly second: { readonly collectOperationId: string; readonly paymentId: string };
 }
 
-const configureBankSource = Effect.fn('SourceReplayRoute.configureBankSource')(function* configureBankSource(
-  refundCase: RefundCase,
-) {
-  const key = yield* randomUuid;
-  yield* refundCase.native.actionRuntime.runAction({
-    payload: {
-      factFamily: 'BANK_ACCOUNTING_RECEIPT',
-      method: 'BANK_TRANSFER_ADVANCE',
-      reason: 'The ERP bank account reports bank-transfer receipts',
-      refundRoute: false,
-      source: erpBank,
-      status: 'ACTIVE',
-      submitterPrincipalIds: [refundCase.scope.principalId],
-    },
-    principal: refundCase.principal,
-    registration: configurePaymentSourceAuthorityAction,
-    transport: { correlationId: 'payment-qualification-ledger', idempotencyKey: key },
-  });
-});
-
 /** Two pending bank-transfer Payments of one Tenant / Selling Legal Entity and the ERP receipt authority. */
 const twoBankTransferPayments = Effect.fn('SourceReplayRoute.twoPayments')(function* twoPayments() {
-  const refundCase = yield* refundCaseFor(yield* ledgerRuntime, { ...bankTransferPayment, gatewayRoute: false });
+  const refundCase = yield* refundCaseFor(yield* ledgerRuntime, {
+    ...bankTransferPayment,
+    gatewayRoute: false,
+    receiptSource: {
+      ...erpBank,
+      factFamily: 'BANK_ACCOUNTING_RECEIPT',
+      method: 'BANK_TRANSFER_ADVANCE',
+      refundRoute: false,
+    },
+  });
   const second = yield* seedPayment(refundCase.native.database, refundCase.scope, bankTransferPayment);
-  yield* configureBankSource(refundCase);
   return { first: refundCase.payment, refundCase, second } satisfies TwoPayments;
 });
 
@@ -360,6 +350,7 @@ const configurePos = (evidence: EvidenceScenario, factFamily: 'LOCAL_POS_COLLECT
   evidence.configureSource({
     factFamily,
     method: 'PAY_ON_PICKUP_OR_ON_SITE',
+    pickupCapabilityRef: pickupBinding.pickupCapabilityRef,
     reason: `Store POS ${factFamily}`,
     refundRoute: factFamily === 'REFUND_EXECUTION',
     source: posOperator,
@@ -490,6 +481,168 @@ it.live('#1151 a pending occurrence replayed with a claimed amount is not an exa
       expect(yield* acceptedAs(evidence.accept(gopay({ ...pending, amount: czk(100_000) })))).toBe(
         'payment_source_occurrence_conflict',
       );
+    }),
+  ),
+);
+
+it.live(
+  '#1151 a changed replay is refused, a foreign operation stays unassigned and a qualified contradiction creates debt',
+  () =>
+    nativeEvidence(
+      Effect.gen(function* contradictorySourceStatements() {
+        const evidence = yield* scenario();
+        yield* configureGopay(evidence);
+        const first = yield* evidence.createPayment();
+        const second = yield* evidence.createPayment();
+        const start = (paymentId: string) =>
+          evidence.startOperation({ amountMinor: 100_000, operationKey: 'collect-1', paymentId });
+        const firstCollect = yield* start(first.paymentId);
+        const secondCollect = yield* start(second.paymentId);
+        const confirmed = {
+          amount: czk(100_000),
+          economicEffectKey: 'gopay:payment:conflict-control',
+          factKind: 'COLLECTION_CONFIRMED',
+          operationId: firstCollect.operationId,
+          paymentId: first.paymentId,
+          sourceOccurrenceId: 'gopay-conflict-control',
+          sourceRevision: 1,
+        } as const;
+        const accepted = yield* evidence.accept(gopay(confirmed));
+        expect(accepted.outcomeChange?.to).toBe('EFFECT_CONFIRMED');
+        const contradiction = { ...confirmed, factKind: 'COLLECTION_NOT_EFFECTED' as const };
+        expect(yield* acceptedAs(evidence.accept(gopay(contradiction)))).toBe('payment_source_occurrence_conflict');
+
+        const unassigned = yield* evidence.accept(
+          gopay({
+            ...confirmed,
+            operationId: secondCollect.operationId,
+            sourceOccurrenceId: 'gopay-foreign-operation',
+          }),
+        );
+        expect(unassigned).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED', interpretation: 'NOT_INTERPRETED' });
+        expect(unassigned.paymentId).toBeUndefined();
+        expect(unassigned.operationId).toBeUndefined();
+        expect(unassigned.reconciliationCaseId).toBeDefined();
+        expect(yield* evidence.rows.cases(first.paymentId)).toHaveLength(0);
+        expect(yield* evidence.rows.cases(second.paymentId)).toHaveLength(0);
+        expect(yield* evidence.coverage(first.paymentId)).toBe(
+          'Established collected=100000 returned=0 remaining=100000',
+        );
+        expect(yield* evidence.coverage(second.paymentId)).toBe('NotCollected');
+
+        const genuine = yield* evidence.accept(
+          gopay({ ...contradiction, sourceOccurrenceId: 'gopay-genuine-conflict' }),
+        );
+        expect(genuine).toMatchObject({ acceptanceOutcome: 'CONFLICT', operationId: firstCollect.operationId });
+        expect(yield* evidence.rows.cases(first.paymentId)).toHaveLength(1);
+        expect(yield* evidence.rows.cases(second.paymentId)).toHaveLength(0);
+      }),
+    ),
+);
+
+it.live('#1152 canonical gateway refunds reject the gateway outcome authority while the exact executor succeeds', () =>
+  nativeEvidence(
+    Effect.gen(function* canonicalGatewayRefundAuthority() {
+      const evidence = yield* scenario();
+      const gateway = yield* configureGopay(evidence);
+      const payment = yield* evidence.createPayment();
+      const collect = yield* evidence.startOperation({
+        amountMinor: 100_000,
+        operationKey: 'collect-1',
+        paymentId: payment.paymentId,
+      });
+      yield* evidence.settle(payment.paymentId, collect.operationId, 1, 'EFFECT_CONFIRMED');
+      const route = yield* configuredRefundExecutionRouteFor(
+        evidence.native.database,
+        evidence.scope,
+        payment.executionBinding,
+      );
+      const refund = yield* evidence.startOperation({
+        amountMinor: 50_000,
+        kind: 'REFUND',
+        operationKey: 'refund-1',
+        paymentId: payment.paymentId,
+        refundBasis: itemsBasis('item-1', 50_000),
+        refundExecutionRoute: route,
+        targetOperationId: collect.operationId,
+      });
+      const reported = {
+        amount: czk(50_000),
+        economicEffectKey: 'gopay:return-canonical',
+        factKind: 'REFUND_CONFIRMED',
+        paymentId: payment.paymentId,
+        sourceOccurrenceId: 'gateway-canonical-attempt',
+        sourceRevision: 0,
+      } as const;
+      const gatewayClaim = gopay({ ...reported, operationId: refund.operationId });
+      expect(yield* failureCodeOf(evidence.accept(gatewayClaim))).toBe('payment_source_authority_forbidden');
+
+      const alternate = yield* evidence.accept(gopay({ ...reported, sourceOccurrenceId: 'gateway-unresolved-return' }));
+      expect(alternate).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED' });
+      expect(
+        yield* failureCodeOf(
+          evidence.decide({
+            caseId: alternate.reconciliationCaseId ?? '',
+            decision: {
+              _tag: 'ATTACH_EVIDENCE',
+              observationId: alternate.observationId,
+              operationId: refund.operationId,
+            },
+            reason: 'Try to attach an unresolved gateway outcome to a canonical refund',
+          }),
+        ),
+      ).toBe('payment_reconciliation_evidence_not_qualified');
+
+      // Legacy ingress used to record the gateway-outcome authority against a canonical REFUND.
+      const legacy = { ...gatewayClaim, sourceOccurrenceId: 'gateway-legacy-refund' };
+      const originalStatement = yield* Schema.decodeEffect(AcceptPaymentObservationPayloadSchema)(legacy);
+      const statementHash = yield* computePaymentMaterialHash(paymentSourceStatementMaterial(originalStatement));
+      yield* evidence.recordObservation({
+        acceptanceOutcome: 'HELD_UNRESOLVED',
+        amountMinor: 50_000,
+        factKind: 'REFUND_CONFIRMED',
+        occurrenceId: legacy.sourceOccurrenceId,
+        operationId: refund.operationId,
+        paymentId: payment.paymentId,
+        source: { ...legacy.source, factFamily: legacy.factFamily },
+        sourceAuthorityId: gateway.sourceAuthorityId,
+        statementHash,
+      });
+      expect(yield* failureCodeOf(evidence.accept(legacy))).toBe('payment_source_authority_forbidden');
+      expect(yield* failureCodeOf(evidence.accept({ ...legacy, evidenceRef: 'changed-replay' }))).toBe(
+        'payment_source_authority_forbidden',
+      );
+
+      const exact = {
+        ...gatewayClaim,
+        factFamily: 'REFUND_EXECUTION',
+        sourceOccurrenceId: 'gateway-original-executor-refund',
+      } as const;
+      const applied = yield* evidence.accept(exact);
+      expect(applied).toMatchObject({
+        acceptanceOutcome: 'ACCEPTED_OBSERVATION',
+        outcomeChange: { to: 'EFFECT_CONFIRMED' },
+        sourceAuthorityId: route.sourceAuthorityId,
+      });
+      expect(yield* evidence.accept(exact)).toMatchObject({
+        acceptanceOutcome: 'DUPLICATE',
+        observationId: applied.observationId,
+        operationId: refund.operationId,
+        sourceAuthorityId: route.sourceAuthorityId,
+      });
+      const correction = gopay({
+        correctsObservationId: applied.observationId,
+        factKind: 'SOURCE_CORRECTION',
+        paymentId: payment.paymentId,
+        sourceOccurrenceId: 'gateway-canonical-correction',
+        sourceRevision: 0,
+      });
+      expect(yield* failureCodeOf(evidence.accept(correction))).toBe('payment_source_authority_forbidden');
+      expect(yield* evidence.accept({ ...correction, factFamily: 'REFUND_EXECUTION' })).toMatchObject({
+        acceptanceOutcome: 'ACCEPTED_OBSERVATION',
+        operationId: refund.operationId,
+        sourceAuthorityId: route.sourceAuthorityId,
+      });
     }),
   ),
 );

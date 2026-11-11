@@ -3,6 +3,7 @@ import { Array as EffectArray, Data, Equivalence, Match, Option, Schema } from '
 
 import type { PaymentMethodBranchSelection } from '../../shared/domain/applicability-contract.ts';
 import type { PaymentCoverageSummary } from '../../shared/domain/lifecycle-views.ts';
+import { isBankAccountingReceiptBinding } from '../../shared/domain/payment-execution-binding.ts';
 import type { PaymentExecutionBinding } from '../../shared/domain/payment-execution-binding.ts';
 import type { PaymentMonetaryAmount } from '../../shared/domain/payment-money.ts';
 import type { PaymentMethod, PaymentOperationOutcome } from '../../shared/domain/payment-vocabulary.ts';
@@ -204,7 +205,10 @@ export const collectionMaterialRequest = (
   binding: PaymentExecutionBinding,
 ) => ({
   amountMinor: request.amount.amountMinor,
-  binding: bindingIdentity(binding),
+  binding:
+    isBankAccountingReceiptBinding(binding) && binding.receiptAuthority !== undefined
+      ? binding
+      : bindingIdentity(binding),
   currency: request.amount.currency,
   kind: 'COLLECT',
   method: request.method,

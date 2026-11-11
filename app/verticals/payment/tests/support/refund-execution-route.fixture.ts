@@ -66,6 +66,7 @@ interface RefundExecutorIdentity {
   readonly accountRef: string;
   readonly environment: string;
   readonly method: PaymentMethod | null;
+  readonly pickupCapabilityRef?: string;
   readonly sourceKind: PaymentSourceKind;
   readonly sourceSystem: string;
 }
@@ -94,10 +95,11 @@ const refundExecutorFor = (binding: PaymentExecutionBinding): RefundExecutorIden
       sourceKind: 'PAYMENT_GATEWAY',
       sourceSystem: gateway.providerFamily,
     }),
-    PICKUP_CAPABILITY: (): RefundExecutorIdentity => ({
+    PICKUP_CAPABILITY: ({ pickupCapabilityRef }): RefundExecutorIdentity => ({
       accountRef: 'pos-drawer-refunds',
       environment: 'production',
       method: 'PAY_ON_PICKUP_OR_ON_SITE',
+      pickupCapabilityRef,
       sourceKind: 'LOCAL_POS_OPERATOR',
       sourceSystem: 'store-pos',
     }),
@@ -121,6 +123,9 @@ const findOrConfigureExecutor = Effect.fn('RefundExecutionRouteFixture.findOrCon
           eq(sourceAuthorities.legalEntityId, scope.legalEntityId),
           eq(sourceAuthorities.factFamily, 'REFUND_EXECUTION'),
           executor.method === null ? isNull(sourceAuthorities.method) : eq(sourceAuthorities.method, executor.method),
+          executor.pickupCapabilityRef === undefined
+            ? isNull(sourceAuthorities.pickupCapabilityRef)
+            : eq(sourceAuthorities.pickupCapabilityRef, executor.pickupCapabilityRef),
           eq(sourceAuthorities.sourceKind, executor.sourceKind),
           eq(sourceAuthorities.sourceSystem, executor.sourceSystem),
           eq(sourceAuthorities.accountRef, executor.accountRef),

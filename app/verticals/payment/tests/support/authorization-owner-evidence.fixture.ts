@@ -2,16 +2,23 @@ import { PaymentTermDefinitionSnapshotSchema } from '@app/payment-term-catalog-c
 import type { PaymentTermDefinitionSnapshot } from '@app/payment-term-catalog-contracts/payment-term';
 import { PaymentTermRefSchema } from '@app/payment-term-catalog-contracts/resources/payment-term';
 import type { PaymentTermRef } from '@app/payment-term-catalog-contracts/resources/payment-term';
-import { Duration, Effect, Layer, Ref, Schema } from 'effect';
+import { DateTime, Duration, Effect, Layer, Option, Ref, Schema } from 'effect';
 
 import { PaymentPurchasingSubjectSchema } from '../../shared/domain/applicability-purchasing-context.ts';
-import type { PaymentPurchasingSubject } from '../../shared/domain/applicability-purchasing-context.ts';
+import type {
+  PaymentPurchasingContext,
+  PaymentPurchasingSubject,
+} from '../../shared/domain/applicability-purchasing-context.ts';
+import type { PaymentAuthorizationBinding } from '../../shared/domain/authorization-proof.ts';
+import type { PaymentCommitmentAttemptEvidence } from '../../shared/domain/commitment-attempt-evidence.ts';
 import type { PaymentCodCarrier } from '../../shared/domain/payment-execution-binding.ts';
+import { CommitmentAttemptEvidencePort } from '../../src/ports/commitment-attempt-evidence-port.ts';
 import { CommitmentOutcomePort, unavailableCommitmentOutcome } from '../../src/ports/commitment-outcome-port.ts';
 import { DeliveryCapabilityPort } from '../../src/ports/delivery-capability-port.ts';
 import type { PaymentCodNotSupportedReasonSchema } from '../../src/ports/delivery-capability-port.ts';
 import { GatewayBindingPort, unavailableGatewayBinding } from '../../src/ports/gateway-binding-port.ts';
 import { ownerEvidenceUnavailable } from '../../src/ports/owner-evidence-unavailable.ts';
+import type { PaymentOwnerScope } from '../../src/ports/owner-evidence-unavailable.ts';
 import { PaymentTermEvidencePort } from '../../src/ports/payment-term-evidence-port.ts';
 import type { PaymentTermPurchase, PaymentTermUseEvidence } from '../../src/ports/payment-term-evidence-port.ts';
 import { PickupCapabilityPort } from '../../src/ports/pickup-capability-port.ts';
@@ -108,10 +115,10 @@ const termUse = (
 
 /**
  * Mutable owner state for one test: entitlement periods, COD answers per Delivery Offer and pickup
- * answers per capability. `layer` provides all six Payment owner ports; the three ports
- * authorization does not consult stay explicitly unavailable.
+ * answers per capability, and independently supplied Current Commitment Attempts.
  */
 export const makeAuthorizationOwnerEvidenceFixture = Effect.gen(function* makeAuthorizationOwnerEvidenceFixture() {
+  const attempts = yield* Ref.make<ReadonlyMap<string, PaymentCommitmentAttemptEvidence>>(new Map());
   const periods = yield* Ref.make<readonly AuthorizationEntitlementPeriodFixture[]>([]);
   const termEvidenceUnavailable = yield* Ref.make(false);
   const termEvidenceDelay = yield* Ref.make(Duration.zero);
@@ -119,6 +126,10 @@ export const makeAuthorizationOwnerEvidenceFixture = Effect.gen(function* makeAu
   const pickup = yield* Ref.make<ReadonlyMap<string, PickupAnswer>>(new Map());
 
   const layer = Layer.mergeAll(
+    Layer.succeed(CommitmentAttemptEvidencePort, {
+      findCurrentAttempt: ({ orderCommitmentAttemptId }) =>
+        Ref.get(attempts).pipe(Effect.map((current) => Option.fromUndefinedOr(current.get(orderCommitmentAttemptId)))),
+    }),
     Layer.succeed(PaymentTermEvidencePort, {
       verifyTermUse: ({ paymentTermRef, purchase }) =>
         Effect.gen(function* answerTermUse() {
@@ -170,6 +181,8 @@ export const makeAuthorizationOwnerEvidenceFixture = Effect.gen(function* makeAu
 
   return {
     layer,
+    putAttempt: (attempt: PaymentCommitmentAttemptEvidence) =>
+      Ref.update(attempts, (current) => new Map([...current, [attempt.orderCommitmentAttemptId, attempt]])),
     putEntitlementPeriod: (period: AuthorizationEntitlementPeriodFixture) =>
       Ref.update(periods, (current) => [
         ...current.filter(
@@ -179,6 +192,8 @@ export const makeAuthorizationOwnerEvidenceFixture = Effect.gen(function* makeAu
         ),
         period,
       ]),
+    removeAttempt: (orderCommitmentAttemptId: string) =>
+      Ref.update(attempts, (current) => new Map([...current].filter(([id]) => id !== orderCommitmentAttemptId))),
     setCod: (deliveryOfferRef: string, answer: CodAnswer) =>
       Ref.update(cod, (current) => new Map([...current, [deliveryOfferRef, answer]])),
     setPickup: (pickupCapabilityRef: string, answer: PickupAnswer) =>
@@ -187,3 +202,26 @@ export const makeAuthorizationOwnerEvidenceFixture = Effect.gen(function* makeAu
     setTermEvidenceUnavailable: (unavailable: boolean) => Ref.set(termEvidenceUnavailable, unavailable),
   };
 });
+
+export const authorizationAttemptFor = (
+  binding: PaymentAuthorizationBinding,
+  purchasingContext: PaymentPurchasingContext,
+  scope: PaymentOwnerScope,
+) =>
+  DateTime.now.pipe(
+    Effect.map(
+      (now) =>
+        ({
+          ...scope,
+          amount: binding.amount,
+          evidenceRef: `order-attempt:${binding.orderCommitmentAttemptId}`,
+          orderCommitmentAttemptId: binding.orderCommitmentAttemptId,
+          orderCommitmentTime: binding.orderCommitmentTime,
+          paymentId: binding.paymentId,
+          paymentTermRef: binding.paymentTermRef,
+          purchaseCorrelationId: binding.purchaseCorrelationId,
+          purchasingContext,
+          validUntil: DateTime.add(now, { hours: 1 }),
+        }) satisfies PaymentCommitmentAttemptEvidence,
+    ),
+  );

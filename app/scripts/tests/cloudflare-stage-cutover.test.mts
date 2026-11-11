@@ -73,6 +73,7 @@ const SPICEDB_KEY = 'spicedb-key-secret';
 const CART_MODULE_CREDENTIAL = moduleCredentialVariable('commerce-cart');
 const CUSTOMER_CONTEXT_MODULE_CREDENTIAL = moduleCredentialVariable('commerce-customer-context');
 const ORDER_MODULE_CREDENTIAL = moduleCredentialVariable('commerce-order');
+const PAYMENT_MODULE_CREDENTIAL = moduleCredentialVariable('payment');
 const PRICING_MODULE_CREDENTIAL = moduleCredentialVariable('pricing');
 const MARKET_CATALOG_MODULE_CREDENTIAL = moduleCredentialVariable('commerce-market-catalog');
 /** A valid value of a setting's format; credentials end in `-secret`, so the leak checks look for them. */
@@ -108,6 +109,7 @@ const CUSTOMER_CONTEXT_WORKER = 'app-commerce-customer-context';
 const MARKET_WORKER = 'app-commerce-market-catalog';
 const PRICING_WORKER = 'app-pricing';
 const ORDER_WORKER = 'app-commerce-order';
+const PAYMENT_WORKER = 'app-payment';
 const CART_WORKER = 'app-commerce-cart';
 const PARTY_WORKER = 'app-party-registry';
 const SHELL_GATEWAY_BASE_URL = 'https://app.stage.example.com/shell-super-app-api';
@@ -851,6 +853,7 @@ it.effect('requires every caller key before writing any Worker secret', () =>
         CART_MODULE_CREDENTIAL,
         CUSTOMER_CONTEXT_MODULE_CREDENTIAL,
         ORDER_MODULE_CREDENTIAL,
+        PAYMENT_MODULE_CREDENTIAL,
         PRICING_MODULE_CREDENTIAL,
         'ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET',
       ]),
@@ -1279,6 +1282,10 @@ it.effect('gives each module Worker its own redacted module credential and the n
       ONTOS_GATEWAY_MODULE_API_KEY: settingValue(MARKET_CATALOG_MODULE_CREDENTIAL),
       ONTOS_SHELL_GATEWAY_BASE_URL: SHELL_GATEWAY_BASE_URL,
     });
+    expect(reveal(PAYMENT_WORKER)).toMatchObject({
+      ONTOS_GATEWAY_MODULE_API_KEY: settingValue(PAYMENT_MODULE_CREDENTIAL),
+      ONTOS_SHELL_GATEWAY_BASE_URL: SHELL_GATEWAY_BASE_URL,
+    });
     expect(Arr.sort(Object.keys(reveal(PRICING_WORKER)), Order.String)).toStrictEqual([
       'ONTOS_GATEWAY_ISSUER',
       'ONTOS_GATEWAY_MODULE_API_KEY',
@@ -1344,6 +1351,7 @@ it.effect('gives each module Worker its own redacted module credential and the n
       [MARKET_WORKER, MARKET_CATALOG_MODULE_CREDENTIAL],
       [PRICING_WORKER, PRICING_MODULE_CREDENTIAL],
       [ORDER_WORKER, ORDER_MODULE_CREDENTIAL],
+      [PAYMENT_WORKER, PAYMENT_MODULE_CREDENTIAL],
       [CART_WORKER, CART_MODULE_CREDENTIAL],
     ] as const) {
       expect(reveal(worker)[GATEWAY_MODULE_API_KEY_VARIABLE]).toBe(settingValue(source));

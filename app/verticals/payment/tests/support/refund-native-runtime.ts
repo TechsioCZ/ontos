@@ -14,6 +14,7 @@ import {
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
+import { isBankAccountingReceiptBinding } from '../../shared/domain/payment-execution-binding.ts';
 import type { PaymentExecutionBinding } from '../../shared/domain/payment-execution-binding.ts';
 import { PaymentOperationIdSchema } from '../../shared/domain/payment-identifiers.ts';
 import type {
@@ -29,6 +30,7 @@ import {
   sourceAuthorityRevisions,
 } from '../../src/database/schema.ts';
 import { paymentAggregatePersistenceForTransaction } from '../../src/persistence/payment-aggregate-persistence.ts';
+import { selectBankReceiptAuthorities } from '../../src/persistence/payment-source-persistence.ts';
 import {
   COMPOSITION_REVISION,
   collectInput,
@@ -236,7 +238,24 @@ export const seedPayment = Effect.fn('RefundNativeRuntime.seedPayment')(function
   const { paymentId } = created.record;
   const collect = yield* collectInput(scope, { amountMinor: options.amountMinor, paymentId }, `collect-${paymentId}`);
   const collected = yield* withScopedTransaction(database, scope, (transaction) =>
-    paymentAggregatePersistenceForTransaction(transaction).insertOperation({ ...collect, binding }),
+    Effect.gen(function* seedCollect() {
+      const { method } = options;
+      if (
+        !isBankAccountingReceiptBinding(binding) ||
+        (method !== 'BANK_TRANSFER_ADVANCE' && method !== 'DEFERRED_INVOICE')
+      ) {
+        return yield* paymentAggregatePersistenceForTransaction(transaction).insertOperation({ ...collect, binding });
+      }
+      const candidates = yield* selectBankReceiptAuthorities(transaction, method);
+      const [only] = candidates;
+      return yield* paymentAggregatePersistenceForTransaction(transaction).insertOperation({
+        ...collect,
+        binding:
+          binding.receiptAuthority === undefined && candidates.length === 1 && only !== undefined
+            ? { ...binding, receiptAuthority: only }
+            : binding,
+      });
+    }),
   );
   const collectOperationId = collected.record.operationId;
   if (options.collected) {
@@ -254,7 +273,8 @@ export interface SourceAuthorityOptions {
   readonly accountRef: string;
   readonly environment?: string;
   readonly factFamily?: PaymentSourceFactFamily;
-  readonly method?: PaymentMethod;
+  readonly method?: PaymentMethod | undefined;
+  readonly pickupCapabilityRef?: string;
   readonly refundRoute?: boolean;
   readonly sourceKind: PaymentSourceKind;
   readonly sourceSystem: string;
@@ -282,6 +302,7 @@ export const seedSourceAuthority = Effect.fn('RefundNativeRuntime.seedSourceAuth
         factFamily: options.factFamily ?? 'REFUND_EXECUTION',
         legalEntityId: scope.legalEntityId,
         method: options.method ?? null,
+        pickupCapabilityRef: options.pickupCapabilityRef ?? null,
         reason: 'Configured for the refund acceptance suite',
         refundRoute: options.refundRoute ?? true,
         revision: 1,

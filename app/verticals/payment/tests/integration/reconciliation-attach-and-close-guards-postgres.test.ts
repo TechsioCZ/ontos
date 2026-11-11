@@ -303,12 +303,13 @@ it.live('#1151 a receipt whose COLLECT no longer holds the attached outcome does
       });
       expect(yield* outcomesOf(evidence, payment.paymentId)).toEqual(['EFFECT_CONFIRMED']);
       // The COLLECT is put in CONFLICT: the attached outcome no longer stands, so the receipt is unaccounted.
-      const conflictCaseId = yield* evidence.openCase('UNRESOLVED_OPERATION', payment.paymentId, collect.operationId);
-      yield* evidence.decide({
-        caseId: conflictCaseId,
-        decision: { _tag: 'CLASSIFY_CONFLICT' },
-        reason: 'Provider and bank statements contradict',
-      });
+      yield* evidence.accept(
+        gopayStatement({
+          factKind: 'COLLECTION_NOT_EFFECTED',
+          operationId: collect.operationId,
+          paymentId: payment.paymentId,
+        }),
+      );
       expect(yield* outcomesOf(evidence, payment.paymentId)).toEqual(['CONFLICT']);
       const closed = yield* refusalOrAccepted(
         evidence.decide({

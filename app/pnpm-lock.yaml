@@ -2151,6 +2151,9 @@ importers:
 
   verticals/payment:
     dependencies:
+      '@app/commerce-customer-context':
+        specifier: workspace:*
+        version: link:../commerce-customer-context
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime

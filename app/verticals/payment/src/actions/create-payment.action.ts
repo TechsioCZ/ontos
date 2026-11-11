@@ -140,7 +140,31 @@ export const handleCreatePayment = Effect.fn('CreatePaymentAction.handle')(funct
     yield* recordPaymentAggregateReads(context, [existing.value]);
     return recovered;
   }
-  // Every intent of this purchase is locked first (Payment id order), so competing intents serialize.
+  // Verify the selected branch and its stable purchase correlation before choosing which purchase to lock.
+  const enablements = yield* services.applicability.loadCurrentEnablements(payload.customerConfigurationId);
+  yield* recordPaymentLookup(context, { query: 'method-enablements', resultCount: enablements.length });
+  const [branch] = yield* evaluatePaymentMethodApplicability({
+    amount: payload.payableAmount,
+    customerConfigurationId: payload.customerConfigurationId,
+    enablements,
+    ownerCall: {
+      consumer: 'CREATE',
+      operationScope: context.scope,
+      payableAmount: payload.payableAmount,
+      purchaseCorrelationId: payload.purchaseCorrelationId,
+    },
+    paymentTermRef: payload.paymentTermRef,
+    purchase: { _tag: 'PURCHASING_CONTEXT', purchasingContext: payload.purchasingContext },
+    scope: { legalEntityId, tenantId },
+    selections: [payload.selection],
+  });
+  if (branch === undefined) {
+    return yield* paymentUnavailable('The selected Payment Method branch was not evaluated');
+  }
+  if (branch.outcome !== 'AVAILABLE') {
+    return yield* paymentMethodNotApplicable(branch.outcome, branch.findings);
+  }
+  // Competing intents lock all Payments of this purchase in Payment ID order.
   const purchasePaymentIds = yield* services.lifecycle.lockPurchasePaymentIds(payload.purchaseCorrelationId);
   yield* recordPaymentLookup(context, { query: 'purchase-intents', resultCount: purchasePaymentIds.length });
   const predecessorPaymentId = Option.fromNullishOr(payload.predecessorPaymentId);
@@ -153,27 +177,8 @@ export const handleCreatePayment = Effect.fn('CreatePaymentAction.handle')(funct
       resultCount: 0,
     });
   }
-  // Omitting the predecessor never bypasses it: every other intent of the purchase must be released.
   yield* requireReleasedPurchase(purchasePaymentIds, services);
   yield* recordPaymentAggregateReads(context, purchasePaymentIds);
-  // #1147 applicability of exactly the selected branch at this execution; nothing else is selected.
-  const enablements = yield* services.applicability.loadCurrentEnablements(payload.customerConfigurationId);
-  yield* recordPaymentLookup(context, { query: 'method-enablements', resultCount: enablements.length });
-  const [branch] = yield* evaluatePaymentMethodApplicability({
-    amount: payload.payableAmount,
-    customerConfigurationId: payload.customerConfigurationId,
-    enablements,
-    paymentTermRef: payload.paymentTermRef,
-    purchase: { _tag: 'PURCHASING_CONTEXT', purchasingContext: payload.purchasingContext },
-    scope: { legalEntityId, tenantId },
-    selections: [payload.selection],
-  });
-  if (branch === undefined) {
-    return yield* paymentUnavailable('The selected Payment Method branch was not evaluated');
-  }
-  if (branch.outcome !== 'AVAILABLE') {
-    return yield* paymentMethodNotApplicable(branch.outcome, branch.findings);
-  }
   const intent: NewPaymentInput = {
     amount: payload.payableAmount,
     customerConfigurationId: payload.customerConfigurationId,

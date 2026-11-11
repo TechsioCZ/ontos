@@ -1,6 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { and, asc, eq, like, sql } from 'drizzle-orm';
-import { Array as Arr, Crypto, Deferred, Effect, Fiber, Option, Order } from 'effect';
+import { Array as Arr, Crypto, Deferred, Effect, Fiber, Option, Order, Predicate, Result } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
@@ -16,17 +16,11 @@ import { actionInvocations, dataAccessEvents } from '../../../../packages/core-r
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import type { AcceptPaymentObservationPayloadSchema } from '../../shared/actions/accept-payment-observation.ts';
-import { configurePaymentSourceAuthorityAction } from '../../src/actions/configure-payment-source-authority.action.ts';
 import { paymentEvidencePersistenceForTransaction } from '../../src/persistence/payment-evidence-persistence.ts';
+import { paymentSourcePersistenceForTransaction } from '../../src/persistence/payment-source-persistence.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 
-import {
-  failureCodeOf,
-  operationalScopeOf,
-  paymentTestRelations,
-  provenanceFor,
-  randomUuid,
-} from './database-fixture.ts';
+import { failureCodeOf, operationalScopeOf, paymentTestRelations, provenanceFor } from './database-fixture.ts';
 import { acceptObservation, decideReconciliation, refundCaseFor } from '../support/refund-action-driver.ts';
 import type { RefundCase } from '../support/refund-action-driver.ts';
 import {
@@ -97,23 +91,17 @@ interface TwoPayments {
 
 /** Two pending bank-transfer Payments of one Tenant / Selling Legal Entity and the ERP receipt authority. */
 const twoBankTransferPayments = Effect.fn('EconomicEffectAttributionTest.twoPayments')(function* twoPayments() {
-  const refundCase = yield* refundCaseFor(yield* nativeRuntime, { ...bankTransferPayment, gatewayRoute: false });
-  const second = yield* seedPayment(refundCase.native.database, refundCase.scope, bankTransferPayment);
-  const key = yield* randomUuid;
-  yield* refundCase.native.actionRuntime.runAction({
-    payload: {
+  const refundCase = yield* refundCaseFor(yield* nativeRuntime, {
+    ...bankTransferPayment,
+    gatewayRoute: false,
+    receiptSource: {
+      ...erpBank,
       factFamily: 'BANK_ACCOUNTING_RECEIPT',
       method: 'BANK_TRANSFER_ADVANCE',
-      reason: 'The ERP bank account reports bank-transfer receipts',
       refundRoute: false,
-      source: erpBank,
-      status: 'ACTIVE',
-      submitterPrincipalIds: [refundCase.scope.principalId],
     },
-    principal: refundCase.principal,
-    registration: configurePaymentSourceAuthorityAction,
-    transport: { correlationId: 'payment-economic-effect-attribution', idempotencyKey: key },
   });
+  const second = yield* seedPayment(refundCase.native.database, refundCase.scope, bankTransferPayment);
   return { first: refundCase.payment, refundCase, second } satisfies TwoPayments;
 });
 
@@ -167,6 +155,53 @@ it.live(
         expect(yield* collectOutcomeOf(refundCase, second)).toBe('PENDING');
       }),
     ),
+);
+
+it.live('#1151 a new keyless receipt cannot corroborate a standing confirmation, but exact redelivery replays', () =>
+  native(
+    Effect.gen(function* keylessReceiptRestatement() {
+      const { first, refundCase } = yield* twoBankTransferPayments();
+      const { economicEffectKey: _key, ...receipt } = receiptOf(first, 'keyless-bank-statement-line');
+      const confirmed = yield* acceptObservation(refundCase, receipt);
+      expect(confirmed.outcomeChange?.to).toBe('EFFECT_CONFIRMED');
+      const duplicate = yield* acceptObservation(refundCase, receipt);
+      expect(duplicate.acceptanceOutcome).toBe('DUPLICATE');
+      expect(duplicate.observationId).toBe(confirmed.observationId);
+
+      const restated = yield* acceptObservation(refundCase, {
+        ...receipt,
+        sourceOccurrenceId: 'unlinked-erp-voucher',
+      });
+      expect(restated.acceptanceOutcome).toBe('HELD_UNRESOLVED');
+      expect(restated.reconciliationCaseId).toBeDefined();
+      expect(restated.outcomeChange).toBeUndefined();
+      expect(yield* collectOutcomeOf(refundCase, first)).toBe('EFFECT_CONFIRMED');
+    }),
+  ),
+);
+
+it.live('#1151 exact Payment correlation alone does not identify an economic effect across keyless receipts', () =>
+  native(
+    Effect.gen(function* twoKeylessReceipts() {
+      const { first, refundCase, second } = yield* twoBankTransferPayments();
+      const { economicEffectKey: _firstKey, ...bankStatement } = receiptOf(first, 'keyless-bank-statement');
+      const { economicEffectKey: _secondKey, ...erpVoucher } = receiptOf(second, 'keyless-erp-voucher');
+
+      // Both receipts have a valid source and exact operation. No common economic identity is supplied.
+      const bankResult = yield* acceptObservation(refundCase, bankStatement);
+      const voucherResult = yield* acceptObservation(refundCase, erpVoucher);
+      expect(bankResult).toMatchObject({
+        acceptanceOutcome: 'ACCEPTED_OBSERVATION',
+        operationId: first.collectOperationId,
+      });
+      expect(voucherResult).toMatchObject({
+        acceptanceOutcome: 'ACCEPTED_OBSERVATION',
+        operationId: second.collectOperationId,
+      });
+      expect(yield* collectOutcomeOf(refundCase, first)).toBe('EFFECT_CONFIRMED');
+      expect(yield* collectOutcomeOf(refundCase, second)).toBe('EFFECT_CONFIRMED');
+    }),
+  ),
 );
 
 it.live(
@@ -313,6 +348,82 @@ it.live(
         expect(yield* collectOutcomeOf(refundCase, second)).toBe('PENDING');
       }),
     ),
+);
+
+it.live('#1152 attachment waits for a pending authority revocation and refuses after it commits', () =>
+  native(
+    Effect.gen(function* revokeBeforeAttachment() {
+      const { first, refundCase } = yield* twoBankTransferPayments();
+      const { database } = refundCase.native;
+      const { scope } = refundCase;
+      yield* transitionOperation(database, scope, {
+        operationId: first.collectOperationId,
+        paymentId: first.paymentId,
+        to: 'CONFLICT',
+      });
+      const held = yield* acceptObservation(refundCase, receiptOf(first, 'bank-receipt-to-attach'));
+      expect(held).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED', operationId: first.collectOperationId });
+
+      const updated = yield* Deferred.make<number>();
+      const release = yield* Deferred.make<boolean>();
+      const provenance = yield* provenanceFor(scope);
+      const revoke = yield* database
+        .transaction((transaction) =>
+          Effect.gen(function* pauseRevocation() {
+            const scoped = yield* installOperationalScope(transaction, operationalScopeOf(scope));
+            const sources = paymentSourcePersistenceForTransaction(
+              scoped,
+              scope,
+              paymentEvidencePersistenceForTransaction(scoped),
+            );
+            yield* sources.configureAuthority({
+              expectedRevision: 1,
+              factFamily: 'BANK_ACCOUNTING_RECEIPT',
+              method: 'BANK_TRANSFER_ADVANCE',
+              provenance,
+              reason: 'Revoke original bank receipt authority',
+              refundRoute: false,
+              source: erpBank,
+              status: 'REVOKED',
+              submitterPrincipalIds: [scope.principalId],
+            });
+            const [backend] = yield* transaction.execute<{ readonly pid: number }>(
+              sql`select pg_catalog.pg_backend_pid() as pid`,
+              'objects',
+            );
+            yield* Deferred.succeed(updated, backend?.pid ?? 0);
+            yield* Deferred.await(release);
+          }),
+        )
+        .pipe(Effect.forkChild);
+      const holderPid = yield* Deferred.await(updated);
+      const attach = yield* decideReconciliation(refundCase, {
+        caseId: held.reconciliationCaseId ?? '',
+        decision: { _tag: 'ATTACH_EVIDENCE', observationId: held.observationId },
+        reason: 'Attach the bank receipt that resolves the collection conflict',
+      }).pipe(
+        Effect.match({
+          onFailure: (failure) => (Predicate.hasProperty(failure, 'code') ? failure.code : 'unknown'),
+          onSuccess: () => 'APPLIED',
+        }),
+        Effect.forkChild,
+      );
+      const waited = yield* Effect.race(
+        awaitBlockedLockWaiters(refundCase.native, holderPid, 1).pipe(Effect.map((waiters) => waiters > 0)),
+        Fiber.await(attach).pipe(Effect.as(false)),
+      );
+      const paymentLock = yield* refundCase.native.admin
+        .unsafe('select payment_id from payment.payments where payment_id = $1 for update nowait', [first.paymentId])
+        .pipe(Effect.result);
+      yield* Deferred.succeed(release, true);
+      yield* Fiber.join(revoke);
+
+      expect(Result.isSuccess(paymentLock)).toBe(true);
+      const refusal = yield* Fiber.join(attach);
+      expect({ refusal, waited }).toEqual({ refusal: 'payment_reconciliation_evidence_not_qualified', waited: true });
+      expect(yield* collectOutcomeOf(refundCase, first)).toBe('CONFLICT');
+    }),
+  ),
 );
 
 /** The economic-effect attribution lookups Core persisted in the scenario's Tenant, with their Action. */

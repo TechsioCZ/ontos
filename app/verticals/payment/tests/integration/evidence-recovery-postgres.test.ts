@@ -1,34 +1,64 @@
 import { randomUUID } from 'node:crypto';
 
 import { GatewayAssertionRedemptionService } from '@app/core-runtime';
-import { NodeCrypto } from '@effect/platform-node';
+import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
+import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { and, eq } from 'drizzle-orm';
-import { Clock, Crypto, Effect, Fiber, Layer, Option, Predicate, Schema } from 'effect';
+import { Clock, Crypto, DateTime, Effect, Exit, Fiber, Layer, Option, Predicate, Ref, Schema } from 'effect';
 import type { Scope } from 'effect';
+import type { ChildProcessSpawner } from 'effect/process';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
-import { applicationCompositionDurableWork, coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
+import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
+import {
+  applicationCompositionDurableWork,
+  coreRelations,
+  outboxMessages,
+  tenantModuleStates,
+} from '../../../../packages/core-runtime/src/db/schema.ts';
+import { lockApplicationCompositionAuthority } from '../../../../packages/core-runtime/src/modules/application-composition-authority.ts';
+import { defineTenantModuleEntrypoint } from '../../../../packages/core-runtime/src/modules/module-entrypoint.ts';
+import {
+  defineOutboxWorker,
+  extractOutboxWorkerSubscriptions,
+} from '../../../../packages/core-runtime/src/outbox/definition.ts';
+import type { OutboxWorkerHandler } from '../../../../packages/core-runtime/src/outbox/definition.ts';
+import { makeOutboxRepository } from '../../../../packages/core-runtime/src/outbox/repository.ts';
+import { makeOutboxRuntime } from '../../../../packages/core-runtime/src/outbox/runtime.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { makeScriptedBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
 import {
   makeTestDatabaseFromClient,
+  makeTestPgClient,
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
+import { makeNativeOutboxWorkerFixture } from '../../../../packages/core-runtime/tests/support/outbox-worker-native-fixture.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
+import { PaymentProviderReplayGuaranteeSchema } from '../../shared/domain/evidence-contract.ts';
+import type { PaymentGatewayAccountBinding } from '../../shared/domain/payment-execution-binding.ts';
+import { paymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import { OutboxPayloadSchema as RecoveryRequestedSchema } from '../../shared/outbox/payment-core-operation-recovery-requested-v1.ts';
+import type { OutboxPayload as RecoveryRequested } from '../../shared/outbox/payment-core-operation-recovery-requested-v1.ts';
 import { OutboxPayloadSchema as OutcomeChangedSchema } from '../../shared/outbox/payment-core-operation-outcome-changed-v1.ts';
+import { startPaymentCollectionAction } from '../../src/actions/start-payment-collection.action.ts';
+import { currentPaymentRead } from '../../src/api/current-payment.read.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive,
 } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
+import { paymentRecoveryModeAtDispatch } from '../../src/domain/evidence-recovery.ts';
+import type { PaymentRecoveryOperationView } from '../../src/domain/evidence-recovery.ts';
+import type { PaymentOwnerScope } from '../../src/ports/owner-evidence-unavailable.ts';
+import { PaymentProviderReplayEvidencePort } from '../../src/ports/provider-replay-evidence-port.ts';
+import { makeLifecycleOwnerContractFixture } from '../support/lifecycle-owner-contract.fixture.ts';
 import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import { failureCodeOf, makeTestScope } from './database-fixture.ts';
 import {
@@ -39,13 +69,19 @@ import {
   evidenceContextAccess,
   evidenceScenarioOf,
   GATEWAY_BINDING,
+  principalOf,
   RECOVERY_REQUESTED,
   seedCoreScope,
 } from './evidence-native-support.ts';
 import type { EvidenceNativeDatabase, EvidenceScenario } from './evidence-native-support.ts';
 
-const native = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) =>
-  Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
+const nativeServices = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(NodeCrypto.layer),
+);
+const native = <A, E>(
+  effect: Effect.Effect<A, E, ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope>,
+) => Effect.scoped(effect).pipe(Effect.provide(nativeServices));
 
 const nativeDatabase = Effect.gen(function* evidenceNativeDatabase() {
   const { admin, runtime } = yield* testDatabaseClients;
@@ -58,6 +94,7 @@ const nativeDatabase = Effect.gen(function* evidenceNativeDatabase() {
 const makeEvidenceRuntimes = Effect.fn('EvidenceNative.makeRuntimes')(function* makeEvidenceRuntimes(
   database: EvidenceNativeDatabase,
   compositionRevision: string,
+  lockCompositionAuthority: typeof lockApplicationCompositionAuthority = openActionRuntimeOptions.lockCompositionAuthority,
 ) {
   const crypto = yield* Crypto.Crypto;
   const accessDecision = makeScriptedBoundAccessGate('allowed').bound;
@@ -70,6 +107,7 @@ const makeEvidenceRuntimes = Effect.fn('EvidenceNative.makeRuntimes')(function* 
       ...openActionRuntimeOptions,
       accessDecision,
       contextAccess: evidenceContextAccess,
+      lockCompositionAuthority,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
       resolveCompositionRevision: () => Effect.succeed(compositionRevision),
@@ -117,15 +155,120 @@ const recoveryMessages = (evidence: ReturnType<typeof evidenceScenarioOf>) =>
     .outbox(RECOVERY_REQUESTED)
     .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(RecoveryRequestedSchema))));
 
-const providerGuarantee = (windowSeconds: number) => ({
+const historicalWindow = {
   providerIdempotency: {
     environment: 'production',
-    providerAccountRef: 'gopay-account-1',
-    providerFamily: 'GOPAY',
-    providerIdempotencyKey: `gopay-idempotency-${randomUUID()}`,
-    windowSeconds,
+    providerAccountRef: 'stripe-account-1',
+    providerFamily: 'STRIPE',
+    providerIdempotencyKey: 'historical-local-key',
+    windowSeconds: 3600,
   },
+};
+
+const stripeBinding: PaymentGatewayAccountBinding = {
+  _tag: 'GATEWAY_ACCOUNT',
+  environment: 'production',
+  providerAccountRef: 'stripe-account-1',
+  providerFamily: 'STRIPE',
+};
+const providerGuarantee = (
+  target: Pick<PaymentRecoveryOperationView, 'binding' | 'kind' | 'materialHash' | 'operationId' | 'paymentId'>,
+  scope: PaymentOwnerScope,
+  startsAtEpochMs: number,
+) =>
+  Schema.decodeUnknownSync(PaymentProviderReplayGuaranteeSchema)({
+    ...scope,
+    binding: target.binding,
+    endpointRef: 'stripe.payment-intents.create',
+    expiresAtEpochMs: startsAtEpochMs + 3_600_000,
+    materialHash: target.materialHash,
+    operationId: target.operationId,
+    operationKind: target.kind,
+    paymentId: target.paymentId,
+    providerIdempotencyKeyHash: 'b'.repeat(64),
+    providerRequestHash: 'c'.repeat(64),
+    startsAtEpochMs,
+  });
+
+const recoveryWorker = <Failure>(handler: OutboxWorkerHandler<RecoveryRequested, Failure>) =>
+  defineOutboxWorker(
+    {
+      consumerModuleKey: 'payment.core',
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'background',
+        authorization: { kind: 'owner_local_background' },
+        entrypointKey: 'payment.core.recovery-contract-fixture',
+        moduleKey: 'payment.core',
+        role: 'worker',
+      }),
+      leaseDurationMs: 1000,
+      payloadSchema: RecoveryRequestedSchema,
+      producerModuleKey: 'payment.core',
+      retryPolicy: { initialBackoffMs: 0, maxAttempts: 3, maxBackoffMs: 0, multiplier: 1 },
+      topic: RECOVERY_REQUESTED,
+      workerKey: 'payment.core.recovery-contract-fixture',
+    },
+    handler,
+  );
+
+const recoveryDelivery = Effect.fn('EvidenceRecoveryTest.delivery')(function* recoveryDelivery() {
+  const template = recoveryWorker(() => Effect.void);
+  const fixture = makeNativeOutboxWorkerFixture([template]);
+  const snapshot = yield* fixture.authority.load;
+  const isolated = yield* makeIsolatedNativeDatabaseFixture({
+    compositionSnapshot: snapshot,
+    mode: 'schema-only',
+    purpose: 'stabilization-1229-payment-entitlement',
+    sourceConnections: yield* loadDatabaseConnectionPair(),
+  });
+  const admin = yield* makeTestPgClient(isolated.connections.admin.connectionString);
+  const runtime = yield* makeTestPgClient(isolated.connections.runtime.connectionString);
+  const database = {
+    coreAdmin: yield* makeTestDatabaseFromClient(admin, coreRelations),
+    database: yield* makeTestDatabaseFromClient(runtime, coreRelations),
+    runtimeClient: runtime,
+  } satisfies EvidenceNativeDatabase;
+  const scope = yield* makeTestScope;
+  yield* seedCoreScope(database, scope);
+  yield* database.coreAdmin.insert(tenantModuleStates).values({
+    moduleKey: 'payment.core',
+    state: 'active',
+    tenantId: scope.tenantId,
+  });
+  const { revision } = snapshot.composition;
+  const r1 = yield* makeEvidenceRuntimes(database, revision, lockApplicationCompositionAuthority);
+  const evidence = evidenceScenarioOf({ native: database, r1, r2: r1, scope });
+  const crypto = yield* Crypto.Crypto;
+  const repository = makeOutboxRepository(database.database, crypto);
+  return { database, evidence, fixture, isolated, r1, repository, revision, template };
 });
+
+const admitOriginalStripeCollection = Effect.fn('EvidenceRecoveryTest.admitOriginalStripeCollection')(
+  function* admitOriginalStripeCollection(delivery: Effect.Success<ReturnType<typeof recoveryDelivery>>) {
+    const { evidence, r1 } = delivery;
+    const payment = yield* evidence.createPayment(100_000, stripeBinding);
+    const owners = yield* makeLifecycleOwnerContractFixture({
+      enabledBindings: [stripeBinding],
+      gatewayAvailable: true,
+      metadataRevision: 1,
+      termUse: 'USABLE',
+    });
+    const result = yield* r1.actions
+      .runAction({
+        payload: {
+          amount: { amountMinor: 100_000, currency: 'CZK' },
+          method: 'ONLINE_GATEWAY',
+          operationKey: 'collect-recovery-original',
+          paymentId: payment.paymentId,
+        },
+        principal: principalOf(evidence.scope),
+        registration: startPaymentCollectionAction,
+        transport: { correlationId: 'payment-recovery-original', idempotencyKey: randomUUID() },
+      })
+      .pipe(Effect.provide(owners.layer));
+    return { ...result.operation, paymentId: payment.paymentId };
+  },
+);
 
 it.live(
   '#1151 Lost create response does not authorize another charge: INDETERMINATE, same binding, no competitor',
@@ -212,25 +355,37 @@ it.live('#1151 Provider idempotency window has expired: recovery falls back to l
   native(
     Effect.gen(function* expiredProviderWindow() {
       const evidence = yield* scenario();
-      const payment = yield* evidence.createPayment();
+      const payment = yield* evidence.createPayment(100_000, stripeBinding);
       const collect = yield* evidence.startOperation({
         amountMinor: 100_000,
-        materialExtras: providerGuarantee(3600),
+        binding: stripeBinding,
+        materialExtras: historicalWindow,
         operationKey: 'collect-window-expired',
         paymentId: payment.paymentId,
       });
       // The handler reads the ACTUAL time after the Payment row lock (never a frozen business T): the
       // test clock puts that boundary two hours after admission, beyond the one-hour provider window.
       const admittedAt = yield* Clock.currentTimeMillis;
+      const request = {
+        operationId: collect.operationId,
+        paymentId: payment.paymentId,
+        reason: 'Retry the uncertain charge with the same local identity',
+        requestedMode: 'PROVIDER_IDEMPOTENT_REPLAY',
+        trigger: 'OPERATOR_REQUEST',
+      } as const;
+      expect(yield* evidence.recover(request)).toMatchObject({
+        executorWorkTracked: false,
+        providerReplay: 'NOT_PROVEN',
+        recoveryMode: 'AUTHORITATIVE_LOOKUP',
+      });
+      const proof = providerGuarantee(collect, evidence.scope, admittedAt);
       const recovered = yield* Effect.gen(function* recoverAfterWindow() {
         yield* TestClock.setTime(admittedAt + 7_200_000);
-        return yield* evidence.recover({
-          operationId: collect.operationId,
-          paymentId: payment.paymentId,
-          reason: 'Retry the uncertain charge with the same local identity',
-          requestedMode: 'PROVIDER_IDEMPOTENT_REPLAY',
-          trigger: 'OPERATOR_REQUEST',
-        });
+        return yield* evidence.recover(request).pipe(
+          Effect.provideService(PaymentProviderReplayEvidencePort, {
+            readGuarantee: () => Effect.succeedSome(proof),
+          }),
+        );
       }).pipe(Effect.provide(TestClock.layer()));
       expect(recovered).toMatchObject({
         modeDowngraded: true,
@@ -238,75 +393,202 @@ it.live('#1151 Provider idempotency window has expired: recovery falls back to l
         recoveryMode: 'AUTHORITATIVE_LOOKUP',
       });
       const messages = yield* recoveryMessages(evidence);
-      expect(messages).toHaveLength(1);
-      expect(messages[0]).toMatchObject({ mode: 'AUTHORITATIVE_LOOKUP', operationId: collect.operationId });
+      expect(messages).toHaveLength(2);
+      expect(
+        messages.every(
+          ({ mode, operationId }) => mode === 'AUTHORITATIVE_LOOKUP' && operationId === collect.operationId,
+        ),
+      ).toBe(true);
     }),
   ),
 );
 
-it.live('#1151 Financial replay uses new transport admission; the consumed assertion fails independently', () =>
-  native(
-    Effect.gen(function* replayWithFreshAssertion() {
-      yield* installPaymentTestCompositionAuthority(COMPOSITION_R1);
-      const evidence = yield* scenario();
-      const payment = yield* evidence.createPayment();
-      const collect = yield* evidence.startOperation({
-        amountMinor: 100_000,
-        materialExtras: providerGuarantee(3600),
-        operationKey: 'collect-window-1h',
-        paymentId: payment.paymentId,
-      });
-      const redemption = yield* GatewayAssertionRedemptionService.pipe(
-        Effect.provide(
-          GatewayAssertionRedemptionLive.pipe(
-            Layer.provide(GatewayAssertionRedemptionDatabaseLive),
-            Layer.provide(Layer.succeed(PgClient.PgClient, evidence.native.runtimeClient)),
-          ),
-        ),
-      );
-      const nowSeconds = Math.floor((yield* Clock.currentTimeMillis) / 1000);
-      const assertion = () => ({
-        audience: 'payment',
-        expiresAtEpochSeconds: nowSeconds + 300,
-        issuer: 'https://gateway.ontos.test',
-        jti: randomUUID(),
-      });
-      const replayOnce = (key: string) =>
-        evidence.recover(
-          {
-            operationId: collect.operationId,
-            paymentId: payment.paymentId,
-            reason: 'Authorized retry of the same provider request',
-            trigger: 'EXECUTION_OUTCOME_UNKNOWN',
-          },
-          { idempotencyKey: key },
-        );
-
-      const first = assertion();
-      yield* redemption.consume(first);
-      const firstReplay = yield* replayOnce(randomUUID());
-      const second = assertion();
-      yield* redemption.consume(second);
-      const secondReplay = yield* replayOnce(randomUUID());
-
-      for (const replay of [firstReplay, secondReplay]) {
-        expect(replay).toMatchObject({
-          executorWorkAdmitted: true,
-          operationId: collect.operationId,
-          providerReplay: 'COVERS_NOW',
-          recoveryMode: 'PROVIDER_IDEMPOTENT_REPLAY',
+it.live(
+  '#1151/#1153 Native replay keeps the original operation and drains only after matched recovery completes',
+  () =>
+    native(
+      Effect.gen(function* replayWithFreshAssertion() {
+        const delivery = yield* recoveryDelivery();
+        const { database, evidence, fixture, isolated, r1, repository, revision, template } = delivery;
+        const collect = yield* admitOriginalStripeCollection(delivery);
+        const scope = { legalEntityId: evidence.scope.legalEntityId, tenantId: evidence.scope.tenantId };
+        const proof = providerGuarantee(collect, scope, yield* Clock.currentTimeMillis);
+        const source = {
+          accountRef: stripeBinding.providerAccountRef,
+          environment: stripeBinding.environment,
+          sourceKind: 'PAYMENT_GATEWAY',
+          sourceSystem: stripeBinding.providerFamily,
+        } as const;
+        yield* evidence.configureSource({
+          factFamily: 'GATEWAY_OUTCOME',
+          method: 'ONLINE_GATEWAY',
+          reason: 'C17 Stripe contract fixture for exact original replay',
+          refundRoute: false,
+          source,
+          status: 'ACTIVE',
+          submitterPrincipalIds: [evidence.scope.principalId],
         });
-      }
-      // Replaying the consumed assertion fails on its own, independent of business replay.
-      const reused = yield* Effect.flip(redemption.consume(first));
-      expect(Predicate.isTagged(reused, 'GatewayAssertionReplayError')).toBe(true);
-      // The original Payment Operation and exact provider request binding remain unchanged.
-      expect(yield* evidence.rows.operations(payment.paymentId)).toHaveLength(1);
-      const messages = yield* recoveryMessages(evidence);
-      expect(messages.map((message) => message.binding)).toEqual([GATEWAY_BINDING, GATEWAY_BINDING]);
-      expect(new Set(messages.map((message) => message.materialHash))).toEqual(new Set([collect.materialHash]));
-    }),
-  ),
+        const redemption = yield* GatewayAssertionRedemptionService.pipe(
+          Effect.provide(
+            GatewayAssertionRedemptionLive.pipe(
+              Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+              Layer.provide(Layer.succeed(PgClient.PgClient, evidence.native.runtimeClient)),
+            ),
+          ),
+        );
+        const nowSeconds = Math.floor((yield* Clock.currentTimeMillis) / 1000);
+        const assertion = () => ({
+          audience: 'payment',
+          expiresAtEpochSeconds: nowSeconds + 300,
+          issuer: 'https://gateway.ontos.test',
+          jti: randomUUID(),
+        });
+        const replayOnce = (key: string) =>
+          evidence
+            .recover(
+              {
+                operationId: collect.operationId,
+                paymentId: collect.paymentId,
+                reason: 'Authorized retry of the same provider request',
+                trigger: 'EXECUTION_OUTCOME_UNKNOWN',
+              },
+              { idempotencyKey: key },
+            )
+            .pipe(
+              Effect.provideService(PaymentProviderReplayEvidencePort, {
+                readGuarantee: (target) => {
+                  expect(target).toMatchObject({
+                    binding: stripeBinding,
+                    materialHash: collect.materialHash,
+                    operationId: collect.operationId,
+                    operationKind: 'COLLECT',
+                    paymentId: collect.paymentId,
+                    scope,
+                  });
+                  return Effect.succeedSome(proof);
+                },
+              }),
+            );
+
+        const first = assertion();
+        yield* redemption.consume(first);
+        const firstReplay = yield* replayOnce(randomUUID());
+        const second = assertion();
+        yield* redemption.consume(second);
+        const secondReplay = yield* replayOnce(randomUUID());
+
+        for (const replay of [firstReplay, secondReplay]) {
+          expect(replay).toMatchObject({
+            executorWorkAdmitted: true,
+            executorWorkTracked: true,
+            operationId: collect.operationId,
+            originalCompositionRevision: revision,
+            providerReplay: 'COVERS_NOW',
+            recoveryMode: 'PROVIDER_IDEMPOTENT_REPLAY',
+          });
+        }
+        // Replaying the consumed assertion fails on its own, independent of business replay.
+        const reused = yield* Effect.flip(redemption.consume(first));
+        expect(Predicate.isTagged(reused, 'GatewayAssertionReplayError')).toBe(true);
+        // The original Payment Operation and exact provider request binding remain unchanged.
+        expect(yield* evidence.rows.operations(collect.paymentId)).toHaveLength(1);
+        const messages = yield* recoveryMessages(evidence);
+        expect(messages.map((message) => message.binding)).toEqual([stripeBinding, stripeBinding]);
+        expect(new Set(messages.map((message) => message.materialHash))).toEqual(new Set([collect.materialHash]));
+        expect(messages.map((message) => message.providerReplayGuarantee)).toEqual([proof, proof]);
+
+        const queued = yield* database.coreAdmin
+          .select({
+            completionConsumer: outboxMessages.completionConsumerModuleKey,
+            completionRevision: outboxMessages.completionOriginalRevision,
+            messageId: outboxMessages.outboxMessageId,
+          })
+          .from(outboxMessages)
+          .where(eq(outboxMessages.topic, RECOVERY_REQUESTED));
+        expect(queued).toHaveLength(2);
+        expect(
+          queued.every(
+            ({ completionConsumer, completionRevision }) =>
+              completionConsumer === 'payment.core' && completionRevision === revision,
+          ),
+        ).toBe(true);
+        expect(yield* unknownEffectWork(evidence, collect.operationId)).toEqual([revision]);
+
+        yield* isolated.composition.closeAdmission();
+        expect(Exit.isFailure(yield* Effect.exit(isolated.composition.drain()))).toBe(true);
+        expect((yield* repository.matchUnmatched(revision, yield* DateTime.nowAsDate)).deliveriesCreated).toBe(2);
+        const claimedAt = DateTime.add(yield* DateTime.now, { seconds: 1 });
+        const abandoned = yield* Effect.fromOption(
+          yield* fixture.bind(
+            [template],
+            repository.claimNext([template], 'original-recovery-worker', DateTime.toDateUtc(claimedAt), revision),
+          ),
+        );
+        const modes = yield* Ref.make<readonly string[]>([]);
+        const worker = recoveryWorker((message, context) =>
+          Effect.gen(function* runProviderContractFixture() {
+            expect(context.compositionRevision).toBe(revision);
+            const current = yield* r1.reads.runRead({
+              input: { paymentId: message.paymentId },
+              principal: principalOf(evidence.scope),
+              registration: currentPaymentRead,
+              transport: { correlationId: 'payment-provider-recovery-dispatch' },
+            });
+            const operation = current.operations.find(({ operationId }) => operationId === message.operationId);
+            if (operation === undefined) {
+              return yield* paymentUnavailable('Current Payment Operation is unavailable to the C17 fixture');
+            }
+            const mode = paymentRecoveryModeAtDispatch(
+              message,
+              { ...operation, paymentId: message.paymentId },
+              scope,
+              yield* DateTime.now,
+              proof,
+            );
+            yield* Ref.update(modes, (prior) => [...prior, mode]);
+            if (mode === 'PROVIDER_IDEMPOTENT_REPLAY') {
+              // The provider fixture reports the retained request's same effect through the registered Action.
+              yield* evidence.accept({
+                amount: { amountMinor: 100_000, currency: 'CZK' },
+                economicEffectKey: 'stripe-recovery-original-effect',
+                factFamily: 'GATEWAY_OUTCOME',
+                factKind: 'COLLECTION_CONFIRMED',
+                operationId: message.operationId,
+                paymentId: message.paymentId,
+                source,
+                sourceOccurrenceId: 'stripe-recovery-verified-occurrence',
+                sourceRevision: 1,
+              });
+            } else if (mode !== 'ALREADY_RESOLVED') {
+              return yield* paymentUnavailable('The fixture did not prove a safe recovery checkpoint');
+            }
+            return yield* Effect.void;
+          }),
+        );
+        const afterLease = DateTime.toDateUtc(DateTime.add(claimedAt, { seconds: 2 }));
+        const restarted = makeOutboxRuntime(makeOutboxRepository(database.database, yield* Crypto.Crypto));
+        const cycle = yield* fixture.bind(
+          [worker],
+          restarted.runCycle({
+            claimOwner: 'restarted-recovery-worker',
+            compositionRevision: revision,
+            maxDeliveries: 2,
+            now: afterLease,
+            registrations: [worker],
+            subscriptions: extractOutboxWorkerSubscriptions([worker]),
+          }),
+        );
+        expect(cycle).toMatchObject({ claimed: 2, failed: 0, succeeded: 2 });
+        expect(yield* Ref.get(modes)).toEqual(['PROVIDER_IDEMPOTENT_REPLAY', 'ALREADY_RESOLVED']);
+        expect(Exit.isFailure(yield* Effect.exit(repository.complete(abandoned, afterLease)))).toBe(true);
+        expect(yield* evidence.rows.operations(collect.paymentId)).toMatchObject([
+          { compositionRevision: revision, operationId: collect.operationId, outcome: 'EFFECT_CONFIRMED' },
+        ]);
+        expect(yield* unknownEffectWork(evidence, collect.operationId)).toEqual([]);
+        yield* isolated.composition.drain();
+      }),
+    ),
+  { timeout: 120_000 },
 );
 
 it.live('#1151 Late callback is admitted by a compatible new runtime and preserves the original lineage', () =>

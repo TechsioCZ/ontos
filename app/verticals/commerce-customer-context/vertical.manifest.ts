@@ -454,6 +454,16 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         registration: customerGroupDetailRead,
       },
       {
+        apiKey: 'guest-payment-terms-resolution',
+        operationKey: 'guestPaymentTermsResolution.execute',
+        registration: guestPaymentTermsResolutionRead,
+      },
+      {
+        apiKey: 'payment-terms-resolution',
+        operationKey: 'paymentTermsResolution.execute',
+        registration: paymentTermsResolutionRead,
+      },
+      {
         apiKey: 'migrate-organization-customer-profile-ico-action',
         operationKey: 'migrateOrganizationCustomerProfileIcoAction.execute',
         registration: migrateOrganizationCustomerProfileIcoAction,

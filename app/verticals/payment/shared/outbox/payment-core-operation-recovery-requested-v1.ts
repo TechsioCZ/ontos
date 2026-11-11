@@ -3,6 +3,7 @@
 // @ontos-outbox-topic payment.core.operation-recovery-requested.v1
 import { Schema } from 'effect';
 
+import { PaymentProviderReplayGuaranteeSchema } from '../domain/evidence-contract.ts';
 import { PaymentExecutionBindingSchema } from '../domain/payment-execution-binding.ts';
 import {
   PaymentActionInvocationIdSchema,
@@ -24,8 +25,8 @@ import {
 /**
  * Durable request to recover ONE original Payment Operation under its ORIGINAL stored binding
  * (#1151 "Idempotency and monetary recovery"). It never names a new operation, account, environment
- * or provider. Only `PROVIDER_IDEMPOTENT_REPLAY` authorizes the executor to resend the exact original
- * material request (`materialHash`); every other mode is lookup-only or awaits evidence/reconciliation.
+ * or provider. Replay still requires a covering guarantee at dispatch and the same retained provider
+ * request and key. Historical messages may lack a guarantee and can only be handled by lookup.
  */
 export const OutboxPayloadSchema = Schema.Struct({
   amount: PaymentMonetaryAmountSchema,
@@ -40,6 +41,7 @@ export const OutboxPayloadSchema = Schema.Struct({
   originalCompositionRevision: PaymentCompositionRevisionSchema,
   paymentId: PaymentIdSchema,
   provenance: PaymentExecutionProvenanceSchema,
+  providerReplayGuarantee: Schema.optionalKey(PaymentProviderReplayGuaranteeSchema),
   recoveryId: PaymentRecoveryIdSchema,
 });
 export type OutboxPayload = typeof OutboxPayloadSchema.Type;

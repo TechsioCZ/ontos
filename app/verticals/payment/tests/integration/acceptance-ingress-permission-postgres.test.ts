@@ -40,6 +40,7 @@ import {
 } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
 import { gatewayAssertionRedemptions, observations, paymentOperations } from '../../src/database/schema.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
+import { seedSourceAuthority } from '../support/refund-native-runtime.ts';
 import { makeTestScope } from './database-fixture.ts';
 import {
   BANK_BINDING,
@@ -218,6 +219,15 @@ const ingressScenario = Effect.fn('AcceptanceIngress.scenario')(function* ingres
     .values({ moduleKey: 'payment.core', state: 'active', tenantId: scope.tenantId });
   const runtimes = yield* makeRuntimes(database, permission);
   const evidence = evidenceScenarioOf({ native: database, r1: runtimes, r2: runtimes, scope });
+  yield* seedSourceAuthority(database.database, scope, {
+    accountRef: 'CZ6508000000192000145399',
+    environment: 'production',
+    factFamily: 'BANK_ACCOUNTING_RECEIPT',
+    method: 'BANK_TRANSFER_ADVANCE',
+    refundRoute: false,
+    sourceKind: 'BANK_ACCOUNTING',
+    sourceSystem: 'erp-acceptance',
+  });
   const payment = yield* evidence.createPayment(100_000, BANK_BINDING, 'BANK_TRANSFER_ADVANCE');
   const transport = yield* mountPaymentTransport(database, runtimes);
   const principal = principalOf(scope);

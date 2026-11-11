@@ -315,6 +315,7 @@ Local development sets `ONTOS_GATEWAY_MODULE_BINDINGS=[]` (`pnpm env:local:ensur
 | `commerce-market-catalog`   | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_MARKET_CATALOG`   |                                                                                                                  |
 | `commerce-order`            | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER`            |                                                                                                                  |
 | `party-registry`            | `ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY`            |                                                                                                                  |
+| `payment`                   | `ONTOS_GATEWAY_MODULE_API_KEY_PAYMENT`                   |                                                                                                                  |
 | `pricing`                   | `ONTOS_GATEWAY_MODULE_API_KEY_PRICING`                   | `ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET` (secret); `ONTOS_PRICING_CONFIRMATION_KEY_{REF,VERSION,LINEAGE_REF}` |
 | `shell-super-app`           |                                                          | `ONTOS_GATEWAY_MODULE_BINDINGS` (JSON array, one binding per module credential above)                            |
 

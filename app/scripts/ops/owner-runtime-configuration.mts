@@ -72,6 +72,7 @@ const ORDER_UNIT = 'commerce-order';
 const PRICING_UNIT = 'pricing';
 const MARKET_CATALOG_UNIT = 'commerce-market-catalog';
 const CATALOG_UNIT = 'catalog';
+const PAYMENT_UNIT = 'payment';
 const PARTY_REGISTRY_UNIT = 'party-registry';
 const PRIVACY_UNIT = 'privacy';
 const SYMMY_INTEGRATION_UNIT = 'symmy-integration';
@@ -171,6 +172,14 @@ export const OWNER_RUNTIME_CONFIGURATIONS: readonly OwnerRuntimeConfiguration[] 
     moduleCredentialVariable: moduleCredentialVariable(ORDER_UNIT),
     operatorValues: [],
     unitId: ORDER_UNIT,
+  },
+  {
+    apiDependencies: [shellGateway],
+    credentialVariables: [],
+    moduleCredentialHolders: SERVICE_AND_WORKER,
+    moduleCredentialVariable: moduleCredentialVariable(PAYMENT_UNIT),
+    operatorValues: [],
+    unitId: PAYMENT_UNIT,
   },
   {
     apiDependencies: [shellGateway],

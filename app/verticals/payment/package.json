@@ -6,6 +6,7 @@
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/payment-client.ts",
+    "./owner-evidence/commitment-attempt": "./shared/domain/commitment-attempt-evidence.ts",
     "./outbox/payment-core-authorization-issued-v1": "./shared/outbox/payment-core-authorization-issued-v1.ts",
     "./outbox/payment-core-operation-outcome-changed-v1": "./shared/outbox/payment-core-operation-outcome-changed-v1.ts",
     "./outbox/payment-core-operation-recovery-requested-v1": "./shared/outbox/payment-core-operation-recovery-requested-v1.ts",
@@ -32,6 +33,7 @@
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
+    "@app/commerce-customer-context": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/payment-term-catalog-contracts": "workspace:*",

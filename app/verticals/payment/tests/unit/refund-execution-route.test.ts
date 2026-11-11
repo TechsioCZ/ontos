@@ -134,7 +134,17 @@ describe('#1150 refund execution route', () => {
   });
 
   it('#1150 pickup uses the POS route, else only an explicitly authorized bank/manual route', () => {
-    const pos = candidate({ sourceKind: 'LOCAL_POS_OPERATOR', sourceSystem: 'store-pos' });
+    const pos = candidate({
+      pickupCapabilityRef: pickup.pickupCapabilityRef,
+      sourceKind: 'LOCAL_POS_OPERATOR',
+      sourceSystem: 'store-pos',
+    });
+    const wrongSite = candidate({
+      method: Option.some('PAY_ON_PICKUP_OR_ON_SITE'),
+      pickupCapabilityRef: 'store-2',
+      sourceKind: 'LOCAL_POS_OPERATOR',
+      sourceSystem: 'store-pos',
+    });
     const manualPickup = candidate({
       method: Option.some('PAY_ON_PICKUP_OR_ON_SITE'),
       sourceKind: 'MANUAL_EXTERNAL_REFUND',
@@ -142,12 +152,12 @@ describe('#1150 refund execution route', () => {
     });
     const manualNeutral = candidate({ sourceKind: 'MANUAL_EXTERNAL_REFUND', sourceSystem: 'finance-desk' });
     const method = 'PAY_ON_PICKUP_OR_ON_SITE';
-    expect(routeKindOf(decideRefundExecutionRoute({ binding: pickup, candidates: [manualPickup, pos], method }))).toBe(
-      'LOCAL_POS',
-    );
-    expect(routeKindOf(decideRefundExecutionRoute({ binding: pickup, candidates: [manualPickup], method }))).toBe(
-      'MANUAL_EXTERNAL',
-    );
+    expect(
+      routeKindOf(decideRefundExecutionRoute({ binding: pickup, candidates: [manualPickup, wrongSite, pos], method })),
+    ).toBe('LOCAL_POS');
+    expect(
+      routeKindOf(decideRefundExecutionRoute({ binding: pickup, candidates: [manualPickup, wrongSite], method })),
+    ).toBe('MANUAL_EXTERNAL');
     expect(reasonOf(decideRefundExecutionRoute({ binding: pickup, candidates: [manualNeutral], method }))).toBe(
       'NO_CONFIGURED_ROUTE',
     );

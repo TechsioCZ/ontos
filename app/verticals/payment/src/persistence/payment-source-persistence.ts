@@ -1,8 +1,9 @@
 import { isPostgresUniqueViolation, OperationContextUnavailable } from '@app/core-runtime';
 import type { ActionServiceFactory, ScopedTransactionExecutor } from '@app/core-runtime';
-import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
 
+import type { PaymentBankReceiptAuthority } from '../../shared/domain/payment-execution-binding.ts';
 import { PaymentCurrencySchema } from '../../shared/domain/payment-money.ts';
 import type { PaymentMonetaryAmount } from '../../shared/domain/payment-money.ts';
 import type { PaymentExecutionProvenance } from '../../shared/domain/payment-provenance.ts';
@@ -29,14 +30,15 @@ import type {
   PaymentEvidencePersistence,
 } from './payment-evidence-persistence.ts';
 import type { PaymentInterpretedEvidence } from '../domain/evidence-interpretation.ts';
+import { sourceAuthorityConfigurationProblem } from '../domain/source-qualification.ts';
 import type { PaymentRecordedObservationView, PaymentSourceAuthorityView } from '../domain/source-qualification.ts';
 
 /**
  * Owner-local persistence of the external/offline source boundary (#1152): configured source
  * authorities (current row + append-only revision history) and the append-only observation ledger.
- * Every statement first locks the authority rows of its exact source binding and fact family
- * (`SELECT ... FOR UPDATE`), so redeliveries of one source occurrence serialize and resolve to
- * DUPLICATE; the Payment row lock (aggregate persistence) is always taken after it.
+ * Every statement first locks the authority rows of its exact source binding (`SELECT ... FOR UPDATE`).
+ * Occurrence identity spans fact families, so changed-family redeliveries serialize before the
+ * recorded-authority check. The Payment row lock is always taken after the source locks.
  *
  * Source authority is bound to principals (#1153): each authority revision records the principals
  * allowed to submit as it, and every authority view says whether the trusted principal of this Core
@@ -46,6 +48,7 @@ import type { PaymentRecordedObservationView, PaymentSourceAuthorityView } from 
 export interface PaymentSourceAuthorityIdentity {
   readonly factFamily: PaymentSourceFactFamily;
   readonly method: PaymentMethod | undefined;
+  readonly pickupCapabilityRef?: string | undefined;
   readonly source: PaymentSourceBinding;
 }
 
@@ -169,6 +172,7 @@ const authorityViewOf = (
   environment: row.environment,
   factFamily: row.factFamily,
   method: row.method ?? undefined,
+  pickupCapabilityRef: row.pickupCapabilityRef ?? undefined,
   refundRoute: row.refundRoute,
   revision: row.revision,
   sourceAuthorityId: row.sourceAuthorityId,
@@ -242,11 +246,59 @@ const observationWriteFailure = (cause: unknown) =>
       )
     : writeFailure(cause);
 
+/** A scoped snapshot for COLLECT admission. Ingress rechecks Current authority under its own locks. */
+export const selectBankReceiptAuthorities = Effect.fn('PaymentSourcePersistence.selectBankReceiptAuthorities')(
+  function* selectBankReceiptAuthorities(
+    transaction: ScopedTransactionExecutor,
+    method: Extract<PaymentMethod, 'BANK_TRANSFER_ADVANCE' | 'DEFERRED_INVOICE'>,
+  ) {
+    const { legalEntityId, tenantId } = transaction.scope;
+    if (legalEntityId === undefined) {
+      return yield* paymentUnavailable('A verified Selling Legal Entity scope is required');
+    }
+    const factFamily = method === 'BANK_TRANSFER_ADVANCE' ? 'BANK_ACCOUNTING_RECEIPT' : 'DEFERRED_INVOICE_RECEIPT';
+    return yield* transaction
+      .select({
+        accountRef: sourceAuthorities.accountRef,
+        environment: sourceAuthorities.environment,
+        sourceAuthorityId: sourceAuthorities.sourceAuthorityId,
+        sourceSystem: sourceAuthorities.sourceSystem,
+      })
+      .from(sourceAuthorities)
+      .innerJoin(
+        sourceAuthorityRevisions,
+        and(
+          eq(sourceAuthorityRevisions.tenantId, sourceAuthorities.tenantId),
+          eq(sourceAuthorityRevisions.legalEntityId, sourceAuthorities.legalEntityId),
+          eq(sourceAuthorityRevisions.sourceAuthorityId, sourceAuthorities.sourceAuthorityId),
+          eq(sourceAuthorityRevisions.revision, sourceAuthorities.revision),
+        ),
+      )
+      .where(
+        and(
+          eq(sourceAuthorities.tenantId, tenantId),
+          eq(sourceAuthorities.legalEntityId, legalEntityId),
+          eq(sourceAuthorities.factFamily, factFamily),
+          or(eq(sourceAuthorities.method, method), isNull(sourceAuthorities.method)),
+          eq(sourceAuthorities.sourceKind, 'BANK_ACCOUNTING'),
+          eq(sourceAuthorities.status, 'ACTIVE'),
+        ),
+      )
+      .pipe(
+        Effect.map((rows): readonly PaymentBankReceiptAuthority[] => rows),
+        Effect.mapError(readFailure),
+      );
+  },
+);
+
 /** Construction is private to a Core-owned transaction; handlers receive only these closed methods. */
 export const paymentSourcePersistenceForTransaction = (
   transaction: ScopedTransactionExecutor,
   submitter: PaymentSourceSubmitter,
-  evidence: Pick<PaymentEvidencePersistence, 'attributeEconomicEffect' | 'listInterpretedEvidence'>,
+  evidence: Pick<
+    PaymentEvidencePersistence,
+    'attributeEconomicEffect' | 'listInterpretedEvidence' | 'listObservationAttachments'
+  >,
 ): PaymentSourcePersistence => {
   const ownerScope = Effect.suspend(() => {
     const { legalEntityId, tenantId } = transaction.scope;
@@ -307,11 +359,11 @@ export const paymentSourcePersistenceForTransaction = (
     const rows = yield* transaction
       .select()
       .from(sourceAuthorities)
-      .where(and(bindingWhere(scope, input.source), eq(sourceAuthorities.factFamily, input.factFamily)))
+      .where(bindingWhere(scope, input.source))
       .orderBy(asc(sourceAuthorities.sourceAuthorityId))
       .for('update')
       .pipe(Effect.mapError(readFailure));
-    return yield* viewsOf(rows);
+    return yield* viewsOf(rows.filter((row) => row.factFamily === input.factFamily));
   });
 
   const appendAuthorityRevision = Effect.fn('PaymentSourcePersistence.appendAuthorityRevision')(
@@ -348,10 +400,18 @@ export const paymentSourcePersistenceForTransaction = (
           bindingWhere(scope, input.source),
           eq(sourceAuthorities.factFamily, input.factFamily),
           input.method === undefined ? isNull(sourceAuthorities.method) : eq(sourceAuthorities.method, input.method),
+          input.pickupCapabilityRef === undefined
+            ? isNull(sourceAuthorities.pickupCapabilityRef)
+            : eq(sourceAuthorities.pickupCapabilityRef, input.pickupCapabilityRef),
         ),
       )
       .for('update')
       .pipe(Effect.mapError(readFailure));
+    const problem = sourceAuthorityConfigurationProblem({ ...input, sourceKind: input.source.sourceKind });
+    // Existing identities remain revocable, even when their historical configuration cannot be admitted today.
+    if (problem !== undefined && (existing === undefined || input.status !== 'REVOKED')) {
+      return yield* paymentSourceRejected('payment_source_configuration_invalid', problem);
+    }
     if (input.expectedRevision !== undefined && existing?.revision !== input.expectedRevision) {
       return yield* paymentSourceRejected(
         'payment_source_authority_revision_conflict',
@@ -376,6 +436,7 @@ export const paymentSourcePersistenceForTransaction = (
           environment: input.source.environment,
           factFamily: input.factFamily,
           method: input.method ?? null,
+          pickupCapabilityRef: input.pickupCapabilityRef ?? null,
           reason: input.reason,
           refundRoute: input.refundRoute,
           revision: 1,
@@ -438,6 +499,24 @@ export const paymentSourcePersistenceForTransaction = (
     } satisfies PaymentSourceConfigurationWrite;
   });
 
+  const recordedWithAttachment = Effect.fn('PaymentSourcePersistence.recordedWithAttachment')(
+    function* recordedWithAttachment(row: ObservationRow) {
+      const observation = yield* recordedViewOf(row);
+      if (
+        observation.operationId !== undefined ||
+        observation.paymentId === undefined ||
+        (observation.factKind !== 'REFUND_CONFIRMED' && observation.factKind !== 'REFUND_NOT_EFFECTED')
+      ) {
+        return observation;
+      }
+      const attachments = yield* evidence.listObservationAttachments([observation.observationId]);
+      const established = attachments.findLast(
+        (attachment) => attachment.operationId !== undefined && attachment.resultingOutcome !== undefined,
+      );
+      return { ...observation, attachedOperationId: established?.operationId };
+    },
+  );
+
   const findOccurrence = Effect.fn('PaymentSourcePersistence.findOccurrence')(function* findOccurrence(input: {
     readonly source: PaymentSourceBinding;
     readonly sourceOccurrenceId: string;
@@ -460,7 +539,7 @@ export const paymentSourcePersistenceForTransaction = (
         ),
       )
       .pipe(Effect.mapError(readFailure));
-    return row === undefined ? Option.none() : Option.some(yield* recordedViewOf(row));
+    return row === undefined ? Option.none() : Option.some(yield* recordedWithAttachment(row));
   });
 
   const findObservation = Effect.fn('PaymentSourcePersistence.findObservation')(function* findObservation(
@@ -478,7 +557,7 @@ export const paymentSourcePersistenceForTransaction = (
         ),
       )
       .pipe(Effect.mapError(readFailure));
-    return row === undefined ? Option.none() : Option.some(yield* recordedViewOf(row));
+    return row === undefined ? Option.none() : Option.some(yield* recordedWithAttachment(row));
   });
 
   const insertObservation = Effect.fn('PaymentSourcePersistence.insertObservation')(function* insertObservation(
