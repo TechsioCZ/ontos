@@ -1327,6 +1327,35 @@ it.effect('a request that goes away mid-description still lets every started evi
   }),
 );
 
+it.effect('fails the description when an evidence write outlives its deadline, and never answers without it', () =>
+  Effect.gen(function* boundedWrite() {
+    const { installed, snapshot } = yield* refusedTwoBatchCatalog;
+    // Batch one's write waits a minute (an exhausted pool, say); nothing but its own deadline can end that wait.
+    const inspection = subjectInspectionFixture({
+      onEvidenceWrite: (write) => (write === 1 ? Effect.sleep('60 seconds') : Effect.void),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const described = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+      Effect.flip,
+      Effect.forkChild,
+    );
+    yield* advanceUntil(() => inspection.writtenRows.has(2));
+    yield* TestClock.adjust('10 seconds');
+    yield* advanceUntilDone(described);
+    const answeredByDeadline = described.pollUnsafe() !== undefined;
+    // Let a write the deadline did not end finish, so the test never hangs on it.
+    yield* TestClock.adjust('60 seconds');
+    yield* advanceUntilDone(described);
+    expect(answeredByDeadline).toBe(true);
+    const failure = yield* Fiber.join(described);
+    expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
+    expect(inspection.writtenRows.has(1)).toBe(false);
+  }),
+);
+
 /** A module with one Action asked in the tenant context and one asked in the company. */
 const tenantAndCompanyCatalog = actionModulesCatalog({
   'alpha.mod': [

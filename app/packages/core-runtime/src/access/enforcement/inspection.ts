@@ -1,4 +1,4 @@
-import { DateTime, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
+import { Cause, DateTime, Deferred, Duration, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
 import type { Scope } from 'effect';
 
 import { readVerifiedGatewayCompositionRevision } from '../../auth/system-principal-context-provenance.ts';
@@ -66,6 +66,9 @@ const agentContextSchema = Schema.Struct({
 const agentContext = Schema.decodeUnknownOption(agentContextSchema);
 const unavailable = (cause?: unknown) =>
   new SubjectInspectionUnavailable({ cause, reason: 'Subject inspection is unavailable' });
+
+/** How long one staged evidence write may take, a wait for a pooled connection included. */
+const EVIDENCE_WRITE_DEADLINE = Duration.seconds(10);
 
 const SCOPE_MISMATCH = 'deny.scope_mismatch';
 const PRINCIPAL_FORBIDDEN = 'deny.principal_kind_forbidden';
@@ -433,6 +436,29 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
   const recordNow = (rows: readonly AccessDecisionLogEntry[]) =>
     ports.decisionLog.recordAll(rows).pipe(Effect.mapError(unavailable));
 
+  /**
+   * A staged write: the request going away never cancels it, but its deadline does, and then the inspection fails.
+   * The write runs in a fiber of its own that only its timer interrupts, and the caller waits for it, uninterruptibly.
+   * Nothing else bounds it: the pool's connect timeout covers opening a connection, not waiting for a free one.
+   */
+  const recordWithinDeadline = (rows: readonly AccessDecisionLogEntry[]) =>
+    Effect.uninterruptible(
+      Effect.gen(function* boundedWrite() {
+        const write = yield* Effect.forkDetach(recordNow(rows), { uninterruptible: false });
+        const timer = yield* Effect.forkDetach(
+          Effect.sleep(EVIDENCE_WRITE_DEADLINE).pipe(Effect.andThen(Fiber.interrupt(write))),
+          {
+            uninterruptible: false,
+          },
+        );
+        const written = yield* Fiber.await(write);
+        yield* Fiber.interrupt(timer);
+        return yield* Exit.isFailure(written) && Cause.hasInterruptsOnly(written.cause)
+          ? Effect.fail(unavailable('The evidence of this inspection was not written before its deadline'))
+          : written;
+      }),
+    );
+
   const sessionOf = (
     input: SubjectInspectionInput,
     scope: Scope.Scope,
@@ -777,8 +803,7 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
     const remember = (fiber: Fiber.Fiber<void, SubjectInspectionUnavailable>) => writes.push(fiber);
     const session = sessionOf(input, scope, {
       ahead: (read) => read.pipe(Effect.ignore, Effect.forkIn(scope), Effect.asVoid),
-      record: (rows) =>
-        Effect.uninterruptible(recordNow(rows)).pipe(Effect.forkIn(scope), Effect.map(remember), Effect.asVoid),
+      record: (rows) => recordWithinDeadline(rows).pipe(Effect.forkIn(scope), Effect.map(remember), Effect.asVoid),
     });
     const outcome = yield* body({
       capabilities: (asked) => inspectBatch({ ...input, ...asked }, catalog, session),
