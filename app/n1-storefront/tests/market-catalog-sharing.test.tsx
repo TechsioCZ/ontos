@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import actualReact from "react" with { rstest: "importActual" };
 import LocaleLayout from "../src/app/[locale]/layout";
 import { getCartScope } from "../src/ontos/cart-quote-server";
+import { internalShellOrigin } from "../src/ontos/config";
 import { storefrontRuntime } from "../src/ontos/runtime";
 
 /**
@@ -47,8 +48,6 @@ rs.mock("../src/features/shell", () => ({
   StorefrontShell: ({ children }: { children: ReactNode }) => children,
 }));
 
-// oxlint-disable-next-line sonarjs/no-clear-text-protocols -- N1 reaches the Shell over the Zerops-internal service address.
-const internalShellOrigin = "http://app:3000";
 const tenantId = "70000000-0000-4000-8000-000000000099";
 const legalEntityId = "71000000-0000-4000-8000-000000000099";
 const marketId = "72000000-0000-4000-8000-000000000099";
