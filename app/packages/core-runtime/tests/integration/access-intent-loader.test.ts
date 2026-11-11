@@ -25,19 +25,21 @@ import type { AccessMembershipStoreService } from '../../src/access/intent/membe
 import { makeTenantIntentLoader } from '../../src/access/intent/tenant-intent-loader.ts';
 import { optionalProperty, runScoped, runScopedRead } from '../../src/access/intent/persistence.ts';
 import type { AccessIntentDatabase, AccessIntentStoreFailure } from '../../src/access/intent/persistence.ts';
-import { holderKey } from '../../src/access/model.ts';
+import { AmountCeilingSchema, CellSelectorSchema, holderKey } from '../../src/access/model.ts';
 import type { TenantProjectionIntent } from '../../src/access/compiler/intent.ts';
 import type { TenantIntentLoaderService } from '../../src/access/intent/tenant-intent-loader.ts';
 import type { AccessIntentError } from '../../src/access/intent/errors.ts';
 import { AccessTeamMemberIdSchema, makeAccessTeamDrizzleStore } from '../../src/access/intent/teams.ts';
 import type { AccessTeamStoreService } from '../../src/access/intent/teams.ts';
 import { AccessTeamIdSchema } from '../../src/access/decision/authority.ts';
+import type { AuthorityCell } from '../../src/access/decision/authority.ts';
 import {
   AccessScopeIdSchema,
   AgentConnectionIdSchema,
   AgentIdSchema,
   AssignmentIncarnationIdSchema,
   CapabilityKeySchema,
+  GrantIncarnationIdSchema,
   LegalEntityIdSchema,
   PrincipalIdSchema,
   RoleIdSchema,
@@ -64,6 +66,52 @@ const migrationPaths = [
   '../../drizzle/20261103093547_authorization-v2-access-intent/migration.sql',
   '../../drizzle/20261110141804_access-membership-ended-by/migration.sql',
 ].map((path) => new URL(path, import.meta.url).pathname);
+
+type ExpectedCeiling = NonNullable<AuthorityCell['amountCeiling']>;
+
+const ALL_RECORDS: AuthorityCell['selector'] = Schema.decodeUnknownSync(CellSelectorSchema)({ _tag: 'all' });
+
+/** The CZK 10 000 a delegation envelope allows. */
+const ENVELOPE_CEILING: ExpectedCeiling = Schema.decodeUnknownSync(AmountCeilingSchema)({
+  currency: 'CZK',
+  limitMinor: 10_000,
+});
+
+const fixedInstant = (iso: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(iso));
+
+/** A cell written out by hand, with fixed instants; its amount ceiling only when it has one. */
+const expectedCell = (input: {
+  readonly assignedBy: string;
+  readonly assignment: string;
+  readonly capabilityKey: string;
+  readonly ceiling?: ExpectedCeiling | undefined;
+  readonly deadline: string;
+  readonly grant: string;
+  readonly holder: AuthorityCell['holder'];
+  readonly revision: string;
+  readonly role: string;
+}): AuthorityCell => {
+  const cell: AuthorityCell = {
+    assignedAt: fixedInstant('2000-01-01T00:00:00Z'),
+    assignedBy: PrincipalIdSchema.make(input.assignedBy),
+    assignmentIncarnationId: AssignmentIncarnationIdSchema.make(input.assignment),
+    capabilityKey: CapabilityKeySchema.make(input.capabilityKey),
+    deadline: fixedInstant(input.deadline),
+    grantIncarnationId: GrantIncarnationIdSchema.make(input.grant),
+    holder: input.holder,
+    mode: 'run',
+    roleId: RoleIdSchema.make(input.role),
+    roleRevisionId: RoleRevisionIdSchema.make(input.revision),
+    selector: ALL_RECORDS,
+  };
+  return input.ceiling === undefined ? cell : { ...cell, amountCeiling: input.ceiling };
+};
+
+/** One answer's cells in assignment order, so a set of cells compares whatever order the rows came in. */
+const byAssignment = (answer: readonly { readonly assignmentIncarnationId: string }[] | undefined) =>
+  [...(answer ?? [])].toSorted((left, right) =>
+    left.assignmentIncarnationId.localeCompare(right.assignmentIncarnationId),
+  );
 
 const uid = (value: number) => `00000000-0000-4000-8000-${value.toString().padStart(12, '0')}`;
 const tenantA = uid(1);
@@ -129,6 +177,14 @@ const assignmentUncapped = uid(79);
 const assignmentEuro = uid(80);
 const grantCappedRead = uid(81);
 const grantCappedUnknown = uid(82);
+// Holders with fixed instants and two roles each: one assignment delegated under a CZK envelope, one of their own.
+const delegationAgent = uid(193);
+const assignmentAgentCapped = uid(194);
+const assignmentAgentUncapped = uid(195);
+const ondra = uid(196);
+const delegationOndra = uid(197);
+const assignmentOndraCapped = uid(198);
+const assignmentOndraUncapped = uid(199);
 const team = uid(50);
 const teamMemberJana = uid(51);
 const teamMemberAgent = uid(52);
@@ -771,7 +827,9 @@ const seedDelegatedMoney = (admin: PgClient.PgClient) =>
     yield* admin.unsafe(`insert into "core"."legal_entities" values ('${tenantA}', '${legalEntityAkros}')`);
     yield* admin.unsafe(`insert into "core"."principals" (tenant_id, principal_id, kind) values
       ('${tenantA}', '${jana}', 'human'),
-      ('${tenantA}', '${eva}', 'human')`);
+      ('${tenantA}', '${eva}', 'human'),
+      ('${tenantA}', '${janaAgent}', 'agent'),
+      ('${tenantA}', '${ondra}', 'human')`);
     yield* admin.unsafe(`insert into "core"."access_scopes" (scope_id, tenant_id, tenant_context_id, legal_entity_id) values
       ('${scopeTenantA}', '${tenantA}', '${tenantA}', null),
       ('${scopeAkros}', '${tenantA}', null, '${legalEntityAkros}')`);
@@ -814,6 +872,36 @@ const seedDelegatedMoney = (admin: PgClient.PgClient) =>
        '${delegationCzk}', ${envelope(delegationCzk, 'CZK')}, 'active', now() - interval '1 day', now() + interval '30 days'),
       ('${assignmentEuro}', '${tenantA}', '${scopeAkros}', '${roleCapped}', '${roleCappedRevision}', '${jana}', '${eva}',
        '${delegationEur}', ${envelope(delegationEur, 'EUR')}, 'active', now() - interval '1 day', now() + interval '30 days')`);
+    // Fixed instants, so every field of these holders' cells is known in advance.
+    const fixedEnvelope = (delegationId: string) =>
+      `jsonb_build_object(
+         'amountCeiling', jsonb_build_object('currency', 'CZK', 'limitMinor', 10000),
+         'capabilityKeys', jsonb_build_array('${payKey}', '${readKey}', '${unknownKey}'),
+         'delegationId', '${delegationId}',
+         'until', '2097-01-01T00:00:00Z'::timestamptz
+       )`;
+    yield* admin.unsafe(`insert into "core"."access_delegations"
+        (delegation_id, tenant_id, scope_id, granted_by, manager_id, people, role_ids, capability_keys,
+         amount_ceiling_json, status, valid_from, until) values
+      ('${delegationAgent}', '${tenantA}', '${scopeAkros}', '${jana}', '${eva}', array['${janaAgent}'::uuid],
+       array['${roleCapped}'::uuid], array['${payKey}', '${readKey}', '${unknownKey}'],
+       '{"currency": "CZK", "limitMinor": 10000}'::jsonb, 'active', '2000-01-01T00:00:00Z', '2098-01-01T00:00:00Z'),
+      ('${delegationOndra}', '${tenantA}', '${scopeAkros}', '${jana}', '${eva}', array['${ondra}'::uuid],
+       array['${roleCapped}'::uuid], array['${payKey}', '${readKey}', '${unknownKey}'],
+       '{"currency": "CZK", "limitMinor": 10000}'::jsonb, 'active', '2000-01-01T00:00:00Z', '2098-01-01T00:00:00Z')`);
+    yield* admin.unsafe(`insert into "core"."access_assignments"
+        (incarnation_id, tenant_id, scope_id, role_id, role_revision_id, principal_id, agent_id, assigned_by,
+         delegated_by, delegation_envelope_json, status, valid_from, valid_until) values
+      ('${assignmentAgentCapped}', '${tenantA}', '${scopeAkros}', '${roleCapped}', '${roleCappedRevision}', null,
+       '${janaAgent}', '${eva}', '${delegationAgent}', ${fixedEnvelope(delegationAgent)}, 'active',
+       '2000-01-01T00:00:00Z', '2096-01-01T00:00:00Z'),
+      ('${assignmentAgentUncapped}', '${tenantA}', '${scopeAkros}', '${roleUncapped}', '${roleUncappedRevision}', null,
+       '${janaAgent}', '${jana}', null, null, 'active', '2000-01-01T00:00:00Z', '2095-01-01T00:00:00Z'),
+      ('${assignmentOndraCapped}', '${tenantA}', '${scopeAkros}', '${roleCapped}', '${roleCappedRevision}', '${ondra}',
+       null, '${eva}', '${delegationOndra}', ${fixedEnvelope(delegationOndra)}, 'active',
+       '2000-01-01T00:00:00Z', '2096-01-01T00:00:00Z'),
+      ('${assignmentOndraUncapped}', '${tenantA}', '${scopeAkros}', '${roleUncapped}', '${roleUncappedRevision}',
+       '${ondra}', null, '${jana}', null, null, 'active', '2000-01-01T00:00:00Z', '2095-01-01T00:00:00Z')`);
   });
 
 it.layer(NodeServices.layer)('the tenant intent loader', (suite) => {
@@ -1119,6 +1207,63 @@ it.layer(NodeServices.layer)('the tenant intent loader over delegated money limi
         unknown,
         ...otherAlone,
       ]);
+
+      // Independent of the single read: batches answered against cells written out by hand. Each holder has a
+      // delegated role (capped at the envelope's CZK 10 000, ending at the earliest of its assignment, envelope and
+      // delegation) and a role of its own.
+      const fixedQueries = (holder: ReturnType<typeof person> | ReturnType<typeof agentHolder>) =>
+        [payKey, readKey, unknownKey].map((key) => ({
+          capabilityKey: capability(key),
+          holder,
+          mode: 'run' as const,
+          scopeId: AccessScopeIdSchema.make(scopeAkros),
+          tenantId: TenantIdSchema.make(tenantA),
+        }));
+      const ownPay = (holder: ReturnType<typeof person> | ReturnType<typeof agentHolder>, assignment: string) =>
+        expectedCell({
+          assignedBy: jana,
+          assignment,
+          capabilityKey: payKey,
+          deadline: '2095-01-01T00:00:00Z',
+          grant: grantUncapped,
+          holder,
+          revision: roleUncappedRevision,
+          role: roleUncapped,
+        });
+      const delegated = (capabilityKey: string, grant: string, ceiling?: ExpectedCeiling) =>
+        expectedCell({
+          assignedBy: eva,
+          assignment: assignmentOndraCapped,
+          capabilityKey,
+          ceiling,
+          deadline: '2096-01-01T00:00:00Z',
+          grant,
+          holder: person(ondra),
+          revision: roleCappedRevision,
+          role: roleCapped,
+        });
+
+      // (a)+(b) A person with two roles: the pay capability answers with both cells, the delegated one narrowed
+      // from the role's CZK 50 000 to the envelope's CZK 10 000; the read is not amount-governed and keeps no ceiling.
+      const ondraAnswers = yield* loader.loadAuthorityCellsMany(schema.scopeAkros, fixedQueries(person(ondra)));
+      expect(ondraAnswers).toHaveLength(3);
+      expect(byAssignment(ondraAnswers[0])).toEqual(
+        byAssignment([
+          delegated(payKey, grantCapped, ENVELOPE_CEILING),
+          ownPay(person(ondra), assignmentOndraUncapped),
+        ]),
+      );
+      expect(ondraAnswers[1]).toEqual([delegated(readKey, grantCappedRead)]);
+      // (c) A capability the pinned catalog does not know leaves no delegated cell (fail closed).
+      expect(ondraAnswers[2]).toEqual([]);
+
+      // An agent: a delegation names people, so the agent's delegated role yields no cell at all (fail closed,
+      // `delegatedCellCeiling`); only its own role answers. The unknown capability answers nothing either.
+      const agentAnswers = yield* loader.loadAuthorityCellsMany(
+        schema.scopeAkros,
+        fixedQueries(agentHolder(janaAgent)),
+      );
+      expect(agentAnswers).toEqual([[ownPay(agentHolder(janaAgent), assignmentAgentUncapped)], [], []]);
     }),
   );
 });
