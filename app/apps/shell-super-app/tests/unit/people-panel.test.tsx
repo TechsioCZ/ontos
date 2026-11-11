@@ -3,7 +3,7 @@ import type { I18nInstance } from '@modern-js/plugin-i18n/runtime';
 import { ModernI18nProvider } from '@modern-js/plugin-i18n/runtime/consumer';
 import { cleanup, render as renderView, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { saveLabelsFor } from '@app/admin-ui';
+import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import { Effect, Schema } from 'effect';
 import { afterEach, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
@@ -192,6 +192,18 @@ it.live('invites a person by email and explicit affiliation, never by principal 
     expect(commands.invite).toHaveBeenCalledTimes(1);
     // The sent invitation closes its dialog.
     yield* Effect.promise(() => waitFor(() => expect(screen.queryByLabelText(/Jméno a příjmení/u)).toBeNull()));
+  }),
+);
+
+it.live('reads the required text of a required field in Czech', () =>
+  Effect.gen(function* requiredText() {
+    const user = userEvent.setup();
+    render(<InvitePersonButton onCommitted={() => {}} />);
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Pozvat člověka' })));
+    yield* Effect.promise(() => screen.findByRole('dialog'));
+    const name = screen.getByLabelText(/Jméno a příjmení/u, { selector: 'input' });
+    expect(document.querySelector(`label[for="${name.id}"]`)?.textContent).toContain(requiredLabelFor('cs'));
+    expect(document.body.textContent).not.toContain('(required)');
   }),
 );
 

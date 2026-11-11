@@ -59,15 +59,17 @@ const acquireServer = (submissions: Submission[], correlations: string[]) =>
             intent,
           ),
       };
-      const tools = () =>
-        buildConnectionTools({
+      const tools = Effect.sync(() => ({
+        kind: 'ok' as const,
+        tools: buildConnectionTools({
           backend,
           catalog: fixtureCatalog(),
           crypto,
           description: DESCRIPTION,
           prmUrl: CONFIG.prmUrl,
           publicOrigin: CONFIG.publicOrigin,
-        });
+        }),
+      }));
       const respond = serveMcp({
         authenticate: (token) =>
           Effect.succeed(

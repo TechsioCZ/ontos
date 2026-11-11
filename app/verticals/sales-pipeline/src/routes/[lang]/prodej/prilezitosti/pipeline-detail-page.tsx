@@ -1,6 +1,6 @@
 // Full page of one business case. The records route shows it in place of the list while `?opportunityId=` names a
 // case and the person chose the full page. Body and actions are shared with the side panel.
-import { PageHeader } from '@app/admin-ui';
+import { DocumentTitle, PageHeader } from '@app/admin-ui';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -46,6 +46,7 @@ export const PipelineDetailPage = ({
 
   return (
     <section className="flex flex-col gap-200">
+      <DocumentTitle title={opportunity?.title} />
       <PageHeader
         actions={
           opportunity === undefined ? undefined : (

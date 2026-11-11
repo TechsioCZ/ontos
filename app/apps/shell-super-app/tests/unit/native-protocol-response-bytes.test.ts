@@ -52,7 +52,7 @@ const sdkDeps = {
       clientId: 'client',
       grantId: 'grant',
       kind: 'ok' as const,
-      tools: () => [],
+      tools: Effect.succeed({ kind: 'ok' as const, tools: [] }),
     }),
   config: Effect.succeed(config),
 };

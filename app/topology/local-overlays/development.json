@@ -29,7 +29,8 @@
     "crm-activities": "http://localhost:4119/.well-known/ontos-module-manifest.json",
     "facility-operations": "http://localhost:4126/.well-known/ontos-module-manifest.json",
     "crm": "http://localhost:4125/.well-known/ontos-module-manifest.json",
-    "payment": "http://localhost:4130/.well-known/ontos-module-manifest.json"
+    "payment": "http://localhost:4130/.well-known/ontos-module-manifest.json",
+    "promotion": "http://localhost:4131/.well-known/ontos-module-manifest.json"
   },
   "schemaVersion": 1,
   "environment": "development",
@@ -65,7 +66,8 @@
     "crm-activities": 4119,
     "facility-operations": 4126,
     "crm": 4125,
-    "payment": 4130
+    "payment": 4130,
+    "promotion": 4131
   },
   "manifests": {
     "assortment": "http://localhost:4104/mf-manifest.json",
@@ -1605,6 +1607,54 @@
           "buildMarker": "77c39303ab83025e"
         }
       }
+    },
+    "promotion": {
+      "apiBaseUrl": "http://localhost:4131/promotion-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/promotion",
+        "buildMarker": "8cd2bb6855e9f51c"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-promotion",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PROMOTION",
+        "api": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+        },
+        "zephyr": {
+          "runtime": "api-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_PROMOTION_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_PROMOTION_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_PROMOTION_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_PROMOTION_WORKER",
+          "serviceBindingEnv": "VERTICAL_PROMOTION_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_PROMOTION_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_PROMOTION_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalPromotionBackend",
+        "manifestEnv": "VERTICAL_PROMOTION_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4131/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4131/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/promotion",
+          "buildMarker": "8cd2bb6855e9f51c"
+        }
+      }
     }
   },
   "apis": {
@@ -1637,6 +1687,7 @@
     "crm-activities": "http://localhost:4119/crm-activities-api",
     "facility-operations": "http://localhost:4126/facility-operations-api",
     "crm": "http://localhost:4125/crm-api",
-    "payment": "http://localhost:4130/payment-api"
+    "payment": "http://localhost:4130/payment-api",
+    "promotion": "http://localhost:4131/promotion-api"
   }
 }

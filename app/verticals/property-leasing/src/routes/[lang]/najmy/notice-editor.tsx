@@ -6,7 +6,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { Effect, Option, PlatformError } from 'effect';
 import { constVoid } from 'effect/Function';
 import { useState } from 'react';

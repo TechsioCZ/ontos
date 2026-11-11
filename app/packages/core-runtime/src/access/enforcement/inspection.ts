@@ -31,6 +31,7 @@ import type {
   SubjectAccessInspectionService,
   SubjectCapabilityAnswer,
   SubjectCapabilityInspectionInput,
+  SubjectActionAnswer,
   SubjectCapabilityQuestion,
   SubjectInspectionInput,
   SubjectListInspection,
@@ -132,16 +133,21 @@ const scopeQueryKey = (query: ScopeQuery): string =>
  */
 const batchAuthorityOf = (authority: DecisionAuthorityPort): DecisionAuthorityPort =>
   withOptional(
-    {
-      readCells: onceEach(
-        (query: AuthorityCellQuery) =>
-          [query.tenantId, query.scopeId, holderIdOf(query.holder), query.capabilityKey, query.mode].join('\u0000'),
-        authority.readCells,
-      ),
-      readConnection: authority.readConnection,
-      readScope: onceEach(scopeQueryKey, authority.readScope),
-      readTeamIds: authority.readTeamIds,
-    },
+    withOptional(
+      {
+        readCells: onceEach(
+          (query: AuthorityCellQuery) =>
+            [query.tenantId, query.scopeId, holderIdOf(query.holder), query.capabilityKey, query.mode].join('\u0000'),
+          authority.readCells,
+        ),
+        readConnection: authority.readConnection,
+        readScope: onceEach(scopeQueryKey, authority.readScope),
+        readTeamIds: authority.readTeamIds,
+      },
+      // The engine reads one batch's cell sets in one call; each set is still read once per batch.
+      'readCellsMany',
+      authority.readCellsMany,
+    ),
     'readConfigureBases',
     authority.readConfigureBases === undefined
       ? undefined
@@ -569,14 +575,20 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
     });
     const answers = yield* evaluateMany(input, [...capabilityQuestions, ...actionQuestions]);
     const offset = capabilityQuestions.length;
-    const allowed = (index: number) =>
-      answers[offset + index]?.decision.outcome === 'ALLOWED' ? ('allowed' as const) : ('denied' as const);
+    // A missing or UNAVAILABLE answer is `unavailable`, never `denied`, so no caller can read it as a refusal.
+    const answerOf = (index: number): SubjectActionAnswer => {
+      const outcome = answers[offset + index]?.decision.outcome;
+      if (outcome === 'ALLOWED') {
+        return 'allowed';
+      }
+      return outcome === undefined || outcome === 'UNAVAILABLE' ? 'unavailable' : 'denied';
+    };
     return {
       answers: answers.slice(0, offset),
       authorities: input.actionKeys.map((actionKey, index) => ({
         actionKey,
-        propose: allowed(index * ACTION_MODES.length),
-        run: allowed(index * ACTION_MODES.length + 1),
+        propose: answerOf(index * ACTION_MODES.length),
+        run: answerOf(index * ACTION_MODES.length + 1),
       })),
       inspectionOnly: true as const,
     };

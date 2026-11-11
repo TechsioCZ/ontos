@@ -1,5 +1,5 @@
 // Quick-view panel of one business case on the records list. The body and actions live in pipeline-detail-content.tsx.
-import { SidePanel } from '@app/admin-ui';
+import { DocumentTitle, SidePanel } from '@app/admin-ui';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -167,6 +167,7 @@ export const PipelineDetailPanel = ({
       size="lg"
       title={opportunity.title}
     >
+      <DocumentTitle title={opportunity.title} />
       <PipelineDetailBody context={context} lookups={lookups} opportunity={opportunity} revision={revision} />
     </SidePanel>
   );

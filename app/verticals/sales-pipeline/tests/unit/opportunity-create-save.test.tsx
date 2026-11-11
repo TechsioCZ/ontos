@@ -3,7 +3,7 @@
 // nothing, the shared Save button ("Uložit", last in the footer) creates the opportunity once, an untouched panel
 // closes without asking and a refused create keeps the input. The i18n runtime, the router blocker, the ui-kit
 // combobox (by one button per item) and the select template (by a native select) are replaced.
-import { saveLabelsFor } from '@app/admin-ui';
+import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
@@ -158,6 +158,15 @@ afterEach(() => {
 });
 
 describe('opportunity create panel with the shared Uložit', () => {
+  it.live('reads the required text of a required field in Czech', () =>
+    Effect.promise(async () => {
+      await mount([]);
+      expect(document.body.textContent).toContain(requiredLabelFor('cs'));
+      expect(document.body.textContent).not.toContain('(required)');
+      expect(document.querySelector('label[for="opportunity-title"]')?.textContent).toContain(requiredLabelFor('cs'));
+    }),
+  );
+
   it.live('typing sends nothing; one click on Uložit creates the opportunity once', () =>
     Effect.promise(async () => {
       const events: string[] = [];

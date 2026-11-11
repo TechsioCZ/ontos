@@ -107,7 +107,8 @@
     "./outbox/core-identity-people-search-rebuild-requested-v1": "./src/outbox/core-identity-people-search-rebuild-requested-v1.ts",
     "./resources/person": "./src/resources/person.ts",
     "./people/search": "./src/people/system-search-provider.ts",
-    "./people/search-rebuild": "./src/modules/actions/request-people-search-rebuild.action.ts"
+    "./people/search-rebuild": "./src/modules/actions/request-people-search-rebuild.action.ts",
+    "./drizzle-config": "./src/environment/drizzle-config.ts"
   },
   "imports": {
     "#database-runtime": {

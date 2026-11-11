@@ -3435,3 +3435,99 @@ it.live(
     expect(report.issues.flatMap((issue) => issue.binaries.map((item) => item.name))).toEqual(['unknown-font-helper']);
   }),
 );
+
+it.live(
+  'models the actual generated Action proposal public contract and preserves neighboring unused exports',
+  Effect.fn(function* generatedActionProposalPublicContract() {
+    const root = yield* fixture();
+    const owner = 'verticals/promotion';
+    const original = 'create-promotion-draft';
+    const actual = readFileSync(path.join(appRoot, owner, `shared/apis/${original}-action.ts`), 'utf-8');
+    const proposal = 'ActionProposalAcceptedSchema';
+    const module = '@app/core-runtime/http/action-proposal';
+    write(root, `${owner}/package.json`, JSON.stringify({ name: '@app/promotion', type: 'module' }));
+    write(
+      root,
+      'packages/core-runtime/package.json',
+      JSON.stringify({
+        exports: { './http/action-proposal': './proposal.ts', './http/foreign': './foreign.ts' },
+        name: '@app/core-runtime',
+        type: 'module',
+      }),
+    );
+    write(root, 'packages/core-runtime/proposal.ts', `export const ${proposal} = 1;`);
+    write(root, 'packages/core-runtime/foreign.ts', `export const ${proposal} = 1;`);
+    write(
+      root,
+      `${owner}/shared/actions/${original}.ts`,
+      'export const CreatePromotionDraftPayloadSchema = 1; export const CreatePromotionDraftResultSchema = 2;',
+    );
+    const controls = [
+      ['missing-success', actual.replace(`success: [${proposal},`, 'success: [')],
+      [
+        'unregistered-api',
+        actual.replace('export const CreatePromotionDraftActionApi', 'const CreatePromotionDraftActionApi'),
+      ],
+      [
+        'wrong-source',
+        actual.replace(
+          `export { ${proposal} } from '${module}';`,
+          `export { ${proposal} } from '@app/core-runtime/http/foreign';`,
+        ),
+      ],
+      ['wrong-header', actual.replace('Codesmith Action HTTP v1', 'Codesmith Action HTTP v2')],
+    ] as const;
+    const sourcePath = (slug: string) => `${owner}/shared/apis/${slug}-action.ts`;
+    write(root, sourcePath(original), `${actual}\nexport const unusedProposalNeighbor = 1;\n`);
+    for (const [slug, source] of controls) {
+      write(
+        root,
+        sourcePath(slug),
+        source.replace(`@ontos-action-http-slug ${original}`, `@ontos-action-http-slug ${slug}`),
+      );
+    }
+    const allSlugs = [original, ...controls.map(([slug]) => slug)];
+    write(
+      root,
+      `${owner}/src/consumer.ts`,
+      allSlugs
+        .map(
+          (slug, index) =>
+            `import { CreatePromotionDraftActionApi as api${index} } from '../shared/apis/${slug}-action.ts'; void api${index};`,
+        )
+        .join('\n'),
+    );
+    const base = yield* Schema.decodeUnknownEffect(KnipConfigSchema)({
+      workspaces: {
+        '.': { entry: [], node: false, project: [] },
+        [owner]: { entry: ['src/consumer.ts'], node: false, project: ['**/*.ts'] },
+        'packages/*': { entry: [], node: false, project: ['*.ts'] },
+      },
+    });
+    const consumerPath = path.join(root, auditConsumersFile);
+    const native = yield* runPinnedKnip(root, consumerPath, { config: base, consumerFiles: [] }).pipe(
+      Effect.provide(NodeServices.layer),
+    );
+    const decodeReport = Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema));
+    const nativeReport = yield* decodeReport(native.stdout);
+    expect(
+      nativeReport.issues.find((issue) => issue.file === sourcePath(original))?.exports.map(({ name }) => name),
+    ).toContain(proposal);
+    const model = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    const evidence = model.evidence.filter(
+      (fact) => fact.reason === 'Generated Action HTTP parked-proposal public contract',
+    );
+    expect(evidence.map(({ target }) => target)).toEqual([`${sourcePath(original)}#${proposal}`]);
+    expect(evidence[0]).toMatchObject({ kind: 'export', source: sourcePath(original), workspace: owner });
+    expect(evidence[0]?.line).toBeGreaterThan(0);
+    const modeled = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+    const report = yield* decodeReport(modeled.stdout);
+    const exportsFor = (slug: string) =>
+      report.issues.find((issue) => issue.file === sourcePath(slug))?.exports.map(({ name }) => name) ?? [];
+    expect(exportsFor(original)).not.toContain(proposal);
+    expect(exportsFor(original)).toContain('unusedProposalNeighbor');
+    for (const [slug] of controls) {
+      expect(exportsFor(slug), slug).toContain(proposal);
+    }
+  }),
+);

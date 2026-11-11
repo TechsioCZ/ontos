@@ -56,7 +56,7 @@ import {
 } from '../../shared/access-admin-api.ts';
 import { ShellAuthenticationApi } from '../../shared/api.ts';
 import { AccessAdminClock } from './clock.ts';
-import { coversNoRole, roleReadScope } from './role-read-scope.ts';
+import { coversNoRole, roleReadScope, roleReadScopes } from './role-read-scope.ts';
 import type { RoleReadScope } from './role-read-scope.ts';
 import {
   AccessAdminSession,
@@ -596,20 +596,55 @@ const scopeLabelOf = (labels: AccessDirectoryScopeLabels, view: View, scopeId: s
   );
 };
 
-/** Whether this person may run one write anywhere this reach shows, as the gate answers right now. */
-const writeAllowed = Effect.fn('AccessAdminPeople.writeAllowed')(function* writeAllowedNow(
+/** The writes the options report on, each decided by its own declaration. */
+const OPTION_WRITES = [
+  'assign',
+  'revokeAssignment',
+  'teamMembership',
+  'delegate',
+  'revokeDelegation',
+  'transferOwnership',
+  'endMembership',
+  'admitMember',
+] as const;
+type OptionWrite = (typeof OPTION_WRITES)[number];
+
+/**
+ * What each write's own declaration reaches right now, or nothing while the Lidé gate is closed (which
+ * asks nothing at all). Every write is asked exactly as `reachFor` asks it, but all of them in one gate
+ * batch: asked one decision at a time, a tenant owner's options were 8 writes x every scope single
+ * decisions, each its own run of pooled transactions, which held the request for tens of seconds.
+ */
+const writeReaches = Effect.fn('AccessAdminPeople.writeReaches')(function* writeReachesNow(
   scope: OperationalScope,
   view: View,
-  declaration: AccessDeclaration,
   now: Date,
 ) {
   const gate = yield* AccessPeopleWriteAvailability;
   if (!gate.available) {
-    return false;
+    return Option.none<ReadonlyMap<OptionWrite, PeopleReach>>();
   }
-  const reach = yield* reachFor(scope, view, declaration, now);
-  return reach.scopeIds.size > 0;
+  const readable = yield* roleReadScopes({
+    companies: companiesOf(view),
+    declarations: OPTION_WRITES.map((write) => accessPeopleDeclarations[write]),
+    now,
+    scope,
+  });
+  const reaches: ReadonlyMap<OptionWrite, PeopleReach> = new Map(
+    OPTION_WRITES.flatMap((write, index) => {
+      const one = readable[index];
+      return one === undefined ? [] : [[write, reachOf(view, one)] as const];
+    }),
+  );
+  return Option.some(reaches);
 });
+
+/** Whether this person may run one write anywhere its reach shows; a closed gate offers none. */
+const writeAllowed = (reaches: Option.Option<ReadonlyMap<OptionWrite, PeopleReach>>, write: OptionWrite): boolean =>
+  Option.match(reaches, {
+    onNone: () => false,
+    onSome: (reach) => (reach.get(write)?.scopeIds.size ?? 0) > 0,
+  });
 
 /**
  * Whether the acting person administers one scope permanently, as the tenant owner or that company's
@@ -630,18 +665,18 @@ const administersPermanently = (view: View, actor: string, scopeId: string): boo
 };
 
 /** Whether ending a membership is open here: the gate, its reach, and permanent administration of a scope in it. */
-const endMembershipAllowed = Effect.fn('AccessAdminPeople.endMembershipAllowed')(function* endMembershipAllowedNow(
+const endMembershipAllowed = (
   scope: OperationalScope,
   view: View,
-  now: Date,
-) {
-  const gate = yield* AccessPeopleWriteAvailability;
-  if (!gate.available) {
-    return false;
-  }
-  const reach = yield* reachFor(scope, view, accessPeopleDeclarations.endMembership, now);
-  return [...reach.scopeIds].some((scopeId) => administersPermanently(view, scope.principalId, scopeId));
-});
+  reaches: Option.Option<ReadonlyMap<OptionWrite, PeopleReach>>,
+): boolean =>
+  Option.match(reaches, {
+    onNone: () => false,
+    onSome: (reach) =>
+      [...(reach.get('endMembership')?.scopeIds ?? [])].some((scopeId) =>
+        administersPermanently(view, scope.principalId, scopeId),
+      ),
+  });
 
 /** Whether one person holds a live 'member' row in one scope; another company's row never counts. */
 const isLiveMemberIn = (view: View, principalId: string, scopeId: string): boolean =>
@@ -700,13 +735,15 @@ const admissionOf = Effect.fn('AccessAdminPeople.admission')(function* admission
   scope: OperationalScope,
   view: View,
   shown: PeopleReach,
-  now: Date,
+  reaches: Option.Option<ReadonlyMap<OptionWrite, PeopleReach>>,
 ) {
-  const gate = yield* AccessPeopleWriteAvailability;
-  if (!gate.available) {
+  if (Option.isNone(reaches)) {
     return { allowed: false, candidates: [] };
   }
-  const reach = yield* reachFor(scope, view, accessPeopleDeclarations.admitMember, now);
+  const reach = reaches.value.get('admitMember');
+  if (reach === undefined) {
+    return { allowed: false, candidates: [] };
+  }
   const companies = view.scopes.flatMap(({ legalEntityId, scopeId }) =>
     legalEntityId !== undefined &&
     reach.scopeIds.has(scopeId) &&
@@ -786,28 +823,10 @@ const options = Effect.fn('AccessAdminPeople.options')(function* listPeopleOptio
     ],
     { concurrency: 1 },
   );
-  // One gate answer per write, so a control shows exactly what the server would admit right now.
-  const [
-    canAssign,
-    canUnassign,
-    canManageTeams,
-    canDelegate,
-    canRevokeDelegation,
-    canTransferOwnership,
-    canEndMembership,
-  ] = yield* Effect.all(
-    [
-      writeAllowed(scope, view, accessPeopleDeclarations.assign, now),
-      writeAllowed(scope, view, accessPeopleDeclarations.revokeAssignment, now),
-      writeAllowed(scope, view, accessPeopleDeclarations.teamMembership, now),
-      writeAllowed(scope, view, accessPeopleDeclarations.delegate, now),
-      writeAllowed(scope, view, accessPeopleDeclarations.revokeDelegation, now),
-      writeAllowed(scope, view, accessPeopleDeclarations.transferOwnership, now),
-      endMembershipAllowed(scope, view, now),
-    ],
-    { concurrency: 1 },
-  );
-  const admission = yield* admissionOf(scope, view, reach, now);
+  // One gate answer per write and scope, so a control shows exactly what the server would admit right
+  // now; all of them travel in one gate batch.
+  const reaches = yield* writeReaches(scope, view, now);
+  const admission = yield* admissionOf(scope, view, reach, reaches);
   const roles = view.roles.filter(({ role }) => roleIsReachable(reach, role.legalEntityId));
   const entryOf = new Map(catalog.map((entry) => [String(entry.key), entry] as const));
   // A tenant-wide reader is offered the release whole; a company's administrator only the
@@ -857,13 +876,13 @@ const options = Effect.fn('AccessAdminPeople.options')(function* listPeopleOptio
       teams: view.teams.flatMap((entry) => (reach.scopeIds.has(entry.team.scopeId) ? [plainTeam(view, entry)] : [])),
       writeAvailability: {
         canAdmitMember: admission.allowed,
-        canAssign,
-        canDelegate,
-        canEndMembership,
-        canManageTeams,
-        canRevokeDelegation,
-        canTransferOwnership,
-        canUnassign,
+        canAssign: writeAllowed(reaches, 'assign'),
+        canDelegate: writeAllowed(reaches, 'delegate'),
+        canEndMembership: endMembershipAllowed(scope, view, reaches),
+        canManageTeams: writeAllowed(reaches, 'teamMembership'),
+        canRevokeDelegation: writeAllowed(reaches, 'revokeDelegation'),
+        canTransferOwnership: writeAllowed(reaches, 'transferOwnership'),
+        canUnassign: writeAllowed(reaches, 'revokeAssignment'),
       },
     },
     'people options',

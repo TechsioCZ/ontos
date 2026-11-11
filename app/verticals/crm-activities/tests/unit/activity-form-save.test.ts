@@ -10,6 +10,7 @@ import type { ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { RecordsPage } from '../../src/routes/[lang]/aktivity/page.tsx';
+import { requiredLabelFor } from '@app/admin-ui';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 
 /** The props the native stand-in of the ui-kit select reads. */
@@ -172,6 +173,28 @@ afterEach(() => {
 });
 
 describe('the activity form', () => {
+  it.live('reads the required text of a required field in Czech', () =>
+    Effect.promise(async () => {
+      const container = document.createElement('div');
+      document.body.append(container);
+      const root = createRoot(container);
+      unmounts.push(() => {
+        act(() => {
+          root.unmount();
+        });
+        container.remove();
+      });
+      await act(async () => {
+        root.render(createElement(RecordsPage, props));
+      });
+      await waitUntil(() => document.querySelector('#activity-summary') !== null);
+
+      const summary = document.querySelector<HTMLInputElement>('#activity-summary');
+      expect(summary?.labels?.[0]?.textContent).toContain(requiredLabelFor('cs'));
+      expect(document.body.textContent).not.toContain('(required)');
+    }),
+  );
+
   it.live('follows the contact search: Uložit is held back while the chosen contact is not listed', () =>
     Effect.promise(async () => {
       const container = document.createElement('div');

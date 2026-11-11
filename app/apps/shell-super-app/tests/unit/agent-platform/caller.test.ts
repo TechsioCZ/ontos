@@ -6,9 +6,14 @@ import {
   TenantModuleStateReadUnavailableError,
   TenantModuleStateService,
 } from '@app/core-runtime';
-import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
+import {
+  AccessDecisionGate,
+  makeTestAccessDecision,
+  SubjectAccessInspection,
+  SubjectInspectionUnavailable,
+} from '@app/core-runtime/access/enforcement';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
-import { Effect, Layer, Predicate, Ref, Schema } from 'effect';
+import { Effect, Layer, Predicate, Ref, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ActionPermissionCheckError } from '../../../../../packages/core-runtime/src/actions/errors.ts';
@@ -19,6 +24,7 @@ import {
   assertAgentProposalsAuthorized,
   callerModuleAccess,
   emptySubjectAccessTrace,
+  moduleCarriers,
   proposalActionKey,
   subjectModuleAccess,
 } from '../../../api/agent-platform/caller.ts';
@@ -882,5 +888,265 @@ it.effect('denies a foreign-tenant subject without changing the requester tenant
     expect(hints.run.size).toBe(0);
     expect(hints.propose.size).toBe(0);
     expect(scope.tenantId).toBe(tenantId);
+  }),
+);
+
+/** One routine run Action of `owner`, under an access key unique within that module. */
+const moduleAction = (owner: string, actionKey: string, owningModuleId = owner): OntosActionContract => {
+  actionFixtureSequence += 1;
+  return Schema.decodeUnknownSync(OntosActionContractSchema)({
+    accessDeclaration: {
+      key: `${owningModuleId}.action-${actionFixtureSequence}.run`,
+      kind: 'action',
+      modes: ['run'],
+      placement: { group: 'actions', level: 'extended' },
+      risk: 'routine',
+      selectors: [],
+    },
+    actionKey,
+    auditProfile: 'standard',
+    entrypoint: {
+      access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      entrypointKey: actionKey,
+      moduleKey: owningModuleId,
+      role: 'action',
+      scope: 'tenant',
+    },
+    idempotency: 'required',
+    legalEntityScope: 'required',
+    owningModuleId,
+    schemaVersion: '1',
+  });
+};
+
+/** Modules with the given Actions each (no other carrier), and every Action's access key in declaration order. */
+const actionModulesCatalog = (modules: Readonly<Record<string, readonly OntosActionContract[]>>) =>
+  Effect.gen(function* actionModules() {
+    const snapshot = yield* makeCompositionSnapshot(
+      Object.entries(modules).map(([id, actions]) => {
+        const contract = makeModuleContractFixture({ appId: id.replaceAll('.', '-'), moduleId: id });
+        return {
+          ...contract,
+          manifest: { ...contract.manifest, publicSurface: { ...contract.manifest.publicSurface, actions } },
+        };
+      }),
+    );
+    const installed = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
+    const keyOf = new Map(
+      Object.values(modules).flatMap((actions) =>
+        actions.flatMap(({ accessDeclaration, actionKey }) =>
+          accessDeclaration === undefined ? [] : [[actionKey, accessDeclaration.key] as const],
+        ),
+      ),
+    );
+    return { installed, keyOf, snapshot };
+  });
+
+/** The hints as they were asked before they stopped at the first admitted question: everything in one batch. */
+const everythingAtOnce = Effect.gen(function* askEverything() {
+  const inspection = yield* SubjectAccessInspection;
+  const installed = yield* (yield* ShellInstalledModuleCatalog).load;
+  yield* inspection.scope(humanRequest);
+  const carriers = moduleCarriers(installed);
+  const actions = installed.contracts.flatMap(({ manifest }) =>
+    manifest.publicSurface.actions.filter((entry) => entry.legalEntityScope !== 'forbidden'),
+  );
+  const inspected = yield* inspection.capabilities({
+    ...humanRequest,
+    actionKeys: [...new Set(actions.map(({ actionKey }) => actionKey))],
+    questions: carriers.map((carrier) => ({
+      carrier: { accessDeclaration: carrier.declaration },
+      legalEntityScope: carrier.legalEntityScope,
+      listing: carrier.declaration?.kind === 'read' && carrier.declaration.selectors.length > 0,
+    })),
+  });
+  const access = new Set<string>();
+  const propose = new Set<string>();
+  const run = new Set<string>();
+  for (const [index, carrier] of carriers.entries()) {
+    const outcome = inspected.answers[index]?.decision.outcome;
+    if (outcome === 'ALLOWED' || outcome === 'NEEDS_APPROVAL') {
+      access.add(carrier.moduleId);
+    }
+  }
+  const byKey = new Map(inspected.authorities.map((authority) => [authority.actionKey, authority]));
+  for (const { actionKey, owningModuleId } of actions) {
+    const authority = byKey.get(actionKey);
+    if (authority?.run === 'unavailable' || authority?.propose === 'unavailable') {
+      return yield* new SubjectInspectionUnavailable({ reason: 'reference: unavailable authority' });
+    }
+    if (authority?.run === 'allowed') {
+      run.add(owningModuleId);
+      access.add(owningModuleId);
+    }
+    if (authority?.propose === 'allowed') {
+      propose.add(owningModuleId);
+      access.add(owningModuleId);
+    }
+  }
+  return { access, propose, run };
+});
+
+const sortedHints = (hints: {
+  readonly access: ReadonlySet<string>;
+  readonly propose: ReadonlySet<string>;
+  readonly run: ReadonlySet<string>;
+}) => ({
+  access: [...hints.access].toSorted(),
+  propose: [...hints.propose].toSorted(),
+  run: [...hints.run].toSorted(),
+});
+
+/** The two-phase hints and the everything-at-once reference over the same inspection: same sets or same failure. */
+const bothHints = (
+  installed: Effect.Success<ReturnType<typeof makeInstalledModuleCatalogLoader>>,
+  inspection: ReturnType<typeof subjectInspectionFixture>,
+) =>
+  Effect.all([subjectModuleAccess(humanRequest).pipe(Effect.result), everythingAtOnce.pipe(Effect.result)], {
+    concurrency: 1,
+  }).pipe(
+    Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+    Effect.provide(inspection.layer),
+  );
+
+it.effect('fails the hints when the first batch cannot decide a key, although asking it again would succeed', () =>
+  Effect.gen(function* firstBatchUnavailable() {
+    // alpha's only allowed Action is its first key; beta allows both of its Actions.
+    const { installed, keyOf, snapshot } = yield* actionModulesCatalog({
+      'alpha.mod': [moduleAction('alpha.mod', 'alpha.mod.first'), moduleAction('alpha.mod', 'alpha.mod.second')],
+      'beta.mod': [moduleAction('beta.mod', 'beta.mod.first'), moduleAction('beta.mod', 'beta.mod.second')],
+    });
+    const flaky = keyOf.get('alpha.mod.first') ?? '';
+    let flakyReads = 0;
+    const inspection = subjectInspectionFixture({
+      capabilities: [flaky, keyOf.get('beta.mod.first') ?? '', keyOf.get('beta.mod.second') ?? ''].map((key) => ({
+        key,
+        modes: ['run'] as const,
+      })),
+      // Only the very first read of alpha's first key fails; any later read of it would succeed.
+      onCapabilityRead: (key) =>
+        Effect.suspend(() => {
+          if (key !== flaky) {
+            return Effect.void;
+          }
+          flakyReads += 1;
+          return flakyReads === 1 ? Effect.fail(accessDecisionUnavailable('engine unavailable')) : Effect.void;
+        }),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const failure = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+      Effect.flip,
+    );
+    // Never a description with alpha silently missing from run: the whole description is unavailable (503).
+    expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
+    flakyReads = 0;
+    const authority = yield* loadActingAuthority(scope, {
+      actingKind: 'human',
+      actingPrincipalId: principalId,
+      legalEntityId,
+      tenantId,
+    }).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+      Effect.flip,
+    );
+    expect(Predicate.isTagged(authority, 'ConnectionUnavailable')).toBe(true);
+  }),
+);
+
+it.effect('fails the hints, like the reference, when one key among allowed ones cannot be decided', () =>
+  Effect.gen(function* oneUnavailableKey() {
+    const { installed, keyOf, snapshot } = yield* actionModulesCatalog({
+      'alpha.mod': [moduleAction('alpha.mod', 'alpha.mod.first'), moduleAction('alpha.mod', 'alpha.mod.second')],
+      'beta.mod': [moduleAction('beta.mod', 'beta.mod.first'), moduleAction('beta.mod', 'beta.mod.second')],
+    });
+    // Every Action runs; nothing proposes, so every module stays open and its second key is asked too.
+    const broken = keyOf.get('beta.mod.second') ?? '';
+    const inspection = subjectInspectionFixture({
+      capabilities: [...keyOf.values()].map((key) => ({ key, modes: ['run'] as const })),
+      onCapabilityRead: (key) =>
+        key === broken ? Effect.fail(accessDecisionUnavailable('one key unreadable')) : Effect.void,
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const [hints, reference] = yield* bothHints(installed, inspection);
+    expect(Result.isFailure(hints) && Predicate.isTagged(hints.failure, 'SubjectInspectionUnavailable')).toBe(true);
+    expect(Result.isFailure(reference) && Predicate.isTagged(reference.failure, 'SubjectInspectionUnavailable')).toBe(
+      true,
+    );
+  }),
+);
+
+it.effect('answers an Action key that two modules declare exactly as asking everything does', () =>
+  Effect.gen(function* sharedActionKey() {
+    // beta's contract repeats alpha's Action (owned by alpha) besides one of its own.
+    const shared = moduleAction('alpha.mod', 'alpha.mod.shared');
+    const { installed, keyOf, snapshot } = yield* actionModulesCatalog({
+      'alpha.mod': [shared],
+      'beta.mod': [shared, moduleAction('beta.mod', 'beta.mod.own')],
+    });
+    const inspection = subjectInspectionFixture({
+      capabilities: [{ key: keyOf.get('alpha.mod.shared') ?? '', modes: ['run'] as const }],
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const [hints, reference] = yield* bothHints(installed, inspection);
+    expect(Result.isSuccess(hints) && Result.isSuccess(reference)).toBe(true);
+    if (Result.isSuccess(hints) && Result.isSuccess(reference)) {
+      expect(sortedHints(hints.success)).toEqual(sortedHints(reference.success));
+      expect(sortedHints(hints.success).run).toEqual(['alpha.mod']);
+    }
+  }),
+);
+
+/** The same batch answer with one Action's run answer replaced by `unavailable`. */
+type BatchAnswer = Effect.Success<ReturnType<(typeof SubjectAccessInspection)['Service']['capabilities']>>;
+
+const withUnavailableRun = (answered: BatchAnswer, actionKey: string): BatchAnswer => ({
+  ...answered,
+  authorities: answered.authorities.map((authority) =>
+    authority.actionKey === actionKey ? { ...authority, run: 'unavailable' as const } : authority,
+  ),
+});
+
+it.effect('never reads an unavailable first-batch Action answer as denied, even when the next batch would allow', () =>
+  Effect.gen(function* unavailableAnswerFailsClosed() {
+    const { installed, keyOf, snapshot } = yield* actionModulesCatalog({
+      'alpha.mod': [moduleAction('alpha.mod', 'alpha.mod.first'), moduleAction('alpha.mod', 'alpha.mod.second')],
+    });
+    const inspection = subjectInspectionFixture({
+      capabilities: [...keyOf.values()].map((key) => ({ key, modes: ['run'] as const })),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    // The first capability batch answers alpha's first key `unavailable`; a later batch would answer it allowed.
+    let batches = 0;
+    const answeringUnavailableOnce = Layer.effect(
+      SubjectAccessInspection,
+      Effect.gen(function* unavailableOnce() {
+        const service = yield* SubjectAccessInspection;
+        return {
+          ...service,
+          capabilities: (input: Parameters<typeof service.capabilities>[0]) =>
+            service.capabilities(input).pipe(
+              Effect.map((answered) => {
+                batches += 1;
+                return batches > 1 ? answered : withUnavailableRun(answered, 'alpha.mod.first');
+              }),
+            ),
+        };
+      }),
+    ).pipe(Layer.provideMerge(inspection.layer));
+    const failure = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(answeringUnavailableOnce),
+      Effect.flip,
+    );
+    expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
+    expect(batches).toBe(1);
   }),
 );

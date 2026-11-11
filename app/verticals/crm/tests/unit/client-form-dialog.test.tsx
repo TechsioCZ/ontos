@@ -1,6 +1,7 @@
 // @rstest-environment happy-dom
 // The client form as the user sees it: typing changes only the draft, and one Save button (or the create button)
 // sends it. Only the i18n runtime, the toaster and the browser runtime's clock are replaced.
+import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { afterEach, describe, expect, it, rstest } from 'effect-rstest';
 import { act } from 'react';
@@ -24,6 +25,9 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
 }));
+
+const labels = saveLabelsFor('cs');
+const copy = { clientName: 'client-name', contactName: 'contact-name', nameRequired: 'Vyplňte název' } as const;
 
 const opened = Schema.decodeSync(IsoTimeSchema)('2026-10-15T10:00:00.000Z');
 
@@ -52,6 +56,8 @@ const recordsWith = (items: readonly Client[]): RecordsResponse => ({
     writeAssigned: false,
   }),
 });
+
+const bodyText = () => document.body.textContent ?? '';
 
 const settle = async (): Promise<void> => {
   await browserRuntime.runPromise(Effect.yieldNow);
@@ -127,6 +133,15 @@ afterEach(() => {
 });
 
 describe('client form', () => {
+  it.live('reads the required text of a required field in Czech', () =>
+    Effect.gen(function* requiredText() {
+      yield* Effect.promise(() => mount({ mode: 'create', submit: succeeding([]) }));
+      const name = document.querySelector<HTMLInputElement>('[id="crm-client-name"]');
+      expect(name?.labels?.[0]?.textContent).toContain(requiredLabelFor('cs'));
+      expect(document.body.textContent).not.toContain('(required)');
+    }),
+  );
+
   it.live('editing a client sends nothing until Uložit is clicked, and then sends once', () =>
     Effect.gen(function* editSendsOnce() {
       const sent: CrmCommandInput[] = [];
@@ -176,6 +191,28 @@ describe('client form', () => {
       await clickButton(container, 'Uložit');
       expect(sent.length).toBe(1);
       expect(sent[0]).toMatchObject({ _tag: 'CreateClient', kind: 'organization', name: 'Nová firma' });
+    }),
+  );
+
+  it.live('a new client with only its main contact typed says why Uložit is disabled and marks the name', () =>
+    Effect.promise(async () => {
+      const sent: CrmCommandInput[] = [];
+      const { container } = await mount({ mode: 'create', submit: succeeding(sent) });
+      expect(bodyText()).not.toContain(labels.invalid);
+      expect(bodyText()).not.toContain(copy.nameRequired);
+
+      await typeInto(container, 'crm-new-contact-0-name', copy.contactName);
+      await settle();
+      expect(bodyText()).toContain(labels.invalid);
+      expect(bodyText()).toContain(copy.nameRequired);
+      expect(buttonNamed(container, labels.save).disabled).toBe(true);
+
+      await typeInto(container, 'crm-client-name', copy.clientName);
+      await settle();
+      expect(bodyText()).not.toContain(labels.invalid);
+      expect(bodyText()).toContain(labels.unsaved);
+      expect(buttonNamed(container, labels.save).disabled).toBe(false);
+      expect(sent).toEqual([]);
     }),
   );
 });

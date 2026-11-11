@@ -3,8 +3,7 @@ import { comboboxTranslations } from '@app/admin-ui';
 import { withNativeLabels } from '@app/admin-ui/select-template';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Combobox } from '@techsio/ui-kit/molecules/combobox';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { Combobox, FormInput } from '@app/admin-ui/form-controls';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import type { OccupancyDraft } from './editor-state.ts';
 

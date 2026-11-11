@@ -68,6 +68,10 @@ rs.mock('../../../api/oauth-connections/grant-store.ts', () => ({
     }),
 }));
 rs.mock('../../../api/oauth-connections/connection-service.ts', () => ({
+  checkLiveGrant: () =>
+    controls.live === undefined
+      ? Effect.die('Live connection is not configured')
+      : Effect.succeed({ grant: controls.live.grant, names: new Map() }),
   loadActingAuthority: () =>
     Effect.succeed({
       labelOf: (moduleId: string | null | undefined) => moduleId ?? '',

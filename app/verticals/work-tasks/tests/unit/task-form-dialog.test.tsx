@@ -3,6 +3,7 @@
 // question before unsaved changes are left. Only the i18n runtime and the router blocker are replaced; the page's
 // save is a recorded function.
 import type { RevisionedSaveResult } from '@app/admin-ui';
+import { requiredLabelFor } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { act } from 'react';
@@ -250,6 +251,14 @@ describe('task edit panel with one Save button', () => {
       yield* Effect.promise(() => waitUntil(() => saveState() === 'conflict'));
       expect(buttons('Načíst aktuální verzi')).toHaveLength(1);
       expect(sent).toHaveLength(1);
+    }),
+  );
+
+  it.effect('reads the required text of a required field in Czech', () =>
+    Effect.gen(function* requiredText() {
+      yield* Effect.promise(mount);
+      expect(titleField().labels?.[0]?.textContent).toContain(requiredLabelFor('cs'));
+      expect(document.body.textContent).not.toContain('(required)');
     }),
   );
 });

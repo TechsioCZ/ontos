@@ -66,7 +66,7 @@ import { ReadPermissionDenied, ReadPermissionUnavailable } from '../../src/reads
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import type { ReadRuntimeService } from '../../src/reads/runtime.ts';
 import type { VerticalRuntimeRegistration } from '../../src/modules/runtime-registration.ts';
-import { bindLiveAccessGate } from '../../src/operations/access-gate.ts';
+import { bindLiveAccessGate, bindLiveActionAccessGate } from '../../src/operations/access-gate.ts';
 import type { BoundAccessGate } from '../../src/operations/access-gate.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
 import { DatabaseIdentityEnrollmentContext } from '../../src/db/database-identities.ts';
@@ -281,6 +281,9 @@ const buildRuntime = (input: {
     const enforcement = AccessDecisionLive.pipe(Layer.provideMerge(ports), Layer.provide(base));
     const context = yield* Layer.build(Layer.mergeAll(base, enforcement));
     const boundGate = yield* bindLiveAccessGate.pipe(Effect.provideContext(context));
+    // Action execution binds the gate the live Action runtime binds: it prepares the decision before the owner
+    // transaction opens and re-checks only persisted currentness inside it, so no SpiceDB call runs in the transaction.
+    const actionGate = yield* bindLiveActionAccessGate.pipe(Effect.provideContext(context));
     // Every scenario entrypoint is a late-created TEST definition, so each run binds exactly its own owner.
     const actionRuntimeOf = (ownerRegistration: VerticalRuntimeRegistration) =>
       makeActionRuntime(
@@ -289,7 +292,7 @@ const buildRuntime = (input: {
         { checkActionPermission: () => Effect.succeed('allowed' as const) },
         testOperationalScopeResolver,
         {
-          accessDecision: boundGate,
+          accessDecision: actionGate,
           databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
           lockCompositionAuthority: () => Effect.succeed([]),
           moduleEntrypointGateway: openModuleEntrypointGateway,

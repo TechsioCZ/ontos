@@ -15,7 +15,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
+import { FormTextarea } from '@app/admin-ui/form-controls';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 import { useEffect, useRef, useState } from 'react';
 import { revokeAgentConnection, runAgentCommand } from './agent-entities-client.ts';

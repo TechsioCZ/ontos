@@ -4,7 +4,7 @@ import { DetailList, SaveBar, UnsavedChangesDialog, formatDate, saveLabelsFor } 
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { Option } from 'effect';
 import type { ReactNode } from 'react';
 

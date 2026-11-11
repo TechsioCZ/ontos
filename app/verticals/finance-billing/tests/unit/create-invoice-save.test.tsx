@@ -3,6 +3,7 @@
 // deliberate Uložit, a failed create keeps the input and shows the error toast, and a draft sent for approval is
 // announced and closes the panel. Only the i18n runtime, the router blocker, the toaster and the two pickers are
 // replaced.
+import { requiredLabelFor } from '@app/admin-ui';
 import { Effect } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
@@ -141,6 +142,21 @@ afterEach(() => {
 });
 
 describe('new invoice safeguards', () => {
+  it.live('reads the required text of a required field in Czech', () =>
+    Effect.gen(function* requiredText() {
+      const drafts: DraftInvoiceInput[] = [];
+      yield* mount(
+        <CreateInvoiceDialog onOpenChange={onOpenChange} open vm={draftVm(drafts, () => ({ invoice, ok: true }))} />,
+      );
+      expect(document.body.textContent).toContain(requiredLabelFor('cs'));
+      expect(document.body.textContent).not.toContain('(required)');
+      const issueDateLabel = [...document.querySelectorAll('label')].find((label) =>
+        label.textContent?.includes('finance-billing.faktury.form.issueDate'),
+      );
+      expect(issueDateLabel?.textContent ?? '').toContain(requiredLabelFor('cs'));
+    }),
+  );
+
   it.live('a 0 Kč line needs a second Uložit: the first only warns, a changed line asks again', () =>
     Effect.gen(function* zeroPrice() {
       const drafts: DraftInvoiceInput[] = [];

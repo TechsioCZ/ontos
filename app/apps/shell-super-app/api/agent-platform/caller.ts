@@ -330,10 +330,10 @@ export type SubjectAccessPhase = (typeof SUBJECT_ACCESS_PHASES)[number];
  * and fixed names only, never an identity. Kept in a Ref, so a read that stalls or is cut off still names its step.
  */
 export interface SubjectAccessTrace {
-  /** Distinct Action keys asked about in the capability batch, each in both modes. */
+  /** Distinct Action keys asked about in the capability batches, each in both modes. */
   readonly actions: number;
   readonly active: SubjectAccessPhase | null;
-  /** Module capability carriers asked about in the capability batch. */
+  /** Module capability carriers asked about in the capability batches. */
   readonly carriers: number;
   readonly durations: Partial<Record<SubjectAccessPhase, number>>;
   /** Calls made to the subject inspection service; each is one composition-checked batch. */
@@ -368,13 +368,24 @@ const tracedPhase = Effect.fn('AgentPlatform.subjectAccessPhase')(function* trac
 const countInspection = (
   trace: Ref.Ref<SubjectAccessTrace>,
   counts: Partial<Pick<SubjectAccessTrace, 'actions' | 'carriers'>>,
-) => Ref.update(trace, (current) => ({ ...current, ...counts, inspectionCalls: current.inspectionCalls + 1 }));
+) =>
+  Ref.update(trace, (current) => ({
+    ...current,
+    actions: current.actions + (counts.actions ?? 0),
+    carriers: current.carriers + (counts.carriers ?? 0),
+    inspectionCalls: current.inspectionCalls + 1,
+  }));
 
 /**
  * Read-only connection-ceiling hints. No subject scope, credential or execution authority is returned; the installed
- * catalog is returned only so the caller names the modules from the same load the hints were taken against. Two
- * inspection calls, whatever the catalog size: the subject's scope, then every module carrier and every Action in one
- * batch.
+ * catalog is returned only so the caller names the modules from the same load the hints were taken against.
+ *
+ * A module is usable, writable or proposable as soon as ONE of its carriers or Actions is admitted, so the hints ask
+ * only what can still change them: first one Action of every module (both modes), then the remaining Actions of a
+ * module whose run or propose answer is still open and the carriers of a module that is not yet usable. The sets are
+ * exactly those of asking everything; each asked question is decided and evidenced as alone. At most three inspection
+ * calls, whatever the catalog size: the subject's scope and one or two capability batches. Executing an Action never
+ * relies on these hints; the gate decides it on its own.
  */
 export const subjectModuleAccess = Effect.fn('AgentPlatform.subjectModuleAccess')(function* subjectModuleAccessEffect(
   input: SubjectInspectionInput,
@@ -399,47 +410,97 @@ export const subjectModuleAccess = Effect.fn('AgentPlatform.subjectModuleAccess'
   const actions = installed.contracts.flatMap(({ manifest }) =>
     manifest.publicSurface.actions.filter((action) => action.legalEntityScope !== 'forbidden'),
   );
-  const actionKeys = [...new Set(actions.map(({ actionKey }) => actionKey))];
-  yield* countInspection(progress, { actions: actionKeys.length, carriers: carriers.length });
-  const inspected = yield* tracedPhase(
-    progress,
-    'capabilities',
-    inspection.capabilities({
+  // Every distinct Action key with the modules that own it, and each module's keys in declaration order.
+  const ownersOf = new Map<string, Set<string>>();
+  const keysOf = new Map<string, string[]>();
+  for (const { actionKey, owningModuleId } of actions) {
+    const owners = ownersOf.get(actionKey) ?? new Set<string>();
+    owners.add(owningModuleId);
+    ownersOf.set(actionKey, owners);
+    const keys = keysOf.get(owningModuleId) ?? [];
+    if (!keys.includes(actionKey)) {
+      keys.push(actionKey);
+    }
+    keysOf.set(owningModuleId, keys);
+  }
+  const ask = Effect.fn('AgentPlatform.subjectCapabilityBatch')(function* ask(
+    actionKeys: readonly string[],
+    asked: readonly ModuleCarrier[],
+  ) {
+    yield* countInspection(progress, { actions: actionKeys.length, carriers: asked.length });
+    const inspected = yield* inspection.capabilities({
       ...input,
       actionKeys,
-      questions: carriers.map((carrier) => ({
+      questions: asked.map((carrier) => ({
         carrier: { accessDeclaration: carrier.declaration },
         legalEntityScope: carrier.legalEntityScope,
         // Visibility for a selector-bearing read is a LIST question, not a targetless record decision.
         listing: carrier.declaration?.kind === 'read' && carrier.declaration.selectors.length > 0,
       })),
-    }),
-  );
-  if (inspected.answers.length !== carriers.length) {
-    return yield* new SubjectInspectionUnavailable({ reason: 'Module inspection returned incomplete authority' });
-  }
-  for (const [index, carrier] of carriers.entries()) {
-    const outcome = inspected.answers[index]?.decision.outcome;
-    if (outcome === undefined || outcome === 'UNAVAILABLE') {
+    });
+    if (inspected.answers.length !== asked.length) {
       return yield* new SubjectInspectionUnavailable({ reason: 'Module inspection returned incomplete authority' });
     }
-    if (outcome === 'ALLOWED' || outcome === 'NEEDS_APPROVAL') {
-      access.add(carrier.moduleId);
+    for (const [index, carrier] of asked.entries()) {
+      const outcome = inspected.answers[index]?.decision.outcome;
+      if (outcome === undefined || outcome === 'UNAVAILABLE') {
+        return yield* new SubjectInspectionUnavailable({ reason: 'Module inspection returned incomplete authority' });
+      }
+      if (outcome === 'ALLOWED' || outcome === 'NEEDS_APPROVAL') {
+        access.add(carrier.moduleId);
+      }
     }
-  }
-  const byKey = new Map(inspected.authorities.map((authority) => [authority.actionKey, authority]));
-  if (byKey.size !== actionKeys.length || actionKeys.some((key) => !byKey.has(key))) {
-    return yield* new SubjectInspectionUnavailable({ reason: 'Action inspection returned incomplete authority' });
-  }
-  for (const action of actions) {
-    const authority = byKey.get(action.actionKey);
-    if (authority?.run === 'allowed') {
-      run.add(action.owningModuleId);
-      access.add(action.owningModuleId);
+    const byKey = new Map(inspected.authorities.map((authority) => [authority.actionKey, authority]));
+    // An unavailable answer is never a denial: a key the hints could not decide fails the whole description, exactly
+    // as asking everything at once fails it, instead of leaving its module out of run or propose.
+    if (
+      byKey.size !== actionKeys.length ||
+      actionKeys.some((key) => !byKey.has(key)) ||
+      inspected.authorities.some((authority) => authority.propose === 'unavailable' || authority.run === 'unavailable')
+    ) {
+      return yield* new SubjectInspectionUnavailable({ reason: 'Action inspection returned incomplete authority' });
     }
-    if (authority?.propose === 'allowed') {
-      propose.add(action.owningModuleId);
-      access.add(action.owningModuleId);
+    for (const [actionKey, authority] of byKey) {
+      for (const owner of ownersOf.get(actionKey) ?? []) {
+        if (authority.run === 'allowed') {
+          run.add(owner);
+          access.add(owner);
+        }
+        if (authority.propose === 'allowed') {
+          propose.add(owner);
+          access.add(owner);
+        }
+      }
+    }
+    return actionKeys.length + asked.length;
+  });
+  const firstKeys = [...new Set([...keysOf.values()].flatMap((keys) => keys.slice(0, 1)))];
+  const settled = (moduleId: string) => run.has(moduleId) && propose.has(moduleId);
+  const batches = yield* tracedPhase(
+    progress,
+    'capabilities',
+    Effect.gen(function* askOpenQuestions() {
+      if (firstKeys.length > 0) {
+        yield* ask(firstKeys, []);
+      }
+      const openKeys = [
+        ...new Set([...keysOf].flatMap(([moduleId, keys]) => (settled(moduleId) ? [] : keys.slice(1)))),
+      ];
+      const openCarriers = carriers.filter(({ moduleId }) => !access.has(moduleId));
+      if (openKeys.length === 0 && openCarriers.length === 0) {
+        return firstKeys.length > 0 ? 1 : 0;
+      }
+      yield* ask(openKeys, openCarriers);
+      return firstKeys.length > 0 ? 2 : 1;
+    }),
+  );
+  // Two batches must describe one release: a composition published between them refuses the hints.
+  if (batches > 1) {
+    const after = yield* (yield* ShellInstalledModuleCatalog).load.pipe(
+      Effect.mapError((cause) => new AgentStoreUnavailable({ cause })),
+    );
+    if (after.composition.revision !== installed.composition.revision) {
+      return yield* new SubjectInspectionUnavailable({ reason: 'Composition changed during subject inspection' });
     }
   }
   return { access, inspectionOnly: true as const, installed, propose, run };

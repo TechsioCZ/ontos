@@ -2,10 +2,11 @@
 // Intent prefetch of the products list: the real list hooks, the strict detail store and the ui-kit table, with only
 // the generated records client replaced and the clock faked. A row the user points at or focuses after the warm-up
 // went stale reads its detail once, so the product opens ready; a fresh row sends nothing.
+import { INTENT_READ_CONCURRENCY, LIST_WARM_ROWS } from '@app/admin-ui';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef, TanstackTable } from '@techsio/ui-kit/organisms/data-table';
-import { Effect, Option, Schema } from 'effect';
+import { Deferred, Effect, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { act, createElement, useState } from 'react';
@@ -80,6 +81,8 @@ const responseOf = (rows: typeof products) =>
 
 /** Every records read the page sent; a detail read names its product. */
 const reads: string[] = [];
+/** While set, detail reads wait for it to be released; unset, they answer in the same tick. */
+let detailGate: Deferred.Deferred<boolean> | null = null;
 const serve = () => {
   rstest.mocked(executeRecords).mockImplementation(({ view }) => {
     if (view?.includeProductCategories === true) {
@@ -88,7 +91,8 @@ const serve = () => {
     }
     if (view?.productId !== undefined) {
       reads.push(`detail:${view.productId}`);
-      return Effect.succeed(responseOf(products.filter((entry) => entry.id === view.productId)));
+      const answer = Effect.succeed(responseOf(products.filter((entry) => entry.id === view.productId)));
+      return detailGate === null ? answer : Deferred.await(detailGate).pipe(Effect.andThen(answer));
     }
     reads.push('list');
     return Effect.succeed(responseOf(products));
@@ -159,13 +163,25 @@ const idle = (seconds: number): Effect.Effect<void> =>
         }),
       ).pipe(Effect.andThen(Effect.suspend(() => idle(seconds - 1))));
 
-const pointedRow = (): HTMLElement => {
-  const row = document.querySelector<HTMLElement>(`tbody tr[data-index="${POINTED}"]`);
+const rowAt = (index: number): HTMLElement => {
+  const row = document.querySelector<HTMLElement>(`tbody tr[data-index="${index}"]`);
   if (row === null) {
     throw new Error('the pointed row is not rendered');
   }
   return row;
 };
+const pointedRow = (): HTMLElement => rowAt(POINTED);
+
+/** The pointer passes over `indexes` in order within one frame, as a fast sweep down the table does. */
+const sweep = (indexes: readonly number[]) =>
+  Effect.promise(() =>
+    act(async () => {
+      for (const index of indexes) {
+        rowAt(index).dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
+      }
+      await browserRuntime.runPromise(Effect.yieldNow);
+    }),
+  );
 
 /** The pointer enters the row (React derives `pointerenter` from `pointerover`). */
 const pointAt = Effect.promise(() =>
@@ -201,7 +217,8 @@ const pointedSnapshot = () =>
 const staleList = Effect.gen(function* staleList() {
   yield* mount(ProductsList);
   yield* idle(5);
-  expect(detailReads()).toHaveLength(ROWS);
+  // Only the first rows are warmed on opening, not the whole page.
+  expect(detailReads()).toHaveLength(LIST_WARM_ROWS);
   yield* idle(20);
   expect(pointedSnapshot()).toBe('pending');
   reads.length = 0;
@@ -216,6 +233,7 @@ beforeEach(() => {
   categoryChoicesData.invalidate();
   reads.length = 0;
   opened.length = 0;
+  detailGate = null;
   serve();
 });
 
@@ -268,5 +286,58 @@ it.effect('an idle list nobody points at sends no detail reads', () =>
     yield* idle(60);
     expect(detailReads()).toEqual([]);
     expect(reads.length).toBeLessThanOrEqual(6);
+  }),
+);
+
+it.effect('opening the list warms its first rows only; a row further down is warmed once the user points at it', () =>
+  Effect.gen(function* coldRow() {
+    yield* mount(ProductsList);
+    yield* idle(5);
+    expect(detailReads()).toEqual(Array.from({ length: LIST_WARM_ROWS }, (_, index) => `detail:product-${index + 1}`));
+    reads.length = 0;
+
+    yield* sweep([ROWS - 1]);
+    yield* idle(1);
+    expect(detailReads()).toEqual([`detail:product-${ROWS}`]);
+  }),
+);
+
+it.effect('a pointer passing quickly over many rows reads only the row it rests on', () =>
+  Effect.gen(function* fastSweep() {
+    yield* staleList;
+    const swept = Array.from({ length: 20 }, (_, index) => index + LIST_WARM_ROWS);
+    yield* sweep(swept);
+    expect(detailReads()).toEqual([]);
+    yield* idle(1);
+    const last = swept.at(-1) ?? 0;
+    expect(detailReads()).toEqual([`detail:product-${last + 1}`]);
+  }),
+);
+
+it.effect('keyboard focus run quickly down many stale rows reads at most two details at once, then the last row', () =>
+  Effect.gen(function* fastFocus() {
+    yield* staleList;
+    const gate = yield* Deferred.make<boolean>();
+    detailGate = gate;
+
+    const walked = Array.from({ length: 20 }, (_, index) => index + LIST_WARM_ROWS);
+    yield* Effect.promise(() =>
+      act(async () => {
+        for (const index of walked) {
+          rowAt(index).focus();
+        }
+        await browserRuntime.runPromise(Effect.yieldNow);
+      }),
+    );
+    // The first two rows start at once; every later one waits, and each newer row replaces the one waiting.
+    expect(detailReads()).toHaveLength(INTENT_READ_CONCURRENCY);
+    yield* Deferred.succeed(gate, true);
+    yield* idle(3);
+    const last = walked.at(-1) ?? 0;
+    expect(detailReads()).toEqual([
+      `detail:product-${LIST_WARM_ROWS + 1}`,
+      `detail:product-${LIST_WARM_ROWS + 2}`,
+      `detail:product-${last + 1}`,
+    ]);
   }),
 );

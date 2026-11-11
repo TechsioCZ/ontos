@@ -1,11 +1,12 @@
-// Prepares a payment reminder. Typing changes only the draft; the shared Uložit records it once, and the demo e-mail
-// dispatcher sends it after the commit. Copy and download only take the text away and record nothing.
+// Prepares a payment reminder. Typing changes only the draft. Recording it really sends an e-mail, so the shared Uložit
+// (in the footer and in the leave question) only opens a review naming the recipient; its confirmation records the
+// reminder once, and the e-mail dispatcher sends it after the commit. Copy and download record nothing.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import type { Schema } from 'effect';
-import { Data, Effect } from 'effect';
-import { UnsavedChangesDialog, surfaceTileClassName } from '@app/admin-ui';
+import { Data, Effect, Schema } from 'effect';
+import { UnsavedChangesDialog, dialogCloseLabel, surfaceTileClassName } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { useState } from 'react';
@@ -13,6 +14,7 @@ import type { Invoice } from '../../../../shared/apis/records.ts';
 import { reminderText } from '../../../../shared/domain/finance-planning.ts';
 import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { FinanceSaveActions, useFinanceFormSave } from './finance-form-save.tsx';
+import type { FinanceFormSave } from './finance-form-save.tsx';
 import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
 import type { EmailProviderState } from './reminder-email-receipts.tsx';
 
@@ -44,6 +46,108 @@ const reminderProblem = (draft: ReminderDraft, canSendEmail: boolean): string | 
   return textLength > REMINDER_TEXT_MAX
     ? `Text upomínky je příliš dlouhý (${textLength} znaků, nejvýše ${REMINDER_TEXT_MAX}). Zkraťte ho.`
     : undefined;
+};
+
+const R = 'finance-billing.financeUi.reminders';
+
+/** Where the review is: closed, open for the person to confirm, or confirmed and sending. */
+const ReviewStepSchema = Schema.Literals(['closed', 'confirmed', 'open']);
+type ReviewStep = typeof ReviewStepSchema.Type;
+
+/** The review before the e-mail goes out: which invoice, to whom and on whose behalf. Only its confirm sends. */
+const ReminderReview = ({
+  invoice,
+  issuerName,
+  onBack,
+  onConfirm,
+  open,
+  recipient,
+  sending,
+}: {
+  readonly invoice: Invoice;
+  readonly issuerName: string | undefined;
+  /** Zpět: back to the form, nothing is sent. */
+  readonly onBack: () => void;
+  /** Records the reminder once; the e-mail is sent after the commit. */
+  readonly onConfirm: () => void;
+  readonly open: boolean;
+  readonly recipient: string;
+  readonly sending: boolean;
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <Dialog
+      actions={
+        <>
+          <Button disabled={sending} onClick={onBack} theme="outlined" variant="secondary">
+            {t(`${R}.reviewBack`)}
+          </Button>
+          <Button disabled={sending} isLoading={sending} onClick={onConfirm} variant="primary">
+            {t(`${R}.reviewConfirm`)}
+          </Button>
+        </>
+      }
+      closeLabel={dialogCloseLabel}
+      customTrigger
+      description={t(`${R}.reviewDescription`)}
+      onOpenChange={(details) => {
+        if (!details.open && !sending) {
+          onBack();
+        }
+      }}
+      open={open}
+      placement="center"
+      role="alertdialog"
+      size="sm"
+      title={t(`${R}.reviewTitle`)}
+    >
+      <dl className="grid grid-cols-[auto_1fr] gap-x-300 gap-y-100 text-sm" data-testid="reminder-review">
+        <dt className="text-fg-secondary">{t(`${R}.reviewInvoice`)}</dt>
+        <dd>{invoice.number ?? invoice.documentNumber}</dd>
+        <dt className="text-fg-secondary">{t(`${R}.reviewRecipient`)}</dt>
+        <dd className="font-semibold">{recipient}</dd>
+        {issuerName !== undefined && (
+          <>
+            <dt className="text-fg-secondary">{t(`${R}.reviewSender`)}</dt>
+            <dd>{issuerName}</dd>
+          </>
+        )}
+      </dl>
+    </Dialog>
+  );
+};
+
+/** Uložit, in the footer and in the leave question, opens the review; it never sends the e-mail by itself. */
+const useReviewedSave = (form: FinanceFormSave) => {
+  const [review, setReview] = useState<ReviewStep>('closed');
+  const sending = form.record.status === 'saving';
+  // A confirmed review stays up while the reminder is recorded; a failure brings the form back with its reason.
+  const open = review === 'open' || (review === 'confirmed' && sending);
+  const openReview = () => setReview('open');
+  const reviewed: FinanceFormSave = {
+    ...form,
+    guard: {
+      ...form.guard,
+      prompt: {
+        ...form.guard.prompt,
+        onSave: () => {
+          form.guard.prompt.onStay();
+          openReview();
+        },
+      },
+    },
+    handleSave: openReview,
+  };
+  return {
+    handleBack: () => setReview('closed'),
+    handleConfirm: () => {
+      setReview('confirmed');
+      form.handleSave();
+    },
+    open,
+    reviewed,
+    sending,
+  };
 };
 
 const EmailProviderStatus = ({
@@ -128,6 +232,7 @@ export const InvoiceReminderForm = ({
     value: draft,
     vm,
   });
+  const review = useReviewedSave(form);
   const textLength = draft.text.trim().length;
   const textTooLong = textLength > REMINDER_TEXT_MAX;
   const problem = form.record.status === 'invalid' ? reminderProblem(draft, canSendEmail) : undefined;
@@ -156,6 +261,15 @@ export const InvoiceReminderForm = ({
   };
   return (
     <div className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
+      <ReminderReview
+        invoice={invoice}
+        issuerName={issuerName}
+        onBack={review.handleBack}
+        onConfirm={review.handleConfirm}
+        open={review.open}
+        recipient={draft.recipient.trim()}
+        sending={review.sending}
+      />
       <EmailProviderStatus issuerName={issuerName} provider={provider} />
       {notice !== undefined && (
         <StatusText showIcon size="sm" status="success">
@@ -203,10 +317,10 @@ export const InvoiceReminderForm = ({
           Stáhnout návrh
         </Button>
         <div className="ml-auto flex flex-wrap items-center gap-100">
-          <FinanceSaveActions form={form} size="sm" />
+          <FinanceSaveActions form={review.reviewed} size="sm" />
         </div>
       </div>
-      <UnsavedChangesDialog labels={form.labels} prompt={form.guard.prompt} />
+      <UnsavedChangesDialog labels={form.labels} prompt={review.reviewed.guard.prompt} />
     </div>
   );
 };

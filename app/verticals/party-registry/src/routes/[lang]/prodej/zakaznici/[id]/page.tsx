@@ -1,6 +1,6 @@
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker, useNavigate, useParams } from '@modern-js/plugin-tanstack/runtime';
-import { PageHeader, SectionCard, Toaster } from '@app/admin-ui';
+import { DocumentTitle, PageHeader, SectionCard, Toaster } from '@app/admin-ui';
 import { pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -164,6 +164,7 @@ export const CustomerDetailPageRecordView = ({ onChanged, onRetry, record, stale
   const backHref = `/${language ?? 'cs'}/prodej/zakaznici`;
   return (
     <>
+      <DocumentTitle title={subject.displayName} />
       <PageHeader
         actions={
           <Button onClick={() => detail.requestNavigation(backHref)} theme="outlined" variant="secondary">

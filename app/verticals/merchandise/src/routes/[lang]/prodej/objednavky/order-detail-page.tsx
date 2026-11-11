@@ -6,7 +6,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Effect } from 'effect';
 import { useState } from 'react';
-import { PageHeader, Toaster } from '@app/admin-ui';
+import { DocumentTitle, PageHeader, Toaster } from '@app/admin-ui';
 import type { Order } from '../../../../../shared/apis/records.ts';
 import type { OrderStatus } from '../../../../../shared/domain/merchandise-model.ts';
 import { storefrontBrandOf } from '../../../../../shared/domain/storefront-brand.ts';
@@ -161,6 +161,7 @@ export const OrderDetailPage = ({ context, legalEntityId, orderId }: OrderDetail
     <>
       <UltramodernRouteHead />
       <section className="flex flex-col gap-200">
+        <DocumentTitle title={detail.status === 'ready' ? detail.order.number : undefined} />
         <PageHeader
           actions={
             detail.status === 'ready' ? (

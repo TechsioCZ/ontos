@@ -20,12 +20,11 @@ export const assertMerchandiseSearchPublished = Effect.fn('Merchandise.assertSea
     if (scope.legalEntityId === undefined) {
       return yield* unavailable();
     }
-    const head = yield* loadHead(db, { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId }).pipe(
+    // An unverified import fails here. A company without a head row has published nothing, so the Core index holds
+    // none of its records and the search answers empty.
+    yield* loadHead(db, { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId }).pipe(
       Effect.mapError(unavailable),
     );
-    if (head === undefined) {
-      return yield* unavailable();
-    }
     return yield* Effect.void;
   },
 );

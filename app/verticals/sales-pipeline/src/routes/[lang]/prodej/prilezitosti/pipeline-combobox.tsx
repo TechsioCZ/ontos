@@ -1,5 +1,5 @@
 import { comboboxTranslations } from '@app/admin-ui';
-import { Combobox } from '@techsio/ui-kit/molecules/combobox';
+import { Combobox } from '@app/admin-ui/form-controls';
 import type { ComboboxProps } from '@techsio/ui-kit/molecules/combobox';
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import type { FocusEvent } from 'react';

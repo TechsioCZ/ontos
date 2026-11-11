@@ -1,0 +1,1838 @@
+{
+  "version": "8",
+  "dialect": "postgres",
+  "id": "2804de4a-4396-4e9d-b8a2-ec7a2a6ae030",
+  "prevIds": [
+    "00000000-0000-0000-0000-000000000000"
+  ],
+  "ddl": [
+    {
+      "name": "promotion",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "basis_policies",
+      "entityType": "tables",
+      "schema": "promotion"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "gateway_assertion_redemptions",
+      "entityType": "tables",
+      "schema": "promotion"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "issued_proofs",
+      "entityType": "tables",
+      "schema": "promotion"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "lifecycle_facts",
+      "entityType": "tables",
+      "schema": "promotion"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "promotion_drafts",
+      "entityType": "tables",
+      "schema": "promotion"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "published_promotions",
+      "entityType": "tables",
+      "schema": "promotion"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "selection_policies",
+      "entityType": "tables",
+      "schema": "promotion"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "tenant_generations",
+      "entityType": "tables",
+      "schema": "promotion"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "voucher_disable_facts",
+      "entityType": "tables",
+      "schema": "promotion"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "vouchers",
+      "entityType": "tables",
+      "schema": "promotion"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "basis_policies"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "policy",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "basis_policies"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "version",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "basis_policies"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "basis_policies"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "basis_policies"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "basis_policies"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "basis_policies"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "issuer",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "audience",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "jti",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "expires_at",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "issued_proofs"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "proof_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "issued_proofs"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "generation",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "issued_proofs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stage",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "issued_proofs"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "merchandise_proof_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "issued_proofs"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "binding",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "issued_proofs"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "result",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "issued_proofs"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "issued_proofs"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "issued_proofs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "issued_proofs"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "issued_proofs"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "lifecycle_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "fact_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "lifecycle_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "promotion_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "lifecycle_facts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "kind",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "lifecycle_facts"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_at",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "lifecycle_facts"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "version",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "lifecycle_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "lifecycle_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "lifecycle_facts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "lifecycle_facts"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "lifecycle_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "promotion_drafts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "promotion_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "promotion_drafts"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "meaning",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "promotion_drafts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "predecessor_promotion_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "promotion_drafts"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "version",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "promotion_drafts"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "promotion_drafts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "promotion_drafts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "promotion_drafts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "promotion_drafts"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "promotion_drafts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "published_promotions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "promotion_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "published_promotions"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "meaning",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "published_promotions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "predecessor_promotion_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "published_promotions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "version",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "published_promotions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "published_promotions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "published_promotions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "published_promotions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "published_promotions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "selection_policies"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "kind",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "selection_policies"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "ordered_promotion_ids",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "selection_policies"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "version",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "selection_policies"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "selection_policies"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "selection_policies"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "selection_policies"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "selection_policies"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "tenant_generations"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "generation",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "tenant_generations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "voucher_disable_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "voucher_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "voucher_disable_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "voucher_disable_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "voucher_disable_facts"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "voucher_disable_facts"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "voucher_disable_facts"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "vouchers"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "voucher_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "vouchers"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "promotion_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "vouchers"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "normalized_code",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "vouchers"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "vouchers"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "vouchers"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "vouchers"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "promotion",
+      "table": "vouchers"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "expires_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "promotion_redemption_expiry",
+      "entityType": "indexes",
+      "schema": "promotion",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "promotion_id"
+      ],
+      "schemaTo": "promotion",
+      "tableTo": "published_promotions",
+      "columnsTo": [
+        "tenant_id",
+        "promotion_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "promotion_lifecycle_tenant_fk",
+      "entityType": "fks",
+      "schema": "promotion",
+      "table": "lifecycle_facts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "promotion_id"
+      ],
+      "schemaTo": "promotion",
+      "tableTo": "promotion_drafts",
+      "columnsTo": [
+        "tenant_id",
+        "promotion_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "promotion_publication_draft_fk",
+      "entityType": "fks",
+      "schema": "promotion",
+      "table": "published_promotions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "predecessor_promotion_id"
+      ],
+      "schemaTo": "promotion",
+      "tableTo": "promotion_drafts",
+      "columnsTo": [
+        "tenant_id",
+        "promotion_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "promotion_successor_tenant_fk",
+      "entityType": "fks",
+      "schema": "promotion",
+      "table": "published_promotions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "voucher_id"
+      ],
+      "schemaTo": "promotion",
+      "tableTo": "vouchers",
+      "columnsTo": [
+        "tenant_id",
+        "voucher_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "promotion_voucher_disable_tenant_fk",
+      "entityType": "fks",
+      "schema": "promotion",
+      "table": "voucher_disable_facts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "promotion_id"
+      ],
+      "schemaTo": "promotion",
+      "tableTo": "published_promotions",
+      "columnsTo": [
+        "tenant_id",
+        "promotion_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "promotion_voucher_published_fk",
+      "entityType": "fks",
+      "schema": "promotion",
+      "table": "vouchers"
+    },
+    {
+      "columns": [
+        "issuer",
+        "audience",
+        "jti"
+      ],
+      "nameExplicit": false,
+      "name": "gateway_assertion_redemptions_pkey",
+      "entityType": "pks",
+      "schema": "promotion",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "kind"
+      ],
+      "nameExplicit": false,
+      "name": "selection_policies_pkey",
+      "entityType": "pks",
+      "schema": "promotion",
+      "table": "selection_policies"
+    },
+    {
+      "columns": [
+        "tenant_id"
+      ],
+      "nameExplicit": false,
+      "name": "basis_policies_pkey",
+      "schema": "promotion",
+      "table": "basis_policies",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "proof_id"
+      ],
+      "nameExplicit": false,
+      "name": "issued_proofs_pkey",
+      "schema": "promotion",
+      "table": "issued_proofs",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "fact_id"
+      ],
+      "nameExplicit": false,
+      "name": "lifecycle_facts_pkey",
+      "schema": "promotion",
+      "table": "lifecycle_facts",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "promotion_id"
+      ],
+      "nameExplicit": false,
+      "name": "promotion_drafts_pkey",
+      "schema": "promotion",
+      "table": "promotion_drafts",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "promotion_id"
+      ],
+      "nameExplicit": false,
+      "name": "published_promotions_pkey",
+      "schema": "promotion",
+      "table": "published_promotions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "tenant_id"
+      ],
+      "nameExplicit": false,
+      "name": "tenant_generations_pkey",
+      "schema": "promotion",
+      "table": "tenant_generations",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "voucher_id"
+      ],
+      "nameExplicit": false,
+      "name": "voucher_disable_facts_pkey",
+      "schema": "promotion",
+      "table": "voucher_disable_facts",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "voucher_id"
+      ],
+      "nameExplicit": false,
+      "name": "vouchers_pkey",
+      "schema": "promotion",
+      "table": "vouchers",
+      "entityType": "pks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "proof_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "promotion_proof_tenant_identity",
+      "entityType": "uniques",
+      "schema": "promotion",
+      "table": "issued_proofs"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "promotion_id",
+        "version"
+      ],
+      "nullsNotDistinct": false,
+      "name": "promotion_lifecycle_version",
+      "entityType": "uniques",
+      "schema": "promotion",
+      "table": "lifecycle_facts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "promotion_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "promotion_draft_tenant_identity",
+      "entityType": "uniques",
+      "schema": "promotion",
+      "table": "promotion_drafts"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "promotion_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "promotion_published_tenant_identity",
+      "entityType": "uniques",
+      "schema": "promotion",
+      "table": "published_promotions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "voucher_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "promotion_voucher_tenant_identity",
+      "entityType": "uniques",
+      "schema": "promotion",
+      "table": "vouchers"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "normalized_code"
+      ],
+      "nullsNotDistinct": false,
+      "name": "promotion_voucher_code_permanent",
+      "entityType": "uniques",
+      "schema": "promotion",
+      "table": "vouchers"
+    },
+    {
+      "value": "(\"stage\" = 'MERCHANDISE' and \"merchandise_proof_id\" is null) or (\"stage\" = 'SHIPPING' and \"merchandise_proof_id\" is not null)",
+      "name": "promotion_proof_stage_binding",
+      "entityType": "checks",
+      "schema": "promotion",
+      "table": "issued_proofs"
+    },
+    {
+      "value": "\"version\" > 0",
+      "name": "promotion_draft_version_positive",
+      "entityType": "checks",
+      "schema": "promotion",
+      "table": "promotion_drafts"
+    },
+    {
+      "value": "\"generation\" > 0",
+      "name": "promotion_generation_positive",
+      "entityType": "checks",
+      "schema": "promotion",
+      "table": "tenant_generations"
+    },
+    {
+      "value": "\"normalized_code\" = lower(btrim(\"normalized_code\")) and length(\"normalized_code\") between 1 and 300",
+      "name": "promotion_voucher_code_canonical",
+      "entityType": "checks",
+      "schema": "promotion",
+      "table": "vouchers"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"basis_policies\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "promotion_basis_policy_select",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "basis_policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"promotion\".\"basis_policies\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "promotion_basis_policy_insert",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "basis_policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"basis_policies\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"promotion\".\"basis_policies\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "promotion_basis_policy_update",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "basis_policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"basis_policies\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "promotion_basis_policy_delete",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "basis_policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"issued_proofs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "promotion_issued_proof_select",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "issued_proofs"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"promotion\".\"issued_proofs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "promotion_issued_proof_insert",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "issued_proofs"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"issued_proofs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"promotion\".\"issued_proofs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "promotion_issued_proof_update",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "issued_proofs"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"issued_proofs\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "promotion_issued_proof_delete",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "issued_proofs"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"lifecycle_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "promotion_lifecycle_select",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "lifecycle_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"promotion\".\"lifecycle_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "promotion_lifecycle_insert",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "lifecycle_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"lifecycle_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"promotion\".\"lifecycle_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "promotion_lifecycle_update",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "lifecycle_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"lifecycle_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "promotion_lifecycle_delete",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "lifecycle_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"promotion_drafts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "promotion_draft_select",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "promotion_drafts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"promotion\".\"promotion_drafts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "promotion_draft_insert",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "promotion_drafts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"promotion_drafts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"promotion\".\"promotion_drafts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "promotion_draft_update",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "promotion_drafts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"promotion_drafts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "promotion_draft_delete",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "promotion_drafts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"published_promotions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "promotion_published_select",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "published_promotions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"promotion\".\"published_promotions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "promotion_published_insert",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "published_promotions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"published_promotions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"promotion\".\"published_promotions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "promotion_published_update",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "published_promotions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"published_promotions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "promotion_published_delete",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "published_promotions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"selection_policies\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "promotion_selection_policy_select",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "selection_policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"promotion\".\"selection_policies\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "promotion_selection_policy_insert",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "selection_policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"selection_policies\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"promotion\".\"selection_policies\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "promotion_selection_policy_update",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "selection_policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"selection_policies\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "promotion_selection_policy_delete",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "selection_policies"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"tenant_generations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "promotion_generation_select",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "tenant_generations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"promotion\".\"tenant_generations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "promotion_generation_insert",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "tenant_generations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"tenant_generations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"promotion\".\"tenant_generations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "promotion_generation_update",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "tenant_generations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"tenant_generations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "promotion_generation_delete",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "tenant_generations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"voucher_disable_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "promotion_voucher_disable_select",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "voucher_disable_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"promotion\".\"voucher_disable_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "promotion_voucher_disable_insert",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "voucher_disable_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"voucher_disable_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"promotion\".\"voucher_disable_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "promotion_voucher_disable_update",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "voucher_disable_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"voucher_disable_facts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "promotion_voucher_disable_delete",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "voucher_disable_facts"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"vouchers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "promotion_voucher_select",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "vouchers"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"promotion\".\"vouchers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "promotion_voucher_insert",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "vouchers"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"vouchers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"promotion\".\"vouchers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "promotion_voucher_update",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "vouchers"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"promotion\".\"vouchers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "promotion_voucher_delete",
+      "entityType": "policies",
+      "schema": "promotion",
+      "table": "vouchers"
+    }
+  ],
+  "renames": []
+}

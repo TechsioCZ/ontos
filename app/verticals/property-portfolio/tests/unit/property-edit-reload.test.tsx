@@ -3,7 +3,7 @@
 // window, a settled write). The strict register store reads `pending` during such a reload; the open dialog must stay
 // mounted: typed input, its unsaved status and the leave question survive, a save goes out against the revision the
 // draft was read at, and a draft with nothing typed takes the reloaded building.
-import { saveLabelsFor } from '@app/admin-ui';
+import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
 import { EmployeeIdSchema } from '@app/workforce/resources/employee';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { constVoid } from 'effect/Function';
@@ -202,6 +202,15 @@ afterEach(() => {
 });
 
 describe('property edit dialog across a background reload', () => {
+  it.live('reads the required text of a required field in Czech', () =>
+    Effect.gen(function* requiredText() {
+      yield* openEdit(firstId);
+      expect(document.body.textContent).toContain(requiredLabelFor('cs'));
+      expect(document.body.textContent).not.toContain('(required)');
+      expect(document.querySelector(`label[for="${name}"]`)?.textContent).toContain(requiredLabelFor('cs'));
+    }),
+  );
+
   it.live('keeps typed input, its status and the leave question; Save sends it against the old revision', () =>
     Effect.gen(function* typedSurvives() {
       yield* openEdit(firstId);

@@ -4,7 +4,7 @@
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
+import { FormTextarea } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Option } from 'effect';
 import { useState } from 'react';

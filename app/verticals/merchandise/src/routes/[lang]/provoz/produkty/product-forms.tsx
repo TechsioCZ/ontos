@@ -5,15 +5,12 @@ import { constVoid } from 'effect/Function';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
+import { FormInput, FormNumericInput } from '@app/admin-ui/form-controls';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import {
   SaveBar,
   SidePanel,
   UnsavedChangesDialog,
-  dialogCloseLabel,
   saveLabelsFor,
   useDraftSave,
   useUnsavedChangesGuard,
@@ -29,6 +26,7 @@ import type { CommandOutcome, ProductCommand } from './products-api.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { selectItem } from '../../../../ui/select-item.ts';
 import { ProductSearchCombobox } from './product-search.tsx';
+import { useCommandInputGuard } from './command-input-guard.tsx';
 import { useCommandFailure, useProductLabel } from './product-form-labels.ts';
 import {
   PRODUCT_LIMITS,
@@ -56,11 +54,14 @@ const REQUIRED_KEY = 'validation.required';
 
 const DialogActions = ({
   busy,
+  disabled = false,
   onCancel,
   onSubmit,
   submit,
 }: {
   readonly busy: boolean;
+  /** The command cannot be sent yet: its form is not validly filled in. */
+  readonly disabled?: boolean;
   readonly onCancel: () => void;
   readonly onSubmit: () => void;
   readonly submit: string;
@@ -71,70 +72,10 @@ const DialogActions = ({
       <Button onClick={onCancel} theme="outlined" variant="secondary">
         {label('common.cancel')}
       </Button>
-      <Button isLoading={busy} loadingText={submit} onClick={onSubmit} variant="primary">
+      <Button disabled={disabled} isLoading={busy} loadingText={submit} onClick={onSubmit} variant="primary">
         {submit}
       </Button>
     </>
-  );
-};
-
-/**
- * Close handling for a form with a typed draft. Esc, outside clicks and Zrušit come here: a draft asks before it is
- * discarded, an empty form closes at once.
- */
-const useDraftClose = (dirty: boolean, onOpenChange: (open: boolean) => void) => {
-  const [discardOpen, setDiscardOpen] = useState(false);
-  const requestClose = (next: boolean) => {
-    if (next) {
-      return;
-    }
-    if (dirty) {
-      setDiscardOpen(true);
-      return;
-    }
-    onOpenChange(false);
-  };
-  return { discardOpen, requestClose, setDiscardOpen };
-};
-
-/** Asks before a form with an unsent draft closes. Esc, outside clicks and Zrušit all reach it first. */
-const DiscardConfirm = ({
-  onConfirm,
-  onKeep,
-  open,
-  title,
-}: {
-  readonly onConfirm: () => void;
-  readonly onKeep: () => void;
-  readonly open: boolean;
-  readonly title: string;
-}) => {
-  const k = useProductLabel();
-  return (
-    <Dialog
-      actions={
-        <>
-          <Button onClick={onKeep} theme="outlined" variant="secondary">
-            {k('detail.discardKeep')}
-          </Button>
-          <Button onClick={onConfirm} variant="danger">
-            {k('detail.discardAction')}
-          </Button>
-        </>
-      }
-      closeLabel={dialogCloseLabel}
-      customTrigger
-      description={k('detail.discardDescription')}
-      onOpenChange={({ open: next }) => {
-        if (!next) {
-          onKeep();
-        }
-      }}
-      open={open}
-      role="alertdialog"
-      size="sm"
-      title={title}
-    />
   );
 };
 
@@ -486,12 +427,12 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
-  const dirty = productId !== null || quantity !== 1 || note !== '';
-  const { discardOpen, requestClose, setDiscardOpen } = useDraftClose(dirty, onOpenChange);
+  const dirty = productId !== null || quantityText !== '1' || note !== '';
 
   const productError = productId === null ? k(REQUIRED_KEY) : undefined;
   const quantityError = Number.isInteger(quantity) && quantity >= 1 ? undefined : k('validation.quantity');
   const noteError = tooLongMessage(k, note, PRODUCT_LIMITS.note);
+  const valid = productError === undefined && quantityError === undefined && noteError === undefined;
 
   const clearForm = () => {
     setProduct(null);
@@ -500,6 +441,9 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
     setNote('');
     setSubmitted(false);
   };
+  // The receipt keeps its own button; leaving with typed input asks the shared leave question first.
+  const { dialog, guard } = useCommandInputGuard(open && dirty, clearForm);
+  const close = () => guard.request(() => onOpenChange(false));
   const submit = () => {
     if (busy) {
       return;
@@ -541,13 +485,19 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
         actions={
           <DialogActions
             busy={busy}
-            onCancel={() => requestClose(false)}
+            disabled={!valid}
+            onCancel={close}
             onSubmit={submit}
             submit={k('receipt.submit')}
           />
         }
         description={k('receipt.description')}
-        onOpenChange={requestClose}
+        guard={guard}
+        onOpenChange={(next) => {
+          if (!next) {
+            onOpenChange(false);
+          }
+        }}
         open={open}
         resizeLabel={t(RESIZE_LABEL_KEY)}
         size="md"
@@ -604,16 +554,7 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
           />
         </form>
       </SidePanel>
-      <DiscardConfirm
-        onConfirm={() => {
-          setDiscardOpen(false);
-          clearForm();
-          onOpenChange(false);
-        }}
-        onKeep={() => setDiscardOpen(false)}
-        open={discardOpen}
-        title={k('receipt.discardTitle')}
-      />
+      {dialog}
     </>
   );
 };

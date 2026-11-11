@@ -3,7 +3,7 @@ import type { IsoDate } from '../../../../../shared/domain/common.ts';
 // Real Finance draft; supplier and immutable line prices are copied from the purchase order.
 import { SectionCard } from '@app/admin-ui';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { Effect, Option, Random } from 'effect';
 import { useRef, useState } from 'react';

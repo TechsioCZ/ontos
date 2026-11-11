@@ -76,8 +76,9 @@ zerops:
       start: sh -c 'test -n "$ONTOS_AKROS_STOREFRONT_API_KEY" || { echo "ONTOS_AKROS_STOREFRONT_API_KEY is required" >&2; exit 1; }; cd app/.zerops/runtime/akros-storefront && HOSTNAME=0.0.0.0 exec node akros-storefront/server.js'
   # The N1 e-shop (ontos-stage-n1): its own Next storefront, with no AKROS or shop identity, database or provider
   # credential. Its tenant, seller and image host are declared below; only the storefront key is a service variable
-  # (ONTOS_N1_STOREFRONT_API_KEY, synced from a stage-edge secret). ONTOS_SHELL_URL must be the public https origin:
-  # the N1 config reader rejects the internal http://app:3000 address that the AKROS storefront uses.
+  # (ONTOS_N1_STOREFRONT_API_KEY, synced from a stage-edge secret). N1 reaches the Shell over the internal origin
+  # http://app:3000, like the AKROS storefront and the shop; its config reader accepts plain http only for loopback
+  # and for exactly that origin.
   - setup: n1
     build:
       base: alpine/nodejs@26
@@ -110,7 +111,7 @@ zerops:
       envVariables:
         NEXT_TELEMETRY_DISABLED: '1'
         NODE_ENV: production
-        ONTOS_SHELL_URL: https://ontos-stage.web-revolution.cz
+        ONTOS_SHELL_URL: http://app:3000
         # The N1 demo tenant and its seller on stage (the ids n1-stage-grants.mts provisions).
         # Allow this storefront's uploaded images and the exact public host of imported N1 catalog photos.
         ONTOS_STOREFRONT_LEGAL_ENTITY_ID: d7ad363a-ddb0-46c6-bb11-8d9362281297

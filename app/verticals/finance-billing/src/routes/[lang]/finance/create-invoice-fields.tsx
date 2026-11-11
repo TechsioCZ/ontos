@@ -3,7 +3,7 @@ import { DetailList, datePickerSegmentsClassName, datePickerTranslations, format
 import { CalendarDate as IntlCalendarDate } from '@internationalized/date';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { DatePicker } from '@techsio/ui-kit/molecules/date-picker';
+import { DatePicker } from '@app/admin-ui/form-controls';
 import { isPlausibleIssueDate } from '../../../../shared/domain/invoice-draft.ts';
 import type { draftTotals } from '../../../../shared/domain/invoice-draft.ts';
 import type { InvoiceDocumentKind } from '../../../../shared/apis/records.ts';

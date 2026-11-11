@@ -158,6 +158,9 @@ it.effect(
         const child = yield* ChildProcess.make(
           process.execPath,
           [
+            // Main's .19 packaging leaves this owner's package.json typeless, so Node names the ESM reparse of the
+            // declaration source; only that notice is silenced, every other diagnostic still fails the import.
+            '--disable-warning=MODULE_TYPELESS_PACKAGE_JSON',
             '--input-type=module',
             '--eval',
             "const owner = await import(process.argv[1]); const core = await import('@app/core-runtime'); console.log(JSON.stringify(core.extractVerticalRuntimeSafeDescriptors(owner.catalogBackendRegistration)));",

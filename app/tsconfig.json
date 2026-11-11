@@ -138,6 +138,9 @@
     },
     {
       "path": "packages/party-registry-identity-contracts"
+    },
+    {
+      "path": "verticals/promotion"
     }
   ]
 }

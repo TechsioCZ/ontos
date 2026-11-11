@@ -5,7 +5,7 @@ import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedC
 import type { SaveOutcome } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import { Effect, Fiber, Match, Option, Schema } from 'effect';

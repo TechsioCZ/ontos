@@ -7,7 +7,7 @@ import { useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { DateTime, Effect, Fiber, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import type { MarketLifecycleResult } from '../../shared/action-contracts.ts';

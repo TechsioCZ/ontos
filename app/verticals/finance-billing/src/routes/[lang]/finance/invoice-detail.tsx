@@ -4,6 +4,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 import {
   DetailList,
+  DocumentTitle,
   formatDate,
   formatMoney,
   formatNumber,
@@ -172,6 +173,7 @@ const InvoiceDetailHeading = (model: ReturnType<typeof useInvoiceDetailModel>) =
   const counterpartySuffix = incoming ? ` · ${counterpartyName}` : '';
   return (
     <>
+      <DocumentTitle title={number} />
       <div className="print:hidden">
         <Button
           className="whitespace-nowrap"

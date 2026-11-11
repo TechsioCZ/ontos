@@ -1,9 +1,10 @@
 import "server-only";
 import { cache } from "react";
-import { Clock, Effect, Match, Schema } from "effect";
+import { Effect, Match, Schema } from "effect";
 import { readConfiguration } from "./config";
 import { readOwner, StorefrontReadUnavailable } from "./gateway";
-import { MarketCatalogSchema, selectMarket } from "./market";
+import { selectMarket } from "./market";
+import { readCurrentMarketCatalog } from "./market-catalog-read";
 import { CatalogResponseSchema, projectCatalog } from "./catalog-model";
 import { storefrontRuntime } from "./runtime";
 
@@ -31,14 +32,7 @@ const CatalogQuerySchema = Schema.Struct({
 export const loadCatalog = (locale: string, query: CatalogQuery) =>
   Effect.gen(function* loadCatalogProgram() {
     const config = yield* readConfiguration(process.env);
-    const now = yield* Clock.currentTimeMillis;
-    const markets = yield* readOwner(
-      config,
-      "commerce-market-catalog",
-      "current-market-catalog",
-      { at: new Date(now).toISOString() },
-      MarketCatalogSchema,
-    );
+    const { markets, now } = yield* readCurrentMarketCatalog(config);
     const market = yield* selectMarket(markets, config, locale, now);
     const { productId, ...filters } = query;
     const full = query.slug !== undefined || productId !== undefined;

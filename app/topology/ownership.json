@@ -876,6 +876,24 @@
           ]
         }
       }
+    },
+    {
+      "id": "promotion",
+      "package": "@app/promotion",
+      "path": "verticals/promotion",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/promotion.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#promotion",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#promotion"
+          ]
+        }
+      }
     }
   ]
 }

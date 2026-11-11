@@ -375,7 +375,14 @@
         "ineligible": "Upomínka se připravuje jen k neuhrazené potvrzené faktuře.",
         "recipient": "E-mail příjemce",
         "emailExample": "fakturace@odberatel.cz",
-        "message": "Text upomínky"
+        "message": "Text upomínky",
+        "reviewTitle": "Odeslat upomínku e-mailem?",
+        "reviewDescription": "Po potvrzení se upomínka skutečně odešle e-mailem na uvedenou adresu. Odeslaný e-mail nelze vzít zpět.",
+        "reviewInvoice": "Faktura",
+        "reviewRecipient": "Příjemce",
+        "reviewSender": "Odesílatel",
+        "reviewBack": "Zpět",
+        "reviewConfirm": "Odeslat e-mail"
       },
       "accounting": {
         "handover": "Účetní předání",

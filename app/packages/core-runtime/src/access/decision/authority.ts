@@ -145,6 +145,13 @@ export interface TeamMembershipQuery {
  */
 export interface DecisionAuthorityPort {
   readonly readCells: (query: AuthorityCellQuery) => Effect.Effect<readonly AuthorityCell[], AccessDecisionUnavailable>;
+  /**
+   * `readCells` for every query of one batch in one read, answered in the asked order. A batch decision reads its
+   * cell sets here when the port offers it, so its intent cost does not grow with the capabilities it asks.
+   */
+  readonly readCellsMany?: (
+    queries: readonly AuthorityCellQuery[],
+  ) => Effect.Effect<readonly (readonly AuthorityCell[])[], AccessDecisionUnavailable>;
   /** Fresh Core configure authority for a structural admin decision (O81). An absent port is unavailable. */
   readonly readConfigureBases?: (query: {
     readonly actor: PrincipalId;

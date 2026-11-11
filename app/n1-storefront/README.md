@@ -170,13 +170,13 @@ Limit 1200 px se týká vnitřních obsahových sekcí domovské stránky.
 Nastavit prostřednictvím prostředí procesu nebo deploymentu; žádnou hodnotu nevkládat
 do `NEXT_PUBLIC_*`, zdrojového kódu ani prohlížeče:
 
-| Proměnná                           | Účel                                                               |
-| ---------------------------------- | ------------------------------------------------------------------ |
-| `ONTOS_N1_STOREFRONT_API_KEY`      | Vlastní omezený N1 Storefront Client klíč                          |
-| `ONTOS_STOREFRONT_TENANT_ID`       | Tenant přiřazeného N1 storefrontu                                  |
-| `ONTOS_STOREFRONT_LEGAL_ENTITY_ID` | Prodávající N1 Legal Entity                                        |
-| `ONTOS_SHELL_URL`                  | Shell origin; lokálně výchozí `http://localhost:3020`, jinak HTTPS |
-| `STOREFRONT_IMAGE_HOSTS`           | Povolené veřejné HTTPS hosty produktových obrázků, oddělené čárkou |
+| Proměnná                           | Účel                                                                                                    |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `ONTOS_N1_STOREFRONT_API_KEY`      | Vlastní omezený N1 Storefront Client klíč                                                               |
+| `ONTOS_STOREFRONT_TENANT_ID`       | Tenant přiřazeného N1 storefrontu                                                                       |
+| `ONTOS_STOREFRONT_LEGAL_ENTITY_ID` | Prodávající N1 Legal Entity                                                                             |
+| `ONTOS_SHELL_URL`                  | Shell origin; lokálně výchozí `http://localhost:3020`, na Zerops interní `http://app:3000`, jinak HTTPS |
+| `STOREFRONT_IMAGE_HOSTS`           | Povolené veřejné HTTPS hosty produktových obrázků, oddělené čárkou                                      |
 
 Storefront Application ID je `n1-storefront`. Vlastník `commerce.market-catalog` musí
 vrátit právě jeden účinný ACTIVE B2C trh pro danou identitu a locale (`cs` / `en`).

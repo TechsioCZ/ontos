@@ -273,7 +273,7 @@ export const CustomerOrdersPanel = ({
     body = <output>{d.accountPage.loading}</output>;
   } else if (state.state === "unavailable") {
     body = (
-      <div className="n1-order-error flex flex-col items-center gap-2 rounded-xs border border-danger p-4">
+      <div className="n1-order-error flex flex-col items-center gap-2 rounded-xs border border-danger p-4 font-medium">
         <StatusText align="center" showIcon={false} size="md" status="error">
           {d.accountPage.ordersUnavailable}
         </StatusText>

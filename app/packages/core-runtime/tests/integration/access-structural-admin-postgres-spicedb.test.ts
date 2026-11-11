@@ -214,6 +214,7 @@ const structuralIntent = Effect.gen(function* structuralIntentEffect() {
   // windows are seeded relative to it and each decision passes the same instant as `now`.
   const reads: AccessIntentReads = {
     loadAuthorityCells: (scope, query) => loader.loadAuthorityCells(scope, query),
+    loadAuthorityCellsMany: (scope, queries) => loader.loadAuthorityCellsMany(scope, queries),
     loadConfigureBases: (scope, query) => loader.loadConfigureBases(scope, query),
     loadConnection: (scope, query) => loader.loadConnection(scope, query),
     loadScope: (scope, query) => loader.loadScope(scope, query),
