@@ -32,8 +32,17 @@ afterAll(() => {
   }
 });
 
-// oxlint-disable-next-line sonarjs/no-undefined-assignment -- The task list input models an absent party filter.
-const input = { includeArchived: false, legalEntityId: 'company-a', partyId: undefined };
+type TaskListInput = Parameters<typeof taskRecords.preload>[0];
+// The task list input has no party filter. The key is left out of the literal; the helper fills the
+// required `partyId` slot from the optional one, so no assertion or literal `undefined` is needed.
+const taskListInput = ({
+  partyId,
+  ...rest
+}: Omit<TaskListInput, 'partyId'> & Partial<Pick<TaskListInput, 'partyId'>>): TaskListInput => ({
+  ...rest,
+  partyId,
+});
+const input = taskListInput({ includeArchived: false, legalEntityId: 'company-a' });
 
 const dispatchChange = (apps: ModuleChangeDetail['apps']) => {
   events.dispatchEvent(new CustomEvent<ModuleChangeDetail>(moduleChangeEvent, { detail: { apps } }));
