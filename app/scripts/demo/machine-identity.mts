@@ -21,7 +21,12 @@ const fail = (reason: string) => new MachineIdentityError({ reason });
 
 export interface MachinePrincipal {
   readonly displayName: string;
-  readonly kind: 'integration' | 'service' | 'system';
+  /**
+   * A demo machine is a service or an integration. A `system` principal is the platform's own (the release actor,
+   * trusted jobs): Core creates it, and the database keeps its status (`core.keep_system_principals`), so this
+   * upsert's reactivation would be refused for one — no demo script creates or reactivates it.
+   */
+  readonly kind: 'integration' | 'service';
   readonly legalEntityId?: string;
   readonly principalId: string;
   readonly tenantId: string;
