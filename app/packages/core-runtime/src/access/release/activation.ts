@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { DateTime, Effect, Match, Option, Result, Schema } from 'effect';
+import { Clock, DateTime, Effect, Match, Option, Result, Schema } from 'effect';
 
 import { TrustedPrincipalContextSchema } from '../../actions/principal-context.ts';
 import { makeSystemPrincipalContextResolver, registerSystemWorkload } from '../../auth/system-principal-context.ts';
@@ -305,6 +305,8 @@ export const planTenantReleaseFollow = (
 };
 
 export interface TenantReleaseReport {
+  /** Wall time of this tenant's plan or follow, its projection reconcile included. */
+  readonly elapsedMillis: number;
   readonly inertKeys: readonly string[];
   readonly items: number;
   readonly outcome: 'failed' | 'followed' | 'planned' | 'unchanged';
@@ -312,6 +314,9 @@ export interface TenantReleaseReport {
   /** Whether the tenant had an untouched "Plný přístup" to follow; false for a tenant that failed. */
   readonly presetFound: boolean;
   readonly reason?: string;
+  /** The SpiceDB relationships the reconcile touched and deleted; 0 for a plan. */
+  readonly relationshipDeletions: number;
+  readonly relationshipTouches: number;
   readonly tenantId: string;
 }
 
@@ -366,19 +371,19 @@ const releaseScopeOf = Effect.fn('AccessReleaseActivation.scope')(function* rele
   }) satisfies OperationalScope;
 });
 
-/** A dry run reads the roles under a scope it never writes with; the release actor may not exist yet. */
+/** A dry run reads the roles under a scope it never writes with, read-only; the release actor may not exist yet. */
 const readOnlyChanges = Effect.fn('AccessReleaseActivation.readOnlyChanges')(function* readOnlyChangesEffect(
   tenantId: string,
 ) {
-  const changes = yield* AccessChangesStore;
+  const releases = yield* AccessReleaseStore;
   const context = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
     authContextRef: `job:${RELEASE_ACTIVATION_JOB.jobKey}:run:dry-run`,
     authMethod: 'system',
     principalId: releaseActorId(tenantId),
     tenantId,
   }).pipe(Effect.mapError((failure) => refusal('the dry-run scope is invalid', failure)));
-  return yield* changes
-    .loadTenantChanges({ ...context, correlationId: 'access-release-activation:dry-run' })
+  return yield* releases
+    .previewTenantChanges({ ...context, correlationId: 'access-release-activation:dry-run' })
     .pipe(Effect.mapError((failure) => refusal(`the roles could not be read: ${failure.reason}`, failure)));
 });
 
@@ -397,7 +402,9 @@ const reportOf = (
   tenantId: string,
   plan: TenantReleaseFollowPlan,
   outcome: TenantReleaseReport['outcome'],
+  measured: Pick<TenantReleaseReport, 'elapsedMillis' | 'relationshipDeletions' | 'relationshipTouches'>,
 ): TenantReleaseReport => ({
+  ...measured,
   inertKeys: plan.inertKeys,
   items: plan.items.length,
   outcome,
@@ -441,9 +448,11 @@ const planTenant = Effect.fn('AccessReleaseActivation.planTenant')(function* pla
   tenantId: string,
   release: FollowedRelease,
 ) {
+  const startedAt = yield* Clock.currentTimeMillis;
   const state = yield* readOnlyChanges(tenantId);
   const plan = yield* planFor(tenantId, release, state, yield* DateTime.nowAsDate);
-  return reportOf(tenantId, plan, 'planned');
+  const elapsedMillis = (yield* Clock.currentTimeMillis) - startedAt;
+  return reportOf(tenantId, plan, 'planned', { elapsedMillis, relationshipDeletions: 0, relationshipTouches: 0 });
 });
 
 /** One tenant's follow: its actor, its writes in one transaction, and a reconcile that always runs. */
@@ -454,6 +463,7 @@ const followTenant = Effect.fn('AccessReleaseActivation.followTenant')(function*
   const releases = yield* AccessReleaseStore;
   const changes = yield* AccessChangesStore;
   const projection = yield* AccessProjectionWriter;
+  const startedAt = yield* Clock.currentTimeMillis;
   yield* releases
     .ensureReleaseActor({ displayName: RELEASE_ACTOR_DISPLAY_NAME, principalId: releaseActorId(tenantId), tenantId })
     .pipe(Effect.mapError((failure) => refusal(`${failure.code}: ${failure.reason}`, failure)));
@@ -470,19 +480,26 @@ const followTenant = Effect.fn('AccessReleaseActivation.followTenant')(function*
       .pipe(Effect.mapError((failure) => refusal(`${failure.code}: ${failure.reason}`, failure)));
   }
   // Always: a previous activation may have recorded intent and failed before its projection was written.
-  yield* projection
+  const written = yield* projection
     .reconcileTenant({ scope })
     .pipe(Effect.mapError((failure) => refusal(`the projection could not be reconciled: ${failure.reason}`, failure)));
-  return reportOf(tenantId, plan, changed ? 'followed' : 'unchanged');
+  return reportOf(tenantId, plan, changed ? 'followed' : 'unchanged', {
+    elapsedMillis: (yield* Clock.currentTimeMillis) - startedAt,
+    relationshipDeletions: written.deletions,
+    relationshipTouches: written.touches,
+  });
 });
 
 const failedTenant = (tenantId: string, failure: AccessReleaseActivationError): TenantReleaseReport => ({
+  elapsedMillis: 0,
   inertKeys: [],
   items: 0,
   outcome: 'failed',
   presetCellsAdded: 0,
   presetFound: false,
   reason: failure.reason,
+  relationshipDeletions: 0,
+  relationshipTouches: 0,
   tenantId,
 });
 
@@ -549,7 +566,9 @@ export const activateCatalogRelease = Effect.fn('AccessReleaseActivation.activat
 /**
  * The same decision and per-tenant plan as `activateCatalogRelease`, without a single write: nothing is published,
  * no release actor is created, no role or item is recorded and the engine is never touched, so it needs the
- * database alone. The ordering is decided against the releases as they stand.
+ * database alone. Every read runs in a read-only transaction, so PostgreSQL itself refuses a write. It takes no
+ * lock: the ordering is decided against the releases as they stand, and an activation running beside it may
+ * publish right after.
  */
 export const planCatalogRelease = Effect.fn('AccessReleaseActivation.plan')(function* planEffect(
   input: ActivateCatalogReleaseInput,
