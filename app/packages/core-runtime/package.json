@@ -46,6 +46,7 @@
     "./auth/gateway-assertion-redemption": "./src/auth/gateway-assertion-redemption.ts",
     "./auth/hosted-module-credentials": "./src/auth/hosted-module-credentials.ts",
     "./auth/module-credentials": "./src/auth/module-credentials.ts",
+    "./auth/owner-module-credential": "./src/auth/owner-module-credential.ts",
     "./auth/staff-authentication-namespace": "./src/auth/staff-authentication-namespace.ts",
     "./auth/system-principal-context-provenance": "./src/auth/system-principal-context-provenance.ts",
     "./http/action-proposal": "./src/actions/proposal-accepted.ts",

@@ -1,11 +1,8 @@
 import { Config, ConfigProvider, Effect, Exit, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import {
-  HostedModuleCredentialsSchema,
-  MODULE_CREDENTIAL_VARIABLE,
-  ownerModuleCredentialConfigProvider,
-} from '../../src/auth/hosted-module-credentials.ts';
+import { HostedModuleCredentialsSchema, MODULE_CREDENTIAL_VARIABLE } from '../../src/auth/hosted-module-credentials.ts';
+import { ownerModuleCredentialConfigProvider } from '../../src/auth/owner-module-credential.ts';
 import { moduleAppIdOf, modulePrincipalDisplayName, PLATFORM_TENANT } from '../../src/auth/module-credentials.ts';
 
 const ORDER_KEY = 'order-module-credential-0001';

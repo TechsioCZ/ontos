@@ -6,10 +6,8 @@ import { NodeServices } from '@effect/platform-node';
 import { Config, ConfigProvider, Effect, Option, Queue, Redacted, Ref, Schema, Stream } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import {
-  claimHostedModuleCredentials,
-  moduleCredentialConfigProvider,
-} from '../../packages/core-runtime/src/auth/hosted-module-credentials.ts';
+import { claimHostedModuleCredentials } from '../../packages/core-runtime/src/auth/hosted-module-credential-store.ts';
+import { moduleCredentialConfigProvider } from '../../packages/core-runtime/src/auth/owner-module-credential.ts';
 import {
   captureChannel,
   healModuleCredentialsOnce,

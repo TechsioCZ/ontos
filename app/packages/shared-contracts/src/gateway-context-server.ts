@@ -1,8 +1,6 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
-import {
-  MODULE_CREDENTIAL_VARIABLE,
-  moduleCredentialConfigProvider,
-} from '@app/core-runtime/auth/hosted-module-credentials';
+import { MODULE_CREDENTIAL_VARIABLE } from '@app/core-runtime/auth/hosted-module-credentials';
+import { moduleCredentialConfigProvider } from '@app/core-runtime/auth/owner-module-credential';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import {
   readVerifiedGatewayCompositionRevision,

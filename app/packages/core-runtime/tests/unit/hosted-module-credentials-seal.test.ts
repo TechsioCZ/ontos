@@ -4,10 +4,12 @@ import { expect, it } from 'effect-rstest';
 import {
   claimHostedModuleCredentials,
   heldHostedModuleCredentials,
+} from '../../src/auth/hosted-module-credential-store.ts';
+import {
   HostedModuleCredentialsSealedError,
   MODULE_CREDENTIAL_VARIABLE,
-  moduleCredentialConfigProvider,
 } from '../../src/auth/hosted-module-credentials.ts';
+import { moduleCredentialConfigProvider } from '../../src/auth/owner-module-credential.ts';
 
 const ORDER_KEY = 'order-module-credential-0001';
 const PARTY_KEY = 'party-module-credential-0001';

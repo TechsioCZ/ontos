@@ -10,8 +10,8 @@ import { fromReadable } from '@effect/platform-node/NodeStream';
 import { Config, Console, Duration, Effect, Option, Schema, Stream } from 'effect';
 import type { Redacted } from 'effect';
 
+import { claimHostedModuleCredentials } from '../../packages/core-runtime/src/auth/hosted-module-credential-store.ts';
 import {
-  claimHostedModuleCredentials,
   HostedModuleCredentialsSchema,
   ModuleAppIdSchema,
 } from '../../packages/core-runtime/src/auth/hosted-module-credentials.ts';

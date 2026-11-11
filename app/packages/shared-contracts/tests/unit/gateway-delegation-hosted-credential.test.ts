@@ -1,8 +1,8 @@
-import { claimHostedModuleCredentials } from '@app/core-runtime/auth/hosted-module-credentials';
 import { ConfigProvider, Crypto, Effect, Exit, Redacted } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
+import { claimHostedModuleCredentials } from '../../../core-runtime/src/auth/hosted-module-credential-store.ts';
 import { acquireDelegatedGatewayContext } from '../../src/gateway-context-server.ts';
 
 const compositionRevision = 'a'.repeat(64);
