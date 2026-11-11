@@ -288,7 +288,7 @@
     "file": "apps/demo/src/browser-import.ts"
   },
   "ui-kit-required-label": {
-    "count": 4,
+    "count": 5,
     "file": "verticals/probe/src/direct-required.tsx"
   }
 }

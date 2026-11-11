@@ -1,6 +1,6 @@
 // Storefront tree category combobox over the server search: each pause in typing reads one bounded page of
 // matching categories with their path labels, so no page loads the whole tree (thousands of nodes for AKROS).
-import { Combobox } from '@techsio/ui-kit/molecules/combobox';
+import { Combobox } from '@app/admin-ui/form-controls';
 import { comboboxTranslations } from '@app/admin-ui';
 import { Effect } from 'effect';
 import { useEffect, useState } from 'react';

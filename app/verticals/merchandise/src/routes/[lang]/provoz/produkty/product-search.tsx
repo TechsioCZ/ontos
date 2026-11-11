@@ -1,5 +1,5 @@
 // Product combobox over the server search: each pause in typing reads one bounded page of list rows.
-import { Combobox } from '@techsio/ui-kit/molecules/combobox';
+import { Combobox } from '@app/admin-ui/form-controls';
 import { comboboxTranslations } from '@app/admin-ui';
 import { Effect } from 'effect';
 import { useEffect, useState } from 'react';

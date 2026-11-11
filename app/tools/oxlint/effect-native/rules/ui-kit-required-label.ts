@@ -4,8 +4,9 @@ import type { ESTree } from '@oxlint/plugins';
 /**
  * ui-kit's label-bearing form controls read an English "(required)" to screen readers after the label of a required
  * field unless they get a translation. `@app/admin-ui/form-controls` re-exports them with the page language's text,
- * so a required admin field must use those. Reported: a JSX element with a `required` attribute whose tag (or the
- * root of a compound tag such as `DatePicker.Root`) is a value import from one of these ui-kit modules.
+ * so a required admin field must use those. Reported: a JSX element with a `required` attribute, or with spread props
+ * that may carry one (a local wrapper passing its props on), whose tag (or the root of a compound tag such as
+ * `DatePicker.Root`) is a value import from one of these ui-kit modules.
  */
 const labelledControlModules: ReadonlySet<string> = new Set([
   '@techsio/ui-kit/atoms/label',
@@ -61,17 +62,18 @@ export const rule = defineRule({
         if (name === null || !imported.has(name)) {
           return;
         }
-        // `required={false}` marks nothing; every other `required` may.
+        // `required={false}` marks nothing; every other `required` may, and so may spread props.
         const required = node.attributes.some(
           (attribute) =>
-            attribute.type === 'JSXAttribute' &&
-            attribute.name.type === 'JSXIdentifier' &&
-            attribute.name.name === 'required' &&
-            !(
-              attribute.value?.type === 'JSXExpressionContainer' &&
-              attribute.value.expression.type === 'Literal' &&
-              attribute.value.expression.value === false
-            ),
+            attribute.type === 'JSXSpreadAttribute' ||
+            (attribute.type === 'JSXAttribute' &&
+              attribute.name.type === 'JSXIdentifier' &&
+              attribute.name.name === 'required' &&
+              !(
+                attribute.value?.type === 'JSXExpressionContainer' &&
+                attribute.value.expression.type === 'Literal' &&
+                attribute.value.expression.value === false
+              )),
         );
         if (required) {
           context.report({ data: { name }, messageId: 'direct', node });
