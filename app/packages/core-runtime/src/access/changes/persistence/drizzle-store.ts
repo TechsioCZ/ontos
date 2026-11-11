@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
+import type { PgTransactionConfig } from 'drizzle-orm/pg-core';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { DateTime, Effect, Layer, Match, Option, Result, Schema } from 'effect';
 
@@ -1150,15 +1151,21 @@ const scopedTransaction = <Value>(
   database: AccessChangesDatabase,
   scope: OperationalScope,
   body: (transaction: CoreTransaction) => Effect.Effect<Value, StoreFailure>,
+  config?: PgTransactionConfig,
 ): Effect.Effect<Value, AccessChangesStoreError> =>
   durable(
-    database.executor.transaction((transaction) =>
-      installOperationalScope(transaction, scope, database.enrollment).pipe(
-        Effect.mapError((failure) => storeUnavailable('The tenant scope could not be installed', failure)),
-        Effect.andThen(() => body(transaction)),
-      ),
+    database.executor.transaction(
+      (transaction) =>
+        installOperationalScope(transaction, scope, database.enrollment).pipe(
+          Effect.mapError((failure) => storeUnavailable('The tenant scope could not be installed', failure)),
+          Effect.andThen(() => body(transaction)),
+        ),
+      config,
     ),
   );
+
+/** What a dry run reads in: PostgreSQL itself refuses every write in it. */
+const READ_ONLY: PgTransactionConfig = { accessMode: 'read only' };
 
 export const makeAccessChangesDrizzleStore = (database: AccessChangesDatabase): AccessChangesStoreService => {
   const runScoped = <Value>(
@@ -1377,7 +1384,8 @@ const readPreviousRelease = Effect.fn('AccessReleaseStore.readPreviousRelease')(
 
 /**
  * The ordering of one candidate in one transaction (`orderCatalogRelease`). Only an activation takes the global
- * lock and publishes; a preview reads the same answer and writes nothing.
+ * lock and publishes; a preview takes no lock, so an activation running beside it may publish right after the
+ * preview decided, and it writes nothing (its caller runs it read-only).
  */
 const orderRelease = Effect.fn('AccessReleaseStore.orderRelease')(function* orderReleaseEffect(
   transaction: CoreTransaction,
@@ -1533,13 +1541,12 @@ export const makeAccessReleaseDrizzleStore = (database: AccessChangesDatabase): 
   const activateRelease: AccessReleaseStoreService['activateRelease'] = (candidate) =>
     inTransaction((transaction) => orderRelease(transaction, candidate, true));
 
-  // A preview decides under the same lock as an activation, in a transaction that cannot write.
+  // A preview takes no lock (`orderRelease` locks only to publish) and decides in a transaction that cannot write.
   const previewRelease: AccessReleaseStoreService['previewRelease'] = (candidate) =>
-    durable(
-      database.executor.transaction((transaction) => orderRelease(transaction, candidate, false), {
-        accessMode: 'read only',
-      }),
-    );
+    durable(database.executor.transaction((transaction) => orderRelease(transaction, candidate, false), READ_ONLY));
+
+  const previewTenantChanges: AccessReleaseStoreService['previewTenantChanges'] = (scope) =>
+    scopedTransaction(database, scope, (transaction) => readTenantChanges(transaction, scope), READ_ONLY);
 
   const ensureReleaseActor: AccessReleaseStoreService['ensureReleaseActor'] = (input) =>
     inTransaction((transaction) => writeReleaseActor(transaction, input));
@@ -1551,10 +1558,18 @@ export const makeAccessReleaseDrizzleStore = (database: AccessChangesDatabase): 
       : Effect.fail(storeConflict('access_changes_scope_mismatch', issue));
   };
 
+  // Reads only, for the plan and the follow alike.
   const loadReleases: AccessReleaseStoreService['loadReleases'] = (ids) =>
-    inTransaction((transaction) => readReleasesNamed(transaction, ids));
+    durable(database.executor.transaction((transaction) => readReleasesNamed(transaction, ids), READ_ONLY));
 
-  return Object.freeze({ activateRelease, ensureReleaseActor, loadReleases, previewRelease, recordReleaseFollow });
+  return Object.freeze({
+    activateRelease,
+    ensureReleaseActor,
+    loadReleases,
+    previewRelease,
+    previewTenantChanges,
+    recordReleaseFollow,
+  });
 };
 
 export const AccessReleaseStoreLive = Layer.effect(

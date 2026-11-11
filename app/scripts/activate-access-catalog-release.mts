@@ -13,7 +13,8 @@
  * local stack runs it after its permission bootstrap. It reads the deployed catalog as data (the committed
  * `topology/authorization-catalog.json`, decoded through Core's own schema), connects with the runtime identity
  * (`DATABASE_URL`) and projects through the one Core writer into SpiceDB (`SPICEDB_*`); `--dry-run` needs only
- * `DATABASE_URL`, reads in read-only transactions and never reaches the engine. It prints counts, the
+ * `DATABASE_URL`, reads in transactions PostgreSQL keeps read-only, takes no lock (an activation running at the
+ * same time may publish right after it) and never reaches the engine. It prints counts, the
  * release identity and capability keys only. A failed tenant or a catalog that is not `published`/`Current` exits 1;
  * the migrator reports it and keeps the release booting, because authorization then simply stays at the previous
  * release.

@@ -371,19 +371,19 @@ const releaseScopeOf = Effect.fn('AccessReleaseActivation.scope')(function* rele
   }) satisfies OperationalScope;
 });
 
-/** A dry run reads the roles under a scope it never writes with; the release actor may not exist yet. */
+/** A dry run reads the roles under a scope it never writes with, read-only; the release actor may not exist yet. */
 const readOnlyChanges = Effect.fn('AccessReleaseActivation.readOnlyChanges')(function* readOnlyChangesEffect(
   tenantId: string,
 ) {
-  const changes = yield* AccessChangesStore;
+  const releases = yield* AccessReleaseStore;
   const context = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
     authContextRef: `job:${RELEASE_ACTIVATION_JOB.jobKey}:run:dry-run`,
     authMethod: 'system',
     principalId: releaseActorId(tenantId),
     tenantId,
   }).pipe(Effect.mapError((failure) => refusal('the dry-run scope is invalid', failure)));
-  return yield* changes
-    .loadTenantChanges({ ...context, correlationId: 'access-release-activation:dry-run' })
+  return yield* releases
+    .previewTenantChanges({ ...context, correlationId: 'access-release-activation:dry-run' })
     .pipe(Effect.mapError((failure) => refusal(`the roles could not be read: ${failure.reason}`, failure)));
 });
 
@@ -566,7 +566,9 @@ export const activateCatalogRelease = Effect.fn('AccessReleaseActivation.activat
 /**
  * The same decision and per-tenant plan as `activateCatalogRelease`, without a single write: nothing is published,
  * no release actor is created, no role or item is recorded and the engine is never touched, so it needs the
- * database alone. The ordering is decided against the releases as they stand.
+ * database alone. Every read runs in a read-only transaction, so PostgreSQL itself refuses a write. It takes no
+ * lock: the ordering is decided against the releases as they stand, and an activation running beside it may
+ * publish right after.
  */
 export const planCatalogRelease = Effect.fn('AccessReleaseActivation.plan')(function* planEffect(
   input: ActivateCatalogReleaseInput,
