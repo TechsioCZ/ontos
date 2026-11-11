@@ -13,6 +13,7 @@ import { SearchSuggestions } from "@techsio/ui-kit/templates/search-suggestions"
 import type { Dictionary } from "@/i18n";
 import type { ProductCardModel } from "@/ontos/catalog-model";
 import { priceProps } from "./price-props";
+import { submitSearchOnEnter } from "./search-keyboard";
 import { useSearchSuggestions } from "./use-search-suggestions";
 
 const renderProductResult = (item: ComboboxItem<ProductCardModel>, d: Dictionary, locale: string) =>
@@ -109,6 +110,7 @@ export const StorefrontSearch = ({
         clearable={false}
         groups={groups}
         id={id}
+        inputProps={{ onKeyDown: submitSearchOnEnter }}
         inputValue={query}
         loading={result.state === "loading"}
         loadingMessage={d.suggestionsLoading}
