@@ -75,6 +75,7 @@ const partyModuleCredential = Effect.fn('PrivacyCompletionShell.partyModuleCrede
 ) {
   const provisioned = yield* provisionModuleCredentials({
     appIds: [partyAppId],
+    bootId: yield* crypto.randomUUIDv4(),
     hostId: 'privacy-completion-shell',
     operationId: yield* crypto.randomUUIDv4(),
     release,

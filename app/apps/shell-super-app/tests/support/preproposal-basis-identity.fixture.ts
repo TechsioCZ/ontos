@@ -446,6 +446,7 @@ export const serve = Effect.scoped(
               );
               const issued = yield* provisionModuleCredentials({
                 appIds: [...MODULE_APP_IDS],
+                bootId: yield* crypto.randomUUIDv4(),
                 hostId: 'preproposal-basis-identity',
                 operationId: yield* crypto.randomUUIDv4(),
                 release: moduleCredentialReleaseOf(installed),

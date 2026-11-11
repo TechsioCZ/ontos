@@ -655,6 +655,7 @@ export const provisionSourceModuleCredential = Effect.fn('ServerOwnerRelayNative
     );
     const provisioned = yield* provisionModuleCredentials({
       appIds: [input.appId],
+      bootId: yield* crypto.randomUUIDv4(),
       hostId: 'server-owner-relay-native',
       operationId: yield* crypto.randomUUIDv4(),
       release: moduleCredentialReleaseOf({

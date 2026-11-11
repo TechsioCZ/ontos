@@ -400,6 +400,7 @@ const serve = Effect.scoped(
             );
             const provisioned = yield* provisionModuleCredentials({
               appIds: [sourceAppId],
+              bootId: yield* crypto.randomUUIDv4(),
               hostId: 'api-key-gateway-native-child',
               operationId: yield* crypto.randomUUIDv4(),
               release: moduleCredentialReleaseOf(installed),
