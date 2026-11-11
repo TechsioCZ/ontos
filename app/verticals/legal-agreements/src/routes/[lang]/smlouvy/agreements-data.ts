@@ -99,6 +99,7 @@ const moduleId = 'legal.agreements';
 /** Selection is not a dataset identity. Opening another contract never rereads all records. */
 const makeAgreementsData = () =>
   definePageData({
+    changesFrom: ['legal-agreements', 'party-registry', 'property-leasing', 'property-portfolio'],
     key: (input: AgreementsInput) => pageDataScopeKey(input.context, moduleId) ?? input.legalEntityId,
     load: loadAgreements,
     maxEntries: 8,
@@ -153,6 +154,7 @@ const loadAgreementCustomer = (contract: Contract) =>
 
 export const agreementCustomerData = definePageData({
   cancelWhenUnused: true,
+  changesFrom: ['legal-agreements', 'party-registry'],
   key: customerKey,
   load: ({ contract }: AgreementCustomerInput) => loadAgreementCustomer(contract),
   maxEntries: 256,

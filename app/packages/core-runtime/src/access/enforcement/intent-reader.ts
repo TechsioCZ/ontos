@@ -12,7 +12,12 @@ import type { TenantIntentLoaderService } from '../intent/tenant-intent-loader.t
 /** The four decision reads of the intent loader, seen as a port rather than as a service. */
 export type AccessIntentReads = Pick<
   TenantIntentLoaderService,
-  'loadAuthorityCells' | 'loadConfigureBases' | 'loadConnection' | 'loadScope' | 'loadTeamIds'
+  | 'loadAuthorityCells'
+  | 'loadAuthorityCellsMany'
+  | 'loadConfigureBases'
+  | 'loadConnection'
+  | 'loadScope'
+  | 'loadTeamIds'
 >;
 
 /**
@@ -32,6 +37,7 @@ const intentUnavailable = (cause: AccessIntentError) =>
 /** The engine's ports for one request scope, answered by the intent loader. */
 export const decisionAuthorityOf = (reads: AccessIntentReads, scope: OperationalScope): DecisionAuthorityPort => ({
   readCells: (query) => reads.loadAuthorityCells(scope, query).pipe(Effect.mapError(intentUnavailable)),
+  readCellsMany: (queries) => reads.loadAuthorityCellsMany(scope, queries).pipe(Effect.mapError(intentUnavailable)),
   readConfigureBases: (query) => reads.loadConfigureBases(scope, query).pipe(Effect.mapError(intentUnavailable)),
   readConnection: (query) => reads.loadConnection(scope, query).pipe(Effect.mapError(intentUnavailable)),
   readScope: (query) => reads.loadScope(scope, query).pipe(Effect.mapError(intentUnavailable)),

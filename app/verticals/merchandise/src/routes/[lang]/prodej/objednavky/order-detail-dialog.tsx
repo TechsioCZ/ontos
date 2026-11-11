@@ -1,6 +1,7 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { SidePanel } from '@app/admin-ui';
+import { DocumentTitle, SidePanel } from '@app/admin-ui';
+import { useState } from 'react';
 import type { Order } from '../../../../../shared/apis/records.ts';
 import type { OrderStatus } from '../../../../../shared/domain/merchandise-model.ts';
 import type { CustomerDirectory } from './customers-directory.ts';
@@ -8,6 +9,7 @@ import type { OrderDetailState } from './orders-records.ts';
 import { OrderDetailActions, OrderDetailContent, OrderPendingBody } from './order-detail-content.tsx';
 import { orderDetailTitle, useOrderEditing } from './order-detail-view.ts';
 import type { PendingOrderDetail } from './order-detail-content.tsx';
+import { OrderReloadNotice } from './order-reload-notice.tsx';
 
 interface OrderDetailDialogProps {
   /** The company's e-shop brand (`storefrontBrandOf`); names e-shop orders and personal pickup. */
@@ -22,6 +24,8 @@ interface OrderDetailDialogProps {
   readonly detail: OrderDetailState;
   readonly onClose: () => void;
   readonly onEdited: (message: string) => void;
+  /** Reads the open order again, after its reload failed. */
+  readonly onRetry?: (() => void) | undefined;
   readonly onStatus: (order: Order, status: OrderStatus) => void;
   readonly revision: number;
 }
@@ -65,7 +69,11 @@ const OrderLoadingPanel = ({
   );
 };
 
-/** The order detail as a quick-view side panel. It does not block the list behind it. */
+/**
+ * The order detail as a quick-view side panel. It does not block the list behind it. While the order is edited the
+ * panel is modal, its footer holds the edit form's actions, and closing it asks first while something is unsaved:
+ * the form's unsaved-changes guard is inside the panel, which asks it on its own.
+ */
 export const OrderDetailDialog = ({
   brand,
   busy,
@@ -77,11 +85,14 @@ export const OrderDetailDialog = ({
   detail,
   onClose,
   onEdited,
+  onRetry,
   onStatus,
   revision,
 }: OrderDetailDialogProps) => {
   const { t } = useModernI18n();
   const { editing, setEditing } = useOrderEditing(detail.status === 'ready' ? detail.order.id : undefined);
+  // The footer element the edit form renders its actions into, so the Save button stays in the panel footer.
+  const [editActions, setEditActions] = useState<HTMLElement | null>(null);
   if (detail.status === 'idle') {
     return null;
   }
@@ -93,18 +104,21 @@ export const OrderDetailDialog = ({
   return (
     <SidePanel
       actions={
-        <OrderDetailActions
-          busy={busy}
-          canCleanupDemo={canCleanupDemo}
-          canEditOrders={canEditOrders}
-          canWrite={canWrite}
-          customers={customers}
-          editing={editing}
-          onClose={onClose}
-          onEditingChange={setEditing}
-          onStatus={onStatus}
-          order={order}
-        />
+        editing ? (
+          <div className="contents" ref={setEditActions} />
+        ) : (
+          <OrderDetailActions
+            busy={busy}
+            canCleanupDemo={canCleanupDemo}
+            canEditOrders={canEditOrders}
+            canWrite={canWrite}
+            customers={customers}
+            editing={editing}
+            onClose={onClose}
+            onStatus={onStatus}
+            order={order}
+          />
+        )
       }
       onOpenChange={(next) => {
         if (!next) {
@@ -118,6 +132,8 @@ export const OrderDetailDialog = ({
       size="xl"
       title={orderDetailTitle({ editing, number: order.number, t })}
     >
+      <DocumentTitle title={order.number} />
+      <OrderReloadNotice detail={detail} onRetry={onRetry} />
       <OrderDetailContent
         brand={brand}
         busy={busy}
@@ -127,6 +143,7 @@ export const OrderDetailDialog = ({
         currentPrincipalId={currentPrincipalId}
         customers={customers}
         detail={detail}
+        editActionsSlot={editActions}
         editing={editing}
         onClose={onClose}
         onEdited={onEdited}

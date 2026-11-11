@@ -132,20 +132,64 @@ export const moduleWriteEvent = 'ontos:module-write';
 
 /**
  * Window event the Shell dispatches when the live channel reports a change committed elsewhere (another session,
- * an agent, an Outbox Worker), or after it may have missed changes (reconnect, tab shown again). Stores react exactly
- * as to a write: every entry becomes stale and only what mounted readers show revalidates. Unlike a write it does not
- * restart the Shell's menu prefetch, so a busy tenant never multiplies preload traffic.
+ * an agent, an Outbox Worker), or after it may have missed changes (reconnect, tab shown again). Its
+ * `detail.apps` names the deployment app ids whose data changed, or is `'all'`. A store that declares `changesFrom`
+ * reacts only when one of its apps is named (or `'all'`, or no list at all); a store without `changesFrom` reacts to
+ * every change. Reacting is exactly as to a write: every entry becomes stale and only what mounted readers show
+ * revalidates. Unlike a write it does not restart the Shell's menu prefetch, so a busy tenant never multiplies
+ * preload traffic.
  */
 export const moduleChangeEvent = 'ontos:module-change';
+
+/** `detail` of `moduleChangeEvent`: deployment app ids (`/module-api/<appId>/…`, `shell` for Shell data) or `'all'`. */
+export interface ModuleChangeDetail {
+  readonly apps: readonly string[] | 'all';
+}
 
 /** A ready value this young is served without loading again. */
 const FRESH_FOR = '20 seconds';
 
-/** Invalidate all local dependencies before any mounted store starts revalidation. */
-const writeInvalidators = MutableRef.make<ReadonlySet<() => () => void>>(new Set());
+interface WriteInvalidator {
+  /** Apps whose changes concern the store; undefined = every change. */
+  readonly changesFrom: ReadonlySet<string> | undefined;
+  readonly invalidate: () => () => void;
+}
+
+/**
+ * The app ids a write or change event names, or `'all'`. Only a `moduleChangeEvent` carrying an app list narrows
+ * it; a write, a reset or an event without a readable list concerns every store (the safe default).
+ */
+const decodeChangedApps = Schema.decodeUnknownOption(Schema.Struct({ apps: Schema.Array(Schema.String) }));
+const changedApps = (event: Event | undefined): ReadonlySet<string> | 'all' =>
+  event?.type === moduleChangeEvent && 'detail' in event
+    ? Option.match(decodeChangedApps(event.detail), {
+        onNone: () => 'all' as const,
+        onSome: ({ apps }) => new Set(apps),
+      })
+    : 'all';
+
+const concerns = (changesFrom: ReadonlySet<string> | undefined, apps: ReadonlySet<string> | 'all'): boolean =>
+  changesFrom === undefined || apps === 'all' || [...changesFrom].some((app) => apps.has(app));
+
+/**
+ * Whether a `moduleWriteEvent` or `moduleChangeEvent` concerns data from `changesFrom`, by the same rule the stores
+ * use. For hooks that listen to these events themselves (a list re-warming its rows' details), so an unrelated
+ * module's change does not restart their work.
+ */
+export const changeConcerns = (event: Event, changesFrom: readonly string[]): boolean =>
+  concerns(new Set(changesFrom), changedApps(event));
+
+/** Invalidate all concerned local dependencies before any mounted store starts revalidation. */
+const writeInvalidators = MutableRef.make<ReadonlySet<WriteInvalidator>>(new Set());
 const writeListenerRegistered = MutableRef.make(false);
-const onModuleWrite = (): void => {
-  const revalidate = Array.from(MutableRef.get(writeInvalidators), (invalidate) => invalidate());
+const onModuleWrite = (event?: Event): void => {
+  const apps = changedApps(event);
+  const revalidate: (() => void)[] = [];
+  for (const { changesFrom, invalidate } of MutableRef.get(writeInvalidators)) {
+    if (concerns(changesFrom, apps)) {
+      revalidate.push(invalidate());
+    }
+  }
   for (const start of revalidate) {
     start();
   }
@@ -203,6 +247,15 @@ const awaitCurrent = <I, A, E>(entry: Entry<I, A, E>): Effect.Effect<void> =>
 export const definePageData = <I, A, E, R>(options: {
   /** Detail stores release unfinished work when their last read/preload is interrupted. Defaults to false. */
   readonly cancelWhenUnused?: boolean;
+  /**
+   * Deployment app ids (`appId` of a vertical's package.json, the `<appId>` of `/module-api/<appId>/…`; `shell` for
+   * Shell/Core data) whose data `load` shows: its own app plus every app it reads directly or whose data its own API
+   * returns. A live change naming none of them leaves the store untouched. Omitted: every live change concerns the
+   * store. Writes (`moduleWriteEvent`, `invalidate`) and changes without an app list always concern it. A value a
+   * mounted view shows reloads once it is 20 s old, and 20 s after a failed or abandoned load, so a write that sends
+   * no live change is not missed.
+   */
+  readonly changesFrom?: readonly string[];
   readonly key: (input: I) => string;
   readonly load: (input: I) => Effect.Effect<A, E, R>;
   /** LRU bound for inactive entries. Active readers are never evicted. */
@@ -211,6 +264,7 @@ export const definePageData = <I, A, E, R>(options: {
   readonly retainStale?: boolean;
   readonly runtime: ManagedRuntime.ManagedRuntime<R, never>;
 }): PageData<I, A, E> => {
+  const changesFrom = options.changesFrom === undefined ? undefined : new Set(options.changesFrom);
   const entries = new Map<string, Entry<I, A, E>>();
   const listeners = new Set<() => void>();
   const mountedKeys = new Map<string, number>();
@@ -278,7 +332,6 @@ export const definePageData = <I, A, E, R>(options: {
         Effect.andThen(
           Effect.sync(() => {
             if (entry.generation === generation) {
-              entry.stale = true;
               onExpired();
             }
           }),
@@ -286,10 +339,35 @@ export const definePageData = <I, A, E, R>(options: {
       ),
     ).pipe(Effect.asVoid);
 
+  /** Whether a mounted reader shows `key` now: re-reading snapshots changes nothing, so no view re-renders. */
+  const shownNow = (key: string): boolean => {
+    observedKeys.clear();
+    observing = true;
+    try {
+      notify();
+    } finally {
+      observing = false;
+    }
+    const shown = observedKeys.has(key);
+    observedKeys.clear();
+    return shown;
+  };
+
   const startLoad = (entry: Entry<I, A, E>): Fiber.Fiber<void> => {
     const onExpired = (): void => {
       const key = options.key(entry.input);
-      if (options.retainStale === false && entries.get(key) === entry && (mountedKeys.get(key) ?? 0) > 0) {
+      if (entries.get(key) !== entry) {
+        entry.stale = true;
+        return;
+      }
+      // A store that ignores unrelated live changes no longer hears every commit, so a change that never sends one
+      // (an Outbox Worker's write) is picked up by expiry, also where a view subscribes without an input.
+      // Checked while the entry is still fresh: a strict snapshot of a stale value is pending, which would re-render.
+      const shown =
+        (options.retainStale === false && mountedKeys.has(key)) ||
+        (changesFrom !== undefined && (mountedKeys.has(key) || (options.cancelWhenUnused !== true && shownNow(key))));
+      entry.stale = true;
+      if (shown) {
         startLoad(entry);
       }
     };
@@ -324,15 +402,19 @@ export const definePageData = <I, A, E, R>(options: {
             settled = true;
             settle(entry, generation, result);
             Deferred.doneUnsafe(completion, Effect.fromResult(result));
-            return Result.isSuccess(result) ? expireLater(entry, generation, onExpired) : Effect.void;
+            // A failure is retried by the same check: a scoped store no longer hears the unrelated commits that
+            // used to retry it, and the recovery it waits for may send no live change at all.
+            return expireLater(entry, generation, onExpired);
           }),
         );
       }).pipe(
         Effect.ensuring(
-          Effect.sync(() => {
-            if (!settled) {
-              abandon(entry, generation);
+          Effect.suspend(() => {
+            if (settled) {
+              return Effect.void;
             }
+            abandon(entry, generation);
+            return expireLater(entry, generation, onExpired);
           }),
         ),
       ),
@@ -407,7 +489,8 @@ export const definePageData = <I, A, E, R>(options: {
   const entryFor = (input: I): Entry<I, A, E> => {
     if (!storeRegistered && 'addEventListener' in globalThis) {
       storeRegistered = true;
-      MutableRef.update(writeInvalidators, (stores) => new Set([...stores, invalidateOnWrite]));
+      const invalidator: WriteInvalidator = { changesFrom, invalidate: invalidateOnWrite };
+      MutableRef.update(writeInvalidators, (stores) => new Set([...stores, invalidator]));
       if (!MutableRef.get(writeListenerRegistered)) {
         MutableRef.set(writeListenerRegistered, true);
         globalThis.addEventListener(moduleWriteEvent, onModuleWrite);

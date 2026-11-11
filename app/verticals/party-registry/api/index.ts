@@ -9,11 +9,12 @@ import type { ActionRuntime, ReadRuntime, GatewayAssertionRedemptionService } fr
 import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
 import {
   OwnerActionApprovalSchemaErrorLive,
-  makeOwnerActionApprovalApiLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
-import { HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
+import { HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime, EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
 import { FetchHttpClient } from 'effect/http';
@@ -179,7 +180,11 @@ export const makePartyRegistryApiRuntime = (
       Layer.provide(Layer.mergeAll(governedActionRuntimeLive, governedReadRuntimeLive)),
     ),
     engagementProfileApiHandlersLive.pipe(Layer.provide(governedActionRuntimeLive)),
-    makeOwnerActionApprovalApiLive(partyRegistryApi, authenticateOwnerApprovalPrincipal).pipe(
+    HttpApiBuilder.group(partyRegistryApi, 'ownerActionApprovals', (handlers) =>
+      handlers
+        .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+        .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+    ).pipe(
       GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
       GovernedReadLayer.provide(governedActionRuntimeLive),
     ),

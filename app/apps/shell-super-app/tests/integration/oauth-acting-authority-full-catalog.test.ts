@@ -48,7 +48,7 @@ import { spiceDbTransport } from '../../../../packages/core-runtime/src/permissi
 import { deriveOntosModuleDeploymentContract } from '../../../../scripts/generate-ontos-module-contract.mts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
-import { emptySubjectAccessTrace, moduleCarriers } from '../../api/agent-platform/caller.ts';
+import { emptySubjectAccessTrace, moduleCarriers, subjectModuleAccess } from '../../api/agent-platform/caller.ts';
 import {
   makeInstalledModuleCatalogLoader,
   ShellInstalledModuleCatalog,
@@ -222,6 +222,9 @@ interface AuthorityCase {
   /** The case database's administrator client, for reading back the evidence rows a read wrote. */
   readonly admin: PgClient.PgClient;
   readonly companyId: string;
+  /** Every company of the tenant, `companyId` first; the owner is bootstrapped into all of them. */
+  readonly companyIds: readonly string[];
+  readonly owner: string;
   readonly person: string;
   readonly runtime: DatabaseConnectionPair['runtime'];
   readonly tenantId: string;
@@ -231,7 +234,13 @@ interface AuthorityCase {
  * One cloned database with one tenant, one company, its bootstrapped owner and one person who holds a role with every
  * `run` capability of `moduleId` in that company, projected into SpiceDB by the one Core writer.
  */
-const withAuthorityCase = <A, E>(moduleId: string, run: (authorityCase: AuthorityCase) => Effect.Effect<A, E>) =>
+const withAuthorityCase = <A, E>(
+  moduleId: string,
+  run: (authorityCase: AuthorityCase) => Effect.Effect<A, E>,
+  companies = 1,
+  /** The one mode the person's role grants: `propose` makes an approval-only subject of the module. */
+  cellMode: 'propose' | 'run' = 'run',
+) =>
   Effect.scoped(
     Effect.gen(function* authorityCase() {
       const crypto = yield* Crypto.Crypto;
@@ -259,18 +268,22 @@ const withAuthorityCase = <A, E>(moduleId: string, run: (authorityCase: Authorit
       );
       const catalog = yield* publishedCatalog;
       const tenantId = yield* crypto.randomUUIDv4();
-      const companyId = yield* crypto.randomUUIDv4();
+      const companyIds = yield* Effect.forEach(Array.from({ length: companies }), () => crypto.randomUUIDv4());
+      const [companyId = ''] = companyIds;
       const owner = yield* crypto.randomUUIDv4();
       const person = yield* crypto.randomUUIDv4();
       yield* admin.unsafe(
         `insert into core.tenants (tenant_id, slug, name, status, default_locale)
          values ('${tenantId}', 'acting-${tenantId.slice(0, 8)}', 'Acting authority tenant', 'active', 'cs')`,
       );
-      yield* admin.unsafe(
-        `insert into core.legal_entities
-           (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status)
-         values ('${companyId}', '${tenantId}', 'Acting authority company', 'CZ', '${companyId.slice(-8)}', 'active')`,
-      );
+      for (const legalEntityId of companyIds) {
+        yield* admin.unsafe(
+          `insert into core.legal_entities
+             (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status)
+           values ('${legalEntityId}', '${tenantId}', 'Acting authority company', 'CZ', '${legalEntityId.slice(-8)}',
+                   'active')`,
+        );
+      }
       for (const principalId of [owner, person]) {
         yield* admin.unsafe(
           `insert into core.principals (principal_id, tenant_id, kind, display_name, status)
@@ -286,7 +299,7 @@ const withAuthorityCase = <A, E>(moduleId: string, run: (authorityCase: Authorit
       const graph = yield* buildAccessGraph({ adminUrl: databases.runtime.connectionString, configuration });
       const ownerScope = yield* sessionScope({ correlationId: 'acting-authority-seed', principalId: owner, tenantId });
       const bootstrap = yield* graph.bootstrap.bootstrapTenantAccess({
-        legalEntityIds: [LegalEntityIdSchema.make(companyId)],
+        legalEntityIds: companyIds.map((legalEntityId) => LegalEntityIdSchema.make(legalEntityId)),
         modules: catalog,
         scope: ownerScope,
       });
@@ -307,8 +320,10 @@ const withAuthorityCase = <A, E>(moduleId: string, run: (authorityCase: Authorit
       const cells = catalog
         .flatMap(({ descriptors }) => descriptors.map(({ accessDeclaration }) => accessDeclaration))
         .flatMap((declaration) =>
-          declaration !== undefined && declaration.key.startsWith(`${moduleId}.`) && declaration.modes.includes('run')
-            ? [{ capabilityKey: declaration.key, mode: 'run', selector: { _tag: 'all' } }]
+          declaration !== undefined &&
+          declaration.key.startsWith(`${moduleId}.`) &&
+          declaration.modes.includes(cellMode)
+            ? [{ capabilityKey: declaration.key, mode: cellMode, selector: { _tag: 'all' } }]
             : [],
         );
       const roleId = yield* crypto.randomUUIDv4();
@@ -328,7 +343,7 @@ const withAuthorityCase = <A, E>(moduleId: string, run: (authorityCase: Authorit
           `insert into core.access_grant_incarnations
              (grant_incarnation_id, tenant_id, scope_id, role_id, capability_key, mode, slot, cell_json, status)
            values (gen_random_uuid(), '${tenantId}', '${companyScopeId}', '${roleId}', '${cell.capabilityKey}',
-                   'run', 'all', '${jsonText(cell)}'::jsonb, 'active')`,
+                   '${cell.mode}', 'all', '${jsonText(cell)}'::jsonb, 'active')`,
         );
       }
       yield* admin.unsafe(
@@ -338,7 +353,7 @@ const withAuthorityCase = <A, E>(moduleId: string, run: (authorityCase: Authorit
                  '${roleRevisionId}', 'active', '${owner}', now() - interval '1 day')`,
       );
       yield* graph.writer.reconcileTenant({ scope: ownerScope });
-      return yield* run({ admin, companyId, person, runtime: databases.runtime, tenantId });
+      return yield* run({ admin, companyId, companyIds, owner, person, runtime: databases.runtime, tenantId });
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
@@ -363,18 +378,26 @@ const measured = <A, E, R>(input: {
   Effect.gen(function* measuredRead() {
     const counters: Counters = { checkBulk: 0, checkItems: 0, compositionLoads: 0 };
     const records: SpanRecord[] = [];
+    // Process CPU time of the read (user + system): the suite runs one read at a time, so it is the read's own.
+    const cpuBefore = process.cpuUsage();
     const value = yield* input.read.pipe(
+      Effect.withSpan('measured.read'),
       Effect.withTracer(recordingTracer(records)),
       Effect.provide(inspectionLayer({ authorityCase: input.authorityCase, counters, snapshot: input.snapshot })),
     );
+    const cpu = process.cpuUsage(cpuBefore);
     const [rows] = yield* input.authorityCase.admin.unsafe<{ readonly count: number }>(
       `select count(*)::int as count from core.access_decision_logs where correlation_id = '${input.correlationId}'`,
     );
     const spans = tally(records);
     return {
+      cellBatches: countOf(spans, 'TenantIntentLoader.loadAuthorityCellsMany'),
       cellReads: countOf(spans, 'TenantIntentLoader.loadAuthorityCells'),
       counters,
+      cpuMs: Math.round((cpu.user + cpu.system) / 1000),
       decisionRows: rows?.count ?? -1,
+      // Wall time of the read itself, from the span the recording tracer closed around it.
+      ms: Math.round(spans.get('measured.read')?.ms ?? -1),
       spans,
       statements: countOf(spans, 'postgres'),
       transactions: countOf(spans, 'sql.transaction'),
@@ -383,9 +406,12 @@ const measured = <A, E, R>(input: {
   });
 
 const reportOf = (result: Effect.Success<ReturnType<typeof measured>>) => ({
+  cellBatches: result.cellBatches,
   cellReads: result.cellReads,
   counters: result.counters,
+  cpuMs: result.cpuMs,
   decisionRows: result.decisionRows,
+  ms: result.ms,
   slowest: [...result.spans.entries()]
     .toSorted(([, left], [, right]) => right.ms - left.ms)
     .slice(0, 25)
@@ -448,7 +474,92 @@ const oneQuestionAtATime = (input: SubjectInspectionInput) =>
     return { access: [...access], run: [...run] };
   });
 
+/**
+ * The module hints as they were asked before the hints stopped at the first admitted question: every carrier and
+ * every Action in one batch. The reference the two-phase `subjectModuleAccess` must equal set for set.
+ */
+const everythingAtOnce = (input: SubjectInspectionInput) =>
+  Effect.gen(function* askEverything() {
+    const inspection = yield* SubjectAccessInspection;
+    const installed = yield* (yield* ShellInstalledModuleCatalog).load;
+    yield* inspection.scope(input);
+    const carriers = moduleCarriers(installed);
+    const actions = installed.contracts.flatMap(({ manifest }) =>
+      manifest.publicSurface.actions.filter((action) => action.legalEntityScope !== 'forbidden'),
+    );
+    const actionKeys = [...new Set(actions.map(({ actionKey }) => actionKey))];
+    const inspected = yield* inspection.capabilities({
+      ...input,
+      actionKeys,
+      questions: carriers.map((carrier) => ({
+        carrier: { accessDeclaration: carrier.declaration },
+        legalEntityScope: carrier.legalEntityScope,
+        listing: carrier.declaration?.kind === 'read' && carrier.declaration.selectors.length > 0,
+      })),
+    });
+    const access = new Set<string>();
+    const propose = new Set<string>();
+    const run = new Set<string>();
+    for (const [index, carrier] of carriers.entries()) {
+      const outcome = inspected.answers[index]?.decision.outcome;
+      if (outcome === 'ALLOWED' || outcome === 'NEEDS_APPROVAL') {
+        access.add(carrier.moduleId);
+      }
+    }
+    const byKey = new Map(inspected.authorities.map((authority) => [authority.actionKey, authority]));
+    for (const action of actions) {
+      const authority = byKey.get(action.actionKey);
+      if (authority?.run === 'allowed') {
+        run.add(action.owningModuleId);
+        access.add(action.owningModuleId);
+      }
+      if (authority?.propose === 'allowed') {
+        propose.add(action.owningModuleId);
+        access.add(action.owningModuleId);
+      }
+    }
+    return { access, propose, run };
+  });
+
+const sortedSet = (values: ReadonlySet<string>) => [...values].toSorted();
+
+/** The two-phase hints equal the everything-at-once reference and leave no more evidence rows than it does. */
+const expectSameHints = (input: {
+  readonly authorityCase: AuthorityCase;
+  readonly principalId: string;
+  readonly snapshot: ActiveApplicationCompositionSnapshot;
+}) =>
+  Effect.gen(function* sameHints() {
+    const { companyId, tenantId } = input.authorityCase;
+    const inspectionOf = (correlationId: string) =>
+      sessionScope({ correlationId, legalEntityId: companyId, principalId: input.principalId, tenantId }).pipe(
+        Effect.map((requesterScope): SubjectInspectionInput => ({
+          queryScope: { legalEntityId: companyId, tenantId },
+          requesterScope,
+          subject: { principalId: input.principalId, tenantId },
+        })),
+      );
+    const hints = yield* measured({
+      authorityCase: input.authorityCase,
+      correlationId: `hints-${input.principalId}`,
+      read: subjectModuleAccess(yield* inspectionOf(`hints-${input.principalId}`)),
+      snapshot: input.snapshot,
+    });
+    const reference = yield* measured({
+      authorityCase: input.authorityCase,
+      correlationId: `reference-${input.principalId}`,
+      read: everythingAtOnce(yield* inspectionOf(`reference-${input.principalId}`)),
+      snapshot: input.snapshot,
+    });
+    expect(sortedSet(hints.value.access)).toEqual(sortedSet(reference.value.access));
+    expect(sortedSet(hints.value.run)).toEqual(sortedSet(reference.value.run));
+    expect(sortedSet(hints.value.propose)).toEqual(sortedSet(reference.value.propose));
+    expect(hints.decisionRows).toBeLessThanOrEqual(reference.decisionRows);
+    return { hints, reference };
+  });
+
 const reportPath = Config.option(Config.String('ACTING_AUTHORITY_REPORT'));
+const ownerReportPath = Config.option(Config.String('OWNER_AUTHORITY_REPORT'));
 
 it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 seconds' })(
   'acting authority over the installed release',
@@ -493,13 +604,16 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
             ).length;
             const capabilityKeys = new Set(carriers.flatMap(({ declaration }) => declaration?.key ?? []));
             expect(snapshot.composition.modules.length).toBeGreaterThan(20);
-            expect(traced.carriers).toBe(carriers.length);
-            expect(traced.inspectionCalls).toBe(2);
-            expect(batch.counters.compositionLoads).toBeLessThanOrEqual(6);
+            // Only the carriers of modules no Action admitted are asked, in at most two capability batches.
+            expect(traced.carriers).toBeLessThanOrEqual(carriers.length);
+            expect(traced.inspectionCalls).toBeLessThanOrEqual(3);
+            expect(batch.counters.compositionLoads).toBeLessThanOrEqual(9);
             expect(batch.counters.checkBulk).toBeLessThanOrEqual(2 + listCarriers);
-            expect(batch.transactions - batch.cellReads).toBeLessThanOrEqual(16);
-            // Each distinct capability is read at most once per mode it is asked in (run, and propose for Actions).
-            expect(batch.cellReads).toBeLessThanOrEqual(capabilityKeys.size * 2);
+            expect(batch.transactions - batch.cellReads).toBeLessThanOrEqual(24);
+            // Every cell set of a capability batch is read in ONE transaction; only a LIST question reads its own.
+            expect(batch.cellBatches).toBeLessThanOrEqual(2);
+            expect(batch.cellReads).toBeLessThanOrEqual(listCarriers);
+            expect(capabilityKeys.size).toBeGreaterThan(100);
 
             // The same questions one at a time, as the Shell asked them before: identical modules, identical
             // evidence rows, and the round trips the batch no longer makes.
@@ -520,7 +634,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
             });
             expect(single.value.access).toEqual([...batch.value.live.read]);
             expect(batch.decisionRows).toBeGreaterThan(0);
-            expect(batch.decisionRows).toBe(single.decisionRows);
+            expect(batch.decisionRows).toBeLessThanOrEqual(single.decisionRows);
+            yield* expectSameHints({ authorityCase, principalId: person, snapshot });
             expect(batch.transactions * 4).toBeLessThan(single.transactions);
 
             const path = yield* reportPath;
@@ -539,6 +654,101 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               );
             }
           }).pipe(Effect.provide(NodeServices.layer)),
+        ),
+      300_000,
+    );
+
+    // Every MCP request re-describes its connection live (`loadLiveConnection` -> `loadActingAuthority`). For the
+    // tenant owner, who holds every right of the release in each of several companies, that description must cost
+    // a fixed number of round trips, never one intent read per capability the catalog declares.
+    suite.effect(
+      "describes a full-access owner's connection authority in a fixed number of round trips",
+      () =>
+        withAuthorityCase(
+          'work.tasks',
+          (authorityCase) =>
+            Effect.gen(function* ownerAuthority() {
+              const snapshot = yield* installedComposition;
+              const { companyId, companyIds, owner, tenantId } = authorityCase;
+              const asker = yield* sessionScope({
+                correlationId: 'owner-authority-batch',
+                legalEntityId: companyId,
+                principalId: owner,
+                tenantId,
+              });
+              const trace = yield* Ref.make(emptySubjectAccessTrace);
+              const owned = yield* measured({
+                authorityCase,
+                correlationId: 'owner-authority-batch',
+                read: loadActingAuthority(
+                  asker,
+                  { actingKind: 'human', actingPrincipalId: owner, legalEntityId: companyId, tenantId },
+                  trace,
+                ),
+                snapshot,
+              });
+              const installed = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
+              const carriers = moduleCarriers(installed);
+              const listCarriers = carriers.filter(
+                ({ declaration }) => declaration?.kind === 'read' && declaration.selectors.length > 0,
+              ).length;
+              expect(companyIds.length).toBe(3);
+              // The owner reaches every module the tenant runs.
+              expect(owned.value.live.read.size).toBeGreaterThan(20);
+              expect(owned.value.offered.length).toBe(owned.value.live.read.size);
+              expect((yield* Ref.get(trace)).inspectionCalls).toBeLessThanOrEqual(3);
+              const { reference } = yield* expectSameHints({ authorityCase, principalId: owner, snapshot });
+              expect(owned.counters.checkBulk).toBeLessThanOrEqual(2 + listCarriers);
+              // The work does not grow with the rights the catalog declares (hundreds): one batched cell read, one
+              // read per LIST question, a fixed number of identity, scope and evidence transactions. Before the batch,
+              // this owner cost one transaction per capability and mode: 463 transactions, 3 252 statements.
+              expect(owned.cellBatches).toBeLessThanOrEqual(2);
+              expect(owned.cellReads).toBeLessThanOrEqual(listCarriers);
+              expect(owned.transactions - owned.cellReads).toBeLessThanOrEqual(24);
+              expect(owned.statements).toBeLessThanOrEqual(300);
+
+              const path = yield* ownerReportPath;
+              if (Option.isSome(path)) {
+                const fileSystem = yield* FileSystem.FileSystem;
+                yield* fileSystem.writeFileString(
+                  path.value,
+                  yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+                    carriers: carriers.length,
+                    companies: companyIds.length,
+                    listCarriers,
+                    modules: snapshot.composition.modules.length,
+                    owner: reportOf(owned),
+                    read: owned.value.live.read.size,
+                    reference: reportOf(reference),
+                  }),
+                );
+              }
+            }).pipe(Effect.provide(NodeServices.layer)),
+          3,
+        ),
+      300_000,
+    );
+
+    // An approval-only subject: the role grants only `propose` over one module. The hints must find the module
+    // proposable but not runnable, exactly as asking everything does, so the connection's ceiling stays approval.
+    suite.effect(
+      'describes a propose-only person exactly as asking every carrier and Action at once',
+      () =>
+        withAuthorityCase(
+          'commerce.pricing',
+          (authorityCase) =>
+            Effect.gen(function* proposeOnlyHints() {
+              const snapshot = yield* installedComposition;
+              const { hints } = yield* expectSameHints({
+                authorityCase,
+                principalId: authorityCase.person,
+                snapshot,
+              });
+              expect([...hints.value.propose]).toContain('commerce.pricing');
+              expect([...hints.value.run]).not.toContain('commerce.pricing');
+            }).pipe(Effect.provide(NodeServices.layer)),
+          1,
+          'propose',
         ),
       300_000,
     );

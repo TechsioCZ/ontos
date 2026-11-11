@@ -1,12 +1,11 @@
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Meter master-data form and reading form (ops-meters lane). Both write through the governed apply-command Action.
-import { AutosaveStatus, formatDate, useAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { SaveBar, formatDate, saveLabelsFor, useDraftSave } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
+import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { DateTime, Effect, Option, Result, Schema } from 'effect';
 import { useReducer, useRef, useState } from 'react';
@@ -21,7 +20,11 @@ import type { CommandOutcome, FailureReason } from '../../../../ui/use-agenda.ts
 import { defaultUnitOf, formatChange, formatQuantity } from './meters-view.ts';
 import { meterCreateCommandOf, meterDraftOf, meterUpdateCommandOf, sameMeterDraft } from './meter-draft.ts';
 import type { MeterDraft } from './meter-draft.ts';
-import { facilityAutosaveOutcome } from '../../../../ui/facility-autosave.ts';
+import { EditGuard } from '../../../../ui/edit-guard.tsx';
+import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
+import { useDraftBase } from '../../../../ui/draft-base.ts';
+import { FormSaveFooter, commandResult, useFormSave } from '../../../../ui/form-save.tsx';
+import type { FormSubmitResult } from '../../../../ui/form-save.tsx';
 
 const k = 'facility-operations.meters';
 const CANCEL_LABEL = 'facility-operations.common.cancel';
@@ -56,6 +59,11 @@ const optional = <Key extends string>(key: Key, value: string) =>
 // Meter master data
 // ---------------------------------------------------------------------------------------------------------------
 
+const meterErrorText = (error: FailureReason | 'required' | undefined, t: ReturnType<typeof useModernI18n>['t']) =>
+  error === undefined
+    ? error
+    : t(error === 'required' ? 'facility-operations.common.required' : `facility-operations.common.errors.${error}`);
+
 export const MeterForm = ({
   meter,
   onCancel,
@@ -67,10 +75,9 @@ export const MeterForm = ({
   readonly onSaved: (meterId: string | undefined) => void;
   readonly run: RunCommand;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const properties = usePropertyOptions();
   const [draft, setDraft] = useState<MeterDraft>(() => meterDraftOf(meter));
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<FailureReason | 'required' | undefined>();
   const set = <Key extends keyof MeterDraft>(key: Key, value: MeterDraft[Key]) =>
     setDraft((current) => ({ ...current, [key]: value }));
@@ -92,53 +99,67 @@ export const MeterForm = ({
       : undefined;
   };
 
-  // An edit saves itself; a new meter card is submitted on "Založit měřidlo" only.
-  const autosave = useAutosave<MeterDraft, never>({
+  // An edit is sent on Uložit only, with the revision of the read the draft was built on.
+  const base = useDraftBase(meter, run);
+  const record = useDraftSave<MeterDraft, never>({
     equals: sameMeterDraft,
     isValid: (value) =>
       meter !== undefined && Option.isSome(meterUpdateCommandOf(value, meter, pickedLocationOf(value))),
     runtime: browserRuntime,
     save: (value) =>
       meter === undefined
-        ? Effect.succeed<AutosaveOutcome>('failed')
+        ? Effect.succeed<SaveOutcome>('failed')
         : Option.match(meterUpdateCommandOf(value, meter, pickedLocationOf(value)), {
-            onNone: () => Effect.succeed<AutosaveOutcome>('failed'),
-            onSome: (command) => facilityAutosaveOutcome(run(command)),
+            onNone: () => Effect.succeed<SaveOutcome>('failed'),
+            onSome: (command) => base.confirm(facilitySaveOutcome(base.run(command))),
           }),
     value: draft,
   });
-  const close = () => {
-    autosave.flush();
-    onCancel();
+  base.sync({
+    onAdopt: () => {
+      const stored = meterDraftOf(meter);
+      if (!sameMeterDraft(stored, draft)) {
+        record.adopt(stored);
+        setDraft(stored);
+      }
+    },
+    settled: !record.pending && sameMeterDraft(draft, record.confirmed),
+  });
+  const labels = saveLabelsFor(language);
+  const discard = () => {
+    setDraft(record.confirmed);
+    setError(undefined);
   };
-  const handleRetry = autosave.retry;
+  const handleSave = record.save;
   const handleReloadLatest = () => {
     const current = meterDraftOf(meter);
-    autosave.adopt(current);
+    base.rebase();
+    record.adopt(current);
     setDraft(current);
     setError(undefined);
   };
 
-  const submit = () => {
-    const command = meterCreateCommandOf(draft, pickedLocationOf(draft));
-    if (Option.isNone(command)) {
-      setError('required');
-      return Effect.void;
-    }
-    setBusy(true);
-    return run(command.value).pipe(
-      Effect.tap((outcome) =>
-        Effect.sync(() => {
-          setBusy(false);
-          if (outcome.ok) {
-            onSaved(outcome.result.entityIds[0]);
-          } else {
-            setError(outcome.reason);
-          }
-        }),
-      ),
-    );
-  };
+  // A new meter is sent on Uložit only; the draft it opens with is not typed input.
+  const create = useFormSave<MeterDraft>({
+    equals: sameMeterDraft,
+    onDiscard: () => {
+      setDraft(meterDraftOf());
+      setError(undefined);
+    },
+    open: meter === undefined,
+    submit: (value) => {
+      const command = meterCreateCommandOf(value, pickedLocationOf(value));
+      if (Option.isNone(command)) {
+        setError('required');
+        return Effect.succeed<FormSubmitResult>('failed');
+      }
+      setError(undefined);
+      return run(command.value).pipe(
+        Effect.map((outcome) => commandResult(outcome, (result) => onSaved(result.entityIds[0]), setError)),
+      );
+    },
+    value: draft,
+  });
 
   const locationItems = [
     {
@@ -167,9 +188,7 @@ export const MeterForm = ({
     <div className="flex flex-col gap-200">
       {error !== undefined && (
         <StatusText showIcon status="error">
-          {error === 'required'
-            ? t('facility-operations.common.required')
-            : t(`facility-operations.common.errors.${error}`)}
+          {meterErrorText(error, t)}
         </StatusText>
       )}
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
@@ -277,28 +296,30 @@ export const MeterForm = ({
         </label>
       )}
       {meter === undefined ? (
-        <div className="flex flex-wrap justify-end gap-100">
-          <Button onClick={onCancel} theme="outlined" variant="secondary">
-            {t(CANCEL_LABEL)}
-          </Button>
-          <Button
-            isLoading={busy}
-            loadingText={t('facility-operations.common.saving')}
-            onClick={() => {
-              void browserRuntime.runPromise(submit());
-            }}
-            variant="primary"
-          >
-            {t(`${k}.create.submit`)}
-          </Button>
-        </div>
+        <FormSaveFooter
+          cancelLabel={t(CANCEL_LABEL)}
+          error={meterErrorText(error, t)}
+          form={create}
+          onCancel={onCancel}
+        />
       ) : (
-        <div className="flex flex-wrap items-center justify-end gap-100">
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
-          <Button onClick={close} theme="outlined" variant="secondary">
-            {t('facility-operations.common.close')}
-          </Button>
-        </div>
+        // The panel around the form asks this guard before it closes as well.
+        <EditGuard draft={record} labels={labels} onDiscard={discard}>
+          {(guard) => (
+            <div className="flex flex-wrap items-center justify-end gap-100">
+              <Button
+                onClick={() => {
+                  guard.request(onCancel);
+                }}
+                theme="outlined"
+                variant="secondary"
+              >
+                {t('facility-operations.common.close')}
+              </Button>
+              <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+            </div>
+          )}
+        </EditGuard>
       )}
     </div>
   );
@@ -347,7 +368,6 @@ interface SubmitMeterReadingInput {
   readonly problem: ReturnType<typeof readingProblem>;
   readonly readBy: string;
   readonly run: RunCommand;
-  readonly setBusy: (busy: boolean) => void;
   readonly setError: (error: ReadingError | undefined) => void;
 }
 
@@ -363,42 +383,40 @@ const submitMeterReading = Effect.fn('Facility.submitMeterReading')(function* su
   problem,
   readBy,
   run,
-  setBusy,
   setError,
 }: SubmitMeterReadingInput) {
   if (meter === undefined) {
     setError('pickMeter');
-    return;
+    return 'failed' as const;
   }
   if (date === '') {
     setError('invalidDate');
-    return;
+    return 'failed' as const;
   }
   if (parsed === undefined) {
     setError('invalidValue');
-    return;
+    return 'failed' as const;
   }
   const costValue = cost.trim() === '' ? undefined : parseDecimal(cost);
   if (cost.trim() !== '' && costValue === undefined) {
     setError('invalidCost');
-    return;
+    return 'failed' as const;
   }
   if (problem !== undefined) {
     setError(`problems.${problem}`);
-    return;
+    return 'failed' as const;
   }
   if (photo !== undefined && photo.size > MAX_UPLOAD_BYTES) {
     setError('photoTooLarge');
-    return;
+    return 'failed' as const;
   }
-  setBusy(true);
+  setError(undefined);
   let stored: MeterPhoto | undefined;
   if (photo !== undefined) {
     const uploaded = yield* uploadFile(photo);
     if (!uploaded.ok) {
-      setBusy(false);
       setError(uploaded.reason === 'forbidden' ? 'forbidden' : 'photoFailed');
-      return;
+      return 'failed' as const;
     }
     stored = uploaded.file;
   }
@@ -417,12 +435,8 @@ const submitMeterReading = Effect.fn('Facility.submitMeterReading')(function* su
     command.photo = stored;
   }
   const outcome = yield* run(command);
-  setBusy(false);
-  if (outcome.ok) {
-    onSaved(meter.id);
-  } else {
-    setError(outcome.reason);
-  }
+  const meterId = meter.id;
+  return commandResult(outcome, () => onSaved(meterId), setError);
 });
 
 interface ReadingDraft {
@@ -442,8 +456,11 @@ const readingDraftOf = (fixedMeterId: string | undefined): ReadingDraft => ({
   readBy: '',
   value: '',
 });
-type ReadingDraftChange = Partial<ReadingDraft> | { readonly clearPhoto: true };
+type ReadingDraftChange = Partial<ReadingDraft> | { readonly clearPhoto: true } | { readonly reset: ReadingDraft };
 const updateReadingDraft = (draft: ReadingDraft, changes: ReadingDraftChange): ReadingDraft => {
+  if ('reset' in changes) {
+    return changes.reset;
+  }
   if ('clearPhoto' in changes) {
     const { photo: _photo, ...withoutPhoto } = draft;
     return withoutPhoto;
@@ -549,7 +566,6 @@ export const ReadingForm = ({
     }
   };
   const photoInput = useRef<HTMLInputElement | null>(null);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ReadingError | undefined>();
   const meter = meters.find((entry) => entry.id === meterId);
   const parsed = parseDecimal(value);
@@ -560,22 +576,37 @@ export const ReadingForm = ({
       ? readingProblem(meter, { date, value: parsed }, pragueToday())
       : undefined;
 
-  const submit = () =>
-    submitMeterReading({
-      canRecordCosts,
-      cost,
-      date,
-      meter,
-      note,
-      onSaved,
-      parsed,
-      photo,
-      problem,
-      readBy,
-      run,
-      setBusy,
-      setError,
-    });
+  // A reading is sent on Uložit only, with the same checks and command as before.
+  const form = useFormSave<ReadingDraft>({
+    onDiscard: () => {
+      updateDraft({ reset: readingDraftOf(fixedMeterId) });
+      setError(undefined);
+    },
+    submit: () =>
+      submitMeterReading({
+        canRecordCosts,
+        cost,
+        date,
+        meter,
+        note,
+        onSaved,
+        parsed,
+        photo,
+        problem,
+        readBy,
+        run,
+        setError,
+      }).pipe(
+        // A photo the browser could not read is the photo's failure, said on the form like a failed upload.
+        Effect.catchTag('FileReadFailed', () =>
+          Effect.sync((): FormSubmitResult => {
+            setError('photoFailed');
+            return 'failed';
+          }),
+        ),
+      ),
+    value: draft,
+  });
 
   const activeMeters = meters.filter((entry) => entry.status !== 'RETIRED');
   const errorText = readingErrorText(error, t);
@@ -698,22 +729,7 @@ export const ReadingForm = ({
       ) : (
         <p className="text-fg-secondary text-xs">{t(`${k}.reading.photoRestricted`)}</p>
       )}
-      <div className="flex flex-wrap justify-end gap-100">
-        <Button onClick={onCancel} theme="outlined" variant="secondary">
-          {t(CANCEL_LABEL)}
-        </Button>
-        <Button
-          disabled={problem !== undefined}
-          isLoading={busy}
-          loadingText={t('facility-operations.common.saving')}
-          onClick={() => {
-            void browserRuntime.runPromise(submit());
-          }}
-          variant="primary"
-        >
-          {t(`${k}.reading.submit`)}
-        </Button>
-      </div>
+      <FormSaveFooter cancelLabel={t(CANCEL_LABEL)} error={errorText} form={form} onCancel={onCancel} />
     </div>
   );
 };

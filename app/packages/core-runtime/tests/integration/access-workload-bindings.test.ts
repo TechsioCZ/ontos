@@ -15,6 +15,8 @@ import type { AccessIntentError } from '../../src/access/intent/errors.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { loadDatabaseConnectionPair, parseDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
+import type { CoreDatabaseExecutor } from '../../src/db/types.ts';
+import { writeTestTenantScopes } from '../../src/testing/tenant-access.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
@@ -100,6 +102,7 @@ const replacedDatabase = (connectionString: string, database: string): string =>
 interface AccessWorkloadSchema {
   readonly admin: PgClient.PgClient;
   readonly reader: ReturnType<typeof makeDrizzleAccessWorkloadBindings>;
+  readonly runtimeDatabase: CoreDatabaseExecutor;
   readonly scopeA: OperationalScope;
   readonly scopeB: OperationalScope;
   readonly store: AccessWorkloadBindingStoreService;
@@ -147,6 +150,7 @@ const makeAccessWorkloadSchema = Effect.gen(function* accessWorkloadSchema() {
       enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
       executor: runtimeDatabase,
     }),
+    runtimeDatabase,
     scopeA: yield* scopeOf(tenantA, provisioner),
     scopeB: yield* scopeOf(tenantB, otherWorkload),
     store: makeAccessWorkloadBindingDrizzleStore({
@@ -156,13 +160,25 @@ const makeAccessWorkloadSchema = Effect.gen(function* accessWorkloadSchema() {
   } satisfies AccessWorkloadSchema;
 });
 
-const seedTenants = (admin: PgClient.PgClient) =>
+const seedTenants = ({ admin, runtimeDatabase }: Pick<AccessWorkloadSchema, 'admin' | 'runtimeDatabase'>) =>
   Effect.gen(function* seedTenantsEffect() {
     yield* admin.unsafe(`insert into "core"."tenants" values ('${tenantA}'), ('${tenantB}')`);
     yield* admin.unsafe(`insert into "core"."principals" (tenant_id, principal_id, kind) values
       ('${tenantA}', '${provisioner}', 'service'),
       ('${tenantA}', '${human}', 'human'),
       ('${tenantB}', '${otherWorkload}', 'service')`);
+    // Every tenant carries the scopes and Ready fence its bootstrap writes; a revocation locks that fence so
+    // it serializes with every Action already prepared on the binding (D6).
+    for (const [tenantId, principalId] of [
+      [tenantA, provisioner],
+      [tenantB, otherWorkload],
+    ] as const) {
+      yield* writeTestTenantScopes(runtimeDatabase, {
+        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+        principalId,
+        tenantId,
+      });
+    }
   });
 
 const bindingOf = (input: {
@@ -184,8 +200,9 @@ it.layer(NodeServices.layer)('the Access workload binding store', (suite) => {
   suite.effect(
     'registers a workload and answers only its active keys to the actor that holds them',
     Effect.fnUntraced(function* registersAndReads() {
-      const { admin, reader, scopeA, store } = yield* makeAccessWorkloadSchema;
-      yield* seedTenants(admin);
+      const schema = yield* makeAccessWorkloadSchema;
+      const { reader, scopeA, store } = schema;
+      yield* seedTenants(schema);
 
       const binding = bindingOf({
         bindingId: uid(30),
@@ -216,8 +233,9 @@ it.layer(NodeServices.layer)('the Access workload binding store', (suite) => {
   suite.effect(
     'never revives a revoked binding and lets a fresh incarnation re-bind the same key',
     Effect.fnUntraced(function* revokedIsFinal() {
-      const { admin, reader, scopeA, store } = yield* makeAccessWorkloadSchema;
-      yield* seedTenants(admin);
+      const schema = yield* makeAccessWorkloadSchema;
+      const { reader, scopeA, store } = schema;
+      yield* seedTenants(schema);
 
       const binding = bindingOf({
         bindingId: uid(31),
@@ -269,8 +287,9 @@ it.layer(NodeServices.layer)('the Access workload binding store', (suite) => {
   suite.effect(
     'refuses a binding that names another tenant and hides another tenant rows from the reader',
     Effect.fnUntraced(function* refusesForeignTenant() {
-      const { admin, reader, scopeA, scopeB, store } = yield* makeAccessWorkloadSchema;
-      yield* seedTenants(admin);
+      const schema = yield* makeAccessWorkloadSchema;
+      const { reader, scopeA, scopeB, store } = schema;
+      yield* seedTenants(schema);
 
       const foreign = bindingOf({
         bindingId: uid(33),
@@ -318,8 +337,9 @@ it.layer(NodeServices.layer)('the Access workload binding store', (suite) => {
   suite.effect(
     'keeps one live binding per principal and key: a repeat registration is a no-op',
     Effect.fnUntraced(function* keepsOneLiveBinding() {
-      const { admin, reader, scopeA, store } = yield* makeAccessWorkloadSchema;
-      yield* seedTenants(admin);
+      const schema = yield* makeAccessWorkloadSchema;
+      const { reader, scopeA, store } = schema;
+      yield* seedTenants(schema);
 
       const first = bindingOf({
         bindingId: uid(36),
@@ -349,7 +369,7 @@ it.layer(NodeServices.layer)('the Access workload binding store', (suite) => {
       // The invariant is the database's: a raw second live row for the same principal and key is
       // refused, so a store bug can never widen what the gate admits (O73).
       const duplicate = yield* Effect.exit(
-        admin.unsafe(`insert into "core"."access_workload_bindings"
+        schema.admin.unsafe(`insert into "core"."access_workload_bindings"
           (binding_id, tenant_id, principal_id, workload_key, status, incarnation, created_at)
         values ('${uid(38)}', '${tenantA}', '${provisioner}', '${IDENTITY_PROVIDER}', 'active', '${uid(48)}', now())`),
       );

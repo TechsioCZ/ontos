@@ -11,6 +11,7 @@ type Snapshot =
   | { readonly error: string; readonly state: 'failed' };
 
 const pending: Snapshot = { state: 'pending' };
+const copy = { detail: 'Detail', note: 'Note' };
 
 /** A strict (`retainStale: false`) page-data store: every reload reads as pending until it settles. */
 const makeStrictStore = () => {
@@ -54,9 +55,9 @@ const Detail = ({ id }: { readonly id: string }) => {
     return <p>{snapshot.error}</p>;
   }
   return (
-    <form aria-label="Detail">
+    <form aria-label={copy.detail}>
       <h1>{snapshot.value}</h1>
-      <input aria-label="Note" />
+      <input aria-label={copy.note} />
     </form>
   );
 };

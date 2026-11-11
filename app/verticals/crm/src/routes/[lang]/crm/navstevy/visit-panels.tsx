@@ -1,18 +1,15 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { DateTime, Effect } from 'effect';
+import { DateTime, Option } from 'effect';
 import { assignableSalespeople } from '../../../../crm/records.ts';
 import type { CrmCommandSubmit } from '../../../../crm/records.ts';
+import { CrmFormSaveActions, useCrmFormSave } from '../../../../crm/form-save.tsx';
 // AREA: visits — owned by the crm-visits lane. Side panels: record a visit, correct it (with history), detail.
 import { DetailList, SidePanel, comboboxTranslations, surfaceTileClassName } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Combobox } from '@techsio/ui-kit/molecules/combobox';
+import { Combobox, FormInput, FormTextarea, RadioGroup } from '@app/admin-ui/form-controls';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
-import { RadioGroup } from '@techsio/ui-kit/molecules/radio-group';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useState } from 'react';
@@ -223,16 +220,47 @@ export const VisitFields = ({
   );
 };
 
+/** The RecordVisit command of a complete draft; none while the client, result or time is missing. */
+export const recordVisitCommandOf = (
+  draft: VisitDraft,
+  clientId: string,
+  writeAll: boolean,
+): Option.Option<CrmCommandInput> => {
+  const occurredAt = isoFromLocal(draft.date, draft.time);
+  if (clientId === '' || draft.result.trim() === '' || occurredAt === undefined) {
+    return Option.none();
+  }
+  const nextStep = draft.nextStep.trim();
+  const command: Extract<CrmCommandInput, { readonly _tag: 'RecordVisit' }> = {
+    _tag: 'RecordVisit',
+    clientId,
+    kind: draft.kind,
+    occurredAt,
+    result: draft.result.trim(),
+  };
+  if (draft.note.trim() !== '') {
+    Object.assign(command, { note: draft.note.trim() });
+  }
+  if (nextStep !== '') {
+    Object.assign(command, { nextStep });
+  }
+  if (draft.nextStepDate !== '') {
+    Object.assign(command, { addToPlan: draft.addToPlan, nextStepDate: draft.nextStepDate });
+  }
+  if (writeAll && draft.salespersonId !== '') {
+    Object.assign(command, { salespersonId: draft.salespersonId });
+  }
+  return Option.some(command);
+};
+
 /** Record a new visit / call / video / e-mail (C02). `clientId` fixes the client (client card). */
 export const RecordVisitPanel = ({
-  busy,
   clientId,
   onOpenChange,
   open,
   records,
   submit,
 }: {
-  readonly busy: boolean;
   readonly clientId?: string;
   readonly onOpenChange: (open: boolean) => void;
   readonly open: boolean;
@@ -242,97 +270,39 @@ export const RecordVisitPanel = ({
   const { t } = useModernI18n();
   const toaster = useToast();
   const [draft, setDraft] = useState<VisitDraft>(() => emptyVisitDraft(records, clientId));
-  const [submitted, setSubmitted] = useState(false);
-  const [serverError, setServerError] = useState<string | undefined>();
   const patch = (next: Partial<VisitDraft>) => setDraft((current) => ({ ...current, ...next }));
-  const close = () => {
-    setDraft(emptyVisitDraft(records, clientId));
-    setSubmitted(false);
-    setServerError(undefined);
-    onOpenChange(false);
-  };
-  const effectiveClient = clientId ?? draft.clientId;
-  const occurredAt = isoFromLocal(draft.date, draft.time);
-  const hasNextDate = draft.nextStepDate !== '';
-  const save = () => {
-    setSubmitted(true);
-    if (effectiveClient === '' || draft.result.trim() === '' || occurredAt === undefined) {
-      return;
-    }
-    const nextStep = draft.nextStep.trim();
-    const command: Extract<CrmCommandInput, { readonly _tag: 'RecordVisit' }> = {
-      _tag: 'RecordVisit',
-      clientId: effectiveClient,
-      kind: draft.kind,
-      occurredAt,
-      result: draft.result.trim(),
-    };
-    if (draft.note.trim() !== '') {
-      Object.assign(command, { note: draft.note.trim() });
-    }
-    if (nextStep !== '') {
-      Object.assign(command, { nextStep });
-    }
-    if (hasNextDate) {
-      Object.assign(command, { addToPlan: draft.addToPlan, nextStepDate: draft.nextStepDate });
-    }
-    if (records.viewer.writeAll && draft.salespersonId !== '') {
-      Object.assign(command, { salespersonId: draft.salespersonId });
-    }
-    browserRuntime.runFork(
-      submit(command).pipe(
-        Effect.tap((outcome) =>
-          Effect.sync(() => {
-            if (outcome.ok) {
-              toaster.create({
-                description: hasNextDate && draft.addToPlan ? 'Další krok je v plánu K oslovení.' : undefined,
-                title: `${visitKindMeta[draft.kind].label} zapsán(a)`,
-                type: 'success',
-              });
-              close();
-            } else {
-              setServerError(czechError(outcome.message, 'Záznam se nepodařilo uložit.'));
-            }
-          }),
-        ),
-      ),
-    );
-  };
+  const form = useCrmFormSave<VisitDraft>({
+    command: (value) => recordVisitCommandOf(value, clientId ?? value.clientId, records.viewer.writeAll),
+    failureText: (message) => czechError(message, 'Záznam se nepodařilo uložit.'),
+    onSaved: (value) => {
+      toaster.create({
+        description: value.nextStepDate !== '' && value.addToPlan ? 'Další krok je v plánu K oslovení.' : undefined,
+        title: `${visitKindMeta[value.kind].label} zapsán(a)`,
+        type: 'success',
+      });
+      onOpenChange(false);
+    },
+    submit,
+    value: draft,
+  });
+  const close = () => onOpenChange(false);
   return (
     <SidePanel
-      actions={
-        <>
-          <Button onClick={close} theme="outlined" variant="secondary">
-            Zrušit
-          </Button>
-          <Button isLoading={busy} loadingText="Ukládám…" onClick={save} variant="primary">
-            Zapsat
-          </Button>
-        </>
-      }
+      actions={<CrmFormSaveActions form={form} onCancel={close} />}
       description={
         clientId === undefined
           ? 'Zapište kontakt, který proběhl. Plánované kontakty patří do K oslovení.'
           : clientLabel(records, clientId)
       }
+      guard={form.guard}
       onOpenChange={(next) => (next ? onOpenChange(true) : close())}
       open={open}
       resizeLabel={RESIZE_LABEL}
       size="lg"
       title={t('crm.ciClientsVisits.visits.recordVisit')}
     >
-      <form
-        className="flex flex-col gap-200 py-200"
-        onSubmit={(event) => {
-          event.preventDefault();
-          save();
-        }}
-      >
-        {serverError !== undefined && (
-          <StatusText showIcon status="error">
-            {serverError}
-          </StatusText>
-        )}
+      {/* Enter never sends the record: only Uložit does. */}
+      <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
         <VisitFields
           draft={draft}
           idPrefix="crm-visit-new"
@@ -340,9 +310,9 @@ export const RecordVisitPanel = ({
           records={records}
           showClient={clientId === undefined}
           showSalesperson={records.viewer.writeAll}
-          submitted={submitted}
+          submitted={form.record.status === 'invalid'}
         />
-        {hasNextDate && (
+        {draft.nextStepDate !== '' && (
           <FormCheckbox
             checked={draft.addToPlan}
             id="crm-visit-new-plan"
@@ -372,108 +342,89 @@ const initialVisitDraft = (target: Visit): VisitDraft => {
   };
 };
 
-/** Correct a visit. Every changed field is kept in the correction history (C02-03). */
-export const CorrectVisitPanel = ({
-  busy,
+/** A correction as typed: the corrected fields and why. */
+interface CorrectionDraft {
+  readonly reason: string;
+  readonly visit: VisitDraft;
+}
+
+const correctedFields: readonly (keyof VisitDraft)[] = [
+  'kind',
+  'date',
+  'time',
+  'result',
+  'note',
+  'nextStep',
+  'nextStepDate',
+];
+
+/** The CorrectVisit command with only the changed fields; none while nothing changed or result and time are missing. */
+const correctionCommandOf = (value: CorrectionDraft, target: Visit): Option.Option<CrmCommandInput> => {
+  const { visit: draft } = value;
+  const original = initialVisitDraft(target);
+  const occurredAt = isoFromLocal(draft.date, draft.time);
+  const changed = (field: keyof VisitDraft) => draft[field] !== original[field];
+  if (draft.result.trim() === '' || occurredAt === undefined || !correctedFields.some(changed)) {
+    return Option.none();
+  }
+  const command: CrmCommandInput = { _tag: 'CorrectVisit', visitId: target.id };
+  if (changed('kind')) {
+    Object.assign(command, { kind: draft.kind });
+  }
+  if (changed('date') || changed('time')) {
+    Object.assign(command, { occurredAt });
+  }
+  if (changed('result')) {
+    Object.assign(command, { result: draft.result.trim() });
+  }
+  if (changed('note')) {
+    Object.assign(command, { note: draft.note.trim() });
+  }
+  if (changed('nextStep')) {
+    Object.assign(command, { nextStep: draft.nextStep.trim() });
+  }
+  if (changed('nextStepDate')) {
+    Object.assign(command, { nextStepDate: draft.nextStepDate });
+  }
+  if (value.reason.trim() !== '') {
+    Object.assign(command, { reason: value.reason.trim() });
+  }
+  return Option.some(command);
+};
+
+const CorrectVisitForm = ({
   onClose,
   records,
   submit,
   visit,
 }: {
-  readonly busy: boolean;
   readonly onClose: () => void;
   readonly records: RecordsResponse;
   readonly submit: Submit;
-  readonly visit: Visit | undefined;
+  readonly visit: Visit;
 }) => {
   const { t } = useModernI18n();
   const toaster = useToast();
-
-  const [draft, setDraft] = useState<VisitDraft | undefined>(() =>
-    visit === undefined ? undefined : initialVisitDraft(visit),
-  );
-  const [reason, setReason] = useState('');
-  const [serverError, setServerError] = useState<string | undefined>();
-  const [loadedId, setLoadedId] = useState(visit?.id);
-  if (visit?.id !== loadedId) {
-    setLoadedId(visit?.id);
-    setDraft(visit === undefined ? undefined : initialVisitDraft(visit));
-    setReason('');
-    setServerError(undefined);
-  }
-  if (visit === undefined || draft === undefined) {
-    return null;
-  }
-  const occurredAt = isoFromLocal(draft.date, draft.time);
-  const original = initialVisitDraft(visit);
-  const save = () => {
-    if (draft.result.trim() === '' || occurredAt === undefined) {
-      setServerError('Vyplňte výsledek, datum a čas.');
-      return;
-    }
-    const changed = (field: keyof VisitDraft) => draft[field] !== original[field];
-    const fields: (keyof VisitDraft)[] = ['kind', 'date', 'time', 'result', 'note', 'nextStep', 'nextStepDate'];
-    if (!fields.some(changed)) {
-      setServerError('Nic jste nezměnili.');
-      return;
-    }
-    const command: CrmCommandInput = {
-      _tag: 'CorrectVisit',
-      visitId: visit.id,
-    };
-    if (changed('kind')) {
-      Object.assign(command, { kind: draft.kind });
-    }
-    if (changed('date') || changed('time')) {
-      Object.assign(command, { occurredAt });
-    }
-    if (changed('result')) {
-      Object.assign(command, { result: draft.result.trim() });
-    }
-    if (changed('note')) {
-      Object.assign(command, { note: draft.note.trim() });
-    }
-    if (changed('nextStep')) {
-      Object.assign(command, { nextStep: draft.nextStep.trim() });
-    }
-    if (changed('nextStepDate')) {
-      Object.assign(command, { nextStepDate: draft.nextStepDate });
-    }
-    if (reason.trim() !== '') {
-      Object.assign(command, { reason: reason.trim() });
-    }
-    browserRuntime.runFork(
-      submit(command).pipe(
-        Effect.tap((outcome) =>
-          Effect.sync(() => {
-            if (outcome.ok) {
-              toaster.create({
-                description: 'Původní hodnoty zůstávají v historii oprav.',
-                title: 'Záznam opraven',
-                type: 'success',
-              });
-              onClose();
-            } else {
-              setServerError(czechError(outcome.message, 'Opravu se nepodařilo uložit.'));
-            }
-          }),
-        ),
-      ),
-    );
-  };
+  const [draft, setDraft] = useState<CorrectionDraft>(() => ({ reason: '', visit: initialVisitDraft(visit) }));
+  const form = useCrmFormSave<CorrectionDraft>({
+    command: (value) => correctionCommandOf(value, visit),
+    failureText: (message) => czechError(message, 'Opravu se nepodařilo uložit.'),
+    onSaved: () => {
+      toaster.create({
+        description: 'Původní hodnoty zůstávají v historii oprav.',
+        title: 'Záznam opraven',
+        type: 'success',
+      });
+      onClose();
+    },
+    submit,
+    value: draft,
+  });
   return (
     <SidePanel
-      actions={
-        <>
-          <Button onClick={onClose} theme="outlined" variant="secondary">
-            Zrušit
-          </Button>
-          <Button isLoading={busy} loadingText="Ukládám…" onClick={save} variant="primary">
-            Uložit opravu
-          </Button>
-        </>
-      }
+      actions={<CrmFormSaveActions form={form} onCancel={onClose} />}
       description={`${clientLabel(records, visit.clientId)} · zapsal(a) ${principalLabel(records, visit.authorPrincipalId)}`}
+      guard={form.guard}
       onOpenChange={(next) => {
         if (!next) {
           onClose();
@@ -484,25 +435,15 @@ export const CorrectVisitPanel = ({
       size="lg"
       title={t('crm.ciClientsVisits.visits.correctRecord')}
     >
-      <form
-        className="flex flex-col gap-200 py-200"
-        onSubmit={(event) => {
-          event.preventDefault();
-          save();
-        }}
-      >
+      {/* Enter never sends the correction: only Uložit does. */}
+      <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
         <StatusText showIcon size="sm" status="default">
           Oprava záznam nepřepíše: původní hodnota, autor a čas opravy zůstanou v historii.
         </StatusText>
-        {serverError !== undefined && (
-          <StatusText showIcon status="error">
-            {serverError}
-          </StatusText>
-        )}
         <VisitFields
-          draft={draft}
+          draft={draft.visit}
           idPrefix="crm-visit-fix"
-          onChange={(patch) => setDraft((current) => (current === undefined ? current : { ...current, ...patch }))}
+          onChange={(patch) => setDraft((current) => ({ ...current, visit: { ...current.visit, ...patch } }))}
           records={records}
           showClient={false}
           showSalesperson={false}
@@ -513,15 +454,35 @@ export const CorrectVisitPanel = ({
           id="crm-visit-fix-reason"
           label={t('crm.ciClientsVisits.visits.correctionReason')}
           name="reason"
-          onChange={(event) => setReason(event.target.value)}
+          onChange={(event) => {
+            const reason = event.target.value;
+            setDraft((current) => ({ ...current, reason }));
+          }}
           placeholder={t('crm.ciClientsVisits.visits.correctionExample')}
           size="sm"
-          value={reason}
+          value={draft.reason}
         />
       </form>
     </SidePanel>
   );
 };
+
+/** Correct a visit. Every changed field is kept in the correction history (C02-03). */
+export const CorrectVisitPanel = ({
+  onClose,
+  records,
+  submit,
+  visit,
+}: {
+  readonly onClose: () => void;
+  readonly records: RecordsResponse;
+  readonly submit: Submit;
+  readonly visit: Visit | undefined;
+}) =>
+  visit === undefined ? null : (
+    // A different visit starts a new correction.
+    <CorrectVisitForm key={visit.id} onClose={onClose} records={records} submit={submit} visit={visit} />
+  );
 
 /** Read-only detail of one visit with its full correction history. */
 export const VisitDetailPanel = ({

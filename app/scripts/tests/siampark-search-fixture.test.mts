@@ -152,7 +152,15 @@ const reviewedAccess = {
     { legalEntityId: demoLegalEntityId, principalId: demoAccounts[0].principalId, roleKey: reviewedRole.key },
   ],
   roles: [reviewedRole],
-  workloads: [{ principalId: '72000000-0000-4000-8000-000000000080', workloadKey: 'demo.crm.party-intake' }],
+  workloads: [
+    { principalId: '72000000-0000-4000-8000-000000000080', workloadKey: 'demo.crm.party-intake' },
+    // A storefront binding registered for the one company it acts for (D6).
+    {
+      legalEntityId: demoLegalEntityId,
+      principalId: '72000000-0000-4000-8000-000000000081',
+      workloadKey: 'demo.storefront-client',
+    },
+  ],
 };
 
 it.live('validates canonical role recipes, cells and the original workload namespace without opening a pool', () =>
@@ -189,6 +197,19 @@ for (const { access, field } of [
       workloads: [{ principalId: '72000000-0000-4000-8000-000000000080', workloadKey: 'intake' }],
     },
     field: 'workloadKey',
+  },
+  {
+    access: {
+      ...reviewedAccess,
+      workloads: [
+        {
+          legalEntityId: 'not-a-company',
+          principalId: '72000000-0000-4000-8000-000000000081',
+          workloadKey: 'demo.storefront-client',
+        },
+      ],
+    },
+    field: 'legalEntityId',
   },
 ]) {
   it.live(`rejects a malformed canonical ${field} before database initialization`, () =>

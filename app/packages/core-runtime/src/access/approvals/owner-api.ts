@@ -108,7 +108,7 @@ export const ownerActionApprovalGroupDefinition = HttpApiGroup.make('ownerAction
     }),
   )
   .middleware(OwnerActionApprovalSchemaErrorMiddleware);
-export type OwnerActionApprovalGroupContract = HttpApiGroup.HttpApiGroup<
+type OwnerActionApprovalGroupContract = HttpApiGroup.HttpApiGroup<
   'ownerActionApprovals',
   HttpApiGroup.Endpoints<typeof ownerActionApprovalGroupDefinition>
 >;

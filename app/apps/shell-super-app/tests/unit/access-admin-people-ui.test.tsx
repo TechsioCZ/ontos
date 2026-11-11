@@ -1,3 +1,4 @@
+import { saveLabelsFor } from '@app/admin-ui';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { DateTime, Effect, Predicate, Schema } from 'effect';
 import { afterEach, expect, it, rstest, test } from 'effect-rstest';
@@ -18,10 +19,23 @@ import { submitPeopleCommand } from '../../src/routes/access-admin/people/people
 import type { PeopleMutationPort } from '../../src/routes/access-admin/people/people-commands.ts';
 import { toPeopleViewModel } from '../../src/routes/access-admin/people/people-presentation.ts';
 import { PeopleView } from '../../src/routes/access-admin/people/people-view.tsx';
-import type { PeopleCommand } from '../../src/routes/access-admin/people/people-view-model.ts';
+import type { PeopleCommand, PeopleFeedback } from '../../src/routes/access-admin/people/people-view-model.ts';
 import { authenticatedShellFixture } from './routes/authenticated-shell-fixture.ts';
 
-const { locale } = rstest.hoisted(() => ({ locale: { current: 'en' } }));
+interface Navigation {
+  shouldBlock: () => boolean;
+}
+const { locale, navigation } = rstest.hoisted(() => {
+  const state: Navigation = { shouldBlock: () => false };
+  return { locale: { current: 'en' }, navigation: state };
+});
+// Every form of the page registers its leave guard with the router; the newest registration is checked.
+rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useBlocker: (options: { readonly shouldBlockFn: () => boolean }) => {
+    navigation.shouldBlock = options.shouldBlockFn;
+    return { status: 'idle' };
+  },
+}));
 const flatten = (node: typeof Schema.Json.Type, prefix = ''): [string, string][] => {
   if (Predicate.isString(node)) {
     return [[prefix, node]];
@@ -58,6 +72,7 @@ const revision = 'people-revision-1';
 const capability = 'commerce.order.order.confirm';
 const from = '2026-10-01T00:00:00.000Z';
 const until = '2026-12-01T10:00:00.000Z';
+const read = '2026-11-01T00:00:00.000Z';
 
 const fixture = () => {
   const people = Schema.decodeUnknownSync(ListAccessPeopleResponseSchema)({
@@ -90,7 +105,16 @@ const fixture = () => {
           },
         ],
         displayName: 'Ada Lovelace',
-        memberships: [{ kind: 'owner', scope: company, status: 'suspended', validFrom: from, validUntil: null }],
+        memberships: [
+          {
+            kind: 'owner',
+            membershipId: '00000000-0000-4000-8000-0000000000e1',
+            scope: company,
+            status: 'suspended',
+            validFrom: from,
+            validUntil: null,
+          },
+        ],
         ownership: { administersScopes: [company], soleAdministratorScopes: [company] },
         principalId: personId,
         suspended: true,
@@ -108,6 +132,7 @@ const fixture = () => {
     soleAdministratorScopes: [company],
   };
   const options = Schema.decodeUnknownSync(ListAccessPeopleOptionsResponseSchema)({
+    admissionCandidates: [],
     capabilities: [
       {
         capabilityKey: capability,
@@ -133,8 +158,10 @@ const fixture = () => {
     scopes: [{ label: 'Alpha s.r.o.', scope: company }],
     teams: [{ name: 'Purchasing', scope: company, teamId }],
     writeAvailability: {
+      canAdmitMember: false,
       canAssign: true,
       canDelegate: true,
+      canEndMembership: false,
       canManageTeams: true,
       canRevokeDelegation: true,
       canTransferOwnership: false,
@@ -144,6 +171,7 @@ const fixture = () => {
   const snapshot: PeopleSnapshot = {
     options: Schema.encodeSync(ListAccessPeopleOptionsResponseSchema)(options),
     people: Schema.encodeSync(ListAccessPeopleResponseSchema)(people),
+    readAt: read,
   };
   return { options, people, snapshot };
 };
@@ -157,8 +185,10 @@ const readPort = (): PeopleReadPort => {
 const mutationPort = () => {
   const response = Schema.decodeUnknownSync(AccessPeopleMutationResponseSchema)({ revision: 'people-revision-2' });
   return {
+    admit: rstest.fn<PeopleMutationPort['admit']>(() => Effect.succeed(response)),
     assign: rstest.fn<PeopleMutationPort['assign']>(() => Effect.succeed(response)),
     delegate: rstest.fn<PeopleMutationPort['delegate']>(() => Effect.succeed(response)),
+    endMembership: rstest.fn<PeopleMutationPort['endMembership']>(() => Effect.succeed(response)),
     revokeAssignment: rstest.fn<PeopleMutationPort['revokeAssignment']>(() => Effect.succeed(response)),
     revokeDelegation: rstest.fn<PeopleMutationPort['revokeDelegation']>(() => Effect.succeed(response)),
     team: rstest.fn<PeopleMutationPort['team']>(() => Effect.succeed(response)),
@@ -171,13 +201,13 @@ const commandInput = (command: PeopleCommand, snapshot = fixture().snapshot) => 
   reason: 'User confirmed the named change',
   snapshot,
 });
-const renderPeople = (snapshot = fixture().snapshot) => {
+const renderPeople = (snapshot = fixture().snapshot, feedback: PeopleFeedback = 'idle') => {
   const callbacks = {
     onCommand: rstest.fn<(command: PeopleCommand, revision: string) => void>(),
     onNextPage: rstest.fn<() => void>(),
     onRefresh: rstest.fn<() => void>(),
   };
-  const rendered = render(<PeopleView feedback="idle" model={model(snapshot)} {...callbacks} />);
+  const rendered = render(<PeopleView feedback={feedback} model={model(snapshot)} {...callbacks} />);
   return { ...rendered, ...callbacks };
 };
 
@@ -324,8 +354,10 @@ test('unavailable writers leave role, team and delegation mutation affordances d
     options: {
       ...snapshot.options,
       writeAvailability: {
+        canAdmitMember: false,
         canAssign: false,
         canDelegate: false,
+        canEndMembership: false,
         canManageTeams: false,
         canRevokeDelegation: false,
         canTransferOwnership: false,
@@ -556,7 +588,8 @@ it.effect('the role form previews the exact selected person, company, role and l
     fireEvent.change(within(form).getByLabelText(translate('shell.accessAdmin.people.endDate')), {
       target: { value: '2026-12-01T10:00' },
     });
-    const submit = within(form).getByRole('button', { name: translate('shell.accessAdmin.people.assignRole') });
+    // Picking and typing send nothing; the form's one Save button opens the confirmation.
+    const submit = within(form).getByRole('button', { name: saveLabelsFor('en').save });
     yield* Effect.promise(() => waitFor(() => expect(submit.hasAttribute('disabled')).toBe(false)));
     expect(within(form).getByLabelText(translate('shell.accessAdmin.people.endDate'))).toHaveProperty(
       'validity.valid',
@@ -574,6 +607,33 @@ it.effect('the role form previews the exact selected person, company, role and l
       { expiryInput: '2026-12-01T10:00', kind: 'assign', personId, roleId, scopeId: companyId },
       revision,
     );
+    expect(view.onCommand).toHaveBeenCalledTimes(1);
+  }),
+);
+
+it.effect('typed delegation input blocks leaving until it is cleared; Enter opens nothing and sends nothing', () =>
+  Effect.gen(function* delegationLeave() {
+    const view = renderPeople();
+    fireEvent.click(screen.getByRole('combobox', { name: translate('shell.accessAdmin.people.scope') }));
+    fireEvent.click(yield* Effect.promise(() => screen.findByRole('option', { name: 'Alpha s.r.o.' })));
+    const form = yield* Effect.promise(() =>
+      screen.findByRole('form', { name: translate('shell.accessAdmin.people.delegationCreate') }),
+    );
+    expect(navigation.shouldBlock()).toBe(false);
+    const amount = within(form).getByLabelText(translate('shell.accessAdmin.people.amountMinor'));
+    fireEvent.change(amount, { target: { value: '5000' } });
+    fireEvent.submit(form);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(view.onCommand).not.toHaveBeenCalled();
+    expect(navigation.shouldBlock()).toBe(true);
+    // Incomplete: the one Save button stays disabled until every required choice is made.
+    expect(
+      within(form)
+        .getByRole('button', { name: saveLabelsFor('en').save })
+        .hasAttribute('disabled'),
+    ).toBe(true);
+    fireEvent.change(amount, { target: { value: '' } });
+    expect(navigation.shouldBlock()).toBe(false);
   }),
 );
 
@@ -602,6 +662,316 @@ test('a delegated assignment keeps its frozen limits visible after the delegatio
   expect(screen.getByText(capability)).toBeTruthy();
   expect(screen.getByText('50,000 CZK')).toBeTruthy();
   expect(screen.queryByRole('button', { name: translate('shell.accessAdmin.people.delegationRevoke') })).toBeNull();
+});
+
+const candidateId = '00000000-0000-4000-8000-000000000009';
+const otherCompanyId = '00000000-0000-4000-8000-00000000000a';
+const otherCandidateId = '00000000-0000-4000-8000-00000000000b';
+const otherCompany = { kind: 'company', legalEntityId: otherCompanyId };
+const people = 'shell.accessAdmin.people';
+const allWrites = (open: boolean) => ({
+  canAdmitMember: open,
+  canAssign: open,
+  canDelegate: open,
+  canEndMembership: open,
+  canManageTeams: open,
+  canRevokeDelegation: open,
+  canTransferOwnership: open,
+  canUnassign: open,
+});
+/** Two companies, one directory candidate each, and Ada holding a live member row in Alpha. */
+const admissionSnapshot = (open = true): PeopleSnapshot => {
+  const { snapshot } = fixture();
+  const options = Schema.decodeUnknownSync(ListAccessPeopleOptionsResponseSchema)({
+    ...snapshot.options,
+    admissionCandidates: [
+      { displayName: 'Katherine Johnson', principalId: candidateId, scope: company },
+      { displayName: 'Dorothy Vaughan', principalId: otherCandidateId, scope: otherCompany },
+    ],
+    scopes: [...snapshot.options.scopes, { label: 'Beta a.s.', scope: otherCompany }],
+    writeAvailability: allWrites(open),
+  });
+  const list = Schema.decodeUnknownSync(ListAccessPeopleResponseSchema)({
+    ...snapshot.people,
+    items: snapshot.people.items.map((person) => ({
+      ...person,
+      memberships: [
+        ...person.memberships,
+        {
+          kind: 'member',
+          membershipId: '00000000-0000-4000-8000-0000000000e2',
+          scope: company,
+          status: 'active',
+          validFrom: from,
+          validUntil: null,
+        },
+      ],
+    })),
+  });
+  return {
+    options: Schema.encodeSync(ListAccessPeopleOptionsResponseSchema)(options),
+    people: Schema.encodeSync(ListAccessPeopleResponseSchema)(list),
+    readAt: snapshot.readAt,
+  };
+};
+/** Selects a company and waits until its admission section shows the given candidate. */
+const chooseScope = (label: string, candidate: string) =>
+  Effect.gen(function* choose() {
+    fireEvent.click(screen.getByRole('combobox', { name: translate(`${people}.scope`) }));
+    fireEvent.click(yield* Effect.promise(() => screen.findByRole('option', { name: label })));
+    return yield* Effect.promise(() =>
+      waitFor(() => {
+        const section = screen.getByRole('region', { name: translate(`${people}.admitSection`) });
+        within(section).getByText(candidate);
+        return section;
+      }),
+    );
+  });
+const leaveLabels = saveLabelsFor('en');
+const cancelName = translate('shell.accessAdmin.common.cancel');
+const endMembershipName = translate(`${people}.endMembershipNamed`, { person: 'Ada Lovelace', scope: 'Alpha s.r.o.' });
+
+it.effect('each company lists only its own directory people and admission previews person, company and effect', () =>
+  Effect.gen(function* admission() {
+    const view = renderPeople(admissionSnapshot());
+    const beta = yield* chooseScope('Beta a.s.', 'Dorothy Vaughan');
+    expect(within(beta).queryByText('Katherine Johnson')).toBeNull();
+    const alpha = yield* chooseScope('Alpha s.r.o.', 'Katherine Johnson');
+    expect(within(alpha).queryByText('Dorothy Vaughan')).toBeNull();
+    fireEvent.click(
+      within(alpha).getByRole('button', {
+        name: translate(`${people}.admitMemberNamed`, { person: 'Katherine Johnson' }),
+      }),
+    );
+    const dialog = yield* Effect.promise(() => screen.findByRole('dialog'));
+    expect(within(dialog).getByText('Katherine Johnson')).toBeTruthy();
+    expect(within(dialog).getByText('Alpha s.r.o.')).toBeTruthy();
+    expect(within(dialog).getByText(translate(`${people}.admitEffect`))).toBeTruthy();
+    expect(view.onCommand).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+    expect(view.onCommand).toHaveBeenCalledWith({ kind: 'admit', personId: candidateId, scopeId: companyId }, revision);
+  }),
+);
+
+it.effect('a closed people gate disables admission and ending and shows the preview-only notice', () =>
+  Effect.gen(function* closedGate() {
+    renderPeople(admissionSnapshot(false));
+    expect(screen.getByText(translate(`${people}.previewOnly`))).toBeTruthy();
+    expect(screen.getByRole('button', { name: endMembershipName }).hasAttribute('disabled')).toBe(true);
+    const alpha = yield* chooseScope('Alpha s.r.o.', 'Katherine Johnson');
+    const admit = within(alpha).getByRole('button', {
+      name: translate(`${people}.admitMemberNamed`, { person: 'Katherine Johnson' }),
+    });
+    expect(admit.hasAttribute('disabled')).toBe(true);
+  }),
+);
+
+it.effect('ending a membership names what ends with it and cannot be confirmed without a reason', () =>
+  Effect.gen(function* endConfirmation() {
+    const view = renderPeople(admissionSnapshot());
+    fireEvent.click(screen.getByRole('button', { name: endMembershipName }));
+    const dialog = yield* Effect.promise(() => screen.findByRole('dialog'));
+    expect(within(dialog).getByText('Ada Lovelace')).toBeTruthy();
+    expect(within(dialog).getByText('Alpha s.r.o.')).toBeTruthy();
+    // One live role and one team in Alpha; the listed delegation is managed by Grace, so it does not end.
+    expect(
+      within(dialog).getByText(translate(`${people}.endMembershipEnds`, { delegations: 0, roles: 1, teams: 1 })),
+    ).toBeTruthy();
+    expect(within(dialog).getByText(translate(`${people}.endMembershipEffect`))).toBeTruthy();
+    const confirm = within(dialog).getByRole('button', { name: 'Confirm' });
+    expect(confirm.hasAttribute('disabled')).toBe(true);
+    const reason = within(dialog).getByLabelText(translate(`${people}.endMembershipReason`), { exact: false });
+    fireEvent.change(reason, { target: { value: '   ' } });
+    expect(confirm.hasAttribute('disabled')).toBe(true);
+    fireEvent.click(confirm);
+    expect(view.onCommand).not.toHaveBeenCalled();
+    fireEvent.change(reason, { target: { value: ' Left the company ' } });
+    yield* Effect.promise(() => waitFor(() => expect(confirm.hasAttribute('disabled')).toBe(false)));
+    fireEvent.click(confirm);
+    expect(view.onCommand).toHaveBeenCalledWith(
+      { kind: 'end-membership', personId, reason: 'Left the company', scopeId: companyId },
+      revision,
+    );
+  }),
+);
+
+it.effect('closing the end confirmation with a typed reason asks the shared leave question', () =>
+  Effect.gen(function* endLeaveQuestion() {
+    const view = renderPeople(admissionSnapshot());
+    // Untouched: Cancel closes without asking and nothing is sent.
+    fireEvent.click(screen.getByRole('button', { name: endMembershipName }));
+    const untouched = yield* Effect.promise(() => screen.findByRole('dialog'));
+    expect(navigation.shouldBlock()).toBe(false);
+    fireEvent.click(within(untouched).getByRole('button', { name: cancelName }));
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+
+    // Typed reason, then Cancel: the question asks; Zahodit změny drops the reason and closes without sending.
+    fireEvent.click(screen.getByRole('button', { name: endMembershipName }));
+    const typed = yield* Effect.promise(() => screen.findByRole('dialog'));
+    const reasonLabel = translate(`${people}.endMembershipReason`);
+    fireEvent.change(within(typed).getByLabelText(reasonLabel, { exact: false }), { target: { value: 'Left' } });
+    expect(navigation.shouldBlock()).toBe(true);
+    // Escape, the way the reason used to be lost, asks too.
+    fireEvent.keyDown(typed, { key: 'Escape' });
+    const escaped = yield* Effect.promise(() => screen.findByRole('alertdialog'));
+    fireEvent.click(within(escaped).getByRole('button', { name: leaveLabels.stay }));
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull()));
+    fireEvent.click(within(typed).getByRole('button', { name: cancelName }));
+    const leave = yield* Effect.promise(() => screen.findByRole('alertdialog'));
+    fireEvent.click(within(leave).getByRole('button', { name: leaveLabels.stay }));
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull()));
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: cancelName }));
+    const discard = yield* Effect.promise(() => screen.findByRole('alertdialog'));
+    fireEvent.click(within(discard).getByRole('button', { name: leaveLabels.discard }));
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()));
+    expect(view.onCommand).not.toHaveBeenCalled();
+
+    // A reason of spaces is input to keep, but the question cannot send it.
+    fireEvent.click(screen.getByRole('button', { name: endMembershipName }));
+    const blank = yield* Effect.promise(() => screen.findByRole('dialog'));
+    fireEvent.change(within(blank).getByLabelText(reasonLabel, { exact: false }), { target: { value: '   ' } });
+    fireEvent.click(within(blank).getByRole('button', { name: cancelName }));
+    const blankLeave = yield* Effect.promise(() => screen.findByRole('alertdialog'));
+    expect(within(blankLeave).getByRole('button', { name: leaveLabels.save }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(within(blankLeave).getByRole('button', { name: leaveLabels.discard }));
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()));
+    expect(view.onCommand).not.toHaveBeenCalled();
+
+    // The question's Uložit sends the same reviewed end.
+    fireEvent.click(screen.getByRole('button', { name: endMembershipName }));
+    const again = yield* Effect.promise(() => screen.findByRole('dialog'));
+    const reason = within(again).getByLabelText(reasonLabel, { exact: false });
+    expect(reason.getAttribute('value') ?? '').toBe('');
+    fireEvent.change(reason, { target: { value: ' Left the company ' } });
+    fireEvent.click(within(again).getByRole('button', { name: cancelName }));
+    const save = yield* Effect.promise(() => screen.findByRole('alertdialog'));
+    fireEvent.click(within(save).getByRole('button', { name: leaveLabels.save }));
+    expect(view.onCommand).toHaveBeenCalledWith(
+      { kind: 'end-membership', personId, reason: 'Left the company', scopeId: companyId },
+      revision,
+    );
+    expect(view.onCommand).toHaveBeenCalledTimes(1);
+    yield* Effect.promise(() => waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()));
+  }),
+);
+
+it.effect('a suspended member row is ended for good without restoring it first, as Core allows', () =>
+  Effect.gen(function* endSuspended() {
+    const open = admissionSnapshot();
+    const snapshot: PeopleSnapshot = {
+      ...open,
+      people: {
+        ...open.people,
+        items: open.people.items.map((person) => ({
+          ...person,
+          memberships: person.memberships.map((row) =>
+            row.kind === 'member' ? { ...row, status: 'suspended' as const } : row,
+          ),
+        })),
+      },
+    };
+    const view = renderPeople(snapshot);
+    fireEvent.click(screen.getByRole('button', { name: endMembershipName }));
+    const dialog = yield* Effect.promise(() => screen.findByRole('dialog'));
+    expect(
+      within(dialog).getByText(translate(`${people}.endMembershipEnds`, { delegations: 0, roles: 1, teams: 1 })),
+    ).toBeTruthy();
+    const reason = within(dialog).getByLabelText(translate(`${people}.endMembershipReason`), { exact: false });
+    fireEvent.change(reason, { target: { value: 'Left while suspended' } });
+    const confirm = within(dialog).getByRole('button', { name: 'Confirm' });
+    yield* Effect.promise(() => waitFor(() => expect(confirm.hasAttribute('disabled')).toBe(false)));
+    fireEvent.click(confirm);
+    const end: PeopleCommand = { kind: 'end-membership', personId, reason: 'Left while suspended', scopeId: companyId };
+    expect(view.onCommand).toHaveBeenCalledWith(end, revision);
+    const port = mutationPort();
+    expect(yield* submitPeopleCommand(commandInput(end, snapshot), port)).toBe('saved');
+    expect(port.endMembership.mock.calls[0]?.[0]).toEqual({
+      expectedRevision: revision,
+      principalId: personId,
+      reason: 'Left while suspended',
+      scope: company,
+    });
+  }),
+);
+
+it.effect('admission and ending reach the client only for a current candidate or live member row', () =>
+  Effect.gen(function* lifecycleCommands() {
+    const port = mutationPort();
+    const snapshot = admissionSnapshot();
+    const admit: PeopleCommand = { kind: 'admit', personId: candidateId, scopeId: companyId };
+    expect(yield* submitPeopleCommand(commandInput(admit, snapshot), port)).toBe('saved');
+    expect(port.admit.mock.calls[0]?.[0]).toEqual({
+      expectedRevision: revision,
+      principalId: candidateId,
+      scope: company,
+    });
+    const admitted = { ...snapshot, options: { ...snapshot.options, admissionCandidates: [] } };
+    expect(yield* submitPeopleCommand(commandInput(admit, admitted), port)).toBe('invalid');
+    expect(yield* submitPeopleCommand(commandInput({ ...admit, personId: otherCandidateId }, snapshot), port)).toBe(
+      'invalid',
+    );
+    expect(port.admit).toHaveBeenCalledTimes(1);
+
+    const end: PeopleCommand = { kind: 'end-membership', personId, reason: ' Left ', scopeId: companyId };
+    expect(yield* submitPeopleCommand(commandInput(end, snapshot), port)).toBe('saved');
+    expect(port.endMembership.mock.calls[0]?.[0]).toEqual({
+      expectedRevision: revision,
+      principalId: personId,
+      reason: 'Left',
+      scope: company,
+    });
+    expect(yield* submitPeopleCommand(commandInput({ ...end, reason: '  ' }, snapshot), port)).toBe('invalid');
+    // The base fixture holds only an owner row in Alpha: owner and access_admin rows are never ended here.
+    expect(yield* submitPeopleCommand(commandInput(end), port)).toBe('invalid');
+    expect(port.endMembership).toHaveBeenCalledTimes(1);
+  }),
+);
+
+const conflictProblem = (detail: string) =>
+  Schema.decodeUnknownSync(AccessAdminConflictProblemSchema)({
+    _tag: 'AccessAdminConflict',
+    detail,
+    status: 409,
+    title: 'Conflict',
+    type: 'about:blank',
+  });
+
+it.effect('a sole administrator leaving gets the last-owner text, other conflicts stay a plain conflict', () =>
+  Effect.gen(function* soleAdministrator() {
+    const end: PeopleCommand = { kind: 'end-membership', personId, reason: 'Left', scopeId: companyId };
+    const port = mutationPort();
+    port.endMembership.mockReturnValue(Effect.fail(conflictProblem('ownership_transfer_required: sole administrator')));
+    const outcome = yield* submitPeopleCommand(commandInput(end, admissionSnapshot()), port);
+    expect(outcome).toBe('ownershipTransfer');
+    port.endMembership.mockReturnValue(Effect.fail(conflictProblem('access_intent_record_conflict: moved')));
+    expect(yield* submitPeopleCommand(commandInput(end, admissionSnapshot()), port)).toBe('conflict');
+    const view = renderPeople(admissionSnapshot(), outcome);
+    expect(view.container.querySelector('[aria-live="polite"]')?.textContent).toBe(
+      translate(`${people}.lastOwnerTransfer`),
+    );
+  }),
+);
+
+test('every admission and end-membership key exists in Czech and English', () => {
+  for (const key of [
+    'admitSection',
+    'admitHelp',
+    'admitMember',
+    'admitMemberNamed',
+    'confirmAdmit',
+    'admitEffect',
+    'noCandidates',
+    'endMembership',
+    'endMembershipNamed',
+    'confirmEndMembership',
+    'endMembershipEnds',
+    'endMembershipEffect',
+    'endMembershipReason',
+  ]) {
+    expect([czech.has(`${people}.${key}`), english.has(`${people}.${key}`)]).toEqual([true, true]);
+  }
 });
 
 test('English and Czech presentation use real locale keys without untranslated output', () => {

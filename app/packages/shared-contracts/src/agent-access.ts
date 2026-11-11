@@ -216,6 +216,8 @@ export const AgentOperatorsRequestSchema = Schema.Struct({
   agentPrincipalId: AgentPrincipalIdSchema,
   /** Complete new operator set (SpiceDB `principal:{agent}#operator`); active people of the agent's company only. */
   operatorPrincipalIds: Schema.Array(AgentPrincipalIdSchema),
+  /** Operator revision the form was read from (`AgentEntity.operatorsRevision`); a stale one answers 409. */
+  expectedRevision: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 export type AgentOperatorsRequest = typeof AgentOperatorsRequestSchema.Type;
 
@@ -281,6 +283,8 @@ export const AgentEntitySchema = Schema.Struct({
   modules: Schema.Array(AgentModuleGrantSchema),
   /** People allowed to connect the agent (SpiceDB `principal:{agent}#operator`). */
   operators: Schema.Array(PrincipalRefSchema),
+  /** Revision of the agent's operator set (0 before the first change); sent back as `expectedRevision` on save. */
+  operatorsRevision: Schema.Int,
   /** Person of the company responsible for the agent; null when no audited profile owner was chosen. */
   owner: Schema.OptionFromNullOr(PrincipalRefSchema),
   principalId: AgentPrincipalIdSchema,

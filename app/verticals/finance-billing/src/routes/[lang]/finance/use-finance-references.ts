@@ -74,6 +74,7 @@ const loadDirectory = Effect.fn('Finance.referenceDirectory')(function* loadDire
 
 /** Never fails: every read's failure is part of the value. */
 const financeDirectory = definePageData({
+  changesFrom: ['finance-billing', 'party-registry', 'sales-pipeline'],
   key: (scope: string) => scope,
   load: (_scope: string) => loadDirectory(),
   runtime: financeBrowserRuntime,
@@ -102,6 +103,7 @@ const loadProducts = Effect.fn('Finance.referenceProducts')(function* loadProduc
 });
 
 const financeProducts = definePageData({
+  changesFrom: ['finance-billing', 'merchandise'],
   key: (scope: string) => scope,
   load: (_scope: string) => loadProducts(),
   runtime: financeBrowserRuntime,
@@ -152,6 +154,12 @@ export const useFinanceReferences = ({ scope }: { readonly scope: string | undef
     opportunityTitles: directory?.opportunityTitles ?? noTitles,
     products: products?.items ?? noProducts,
     productsReadable: directory?.productsReadable,
-    referencesFailed: (directory?.failures.length ?? 0) > 0 || products?.failed === true,
+    /** The product catalog of the create form could not be read; the list itself shows no product names. */
+    productsFailed: products?.failed === true,
+    /**
+     * Names the list shows (customers, opportunity titles) could not be read. A failed product catalog is not one of
+     * them: it only leaves the create form without products, and says so there.
+     */
+    referencesFailed: (directory?.failures.length ?? 0) > 0,
   };
 };

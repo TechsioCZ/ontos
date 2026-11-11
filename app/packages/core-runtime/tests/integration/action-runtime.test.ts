@@ -394,7 +394,11 @@ const liveModuleStateOptions = (database: ContextServiceContract) => {
   };
 };
 
-const prepareTestOwnerRows = Effect.fn(function* integrationProgram1(database: ContextServiceContract) {
+const prepareTestOwnerRows = Effect.fn(function* integrationProgram1(
+  database: ContextServiceContract,
+  /** Tenant scopes are installed only through the shared runtime identity, never the admin login. */
+  scopes: ContextServiceContract = database,
+) {
   const { authBindingId, legalEntityId, principalId, tenantId } = yield* ActionRuntimeSuite;
   yield* database.executor.insert(tenants).values({
     defaultLocale: 'en',
@@ -434,7 +438,7 @@ const prepareTestOwnerRows = Effect.fn(function* integrationProgram1(database: C
     tenantId,
   });
   // The governed module-state Action runs under the Tenant's real access fence.
-  yield* writeTestTenantScopes(database.executor, { principalId, tenantId });
+  yield* writeTestTenantScopes(scopes.executor, { principalId, tenantId });
 });
 const prepare = withDatabase(prepareTestOwnerRows);
 
@@ -1743,15 +1747,15 @@ const testProgram12 = () =>
         .from(tenantModuleStates)
         .where(eq(tenantModuleStates.moduleKey, moduleStateKey));
 
-      const keyedLookup = { actionKey: 'shell.test.lost-ack', idempotencyKey: key, principal };
+      const keyedLookup = { actionKey: 'core.shell.test.lost-ack', idempotencyKey: key, principal };
       expect(yield* resolvingRuntime.resolveActionExecution(keyedLookup)).toEqual({
-        actionKey: 'shell.test.lost-ack',
+        actionKey: 'core.shell.test.lost-ack',
         invocationId,
         retryCommand: false,
         state: 'COMMITTED',
       });
       expect(yield* resolvingRuntime.resolveActionExecution({ invocationId, principal })).toEqual({
-        actionKey: 'shell.test.lost-ack',
+        actionKey: 'core.shell.test.lost-ack',
         invocationId,
         retryCommand: false,
         state: 'COMMITTED',
@@ -1772,7 +1776,7 @@ const testProgram12 = () =>
       const keyedUnavailable = yield* Effect.flip(unavailableRuntime.resolveActionCommit(keyedLookup));
       expect(Predicate.isTagged(keyedUnavailable, 'ActionInvocationPersistenceError')).toBe(true);
       for (const outsideScope of [
-        { ...keyedLookup, actionKey: 'shell.test.other-action' },
+        { ...keyedLookup, actionKey: 'core.shell.test.other-action' },
         { ...keyedLookup, idempotencyKey: 'unknown-key' },
         { ...keyedLookup, principal: { ...principal, tenantId: yield* crypto.randomUUIDv4() } },
         { ...keyedLookup, principal: { ...principal, principalId: yield* crypto.randomUUIDv4() } },
@@ -1850,14 +1854,14 @@ const testProgram12 = () =>
         principal,
       });
       const keyedOpen = yield* resolvingRuntime.resolveActionCommit({
-        actionKey: 'shell.test.lost-ack-open',
+        actionKey: 'core.shell.test.lost-ack-open',
         idempotencyKey: openKey,
         principal,
       });
       expect(keyedOpen.invocationId).toBe(openInvocationId);
       expect(
         yield* resolvingRuntime.resolveActionExecution({
-          actionKey: 'shell.test.lost-ack-open',
+          actionKey: 'core.shell.test.lost-ack-open',
           idempotencyKey: openKey,
           principal,
         }),
@@ -2011,7 +2015,7 @@ const testCompositionTransactionFence = () =>
       yield* isolated.migrateCoreSchema();
       const database = yield* makeCoreDatabase({ ...isolated.connections.runtime, maxConnections: 3 });
       const adminDatabase = yield* makeCoreDatabase({ ...isolated.connections.admin, maxConnections: 3 });
-      yield* prepareTestOwnerRows(adminDatabase);
+      yield* prepareTestOwnerRows(adminDatabase, database);
 
       const handlerStarted = yield* Deferred.make<null>();
       const handlerRelease = yield* Deferred.make<null>();
@@ -2172,7 +2176,7 @@ const testGuardedActionRemoteIo = Effect.fn('ActionRuntimeIntegration.refuseRemo
   });
   yield* withDatabase((database) =>
     Effect.gen(function* guardedAction() {
-      const runtime = makeActionRuntime(
+      const runtime = makeRegisteredTestActionRuntime(
         database,
         makeActionRepository(crypto),
         allowedPermission,
@@ -2183,7 +2187,7 @@ const testGuardedActionRemoteIo = Effect.fn('ActionRuntimeIntegration.refuseRemo
         },
       );
       const action = makeRegistration({
-        actionKey: 'shell.test.guarded-remote-io',
+        actionKey: 'core.shell.test.guarded-remote-io',
         moduleStateKey,
         onExecuteEffect: forbiddenRemoteWork,
       });
@@ -2219,7 +2223,7 @@ const testActionServicePreparation = Effect.fn('ActionRuntimeIntegration.prepare
   const key = 'prepared-owner-services';
   const moduleStateKey = `test.${key}.${tenantId}`;
   const phases: string[] = [];
-  const base = makeRegistration({ actionKey: 'shell.test.prepared-owner-services', moduleStateKey });
+  const base = makeRegistration({ actionKey: 'core.shell.test.prepared-owner-services', moduleStateKey });
   const action = defineAction(base.descriptor, getActionHandler(base), getActionServiceFactory(base), {
     prepareServices: Effect.fn('ActionRuntimeIntegration.prepareOwnerServices')(
       function* prepareOwnerServices(payload, context) {
@@ -2259,7 +2263,7 @@ const testActionServicePreparation = Effect.fn('ActionRuntimeIntegration.prepare
   });
   yield* withDatabase((database) =>
     Effect.gen(function* preparedAction() {
-      const runtime = makeActionRuntime(
+      const runtime = makeRegisteredTestActionRuntime(
         database,
         makeActionRepository(crypto),
         allowedPermission,

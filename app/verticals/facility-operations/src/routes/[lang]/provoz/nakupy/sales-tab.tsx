@@ -9,12 +9,14 @@ import { optionalField } from '../../../../../shared/domain/common.ts';
 import { listCustomers } from '@app/party-registry/api/client';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import {
-  AutosaveStatus,
   DetailList,
   EmptyState,
+  SaveBar,
   SectionCard,
   SidePanel,
+  UnsavedChangesDialog,
   formatDate,
+  saveLabelsFor,
   surfaceTileClassName,
 } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -22,8 +24,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import type { BadgeProps } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
+import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
@@ -44,7 +45,10 @@ import { useIncomingInvoiceLinks } from './finance-links.tsx';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { quoteDraftOf } from './sales-quote-draft.ts';
 import type { QuoteDraft } from './sales-quote-draft.ts';
-import { useQuoteAutosave } from './sales-quote-autosave.ts';
+import { useQuoteDraftSave } from './sales-quote-save.ts';
+import { SalesCloseForm, SalesDeliverForm, SalesInvoiceForm } from './sales-order-forms.tsx';
+import { nothingToSave, useEditGuard } from '../../../../ui/edit-guard.tsx';
+import { FormSaveFooter, refusedOutcome, submitDone, useFormSave } from '../../../../ui/form-save.tsx';
 import { addDays } from '../../../../ui/ops-agenda/deadlines.ts';
 import {
   dateTimeIso,
@@ -308,7 +312,6 @@ interface SubmitSalesQuoteDraftInput {
   readonly parsed: readonly ParsedSalesLine[];
   readonly quote: SalesQuote | undefined;
   readonly run: RunCommand;
-  readonly setBusy: (value: boolean) => void;
   readonly setError: (value: string | undefined) => void;
   readonly t: ReturnType<typeof useModernI18n>['t'];
   readonly valid: boolean;
@@ -316,35 +319,19 @@ interface SubmitSalesQuoteDraftInput {
 }
 const submitSalesQuoteDraft = Effect.fn('FacilityOperations.Purchasing.submitSalesQuoteDraft')(
   function* submitSalesQuote(input: SubmitSalesQuoteDraftInput, status: 'draft' | 'sent') {
-    const {
-      customerId,
-      customers,
-      date,
-      k,
-      note,
-      onSaved,
-      parsed,
-      quote,
-      run,
-      setBusy,
-      setError,
-      t,
-      valid,
-      validUntil,
-    } = input;
+    const { customerId, customers, date, k, note, onSaved, parsed, quote, run, setError, t, valid, validUntil } = input;
     const customer =
       customers.status === 'ready'
         ? customers.customers.find((entry) => entry.counterpartyId === customerId)
         : undefined;
     if (customer === undefined || !valid || date === '') {
       setError(k('sales.form.required'));
-      return;
+      return 'failed' as const;
     }
     if (validUntil !== '' && validUntil < date) {
       setError(k('sales.form.validity'));
-      return;
+      return 'failed' as const;
     }
-    setBusy(true);
     setError(undefined);
     const fields = {
       customer,
@@ -363,14 +350,102 @@ const submitSalesQuoteDraft = Effect.fn('FacilityOperations.Purchasing.submitSal
         ? { _tag: 'SalesQuoteCreate', ...fields, status }
         : { _tag: 'SalesQuoteUpdate', ...fields, quoteId: quote.id },
     );
-    setBusy(false);
     if (!outcome.ok) {
       setError(t(failureKey(outcome.reason)));
-      return;
+      return refusedOutcome(outcome);
     }
-    onSaved(outcome.result.entityIds[0] ?? quote?.id ?? '');
+    const savedId = outcome.result.entityIds[0] ?? quote?.id ?? '';
+    return submitDone(() => onSaved(savedId));
   },
 );
+
+/** The lines of a quote being edited: description, quantity, unit price and VAT rate, with the running totals. */
+const SalesQuoteLines = ({
+  lines,
+  onAddLine,
+  onChangeLine,
+  onRemoveLine,
+  totals,
+}: {
+  readonly lines: readonly LineDraft[];
+  readonly onAddLine: () => void;
+  readonly onChangeLine: (index: number, patch: Partial<LineDraft>) => void;
+  readonly onRemoveLine: (key: string) => void;
+  readonly totals: ReturnType<typeof salesTotals> | undefined;
+}) => {
+  const k = usePurchasingT();
+  return (
+    <fieldset className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
+      <legend className="px-50 font-semibold text-sm">{k(linesLabelKey)}</legend>
+      {lines.map((line, index) => (
+        <div className="flex flex-col gap-100 border-border-secondary border-b pb-150" key={line.key}>
+          <FormInput
+            id={`sales-line-${index}-description`}
+            label={k('sales.fields.description')}
+            onChange={(event) => onChangeLine(index, { description: event.target.value })}
+            placeholder={k('sales.form.descriptionPlaceholder')}
+            value={line.description}
+          />
+          <div className="grid items-end gap-100" style={{ gridTemplateColumns: '7rem minmax(6rem, 1fr) 6.5rem' }}>
+            <FormInput
+              id={`sales-line-${index}-quantity`}
+              inputMode="numeric"
+              label={k('sales.fields.quantity')}
+              onChange={(event) => onChangeLine(index, { quantity: event.target.value })}
+              value={line.quantity}
+            />
+            <FormInput
+              id={`sales-line-${index}-price`}
+              inputMode="decimal"
+              label={k('sales.fields.unitPrice')}
+              onChange={(event) => onChangeLine(index, { price: event.target.value })}
+              placeholder="4 500"
+              value={line.price}
+            />
+            <Select
+              items={vatRates.map((rate) => ({
+                displayValue: `${rate} %`,
+                label: `${rate} %`,
+                value: String(rate),
+              }))}
+              label={k('sales.fields.vat')}
+              name={`sales-line-${index}-vat`}
+              onValueChange={({ value }) => {
+                const selectedRate = vatRates.find((candidate) => candidate === Number(value[0] ?? 21));
+                if (selectedRate !== undefined) {
+                  onChangeLine(index, { vat: selectedRate });
+                }
+              }}
+              size="md"
+              value={[String(line.vat)]}
+            />
+          </div>
+          <div className="flex justify-end">
+            <Button
+              disabled={lines.length === 1}
+              onClick={() => onRemoveLine(line.key)}
+              size="sm"
+              theme="borderless"
+              variant="secondary"
+            >
+              {k('sales.form.removeLine')}
+            </Button>
+          </div>
+        </div>
+      ))}
+      <div className="flex flex-wrap items-center justify-between gap-100">
+        <Button onClick={onAddLine} size="sm" theme="outlined" variant="secondary">
+          {k('sales.form.addLine')}
+        </Button>
+        {totals !== undefined && (
+          <span className="text-sm">
+            {k('sales.totals', { base: formatAmount(totals.baseMinor), total: formatAmount(totals.totalMinor) })}
+          </span>
+        )}
+      </div>
+    </fieldset>
+  );
+};
 
 export const SalesQuoteFormPanel = ({
   onClose,
@@ -384,7 +459,7 @@ export const SalesQuoteFormPanel = ({
   readonly run: RunCommand;
 }) => {
   const k = usePurchasingT();
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const customers = useCustomers();
   // Customer, dates and note of the quote as typed; the lines keep their own state because of their row keys.
   const [draft, setDraft] = useState<QuoteDraft>(() => ({
@@ -406,7 +481,8 @@ export const SalesQuoteFormPanel = ({
       })) ?? [{ ...emptyLine, key: `${linePrefix}-initial` }],
   );
   const [error, setError] = useState<string>();
-  const [busy, setBusy] = useState(false);
+  // A new quote is saved as sent unless the user keeps it as a draft (formerly two buttons, now one Uložit).
+  const [status, setStatus] = useState<'draft' | 'sent'>('sent');
 
   const addLine = () => {
     lineSequence.current += 1;
@@ -435,7 +511,7 @@ export const SalesQuoteFormPanel = ({
       )
     : undefined;
 
-  const submit = (status: 'draft' | 'sent') =>
+  const submit = () =>
     submitSalesQuoteDraft(
       {
         customerId: draft.customerId,
@@ -447,7 +523,6 @@ export const SalesQuoteFormPanel = ({
         parsed,
         quote,
         run,
-        setBusy,
         setError,
         t,
         valid,
@@ -461,7 +536,7 @@ export const SalesQuoteFormPanel = ({
     customers.status === 'ready'
       ? customers.customers.find((entry) => entry.counterpartyId === value.customerId)
       : undefined;
-  const autosaveValue: QuoteDraft = {
+  const draftValue: QuoteDraft = {
     ...draft,
     lines: lines.map((line) => ({
       description: line.description,
@@ -470,200 +545,167 @@ export const SalesQuoteFormPanel = ({
       vat: line.vat,
     })),
   };
-  const autosave = useQuoteAutosave({
+  const record = useQuoteDraftSave({
     applyStored: (stored) => {
       setDraft(stored);
       setLines(stored.lines.map((line, index) => ({ ...line, key: `${linePrefix}-reload-${index}` })));
     },
     customerOf,
-    draft: autosaveValue,
+    draft: draftValue,
     quote,
     run,
   });
+  // An edit of a stored quote saves through its record draft; a new quote is created on its own Uložit.
+  const editing = quote !== undefined;
+  const create = useFormSave({ open: !editing, submit, value: { draftValue, status } });
+  const guard = useEditGuard(editing ? record : nothingToSave, record.discard);
+  const labels = saveLabelsFor(language);
   const close = () => {
-    autosave.flush();
-    onClose();
+    guard.request(onClose);
   };
-  const handleReloadLatest = autosave.reloadLatest;
-  const handleRetry = autosave.retry;
+  const handleReloadLatest = record.reloadLatest;
+  const handleSave = record.save;
 
   return (
-    <SidePanel
-      actions={
-        <>
-          {quote !== undefined && (
-            <>
-              <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
-              <Button onClick={close} theme="outlined" variant="secondary">
-                {t('facility-operations.common.close')}
-              </Button>
-            </>
-          )}
-          {quote === undefined && (
-            <Button disabled={busy} onClick={onClose} theme="outlined" variant="secondary">
-              {t(cancelLabelKey)}
-            </Button>
-          )}
-          {quote === undefined && (
-            <Button
-              disabled={busy}
-              onClick={() => {
-                browserRuntime.runFork(submit('draft'));
-              }}
-              theme="outlined"
-              variant="secondary"
-            >
-              {k('sales.form.saveDraft')}
-            </Button>
-          )}
-          {quote === undefined && (
-            <Button
-              isLoading={busy}
-              onClick={() => {
-                browserRuntime.runFork(submit('sent'));
-              }}
-              variant="primary"
-            >
-              {k('sales.form.saveSent')}
-            </Button>
-          )}
-        </>
-      }
-      onOpenChange={(open) => {
-        if (!open) {
-          onClose();
-        }
-      }}
-      open
-      resizeLabel={t(closeLabelKey)}
-      size="xl"
-      title={quote === undefined ? k('sales.newQuote') : k('sales.editQuote', { number: quote.number })}
-    >
-      <div className="flex flex-col gap-200 py-200">
-        {error !== undefined && (
-          <StatusText showIcon status="error">
-            {error}
-          </StatusText>
-        )}
-        {quote !== undefined && quote.salesOrderId !== undefined && (
-          <StatusText showIcon status="default">
-            {k('sales.form.copyNote')}
-          </StatusText>
-        )}
-        {customers.status === 'ready' ? (
-          <Select
-            items={customers.customers.map((entry) => ({
-              displayValue: entry.name,
-              label: entry.name,
-              value: entry.counterpartyId,
-            }))}
-            label={k(customerLabelKey)}
-            name="sales-customer"
-            onValueChange={({ value }) => updateDraft({ customerId: value[0] ?? '' })}
-            placeholder={k('sales.form.pickCustomer')}
-            size="md"
-            value={draft.customerId === '' ? [] : [draft.customerId]}
-          />
-        ) : (
-          <p className="text-fg-secondary text-sm">
-            {k(customers.status === 'loading' ? 'sales.form.customersLoading' : 'sales.form.customersUnavailable')}
-          </p>
-        )}
-        <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-          <FormInput
-            id="sales-quote-date"
-            label={k('sales.fields.date')}
-            onChange={(event) => updateDraft({ date: event.target.value })}
-            required
-            type="date"
-            value={draft.date}
-          />
-          <FormInput
-            id="sales-quote-valid"
-            label={k('sales.fields.validUntil')}
-            onChange={(event) => updateDraft({ validUntil: event.target.value })}
-            type="date"
-            value={draft.validUntil}
-          />
-        </div>
-        <fieldset className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
-          <legend className="px-50 font-semibold text-sm">{k(linesLabelKey)}</legend>
-          {lines.map((line, index) => (
-            <div className="flex flex-col gap-100 border-border-secondary border-b pb-150" key={line.key}>
-              <FormInput
-                id={`sales-line-${index}-description`}
-                label={k('sales.fields.description')}
-                onChange={(event) => setLine(index, { description: event.target.value })}
-                placeholder={k('sales.form.descriptionPlaceholder')}
-                value={line.description}
-              />
-              <div className="grid items-end gap-100" style={{ gridTemplateColumns: '7rem minmax(6rem, 1fr) 6.5rem' }}>
-                <FormInput
-                  id={`sales-line-${index}-quantity`}
-                  inputMode="numeric"
-                  label={k('sales.fields.quantity')}
-                  onChange={(event) => setLine(index, { quantity: event.target.value })}
-                  value={line.quantity}
-                />
-                <FormInput
-                  id={`sales-line-${index}-price`}
-                  inputMode="decimal"
-                  label={k('sales.fields.unitPrice')}
-                  onChange={(event) => setLine(index, { price: event.target.value })}
-                  placeholder="4 500"
-                  value={line.price}
-                />
-                <Select
-                  items={vatRates.map((rate) => ({
-                    displayValue: `${rate} %`,
-                    label: `${rate} %`,
-                    value: String(rate),
-                  }))}
-                  label={k('sales.fields.vat')}
-                  name={`sales-line-${index}-vat`}
-                  onValueChange={({ value }) => {
-                    const selectedRate = vatRates.find((candidate) => candidate === Number(value[0] ?? 21));
-                    if (selectedRate !== undefined) {
-                      setLine(index, { vat: selectedRate });
-                    }
-                  }}
-                  size="md"
-                  value={[String(line.vat)]}
-                />
-              </div>
-              <div className="flex justify-end">
-                <Button
-                  disabled={lines.length === 1}
-                  onClick={() => setLines((current) => withoutSalesLine(current, line.key))}
-                  size="sm"
-                  theme="borderless"
-                  variant="secondary"
-                >
-                  {k('sales.form.removeLine')}
+    <>
+      <SidePanel
+        actions={
+          <>
+            {quote !== undefined && (
+              <>
+                <Button onClick={close} theme="outlined" variant="secondary">
+                  {t('facility-operations.common.close')}
                 </Button>
-              </div>
-            </div>
-          ))}
-          <div className="flex flex-wrap items-center justify-between gap-100">
-            <Button onClick={addLine} size="sm" theme="outlined" variant="secondary">
-              {k('sales.form.addLine')}
-            </Button>
-            {totals !== undefined && (
-              <span className="text-sm">
-                {k('sales.totals', { base: formatAmount(totals.baseMinor), total: formatAmount(totals.totalMinor) })}
-              </span>
+                <SaveBar
+                  labels={labels}
+                  onReloadLatest={handleReloadLatest}
+                  onSave={handleSave}
+                  status={record.status}
+                />
+              </>
             )}
+            {quote === undefined && (
+              <FormSaveFooter cancelLabel={t(cancelLabelKey)} error={error} form={create} onCancel={onClose} />
+            )}
+          </>
+        }
+        guard={editing ? guard : create.guard}
+        onOpenChange={(open) => {
+          if (!open) {
+            onClose();
+          }
+        }}
+        open
+        resizeLabel={t(closeLabelKey)}
+        size="xl"
+        title={quote === undefined ? k('sales.newQuote') : k('sales.editQuote', { number: quote.number })}
+      >
+        <div className="flex flex-col gap-200 py-200">
+          {error !== undefined && (
+            <StatusText showIcon status="error">
+              {error}
+            </StatusText>
+          )}
+          {quote !== undefined && quote.salesOrderId !== undefined && (
+            <StatusText showIcon status="default">
+              {k('sales.form.copyNote')}
+            </StatusText>
+          )}
+          {customers.status === 'ready' ? (
+            <Select
+              items={customers.customers.map((entry) => ({
+                displayValue: entry.name,
+                label: entry.name,
+                value: entry.counterpartyId,
+              }))}
+              label={k(customerLabelKey)}
+              name="sales-customer"
+              onValueChange={({ value }) => updateDraft({ customerId: value[0] ?? '' })}
+              placeholder={k('sales.form.pickCustomer')}
+              size="md"
+              value={draft.customerId === '' ? [] : [draft.customerId]}
+            />
+          ) : (
+            <p className="text-fg-secondary text-sm">
+              {k(customers.status === 'loading' ? 'sales.form.customersLoading' : 'sales.form.customersUnavailable')}
+            </p>
+          )}
+          <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
+            <FormInput
+              id="sales-quote-date"
+              label={k('sales.fields.date')}
+              onChange={(event) => updateDraft({ date: event.target.value })}
+              required
+              type="date"
+              value={draft.date}
+            />
+            <FormInput
+              id="sales-quote-valid"
+              label={k('sales.fields.validUntil')}
+              onChange={(event) => updateDraft({ validUntil: event.target.value })}
+              type="date"
+              value={draft.validUntil}
+            />
           </div>
-        </fieldset>
-        <FormTextarea
-          id="sales-quote-note"
-          label={k(noteLabelKey)}
-          onChange={(event) => updateDraft({ note: event.target.value })}
-          rows={2}
-          value={draft.note}
-        />
-      </div>
-    </SidePanel>
+          <SalesQuoteLines
+            lines={lines}
+            onAddLine={addLine}
+            onChangeLine={setLine}
+            onRemoveLine={(key) => setLines((current) => withoutSalesLine(current, key))}
+            totals={totals}
+          />
+          <FormTextarea
+            id="sales-quote-note"
+            label={k(noteLabelKey)}
+            onChange={(event) => updateDraft({ note: event.target.value })}
+            rows={2}
+            value={draft.note}
+          />
+          {quote === undefined && (
+            <Select
+              items={(['sent', 'draft'] as const).map((value) => ({
+                displayValue: k(`sales.quoteStatus.${value}`),
+                label: k(`sales.quoteStatus.${value}`),
+                value,
+              }))}
+              label={k('sales.form.statusAfterSave')}
+              name="sales-quote-status"
+              onValueChange={({ value }) => setStatus(value[0] === 'draft' ? 'draft' : 'sent')}
+              size="md"
+              value={[status]}
+            />
+          )}
+        </div>
+      </SidePanel>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
+  );
+};
+
+/**
+ * The quote form as the page opens it: a new quote, or the edit of `quoteId` resolved from the page's live state on
+ * every render. The edit therefore takes each newer read, so "Načíst nejnovější" loads the version the newer revision
+ * belongs to. A quote that is gone from the state closes the form.
+ */
+export const SalesQuoteEditPanel = ({
+  onClose,
+  onSaved,
+  quoteId,
+  run,
+  state,
+}: {
+  readonly onClose: () => void;
+  readonly onSaved: (quoteId: string) => void;
+  readonly quoteId?: string;
+  readonly run: RunCommand;
+  readonly state: PurchasingState;
+}) => {
+  if (quoteId === undefined) {
+    return <SalesQuoteFormPanel onClose={onClose} onSaved={onSaved} run={run} />;
+  }
+  const quote = (state.salesQuotes ?? []).find((entry) => entry.id === quoteId);
+  return quote === undefined ? null : (
+    <SalesQuoteFormPanel onClose={onClose} onSaved={onSaved} quote={quote} run={run} />
   );
 };
 
@@ -1005,37 +1047,6 @@ const submitSalesOrderCommand = Effect.fn('FacilityOperations.Purchasing.submitS
   },
 );
 
-interface SubmitSalesInvoiceInput {
-  readonly dueDate: IsoDate;
-  readonly issueDate: IsoDate;
-  readonly issueInvoice: ReturnType<typeof useIssueInvoice>;
-  readonly k: ReturnType<typeof usePurchasingT>;
-  readonly order: SalesOrder;
-  readonly setAction: (value: OrderAction) => void;
-  readonly setBusy: (value: boolean) => void;
-  readonly setError: (value: string | undefined) => void;
-  readonly toast: ReturnType<typeof useToast>;
-}
-const submitSalesInvoice = Effect.fn('FacilityOperations.Purchasing.submitSalesInvoice')(function* invoiceSalesOrder(
-  input: SubmitSalesInvoiceInput,
-) {
-  const { dueDate, issueDate, issueInvoice, k, order, setAction, setBusy, setError, toast } = input;
-  if (dueDate < issueDate) {
-    setError(k('sales.form.dueDate'));
-    return;
-  }
-  setBusy(true);
-  setError(undefined);
-  const outcome = yield* issueInvoice(order, issueDate, dueDate);
-  setBusy(false);
-  if (!outcome.ok) {
-    setError(k('sales.form.invoiceFailed'));
-    return;
-  }
-  toast.create({ title: k('sales.messages.invoiced', { number: outcome.number ?? '' }), type: 'success' });
-  setAction(undefined);
-});
-
 interface SalesOrderDetailsProps {
   readonly lang: string;
   readonly onOpenQuote: (id: string) => void;
@@ -1173,11 +1184,6 @@ export const SalesOrderPanel = ({
   const finance = useIncomingInvoiceLinks();
   const [busy, setBusy] = useState(false);
   const [action, setAction] = useState<OrderAction>();
-  const [deliveryDate, setDeliveryDate] = useState(todayIso);
-  const [quantities, setQuantities] = useState<Readonly<Record<string, string>>>({});
-  const [reason, setReason] = useState('');
-  const [issueDate, setIssueDate] = useState(todayIso);
-  const [dueDate, setDueDate] = useState(() => addDays(todayIso(), 14));
   const [error, setError] = useState<string>();
   const order = (state.salesOrders ?? []).find((entry) => entry.id === orderId);
   if (order === undefined) {
@@ -1188,20 +1194,6 @@ export const SalesOrderPanel = ({
   const remainder = salesRemainder(order);
   const done = (command: Parameters<RunCommand>[0], success: string) =>
     submitSalesOrderCommand({ k, run, setAction, setBusy, setError, t, toast }, command, success);
-  const deliver = () => {
-    const lines = remainder
-      .map(({ line }) => ({ lineId: line.id, quantity: parsePositiveInt(quantities[line.id] ?? '') }))
-      .filter((entry): entry is { lineId: typeof entry.lineId; quantity: number } => entry.quantity !== undefined);
-    if (lines.length === 0) {
-      setError(k('sales.form.deliveryRequired'));
-      return;
-    }
-    browserRuntime.runFork(
-      done({ _tag: 'SalesOrderDeliver', date: deliveryDate, lines, orderId: order.id }, 'sales.messages.delivered'),
-    );
-  };
-  const invoice = () =>
-    submitSalesInvoice({ dueDate, issueDate, issueInvoice, k, order, setAction, setBusy, setError, toast });
   const capabilities = salesOrderCapabilities(order, finance, canWrite, remainder.length);
   return (
     <SidePanel
@@ -1234,7 +1226,8 @@ export const SalesOrderPanel = ({
             {error}
           </StatusText>
         )}
-        {canWrite && (
+        {/* While a form is open its input is left only through its own Zrušit or Uložit. */}
+        {canWrite && action === undefined && (
           <div className="flex flex-wrap gap-100">
             {order.status === 'draft' && (
               <Button
@@ -1329,105 +1322,18 @@ export const SalesOrderPanel = ({
           </p>
         )}
         {action === 'deliver' && (
-          <SectionCard title={k('sales.actions.deliver')}>
-            <FormInput
-              id="sales-delivery-date"
-              label={k('sales.fields.deliveryDate')}
-              onChange={(event) => setDeliveryDate(event.target.value)}
-              type="date"
-              value={deliveryDate}
-            />
-            {remainder.map(({ line, remaining }) => (
-              <FormInput
-                helpText={k('sales.form.remainingHelp', { count: remaining })}
-                id={`sales-deliver-${line.id}`}
-                inputMode="numeric"
-                key={line.id}
-                label={line.description}
-                onChange={(event) => setQuantities((current) => ({ ...current, [line.id]: event.target.value }))}
-                value={quantities[line.id] ?? ''}
-              />
-            ))}
-            <div className="flex justify-end gap-100">
-              <Button onClick={() => setAction(undefined)} size="sm" theme="outlined" variant="secondary">
-                {t(cancelLabelKey)}
-              </Button>
-              <Button isLoading={busy} onClick={deliver} size="sm" variant="primary">
-                {k('sales.actions.saveDelivery')}
-              </Button>
-            </div>
-          </SectionCard>
+          <SalesDeliverForm onDone={() => setAction(undefined)} order={order} remainder={remainder} run={run} />
         )}
         {action === 'close' && (
-          <SectionCard title={k(closeActionKey)}>
-            <FormTextarea
-              id="sales-close-reason"
-              label={k('sales.fields.closeReason')}
-              onChange={(event) => setReason(event.target.value)}
-              rows={2}
-              value={reason}
-            />
-            <div className="flex justify-end gap-100">
-              <Button onClick={() => setAction(undefined)} size="sm" theme="outlined" variant="secondary">
-                {t(cancelLabelKey)}
-              </Button>
-              <Button
-                disabled={reason.trim() === ''}
-                isLoading={busy}
-                onClick={() => {
-                  browserRuntime.runFork(
-                    done(
-                      { _tag: 'SalesOrderTransition', note: reason.trim(), orderId: order.id, to: 'completed' },
-                      'sales.messages.closed',
-                    ),
-                  );
-                }}
-                size="sm"
-                variant="primary"
-              >
-                {k(closeActionKey)}
-              </Button>
-            </div>
-          </SectionCard>
+          <SalesCloseForm closeLabel={k(closeActionKey)} onDone={() => setAction(undefined)} order={order} run={run} />
         )}
         {action === 'invoice' && capabilities.invoiceWritable && (
-          <SectionCard title={k('sales.actions.invoice')}>
-            <p className="text-fg-secondary text-sm">
-              {k('sales.form.invoiceIntro', { customer: order.customer.name })}
-            </p>
-            <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-              <FormInput
-                id="sales-invoice-issue"
-                label={k('sales.fields.issueDate')}
-                onChange={(event) => setIssueDate(event.target.value)}
-                type="date"
-                value={issueDate}
-              />
-              <FormInput
-                id="sales-invoice-due"
-                label={k('sales.fields.dueDate')}
-                onChange={(event) => setDueDate(event.target.value)}
-                type="date"
-                value={dueDate}
-              />
-            </div>
-            <p className="font-semibold text-sm">{k(withVatKey, { total: formatAmount(totals.totalMinor) })}</p>
-            <div className="flex justify-end gap-100">
-              <Button onClick={() => setAction(undefined)} size="sm" theme="outlined" variant="secondary">
-                {t(cancelLabelKey)}
-              </Button>
-              <Button
-                isLoading={busy}
-                onClick={() => {
-                  browserRuntime.runFork(invoice());
-                }}
-                size="sm"
-                variant="primary"
-              >
-                {k('sales.actions.createInvoice')}
-              </Button>
-            </div>
-          </SectionCard>
+          <SalesInvoiceForm
+            issueInvoice={issueInvoice}
+            onDone={() => setAction(undefined)}
+            order={order}
+            totalLabel={k(withVatKey, { total: formatAmount(totals.totalMinor) })}
+          />
         )}
         <SalesOrderDetails lang={lang} onOpenQuote={onOpenQuote} order={order} />
       </div>

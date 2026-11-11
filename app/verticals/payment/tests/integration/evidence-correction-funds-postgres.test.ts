@@ -1,0 +1,395 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime';
+import { randomUUID } from 'node:crypto';
+
+import { NodeCrypto } from '@effect/platform-node';
+import { and, eq } from 'drizzle-orm';
+import { Crypto, Effect } from 'effect';
+import type { Scope } from 'effect';
+import { expect, it } from 'effect-rstest';
+
+import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
+import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
+import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
+import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
+import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
+import { makeScriptedBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
+import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
+import { openActionRuntimeOptions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
+import {
+  makeTestDatabaseFromClient,
+  testDatabaseClients,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
+import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
+import { paymentRegistration } from '../../vertical.registration.ts';
+import { observations } from '../../src/database/schema.ts';
+import { computePaymentFunds, PaymentFundsLedger } from '../../src/domain/coverage.ts';
+import type { PaymentFundsLedgerCase } from '../../src/domain/coverage.ts';
+import { paymentFundsSnapshotOf } from '../../src/persistence/payment-aggregate-persistence.ts';
+import { failureCodeOf, makeTestScope } from './database-fixture.ts';
+import {
+  COMPOSITION_R1,
+  COMPOSITION_R2,
+  evidenceAllowedPermission,
+  evidenceContextAccess,
+  evidenceScenarioOf,
+  seedCoreScope,
+} from './evidence-native-support.ts';
+import type { EvidenceNativeDatabase, EvidenceScenario } from './evidence-native-support.ts';
+import { acceptReturnEvidence } from '../support/refund-native-runtime.ts';
+
+const native = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) =>
+  Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
+
+const nativeDatabase = Effect.gen(function* h1NativeDatabase() {
+  const { admin, runtime } = yield* testDatabaseClients;
+  const coreAdmin = yield* makeTestDatabaseFromClient(admin, coreRelations);
+  const database = yield* makeTestDatabaseFromClient(runtime, coreRelations);
+  return { coreAdmin, database, runtimeClient: runtime } satisfies EvidenceNativeDatabase;
+});
+
+const makeRuntimes = Effect.fn('CorrectionFunds.makeRuntimes')(function* makeRuntimes(
+  database: EvidenceNativeDatabase,
+  compositionRevision: string,
+) {
+  const crypto = yield* Crypto.Crypto;
+  const accessDecision = makeScriptedBoundAccessGate('allowed').bound;
+  const actions = makeActionRuntime(
+    { executor: database.database },
+    makeActionRepository(crypto),
+    evidenceAllowedPermission,
+    testOperationalScopeResolver,
+    {
+      ...openActionRuntimeOptions,
+      accessDecision,
+      contextAccess: evidenceContextAccess,
+      ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+      ownerRegistration: paymentRegistration,
+      resolveCompositionRevision: () => Effect.succeed(compositionRevision),
+    },
+  );
+  const reads = makeReadRuntime(
+    { executor: database.database },
+    openModuleEntrypointGateway,
+    testOperationalScopeResolver,
+    evidenceContextAccess,
+    {
+      accessDecision,
+      databaseIdentities: defineDatabaseIdentityEnrollment([]),
+      ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+      ownerRegistration: paymentRegistration,
+    },
+  );
+  return { actions, reads };
+});
+
+const scenario = Effect.fn('CorrectionFunds.scenario')(function* scenario() {
+  const database = yield* nativeDatabase;
+  const scope = yield* makeTestScope;
+  yield* seedCoreScope(database, scope);
+  const r1 = yield* makeRuntimes(database, COMPOSITION_R1);
+  const r2 = yield* makeRuntimes(database, COMPOSITION_R2);
+  return evidenceScenarioOf({ native: database, r1, r2, scope });
+});
+
+const czk = (amountMinor: number) => ({ amountMinor, currency: 'CZK' as const });
+
+const GOPAY_SOURCE = {
+  accountRef: 'gopay-account-1',
+  environment: 'production',
+  sourceKind: 'PAYMENT_GATEWAY',
+  sourceSystem: 'GOPAY',
+} as const;
+
+const configureGopay = (evidence: EvidenceScenario) =>
+  evidence.configureSource({
+    factFamily: 'GATEWAY_OUTCOME',
+    reason: 'GoPay callbacks are the gateway outcome authority',
+    refundRoute: false,
+    source: GOPAY_SOURCE,
+    status: 'ACTIVE',
+    submitterPrincipalIds: [evidence.scope.principalId],
+  });
+
+const gopayStatement = (fields: {
+  readonly amount?: { readonly amountMinor: number; readonly currency: 'CZK' };
+  readonly correctsObservationId?: string;
+  readonly economicEffectKey?: string;
+  readonly factKind: 'COLLECTION_CONFIRMED' | 'REFUND_CONFIRMED' | 'SOURCE_CORRECTION';
+  readonly operationId?: string;
+  readonly paymentId?: string;
+}) => ({
+  factFamily: 'GATEWAY_OUTCOME' as const,
+  source: GOPAY_SOURCE,
+  sourceOccurrenceId: `gopay-callback-${randomUUID()}`,
+  sourceRevision: 0,
+  ...fields,
+});
+
+/** A 1000 CZK GoPay COLLECT confirmed by one accepted callback through the registered Action. */
+const confirmedCollect = Effect.fn('CorrectionFunds.confirmedCollect')(function* confirmedCollect(
+  evidence: EvidenceScenario,
+) {
+  const payment = yield* evidence.createPayment();
+  const collect = yield* evidence.startOperation({
+    amountMinor: 100_000,
+    operationKey: `collect-${randomUUID()}`,
+    paymentId: payment.paymentId,
+  });
+  yield* configureGopay(evidence);
+  const first = yield* evidence.accept(
+    gopayStatement({
+      amount: czk(100_000),
+      economicEffectKey: `gopay:charge:${randomUUID()}`,
+      factKind: 'COLLECTION_CONFIRMED',
+      operationId: collect.operationId,
+      paymentId: payment.paymentId,
+    }),
+  );
+  expect(first).toMatchObject({ acceptanceOutcome: 'ACCEPTED_OBSERVATION', interpretation: 'TRANSITION' });
+  return { collect, first, payment };
+});
+
+/** Summary of the shared calculator for the persisted Payment; the Current read must state exactly this. */
+const calculatorSummary = (ledger: PaymentFundsLedgerCase) =>
+  PaymentFundsLedger.$match(ledger, {
+    Established: ({ collected, confirmedReturned, remaining }) =>
+      `Established collected=${collected.amountMinor} returned=${confirmedReturned.amountMinor} remaining=${remaining.amountMinor}`,
+    Held: ({ reason }) => `Held ${reason}`,
+    NotCollected: () => 'NotCollected',
+  });
+
+const calculatorOf = (evidence: EvidenceScenario, paymentId: string) =>
+  evidence
+    .evidenceAggregate(paymentId)
+    .pipe(Effect.map((loaded) => calculatorSummary(computePaymentFunds(paymentFundsSnapshotOf(loaded.current)))));
+
+/**
+ * Invariant (#1151, money invariants 2 and 4): a Held Current coverage is held reconciliation debt, so it
+ * must be visible as at least one OPEN case or unresolved operation that governed decisions can settle.
+ */
+it.live(
+  '#1151 a correction that over-reduces a collect after a confirmed return reads Held with visible OPEN debt',
+  () =>
+    native(
+      Effect.gen(function* s6OverReducedAfterReturn() {
+        const evidence = yield* scenario();
+        const { collect, first, payment } = yield* confirmedCollect(evidence);
+        const routeSource = yield* evidence.configureRefundRoute('erp-primary', 'refund-account-a');
+        const refund = yield* evidence.startOperation({
+          amountMinor: 80_000,
+          kind: 'REFUND',
+          operationKey: 'refund-h1-s6',
+          paymentId: payment.paymentId,
+          refundBasis: {
+            _tag: 'REFUNDABLE_ITEMS',
+            items: [{ amountMinor: 80_000, currency: 'CZK', itemRef: 'line-s6', sourceEvidenceRef: 'order-line-s6' }],
+          },
+          refundExecutionRoute: yield* evidence.refundRouteOf(routeSource),
+          targetOperationId: collect.operationId,
+        });
+        yield* evidence.settle(payment.paymentId, refund.operationId, 1, 'EFFECT_CONFIRMED');
+        // 30k of the 100k collection is disproven while 80k was already returned: 70k < 80k is unexplainable.
+        yield* evidence.accept(
+          gopayStatement({
+            amount: czk(30_000),
+            correctsObservationId: first.observationId,
+            economicEffectKey: `gopay:charge:partial-after-return:${randomUUID()}`,
+            factKind: 'SOURCE_CORRECTION',
+            operationId: collect.operationId,
+            paymentId: payment.paymentId,
+          }),
+        );
+        const coverage = yield* evidence.coverage(payment.paymentId);
+        expect(coverage.startsWith('Held ')).toBe(true);
+        expect(yield* calculatorOf(evidence, payment.paymentId)).toBe(coverage);
+        const debt = yield* evidence.debt({ paymentId: payment.paymentId });
+        expect(debt.openCases.length + debt.unresolvedOperations.length).toBeGreaterThan(0);
+
+        // Governance cannot make the held correction disappear: classifying the conflict, re-attaching
+        // the corrected receipt and closing would expose 200 CZK that is no longer proven collected.
+        const [held] = debt.openCases;
+        const caseId = held?.caseId ?? '';
+        yield* evidence.decide({
+          caseId,
+          decision: { _tag: 'CLASSIFY_CONFLICT' },
+          reason: 'The correction contradicts the returned amount',
+        });
+        yield* evidence.decide({
+          caseId,
+          decision: { _tag: 'ATTACH_EVIDENCE', observationId: first.observationId, operationId: collect.operationId },
+          reason: 'Re-attach the original receipt',
+        });
+        expect(
+          yield* failureCodeOf(
+            evidence.decide({
+              caseId,
+              decision: { _tag: 'CLOSE_CASE', evidenceRef: 'operator-note' },
+              reason: 'Close the held correction',
+            }),
+          ),
+        ).toBe('payment_reconciliation_obligation_unresolved');
+        expect((yield* evidence.coverage(payment.paymentId)).startsWith('Held ')).toBe(true);
+      }),
+    ),
+);
+
+it.live('#1151 a partial correction below a PENDING refund reservation reads Held with visible OPEN debt', () =>
+  native(
+    Effect.gen(function* s12PendingReservationOverReduced() {
+      const evidence = yield* scenario();
+      const { collect, first, payment } = yield* confirmedCollect(evidence);
+      const routeSource = yield* evidence.configureRefundRoute('erp-primary', 'refund-account-a');
+      yield* evidence.startOperation({
+        amountMinor: 80_000,
+        kind: 'REFUND',
+        operationKey: 'refund-h1-s12',
+        paymentId: payment.paymentId,
+        refundBasis: {
+          _tag: 'REFUNDABLE_ITEMS',
+          items: [{ amountMinor: 80_000, currency: 'CZK', itemRef: 'line-s12', sourceEvidenceRef: 'order-line-s12' }],
+        },
+        refundExecutionRoute: yield* evidence.refundRouteOf(routeSource),
+        targetOperationId: collect.operationId,
+      });
+      yield* evidence.accept(
+        gopayStatement({
+          amount: czk(30_000),
+          correctsObservationId: first.observationId,
+          economicEffectKey: `gopay:charge:partial-s12:${randomUUID()}`,
+          factKind: 'SOURCE_CORRECTION',
+          operationId: collect.operationId,
+          paymentId: payment.paymentId,
+        }),
+      );
+      const coverage = yield* evidence.coverage(payment.paymentId);
+      expect(coverage.startsWith('Held ')).toBe(true);
+      expect(yield* calculatorOf(evidence, payment.paymentId)).toBe(coverage);
+      const debt = yield* evidence.debt({ paymentId: payment.paymentId });
+      expect(debt.openCases.length + debt.unresolvedOperations.length).toBeGreaterThan(0);
+    }),
+  ),
+);
+
+/**
+ * #1150/#1151: the correction admission and the funds reader measure one prior return the same way.
+ * A return stated against the collection counts for what it still proves after its own partial
+ * corrections, so a collection correction that the funds reader can explain is applied, not held.
+ */
+it.live('#1151 a collection correction is admitted against what a partially corrected prior return still proves', () =>
+  native(
+    Effect.gen(function* correctedPriorReturnAdmission() {
+      const evidence = yield* scenario();
+      const { collect, first, payment } = yield* confirmedCollect(evidence);
+      const [receipt] = yield* evidence.native.coreAdmin
+        .select({ sourceAuthorityId: observations.sourceAuthorityId })
+        .from(observations)
+        .where(eq(observations.observationId, first.observationId));
+      const returnKey = `gopay:refund:prior:${randomUUID()}`;
+      // 900 CZK of the 1000 CZK collection already went back, stated against the collection itself.
+      yield* acceptReturnEvidence(evidence.native.database, evidence.scope, {
+        amountMinor: 90_000,
+        economicEffectKey: returnKey,
+        operationId: collect.operationId,
+        paymentId: payment.paymentId,
+        sourceAuthorityId: receipt?.sourceAuthorityId ?? '',
+        sourceOccurrenceId: `gopay-prior-return-${randomUUID()}`,
+      });
+      const [priorReturn] = yield* evidence.native.coreAdmin
+        .select({ observationId: observations.observationId })
+        .from(observations)
+        .where(and(eq(observations.paymentId, payment.paymentId), eq(observations.economicEffectKey, returnKey)));
+      // 200 CZK of that return statement was erroneous: 700 CZK actually went back.
+      const returnCorrection = yield* evidence.accept(
+        gopayStatement({
+          amount: czk(20_000),
+          correctsObservationId: priorReturn?.observationId ?? '',
+          economicEffectKey: `gopay:refund:prior:correction:${randomUUID()}`,
+          factKind: 'SOURCE_CORRECTION',
+          paymentId: payment.paymentId,
+        }),
+      );
+      expect(returnCorrection.acceptanceOutcome).toBe('ACCEPTED_OBSERVATION');
+      // 200 CZK of the collection is disproven: 800 CZK collected still covers the 700 CZK returned.
+      const reduction = yield* evidence.accept(
+        gopayStatement({
+          amount: czk(20_000),
+          correctsObservationId: first.observationId,
+          economicEffectKey: `gopay:charge:reduced:${randomUUID()}`,
+          factKind: 'SOURCE_CORRECTION',
+          operationId: collect.operationId,
+          paymentId: payment.paymentId,
+        }),
+      );
+      expect(reduction).toMatchObject({ acceptanceOutcome: 'ACCEPTED_OBSERVATION', interpretation: 'CORRECTION' });
+      expect(yield* evidence.coverage(payment.paymentId)).toBe(
+        'Established collected=80000 returned=70000 remaining=10000',
+      );
+      // Control: 110 CZK more would leave 690 CZK collected against 700 CZK returned, so it is held.
+      const excess = yield* evidence.accept(
+        gopayStatement({
+          amount: czk(11_000),
+          correctsObservationId: first.observationId,
+          economicEffectKey: `gopay:charge:over-reduced:${randomUUID()}`,
+          factKind: 'SOURCE_CORRECTION',
+          operationId: collect.operationId,
+          paymentId: payment.paymentId,
+        }),
+      );
+      expect(excess.interpretation).toBe('HOLD');
+      expect((yield* evidence.coverage(payment.paymentId)).startsWith('Held ')).toBe(true);
+    }),
+  ),
+);
+
+it.live('#1151 one return restated from the collection to its REFUND is counted once by the correction admission', () =>
+  native(
+    Effect.gen(function* returnRestatedAgainstRefund() {
+      const evidence = yield* scenario();
+      const { collect, first, payment } = yield* confirmedCollect(evidence);
+      const returnKey = `gopay:refund:restated:${randomUUID()}`;
+      const returnStatement = (operationId: string) =>
+        evidence.accept(
+          gopayStatement({
+            amount: czk(60_000),
+            economicEffectKey: returnKey,
+            factKind: 'REFUND_CONFIRMED',
+            operationId,
+            paymentId: payment.paymentId,
+          }),
+        );
+      // The gateway first states the 600 CZK return against the collection...
+      const againstCollect = yield* returnStatement(collect.operationId);
+      const routeSource = yield* evidence.configureRefundRoute('erp-primary', 'refund-account-a');
+      const refund = yield* evidence.startOperation({
+        amountMinor: 60_000,
+        kind: 'REFUND',
+        operationKey: `refund-restated-${randomUUID()}`,
+        paymentId: payment.paymentId,
+        refundBasis: {
+          _tag: 'REFUNDABLE_ITEMS',
+          items: [{ amountMinor: 60_000, currency: 'CZK', itemRef: 'line-restated', sourceEvidenceRef: 'order-line' }],
+        },
+        refundExecutionRoute: yield* evidence.refundRouteOf(routeSource),
+        targetOperationId: collect.operationId,
+      });
+      yield* evidence.settle(payment.paymentId, refund.operationId, 1, 'EFFECT_CONFIRMED');
+      // ...and later the same economic effect against the Payment REFUND that executed it.
+      const againstRefund = yield* returnStatement(refund.operationId);
+      // The first statement stays held debt of its own case; the second corroborates the confirmed REFUND.
+      expect(againstCollect).toMatchObject({ acceptanceOutcome: 'HELD_UNRESOLVED', interpretation: 'HOLD' });
+      expect(againstRefund).toMatchObject({ acceptanceOutcome: 'ACCEPTED_OBSERVATION', interpretation: 'NO_CHANGE' });
+      // 100 CZK of the collection is disproven: 900 CZK collected still covers the one 600 CZK return.
+      const reduction = yield* evidence.accept(
+        gopayStatement({
+          amount: czk(10_000),
+          correctsObservationId: first.observationId,
+          economicEffectKey: `gopay:charge:reduced:${randomUUID()}`,
+          factKind: 'SOURCE_CORRECTION',
+          operationId: collect.operationId,
+          paymentId: payment.paymentId,
+        }),
+      );
+      expect(reduction).toMatchObject({ acceptanceOutcome: 'ACCEPTED_OBSERVATION', interpretation: 'CORRECTION' });
+    }),
+  ),
+);

@@ -93,6 +93,7 @@ export { makeTestAccessDecision } from './testing.ts';
 export type {
   InspectionSubject,
   SubjectAccessInspectionService,
+  SubjectActionAnswer,
   SubjectActionInspection,
   SubjectCapabilityAnswer,
   SubjectCapabilityBatchInspection,

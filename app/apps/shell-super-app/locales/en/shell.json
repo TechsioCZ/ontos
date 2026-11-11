@@ -260,7 +260,20 @@
         "confirmRemove": "Remove the role? Access ends immediately.",
         "assigned": "The role was assigned.",
         "removed": "The role was removed.",
-        "selfReduction": "Removing your own permission is always possible."
+        "selfReduction": "Removing your own permission is always possible.",
+        "admitSection": "Company people without access",
+        "admitHelp": "A company directory member gets company and tenant membership. Assign roles separately.",
+        "admitMember": "Add member",
+        "admitMemberNamed": "Add member: {{person}}",
+        "confirmAdmit": "Add this person as a company member?",
+        "admitEffect": "Gets company and tenant membership, with no roles yet.",
+        "noCandidates": "Nobody in the company directory is without access.",
+        "endMembership": "End membership",
+        "endMembershipNamed": "End membership: {{person}}, {{scope}}",
+        "confirmEndMembership": "End the membership? Access ends immediately.",
+        "endMembershipEnds": "Ending: roles {{roles}}, teams {{teams}}, delegations {{delegations}}.",
+        "endMembershipEffect": "Roles, teams and delegations in this scope end too. A new admission starts without them.",
+        "endMembershipReason": "Reason for ending"
       },
       "changes": {
         "title": "Permission changes",
@@ -1145,6 +1158,8 @@
       "fullName": "Full name",
       "tabs": "People and agents",
       "title": "People and roles",
+      "membershipTitle": "Company membership",
+      "roleEditorTitle": "Assign or remove a role",
       "changeReason": "Reason for change",
       "table": {
         "actions": "Actions",

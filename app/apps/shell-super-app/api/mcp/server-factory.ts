@@ -93,7 +93,11 @@ type McpToolConfiguration = Pick<
   '_meta' | 'annotations' | 'description' | 'inputSchema' | 'outputSchema' | 'title'
 >;
 
-/** One McpServer per request: the tool list always reflects the current grant (no list_changed needed). */
+/**
+ * One McpServer per request: the tool list always reflects the current grant (no list_changed needed). A request
+ * that does not need the tools gets none, yet the server advertises the same tools capability, which registering a
+ * tool would declare, so discovery answers alike either way.
+ */
 export const buildMcpServer = (
   tools: readonly ToolSpec[],
   {
@@ -107,7 +111,10 @@ export const buildMcpServer = (
   // The HTTP adapter loads SDK values only for this request. A static value import here
   // would be hoisted by Rspack even when the factory itself is imported lazily.
   const { McpServer } = sdk;
-  const server = new McpServer({ ...SERVER_INFO }, { instructions: SERVER_INSTRUCTIONS });
+  const server = new McpServer(
+    { ...SERVER_INFO },
+    { capabilities: { tools: { listChanged: true } }, instructions: SERVER_INSTRUCTIONS },
+  );
   for (const tool of tools) {
     const configuration: McpToolConfiguration = {
       _meta: { securitySchemes: CHATGPT_SECURITY_SCHEMES },

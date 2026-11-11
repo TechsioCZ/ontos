@@ -1,6 +1,7 @@
 import {
   OwnerActionApprovalSchemaErrorLive,
-  makeOwnerActionApprovalApiLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { crmActivitiesBackendRegistration } from '../vertical.runtime-declaration.ts';
@@ -124,7 +125,11 @@ const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit,
 );
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
-  makeOwnerActionApprovalApiLive(crmActivitiesApi, authenticateOwnerApprovalPrincipal).pipe(
+  HttpApiBuilder.group(crmActivitiesApi, 'ownerActionApprovals', (handlers) =>
+    handlers
+      .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+      .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+  ).pipe(
     GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
     GovernedReadLayer.provide(governedActionRuntimeLive),
   ),

@@ -548,6 +548,17 @@ jobs:
         working-directory: app
         run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/native-composition-units" .output
 
+      # The native owner fixtures (Inventory's confirmation-protection suite) read the Composition these exact built
+      # artifacts form; the path is exported only after the derivation decoded it as consumers decode it.
+      - name: Derive the fresh built Composition for native owner fixtures
+        if: matrix.native-composition == true
+        working-directory: app
+        env:
+          APP_ENV_PATH: /dev/null
+        run: |
+          mise exec -- node scripts/derive-built-application-composition.mts --snapshot-output "$RUNNER_TEMP/native-composition-snapshot.json"
+          echo "NATIVE_1290_COMPOSITION_SNAPSHOT_PATH=$RUNNER_TEMP/native-composition-snapshot.json" >> "$GITHUB_ENV"
+
       - name: Materialize the native combined Outbox Worker host artifact
         if: matrix.root-suite == true
         working-directory: app
@@ -791,7 +802,7 @@ jobs:
           - {
               shard: 3,
               proof: none,
-              units: verticals/assortment apps/shell-super-app verticals/merchandise verticals/facility-operations verticals/sales-insights,
+              units: verticals/assortment apps/shell-super-app verticals/merchandise verticals/facility-operations verticals/sales-insights verticals/promotion verticals/payment,
             }
           - {
               shard: 4,

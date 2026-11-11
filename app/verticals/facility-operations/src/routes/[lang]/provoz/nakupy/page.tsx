@@ -13,7 +13,7 @@ import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { useState } from 'react';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import type { RunCommand } from './purchasing-model.ts';
-import type { PurchasingState, SalesQuote } from '../../../../../shared/domain/purchasing.ts';
+import type { PurchasingState } from '../../../../../shared/domain/purchasing.ts';
 import {
   OPEN_ORDER_STATUSES,
   materialPlanOf,
@@ -27,7 +27,7 @@ import type { DraftLine } from './order-forms.tsx';
 import { OrderPanel, OrdersTab } from './orders-tab.tsx';
 import { MovementsTab, QuotePanel, QuotesTab, ReplenishTab, SuppliersTab } from './other-tabs.tsx';
 import { formatAmount, todayIso, usePurchasingT } from './purchasing-model.ts';
-import { SalesOrderPanel, SalesQuoteFormPanel, SalesQuotePanel, SalesTab } from './sales-tab.tsx';
+import { SalesOrderPanel, SalesQuoteEditPanel, SalesQuotePanel, SalesTab } from './sales-tab.tsx';
 import { ItemPanel, StockTab } from './stock-tab.tsx';
 
 const tabs = ['stock', 'replenish', 'orders', 'quotes', 'sales', 'movements', 'suppliers'] as const;
@@ -59,7 +59,7 @@ type Panel =
   | { readonly kind: typeof panelKinds.createSupplier }
   | { readonly id: string; readonly kind: typeof panelKinds.salesQuote }
   | { readonly id: string; readonly kind: typeof panelKinds.salesOrder }
-  | { readonly kind: typeof panelKinds.salesQuoteForm; readonly quote?: SalesQuote };
+  | { readonly kind: typeof panelKinds.salesQuoteForm; readonly quoteId?: string };
 
 const Stats = ({ state }: { readonly state: PurchasingState }) => {
   const k = usePurchasingT();
@@ -268,11 +268,13 @@ const PurchasingPanels = ({
       )}
       {panel.kind === panelKinds.createSupplier && <SupplierPanel onClose={close} run={run} />}
       {panel.kind === panelKinds.salesQuoteForm && (
-        <SalesQuoteFormPanel
+        <SalesQuoteEditPanel
+          key={panel.quoteId ?? panelKinds.salesQuoteForm}
           onClose={close}
           onSaved={(id) => setPanel({ id, kind: panelKinds.salesQuote })}
           run={run}
-          {...optionalField('quote', panel.quote)}
+          state={state}
+          {...optionalField('quoteId', panel.quoteId)}
         />
       )}
       {panel.kind === panelKinds.salesQuote && (
@@ -280,7 +282,7 @@ const PurchasingPanels = ({
           canWrite={canWrite}
           key={panel.id}
           onClose={close}
-          onEdit={(quote) => setPanel({ kind: panelKinds.salesQuoteForm, quote })}
+          onEdit={(quote) => setPanel({ kind: panelKinds.salesQuoteForm, quoteId: quote.id })}
           onOpenOrder={(id) => setPanel({ id, kind: panelKinds.salesOrder })}
           quoteId={panel.id}
           run={run}

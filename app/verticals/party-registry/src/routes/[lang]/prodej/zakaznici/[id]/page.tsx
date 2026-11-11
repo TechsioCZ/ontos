@@ -1,13 +1,13 @@
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useNavigate, useParams } from '@modern-js/plugin-tanstack/runtime';
-import { PageHeader, SectionCard, Toaster } from '@app/admin-ui';
+import { useBlocker, useNavigate, useParams } from '@modern-js/plugin-tanstack/runtime';
+import { DocumentTitle, PageHeader, SectionCard, Toaster } from '@app/admin-ui';
 import { pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Option, Result, Schema } from 'effect';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import type { CustomerListItem } from '../../../../../api/customers-client.ts';
 import { partyRegistryI18nResources } from '../../../../../i18n/resources.ts';
@@ -15,7 +15,7 @@ import { browserRuntime } from '../../../../../runtime/browser-effect-runtime.ts
 import type { CounterpartyRef } from '../../../../../../shared/resources/counterparty.ts';
 import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
 import '../../../../index.css';
-import { CUSTOMER_DETAIL_KEY, CustomerDetailContent } from '../customer-detail-content.tsx';
+import { CUSTOMER_DETAIL_KEY, CustomerDetailContent, CustomerDetailSaveBar } from '../customer-detail-content.tsx';
 import type { CustomerDetailSubject } from '../customer-detail-content.tsx';
 import {
   customerDetailPageData,
@@ -130,6 +130,9 @@ export const CustomerDetailPageRecordView = ({ onChanged, onRetry, record, stale
   const toaster = useToast();
   const subject = customerDetailPageSubject(record);
   const detailCustomer = editingCustomer(record.counterparty.counterpartyRef);
+  // Route navigation (Back, Shell links, another record) with unsaved edits asks the detail's question first.
+  const unsaved = useRef(false);
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => unsaved.current, withResolver: true });
   const model = useCustomerDetail(
     detailCustomer,
     record,
@@ -146,7 +149,12 @@ export const CustomerDetailPageRecordView = ({ onChanged, onRetry, record, stale
     (href) => {
       void navigate({ to: href });
     },
+    blocker,
   );
+  // Before the detail's own effects run, so a navigation it starts after a save or discard is not blocked again.
+  useLayoutEffect(() => {
+    unsaved.current = model.guard.dirty;
+  }, [model.guard.dirty]);
   /** A page reload refreshes both the editing model and the exact shared record. */
   const refresh = () => {
     model.refresh();
@@ -156,6 +164,7 @@ export const CustomerDetailPageRecordView = ({ onChanged, onRetry, record, stale
   const backHref = `/${language ?? 'cs'}/prodej/zakaznici`;
   return (
     <>
+      <DocumentTitle title={subject.displayName} />
       <PageHeader
         actions={
           <Button onClick={() => detail.requestNavigation(backHref)} theme="outlined" variant="secondary">
@@ -166,7 +175,14 @@ export const CustomerDetailPageRecordView = ({ onChanged, onRetry, record, stale
         title={pageTitle(subject.displayName, t(`${CUSTOMER_DETAIL_KEY}.title`))}
       />
       <SectionCard>
-        <CustomerDetailContent detail={detail} initialSnapshot={record} onRetry={refresh} subject={subject} />
+        {/* The one Save button of the page's form sits directly under its fields, above the related records. */}
+        <CustomerDetailContent
+          detail={detail}
+          initialSnapshot={record}
+          onRetry={refresh}
+          saveBar={<CustomerDetailSaveBar detail={detail} />}
+          subject={subject}
+        />
       </SectionCard>
     </>
   );
@@ -269,8 +285,16 @@ const CustomerDetailPageContent = ({ context, routeParams }: CustomerDetailPageP
       );
     }
     if ((status === 'unavailable' || status === 'loading') && usableHeld !== undefined) {
+      // A background reload of the same record changes nothing on screen; only a failed reload offers a reload and
+      // holds the actions until the record is current again.
       return (
-        <CustomerDetailPageRecordView key={pageKey} onChanged={reload} onRetry={reload} record={usableHeld} stale />
+        <CustomerDetailPageRecordView
+          key={pageKey}
+          onChanged={reload}
+          onRetry={reload}
+          record={usableHeld}
+          stale={status === 'unavailable'}
+        />
       );
     }
     return (

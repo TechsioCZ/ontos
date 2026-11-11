@@ -63,11 +63,17 @@ export const ProductPatchSchema = Schema.Struct({
 export type ProductPatch = typeof ProductPatchSchema.Type;
 
 /**
- * One change of a product's gallery, saved on its own: an uploaded picture (stored in Core Media), the whole gallery
- * in a new order, a removal, or the undo of a removal. Each applies to the current gallery, not to a revision.
+ * One change of a product's gallery: an uploaded picture (stored in Core Media), the whole gallery in a new order, a
+ * removal, or the undo of a removal. Each of these applies to the current gallery, not to a revision.
+ *
+ * The admin's gallery draft uses the other two: `Stage` stores a picture for the product without putting it into the
+ * public gallery, and `Set` saves the whole gallery the draft shows (staged pictures in, removed ones out, order and
+ * main picture) against the catalog revision the draft was read at, so a save over someone else's change is refused.
  */
 export const ProductImageChangeSchema = Schema.Union([
   Schema.TaggedStruct('Upload', { image: MediaImageUploadSchema }),
+  Schema.TaggedStruct('Stage', { image: MediaImageUploadSchema }),
+  Schema.TaggedStruct('Set', { images: Schema.Array(ImageRefSchema).check(Schema.isMaxLength(20)) }),
   Schema.TaggedStruct('Reorder', { images: Schema.Array(ImageRefSchema).check(Schema.isMaxLength(20)) }),
   Schema.TaggedStruct('Remove', { image: ImageRefSchema }),
   Schema.TaggedStruct('Restore', {
@@ -193,7 +199,8 @@ export const merchandiseAiCommandSchemas = [
 /**
  * Market offer and price list commands (owner-local stand-in for Assortment/Pricing per commerce market). They ignore
  * the payload's catalog `expectedRevision` and never advance it: ConfigureMarket guards the market's own revision,
- * offer changes are idempotent set operations.
+ * SetProductMarketOffer guards the product's offer it replaces (`expectedOffered`), offer changes are idempotent set
+ * operations.
  */
 const ApplyConfigureMarketCommandSchema = Schema.TaggedStruct('ConfigureMarket', {
   currency: MarketCurrencySchema,
@@ -206,6 +213,11 @@ const ApplyConfigureMarketCommandSchema = Schema.TaggedStruct('ConfigureMarket',
 });
 
 const ApplySetProductMarketOfferCommandSchema = Schema.TaggedStruct('SetProductMarketOffer', {
+  /**
+   * The offer the caller read before this change (the market's offer mode with the product's exception). When given
+   * and the market now offers something else, the save is refused as a revision conflict; omitted = not checked.
+   */
+  expectedOffered: Schema.optionalKey(Schema.Boolean),
   marketId: MarketIdSchema,
   offered: Schema.Boolean,
   productId: ProductIdSchema,

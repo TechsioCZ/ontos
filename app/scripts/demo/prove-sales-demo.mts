@@ -486,12 +486,14 @@ const provePermissions = (
     const repPipeline = yield* salesRep.read(PIPELINE);
     yield* check('obchodnik@ read pipeline → 200 (control)', repPipeline.status === 200, brief(repPipeline));
 
+    // The agent-bot API key is a service principal with no Role and no workload binding (ADR-0030): owner
+    // carriers declare human capabilities, which never admit a machine, so its reads and writes are refused and
+    // nothing is parked as a proposal. Agents act through their own grants and write policy (MCP connections).
     const botPipeline = yield* bot.read(PIPELINE);
-    yield* check('bot read opportunities → 200', botPipeline.status === 200, brief(botPipeline));
-    // Metrics (Statistiky, MCP get_metrics) are computed from these owner reads; sales-insights itself stores nothing.
+    yield* check('bot read opportunities → 403', botPipeline.status === 403, brief(botPipeline));
     for (const audience of [BILLING, 'merchandise', WORK]) {
-      const metricSource = yield* bot.read(audience);
-      yield* check(`bot read ${audience} (metrics source) → 200`, metricSource.status === 200, brief(metricSource));
+      const ownerRead = yield* bot.read(audience);
+      yield* check(`bot read ${audience} → 403`, ownerRead.status === 403, brief(ownerRead));
     }
     const botTask = yield* bot.apply(WORK, APPLY_COMMAND, {
       _tag: 'CreateTask',
@@ -500,7 +502,7 @@ const provePermissions = (
       priority: 'NORMAL',
       title: `Agent: navázat na vyhranou příležitost ${opportunity.title}`,
     });
-    yield* check('bot CreateTask → 200', botTask.status === 200, brief(botTask));
+    yield* check('bot CreateTask → 403', botTask.status === 403, brief(botTask));
     if (invoice !== undefined) {
       const botConfirm = yield* bot.apply(BILLING, APPLY_COMMAND, {
         _tag: 'ConfirmInvoice',

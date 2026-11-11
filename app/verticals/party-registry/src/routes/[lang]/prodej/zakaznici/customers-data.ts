@@ -1,8 +1,22 @@
 import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
-import { Data, DateTime, Effect, Exit, Match, Option, Predicate, Random, Ref, Result, Schema } from 'effect';
+import {
+  Data,
+  DateTime,
+  Effect,
+  Exit,
+  Match,
+  MutableRef,
+  Option,
+  Predicate,
+  Random,
+  Ref,
+  Result,
+  Schema,
+} from 'effect';
 import { constVoid } from 'effect/Function';
 
 import {
+  changeConcerns,
   definePageData,
   moduleChangeEvent,
   modulePagePreload,
@@ -11,7 +25,17 @@ import {
   pageDataScopeKey,
 } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
-import { useHeldSnapshot } from '@app/admin-ui';
+import {
+  draftSavable,
+  LIST_WARM_ROWS,
+  makeIntentLimiter,
+  makePointerDwell,
+  rowIntentProps,
+  useHeldSnapshot,
+  useRecordDraft,
+  useUnsavedChangesGuard,
+} from '@app/admin-ui';
+import type { BlockedNavigation, DraftSaveResult, RowIntentProps, SavableDraft, SaveState } from '@app/admin-ui';
 
 import { executeAresLookup } from '../../../../api/ares-lookup-client.ts';
 import { executeDuplicateCandidateList } from '../../../../api/duplicate-candidate-list-client.ts';
@@ -56,10 +80,19 @@ import type { OfficialIdentifierAssertion } from '../../../../../shared/domain/i
 import type { PartyRef } from '../../../../../shared/resources/party.ts';
 import type { CounterpartyRef } from '../../../../../shared/resources/counterparty.ts';
 import {
+  changedCustomerFields,
+  customerDraftChanges,
+  customerDraftOf,
+  sameCustomerDraft,
+  validCustomerDraft,
+  withWritten,
+} from './customer-detail-draft.ts';
+import type { CustomerDraft, CustomerDraftChange, CustomerDraftSource } from './customer-detail-draft.ts';
+import {
+  customerContactEditable,
   customerContactRows,
   customerIdentifierRows,
   customerHistoryRows,
-  discardCustomerDraftKeys,
 } from './customers-model.ts';
 import type { CreateDraft, CustomerParty } from './customers-model.ts';
 
@@ -113,12 +146,16 @@ export const customersQuery = (context?: ModulePageContext): string =>
  * page, so rows, stats and segment labels render in the first commit.
  */
 export const customersData = definePageData({
+  changesFrom: ['commerce-customer-context', 'party-registry'],
   key: (query: string) => query,
   load: (_query: string) => loadCustomers,
   maxEntries: 8,
   retainStale: false,
   runtime: browserRuntime,
 });
+
+/** Last ready reads of the customer list per scope, kept for a list reopened after a full customer page. */
+const customersListMemory = MutableRef.make(new Map<string, ReturnType<typeof customersData.snapshot>>());
 
 /**
  * The customer list as the page reads it. The strict store reads as pending while it reloads the same register
@@ -134,6 +171,8 @@ export const useCustomersSnapshot = (query: string) =>
       () => customersData.snapshot(query),
       (): ReturnType<typeof customersData.snapshot> => pageDataPending,
     ),
+    // A list reopened after a full customer page starts from its last ready read.
+    { memory: MutableRef.get(customersListMemory) },
   );
 
 /** `preloadPage` of the customers page. */
@@ -244,6 +283,7 @@ const customerDetailKey = ({ customer, scope }: CustomerDetailInput): string =>
 /** A partial section is renderable for this opening, but is not a reusable authorization decision. */
 export const customerDetailData = definePageData({
   cancelWhenUnused: true,
+  changesFrom: ['party-registry'],
   key: customerDetailKey,
   load: ({ customer }: CustomerDetailInput) =>
     loadCustomerDetail(customer).pipe(
@@ -285,7 +325,10 @@ export const cachedCustomerDetailByRef = (
   return detail.state === 'ready' && !detail.refreshing ? detail.value : undefined;
 };
 
-/** Visible current-page rows only. The UI owner supplies its actual paginated row model. */
+/**
+ * The first `LIST_WARM_ROWS` visible current-page rows only: each detail is four owner reads, so warming a whole page
+ * sent about a hundred reads on opening the list. The UI owner supplies its actual paginated row model.
+ */
 export const preloadCustomerDetails = (
   context: ModulePageContext | undefined,
   rows: readonly CustomerListItem[],
@@ -294,7 +337,7 @@ export const preloadCustomerDetails = (
   return scope === undefined
     ? Effect.void
     : Effect.forEach(
-        rows.slice(0, 200),
+        rows.slice(0, LIST_WARM_ROWS),
         (customer) => customerDetailData.read({ customer, scope }).pipe(Effect.ignore),
         {
           concurrency: 2,
@@ -303,30 +346,80 @@ export const preloadCustomerDetails = (
       );
 };
 
+/**
+ * Warms the first visible rows' details once per batch. The batch key is the scope plus each warmed row's detail key,
+ * which carries
+ * the Counterparty and the party revision: a list reload, a freshness expiry or a live change does not warm them again,
+ * while a new page or a changed row does. A row opened later is warmed by its pointer or focus intent instead.
+ */
 export const usePrefetchCustomerDetails = (
   context: ModulePageContext | undefined,
   rows: readonly CustomerListItem[],
 ): void => {
   const scope = pageDataScopeKey(context, 'party.registry');
   const selection = Result.getOrThrow(
-    Schema.encodeResult(DetailKeySchema)(rows.map((customer) => customerDetailKey({ customer, scope: scope ?? '' }))),
+    Schema.encodeResult(DetailKeySchema)(
+      rows.slice(0, LIST_WARM_ROWS).map((customer) => customerDetailKey({ customer, scope: scope ?? '' })),
+    ),
   );
-  const needsPreload = useSyncExternalStore(
-    customerDetailData.subscribe,
-    () =>
-      scope !== undefined &&
-      rows.slice(0, 200).some((customer) => customerDetailData.snapshot({ customer, scope }).state === 'pending'),
-    () => false,
-  );
+  const warmed = useRef<string | undefined>(undefined);
   const preload = useEffectEvent(() => preloadCustomerDetails(context, rows));
   useEffect(() => {
-    const fiber =
-      needsPreload && scope !== undefined && selection !== '[]' ? browserRuntime.runFork(preload()) : undefined;
+    if (scope === undefined || selection === '[]' || warmed.current === selection) {
+      return;
+    }
+    const fiber = browserRuntime.runFork(
+      preload().pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            warmed.current = selection;
+          }),
+        ),
+      ),
+    );
     return () => {
-      fiber?.interruptUnsafe();
+      fiber.interruptUnsafe();
     };
-  }, [needsPreload, scope, selection]);
+  }, [scope, selection]);
 };
+
+const customerIntentReads = makeIntentLimiter();
+const customerPointerDwell = makePointerDwell((effect) => browserRuntime.runFork(effect));
+
+/**
+ * Warms one row's detail on pointer or keyboard intent. A fresh entry answers without a request. At most two intent
+ * reads run at once; a sweep over many rows keeps only the newest waiting.
+ */
+export const prefetchCustomerDetail = (context: ModulePageContext | undefined, customer: CustomerListItem): void => {
+  const scope = pageDataScopeKey(context, 'party.registry');
+  if (scope === undefined || customerDetailData.snapshot({ customer, scope }).state === 'ready') {
+    return;
+  }
+  customerIntentReads((done) => {
+    if (customerDetailData.snapshot({ customer, scope }).state === 'ready') {
+      done();
+      return;
+    }
+    browserRuntime.runFork(
+      customerDetailData.read({ customer, scope }).pipe(Effect.ignore, Effect.ensuring(Effect.sync(done))),
+    );
+  });
+};
+
+/**
+ * Row intent over the table's row model (`data-index`), passed as the DataTable's `slotProps.row`. The rows are read
+ * when the event fires, so a sort or page change made since this render maps the index to the row actually shown.
+ */
+export const customerDetailIntent = (
+  context: ModulePageContext | undefined,
+  rows: () => readonly CustomerListItem[],
+): RowIntentProps =>
+  rowIntentProps((index) => {
+    const customer = rows()[index];
+    if (customer !== undefined) {
+      prefetchCustomerDetail(context, customer);
+    }
+  }, customerPointerDwell);
 
 export type CustomerFactChange =
   | { readonly kind: 'name'; readonly value: string; readonly party: CustomerParty }
@@ -528,37 +621,37 @@ export const loadCustomerDetailInto = (
   return () => fiber.interruptUnsafe();
 };
 
-type CustomerLeaveIntent =
-  | { readonly kind: 'close' }
-  | { readonly href: string; readonly kind: 'navigate' }
-  | { readonly kind: 'run'; readonly run: () => void };
 const navigateCustomerDocument = (href: string): void => globalThis.location.assign(href);
-
-export const CustomerLeaveDecisionSchema = Schema.Literals(['ignore', 'confirm', 'proceed']);
-export type CustomerLeaveDecision = typeof CustomerLeaveDecisionSchema.Type;
-/** The one leave check of the customer detail: a save in flight ignores the request, unsaved edits ask first. */
-export const customerLeaveDecision = (state: {
-  readonly busy: boolean;
-  readonly dirty: boolean;
-}): CustomerLeaveDecision => {
-  if (state.busy) {
-    return 'ignore';
-  }
-  return state.dirty ? 'confirm' : 'proceed';
-};
-
-const settledAutosaveStates = new Set(['idle', 'saved', 'proposed']);
-/** Inline autosave fields keep their own drafts; one whose status has not settled holds typed text not yet saved. */
-export const hasUnsettledAutosave = (root: ParentNode | null): boolean =>
-  root !== null &&
-  [...root.querySelectorAll<HTMLElement>('[data-autosave-state]')].some(
-    (status) => !settledAutosaveStates.has(status.dataset['autosaveState'] ?? ''),
-  );
 
 /** Runs `run` after the open detail's leave check. The open detail exposes it through a ref; the list page calls it. */
 export type CustomerLeaveRun = (run: () => void) => void;
 
-/** Application state stays with the owning feature. Each mutation retains unrelated drafts. */
+const isBlocked = Schema.is(Schema.Struct({ outcome: Schema.Literal('BLOCKED') }));
+
+/** The rows of the detail as the owner snapshot has them, and the source of its draft. */
+const customerDetailRowsOf = (snapshot: CustomerDetailSnapshot | undefined) => {
+  const identity = snapshot?.identity;
+  const party = identity?.status === 'ready' ? identity.value.party : undefined;
+  const contacts = snapshot?.contacts.status === 'ready' ? snapshot.contacts.value.items : [];
+  const identifiers = snapshot?.identifiers.status === 'ready' ? snapshot.identifiers.value.items : [];
+  const contactRows = customerContactRows(contacts);
+  const identifierRows =
+    snapshot?.identifiers.status === 'ready'
+      ? customerIdentifierRows(identifiers, DateTime.formatIso(snapshot.now))
+      : [];
+  const source: CustomerDraftSource = {
+    contactRows: snapshot?.contacts.status === 'ready' ? contactRows : [],
+    editableContact: (row) => customerContactEditable(row.existing, party !== undefined),
+    identifierRows,
+    party,
+  };
+  return { contactRows, history: customerHistoryRows(contacts, identifiers), identifierRows, identity, party, source };
+};
+
+/**
+ * Application state stays with the owning feature. The editable facts form one draft with one Save button; the
+ * one-click commands (end a fact, archive or restore) run on their own.
+ */
 export const useCustomerDetail = (
   customer: Pick<CustomerListItem, 'counterpartyRef'>,
   initialSnapshot: CustomerDetailSnapshot | undefined,
@@ -567,10 +660,11 @@ export const useCustomerDetail = (
   onSaved: () => void,
   t: (key: string, values?: Record<string, string>) => string,
   navigate: (href: string) => void = navigateCustomerDocument,
+  navigation?: BlockedNavigation,
 ) => {
   const KEY = 'party-registry.pages.customers.detail';
   // A local reload/save may override only the owner snapshot that started it. New page/cache props win
-  // synchronously, including a pending or refused revalidation, without discarding unrelated drafts.
+  // synchronously, including a pending or refused revalidation, without discarding the draft.
   const [localSnapshot, setLocalSnapshot] = useState<{
     readonly source: CustomerDetailSnapshot | undefined;
     readonly value: CustomerDetailSnapshot | undefined;
@@ -579,91 +673,22 @@ export const useCustomerDetail = (
     localSnapshot !== undefined && localSnapshot.source === initialSnapshot ? localSnapshot.value : initialSnapshot;
   const setSnapshot = (value: CustomerDetailSnapshot | undefined) =>
     setLocalSnapshot({ source: initialSnapshot, value });
-  const [draft, setDraft] = useState<Record<string, string>>({});
   const [reason, setReason] = useState('');
   const [evidence, setEvidence] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  /** A related link left through the guard, followed once the draft is saved or discarded. */
+  const leavingTo = useRef<string | undefined>(undefined);
   const [localStale, setLocalStale] = useState<{
     readonly source: CustomerDetailSnapshot | undefined;
     readonly value: boolean;
   }>();
   const stale = localStale !== undefined && localStale.source === initialSnapshot && localStale.value;
   const setStale = (value: boolean) => setLocalStale({ source: initialSnapshot, value });
-  const [leaveIntent, setLeaveIntent] = useState<CustomerLeaveIntent>();
-  const allowDocumentLeave = useRef(false);
-  const discardOpen = leaveIntent !== undefined;
-  const dirty = Object.keys(draft).length > 0;
-  const identity = snapshot?.identity;
-  const party = identity?.status === 'ready' ? identity.value.party : undefined;
-  const value = (key: string, original = '') => draft[key] ?? original;
-  const changeDraft = (key: string, next: string, original = '') =>
-    setDraft((current) => (next === original ? discardCustomerDraftKeys(current, [key]) : { ...current, [key]: next }));
-
-  // A confirmed related link consumes one unload allowance. Any cancelled browser unload stays guarded.
-  useEffect(() => {
-    const guardDocumentLeave = (event: BeforeUnloadEvent) => {
-      if (allowDocumentLeave.current) {
-        allowDocumentLeave.current = false;
-        return;
-      }
-      if (dirty || busy) {
-        event.preventDefault();
-        event.returnValue = '';
-      }
-    };
-    globalThis.addEventListener('beforeunload', guardDocumentLeave);
-    return () => globalThis.removeEventListener('beforeunload', guardDocumentLeave);
-  }, [busy, dirty]);
-
-  const completeLeave = (intent: CustomerLeaveIntent) =>
-    Match.value(intent).pipe(
-      Match.discriminatorsExhaustive('kind')({
-        close: () => onOpenChange(false),
-        navigate: ({ href }) => {
-          allowDocumentLeave.current = true;
-          navigate(href);
-        },
-        run: ({ run }) => run(),
-      }),
-    );
-  const requestLeave = (intent: CustomerLeaveIntent, inlineDraft = false) => {
-    const decision = customerLeaveDecision({ busy, dirty: dirty || inlineDraft });
-    if (decision === 'ignore') {
-      return;
-    }
-    if (decision === 'confirm') {
-      setLeaveIntent(intent);
-      return;
-    }
-    completeLeave(intent);
-  };
-  const requestClose = (open: boolean) => {
-    if (open) {
-      onOpenChange(true);
-    } else {
-      requestLeave({ kind: 'close' });
-    }
-  };
-  const requestNavigation = (href: string) => requestLeave({ href, kind: 'navigate' });
-  /**
-   * Runs `run` only after the same leave check as close: a save in flight ignores it, unsaved edits ask first.
-   * `inlineDraft` reports text typed into an inline autosave field that is not saved yet.
-   */
-  const requestLeaveThen = (run: () => void, inlineDraft: boolean) => {
-    requestLeave({ kind: 'run', run }, inlineDraft);
-  };
-  const setDiscardOpen = (open: boolean) => {
-    if (!open) {
-      setLeaveIntent(undefined);
-    }
-  };
-  const confirmDiscard = () => {
-    if (!busy && leaveIntent !== undefined) {
-      setLeaveIntent(undefined);
-      completeLeave(leaveIntent);
-    }
-  };
+  const { contactRows, history, identifierRows, identity, party, source } = customerDetailRowsOf(snapshot);
+  /** Evidence and a reason are the change basis of a governed identity change: nothing is sent without them. */
+  const basisFilled = reason.trim() !== '' && evidence.trim() !== '';
 
   // A local revalidation can revoke access to any section. Discard dependent cached decisions too,
   // including full-page records, even when the owner returns a partial snapshot or refuses the read.
@@ -692,11 +717,154 @@ export const useCustomerDetail = (
     );
   };
 
-  const save = (change: CustomerFactChange, keys: readonly string[]) => {
-    if (party === undefined || busy || stale) {
+  /** Set when a save wrote something; the snapshot is re-read once that save has ended. */
+  const wrote = useRef(false);
+  /** Sends the changed facts one by one; what went through stays saved when a later one fails. */
+  const sendDraft = (value: CustomerDraft, confirmed: CustomerDraft): Effect.Effect<DraftSaveResult<CustomerDraft>> => {
+    if (party === undefined || !basisFilled) {
+      return Effect.succeed('failed');
+    }
+    const basis = { evidence: evidence.trim(), reason: reason.trim() };
+    const send = (
+      pending: readonly CustomerDraftChange[],
+      written: CustomerDraft,
+    ): Effect.Effect<DraftSaveResult<CustomerDraft>> => {
+      const [first, ...rest] = pending;
+      if (first === undefined) {
+        return Effect.succeed('saved');
+      }
+      return saveCustomerFact(party.partyRef, first.change, basis.reason, basis.evidence).pipe(
+        Effect.matchEffect({
+          onFailure: (error) =>
+            Effect.sync((): DraftSaveResult<CustomerDraft> => {
+              const key = customerDetailFailureKey(error);
+              setSaveError(t(`${KEY}.${key}`));
+              const outcome = key === 'conflict' ? 'conflict' : 'failed';
+              return written === confirmed ? outcome : { confirmed: written, outcome, revision: 0 };
+            }),
+          onSuccess: (result) => {
+            if (isBlocked(result)) {
+              setSaveError(t(`${KEY}.restoreBlocked`));
+              return Effect.succeed<DraftSaveResult<CustomerDraft>>(
+                written === confirmed ? 'failed' : { confirmed: written, outcome: 'failed', revision: 0 },
+              );
+            }
+            wrote.current = true;
+            return send(rest, withWritten(written, value, first.keys));
+          },
+        }),
+      );
+    };
+    return Effect.sync(() => setSaveError(null)).pipe(
+      Effect.andThen(send(customerDraftChanges(value, confirmed, source), confirmed)),
+    );
+  };
+  const record = useRecordDraft<CustomerDraft, never>({
+    equals: sameCustomerDraft,
+    isValid: validCustomerDraft(source),
+    refresh: Effect.sync(refresh),
+    runtime: browserRuntime,
+    save: (value, _expectedRevision, confirmed) => sendDraft(value, confirmed),
+    server: customerDraftOf(source),
+  });
+  const saving = record.status === 'saving';
+  // Without evidence and a reason the draft cannot be sent: the save bar reads it like any invalid draft.
+  const status: SaveState =
+    !basisFilled && (record.status === 'dirty' || record.status === 'error') ? 'invalid' : record.status;
+  /** The detail after a save that wrote something: the owner's current version. */
+  const showWritten = () => {
+    onRenamed();
+    onSaved();
+    void browserRuntime.runPromise(
+      reloadSnapshot.pipe(
+        Effect.match({
+          onFailure: (error) => {
+            setSnapshot(undefined);
+            setStale(true);
+            setNotice(t(`${KEY}.savedReloadFailed`, { reason: t(`${KEY}.${customerDetailFailureKey(error)}`) }));
+          },
+          onSuccess: (next) => setSnapshot(next),
+        }),
+      ),
+    );
+  };
+  const save = () => {
+    if (basisFilled && !busy) {
+      record.save();
+      // Once a save that wrote something has ended, the detail shows what the owner now has.
+      record.afterSave(() => {
+        if (wrote.current) {
+          wrote.current = false;
+          showWritten();
+        }
+      });
+    }
+  };
+  const draftForGuard: SavableDraft = {
+    afterSave: record.afterSave,
+    canSave: draftSavable(status) && !busy,
+    dirty: record.dirty,
+    save,
+    status,
+  };
+  const guard = useUnsavedChangesGuard({ draft: draftForGuard, navigation, onDiscard: record.discard });
+
+  // A one-click command in flight: leaving the document now would lose its answer.
+  useEffect(() => {
+    const guardDocumentLeave = (event: BeforeUnloadEvent) => {
+      if (busy) {
+        event.preventDefault();
+      }
+    };
+    globalThis.addEventListener('beforeunload', guardDocumentLeave);
+    return () => globalThis.removeEventListener('beforeunload', guardDocumentLeave);
+  }, [busy]);
+
+  // A related link left through the guard: followed once the draft is saved or discarded, so the document does not
+  // ask a second time.
+  useEffect(() => {
+    const href = leavingTo.current;
+    if (href !== undefined && !guard.dirty) {
+      leavingTo.current = undefined;
+      navigate(href);
+    }
+  }, [guard.dirty, navigate]);
+
+  const { confirmed } = record;
+  const draft = changedCustomerFields(record.draft, confirmed);
+  const { dirty } = record;
+  const value = (key: string, original = '') => record.draft.fields[key] ?? original;
+  const changeDraft = (key: string, next: string) =>
+    record.setDraft((current) => ({ ...current, fields: { ...current.fields, [key]: next } }));
+
+  /** Runs `leave` after the leave check: a command in flight ignores it, unsaved edits ask first. */
+  const requestLeaveThen = (leave: () => void) => {
+    if (!busy) {
+      guard.request(leave);
+    }
+  };
+  const requestClose = (open: boolean) => {
+    if (open) {
+      onOpenChange(true);
+    } else {
+      requestLeaveThen(() => onOpenChange(false));
+    }
+  };
+  const requestNavigation = (href: string) =>
+    requestLeaveThen(() => {
+      if (guard.dirty) {
+        leavingTo.current = href;
+        return;
+      }
+      navigate(href);
+    });
+
+  /** A one-click command (end a fact, archive or restore): sent at once, with the change basis. */
+  const runCommand = (change: CustomerFactChange) => {
+    if (party === undefined || busy || saving || stale) {
       return;
     }
-    if (reason.trim() === '' || evidence.trim() === '' || (change.kind === 'name' && change.value.trim() === '')) {
+    if (!basisFilled) {
       setNotice(t(`${KEY}.validation`));
       return;
     }
@@ -713,12 +881,10 @@ export const useCustomerDetail = (
               }
             }),
           onSuccess: (result) => {
-            if (Schema.is(Schema.Struct({ outcome: Schema.Literal('BLOCKED') }))(result)) {
+            if (isBlocked(result)) {
               return Effect.sync(() => setNotice(t(`${KEY}.restoreBlocked`)));
             }
-            // Clear only the confirmed section. Other drafts survive errors and subsequent snapshot refreshes.
             return Effect.sync(() => {
-              setDraft((current) => discardCustomerDraftKeys(current, keys));
               onRenamed();
               onSaved();
             }).pipe(
@@ -739,39 +905,36 @@ export const useCustomerDetail = (
     );
   };
 
-  const contacts = snapshot?.contacts.status === 'ready' ? snapshot.contacts.value.items : [];
-  const identifiers = snapshot?.identifiers.status === 'ready' ? snapshot.identifiers.value.items : [];
-  const contactRows = customerContactRows(contacts);
-  const identifierRows = customerIdentifierRows(
-    identifiers,
-    snapshot === undefined ? '' : DateTime.formatIso(snapshot.now),
-  );
-  const history = customerHistoryRows(contacts, identifiers);
   return {
-    busy,
+    basisFilled,
+    busy: busy || saving,
     changeDraft,
+    /** A one-click command is in flight (not the draft's save): leaving is ignored until it answers. */
+    commandBusy: busy,
     contactRows,
-    confirmDiscard,
+    draft,
+    evidence,
+    guard,
     history,
     identifierRows,
     dirty,
-    discardOpen,
-    draft,
-    evidence,
     identity,
     notice,
     party,
     reason,
+    record,
     refresh,
     requestClose,
     requestLeaveThen,
     requestNavigation,
+    runCommand,
     save,
-    setDiscardOpen,
+    saveError,
     setEvidence,
     setReason,
     snapshot,
     stale,
+    status,
     value,
   };
 };
@@ -789,13 +952,20 @@ export const useCustomerDetailSelection = (context?: ModulePageContext) => {
       listener,
       detail === null || scope === undefined || openingScope !== scope ? undefined : { customer: detail, scope },
     );
-  const cached = useSyncExternalStore(
-    subscribe,
-    () =>
-      detail === null || scope === undefined || openingScope !== scope
-        ? pageDataPending
-        : customerDetailData.snapshot({ customer: detail, scope }),
-    () => pageDataPending,
+  // A background reload of the open customer (freshness window, live change, settled write) keeps its last ready
+  // read on screen instead of dropping the panel to its loading state.
+  const cached = useHeldSnapshot(
+    detail === null || scope === undefined || openingScope !== scope
+      ? ''
+      : customerDetailKey({ customer: detail, scope }),
+    useSyncExternalStore(
+      subscribe,
+      () =>
+        detail === null || scope === undefined || openingScope !== scope
+          ? pageDataPending
+          : customerDetailData.snapshot({ customer: detail, scope }),
+      () => pageDataPending,
+    ),
   );
   const activeScope = useRef(scope);
   useEffect(() => {
@@ -1088,7 +1258,11 @@ export const useCustomerIdentityReview = (onResolved: () => void) => {
       revalidateDetail(caseSelection.current);
     }
   };
-  const follow = useEffectEvent(revalidate);
+  const follow = useEffectEvent((event: Event) => {
+    if (changeConcerns(event, ['party-registry'])) {
+      revalidate();
+    }
+  });
   useEffect(() => {
     if (!open) {
       return;

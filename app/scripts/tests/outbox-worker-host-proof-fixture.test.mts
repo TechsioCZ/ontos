@@ -2,7 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
-import { Deferred, Effect, Fiber, FileSystem, Ref, Schema, Stream } from 'effect';
+import { Console as EffectConsole, Deferred, Effect, Fiber, FileSystem, Ref, Schema, Stream } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 
@@ -14,6 +14,39 @@ import {
 
 const workspaceRoot = path.resolve(import.meta.dirname, '../..');
 const nativeControlPath = fileURLToPath(new URL('outbox-worker-host-proof-native.fixture.mts', import.meta.url));
+
+// The generator's supported default package profile can emit this pinned Node26 advisory while
+// native TypeScript module detection imports real owner registrations. Every byte stays visible.
+const nodeModuleTypeWarnings = new RegExp(
+  String.raw`^(?:\(node:\d+\) \[MODULE_TYPELESS_PACKAGE_JSON\] Warning: Module type of file:\/\/[^\r\n]+\.ts is not specified and it doesn't parse as CommonJS\.\n` +
+    String.raw`Reparsing as ES module because module syntax was detected\. This incurs a performance overhead\.\n` +
+    String.raw`To eliminate this warning, add "type": "module" to [^\r\n]+\/package\.json\.\n` +
+    String.raw`(?:\(Use \x60node --trace-warnings \.\.\.\x60 to show where the warning was created\)\n)?)+(?![\s\S])`,
+  'u',
+);
+const hasOnlyNativeModuleTypeWarnings = (stderr: string): boolean =>
+  stderr === '' || nodeModuleTypeWarnings.test(stderr);
+
+it('accepts only complete native module-type advisories and rejects unexpected stderr', () => {
+  const warning =
+    "(node:123) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///tmp/ontos/verticals/catalog/shared/value.ts is not specified and it doesn't parse as CommonJS.\n" +
+    'Reparsing as ES module because module syntax was detected. This incurs a performance overhead.\n' +
+    'To eliminate this warning, add "type": "module" to /tmp/ontos/verticals/catalog/package.json.\n';
+  const hint = '(Use `node --trace-warnings ...` to show where the warning was created)\n';
+  expect(hasOnlyNativeModuleTypeWarnings('')).toBe(true);
+  expect(hasOnlyNativeModuleTypeWarnings(warning)).toBe(true);
+  expect(hasOnlyNativeModuleTypeWarnings(`${warning}${hint}${warning}`)).toBe(true);
+  for (const unexpected of [
+    'Error: native admission failed\n',
+    `${warning}Error: native admission failed\n`,
+    `unexpected runtime diagnostic\n${warning}`,
+    `${warning}TS2322: invalid runtime contract\n`,
+    `${warning}\n`,
+    warning.split('\n')[0],
+  ]) {
+    expect(hasOnlyNativeModuleTypeWarnings(unexpected)).toBe(false);
+  }
+});
 
 const runSignalControl = (control: 'signal' | 'signal-finalizer-failure') =>
   Effect.gen(function* realNativeSignal() {
@@ -138,10 +171,13 @@ it.live('preserves the real complete catalog and serves exact native snapshot by
       ],
       { concurrency: 'unbounded' },
     );
-    expect({ code, stderr, stdout }).toEqual({
+    if (stderr !== '') {
+      yield* EffectConsole.error(stderr);
+    }
+    expect({ code, stdout }).toEqual({
       code: 0,
-      stderr: '',
       stdout: 'complete native host admission controls passed\n',
     });
+    expect(hasOnlyNativeModuleTypeWarnings(stderr)).toBe(true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

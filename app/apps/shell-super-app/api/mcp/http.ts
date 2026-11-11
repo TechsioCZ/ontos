@@ -1,8 +1,9 @@
 /**
  * The Shell's stateless MCP endpoint (Streamable HTTP, `<shell>/mcp`) and its RFC 9728 Protected Resource Metadata.
  * Web-standard Request -> Response only, so the same pipeline runs in the Node BFF and in the Cloudflare Worker. No
- * sessions, no URL tokens, no API keys: every request carries its own OAuth access token and is verified, described
- * and served from scratch.
+ * sessions, no URL tokens, no API keys: every request carries its own OAuth access token and is verified and served
+ * from scratch. Only a well-formed request whose answer depends on the connection's tools (`tools/list`,
+ * `tools/call`) describes the connection's authority; discovery and protocol errors never do.
  */
 import { Duration, Effect, Function as Fn, Schema } from 'effect';
 import { HttpServerResponse } from 'effect/http';
@@ -22,15 +23,29 @@ export interface McpEndpointConfig {
   readonly resource: string;
 }
 
+/** The tools of an authenticated connection, described live for one request. */
+export type McpConnectionTools =
+  | { readonly kind: 'invalid' }
+  | { readonly kind: 'ok'; readonly tools: readonly ToolSpec[] }
+  | { readonly kind: 'unavailable' };
+
 export type McpAuthentication =
   | { readonly kind: 'invalid' }
   | {
       readonly clientId: string;
       readonly grantId: string;
       readonly kind: 'ok';
-      readonly tools: () => readonly ToolSpec[];
+      /** Describes the connection's current authority and builds its tools; run only by a request that needs them. */
+      readonly tools: Effect.Effect<McpConnectionTools>;
     }
   | { readonly kind: 'unavailable' };
+
+/**
+ * The methods whose answer depends on the connection's tools. The SDK calls the server factory only for a request
+ * that passed its protocol checks, and only after it has matched the required `Mcp-Method` header to the body's
+ * method, so the factory may read the method from that header.
+ */
+export const MCP_TOOL_METHODS: ReadonlySet<string> = new Set(['tools/call', 'tools/list']);
 
 /** Per-request inputs of the endpoint; the Shell transport reads them from the request's services. */
 export interface McpEndpointDeps<Failure = never, Requirements = never> {
@@ -173,7 +188,7 @@ export const serveMcp = <Failure, Requirements>(deps: McpEndpointDeps<Failure, R
     if (bearer === undefined) {
       return unauthorizedResponse(config.prmUrl, false);
     }
-    const authentication = yield* deps.authenticate(bearer);
+    const [authenticated, authentication] = yield* Effect.timed(deps.authenticate(bearer));
     if (authentication.kind === 'invalid') {
       return unauthorizedResponse(config.prmUrl, true);
     }
@@ -188,8 +203,25 @@ export const serveMcp = <Failure, Requirements>(deps: McpEndpointDeps<Failure, R
     );
     // The SDK calls back with Promises; tools and logs run with the services of this request.
     const services = yield* Effect.context();
+    const run = Effect.runPromiseWith(services);
+    // Set by the factory when the connection could not be described. The factory then serves no tool at all and
+    // the endpoint answers HTTP 401/503 below in place of the SDK's answer: an expected refusal, not an error.
+    let refused: 'invalid' | 'unavailable' | undefined;
+    let describedMs: number | undefined;
+    const describedServer = Effect.gen(function* describeServer() {
+      const [elapsed, described] = yield* Effect.timed(authentication.tools);
+      describedMs = Duration.toMillis(elapsed);
+      if (described.kind !== 'ok') {
+        refused = described.kind;
+        return buildMcpServer([], { run, sdk });
+      }
+      return buildMcpServer(described.tools, { run, sdk });
+    });
     const handler = sdk.createMcpHandler(
-      () => buildMcpServer(authentication.tools(), { run: Effect.runPromiseWith(services), sdk }),
+      ({ requestInfo }): ReturnType<typeof buildMcpServer> | Promise<ReturnType<typeof buildMcpServer>> =>
+        MCP_TOOL_METHODS.has(requestInfo?.headers.get('mcp-method') ?? '')
+          ? run(describedServer)
+          : buildMcpServer([], { run, sdk }),
       {
         // Current MCP revision only: 2025-era requests get the unsupported-version error naming 2026-07-28.
         legacy: 'reject',
@@ -224,14 +256,27 @@ export const serveMcp = <Failure, Requirements>(deps: McpEndpointDeps<Failure, R
         }),
       ),
     );
+    let answered = response;
+    if (refused === 'invalid') {
+      answered = unauthorizedResponse(config.prmUrl, true);
+    } else if (refused === 'unavailable') {
+      answered = unavailableResponse();
+    }
     yield* Effect.logInfo('mcp.request').pipe(
       Effect.annotateLogs({
+        authMs: Duration.toMillis(authenticated),
+        describedMs: describedMs ?? null,
         grantId: authentication.grantId,
+        mcpMethod: request.headers.get('mcp-method') ?? null,
         method: request.method,
         ms: Duration.toMillis(elapsed),
-        status: response.status,
+        refusal: refused ?? null,
+        status: answered.status,
       }),
     );
+    if (refused !== undefined) {
+      return answered;
+    }
     const adapted = HttpServerResponse.raw(response, { headers: PUBLIC_CORS_HEADERS }).pipe(HttpServerResponse.toWeb);
     if ((response.headers.get('content-type') ?? '').includes('text/event-stream')) {
       adapted.headers.set('cache-control', 'no-cache');

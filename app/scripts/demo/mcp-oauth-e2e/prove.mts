@@ -40,6 +40,9 @@ import {
   closeMcpClient,
   connectMcp,
   callJson,
+  confirmLatency,
+  latencySummary,
+  listTools,
   rawLegacyInitialize,
   rawMcpStatus,
   MODERN_PROTOCOL_VERSION,
@@ -133,7 +136,7 @@ const visibleProofTasks = (
 
 const listToolNames = (client: Client) =>
   Effect.gen(function* listClientTools() {
-    const listed = yield* Effect.tryPromise(async () => await client.listTools());
+    const listed = yield* listTools(client);
     return listed.tools.map((tool) => tool.name);
   });
 
@@ -331,13 +334,15 @@ const runVariant = (def: VariantDef, summary: VariantSummary, verification: bool
       k,
       'tools/list (2026-07-28)',
       Effect.gen(function* verifyCurrentProtocol() {
-        const { client, protocolVersion } = yield* Effect.suspend(() => connectMcp(E2E.mcpUrl, access));
-        open.push(client);
-        const names = yield* listToolNames(client);
+        const connection = yield* Effect.suspend(() => connectMcp(E2E.mcpUrl, access));
+        open.push(connection.client);
+        const names = yield* listToolNames(connection.client);
         return {
-          detail: `${names.length} nástrojů, verze ${protocolVersion}`,
-          pass: protocolVersion === MODERN_PROTOCOL_VERSION && REQUIRED_TOOLS.every((name) => names.includes(name)),
-          value: client,
+          detail: `${names.length} nástrojů, verze ${connection.protocolVersion}`,
+          pass:
+            connection.protocolVersion === MODERN_PROTOCOL_VERSION &&
+            REQUIRED_TOOLS.every((name) => names.includes(name)),
+          value: connection.client,
         };
       }),
     );
@@ -590,6 +595,20 @@ const runVariant = (def: VariantDef, summary: VariantSummary, verification: bool
         return {
           detail: `${candidate} → isError=${outcome.isError}`,
           pass: outcome.isError && /nesmí|jen číst/u.test(outcome.text),
+        };
+      }),
+    );
+    // Every authenticated request of this client answered within its budget: an MCP client gives up on a slow
+    // `server/discover` (Claude Code waits 5 s), so a slow connection is a failed connection. A miss is measured
+    // once more and fails only when the second sample misses too.
+    yield* rec.stepEffect(
+      k,
+      'latence MCP (připojení ≤ 5 s; discover a tools/list ≤ 3 s, tools/call ≤ 10 s)',
+      Effect.gen(function* verifyLatency() {
+        const { first, slow } = yield* confirmLatency(client);
+        return {
+          detail: slow.length === 0 ? latencySummary(first) : `pomalé: ${slow.join('; ')}`,
+          pass: first.length > 0 && slow.length === 0,
         };
       }),
     );

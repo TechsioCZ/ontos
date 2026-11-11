@@ -7,6 +7,8 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import {
   PageHeader,
   SidePanel,
+  UnsavedChangesBoundary,
+  useUnsavedChangesScope,
   dataTableRowLabels,
   paginationTranslations,
   StatCard,
@@ -47,9 +49,10 @@ import { AssetSummary } from './asset-summary.tsx';
 import { DepreciationOverview } from './depreciation.tsx';
 import { InvestmentForm, InvestmentPlan } from './investments.tsx';
 import { TextField } from './form-kit.tsx';
+import type { AssetSubmit } from './form-kit.tsx';
+import { FooterSlotProvider, useFooterSlot } from '../../../../ui/footer-slot.tsx';
 import { InventoryTab } from './inventory.tsx';
 
-const CREATE_FORM_ID = 'facility-assets-create-form';
 const ALL = 'all';
 const KIND_LABEL = 'fields.kind';
 const LOCATION_LABEL = 'fields.location';
@@ -381,25 +384,19 @@ const useAssetsViewModel = () => {
   ];
 
   const { success: createSuccess, title: createTitle } = createPanelLabels(panel, k);
-  const submitCreate = (command: OpsCommand): void => {
-    void browserRuntime.runPromise(
-      submit(command, createSuccess).pipe(
-        Effect.tap((ok) =>
-          Effect.sync(() => {
-            if (!ok) {
-              return;
-            }
-            if (panel?.kind === 'inventory') {
-              setTab('inventories');
-            }
-            if (panel?.kind === 'asset' && ops.data !== undefined) {
-              setStatusFilter('active');
-            }
-            setPanel(undefined);
-          }),
-        ),
-      ),
-    );
+  // The create panel's forms send their command on Uložit; a confirmed save toasts, closes and shows the result.
+  const submitCreate: AssetSubmit = {
+    onSaved: () => {
+      toast.create({ title: k(createSuccess), type: 'success' });
+      if (panel?.kind === 'inventory') {
+        setTab('inventories');
+      }
+      if (panel?.kind === 'asset' && ops.data !== undefined) {
+        setStatusFilter('active');
+      }
+      setPanel(undefined);
+    },
+    run: ops.run,
   };
 
   return {
@@ -805,53 +802,51 @@ const AssetsTabs = ({ vm }: { readonly vm: AssetsViewModel }) => {
   );
 };
 
+/** The create panel: Zrušit, then the form's own Uložit last in the footer; every way out asks the form first. */
 const AssetsCreatePanel = ({ vm }: { readonly vm: AssetsViewModel }) => {
-  const { busy, createTitle, k, panel, setPanel, state, submitCreate, t } = vm;
+  const { createTitle, k, panel, setPanel, state, submitCreate, t } = vm;
+  const scope = useUnsavedChangesScope();
+  const footer = useFooterSlot();
+  const close = () => setPanel(undefined);
   return (
-    <SidePanel
-      actions={
-        <>
-          <Button onClick={() => setPanel(undefined)} theme="outlined" variant="secondary">
-            {t('facility-operations.common.cancel')}
-          </Button>
-          <Button form={CREATE_FORM_ID} isLoading={busy} loadingText={k('saving')} type="submit" variant="primary">
-            {panel?.kind === 'asset' ? k('actions.createAsset') : k('actions.save')}
-          </Button>
-        </>
-      }
-      onOpenChange={(next) => {
-        if (!next) {
-          setPanel(undefined);
+    <UnsavedChangesBoundary scope={scope}>
+      <SidePanel
+        actions={
+          <>
+            <Button onClick={() => scope.request(close)} theme="outlined" variant="secondary">
+              {t('facility-operations.common.cancel')}
+            </Button>
+            {footer.target}
+          </>
         }
-      }}
-      open={panel !== undefined}
-      resizeLabel={k('resize')}
-      size="lg"
-      title={createTitle}
-    >
-      {panel?.kind === 'asset' && <AssetCardCreateForm formId={CREATE_FORM_ID} onSubmit={submitCreate} state={state} />}
-      {panel?.kind === 'inventory' && (
-        <InventoryCreateForm formId={CREATE_FORM_ID} onSubmit={submitCreate} state={state} />
-      )}
-      {panel?.kind === 'template' && <TemplateForm formId={CREATE_FORM_ID} onSubmit={submitCreate} />}
-      {panel?.kind === 'investment' && (
-        <InvestmentForm
-          formId={CREATE_FORM_ID}
-          onSubmit={submitCreate}
-          state={state}
-          {...(panel.investment === undefined ? {} : { investment: panel.investment })}
-        />
-      )}
-      {panel?.kind === 'followUp' && (
-        <FollowUpForm
-          assetId={panel.item.assetId}
-          assetName={panel.item.name}
-          formId={CREATE_FORM_ID}
-          inventoryId={panel.inventory.id}
-          onSubmit={submitCreate}
-        />
-      )}
-    </SidePanel>
+        onOpenChange={(next) => {
+          if (!next) {
+            close();
+          }
+        }}
+        open={panel !== undefined}
+        resizeLabel={k('resize')}
+        size="lg"
+        title={createTitle}
+      >
+        <FooterSlotProvider slot={footer.slot}>
+          {panel?.kind === 'asset' && <AssetCardCreateForm onSubmit={submitCreate} state={state} />}
+          {panel?.kind === 'inventory' && <InventoryCreateForm onSubmit={submitCreate} state={state} />}
+          {panel?.kind === 'template' && <TemplateForm onSubmit={submitCreate} />}
+          {panel?.kind === 'investment' && (
+            <InvestmentForm investment={panel.investment} onSubmit={submitCreate} state={state} />
+          )}
+          {panel?.kind === 'followUp' && (
+            <FollowUpForm
+              assetId={panel.item.assetId}
+              assetName={panel.item.name}
+              inventoryId={panel.inventory.id}
+              onSubmit={submitCreate}
+            />
+          )}
+        </FooterSlotProvider>
+      </SidePanel>
+    </UnsavedChangesBoundary>
   );
 };
 

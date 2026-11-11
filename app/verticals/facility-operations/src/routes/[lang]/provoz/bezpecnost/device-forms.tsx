@@ -1,13 +1,19 @@
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Side panels of the security agenda: device card create/edit, fault report (+ linked task), inspection, resolve.
-import { AutosaveStatus, SidePanel, surfaceTileClassName, useAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import {
+  SaveBar,
+  SidePanel,
+  UnsavedChangesDialog,
+  saveLabelsFor,
+  surfaceTileClassName,
+  useDraftSave,
+} from '@app/admin-ui';
+import type { SaveOutcome, UnsavedChangesGuard } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
+import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { Effect, Option, Result, Schema } from 'effect';
@@ -31,7 +37,11 @@ import type { CommandOutcome, FailureReason } from '../../../../ui/use-agenda.ts
 import { addDays, createServiceTask, locationText, todayPrague, useSecurityLabel } from './security-model.ts';
 import { deviceCreateCommandOf, deviceDraftOf, deviceUpdateCommandOf, sameDeviceDraft } from './device-draft.ts';
 import type { DeviceDraft } from './device-draft.ts';
-import { facilityAutosaveOutcome } from '../../../../ui/facility-autosave.ts';
+import { useEditGuard } from '../../../../ui/edit-guard.tsx';
+import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
+import { useDraftBase } from '../../../../ui/draft-base.ts';
+import { FormSaveFooter, commandResult, refusedOutcome, submitDone, useFormSave } from '../../../../ui/form-save.tsx';
+import type { FormSubmitResult } from '../../../../ui/form-save.tsx';
 
 export type RunCommand = (command: OpsCommand) => Effect.Effect<CommandOutcome>;
 type InspectionCommand = Extract<OpsCommand, { readonly _tag: 'SecurityDeviceRecordInspection' }>;
@@ -43,61 +53,52 @@ type MutableResolveCommand = { -readonly [Key in keyof ResolveCommand]: ResolveC
 
 type FormError = FailureReason | 'required';
 const NONE = 'none';
+const CANCEL_LABEL = 'facility-operations.common.cancel';
+
+/** The text of a form error, for the error line and the save bar. */
+const useErrorText = () => {
+  const { t } = useModernI18n();
+  return (error: FormError | undefined) =>
+    error === undefined
+      ? error
+      : t(error === 'required' ? 'facility-operations.common.required' : `facility-operations.common.errors.${error}`);
+};
 
 const ErrorLine = ({ error }: { readonly error: FormError | undefined }) => {
-  const { t } = useModernI18n();
-  if (error === undefined) {
+  const text = useErrorText()(error);
+  if (text === undefined) {
     return null;
   }
   return (
     <StatusText showIcon status="error">
-      {error === 'required'
-        ? t('facility-operations.common.required')
-        : t(`facility-operations.common.errors.${error}`)}
+      {text}
     </StatusText>
   );
 };
 
+/** The side panel of one security form; its actions end with the shared save bar. Enter never submits. */
 const PanelFrame = ({
   actions,
-  busy = false,
   children,
+  guard,
   onClose,
-  onSubmit,
   open,
-  submitLabel,
   title,
 }: {
-  /** Explicit actions (an edit panel shows its autosave state instead of a submit button). */
-  readonly actions?: ReactNode | undefined;
-  readonly busy?: boolean | undefined;
+  /** Zrušit/Zavřít and the save bar, last. */
+  readonly actions: ReactNode;
   readonly children: ReactNode;
+  /** The unsaved-changes guard of an edit panel: every dismissal asks it first. */
+  readonly guard?: UnsavedChangesGuard | undefined;
   readonly onClose: () => void;
-  readonly onSubmit?: (() => void) | undefined;
   readonly open: boolean;
-  /** Submit button label of a create/action panel; unused when `actions` is given. */
-  readonly submitLabel?: string | undefined;
   readonly title: string;
 }) => {
   const { t } = useModernI18n();
-  const panelActions = actions ?? (
-    <>
-      <Button onClick={onClose} theme="outlined" variant="secondary">
-        {t('facility-operations.common.cancel')}
-      </Button>
-      <Button
-        isLoading={busy}
-        loadingText={t('facility-operations.common.saving')}
-        onClick={onSubmit}
-        variant="primary"
-      >
-        {submitLabel}
-      </Button>
-    </>
-  );
   return (
     <SidePanel
-      actions={panelActions}
+      actions={actions}
+      guard={guard}
       onOpenChange={(next) => {
         if (!next) {
           onClose();
@@ -108,24 +109,11 @@ const PanelFrame = ({
       size="md"
       title={title}
     >
-      {onSubmit === undefined ? (
-        <div className="flex flex-col gap-200 py-200">{children}</div>
-      ) : (
-        <form
-          className="flex flex-col gap-200 py-200"
-          onSubmit={(event) => {
-            event.preventDefault();
-            onSubmit();
-          }}
-        >
-          {children}
-        </form>
-      )}
+      <div className="flex flex-col gap-200 py-200">{children}</div>
     </SidePanel>
   );
 };
 
-/** The fields of one device card, shared by the create panel and the autosaving edit panel. */
 const DeviceFields = ({
   draft,
   k,
@@ -301,56 +289,46 @@ const DeviceCreatePanel = ({
   const toast = useToast();
   const properties = usePropertyOptions();
   const [draft, setDraft] = useState<DeviceDraft>(() => deviceDraftOf());
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<FormError | undefined>();
+  const errorText = useErrorText();
   const set = <Key extends keyof DeviceDraft>(key: Key, value: DeviceDraft[Key]) =>
     setDraft((current) => ({ ...current, [key]: value }));
 
-  const submit = () => {
-    const command = deviceCreateCommandOf(draft, pickedLocationOf({ draft, properties }));
-    if (Option.isNone(command)) {
-      setError('required');
-      return Effect.void;
-    }
-    setBusy(true);
-    return run(command.value).pipe(
-      Effect.tap((outcome) =>
-        Effect.sync(() => {
-          setBusy(false);
-          if (outcome.ok) {
-            toast.create({ title: k('created'), type: 'success' });
-            onSaved(outcome.result.entityIds[0]);
-          } else {
-            setError(outcome.reason);
-          }
-        }),
-      ),
-    );
-  };
+  // A new card is sent on Uložit only.
+  const form = useFormSave<DeviceDraft>({
+    equals: sameDeviceDraft,
+    onDiscard: () => {
+      setDraft(deviceDraftOf());
+      setError(undefined);
+    },
+    submit: (value) => {
+      const command = deviceCreateCommandOf(value, pickedLocationOf({ draft: value, properties }));
+      if (Option.isNone(command)) {
+        setError('required');
+        return Effect.succeed<FormSubmitResult>('failed');
+      }
+      setError(undefined);
+      return run(command.value).pipe(
+        Effect.map((outcome) =>
+          commandResult(
+            outcome,
+            (result) => {
+              toast.create({ title: k('created'), type: 'success' });
+              onSaved(result.entityIds[0]);
+            },
+            setError,
+          ),
+        ),
+      );
+    },
+    value: draft,
+  });
 
   return (
     <PanelFrame
-      actions={
-        <>
-          <Button onClick={onClose} theme="outlined" variant="secondary">
-            {t('facility-operations.common.cancel')}
-          </Button>
-          <Button
-            isLoading={busy}
-            loadingText={t('facility-operations.common.saving')}
-            onClick={() => {
-              void browserRuntime.runPromise(submit());
-            }}
-            variant="primary"
-          >
-            {k('create.submit')}
-          </Button>
-        </>
-      }
+      actions={<FormSaveFooter cancelLabel={t(CANCEL_LABEL)} error={errorText(error)} form={form} onCancel={onClose} />}
+      guard={form.guard}
       onClose={onClose}
-      onSubmit={() => {
-        void browserRuntime.runPromise(submit());
-      }}
       open={open}
       title={k('create.title')}
     >
@@ -361,8 +339,8 @@ const DeviceCreatePanel = ({
 };
 
 /**
- * Edit one device card. Changes save themselves (debounced, on blur and on Zavřít) against the agenda revision; a
- * revision conflict offers the version someone else saved, and a taken name stays local until it is filled in.
+ * Edit one device card. Nothing is sent until Uložit; the save goes against the agenda revision, so a revision
+ * conflict offers the version someone else saved, and a card without a name cannot be saved.
  */
 const DeviceEditPanel = ({
   device,
@@ -375,54 +353,74 @@ const DeviceEditPanel = ({
   readonly open: boolean;
   readonly run: RunCommand;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const k = useSecurityLabel();
   const properties = usePropertyOptions();
   const [draft, setDraft] = useState<DeviceDraft>(() => deviceDraftOf(device));
   const set = <Key extends keyof DeviceDraft>(key: Key, value: DeviceDraft[Key]) =>
     setDraft((current) => ({ ...current, [key]: value }));
-  const autosave = useAutosave<DeviceDraft, never>({
+  // Saves carry the revision of the read the draft was built on, so someone else's newer change refuses them.
+  const base = useDraftBase(device, run);
+  const record = useDraftSave<DeviceDraft, never>({
     equals: sameDeviceDraft,
     isValid: (value) =>
       Option.isSome(deviceUpdateCommandOf(value, device, pickedLocationOf({ device, draft: value, properties }))),
     runtime: browserRuntime,
     save: (value) =>
       Option.match(deviceUpdateCommandOf(value, device, pickedLocationOf({ device, draft: value, properties })), {
-        onNone: () => Effect.succeed<AutosaveOutcome>('failed'),
-        onSome: (command) => facilityAutosaveOutcome(run(command)),
+        onNone: () => Effect.succeed<SaveOutcome>('failed'),
+        onSome: (command) => base.confirm(facilitySaveOutcome(base.run(command))),
       }),
     value: draft,
   });
+  base.sync({
+    onAdopt: () => {
+      const stored = deviceDraftOf(device);
+      if (!sameDeviceDraft(stored, draft)) {
+        record.adopt(stored);
+        setDraft(stored);
+      }
+    },
+    settled: !record.pending && sameDeviceDraft(draft, record.confirmed),
+  });
+  const guard = useEditGuard(record, () => {
+    setDraft(record.confirmed);
+  });
+  const labels = saveLabelsFor(language);
   const close = () => {
-    autosave.flush();
-    onClose();
+    guard.request(onClose);
   };
-  const handleRetry = autosave.retry;
+  const handleSave = record.save;
   const handleReloadLatest = () => {
     const current = deviceDraftOf(device);
-    autosave.adopt(current);
+    base.rebase();
+    record.adopt(current);
     setDraft(current);
   };
   return (
-    <PanelFrame
-      actions={
-        <>
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
-          <Button onClick={close} theme="outlined" variant="secondary">
-            {t('facility-operations.common.close')}
-          </Button>
-        </>
-      }
-      onClose={close}
-      open={open}
-      title={k('edit.title')}
-    >
-      <DeviceFields draft={draft} k={k} nameMissing={autosave.status === 'invalid'} properties={properties} set={set} />
-    </PanelFrame>
+    <>
+      <PanelFrame
+        actions={
+          <>
+            <Button onClick={close} theme="outlined" variant="secondary">
+              {t('facility-operations.common.close')}
+            </Button>
+            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+          </>
+        }
+        guard={guard}
+        onClose={onClose}
+        open={open}
+        title={k('edit.title')}
+      >
+        <DeviceFields draft={draft} k={k} nameMissing={record.status === 'invalid'} properties={properties} set={set} />
+      </PanelFrame>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
   );
 };
 
-/** Create or edit one device card; an edit saves itself while the panel is open. */
+/** Create or edit one device card; an edit is sent on Uložit only. */
 const DeviceFormSession = ({
   device,
   onClose,
@@ -430,7 +428,7 @@ const DeviceFormSession = ({
   open,
   run,
 }: {
-  readonly device: SecurityDevice | undefined;
+  readonly device?: SecurityDevice | undefined;
   readonly onClose: () => void;
   readonly onSaved: (deviceId: string | undefined) => void;
   readonly open: boolean;
@@ -509,7 +507,6 @@ interface SubmitSecurityFaultInput {
   readonly occurredOn: SecurityIncident['occurredOn'];
   readonly onSaved: (deviceId: string) => void;
   readonly run: RunCommand;
-  readonly setBusy: (busy: boolean) => void;
   readonly setError: (error: FormError | undefined) => void;
   readonly severity: SecuritySeverity;
   readonly t: ReturnType<typeof useModernI18n>['t'];
@@ -528,7 +525,6 @@ const submitSecurityFault = Effect.fn('Facility.submitSecurityFault')(function* 
   occurredOn,
   onSaved,
   run,
-  setBusy,
   setError,
   severity,
   t,
@@ -540,9 +536,9 @@ const submitSecurityFault = Effect.fn('Facility.submitSecurityFault')(function* 
   const device = active.find((entry) => entry.id === deviceId);
   if (device === undefined || title.trim() === '' || occurredOn === '') {
     setError('required');
-    return;
+    return 'failed' as const;
   }
-  setBusy(true);
+  setError(undefined);
   const command: MutableReportCommand = {
     _tag: 'SecurityIncidentReport',
     deviceId: device.id,
@@ -555,27 +551,25 @@ const submitSecurityFault = Effect.fn('Facility.submitSecurityFault')(function* 
   }
   const reported = yield* run(command);
   if (!reported.ok) {
-    setBusy(false);
     setError(reported.reason);
-    return;
+    return refusedOutcome(reported);
   }
   const [createdId] = reported.result.entityIds;
   let incidentId: SecurityIncident['id'] | undefined;
   if (createdId !== undefined) {
     const parsedId = Schema.decodeResult(SecurityIncidentIdSchema)(createdId);
     if (Result.isFailure(parsedId)) {
-      setBusy(false);
       setError('invalid');
-      return;
+      return 'failed' as const;
     }
     incidentId = parsedId.success;
   }
   const reportedTitle = k('report.done');
   if (!withTask || incidentId === undefined) {
-    setBusy(false);
-    toast.create({ title: reportedTitle, type: 'success' });
-    onSaved(device.id);
-    return;
+    return submitDone(() => {
+      toast.create({ title: reportedTitle, type: 'success' });
+      onSaved(device.id);
+    });
   }
   const created = yield* linkNewTask({
     description: description.trim(),
@@ -589,21 +583,22 @@ const submitSecurityFault = Effect.fn('Facility.submitSecurityFault')(function* 
     tenantId,
     title: title.trim(),
   });
-  setBusy(false);
-  toast.create(
-    (
-      {
-        failed: { description: k('report.taskFailed'), title: reportedTitle, type: 'warning' },
-        linked: { title: k('report.doneWithTask'), type: 'success' },
-        pending_approval: {
-          description: t('facility-operations.common.errors.approval_required'),
-          title: reportedTitle,
-          type: 'info',
-        },
-      } satisfies Record<TaskLinkOutcome, Parameters<typeof toast.create>[0]>
-    )[created],
-  );
-  onSaved(device.id);
+  return submitDone(() => {
+    toast.create(
+      (
+        {
+          failed: { description: k('report.taskFailed'), title: reportedTitle, type: 'warning' },
+          linked: { title: k('report.doneWithTask'), type: 'success' },
+          pending_approval: {
+            description: t('facility-operations.common.errors.approval_required'),
+            title: reportedTitle,
+            type: 'info',
+          },
+        } satisfies Record<TaskLinkOutcome, Parameters<typeof toast.create>[0]>
+      )[created],
+    );
+    onSaved(device.id);
+  });
 });
 
 interface ReportDraft {
@@ -662,38 +657,41 @@ const ReportFaultSession = ({
   const setOccurredOn = (nextValue: SecurityIncident['occurredOn']) => updateDraft({ occurredOn: nextValue });
   const setWithTask = (nextValue: boolean) => updateDraft({ withTask: nextValue });
   const setDueDate = (nextValue: typeof IsoDateSchema.Encoded) => updateDraft({ dueDate: nextValue });
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<FormError | undefined>();
-
-  const submit = () =>
-    submitSecurityFault({
-      active,
-      description,
-      deviceId,
-      dueDate,
-      k,
-      occurredOn,
-      onSaved,
-      run,
-      setBusy,
-      setError,
-      severity,
-      t,
-      tenantId,
-      title,
-      toast,
-      withTask,
-    });
+  const errorText = useErrorText();
+  // A fault is reported on Uložit only, with the same command and follow-up task as before.
+  const form = useFormSave<ReportDraft>({
+    onDiscard: () => {
+      updateDraft(reportDraftOf(initialDeviceId));
+      setError(undefined);
+    },
+    submit: () =>
+      submitSecurityFault({
+        active,
+        description,
+        deviceId,
+        dueDate,
+        k,
+        occurredOn,
+        onSaved,
+        run,
+        setError,
+        severity,
+        t,
+        tenantId,
+        title,
+        toast,
+        withTask,
+      }),
+    value: draft,
+  });
 
   return (
     <PanelFrame
-      busy={busy}
+      actions={<FormSaveFooter cancelLabel={t(CANCEL_LABEL)} error={errorText(error)} form={form} onCancel={onClose} />}
+      guard={form.guard}
       onClose={onClose}
-      onSubmit={() => {
-        void browserRuntime.runPromise(submit());
-      }}
       open={open}
-      submitLabel={k('report.submit')}
       title={k('report.title')}
     >
       <ErrorLine error={error} />
@@ -785,7 +783,6 @@ interface SubmitSecurityInspectionInput {
   readonly note: string;
   readonly onSaved: () => void;
   readonly run: RunCommand;
-  readonly setBusy: (busy: boolean) => void;
   readonly setError: (error: FormError | undefined) => void;
   readonly toast: ReturnType<typeof useToast>;
 }
@@ -798,15 +795,14 @@ const submitSecurityInspection = Effect.fn('Facility.submitSecurityInspection')(
   note,
   onSaved,
   run,
-  setBusy,
   setError,
   toast,
 }: SubmitSecurityInspectionInput) {
   if (device === undefined || date === '') {
     setError('required');
-    return;
+    return 'failed' as const;
   }
-  setBusy(true);
+  setError(undefined);
   const command: MutableInspectionCommand = {
     _tag: 'SecurityDeviceRecordInspection',
     deviceId: device.id,
@@ -819,13 +815,14 @@ const submitSecurityInspection = Effect.fn('Facility.submitSecurityInspection')(
     command.note = note.trim();
   }
   const outcome = yield* run(command);
-  setBusy(false);
-  if (outcome.ok) {
-    toast.create({ title: k('inspectionSaved'), type: 'success' });
-    onSaved();
-  } else {
-    setError(outcome.reason);
-  }
+  return commandResult(
+    outcome,
+    () => {
+      toast.create({ title: k('inspectionSaved'), type: 'success' });
+      onSaved();
+    },
+    setError,
+  );
 });
 
 const InspectionSession = ({
@@ -841,24 +838,32 @@ const InspectionSession = ({
   readonly open: boolean;
   readonly run: RunCommand;
 }) => {
+  const { t } = useModernI18n();
   const k = useSecurityLabel();
   const toast = useToast();
   const [date, setDate] = useState(todayPrague);
   const [next, setNext] = useState(() => addDays(todayPrague(), 365));
   const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<FormError | undefined>();
-  const submit = () =>
-    submitSecurityInspection({ date, device, k, next, note, onSaved, run, setBusy, setError, toast });
+  const errorText = useErrorText();
+  // The inspection opens with today and the next date filled in: Uložit records it as it is.
+  const form = useFormSave({
+    onDiscard: () => {
+      setDate(todayPrague());
+      setNext(addDays(todayPrague(), 365));
+      setNote('');
+      setError(undefined);
+    },
+    savableAtOnce: true,
+    submit: () => submitSecurityInspection({ date, device, k, next, note, onSaved, run, setError, toast }),
+    value: { date, next, note },
+  });
   return (
     <PanelFrame
-      busy={busy}
+      actions={<FormSaveFooter cancelLabel={t(CANCEL_LABEL)} error={errorText(error)} form={form} onCancel={onClose} />}
+      guard={form.guard}
       onClose={onClose}
-      onSubmit={() => {
-        void browserRuntime.runPromise(submit());
-      }}
       open={open}
-      submitLabel={k('inspection.submit')}
       title={k('inspection.title')}
     >
       <ErrorLine error={error} />
@@ -899,7 +904,6 @@ interface SubmitSecurityResolutionInput {
   readonly onSaved: () => void;
   readonly resolution: string;
   readonly run: RunCommand;
-  readonly setBusy: (busy: boolean) => void;
   readonly setError: (error: FormError | undefined) => void;
   readonly toast: ReturnType<typeof useToast>;
 }
@@ -910,14 +914,13 @@ const submitSecurityResolution = Effect.fn('Facility.submitSecurityResolution')(
   onSaved,
   resolution,
   run,
-  setBusy,
   setError,
   toast,
 }: SubmitSecurityResolutionInput) {
   if (incident === undefined) {
-    return;
+    return 'failed' as const;
   }
-  setBusy(true);
+  setError(undefined);
   const command: MutableResolveCommand = {
     _tag: 'SecurityIncidentChangeState',
     incidentId: incident.id,
@@ -927,13 +930,14 @@ const submitSecurityResolution = Effect.fn('Facility.submitSecurityResolution')(
     command.resolution = resolution.trim();
   }
   const outcome = yield* run(command);
-  setBusy(false);
-  if (outcome.ok) {
-    toast.create({ title: k('stateSaved'), type: 'success' });
-    onSaved();
-  } else {
-    setError(outcome.reason);
-  }
+  return commandResult(
+    outcome,
+    () => {
+      toast.create({ title: k('stateSaved'), type: 'success' });
+      onSaved();
+    },
+    setError,
+  );
 });
 
 const ResolveSession = ({
@@ -949,21 +953,28 @@ const ResolveSession = ({
   readonly open: boolean;
   readonly run: RunCommand;
 }) => {
+  const { t } = useModernI18n();
   const k = useSecurityLabel();
   const toast = useToast();
   const [resolution, setResolution] = useState('');
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<FormError | undefined>();
-  const submit = () => submitSecurityResolution({ incident, k, onSaved, resolution, run, setBusy, setError, toast });
+  const errorText = useErrorText();
+  // The resolution note is optional: Uložit resolves the fault as it is.
+  const form = useFormSave({
+    onDiscard: () => {
+      setResolution('');
+      setError(undefined);
+    },
+    savableAtOnce: true,
+    submit: () => submitSecurityResolution({ incident, k, onSaved, resolution, run, setError, toast }),
+    value: resolution,
+  });
   return (
     <PanelFrame
-      busy={busy}
+      actions={<FormSaveFooter cancelLabel={t(CANCEL_LABEL)} error={errorText(error)} form={form} onCancel={onClose} />}
+      guard={form.guard}
       onClose={onClose}
-      onSubmit={() => {
-        void browserRuntime.runPromise(submit());
-      }}
       open={open}
-      submitLabel={k('resolveDialog.submit')}
       title={k('resolveDialog.title')}
     >
       <ErrorLine error={error} />

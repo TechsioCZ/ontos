@@ -1,14 +1,11 @@
 import { Effect, Match, Schema } from 'effect';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { optionalField } from '../../../../../shared/domain/common.ts';
 // Stock movement form (S05): příjem, výdej, přesun, korekce, plánovaný výdej. ops-purchasing lane.
 import { SectionCard } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
+import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { useState } from 'react';
@@ -34,6 +31,8 @@ import {
   useTaskOptions,
 } from './purchasing-model.ts';
 import type { RunCommand } from './purchasing-model.ts';
+import { FormSaveFooter, refusedOutcome, submitDone, useFormSave } from '../../../../ui/form-save.tsx';
+import type { FormSubmitResult } from '../../../../ui/form-save.tsx';
 
 const MovementKindSchema = Schema.Literals([...StockMovementKindSchema.literals, 'planned']);
 export type MovementKind = typeof MovementKindSchema.Type;
@@ -172,7 +171,6 @@ interface MovementSubmission {
   readonly feedback: {
     readonly onDone: () => void;
     readonly onSuccess: () => void;
-    readonly setBusy: (busy: boolean) => void;
     readonly setError: (message: string | undefined) => void;
   };
   readonly item: StockItem;
@@ -311,19 +309,24 @@ const submitMovementCommand = Effect.fn('FacilityOperations.Purchasing.submitMov
   input.feedback.setError(undefined);
   const values = yield* validateMovement(input);
   const command = makeMovementCommand(input, values);
-  input.feedback.setBusy(true);
   const outcome = yield* input.run(command);
-  input.feedback.setBusy(false);
-  if (outcome.ok) {
+  if (!outcome.ok) {
+    input.feedback.setError(input.labels.t(failureKey(outcome.reason)));
+    return refusedOutcome(outcome);
+  }
+  return submitDone(() => {
     input.feedback.onSuccess();
     input.feedback.onDone();
-  } else {
-    input.feedback.setError(input.labels.t(failureKey(outcome.reason)));
-  }
+  });
 });
 const submitMovement = (input: MovementSubmission) =>
   submitMovementCommand(input).pipe(
-    Effect.catchTag('MovementInputError', ({ message }) => Effect.sync(() => input.feedback.setError(message))),
+    Effect.catchTag('MovementInputError', ({ message }) =>
+      Effect.sync((): FormSubmitResult => {
+        input.feedback.setError(message);
+        return 'failed';
+      }),
+    ),
   );
 
 interface MovementReferenceFieldsProps {
@@ -409,7 +412,6 @@ const MovementEditor = ({ item, kind, onDone, planned, run, state }: Props) => {
   const [task, setTask] = useState(NONE);
   const [place, setPlace] = useState(NONE);
   const [error, setError] = useState<string | undefined>();
-  const [busy, setBusy] = useState(false);
 
   const outgoing = kind === 'issue' || kind === 'transfer';
   const sourceWarehouse = warehouseId;
@@ -438,24 +440,29 @@ const MovementEditor = ({ item, kind, onDone, planned, run, state }: Props) => {
     return result;
   };
 
-  const submit = () =>
-    submitMovement({
-      available,
-      draft: { batch, date, kind, picked, quantity, reason, serialText, targetId, warehouseId },
-      feedback: {
-        onDone,
-        onSuccess: () => {
-          toast.create({ duration: 5000, title: k(`movement.done.${kind}`), type: 'success' });
+  const draft: MovementDraft = { batch, date, kind, picked, quantity, reason, serialText, targetId, warehouseId };
+  // The movement is recorded on Uložit only; one issued from a plan opens filled in and can be sent as it is.
+  const form = useFormSave({
+    savableAtOnce: planned !== undefined,
+    submit: () =>
+      submitMovement({
+        available,
+        draft,
+        feedback: {
+          onDone,
+          onSuccess: () => {
+            toast.create({ duration: 5000, title: k(`movement.done.${kind}`), type: 'success' });
+          },
+          setError,
         },
-        setBusy,
-        setError,
-      },
-      item,
-      labels: { k, t },
-      ...optionalField('plannedId', planned?.id),
-      refs,
-      run,
-    });
+        item,
+        labels: { k, t },
+        ...optionalField('plannedId', planned?.id),
+        refs,
+        run,
+      }),
+    value: { ...draft, place, task },
+  });
 
   return (
     <SectionCard title={k(`movement.title.${kind}`)}>
@@ -556,22 +563,12 @@ const MovementEditor = ({ item, kind, onDone, planned, run, state }: Props) => {
           task={task}
           tasks={tasks}
         />
-        <div className="flex flex-wrap justify-end gap-100">
-          <Button onClick={onDone} size="sm" theme="outlined" variant="secondary">
-            {t('facility-operations.common.cancel')}
-          </Button>
-          <Button
-            isLoading={busy}
-            loadingText={t('facility-operations.common.saving')}
-            onClick={() => {
-              browserRuntime.runFork(submit());
-            }}
-            size="sm"
-            variant="primary"
-          >
-            {k(`movement.submit.${kind}`)}
-          </Button>
-        </div>
+        <FormSaveFooter
+          cancelLabel={t('facility-operations.common.cancel')}
+          error={error}
+          form={form}
+          onCancel={onDone}
+        />
       </div>
     </SectionCard>
   );

@@ -1,6 +1,7 @@
 import {
   OwnerActionApprovalSchemaErrorLive,
-  makeOwnerActionApprovalApiLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
 } from '@app/core-runtime/access/approvals/owner-http';
 import type { OwnerActionApprovals } from '@app/core-runtime/access/approvals/owner-runtime';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
@@ -426,7 +427,11 @@ export const makeCatalogApiRuntime = (
   );
   const apiHandlersLive = Layer.mergeAll(
     catalogReadinessLayer,
-    makeOwnerActionApprovalApiLive(catalogApi, authenticateOwnerApprovalPrincipal).pipe(
+    HttpApiBuilder.group(catalogApi, 'ownerActionApprovals', (handlers) =>
+      handlers
+        .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+        .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+    ).pipe(
       GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
       GovernedReadLayer.provide(governedActionRuntimeLive),
     ),

@@ -7,6 +7,7 @@ import {
   CRM_PARTY_INTAKE_WORKLOAD,
   STOREFRONT_CLIENT_WORKLOAD,
   STOREFRONT_INQUIRY_WORKLOAD,
+  STOREFRONT_MERCHANDISE_WORKLOAD,
   akrosStorefrontPrincipal,
   commerceEnrollmentOperatorActionKeys,
   commercePortalPrincipal,
@@ -113,10 +114,18 @@ it('pins each service principal to its own company and gives it no Role of its o
 it('maps every reviewed machine identity to exactly the workload keys a carrier declares', () => {
   const bindings = reviewedWorkloadBindings();
   // The storefronts and the portal run the portal-enrollment journey; only the portal is the identity provider.
+  // Each storefront binding is registered for the storefront's own company (D6).
+  const kavarna = { legalEntityId: storefrontPrincipal.legalEntityId, principalId: storefrontPrincipal.principalId };
+  const sroubshop = {
+    legalEntityId: akrosStorefrontPrincipal.legalEntityId,
+    principalId: akrosStorefrontPrincipal.principalId,
+  };
   expect(bindings).toEqual([
-    { principalId: storefrontPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
-    { principalId: akrosStorefrontPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
-    { principalId: akrosStorefrontPrincipal.principalId, workloadKey: STOREFRONT_INQUIRY_WORKLOAD },
+    { ...kavarna, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
+    { ...kavarna, workloadKey: STOREFRONT_MERCHANDISE_WORKLOAD },
+    { ...sroubshop, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
+    { ...sroubshop, workloadKey: STOREFRONT_MERCHANDISE_WORKLOAD },
+    { ...sroubshop, workloadKey: STOREFRONT_INQUIRY_WORKLOAD },
     { principalId: commercePortalPrincipal.principalId, workloadKey: STOREFRONT_CLIENT_WORKLOAD },
     { principalId: commercePortalPrincipal.principalId, workloadKey: IDENTITY_PROVIDER_WORKLOAD },
     { principalId: crmPartyIntakePrincipal.principalId, workloadKey: CRM_PARTY_INTAKE_WORKLOAD },

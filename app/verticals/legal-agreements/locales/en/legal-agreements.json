@@ -78,6 +78,7 @@
       "create": "Create contract",
       "noUnit": "No unit",
       "unnamedContract": "Untitled contract",
+      "unnamedCustomer": "Unnamed customer",
       "list": "Contracts",
       "provider": "Provider",
       "attemptedAt": "Attempt time",

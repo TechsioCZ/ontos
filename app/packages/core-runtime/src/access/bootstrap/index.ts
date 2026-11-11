@@ -26,6 +26,7 @@ export {
   FULL_ACCESS_ROLE_NAME,
   FULL_ACCESS_ROLE_TEMPLATE_KEY,
   compileFullAccessRole,
+  fullAccessPresetRoleId,
   fullAccessRoleIntent,
 } from './full-access-role.ts';
 export {

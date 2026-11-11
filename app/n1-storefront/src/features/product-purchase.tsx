@@ -100,8 +100,8 @@ export const ProductPurchase = ({
   }
   return (
     <div>
-      <div className="n1-product-quantity-desktop hidden items-center gap-2 md:flex">
-        <div className="w-26 shrink-0">
+      <div className="n1-product-quantity-desktop hidden flex-wrap items-center gap-2 md:flex">
+        <div className="w-26 shrink-0 pointer-coarse:w-40">
           <NumericInput
             allowOverflow={false}
             clampValueOnBlur={false}
@@ -117,32 +117,26 @@ export const ProductPurchase = ({
             step={cartQuantityStep(current.packageQuantity)}
             value={quantity}
           >
-            <div className="flex w-7 shrink-0">
+            <NumericInput.Control>
               <NumericInput.DecrementTrigger
                 aria-label={d.shopping.decreaseQuantity}
                 icon="token-icon-minus"
                 iconSize="sm"
               />
-            </div>
-            <div className="w-12 shrink-0">
-              <NumericInput.Control>
-                <NumericInput.Input
-                  aria-describedby={
-                    guidanceId === undefined
-                      ? "purchase-quantity-error"
-                      : `${guidanceId} purchase-quantity-error`
-                  }
-                  aria-label={`${d.quantity} (${current.unit})`}
-                />
-              </NumericInput.Control>
-            </div>
-            <div className="flex w-7 shrink-0">
+              <NumericInput.Input
+                aria-describedby={
+                  guidanceId === undefined
+                    ? "purchase-quantity-error"
+                    : `${guidanceId} purchase-quantity-error`
+                }
+                aria-label={`${d.quantity} (${current.unit})`}
+              />
               <NumericInput.IncrementTrigger
                 aria-label={d.shopping.increaseQuantity}
                 icon="token-icon-plus"
                 iconSize="sm"
               />
-            </div>
+            </NumericInput.Control>
           </NumericInput>
         </div>
         <Button

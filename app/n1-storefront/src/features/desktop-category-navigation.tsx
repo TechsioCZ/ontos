@@ -156,7 +156,7 @@ export const DesktopCategoryNavigation = ({
                   onFocusCapture={() => setKeyboardFocus(true)}
                   ref={content}
                 >
-                  <div className="grid min-h-n1-category-menu-grid grid-cols-6 content-center items-end gap-2">
+                  <div className="grid min-h-n1-category-menu-grid grid-cols-6 content-center items-end gap-2 font-bold">
                     {categoryLinks.map((category) => {
                       const ownerArtwork = category.imageSrc?.trim();
                       const artwork =
@@ -191,6 +191,7 @@ export const DesktopCategoryNavigation = ({
                             as={NextLink}
                             href={`/${locale}/kategorie/${encodeURIComponent(category.slug)}`}
                             onClick={() => api.setOpen(false)}
+                            size="sm"
                           >
                             {category.name}
                           </Link>

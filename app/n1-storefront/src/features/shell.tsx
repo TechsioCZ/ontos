@@ -119,7 +119,7 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
           </div>
           <Header.Actions className="ml-auto md:order-last">
             <div className="md:hidden">
-              <Header.ActionItem>
+              <Header.ActionItem className="flex items-center">
                 <Button
                   aria-controls="n1-mobile-navigation"
                   aria-expanded={mobileMenuOpen}
@@ -141,22 +141,24 @@ export const StorefrontShell = ({ categories, children, dictionary: d, locale }:
                 />
               </Header.ActionItem>
             </div>
-            <Button
-              aria-label={`${d.favorites}: ${d.featureUnavailable}`}
-              disabled
-              size="current"
-              theme="unstyled"
-              variant="tertiary"
-            >
-              <Image
-                alt=""
-                as={NextImage}
-                height={24}
-                size="custom"
-                src="/brand/heart.svg"
-                width={24}
-              />
-            </Button>
+            <div className="n1-header-favorite flex items-center">
+              <Button
+                aria-label={`${d.favorites}: ${d.featureUnavailable}`}
+                disabled
+                size="current"
+                theme="borderless"
+                variant="tertiary"
+              >
+                <Image
+                  alt=""
+                  as={NextImage}
+                  height={24}
+                  size="custom"
+                  src="/brand/heart.svg"
+                  width={24}
+                />
+              </Button>
+            </div>
             <MiniLogin
               dictionary={d}
               locale={locale}

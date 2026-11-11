@@ -16,8 +16,8 @@ import {
   workerCheckpoints,
 } from '../db/schema.ts';
 import type { CoreTransaction, CoreDbExecutor } from '../db/types.ts';
-import { tenantStatesAllowingAccess } from '../modules/module-state-gate.ts';
 import { isGenuineCoreOutboxWorker } from '../modules/module-operation-execution.ts';
+import { tenantStatesAllowingAccess } from '../modules/module-state-gate.ts';
 import {
   ApplicationCompositionAuthorityError,
   lockApplicationCompositionAuthority,
@@ -133,381 +133,70 @@ const loadClaimInvocationEvidence = Effect.fnUntraced(function* loadClaimInvocat
   );
 });
 
-export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Crypto): OutboxRepositoryService => ({
-  claimNext: (registrations, claimOwner, now, compositionRevision) => {
-    if (registrations.length === 0) {
-      return Effect.succeedNone;
-    }
-    const byWorkerKey = new Map(registrations.map((registration) => [registration.descriptor.workerKey, registration]));
-    return Effect.gen(function* nativeClaimAdmission() {
-      const admission = yield* prepareNativeOutboxClaimAdmission(registrations, compositionRevision).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ApplicationCompositionAuthorityError({
-              cause,
-              code: 'application_composition_authority_unavailable',
-              reason: 'The worker claim intrinsic admission could not be verified',
-            }),
-        ),
-      );
-      const coreWorkers = yield* Effect.forEach(registrations, isGenuineCoreOutboxWorker, { concurrency: 1 }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ApplicationCompositionAuthorityError({
-              cause,
-              code: 'application_composition_authority_unavailable',
-              reason: 'The Core worker identity could not be verified',
-            }),
-        ),
-      );
-      const coreOnly = coreWorkers.every(Boolean);
-      return yield* executor
-        .transaction(
-          Effect.fn('claimNextEffect')(function* claimNextEffect(transaction: CoreTransaction) {
-            yield* lockApplicationCompositionAuthority(transaction, compositionRevision, 'worker');
-            const query = transaction
-              .select({
-                actionInvocationId: domainEvents.actionInvocationId,
-                attemptsCount: outboxDeliveries.attemptsCount,
-                consumerModuleKey: outboxDeliveries.consumerModuleKey,
-                deliveryId: outboxDeliveries.outboxDeliveryId,
-                domainEventId: domainEvents.domainEventId,
-                messageId: outboxMessages.outboxMessageId,
-                payloadJson: outboxMessages.payloadJson,
-                producerModuleKey: outboxMessages.producerModuleKey,
-                status: outboxDeliveries.status,
-                tenantId: outboxMessages.tenantId,
-                tenantSequenceNo: domainEvents.tenantSequenceNo,
-                topic: outboxMessages.topic,
-                workerKey: outboxDeliveries.workerKey,
-              })
-              .from(outboxDeliveries)
-              .innerJoin(outboxMessages, eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId))
-              .innerJoin(domainEvents, eq(domainEvents.domainEventId, outboxMessages.domainEventId))
-              .$dynamic();
-            // Genuine Core workers belong to Shell, not a tenant-installed module.
-            // Other workers retain their consumer-state join and its row lock.
-            const eligible = coreOnly
-              ? query
-              : query.innerJoin(
-                  tenantModuleStates,
-                  and(
-                    eq(tenantModuleStates.tenantId, outboxMessages.tenantId),
-                    eq(tenantModuleStates.moduleKey, outboxDeliveries.consumerModuleKey),
-                    inArray(tenantModuleStates.state, BACKGROUND_ELIGIBLE_STATES),
-                  ),
-                );
-            const candidates = yield* eligible
-              .where(
-                and(
-                  inArray(outboxDeliveries.workerKey, [...byWorkerKey.keys()]),
-                  or(
-                    ...registrations.map((registration) =>
-                      and(
-                        eq(outboxDeliveries.workerKey, registration.descriptor.workerKey),
-                        ...(admission.intrinsic.get(registration.descriptor.consumerModuleKey) ?? []).map(
-                          (provider) =>
-                            sql`exists (select 1 from ${tenantModuleStates} where ${tenantModuleStates.tenantId} = ${outboxMessages.tenantId} and ${tenantModuleStates.moduleKey} = ${provider} and ${tenantModuleStates.state} = 'active')`,
-                        ),
-                      ),
-                    ),
-                  ),
-                  // A tenant that is no longer active must not have background work claimed at all. This is a
-                  // predicate rather than a join on purpose: `.for('update')` below locks every row named in the
-                  // FROM list, and `core.tenants` is the per-tenant serialization anchor held FOR UPDATE by every
-                  // event-emitting action, so joining it would make claim transactions contend with ordinary
-                  // writes. Keeping ineligible deliveries pending means resuming the work resumes with the tenant;
-                  // for an archived tenant, which is terminal, they stay pending rather than being retried, and
-                  // cancelling them belongs with the archive procedure that changes the status.
-                  sql`exists (select 1 from ${tenants} where ${tenants.tenantId} = ${outboxMessages.tenantId} and ${tenants.status} = 'active')`,
-                  or(
-                    and(eq(outboxDeliveries.status, 'pending'), lte(outboxDeliveries.availableAt, now)),
-                    and(eq(outboxDeliveries.status, 'processing'), lte(outboxDeliveries.claimExpiresAt, now)),
-                  ),
-                ),
-              )
-              .orderBy(
-                asc(outboxDeliveries.availableAt),
-                asc(domainEvents.tenantSequenceNo),
-                asc(outboxDeliveries.outboxDeliveryId),
-              )
-              .limit(1)
-              .for('update', { skipLocked: true });
-            const [candidate] = candidates;
-            if (candidate === undefined) {
-              return Option.none();
-            }
-            const registration = byWorkerKey.get(candidate.workerKey);
-            if (registration === undefined) {
-              return Option.none();
-            }
-            if (candidate.status === 'processing') {
-              yield* transaction
-                .update(outboxAttempts)
-                .set({
-                  errorMessage: 'Outbox Worker lease expired before completion',
-                  finishedAt: now,
-                })
-                .where(
-                  and(eq(outboxAttempts.outboxDeliveryId, candidate.deliveryId), isNull(outboxAttempts.finishedAt)),
-                );
-            }
-            if (candidate.attemptsCount >= registration.descriptor.retryPolicy.maxAttempts) {
-              yield* transaction
-                .update(outboxDeliveries)
-                .set({
-                  claimedAt: null,
-                  claimedBy: null,
-                  claimExpiresAt: null,
-                  status: 'dead',
-                  updatedAt: now,
-                })
-                .where(eq(outboxDeliveries.outboxDeliveryId, candidate.deliveryId));
-              return Option.none();
-            }
-            const claimId = `${claimOwner}:${yield* crypto.randomUUIDv4()}`;
-            const claimExpiresAt = addMilliseconds(now, registration.descriptor.leaseDurationMs);
-            const [claimed] = yield* transaction
-              .update(outboxDeliveries)
-              .set({
-                attemptsCount: sql`${outboxDeliveries.attemptsCount} + 1`,
-                claimedAt: now,
-                claimedBy: claimId,
-                claimExpiresAt,
-                status: 'processing',
-                updatedAt: now,
-              })
-              .where(eq(outboxDeliveries.outboxDeliveryId, candidate.deliveryId))
-              .returning({ attemptsCount: outboxDeliveries.attemptsCount });
-            if (claimed === undefined) {
-              return yield* new OutboxRepositoryInvariantError({
-                reason: 'Claim update returned no delivery',
-              });
-            }
-            const [attempt] = yield* transaction
-              .insert(outboxAttempts)
-              .values({ outboxDeliveryId: candidate.deliveryId, startedAt: now })
-              .returning({ attemptId: outboxAttempts.outboxAttemptId });
-            if (attempt === undefined) {
-              return yield* new OutboxRepositoryInvariantError({
-                reason: 'Attempt insert returned no row',
-              });
-            }
-            const invocationEvidence = yield* loadClaimInvocationEvidence(
-              transaction,
-              candidate.actionInvocationId,
-              candidate.tenantId,
-            );
-            return Option.some(
-              attestNativeOutboxClaim(
-                Object.freeze({
-                  attemptId: attempt.attemptId,
-                  attemptNumber: claimed.attemptsCount,
-                  claimId,
-                  consumerModuleKey: candidate.consumerModuleKey,
-                  deliveryId: candidate.deliveryId,
-                  domainEventId: candidate.domainEventId,
-                  ...invocationEvidence,
-                  messageId: candidate.messageId,
-                  payloadJson: candidate.payloadJson,
-                  producerModuleKey: candidate.producerModuleKey,
-                  retryPolicy: registration.descriptor.retryPolicy,
-                  tenantId: candidate.tenantId,
-                  tenantSequenceNo: candidate.tenantSequenceNo,
-                  topic: candidate.topic,
-                  workerKey: candidate.workerKey,
-                } satisfies OutboxClaim),
-                registration,
-                admission,
-              ),
-            );
-          }),
-        )
-        .pipe(
-          Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
-          Effect.mapError(compositionAuthorityOrPersistenceError),
-        );
-    });
+/** A background-eligible consumer state of the message's tenant; shared by the claim and its idle probe. */
+const backgroundEligibleConsumer = and(
+  eq(tenantModuleStates.tenantId, outboxMessages.tenantId),
+  eq(tenantModuleStates.moduleKey, outboxDeliveries.consumerModuleKey),
+  inArray(tenantModuleStates.state, BACKGROUND_ELIGIBLE_STATES),
+);
+// A tenant that is no longer active must not have background work claimed at all. This is a predicate rather than a
+// join on purpose: `.for('update')` in the claim locks every row named in the FROM list, and `core.tenants` is the
+// per-tenant serialization anchor held FOR UPDATE by every event-emitting action, so joining it would make claim
+// transactions contend with ordinary writes. Keeping ineligible deliveries pending means resuming the work resumes with
+// the tenant; for an archived tenant, which is terminal, they stay pending rather than being retried, and cancelling
+// them belongs with the archive procedure that changes the status.
+const activeMessageTenant = sql`exists (select 1 from ${tenants} where ${tenants.tenantId} = ${outboxMessages.tenantId} and ${tenants.status} = 'active')`;
+const dueDelivery = (now: Date) =>
+  or(
+    and(eq(outboxDeliveries.status, 'pending'), lte(outboxDeliveries.availableAt, now)),
+    and(eq(outboxDeliveries.status, 'processing'), lte(outboxDeliveries.claimExpiresAt, now)),
+  );
+
+const probeFailure = <Value, Failure, Requirements>(effect: Effect.Effect<Value, Failure, Requirements>) =>
+  effect.pipe(
+    Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
+    Effect.mapError(outboxPersistenceFailure),
+  );
+
+/**
+ * Whether any of these workers' deliveries could be claimed now. It reads committed rows without the composition fence,
+ * so an idle poll costs this one statement instead of a fenced transaction. It only decides whether to attempt a claim:
+ * it is a superset of the claim's candidates (the claim also requires each intrinsic provider to be active), and every
+ * claim still takes the fence, admits the revision and re-checks every predicate under its row lock. A delivery that
+ * becomes due after the probe is claimed by the next poll.
+ */
+const hasDueDelivery = Effect.fnUntraced(
+  function* hasDueDelivery(executor: CoreDbExecutor, workerKeys: readonly string[], now: Date, coreOnly: boolean) {
+    const query = executor
+      .select({ deliveryId: outboxDeliveries.outboxDeliveryId })
+      .from(outboxDeliveries)
+      .innerJoin(outboxMessages, eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId))
+      .$dynamic();
+    const eligible = coreOnly ? query : query.innerJoin(tenantModuleStates, backgroundEligibleConsumer);
+    const rows = yield* eligible
+      .where(and(inArray(outboxDeliveries.workerKey, [...workerKeys]), activeMessageTenant, dueDelivery(now)))
+      .limit(1);
+    return rows.length > 0;
   },
-  complete: (claim, now) =>
-    executor
-      .transaction(
-        Effect.fn('completeEffect')(function* completeEffect(transaction: CoreTransaction) {
-          yield* transaction
-            .select({ tenantId: tenants.tenantId })
-            .from(tenants)
-            .where(eq(tenants.tenantId, claim.tenantId))
-            .for('update');
-          const [owned] = yield* transaction
-            .select({ deliveryId: outboxDeliveries.outboxDeliveryId })
-            .from(outboxDeliveries)
-            .where(
-              and(
-                eq(outboxDeliveries.outboxDeliveryId, claim.deliveryId),
-                eq(outboxDeliveries.status, 'processing'),
-                eq(outboxDeliveries.claimedBy, claim.claimId),
-              ),
-            )
-            .for('update');
-          if (owned === undefined) {
-            return yield* claimLost();
-          }
-          const finishedAttempts = yield* transaction
-            .update(outboxAttempts)
-            .set({ finishedAt: now })
-            .where(and(eq(outboxAttempts.outboxAttemptId, claim.attemptId), isNull(outboxAttempts.finishedAt)))
-            .returning({ attemptId: outboxAttempts.outboxAttemptId });
-          if (finishedAttempts.length !== 1) {
-            return yield* claimLost();
-          }
-          const completed = yield* transaction
-            .update(outboxDeliveries)
-            .set({
-              claimedAt: null,
-              claimedBy: null,
-              claimExpiresAt: null,
-              status: 'done',
-              updatedAt: now,
-            })
-            .where(
-              and(
-                eq(outboxDeliveries.outboxDeliveryId, claim.deliveryId),
-                eq(outboxDeliveries.status, 'processing'),
-                eq(outboxDeliveries.claimedBy, claim.claimId),
-              ),
-            )
-            .returning({ deliveryId: outboxDeliveries.outboxDeliveryId });
-          if (completed.length !== 1) {
-            return yield* claimLost();
-          }
-          const streamKey = streamKeyFor(claim.producerModuleKey, claim.topic);
-          const [checkpoint] = yield* transaction
-            .select({
-              lastTenantSequenceNo: workerCheckpoints.lastTenantSequenceNo,
-            })
-            .from(workerCheckpoints)
-            .where(
-              and(
-                eq(workerCheckpoints.tenantId, claim.tenantId),
-                eq(workerCheckpoints.consumerName, claim.workerKey),
-                eq(workerCheckpoints.streamKey, streamKey),
-              ),
-            )
-            .for('update');
-          const previous = checkpoint?.lastTenantSequenceNo ?? 0n;
-          const streamDeliveries = yield* transaction
-            .select({
-              status: outboxDeliveries.status,
-              tenantSequenceNo: domainEvents.tenantSequenceNo,
-            })
-            .from(outboxDeliveries)
-            .innerJoin(outboxMessages, eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId))
-            .innerJoin(domainEvents, eq(domainEvents.domainEventId, outboxMessages.domainEventId))
-            .where(
-              and(
-                eq(outboxMessages.tenantId, claim.tenantId),
-                eq(outboxDeliveries.workerKey, claim.workerKey),
-                eq(outboxMessages.producerModuleKey, claim.producerModuleKey),
-                eq(outboxMessages.topic, claim.topic),
-                gt(domainEvents.tenantSequenceNo, previous),
-              ),
-            )
-            .orderBy(asc(domainEvents.tenantSequenceNo));
-          let nextCheckpoint = previous;
-          for (const delivery of streamDeliveries) {
-            if (delivery.status !== 'done') {
-              break;
-            }
-            nextCheckpoint = delivery.tenantSequenceNo;
-          }
-          if (nextCheckpoint > previous) {
-            yield* transaction
-              .insert(workerCheckpoints)
-              .values({
-                consumerName: claim.workerKey,
-                lastProcessedAt: now,
-                lastTenantSequenceNo: nextCheckpoint,
-                streamKey,
-                tenantId: claim.tenantId,
-                updatedAt: now,
-              })
-              .onConflictDoUpdate({
-                set: {
-                  lastProcessedAt: now,
-                  lastTenantSequenceNo: nextCheckpoint,
-                  updatedAt: now,
-                },
-                target: [workerCheckpoints.tenantId, workerCheckpoints.consumerName, workerCheckpoints.streamKey],
-              });
-          }
-          return yield* Effect.void;
-        }),
-      )
-      .pipe(
-        Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
-        Effect.mapError(claimLostOrPersistenceError),
-      ),
-  fail: (claim, safeErrorMessage, now) =>
-    executor
-      .transaction(
-        Effect.fn('failEffect')(function* failEffect(transaction: CoreTransaction) {
-          const [owned] = yield* transaction
-            .select({ deliveryId: outboxDeliveries.outboxDeliveryId })
-            .from(outboxDeliveries)
-            .where(
-              and(
-                eq(outboxDeliveries.outboxDeliveryId, claim.deliveryId),
-                eq(outboxDeliveries.status, 'processing'),
-                eq(outboxDeliveries.claimedBy, claim.claimId),
-              ),
-            )
-            .for('update');
-          if (owned === undefined) {
-            return yield* claimLost();
-          }
-          const finishedAttempts = yield* transaction
-            .update(outboxAttempts)
-            .set({
-              errorMessage: sanitizeOutboxErrorMessage(safeErrorMessage),
-              finishedAt: now,
-            })
-            .where(and(eq(outboxAttempts.outboxAttemptId, claim.attemptId), isNull(outboxAttempts.finishedAt)))
-            .returning({ attemptId: outboxAttempts.outboxAttemptId });
-          if (finishedAttempts.length !== 1) {
-            return yield* claimLost();
-          }
-          const status: OutboxFailureStatus = claim.attemptNumber >= claim.retryPolicy.maxAttempts ? 'dead' : 'pending';
-          const availableAt =
-            status === 'dead' ? now : addMilliseconds(now, retryBackoffMs(claim.retryPolicy, claim.attemptNumber));
-          const updated = yield* transaction
-            .update(outboxDeliveries)
-            .set({
-              availableAt,
-              claimedAt: null,
-              claimedBy: null,
-              claimExpiresAt: null,
-              status,
-              updatedAt: now,
-            })
-            .where(
-              and(
-                eq(outboxDeliveries.outboxDeliveryId, claim.deliveryId),
-                eq(outboxDeliveries.status, 'processing'),
-                eq(outboxDeliveries.claimedBy, claim.claimId),
-              ),
-            )
-            .returning({ deliveryId: outboxDeliveries.outboxDeliveryId });
-          if (updated.length !== 1) {
-            return yield* claimLost();
-          }
-          return status;
-        }),
-      )
-      .pipe(
-        Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
-        Effect.mapError(claimLostOrPersistenceError),
-      ),
-  matchUnmatched: (compositionRevision, now) =>
+  (effect) => effect.pipe(probeFailure),
+);
+
+/** Whether any message awaits matching; read without the fence, which only the match transaction itself takes. */
+const hasUnmatchedMessage = Effect.fnUntraced(
+  function* hasUnmatchedMessage(executor: CoreDbExecutor) {
+    const rows = yield* executor
+      .select({ messageId: outboxMessages.outboxMessageId })
+      .from(outboxMessages)
+      .where(isNull(outboxMessages.matchedAt))
+      .limit(1);
+    return rows.length > 0;
+  },
+  (effect) => effect.pipe(probeFailure),
+);
+const NO_MATCH: OutboxMatchResult = Object.freeze({ deliveriesCreated: 0, messagesMatched: 0 });
+
+export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Crypto): OutboxRepositoryService => {
+  const matchUnmatchedMessages = (compositionRevision: string, now: Date) =>
     executor
       .transaction(
         Effect.fn('matchUnmatchedEffect')(function* matchUnmatchedEffect(transaction: CoreTransaction) {
@@ -563,8 +252,378 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
       .pipe(
         Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
         Effect.mapError(compositionAuthorityOrPersistenceError),
+      );
+  return {
+    claimNext: (registrations, claimOwner, now, compositionRevision) => {
+      if (registrations.length === 0) {
+        return Effect.succeedNone;
+      }
+      const byWorkerKey = new Map(
+        registrations.map((registration) => [registration.descriptor.workerKey, registration]),
+      );
+      return Effect.gen(function* nativeClaimAdmission() {
+        // Admission precedes every statement, the idle probe included: an unadmitted worker issues no SQL at all.
+        const admission = yield* prepareNativeOutboxClaimAdmission(registrations, compositionRevision).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ApplicationCompositionAuthorityError({
+                cause,
+                code: 'application_composition_authority_unavailable',
+                reason: 'The worker claim intrinsic admission could not be verified',
+              }),
+          ),
+        );
+        const coreWorkers = yield* Effect.forEach(registrations, isGenuineCoreOutboxWorker, { concurrency: 1 }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ApplicationCompositionAuthorityError({
+                cause,
+                code: 'application_composition_authority_unavailable',
+                reason: 'The Core worker identity could not be verified',
+              }),
+          ),
+        );
+        const coreOnly = coreWorkers.every(Boolean);
+        if (!(yield* hasDueDelivery(executor, [...byWorkerKey.keys()], now, coreOnly))) {
+          return Option.none<OutboxClaim>();
+        }
+        return yield* executor
+          .transaction(
+            Effect.fn('claimNextEffect')(function* claimNextEffect(transaction: CoreTransaction) {
+              yield* lockApplicationCompositionAuthority(transaction, compositionRevision, 'worker');
+              const query = transaction
+                .select({
+                  actionInvocationId: domainEvents.actionInvocationId,
+                  attemptsCount: outboxDeliveries.attemptsCount,
+                  consumerModuleKey: outboxDeliveries.consumerModuleKey,
+                  deliveryId: outboxDeliveries.outboxDeliveryId,
+                  domainEventId: domainEvents.domainEventId,
+                  messageId: outboxMessages.outboxMessageId,
+                  payloadJson: outboxMessages.payloadJson,
+                  producerModuleKey: outboxMessages.producerModuleKey,
+                  status: outboxDeliveries.status,
+                  tenantId: outboxMessages.tenantId,
+                  tenantSequenceNo: domainEvents.tenantSequenceNo,
+                  topic: outboxMessages.topic,
+                  workerKey: outboxDeliveries.workerKey,
+                })
+                .from(outboxDeliveries)
+                .innerJoin(outboxMessages, eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId))
+                .innerJoin(domainEvents, eq(domainEvents.domainEventId, outboxMessages.domainEventId))
+                .$dynamic();
+              // Shipped Core workers are Shell capabilities, not tenant-installed modules.
+              // Other workers retain their consumer-state join and its row lock.
+              const eligible = coreOnly ? query : query.innerJoin(tenantModuleStates, backgroundEligibleConsumer);
+              const candidates = yield* eligible
+                .where(
+                  and(
+                    inArray(outboxDeliveries.workerKey, [...byWorkerKey.keys()]),
+                    or(
+                      ...registrations.map((registration) =>
+                        and(
+                          eq(outboxDeliveries.workerKey, registration.descriptor.workerKey),
+                          ...(admission.intrinsic.get(registration.descriptor.consumerModuleKey) ?? []).map(
+                            (provider) =>
+                              sql`exists (select 1 from ${tenantModuleStates} where ${tenantModuleStates.tenantId} = ${outboxMessages.tenantId} and ${tenantModuleStates.moduleKey} = ${provider} and ${tenantModuleStates.state} = 'active')`,
+                          ),
+                        ),
+                      ),
+                    ),
+                    activeMessageTenant,
+                    dueDelivery(now),
+                  ),
+                )
+                .orderBy(
+                  asc(outboxDeliveries.availableAt),
+                  asc(domainEvents.tenantSequenceNo),
+                  asc(outboxDeliveries.outboxDeliveryId),
+                )
+                .limit(1)
+                .for('update', { skipLocked: true });
+              const [candidate] = candidates;
+              if (candidate === undefined) {
+                return Option.none();
+              }
+              const registration = byWorkerKey.get(candidate.workerKey);
+              if (registration === undefined) {
+                return Option.none();
+              }
+              if (candidate.status === 'processing') {
+                yield* transaction
+                  .update(outboxAttempts)
+                  .set({
+                    errorMessage: 'Outbox Worker lease expired before completion',
+                    finishedAt: now,
+                  })
+                  .where(
+                    and(eq(outboxAttempts.outboxDeliveryId, candidate.deliveryId), isNull(outboxAttempts.finishedAt)),
+                  );
+              }
+              if (candidate.attemptsCount >= registration.descriptor.retryPolicy.maxAttempts) {
+                yield* transaction
+                  .update(outboxDeliveries)
+                  .set({
+                    claimedAt: null,
+                    claimedBy: null,
+                    claimExpiresAt: null,
+                    status: 'dead',
+                    updatedAt: now,
+                  })
+                  .where(eq(outboxDeliveries.outboxDeliveryId, candidate.deliveryId));
+                return Option.none();
+              }
+              const claimId = `${claimOwner}:${yield* crypto.randomUUIDv4()}`;
+              const claimExpiresAt = addMilliseconds(now, registration.descriptor.leaseDurationMs);
+              const [claimed] = yield* transaction
+                .update(outboxDeliveries)
+                .set({
+                  attemptsCount: sql`${outboxDeliveries.attemptsCount} + 1`,
+                  claimedAt: now,
+                  claimedBy: claimId,
+                  claimExpiresAt,
+                  status: 'processing',
+                  updatedAt: now,
+                })
+                .where(eq(outboxDeliveries.outboxDeliveryId, candidate.deliveryId))
+                .returning({ attemptsCount: outboxDeliveries.attemptsCount });
+              if (claimed === undefined) {
+                return yield* new OutboxRepositoryInvariantError({
+                  reason: 'Claim update returned no delivery',
+                });
+              }
+              const [attempt] = yield* transaction
+                .insert(outboxAttempts)
+                .values({ outboxDeliveryId: candidate.deliveryId, startedAt: now })
+                .returning({ attemptId: outboxAttempts.outboxAttemptId });
+              if (attempt === undefined) {
+                return yield* new OutboxRepositoryInvariantError({
+                  reason: 'Attempt insert returned no row',
+                });
+              }
+              const invocationEvidence = yield* loadClaimInvocationEvidence(
+                transaction,
+                candidate.actionInvocationId,
+                candidate.tenantId,
+              );
+              return Option.some(
+                attestNativeOutboxClaim(
+                  Object.freeze({
+                    attemptId: attempt.attemptId,
+                    attemptNumber: claimed.attemptsCount,
+                    claimId,
+                    consumerModuleKey: candidate.consumerModuleKey,
+                    deliveryId: candidate.deliveryId,
+                    domainEventId: candidate.domainEventId,
+                    ...invocationEvidence,
+                    messageId: candidate.messageId,
+                    payloadJson: candidate.payloadJson,
+                    producerModuleKey: candidate.producerModuleKey,
+                    retryPolicy: registration.descriptor.retryPolicy,
+                    tenantId: candidate.tenantId,
+                    tenantSequenceNo: candidate.tenantSequenceNo,
+                    topic: candidate.topic,
+                    workerKey: candidate.workerKey,
+                  } satisfies OutboxClaim),
+                  registration,
+                  admission,
+                ),
+              );
+            }),
+          )
+          .pipe(
+            Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
+            Effect.mapError(compositionAuthorityOrPersistenceError),
+          );
+      });
+    },
+    complete: (claim, now) =>
+      executor
+        .transaction(
+          Effect.fn('completeEffect')(function* completeEffect(transaction: CoreTransaction) {
+            yield* transaction
+              .select({ tenantId: tenants.tenantId })
+              .from(tenants)
+              .where(eq(tenants.tenantId, claim.tenantId))
+              .for('update');
+            const [owned] = yield* transaction
+              .select({ deliveryId: outboxDeliveries.outboxDeliveryId })
+              .from(outboxDeliveries)
+              .where(
+                and(
+                  eq(outboxDeliveries.outboxDeliveryId, claim.deliveryId),
+                  eq(outboxDeliveries.status, 'processing'),
+                  eq(outboxDeliveries.claimedBy, claim.claimId),
+                ),
+              )
+              .for('update');
+            if (owned === undefined) {
+              return yield* claimLost();
+            }
+            const finishedAttempts = yield* transaction
+              .update(outboxAttempts)
+              .set({ finishedAt: now })
+              .where(and(eq(outboxAttempts.outboxAttemptId, claim.attemptId), isNull(outboxAttempts.finishedAt)))
+              .returning({ attemptId: outboxAttempts.outboxAttemptId });
+            if (finishedAttempts.length !== 1) {
+              return yield* claimLost();
+            }
+            const completed = yield* transaction
+              .update(outboxDeliveries)
+              .set({
+                claimedAt: null,
+                claimedBy: null,
+                claimExpiresAt: null,
+                status: 'done',
+                updatedAt: now,
+              })
+              .where(
+                and(
+                  eq(outboxDeliveries.outboxDeliveryId, claim.deliveryId),
+                  eq(outboxDeliveries.status, 'processing'),
+                  eq(outboxDeliveries.claimedBy, claim.claimId),
+                ),
+              )
+              .returning({ deliveryId: outboxDeliveries.outboxDeliveryId });
+            if (completed.length !== 1) {
+              return yield* claimLost();
+            }
+            const streamKey = streamKeyFor(claim.producerModuleKey, claim.topic);
+            const [checkpoint] = yield* transaction
+              .select({
+                lastTenantSequenceNo: workerCheckpoints.lastTenantSequenceNo,
+              })
+              .from(workerCheckpoints)
+              .where(
+                and(
+                  eq(workerCheckpoints.tenantId, claim.tenantId),
+                  eq(workerCheckpoints.consumerName, claim.workerKey),
+                  eq(workerCheckpoints.streamKey, streamKey),
+                ),
+              )
+              .for('update');
+            const previous = checkpoint?.lastTenantSequenceNo ?? 0n;
+            const streamDeliveries = yield* transaction
+              .select({
+                status: outboxDeliveries.status,
+                tenantSequenceNo: domainEvents.tenantSequenceNo,
+              })
+              .from(outboxDeliveries)
+              .innerJoin(outboxMessages, eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId))
+              .innerJoin(domainEvents, eq(domainEvents.domainEventId, outboxMessages.domainEventId))
+              .where(
+                and(
+                  eq(outboxMessages.tenantId, claim.tenantId),
+                  eq(outboxDeliveries.workerKey, claim.workerKey),
+                  eq(outboxMessages.producerModuleKey, claim.producerModuleKey),
+                  eq(outboxMessages.topic, claim.topic),
+                  gt(domainEvents.tenantSequenceNo, previous),
+                ),
+              )
+              .orderBy(asc(domainEvents.tenantSequenceNo));
+            let nextCheckpoint = previous;
+            for (const delivery of streamDeliveries) {
+              if (delivery.status !== 'done') {
+                break;
+              }
+              nextCheckpoint = delivery.tenantSequenceNo;
+            }
+            if (nextCheckpoint > previous) {
+              yield* transaction
+                .insert(workerCheckpoints)
+                .values({
+                  consumerName: claim.workerKey,
+                  lastProcessedAt: now,
+                  lastTenantSequenceNo: nextCheckpoint,
+                  streamKey,
+                  tenantId: claim.tenantId,
+                  updatedAt: now,
+                })
+                .onConflictDoUpdate({
+                  set: {
+                    lastProcessedAt: now,
+                    lastTenantSequenceNo: nextCheckpoint,
+                    updatedAt: now,
+                  },
+                  target: [workerCheckpoints.tenantId, workerCheckpoints.consumerName, workerCheckpoints.streamKey],
+                });
+            }
+            return yield* Effect.void;
+          }),
+        )
+        .pipe(
+          Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
+          Effect.mapError(claimLostOrPersistenceError),
+        ),
+    fail: (claim, safeErrorMessage, now) =>
+      executor
+        .transaction(
+          Effect.fn('failEffect')(function* failEffect(transaction: CoreTransaction) {
+            const [owned] = yield* transaction
+              .select({ deliveryId: outboxDeliveries.outboxDeliveryId })
+              .from(outboxDeliveries)
+              .where(
+                and(
+                  eq(outboxDeliveries.outboxDeliveryId, claim.deliveryId),
+                  eq(outboxDeliveries.status, 'processing'),
+                  eq(outboxDeliveries.claimedBy, claim.claimId),
+                ),
+              )
+              .for('update');
+            if (owned === undefined) {
+              return yield* claimLost();
+            }
+            const finishedAttempts = yield* transaction
+              .update(outboxAttempts)
+              .set({
+                errorMessage: sanitizeOutboxErrorMessage(safeErrorMessage),
+                finishedAt: now,
+              })
+              .where(and(eq(outboxAttempts.outboxAttemptId, claim.attemptId), isNull(outboxAttempts.finishedAt)))
+              .returning({ attemptId: outboxAttempts.outboxAttemptId });
+            if (finishedAttempts.length !== 1) {
+              return yield* claimLost();
+            }
+            const status: OutboxFailureStatus =
+              claim.attemptNumber >= claim.retryPolicy.maxAttempts ? 'dead' : 'pending';
+            const availableAt =
+              status === 'dead' ? now : addMilliseconds(now, retryBackoffMs(claim.retryPolicy, claim.attemptNumber));
+            const updated = yield* transaction
+              .update(outboxDeliveries)
+              .set({
+                availableAt,
+                claimedAt: null,
+                claimedBy: null,
+                claimExpiresAt: null,
+                status,
+                updatedAt: now,
+              })
+              .where(
+                and(
+                  eq(outboxDeliveries.outboxDeliveryId, claim.deliveryId),
+                  eq(outboxDeliveries.status, 'processing'),
+                  eq(outboxDeliveries.claimedBy, claim.claimId),
+                ),
+              )
+              .returning({ deliveryId: outboxDeliveries.outboxDeliveryId });
+            if (updated.length !== 1) {
+              return yield* claimLost();
+            }
+            return status;
+          }),
+        )
+        .pipe(
+          Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
+          Effect.mapError(claimLostOrPersistenceError),
+        ),
+    matchUnmatched: (compositionRevision, now) =>
+      hasUnmatchedMessage(executor).pipe(
+        probeFailure,
+        Effect.flatMap((pending) =>
+          pending ? matchUnmatchedMessages(compositionRevision, now) : Effect.succeed(NO_MATCH),
+        ),
       ),
-});
+  };
+};
 export const OutboxRepositoryLive = Layer.effect(
   OutboxRepository,
   Effect.gen(function* makeOutboxRepositoryService() {

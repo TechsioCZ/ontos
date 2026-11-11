@@ -22,6 +22,7 @@ const ownerMigrations = [
   'shell-super-app',
   'party-registry',
   'payment-term-catalog',
+  'payment',
   'price-group-catalog',
   'commerce-customer-context',
   'commerce-market-catalog',
@@ -32,6 +33,7 @@ const ownerMigrations = [
   'assortment',
   'tax',
   'privacy',
+  'promotion',
 ];
 const generatedOwnerMigrations = [
   'property-portfolio',

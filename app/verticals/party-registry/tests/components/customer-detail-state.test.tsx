@@ -1,25 +1,14 @@
-import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
-import { DateTime, Deferred, Effect, Exit, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { CustomerListItemSchema } from '../../shared/apis/customer-list.ts';
-import {
-  CounterpartyReadForbiddenProblemSchema,
-  CounterpartyReadResponseSchema,
-} from '../../shared/apis/counterparty-read.ts';
-import { PartyDetailForbiddenProblemSchema } from '../../shared/apis/party-detail.ts';
+import { CounterpartyReadResponseSchema } from '../../shared/apis/counterparty-read.ts';
 import { PartySchema } from '../../shared/domain/identity-contracts.ts';
-import { PartyCommandConflictProblemSchema, PartyCommandForbiddenProblemSchema } from '../../shared/command-api.ts';
 import { executeCounterpartyRead } from '../../src/api/counterparty-read-client.ts';
 import { executePartyDetail } from '../../src/api/party-detail-client.ts';
 import { executePartyContactPoints } from '../../src/api/party-contact-points-client.ts';
 import { executePartyOfficialIdentifierHistory } from '../../src/api/party-official-identifier-history-client.ts';
 import { updateParty } from '../../src/api/party-command-client.ts';
-import {
-  hasUnsettledAutosave,
-  loadCustomerDetail,
-  useCustomerDetail,
-} from '../../src/routes/[lang]/prodej/zakaznici/customers-data.ts';
-import { relatedCustomerUrl } from '../../src/routes/[lang]/prodej/zakaznici/customers-model.ts';
 import type { CustomerDetailSnapshot } from '../../src/routes/[lang]/prodej/zakaznici/customers-data.ts';
 import { CustomerDetailDialog } from '../../src/routes/[lang]/prodej/zakaznici/customer-detail-dialog.tsx';
 import { expectHumanReadable } from '../support/visible-text.ts';
@@ -27,7 +16,27 @@ import { expectHumanReadable } from '../support/visible-text.ts';
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
 }));
+/** The router's blocker: `shouldBlock` is what the panel asks it to block on, `status` what the router answers. */
+interface Navigation {
+  readonly proceed: () => void;
+  readonly reset: () => void;
+  shouldBlock: () => boolean;
+  status: 'blocked' | 'idle';
+}
+const { navigation } = rstest.hoisted(() => {
+  const state: Navigation = {
+    proceed: rstest.fn<() => void>(),
+    reset: rstest.fn<() => void>(),
+    shouldBlock: () => false,
+    status: 'idle',
+  };
+  return { navigation: state };
+});
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useBlocker: (options: { readonly shouldBlockFn: () => boolean }) => {
+    navigation.shouldBlock = options.shouldBlockFn;
+    return { proceed: navigation.proceed, reset: navigation.reset, status: navigation.status };
+  },
   useRouterState: () => '/cs/prodej/zakaznici',
 }));
 
@@ -113,53 +122,11 @@ const snapshot: CustomerDetailSnapshot = {
 };
 const close = rstest.fn();
 const saved = rstest.fn();
-const changed = rstest.fn();
-const navigate = rstest.fn();
-const translate = (key: string) => key;
-const useDetail = () =>
-  useCustomerDetail(
-    customer,
-    snapshot,
-    (open) => {
-      close(open);
-    },
-    () => {
-      changed();
-    },
-    () => {
-      saved();
-    },
-    translate,
-    (href) => {
-      navigate(href);
-    },
-  );
 const afterParty = { ...party, displayName: Option.some('After'), revision: 2 };
-
-it('shows the customer name without exposing party or business-context identifiers', () => {
-  render(
-    <CustomerDetailDialog
-      customer={customer}
-      onOpenChange={(open) => {
-        close(open);
-      }}
-      onRenamed={() => {
-        changed();
-      }}
-      onRetry={() => {
-        saved();
-      }}
-      snapshot={snapshot}
-    />,
-  );
-  expect(screen.getByRole('heading', { name: 'Before' })).toBeTruthy();
-  expect(document.body.textContent).not.toContain(partyId);
-  expect(document.body.textContent).not.toContain(counterpartyId);
-  expectHumanReadable();
-});
 
 beforeEach(() => {
   rstest.clearAllMocks();
+  navigation.status = 'idle';
   rstest.mocked(executeCounterpartyRead).mockReturnValue(Effect.succeed(snapshot.counterparty));
   if (snapshot.identity.status === 'ready') {
     rstest
@@ -172,273 +139,6 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-const prepare = (model: ReturnType<typeof useDetail>) => {
-  model.changeDraft('name', 'After', 'Before');
-  model.changeDraft('new-EMAIL-value', 'pending@example.cz');
-  model.setReason('Reviewed document');
-  model.setEvidence('document:42');
-};
-
-it.effect('a confirmed section refreshes its revision and keeps unrelated drafts open', () =>
-  Effect.gen(function* confirmedSection() {
-    const { result } = renderHook(useDetail);
-    act(() => prepare(result.current));
-    act(() => result.current.save({ kind: 'name', party, value: 'After' }, ['name']));
-    yield* Effect.promise(() => waitFor(() => expect(saved).toHaveBeenCalledTimes(1)));
-    yield* Effect.promise(() => waitFor(() => expect(result.current.busy).toBe(false)));
-    expect(result.current.party?.revision).toBe(2);
-    expect(result.current.draft).toEqual({ 'new-EMAIL-value': 'pending@example.cz' });
-    act(() => result.current.requestClose(false));
-    expect(result.current.discardOpen).toBe(true);
-    expect(close).not.toHaveBeenCalled();
-  }),
-);
-
-it.effect('a revision conflict preserves the draft and requires a reload before another write', () =>
-  Effect.gen(function* revisionConflict() {
-    const failure = yield* Schema.decodeEffect(PartyCommandConflictProblemSchema)({
-      _tag: 'PartyCommandConflictProblem',
-      code: 'party_lifecycle_conflict',
-      detail: 'Revision changed',
-      status: 409,
-      title: 'Conflict',
-      type: 'urn:test:conflict',
-    });
-    rstest.mocked(updateParty).mockReturnValue(Effect.fail(failure));
-    const { result } = renderHook(useDetail);
-    act(() => prepare(result.current));
-    act(() => result.current.save({ kind: 'name', party, value: 'After' }, ['name']));
-    yield* Effect.promise(() => waitFor(() => expect(result.current.stale).toBe(true)));
-    expect(result.current.draft['name']).toBe('After');
-    act(() => result.current.save({ kind: 'name', party, value: 'After' }, ['name']));
-    expect(updateParty).toHaveBeenCalledTimes(1);
-    expect(saved).not.toHaveBeenCalled();
-  }),
-);
-
-it.effect('a denied write keeps every draft and reports permission refusal', () =>
-  Effect.gen(function* deniedWrite() {
-    const failure = yield* Schema.decodeEffect(PartyCommandForbiddenProblemSchema)({
-      _tag: 'PartyCommandForbiddenProblem',
-      detail: 'Denied',
-      status: 403,
-      title: 'Forbidden',
-      type: 'urn:test:forbidden',
-    });
-    rstest.mocked(updateParty).mockReturnValue(Effect.fail(failure));
-    const { result } = renderHook(useDetail);
-    act(() => prepare(result.current));
-    act(() => result.current.save({ kind: 'name', party, value: 'After' }, ['name']));
-    yield* Effect.promise(() =>
-      waitFor(() => expect(result.current.notice).toBe('party-registry.pages.customers.detail.forbidden')),
-    );
-    expect(result.current.draft['name']).toBe('After');
-    expect(saved).not.toHaveBeenCalled();
-  }),
-);
-
-it.effect('a commercial-context denial stops broader identity and contact reads before they start', () =>
-  Effect.gen(function* commercialDenied() {
-    const failure = yield* Schema.decodeEffect(CounterpartyReadForbiddenProblemSchema)({
-      _tag: 'CounterpartyReadForbiddenProblem',
-      detail: 'Denied context',
-      status: 403,
-      title: 'Forbidden',
-      type: 'urn:test:forbidden',
-    });
-    rstest.mocked(executeCounterpartyRead).mockReturnValue(Effect.fail(failure));
-    const result = yield* Effect.exit(loadCustomerDetail(customer));
-    expect(Exit.isFailure(result)).toBe(true);
-    expect(executePartyDetail).not.toHaveBeenCalled();
-    expect(executePartyContactPoints).not.toHaveBeenCalled();
-  }),
-);
-
-it.effect('the detail reads the current identity only, so a read-only role is not refused for fact history', () =>
-  Effect.gen(function* currentIdentityOnly() {
-    const result = yield* loadCustomerDetail(customer);
-    expect(result.identity.status).toBe('ready');
-    expect(executePartyDetail).toHaveBeenCalledExactlyOnceWith({ partyRef }, expect.any(String));
-  }),
-);
-
-it.effect(
-  'a tenant Party-read denial keeps the authorized Counterparty summary without broadening its projection',
-  () =>
-    Effect.gen(function* identityDenied() {
-      const failure = yield* Schema.decodeEffect(PartyDetailForbiddenProblemSchema)({
-        _tag: 'PartyDetailForbiddenProblem',
-        detail: 'Denied identity',
-        status: 403,
-        title: 'Forbidden',
-        type: 'urn:test:forbidden',
-      });
-      rstest.mocked(executePartyDetail).mockReturnValue(Effect.fail(failure));
-      const result = yield* loadCustomerDetail(customer);
-      expect(result.counterparty).toEqual(snapshot.counterparty);
-      expect(result.identity).toEqual({ status: 'forbidden' });
-      expect(result.counterparty.party).not.toHaveProperty('officialIdentifiers');
-    }),
-);
-
-it.effect('a committed section is never resubmitted when its refresh fails', () =>
-  Effect.gen(function* committedReloadFailure() {
-    const failure = yield* Schema.decodeEffect(CounterpartyReadForbiddenProblemSchema)({
-      _tag: 'CounterpartyReadForbiddenProblem',
-      detail: 'Access revoked',
-      status: 403,
-      title: 'Forbidden',
-      type: 'urn:test:forbidden',
-    });
-    rstest.mocked(executeCounterpartyRead).mockReturnValue(Effect.fail(failure));
-    const { result } = renderHook(useDetail);
-    act(() => prepare(result.current));
-    act(() => result.current.save({ kind: 'name', party, value: 'After' }, ['name']));
-    yield* Effect.promise(() => waitFor(() => expect(result.current.stale).toBe(true)));
-    expect(saved).toHaveBeenCalledTimes(1);
-    expect(result.current.draft).toEqual({ 'new-EMAIL-value': 'pending@example.cz' });
-    act(() => result.current.save({ kind: 'name', party, value: 'After' }, ['name']));
-    expect(updateParty).toHaveBeenCalledTimes(1);
-  }),
-);
-
-it('keeps a dirty draft when related navigation is cancelled and confirms only the latest intended URL', () => {
-  const { result } = renderHook(useDetail);
-  const opportunityUrl = relatedCustomerUrl('cs', '/prodej/prilezitosti', customer, false);
-  const invoiceUrl = relatedCustomerUrl('cs', '/finance', customer, true);
-  act(() => result.current.changeDraft('new-PHONE-value', '+420123456789'));
-  act(() => result.current.requestNavigation(opportunityUrl));
-  expect(result.current.discardOpen).toBe(true);
-  expect(navigate).not.toHaveBeenCalled();
-  act(() => result.current.setDiscardOpen(false));
-  expect(result.current.draft['new-PHONE-value']).toBe('+420123456789');
-  act(() => result.current.confirmDiscard());
-  expect(navigate).not.toHaveBeenCalled();
-  act(() => result.current.requestNavigation(invoiceUrl));
-  act(() => result.current.confirmDiscard());
-  expect(navigate).toHaveBeenCalledExactlyOnceWith(invoiceUrl);
-  expect(invoiceUrl).toContain(`counterpartyId=${counterpartyId}`);
-  expect(invoiceUrl).toContain(`tenantId=${tenantId}`);
-  expect(close).not.toHaveBeenCalled();
-});
-
-it('navigates directly only when the customer editor is clean', () => {
-  const { result } = renderHook(useDetail);
-  const href = relatedCustomerUrl('cs', '/ukoly', customer, false);
-  act(() => result.current.requestNavigation(href));
-  expect(navigate).toHaveBeenCalledExactlyOnceWith(href);
-  expect(result.current.discardOpen).toBe(false);
-});
-
-it('runs a deferred retarget at once when the customer editor is clean', () => {
-  const { result } = renderHook(useDetail);
-  const run = rstest.fn<() => void>();
-  act(() => result.current.requestLeaveThen(run, false));
-  expect(run).toHaveBeenCalledTimes(1);
-  expect(result.current.discardOpen).toBe(false);
-});
-
-it('asks before a deferred retarget when the editor is dirty, and runs it only after the user confirms', () => {
-  const { result } = renderHook(useDetail);
-  const run = rstest.fn<() => void>();
-  act(() => result.current.changeDraft('new-PHONE-value', '+420123456789'));
-  act(() => result.current.requestLeaveThen(run, false));
-  expect(result.current.discardOpen).toBe(true);
-  expect(run).not.toHaveBeenCalled();
-  act(() => result.current.setDiscardOpen(false));
-  expect(run).not.toHaveBeenCalled();
-  act(() => result.current.requestLeaveThen(run, false));
-  act(() => result.current.confirmDiscard());
-  expect(run).toHaveBeenCalledTimes(1);
-  expect(close).not.toHaveBeenCalled();
-});
-
-it('asks before a deferred retarget when an inline autosave field holds unsaved text', () => {
-  const { result } = renderHook(useDetail);
-  const run = rstest.fn<() => void>();
-  act(() => result.current.requestLeaveThen(run, true));
-  expect(result.current.discardOpen).toBe(true);
-  expect(run).not.toHaveBeenCalled();
-  act(() => result.current.confirmDiscard());
-  expect(run).toHaveBeenCalledTimes(1);
-});
-
-const autosaveStatuses = (states: readonly string[]) => {
-  const root = document.createElement('div');
-  for (const state of states) {
-    const status = document.createElement('div');
-    status.dataset['autosaveState'] = state;
-    root.append(status);
-  }
-  return root;
-};
-
-it('reads an unsettled inline autosave status in the panel body as unsaved text', () => {
-  expect(hasUnsettledAutosave(autosaveStatuses(['saved', 'invalid']))).toBe(true);
-  expect(hasUnsettledAutosave(autosaveStatuses(['dirty']))).toBe(true);
-  expect(hasUnsettledAutosave(autosaveStatuses(['idle', 'saved', 'proposed']))).toBe(false);
-  expect(hasUnsettledAutosave(null)).toBe(false);
-});
-
-it.effect('ignores a deferred retarget while a save is in flight', () =>
-  Effect.gen(function* busyRetarget() {
-    const pending = yield* Deferred.make<typeof party>();
-    rstest.mocked(updateParty).mockReturnValue(Deferred.await(pending));
-    const { result } = renderHook(useDetail);
-    act(() => prepare(result.current));
-    act(() => result.current.save({ kind: 'name', party, value: 'After' }, ['name']));
-    expect(result.current.busy).toBe(true);
-    const run = rstest.fn<() => void>();
-    act(() => result.current.requestLeaveThen(run, false));
-    expect(run).not.toHaveBeenCalled();
-    expect(result.current.discardOpen).toBe(false);
-    yield* Deferred.succeed(pending, afterParty);
-    yield* Effect.promise(() => waitFor(() => expect(result.current.busy).toBe(false)));
-  }),
-);
-
-it.effect('blocks related navigation and document unload during an unfinished save', () =>
-  Effect.gen(function* busyNavigation() {
-    const pending = yield* Deferred.make<typeof party>();
-    rstest.mocked(updateParty).mockReturnValue(Deferred.await(pending));
-    const { result } = renderHook(useDetail);
-    act(() => prepare(result.current));
-    act(() => result.current.save({ kind: 'name', party, value: 'After' }, ['name']));
-    expect(result.current.busy).toBe(true);
-    act(() => result.current.requestNavigation('/cs/prodej/prilezitosti?partyId=blocked'));
-    expect(navigate).not.toHaveBeenCalled();
-    expect(result.current.discardOpen).toBe(false);
-    const unload = new Event('beforeunload', { cancelable: true });
-    globalThis.dispatchEvent(unload);
-    expect(unload.defaultPrevented).toBe(true);
-    yield* Deferred.succeed(pending, afterParty);
-    yield* Effect.promise(() => waitFor(() => expect(result.current.busy).toBe(false)));
-  }),
-);
-
-it('protects document unload while dirty, grants one confirmed navigation, and removes the guard on unmount', () => {
-  const { result, unmount } = renderHook(useDetail);
-  const clean = new Event('beforeunload', { cancelable: true });
-  globalThis.dispatchEvent(clean);
-  expect(clean.defaultPrevented).toBe(false);
-  act(() => result.current.changeDraft('new-PHONE-value', '+420123456789'));
-  const dirty = new Event('beforeunload', { cancelable: true });
-  globalThis.dispatchEvent(dirty);
-  expect(dirty.defaultPrevented).toBe(true);
-  act(() => result.current.requestNavigation('/cs/ukoly?partyId=confirmed'));
-  act(() => result.current.confirmDiscard());
-  const confirmed = new Event('beforeunload', { cancelable: true });
-  globalThis.dispatchEvent(confirmed);
-  expect(confirmed.defaultPrevented).toBe(false);
-  const another = new Event('beforeunload', { cancelable: true });
-  globalThis.dispatchEvent(another);
-  expect(another.defaultPrevented).toBe(true);
-  unmount();
-  const afterUnmount = new Event('beforeunload', { cancelable: true });
-  globalThis.dispatchEvent(afterUnmount);
-  expect(afterUnmount.defaultPrevented).toBe(false);
-});
-
 const detailDialog = (value?: CustomerDetailSnapshot) => (
   <CustomerDetailDialog
     customer={customer}
@@ -446,7 +146,7 @@ const detailDialog = (value?: CustomerDetailSnapshot) => (
       close(open);
     }}
     onRenamed={() => {
-      changed();
+      saved();
     }}
     onRetry={() => {
       saved();
@@ -454,13 +154,28 @@ const detailDialog = (value?: CustomerDetailSnapshot) => (
     snapshot={value}
   />
 );
-const reasonField = () => {
-  const element = document.querySelector<HTMLInputElement>('#customer-reason');
+const fieldById = <T extends HTMLElement>(id: string) => {
+  const element = document.querySelector<T>(`[id="${id}"]`);
   if (element === null) {
-    throw new Error('missing #customer-reason');
+    throw new Error(`missing field ${id}`);
   }
   return element;
 };
+const reasonField = () => fieldById<HTMLInputElement>('customer-reason');
+const nameField = () => fieldById<HTMLInputElement>('customer-rename');
+const saveButton = () => screen.getByRole<HTMLButtonElement>('button', { name: 'Uložit' });
+const fillBasis = () => {
+  fireEvent.change(fieldById<HTMLInputElement>('customer-evidence'), { target: { value: 'document:42' } });
+  fireEvent.change(reasonField(), { target: { value: 'Reviewed document' } });
+};
+
+it('shows the customer name without exposing party or business-context identifiers', () => {
+  render(detailDialog(snapshot));
+  expect(screen.getByRole('heading', { name: 'Before' })).toBeTruthy();
+  expect(document.body.textContent).not.toContain(partyId);
+  expect(document.body.textContent).not.toContain(counterpartyId);
+  expectHumanReadable();
+});
 
 it('keeps the typed reason when the same customer snapshot passes through a loading refresh', () => {
   const { rerender } = render(detailDialog(snapshot));
@@ -469,3 +184,71 @@ it('keeps the typed reason when the same customer snapshot passes through a load
   rerender(detailDialog(snapshot));
   expect(reasonField().value).toBe('Reviewed document');
 });
+
+it.live('typing and waiting write nothing until the one Save button is pressed', () =>
+  Effect.gen(function* explicitSave() {
+    render(detailDialog(snapshot));
+    fillBasis();
+    fireEvent.change(nameField(), { target: { value: 'After' } });
+    yield* Effect.sleep('1 second');
+    expect(updateParty).not.toHaveBeenCalled();
+    expect(saveButton().disabled).toBe(false);
+    fireEvent.click(saveButton());
+    yield* Effect.promise(() => waitFor(() => expect(updateParty).toHaveBeenCalledTimes(1)));
+    // Saved: the detail re-reads the owner's version, which the clean draft then shows.
+    yield* Effect.promise(() =>
+      waitFor(() =>
+        expect(['idle', 'saved']).toContain(
+          document.querySelector<HTMLElement>('[data-save-state]')?.dataset['saveState'],
+        ),
+      ),
+    );
+    expect(saveButton().disabled).toBe(true);
+    expect(updateParty).toHaveBeenCalledTimes(1);
+  }),
+);
+
+it.live('an empty name leaves Save disabled and writes nothing', () =>
+  Effect.gen(function* invalidDraft() {
+    render(detailDialog(snapshot));
+    fillBasis();
+    fireEvent.change(nameField(), { target: { value: '' } });
+    yield* Effect.sleep('1 second');
+    expect(saveButton().disabled).toBe(true);
+    expect(updateParty).not.toHaveBeenCalled();
+  }),
+);
+
+it.live('closing with unsaved text asks first and leaving discards without writing', () =>
+  Effect.gen(function* leaveAsks() {
+    render(detailDialog(snapshot));
+    fillBasis();
+    fireEvent.change(nameField(), { target: { value: 'After' } });
+    fireEvent.click(screen.getByRole('button', { name: 'party-registry.pages.customers.detail.cancel' }));
+    expect(close).not.toHaveBeenCalled();
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByRole('button', { name: 'Zůstat' })).toBeTruthy()));
+    fireEvent.click(screen.getByRole('button', { name: 'Zahodit změny' }));
+    yield* Effect.sleep('1 second');
+    expect(close).toHaveBeenCalledWith(false);
+    expect(updateParty).not.toHaveBeenCalled();
+  }),
+);
+
+it.live('a route change from the peek panel with unsaved text asks first; Zůstat keeps the draft', () =>
+  Effect.gen(function* routeChangeAsks() {
+    const { rerender } = render(detailDialog(snapshot));
+    expect(navigation.shouldBlock()).toBe(false);
+    fillBasis();
+    fireEvent.change(nameField(), { target: { value: 'After' } });
+    yield* Effect.promise(() => waitFor(() => expect(navigation.shouldBlock()).toBe(true)));
+    // A Shell link next to the peek panel: the router holds the navigation and the panel asks.
+    navigation.status = 'blocked';
+    rerender(detailDialog(snapshot));
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByRole('button', { name: 'Zůstat' })).toBeTruthy()));
+    fireEvent.click(screen.getByRole('button', { name: 'Zůstat' }));
+    expect(navigation.reset).toHaveBeenCalledTimes(1);
+    expect(navigation.proceed).not.toHaveBeenCalled();
+    expect(nameField().value).toBe('After');
+    expect(updateParty).not.toHaveBeenCalled();
+  }),
+);

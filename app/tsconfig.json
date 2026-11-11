@@ -41,6 +41,9 @@
       "path": "verticals/payment-term-catalog"
     },
     {
+      "path": "verticals/payment"
+    },
+    {
       "path": "verticals/catalog"
     },
     {
@@ -135,6 +138,9 @@
     },
     {
       "path": "packages/party-registry-identity-contracts"
+    },
+    {
+      "path": "verticals/promotion"
     }
   ]
 }

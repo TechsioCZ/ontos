@@ -31,8 +31,7 @@
   },
   "create": {
     "title": "New event",
-    "description": "Own calendar event (meeting, inspection, reminder). The assignee is notified.",
-    "submit": "Save event"
+    "description": "Own calendar event (meeting, inspection, reminder). The assignee is notified."
   },
   "created": "Event saved",
   "stats": {

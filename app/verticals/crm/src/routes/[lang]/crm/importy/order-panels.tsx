@@ -6,20 +6,25 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
 // AREA: imports — owned by the crm-imports lane. Order detail side panel (state history, lines, pairing history,
 // review decisions) and the manual pairing form (C03/C04). Every action is a governed CRM command.
-import { DetailList, SidePanel, formatDateTime, surfaceTileClassName } from '@app/admin-ui';
+import {
+  DetailList,
+  SidePanel,
+  UnsavedChangesBoundary,
+  formatDateTime,
+  surfaceTileClassName,
+  useUnsavedChangesScope,
+} from '@app/admin-ui';
+import { PairingForm } from './pairing-form.tsx';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
+import { FormTextarea } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 
 import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 
-import { salespersonName } from '../../../../crm/records.ts';
 import type { CrmCommandSubmit } from '../../../../crm/records.ts';
 
 import { orderStatusLabel, statusReviewReasonLabel } from '../../../../crm/order-status-presentation.ts';
@@ -116,122 +121,6 @@ export const RawStatusBadge = ({ status }: { readonly status: string }) => (
     {orderStatusLabel(status)}
   </Badge>
 );
-
-/** Manual pairing / re-pairing of one order with a reason (C04-03). Candidates are suggestions only. */
-export const PairingForm = ({
-  busy,
-  onDone,
-  order,
-  records,
-  submit,
-}: {
-  readonly busy: boolean;
-  readonly onDone?: () => void;
-  readonly order: ImportedOrder;
-  readonly records: RecordsResponse;
-  readonly submit: Submit;
-}) => {
-  const { t } = useModernI18n();
-  const run = useRunner(submit);
-  const [clientId, setClientId] = useState(order.candidates?.[0]?.clientId ?? '');
-  const [reason, setReason] = useState('');
-  const [approve, setApprove] = useState(false);
-  const linkExists =
-    order.externalCustomerId !== undefined &&
-    records.state.imports.customerLinks.some(
-      (link) => link.source === order.source && link.externalCustomerId === order.externalCustomerId,
-    );
-  const clients = records.state.clients.items
-    .filter((client) => client.status === 'active' && client.id !== order.clientId)
-    .toSorted((left, right) => left.name.localeCompare(right.name, 'cs'));
-  const candidates = order.candidates ?? [];
-  const save = () => {
-    const command: Extract<CrmCommandInput, { readonly _tag: 'PairOrder' }> = {
-      _tag: 'PairOrder',
-      clientId,
-      orderId: order.id,
-      reason: reason.trim(),
-    };
-    if (approve) {
-      Object.assign(command, { approveCustomerLink: true });
-    }
-    run(command, order.clientId === undefined ? 'Objednávka napárována' : 'Přiřazení opraveno', () => {
-      setReason('');
-      setApprove(false);
-      onDone?.();
-    });
-  };
-  return (
-    <div className="flex flex-col gap-150">
-      {candidates.length > 0 && (
-        <div className="flex flex-col gap-100 rounded-lg bg-bg-light-warning-base p-150">
-          <span className="font-medium text-sm">Možní kandidáti – nepotvrzeno</span>
-          <span className="text-fg-secondary text-xs">
-            Shoda IČO, e-mailu nebo názvu není důkaz identity. Systém je sám nepřiřadí; vyberte klienta až po ověření.
-          </span>
-          <div className="flex flex-wrap gap-100">
-            {candidates.map((candidate) => (
-              <button
-                className={`flex flex-col items-start gap-50 rounded-lg border px-150 py-100 text-left text-sm ${clientId === candidate.clientId ? 'border-primary bg-surface' : 'border-border-primary bg-base'}`}
-                key={candidate.clientId}
-                onClick={() => setClientId(candidate.clientId)}
-                type="button"
-              >
-                <span className="flex items-center gap-50 font-medium">
-                  {clientId === candidate.clientId && (
-                    <span aria-hidden="true" className="icon-[mdi--check-circle] size-200 text-success" />
-                  )}
-                  {clientLabel(records, candidate.clientId) ?? NOT_PROVIDED}
-                </span>
-                <span className="text-fg-secondary text-xs">{candidate.reason}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-      <SelectTemplate
-        items={clients.map((client) => ({
-          label: `${client.name} · ${salespersonName(records, client.ownerSalespersonId) ?? 'nepřiděleno'}`,
-          value: client.id,
-        }))}
-        label={t('crm.ciWorkflow.targetClient')}
-        name="pairing-client"
-        onValueChange={(details) => setClientId(details.value[0] ?? '')}
-        placeholder={t('crm.ciWorkflow.selectClient')}
-        size="sm"
-        value={clientId === '' ? [] : [clientId]}
-      />
-      <ReasonField
-        id={`pairing-reason-${order.id}`}
-        label={t('crm.ciWorkflow.pairingReason')}
-        onChange={setReason}
-        value={reason}
-      />
-      {order.externalCustomerId !== undefined && !linkExists && (
-        <FormCheckbox
-          checked={approve}
-          id={`pairing-approve-${order.id}`}
-          label={`Schválit vazbu: ${order.customerName ?? orderTitle(order)} (${order.source}) patří tomuto klientovi – další objednávky se napárují samy`}
-          onCheckedChange={(checked) => setApprove(checked)}
-          size="sm"
-        />
-      )}
-      <div className="flex justify-end">
-        <Button
-          disabled={clientId === '' || reason.trim().length < 3}
-          icon="icon-[mdi--link-variant]"
-          isLoading={busy}
-          loadingText="Ukládám…"
-          onClick={save}
-          size="sm"
-          variant="primary"
-        >
-          {order.clientId === undefined ? 'Napárovat' : 'Přiřadit jinému klientovi'}
-        </Button>
-      </div>
-    </div>
-  );
-};
 
 const DecisionForm = ({
   actions,
@@ -528,6 +417,8 @@ export const OrderDetailPanel = ({
   const formatAmount = useFormatAmount();
   const run = useRunner(submit);
   const [repairOpen, setRepairOpen] = useState(false);
+  // The inline pairing form registers its unsaved-changes guard here, so Zavřít asks it first.
+  const scope = useUnsavedChangesScope();
   const canDecide = records.viewer.writeAll;
   if (order === undefined) {
     return null;
@@ -539,123 +430,127 @@ export const OrderDetailPanel = ({
   const history = records.state.imports.pairingHistory.filter((change) => change.orderId === order.id).toReversed();
 
   return (
-    <SidePanel
-      actions={
-        <Button onClick={onClose} theme="outlined" variant="secondary">
-          Zavřít
-        </Button>
-      }
-      description={order.source}
-      onOpenChange={(open) => {
-        if (!open) {
-          setRepairOpen(false);
-          onClose();
+    <UnsavedChangesBoundary scope={scope}>
+      <SidePanel
+        actions={
+          <Button onClick={() => scope.request(onClose)} theme="outlined" variant="secondary">
+            Zavřít
+          </Button>
         }
-      }}
-      open
-      resizeLabel={RESIZE_LABEL}
-      size="lg"
-      title={`Objednávka ${orderTitle(order)}`}
-    >
-      <div className="flex flex-col gap-250">
-        {renderOrderFacts(order, records, formatAmount)}
-        {order.duplicateOf !== undefined && (
-          <Section title={t('crm.ciWorkflow.crossSourceDuplicate')}>
-            <span className="text-sm">
-              {order.reviewReason ?? 'Stejná objednávka z jiného zdroje.'}
-              {twin === undefined ? null : ` Původní záznam: ${orderTitle(twin)} (${twin.source}).`}
-            </span>
-            {(order.decisions ?? []).map((decision) => (
-              <span className="text-fg-secondary text-xs" key={DateTime.formatIso(decision.at)}>
-                {`${decision.decision === 'distinct' ? 'Samostatná objednávka' : 'Potvrzená duplicita'} – ${principalLabel(records, decision.by)}, ${pipe(decision.at, orderDateText, formatDateTime)}: ${decision.reason}`}
+        description={order.source}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRepairOpen(false);
+            onClose();
+          }
+        }}
+        open
+        resizeLabel={RESIZE_LABEL}
+        size="lg"
+        title={`Objednávka ${orderTitle(order)}`}
+      >
+        <div className="flex flex-col gap-250">
+          {renderOrderFacts(order, records, formatAmount)}
+          {order.duplicateOf !== undefined && (
+            <Section title={t('crm.ciWorkflow.crossSourceDuplicate')}>
+              <span className="text-sm">
+                {order.reviewReason ?? 'Stejná objednávka z jiného zdroje.'}
+                {twin === undefined ? null : ` Původní záznam: ${orderTitle(twin)} (${twin.source}).`}
               </span>
-            ))}
-            {isOpenDuplicate(order) && canDecide && (
-              <DecisionForm
-                actions={[
-                  {
-                    label: 'Jde o samostatnou objednávku',
-                    run: (reason) => {
-                      run(
-                        { _tag: 'ResolveOrderDuplicate', decision: 'distinct', orderId: order.id, reason },
-                        'Rozhodnutí uloženo',
-                      );
+              {(order.decisions ?? []).map((decision) => (
+                <span className="text-fg-secondary text-xs" key={DateTime.formatIso(decision.at)}>
+                  {`${decision.decision === 'distinct' ? 'Samostatná objednávka' : 'Potvrzená duplicita'} – ${principalLabel(records, decision.by)}, ${pipe(decision.at, orderDateText, formatDateTime)}: ${decision.reason}`}
+                </span>
+              ))}
+              {isOpenDuplicate(order) && canDecide && (
+                <DecisionForm
+                  actions={[
+                    {
+                      label: 'Jde o samostatnou objednávku',
+                      run: (reason) => {
+                        run(
+                          { _tag: 'ResolveOrderDuplicate', decision: 'distinct', orderId: order.id, reason },
+                          'Rozhodnutí uloženo',
+                        );
+                      },
                     },
-                  },
-                  {
-                    label: 'Potvrdit duplicitu',
-                    primary: true,
-                    run: (reason) => {
-                      run(
-                        { _tag: 'ResolveOrderDuplicate', decision: 'confirmed_duplicate', orderId: order.id, reason },
-                        'Duplicita potvrzena',
-                      );
+                    {
+                      label: 'Potvrdit duplicitu',
+                      primary: true,
+                      run: (reason) => {
+                        run(
+                          { _tag: 'ResolveOrderDuplicate', decision: 'confirmed_duplicate', orderId: order.id, reason },
+                          'Duplicita potvrzena',
+                        );
+                      },
                     },
-                  },
-                ]}
-                busy={busy}
-                id={`duplicate-${order.id}`}
-                intro="Bez potvrzené korelace se objednávka nezapočítává do potvrzených souhrnů. Potvrzená duplicita zůstane mimo souhrny trvale."
-              />
+                  ]}
+                  busy={busy}
+                  id={`duplicate-${order.id}`}
+                  intro="Bez potvrzené korelace se objednávka nezapočítává do potvrzených souhrnů. Potvrzená duplicita zůstane mimo souhrny trvale."
+                />
+              )}
+            </Section>
+          )}
+          {order.reviewReason !== undefined &&
+            order.duplicateOf === undefined &&
+            (order.decisions ?? []).length > 0 && (
+              <Section title={t('crm.ciWorkflow.crossSourceDuplicate')}>
+                {(order.decisions ?? []).map((decision) => (
+                  <span className="text-fg-secondary text-xs" key={DateTime.formatIso(decision.at)}>
+                    {`Samostatná objednávka – ${principalLabel(records, decision.by)}, ${pipe(decision.at, orderDateText, formatDateTime)}: ${decision.reason}`}
+                  </span>
+                ))}
+              </Section>
+            )}
+          <Section title={`Historie stavů (${String(order.statusHistory.length)})`}>
+            <StatusTimeline busy={busy} canDecide={canDecide} order={order} records={records} run={run} />
+          </Section>
+          <Section title={t('crm.ciWorkflow.items')}>
+            <LinesTable order={order} />
+          </Section>
+          <Section title={t('crm.ciWorkflow.clientAssignment')}>
+            {history.length === 0 ? (
+              <span className="text-fg-secondary text-sm">Zatím bez přiřazení.</span>
+            ) : (
+              <ol className="flex flex-col gap-100">
+                {history.map((change) => (
+                  <li className="flex flex-col gap-50 text-sm" key={change.id}>
+                    <span>
+                      <span className="font-medium">{pairingChangeLabel(records, change)}</span>
+                      {' · '}
+                      {change.via === 'manual' ? 'ručně' : 'schválená vazba zákazníka'}
+                    </span>
+                    <span className="text-fg-secondary text-xs">
+                      {`${principalLabel(records, change.by)}, ${pipe(change.at, orderDateText, formatDateTime)} – ${pairingReason(change)}`}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
+            {canDecide && (
+              <div className="flex flex-col gap-150">
+                {order.clientId === undefined || repairOpen ? (
+                  <PairingForm
+                    onCancel={order.clientId === undefined ? onClose : () => setRepairOpen(false)}
+                    onSaved={() => setRepairOpen(false)}
+                    order={order}
+                    records={records}
+                    submit={submit}
+                  />
+                ) : (
+                  <div className="flex flex-wrap gap-100">
+                    <Button onClick={() => setRepairOpen(true)} size="sm" theme="outlined" variant="secondary">
+                      Opravit přiřazení
+                    </Button>
+                    <UnpairButton busy={busy} order={order} run={run} />
+                  </div>
+                )}
+              </div>
             )}
           </Section>
-        )}
-        {order.reviewReason !== undefined && order.duplicateOf === undefined && (order.decisions ?? []).length > 0 && (
-          <Section title={t('crm.ciWorkflow.crossSourceDuplicate')}>
-            {(order.decisions ?? []).map((decision) => (
-              <span className="text-fg-secondary text-xs" key={DateTime.formatIso(decision.at)}>
-                {`Samostatná objednávka – ${principalLabel(records, decision.by)}, ${pipe(decision.at, orderDateText, formatDateTime)}: ${decision.reason}`}
-              </span>
-            ))}
-          </Section>
-        )}
-        <Section title={`Historie stavů (${String(order.statusHistory.length)})`}>
-          <StatusTimeline busy={busy} canDecide={canDecide} order={order} records={records} run={run} />
-        </Section>
-        <Section title={t('crm.ciWorkflow.items')}>
-          <LinesTable order={order} />
-        </Section>
-        <Section title={t('crm.ciWorkflow.clientAssignment')}>
-          {history.length === 0 ? (
-            <span className="text-fg-secondary text-sm">Zatím bez přiřazení.</span>
-          ) : (
-            <ol className="flex flex-col gap-100">
-              {history.map((change) => (
-                <li className="flex flex-col gap-50 text-sm" key={change.id}>
-                  <span>
-                    <span className="font-medium">{pairingChangeLabel(records, change)}</span>
-                    {' · '}
-                    {change.via === 'manual' ? 'ručně' : 'schválená vazba zákazníka'}
-                  </span>
-                  <span className="text-fg-secondary text-xs">
-                    {`${principalLabel(records, change.by)}, ${pipe(change.at, orderDateText, formatDateTime)} – ${pairingReason(change)}`}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          )}
-          {canDecide && (
-            <div className="flex flex-col gap-150">
-              {order.clientId === undefined || repairOpen ? (
-                <PairingForm
-                  busy={busy}
-                  onDone={() => setRepairOpen(false)}
-                  order={order}
-                  records={records}
-                  submit={submit}
-                />
-              ) : (
-                <div className="flex flex-wrap gap-100">
-                  <Button onClick={() => setRepairOpen(true)} size="sm" theme="outlined" variant="secondary">
-                    Opravit přiřazení
-                  </Button>
-                  <UnpairButton busy={busy} order={order} run={run} />
-                </div>
-              )}
-            </div>
-          )}
-        </Section>
-      </div>
-    </SidePanel>
+        </div>
+      </SidePanel>
+    </UnsavedChangesBoundary>
   );
 };

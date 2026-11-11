@@ -73,7 +73,7 @@
         "zeroPriceWarning": "Položka bude na faktuře za 0 Kč. Pokud to není záměr, zadejte cenu.",
         "submit": "Vytvořit návrh",
         "submitAnyway": "Přesto vytvořit návrh",
-        "zeroPriceConfirm": "Faktura obsahuje položku za 0 Kč. Zkontrolujte ceny, nebo návrh přesto vytvořte.",
+        "zeroPriceConfirm": "Faktura obsahuje položku za 0 Kč. Zkontrolujte ceny, nebo návrh vytvořte dalším kliknutím na Uložit.",
         "submitting": "Vytvářím…",
         "created": "Faktura vytvořena",
         "createFailed": "Fakturu se nepodařilo vytvořit",
@@ -116,6 +116,7 @@
       "loadErrorDescription": "Zkontrolujte připojení a zkuste to znovu.",
       "emptyFirstTitle": "Zatím tu nejsou žádné faktury.",
       "emptyFirstDescription": "První fakturu vystavte tlačítkem Nová faktura.",
+      "emptyFirstReadOnlyDescription": "Faktury se tu objeví, jakmile je vystaví někdo s oprávněním k fakturaci.",
       "noMatches": "Žádné faktury neodpovídají filtru.",
       "noMatchesDescription": "Zkuste upravit hledání nebo stav.",
       "filters": {
@@ -279,7 +280,19 @@
         "title": "Zohlednění předchozích dokladů",
         "amount": "Zohlednit (Kč)",
         "note": "Poznámka (např. číslo daňového dokladu k přijaté platbě)",
-        "confirm": "Potvrzuji, že jsem částky zkontroloval(a) a mají se na této faktuře zohlednit."
+        "confirm": "Potvrzuji, že jsem částky zkontroloval(a) a mají se na této faktuře zohlednit.",
+        "formDescription": "Faktura {{number}} na {{total}}. Zadejte částky, které se z dřívějších dokladů zohlední.",
+        "noCandidate": "Žádný vhodný dřívější doklad tohoto odběratele.",
+        "candidate": "{{number}} · {{kind}} · {{date}}",
+        "kindAdvance": "zálohová",
+        "kindPartial": "dílčí",
+        "candidateHint": "Uhrazeno {{paid}} z {{total}} · lze zohlednit nejvýše {{available}}",
+        "errorPositive": "Zadejte kladné částky, např. 25 000 nebo 25 000,50.",
+        "errorOver": "Částka přesahuje uhrazenou a dosud nezohledněnou část dřívějšího dokladu.",
+        "errorTotal": "Součet zohledněných částek přesahuje celkovou částku této faktury.",
+        "errorConfirm": "Potvrďte, že jste částky zkontrolovali.",
+        "confirmedToast": "Zohlednění předchozích dokladů potvrzeno",
+        "removedToast": "Zohlednění předchozích dokladů odebráno"
       },
       "paymentTerms": {
         "title": "Skonto a úrok z prodlení",
@@ -331,9 +344,18 @@
         "title": "Úhrady",
         "date": "Datum úhrady",
         "note": "Poznámka (např. číslo výpisu)",
-        "counterpartyHistory": "Platební historie protistrany"
+        "counterpartyHistory": "Platební historie protistrany",
+        "record": "Zaznamenat úhradu",
+        "reviewIncoming": "Potvrdit odeslání platby?",
+        "reviewOutgoing": "Potvrdit přijetí platby?",
+        "reviewDescription": "Úhrada se zapíše jako ručně potvrzená vaším jménem. Tento krok nelze vzít zpět.",
+        "reviewInvoice": "Faktura",
+        "reviewRemaining": "Po potvrzení úhrady zbývá",
+        "reviewBack": "Zpět",
+        "reviewConfirm": "Potvrzuji úhradu"
       },
       "common": {
+        "cancel": "Zrušit",
         "amount": "Částka (Kč)",
         "vatRate": "Sazba DPH",
         "edit": "Upravit",
@@ -353,7 +375,14 @@
         "ineligible": "Upomínka se připravuje jen k neuhrazené potvrzené faktuře.",
         "recipient": "E-mail příjemce",
         "emailExample": "fakturace@odberatel.cz",
-        "message": "Text upomínky"
+        "message": "Text upomínky",
+        "reviewTitle": "Odeslat upomínku e-mailem?",
+        "reviewDescription": "Po potvrzení se upomínka skutečně odešle e-mailem na uvedenou adresu. Odeslaný e-mail nelze vzít zpět.",
+        "reviewInvoice": "Faktura",
+        "reviewRecipient": "Příjemce",
+        "reviewSender": "Odesílatel",
+        "reviewBack": "Zpět",
+        "reviewConfirm": "Odeslat e-mail"
       },
       "accounting": {
         "handover": "Účetní předání",
@@ -367,7 +396,13 @@
         "errorDescription": "Popis chyby",
         "errorExample": "např. POHODA odmítla import – chybí DIČ odběratele",
         "evidence": "Důkaz převzetí",
-        "evidenceExample": "např. e-mail Ing. Novákové z 20. 10. 2026"
+        "evidenceExample": "např. e-mail Ing. Novákové z 20. 10. 2026",
+        "failTitle": "Chyba předání {{batch}}",
+        "failDescription": "Např. účetní systém import odmítl nebo v balíčku chybí doklad. Doklady z chybného balíčku lze zařadit do nového.",
+        "failedToast": "Balíček {{batch}} označen jako chybný",
+        "confirmTitle": "Potvrzení převzetí {{batch}}",
+        "confirmDescription": "Zaznamenejte, že účetní balíček převzala, a uveďte důkaz (např. e-mail ze dne…, číslo importní dávky). OntOS tím doklady neoznačí jako zaúčtované.",
+        "confirmedToast": "Převzetí balíčku potvrzeno účetní"
       },
       "objects": {
         "property": "Nemovitost",
@@ -387,6 +422,7 @@
         "addTitle": "Nová položka ceníku",
         "save": "Uložit",
         "close": "Zavřít",
+        "cancel": "Zrušit",
         "priceHint": "Cena za jednotku bez DPH v Kč.",
         "nameRequired": "Vyplňte název položky.",
         "priceRequired": "Zadejte cenu bez DPH, např. 1 500 nebo 1 500,50.",
@@ -469,6 +505,11 @@
         "discountReason": "Důvod schválené slevy",
         "discountExample": "např. věrnostní sleva podle smlouvy",
         "fromPriceList": "Z ceníku"
+      },
+      "documentKind": {
+        "title": "Změnit druh dokladu?",
+        "description": "Druh dokladu se změní z „{{from}}“ na „{{to}}“.",
+        "confirm": "Změnit druh dokladu"
       }
     }
   }

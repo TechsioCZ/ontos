@@ -134,6 +134,7 @@ shrink-0
 size-8
 size-full
 sm:col-span-1
+sm:flex-nowrap
 sm:gap-x-150
 sm:grid-cols-2
 sm:grid-cols-3
@@ -141,7 +142,7 @@ sm:grid-cols-4
 sm:grid-cols-[auto_minmax(0,1fr)]
 sm:grid-cols-[minmax(0,1fr)_10rem]
 sm:grid-cols-[minmax(0,1fr)_12rem_8rem_auto]
-sm:grid-cols-[minmax(0,1fr)_7rem_auto]
+sm:grid-cols-[minmax(0,1fr)_9rem_auto]
 sm:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_minmax(0,1fr)_auto]
 sr-only
 start-0

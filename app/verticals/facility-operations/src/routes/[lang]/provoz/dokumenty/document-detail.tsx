@@ -1,12 +1,18 @@
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Document detail side panel (S12): metadata, contract terms, links, amendments, preview, version history with
 // authorised download, new version upload, manual signature record and the comment thread (S14).
-import { DetailList, SectionCard, SidePanel, surfaceTileClassName } from '@app/admin-ui';
+import {
+  DetailList,
+  SectionCard,
+  SidePanel,
+  UnsavedChangesBoundary,
+  surfaceTileClassName,
+  useUnsavedChangesScope,
+} from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { Effect } from 'effect';
@@ -34,6 +40,8 @@ import { canPreview, DownloadButton, FilePreviewBody, FilePreviewDialog } from '
 import type { CommandOutcome, FailureReason, useAgendaRecords } from '../../../../ui/use-agenda.ts';
 import { MAX_UPLOAD_BYTES, uploadFile } from '../../../../ui/use-agenda.ts';
 import { ContractStatusBadge } from './documents-model.tsx';
+import { FormSaveFooter, commandResult, useFormSave } from '../../../../ui/form-save.tsx';
+import type { FormSubmitResult } from '../../../../ui/form-save.tsx';
 
 const k = 'facility-operations.documents';
 const notProvidedKey = 'facility-operations.common.notProvided';
@@ -50,8 +58,6 @@ const uploadDocumentVersion = Effect.fn('Documents.uploadVersion')(function* upl
   note,
   onBusy,
   onFailure,
-  onFileChange,
-  onNoteChange,
   onPersisted,
   run,
 }: {
@@ -60,21 +66,19 @@ const uploadDocumentVersion = Effect.fn('Documents.uploadVersion')(function* upl
   readonly note: string;
   readonly onBusy: (busy?: 'upload' | 'save') => void;
   readonly onFailure: (failure?: FailureReason | 'upload') => void;
-  readonly onFileChange: (file?: File) => void;
-  readonly onNoteChange: (note: string) => void;
   readonly onPersisted: (version: number) => void;
   readonly run: (command: OpsCommand) => Effect.Effect<CommandOutcome>;
 }) {
   if (file === undefined) {
-    return;
+    return 'failed' as const;
   }
   onFailure();
   onBusy('upload');
   const uploaded = yield* uploadFile(file);
   if (!uploaded.ok) {
     onBusy();
-    onFailure('upload');
-    return;
+    onFailure(uploaded.reason === 'forbidden' ? 'forbidden' : 'upload');
+    return 'failed' as const;
   }
   onBusy('save');
   const outcome = yield* run({
@@ -84,23 +88,22 @@ const uploadDocumentVersion = Effect.fn('Documents.uploadVersion')(function* upl
     ...optionalField('note', note.trim() === '' ? undefined : note.trim()),
   });
   onBusy();
-  if (outcome.ok) {
-    let highest = 0;
-    for (const entry of document.versions) {
-      highest = Math.max(highest, entry.version);
-    }
-    const next = highest + 1;
-    onPersisted(next);
-    onFileChange();
-    onNoteChange('');
-  } else {
-    onFailure(outcome.reason);
-  }
+  return commandResult(
+    outcome,
+    () => {
+      let highest = 0;
+      for (const entry of document.versions) {
+        highest = Math.max(highest, entry.version);
+      }
+      onPersisted(highest + 1);
+    },
+    onFailure,
+  );
 });
 
 const recordDocumentSignature = Effect.fn('Documents.recordSignature')(function* recordDocumentSignature({
   documentId,
-  onBusy,
+  onClear,
   onDone,
   onFailure,
   onPersisted,
@@ -110,7 +113,7 @@ const recordDocumentSignature = Effect.fn('Documents.recordSignature')(function*
   version,
 }: {
   readonly documentId: DocumentRecord['id'];
-  readonly onBusy: (busy: boolean) => void;
+  readonly onClear: () => void;
   readonly onDone: () => void;
   readonly onFailure: (failure: FailureReason | 'required') => void;
   readonly onPersisted: () => void;
@@ -121,9 +124,9 @@ const recordDocumentSignature = Effect.fn('Documents.recordSignature')(function*
 }) {
   if (signedBy.trim() === '' || signedOnInput === '') {
     onFailure('required');
-    return;
+    return 'failed' as const;
   }
-  onBusy(true);
+  onClear();
   const outcome = yield* run({
     _tag: 'DocumentSignatureRecord',
     documentId,
@@ -131,16 +134,27 @@ const recordDocumentSignature = Effect.fn('Documents.recordSignature')(function*
     signedOn: signedOnInput,
     version: Number(version),
   });
-  onBusy(false);
-  if (outcome.ok) {
-    onPersisted();
-    onDone();
-  } else {
-    onFailure(outcome.reason);
-  }
+  return commandResult(
+    outcome,
+    () => {
+      onPersisted();
+      onDone();
+    },
+    onFailure,
+  );
 });
 
-const VersionUpload = ({
+/** The draft of a new version: its file and note. */
+interface VersionDraft {
+  readonly file?: File | undefined;
+  readonly note: string;
+}
+
+/** A new version before a file is picked. */
+const emptyVersionDraft: VersionDraft = { note: '' };
+
+/** The new-version form of the version history (exported for its mounted test). */
+export const VersionUpload = ({
   document,
   run,
 }: {
@@ -155,26 +169,48 @@ const VersionUpload = ({
   const [error, setError] = useState<string | undefined>();
   const newVersionLabel = t(`${k}.detail.newVersion`);
 
-  const submit = uploadDocumentVersion({
-    document,
-    file,
-    note,
-    onBusy: setBusy,
-    onFailure: (failure) => {
-      if (failure === undefined) {
-        setError(undefined);
-      } else if (failure === 'upload') {
-        setError(t(`${k}.uploadFailed`));
-      } else {
-        setError(t(`facility-operations.common.errors.${failure}`));
-      }
+  // A new version is sent on Uložit only, with its file and note.
+  const form = useFormSave<VersionDraft>({
+    isValid: (value) => value.file !== undefined,
+    onDiscard: () => {
+      setFile(undefined);
+      setNote('');
+      setError(undefined);
     },
-    onFileChange: setFile,
-    onNoteChange: setNote,
-    onPersisted: (next) => {
-      toast.create({ title: t(`${k}.detail.versionSaved`, { version: next }), type: 'success' });
+    onStartOver: () => {
+      setFile(undefined);
+      setNote('');
+      return emptyVersionDraft;
     },
-    run,
+    submit: () =>
+      uploadDocumentVersion({
+        document,
+        file,
+        note,
+        onBusy: setBusy,
+        onFailure: (failure) => {
+          if (failure === undefined) {
+            setError(undefined);
+          } else if (failure === 'upload') {
+            setError(t(`${k}.uploadFailed`));
+          } else {
+            setError(t(`facility-operations.common.errors.${failure}`));
+          }
+        },
+        onPersisted: (next) => {
+          toast.create({ title: t(`${k}.detail.versionSaved`, { version: next }), type: 'success' });
+        },
+        run,
+      }).pipe(
+        Effect.catchTag('FileReadFailed', () =>
+          Effect.sync((): FormSubmitResult => {
+            setBusy(undefined);
+            setError(t(`${k}.uploadFailed`));
+            return 'failed';
+          }),
+        ),
+      ),
+    value: { file, note },
   });
 
   return (
@@ -211,34 +247,24 @@ const VersionUpload = ({
         )}
       </div>
       {file !== undefined && (
-        <div className="flex flex-wrap items-end gap-100">
-          <div className="min-w-0 flex-1">
-            <FormInput
-              id="version-note"
-              label={t(`${k}.detail.versionNote`)}
-              maxLength={4000}
-              onChange={(event) => setNote(event.target.value)}
-              placeholder={t(`${k}.detail.versionNotePlaceholder`)}
-              value={note}
-            />
-          </div>
-          <Button
-            isLoading={busy !== undefined}
-            loadingText={busy === 'upload' ? t(`${k}.uploading`) : t('facility-operations.common.saving')}
-            onClick={() => {
-              browserRuntime.runFork(submit);
-            }}
-            variant="primary"
-          >
-            {t(`${k}.detail.newVersion`)}
-          </Button>
-        </div>
+        <FormInput
+          id="version-note"
+          label={t(`${k}.detail.versionNote`)}
+          maxLength={4000}
+          onChange={(event) => setNote(event.target.value)}
+          placeholder={t(`${k}.detail.versionNotePlaceholder`)}
+          value={note}
+        />
       )}
+      <FormSaveFooter error={error} form={form}>
+        {busy === 'upload' && <StatusText size="sm">{t(`${k}.uploading`)}</StatusText>}
+      </FormSaveFooter>
     </div>
   );
 };
 
-const SignatureForm = ({
+/** The manual signature form of the signature card (exported for its mounted test). */
+export const SignatureForm = ({
   document,
   onDone,
   run,
@@ -253,30 +279,41 @@ const SignatureForm = ({
   const [signedBy, setSignedBy] = useState('');
   const [signedOn, setSignedOn] = useState('');
   const [version, setVersion] = useState(String(latest));
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<FailureReason | 'required' | undefined>();
-
-  const submit = recordDocumentSignature({
-    documentId: document.id,
-    onBusy: setBusy,
-    onDone,
-    onFailure: setError,
-    onPersisted: () => {
-      toast.create({ title: t(`${k}.signature.saved`), type: 'success' });
+  const errorText =
+    error === undefined
+      ? undefined
+      : t(error === 'required' ? 'facility-operations.common.required' : `facility-operations.common.errors.${error}`);
+  // The signature is recorded on Uložit only; the version it opens with is not typed input.
+  const form = useFormSave({
+    onDiscard: () => {
+      setSignedBy('');
+      setSignedOn('');
+      setVersion(String(latest));
+      setError(undefined);
     },
-    run,
-    signedBy,
-    signedOnInput: signedOn,
-    version,
+    submit: () =>
+      recordDocumentSignature({
+        documentId: document.id,
+        onClear: () => setError(undefined),
+        onDone,
+        onFailure: setError,
+        onPersisted: () => {
+          toast.create({ title: t(`${k}.signature.saved`), type: 'success' });
+        },
+        run,
+        signedBy,
+        signedOnInput: signedOn,
+        version,
+      }),
+    value: { signedBy, signedOn, version },
   });
 
   return (
     <div className={`${surfaceTileClassName} flex flex-col gap-150 p-150`}>
-      {error !== undefined && (
+      {errorText !== undefined && (
         <StatusText showIcon status="error">
-          {error === 'required'
-            ? t('facility-operations.common.required')
-            : t(`facility-operations.common.errors.${error}`)}
+          {errorText}
         </StatusText>
       )}
       <div className="grid grid-cols-1 gap-150 sm:grid-cols-3">
@@ -309,19 +346,13 @@ const SignatureForm = ({
           value={[version]}
         />
       </div>
-      <div className="flex items-center justify-between gap-100">
-        <span className="text-fg-secondary text-xs">{t(`${k}.signature.manualNote`)}</span>
-        <Button
-          isLoading={busy}
-          onClick={() => {
-            browserRuntime.runFork(submit);
-          }}
-          size="sm"
-          variant="primary"
-        >
-          {t(`${k}.signature.record`)}
-        </Button>
-      </div>
+      <span className="text-fg-secondary text-xs">{t(`${k}.signature.manualNote`)}</span>
+      <FormSaveFooter
+        cancelLabel={t('facility-operations.common.cancel')}
+        error={errorText}
+        form={form}
+        onCancel={onDone}
+      />
     </div>
   );
 };
@@ -482,7 +513,7 @@ const DocumentVersionHistory = ({
   const versionsNewestFirst = document.versions.toReversed();
   return (
     <SectionCard title={`${historyLabel} (${document.versions.length})`}>
-      {canWrite && <VersionUpload document={document} run={run} />}
+      {canWrite && <VersionUpload document={document} key={document.id} run={run} />}
       {versionsNewestFirst.length === 0 ? (
         <p className="text-fg-secondary text-sm">{t(`${k}.detail.noVersions`)}</p>
       ) : (
@@ -580,7 +611,7 @@ const DocumentSignatureCard = ({
           ]}
         />
       )}
-      {signing && <SignatureForm document={document} onDone={() => setSigning(false)} run={run} />}
+      {signing && <SignatureForm document={document} key={document.id} onDone={() => setSigning(false)} run={run} />}
     </SectionCard>
   );
 };
@@ -611,108 +642,114 @@ export const DocumentDetailPanel = ({
   const { t } = useModernI18n();
   const [preview, setPreview] = useState<StoredFileRef | undefined>();
   const notProvided = t(notProvidedKey);
+  // Every way out of the detail asks the forms inside it (new version, signature) before their input is lost.
+  const scope = useUnsavedChangesScope();
 
   if (document === undefined) {
     return null;
   }
   const current = document.versions.at(-1);
   const { contract } = document;
-  const openSubject = documentSubjectOpener(onOpenDocument);
+  const leaveTo = (leave: () => void) => () => scope.request(leave);
+  const openDocument = (documentId: string) => scope.request(() => onOpenDocument(documentId));
+  const openSubject = documentSubjectOpener(openDocument);
 
   return (
-    <SidePanel
-      actions={
-        <div className="facility-documents-actions">
-          {canWrite && (
-            <Button onClick={() => onEdit(document)} theme="outlined" variant="secondary">
-              {t(`${k}.detail.edit`)}
+    <UnsavedChangesBoundary scope={scope}>
+      <SidePanel
+        actions={
+          <div className="facility-documents-actions">
+            {canWrite && (
+              <Button onClick={leaveTo(() => onEdit(document))} theme="outlined" variant="secondary">
+                {t(`${k}.detail.edit`)}
+              </Button>
+            )}
+            {canWrite && document.category === 'contract' && (
+              <Button onClick={leaveTo(() => onAmend(document))} theme="outlined" variant="secondary">
+                {t(`${k}.contract.createAmendment`)}
+              </Button>
+            )}
+            <Button onClick={leaveTo(onClose)} variant="primary">
+              {t('facility-operations.common.close')}
             </Button>
-          )}
-          {canWrite && document.category === 'contract' && (
-            <Button onClick={() => onAmend(document)} theme="outlined" variant="secondary">
-              {t(`${k}.contract.createAmendment`)}
-            </Button>
-          )}
-          <Button onClick={onClose} variant="primary">
-            {t('facility-operations.common.close')}
-          </Button>
-        </div>
-      }
-      description={
-        <span className="flex flex-wrap items-center gap-100">
-          <CategoryBadge category={document.category} />
-          {contract !== undefined && <ContractStatusBadge status={contract.status} />}
-          {document.signature !== undefined && (
-            <Badge size="sm" variant="success">
-              {t(`${k}.signature.signed`, { date: formatIsoDate(document.signature.signedOn, notProvided) })}
-            </Badge>
-          )}
-          <span className="text-fg-secondary text-xs">
-            {t(`${k}.fields.lastChange`)}: {formatWhen(document.updatedAt)}
-          </span>
-        </span>
-      }
-      onOpenChange={(next) => {
-        if (!next) {
-          onClose();
+          </div>
         }
-      }}
-      open
-      resizeLabel={t('facility-operations.common.close')}
-      size="xl"
-      title={document.title}
-    >
-      <div className="flex flex-col gap-250 py-200" data-testid="document-detail">
-        {original !== undefined && (
-          <button
-            className="w-fit rounded-md bg-info-light px-150 py-100 text-left text-sm hover:underline"
-            onClick={() => onOpenDocument(original.id)}
-            type="button"
-          >
-            ↳ {t(`${k}.contract.amendmentOf`, { title: original.title })}
-          </button>
-        )}
-        {current !== undefined && canPreview(current.file) && (
-          <SectionCard
-            actions={<DownloadButton file={current.file} />}
-            title={[t(`${k}.preview`), t(`${k}.detail.versionLabel`, { version: current.version })].join(' · ')}
-          >
-            <FilePreviewBody file={current.file} height="420px" />
+        description={
+          <span className="flex flex-wrap items-center gap-100">
+            <CategoryBadge category={document.category} />
+            {contract !== undefined && <ContractStatusBadge status={contract.status} />}
+            {document.signature !== undefined && (
+              <Badge size="sm" variant="success">
+                {t(`${k}.signature.signed`, { date: formatIsoDate(document.signature.signedOn, notProvided) })}
+              </Badge>
+            )}
+            <span className="text-fg-secondary text-xs">
+              {t(`${k}.fields.lastChange`)}: {formatWhen(document.updatedAt)}
+            </span>
+          </span>
+        }
+        onOpenChange={(next) => {
+          if (!next) {
+            onClose();
+          }
+        }}
+        open
+        resizeLabel={t('facility-operations.common.close')}
+        size="xl"
+        title={document.title}
+      >
+        <div className="flex flex-col gap-250 py-200" data-testid="document-detail">
+          {original !== undefined && (
+            <button
+              className="w-fit rounded-md bg-info-light px-150 py-100 text-left text-sm hover:underline"
+              onClick={() => openDocument(original.id)}
+              type="button"
+            >
+              ↳ {t(`${k}.contract.amendmentOf`, { title: original.title })}
+            </button>
+          )}
+          {current !== undefined && canPreview(current.file) && (
+            <SectionCard
+              actions={<DownloadButton file={current.file} />}
+              title={[t(`${k}.preview`), t(`${k}.detail.versionLabel`, { version: current.version })].join(' · ')}
+            >
+              <FilePreviewBody file={current.file} height="420px" />
+            </SectionCard>
+          )}
+
+          <DocumentMetadata document={document} onOpenDocument={openDocument} />
+
+          {contract !== undefined && <DocumentContractInfo contract={contract} />}
+
+          {(document.category === 'contract' || amendments.length > 0) && (
+            <DocumentAmendments
+              amendments={amendments}
+              canWrite={canWrite}
+              document={document}
+              onAmend={(amended) => scope.request(() => onAmend(amended))}
+              onOpenDocument={openDocument}
+            />
+          )}
+
+          <DocumentVersionHistory canWrite={canWrite} document={document} onPreview={setPreview} run={run} />
+
+          <DocumentSignatureCard canWrite={canWrite} document={document} run={run} />
+
+          <SectionCard>
+            <CommentThread
+              onOpenAttachment={openSubject}
+              records={records}
+              subject={{ id: document.id, kind: 'document', label: document.title }}
+              title={t(`${k}.detail.comments`)}
+            />
           </SectionCard>
-        )}
 
-        <DocumentMetadata document={document} onOpenDocument={onOpenDocument} />
-
-        {contract !== undefined && <DocumentContractInfo contract={contract} />}
-
-        {(document.category === 'contract' || amendments.length > 0) && (
-          <DocumentAmendments
-            amendments={amendments}
-            canWrite={canWrite}
-            document={document}
-            onAmend={onAmend}
-            onOpenDocument={onOpenDocument}
-          />
-        )}
-
-        <DocumentVersionHistory canWrite={canWrite} document={document} onPreview={setPreview} run={run} />
-
-        <DocumentSignatureCard canWrite={canWrite} document={document} run={run} />
-
-        <SectionCard>
-          <CommentThread
-            onOpenAttachment={openSubject}
-            records={records}
-            subject={{ id: document.id, kind: 'document', label: document.title }}
-            title={t(`${k}.detail.comments`)}
-          />
-        </SectionCard>
-
-        <SectionCard>
-          <ChangeHistory entityId={document.id} refreshKey={document.updatedAt} />
-        </SectionCard>
-      </div>
-      <FilePreviewDialog file={preview} onClose={() => setPreview(undefined)} />
-    </SidePanel>
+          <SectionCard>
+            <ChangeHistory entityId={document.id} refreshKey={document.updatedAt} />
+          </SectionCard>
+        </div>
+        <FilePreviewDialog file={preview} onClose={() => setPreview(undefined)} />
+      </SidePanel>
+    </UnsavedChangesBoundary>
   );
 };

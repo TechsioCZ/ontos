@@ -6,7 +6,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Effect } from 'effect';
 import { useState } from 'react';
-import { PageHeader, Toaster } from '@app/admin-ui';
+import { DocumentTitle, PageHeader, Toaster } from '@app/admin-ui';
 import type { Order } from '../../../../../shared/apis/records.ts';
 import type { OrderStatus } from '../../../../../shared/domain/merchandise-model.ts';
 import { storefrontBrandOf } from '../../../../../shared/domain/storefront-brand.ts';
@@ -17,6 +17,7 @@ import { OrderCancelDialog } from './order-cancel-dialog.tsx';
 import { OrderDetailActions, OrderDetailContent, OrderPendingBody } from './order-detail-content.tsx';
 import { orderDetailTitle, useOrderEditing } from './order-detail-view.ts';
 import { orderNavigationFailureKey } from './order-navigation.ts';
+import { OrderReloadNotice } from './order-reload-notice.tsx';
 import type { PendingOrderDetail } from './order-detail-content.tsx';
 import { proposalToast, statusChangeNotification } from './order-status-notice.ts';
 import {
@@ -69,7 +70,8 @@ export const OrderDetailPage = ({ context, legalEntityId, orderId }: OrderDetail
   const [busy, setBusy] = useState(false);
   const [pendingCancel, setPendingCancel] = useState<readonly Order[] | null>(null);
   // The detail read does not carry the permissions, so the order list supplies them. One row keeps that read small.
-  const list = useOrders(legalEntityId, firstOrdersPage(1), context);
+  // The page shows neither the rows nor the header counts, so it warms no rows and reads no counts.
+  const list = useOrders(legalEntityId, firstOrdersPage(1), context, { counts: false, warm: false });
   const records = list.state.kind === 'ready' ? list.state.records : undefined;
   const canWrite = records?.canWrite === true;
   const canEditOrders = records === undefined ? false : recordsCanEditOrders(records);
@@ -160,6 +162,7 @@ export const OrderDetailPage = ({ context, legalEntityId, orderId }: OrderDetail
     <>
       <UltramodernRouteHead />
       <section className="flex flex-col gap-200">
+        <DocumentTitle title={detail.status === 'ready' ? detail.order.number : undefined} />
         <PageHeader
           actions={
             detail.status === 'ready' ? (
@@ -171,7 +174,6 @@ export const OrderDetailPage = ({ context, legalEntityId, orderId }: OrderDetail
                 customers={directory}
                 editing={editing}
                 onClose={back}
-                onEditingChange={setEditing}
                 onStatus={requestStatus}
                 order={detail.order}
               />
@@ -186,6 +188,7 @@ export const OrderDetailPage = ({ context, legalEntityId, orderId }: OrderDetail
           }
           title={title}
         />
+        <OrderReloadNotice detail={detail} onRetry={reload} />
         {detail.status === 'ready' ? (
           <OrderDetailContent
             brand={storefrontBrandOf(legalEntityId)}

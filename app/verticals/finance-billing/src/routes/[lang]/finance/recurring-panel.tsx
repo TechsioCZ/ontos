@@ -1,47 +1,26 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { VAT_RATE_CHOICES } from '../../../../shared/domain/invoice-draft.ts';
 import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { Effect } from 'effect';
 import { FinanceTableScroll } from './finance-table-scroll.tsx';
 import { formatCzechDays } from '@app/shared-contracts';
-import { dialogCloseLabel, EmptyState, formatDate, formatMoney, SectionCard, SidePanel } from '@app/admin-ui';
+import { dialogCloseLabel, EmptyState, formatDate, formatMoney, SectionCard } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Checkbox } from '@techsio/ui-kit/atoms/checkbox';
 import { invoiceLifecycle, LIFECYCLE_PRESENTATION } from './invoice-view.ts';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useState } from 'react';
-import type { RecurringTemplate, VatRate } from '../../../../shared/apis/records.ts';
+import type { RecurringTemplate } from '../../../../shared/apis/records.ts';
 import { addMonths, monthOf } from '../../../../shared/domain/finance-planning.ts';
 import { computeInvoiceTotals } from '../../../../shared/domain/invoice-totals.ts';
-import { isPendingApproval, monthLabel, outcomeMessage, outcomeNotice, parseAmountMinor } from './finance-ui.tsx';
-import type { FinanceCommandDraft, FinanceNotice, FinanceViewModel } from './finance-ui.tsx';
+import { isPendingApproval, monthLabel, outcomeMessage, outcomeNotice } from './finance-ui.tsx';
+import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
+import { RecurringTemplateEditor } from './recurring-template-form.tsx';
 
 const templateTotal = (template: RecurringTemplate) => computeInvoiceTotals(template.lines)?.totalMinor ?? 0;
-
-interface TemplateDraft {
-  readonly amount: string;
-  readonly customerId: string;
-  readonly description: string;
-  readonly dueDays: string;
-  readonly issueDay: string;
-  readonly name: string;
-  readonly vatRate: VatRate;
-}
-
-const emptyTemplate: TemplateDraft = {
-  amount: '',
-  customerId: '',
-  description: 'Nájemné za prostor',
-  dueDays: '14',
-  issueDay: '1',
-  name: '',
-  vatRate: 21,
-};
 
 interface GenerationResult {
   readonly created: readonly string[];
@@ -128,62 +107,6 @@ const recurringPanelGenerateDuplicateProgram = Effect.fn('Finance.generateDuplic
   },
 );
 
-const recurringPanelCreateTemplateProgram = Effect.fn('Finance.createTemplate')(
-  function* recurringPanelCreateTemplateProgram(
-    context: Pick<
-      ReturnType<typeof useRecurringPanel>,
-      'customers' | 'draft' | 'setCreating' | 'setDraft' | 'setFormError' | 'vm'
-    >,
-  ) {
-    const { customers, draft, setCreating, setDraft, setFormError, vm } = context;
-    const customer = customers.find((entry) => entry.partyId === draft.customerId);
-    const amountMinor = parseAmountMinor(draft.amount);
-    const issueDay = Number(draft.issueDay);
-    const dueDays = Number(draft.dueDays);
-    if (customer === undefined || draft.name.trim() === '' || draft.description.trim() === '') {
-      setFormError({ status: 'error', text: 'Vyberte nájemce a vyplňte název a popis položky.' });
-      return;
-    }
-    if (amountMinor === undefined || amountMinor === 0) {
-      setFormError({ status: 'error', text: 'Zadejte měsíční částku bez DPH.' });
-      return;
-    }
-    if (
-      !Number.isInteger(issueDay) ||
-      issueDay < 1 ||
-      issueDay > 28 ||
-      !Number.isInteger(dueDays) ||
-      dueDays < 1 ||
-      dueDays > 90
-    ) {
-      setFormError({ status: 'error', text: 'Den vystavení musí být 1–28 a splatnost 1–90 dní.' });
-      return;
-    }
-    const createRecurringTemplateCommand: FinanceCommandDraft<'CreateRecurringTemplate'> = {
-      _tag: 'CreateRecurringTemplate',
-      counterpartyRef: customer.counterpartyRef,
-      dueDays,
-      issueDay,
-      lines: [
-        { description: draft.description.trim(), quantity: 1, unitPriceMinor: amountMinor, vatRate: draft.vatRate },
-      ],
-      name: draft.name.trim(),
-      partyId: customer.partyId,
-    };
-    if (customer.displayName !== null) {
-      createRecurringTemplateCommand.counterpartyName = customer.displayName;
-    }
-    const outcome = yield* vm.execute(createRecurringTemplateCommand, 'Šablona opakované faktury uložena');
-    if (outcome.ok) {
-      setCreating(false);
-      setDraft(emptyTemplate);
-      setFormError(undefined);
-    } else {
-      setFormError(outcomeNotice(vm, outcome));
-    }
-  },
-);
-
 const recurringPanelPrepareSelectedProgram = Effect.fn('Finance.prepareSelected')(
   function* recurringPanelPrepareSelectedProgram(
     context: Pick<ReturnType<typeof useRecurringPanel>, 'selectedDrafts' | 'setBulkResult' | 'setBulkSelected' | 'vm'>,
@@ -219,8 +142,6 @@ const useRecurringPanel = (vm: FinanceViewModel) => {
   const nextMonth = addMonths(monthOf(vm.referenceDate === '' ? '2026-10-20' : vm.referenceDate), 1);
   const [period, setPeriod] = useState(nextMonth);
   const [creating, setCreating] = useState(false);
-  const [draft, setDraft] = useState<TemplateDraft>(emptyTemplate);
-  const [formError, setFormError] = useState<FinanceNotice>();
   const [result, setResult] = useState<GenerationResult>();
   const [duplicateTarget, setDuplicateTarget] = useState<RecurringTemplate>();
   const [running, setRunning] = useState(false);
@@ -229,8 +150,6 @@ const useRecurringPanel = (vm: FinanceViewModel) => {
     readonly kind: 'default' | 'error' | 'success';
     readonly text: string;
   }>();
-  const { customers } = vm.references;
-  const set = (patch: Partial<TemplateDraft>) => setDraft((current) => ({ ...current, ...patch }));
 
   const generated = (template: RecurringTemplate) =>
     invoices.filter((invoice) => invoice.recurringTemplateId === template.id && invoice.businessState !== 'VOIDED');
@@ -244,12 +163,6 @@ const useRecurringPanel = (vm: FinanceViewModel) => {
   const generateDuplicate = (): void => {
     void financeBrowserRuntime.runPromise(
       recurringPanelGenerateDuplicateProgram({ duplicateTarget, period, setDuplicateTarget, setResult, vm }),
-    );
-  };
-
-  const createTemplate = (): void => {
-    void financeBrowserRuntime.runPromise(
-      recurringPanelCreateTemplateProgram({ customers, draft, setCreating, setDraft, setFormError, vm }),
     );
   };
 
@@ -282,12 +195,8 @@ const useRecurringPanel = (vm: FinanceViewModel) => {
     active,
     bulkResult,
     bulkSelected,
-    createTemplate,
     creating,
-    customers,
-    draft,
     duplicateTarget,
-    formError,
     generate,
     generated,
     generateDuplicate,
@@ -301,13 +210,10 @@ const useRecurringPanel = (vm: FinanceViewModel) => {
     running,
     selectable,
     selectedDrafts,
-    set,
     setBulkResult,
     setBulkSelected,
     setCreating,
-    setDraft,
     setDuplicateTarget,
-    setFormError,
     setPeriod,
     setResult,
     setRunning,
@@ -683,142 +589,6 @@ const RecurringDuplicateDecision = (model: ReturnType<typeof useRecurringPanel>)
   );
 };
 
-const RecurringTemplateEditor = (model: ReturnType<typeof useRecurringPanel>) => {
-  const { t } = useModernI18n();
-  const { createTemplate, creating, customers, draft, formError, set, setCreating, vm } = model;
-  return (
-    <SidePanel
-      actions={
-        <>
-          <Button onClick={() => setCreating(false)} theme="outlined" variant="secondary">
-            Zrušit
-          </Button>
-          <Button
-            isLoading={vm.busy}
-            onClick={() => {
-              createTemplate();
-            }}
-            variant="primary"
-          >
-            Uložit šablonu
-          </Button>
-        </>
-      }
-      description="Pravidelná měsíční faktura, např. nájemné za jednotku."
-      onOpenChange={setCreating}
-      open={creating}
-      resizeLabel={vm.t('finance-billing.sidePanel.resize')}
-      size="lg"
-      title={t('finance-billing.financeUi.recurring.newTemplate')}
-    >
-      <form
-        className="flex flex-col gap-200 py-200"
-        onSubmit={(event) => {
-          event.preventDefault();
-          createTemplate();
-        }}
-      >
-        {formError !== undefined && (
-          <StatusText showIcon size="sm" status={formError.status}>
-            {formError.text}
-          </StatusText>
-        )}
-        {customers.length === 0 && (
-          <StatusText showIcon size="sm" status="warning">
-            V adresáři zatím není žádný zákazník (nájemce). Založte jej nejprve v sekci Zákazníci.
-          </StatusText>
-        )}
-        <SelectTemplate
-          items={customers.map((customer) => ({
-            displayValue: customer.displayName ?? t('finance-billing.faktury.unknownCustomer'),
-            label: customer.displayName ?? t('finance-billing.faktury.unknownCustomer'),
-            value: customer.partyId,
-          }))}
-          label={t('finance-billing.financeUi.recurring.tenant')}
-          labelProps={{ className: 'font-label text-label-md' }}
-          onValueChange={({ value }) => {
-            const [next] = value;
-            if (next !== undefined) {
-              set({ customerId: next });
-            }
-          }}
-          placeholder={t('finance-billing.financeUi.recurring.tenantPlaceholder')}
-          size="sm"
-          value={draft.customerId === '' ? [] : [draft.customerId]}
-        />
-        <FormInput
-          id="template-name"
-          label={t('finance-billing.financeUi.recurring.templateName')}
-          onChange={(event) => set({ name: event.target.value })}
-          placeholder={t('finance-billing.financeUi.recurring.templateExample')}
-          size="sm"
-          value={draft.name}
-        />
-        <FormInput
-          id="template-line"
-          label={t('finance-billing.financeUi.recurring.lineText')}
-          onChange={(event) => set({ description: event.target.value })}
-          size="sm"
-          value={draft.description}
-        />
-        <div className="grid grid-cols-1 gap-200 md:grid-cols-2">
-          <FormInput
-            helpText={
-              parseAmountMinor(draft.amount) === undefined
-                ? 'Částka bez DPH'
-                : `s DPH ${formatMoney(Math.round((parseAmountMinor(draft.amount) ?? 0) * (1 + draft.vatRate / 100)))}`
-            }
-            id="template-amount"
-            inputMode="decimal"
-            label={t('finance-billing.financeUi.recurring.monthlyAmount')}
-            onChange={(event) => set({ amount: event.target.value })}
-            size="sm"
-            value={draft.amount}
-          />
-          <SelectTemplate
-            items={[21, 12, 0].map((rate) => ({
-              displayValue: `${rate} %`,
-              label: `${rate} %`,
-              value: String(rate),
-            }))}
-            label={t('finance-billing.financeUi.common.vatRate')}
-            labelProps={{ className: 'font-label text-label-md' }}
-            onValueChange={({ value }) => {
-              const [next] = value;
-              if (next === '21' || next === '12' || next === '0') {
-                const vatRate = VAT_RATE_CHOICES.find((rate) => String(rate) === next);
-                if (vatRate !== undefined) {
-                  set({ vatRate });
-                }
-              }
-            }}
-            size="sm"
-            value={[String(draft.vatRate)]}
-          />
-        </div>
-        <div className="grid grid-cols-1 gap-200 md:grid-cols-2">
-          <FormInput
-            id="template-issue-day"
-            inputMode="numeric"
-            label={t('finance-billing.financeUi.recurring.issueDay')}
-            onChange={(event) => set({ issueDay: event.target.value })}
-            size="sm"
-            value={draft.issueDay}
-          />
-          <FormInput
-            id="template-due-days"
-            inputMode="numeric"
-            label={t('finance-billing.financeUi.recurring.dueDays')}
-            onChange={(event) => set({ dueDays: event.target.value })}
-            size="sm"
-            value={draft.dueDays}
-          />
-        </div>
-      </form>
-    </SidePanel>
-  );
-};
-
 export const RecurringPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
   const model = useRecurringPanel(vm);
   return (
@@ -827,7 +597,7 @@ export const RecurringPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
       <RecurringTemplates {...model} />
       <RecurringDrafts {...model} />
       <RecurringDuplicateDecision {...model} />
-      <RecurringTemplateEditor {...model} />
+      {model.creating && <RecurringTemplateEditor onClose={() => model.setCreating(false)} vm={vm} />}
     </div>
   );
 };

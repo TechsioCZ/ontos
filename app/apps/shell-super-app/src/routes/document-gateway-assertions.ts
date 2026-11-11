@@ -18,6 +18,9 @@ import { issueDocumentGatewayContexts } from '../api/auth-client.ts';
  *
  * Nothing is persisted: sign-out and tenant or legal-entity switches reload the document, which drops them, and a new
  * composition revision replaces them. Each assertion keeps its own audience and lifetime; modules authorize every call.
+ *
+ * Owners redeem each assertion exactly once: a second presentation is refused with 401. So a token leaves this module
+ * at most once for the whole document, including tokens server rendering embedded, which every render offers again.
  */
 
 /** Leave enough lifetime for a claimed assertion to reach its owner. */
@@ -37,12 +40,21 @@ interface DocumentAssertions {
   /** Audiences this document asks for; a renewal covers all of them together. */
   readonly audiences: Set<string>;
   readonly revision: string;
-  readonly seededTokens: Set<string>;
   readonly slots: Map<string, Slot>;
 }
 
 /** One document admits one release; a new revision starts an empty set. */
 const documentAssertions = MutableRef.make(Option.none<DocumentAssertions>());
+
+/**
+ * Every embedded token ever offered, for the document's lifetime. The Shell offers the same embedded set on every
+ * render, also after a context boundary or another revision dropped the held set; a token offered before is never
+ * held again, whether a remote already redeemed it or it belongs to the context that just ended.
+ */
+const offeredTokens = MutableRef.make(new Set<string>());
+
+/** Revisions the Shell no longer issues for (a release switch); their documents must reload, so no batch is asked. */
+const retiredRevisions = MutableRef.make(new Set<string>());
 
 const inBrowser = () => 'document' in globalThis;
 
@@ -54,7 +66,7 @@ const currentFor = (revision: string): Option.Option<DocumentAssertions> =>
 
 const ownedFor = (revision: string): DocumentAssertions =>
   Option.getOrElse(currentFor(revision), () => {
-    const fresh: DocumentAssertions = { audiences: new Set(), revision, seededTokens: new Set(), slots: new Map() };
+    const fresh: DocumentAssertions = { audiences: new Set(), revision, slots: new Map() };
     MutableRef.set(documentAssertions, Option.some(fresh));
     return fresh;
   });
@@ -81,6 +93,12 @@ const requestBatch = (revision: string, audiences: readonly string[]) =>
       ).pipe(
         Effect.map(({ assertions }) => assertions),
         Effect.timeout(BATCH_TIMEOUT),
+        Effect.catchTag('GatewayReloadRequiredProblem', () =>
+          Effect.sync((): readonly DocumentGatewayAssertion[] => {
+            MutableRef.get(retiredRevisions).add(revision);
+            return [];
+          }),
+        ),
         Effect.orElseSucceed((): readonly DocumentGatewayAssertion[] => []),
       ),
     { concurrency: BATCH_CONCURRENCY },
@@ -125,7 +143,7 @@ export const warmDocumentGatewayAssertions = Effect.fn('DocumentGatewayAssertion
   revision: string,
   audiences: readonly string[],
 ) {
-  if (!inBrowser()) {
+  if (!inBrowser() || MutableRef.get(retiredRevisions).has(revision)) {
     return;
   }
   const owned = ownedFor(revision);
@@ -159,7 +177,7 @@ export const documentGatewayAssertion = Effect.fn('DocumentGatewayAssertions.get
   revision: string,
 ) {
   const current = currentFor(revision);
-  if (!inBrowser() || Option.isNone(current)) {
+  if (!inBrowser() || Option.isNone(current) || MutableRef.get(retiredRevisions).has(revision)) {
     return Option.none<GatewayContextResponse>();
   }
   const owned = current.value;
@@ -210,14 +228,15 @@ export const seedDocumentGatewayAssertions = Effect.fn('DocumentGatewayAssertion
   }
   const now = yield* Clock.currentTimeMillis;
   const owned = ownedFor(revision);
+  const offered = MutableRef.get(offeredTokens);
   for (const assertion of assertions) {
     owned.audiences.add(assertion.audience);
     const slot = owned.slots.get(assertion.audience);
     const response = assertionOf(assertion);
-    if (owned.seededTokens.has(response.token)) {
+    if (offered.has(response.token)) {
       continue;
     }
-    owned.seededTokens.add(response.token);
+    offered.add(response.token);
     if (
       assertion.compositionRevision === revision &&
       usable(response, now) &&
@@ -228,5 +247,8 @@ export const seedDocumentGatewayAssertions = Effect.fn('DocumentGatewayAssertion
   }
 });
 
-/** Drops every held assertion. Tests call it between cases. */
+/**
+ * Drops every held assertion at a context boundary (and between test cases). Embedded tokens offered before stay
+ * refused: they belong to the context that ended or were already redeemed.
+ */
 export const resetDocumentGatewayAssertions = Effect.sync(() => MutableRef.set(documentAssertions, Option.none()));

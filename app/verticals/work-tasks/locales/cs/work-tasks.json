@@ -216,7 +216,8 @@
       "plannedCapacity": "Plánované kapacity",
       "from": "Od",
       "to": "Do",
-      "noAssignedTasks": "V tomto období nejsou přiřazené úkoly"
+      "noAssignedTasks": "V tomto období nejsou přiřazené úkoly",
+      "invalidPlan": "Vyplňte název, odpovědnou osobu a platné období. Milníky musí ležet v období projektu."
     }
   }
 }

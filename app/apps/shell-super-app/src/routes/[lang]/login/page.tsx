@@ -4,7 +4,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Link } from '@techsio/ui-kit/atoms/link';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
 import { Effect, Function as Fn, Match, Option, Predicate, Schema } from 'effect';
 import type { Cause } from 'effect';

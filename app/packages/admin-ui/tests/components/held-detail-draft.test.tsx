@@ -2,12 +2,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { Effect, Layer, ManagedRuntime } from 'effect';
 import { afterEach, expect, it } from 'effect-rstest';
 import { useSyncExternalStore } from 'react';
-import { useAutosaveDraft } from '../../src/autosave.ts';
+import { useRecordDraft } from '../../src/draft-save.ts';
 import { useHeldSnapshot } from '../../src/held-snapshot.ts';
 
 afterEach(cleanup);
 
 const runtime = ManagedRuntime.make(Layer.empty);
+
+const copy = { detail: 'Detail', name: 'Name', price: 'Price' };
 
 interface Product {
   readonly name: string;
@@ -59,8 +61,7 @@ interface EditorProps {
 
 /** The editor of a held detail: it stays mounted across the reload, so its draft has to follow the record itself. */
 const Editor = ({ product, revision, sent }: EditorProps) => {
-  const autosave = useAutosaveDraft<Product, never>({
-    delayMs: 60_000,
+  const record = useRecordDraft<Product, never>({
     equals: sameProduct,
     isValid: (value) => value.name.trim() !== '',
     revision,
@@ -72,21 +73,22 @@ const Editor = ({ product, revision, sent }: EditorProps) => {
       }),
     server: product,
   });
-  const handleBlur = autosave.flush;
+  const handleSave = record.save;
   return (
-    <form aria-label="Detail">
+    <form aria-label={copy.detail}>
       <input
-        aria-label="Name"
-        onBlur={handleBlur}
-        onChange={(event) => autosave.setDraft((current) => ({ ...current, name: event.target.value }))}
-        value={autosave.draft.name}
+        aria-label={copy.name}
+        onChange={(event) => record.setDraft((current) => ({ ...current, name: event.target.value }))}
+        value={record.draft.name}
       />
       <input
-        aria-label="Price"
-        onBlur={handleBlur}
-        onChange={(event) => autosave.setDraft((current) => ({ ...current, price: event.target.value }))}
-        value={autosave.draft.price}
+        aria-label={copy.price}
+        onChange={(event) => record.setDraft((current) => ({ ...current, price: event.target.value }))}
+        value={record.draft.price}
       />
+      <button onClick={handleSave} type="button">
+        Save
+      </button>
     </form>
   );
 };
@@ -124,6 +126,8 @@ it.effect('an untouched draft takes the reloaded record, so a later edit saves o
 
     fireEvent.change(field('Name'), { target: { value: 'Cable 2 m' } });
     fireEvent.focusOut(field('Name'));
+    expect(sent).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     yield* eventually(() => expect(sent).toHaveLength(1));
     expect(sent[0]).toEqual({ expectedRevision: 2, value: { name: 'Cable 2 m', price: '120' } });
   }),
@@ -141,7 +145,7 @@ it.effect('a changed draft keeps its typed values and still saves against the re
     expect(field('Name').value).toBe('Cable 2 m');
 
     // The save names revision 1, so the server refuses it instead of writing the old price over the new one.
-    fireEvent.focusOut(field('Name'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     yield* eventually(() => expect(sent).toHaveLength(1));
     expect(sent[0]?.expectedRevision).toBe(1);
   }),

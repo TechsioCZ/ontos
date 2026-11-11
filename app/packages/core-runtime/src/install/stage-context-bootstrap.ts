@@ -525,6 +525,12 @@ const retireTenant = Effect.fn('StageContextBootstrap.retireTenant')(function* r
     .pipe(Effect.mapError(bootstrapFailureFromCause));
   yield* Effect.forEach(
     [
+      // The tenant ends first: a platform system principal (the release actor) may only change status once its
+      // tenant is no longer active, which the database enforces (core.keep_system_principals).
+      transaction
+        .update(tenants)
+        .set({ status: 'archived' })
+        .where(and(eq(tenants.tenantId, retired.tenantId), ne(tenants.status, 'archived'))),
       transaction
         .update(principals)
         .set({ status: 'archived' })
@@ -537,10 +543,6 @@ const retireTenant = Effect.fn('StageContextBootstrap.retireTenant')(function* r
         .update(legalEntities)
         .set({ status: 'archived' })
         .where(and(eq(legalEntities.tenantId, retired.tenantId), ne(legalEntities.status, 'archived'))),
-      transaction
-        .update(tenants)
-        .set({ status: 'archived' })
-        .where(and(eq(tenants.tenantId, retired.tenantId), ne(tenants.status, 'archived'))),
     ],
     (statement) => statement.pipe(Effect.mapError(bootstrapFailureFromCause)),
     { concurrency: 1, discard: true },

@@ -111,7 +111,6 @@
           "productMeta": "Price {{price}}, on hand {{stock}} pcs",
           "quantity": "Quantity (pcs)",
           "removeLine": "Remove item",
-          "submit": "Create order",
           "submitting": "Creating…",
           "title": "New order",
           "customerPlaceholder": "Search for a customer…",
@@ -151,8 +150,8 @@
           "navigationFailed": "The order could not be opened. Try again.",
           "cancelledNotice": "This order is cancelled. No further status changes are possible.",
           "historyEmpty": "Change history is not available for this older order.",
-          "before": "Before:",
-          "after": "After:",
+          "valueBefore": "Before:",
+          "valueAfter": "After:",
           "reason": "Reason: {{reason}}",
           "storefrontSource": "Online store (DEMO)",
           "storefrontSourceBrand": "Online store {{brand}} (DEMO)",
@@ -209,6 +208,7 @@
           "firstDescription": "Create the first order and follow it through delivery.",
           "firstTitle": "There are no orders yet.",
           "forbiddenTitle": "You do not have access to this section.",
+          "reloadFailed": "The current version of the order could not be loaded. Your unsaved changes are still in the form.",
           "retry": "Try again",
           "tagFilterFailed": "Tags could not be loaded. Try again."
         },
@@ -260,11 +260,16 @@
           "clear": "Clear selection",
           "deactivate": "Deactivate",
           "selected": "Selected: {{total}}",
-          "tags": "Tags"
+          "tags": "Tags",
+          "activateTitle": "Activate the selected products ({{total}})?",
+          "activateDescription": "The selected products ({{total}}) appear in the e-shop right away and customers can order them.",
+          "activateConfirm": "Activate ({{total}})",
+          "deactivateTitle": "Deactivate the selected products ({{total}})?",
+          "deactivateDescription": "The selected products ({{total}}) disappear from the e-shop right away and customers can no longer order them.",
+          "deactivateConfirm": "Deactivate ({{total}})"
         },
         "category": {
           "field": "New category",
-          "submit": "Change category",
           "title": "Change category"
         },
         "columns": {
@@ -287,17 +292,11 @@
           "save": "Save changes"
         },
         "create": {
-          "discardTitle": "Discard unsaved changes?",
-          "submit": "Create product",
           "title": "New product"
         },
         "description": "Products, prices and stock movements.",
         "detail": {
           "active": "Active product",
-          "discardAction": "Discard changes",
-          "discardDescription": "Unsaved changes in this form will be lost.",
-          "discardKeep": "Keep editing",
-          "discardTitle": "Discard unsaved changes to {{name}}?",
           "tab": "Detail",
           "back": "Back to products",
           "priceExplanation": "Edit the price excluding VAT. The price including VAT is calculated from the selected VAT rate.",
@@ -310,7 +309,7 @@
         "gallery": {
           "title_one": "Image ({{count}})",
           "title_other": "Images ({{count}})",
-          "intro": "The first image is the main one and the storefront shows it first. Drag to change the order. Every change is saved right away.",
+          "intro": "The first image is the main one and the e-shop shows it first. Drag images or use the buttons to change the order. Uploaded images, a new order and removals reach the e-shop only after you click Save.",
           "introReadOnly": "The first image is the main one and the storefront shows it first.",
           "main": "Main",
           "imageAlt": "{{name}} – image {{position}}",
@@ -336,7 +335,7 @@
           "dropzoneHint": "JPG, PNG or WebP up to 20 MB, several at once. You can also paste an image (Ctrl+V).",
           "pick": "Choose images",
           "hideNotice": "Hide notice",
-          "removed": "The image was removed.",
+          "removed": "The image is removed from the draft. It leaves the e-shop once you save.",
           "undo": "Undo",
           "uploading_one": "Uploading {{count}} image…",
           "uploading_other": "Uploading {{count}} images…",
@@ -351,7 +350,8 @@
           "tooManyFiles": "A product can have at most {{limit}} images. You can add {{remaining}} more now.",
           "fileTooLarge": "The file “{{name}}” is larger than 20 MB. Make it smaller or choose another.",
           "fileInvalidType": "The file “{{name}}” is not a JPG, PNG or WebP image.",
-          "fileRejected": "The file “{{name}}” cannot be uploaded."
+          "fileRejected": "The file “{{name}}” cannot be uploaded.",
+          "saveRejected": "The images could not be saved because one of them is no longer available. Load the latest version and try again."
         },
         "fields": {
           "category": "Category",
@@ -422,13 +422,11 @@
           "affected": "Products affected: {{total}}",
           "description": "Enter the change in percent. A positive number raises prices, a negative one lowers them.",
           "field": "Price change (%)",
-          "submit": "Change price",
           "title": "Change price by %",
           "warning": "The price change does not affect issued invoices or orders."
         },
         "receipt": {
           "description": "Record stock received. On-hand stock is recalculated from movements.",
-          "discardTitle": "Discard unsaved changes?",
           "submit": "Record receipt",
           "title": "Goods receipt"
         },
@@ -443,7 +441,8 @@
           "tagFilterFailed": "Tags could not be loaded. Try again.",
           "notFound": "Product not found",
           "invalidId": "The product address is invalid.",
-          "loading": "Loading product…"
+          "loading": "Loading product…",
+          "reloadFailed": "The current version of the product could not be loaded. Your unsaved changes are still in the form."
         },
         "stats": {
           "lowStock": "Below minimum",
@@ -521,7 +520,13 @@
           "notOffered": "Not offered",
           "noPrice": "price not available",
           "offeredSaved": "The product is offered in market {{code}}.",
+          "saved": "The product's market offers are saved.",
           "withdrawnSaved": "The product was withdrawn from market {{code}}."
+        },
+        "eshop": {
+          "archiveTitle": "Archive DEMO product {{name}}?",
+          "archiveDescription": "Product {{name}} disappears from the list and the e-shop right away. Stock movements, orders and the audit trail are kept.",
+          "archiveConfirm": "Archive"
         }
       },
       "records": {

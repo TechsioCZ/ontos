@@ -1,42 +1,32 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { czechPlural } from '@app/shared-contracts';
-import { AutosaveStatus, useAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import { Effect, Fiber, Match, Option, Schema } from 'effect';
 import type { HttpClient } from 'effect/http';
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
 
-import {
-  AssignAccessRolePayloadSchema,
-  RevokeAccessAssignmentPayloadSchema,
-} from '../../../shared/access-admin-api.ts';
 import type { PeopleList, Person } from '../../../shared/people-api.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
-import type { PeopleOutcome, PersonRoleCommand } from './people-client.ts';
-import { changeCompanyMembership, changePersonRole, loadAllPeople, loadPeopleAccess } from './people-client.ts';
+import type { PeopleOutcome } from './people-client.ts';
+import { changeCompanyMembership, loadAllPeople, loadPeopleAccess } from './people-client.ts';
 import {
-  accessAssignmentOf,
   accessRoleNamesOf,
-  accessRolesOfScope,
   defaultPeopleFilters,
   isChangeConfirmed,
   membershipLabels,
   personKindLabel,
   personStatusKey,
 } from './people-model.ts';
-import type {
-  AccessRoleChoice,
-  PeopleAccessView,
-  PeopleEditKind,
-  PeopleFilters,
-  PendingPeopleChange,
-} from './people-model.ts';
+import type { PeopleAccessView, PeopleEditKind, PeopleFilters, PendingPeopleChange } from './people-model.ts';
 import { InvitePersonButton } from './invite-person-button.tsx';
+import { PersonRoleEditor } from './person-role-editor.tsx';
 import { PeopleTable, PeopleToolbar, PersonStatusDot } from './people-table.tsx';
 import { baseOf, membershipDraftOf, membershipEditOf, sameMembershipDraft } from './people-membership-draft.ts';
 import type { MembershipBase, MembershipDraft } from './people-membership-draft.ts';
@@ -47,89 +37,23 @@ interface Editor {
 }
 const selectClass = 'w-full rounded-md border border-border-primary bg-base p-100';
 
-/**
- * The role picker offers exactly the canonical roles of this scope, named by their canonical identity.
- * A role key never reaches a write: the assignment names the role id and the exact revision the screen read.
- */
-const RolePicker = ({
-  access,
-  busy,
-  onChange,
-  operation,
-  person,
-  roleId,
-  roles,
-}: {
-  readonly access: PeopleAccessView | undefined;
-  readonly busy: boolean;
-  readonly onChange: (roleId: string) => void;
-  readonly operation: 'assign' | 'revoke';
-  readonly person: Person;
-  readonly roleId: string;
-  readonly roles: readonly AccessRoleChoice[];
-}) => {
-  const selected = roles.find((role) => role.roleId === roleId);
-  const revocable = (role: AccessRoleChoice) =>
-    accessAssignmentOf(access, person.principalRef.principalId, role.roleId) !== undefined;
-  return (
-    <>
-      <p className="text-fg-secondary text-sm">
-        Role platí pro {selected?.scope.kind === 'company' ? 'vybranou firmu' : 'celou organizaci'}. Rozsah role je daný
-        rolí, ne volbou v této obrazovce.
-      </p>
-      <label className="grid gap-50">
-        Role
-        <select
-          className={selectClass}
-          disabled={busy}
-          onChange={(event) => onChange(event.target.value)}
-          required
-          value={roleId}
-        >
-          <option value="">Vyberte roli</option>
-          {roles.map((role) => (
-            <option key={role.roleId} value={role.roleId}>
-              {role.name}
-              {operation === 'revoke' && !revocable(role) ? ' (nepřiřazena)' : ''}
-            </option>
-          ))}
-        </select>
-      </label>
-      {roles.length === 0 ? (
-        <StatusText status="warning">V tomto rozsahu není žádná role. Role založíte v části Přístup → Role.</StatusText>
-      ) : null}
-    </>
-  );
-};
-
 const PeopleEditor = ({
-  access,
-  companyId,
   editor,
   onClose,
   onCommitted,
-  scope,
 }: {
-  readonly access: PeopleAccessView | undefined;
-  readonly companyId: string | undefined;
   readonly editor: Editor;
   readonly onClose: () => void;
   readonly onCommitted: (change: PendingPeopleChange) => void;
-  readonly scope: 'company' | 'tenant';
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
+  const labels = saveLabelsFor(language);
   const { person } = editor;
   const membership = person.selectedCompanyMembership;
   const { kind, principalRef } = person;
-  const roles = accessRolesOfScope(access, scope, companyId);
-  const [roleId, setRoleId] = useState('');
-  const [operation, setOperation] = useState<'assign' | 'revoke'>('assign');
-  const [reason, setReason] = useState('');
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const title = editor.kind === 'role' ? 'Přiřadit nebo odebrat roli' : 'Členství ve firmě';
-  // The company membership of an existing person saves itself: the change is audited, so it is sent only once the
-  // reason is filled in, and the revision the server answered with is the one the next change builds on.
+  // The company membership is saved only by Uložit. The change is audited, so it is sent only once the reason is
+  // filled in, and the revision the server answered with is the one the next change builds on.
   const openedBase: MembershipBase = {
     affiliation: membership?.affiliation ?? null,
     status: membership?.status ?? 'invited',
@@ -137,13 +61,13 @@ const PeopleEditor = ({
   const base = useRef<MembershipBase>(openedBase);
   const revision = useRef(membership?.revision ?? 0);
   const [membershipDraft, setMembershipDraft] = useState<MembershipDraft>(() => membershipDraftOf(openedBase));
-  const autosave = useAutosave<MembershipDraft, HttpClient.HttpClient>({
+  const record = useDraftSave<MembershipDraft, HttpClient.HttpClient>({
     equals: sameMembershipDraft,
     isValid: (value) => Option.isSome(membershipEditOf(value, base.current)),
     runtime: browserRuntime,
     save: (value) =>
       Option.match(membershipEditOf(value, base.current), {
-        onNone: () => Effect.succeed<AutosaveOutcome>('saved'),
+        onNone: () => Effect.succeed<SaveOutcome>('saved'),
         onSome: (edit) =>
           changeCompanyMembership({
             affiliation: kind === 'agent' ? null : edit.affiliation,
@@ -152,7 +76,7 @@ const PeopleEditor = ({
             reason: edit.reason,
             status: edit.status,
           }).pipe(
-            Effect.map((outcome): AutosaveOutcome => {
+            Effect.map((outcome): SaveOutcome => {
               if (outcome.status === 'failed') {
                 setError(outcome.message);
                 return 'failed';
@@ -170,198 +94,98 @@ const PeopleEditor = ({
   });
   const patchMembership = (patch: Partial<MembershipDraft>) =>
     setMembershipDraft((current) => ({ ...current, ...patch }));
-  const close = () => {
-    autosave.flush();
-    onClose();
-  };
-  const handleRetry = autosave.retry;
-  const handleReloadLatest = () => autosave.adopt(membershipDraftOf(baseOf(person)));
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({
+    draft: record,
+    navigation: blocker,
+    onDiscard: () => setMembershipDraft(record.confirmed),
+  });
+  const handleReloadLatest = () => record.adopt(membershipDraftOf(baseOf(person)));
   const requestClose = () => {
-    if (editor.kind === 'role') {
-      if (!busy) {
-        onClose();
-      }
-      return;
-    }
-    close();
+    guard.request(onClose);
   };
-  const chosen = roles.find((role) => role.roleId === roleId);
-  const held = chosen === undefined ? undefined : accessAssignmentOf(access, principalRef.principalId, chosen.roleId);
-  const command = (): PersonRoleCommand | undefined => {
-    if (access === undefined || chosen === undefined || reason.trim() === '') {
-      return undefined;
-    }
-    if (operation === 'assign') {
-      const payload = Schema.decodeUnknownOption(AssignAccessRolePayloadSchema)({
-        expectedRevision: access.people.revision,
-        expectedRoleRevisionId: chosen.latestRevisionId,
-        principalId: principalRef.principalId,
-        roleId: chosen.roleId,
-        scope: chosen.scope,
-      });
-      return Option.isNone(payload) ? undefined : { operation: 'assign', payload: payload.value };
-    }
-    if (held === undefined) {
-      return undefined;
-    }
-    const payload = Schema.decodeUnknownOption(RevokeAccessAssignmentPayloadSchema)({
-      expectedRevision: access.people.revision,
-      incarnationId: held.incarnationId,
-      reason: reason.trim(),
-    });
-    return Option.isNone(payload) ? undefined : { operation: 'revoke', payload: payload.value };
-  };
-  const submit = () => {
-    if (busy) {
-      return;
-    }
-    const request = command();
-    if (request === undefined) {
-      setError(
-        access === undefined
-          ? 'Přístupové údaje se nepodařilo načíst. Obnovte stránku.'
-          : 'Vyberte roli, vyplňte důvod a u odebírání zvolte přiřazenou roli.',
-      );
-      return;
-    }
-    setBusy(true);
-    setError('');
-    void browserRuntime.runPromise(
-      changePersonRole(request).pipe(
-        Effect.andThen((outcome) =>
-          Effect.sync(() => {
-            setBusy(false);
-            if (outcome.status === 'failed') {
-              setError(outcome.message);
-            } else {
-              onCommitted(outcome.value);
-            }
-          }),
-        ),
-      ),
-    );
-  };
+  const handleSave = record.save;
   return (
-    <Dialog
-      actions={
-        editor.kind === 'role' ? (
+    <>
+      <Dialog
+        actions={
           <>
-            <Button disabled={busy} onClick={onClose} theme="outlined" variant="secondary">
-              Zrušit
-            </Button>
-            <Button disabled={busy || reason.trim() === '' || chosen === undefined} onClick={submit} variant="primary">
-              {busy ? 'Odesílám…' : 'Potvrdit změnu'}
-            </Button>
-          </>
-        ) : (
-          <>
-            <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
-            <Button onClick={close} theme="outlined" variant="secondary">
+            <Button onClick={requestClose} theme="outlined" variant="secondary">
               Zavřít
             </Button>
+            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
           </>
-        )
-      }
-      closeLabel="Zavřít"
-      customTrigger
-      onOpenChange={(details) => {
-        if (!details.open) {
-          requestClose();
         }
-      }}
-      open
-      title={title}
-    >
-      <div className="grid gap-200">
-        <p>{person.displayName}</p>
-        {editor.kind === 'role' ? (
-          <>
-            <RolePicker
-              access={access}
-              busy={busy}
-              onChange={setRoleId}
-              operation={operation}
-              person={person}
-              roleId={roleId}
-              roles={roles}
-            />
+        closeLabel="Zavřít"
+        customTrigger
+        onOpenChange={(details) => {
+          if (!details.open) {
+            requestClose();
+          }
+        }}
+        open
+        title={t('shell.people.membershipTitle')}
+      >
+        <div className="grid gap-200">
+          <p>{person.displayName}</p>
+          {kind === 'human' ? (
             <label className="grid gap-50">
-              Změna
+              Zařazení ve firmě
+              <select
+                className={selectClass}
+                onChange={(event) =>
+                  patchMembership({ affiliation: event.target.value === 'employee' ? 'employee' : 'external' })
+                }
+                value={membershipDraft.affiliation}
+              >
+                <option value="employee">Zaměstnanec</option>
+                <option value="external">Externí osoba</option>
+              </select>
+            </label>
+          ) : (
+            <p>AI agent nemá zaměstnanecké ani externí zařazení.</p>
+          )}
+          {editor.kind === 'membership' ? (
+            <label className="grid gap-50">
+              Stav členství
               <select
                 className={selectClass}
                 onChange={(event) => {
-                  setOperation(event.target.value === 'revoke' ? 'revoke' : 'assign');
-                  setRoleId('');
+                  const { value } = event.target;
+                  if (value === 'active' || value === 'disabled' || value === 'departed' || value === 'invited') {
+                    patchMembership({ status: value });
+                  }
                 }}
-                value={operation}
+                value={membershipDraft.status}
               >
-                <option value="assign">Přiřadit</option>
-                <option value="revoke">Odebrat</option>
+                {Object.entries(membershipLabels).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
               </select>
             </label>
-          </>
-        ) : (
-          <>
-            {kind === 'human' ? (
-              <label className="grid gap-50">
-                Zařazení ve firmě
-                <select
-                  className={selectClass}
-                  onChange={(event) =>
-                    patchMembership({ affiliation: event.target.value === 'employee' ? 'employee' : 'external' })
-                  }
-                  value={membershipDraft.affiliation}
-                >
-                  <option value="employee">Zaměstnanec</option>
-                  <option value="external">Externí osoba</option>
-                </select>
-              </label>
-            ) : (
-              <p>AI agent nemá zaměstnanecké ani externí zařazení.</p>
-            )}
-            {editor.kind === 'membership' ? (
-              <label className="grid gap-50">
-                Stav členství
-                <select
-                  className={selectClass}
-                  onChange={(event) => {
-                    const { value } = event.target;
-                    if (value === 'active' || value === 'disabled' || value === 'departed' || value === 'invited') {
-                      patchMembership({ status: value });
-                    }
-                  }}
-                  value={membershipDraft.status}
-                >
-                  {Object.entries(membershipLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            <p className="text-fg-secondary text-sm">
-              Zařazení ve firmě a stav členství jsou organizační údaje: neurčují práva a jejich změna sama neodebere
-              žádnou roli. Oprávnění se mění přiřazením role; členství a správu firmy nastavujete ve správě přístupu.
-            </p>
-          </>
-        )}
-        <FormInput
-          label={t('shell.people.changeReason')}
-          maxLength={500}
-          onChange={(event) =>
-            editor.kind === 'role' ? setReason(event.target.value) : patchMembership({ reason: event.target.value })
-          }
-          required
-          value={editor.kind === 'role' ? reason : membershipDraft.reason}
-        />
-        {error === '' ? null : (
-          <StatusText role="alert" status="error">
-            {error}
-          </StatusText>
-        )}
-      </div>
-    </Dialog>
+          ) : null}
+          <p className="text-fg-secondary text-sm">
+            Zařazení ve firmě a stav členství jsou organizační údaje: neurčují práva a jejich změna sama neodebere
+            žádnou roli. Oprávnění se mění přiřazením role; členství a správu firmy nastavujete ve správě přístupu.
+          </p>
+          <FormInput
+            label={t('shell.people.changeReason')}
+            maxLength={500}
+            onChange={(event) => patchMembership({ reason: event.target.value })}
+            required
+            value={membershipDraft.reason}
+          />
+          {error === '' ? null : (
+            <StatusText role="alert" status="error">
+              {error}
+            </StatusText>
+          )}
+        </div>
+      </Dialog>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
   );
 };
 
@@ -550,6 +374,35 @@ const useLiveReload = (reload: () => void) => {
   }, []);
 };
 
+/** The open editor of one person: their roles, or their company membership. */
+const EditorDialog = ({
+  access,
+  companyId,
+  editor,
+  onClose,
+  onCommitted,
+  scope,
+}: {
+  readonly access: PeopleAccessView | undefined;
+  readonly companyId: string | undefined;
+  readonly editor: Editor;
+  readonly onClose: () => void;
+  readonly onCommitted: (change: PendingPeopleChange) => void;
+  readonly scope: 'company' | 'tenant';
+}) =>
+  editor.kind === 'role' ? (
+    <PersonRoleEditor
+      access={access}
+      companyId={companyId}
+      onClose={onClose}
+      onCommitted={onCommitted}
+      person={editor.person}
+      scope={scope}
+    />
+  ) : (
+    <PeopleEditor editor={editor} onClose={onClose} onCommitted={onCommitted} />
+  );
+
 interface Loaded<Value> {
   readonly key: string;
   readonly outcome: PeopleOutcome<Value>;
@@ -674,7 +527,7 @@ export const PeoplePanel = ({
         />
       )}
       {editor === undefined ? null : (
-        <PeopleEditor
+        <EditorDialog
           access={access}
           companyId={companyId}
           editor={editor}

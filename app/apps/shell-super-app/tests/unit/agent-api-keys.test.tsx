@@ -1,3 +1,4 @@
+import { saveLabelsFor } from '@app/admin-ui';
 import { AgentEntitySchema } from '@app/shared-contracts/agent-access';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
@@ -21,6 +22,11 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
 }));
 
 const prefix = 'shell.agents.keys';
+const labels = saveLabelsFor('cs');
+// Outside a router: no route change is ever blocked here.
+rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useBlocker: () => ({ status: 'idle' }),
+}));
 const principalId = '00000000-0000-4000-8000-000000000003';
 const authBindingId = '00000000-0000-4000-8000-000000000004';
 const otherPrincipalId = '00000000-0000-4000-8000-000000000005';
@@ -43,6 +49,7 @@ const agent = Schema.decodeUnknownSync(AgentEntitySchema)({
   hasProfile: true,
   modules: [],
   operators: [],
+  operatorsRevision: 0,
   owner: null,
   principalId,
   status: 'active',
@@ -93,7 +100,7 @@ it.live('issues only after explicit confirmation, displays the secret once and n
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.issue` })));
     expect(commands.issue).not.toHaveBeenCalled();
     yield* Effect.promise(() => user.type(screen.getByLabelText(/keys.name/u), 'Worker'));
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.confirm` })));
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: labels.save })));
     const secretField = yield* Effect.promise(() => screen.findByDisplayValue(testSecret));
     expect(secretField.hasAttribute('readonly')).toBe(true);
     expect(commands.issue).toHaveBeenCalledTimes(1);
@@ -123,9 +130,9 @@ it.live('rotates the exact binding with a reason and reports pending cleanup wit
       Effect.promise(() => screen.findByRole('button', { name: `${prefix}.rotate` })),
       (awaitedValue0) => Effect.promise(() => user.click(awaitedValue0)),
     );
-    expect(screen.getByRole('button', { name: `${prefix}.confirm` }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: labels.save }).hasAttribute('disabled')).toBe(true);
     yield* Effect.promise(() => user.type(screen.getByLabelText(/keys.reason/u), 'Scheduled rotation'));
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.confirm` })));
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: labels.save })));
     expect(yield* Effect.promise(() => screen.findByDisplayValue(testSecret))).toBeTruthy();
     expect(screen.getByText(`${prefix}.cleanupPending`)).toBeTruthy();
     expect(commands.rotate.mock.calls[0]?.[0]).toEqual({
@@ -149,7 +156,7 @@ it.live('uses the actual binding status to revoke a disabled key, not its provid
     expect(yield* Effect.promise(() => screen.findByRole('button', { name: `${prefix}.enable` }))).toBeTruthy();
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.revoke` })));
     yield* Effect.promise(() => user.type(screen.getByLabelText(/keys.reason/u), 'Credential retired'));
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.confirm` })));
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: labels.save })));
     yield* Effect.promise(() => waitFor(() => expect(commands.status).toHaveBeenCalledTimes(1)));
     expect(commands.status.mock.calls[0]?.[0]).toEqual({
       authBindingId,
@@ -170,17 +177,18 @@ it.live('does not retry an ambiguous issuance and requires a fresh list before a
     yield* Effect.promise(() => screen.findByText('Automation'));
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.issue` })));
     yield* Effect.promise(() => user.type(screen.getByLabelText(/keys.name/u), 'Worker'));
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.confirm` })));
-    yield* Effect.promise(() =>
-      waitFor(() =>
-        expect(screen.getByRole('button', { name: `${prefix}.confirm` }).hasAttribute('disabled')).toBe(true),
-      ),
-    );
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: labels.save })));
+    yield* Effect.promise(() => screen.findAllByText(`${prefix}.failed`));
+    // Uložit again never repeats the command: the list has to be read first.
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: labels.save })));
     expect(commands.issue).toHaveBeenCalledTimes(1);
     expect(commands.list).toHaveBeenCalledTimes(1);
     expect(screen.queryByText('Not safe to display')).toBeNull();
     expect(screen.queryByDisplayValue(testSecret)).toBeNull();
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.cancel` })));
+    // The typed name was never saved, so leaving asks; Zahodit změny closes the form.
+    const discard = yield* Effect.promise(() => screen.findByRole('button', { name: labels.discard }));
+    yield* Effect.promise(() => user.click(discard));
     expect(screen.getByRole('button', { name: `${prefix}.issue` }).hasAttribute('disabled')).toBe(true);
     // The unconfirmed state offers only an error-state retry of the read, never of the command.
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.retry` })));
@@ -248,14 +256,14 @@ it.live('disables and re-enables only the exact binding with its current expecte
     commands.list.mockReturnValue(
       Effect.succeed({ items: [{ ...row, key: { ...key, bindingStatus: 'disabled' } }], nextOffset: null }),
     );
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.confirm` })));
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: labels.save })));
     yield* Effect.flatMap(
       Effect.promise(() => screen.findByRole('button', { name: `${prefix}.enable` })),
       (awaitedValue0) => Effect.promise(() => user.click(awaitedValue0)),
     );
     yield* Effect.promise(() => user.type(screen.getByLabelText(/keys.reason/u), 'Resume automation'));
     commands.list.mockReturnValue(Effect.succeed({ items: [row], nextOffset: null }));
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.confirm` })));
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: labels.save })));
     yield* Effect.promise(() => waitFor(() => expect(commands.status).toHaveBeenCalledTimes(2)));
     expect(commands.status.mock.calls.map((call) => call[0])).toEqual([
       {
@@ -311,7 +319,7 @@ it.live('keeps a committed key change pending until the reread confirms the actu
       (awaitedValue0) => Effect.promise(() => user.click(awaitedValue0)),
     );
     yield* Effect.promise(() => user.type(screen.getByLabelText(/keys.reason/u), 'Pause automation'));
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: `${prefix}.confirm` })));
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: labels.save })));
     expect(yield* Effect.promise(() => screen.findByText(`${prefix}.projectionPending`))).toBeTruthy();
     expect(screen.queryByText(`${prefix}.updated`)).toBeNull();
     expect(screen.getByRole('button', { name: `${prefix}.disable` }).hasAttribute('disabled')).toBe(true);

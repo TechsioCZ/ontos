@@ -14,50 +14,54 @@ import {
 } from '../verify-application-db-schema.mts';
 import { loadApplicationMigrationInventory } from '../application-migration-inventory.mts';
 
-it.effect('retains all 31 source-owned verifiers including Projects and the Core application enrollment wrapper', () =>
-  Effect.gen(function* sourceOwnedVerifiers() {
-    const inventory = yield* loadApplicationMigrationInventory();
-    const ownerVerifierPaths = inventory.filter((owner) => !owner.optional).flatMap((owner) => owner.verifierPaths);
-    expect(ownerVerifierPaths).toHaveLength(31);
-    expect(inventory.find((owner) => owner.ownerId === 'core-runtime')?.verifierPaths).toEqual([
-      'scripts/verify-core-db-schema.mts',
-    ]);
-    expect(ownerVerifierPaths.toSorted()).toEqual(
-      [
+it.effect(
+  'retains all 33 source-owned verifiers including Projects, Payment, Promotion and the Core application enrollment wrapper',
+  () =>
+    Effect.gen(function* sourceOwnedVerifiers() {
+      const inventory = yield* loadApplicationMigrationInventory();
+      const ownerVerifierPaths = inventory.filter((owner) => !owner.optional).flatMap((owner) => owner.verifierPaths);
+      expect(ownerVerifierPaths).toHaveLength(33);
+      expect(inventory.find((owner) => owner.ownerId === 'core-runtime')?.verifierPaths).toEqual([
         'scripts/verify-core-db-schema.mts',
-        'apps/shell-super-app/scripts/verify-auth-db-schema.mts',
-        'verticals/assortment/scripts/verify-db-schema.mts',
-        'verticals/party-registry/scripts/verify-db-schema.mts',
-        'verticals/party-registry/scripts/verify-engagement-db-schema.mts',
-        'verticals/payment-term-catalog/scripts/verify-db-schema.mts',
-        'verticals/price-group-catalog/scripts/verify-db-schema.mts',
-        'verticals/commerce-cart/scripts/verify-db-schema.mts',
-        'verticals/commerce-customer-context/scripts/verify-db-schema.mts',
-        'verticals/commerce-market-catalog/scripts/verify-db-schema.mts',
-        'verticals/commerce-order/scripts/verify-database.mts',
-        'verticals/catalog/scripts/verify-db-schema.mts',
-        'verticals/inventory/scripts/verify-db-schema.mts',
-        'verticals/pricing/scripts/verify-db-schema.mts',
-        'verticals/privacy/scripts/verify-db-schema.mts',
-        'verticals/legal-agreements/scripts/verify-db-schema.mts',
-        'verticals/finance-billing/scripts/verify-db-schema.mts',
-        'verticals/property-leasing/scripts/verify-db-schema.mts',
-        'verticals/property-portfolio/scripts/verify-db-schema.mts',
-        'verticals/crm-activities/scripts/verify-db-schema.mts',
-        'verticals/work-tasks/scripts/verify-db-schema.mts',
-        'verticals/workforce/scripts/verify-db-schema.mts',
-        'verticals/tagging/scripts/verify-db-schema.mts',
-        'verticals/crm/scripts/verify-db-schema.mts',
-        'verticals/sales-pipeline/scripts/verify-db-schema.mts',
-        'verticals/merchandise/scripts/verify-db-schema.mts',
-        'verticals/sales-insights/scripts/verify-db-schema.mts',
-        'verticals/facility-operations/scripts/verify-db-schema.mts',
-        'verticals/storefront-registry/scripts/verify-db-schema.mts',
-        'verticals/tax/scripts/verify-db-schema.mts',
-        'verticals/projects/scripts/verify-db-schema.mts',
-      ].toSorted(),
-    );
-  }).pipe(Effect.provide(NodeServices.layer)),
+      ]);
+      expect(ownerVerifierPaths.toSorted()).toEqual(
+        [
+          'scripts/verify-core-db-schema.mts',
+          'apps/shell-super-app/scripts/verify-auth-db-schema.mts',
+          'verticals/assortment/scripts/verify-db-schema.mts',
+          'verticals/party-registry/scripts/verify-db-schema.mts',
+          'verticals/party-registry/scripts/verify-engagement-db-schema.mts',
+          'verticals/payment/scripts/verify-db-schema.mts',
+          'verticals/payment-term-catalog/scripts/verify-db-schema.mts',
+          'verticals/price-group-catalog/scripts/verify-db-schema.mts',
+          'verticals/commerce-cart/scripts/verify-db-schema.mts',
+          'verticals/commerce-customer-context/scripts/verify-db-schema.mts',
+          'verticals/commerce-market-catalog/scripts/verify-db-schema.mts',
+          'verticals/commerce-order/scripts/verify-database.mts',
+          'verticals/catalog/scripts/verify-db-schema.mts',
+          'verticals/inventory/scripts/verify-db-schema.mts',
+          'verticals/pricing/scripts/verify-db-schema.mts',
+          'verticals/privacy/scripts/verify-db-schema.mts',
+          'verticals/legal-agreements/scripts/verify-db-schema.mts',
+          'verticals/finance-billing/scripts/verify-db-schema.mts',
+          'verticals/property-leasing/scripts/verify-db-schema.mts',
+          'verticals/property-portfolio/scripts/verify-db-schema.mts',
+          'verticals/crm-activities/scripts/verify-db-schema.mts',
+          'verticals/work-tasks/scripts/verify-db-schema.mts',
+          'verticals/workforce/scripts/verify-db-schema.mts',
+          'verticals/tagging/scripts/verify-db-schema.mts',
+          'verticals/crm/scripts/verify-db-schema.mts',
+          'verticals/sales-pipeline/scripts/verify-db-schema.mts',
+          'verticals/merchandise/scripts/verify-db-schema.mts',
+          'verticals/sales-insights/scripts/verify-db-schema.mts',
+          'verticals/facility-operations/scripts/verify-db-schema.mts',
+          'verticals/storefront-registry/scripts/verify-db-schema.mts',
+          'verticals/tax/scripts/verify-db-schema.mts',
+          'verticals/projects/scripts/verify-db-schema.mts',
+          'verticals/promotion/scripts/verify-db-schema.mts',
+        ].toSorted(),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 const ownerFixture = (source: string) =>

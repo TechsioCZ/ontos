@@ -1,20 +1,22 @@
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import {
-  AutosaveStatus,
+  SaveBar,
   DetailList,
+  DocumentTitle,
   PageHeader,
   SectionCard,
   SidePanel,
   StatCard,
-  comboboxTranslations,
+  UnsavedChangesDialog,
   formatDate,
   formatMoney,
+  saveLabelsFor,
   surfaceCardClassName,
   surfaceTileClassName,
-  useAutosaveDraft,
+  useRecordDraft,
+  useUnsavedChangesGuard,
 } from '@app/admin-ui';
-import type { RevisionedSaveResult } from '@app/admin-ui';
-import { Combobox } from '@techsio/ui-kit/molecules/combobox';
+import type { RevisionedSaveResult, SaveOutcome } from '@app/admin-ui';
 import { failureFeedback } from '../../../../shared/actions/apply-command.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
@@ -23,12 +25,10 @@ import { modulePagePreload } from '@app/shared-contracts/page-data';
 import { createCustomer, listCustomers, loadPartiesClient } from '@app/party-registry/api/client';
 import { PartyDocuments, PropertyEquipment } from '@app/facility-operations/ui/record-discussion';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import { useBlocker, useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Select } from '@techsio/ui-kit/molecules/select';
-import { withNativeLabels } from '@app/admin-ui/select-template';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
@@ -49,7 +49,6 @@ import {
   leaseContract,
   loadedList,
   monthlyTotal,
-  parseCrowns,
 } from './lease-story.tsx';
 import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
@@ -57,24 +56,34 @@ import csResource from '../../../../locales/cs/property-leasing.json';
 import enResource from '../../../../locales/en/property-leasing.json';
 import '../../index.css';
 import { TenantDirectory, TenantDossierCard } from './tenant-dossier.tsx';
-import type { DossierAutosave, DossierChanges, NewCounterpartyInput } from './tenant-dossier.tsx';
+import type { DossierSave, DossierChanges, NewCounterpartyInput } from './tenant-dossier.tsx';
 import { CounterpartyDossierView } from './counterparty-dossier.tsx';
 import { NoticeCard, OccupancyHistoryCard, RegistrationSheetCard } from './stay-documents.tsx';
 import type { NoticeContext } from './notice-templates.ts';
 import { OccupancyCalendar } from './occupancy-calendar.tsx';
 import './occupancy-form.css';
-import { initialEditorState, occupancyEditorActions, occupancyEditorReducer } from './editor-state.ts';
 import {
-  autosaveLeasingCommand,
+  initialEditorState,
+  occupancyDraftOf,
+  occupancyEditorActions,
+  occupancyEditorReducer,
+} from './editor-state.ts';
+import { createOccupancy, failedWith, saveLeaseDraft, sendAddition, settleAddition } from './occupancy-command.ts';
+import type { AdditionSave, OccupancyOutcome } from './occupancy-command.ts';
+import { leaseDraftRecord, stayDraftRecord, updateDraftCommand } from './occupancy-draft.ts';
+import { OccupancyEditorPanel } from './occupancy-editor-panel.tsx';
+import type { OccupancySave } from './occupancy-editor-panel.tsx';
+import {
+  saveLeasingCommand,
   newUuid,
   rentDraftOf,
   rentProblems,
   rentTermsOf,
   rentUnchangedSince,
   sameRentDraft,
-} from './leasing-autosave.ts';
-import type { RentDraft } from './leasing-autosave.ts';
-import type { OccupancyEditorMode } from './editor-state.ts';
+} from './leasing-save.ts';
+import type { RentDraft } from './leasing-save.ts';
+import type { OccupancyDraft, OccupancyEditorMode } from './editor-state.ts';
 import {
   leaseInputOf,
   leaseRecords,
@@ -89,7 +98,6 @@ import { invalidateLeaseRelated, preloadLeaseRelated, useLeaseRelated } from './
 
 export const preloadPage = modulePagePreload((props) => prepareLeasePage(props, preloadLeaseRelated));
 
-const LABEL_CHOOSE = 'property-leasing.demo.choose';
 const LABEL_UNIT = 'property-leasing.demo.unit';
 const LABEL_DETAIL = 'property-leasing.demo.detail';
 const LABEL_OPEN_END = 'property-leasing.demo.openEnd';
@@ -103,7 +111,6 @@ const pragueDayFormat = new Intl.DateTimeFormat('sv-SE', {
 const currentPragueDay = () => pragueDayFormat.format(DateTime.toEpochMillis(DateTime.nowUnsafe()));
 const DEFAULT_START_DATE = currentPragueDay();
 const LABEL_EDIT_DRAFT = 'property-leasing.demo.editDraft';
-const LABEL_CREATE = 'property-leasing.demo.create';
 const propertyLeasingI18nResources = {
   cs: { 'property-leasing': csResource },
   en: { 'property-leasing': enResource },
@@ -375,29 +382,50 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
       ),
     );
   };
+  /**
+   * Uložit of a form that adds a record (a registration sheet, a prepared notice, a logged entry): one command, resent
+   * once against fresh records after an unrelated change, since an addition overwrites nothing; settled as the page's
+   * own commands are, so related lists refresh and a saved one is listed.
+   */
+  const saveAddition: AdditionSave = (command) =>
+    snapshot === undefined
+      ? Effect.succeed(failedWith('unavailable'))
+      : settleAddition(sendAddition(command, snapshot.revision), {
+          invalidate: invalidateLeaseRelated,
+          onProposal: setProposal,
+          reload: reload().pipe(Effect.ignore),
+        });
+  const logCounterpartyActivity = (counterpartyId: string) => (changes: DossierChanges) => {
+    const entry = tenantDirectory.find((item) => item.counterpartyRef.resourceId === counterpartyId);
+    return entry === undefined
+      ? Effect.succeed(failedWith('unavailable'))
+      : saveAddition({ _tag: 'UpdateCounterpartyDossier', counterpartyRef: entry.counterpartyRef, ...changes });
+  };
   const updateCounterpartyDossier = (counterpartyId: string) => (changes: DossierChanges) => {
     const entry = tenantDirectory.find((item) => item.counterpartyRef.resourceId === counterpartyId);
     if (entry !== undefined) {
       runCommand({ _tag: 'UpdateCounterpartyDossier', counterpartyRef: entry.counterpartyRef, ...changes });
     }
   };
-  const autosaveCounterpartyDossier =
-    (counterpartyId: string): DossierAutosave =>
+  const saveCounterpartyDossier =
+    (counterpartyId: string): DossierSave =>
     (changes, expectedRevision, unchanged) => {
       const entry = tenantDirectory.find((item) => item.counterpartyRef.resourceId === counterpartyId);
       return entry === undefined
         ? Effect.succeed<RevisionedSaveResult>('failed')
-        : autosaveLeasingCommand(
+        : saveLeasingCommand(
             { _tag: 'UpdateCounterpartyDossier', counterpartyRef: entry.counterpartyRef, ...changes },
             expectedRevision,
             unchanged,
             setProposal,
           );
     };
+  /** The counterparty the create form saved; the page opens its dossier once the form is gone. */
+  const [createdCounterparty, setCreatedCounterparty] = useState<string>();
   /** S01-01: a firm or person becomes a counterparty of this company with its first timeline note. */
-  const createCounterparty = (input: NewCounterpartyInput) => {
+  const createCounterparty = (input: NewCounterpartyInput): Effect.Effect<SaveOutcome> => {
     if (snapshot === undefined) {
-      return;
+      return Effect.succeed('failed');
     }
     setCreateError(undefined);
     setProposal(undefined);
@@ -413,180 +441,134 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     if (input.partyType === 'ORGANIZATION' && input.companyId.trim() !== '') {
       request.companyId = input.companyId.trim();
     }
-    run(
-      createCustomer(request).pipe(
-        Effect.flatMap((created) =>
-          Effect.all(
-            {
-              idempotencyKey: newUuid,
-              referenceCredentials: makeReferenceGatewayCredentials(['party-registry']),
-            },
-            { concurrency: 2 },
-          ).pipe(
-            Effect.flatMap(({ idempotencyKey, referenceCredentials }) =>
-              executeApplyCommand(
-                {
-                  command: {
-                    _tag: 'UpdateCounterpartyDossier',
-                    activity: {
-                      kind: 'NOTE',
-                      summary:
-                        input.note.trim() === ''
-                          ? `${input.partyType === 'PERSON' ? 'Osoba' : 'Firma'} založena jako protistrana Nájempark.`
-                          : input.note.trim(),
-                    },
-                    counterpartyRef: created.counterpartyRef,
+    return createCustomer(request).pipe(
+      Effect.flatMap((created) =>
+        Effect.all(
+          {
+            idempotencyKey: newUuid,
+            referenceCredentials: makeReferenceGatewayCredentials(['party-registry']),
+          },
+          { concurrency: 2 },
+        ).pipe(
+          Effect.flatMap(({ idempotencyKey, referenceCredentials }) =>
+            executeApplyCommand(
+              {
+                command: {
+                  _tag: 'UpdateCounterpartyDossier',
+                  activity: {
+                    kind: 'NOTE',
+                    summary:
+                      input.note.trim() === ''
+                        ? `${input.partyType === 'PERSON' ? 'Osoba' : 'Firma'} založena jako protistrana Nájempark.`
+                        : input.note.trim(),
                   },
-                  expectedRevision: snapshot.revision,
+                  counterpartyRef: created.counterpartyRef,
                 },
-                'property-leasing.counterparty-create',
-                { idempotencyKey, referenceCredentials },
-              ),
+                expectedRevision: snapshot.revision,
+              },
+              'property-leasing.counterparty-create',
+              { idempotencyKey, referenceCredentials },
             ),
-            Effect.map((result) => ({
-              created,
-              parked: Schema.is(ActionProposalAcceptedSchema)(result) ? result : undefined,
-            })),
           ),
+          Effect.map((result) => ({
+            created,
+            parked: Schema.is(ActionProposalAcceptedSchema)(result) ? result : undefined,
+          })),
         ),
-        Effect.match({
-          onFailure: (failure) => {
-            const status = 'status' in failure && Predicate.isNumber(failure.status) ? failure.status : undefined;
-            let message = 'Protistranu se nepodařilo uložit. Zkontrolujte údaje a zkuste to znovu.';
-            if (status === 403) {
-              message = 'Pro zakládání protistran nemáte oprávnění.';
-            } else if (Predicate.isTagged(failure, 'CustomerCreateAmbiguous')) {
-              message = 'Protistrana se shoduje s více existujícími záznamy. Vyřešte shodu v registru zákazníků.';
-            }
-            setCreateError(message);
-            setActionFeedback(status === 403 ? 'forbidden' : undefined);
-          },
-          onSuccess: ({ created, parked }) => {
-            if (parked !== undefined) {
-              // The leasing counterparty and its first note exist only once the proposal is approved.
-              setProposal(parked);
-              setActionFeedback(undefined);
-              return;
-            }
-            const url = new URL(window.location.href);
-            url.search = '';
-            url.searchParams.set('counterpartyId', created.counterpartyRef.resourceId);
-            url.hash = 'tenant';
-            window.location.assign(url);
-          },
-        }),
       ),
+      Effect.match({
+        onFailure: (failure) => {
+          const status = 'status' in failure && Predicate.isNumber(failure.status) ? failure.status : undefined;
+          let message = 'Protistranu se nepodařilo uložit. Zkontrolujte údaje a zkuste to znovu.';
+          if (status === 403) {
+            message = 'Pro zakládání protistran nemáte oprávnění.';
+          } else if (Predicate.isTagged(failure, 'CustomerCreateAmbiguous')) {
+            message = 'Protistrana se shoduje s více existujícími záznamy. Vyřešte shodu v registru zákazníků.';
+          }
+          setCreateError(message);
+          setActionFeedback(status === 403 ? 'forbidden' : undefined);
+          return 'failed';
+        },
+        onSuccess: ({ created, parked }): SaveOutcome => {
+          setActionFeedback(undefined);
+          if (parked !== undefined) {
+            // The leasing counterparty and its first note exist only once the proposal is approved.
+            setProposal(parked);
+            return 'proposed';
+          }
+          setCreatedCounterparty(created.counterpartyRef.resourceId);
+          return 'saved';
+        },
+      }),
     );
   };
-  const rentTermsFromForm = (): RentTerms | 'invalid' | undefined => {
-    if (rentMonthly.trim().length === 0 && rentService.trim().length === 0) {
-      return undefined;
+  useEffect(() => {
+    if (createdCounterparty !== undefined) {
+      const url = new URL(window.location.href);
+      url.search = '';
+      url.searchParams.set('counterpartyId', createdCounterparty);
+      url.hash = 'tenant';
+      window.location.assign(url);
     }
-    const monthlyRentMinor = parseCrowns(rentMonthly);
-    const serviceChargesMinor = rentService.trim().length === 0 ? 0 : parseCrowns(rentService);
-    const paymentDay = Number(rentPaymentDay);
-    if (
-      monthlyRentMinor === undefined ||
-      serviceChargesMinor === undefined ||
-      !Number.isInteger(paymentDay) ||
-      paymentDay < 1 ||
-      paymentDay > 31
-    ) {
-      return 'invalid';
-    }
-    return { currency: 'CZK', monthlyRentMinor, paymentDay, serviceChargesMinor };
-  };
+  }, [createdCounterparty]);
   const openRentEditor = () => {
     dispatchEditor(occupancyEditorActions.OPEN_RENT({ terms: Option.fromUndefinedOr(selected?.rentTerms) }));
   };
-  const createDraft = () => {
-    const unit = properties?.units.find((record) => record.unitRef.resourceId === unitId);
-    const customer = customers.find((record) => record.counterpartyRef.resourceId === customerId);
-    const rentTerms = rentTermsFromForm();
-    if (unit === undefined || customer === undefined || rentTerms === 'invalid') {
-      setActionFeedback('validation');
-      return;
+  /** A new lease or stay the form created; the page opens it once the form is gone. */
+  const [created, setCreated] = useState<string>();
+  // Opened only once the form is gone, so leaving the page does not ask about the saved form.
+  useEffect(() => {
+    if (created !== undefined) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('resourceId', created);
+      url.searchParams.delete('create');
+      url.searchParams.delete('unitId');
+      window.location.assign(url);
     }
-    run(
-      newUuid.pipe(
-        Effect.match({
-          onFailure: reportFailure,
-          onSuccess: (resourceId) => {
-            const record: { -readonly [Key in keyof Occupancy]: Occupancy[Key] } = {
-              contractRef: null,
-              customerCounterpartyRef: customer.counterpartyRef,
-              endDate: endDate || null,
-              externalBookingCorrelation: null,
-              guestPartyRef: null,
-              kind: 'LONG_TERM_LEASE',
-              note: null,
-              occupancyRef: {
-                moduleId: 'property.leasing',
-                resourceId,
-                resourceType: 'property.leasing.occupancy',
-                tenantId: unit.unitRef.tenantId,
-              },
-              peopleCount: null,
-              startDate,
-              state: 'DRAFT',
-              unitRef: unit.unitRef,
-            };
-            if (rentTerms !== undefined) {
-              record.rentTerms = rentTerms;
-            }
-            runCommand({ _tag: 'CreateDraft', record });
-          },
-        }),
-      ),
+  }, [created]);
+  /** The form's Save outcome: a saved change re-reads the page first, a parked one is reported. */
+  const settleSave = (outcome: OccupancyOutcome) =>
+    Match.value(outcome).pipe(
+      Match.tag('Saved', () => reload().pipe(Effect.ignore)),
+      // A conflict re-reads too, so "Načíst aktuální verzi" offers the newer version.
+      Match.tag('Conflict', () => reload().pipe(Effect.ignore)),
+      Match.tag('Proposed', ({ proposal: parked }) => Effect.sync(() => setProposal(parked))),
+      Match.orElse(() => Effect.void),
+      Effect.as(outcome),
     );
+  /**
+   * The Save button of the lease and stay form: a new lease or stay against the leases as read now, or the edited
+   * lease draft against the revision its draft was read at.
+   */
+  const saveOccupancy = (draft: OccupancyDraft, save: OccupancySave): Effect.Effect<OccupancyOutcome> => {
+    // Only a lease that is still a draft can change; anything else is refused before it is sent.
+    const record = snapshot?.occupancies.find((item) => item.occupancyRef.resourceId === editingId);
+    const send =
+      editingId.length === 0
+        ? createOccupancy(draft, {
+            expectedRevision: snapshot?.revision ?? 0,
+            kind: editor === 'stay' ? 'stay' : 'lease',
+            references: {
+              customers,
+              guests: guests.map((item) => ({ ref: item.ref })),
+              units: properties?.units ?? [],
+            },
+          })
+        : Option.match(
+            Option.filter(Option.fromUndefinedOr(record), (item) => item.state === 'DRAFT'),
+            {
+              onNone: () => Effect.succeed(failedWith('validation')),
+              onSome: (occupancy) => saveLeaseDraft(occupancy, draft, save),
+            },
+          );
+    return send.pipe(Effect.ensuring(Effect.sync(invalidateLeaseRelated)), Effect.flatMap(settleSave));
   };
-  const createStay = () => {
-    const unit = properties?.units.find((item) => item.unitRef.resourceId === unitId);
-    const guest = guests.find((item) => item.ref.resourceId === guestId);
-    const count = Number(peopleCount);
-    if (
-      unit === undefined ||
-      guest === undefined ||
-      !Number.isInteger(count) ||
-      count < 1 ||
-      endDate.length === 0 ||
-      endDate <= startDate ||
-      stayNote.length > 500
-    ) {
-      setActionFeedback('validation');
-      return;
-    }
-    run(
-      newUuid.pipe(
-        Effect.match({
-          onFailure: reportFailure,
-          onSuccess: (resourceId) =>
-            runCommand({
-              _tag: 'CreateDraft',
-              record: {
-                contractRef: null,
-                customerCounterpartyRef: null,
-                endDate,
-                externalBookingCorrelation: null,
-                guestPartyRef: guest.ref,
-                kind: 'SHORT_STAY',
-                note: stayNote.trim() || null,
-                occupancyRef: {
-                  moduleId: 'property.leasing',
-                  resourceId,
-                  resourceType: 'property.leasing.occupancy',
-                  tenantId: unit.unitRef.tenantId,
-                },
-                peopleCount: count,
-                startDate,
-                state: 'DRAFT',
-                unitRef: unit.unitRef,
-              },
-            }),
-        }),
-      ),
-    );
+  /** The form created `resourceId`: it closes, then the page opens the new record. */
+  const openCreated = (resourceId: string) => {
+    setEditor(undefined);
+    setCreated(resourceId);
   };
+  const restoreDraft = (draft: OccupancyDraft) => dispatchEditor(occupancyEditorActions.RESTORE_DRAFT({ draft }));
   const editDraft = () => {
     if (selected?.state !== 'DRAFT') {
       return;
@@ -637,24 +619,6 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
       loadLinkedCustomers();
     }
   }, [properties, feedback, linkedResourceId, search]);
-  const saveDraft = () => {
-    const rentTerms = rentTermsFromForm();
-    if (selected?.state !== 'DRAFT' || selected.occupancyRef.resourceId !== editingId || rentTerms === 'invalid') {
-      setActionFeedback('validation');
-      return;
-    }
-    type UpdateDraft = Extract<OccupancyCommand, { readonly _tag: 'UpdateDraft' }>;
-    const command: { -readonly [Key in keyof UpdateDraft]: UpdateDraft[Key] } = {
-      _tag: 'UpdateDraft',
-      endDate: endDate || null,
-      occupancyRef: selected.occupancyRef,
-      startDate,
-    };
-    if (rentTerms !== undefined) {
-      command.rentTerms = rentTerms;
-    }
-    runCommand(command);
-  };
   const activate = (record: Occupancy) => {
     const contract = agreements?.contracts.find(
       (value) =>
@@ -721,15 +685,12 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
   return {
     activate,
     agreements,
-    autosaveCounterpartyDossier,
     busy,
     cancelledCount,
     canWrite,
     collision,
     createCounterparty,
-    createDraft,
     createError,
-    createStay,
     customerId,
     customerName,
     customerNameFeedback,
@@ -739,6 +700,8 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     customersEmpty: !customersLoading && customers.length === 0,
     customersLoading,
     directoryLoaded,
+    dispatchEditor,
+    draft: occupancyDraftOf(draftEditor),
     editDraft,
     editingId,
     editor,
@@ -751,7 +714,9 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     language,
     linkedCounterpartyId,
     linkedResourceId,
+    logCounterpartyActivity,
     newDraft,
+    openCreated,
     openRentEditor,
     partyNameOf,
     peopleCount,
@@ -764,9 +729,13 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     rentPaymentDay,
     rentService,
     reportProposal: setProposal,
+    restoreDraft,
     retry,
     runCommand,
-    saveDraft,
+    runReload: () => run(reload()),
+    saveAddition,
+    saveCounterpartyDossier,
+    saveOccupancy,
     searchGuests,
     selected,
     setCustomerId,
@@ -812,55 +781,30 @@ const ProposalNotice = ({ state }: { readonly state: ReturnType<typeof useRecord
   state.proposal === undefined ? null : (
     <output aria-live="polite">{state.t('property-leasing.demo.approvalRequired')}</output>
   );
-const RentFields = ({ state }: { readonly state: ReturnType<typeof useRecordsPage> }) => (
-  <div className="propertyleasing:grid propertyleasing:gap-4 propertyleasing:md:grid-cols-3">
-    <FormInput
-      id="occupancy-rent-monthly"
-      inputMode="decimal"
-      label={state.t('property-leasing.rent.monthlyRentInput')}
-      onChange={(event) => state.setRentMonthly(event.target.value)}
-      value={state.rentMonthly}
-    />
-    <FormInput
-      id="occupancy-rent-service"
-      inputMode="decimal"
-      label={state.t('property-leasing.rent.serviceChargesInput')}
-      onChange={(event) => state.setRentService(event.target.value)}
-      value={state.rentService}
-    />
-    <FormInput
-      id="occupancy-rent-payment-day"
-      label={state.t('property-leasing.rent.paymentDayInput')}
-      max={31}
-      min={1}
-      onChange={(event) => state.setRentPaymentDay(event.target.value)}
-      type="number"
-      value={state.rentPaymentDay}
-    />
-  </div>
-);
 /**
- * The agreed rent of the selected lease. Changes save themselves (debounced, on blur and on Zavřít) against the
- * revision the draft builds on; when someone else changed this rent, the panel offers the current version instead.
+ * The agreed rent of the selected lease. Edits stay on screen until Uložit is clicked, against the revision the draft
+ * builds on; when someone else changed this rent, the panel offers the current version instead. Leaving with unsaved
+ * changes asks first.
  */
 const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; readonly state: PageState }) => {
   const { t } = state;
+  const labels = saveLabelsFor(state.language);
   const server = rentDraftOf(occupancy.rentTerms);
   /** The rent the draft builds on: what the panel opened with, last saved or reloaded. */
   const base = useRef(server);
   const rememberSaved = (value: RentDraft, result: RevisionedSaveResult) => {
-    if (result !== 'conflict' && result !== 'failed') {
+    if (Predicate.isNumber(result) || result === 'saved') {
       base.current = value;
     }
   };
   const send = (value: RentDraft, expectedRevision: number, rentTerms: RentTerms) =>
-    autosaveLeasingCommand(
+    saveLeasingCommand(
       { _tag: 'SetRentTerms', occupancyRef: occupancy.occupancyRef, rentTerms },
       expectedRevision,
       rentUnchangedSince(occupancy.occupancyRef.resourceId, base.current),
       state.reportProposal,
     ).pipe(Effect.tap((result) => Effect.sync(() => rememberSaved(value, result))));
-  const autosave = useAutosaveDraft<RentDraft, never>({
+  const record = useRecordDraft<RentDraft, never>({
     equals: sameRentDraft,
     isValid: (value) => Option.isSome(rentTermsOf(value)),
     revision: state.snapshot?.revision ?? 0,
@@ -872,36 +816,39 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
       }),
     server,
   });
-  const settledOnServer = !autosave.pending && sameRentDraft(autosave.draft, server);
+  const settledOnServer = !record.pending && sameRentDraft(record.draft, server);
   useEffect(() => {
     if (settledOnServer) {
       base.current = server;
     }
   }, [base, server, settledOnServer]);
-  const { draft } = autosave;
+  const { draft } = record;
   const problems = rentProblems(draft);
   const invalid = (problem: boolean, key: string) =>
     problem ? { helpText: t(key), validateStatus: 'error' as const } : {};
   const change = (field: keyof RentDraft) => (value: string) =>
-    autosave.setDraft((current) => ({ ...current, [field]: value }));
+    record.setDraft((current) => ({ ...current, [field]: value }));
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
   const close = () => {
-    autosave.flush();
-    state.setRentEditorOpen(false);
+    guard.request(() => {
+      state.setRentEditorOpen(false);
+    });
   };
-  const handleBlur = autosave.flush;
-  const handleRetry = autosave.retry;
-  const handleReloadLatest = autosave.reloadLatest;
+  const handleSave = record.save;
+  const handleReloadLatest = record.reloadLatest;
   return (
     <SidePanel
       actions={
         <>
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
           <Button onClick={close} theme="outlined" variant="secondary">
             {t(LABEL_CLOSE)}
           </Button>
+          <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
         </>
       }
       closeLabel={t(LABEL_CLOSE)}
+      guard={guard}
       initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#occupancy-rent-monthly')}
       onOpenChange={(open) => {
         if (!open) {
@@ -913,6 +860,7 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
       size="md"
       title={t('property-leasing.rent.formTitle')}
     >
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
       <div className="propertyleasing:space-y-4 propertyleasing:py-2">
         <p className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
           {t('property-leasing.rent.formHint')}
@@ -922,7 +870,6 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
             id="occupancy-rent-monthly"
             inputMode="decimal"
             label={t('property-leasing.rent.monthlyRentInput')}
-            onBlur={handleBlur}
             onChange={(event) => change('monthly')(event.target.value)}
             value={draft.monthly}
             {...invalid(problems.monthly, 'property-leasing.rent.invalidAmount')}
@@ -931,7 +878,6 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
             id="occupancy-rent-service"
             inputMode="decimal"
             label={t('property-leasing.rent.serviceChargesInput')}
-            onBlur={handleBlur}
             onChange={(event) => change('service')(event.target.value)}
             value={draft.service}
             {...invalid(problems.service, 'property-leasing.rent.invalidAmount')}
@@ -941,7 +887,6 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
             label={t('property-leasing.rent.paymentDayInput')}
             max={31}
             min={1}
-            onBlur={handleBlur}
             onChange={(event) => change('paymentDay')(event.target.value)}
             type="number"
             value={draft.paymentDay}
@@ -1012,6 +957,7 @@ const OccupancyDetailHeader = ({ model, state }: OccupancyDetailProps) => {
     tenant?.displayName === null || tenant?.displayName === undefined ? '' : ` · ${tenant.displayName}`;
   return (
     <>
+      <DocumentTitle title={`${unitName(selected.unitRef.resourceId)}${tenantSuffix}`} />
       <div>
         <LinkButton
           href={`/${language}/najmy`}
@@ -1216,8 +1162,11 @@ const OccupancyRelations = ({ model, state }: OccupancyDetailProps) => {
               : `/${language}/najmy?counterpartyId=${selected.customerCounterpartyRef.resourceId}#tenant`
           }
           newContactId={newUuid}
-          onAutosave={(changes, expectedRevision, unchanged) =>
-            autosaveLeasingCommand(
+          onLog={(changes) =>
+            state.saveAddition({ _tag: 'UpdateTenantDossier', occupancyRef: selected.occupancyRef, ...changes })
+          }
+          onSave={(changes, expectedRevision, unchanged) =>
+            saveLeasingCommand(
               { _tag: 'UpdateTenantDossier', occupancyRef: selected.occupancyRef, ...changes },
               expectedRevision,
               unchanged,
@@ -1253,7 +1202,8 @@ const OccupancyRelations = ({ model, state }: OccupancyDetailProps) => {
 };
 const OccupancyDocuments = ({ model, state }: OccupancyDetailProps) => {
   const { noticeContext, occupancyId, selected, tenant, tenantDossier } = model;
-  const { busy, runCommand, snapshot, t } = state;
+  const { busy, snapshot, t } = state;
+  const handleSaveAddition = state.saveAddition;
   return (
     <>
       {snapshot !== undefined && (
@@ -1261,23 +1211,20 @@ const OccupancyDocuments = ({ model, state }: OccupancyDetailProps) => {
           busy={busy}
           canWrite={state.canWrite}
           context={noticeContext}
-          key={`sheet:${snapshot.revision}`}
           newId={newUuid}
-          onCommand={runCommand}
+          onSave={handleSaveAddition}
           sheets={(snapshot.registrationSheets ?? []).filter((sheet) => sheet.occupancyId === occupancyId)}
         />
       )}
       {snapshot !== undefined && (
         <NoticeCard
-          busy={busy}
           canWrite={state.canWrite}
           context={noticeContext}
           defaultEmail={tenant?.email ?? tenantDossier?.contacts.find((contact) => contact.email !== '')?.email ?? ''}
           defaultPhone={tenant?.phone ?? tenantDossier?.contacts.find((contact) => contact.phone !== '')?.phone ?? ''}
-          key={`notice:${snapshot.revision}`}
           newId={newUuid}
           notices={(snapshot.preparedNotices ?? []).filter((notice) => notice.occupancyId === occupancyId)}
-          onCommand={runCommand}
+          onSave={handleSaveAddition}
         />
       )}
       {selected.note !== null && (
@@ -1414,32 +1361,10 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
   );
 };
 const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRecordsPage> }) => {
-  const {
-    busy,
-    customerId,
-    customerOpen,
-    customers,
-    customersLoading,
-    editingId,
-    editor,
-    endDate,
-    feedback,
-    properties,
-    setCustomerId,
-    setCustomerOpen,
-    setEndDate,
-    setStartDate,
-    setUnitId,
-    startDate,
-    t,
-    unitId,
-  } = state;
+  const { editingId, editor, properties, t } = state;
   if (editor === undefined) {
     return null;
   }
-  const { guestId, guestQuery, guests, searchGuests, setGuestId, setGuestQuery } = state;
-  const panelTitle = editor === 'stay' ? 'property-leasing.demo.newBooking' : LABEL_EDIT_DRAFT;
-  const title = editor === 'lease' && editingId.length === 0 ? 'property-leasing.demo.newLease' : panelTitle;
   // Only units in operation inside a building in operation are offered for a new stay or lease.
   const activeUnits = (properties?.units ?? []).filter(
     (record) =>
@@ -1448,194 +1373,72 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
         (item) => item.propertyRef.resourceId === record.propertyRef.resourceId && item.lifecycleState === 'ACTIVE',
       ) === true,
   );
+  const references = {
+    customers: state.customers,
+    guests: state.guests.map((item) => ({ ref: item.ref })),
+    units: properties?.units ?? [],
+  };
+  const editing = Option.fromUndefinedOr(
+    state.snapshot?.occupancies.find((record) => record.occupancyRef.resourceId === editingId),
+  );
+  const isValid = (draft: OccupancyDraft) =>
+    Option.match(editing, {
+      onNone: () =>
+        Option.isSome((editor === 'stay' ? stayDraftRecord : leaseDraftRecord)(draft, references, editingId)),
+      onSome: (record) => Option.isSome(updateDraftCommand(record.occupancyRef, draft)),
+    });
+  const handleChange = (field: keyof OccupancyDraft, value: string) =>
+    state.dispatchEditor(occupancyEditorActions.SET_INPUT({ field, value }));
+  const handleClose = () => state.setEditor(undefined);
+  const handleCreated = state.openCreated;
+  const handleReload = () => state.runReload();
+  const handleRestore = state.restoreDraft;
+  const handleSave = state.saveOccupancy;
+  const handleSearch = state.searchGuests;
+  const handleQueryChange = state.setGuestQuery;
+  const handleCustomerOpenChange = state.setCustomerOpen;
+  const { feedback } = state;
   return (
-    <SidePanel
-      actions={
-        <div className="sp-occupancy-form-actions">
-          <Button disabled={busy} onClick={() => state.setEditor(undefined)} theme="outlined" variant="secondary">
-            {t(LABEL_CLOSE)}
-          </Button>
-          {editor === 'lease' ? (
-            <Button
-              disabled={busy || state.customersLoading}
-              isLoading={feedback === 'saving'}
-              onClick={state.editingId.length > 0 ? state.saveDraft : state.createDraft}
-              variant="primary"
-            >
-              {t(state.editingId.length > 0 ? 'property-leasing.demo.saveDraft' : LABEL_CREATE)}
-            </Button>
-          ) : (
-            <Button
-              disabled={busy}
-              isLoading={feedback === 'saving'}
-              onClick={() => state.createStay()}
-              variant="primary"
-            >
-              Uložit rezervaci
-            </Button>
-          )}
-        </div>
-      }
-      closeLabel={t(LABEL_CLOSE)}
-      initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#occupancy-start-date')}
-      onOpenChange={(open) => {
-        if (!open && !busy) {
-          state.setEditor(undefined);
-        }
+    <OccupancyEditorPanel
+      customers={{
+        empty: state.customersEmpty,
+        items: state.customers.map((record) => ({
+          label: record.displayName ?? t('property-leasing.demo.unnamedCustomer'),
+          value: record.counterpartyRef.resourceId,
+        })),
+        loading: state.customersLoading,
+        onOpenChange: handleCustomerOpenChange,
+        open: state.customerOpen,
       }}
-      open
-      resizeLabel={t('property-leasing.demo.resizePanel')}
-      size="lg"
-      title={t(title)}
-    >
-      <div className="propertyleasing:space-y-4 propertyleasing:py-2">
-        {feedback !== 'ready' && <output aria-live="polite">{t(`property-leasing.demo.feedback.${feedback}`)}</output>}
-        <ProposalNotice state={state} />
-        <div className="propertyleasing:space-y-4">
-          {editingId.length === 0 && (
-            <div className="propertyleasing:grid propertyleasing:gap-4 propertyleasing:md:grid-cols-2">
-              <Select
-                items={withNativeLabels(
-                  activeUnits.map((record) => ({ label: record.name, value: record.unitRef.resourceId })),
-                )}
-                onValueChange={({ value }) => setUnitId(value[0] ?? '')}
-                value={unitId.length > 0 ? [unitId] : []}
-              >
-                <Select.Label>{t(LABEL_UNIT)}</Select.Label>
-                <Select.Control>
-                  <Select.Trigger>
-                    <Select.ValueText placeholder={t(LABEL_CHOOSE)} />
-                  </Select.Trigger>
-                </Select.Control>
-                <Select.Positioner>
-                  <Select.Content>
-                    {activeUnits.map((record) => (
-                      <Select.Item
-                        item={{ label: record.name, value: record.unitRef.resourceId }}
-                        key={record.unitRef.resourceId}
-                      >
-                        <Select.ItemText>{record.name}</Select.ItemText>
-                        <Select.ItemIndicator />
-                      </Select.Item>
-                    ))}
-                  </Select.Content>
-                </Select.Positioner>
-              </Select>
-              {editor === 'lease' && (
-                <div onFocus={() => setCustomerOpen(true)}>
-                  <Combobox
-                    clearable
-                    disabled={busy}
-                    footer={state.customersEmpty ? t('property-leasing.demo.customersEmpty') : undefined}
-                    items={customers.map((record) => ({
-                      label: record.displayName ?? 'Zákazník bez názvu',
-                      value: record.counterpartyRef.resourceId,
-                    }))}
-                    label={t('property-leasing.demo.customer')}
-                    loading={customersLoading}
-                    loadingMessage={t('property-leasing.demo.customersLoading')}
-                    name="customer"
-                    noResultsMessage={t('property-leasing.demo.customersEmpty')}
-                    onChange={(value) => setCustomerId((Array.isArray(value) ? value[0] : value) ?? '')}
-                    onOpenChange={(open) => setCustomerOpen(open)}
-                    open={customerOpen}
-                    placeholder={t('property-leasing.demo.customerPlaceholder')}
-                    translations={comboboxTranslations}
-                    value={customerId.length > 0 ? [customerId] : []}
-                  />
-                </div>
-              )}
-            </div>
-          )}
-          <div className="propertyleasing:grid propertyleasing:gap-4 propertyleasing:md:grid-cols-2">
-            <FormInput
-              id="occupancy-start-date"
-              label={t('property-leasing.demo.startDate')}
-              onChange={(event) => setStartDate(event.target.value)}
-              type="date"
-              value={startDate}
-            />
-            <FormInput
-              id="occupancy-end-date"
-              label={t('property-leasing.demo.endDate')}
-              onChange={(event) => setEndDate(event.target.value)}
-              type="date"
-              value={endDate}
-            />
-          </div>
-          {editor === 'lease' && (
-            <section className="propertyleasing:space-y-3">
-              <h3 className="propertyleasing:text-sm propertyleasing:font-semibold">
-                {t('property-leasing.rent.title')}
-              </h3>
-              <RentFields state={state} />
-            </section>
-          )}
-        </div>
-        {state.editor === 'stay' && (
-          <section className="propertyleasing:space-y-4">
-            <p className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
-              Ruční rezervace bez napojení na rezervační portál. Po uložení ji můžete potvrdit, zahájit, ukončit nebo
-              zrušit. Potvrzení kontroluje kolize termínů.
-            </p>
-            <div className="propertyleasing:flex propertyleasing:items-end propertyleasing:gap-2">
-              <div className="propertyleasing:min-w-0 propertyleasing:flex-1">
-                <FormInput
-                  id="booking-guest-query"
-                  label={t('property-leasing.demo.guestSearch')}
-                  onChange={(event) => setGuestQuery(event.target.value)}
-                  value={guestQuery}
-                />
-              </div>
-              <Button disabled={busy} onClick={searchGuests} size="sm" theme="outlined" variant="secondary">
-                {t('property-leasing.demo.search')}
-              </Button>
-            </div>
-            <Select
-              items={guests.map((record) => ({ label: record.title, value: record.ref.resourceId }))}
-              onValueChange={({ value }) => setGuestId(value[0] ?? '')}
-              value={guestId.length > 0 ? [guestId] : []}
-            >
-              <Select.Label>{t('property-leasing.demo.guest')}</Select.Label>
-              <Select.Control>
-                <Select.Trigger>
-                  <Select.ValueText placeholder={t(LABEL_CHOOSE)} />
-                </Select.Trigger>
-              </Select.Control>
-              <Select.Positioner>
-                <Select.Content>
-                  {guests.map((record) => (
-                    <Select.Item
-                      item={{ label: record.title, value: record.ref.resourceId }}
-                      key={record.ref.resourceId}
-                    >
-                      <Select.ItemText>{record.title}</Select.ItemText>
-                      <Select.ItemIndicator />
-                    </Select.Item>
-                  ))}
-                </Select.Content>
-              </Select.Positioner>
-            </Select>
-            <FormInput
-              id="stay-people-count"
-              label={t('property-leasing.booking.peopleCount')}
-              min={1}
-              onChange={(event) => state.setPeopleCount(event.target.value)}
-              required
-              type="number"
-              value={state.peopleCount}
-            />
-            <FormInput
-              id="stay-note"
-              label={t('property-leasing.booking.note')}
-              maxLength={500}
-              onChange={(event) => state.setStayNote(event.target.value)}
-              value={state.stayNote}
-            />
-          </section>
-        )}
-      </div>
-    </SidePanel>
+      draft={state.draft}
+      editing={editing}
+      feedbackText={
+        feedback === 'ready' || feedback === 'saving' || feedback === 'loading'
+          ? undefined
+          : t(`property-leasing.demo.feedback.${feedback}`)
+      }
+      guests={{
+        busy: state.busy,
+        items: state.guests.map((record) => ({
+          label: record.title ?? t('property-leasing.demo.unnamedGuest'),
+          value: record.ref.resourceId,
+        })),
+        onQueryChange: handleQueryChange,
+        onSearch: handleSearch,
+        query: state.guestQuery,
+      }}
+      isValid={isValid}
+      key={`${editor}:${editingId}`}
+      mode={editor}
+      onChange={handleChange}
+      onClose={handleClose}
+      onCreated={handleCreated}
+      onReload={handleReload}
+      onRestore={handleRestore}
+      onSave={handleSave}
+      revision={state.snapshot?.revision ?? 0}
+      units={activeUnits.map((record) => ({ label: record.name, value: record.unitRef.resourceId }))}
+    />
   );
 };
 const OccupancySummary = ({ state }: { readonly state: ReturnType<typeof useRecordsPage> }) => {
@@ -1713,7 +1516,8 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
             }
             language={state.language}
             newContactId={newUuid}
-            onAutosave={state.autosaveCounterpartyDossier(state.linkedCounterpartyId)}
+            onLog={state.logCounterpartyActivity(state.linkedCounterpartyId)}
+            onSave={state.saveCounterpartyDossier(state.linkedCounterpartyId)}
             onUpdate={state.updateCounterpartyDossier(state.linkedCounterpartyId)}
             snapshot={snapshot}
             unitName={unitName}

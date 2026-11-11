@@ -26,6 +26,7 @@
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
   "dependencies": {
+    "@app/admin-ui": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/shared-contracts": "workspace:*",
@@ -87,6 +88,5 @@
       "schemaVersion": 2
     }
   },
-  "zephyr:dependencies": {},
-  "type": "module"
+  "zephyr:dependencies": {}
 }

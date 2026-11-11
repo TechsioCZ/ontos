@@ -22,7 +22,7 @@ const client = Schema.decodeSync(ClientSchema)({
 });
 const saved = draftOf(client, 'none');
 
-describe('client autosave draft', () => {
+describe('client edit draft', () => {
   it('treats a draft that differs only in surrounding spaces as already saved', () => {
     expect(sameClientDraft(saved, { ...saved, name: 'Akros ' })).toBe(true);
     expect(sameClientDraft(saved, { ...saved, name: 'Akros CZ' })).toBe(false);

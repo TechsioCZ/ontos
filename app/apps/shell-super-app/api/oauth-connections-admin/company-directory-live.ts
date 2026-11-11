@@ -120,6 +120,13 @@ export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
         }
         let revision = agent.operatorCommand?.revision ?? 0;
         if (!commandMatches) {
+          // The form was read before someone else's change: refuse instead of overwriting it. The Action gets this
+          // same revision as `expectedRevision`, so a change committed after this snapshot is refused under its lock.
+          if (input.expectedRevision !== undefined && input.expectedRevision !== revision) {
+            return yield* new ConnectionsGone({
+              reason: 'Operátory agenta se mezitím změnily. Načtěte aktuální verzi a zkuste to znovu.',
+            });
+          }
           const payload = {
             agentPrincipalId: agent.principalId,
             context: input.context,

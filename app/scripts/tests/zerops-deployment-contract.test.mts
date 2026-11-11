@@ -337,7 +337,7 @@ it('declares the import list of the data plane, the migrator secrets, the app an
   }
 });
 
-it('reserves the application working set and one dedicated CPU while preserving free-memory and replica limits', () => {
+it('fixes the application at 4 GiB and one dedicated CPU while preserving free-memory and replica limits', () => {
   const services = Schema.decodeUnknownSync(Schema.instanceOf(YAMLSeq))(
     parseDocument(readFileSync(zeropsImportPath, 'utf-8')).get('services', true),
   );
@@ -345,7 +345,7 @@ it('reserves the application working set and one dedicated CPU while preserving 
     services.items.find((service) => isMap(service) && service.get('hostname') === 'app'),
   );
 
-  expect(app.getIn(['verticalAutoscaling', 'minRam'])).toBe(2.5);
+  expect(app.getIn(['verticalAutoscaling', 'minRam'])).toBe(4);
   expect(app.getIn(['verticalAutoscaling', 'maxRam'])).toBe(4);
   expect(app.getIn(['verticalAutoscaling', 'minFreeRamGB'])).toBe(0.5);
   expect(app.getIn(['verticalAutoscaling', 'cpuMode'])).toBe('DEDICATED');
@@ -391,7 +391,7 @@ it('runs the N1 e-shop on one minimal service of its own, from the n1 setup, wit
   expect(n1.get('minContainers')).toBe(1);
   expect(n1.get('maxContainers')).toBe(1);
   expect(block).not.toMatch(/akros-storefront|ONTOS_AKROS_STOREFRONT_API_KEY|DATABASE_URL|SMTP_|PAYMENT_|SHIPPING_/u);
-  expect(block).toContain('ONTOS_SHELL_URL: https://ontos-stage.web-revolution.cz');
+  expect(block).toContain('ONTOS_SHELL_URL: http://app:3000');
   expect(block).toContain('test -n "$ONTOS_N1_STOREFRONT_API_KEY"');
   expect(pushDelivery).toContain(`n1) id="\${ZEROPS_N1_STOREFRONT_SERVICE_ID:?n1 service id is required}"; setup=n1`);
   expect(workflow).toContain(`ONTOS_N1_STOREFRONT_API_KEY: \${{ secrets.ONTOS_N1_STOREFRONT_API_KEY }}`);

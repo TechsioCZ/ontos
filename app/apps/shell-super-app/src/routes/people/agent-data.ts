@@ -25,6 +25,7 @@ export const loadAgentEntitiesWithRetry = loadAgentEntities.pipe(
 
 /** Agent entities of the selected company with their operators, connections and history. */
 export const agentEntitiesData = definePageData({
+  changesFrom: ['shell'],
   key: (legalEntityId: string) => legalEntityId,
   load: () => loadAgentEntitiesWithRetry,
   runtime: browserRuntime,

@@ -1,4 +1,5 @@
 import {
+  changeConcerns,
   definePageData,
   moduleChangeEvent,
   modulePagePreload,
@@ -8,8 +9,9 @@ import {
   pageDataTenantScopeKey,
   pageDataWorkEvent,
 } from '@app/shared-contracts/page-data';
-import type { PageDataWork } from '@app/shared-contracts/page-data';
+import type { ModuleChangeDetail, PageDataWork } from '@app/shared-contracts/page-data';
 import { Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Result } from 'effect';
+import { TestClock } from 'effect/testing';
 import { afterAll, beforeAll, expect, it } from 'effect-rstest';
 
 const events = new EventTarget();
@@ -346,6 +348,254 @@ it.live('a live change revalidates only what mounted readers show and retries a 
     unsubscribe();
   }),
 );
+
+/** A strict store (as the admin details) mounted on one entry; `changesFrom` names the apps it shows. */
+const mountScopedStore = (scope: { readonly changesFrom?: readonly string[] }) => {
+  let loads = 0;
+  const store = definePageData({
+    ...scope,
+    key: (id: string) => id,
+    load: (id: string) =>
+      Effect.sync(() => {
+        loads += 1;
+        return `${id}#${loads}`;
+      }),
+    retainStale: false,
+    runtime,
+  });
+  const unsubscribe = store.subscribe(() => {
+    store.snapshot('shown');
+  }, 'shown');
+  return { loads: () => loads, store, unsubscribe };
+};
+
+/** The Shell's live channel reports a change of `apps`. */
+const dispatchChange = (apps: ModuleChangeDetail['apps']) => {
+  globalThis.dispatchEvent(new CustomEvent<ModuleChangeDetail>(moduleChangeEvent, { detail: { apps } }));
+};
+
+it.live('a live change from an app the store does not show leaves it untouched', () =>
+  Effect.gen(function* unrelatedChange() {
+    const scoped = mountScopedStore({ changesFrom: ['merchandise', 'party-registry'] });
+    const unscoped = mountScopedStore({});
+    yield* scoped.store.preload('shown');
+    yield* unscoped.store.preload('shown');
+    const shown = scoped.store.snapshot('shown');
+    dispatchChange(['finance-billing', 'shell']);
+    yield* Effect.sleep('10 millis');
+    expect(scoped.loads()).toBe(1);
+    expect(scoped.store.snapshot('shown')).toBe(shown);
+    // A fresh entry is served without a request: the change did not mark it stale.
+    yield* scoped.store.read('shown');
+    expect(scoped.loads()).toBe(1);
+    // A store that declares nothing keeps reacting to every change.
+    expect(unscoped.loads()).toBe(2);
+    scoped.unsubscribe();
+    unscoped.unsubscribe();
+  }),
+);
+
+it.live('a live change from a declared app reloads the store as before', () =>
+  Effect.gen(function* declaredChange() {
+    const { loads, store, unsubscribe } = mountScopedStore({ changesFrom: ['merchandise', 'party-registry'] });
+    yield* store.preload('shown');
+    dispatchChange(['party-registry']);
+    yield* Effect.sleep('10 millis');
+    expect(loads()).toBe(2);
+    expect(store.snapshot('shown')).toMatchObject({ state: 'ready', value: 'shown#2' });
+    dispatchChange(['crm', 'merchandise']);
+    yield* Effect.sleep('10 millis');
+    expect(loads()).toBe(3);
+    unsubscribe();
+  }),
+);
+
+it.live('a change without an app list, a reset and a write reload every scoped store', () =>
+  Effect.gen(function* everythingChanged() {
+    const { loads, store, unsubscribe } = mountScopedStore({ changesFrom: ['merchandise'] });
+    yield* store.preload('shown');
+    globalThis.dispatchEvent(new Event(moduleChangeEvent));
+    yield* Effect.sleep('10 millis');
+    expect(loads()).toBe(2);
+    dispatchChange('all');
+    yield* Effect.sleep('10 millis');
+    expect(loads()).toBe(3);
+    globalThis.dispatchEvent(new CustomEvent(moduleChangeEvent, { detail: { other: true } }));
+    yield* Effect.sleep('10 millis');
+    expect(loads()).toBe(4);
+    globalThis.dispatchEvent(new Event(moduleWriteEvent));
+    yield* Effect.sleep('10 millis');
+    expect(loads()).toBe(5);
+    store.invalidate();
+    yield* Effect.sleep('10 millis');
+    expect(loads()).toBe(6);
+    unsubscribe();
+  }),
+);
+
+it.live('a shown scoped store reloads once its value is 20 s old, as a write it never hears about may be pending', () =>
+  Effect.gen(function* scopedExpiry() {
+    const clock = ManagedRuntime.make(TestClock.layer());
+    let loads = 0;
+    // Not strict, and read as a React view reads it: the listener carries no input.
+    const store = definePageData({
+      changesFrom: ['finance-billing'],
+      key: (id: string) => id,
+      load: (id: string) =>
+        Effect.sync(() => {
+          loads += 1;
+          return `${id}#${loads}`;
+        }),
+      runtime: clock,
+    });
+    let unsubscribe = store.subscribe(() => {
+      store.snapshot('shown');
+    });
+    yield* store.preload('shown');
+    yield* store.preload('hidden');
+    expect(loads).toBe(2);
+    yield* Effect.promise(() => clock.runPromise(TestClock.adjust('20 seconds')));
+    yield* Effect.sleep('10 millis');
+    // Only the value a view shows reloads; it stays on screen meanwhile.
+    expect(loads).toBe(3);
+    expect(store.snapshot('shown')).toMatchObject({ state: 'ready', value: 'shown#3' });
+    expect(store.snapshot('hidden')).toMatchObject({ value: 'hidden#2' });
+    // Nothing shown: an expired value waits for its next reader.
+    unsubscribe();
+    unsubscribe = store.subscribe(() => {
+      // A view of another page: it reads nothing of this store.
+    });
+    yield* Effect.promise(() => clock.runPromise(TestClock.adjust('20 seconds')));
+    yield* Effect.sleep('10 millis');
+    expect(loads).toBe(3);
+    unsubscribe();
+    yield* Effect.promise(() => clock.dispose());
+  }),
+);
+
+it.live('a shown strict scoped store reloads once 20 s old, also when its view subscribes without an input', () =>
+  Effect.gen(function* strictScopedExpiry() {
+    const clock = ManagedRuntime.make(TestClock.layer());
+    let loads = 0;
+    const store = definePageData({
+      changesFrom: ['finance-billing'],
+      key: (id: string) => id,
+      load: (id: string) =>
+        Effect.sync(() => {
+          loads += 1;
+          return `${id}#${loads}`;
+        }),
+      retainStale: false,
+      runtime: clock,
+    });
+    const seen: string[] = [];
+    const unsubscribe = store.subscribe(() => {
+      seen.push(store.snapshot('shown').state);
+    });
+    yield* store.preload('shown');
+    yield* store.preload('hidden');
+    expect(loads).toBe(2);
+    seen.length = 0;
+    yield* Effect.promise(() => clock.runPromise(TestClock.adjust('20 seconds')));
+    yield* Effect.sleep('10 millis');
+    // Asking whether a view shows the value re-reads it while it is still fresh, so the check itself shows no loading.
+    expect(seen[0]).toBe('ready');
+    expect(loads).toBe(3);
+    expect(store.snapshot('shown')).toMatchObject({ state: 'ready', value: 'shown#3' });
+    expect(store.snapshot('hidden')).toMatchObject({ state: 'pending' });
+    unsubscribe();
+    yield* Effect.promise(() => clock.dispose());
+  }),
+);
+
+interface FlakyOutcome {
+  fail: 'no' | 'error' | 'defect';
+}
+
+const makeFlakyScopedStore = (
+  clock: ManagedRuntime.ManagedRuntime<never, never>,
+  retainStale: boolean,
+  outcome: FlakyOutcome,
+) => {
+  let loads = 0;
+  const store = definePageData({
+    changesFrom: ['finance-billing'],
+    key: (id: string) => id,
+    load: (id: string) =>
+      Effect.suspend(() => {
+        loads += 1;
+        if (outcome.fail === 'error') {
+          return Effect.fail('down' as const);
+        }
+        return outcome.fail === 'defect' ? Effect.die('boom') : Effect.succeed(`${id}#${loads}`);
+      }),
+    retainStale,
+    runtime: clock,
+  });
+  return { loads: () => loads, store };
+};
+
+for (const failure of ['error', 'defect'] as const) {
+  it.live(`a shown scoped store retries 20 s after a reload ends in ${failure}, without an unrelated change`, () =>
+    Effect.gen(function* scopedFailureRetry() {
+      const clock = ManagedRuntime.make(TestClock.layer());
+      const outcome: FlakyOutcome = { fail: 'no' };
+      const { loads, store } = makeFlakyScopedStore(clock, true, outcome);
+      // Read as a React view reads it: the listener carries no input.
+      const unsubscribe = store.subscribe(() => {
+        store.snapshot('shown');
+      });
+      yield* store.preload('shown');
+      outcome.fail = failure;
+      dispatchChange(['finance-billing']);
+      yield* Effect.sleep('10 millis');
+      expect(loads()).toBe(2);
+      expect(store.snapshot('shown')).toMatchObject({ refreshing: false, state: 'ready', value: 'shown#1' });
+      // The backend recovers; the write the view waits for sends no live change.
+      outcome.fail = 'no';
+      yield* Effect.promise(() => clock.runPromise(TestClock.adjust('20 seconds')));
+      yield* Effect.sleep('10 millis');
+      expect(loads()).toBe(3);
+      expect(store.snapshot('shown')).toMatchObject({ state: 'ready', value: 'shown#3' });
+      unsubscribe();
+      yield* Effect.promise(() => clock.dispose());
+    }),
+  );
+}
+
+it.live('a mounted strict scoped store retries 20 s after a failed reload instead of staying failed', () =>
+  Effect.gen(function* strictScopedFailureRetry() {
+    const clock = ManagedRuntime.make(TestClock.layer());
+    const outcome: FlakyOutcome = { fail: 'no' };
+    const { loads, store } = makeFlakyScopedStore(clock, false, outcome);
+    const unsubscribe = store.subscribe(() => {
+      store.snapshot('shown');
+    }, 'shown');
+    yield* store.preload('shown');
+    outcome.fail = 'error';
+    dispatchChange(['finance-billing']);
+    yield* Effect.sleep('10 millis');
+    expect(store.snapshot('shown')).toMatchObject({ state: 'failed' });
+    outcome.fail = 'no';
+    yield* Effect.promise(() => clock.runPromise(TestClock.adjust('20 seconds')));
+    yield* Effect.sleep('10 millis');
+    expect(loads()).toBe(3);
+    expect(store.snapshot('shown')).toMatchObject({ state: 'ready', value: 'shown#3' });
+    unsubscribe();
+    yield* Effect.promise(() => clock.dispose());
+  }),
+);
+
+const changeOf = (detail: ModuleChangeDetail) => new CustomEvent(moduleChangeEvent, { detail });
+
+it('a hook listening to change events itself applies the same app rule as the stores', () => {
+  expect(changeConcerns(changeOf({ apps: ['tagging'] }), ['merchandise'])).toBe(false);
+  expect(changeConcerns(changeOf({ apps: ['tagging', 'merchandise'] }), ['merchandise'])).toBe(true);
+  expect(changeConcerns(changeOf({ apps: 'all' }), ['merchandise'])).toBe(true);
+  expect(changeConcerns(new CustomEvent(moduleChangeEvent, { detail: { other: true } }), ['merchandise'])).toBe(true);
+  expect(changeConcerns(new Event(moduleChangeEvent), ['merchandise'])).toBe(true);
+  expect(changeConcerns(new Event(moduleWriteEvent), ['merchandise'])).toBe(true);
+});
 
 it.effect('snapshots are referentially stable until the entry changes; update edits a ready value', () =>
   Effect.gen(function* stableSnapshots() {

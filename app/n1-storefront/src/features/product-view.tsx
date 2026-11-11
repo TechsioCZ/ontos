@@ -131,8 +131,8 @@ export const ProductView = ({
               </Breadcrumb.Item>
             </Fragment>
           ))}
-          <Breadcrumb.Separator />
-          <Breadcrumb.Item>
+          <Breadcrumb.Separator className="hidden md:inline-flex" />
+          <Breadcrumb.Item className="hidden md:inline-flex">
             <Breadcrumb.CurrentLink>{product.name}</Breadcrumb.CurrentLink>
           </Breadcrumb.Item>
         </Breadcrumb.List>

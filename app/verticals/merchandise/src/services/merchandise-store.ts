@@ -630,6 +630,16 @@ export interface CatalogHead {
   readonly revision: number;
 }
 
+/**
+ * A company whose head row was never written: no products, orders or AI changes yet. Reads answer it at revision 0;
+ * the company's first write creates the row ({@link lockHeadForWrite}).
+ */
+export const EMPTY_CATALOG_HEAD: CatalogHead = Object.freeze({
+  aiChanges: Option.getOrUndefined(Option.none<MerchandiseAiSlice>()),
+  homepageFeaturedProductIds: [],
+  revision: 0,
+});
+
 /** The company's head row; `lock` serializes writers of the company (SELECT … FOR UPDATE). */
 export const loadHead = Effect.fn('MerchandiseStore.loadHead')(function* loadHead(
   db: MerchandiseDb,
@@ -672,6 +682,33 @@ export const loadHead = Effect.fn('MerchandiseStore.loadHead')(function* loadHea
     { concurrency: 1 },
   );
   return { aiChanges, homepageFeaturedProductIds, revision: row.revision } satisfies CatalogHead;
+});
+
+/**
+ * The head a write runs on, locked until commit. A company without a head row gets one at revision 0 inside the
+ * caller's scoped transaction: under READ COMMITTED a concurrent first write blocks on the primary key, its insert
+ * does nothing once the winner commits, and the re-read then locks the winner's committed row. So both writers
+ * serialize on one row and the later one compares its expected revision against the winner's, never against 0.
+ */
+export const lockHeadForWrite = Effect.fn('MerchandiseStore.lockHeadForWrite')(function* lockHeadForWrite(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  options: { readonly aiChanges?: boolean } = {},
+): Effect.fn.Return<CatalogHead, MerchandiseStoreFailure> {
+  const locked = { ...options, lock: true };
+  const existing = yield* loadHead(db, scope, locked);
+  if (existing !== undefined) {
+    return existing;
+  }
+  yield* query(
+    db
+      .insert(catalogHeads)
+      .values({ ...scope, revision: EMPTY_CATALOG_HEAD.revision })
+      .onConflictDoNothing({ target: [catalogHeads.tenantId, catalogHeads.legalEntityId] }),
+    'Merchandise head could not be created',
+  );
+  const created = yield* loadHead(db, scope, locked);
+  return created ?? (yield* new MerchandiseStoreFailure({ reason: 'Merchandise head could not be created' }));
 });
 
 /** What one command needs to see; everything else stays in the database. */

@@ -7,9 +7,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
-import { Switch } from '@techsio/ui-kit/molecules/switch';
+import { FormInput, FormTextarea, Switch } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef } from '@techsio/ui-kit/organisms/data-table';
@@ -45,6 +43,7 @@ import type { RunCommand } from './purchasing-model.ts';
 import { TextLink } from './stock-tab.tsx';
 import { FinanceInvoiceLink, useIncomingInvoiceLinks } from './finance-links.tsx';
 import { InvoiceDraftForm } from './invoice-draft-form.tsx';
+import { FormSaveFooter, refusedOutcome, submitDone, useFormSave } from '../../../../ui/form-save.tsx';
 
 const noteLabelKey = 'facility-operations.common.note';
 const cancelLabelKey = 'facility-operations.common.cancel';
@@ -295,7 +294,6 @@ interface SubmitOrderReceiptInput {
   readonly quantities: Readonly<Record<string, string>>;
   readonly run: RunCommand;
   readonly serials: Readonly<Record<string, string>>;
-  readonly setBusy: (value: boolean) => void;
   readonly setError: (value: string | undefined) => void;
   readonly t: ReturnType<typeof useModernI18n>['t'];
   readonly toast: ReturnType<typeof useToast>;
@@ -303,23 +301,8 @@ interface SubmitOrderReceiptInput {
 const submitOrderReceipt = Effect.fn('FacilityOperations.Purchasing.submitOrderReceipt')(function* receiveOrder(
   input: SubmitOrderReceiptInput,
 ) {
-  const {
-    batches,
-    date,
-    deliveryNote,
-    k,
-    lookup,
-    onDone,
-    open,
-    order,
-    quantities,
-    run,
-    serials,
-    setBusy,
-    setError,
-    t,
-    toast,
-  } = input;
+  const { batches, date, deliveryNote, k, lookup, onDone, open, order, quantities, run, serials, setError, t, toast } =
+    input;
   setError(undefined);
   const lines: PurchaseReceiveLine[] = [];
   for (const line of open) {
@@ -330,11 +313,11 @@ const submitOrderReceipt = Effect.fn('FacilityOperations.Purchasing.submitOrderR
     const quantity = Number(text);
     if (!Number.isInteger(quantity) || quantity < 0) {
       setError(t('facility-operations.common.errors.invalid'));
-      return;
+      return 'failed' as const;
     }
     if (quantity > lineRemaining(line)) {
       setError(k('orders.overRemaining', { item: line.description, remaining: lineRemaining(line) }));
-      return;
+      return 'failed' as const;
     }
     const item = lookup.item(line.itemId);
     const tracking = item === undefined ? 'none' : item.tracking;
@@ -342,11 +325,11 @@ const submitOrderReceipt = Effect.fn('FacilityOperations.Purchasing.submitOrderR
     const serialList = parseSerials(serials[line.id] ?? '');
     if (tracking === 'batch' && batch === '') {
       setError(k('orders.batchFor', { item: line.description }));
-      return;
+      return 'failed' as const;
     }
     if (tracking === 'serial' && serialList.length !== quantity) {
       setError(k('orders.serialsFor', { count: quantity, item: line.description }));
-      return;
+      return 'failed' as const;
     }
     lines.push({
       lineId: line.id,
@@ -357,9 +340,8 @@ const submitOrderReceipt = Effect.fn('FacilityOperations.Purchasing.submitOrderR
   }
   if (lines.length === 0) {
     setError(k('orders.nothingReceived'));
-    return;
+    return 'failed' as const;
   }
-  setBusy(true);
   const outcome = yield* run({
     _tag: 'PurchaseOrderReceive',
     date,
@@ -367,16 +349,18 @@ const submitOrderReceipt = Effect.fn('FacilityOperations.Purchasing.submitOrderR
     orderId: order.id,
     ...optionalField('deliveryNote', deliveryNote.trim() === '' ? undefined : deliveryNote.trim()),
   });
-  setBusy(false);
-  if (outcome.ok) {
+  if (!outcome.ok) {
+    setError(t(failureKey(outcome.reason)));
+    return refusedOutcome(outcome);
+  }
+  return submitDone(() => {
     toast.create({ duration: 5000, title: k('orders.received'), type: 'success' });
     onDone();
-  } else {
-    setError(t(failureKey(outcome.reason)));
-  }
+  });
 });
 
-const ReceiveForm = ({
+/** Receipt of a delivery against the order (exported for its mounted test). */
+export const ReceiveForm = ({
   onDone,
   order,
   run,
@@ -400,25 +384,28 @@ const ReceiveForm = ({
   const [batches, setBatches] = useState<Record<string, string>>({});
   const [serials, setSerials] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | undefined>();
-  const [busy, setBusy] = useState(false);
-  const submit = () =>
-    submitOrderReceipt({
-      batches,
-      date,
-      deliveryNote,
-      k,
-      lookup,
-      onDone,
-      open,
-      order,
-      quantities,
-      run,
-      serials,
-      setBusy,
-      setError,
-      t,
-      toast,
-    });
+  // The receipt is recorded on Uložit only; the remaining quantities it opens with can be received as they are.
+  const form = useFormSave({
+    savableAtOnce: true,
+    submit: () =>
+      submitOrderReceipt({
+        batches,
+        date,
+        deliveryNote,
+        k,
+        lookup,
+        onDone,
+        open,
+        order,
+        quantities,
+        run,
+        serials,
+        setError,
+        t,
+        toast,
+      }),
+    value: { batches, date, deliveryNote, quantities, serials },
+  });
   return (
     <SectionCard title={k('orders.receiveTitle')}>
       {error !== undefined && (
@@ -492,22 +479,7 @@ const ReceiveForm = ({
           );
         })}
       </div>
-      <div className="flex justify-end gap-100">
-        <Button onClick={onDone} size="sm" theme="outlined" variant="secondary">
-          {t(cancelLabelKey)}
-        </Button>
-        <Button
-          isLoading={busy}
-          loadingText={t('facility-operations.common.saving')}
-          onClick={() => {
-            browserRuntime.runFork(submit());
-          }}
-          size="sm"
-          variant="primary"
-        >
-          {k('orders.receiveSubmit')}
-        </Button>
-      </div>
+      <FormSaveFooter cancelLabel={t(cancelLabelKey)} error={error} form={form} onCancel={onDone} />
     </SectionCard>
   );
 };
@@ -521,7 +493,6 @@ interface SubmitOrderInvoiceLinkInput {
   readonly onDone: () => void;
   readonly order: PurchaseOrder;
   readonly run: RunCommand;
-  readonly setBusy: (value: boolean) => void;
   readonly setError: (value: string | undefined) => void;
   readonly t: ReturnType<typeof useModernI18n>['t'];
   readonly toast: ReturnType<typeof useToast>;
@@ -529,14 +500,13 @@ interface SubmitOrderInvoiceLinkInput {
 
 const submitOrderInvoiceLink = Effect.fn('FacilityOperations.Purchasing.submitOrderInvoiceLink')(
   function* linkOrderInvoice(input: SubmitOrderInvoiceLinkInput) {
-    const { amount, date, k, note, number, onDone, order, run, setBusy, setError, t, toast } = input;
+    const { amount, date, k, note, number, onDone, order, run, setError, t, toast } = input;
     setError(undefined);
     const amountMinor = amount.trim() === '' ? undefined : parseAmountMinor(amount);
     if (number.trim() === '' || (amount.trim() !== '' && amountMinor === undefined)) {
       setError(t('facility-operations.common.required'));
-      return;
+      return 'failed' as const;
     }
-    setBusy(true);
     const outcome = yield* run({
       _tag: 'PurchaseOrderLinkInvoice',
       number: number.trim(),
@@ -545,17 +515,19 @@ const submitOrderInvoiceLink = Effect.fn('FacilityOperations.Purchasing.submitOr
       ...optionalField('amountMinor', amountMinor),
       ...optionalField('note', note.trim() === '' ? undefined : note.trim()),
     });
-    setBusy(false);
-    if (outcome.ok) {
+    if (!outcome.ok) {
+      setError(t(failureKey(outcome.reason)));
+      return refusedOutcome(outcome);
+    }
+    return submitDone(() => {
       toast.create({ duration: 5000, title: k('orders.invoiceLinked'), type: 'success' });
       onDone();
-    } else {
-      setError(t(failureKey(outcome.reason)));
-    }
+    });
   },
 );
 
-const InvoiceForm = ({
+/** Links a supplier invoice to the order (exported for its mounted test). */
+export const InvoiceForm = ({
   onDone,
   order,
   run,
@@ -572,9 +544,11 @@ const InvoiceForm = ({
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | undefined>();
-  const [busy, setBusy] = useState(false);
-  const submit = () =>
-    submitOrderInvoiceLink({ amount, date, k, note, number, onDone, order, run, setBusy, setError, t, toast });
+  // The invoice is linked on Uložit only.
+  const form = useFormSave({
+    submit: () => submitOrderInvoiceLink({ amount, date, k, note, number, onDone, order, run, setError, t, toast }),
+    value: { amount, date, note, number },
+  });
   return (
     <SectionCard title={k('orders.linkInvoice')}>
       {error !== undefined && (
@@ -613,22 +587,7 @@ const InvoiceForm = ({
         onChange={(event) => setNote(event.target.value)}
         value={note}
       />
-      <div className="flex justify-end gap-100">
-        <Button onClick={onDone} size="sm" theme="outlined" variant="secondary">
-          {t(cancelLabelKey)}
-        </Button>
-        <Button
-          isLoading={busy}
-          loadingText={t('facility-operations.common.saving')}
-          onClick={() => {
-            browserRuntime.runFork(submit());
-          }}
-          size="sm"
-          variant="primary"
-        >
-          {k('orders.linkInvoiceSubmit')}
-        </Button>
-      </div>
+      <FormSaveFooter cancelLabel={t(cancelLabelKey)} error={error} form={form} onCancel={onDone} />
     </SectionCard>
   );
 };

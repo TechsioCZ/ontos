@@ -187,6 +187,36 @@ describe('finance reference caches per verified Shell scope', () => {
     }),
   );
 
+  it.live('reports missing names only when a name list failed, not when the product catalog did', () =>
+    Effect.gen(function* namesNotice() {
+      const catalogScope = financePageScope({
+        ...companyContext,
+        legalEntityId: 'b0000000-0000-4000-8000-000000000021',
+      });
+      mocks.customers.mockReturnValueOnce(Effect.succeed([customer('party-c', 'Gama a.s.')]));
+      mocks.products.mockReturnValueOnce(Effect.fail('catalog unavailable'));
+      renderReferences(catalogScope);
+      yield* waitForCalls(mocks.products, 1);
+      yield* settle(100);
+      const catalogFailed = renderReferences(catalogScope);
+      expect(names(catalogFailed)).toEqual(['Gama a.s.']);
+      // The list shows customer and opportunity names; a failed catalog only leaves the create form without products.
+      expect(catalogFailed.referencesFailed).toBe(false);
+      expect(catalogFailed.productsFailed).toBe(true);
+
+      const customersScope = financePageScope({
+        ...companyContext,
+        legalEntityId: 'b0000000-0000-4000-8000-000000000022',
+      });
+      mocks.customers.mockReturnValueOnce(Effect.fail('customers unavailable'));
+      mocks.products.mockReturnValueOnce(Effect.succeed([]));
+      renderReferences(customersScope);
+      yield* waitForCalls(mocks.customers, 2);
+      yield* settle(100);
+      expect(renderReferences(customersScope).referencesFailed).toBe(true);
+    }),
+  );
+
   it.live('shows each principal its own label, never a late label of the previous principal', () =>
     Effect.gen(function* labels() {
       const accountantScope = financePageScope(companyContext);

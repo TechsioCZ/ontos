@@ -15,6 +15,7 @@ const { fixture } = rstest.hoisted(() => ({
       hasProfile: true,
       modules: [],
       operators: [],
+      operatorsRevision: 0,
       owner: null,
       principalId: '00000000-0000-4000-8000-000000000003',
       status: 'active',
@@ -25,6 +26,7 @@ const { fixture } = rstest.hoisted(() => ({
   },
 }));
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useBlocker: () => ({ status: 'idle' }),
   useRouterState: ({
     select,
   }: {

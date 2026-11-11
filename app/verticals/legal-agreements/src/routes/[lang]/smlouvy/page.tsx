@@ -1,9 +1,9 @@
 import { RecordDiscussion } from '@app/facility-operations/ui/record-discussion';
 import {
   DetailList,
+  DocumentTitle,
   PageHeader,
   SectionCard,
-  SidePanel,
   formatDate,
   formatMoney,
   surfaceTileClassName,
@@ -13,16 +13,15 @@ import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Select } from '@techsio/ui-kit/molecules/select';
-import { withNativeLabels } from '@app/admin-ui/select-template';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { Match } from 'effect';
 import { useRecordsPage } from './use-agreements-records.ts';
+import { AgreementsDraftForm } from './agreements-draft-form.tsx';
 import { agreementsInputOf } from './agreements-data.ts';
 import type { AgreementsInput } from './agreements-data.ts';
 import { ContractLinksCard, ContractTermsCard, ContractTermsForm, contractMonthlyTotal } from './contract-terms.tsx';
+import { SignatureForm } from './signature-form.tsx';
 import { AgreementDocumentDetail, AgreementDocumentStatus } from './document-detail.tsx';
 import type { AgreementDocumentState } from './document-selection.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
@@ -55,8 +54,6 @@ const SignedDocumentReference = ({
 };
 
 const LABEL_DETAIL = 'legal-agreements.demo.detail';
-const LABEL_OTHER = 'legal-agreements.demo.kinds.OTHER';
-const LABEL_CREATE = 'legal-agreements.demo.create';
 const legalAgreementsI18nResources = {
   cs: { 'legal-agreements': csResource },
   en: { 'legal-agreements': enResource },
@@ -116,6 +113,7 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
   }
   return (
     <>
+      <DocumentTitle title={state.titleOf(selected)} />
       <div>
         <LinkButton
           href={`/${language}/smlouvy`}
@@ -213,37 +211,12 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
             ))}
           </SectionCard>
           {state.detailView.canRecordSignature && (
-            <form
-              className="legalagreements:w-full legalagreements:space-y-3"
-              onSubmit={(event) => {
-                event.preventDefault();
-                recordSignature(selected);
-              }}
-            >
-              <p className="legalagreements:text-sm">{t('legal-agreements.demo.manualSignatureHint')}</p>
-              {(
-                [
-                  ['signedBy', state.signedBy, state.setSignedBy],
-                  ['signedFileName', state.signedFileName, state.setSignedFileName],
-                  ['signedReference', state.signedReference, state.setSignedReference],
-                  ['signedOn', state.signedOn, state.setSignedOn],
-                ] as const
-              ).map(([field, value, change]) => (
-                <FormInput
-                  disabled={busy}
-                  id={`contract-${field}`}
-                  key={field}
-                  label={t(`legal-agreements.demo.${field}`)}
-                  onChange={(event) => change(event.target.value)}
-                  required
-                  type={field === 'signedOn' ? 'date' : 'text'}
-                  value={value}
-                />
-              ))}
-              <Button disabled={busy} size="sm" type="submit" variant="warning">
-                {t('legal-agreements.demo.recordSignature')}
-              </Button>
-            </form>
+            <SignatureForm
+              busy={busy}
+              key={selected.contractRef.resourceId}
+              onSave={(draft) => recordSignature(selected, draft)}
+              reload={state.refreshAgreements}
+            />
           )}
         </div>
         <div className="legalagreements:min-w-0 legalagreements:space-y-6">
@@ -334,185 +307,6 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
       </div>
       <ContractTermsForm state={state} />
     </>
-  );
-};
-const AgreementsDraftForm = ({ state }: { readonly state: ReturnType<typeof useRecordsPage> }) => {
-  const {
-    busy,
-    createContract,
-    editingDraft,
-    endDate,
-    feedback,
-    occupancies,
-    occupancyId,
-    saveDraft,
-    selected,
-    setEndDate,
-    setOccupancyId,
-    setStartDate,
-    startDate,
-    t,
-    unitName,
-  } = state;
-  if (!state.formOpen) {
-    return null;
-  }
-  const confirmedLeases = (occupancies?.occupancies ?? []).filter(
-    (record) => record.kind === 'LONG_TERM_LEASE' && record.state === 'CONFIRMED',
-  );
-  const commercialCustomers = state.customers.flatMap((item) =>
-    item.status === 'ACTIVE' ? [{ label: item.displayName ?? 'Zákazník bez názvu', value: item.partyId }] : [],
-  );
-  const customerValues = state.customerId.length === 0 ? [] : [state.customerId];
-  const formLabel = editingDraft ? 'legal-agreements.demo.editDraft' : LABEL_CREATE;
-  return (
-    <SidePanel
-      actions={
-        <>
-          <Button disabled={busy} onClick={() => state.setFormOpen(false)} theme="outlined" variant="secondary">
-            {t('legal-agreements.detail.close')}
-          </Button>
-          <Button
-            disabled={busy}
-            isLoading={feedback === 'saving'}
-            onClick={editingDraft ? saveDraft : createContract}
-            variant="primary"
-          >
-            {t(editingDraft ? 'legal-agreements.demo.saveDraft' : LABEL_CREATE)}
-          </Button>
-        </>
-      }
-      closeLabel={t('legal-agreements.detail.close')}
-      initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('#contract-start-date')}
-      onOpenChange={(open) => {
-        if (!open && !busy) {
-          state.setFormOpen(false);
-        }
-      }}
-      open
-      resizeLabel={t('legal-agreements.detail.resizePanel')}
-      size="lg"
-      title={t(formLabel)}
-    >
-      <div className="legalagreements:space-y-4 legalagreements:py-2">
-        {feedback !== 'ready' && <output aria-live="polite">{t(`legal-agreements.demo.feedback.${feedback}`)}</output>}
-        {state.proposal !== undefined && (
-          <output aria-live="polite">{t('legal-agreements.demo.approvalRequired')}</output>
-        )}
-        {!editingDraft && (
-          <Select
-            items={withNativeLabels(
-              (['OTHER', 'LEASE'] as const).map((value) => ({
-                label: t(`legal-agreements.demo.kinds.${value}`),
-                value,
-              })),
-            )}
-            onValueChange={({ value }) => state.selectContractKind(value[0] === 'LEASE' ? 'LEASE' : 'OTHER')}
-            value={[state.contractKind]}
-          >
-            <Select.Label>{t('legal-agreements.demo.contractKind')}</Select.Label>
-            <Select.Control>
-              <Select.Trigger>
-                <Select.ValueText />
-              </Select.Trigger>
-            </Select.Control>
-            <Select.Positioner>
-              <Select.Content>
-                {(['OTHER', 'LEASE'] as const).map((value) => (
-                  <Select.Item item={{ label: t(`legal-agreements.demo.kinds.${value}`), value }} key={value}>
-                    <Select.ItemText>{t(`legal-agreements.demo.kinds.${value}`)}</Select.ItemText>
-                    <Select.ItemIndicator />
-                  </Select.Item>
-                ))}
-              </Select.Content>
-            </Select.Positioner>
-          </Select>
-        )}
-        {state.formView.showCommercialCustomer && (
-          <Select
-            items={commercialCustomers}
-            onValueChange={({ value }) => state.setCustomerId(value[0] ?? '')}
-            value={customerValues}
-          >
-            <Select.Label>{t('legal-agreements.demo.customer')}</Select.Label>
-            <Select.Control>
-              <Select.Trigger>
-                <Select.ValueText placeholder={t('legal-agreements.demo.choose')} />
-              </Select.Trigger>
-            </Select.Control>
-            <Select.Positioner>
-              <Select.Content>
-                {commercialCustomers.map((item) => (
-                  <Select.Item item={item} key={item.value}>
-                    <Select.ItemText>{item.label}</Select.ItemText>
-                    <Select.ItemIndicator />
-                  </Select.Item>
-                ))}
-              </Select.Content>
-            </Select.Positioner>
-          </Select>
-        )}
-        {state.formView.showRentalFeedback && (
-          <output aria-live="polite">{t(`legal-agreements.demo.feedback.${state.rentalFeedback}`)}</output>
-        )}
-        {editingDraft && <p>{selected?.kind === 'OTHER' ? t(LABEL_OTHER) : unitName(selected?.unitRef?.resourceId)}</p>}
-        {state.formView.showRentalSelector && (
-          <Select
-            items={confirmedLeases.map((record) => ({
-              label: unitName(record.unitRef.resourceId),
-              value: record.occupancyRef.resourceId,
-            }))}
-            onValueChange={({ value }) => {
-              setOccupancyId(value[0] ?? '');
-              const record = occupancies?.occupancies.find(
-                (candidate) => candidate.occupancyRef.resourceId === value[0],
-              );
-              if (record !== undefined) {
-                setStartDate(record.startDate);
-                setEndDate(record.endDate ?? '');
-              }
-            }}
-            value={occupancyId.length > 0 ? [occupancyId] : []}
-          >
-            <Select.Label>{t('legal-agreements.demo.occupancy')}</Select.Label>
-            <Select.Control>
-              <Select.Trigger>
-                <Select.ValueText placeholder={t('legal-agreements.demo.choose')} />
-              </Select.Trigger>
-            </Select.Control>
-            <Select.Positioner>
-              <Select.Content>
-                {confirmedLeases.map((record) => (
-                  <Select.Item
-                    item={{ label: unitName(record.unitRef.resourceId), value: record.occupancyRef.resourceId }}
-                    key={record.occupancyRef.resourceId}
-                  >
-                    <Select.ItemText>{unitName(record.unitRef.resourceId)}</Select.ItemText>
-                    <Select.ItemIndicator />
-                  </Select.Item>
-                ))}
-              </Select.Content>
-            </Select.Positioner>
-          </Select>
-        )}
-        <div className="legalagreements:grid legalagreements:gap-4 legalagreements:md:grid-cols-2">
-          <FormInput
-            id="contract-start-date"
-            label={t('legal-agreements.demo.startDate')}
-            onChange={(event) => setStartDate(event.target.value)}
-            type="date"
-            value={startDate}
-          />
-          <FormInput
-            id="contract-end-date"
-            label={t('legal-agreements.demo.endDate')}
-            onChange={(event) => setEndDate(event.target.value)}
-            type="date"
-            value={endDate}
-          />
-        </div>
-      </div>
-    </SidePanel>
   );
 };
 const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {

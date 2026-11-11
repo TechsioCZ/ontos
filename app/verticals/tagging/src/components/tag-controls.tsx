@@ -26,20 +26,31 @@ import { UnassignTagActionForbiddenProblemSchema } from '../../shared/apis/unass
  * - `useTagsOfKind(kind)`: the same for every subject of `kind`, read on mount without waiting for the list ids,
  *   plus a `catalog` to hand to `TagFilter`.
  * - `BulkTagDialog({ kind, subjectIds, open, onOpenChange, onDone })`: adds or removes one tag on many
- *   subjects. Confirms with a toast, so the host page must render one `<Toaster />` from
- *   `@techsio/ui-kit/molecules/toast`.
+ *   subjects, sent only by the shared Save button ("Uložit"); leaving a started choice asks first. Confirms with a
+ *   toast, so the host page must render one `<Toaster />` from `@techsio/ui-kit/molecules/toast`.
  */
-import { matchesSearch, SidePanel, TagBadge, comboboxTranslations } from '@app/admin-ui';
-import type { SidePanelSize } from '@app/admin-ui';
+import {
+  SaveBar,
+  SidePanel,
+  TagBadge,
+  UnsavedChangesDialog,
+  comboboxTranslations,
+  matchesSearch,
+  saveLabelsFor,
+  useDraftSave,
+  useUnsavedChangesGuard,
+} from '@app/admin-ui';
+import type { SaveOutcome, SidePanelSize } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Combobox } from '@techsio/ui-kit/molecules/combobox';
-import { RadioGroup } from '@techsio/ui-kit/molecules/radio-group';
+import { Combobox, RadioGroup } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { definePageData, pageDataPending } from '@app/shared-contracts/page-data';
 import { Effect, Schema } from 'effect';
+import { constVoid } from 'effect/Function';
 import type { ReactNode } from 'react';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { assignTag, unassignTag } from '../api/records-commands.ts';
@@ -121,6 +132,7 @@ type CatalogScope = typeof catalogScope;
  * dataset, so a page that preloaded it shows its options at once and a second picker issues no read of its own.
  */
 export const tagCatalogData = definePageData({
+  changesFrom: ['tagging'],
   key: (scope: CatalogScope) => scope,
   load: () => listTags.pipe(Effect.map((tags) => [...tags])),
   runtime: browserRuntime,
@@ -486,138 +498,170 @@ const isForbidden = (failure: TagCallFailure) =>
   Schema.is(AssignTagActionForbiddenProblemSchema)(failure) ||
   Schema.is(UnassignTagActionForbiddenProblemSchema)(failure);
 
+interface BulkTagDraft {
+  readonly mode: BulkMode;
+  readonly tagId: TagId | null;
+}
+
+const emptyBulkTagDraft: BulkTagDraft = { mode: 'add', tagId: null };
+
+/**
+ * Picking the tag and add/remove changes only the draft; the shared Save button ("Uložit", last in the footer) applies
+ * it to every selected subject, and leaving a started choice asks Uložit / Zahodit změny / Zůstat first.
+ */
 const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', subjectIds }: BulkTagDialogProps) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const toaster = useToast();
-  const [tagId, setTagId] = useState<TagId | null>(null);
-  const [mode, setMode] = useState<BulkMode>('add');
-  const [busy, setBusy] = useState(false);
+  const [draft, setDraft] = useState<BulkTagDraft>(emptyBulkTagDraft);
+  const { mode, tagId } = draft;
   const [failure, setFailure] = useState<BulkFailure>('none');
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
-  const [submitted, setSubmitted] = useState(false);
   // The picker reads the same shared catalog; a refusal means this role may not tag at all, so the panel says so.
   const readable = tagsReadable();
   const catalog = useTagCatalogSnapshot(open && readable);
   const catalogForbidden = !readable || (catalog.state === 'failed' && isForbidden(catalog.error));
   const forbidden = catalogForbidden || failure === 'forbidden';
 
-  const close = () => {
-    setTagId(null);
-    setMode('add');
-    setFailure('none');
-    setSubmitted(false);
-    onOpenChange(false);
-  };
-
-  const submit = () => {
-    setSubmitted(true);
-    if (tagId === null || subjectIds.length === 0) {
-      return;
-    }
-    const operation = mode === 'add' ? assignTag : unassignTag;
+  const apply = (value: BulkTagDraft, chosen: TagId): Effect.Effect<SaveOutcome> => {
+    const operation = value.mode === 'add' ? assignTag : unassignTag;
     const subjects: Subject[] = subjectIds.map((id) => ({ id, kind }));
     const chunks = Array.from({ length: Math.ceil(subjects.length / subjectChunkSize) }, (_, index) =>
       subjects.slice(index * subjectChunkSize, (index + 1) * subjectChunkSize),
     );
-    setBusy(true);
-    setFailure('none');
-    runTagEffect(
-      Effect.forEach(chunks, (part) => operation(tagId, part), { concurrency: 1, discard: true }),
-      {
-        onFailure: (error) => {
-          setBusy(false);
-          setPendingMessage(pendingProposalMessage(error) ?? null);
+    return Effect.forEach(chunks, (part) => operation(chosen, part), { concurrency: 1, discard: true }).pipe(
+      Effect.match({
+        onFailure: (error): SaveOutcome => {
+          const pending = pendingProposalMessage(error);
+          setPendingMessage(pending ?? null);
           setFailure(isForbidden(error) ? 'forbidden' : 'retry');
+          return pending === undefined ? 'failed' : 'proposed';
         },
-        onSuccess: () => {
-          setBusy(false);
-          toaster.create({ title: t('tagging.tags.bulk.success'), type: 'success' });
-          onDone();
-          close();
+        onSuccess: (): SaveOutcome => {
+          setFailure('none');
+          return 'saved';
         },
-      },
+      }),
     );
   };
+  const record = useDraftSave<BulkTagDraft, never>({
+    isValid: (value) => value.tagId !== null && subjectIds.length > 0 && !forbidden,
+    open,
+    runtime: browserRuntime,
+    save: (value) => (value.tagId === null ? Effect.succeed<SaveOutcome>('failed') : apply(value, value.tagId)),
+    value: draft,
+  });
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
 
-  const tagError = submitted && tagId === null;
-  return (
-    <SidePanel
-      actions={
-        <>
-          <Button disabled={busy} onClick={() => close()} size="sm" theme="outlined" variant="secondary">
-            {t('tagging.tags.form.cancel')}
-          </Button>
-          <Button
-            disabled={subjectIds.length === 0 || forbidden}
-            isLoading={busy}
-            loadingText={t('tagging.tags.bulk.busy')}
-            onClick={() => submit()}
-            size="sm"
-            variant="primary"
-          >
-            {t(mode === 'remove' ? 'tagging.tags.bulk.submitRemove' : 'tagging.tags.bulk.submit')}
-          </Button>
-        </>
+  const close = () => {
+    setDraft(emptyBulkTagDraft);
+    // The panel can stay mounted while closed: the next opening starts from an empty choice again.
+    record.adopt(emptyBulkTagDraft);
+    setFailure('none');
+    setPendingMessage(null);
+    onOpenChange(false);
+  };
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: constVoid });
+  const labels = saveLabelsFor(language);
+  const handleReloadLatest = constVoid;
+  const handleSave = () => {
+    record.save();
+    record.afterSave((status) => {
+      if (status === 'saved') {
+        toaster.create({ title: t('tagging.tags.bulk.success'), type: 'success' });
+        onDone();
+        close();
       }
-      description={t('tagging.tags.bulk.description', { total: subjectIds.length })}
-      // The first field takes focus, not the close button the panel renders first.
-      initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('[id="combobox:bulk-tag-picker:input"]')}
-      onOpenChange={(next) => {
-        if (!next && !busy) {
-          close();
+    });
+  };
+
+  const tagError = record.status === 'invalid' && tagId === null;
+  return (
+    <>
+      <SidePanel
+        actions={
+          <>
+            <Button
+              disabled={record.status === 'saving'}
+              onClick={() => guard.request(close)}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
+              {t('tagging.tags.form.cancel')}
+            </Button>
+            <SaveBar
+              labels={labels}
+              onReloadLatest={handleReloadLatest}
+              onSave={handleSave}
+              size="sm"
+              status={record.status}
+            />
+          </>
         }
-      }}
-      open={open}
-      resizeLabel={t('tagging.sidePanel.resize')}
-      size={size}
-      title={t('tagging.tags.bulk.title')}
-    >
-      <div className="flex flex-col gap-200 py-200">
-        {forbidden && (
-          <StatusText showIcon status="error">
-            {t('tagging.tags.bulk.forbidden')}
-          </StatusText>
-        )}
-        {!forbidden && failure === 'retry' && (
-          <StatusText showIcon status="error">
-            {pendingMessage ?? t('tagging.tags.bulk.failure')}
-          </StatusText>
-        )}
-        {!forbidden && (
-          <TagPicker
-            clearable={false}
-            enabled={open}
-            helpText={tagError ? t('tagging.tags.bulk.chooseTag') : ''}
-            id="bulk-tag-picker"
-            invalid={tagError}
-            kind={kind}
-            labelKey="tagging.tags.bulk.tag"
-            onChange={setTagId}
-            value={tagId}
-          />
-        )}
-        <RadioGroup
-          disabled={forbidden}
-          onValueChange={(next) => setMode(next === 'remove' ? 'remove' : 'add')}
-          size="sm"
-          value={mode}
-        >
-          <RadioGroup.Label>{t('tagging.tags.bulk.action')}</RadioGroup.Label>
-          <RadioGroup.ItemGroup>
-            <RadioGroup.Item value="add">
-              <RadioGroup.ItemHiddenInput />
-              <RadioGroup.ItemControl />
-              <RadioGroup.ItemText>{t('tagging.tags.bulk.add')}</RadioGroup.ItemText>
-            </RadioGroup.Item>
-            <RadioGroup.Item value="remove">
-              <RadioGroup.ItemHiddenInput />
-              <RadioGroup.ItemControl />
-              <RadioGroup.ItemText>{t('tagging.tags.bulk.remove')}</RadioGroup.ItemText>
-            </RadioGroup.Item>
-          </RadioGroup.ItemGroup>
-        </RadioGroup>
-      </div>
-    </SidePanel>
+        description={t('tagging.tags.bulk.description', { total: subjectIds.length })}
+        guard={guard}
+        // The first field takes focus, not the close button the panel renders first.
+        initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('[id="combobox:bulk-tag-picker:input"]')}
+        onOpenChange={(next) => {
+          if (!next && record.status !== 'saving') {
+            close();
+          }
+        }}
+        open={open}
+        resizeLabel={t('tagging.sidePanel.resize')}
+        size={size}
+        title={t('tagging.tags.bulk.title')}
+      >
+        <div className="flex flex-col gap-200 py-200">
+          {forbidden && (
+            <StatusText showIcon status="error">
+              {t('tagging.tags.bulk.forbidden')}
+            </StatusText>
+          )}
+          {!forbidden && failure === 'retry' && (
+            <StatusText showIcon status="error">
+              {pendingMessage ?? t('tagging.tags.bulk.failure')}
+            </StatusText>
+          )}
+          {!forbidden && (
+            <TagPicker
+              clearable={false}
+              enabled={open}
+              helpText={tagError ? t('tagging.tags.bulk.chooseTag') : ''}
+              id="bulk-tag-picker"
+              invalid={tagError}
+              kind={kind}
+              labelKey="tagging.tags.bulk.tag"
+              onChange={(next) => setDraft((current) => ({ ...current, tagId: next }))}
+              value={tagId}
+            />
+          )}
+          <RadioGroup
+            disabled={forbidden}
+            onValueChange={(next) =>
+              setDraft((current) => ({ ...current, mode: next === 'remove' ? 'remove' : 'add' }))
+            }
+            size="sm"
+            value={mode}
+          >
+            <RadioGroup.Label>{t('tagging.tags.bulk.action')}</RadioGroup.Label>
+            <RadioGroup.ItemGroup>
+              <RadioGroup.Item value="add">
+                <RadioGroup.ItemHiddenInput />
+                <RadioGroup.ItemControl />
+                <RadioGroup.ItemText>{t('tagging.tags.bulk.add')}</RadioGroup.ItemText>
+              </RadioGroup.Item>
+              <RadioGroup.Item value="remove">
+                <RadioGroup.ItemHiddenInput />
+                <RadioGroup.ItemControl />
+                <RadioGroup.ItemText>{t('tagging.tags.bulk.remove')}</RadioGroup.ItemText>
+              </RadioGroup.Item>
+            </RadioGroup.ItemGroup>
+          </RadioGroup>
+        </div>
+      </SidePanel>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
   );
 };
 

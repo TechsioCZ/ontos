@@ -73,7 +73,7 @@
         "zeroPriceWarning": "This line will be invoiced at 0 CZK. If that is not intended, enter a price.",
         "submit": "Create draft",
         "submitAnyway": "Create draft anyway",
-        "zeroPriceConfirm": "The invoice has a 0 CZK line. Check the prices, or create the draft anyway.",
+        "zeroPriceConfirm": "The invoice has a 0 CZK line. Check the prices, or click Save again to create the draft anyway.",
         "submitting": "Creating…",
         "created": "Invoice created",
         "createFailed": "The invoice could not be created",
@@ -116,6 +116,7 @@
       "loadErrorDescription": "Check your connection and try again.",
       "emptyFirstTitle": "No invoices yet.",
       "emptyFirstDescription": "Create the first invoice using New invoice.",
+      "emptyFirstReadOnlyDescription": "Invoices appear here once someone with billing rights issues them.",
       "noMatches": "No invoices match the filter.",
       "noMatchesDescription": "Try a different search or status.",
       "filters": {
@@ -279,7 +280,19 @@
         "title": "Settlement of previous invoices",
         "amount": "Apply (CZK)",
         "note": "Note (e.g. tax document number for a received payment)",
-        "confirm": "I confirm that I have checked the amounts and that they should be applied to this invoice."
+        "confirm": "I confirm that I have checked the amounts and that they should be applied to this invoice.",
+        "formDescription": "Invoice {{number}} for {{total}}. Enter the amounts of earlier documents to take into account.",
+        "noCandidate": "This customer has no suitable earlier document.",
+        "candidate": "{{number}} · {{kind}} · {{date}}",
+        "kindAdvance": "advance",
+        "kindPartial": "partial",
+        "candidateHint": "Paid {{paid}} of {{total}} · at most {{available}} can be taken into account",
+        "errorPositive": "Enter positive amounts, for example 25 000 or 25 000,50.",
+        "errorOver": "The amount exceeds the paid part of the earlier document not yet taken into account.",
+        "errorTotal": "The amounts taken into account exceed the total of this invoice.",
+        "errorConfirm": "Confirm that you checked the amounts.",
+        "confirmedToast": "Earlier documents taken into account",
+        "removedToast": "Earlier documents no longer taken into account"
       },
       "paymentTerms": {
         "title": "Early payment discount and late payment interest",
@@ -331,9 +344,18 @@
         "title": "Payments",
         "date": "Payment date",
         "note": "Note (e.g. statement number)",
-        "counterpartyHistory": "Counterparty payment history"
+        "counterpartyHistory": "Counterparty payment history",
+        "record": "Record payment",
+        "reviewIncoming": "Confirm the payment sent?",
+        "reviewOutgoing": "Confirm the payment received?",
+        "reviewDescription": "The payment is recorded as confirmed manually in your name. This step cannot be undone.",
+        "reviewInvoice": "Invoice",
+        "reviewRemaining": "Remaining after this payment",
+        "reviewBack": "Back",
+        "reviewConfirm": "I confirm the payment"
       },
       "common": {
+        "cancel": "Cancel",
         "amount": "Amount (CZK)",
         "vatRate": "VAT rate",
         "edit": "Edit",
@@ -353,7 +375,14 @@
         "ineligible": "Payment reminders are only prepared for unpaid confirmed invoices.",
         "recipient": "Recipient email",
         "emailExample": "billing@customer.cz",
-        "message": "Reminder text"
+        "message": "Reminder text",
+        "reviewTitle": "Send the reminder by e-mail?",
+        "reviewDescription": "Once confirmed, the reminder is really sent by e-mail to the address given. A sent e-mail cannot be taken back.",
+        "reviewInvoice": "Invoice",
+        "reviewRecipient": "Recipient",
+        "reviewSender": "Sender",
+        "reviewBack": "Back",
+        "reviewConfirm": "Send the e-mail"
       },
       "accounting": {
         "handover": "Accounting handover",
@@ -367,7 +396,13 @@
         "errorDescription": "Error description",
         "errorExample": "e.g. POHODA rejected the import – customer VAT ID is missing",
         "evidence": "Receipt evidence",
-        "evidenceExample": "e.g. email from Ing. Nováková dated 20 October 2026"
+        "evidenceExample": "e.g. email from Ing. Nováková dated 20 October 2026",
+        "failTitle": "Handover error {{batch}}",
+        "failDescription": "For example, the accounting system refused the import or a document is missing from the package. Documents of a failed package can go into a new one.",
+        "failedToast": "Package {{batch}} marked as failed",
+        "confirmTitle": "Takeover confirmation {{batch}}",
+        "confirmDescription": "Record that the accountant took the package over and name the proof (for example an e-mail dated…, an import batch number). OntOS does not mark the documents as booked.",
+        "confirmedToast": "The accountant's takeover of the package is confirmed"
       },
       "objects": {
         "property": "Property",
@@ -387,6 +422,7 @@
         "addTitle": "New price list item",
         "save": "Save",
         "close": "Close",
+        "cancel": "Cancel",
         "priceHint": "Unit price excluding VAT, in CZK.",
         "nameRequired": "Enter the item name.",
         "priceRequired": "Enter a price excluding VAT, e.g. 1500 or 1500.50.",
@@ -469,6 +505,11 @@
         "discountReason": "Approved discount reason",
         "discountExample": "e.g. loyalty discount under the agreement",
         "fromPriceList": "From the price list"
+      },
+      "documentKind": {
+        "title": "Change the document kind?",
+        "description": "The document kind changes from “{{from}}” to “{{to}}”.",
+        "confirm": "Change the document kind"
       }
     }
   }

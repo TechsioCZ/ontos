@@ -34,6 +34,7 @@ import {
   runCommand,
   productNavigationFailureKey,
   productScope,
+  productDetailIntent,
   productDetailSearch,
   productCategoryKey,
   useProductDetailsPrefetch,
@@ -181,6 +182,7 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
   const stale = state.status === 'ready' && state.query !== query;
   const tableStatus = stale ? 'loading' : tableStatusFor(state.status, tagFilter.status);
   useProductDetailsPrefetch(context, revision, viewKey, table, products, tableStatus === 'ready');
+  const rowIntent = productDetailIntent(context, revision, table, products, tableStatus === 'ready');
 
   const onCommitted = (message: string) => {
     toaster.create({ duration: SUCCESS_TOAST_MS, title: message, type: 'success' });
@@ -289,6 +291,7 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
     ready,
     reload,
     revision,
+    rowIntent,
     runBulk,
     search,
     selectedIds,
@@ -335,6 +338,7 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
     ready,
     reload,
     revision,
+    rowIntent,
     runBulk,
     search,
     selectedIds,
@@ -531,6 +535,7 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
           onSelectionChange={setSelection}
           pagination={pagination}
           rowCount={ready?.totalProducts ?? products.length}
+          rowIntent={rowIntent}
           rows={products}
           selection={selection}
           status={tableStatus}

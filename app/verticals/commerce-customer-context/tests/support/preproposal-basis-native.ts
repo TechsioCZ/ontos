@@ -1943,6 +1943,9 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
     const compositionUrl = yield* makeCompositionSource(compositionDocument);
     const owned = yield* makeIsolatedNativeDatabaseFixture({
       compositionSnapshot: snapshot,
+      // The cloned trust catalog maps the Party gateway audience to its request role only for enrolled identities;
+      // without it the Shell issuer's signed-assertion grant for Party is refused as an unenrolled audience.
+      databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
       mode: 'schema-only',
       purpose: 'stabilization-1257-approval-fresh-proof',
       sourceConnections,

@@ -24,8 +24,9 @@ import {
  * per remote. `fetch` is the seam they all share: ordinary module reads (`/module-api/…/reads/…`) are answered
  * from memory and concurrent identical reads share one request. Search and explicit `no-store` target reads bypass
  * both answer retention and single-flight without invalidating unrelated reads. Each physical downstream request
- * uses its own single-use gateway assertion. Any other module request is a write: once it settles, every cached
- * read is dropped and `moduleWriteEvent` is dispatched, so a user never sees their own change missing.
+ * uses its own single-use gateway assertion; a read whose assertion the owner refuses (401) is sent once more with a
+ * fresh one. Any other module request is a write: once it settles, every cached read is dropped and `moduleWriteEvent`
+ * is dispatched, so a user never sees their own change missing. Writes are never sent twice.
  *
  * The reads a page makes right after it opens are remembered per path (in `localStorage`, without credentials), so
  * a later preload of that path can issue them before the click.
@@ -43,6 +44,8 @@ const PREFETCH_CONCURRENCY = 8;
 const MANIFEST_PREFIX = 'ontos.page-reads.v1:';
 /** Bounds background waits, never the lifetime of underlying owner or transport work. */
 const BACKGROUND_WAIT_LIMIT = '30 seconds';
+/** A search or `no-store` read is the caller's own; it is bounded like a write, not like a shared background read. */
+const UNCACHED_READ_LIMIT = '2 minutes';
 
 interface BufferedResponse {
   readonly body: ArrayBuffer;
@@ -118,6 +121,8 @@ type ClassifiedRequest =
   | { readonly body: string; readonly init: RequestInit; readonly kind: 'gateway'; readonly url: string }
   | { readonly kind: 'pass' }
   | { readonly kind: 'read'; readonly read: ModuleRead }
+  /** A search or `no-store` read: neither shared nor kept, but still idempotent. */
+  | { readonly kind: 'uncachedRead'; readonly read: ModuleRead }
   | { readonly kind: 'write' };
 
 const pass: ClassifiedRequest = { kind: 'pass' };
@@ -177,7 +182,7 @@ const classify = (state: CacheState, input: RequestInfo | URL, init: RequestInit
     return pass;
   }
   if (/\/search\//u.test(url.pathname)) {
-    return pass;
+    return body === undefined ? pass : { kind: 'uncachedRead', read: moduleRead(state, url, body, init) };
   }
   const isRead = /\/reads\//u.test(url.pathname) && body !== undefined;
   const noStore =
@@ -187,7 +192,7 @@ const classify = (state: CacheState, input: RequestInfo | URL, init: RequestInit
       ?.split(',')
       .some((directive) => directive.trim().toLowerCase() === 'no-store') === true;
   if (isRead && noStore) {
-    return pass;
+    return { kind: 'uncachedRead', read: moduleRead(state, url, body, init) };
   }
   return isRead ? { kind: 'read', read: moduleRead(state, url, body, init) } : { kind: 'write' };
 };
@@ -300,6 +305,37 @@ const bufferedFetch = (
 
 const isOk = (response: BufferedResponse) => response.status >= 200 && response.status < 300;
 
+/**
+ * An owner answers 401 for an assertion it does not accept: already redeemed, expired, or for a release it no longer
+ * serves; the answer does not say which. A read changes nothing, so it is sent once more with a fresh assertion for its
+ * audience, and a rare race costs one round trip instead of a failed page until its next refresh. Without a known
+ * audience, after a context boundary, or when the Shell issues no assertion, the refusal stands.
+ */
+const withFreshAssertion = <A>(
+  state: CacheState,
+  read: ModuleRead,
+  refused: A,
+  send: (init: RequestInit) => Effect.Effect<A, ModuleRequestFailed>,
+) => {
+  const { contextGeneration } = state;
+  return read.audience === undefined
+    ? Effect.succeed(refused)
+    : makeOperationGateway(read.audience)
+        .invoke((authorization) => {
+          if (state.contextGeneration !== contextGeneration) {
+            return Effect.succeed(Exit.succeed(refused));
+          }
+          const headers = new Headers(read.init.headers);
+          headers.set('authorization', authorization);
+          // The renewed attempt's own outcome is the answer; only a missing assertion keeps the refusal.
+          return send({ ...read.init, headers }).pipe(Effect.exit);
+        })
+        .pipe(
+          Effect.orElseSucceed(() => Exit.succeed(refused)),
+          Effect.flatMap((attempt) => attempt),
+        );
+};
+
 const persistVisit = (visit: Visit) =>
   Schema.encodeEffect(RecordedReadsJson)(visit.reads).pipe(
     Effect.flatMap((json) =>
@@ -348,7 +384,18 @@ const startRead = Effect.fn('BrowserRequestCache.startRead')(function* startRead
   const key = readKey(read);
   const { generation } = state;
   const keep = now >= state.quietUntil;
-  const fiber = yield* Effect.forkDetach(bufferedFetch(state, read.url, read.init, read.preparationKey));
+  const { contextGeneration } = state;
+  const send = (init: RequestInit) => bufferedFetch(state, read.url, init, read.preparationKey);
+  // Every caller joined to this read shares its one renewed attempt.
+  const fiber = yield* Effect.forkDetach(
+    send(read.init).pipe(
+      Effect.flatMap((response) =>
+        response.status === 401 && state.contextGeneration === contextGeneration
+          ? withFreshAssertion(state, read, response, send)
+          : Effect.succeed(response),
+      ),
+    ),
+  );
   const entry: ReadEntry = { fiber, primary: MutableRef.get(preparations) === 0, startedAt: now };
   if (state.reads.size >= READ_ENTRY_LIMIT) {
     state.reads.clear();
@@ -488,6 +535,41 @@ const serveGateway = Effect.fn('BrowserRequestCache.serveGateway')(function* ser
     yield* noteSingleAudience(request.body);
   }
   return response;
+});
+
+/** The caller's own request, with its own abort signal; only a refused assertion makes it send once more. */
+const serveUncachedRead = Effect.fn('BrowserRequestCache.serveUncachedRead')(function* serveUncachedReadEffect(
+  state: CacheState,
+  read: ModuleRead,
+) {
+  const { contextGeneration } = state;
+  const send = (init: RequestInit) =>
+    Effect.tryPromise({
+      catch: (cause) => new ModuleRequestFailed({ cause }),
+      try: async () => await state.original(read.url, init),
+    }).pipe(
+      Effect.timeout(UNCACHED_READ_LIMIT),
+      Effect.catchTag('TimeoutError', (cause) => Effect.fail(new ModuleRequestFailed({ cause }))),
+    );
+  const response = yield* send(read.init);
+  if (response.status !== 401 || state.contextGeneration !== contextGeneration) {
+    return response;
+  }
+  // The refusal is a small problem document; keep it to answer with if no fresh assertion is issued.
+  const refused = yield* Effect.tryPromise({
+    catch: (cause) => new ModuleRequestFailed({ cause }),
+    try: async () =>
+      toResponse({
+        body: await response.arrayBuffer(),
+        headers: Object.fromEntries(response.headers),
+        status: response.status,
+        statusText: response.statusText,
+      }),
+  }).pipe(
+    Effect.timeout(UNCACHED_READ_LIMIT),
+    Effect.catchTag('TimeoutError', (cause) => Effect.fail(new ModuleRequestFailed({ cause }))),
+  );
+  return yield* withFreshAssertion(state, read, refused, send);
 });
 
 const serveWrite = (state: CacheState, input: RequestInfo | URL, init: RequestInit | undefined) =>
@@ -637,6 +719,7 @@ export const installBrowserRequestCache = (): void => {
         gateway: (request) => Option.some(serveGateway(state, request).pipe(Effect.map(toResponse))),
         pass: () => Option.none(),
         read: ({ read }) => Option.some(serveRead(state, read, true).pipe(Effect.map(toResponse))),
+        uncachedRead: ({ read }) => Option.some(serveUncachedRead(state, read)),
         write: () => Option.some(serveWrite(state, input, init)),
       }),
     );

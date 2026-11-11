@@ -15,6 +15,7 @@ import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog
 import { ShellGovernedReads } from '../modules/shell-governed-reads.ts';
 import { searchProviderModuleIds } from '../modules/shell-resources.ts';
 
+import { describeLiveGrant } from '../oauth-connections/connection-service.ts';
 import { mcpRecordSearchResourceTypes } from './catalog.ts';
 import { authenticateMcpRequest, connectionPrincipalContext } from './connection.ts';
 import { ModuleUnavailable } from './module-unavailable.ts';
@@ -86,6 +87,7 @@ export const searchMcpRecords = Effect.fn('Mcp.searchRecords')(function* searchR
     return yield* problemOf(401, { code: 'token_invalid' });
   }
   const live = yield* authenticateMcpRequest(token).pipe(
+    Effect.flatMap(describeLiveGrant),
     Effect.mapError((cause) =>
       Predicate.isTagged(cause, 'ConnectionUnauthorized')
         ? problemOf(401, { code: 'token_invalid' })

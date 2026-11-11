@@ -281,13 +281,15 @@ it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
     }),
   );
 
-  suite.effect('category-only reads fail closed without the scoped catalog head', () =>
+  suite.effect('category-only reads of a company without a catalog head answer an empty tree at revision 0', () =>
     Effect.gen(function* missingCategoryHead() {
       const gate = makeTestBoundAccessGate({ defaultAnswer: { outcome: 'ALLOWED' } });
+      const tables: string[] = [];
       const harness = yield* makeReadTestHarness({
         accessDecision: gate.bound,
         executeOwnerQuery: ({ sql }) => {
-          expect(sql).toContain('from "demo_merchandise"."catalog_heads"');
+          tables.push(sql.includes('"demo_merchandise"."catalog_heads"') ? 'head' : 'other');
+          expect(sql.startsWith('select') || sql.startsWith('with')).toBe(true);
           return Effect.succeed([]);
         },
         operationTime,
@@ -295,16 +297,12 @@ it.layer(NodeCrypto.layer)('Merchandise governed catalog reads', (suite) => {
         ownerRegistration: merchandiseRegistration,
         scope: catalogScope,
       });
-      const failure = yield* harness.runtime
+      const result = yield* harness.runtime
         .runRead(catalogInvocation({ mode: 'categories' }))
-        .pipe(
-          Effect.provide(harness.layer),
-          Effect.provideService(AccessDecisionGate, gate.accessDecision),
-          Effect.flip,
-        );
-      expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
-      expect(harness.snapshot().ownerQueries).toHaveLength(1);
-      expect(harness.snapshot().evidenceWrites).toBe(0);
+        .pipe(Effect.provide(harness.layer), Effect.provideService(AccessDecisionGate, gate.accessDecision));
+      expect(result).toMatchObject({ products: [], revision: 0 });
+      // The head is read, never written: a read creates no catalog row.
+      expect(tables[0]).toBe('head');
     }),
   );
   suite.effect('unfinished bootstrap rejects category reads before any partial category data escapes', () =>

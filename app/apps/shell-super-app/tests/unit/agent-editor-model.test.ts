@@ -26,6 +26,7 @@ const agent = Schema.decodeUnknownSync(AgentEntitySchema)({
   hasProfile: true,
   modules: [{ access: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') }],
   operators: [{ displayName: 'Vedení', principalId: AgentPrincipalIdSchema.make('p1') }],
+  operatorsRevision: 0,
   owner: { displayName: 'Provoz', principalId: AgentPrincipalIdSchema.make('p2') },
   principalId: AgentPrincipalIdSchema.make('a1'),
   status: 'active',

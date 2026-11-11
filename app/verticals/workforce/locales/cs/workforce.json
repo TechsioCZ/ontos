@@ -85,12 +85,10 @@
           "principal": "Přihlašovací účet",
           "principalHelp": "Nejprve pozvěte člověka ve správě lidí. Zaměstnání ani pracovní role nepřidělují oprávnění; pro přiřazení úkolů aktivujte členství a přidělte přístup k Úkolům.",
           "managePeople": "Pozvat člověka a spravovat členství a oprávnění",
-          "role": "Pracovní role",
-          "saving": "Ukládám…"
+          "role": "Pracovní role"
         },
         "bulk": {
           "activate": "Aktivovat",
-          "apply": "Uložit",
           "deactivate": "Deaktivovat",
           "department": "Změnit oddělení",
           "departmentTitle": "Změnit oddělení",

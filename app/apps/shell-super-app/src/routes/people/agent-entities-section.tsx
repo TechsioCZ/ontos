@@ -10,22 +10,21 @@ import type {
   ManageAgentEntityRequest,
   PrincipalRef,
 } from '@app/shared-contracts/agent-access';
-import { AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
+import { FormTextarea } from '@app/admin-ui/form-controls';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 import { useEffect, useRef, useState } from 'react';
-import { revokeAgentConnection, runAgentCommand, saveAgentOperators } from './agent-entities-client.ts';
+import { revokeAgentConnection, runAgentCommand } from './agent-entities-client.ts';
 import type { AgentFailure } from './agent-entities-client.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { usePageData } from './use-agent-page-data.ts';
 import { newRequestToken } from './people-client.ts';
 import { AgentEditorPanel } from './agent-editor-panel.tsx';
+import { OperatorsBlock } from './agent-operators-block.tsx';
 import { agentEntitiesData } from './agent-data.ts';
 
 const key = 'shell.agents.section';
@@ -60,11 +59,6 @@ export interface AgentEntitiesSectionProps {
   readonly legalEntityId: string;
   readonly onNotify: (title: string, description?: string) => void;
 }
-
-const sameIds = (left: readonly string[], right: readonly string[]) => {
-  const rightIds = new Set(right);
-  return left.length === right.length && left.every((id) => rightIds.has(id));
-};
 
 interface ConnectionRowProps {
   readonly connection: ConnectionSummary;
@@ -237,132 +231,6 @@ const ConnectionsBlock = ({ agent, onChanged, onNotify }: ConnectionsBlockProps)
   );
 };
 
-interface OperatorsBlockProps {
-  readonly agent: AgentEntity;
-  readonly company: string;
-  readonly members: readonly PrincipalRef[];
-  readonly onChanged: () => void;
-  readonly onNotify: Notify;
-}
-
-const OperatorsBlock = ({ agent, company, members, onChanged, onNotify }: OperatorsBlockProps) => {
-  const { t } = useModernI18n();
-  const initialIds = agent.operators.map((operator) => operator.principalId);
-  const [selected, setSelected] = useState<readonly string[]>(initialIds);
-  const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<AgentFailure | null>(null);
-  const [confirming, setConfirming] = useState(false);
-  const dirty = !sameIds(selected, initialIds);
-  const initialSet = new Set(initialIds);
-  const selectedSet = new Set(selected);
-  // Connections that saving would cut: the agent connected by people who are being removed.
-  const cut = agent.connections.filter(
-    (connection) =>
-      Option.isSome(connection.delegatedBy) &&
-      initialSet.has(connection.delegatedBy.value.principalId) &&
-      !selectedSet.has(connection.delegatedBy.value.principalId),
-  );
-  const cutNames = [
-    ...new Set(
-      cut.map((connection) =>
-        Option.match(connection.delegatedBy, { onNone: () => '', onSome: (person) => person.displayName }),
-      ),
-    ),
-  ].join(', ');
-
-  const toggle = (principalId: string, checked: boolean) =>
-    setSelected((current) =>
-      checked
-        ? [...current.filter((id) => id !== principalId), principalId]
-        : current.filter((id) => id !== principalId),
-    );
-
-  const save = () => {
-    setConfirming(false);
-    setBusy(true);
-    setFailure(null);
-    browserRuntime.runFork(
-      saveAgentOperators({
-        agentPrincipalId: agent.principalId,
-        operatorPrincipalIds: selected.map((id) => AgentPrincipalIdSchema.make(id)),
-      }).pipe(
-        Effect.andThen((outcome) =>
-          Effect.sync(() => {
-            setBusy(false);
-            if (outcome.status === 'failed') {
-              setFailure(outcome.reason);
-              return;
-            }
-            onNotify(t(`${connectionsKey}.operators.saved`, { name: agent.displayName }));
-            if (outcome.value.revokedConnections > 0) {
-              onNotify(t(`${connectionsKey}.operators.revoked`, { count: outcome.value.revokedConnections }));
-            }
-            onChanged();
-          }),
-        ),
-        Effect.ensuring(Effect.sync(() => setBusy(false))),
-      ),
-    );
-  };
-
-  return (
-    <section className="flex min-w-0 flex-col gap-150">
-      <h3 className="font-semibold text-sm">{t(`${connectionsKey}.operators.title`)}</h3>
-      <p className="text-fg-secondary text-xs">{t(`${connectionsKey}.operators.hint`, { company })}</p>
-      <div className="flex flex-col gap-100">
-        {members.map((member) => (
-          <FormCheckbox
-            checked={selectedSet.has(member.principalId)}
-            id={`agent-operator-${agent.principalId}-${member.principalId}`}
-            key={member.principalId}
-            label={member.displayName}
-            onCheckedChange={(checked) => toggle(member.principalId, checked)}
-            size="sm"
-          />
-        ))}
-      </div>
-      {selected.length === 0 && <p className="text-fg-secondary text-xs">{t(`${connectionsKey}.operators.empty`)}</p>}
-      {failure !== null && (
-        <StatusText showIcon status="error">
-          {t(`${PEOPLE_ERROR_KEY}.${failure}`)}
-        </StatusText>
-      )}
-      <div>
-        <Button
-          disabled={!dirty || busy}
-          isLoading={busy}
-          loadingText={t(`${connectionsKey}.operators.saving`)}
-          onClick={() => (cut.length > 0 ? setConfirming(true) : save())}
-          size="sm"
-          variant="primary"
-        >
-          {t(`${connectionsKey}.operators.save`)}
-        </Button>
-      </div>
-      <Dialog
-        actions={
-          <>
-            <Button onClick={() => setConfirming(false)} theme="outlined" type="button" variant="secondary">
-              {t(`${connectionsKey}.operators.cancel`)}
-            </Button>
-            <Button disabled={busy} onClick={save} type="button" variant="danger">
-              {t(`${connectionsKey}.operators.confirm`)}
-            </Button>
-          </>
-        }
-        closeLabel={dialogCloseLabel}
-        customTrigger
-        description={t(`${connectionsKey}.operators.confirmDescription`, { count: cut.length, names: cutNames })}
-        onOpenChange={(details) => setConfirming(details.open)}
-        open={confirming}
-        role="alertdialog"
-        size="sm"
-        title={t(`${connectionsKey}.operators.confirmTitle`)}
-      />
-    </section>
-  );
-};
-
 interface AgentCardProps {
   readonly agent: AgentEntity;
   readonly company: string;
@@ -463,15 +331,7 @@ const AgentCard = ({
       )}
 
       <div className="grid grid-cols-1 gap-200 lg:grid-cols-2">
-        <OperatorsBlock
-          agent={agent}
-          company={company}
-          // Remount when the server-side operator set changes, so the selection restarts from it.
-          key={agent.operators.map((operator) => operator.principalId).join(',')}
-          members={members}
-          onChanged={onChanged}
-          onNotify={onNotify}
-        />
+        <OperatorsBlock agent={agent} company={company} members={members} onChanged={onChanged} onNotify={onNotify} />
         <ConnectionsBlock agent={agent} onChanged={onChanged} onNotify={onNotify} />
       </div>
     </article>

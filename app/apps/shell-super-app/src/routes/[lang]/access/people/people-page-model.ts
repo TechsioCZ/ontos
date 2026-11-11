@@ -1,4 +1,4 @@
-import { Effect, Match, Option, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Schema } from 'effect';
 import { Url, UrlParams } from 'effect/http';
 
 import {
@@ -20,6 +20,8 @@ export interface PeopleReadPort {
 export interface PeopleSnapshot {
   readonly options: typeof ListAccessPeopleOptionsResponseSchema.Encoded;
   readonly people: typeof ListAccessPeopleResponseSchema.Encoded;
+  /** When the list was read; a member row is current against it, as Core judges it at the write. */
+  readonly readAt: typeof Schema.DateTimeUtcFromString.Encoded;
 }
 
 export type PeoplePageModel =
@@ -57,6 +59,7 @@ export const loadPeopleData = (
         {
           options: Schema.encodeEffect(ListAccessPeopleOptionsResponseSchema)(snapshot.options),
           people: Schema.encodeEffect(ListAccessPeopleResponseSchema)(snapshot.people),
+          readAt: DateTime.now.pipe(Effect.flatMap(Schema.encodeEffect(Schema.DateTimeUtcFromString))),
         },
         { concurrency: 1 },
       ).pipe(Effect.map((encoded): PeoplePageModel => ({ shell, snapshot: encoded, state: 'ready' })));

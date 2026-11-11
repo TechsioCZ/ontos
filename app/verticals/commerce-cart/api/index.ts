@@ -1,6 +1,7 @@
 import {
   OwnerActionApprovalSchemaErrorLive,
-  makeOwnerActionApprovalApiLive,
+  makeOwnerActionApproveHandler,
+  makeOwnerActionInspectHandler,
 } from '@app/core-runtime/access/approvals/owner-http';
 import { makeOwnerActionApprovalsLive } from '@app/core-runtime/access/approvals/owner-runtime';
 import { commerceCartRegistration } from '../vertical.registration.ts';
@@ -149,7 +150,11 @@ const cartGatewayAssertionRedemptionDatabaseLive = GatewayAssertionRedemptionDat
 );
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
-  makeOwnerActionApprovalApiLive(commerceCartApi, authenticateOwnerApprovalPrincipal).pipe(
+  HttpApiBuilder.group(commerceCartApi, 'ownerActionApprovals', (handlers) =>
+    handlers
+      .handle('approve', makeOwnerActionApproveHandler(authenticateOwnerApprovalPrincipal))
+      .handle('inspect', makeOwnerActionInspectHandler(authenticateOwnerApprovalPrincipal)),
+  ).pipe(
     GovernedReadLayer.provide(OwnerActionApprovalSchemaErrorLive),
     GovernedReadLayer.provide(governedActionRuntimeLive),
   ),

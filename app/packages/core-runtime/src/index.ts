@@ -1269,7 +1269,7 @@ export {
   OutboxWorkerDescriptorError,
 } from './outbox/errors.ts';
 export type { OutboxWorkerHealth, OutboxWorkerHealthServer, OutboxWorkerReadiness } from './outbox/health.ts';
-export { parseOutboxPollingConfig, runOutboxPollingLoop } from './outbox/poller.ts';
+export { parseOutboxPollingConfig, repeatWithIdleBackoff, runOutboxPollingLoop } from './outbox/poller.ts';
 export type {
   OutboxCycleRunner,
   OutboxPollingConfig,

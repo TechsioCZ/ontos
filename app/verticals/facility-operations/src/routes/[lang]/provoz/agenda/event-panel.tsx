@@ -1,14 +1,15 @@
 // Detail of one calendar entry. Derived deadlines are read-only here: the date is changed in the source record
 // (S13 „Termín se upravuje v původním záznamu“). Own calendar events can be edited, reassigned, completed or
 // cancelled, and carry a comment thread (S14). Also the create form. Owned by the ops-agenda lane.
-import { DetailList, SidePanel } from '@app/admin-ui';
+import { DetailList, SaveBar, SidePanel, UnsavedChangesDialog, saveLabelsFor, useDraftSave } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
+import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { DateTime, Effect, Schema } from 'effect';
+import { constVoid } from 'effect/Function';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { useState } from 'react';
 import { OpsCommandSchema } from '../../../../../shared/agendas.ts';
@@ -22,6 +23,9 @@ import { useAgendaPeople } from '../../../../ui/ops-agenda/agenda-people.tsx';
 import { Pill, categoryTone, fmt, langOf, urgencyTone } from '../../../../ui/ops-agenda/ui-bits.tsx';
 import { usePropertyOptions } from '../../../../ui/property-options.ts';
 import type { CommandOutcome } from '../../../../ui/use-agenda.ts';
+import { useDraftBase } from '../../../../ui/draft-base.ts';
+import { useEditGuard } from '../../../../ui/edit-guard.tsx';
+import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
 
 const k = 'facility-operations.agenda';
 const kinds: readonly CalendarEventKind[] = ['MEETING', 'DEADLINE', 'INSPECTION', 'REMINDER'];
@@ -165,6 +169,45 @@ const useLocationRef = () => {
       : properties.options.find((option) => option.value === value)?.ref;
 };
 
+const closeKey = 'facility-operations.common.close';
+const requiredKey = 'facility-operations.common.required';
+const datePattern = /^\d{4}-\d{2}-\d{2}$/u;
+const completeDraft = (draft: Draft) => draft.title.trim() !== '' && datePattern.test(draft.date);
+
+const sameDraft = (left: Draft, right: Draft): boolean =>
+  left.assignee === right.assignee &&
+  left.date === right.date &&
+  left.kind === right.kind &&
+  left.location === right.location &&
+  left.note === right.note &&
+  left.title === right.title;
+
+/**
+ * Sends one wire command as the save bar sees it: a command the schema refuses saves nothing and says why, a command
+ * the agenda refuses says the agenda's reason, and the outcome is `facilitySaveOutcome`.
+ */
+const useSendCommand = () => {
+  const { t } = useModernI18n();
+  const [error, setError] = useState<PanelFeedback>();
+  const refused = (cause: Schema.SchemaError) =>
+    Effect.sync((): SaveOutcome => {
+      setError({ cause, message: t('facility-operations.common.errors.invalid') });
+      return 'failed';
+    });
+  const answered = (outcome: CommandOutcome) =>
+    Effect.sync(() => {
+      setError(outcome.ok ? undefined : { message: t(`facility-operations.common.errors.${outcome.reason}`) });
+    });
+  const send = (command: WireCommand, run: (command: OpsCommand) => Effect.Effect<CommandOutcome>) =>
+    Schema.decodeEffect(OpsCommandSchema)(command).pipe(
+      Effect.matchEffect({
+        onFailure: refused,
+        onSuccess: (decoded) => facilitySaveOutcome(run(decoded).pipe(Effect.tap(answered))),
+      }),
+    );
+  return { error: error?.message, send };
+};
+
 export const CreateEventPanel = ({
   initialDate,
   onClose,
@@ -176,34 +219,20 @@ export const CreateEventPanel = ({
   readonly onRun: (command: OpsCommand) => Effect.Effect<CommandOutcome>;
   readonly open: boolean;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const [draft, setDraft] = useState(() => emptyDraft(initialDate));
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<PanelFeedback>();
   const locationRef = useLocationRef();
   const people = useAgendaPeople();
   const personOf = (id: string | undefined) => people.find((person) => person.principalId === id);
-  const [previousForm, setPreviousForm] = useState({ initialDate, open });
-  if (previousForm.open !== open || previousForm.initialDate !== initialDate) {
-    setPreviousForm({ initialDate, open });
-    if (open) {
-      setDraft(emptyDraft(initialDate));
-      setError(undefined);
-    }
-  }
-  const submit = () => {
-    if (draft.title.trim() === '' || !/^\d{4}-\d{2}-\d{2}$/u.test(draft.date)) {
-      setError({ message: t('facility-operations.common.required') });
-      return;
-    }
-    setBusy(true);
-    const related = locationRef(draft.location);
-    const assignee = personOf(draft.assignee === NONE ? undefined : draft.assignee);
+  const { error, send } = useSendCommand();
+  const commandOf = (value: Draft): CreateEventCommand => {
+    const related = locationRef(value.location);
+    const assignee = personOf(value.assignee === NONE ? undefined : value.assignee);
     const command: { -readonly [Key in keyof CreateEventCommand]: CreateEventCommand[Key] } = {
       _tag: 'AgendaEventCreate',
-      date: draft.date,
-      kind: draft.kind,
-      title: draft.title.trim(),
+      date: value.date,
+      kind: value.kind,
+      title: value.title.trim(),
     };
     if (assignee !== undefined) {
       command.assignee = { principalId: assignee.principalId, tenantId: assignee.tenantId };
@@ -212,68 +241,212 @@ export const CreateEventPanel = ({
     if (related !== undefined) {
       command.related = related;
     }
-    if (draft.note.trim() !== '') {
-      command.note = draft.note.trim();
+    if (value.note.trim() !== '') {
+      command.note = value.note.trim();
     }
-    browserRuntime.runFork(
-      Schema.decodeEffect(OpsCommandSchema)(command).pipe(
-        Effect.flatMap(onRun),
-        Effect.match({
-          onFailure: (cause) => {
-            setBusy(false);
-            setError({ cause, message: t('facility-operations.common.errors.invalid') });
-          },
-          onSuccess: (outcome) => {
-            setBusy(false);
-            if (outcome.ok) {
-              onClose();
-            } else {
-              setError({ message: t(`facility-operations.common.errors.${outcome.reason}`) });
-            }
-          },
-        }),
-      ),
-    );
+    return command;
+  };
+  // The new event is only on screen until Uložit sends it.
+  const record = useDraftSave<Draft, never>({
+    equals: sameDraft,
+    isValid: completeDraft,
+    // The panel stays mounted while closed: only the open panel asks before leaving.
+    open,
+    runtime: browserRuntime,
+    save: (value) => send(commandOf(value), onRun),
+    value: draft,
+  });
+  const [previousForm, setPreviousForm] = useState({ initialDate, open });
+  if (previousForm.open !== open || previousForm.initialDate !== initialDate) {
+    setPreviousForm({ initialDate, open });
+    if (open) {
+      const empty = emptyDraft(initialDate);
+      setDraft(empty);
+      record.adopt(empty);
+    }
+  }
+  const guard = useEditGuard(record, () => {
+    setDraft(record.confirmed);
+  });
+  const labels = saveLabelsFor(language);
+  const handleSave = () => {
+    record.save();
+    record.afterSave((status) => {
+      if (status === 'saved') {
+        onClose();
+      }
+    });
   };
   return (
-    <SidePanel
-      actions={
-        <>
-          <Button onClick={onClose} theme="outlined" variant="secondary">
-            {t('facility-operations.common.cancel')}
-          </Button>
-          <Button
-            isLoading={busy}
-            loadingText={t('facility-operations.common.saving')}
-            onClick={() => {
-              submit();
-            }}
-            variant="primary"
-          >
-            {t(`${k}.create.submit`)}
-          </Button>
-        </>
-      }
-      description={t(`${k}.create.description`)}
-      onOpenChange={(next) => {
-        if (!next) {
-          onClose();
+    <>
+      <SidePanel
+        actions={
+          <>
+            <Button onClick={() => guard.request(onClose)} theme="outlined" variant="secondary">
+              {t('facility-operations.common.cancel')}
+            </Button>
+            <SaveBar
+              error={error}
+              labels={labels}
+              onReloadLatest={constVoid}
+              onSave={handleSave}
+              status={record.status}
+            />
+          </>
         }
-      }}
-      open={open}
-      resizeLabel={t('facility-operations.common.close')}
-      size="md"
-      title={t(`${k}.create.title`)}
-    >
-      <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-3 facilityoperations:py-2">
-        {error !== undefined && (
-          <StatusText showIcon status="error">
-            {error.message}
-          </StatusText>
-        )}
-        <EventForm draft={draft} setDraft={setDraft} />
-      </div>
-    </SidePanel>
+        description={t(`${k}.create.description`)}
+        guard={guard}
+        onOpenChange={(next) => {
+          if (!next) {
+            onClose();
+          }
+        }}
+        open={open}
+        resizeLabel={t(closeKey)}
+        size="md"
+        title={t(`${k}.create.title`)}
+      >
+        <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-3 facilityoperations:py-2">
+          {record.status === 'invalid' && (
+            <StatusText showIcon status="error">
+              {t(requiredKey)}
+            </StatusText>
+          )}
+          <EventForm draft={draft} setDraft={setDraft} />
+        </div>
+      </SidePanel>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
+  );
+};
+
+/**
+ * Edit of one own calendar event, against the read it was opened from: a newer change by someone else refuses the
+ * save, and "Načíst nejnovější" loads that change. `event` is the live record of the current read.
+ */
+const EventEditPanel = ({
+  event,
+  onClose,
+  onDone,
+  onRun,
+  title,
+}: {
+  readonly event: CalendarEvent;
+  readonly onClose: () => void;
+  /** Back to the event's detail: after a save, or when the edit is left. */
+  readonly onDone: () => void;
+  readonly onRun: (command: OpsCommand) => Effect.Effect<CommandOutcome>;
+  readonly title: string;
+}) => {
+  const { language, t } = useModernI18n();
+  const [draft, setDraft] = useState<Draft>(() => draftOf(event));
+  const locationRef = useLocationRef();
+  const people = useAgendaPeople();
+  const personOf = (id: string | undefined) => people.find((person) => person.principalId === id);
+  const { error, send } = useSendCommand();
+  const commandOf = (value: Draft): UpdateEventCommand => {
+    const assignee = personOf(value.assignee === NONE ? undefined : value.assignee);
+    const related = locationRef(value.location);
+    let command: UpdateEventCommand = {
+      _tag: 'AgendaEventUpdate',
+      date: value.date,
+      eventId: event.id,
+      kind: value.kind,
+      note: value.note.trim(),
+      title: value.title.trim(),
+    };
+    if (value.assignee === NONE) {
+      command = { ...command, assignee: null };
+    } else if (assignee !== undefined) {
+      command = {
+        ...command,
+        assignee: { principalId: assignee.principalId, tenantId: assignee.tenantId },
+        assigneeLabel: assignee.displayName,
+      };
+    }
+    if (value.location === NONE) {
+      command = { ...command, related: null };
+    } else if (related !== undefined) {
+      command = { ...command, related };
+    }
+    return command;
+  };
+  // Saves carry the revision of the read the draft was built on, so someone else's newer change refuses them.
+  const base = useDraftBase(event, onRun);
+  const record = useDraftSave<Draft, never>({
+    equals: sameDraft,
+    isValid: completeDraft,
+    runtime: browserRuntime,
+    save: (value) => base.confirm(send(commandOf(value), base.run)),
+    value: draft,
+  });
+  base.sync({
+    onAdopt: () => {
+      const stored = draftOf(event);
+      if (!sameDraft(stored, draft)) {
+        record.adopt(stored);
+        setDraft(stored);
+      }
+    },
+    settled: !record.pending && sameDraft(draft, record.confirmed),
+  });
+  const guard = useEditGuard(record, () => {
+    setDraft(record.confirmed);
+  });
+  const labels = saveLabelsFor(language);
+  const handleSave = () => {
+    record.save();
+    record.afterSave((status) => {
+      if (status === 'saved') {
+        onDone();
+      }
+    });
+  };
+  const handleReloadLatest = () => {
+    const current = draftOf(event);
+    base.rebase();
+    record.adopt(current);
+    setDraft(current);
+  };
+  return (
+    <>
+      <SidePanel
+        actions={
+          <>
+            <Button onClick={() => guard.request(onDone)} theme="outlined" variant="secondary">
+              {t('facility-operations.common.cancel')}
+            </Button>
+            <SaveBar
+              error={error}
+              labels={labels}
+              onReloadLatest={handleReloadLatest}
+              onSave={handleSave}
+              status={record.status}
+            />
+          </>
+        }
+        guard={guard}
+        onOpenChange={(next) => {
+          if (!next) {
+            onClose();
+          }
+        }}
+        open
+        resizeLabel={t(closeKey)}
+        size="md"
+        title={title}
+      >
+        <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-4 facilityoperations:py-2">
+          {record.status === 'invalid' && (
+            <StatusText showIcon status="error">
+              {t(requiredKey)}
+            </StatusText>
+          )}
+          <EventForm draft={draft} setDraft={setDraft} />
+        </div>
+      </SidePanel>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
   );
 };
 
@@ -297,18 +470,16 @@ const useDeadlinePanel = ({
   const event =
     deadline?.eventId === undefined ? undefined : state?.events.find((entry) => entry.id === deadline.eventId);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<Draft | undefined>(() => (event === undefined ? undefined : draftOf(event)));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<PanelFeedback>();
-  const locationRef = useLocationRef();
   const people = useAgendaPeople();
   const personOf = (id: string | undefined) => people.find((person) => person.principalId === id);
-  const [previousRecord, setPreviousRecord] = useState({ event, key: deadline?.key });
-  if (previousRecord.key !== deadline?.key || previousRecord.event !== event) {
-    setPreviousRecord({ event, key: deadline?.key });
+  // Another entry starts over; a newer read of the same event keeps an edit and its draft open.
+  const [previousKey, setPreviousKey] = useState(deadline?.key);
+  if (previousKey !== deadline?.key) {
+    setPreviousKey(deadline?.key);
     setEditing(false);
     setError(undefined);
-    setDraft(event === undefined ? undefined : draftOf(event));
   }
 
   const run = (command: WireCommand, close = false) => {
@@ -338,41 +509,6 @@ const useDeadlinePanel = ({
     );
   };
 
-  const save = () => {
-    if (event === undefined || draft === undefined) {
-      return;
-    }
-    if (draft.title.trim() === '' || !/^\d{4}-\d{2}-\d{2}$/u.test(draft.date)) {
-      setError({ message: t('facility-operations.common.required') });
-      return;
-    }
-    const assignee = personOf(draft.assignee === NONE ? undefined : draft.assignee);
-    const related = locationRef(draft.location);
-    let command: UpdateEventCommand = {
-      _tag: 'AgendaEventUpdate',
-      date: draft.date,
-      eventId: event.id,
-      kind: draft.kind,
-      note: draft.note.trim(),
-      title: draft.title.trim(),
-    };
-    if (draft.assignee === NONE) {
-      command = { ...command, assignee: null };
-    } else if (assignee !== undefined) {
-      command = {
-        ...command,
-        assignee: { principalId: assignee.principalId, tenantId: assignee.tenantId },
-        assigneeLabel: assignee.displayName,
-      };
-    }
-    if (draft.location === NONE) {
-      command = { ...command, related: null };
-    } else if (related !== undefined) {
-      command = { ...command, related };
-    }
-    run(command);
-  };
-
   const status = event?.status ?? 'PLANNED';
   const urgency = deadline === undefined ? 'later' : urgencyOf(deadline, today);
   const owner = personOf(deadline?.ownerPrincipalId);
@@ -381,7 +517,6 @@ const useDeadlinePanel = ({
     busy,
     canWrite,
     deadline,
-    draft,
     editing,
     error,
     event,
@@ -390,8 +525,6 @@ const useDeadlinePanel = ({
     owner,
     personOf,
     run,
-    save,
-    setDraft,
     setEditing,
     status,
     t,
@@ -403,26 +536,15 @@ const renderDeadlineActions = ({
   busy,
   canWrite,
   deadline,
-  editing,
   event,
   lang,
   run,
-  save,
   setEditing,
   status,
   t,
 }: ReturnType<typeof useDeadlinePanel>) => {
   if (event !== undefined && canWrite) {
-    return editing ? (
-      <>
-        <Button onClick={() => setEditing(false)} theme="outlined" variant="secondary">
-          {t('facility-operations.common.cancel')}
-        </Button>
-        <Button isLoading={busy} loadingText={t('facility-operations.common.saving')} onClick={save} variant="primary">
-          {t('facility-operations.common.save')}
-        </Button>
-      </>
-    ) : (
+    return (
       <div className="ops-event-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, width: '100%' }}>
         <style>{`.ops-event-actions > button { flex: 1 1 165px; height: auto; min-height: 44px; white-space: normal; padding-block: 10px; }`}</style>
         {status === 'PLANNED' && (
@@ -528,7 +650,19 @@ const renderDeadlineDetails = ({ deadline, event, lang, owner, personOf, t }: Re
 
 export const DeadlinePanel = (props: Parameters<typeof useDeadlinePanel>[0]) => {
   const model = useDeadlinePanel(props);
-  const { deadline, draft, editing, error, event, onClose, setDraft, status, t, urgency } = model;
+  const { deadline, editing, error, event, onClose, setEditing, status, t, urgency } = model;
+  if (editing && event !== undefined && deadline !== undefined && model.canWrite) {
+    return (
+      <EventEditPanel
+        event={event}
+        key={event.id}
+        onClose={onClose}
+        onDone={() => setEditing(false)}
+        onRun={props.onRun}
+        title={deadline.title}
+      />
+    );
+  }
 
   return (
     <SidePanel
@@ -539,7 +673,7 @@ export const DeadlinePanel = (props: Parameters<typeof useDeadlinePanel>[0]) => 
         }
       }}
       open={deadline !== undefined}
-      resizeLabel={t('facility-operations.common.close')}
+      resizeLabel={t(closeKey)}
       size="md"
       title={deadline?.title ?? ''}
     >
@@ -561,11 +695,7 @@ export const DeadlinePanel = (props: Parameters<typeof useDeadlinePanel>[0]) => 
               {error.message}
             </StatusText>
           )}
-          {editing && draft !== undefined ? (
-            <EventForm draft={draft} setDraft={setDraft} />
-          ) : (
-            renderDeadlineDetails(model)
-          )}
+          {renderDeadlineDetails(model)}
           {deadline.eventId === undefined && (
             <p
               className="facilityoperations:m-0 facilityoperations:rounded-lg facilityoperations:p-3 facilityoperations:text-sm"
@@ -574,7 +704,7 @@ export const DeadlinePanel = (props: Parameters<typeof useDeadlinePanel>[0]) => 
               {t(`${k}.event.derivedNote`, { source: t(`${k}.sources.${deadline.source}`) })}
             </p>
           )}
-          {event !== undefined && !editing && (
+          {event !== undefined && (
             <CommentThread
               subject={{ id: event.id, kind: 'event', label: event.title }}
               title={t(`${k}.event.comments`)}

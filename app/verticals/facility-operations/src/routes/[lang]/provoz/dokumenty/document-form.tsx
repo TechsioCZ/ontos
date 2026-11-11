@@ -1,13 +1,19 @@
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Create / edit / amendment form for the documents agenda (S12). Upload goes through the governed FileUpload command
 // first; the returned file snapshot becomes version 1 of the new document.
-import { AutosaveStatus, SidePanel, surfaceTileClassName, useAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import {
+  SaveBar,
+  SidePanel,
+  UnsavedChangesDialog,
+  saveLabelsFor,
+  surfaceTileClassName,
+  useDraftSave,
+} from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
+import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { Effect, Option, Result, Schema } from 'effect';
@@ -34,7 +40,11 @@ import {
   sameDocumentEditDraft,
 } from './document-draft.ts';
 import type { ContractDraft, DocumentEditDraft } from './document-draft.ts';
-import { facilityAutosaveOutcome } from '../../../../ui/facility-autosave.ts';
+import { useEditGuard } from '../../../../ui/edit-guard.tsx';
+import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
+import { useDraftBase } from '../../../../ui/draft-base.ts';
+import { FormSaveFooter, commandResult, useFormSave } from '../../../../ui/form-save.tsx';
+import type { FormSubmitResult } from '../../../../ui/form-save.tsx';
 import {
   documentCategories,
   FileTypeIcon,
@@ -56,7 +66,7 @@ export type DocumentFormMode =
   | { readonly kind: 'create' }
   | { readonly document: DocumentRecord; readonly kind: 'edit' }
   | { readonly kind: 'amend'; readonly original: DocumentRecord };
-/** Modes the create panel handles; an edit is autosaved by the edit panel instead. */
+/** Modes the create panel handles; an edit is handled by the edit panel instead. */
 type CreateDocumentFormMode = Exclude<DocumentFormMode, { readonly kind: 'edit' }>;
 
 export const documentFormKey = (mode: DocumentFormMode): string => {
@@ -144,7 +154,7 @@ const persistDocument = Effect.fn('Documents.persist')(function* persistDocument
     (category === 'amendment' && amends === NONE)
   ) {
     onFailure('required');
-    return;
+    return 'failed' as const;
   }
   onFailure();
   const common = {
@@ -161,7 +171,7 @@ const persistDocument = Effect.fn('Documents.persist')(function* persistDocument
     if (!uploaded.ok) {
       onBusy();
       onFailure(uploaded.reason === 'forbidden' ? 'forbidden' : 'upload');
-      return;
+      return 'failed' as const;
     }
     stored = uploaded.file;
   }
@@ -175,15 +185,11 @@ const persistDocument = Effect.fn('Documents.persist')(function* persistDocument
   if (Result.isFailure(command)) {
     onBusy();
     onFailure('invalid');
-    return;
+    return 'failed' as const;
   }
   const outcome = yield* run(command.success);
   onBusy();
-  if (outcome.ok) {
-    onPersisted(outcome.result.entityIds[0], 'created');
-  } else {
-    onFailure(outcome.reason);
-  }
+  return commandResult(outcome, (result) => onPersisted(result.entityIds[0], 'created'), onFailure);
 });
 
 const DocumentFilePicker = ({
@@ -534,7 +540,6 @@ const DocumentContractFields = ({
 const DocumentTextFields = ({
   category,
   description,
-  onBlur,
   onCategoryChange,
   onDescriptionChange,
   onTitleChange,
@@ -543,7 +548,6 @@ const DocumentTextFields = ({
 }: {
   readonly category: string;
   readonly description: string;
-  readonly onBlur?: (() => void) | undefined;
   readonly onCategoryChange: (category: string) => void;
   readonly onDescriptionChange: (description: string) => void;
   readonly onTitleChange: (title: string) => void;
@@ -559,7 +563,6 @@ const DocumentTextFields = ({
         id="document-title"
         label={t(`${k}.fields.title`)}
         maxLength={300}
-        onBlur={onBlur}
         onChange={(event) => onTitleChange(event.target.value)}
         required
         value={title}
@@ -583,7 +586,6 @@ const DocumentTextFields = ({
         id="document-description"
         label={t(`${k}.fields.description`)}
         maxLength={4000}
-        onBlur={onBlur}
         onChange={(event) => onDescriptionChange(event.target.value)}
         rows={2}
         value={description}
@@ -593,8 +595,8 @@ const DocumentTextFields = ({
 };
 
 /**
- * Edit one stored document. Changes save themselves (debounced, on blur and on Zavřít): the title, the category, the
- * description, the links and the contract terms. A category without its required fields stays local until it is valid.
+ * Edit one stored document: the title, the category, the description, the links and the contract terms. Nothing is
+ * sent until Uložit, and a category without its required fields cannot be saved until it is valid.
  */
 const DocumentEditPanel = ({
   contracts,
@@ -611,22 +613,36 @@ const DocumentEditPanel = ({
   readonly run: (command: OpsCommand) => Effect.Effect<CommandOutcome>;
   readonly tasks: TaskOptionsState;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const properties = usePropertyOptions();
   const contacts = useContactOptions();
   const invoices = useInvoiceOptions();
   const [draft, setDraft] = useState<DocumentEditDraft>(() => documentEditDraftOf(document));
   const problems = documentEditProblems(draft);
-  const autosave = useAutosave<DocumentEditDraft, never>({
+  // Saves carry the revision of the read the draft was built on, so someone else's newer change refuses them.
+  const base = useDraftBase(document, run);
+  const record = useDraftSave<DocumentEditDraft, never>({
     equals: sameDocumentEditDraft,
     isValid: (value) => Option.isSome(documentUpdateCommandOf(document.id, value)),
+    // A closed panel holds nothing on screen: only the open panel asks before leaving.
+    open,
     runtime: browserRuntime,
     save: (value) =>
       Option.match(documentUpdateCommandOf(document.id, value), {
-        onNone: () => Effect.succeed<AutosaveOutcome>('failed'),
-        onSome: (command) => facilityAutosaveOutcome(run(command)),
+        onNone: () => Effect.succeed<SaveOutcome>('failed'),
+        onSome: (command) => base.confirm(facilitySaveOutcome(base.run(command))),
       }),
     value: draft,
+  });
+  base.sync({
+    onAdopt: () => {
+      const stored = documentEditDraftOf(document);
+      if (!sameDocumentEditDraft(stored, draft)) {
+        record.adopt(stored);
+        setDraft(stored);
+      }
+    },
+    settled: !record.pending && sameDocumentEditDraft(draft, record.confirmed),
   });
   const update = (patch: Partial<DocumentEditDraft>) => setDraft((current) => ({ ...current, ...patch }));
   const setTerm = (key: keyof ContractDraft) => (value: string) =>
@@ -639,81 +655,87 @@ const DocumentEditPanel = ({
     );
   const removeLink = (link: SubjectRef) =>
     setDraft((current) => ({ ...current, links: current.links.filter((entry) => !sameSubject(entry, link)) }));
+  const guard = useEditGuard(record, () => {
+    setDraft(record.confirmed);
+  });
+  const labels = saveLabelsFor(language);
   const close = () => {
-    autosave.flush();
-    onClose();
+    guard.request(onClose);
   };
-  const handleBlur = autosave.flush;
-  const handleRetry = autosave.retry;
+  const handleSave = record.save;
   const handleReloadLatest = () => {
     const current = documentEditDraftOf(document);
-    autosave.adopt(current);
+    base.rebase();
+    record.adopt(current);
     setDraft(current);
   };
-  const showErrors = autosave.status === 'invalid';
+  const showErrors = record.status === 'invalid';
   const linkableContracts = contracts.filter((entry) => entry.id !== document.id);
   return (
-    <SidePanel
-      actions={
-        <>
-          <AutosaveStatus onReloadLatest={handleReloadLatest} onRetry={handleRetry} status={autosave.status} />
-          <Button onClick={close} theme="outlined" variant="secondary">
-            {t(closeLabelKey)}
-          </Button>
-        </>
-      }
-      onOpenChange={(next) => {
-        if (!next) {
-          close();
+    <>
+      <SidePanel
+        actions={
+          <>
+            <Button onClick={close} theme="outlined" variant="secondary">
+              {t(closeLabelKey)}
+            </Button>
+            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+          </>
         }
-      }}
-      open={open}
-      resizeLabel={t(closeLabelKey)}
-      size="lg"
-      title={t(`${k}.create.editTitle`)}
-    >
-      <div className="flex flex-col gap-250 py-200">
-        {problems.contract && showErrors && (
-          <StatusText showIcon status="error">
-            {t(`${k}.contract.required`)}
-          </StatusText>
-        )}
-        <DocumentTextFields
-          category={draft.category}
-          description={draft.description}
-          onBlur={handleBlur}
-          onCategoryChange={(category) => update({ category })}
-          onDescriptionChange={(description) => update({ description })}
-          onTitleChange={(title) => update({ title })}
-          problems={showErrors ? problems : undefined}
-          title={draft.title}
-        />
-        <DocumentLinkFields
-          category={draft.category}
-          contacts={contacts}
-          invoices={invoices}
-          linkableContracts={linkableContracts}
-          links={draft.links}
-          onAddLink={addLink}
-          onRemoveLink={removeLink}
-          properties={properties}
-          tasks={tasks}
-        />
-        {isContractCategory(draft.category) && (
-          <DocumentContractFields
-            amends={NONE}
-            amendsLocked
+        guard={guard}
+        onOpenChange={(next) => {
+          if (!next) {
+            onClose();
+          }
+        }}
+        open={open}
+        resizeLabel={t(closeLabelKey)}
+        size="lg"
+        title={t(`${k}.create.editTitle`)}
+      >
+        <div className="flex flex-col gap-250 py-200">
+          {problems.contract && showErrors && (
+            <StatusText showIcon status="error">
+              {t(`${k}.contract.required`)}
+            </StatusText>
+          )}
+          <DocumentTextFields
             category={draft.category}
-            contract={draft.contract}
-            contracts={contracts}
-            onStatusChange={(status) =>
-              setDraft((current) => ({ ...current, contract: { ...current.contract, status } }))
-            }
-            onTermChange={setTerm}
+            description={draft.description}
+            onCategoryChange={(category) => update({ category })}
+            onDescriptionChange={(description) => update({ description })}
+            onTitleChange={(title) => update({ title })}
+            problems={showErrors ? problems : undefined}
+            title={draft.title}
           />
-        )}
-      </div>
-    </SidePanel>
+          <DocumentLinkFields
+            category={draft.category}
+            contacts={contacts}
+            invoices={invoices}
+            linkableContracts={linkableContracts}
+            links={draft.links}
+            onAddLink={addLink}
+            onRemoveLink={removeLink}
+            properties={properties}
+            tasks={tasks}
+          />
+          {isContractCategory(draft.category) && (
+            <DocumentContractFields
+              amends={NONE}
+              amendsLocked
+              category={draft.category}
+              contract={draft.contract}
+              contracts={contracts}
+              onStatusChange={(status) =>
+                setDraft((current) => ({ ...current, contract: { ...current.contract, status } }))
+              }
+              onTermChange={setTerm}
+            />
+          )}
+        </div>
+      </SidePanel>
+      <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
+    </>
   );
 };
 
@@ -774,21 +796,38 @@ const DocumentCreatePanel = ({
     }
   };
 
-  const submit = persistDocument({
-    amends,
-    category,
-    contract,
-    description,
-    file,
-    links,
-    onBusy: setBusy,
-    onFailure: setError,
-    onPersisted: (documentId, action) => {
-      toast.create({ title: t(`${k}.${action}`), type: 'success' });
-      onSaved(documentId);
-    },
-    run,
-    title,
+  // The document and its file are sent on Uložit only; an amendment opens prefilled, which Uložit can send as it is.
+  const form = useFormSave({
+    // Zahodit změny closes the panel, which unmounts the form with its input.
+    open,
+    savableAtOnce: mode.kind === 'amend',
+    submit: () =>
+      persistDocument({
+        amends,
+        category,
+        contract,
+        description,
+        file,
+        links,
+        onBusy: setBusy,
+        onFailure: setError,
+        onPersisted: (documentId, action) => {
+          toast.create({ title: t(`${k}.${action}`), type: 'success' });
+          onSaved(documentId);
+        },
+        run,
+        title,
+      }).pipe(
+        // A file the browser could not read is an upload failure, said on the form.
+        Effect.catchTag('FileReadFailed', () =>
+          Effect.sync((): FormSubmitResult => {
+            setBusy(undefined);
+            setError('upload');
+            return 'failed';
+          }),
+        ),
+      ),
+    value: { amends, category, contract, description, file, links, title },
   });
 
   const errorText = error === undefined ? undefined : documentErrorText(error, t);
@@ -800,22 +839,16 @@ const DocumentCreatePanel = ({
   return (
     <SidePanel
       actions={
-        <>
-          <Button onClick={onClose} theme="outlined" variant="secondary">
-            {t('facility-operations.common.cancel')}
-          </Button>
-          <Button
-            isLoading={busy !== undefined}
-            loadingText={busy === 'upload' ? t(`${k}.uploading`) : t('facility-operations.common.saving')}
-            onClick={() => {
-              browserRuntime.runFork(submit);
-            }}
-            variant="primary"
-          >
-            {t(`${k}.create.submit`)}
-          </Button>
-        </>
+        <FormSaveFooter
+          cancelLabel={t('facility-operations.common.cancel')}
+          error={errorText}
+          form={form}
+          onCancel={onClose}
+        >
+          {busy === 'upload' && <StatusText size="sm">{t(`${k}.uploading`)}</StatusText>}
+        </FormSaveFooter>
       }
+      guard={form.guard}
       onOpenChange={(next) => {
         if (!next) {
           onClose();
@@ -871,8 +904,8 @@ const DocumentCreatePanel = ({
 };
 
 /**
- * Create one document (and upload its file) or a new amendment on "Uložit", or edit a stored one, which saves itself
- * while the panel is open.
+ * Create one document (and upload its file) or a new amendment on "Uložit", or edit a stored one, whose changes are
+ * sent on Uložit as well.
  */
 export const DocumentFormPanel = ({
   contracts,

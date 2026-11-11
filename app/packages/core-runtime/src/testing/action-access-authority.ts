@@ -205,6 +205,8 @@ export const makeTestActionAccessPorts = (
   const authorityFor = (_scope: OperationalScope): DecisionAuthorityPort =>
     Object.freeze({
       readCells,
+      // The batched read every live intent port offers: each answer exactly the single read's.
+      readCellsMany: (queries: readonly AuthorityCellQuery[]) => Effect.forEach(queries, readCells, { concurrency: 1 }),
       readConfigureBases: () => Effect.succeed([]),
       readConnection: () => Effect.succeed(Option.none()),
       readScope: (query: ScopeQuery) => Effect.succeed(Option.fromUndefinedOr(scopeOf(query))),

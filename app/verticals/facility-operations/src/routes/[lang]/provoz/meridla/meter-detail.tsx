@@ -16,7 +16,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { Chart } from '@techsio/ui-kit/molecules/chart';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DateTime, Effect, Schema } from 'effect';

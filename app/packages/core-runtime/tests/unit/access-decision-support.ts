@@ -129,18 +129,26 @@ export const connect = (overrides: Partial<ResolvedAgentConnection> = {}): Resol
 export interface AuthoritySpec {
   /** The agent's own membership end dates; they default to the person's, as in a real scope. */
   readonly agentMembershipDeadlines?: readonly AuthorityDeadline[];
+  /** The port also offers the batched cell read, answering each query exactly as `readCells` does. */
+  readonly batchReads?: boolean;
   readonly cells: readonly AuthorityCell[];
   readonly configureBases?: readonly AccessConfigureBasis[];
   readonly configureUnavailable?: boolean;
   readonly connection?: ResolvedAgentConnection;
   readonly legalEntityScope?: AccessScope;
   readonly membershipDeadlines?: readonly AuthorityDeadline[];
+  /**
+   * Holders without a live membership in the scope: a query naming any of them resolves to none, so
+   * the engine itself answers DENIED `deny.scope_mismatch`, as the real intent loader does.
+   */
+  readonly nonMembers?: readonly Holder[];
   readonly resolvedScopeId?: typeof scopeId;
   readonly teamMembers?: ReadonlyMap<string, readonly AccessTeamId[]>;
 }
 
 export interface AuthorityCalls {
   readCells: number;
+  readCellsMany: number;
   readConfigureBases: number;
   readConnection: number;
   readScope: number;
@@ -152,22 +160,23 @@ export const holderId = (holder: Holder): string => holderIdOf(holder);
 export const makeAuthority = (spec: AuthoritySpec) => {
   const calls: AuthorityCalls = {
     readCells: 0,
+    readCellsMany: 0,
     readConfigureBases: 0,
     readConnection: 0,
     readScope: 0,
     readTeamIds: 0,
   };
-  const port: DecisionAuthorityPort = {
+  const cellsOf = (query: AuthorityCellQuery) =>
+    spec.cells.filter(
+      (candidate) =>
+        holderId(candidate.holder) === holderId(query.holder) &&
+        candidate.capabilityKey === query.capabilityKey &&
+        candidate.mode === query.mode,
+    );
+  const single: DecisionAuthorityPort = {
     readCells: (query: AuthorityCellQuery) => {
       calls.readCells += 1;
-      return Effect.succeed(
-        spec.cells.filter(
-          (candidate) =>
-            holderId(candidate.holder) === holderId(query.holder) &&
-            candidate.capabilityKey === query.capabilityKey &&
-            candidate.mode === query.mode,
-        ),
-      );
+      return Effect.succeed(cellsOf(query));
     },
     readConfigureBases: () => {
       calls.readConfigureBases += 1;
@@ -181,6 +190,9 @@ export const makeAuthority = (spec: AuthoritySpec) => {
     },
     readScope: (query: ScopeQuery) => {
       calls.readScope += 1;
+      if (query.holders.some((holder) => spec.nonMembers?.some((absent) => holderEquals(absent, holder)) === true)) {
+        return Effect.succeed(Option.none());
+      }
       const resolvedScope =
         spec.legalEntityScope === undefined || query.legalEntityId === undefined ? scope : spec.legalEntityScope;
       const principalDeadlines = spec.membershipDeadlines ?? [
@@ -208,6 +220,16 @@ export const makeAuthority = (spec: AuthoritySpec) => {
       return Effect.succeed(spec.teamMembers?.get(holderId(query.holder)) ?? []);
     },
   };
+  const port: DecisionAuthorityPort =
+    spec.batchReads === true
+      ? {
+          ...single,
+          readCellsMany: (queries) => {
+            calls.readCellsMany += 1;
+            return Effect.succeed(queries.map(cellsOf));
+          },
+        }
+      : single;
   return { calls, port };
 };
 

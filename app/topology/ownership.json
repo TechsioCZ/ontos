@@ -858,6 +858,42 @@
           ]
         }
       }
+    },
+    {
+      "id": "payment",
+      "package": "@app/payment",
+      "path": "verticals/payment",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/payment.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#payment",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#payment"
+          ]
+        }
+      }
+    },
+    {
+      "id": "promotion",
+      "package": "@app/promotion",
+      "path": "verticals/promotion",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/promotion.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#promotion",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#promotion"
+          ]
+        }
+      }
     }
   ]
 }

@@ -1,4 +1,4 @@
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { MerchandiseCommandSchema, merchandiseMarketCommandSchemas } from '../../shared/actions/apply-command.ts';
 import {
@@ -26,7 +26,7 @@ import {
   VariantRecordSchema,
 } from '../../shared/domain/merchandise-model.ts';
 import { blockedReasonOf } from '../../src/api/agent-review.ts';
-import { isMarketCommand, planConfigureMarket } from '../../src/services/market-commands.ts';
+import { isMarketCommand, isStaleProductOffer, planConfigureMarket } from '../../src/services/market-commands.ts';
 import {
   productGrossCzk,
   productInMarketCurrency,
@@ -186,6 +186,22 @@ it('decodes the market commands with their bounds', () => {
     ),
   ).toBe(true);
   expect(isMarketCommand(decodeCommand({ _tag: 'RemoveMarket', marketId: MARKET_ID }))).toBe(true);
+});
+
+it('refuses a product offer only when the offer it was read from changed since', () => {
+  const offer = { _tag: 'SetProductMarketOffer', marketId: MARKET_ID, offered: false, productId: 'p1' };
+  const withRead = decodeCommand({ ...offer, expectedOffered: true });
+  const withoutRead = decodeCommand(offer);
+  expect(Predicate.isTagged(withRead, 'SetProductMarketOffer') && withRead.expectedOffered).toBe(true);
+  expect(Predicate.isTagged(withoutRead, 'SetProductMarketOffer') && 'expectedOffered' in withoutRead).toBe(false);
+  // Read as offered and still offered: accepted.
+  expect(isStaleProductOffer(true, { expectedOffered: true })).toBe(false);
+  // Someone withdrew it after the read: refused.
+  expect(isStaleProductOffer(false, { expectedOffered: true })).toBe(true);
+  expect(isStaleProductOffer(true, { expectedOffered: false })).toBe(true);
+  // Existing callers that name no read offer are never refused.
+  expect(isStaleProductOffer(true, {})).toBe(false);
+  expect(isStaleProductOffer(false, {})).toBe(false);
 });
 
 it.effect('guards market commands like other catalog and money changes', () =>

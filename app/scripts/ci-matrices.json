@@ -29,7 +29,7 @@
       "name": "Database, Migration, RLS, Authorization, and Outbox Integration",
       "native-composition": true,
       "root-suite": true,
-      "package-filters": "--filter !. --filter !./verticals/catalog --filter !./verticals/pricing --filter !./verticals/inventory --filter !./verticals/commerce-customer-context --filter !./verticals/commerce-market-catalog --filter !./verticals/commerce-order --filter !./verticals/payment-term-catalog --filter !./verticals/price-group-catalog --filter !./verticals/storefront-registry --filter !./verticals/privacy --filter !./verticals/party-registry --filter !./verticals/tax --filter !./verticals/projects"
+      "package-filters": "--filter !. --filter !./verticals/catalog --filter !./verticals/pricing --filter !./verticals/inventory --filter !./verticals/commerce-customer-context --filter !./verticals/commerce-market-catalog --filter !./verticals/commerce-order --filter !./verticals/payment --filter !./verticals/payment-term-catalog --filter !./verticals/price-group-catalog --filter !./verticals/storefront-registry --filter !./verticals/privacy --filter !./verticals/party-registry --filter !./verticals/tax --filter !./verticals/projects"
     },
     {
       "suite": "integration",
@@ -92,7 +92,7 @@
         "@app/pricing",
         "@app/commerce-customer-context"
       ],
-      "package-filters": "--filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog --filter ./verticals/storefront-registry"
+      "package-filters": "--filter ./verticals/commerce-market-catalog --filter ./verticals/commerce-order --filter ./verticals/payment --filter ./verticals/payment-term-catalog --filter ./verticals/price-group-catalog --filter ./verticals/storefront-registry"
     },
     {
       "suite": "integration",

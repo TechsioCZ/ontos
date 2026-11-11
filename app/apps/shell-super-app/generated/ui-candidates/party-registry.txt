@@ -11,7 +11,6 @@
 --tag-multiple-outline
 block
 break-words
-contents
 filter
 fixed
 flex
@@ -35,7 +34,6 @@ icon-[mdi--handshake-outline]
 icon-[mdi--plus]
 icon-[mdi--square-edit-outline]
 icon-[mdi--tag-multiple-outline]
-inline
 items-center
 items-end
 items-start

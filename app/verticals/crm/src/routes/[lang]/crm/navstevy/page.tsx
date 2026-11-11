@@ -282,7 +282,7 @@ const renderVisitResults = ({
 
 const VisitsContent = ({ initialClient }: { readonly initialClient: string | null }) => {
   const { t } = useModernI18n();
-  const { busy, load, state, submit } = useCrmRecords();
+  const { load, state, submit } = useCrmRecords();
   const [filters, setFilters] = useState(() => ({
     clientFilter: initialClient ?? ALL,
     kindFilter: ALL,
@@ -465,7 +465,6 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
 
             {recordOpen && (
               <RecordVisitPanel
-                busy={busy}
                 {...recordClient}
                 onOpenChange={setRecordOpen}
                 open={recordOpen}
@@ -488,7 +487,6 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
               visit={detail}
             />
             <CorrectVisitPanel
-              busy={busy}
               onClose={() => setCorrectId(undefined)}
               records={records}
               submit={submit}

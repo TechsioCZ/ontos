@@ -13,8 +13,8 @@ const proposal = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
 });
 
 describe('market writes parked for approval', () => {
-  it('keeps a price list parked for approval unsaved, without inventing a market revision', () => {
-    expect(priceListSaveResult(proposal)).toBe('failed');
+  it('keeps a price list parked for approval unsaved (proposed), without inventing a market revision', () => {
+    expect(priceListSaveResult(proposal)).toBe('proposed');
   });
 
   it('adopts the committed market revision, or reports a plain save when the owner returns none', () => {

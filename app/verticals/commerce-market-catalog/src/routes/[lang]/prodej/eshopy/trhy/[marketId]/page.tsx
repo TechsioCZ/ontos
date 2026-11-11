@@ -1,6 +1,6 @@
 import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate, useParams } from '@modern-js/plugin-tanstack/runtime';
-import { DetailList, PageHeader, SectionCard, Toaster } from '@app/admin-ui';
+import { DetailList, DocumentTitle, PageHeader, SectionCard, Toaster } from '@app/admin-ui';
 import { modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps, PageData } from '@app/shared-contracts/page-data';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -269,6 +269,7 @@ const MarketDetailContent = ({ legalEntityId, marketId, tenantId }: MarketInput)
   };
   return (
     <div className="flex flex-col gap-300">
+      <DocumentTitle title={market.marketCode} />
       <PageHeader
         actions={
           <HeaderActions

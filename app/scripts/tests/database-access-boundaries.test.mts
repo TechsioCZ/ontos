@@ -1478,3 +1478,52 @@ export const services = Fx.fn('services')((transaction: Executor, scope: Scope) 
       );
     }),
 );
+
+it.live('excludes only canonical materialized runtime output while enforcing authored declaration boundaries', () =>
+  Effect.gen(function* materializedRuntimeCollectionBoundary() {
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-db-runtime-boundary-'))),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    // Declaration emission can select the testing export alias for this production service type.
+    const generatedDeclaration =
+      'export declare const governedReadApiHandlersLive: import("effect").Layer.Layer<never, never, import("@app/core-runtime/testing/application-composition-source").ActiveApplicationCompositionSource>;\n';
+    const compiledJavaScript =
+      '// ../../packages/core-runtime/src/modules/active-application-composition-source-service.ts\nexport const governedReadApiHandlersLive = {};\n';
+    const files = {
+      '.zerops/authored.d.ts': generatedDeclaration,
+      '.zerops/runtime-other/api/index.d.ts': generatedDeclaration,
+      '.zerops/runtime/promotion/api/index.d.ts': generatedDeclaration,
+      '.zerops/runtime/promotion/api/index.js': compiledJavaScript,
+      'verticals/promotion/.zerops/runtime/api/index.d.ts': generatedDeclaration,
+      'verticals/promotion/api/authored.d.ts': generatedDeclaration,
+      'verticals/promotion/api/private-database.d.ts':
+        'export type PrivateDatabase = typeof import("@app/core-runtime/db/schema");\n',
+      'verticals/promotion/src/dynamic-testing.ts': 'const harness = import("@app/core-runtime/testing/actions");\n',
+      'verticals/promotion/src/value-testing.ts':
+        'import { makeActionTestHarness } from "@app/core-runtime/testing/actions";\n',
+    };
+    yield* Effect.all(
+      Object.entries(files).map(([relative, source]) =>
+        Effect.gen(function* writeRuntimeCollectionFixture() {
+          const file = path.join(root, relative);
+          yield* Effect.tryPromise(() => mkdir(path.dirname(file), { recursive: true }));
+          yield* Effect.tryPromise(() => writeFile(file, source));
+        }),
+      ),
+    );
+    const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+    expect(violations.map(({ file, line }) => `${file}:${line}`)).toEqual([
+      '.zerops/authored.d.ts:1',
+      '.zerops/runtime-other/api/index.d.ts:1',
+      'verticals/promotion/.zerops/runtime/api/index.d.ts:1',
+      'verticals/promotion/api/authored.d.ts:1',
+      'verticals/promotion/api/private-database.d.ts:1',
+      'verticals/promotion/src/dynamic-testing.ts:1',
+      'verticals/promotion/src/value-testing.ts:1',
+    ]);
+    expect(
+      yield* Effect.tryPromise(() => readFile(path.join(root, '.zerops/runtime/promotion/api/index.js'), 'utf-8')),
+    ).toBe(compiledJavaScript);
+  }),
+);

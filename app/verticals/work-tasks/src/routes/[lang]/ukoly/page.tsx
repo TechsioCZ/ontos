@@ -1,5 +1,15 @@
-import { EmptyState, PageHeader, StatCard, StatRow, Toaster, dataTableRowLabels } from '@app/admin-ui';
-import type { RevisionedSaveResult } from '@app/admin-ui';
+import {
+  EmptyState,
+  PageHeader,
+  StatCard,
+  StatRow,
+  Toaster,
+  UnsavedChangesBoundary,
+  dataTableRowLabels,
+  useHeldSnapshot,
+  useUnsavedChangesScope,
+} from '@app/admin-ui';
+import type { RevisionedSaveResult, SaveOutcome } from '@app/admin-ui';
 import { listCustomers } from '@app/party-registry/api/client';
 import { listOpportunities } from '@app/sales-pipeline/clients/records';
 import { executeRecords as propertyRecords } from '@app/property-portfolio/clients/records';
@@ -44,7 +54,7 @@ import { WorkPlanning } from './work-planning.tsx';
 import { principalKey } from '../../../../shared/assignment.ts';
 import { assignmentPatch, selectedPrincipal } from './assignment-options.ts';
 import type { TaskFormSubmission } from './task-form-dialog.tsx';
-import { isActionProposal, taskAutosaveOutcome, taskAutosaveResult } from './task-form-values.ts';
+import { isActionProposal, taskSaveOutcome, taskSaveResult } from './task-form-values.ts';
 import {
   TaskTabSchema,
   commonTransitionTargets,
@@ -74,6 +84,8 @@ const workTasksI18nResources = {
 } as const;
 
 const key = 'work-tasks.pages.records';
+// The deployment app id of this vertical; the stores below reload only on changes of the apps they show.
+const ownAppId = 'work-tasks';
 const NONE = 'none';
 const ALL = 'all';
 const BULK_TOAST_DURATION_MS = 6000;
@@ -174,7 +186,9 @@ interface TasksInput {
 }
 
 /** The page's primary data: loaded before the Shell reveals the page, kept per document, revalidated after writes. */
-const taskRecords = definePageData({
+export const taskRecords = definePageData({
+  // 'shell' carries Core identity changes; the read includes assignable principals and principal names.
+  changesFrom: [ownAppId, 'shell'],
   key: ({ includeArchived, legalEntityId, partyId }: TasksInput) =>
     `${legalEntityId}|${partyId ?? ''}|${includeArchived ? 'archived' : 'current'}`,
   load: ({ includeArchived, partyId }: TasksInput) =>
@@ -188,6 +202,7 @@ const taskRecords = definePageData({
 
 // Optional business-reference names load only when the work-tasks read allows their owner.
 const customerDirectory = definePageData({
+  changesFrom: ['party-registry', ownAppId],
   key: (legalEntityId: string) => legalEntityId,
   load: () =>
     listCustomers().pipe(
@@ -198,6 +213,7 @@ const customerDirectory = definePageData({
 });
 
 const opportunityDirectory = definePageData({
+  changesFrom: ['sales-pipeline', ownAppId],
   key: (legalEntityId: string) => legalEntityId,
   load: () =>
     requestId.pipe(
@@ -491,10 +507,16 @@ const useTasksPage = (
   const toaster = useToast();
   const [showHidden, setShowHidden] = useState(false);
   const input: TasksInput = { includeArchived: showHidden, legalEntityId, partyId };
-  const recordsSnapshot = useSyncExternalStore(
-    taskRecords.subscribe,
-    () => taskRecords.snapshot(input),
-    () => pageDataPending,
+  // A background reload of the same list keeps the last ready one on screen, with the write access, assignees and
+  // names read from it, so an open editor never turns read-only for the length of the reload. A failed or refused
+  // reload, or another company or filter, replaces it at once.
+  const recordsSnapshot = useHeldSnapshot(
+    taskRecords.key(input),
+    useSyncExternalStore(
+      taskRecords.subscribe,
+      () => taskRecords.snapshot(input),
+      () => pageDataPending,
+    ),
   );
   useEffect(() => {
     if (!invalidFilter) {
@@ -524,11 +546,16 @@ const useTasksPage = (
   // The control that opened the task panel. The panel unmounts on close, so focus goes back there explicitly.
   const panelOpener = useRef<HTMLElement | null>(null);
 
+  // The open task's unsaved changes are asked about before another task (or a new one) replaces it.
+  const editorScope = useUnsavedChangesScope();
   const openEditor = (next: Editor) => {
     // `:focus` never matches <body>, so a click that focused nothing records no opener.
-    panelOpener.current = globalThis.document.querySelector<HTMLElement>(':focus');
-    setFormError(undefined);
-    setEditor(next);
+    const opener = globalThis.document.querySelector<HTMLElement>(':focus');
+    editorScope.request(() => {
+      panelOpener.current = opener;
+      setFormError(undefined);
+      setEditor(next);
+    });
   };
 
   const closeEditor = () => {
@@ -727,30 +754,37 @@ const useTasksPage = (
   };
 
   /** Creates a task on "Vytvořit úkol". */
-  const save = (submission: TaskFormSubmission) => {
-    if (records === undefined || editor === undefined) {
-      return;
-    }
-    const command = commandOf(submission, editor);
-    const successKey = `${key}.created`;
-    setSaving(true);
-    setFormError(undefined);
-    runCommand(command, records.revision, (result) => {
-      setSaving(false);
-      if (result.ok) {
-        closeEditor();
-        setActionError(undefined);
-        toaster.create({ duration: SUCCESS_TOAST_DURATION_MS, title: t(successKey), type: 'success' });
-      } else if (result.proposed) {
-        // The creation waits for approval; keeping the form open would only invite a duplicate proposal.
-        closeEditor();
-        setActionError(undefined);
-        announceProposal();
-      } else {
-        setFormError(result.message);
-      }
-    });
-  };
+  /**
+   * The create panel's Save button. A created task, or one parked for approval, closes the panel (the panel does that
+   * once the save bar reports it); a failure keeps the draft and shows its message.
+   */
+  const save = (submission: TaskFormSubmission): Effect.Effect<SaveOutcome> =>
+    records === undefined || editor === undefined
+      ? Effect.succeed<SaveOutcome>('failed')
+      : Effect.suspend(() => {
+          setSaving(true);
+          setFormError(undefined);
+          return commandEffect(commandOf(submission, editor), records.revision).pipe(
+            Effect.match({
+              onFailure: (error): SaveOutcome => {
+                setSaving(false);
+                setFormError(failureMessage(error));
+                return 'failed';
+              },
+              onSuccess: (outcome): SaveOutcome => {
+                setSaving(false);
+                setActionError(undefined);
+                if (isActionProposal(outcome)) {
+                  // The creation waits for approval; keeping the form open would only invite a duplicate proposal.
+                  announceProposal();
+                  return 'proposed';
+                }
+                toaster.create({ duration: SUCCESS_TOAST_DURATION_MS, title: t(`${key}.created`), type: 'success' });
+                return 'saved';
+              },
+            }),
+          );
+        });
 
   const finishBulk = (outcome: CommandOutcome, summaryKey: 'assigned' | 'changed') => {
     setBulkBusy(false);
@@ -873,24 +907,24 @@ const useTasksPage = (
   };
 
   /**
-   * Autosave of the edit panel against the revision its draft builds on. The saved task shows at once; a revision
+   * The edit panel's Save button, against the revision its draft builds on. The saved task shows at once; a revision
    * conflict goes to the panel's status line, any other failure to its message. A draft parked for approval is not
-   * saved: the status line shows it as pending, and autosave never sends that draft again.
+   * saved: the status line shows it as pending, and that draft is never sent again.
    */
-  const handleAutosave = (submission: TaskFormSubmission, expectedRevision: number) =>
+  const handleSaveEdit = (submission: TaskFormSubmission, expectedRevision: number) =>
     editor?.mode === 'edit'
       ? commandEffect(commandOf(submission, editor), expectedRevision).pipe(
           Effect.matchEffect({
             onFailure: (error) =>
               Effect.sync((): RevisionedSaveResult => {
-                const outcome = taskAutosaveOutcome(error);
+                const outcome = taskSaveOutcome(error);
                 setFormError(outcome === 'conflict' ? undefined : failureMessage(error));
                 return outcome;
               }),
             onSuccess: (result) =>
               Effect.sync((): RevisionedSaveResult => {
                 setFormError(undefined);
-                return taskAutosaveResult(result);
+                return taskSaveResult(result);
               }),
           }),
         )
@@ -911,6 +945,7 @@ const useTasksPage = (
     customerNames,
     customers,
     editor,
+    editorScope,
     filters,
     filtersActive,
     formError,
@@ -935,7 +970,6 @@ const useTasksPage = (
         }
       });
     },
-    handleAutosave,
     handleBulkAssign,
     handleBulkChangeState,
     handleChangeRowState,
@@ -969,6 +1003,7 @@ const useTasksPage = (
     },
     handleReload,
     handleSave: save,
+    handleSaveEdit,
     handleSelectionChange: setSelection,
     handleSortingChange: setSorting,
     loadState,
@@ -1018,12 +1053,14 @@ const TaskEditor = ({ model }: { readonly model: ReturnType<typeof useTasksPage>
       customers={model.customers}
       customersLoading={!model.lookups.customers}
       error={model.formError}
+      // One panel per task: opening another task starts a new draft instead of carrying this one over.
+      key={editing?.ref.resourceId ?? 'new'}
       lookupAccess={model.lookupAccess}
       onArchive={model.canWrite ? model.handleArchive : undefined}
-      onAutosave={model.handleAutosave}
       onClose={model.handleCloseEditor}
       onComment={model.handleComment}
-      onSubmit={model.handleSave}
+      onCreate={model.handleSave}
+      onSaveEdit={model.handleSaveEdit}
       opportunities={model.opportunities}
       opportunitiesLoading={!model.lookups.opportunities}
       principalNames={model.principalNames}
@@ -1296,7 +1333,9 @@ const TasksPageContent = ({
         }}
       />
 
-      <TaskEditor model={model} />
+      <UnsavedChangesBoundary scope={model.editorScope}>
+        <TaskEditor model={model} />
+      </UnsavedChangesBoundary>
     </>
   );
 };

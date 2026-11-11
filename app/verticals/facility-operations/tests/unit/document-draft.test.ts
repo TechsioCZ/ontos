@@ -1,5 +1,5 @@
-import { startAutosave } from '@app/admin-ui';
-import type { AutosaveOutcome } from '@app/admin-ui';
+import { draftSavable, startDraftSave } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
@@ -11,7 +11,7 @@ import {
   sameDocumentEditDraft,
 } from '../../src/routes/[lang]/provoz/dokumenty/document-draft.ts';
 import type { DocumentEditDraft } from '../../src/routes/[lang]/provoz/dokumenty/document-draft.ts';
-import { facilityAutosaveOutcome } from '../../src/ui/facility-autosave.ts';
+import { facilitySaveOutcome } from '../../src/ui/facility-save.ts';
 import type { CommandOutcome } from '../../src/ui/use-agenda.ts';
 
 const principal = {
@@ -81,21 +81,22 @@ const savedOutcome: CommandOutcome = {
   ok: true,
   result: { agenda: 'documents', entityIds: [], revision: 5 },
 };
-const refused = (reason: 'conflict' | 'forbidden'): CommandOutcome => ({ ok: false, reason });
+const refused = (reason: 'approval_required' | 'conflict' | 'forbidden'): CommandOutcome => ({ ok: false, reason });
 
-describe('facility autosave outcome', () => {
-  it.effect('maps a saved command, a stale revision and any other refusal', () =>
+describe('facility save outcome', () => {
+  it.effect('maps a saved command, a parked proposal, a stale revision and any other refusal', () =>
     Effect.gen(function* outcomes() {
-      expect(yield* facilityAutosaveOutcome(Effect.succeed(savedOutcome))).toBe('saved');
-      expect(yield* facilityAutosaveOutcome(Effect.succeed(refused('conflict')))).toBe('conflict');
-      expect(yield* facilityAutosaveOutcome(Effect.succeed(refused('forbidden')))).toBe('failed');
+      expect(yield* facilitySaveOutcome(Effect.succeed(savedOutcome))).toBe('saved');
+      expect(yield* facilitySaveOutcome(Effect.succeed(refused('approval_required')))).toBe('proposed');
+      expect(yield* facilitySaveOutcome(Effect.succeed(refused('conflict')))).toBe('conflict');
+      expect(yield* facilitySaveOutcome(Effect.succeed(refused('forbidden')))).toBe('failed');
     }),
   );
 });
 
-const panel = Effect.fnUntraced(function* panel(outcome: AutosaveOutcome) {
+const panel = Effect.fnUntraced(function* panel(outcome: SaveOutcome) {
   const sent: DocumentEditDraft[] = [];
-  const controller = yield* startAutosave(stored, {
+  const controller = yield* startDraftSave(stored, {
     equals: sameDocumentEditDraft,
     isValid: (value: DocumentEditDraft) => Option.isSome(documentUpdateCommandOf(documentId, value)),
     save: (value: DocumentEditDraft) => Effect.sync(() => sent.push(value)).pipe(Effect.as(outcome)),
@@ -103,17 +104,37 @@ const panel = Effect.fnUntraced(function* panel(outcome: AutosaveOutcome) {
   return { controller, sent };
 });
 
-describe('document edit panel autosave', () => {
-  it.effect('saves a typed description after the quiet time; an empty title stays local', () =>
+describe('document edit panel explicit save', () => {
+  it.effect('sends a typed description only on Save, once; an empty title stays local', () =>
     Effect.gen(function* typed() {
       const { controller, sent } = yield* panel('saved');
       controller.change({ ...stored, title: '' });
-      controller.flush();
+      controller.save();
       expect(controller.status()).toBe('invalid');
+      expect(draftSavable(controller.status())).toBe(false);
       controller.change({ ...stored, description: 'Příloha k podpisu' });
-      yield* TestClock.adjust('800 millis');
+      // Longer than any delay the panel ever saved after: typing alone sends nothing.
+      yield* TestClock.adjust('1 minute');
+      expect(sent).toEqual([]);
+      expect(controller.status()).toBe('dirty');
+      controller.save();
+      controller.save();
+      yield* Effect.yieldNow;
       expect(sent.map(({ description }) => description)).toEqual(['Příloha k podpisu']);
       expect(controller.status()).toBe('saved');
+    }),
+  );
+
+  it.effect('discard goes back to the confirmed draft and sends nothing', () =>
+    Effect.gen(function* discarded() {
+      const { controller, sent } = yield* panel('saved');
+      controller.change({ ...stored, description: 'Příloha k podpisu' });
+      expect(controller.status()).toBe('dirty');
+      controller.discard();
+      expect(controller.status()).toBe('idle');
+      expect(controller.confirmed()).toBe(stored);
+      yield* TestClock.adjust('1 minute');
+      expect(sent).toEqual([]);
     }),
   );
 
@@ -121,7 +142,7 @@ describe('document edit panel autosave', () => {
     Effect.gen(function* conflict() {
       const { controller, sent } = yield* panel('conflict');
       controller.change({ ...stored, title: 'Nájemní smlouva R204 – oprava' });
-      controller.flush();
+      controller.save();
       yield* Effect.yieldNow;
       expect(controller.status()).toBe('conflict');
       controller.change({ ...stored, title: 'Nájemní smlouva R204 – oprava 2' });

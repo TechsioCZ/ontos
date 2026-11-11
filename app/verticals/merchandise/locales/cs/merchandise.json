@@ -111,7 +111,6 @@
           "productMeta": "Cena {{price}}, skladem {{stock}} ks",
           "quantity": "Množství (ks)",
           "removeLine": "Odebrat položku",
-          "submit": "Vytvořit objednávku",
           "submitting": "Vytvářím…",
           "title": "Nová objednávka",
           "customerPlaceholder": "Hledat zákazníka…",
@@ -151,8 +150,8 @@
           "navigationFailed": "Objednávku se nepodařilo otevřít. Zkuste to znovu.",
           "cancelledNotice": "Objednávka je zrušená. Další změny stavu nejsou možné.",
           "historyEmpty": "Historie změn není u této starší objednávky k dispozici.",
-          "before": "Před:",
-          "after": "Po:",
+          "valueBefore": "Před:",
+          "valueAfter": "Po:",
           "reason": "Důvod: {{reason}}",
           "storefrontSource": "E-shop (DEMO)",
           "storefrontSourceBrand": "E-shop {{brand}} (DEMO)",
@@ -209,6 +208,7 @@
           "firstDescription": "Založte první objednávku a sledujte ji až do dokončení.",
           "firstTitle": "Zatím tu nejsou žádné objednávky.",
           "forbiddenTitle": "K této sekci nemáte oprávnění.",
+          "reloadFailed": "Aktuální verzi objednávky se nepodařilo načíst. Neuložené změny zůstávají ve formuláři.",
           "retry": "Zkusit znovu",
           "tagFilterFailed": "Štítky se nepodařilo načíst. Zkuste to znovu."
         },
@@ -260,11 +260,16 @@
           "clear": "Zrušit výběr",
           "deactivate": "Deaktivovat",
           "selected": "Vybráno: {{total}}",
-          "tags": "Štítky"
+          "tags": "Štítky",
+          "activateTitle": "Aktivovat vybrané produkty ({{total}})?",
+          "activateDescription": "Vybrané produkty ({{total}}) se hned začnou zobrazovat v e-shopu a zákazníci je budou moct objednat.",
+          "activateConfirm": "Aktivovat ({{total}})",
+          "deactivateTitle": "Deaktivovat vybrané produkty ({{total}})?",
+          "deactivateDescription": "Vybrané produkty ({{total}}) hned zmizí z e-shopu a zákazníci je nebudou moct objednat.",
+          "deactivateConfirm": "Deaktivovat ({{total}})"
         },
         "category": {
           "field": "Nová kategorie",
-          "submit": "Změnit kategorii",
           "title": "Změnit kategorii"
         },
         "columns": {
@@ -287,17 +292,11 @@
           "save": "Uložit změny"
         },
         "create": {
-          "discardTitle": "Zahodit neuložené změny?",
-          "submit": "Vytvořit produkt",
           "title": "Nový produkt"
         },
         "description": "Produkty, ceny a skladové pohyby.",
         "detail": {
           "active": "Aktivní produkt",
-          "discardAction": "Zahodit změny",
-          "discardDescription": "Neuložené změny v tomto formuláři se ztratí.",
-          "discardKeep": "Pokračovat v úpravách",
-          "discardTitle": "Zahodit neuložené změny u produktu {{name}}?",
           "tab": "Detail",
           "back": "Zpět na produkty",
           "priceExplanation": "Upravujete cenu bez DPH. Cena s DPH se vypočítá podle zvolené sazby DPH.",
@@ -312,7 +311,7 @@
           "title_few": "Obrázky ({{count}})",
           "title_many": "Obrázky ({{count}})",
           "title_other": "Obrázky ({{count}})",
-          "intro": "První obrázek je hlavní a e-shop ho ukáže jako první. Pořadí změníte přetažením. Každá změna se ukládá hned.",
+          "intro": "První obrázek je hlavní a e-shop ho ukáže jako první. Pořadí změníte přetažením nebo tlačítky. Nahrané obrázky, nové pořadí i odebrání se v e-shopu projeví až po uložení tlačítkem Uložit.",
           "introReadOnly": "První obrázek je hlavní a e-shop ho ukáže jako první.",
           "main": "Hlavní",
           "imageAlt": "{{name}} – obrázek {{position}}",
@@ -338,7 +337,7 @@
           "dropzoneHint": "JPG, PNG nebo WebP do 20 MB, i více najednou. Obrázek můžete také vložit ze schránky (Ctrl+V).",
           "pick": "Vybrat obrázky",
           "hideNotice": "Skrýt upozornění",
-          "removed": "Obrázek byl odebrán.",
+          "removed": "Obrázek je odebraný z konceptu. Z e-shopu zmizí po uložení.",
           "undo": "Vrátit zpět",
           "uploading_one": "Nahrávám {{count}} obrázek…",
           "uploading_few": "Nahrávám {{count}} obrázky…",
@@ -355,7 +354,8 @@
           "tooManyFiles": "Produkt může mít nejvýše {{limit}} obrázků. Teď můžete přidat ještě {{remaining}}.",
           "fileTooLarge": "Soubor „{{name}}“ je větší než 20 MB. Zmenšete ho, nebo vyberte jiný.",
           "fileInvalidType": "Soubor „{{name}}“ není obrázek ve formátu JPG, PNG nebo WebP.",
-          "fileRejected": "Soubor „{{name}}“ nelze nahrát."
+          "fileRejected": "Soubor „{{name}}“ nelze nahrát.",
+          "saveRejected": "Obrázky se nepodařilo uložit, některý z nich už není k dispozici. Načtěte aktuální verzi a zkuste to znovu."
         },
         "fields": {
           "category": "Kategorie",
@@ -426,13 +426,11 @@
           "affected": "Počet ovlivněných produktů: {{total}}",
           "description": "Zadejte změnu v procentech. Kladné číslo zdraží, záporné zlevní.",
           "field": "Změna ceny (%)",
-          "submit": "Změnit cenu",
           "title": "Změnit cenu o %",
           "warning": "Změna ceny neovlivní vystavené faktury ani objednávky."
         },
         "receipt": {
           "description": "Zaznamenejte příjem na sklad. Stav se přepočítá z pohybů.",
-          "discardTitle": "Zahodit neuložené změny?",
           "submit": "Zaznamenat příjem",
           "title": "Příjem zboží"
         },
@@ -447,7 +445,8 @@
           "tagFilterFailed": "Štítky se nepodařilo načíst. Zkuste to znovu.",
           "notFound": "Produkt nebyl nalezen",
           "invalidId": "Adresa produktu je neplatná.",
-          "loading": "Načítám produkt…"
+          "loading": "Načítám produkt…",
+          "reloadFailed": "Aktuální verzi produktu se nepodařilo načíst. Neuložené změny zůstávají ve formuláři."
         },
         "stats": {
           "lowStock": "Pod minimem",
@@ -525,7 +524,13 @@
           "notOffered": "Není v nabídce",
           "noPrice": "cena není dostupná",
           "offeredSaved": "Produkt je v nabídce trhu {{code}}.",
+          "saved": "Nabídka produktu na trzích je uložena.",
           "withdrawnSaved": "Produkt byl z nabídky trhu {{code}} vyřazen."
+        },
+        "eshop": {
+          "archiveTitle": "Archivovat DEMO produkt {{name}}?",
+          "archiveDescription": "Produkt {{name}} hned zmizí ze seznamu i z e-shopu. Skladové pohyby, objednávky a audit zůstanou zachovány.",
+          "archiveConfirm": "Archivovat"
         }
       },
       "records": {

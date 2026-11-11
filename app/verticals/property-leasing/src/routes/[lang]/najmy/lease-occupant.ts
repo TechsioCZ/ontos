@@ -1,4 +1,5 @@
 import {
+  changeConcerns,
   definePageData,
   modulePagePreload,
   pageDataPending,
@@ -10,6 +11,7 @@ import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { executeCounterpartyRead, executePartyDetail, listCustomers } from '@app/party-registry/api/client';
 import { executeRecords as executePropertyRecords } from '@app/property-portfolio/clients/records';
 import { executeRecords as executeAgreementsRecords } from '@app/legal-agreements/clients/records';
+import { useHeldSnapshot } from '@app/admin-ui';
 import { Effect, Option, Result, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { useEffect, useEffectEvent, useSyncExternalStore } from 'react';
@@ -23,6 +25,9 @@ import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 const keyOf = (parts: readonly string[]) =>
   Result.getOrThrow(Schema.encodeResult(Schema.fromJsonString(Schema.Array(Schema.String)))(parts));
 const moduleId = 'property.leasing';
+/** Deployment app ids of this vertical and of the customer registry, for the stores' `changesFrom`. */
+const ownApp = 'property-leasing';
+const partyApp = 'party-registry';
 
 export interface LeaseInput {
   readonly legalEntityId: string;
@@ -89,6 +94,7 @@ export const loadLeaseRecords = Effect.fn('PropertyLeasing.loadLeaseRecords')(fu
 
 /** Base records settle without a whole-register burst of guest identity reads. */
 export const leaseRecords = definePageData({
+  changesFrom: ['legal-agreements', partyApp, ownApp, 'property-portfolio'],
   key: (input: LeaseInput) => input.scope,
   load: () => loadLeaseRecords(),
   maxEntries: 8,
@@ -109,6 +115,7 @@ export const occupantKey = (input: LeaseDetailInput) =>
 /** A failed related-owner read is not retained as a reusable authorization decision. */
 export const leaseOccupant = definePageData({
   cancelWhenUnused: true,
+  changesFrom: [partyApp, ownApp],
   key: occupantKey,
   load: (input: LeaseDetailInput) => loadOccupantName(input.record).pipe(Effect.map(Option.getOrUndefined)),
   maxEntries: 256,
@@ -148,6 +155,8 @@ export const renderedLeaseOccupantRows = (
   counterpartyId: string | undefined,
   visible: readonly Occupancy[],
 ) => (resourceId === undefined && counterpartyId === undefined ? visible : []);
+/** Apps whose data the rows' detail stores show (occupant name, and the related tasks and invoices). */
+const leaseRowApps = ['finance-billing', partyApp, ownApp, 'work-tasks'];
 /** The plain Table has no hidden sort/page model; these are its exact filtered rows. */
 export const usePrefetchLeaseOccupants = (
   input: LeaseInput,
@@ -172,9 +181,11 @@ export const usePrefetchLeaseOccupants = (
       return constVoid;
     }
     let fiber = browserRuntime.runFork(preload(scope));
-    const restart = () => {
-      fiber.interruptUnsafe();
-      fiber = browserRuntime.runFork(preload(scope));
+    const restart = (event: Event) => {
+      if (changeConcerns(event, leaseRowApps)) {
+        fiber.interruptUnsafe();
+        fiber = browserRuntime.runFork(preload(scope));
+      }
     };
     globalThis.addEventListener(moduleWriteEvent, restart);
     globalThis.addEventListener(moduleChangeEvent, restart);
@@ -220,10 +231,16 @@ export const preloadPage = modulePagePreload(prepareLeasePage);
 /** Foreground uses the exact authorized base row/revision and joins a visible-row read. */
 export const useLeaseData = (input: LeaseInput, search: Option.Option<RecordsSearch>) => {
   const resourceId = Option.getOrUndefined(search)?.resourceId;
-  const records = useSyncExternalStore(
-    (listener) => leaseRecords.subscribe(listener, input),
-    () => leaseRecords.snapshot(input),
-    () => pageDataPending,
+  // The base records are strict (`retainStale: false`): every background reload (a live change, the 20 s freshness, a
+  // settled write) reads `pending`. Without the held snapshot the selected lease turns undefined for that moment, its
+  // rent terms and tenant dossier forms unmount and lose what the user typed. A failed or denied read still replaces it.
+  const records = useHeldSnapshot(
+    leaseRecords.key(input),
+    useSyncExternalStore(
+      (listener) => leaseRecords.subscribe(listener, input),
+      () => leaseRecords.snapshot(input),
+      () => pageDataPending,
+    ),
   );
   const current = records.state === 'ready' ? records.value.records : undefined;
   const record = current?.occupancies.find((row) => row.occupancyRef.resourceId === resourceId);

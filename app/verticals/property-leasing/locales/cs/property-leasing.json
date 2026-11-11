@@ -80,6 +80,8 @@
       "newDraft": "Přejít k novému nájmu",
       "newLease": "Nový nájem",
       "newBooking": "Nový pobyt",
+      "unnamedCustomer": "Zákazník bez názvu",
+      "unnamedGuest": "Host bez jména",
       "close": "Zavřít",
       "resizePanel": "Změnit šířku panelu. Použijte šipky vlevo a vpravo.",
       "customersLoading": "Načítání nájemců…",
@@ -212,7 +214,8 @@
     },
     "booking": {
       "peopleCount": "Počet osob",
-      "note": "Poznámka k rezervaci"
+      "note": "Poznámka k rezervaci",
+      "manualHint": "Ruční rezervace bez napojení na rezervační portál. Po uložení ji můžete potvrdit, zahájit, ukončit nebo zrušit. Potvrzení kontroluje kolize termínů."
     },
     "calendar": {
       "previousMonth": "Předchozí měsíc obsazenosti",
@@ -258,7 +261,8 @@
       "timelinePlaceholder": "Například první kontakt na veletrhu, zájem o kancelář od jara",
       "directoryTitle": "Nájemci, zájemci a kontaktní osoby",
       "search": "Hledat protistranu nebo kontakt",
-      "detailsTitle": "Údaje protistrany"
+      "detailsTitle": "Údaje protistrany",
+      "communicationManual": "Ruční evidence. E-mail ani SMS se touto akcí neodesílá."
     }
   }
 }

@@ -1,5 +1,6 @@
 import type { IsoDate } from '../../../../../shared/domain/common.ts';
 import { Effect } from 'effect';
+import { FormSaveFooter, refusedOutcome, submitDone, useFormSave } from '../../../../ui/form-save.tsx';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Doplnění (rule-based), Pohyby (ledger + issues by month + serial lookup), Nabídky, Dodavatelé. ops-purchasing lane.
 import {
@@ -7,6 +8,7 @@ import {
   ScrollRegion,
   SectionCard,
   SidePanel,
+  UnsavedChangesDialog,
   foldSearchText,
   formatDate,
   formatNumber,
@@ -412,7 +414,6 @@ interface SubmitOrderFromQuoteInput {
   readonly onOpenOrder: (id: string) => void;
   readonly quote: SupplierQuote;
   readonly run: RunCommand;
-  readonly setBusy: (value: boolean) => void;
   readonly setError: (value: string | undefined) => void;
   readonly state: PurchasingState;
   readonly t: ReturnType<typeof useModernI18n>['t'];
@@ -421,30 +422,30 @@ interface SubmitOrderFromQuoteInput {
 }
 const submitOrderFromQuote = Effect.fn('FacilityOperations.Purchasing.submitOrderFromQuote')(
   function* createOrderFromQuote(input: SubmitOrderFromQuoteInput) {
-    const { expectedDate, k, onOpenOrder, quote, run, setBusy, setError, state, t, toast, warehouseId } = input;
+    const { expectedDate, k, onOpenOrder, quote, run, setError, state, t, toast, warehouseId } = input;
     setError(undefined);
     const warehouse = state.warehouses.find((entry) => entry.id === warehouseId);
     if (warehouse === undefined) {
       setError(t('facility-operations.common.required'));
-      return;
+      return 'failed' as const;
     }
-    setBusy(true);
     const command = {
       _tag: 'PurchaseOrderCreateFromQuote' as const,
       quoteId: quote.id,
       warehouseId: warehouse.id,
     };
     const outcome = yield* run(expectedDate === '' ? command : { ...command, expectedDate });
-    setBusy(false);
-    if (outcome.ok) {
+    if (!outcome.ok) {
+      setError(t(failureKey(outcome.reason)));
+      return refusedOutcome(outcome);
+    }
+    return submitDone(() => {
       toast.create({ duration: 5000, title: k('quotes.ordered'), type: 'success' });
       const [orderId] = outcome.result.entityIds;
       if (orderId !== undefined) {
         onOpenOrder(orderId);
       }
-    } else {
-      setError(t(failureKey(outcome.reason)));
-    }
+    });
   },
 );
 
@@ -473,6 +474,92 @@ const submitQuoteRejection = Effect.fn('FacilityOperations.Purchasing.submitQuot
   }
 });
 
+/** Turns a received quote into an order: Uložit creates it; rejecting the quote stays a confirmed command. */
+export const QuoteToOrderForm = ({
+  error,
+  onOpenOrder,
+  quote,
+  run,
+  setError,
+  state,
+}: {
+  readonly error?: string | undefined;
+  readonly onOpenOrder: (orderId: string) => void;
+  readonly quote: SupplierQuote;
+  readonly run: RunCommand;
+  readonly setError: (value: string | undefined) => void;
+  readonly state: PurchasingState;
+}) => {
+  const k = usePurchasingT();
+  const { t } = useModernI18n();
+  const toast = useToast();
+  const [warehouseId, setWarehouseId] = useState(state.warehouses[0]?.id ?? '');
+  const [expectedDate, setExpectedDate] = useState('');
+  const [rejecting, setRejecting] = useState(false);
+  const [busy, setBusy] = useState(false);
+  // The order is created on Uložit only; the warehouse it opens with can be used as it is.
+  const form = useFormSave({
+    savableAtOnce: true,
+    submit: () =>
+      submitOrderFromQuote({ expectedDate, k, onOpenOrder, quote, run, setError, state, t, toast, warehouseId }),
+    value: { expectedDate, warehouseId },
+  });
+  const reject = () => submitQuoteRejection({ k, quote, run, setBusy, setError, setRejecting, t, toast });
+  return (
+    <SectionCard title={k('quotes.toOrderTitle')}>
+      <p className="text-fg-secondary text-sm">{k('quotes.toOrderHint')}</p>
+      <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
+        <Select
+          items={state.warehouses.map((entry) => ({
+            displayValue: entry.name,
+            label: entry.name,
+            value: entry.id,
+          }))}
+          label={k('fields.deliverTo')}
+          name="quote-warehouse"
+          onValueChange={({ value }) => setWarehouseId(value[0] ?? warehouseId)}
+          placeholder={k('placeholders.warehouse')}
+          size="md"
+          value={[warehouseId]}
+        />
+        <FormInput
+          id="quote-expected"
+          label={k('fields.expectedDate')}
+          onChange={(event) => setExpectedDate(event.target.value)}
+          type="date"
+          value={expectedDate}
+        />
+      </div>
+      {rejecting ? (
+        <div className="flex flex-wrap justify-end gap-100">
+          <span className="self-center text-sm">{k('quotes.rejectConfirm')}</span>
+          <Button onClick={() => setRejecting(false)} size="sm" theme="outlined" variant="secondary">
+            {t('facility-operations.common.cancel')}
+          </Button>
+          <Button
+            isLoading={busy}
+            onClick={() => {
+              browserRuntime.runFork(reject());
+            }}
+            size="sm"
+            variant="danger"
+          >
+            {k('quotes.reject')}
+          </Button>
+          {/* The leave question stays reachable while the rejection is being confirmed. */}
+          <UnsavedChangesDialog labels={form.labels} prompt={form.guard.prompt} />
+        </div>
+      ) : (
+        <FormSaveFooter error={error} form={form}>
+          <Button onClick={() => setRejecting(true)} size="sm" theme="borderless" variant="danger">
+            {k('quotes.reject')}
+          </Button>
+        </FormSaveFooter>
+      )}
+    </SectionCard>
+  );
+};
+
 export const QuotePanel = ({
   canWrite,
   onClose,
@@ -490,20 +577,12 @@ export const QuotePanel = ({
 }) => {
   const k = usePurchasingT();
   const { t } = useModernI18n();
-  const toast = useToast();
   const lookup = lookupOf(state);
   const quote = state.quotes.find((entry) => entry.id === quoteId);
-  const [warehouseId, setWarehouseId] = useState(state.warehouses[0]?.id ?? '');
-  const [expectedDate, setExpectedDate] = useState('');
-  const [rejecting, setRejecting] = useState(false);
   const [error, setError] = useState<string | undefined>();
-  const [busy, setBusy] = useState(false);
   if (quote === undefined) {
     return null;
   }
-  const toOrder = () =>
-    submitOrderFromQuote({ expectedDate, k, onOpenOrder, quote, run, setBusy, setError, state, t, toast, warehouseId });
-  const reject = () => submitQuoteRejection({ k, quote, run, setBusy, setError, setRejecting, t, toast });
   const order = lookup.order(quote.purchaseOrderId);
   return (
     <SidePanel
@@ -531,68 +610,14 @@ export const QuotePanel = ({
           </StatusText>
         )}
         {canWrite && quote.status === 'received' && (
-          <SectionCard title={k('quotes.toOrderTitle')}>
-            <p className="text-fg-secondary text-sm">{k('quotes.toOrderHint')}</p>
-            <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-              <Select
-                items={state.warehouses.map((entry) => ({
-                  displayValue: entry.name,
-                  label: entry.name,
-                  value: entry.id,
-                }))}
-                label={k('fields.deliverTo')}
-                name="quote-warehouse"
-                onValueChange={({ value }) => setWarehouseId(value[0] ?? warehouseId)}
-                placeholder={k('placeholders.warehouse')}
-                size="md"
-                value={[warehouseId]}
-              />
-              <FormInput
-                id="quote-expected"
-                label={k('fields.expectedDate')}
-                onChange={(event) => setExpectedDate(event.target.value)}
-                type="date"
-                value={expectedDate}
-              />
-            </div>
-            <div className="flex flex-wrap justify-end gap-100">
-              {rejecting ? (
-                <>
-                  <span className="self-center text-sm">{k('quotes.rejectConfirm')}</span>
-                  <Button onClick={() => setRejecting(false)} size="sm" theme="outlined" variant="secondary">
-                    {t('facility-operations.common.cancel')}
-                  </Button>
-                  <Button
-                    isLoading={busy}
-                    onClick={() => {
-                      browserRuntime.runFork(reject());
-                    }}
-                    size="sm"
-                    variant="danger"
-                  >
-                    {k('quotes.reject')}
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button onClick={() => setRejecting(true)} size="sm" theme="borderless" variant="danger">
-                    {k('quotes.reject')}
-                  </Button>
-                  <Button
-                    icon="icon-[mdi--cart-arrow-right]"
-                    isLoading={busy}
-                    onClick={() => {
-                      browserRuntime.runFork(toOrder());
-                    }}
-                    size="sm"
-                    variant="primary"
-                  >
-                    {k('quotes.toOrder')}
-                  </Button>
-                </>
-              )}
-            </div>
-          </SectionCard>
+          <QuoteToOrderForm
+            error={error}
+            onOpenOrder={onOpenOrder}
+            quote={quote}
+            run={run}
+            setError={setError}
+            state={state}
+          />
         )}
         <SectionCard title={k('orders.lines')}>
           <Table size="sm" variant="line">

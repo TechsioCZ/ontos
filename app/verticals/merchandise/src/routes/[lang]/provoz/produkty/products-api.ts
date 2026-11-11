@@ -1,12 +1,13 @@
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { useHeldSnapshot } from '@app/admin-ui';
+import { LIST_WARM_ROWS, makeIntentLimiter, makePointerDwell, rowIntentProps, useHeldSnapshot } from '@app/admin-ui';
+import type { RowIntentProps } from '@app/admin-ui';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import type { TanstackTable } from '@techsio/ui-kit/organisms/data-table';
-import { Effect, Match, Option, Random, Result, Schema } from 'effect';
+import { Effect, Match, MutableRef, Option, Random, Result, Schema } from 'effect';
 import type { Cause } from 'effect';
-import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeManageCatalog } from '../../../../api/manage-catalog-action-client.ts';
 import { executeManageMarkets } from '../../../../api/manage-markets-action-client.ts';
@@ -16,6 +17,8 @@ import { executeRecordStockMovement } from '../../../../api/record-stock-movemen
 import { committedResult } from '../../../../api/action-result.ts';
 import { executeRecords } from '../../../../api/records-consumer.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { useKeptDetail } from '../../../../runtime/kept-detail.ts';
+import type { DetailRead } from '../../../../runtime/kept-detail.ts';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import { ProductIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import type { ProductId, ProductRecord } from '../../../../../shared/domain/merchandise-model.ts';
@@ -233,12 +236,24 @@ export const productCategoryKey = (legalEntityId: string, context?: ModulePageCo
 
 /** One page of the products list with the company indicators and the write capability. */
 export const productListData = definePageData({
+  changesFrom: ['merchandise'],
   key: productListKey,
   load: ({ query }: ProductListInput) => readView(productListView(query)),
   maxEntries: 16,
   retainStale: false,
   runtime: browserRuntime,
 });
+
+/** Last ready reads of the products list, kept for a list reopened while its strict store reloads. */
+export const productListMemory = MutableRef.make(new Map<string, ReturnType<typeof productListData.snapshot>>());
+
+/**
+ * Drops what a reopened products list may show from before a write. A write may end without the Shell's write event
+ * (an uncertain outcome), so the write path calls this as well.
+ */
+export const forgetRememberedProducts = (): void => {
+  MutableRef.get(productListMemory).clear();
+};
 
 /** The page the products list opens with: no filters, default sort. */
 export const firstProductPage = (limit: number): ProductListQuery => ({
@@ -268,6 +283,7 @@ export interface CategoryChoices {
  * (the filter then searches it on the server) and, without a tree, the distinct product category labels with counts.
  */
 export const categoryChoicesData = definePageData({
+  changesFrom: ['merchandise'],
   key: (legalEntityId: string) => legalEntityId,
   load: () =>
     readView({ includeProductCategories: true, limit: 0, ordersLimit: 0 }).pipe(
@@ -315,6 +331,7 @@ const readProductDetail = ({ productId }: ProductDetailInput) =>
 
 export const productDetailData = definePageData({
   cancelWhenUnused: true,
+  changesFrom: ['merchandise'],
   key: ({ legalEntityId, productId, revision, scope }: ProductDetailInput) =>
     cacheKey([scope ?? legalEntityId, productId, String(revision)]),
   load: readProductDetail,
@@ -323,7 +340,7 @@ export const productDetailData = definePageData({
   runtime: browserRuntime,
 });
 
-type ProductCommand = Extract<
+export type ProductCommand = Extract<
   MerchandiseCommand,
   {
     readonly _tag:
@@ -369,38 +386,45 @@ const submitProductCommand = (command: ProductCommand, expectedRevision: number,
   );
 };
 
-/** The product workflow uses each published closed operation, with one native idempotency key per attempt. */
+/**
+ * One product command against `expectedRevision`, answered as a `CommandOutcome`; the product reads are invalidated.
+ * The product workflow uses each published closed operation, with one native idempotency key per attempt.
+ */
+export const productCommandOutcome = (
+  command: ProductCommand,
+  expectedRevision: number,
+): Effect.Effect<CommandOutcome> =>
+  newId.pipe(
+    Effect.flatMap((idempotencyKey) =>
+      submitProductCommand(command, expectedRevision, idempotencyKey).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            forgetRememberedProducts();
+            productListData.invalidate();
+            productDetailData.invalidate();
+            categoryChoicesData.invalidate();
+          }),
+        ),
+      ),
+    ),
+    Effect.match({
+      onFailure: (error): CommandOutcome =>
+        Schema.is(ActionProposalAcceptedSchema)(error)
+          ? { ok: false, proposal: error, reason: 'approval-required' }
+          : { ok: false, reason: commandReason(error) },
+      onSuccess: (result): CommandOutcome =>
+        result.image === undefined
+          ? { ok: true, revision: result.revision }
+          : { image: result.image, ok: true, revision: result.revision },
+    }),
+  );
+
 export const runCommand = (
   command: ProductCommand,
   expectedRevision: number,
   onOutcome: (outcome: CommandOutcome) => void,
 ): void => {
-  void browserRuntime.runPromise(
-    newId.pipe(
-      Effect.flatMap((idempotencyKey) =>
-        submitProductCommand(command, expectedRevision, idempotencyKey).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              productListData.invalidate();
-              productDetailData.invalidate();
-              categoryChoicesData.invalidate();
-            }),
-          ),
-        ),
-      ),
-      Effect.match({
-        onFailure: (error): CommandOutcome =>
-          Schema.is(ActionProposalAcceptedSchema)(error)
-            ? { ok: false, proposal: error, reason: 'approval-required' }
-            : { ok: false, reason: commandReason(error) },
-        onSuccess: (result): CommandOutcome =>
-          result.image === undefined
-            ? { ok: true, revision: result.revision }
-            : { image: result.image, ok: true, revision: result.revision },
-      }),
-      Effect.map(onOutcome),
-    ),
-  );
+  void browserRuntime.runPromise(productCommandOutcome(command, expectedRevision).pipe(Effect.map(onOutcome)));
 };
 
 /** The detail input for a route id; none for an id no product can have. */
@@ -490,7 +514,7 @@ export const preloadProductDetails = (
   productScope(context) === undefined
     ? Effect.void
     : Effect.forEach(
-        rows.slice(0, 200),
+        rows.slice(0, LIST_WARM_ROWS),
         (row) =>
           Option.match(detailInput(context?.legalEntityId ?? '', row.id, context, revision), {
             onNone: () => Effect.void,
@@ -499,7 +523,10 @@ export const preloadProductDetails = (
         { concurrency: 2, discard: true },
       );
 
-/** Batches only the final current-page rows. Changing page/filter/scope cancels the previous batch and queue. */
+/**
+ * Warms the first `LIST_WARM_ROWS` final current-page rows; every other row is warmed by its intent. Changing
+ * page/filter/scope cancels the previous batch and queue.
+ */
 export const useProductDetailsPrefetch = (
   context: ModulePageContext | undefined,
   revision: number,
@@ -531,7 +558,7 @@ export const useProductDetailsPrefetch = (
     productDetailData.subscribe,
     () =>
       scope !== undefined &&
-      rows.some((row) =>
+      rows.slice(0, LIST_WARM_ROWS).some((row) =>
         Option.match(detailInput(context?.legalEntityId ?? '', row.id, context, revision), {
           onNone: () => false,
           onSome: (input) => productDetailData.snapshot(input).state !== 'ready',
@@ -539,24 +566,90 @@ export const useProductDetailsPrefetch = (
       ),
     () => false,
   );
+  // One batch per list revision and page of rows. The strict detail entries read as pending again once their 20 s
+  // freshness window passes or a live change from any module arrives; warming every row again then made an idle list
+  // re-read all its details every 40 s and on every live event. A write or a change of these products moves the
+  // revision and warms the rows again; opening a row always reads its detail fresh.
+  const batch = cacheKey([request, selection]);
+  const warmed = useRef<string>(undefined);
   const preload = useEffectEvent((key: string) =>
-    key === request ? preloadProductDetails(context, revision, rows) : Effect.void,
+    key === request
+      ? preloadProductDetails(context, revision, rows).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              warmed.current = batch;
+            }),
+          ),
+        )
+      : Effect.void,
   );
   useEffect(() => {
     const fiber =
-      needsPreload && scope !== undefined && selection !== '[]' ? browserRuntime.runFork(preload(request)) : undefined;
+      needsPreload && scope !== undefined && selection !== '[]' && warmed.current !== batch
+        ? browserRuntime.runFork(preload(request))
+        : undefined;
     return () => {
       fiber?.interruptUnsafe();
     };
-  }, [needsPreload, request, scope, selection]);
+  }, [batch, needsPreload, request, scope, selection]);
 };
+
+const productIntentReads = makeIntentLimiter();
+const productPointerDwell = makePointerDwell((effect) => browserRuntime.runFork(effect));
+
+/**
+ * Warms one row's detail when the user shows the intent to open it. The strict detail store does the rest: a fresh
+ * entry answers at once without a request and a running read is joined, so each row has at most one read in flight.
+ * At most two intent reads run at once; a sweep over many rows keeps only the newest waiting.
+ */
+export const prefetchProductDetail = (
+  context: ModulePageContext | undefined,
+  revision: number,
+  productId: string,
+): void => {
+  if (productScope(context) === undefined) {
+    return;
+  }
+  const input = Option.getOrUndefined(detailInput(context?.legalEntityId ?? '', productId, context, revision));
+  if (input === undefined || productDetailData.snapshot(input).state === 'ready') {
+    return;
+  }
+  productIntentReads((done) => {
+    if (productDetailData.snapshot(input).state === 'ready') {
+      done();
+      return;
+    }
+    browserRuntime.runFork(productDetailData.read(input).pipe(Effect.ignore, Effect.ensuring(Effect.sync(done))));
+  });
+};
+
+/** Intent prefetch of the products list: the row the user points at or focuses has its detail ready to open. */
+export const productDetailIntent = (
+  context: ModulePageContext | undefined,
+  revision: number,
+  table: ProductRowModel | undefined,
+  authorizedRows: readonly ProductRecord[],
+  enabled: boolean,
+): RowIntentProps =>
+  rowIntentProps((index) => {
+    const row = enabled ? currentProductRows(table, authorizedRows)[index] : undefined;
+    if (row !== undefined) {
+      prefetchProductDetail(context, revision, row.id);
+    }
+  }, productPointerDwell);
 
 export type ProductDetailState =
   | { readonly status: 'loading' }
   | { readonly status: 'invalid' }
   | { readonly status: 'not-found' }
   | { readonly reason: FailureReason; readonly status: 'error' }
-  | { readonly product: ProductRecord; readonly response: RecordsResponse; readonly status: 'ready' };
+  | {
+      readonly product: ProductRecord;
+      /** The product shown is the last one read: reading it again failed for this reason. */
+      readonly reloadFailure?: FailureReason;
+      readonly response: RecordsResponse;
+      readonly status: 'ready';
+    };
 
 export const detailState = (
   valid: boolean,
@@ -579,6 +672,21 @@ export const detailState = (
     onNone: (): ProductDetailState => ({ status: 'not-found' }),
     onSome: (found): ProductDetailState => ({ product: found, response, status: 'ready' }),
   });
+};
+
+type ReadyProductDetail = Extract<ProductDetailState, { readonly status: 'ready' }>;
+
+/** A denied read never keeps the shown product: its fields and actions go at once. */
+const productRead = (state: ProductDetailState): DetailRead<ReadyProductDetail, FailureReason> => {
+  if (state.status === 'ready') {
+    return { kind: 'ready', ready: state };
+  }
+  if (state.status === 'loading') {
+    return { kind: 'loading' };
+  }
+  return state.status === 'error' && state.reason !== 'forbidden'
+    ? { failure: state.reason, kind: 'failed' }
+    : { kind: 'final' };
 };
 
 /** A warmed complete scoped entry is consumed in render. Missing Shell identity never reuses the detail store. */
@@ -630,10 +738,20 @@ export const useProductDetail = (
     Option.isSome(input) ? productDetailData.key(input.value) : '',
     scope === undefined ? pageDataPending : snapshot,
   );
-  if (scope === undefined) {
-    return detailState(Option.isSome(input), unscoped?.key === request ? unscoped.snapshot : pageDataPending);
+  const state =
+    scope === undefined
+      ? detailState(Option.isSome(input), unscoped?.key === request ? unscoped.snapshot : pageDataPending)
+      : detailState(Option.isSome(input), shown);
+  // A failed reload of the product already on screen keeps it, so the editor and its unsaved drafts stay.
+  const kept = useKeptDetail({
+    key: cacheKey([legalEntityId, scope ?? '', routeId]),
+    read: productRead(state),
+    same: (left, right) => left.product === right.product && left.response === right.response,
+  });
+  if (kept === null) {
+    return state;
   }
-  return detailState(Option.isSome(input), shown);
+  return kept.reloadFailure === undefined ? kept.ready : { ...kept.ready, reloadFailure: kept.reloadFailure };
 };
 
 export const productNavigationFailureKey = Match.type<Cause.TimeoutError | Cause.UnknownError>().pipe(

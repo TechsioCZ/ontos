@@ -1,6 +1,6 @@
-// Forms of the assets page. Each renders a <form id> whose submit button sits in the SidePanel footer and hands a
-// typed command to `onSubmit`; the page runs it through the governed apply-command Action. The create/edit card keeps
-// its values in the page's draft, so an edit of a stored asset saves itself. Owned by ops-assets.
+// Forms of the assets page. Each keeps its draft and renders the shared Uložit last in the SidePanel footer, which
+// builds a typed command and runs it through the panel's `onSubmit` (the governed apply-command Action). The create/edit card keeps
+// its values in the page's draft, so an edit of a stored asset is sent by the panel's Uložit. Owned by ops-assets.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Option as EffectOption, Schema } from 'effect';
 import type { TOptions } from 'i18next';
@@ -43,19 +43,20 @@ import {
   CheckField,
   ErrorLine,
   FormGrid,
+  PanelFields,
   PanelForm,
   SelectField,
   TextField,
   optional,
 } from './form-kit.tsx';
-import type { Option } from './form-kit.tsx';
+import type { AssetSubmit, Option } from './form-kit.tsx';
 import { assetPlacementOf, locationItems, usePropertyTree } from './property-tree.ts';
 import type { PropertyTree } from './property-tree.ts';
 import { surfaceTileClassName } from '@app/admin-ui';
 
 export interface FormProps {
-  readonly formId: string;
-  readonly onSubmit: (command: OpsCommand) => void;
+  /** How the panel runs the command the form built; the form's Uložit sits last in the panel footer. */
+  readonly onSubmit: AssetSubmit;
 }
 
 const useK = () => {
@@ -82,48 +83,48 @@ const locationOptions = (tree: PropertyTree, none: string): Option[] => [
 
 // ── Create / edit card ──────────────────────────────────────────────────────────────────────────────────
 
-export interface AssetCardFormProps extends FormProps {
+export interface AssetCardFormProps {
   readonly asset?: Asset;
   readonly draft: AssetCardDraft;
-  /** The page owns the draft, so an edit can autosave it from the panel footer. */
+  /** The page owns the draft, so an edit is saved from the panel footer. */
   readonly onChange: (patch: Partial<AssetCardDraft>) => void;
+  /** A new card only: its Uložit creates it. An edit is saved by the panel's own save bar. */
+  readonly onSubmit?: AssetSubmit | undefined;
   readonly state: AssetsState;
 }
 
-export const AssetCardForm = ({ asset, draft, formId, onChange, onSubmit, state }: AssetCardFormProps) => {
+export const AssetCardForm = ({ asset, draft, onChange, onSubmit, state }: AssetCardFormProps) => {
   const k = useK();
   const tree = usePropertyTree();
   const [error, setError] = useState<string | undefined>();
   const problems = assetCardProblems(draft);
 
-  const submit = () => {
+  const command = (): OpsCommand | undefined => {
     if (problems.inventoryNumber || problems.name || problems.category) {
       setError(k(formText.required));
-      return;
+      return undefined;
     }
     if (
       asset === undefined &&
       state.assets.some((entry) => entry.inventoryNumber.toLowerCase() === draft.inventoryNumber.trim().toLowerCase())
     ) {
       setError(k('form.duplicateNumber'));
-      return;
+      return undefined;
     }
     if (problems.amount) {
       setError(k(formText.invalidAmount));
-      return;
+      return undefined;
     }
     setError(undefined);
-    const command =
+    const built =
       asset === undefined
         ? assetCardCreateCommandOf(draft, assetPlacementOf(tree, draft))
         : assetCardUpdateCommandOf(draft, asset, assetPlacementOf(tree, draft, asset));
-    if (EffectOption.isSome(command)) {
-      onSubmit(command.value);
-    }
+    return EffectOption.getOrUndefined(built);
   };
 
-  return (
-    <PanelForm id={formId} onSubmit={submit}>
+  const fields = (
+    <>
       <ErrorLine message={error} />
       <FormGrid>
         <TextField
@@ -238,48 +239,55 @@ export const AssetCardForm = ({ asset, draft, formId, onChange, onSubmit, state 
         onChange={(value) => onChange({ note: value })}
         value={draft.note}
       />
+    </>
+  );
+  return onSubmit === undefined ? (
+    <PanelFields>{fields}</PanelFields>
+  ) : (
+    <PanelForm command={command} error={error} onSubmit={onSubmit} value={draft}>
+      {fields}
     </PanelForm>
   );
 };
 
-/** A new asset card: its draft is local, because a new asset is submitted once with the footer button. */
-export const AssetCardCreateForm = ({ formId, onSubmit, state }: FormProps & { readonly state: AssetsState }) => {
+/** A new asset card: its draft is local, and the footer's Uložit creates the asset once. */
+export const AssetCardCreateForm = ({ onSubmit, state }: FormProps & { readonly state: AssetsState }) => {
   const [draft, setDraft] = useState<AssetCardDraft>(() => assetCardDraftOf());
   const change = (patch: Partial<AssetCardDraft>) => setDraft((current) => ({ ...current, ...patch }));
-  return <AssetCardForm draft={draft} formId={formId} onChange={change} onSubmit={onSubmit} state={state} />;
+  return <AssetCardForm draft={draft} onChange={change} onSubmit={onSubmit} state={state} />;
 };
 
 // ── Value change (S02-02) ─────────────────────────────────────────────────────────────────────────────
 
-export const ValueChangeForm = ({ asset, formId, onSubmit }: FormProps & { readonly asset: Asset }) => {
+export const ValueChangeForm = ({ asset, onSubmit }: FormProps & { readonly asset: Asset }) => {
   const k = useK();
   const [value, setValue] = useState('');
   const [date, setDate] = useState(todayIsoDate);
   const [reason, setReason] = useState('');
   const [documentRef, setDocumentRef] = useState('');
   const [error, setError] = useState<string | undefined>();
-  const submit = () => {
+  const command = (): OpsCommand | undefined => {
     const parsed = parseCzk(value);
     if (parsed === undefined || parsed === null) {
       setError(k(formText.invalidAmount));
-      return;
+      return undefined;
     }
     if (reason.trim() === '' || date === '') {
       setError(k(formText.reasonRequired));
-      return;
+      return undefined;
     }
     setError(undefined);
-    onSubmit({
+    return {
       _tag: 'AssetValueChange',
       assetId: asset.id,
       date,
       newValueMinor: parsed,
       reason: reason.trim(),
       ...optional('documentRef', documentRef),
-    });
+    };
   };
   return (
-    <PanelForm id={formId} onSubmit={submit}>
+    <PanelForm command={command} error={error} onSubmit={onSubmit} value={{ date, documentRef, reason, value }}>
       <p className="text-fg-secondary text-sm">
         {k('form.valueIntro', { value: money(asset.currentValueMinor, k('notProvided')) })}
       </p>
@@ -317,30 +325,30 @@ export const ValueChangeForm = ({ asset, formId, onSubmit }: FormProps & { reado
 
 // ── Timeline event ────────────────────────────────────────────────────────────────────────────────────
 
-export const EventForm = ({ asset, formId, onSubmit }: FormProps & { readonly asset: Asset }) => {
+export const EventForm = ({ asset, onSubmit }: FormProps & { readonly asset: Asset }) => {
   const k = useK();
   const [kind, setKind] = useState<(typeof manualEventKinds)[number]>('construction');
   const [date, setDate] = useState(todayIsoDate);
   const [note, setNote] = useState('');
   const [documentRef, setDocumentRef] = useState('');
   const [error, setError] = useState<string | undefined>();
-  const submit = () => {
+  const command = (): OpsCommand | undefined => {
     if (note.trim() === '' || date === '') {
       setError(k(formText.required));
-      return;
+      return undefined;
     }
     setError(undefined);
-    onSubmit({
+    return {
       _tag: 'AssetEventRecord',
       assetId: asset.id,
       date,
       kind,
       note: note.trim(),
       ...optional('documentRef', documentRef),
-    });
+    };
   };
   return (
-    <PanelForm id={formId} onSubmit={submit}>
+    <PanelForm command={command} error={error} onSubmit={onSubmit} value={{ date, documentRef, kind, note }}>
       <ErrorLine message={error} />
       <FormGrid>
         <SelectField
@@ -366,7 +374,7 @@ export const EventForm = ({ asset, formId, onSubmit }: FormProps & { readonly as
 
 // ── Disposal (S02-04) ─────────────────────────────────────────────────────────────────────────────────
 
-export const DisposeForm = ({ asset, formId, onSubmit }: FormProps & { readonly asset: Asset }) => {
+export const DisposeForm = ({ asset, onSubmit }: FormProps & { readonly asset: Asset }) => {
   const k = useK();
   const [kind, setKind] = useState<DisposalKind>('retirement');
   const [date, setDate] = useState(todayIsoDate);
@@ -374,18 +382,18 @@ export const DisposeForm = ({ asset, formId, onSubmit }: FormProps & { readonly 
   const [proceeds, setProceeds] = useState('');
   const [documentRef, setDocumentRef] = useState('');
   const [error, setError] = useState<string | undefined>();
-  const submit = () => {
+  const command = (): OpsCommand | undefined => {
     const parsed = parseCzk(proceeds);
     if (parsed === null) {
       setError(k(formText.invalidAmount));
-      return;
+      return undefined;
     }
     if (reason.trim() === '' || date === '') {
       setError(k(formText.reasonRequired));
-      return;
+      return undefined;
     }
     setError(undefined);
-    onSubmit({
+    return {
       _tag: 'AssetDispose',
       assetId: asset.id,
       date,
@@ -393,10 +401,15 @@ export const DisposeForm = ({ asset, formId, onSubmit }: FormProps & { readonly 
       reason: reason.trim(),
       ...optional('documentRef', documentRef),
       ...optionalField('proceedsMinor', kind === 'sale' ? parsed : undefined),
-    });
+    };
   };
   return (
-    <PanelForm id={formId} onSubmit={submit}>
+    <PanelForm
+      command={command}
+      error={error}
+      onSubmit={onSubmit}
+      value={{ date, documentRef, kind, proceeds, reason }}
+    >
       <p className="text-fg-secondary text-sm">{k('form.disposeIntro', { name: asset.name })}</p>
       <ErrorLine message={error} />
       <FormGrid>
@@ -433,7 +446,7 @@ export const DisposeForm = ({ asset, formId, onSubmit }: FormProps & { readonly 
 
 // ── Revision / service / permit ───────────────────────────────────────────────────────────────────────
 
-export const ServiceForm = ({ asset, formId, onSubmit }: FormProps & { readonly asset: Asset }) => {
+export const ServiceForm = ({ asset, onSubmit }: FormProps & { readonly asset: Asset }) => {
   const k = useK();
   const [kind, setKind] = useState<ServiceKind>('revision');
   const [title, setTitle] = useState('');
@@ -446,17 +459,17 @@ export const ServiceForm = ({ asset, formId, onSubmit }: FormProps & { readonly 
   const [documentRef, setDocumentRef] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | undefined>();
-  const submit = () => {
+  const command = (): OpsCommand | undefined => {
     if (title.trim() === '') {
       setError(k(formText.required));
-      return;
+      return undefined;
     }
     if (kind !== 'permit' && performedOn === '' && nextDueOn === '') {
       setError(k('form.serviceDates'));
-      return;
+      return undefined;
     }
     setError(undefined);
-    onSubmit({
+    return {
       _tag: 'AssetServiceRecord',
       assetId: asset.id,
       kind,
@@ -469,10 +482,15 @@ export const ServiceForm = ({ asset, formId, onSubmit }: FormProps & { readonly 
       ...optional('note', note),
       ...optionalField('permitState', kind === 'permit' ? permitState : undefined),
       ...optionalField('result', kind !== 'permit' && performedOn !== '' ? result : undefined),
-    });
+    };
   };
   return (
-    <PanelForm id={formId} onSubmit={submit}>
+    <PanelForm
+      command={command}
+      error={error}
+      onSubmit={onSubmit}
+      value={{ documentRef, kind, nextDueOn, note, performedOn, permitState, responsible, result, supplier, title }}
+    >
       <ErrorLine message={error} />
       <FormGrid>
         <SelectField
@@ -567,7 +585,6 @@ export const ServiceForm = ({ asset, formId, onSubmit }: FormProps & { readonly 
 
 export const PlanForm = ({
   asset,
-  formId,
   onSubmit,
   state,
   type,
@@ -597,7 +614,7 @@ export const PlanForm = ({
       setTaxGroup(template.taxGroup ?? '');
     }
   };
-  const submit = () => {
+  const command = (): OpsCommand | undefined => {
     const parsedBase = parseCzk(base);
     const parsedYears = Number(years);
     if (
@@ -608,14 +625,14 @@ export const PlanForm = ({
       parsedYears > 100
     ) {
       setError(k('form.planInvalid'));
-      return;
+      return undefined;
     }
     if (method.trim() === '' || startDate === '') {
       setError(k(formText.required));
-      return;
+      return undefined;
     }
     setError(undefined);
-    onSubmit({
+    return {
       _tag: 'AssetDepreciationPlanCreate',
       assetId: asset.id,
       baseMinor: parsedBase,
@@ -627,10 +644,15 @@ export const PlanForm = ({
       ...optional('taxGroup', type === 'tax' ? taxGroup : ''),
       ...optional('note', note),
       ...optionalField('templateId', templateId === NONE ? undefined : templateId),
-    });
+    };
   };
   return (
-    <PanelForm id={formId} onSubmit={submit}>
+    <PanelForm
+      command={command}
+      error={error}
+      onSubmit={onSubmit}
+      value={{ base, method, note, planInterval, startDate, taxGroup, templateId, years }}
+    >
       <p className="text-fg-secondary text-sm">{k('depreciation.evidenceNote')}</p>
       <ErrorLine message={error} />
       {templates.length > 0 && (
@@ -719,7 +741,6 @@ const nextOpenPeriod = (plan: DepreciationPlan): string => {
 
 export const EntryForm = ({
   asset,
-  formId,
   onSubmit,
   plan,
 }: FormProps & { readonly asset: Asset; readonly plan: DepreciationPlan }) => {
@@ -731,27 +752,27 @@ export const EntryForm = ({
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | undefined>();
   const remaining = plan.baseMinor - approvedTotal(plan);
-  const submit = () => {
+  const command = (): OpsCommand | undefined => {
     const parsed = parseCzk(amount);
     const periodPattern = plan.interval === 'monthly' ? /^\d{4}-(?:0[1-9]|1[0-2])$/u : /^\d{4}$/u;
     if (!periodPattern.test(period.trim())) {
       setError(k(plan.interval === 'monthly' ? 'form.periodMonthly' : 'form.periodYearly'));
-      return;
+      return undefined;
     }
     if (parsed === undefined || parsed === null) {
       setError(k(formText.invalidAmount));
-      return;
+      return undefined;
     }
     if (parsed > remaining) {
       setError(k('form.overBase', { remaining: money(remaining, '—') }));
-      return;
+      return undefined;
     }
     if (plan.entries.some((entry) => entry.period === period.trim())) {
       setError(k('form.periodTaken'));
-      return;
+      return undefined;
     }
     setError(undefined);
-    onSubmit({
+    return {
       _tag: 'AssetDepreciationEntryRecord',
       amountMinor: parsed,
       assetId: asset.id,
@@ -760,10 +781,15 @@ export const EntryForm = ({
       ...optional('documentRef', documentRef),
       ...optional('note', note),
       ...optionalField('partial', partial ? true : undefined),
-    });
+    };
   };
   return (
-    <PanelForm id={formId} onSubmit={submit}>
+    <PanelForm
+      command={command}
+      error={error}
+      onSubmit={onSubmit}
+      value={{ amount, documentRef, note, partial, period }}
+    >
       <p className="text-fg-secondary text-sm">
         {k('form.entryIntro', { remaining: money(remaining, '—'), type: k(`depreciation.${plan.type}`) })}
       </p>
@@ -801,7 +827,7 @@ export const EntryForm = ({
   );
 };
 
-export const TemplateForm = ({ formId, onSubmit }: FormProps) => {
+export const TemplateForm = ({ onSubmit }: FormProps) => {
   const k = useK();
   const [name, setName] = useState('');
   const [type, setType] = useState<DepreciationType>('accounting');
@@ -811,7 +837,7 @@ export const TemplateForm = ({ formId, onSubmit }: FormProps) => {
   const [taxGroup, setTaxGroup] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | undefined>();
-  const submit = () => {
+  const command = (): OpsCommand | undefined => {
     const parsedYears = Number(years);
     if (
       name.trim() === '' ||
@@ -821,10 +847,10 @@ export const TemplateForm = ({ formId, onSubmit }: FormProps) => {
       parsedYears > 100
     ) {
       setError(k('form.planInvalid'));
-      return;
+      return undefined;
     }
     setError(undefined);
-    onSubmit({
+    return {
       _tag: 'AssetDepreciationTemplateCreate',
       interval: planInterval,
       method: method.trim(),
@@ -833,10 +859,15 @@ export const TemplateForm = ({ formId, onSubmit }: FormProps) => {
       years: parsedYears,
       ...optional('taxGroup', type === 'tax' ? taxGroup : ''),
       ...optional('note', note),
-    });
+    };
   };
   return (
-    <PanelForm id={formId} onSubmit={submit}>
+    <PanelForm
+      command={command}
+      error={error}
+      onSubmit={onSubmit}
+      value={{ method, name, note, planInterval, taxGroup, type, years }}
+    >
       <p className="text-fg-secondary text-sm">{k('templates.intro')}</p>
       <ErrorLine message={error} />
       <TextField id="template-name" label={k('fields.templateName')} onChange={setName} required value={name} />
@@ -884,7 +915,7 @@ export const TemplateForm = ({ formId, onSubmit }: FormProps) => {
 
 // ── Inventory (S02 inventura) ─────────────────────────────────────────────────────────────────────────
 
-export const InventoryCreateForm = ({ formId, onSubmit, state }: FormProps & { readonly state: AssetsState }) => {
+export const InventoryCreateForm = ({ onSubmit, state }: FormProps & { readonly state: AssetsState }) => {
   const k = useK();
   const tree = usePropertyTree();
   const [scope, setScope] = useState('');
@@ -897,27 +928,27 @@ export const InventoryCreateForm = ({ formId, onSubmit, state }: FormProps & { r
   const candidates = state.assets.filter(
     (asset) => isActiveAsset(asset) && (scope === '' || asset.propertyId === scope || asset.location?.id === scope),
   );
-  const submit = () => {
+  const command = (): OpsCommand | undefined => {
     if (title.trim() === '' || date === '') {
       setError(k(formText.required));
-      return;
+      return undefined;
     }
     if (candidates.length === 0) {
       setError(k('inventory.noCandidates'));
-      return;
+      return undefined;
     }
     setError(undefined);
-    onSubmit({
+    return {
       _tag: 'AssetInventoryCreate',
       assetIds: candidates.map((asset) => asset.id),
       date,
       title: title.trim(),
       ...optional('note', note),
       ...optionalField('scope', picked?.ref),
-    });
+    };
   };
   return (
-    <PanelForm id={formId} onSubmit={submit}>
+    <PanelForm command={command} error={error} onSubmit={onSubmit} value={{ date, note, scope, title }}>
       <p className="text-fg-secondary text-sm">{k('inventory.createIntro')}</p>
       <ErrorLine message={error} />
       <SelectField
@@ -960,7 +991,6 @@ export const InventoryCreateForm = ({ formId, onSubmit, state }: FormProps & { r
 export const FollowUpForm = ({
   assetId,
   assetName,
-  formId,
   inventoryId,
   onSubmit,
 }: FormProps & { readonly assetId: Asset['id']; readonly assetName: string; readonly inventoryId: string }) => {
@@ -969,23 +999,23 @@ export const FollowUpForm = ({
   const [dueDate, setDueDate] = useState(todayIsoDate);
   const [assignee, setAssignee] = useState('');
   const [error, setError] = useState<string | undefined>();
-  const submit = () => {
+  const command = (): OpsCommand | undefined => {
     if (title.trim() === '' || dueDate === '') {
       setError(k(formText.required));
-      return;
+      return undefined;
     }
     setError(undefined);
-    onSubmit({
+    return {
       _tag: 'AssetInventoryFollowUp',
       assetId,
       dueDate,
       inventoryId,
       title: title.trim(),
       ...optional('assignee', assignee),
-    });
+    };
   };
   return (
-    <PanelForm id={formId} onSubmit={submit}>
+    <PanelForm command={command} error={error} onSubmit={onSubmit} savableAtOnce value={{ assignee, dueDate, title }}>
       <ErrorLine message={error} />
       <TextField id="followup-title" label={k('fields.taskTitle')} onChange={setTitle} required value={title} />
       <FormGrid>
@@ -1003,22 +1033,21 @@ export const FollowUpForm = ({
   );
 };
 
-export const ArchiveForm = ({ asset, formId, onSubmit }: FormProps & { readonly asset: Asset }) => {
+export const ArchiveForm = ({ asset, onSubmit }: FormProps & { readonly asset: Asset }) => {
   const k = useK();
   const [reason, setReason] = useState(() => k('archive.defaultReason'));
   const [error, setError] = useState<string | undefined>();
+  const command = (): OpsCommand | undefined => {
+    const trimmed = reason.trim();
+    if (trimmed === '') {
+      setError(k(formText.reasonRequired));
+      return undefined;
+    }
+    setError(undefined);
+    return { _tag: 'AssetArchive', assetId: asset.id, reason: trimmed };
+  };
   return (
-    <PanelForm
-      id={formId}
-      onSubmit={() => {
-        const trimmed = reason.trim();
-        if (trimmed === '') {
-          setError(k(formText.reasonRequired));
-          return;
-        }
-        onSubmit({ _tag: 'AssetArchive', assetId: asset.id, reason: trimmed });
-      }}
-    >
+    <PanelForm command={command} error={error} onSubmit={onSubmit} savableAtOnce value={reason}>
       <ErrorLine message={error} />
       <TextField id="asset-archive-reason" label={k('archive.prompt')} onChange={setReason} required value={reason} />
     </PanelForm>

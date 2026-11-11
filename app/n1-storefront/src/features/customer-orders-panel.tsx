@@ -8,6 +8,7 @@ import { Badge } from "@techsio/ui-kit/atoms/badge";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
+import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import { Table } from "@techsio/ui-kit/organisms/table";
 import type { Dictionary } from "@/i18n";
 import { CustomerOrdersApi } from "@/ontos/customer-orders";
@@ -41,12 +42,14 @@ const readFailure = (error: Effect.Error<ReturnType<typeof readOrders>>): OrderP
   );
 export const CustomerOrderStatus = ({
   dictionary: d,
+  size = "md",
   status,
 }: {
   dictionary: Dictionary;
+  size?: "sm" | "md";
   status: CustomerOrder["status"];
 }) => (
-  <Badge size="md" variant={status === "CANCELLED" ? "danger" : "info"}>
+  <Badge size={size} variant={status === "CANCELLED" ? "danger" : "info"}>
     {d.checkout.statuses[status]}
   </Badge>
 );
@@ -79,9 +82,9 @@ const DetailLink = ({
     href={`/${locale}/ucet/objednavky/${encodeURIComponent(order.id)}`}
     size="md"
     theme="solid"
-    variant="primary"
+    variant="secondary"
   >
-    {d.accountPage.detail}
+    {d.detail}
   </LinkButton>
 );
 
@@ -94,7 +97,7 @@ export const CustomerOrdersList = ({
   dictionary: Dictionary;
   locale: string;
 }) => (
-  <div className="flex min-w-0 flex-col gap-4">
+  <div className="n1-order-history flex min-w-0 flex-col gap-4">
     <div className="flex flex-col items-start gap-4 border-b border-border-secondary pb-4 md:flex-row md:items-end md:justify-between">
       <div>
         <h3 className="text-xl font-semibold">{d.accountPage.history}</h3>
@@ -110,10 +113,17 @@ export const CustomerOrdersList = ({
       {data.total} {d.accountPage.totalOrders}
     </p>
     {data.orders.length === 0 ? (
-      <p>{d.accountPage.emptyOrders}</p>
+      <div className="flex flex-col items-center gap-2 rounded-xs border border-border-secondary p-4 text-center">
+        <Icon color="secondary" icon="icon-[mdi--archive-outline]" size="2xl" />
+        <h3 className="text-md font-medium">{d.accountPage.emptyOrdersHeading}</h3>
+        <p className="text-sm leading-normal text-fg-secondary">{d.accountPage.emptyOrders}</p>
+        <LinkButton as={NextLink} href={`/${locale}`} size="md" theme="solid" variant="secondary">
+          {d.accountPage.startShopping}
+        </LinkButton>
+      </div>
     ) : (
       <>
-        <div className="hidden min-w-0 overflow-x-auto md:block">
+        <div className="hidden min-w-0 overflow-x-auto lg:block">
           <Table size="md" variant="outline">
             <Table.Header>
               <Table.Row>
@@ -121,7 +131,7 @@ export const CustomerOrdersList = ({
                 <Table.ColumnHeader>{d.accountPage.createdAt}</Table.ColumnHeader>
                 <Table.ColumnHeader>{d.accountPage.items}</Table.ColumnHeader>
                 <Table.ColumnHeader numeric>{d.accountPage.total}</Table.ColumnHeader>
-                <Table.ColumnHeader>{d.accountPage.detail}</Table.ColumnHeader>
+                <Table.ColumnHeader>{d.detail}</Table.ColumnHeader>
               </Table.Row>
             </Table.Header>
             <Table.Body>
@@ -130,7 +140,7 @@ export const CustomerOrdersList = ({
                   <Table.Cell>
                     <div className="flex flex-col items-start gap-1">
                       <span>{order.number}</span>
-                      <CustomerOrderStatus dictionary={d} status={order.status} />
+                      <CustomerOrderStatus dictionary={d} size="sm" status={order.status} />
                     </div>
                   </Table.Cell>
                   <Table.Cell>
@@ -150,7 +160,7 @@ export const CustomerOrdersList = ({
             </Table.Body>
           </Table>
         </div>
-        <div className="flex min-w-0 flex-col gap-3 md:hidden">
+        <div className="flex min-w-0 flex-col gap-3 lg:hidden">
           {data.orders.map((order) => (
             <article
               className="flex min-w-0 flex-col gap-3 rounded-xs border border-border-secondary p-3"
@@ -165,7 +175,7 @@ export const CustomerOrdersList = ({
                     {customerOrderDate(order.createdAt, locale, d.accountPage.unknown)}
                   </p>
                 </div>
-                <CustomerOrderStatus dictionary={d} status={order.status} />
+                <CustomerOrderStatus dictionary={d} size="sm" status={order.status} />
               </div>
               <OrderPreview order={order} />
               <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border-secondary pt-2">
@@ -261,13 +271,24 @@ export const CustomerOrdersPanel = ({
     );
   } else if (state.state === "loading") {
     body = <output>{d.accountPage.loading}</output>;
+  } else if (state.state === "unavailable") {
+    body = (
+      <div className="n1-order-error flex flex-col items-center gap-2 rounded-xs border border-danger p-4 font-medium">
+        <StatusText align="center" showIcon={false} size="md" status="error">
+          {d.accountPage.ordersUnavailable}
+        </StatusText>
+        <Button
+          onClick={() => setRequest((previous) => ({ ...previous }))}
+          size="sm"
+          theme="solid"
+          variant="secondary"
+        >
+          {d.retry}
+        </Button>
+      </div>
+    );
   } else {
-    let message = d.accountPage.ordersUnavailable;
-    if (state.state === "anonymous") {
-      message = d.accountPage.anonymous;
-    } else if (state.state === "forbidden") {
-      message = d.accountPage.forbidden;
-    }
+    const message = state.state === "anonymous" ? d.accountPage.anonymous : d.accountPage.forbidden;
     body = (
       <div className="flex flex-col items-start gap-4">
         <output>{message}</output>

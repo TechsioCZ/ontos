@@ -20,7 +20,6 @@
 --calendar-account-outline
 --calendar-clock
 --card-account-details-outline
---cart-arrow-right
 --cart-plus
 --cctv
 --check
@@ -100,7 +99,6 @@ bg-success
 bg-success-light
 bg-surface
 block
-blur
 border
 border-2
 border-b
@@ -159,7 +157,6 @@ icon-[mdi--archive-outline]
 icon-[mdi--calendar-account-outline]
 icon-[mdi--calendar-clock]
 icon-[mdi--card-account-details-outline]
-icon-[mdi--cart-arrow-right]
 icon-[mdi--cart-plus]
 icon-[mdi--cctv]
 icon-[mdi--check]
@@ -272,6 +269,7 @@ rounded-full
 rounded-lg
 rounded-md
 rounded-sm
+running
 self-center
 shrink-0
 size-5

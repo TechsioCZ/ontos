@@ -350,7 +350,7 @@ const planSelection = ({
 
 const PlanContent = () => {
   const { t } = useModernI18n();
-  const { busy, load, state, submit } = useCrmRecords();
+  const { load, state, submit } = useCrmRecords();
   const [tab, setTab] = useState<string | undefined>();
   const [salespersonFilter, setSalespersonFilter] = useState(ALL);
   const [creating, setCreating] = useState(false);
@@ -480,12 +480,9 @@ const PlanContent = () => {
             )}
             {activeTab === 'done' && <DoneList items={done} records={records} />}
 
-            {creating && (
-              <PlanContactPanel busy={busy} onClose={() => setCreating(false)} records={records} submit={submit} />
-            )}
+            {creating && <PlanContactPanel onClose={() => setCreating(false)} records={records} submit={submit} />}
             {rescheduling !== undefined && (
               <PlanContactPanel
-                busy={busy}
                 item={rescheduling}
                 key={rescheduling.id}
                 onClose={() => setRescheduleId(undefined)}
@@ -495,7 +492,6 @@ const PlanContent = () => {
             )}
             {completing !== undefined && (
               <CompletePlanPanel
-                busy={busy}
                 item={completing}
                 key={completing.id}
                 onClose={() => setCompleteId(undefined)}

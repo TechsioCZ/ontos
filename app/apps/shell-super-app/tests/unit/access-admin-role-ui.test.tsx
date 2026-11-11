@@ -1,5 +1,6 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { saveLabelsFor } from '@app/admin-ui';
 import { Effect, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest, test } from 'effect-rstest';
 
@@ -22,6 +23,7 @@ import { authenticatedShellFixture } from './routes/authenticated-shell-fixture.
 import { roleErrorStatus } from '../../src/routes/access-admin/role-editor/role-commands.ts';
 import { RoleEditorFeature } from '../../src/routes/access-admin/role-editor/role-editor-feature.tsx';
 import { CreateRoleFeature } from '../../src/routes/access-admin/role-editor/create-role-feature.tsx';
+import type { GetAccessRoleResponse } from '../../shared/access-admin-api.ts';
 import {
   AccessRoleSchema,
   AccessRoleTemplateSchema,
@@ -58,6 +60,25 @@ beforeEach(() => {
   saveCall.mockReset();
 });
 
+interface NavigationStub {
+  readonly proceed: () => void;
+  readonly reset: () => void;
+  shouldBlock: () => boolean;
+  status: 'blocked' | 'idle';
+}
+const navigation = rstest.hoisted((): NavigationStub => ({
+  proceed: rstest.fn<() => void>(),
+  reset: rstest.fn<() => void>(),
+  shouldBlock: (): boolean => false,
+  status: 'idle',
+}));
+rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useBlocker: (options: { readonly shouldBlockFn: () => boolean }) => {
+    navigation.shouldBlock = options.shouldBlockFn;
+    return { proceed: navigation.proceed, reset: navigation.reset, status: navigation.status };
+  },
+}));
+
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({
     language: 'en',
@@ -67,6 +88,8 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
 }));
 
 afterEach(cleanup);
+const saveName = saveLabelsFor('en').save;
+const saveButton = () => screen.getByRole('button', { name: saveName });
 const cell: RoleCellView = { capabilityKey: 'commerce.order.order.read', mode: 'run', selector: { _tag: 'all' } };
 const capability: RoleCapabilityView = {
   key: cell.capabilityKey,
@@ -116,6 +139,7 @@ const props = (): RoleEditorViewProps => ({
     revision: 2,
     revisionId: 'revision-2',
   },
+  saveState: 'idle',
   status: 'idle',
   templates: [],
   writesAvailable: true,
@@ -200,19 +224,18 @@ it.effect('kit checkbox is keyboard-operable and names the exact capability, mod
 
 it.effect('dangerous effects have distinct accessible names and cannot save with partial acknowledgement', () =>
   Effect.gen(function* keyboardConfirmationTest() {
-    const input = { ...props(), cells: [cell, dangerous], preview };
+    const input = { ...props(), cells: [cell, dangerous], preview, saveState: 'invalid' as const };
     const { rerender } = render(<RoleEditorView {...input} />);
-    const saveName = 'shell.accessAdmin.role.confirmSave';
-    expect(screen.getByRole('button', { name: saveName }).hasAttribute('disabled')).toBe(true);
+    expect(saveButton().hasAttribute('disabled')).toBe(true);
     const confirm = screen.getByRole('checkbox', { name: /Cancel committed orders/u });
     confirm.focus();
     const user = userEvent.setup();
     yield* Effect.promise(() => user.keyboard(' '));
     expect(input.onConfirm).toHaveBeenCalledWith('cancel', true);
     rerender(<RoleEditorView {...input} confirmations={['cancel']} />);
-    expect(screen.getByRole('button', { name: saveName }).hasAttribute('disabled')).toBe(true);
-    rerender(<RoleEditorView {...input} confirmations={['cancel', 'approve']} />);
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: saveName })));
+    expect(saveButton().hasAttribute('disabled')).toBe(true);
+    rerender(<RoleEditorView {...input} confirmations={['cancel', 'approve']} saveState="dirty" />);
+    yield* Effect.promise(() => user.click(saveButton()));
     expect(input.onSave).toHaveBeenCalledTimes(1);
   }),
 );
@@ -229,11 +252,15 @@ test('preview shows full before/after and server affected-human count', () => {
 
 test('unavailable writer never advertises a working save and expiry stays assignment-owned', () => {
   render(
-    <RoleEditorView {...props()} confirmations={['cancel', 'approve']} preview={preview} writesAvailable={false} />,
+    <RoleEditorView
+      {...props()}
+      confirmations={['cancel', 'approve']}
+      preview={preview}
+      saveState="invalid"
+      writesAvailable={false}
+    />,
   );
-  expect(screen.getByRole('button', { name: 'shell.accessAdmin.role.confirmSave' }).hasAttribute('disabled')).toBe(
-    true,
-  );
+  expect(saveButton().hasAttribute('disabled')).toBe(true);
   expect(screen.getByText('shell.accessAdmin.role.writesUnavailable')).toBeTruthy();
   expect(screen.getByText('shell.accessAdmin.role.assignmentExpiryHelp')).toBeTruthy();
   expect(screen.queryByLabelText('shell.accessAdmin.role.expiry')).toBeNull();
@@ -333,10 +360,12 @@ it.effect('editing after a server preview invalidates both token and confirmatio
     );
     const user = userEvent.setup();
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'shell.accessAdmin.common.preview' })));
-    yield* Effect.promise(() => screen.findByRole('button', { name: 'shell.accessAdmin.role.confirmSave' }));
+    yield* Effect.promise(() => screen.findByRole('checkbox', { name: /dangerousConfirmEffect/u }));
     yield* Effect.promise(() => user.click(screen.getByRole('checkbox', { name: /dangerousConfirmEffect/u })));
+    expect(saveButton().hasAttribute('disabled')).toBe(false);
     yield* Effect.promise(() => user.click(screen.getByRole('checkbox', { name: /commerce\.order\.order\.read/u })));
-    expect(screen.queryByRole('button', { name: 'shell.accessAdmin.role.confirmSave' })).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: /dangerousConfirmEffect/u })).toBeNull();
+    expect(saveButton().hasAttribute('disabled')).toBe(true);
     expect(saveCall).not.toHaveBeenCalled();
   }),
 );
@@ -368,16 +397,12 @@ it.effect(
       );
       const user = userEvent.setup();
       yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'shell.accessAdmin.common.preview' })));
-      yield* Effect.promise(() => screen.findByRole('button', { name: 'shell.accessAdmin.role.confirmSave' }));
+      yield* Effect.promise(() => screen.findByRole('checkbox', { name: /dangerousConfirmEffect/u }));
       expect(document.body.textContent).not.toContain('run:action:critical');
       yield* Effect.promise(() => user.click(screen.getByRole('checkbox', { name: /dangerousConfirmEffect/u })));
-      yield* Effect.promise(() =>
-        user.click(screen.getByRole('button', { name: 'shell.accessAdmin.role.confirmSave' })),
-      );
-      yield* Effect.promise(() => screen.findByText('shell.accessAdmin.common.unavailable'));
-      yield* Effect.promise(() =>
-        user.click(screen.getByRole('button', { name: 'shell.accessAdmin.role.confirmSave' })),
-      );
+      yield* Effect.promise(() => user.click(saveButton()));
+      yield* Effect.promise(() => screen.findAllByText('shell.accessAdmin.common.unavailable'));
+      yield* Effect.promise(() => user.click(saveButton()));
       yield* Effect.promise(() => waitFor(() => expect(saveCall).toHaveBeenCalledTimes(2)));
       expect(saveCall.mock.calls[0]?.[1]).toEqual(saveCall.mock.calls[1]?.[1]);
       expect(saveCall).toHaveBeenCalledWith(
@@ -411,7 +436,7 @@ it.effect('creation uses only the blank template with no cells, then selects the
     render(<CreateRoleFeature catalog={catalog} onCreated={onCreated} writesAvailable />);
     const user = userEvent.setup();
     yield* Effect.promise(() => user.type(screen.getByLabelText(/shell.accessAdmin.role.name/u), 'New role'));
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'shell.accessAdmin.role.createBlank' })));
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Save' })));
     yield* Effect.promise(() => waitFor(() => expect(onCreated).toHaveBeenCalledWith(created)));
     expect(createCall).toHaveBeenCalledWith(
       expect.objectContaining({ cells: [], name: 'New role', scope: { kind: 'tenant' }, templateKey: 'blank' }),
@@ -423,11 +448,61 @@ it.effect('creation uses only the blank template with no cells, then selects the
 test('creation cannot use a nonblank template or an unavailable writer', () => {
   const fixture = featureFixture();
   render(<CreateRoleFeature catalog={fixture.catalog} onCreated={() => {}} writesAvailable={false} />);
-  expect(screen.getByRole('button', { name: 'shell.accessAdmin.role.createBlank' }).hasAttribute('disabled')).toBe(
-    true,
-  );
+  expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(true);
   expect(createCall).not.toHaveBeenCalled();
 });
+
+const blankCatalog = () => {
+  const fixture = featureFixture();
+  return {
+    ...fixture.catalog,
+    templates: [
+      Schema.decodeUnknownSync(AccessRoleTemplateSchema)({
+        catalogSnapshotId: fixture.catalog.catalogSnapshotId,
+        cells: [],
+        name: 'Blank',
+        source: 'blank',
+        templateKey: 'blank',
+      }),
+    ],
+  };
+};
+
+it.effect('create role: typing writes nothing, Save writes once', () =>
+  Effect.gen(function* createWritesOnSaveTest() {
+    const created = { ...featureFixture().role, cells: [] };
+    createCall.mockReturnValue(Effect.succeed(created));
+    const onCreated = rstest.fn<(role: GetAccessRoleResponse['role']) => void>();
+    render(<CreateRoleFeature catalog={blankCatalog()} onCreated={onCreated} writesAvailable />);
+    const user = userEvent.setup();
+    yield* Effect.promise(() => user.type(screen.getByLabelText(/shell.accessAdmin.role.name/u), 'New role'));
+    expect(createCall).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(false);
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Save' })));
+    yield* Effect.promise(() => waitFor(() => expect(onCreated).toHaveBeenCalledWith(created)));
+    expect(createCall).toHaveBeenCalledTimes(1);
+  }),
+);
+
+it.effect('create role: leaving with unsaved input asks first, Discard sends nothing', () =>
+  Effect.gen(function* createLeaveAsksTest() {
+    createCall.mockReturnValue(Effect.succeed({ ...featureFixture().role, cells: [] }));
+    const onCreated = rstest.fn<(role: GetAccessRoleResponse['role']) => void>();
+    const page = () => <CreateRoleFeature catalog={blankCatalog()} onCreated={onCreated} writesAvailable />;
+    const view = render(page());
+    const user = userEvent.setup();
+    yield* Effect.promise(() => user.type(screen.getByLabelText(/shell.accessAdmin.role.name/u), 'New role'));
+    expect(navigation.shouldBlock()).toBe(true);
+    // The router holds the navigation (a Shell link, browser Back) and the form asks.
+    navigation.status = 'blocked';
+    view.rerender(page());
+    const discard = yield* Effect.promise(() => screen.findByRole('button', { name: 'Discard changes' }));
+    yield* Effect.promise(() => user.click(discard));
+    expect(navigation.proceed).toHaveBeenCalledTimes(1);
+    expect(createCall).not.toHaveBeenCalled();
+    navigation.status = 'idle';
+  }),
+);
 
 it.effect('tenant administration loads without a selected company and anonymous sessions do not issue role reads', () =>
   Effect.gen(function* tenantContextTest() {
@@ -476,9 +551,9 @@ it.effect('successful save remains visible and the next preview uses the returne
     );
     const user = userEvent.setup();
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'shell.accessAdmin.common.preview' })));
-    yield* Effect.promise(() => screen.findByRole('button', { name: 'shell.accessAdmin.role.confirmSave' }));
+    yield* Effect.promise(() => screen.findByRole('checkbox', { name: /dangerousConfirmEffect/u }));
     yield* Effect.promise(() => user.click(screen.getByRole('checkbox', { name: /dangerousConfirmEffect/u })));
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'shell.accessAdmin.role.confirmSave' })));
+    yield* Effect.promise(() => user.click(saveButton()));
     yield* Effect.promise(() => screen.findByText('shell.accessAdmin.common.saved'));
     expect(onSaved).toHaveBeenCalledWith(savedRole);
     rerender(
@@ -512,3 +587,39 @@ test('failure mapping keeps authentication, denial, conflict and retryable outag
     'unavailable',
   );
 });
+
+/** The read cell of the editor, also while a closing dialog still hides the page from the accessibility tree. */
+const readCell = () =>
+  screen.getByRole<HTMLInputElement>('checkbox', { hidden: true, name: /commerce\.order\.order\.read/u });
+
+it.effect('role edit: changed cells ask before leaving, Discard restores the saved role and sends nothing', () =>
+  Effect.gen(function* editLeaveAsksTest() {
+    const fixture = featureFixture();
+    const page = () => (
+      <RoleEditorFeature
+        catalog={fixture.catalog}
+        initialRole={fixture.role}
+        onRefresh={() => {}}
+        onSaved={() => {}}
+        writesAvailable
+      />
+    );
+    const view = render(page());
+    expect(navigation.shouldBlock()).toBe(false);
+    const user = userEvent.setup();
+    const before = readCell().checked;
+    yield* Effect.promise(() => user.click(readCell()));
+    expect(navigation.shouldBlock()).toBe(true);
+    expect(screen.getByRole('button', { name: saveName }).hasAttribute('disabled')).toBe(true);
+    navigation.status = 'blocked';
+    view.rerender(page());
+    const discard = yield* Effect.promise(() => screen.findByRole('button', { name: 'Discard changes' }));
+    yield* Effect.promise(() => user.click(discard));
+    expect(navigation.proceed).toHaveBeenCalled();
+    navigation.status = 'idle';
+    view.rerender(page());
+    yield* Effect.promise(() => waitFor(() => expect(readCell().checked).toBe(before)));
+    expect(navigation.shouldBlock()).toBe(false);
+    expect(saveCall).not.toHaveBeenCalled();
+  }),
+);

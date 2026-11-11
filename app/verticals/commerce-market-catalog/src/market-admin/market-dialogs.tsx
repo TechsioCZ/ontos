@@ -3,8 +3,11 @@
 import { executeMarketAffectedUseAssessment } from '@app/customer-market-retirement-contracts/market-affected-use-assessment/client';
 import { MarketAffectedUseAssessmentRequestSchema } from '@app/customer-market-retirement-contracts/market-affected-use-assessment';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import { useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
+import type { SaveOutcome } from '@app/admin-ui';
+import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { DateTime, Effect, Fiber, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import type { MarketLifecycleResult } from '../../shared/action-contracts.ts';
@@ -24,9 +27,9 @@ import { definitionFormOf, definitionIssues, reasonValid, reviseMarketInput } fr
 import type { MarketDefinitionForm } from './market-form.ts';
 import { confirmsMarketCode, retirementImpactOf } from './market-detail-model.ts';
 import type { RetirementImpact } from './market-detail-model.ts';
-import { DialogFrame } from './dialog-frame.tsx';
+import { DialogFrame, FormDialogFrame } from './dialog-frame.tsx';
 import { failureText, useMarketText } from './market-ui.tsx';
-import { requestId, runMarketAction, writeFailure } from './page-data.ts';
+import { marketActionEffect, requestId, runMarketAction, writeFailure } from './page-data.ts';
 import type { WriteFailure, WriteOutcome } from './page-data.ts';
 
 const isProposal = Schema.is(ActionProposalAcceptedSchema);
@@ -39,71 +42,84 @@ interface MarketDialogProps {
   readonly onDone: (message: string) => void;
 }
 
+/** The draft of the edit dialog: the definition as the form shows it, and the reason the revision is written with. */
+interface EditDraft {
+  readonly form: MarketDefinitionForm;
+  readonly reason: string;
+}
+
+/**
+ * Edits the definition of a market in a new revision. Typing changes only the dialog's draft; its one Save sends the
+ * revision once, and leaving with unsaved input asks first.
+ */
 export const EditMarketDialog = ({ market, onAwaitingApproval, onClose, onDone }: MarketDialogProps) => {
   const { text } = useMarketText();
-  const [form, setForm] = useState<MarketDefinitionForm>(() => definitionFormOf(market));
-  const [reason, setReason] = useState('');
-  const [showIssues, setShowIssues] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [draft, setDraft] = useState<EditDraft>(() => ({ form: definitionFormOf(market), reason: '' }));
   const [failure, setFailure] = useState<WriteFailure | null>(null);
-  const issues = definitionIssues(form);
-  const submit = () => {
-    if (issues.length > 0 || !reasonValid(reason)) {
-      setShowIssues(true);
-      return;
-    }
-    setBusy(true);
-    setFailure(null);
-    runMarketAction(
-      DateTime.now.pipe(
-        Effect.flatMap((now) =>
-          Schema.decodeUnknownEffect(ReviseMarketDefinitionPayloadSchema)(
-            reviseMarketInput({ current: market, form, now, reason }),
+  const record = useDraftSave<EditDraft, never>({
+    isValid: (value) => definitionIssues(value.form).length === 0 && reasonValid(value.reason),
+    runtime: browserRuntime,
+    save: (value) =>
+      marketActionEffect(
+        DateTime.now.pipe(
+          Effect.flatMap((now) =>
+            Schema.decodeUnknownEffect(ReviseMarketDefinitionPayloadSchema)(
+              reviseMarketInput({ current: market, form: value.form, now, reason: value.reason }),
+            ),
           ),
         ),
-      ),
-      executeReviseMarketDefinition,
-      (outcome) => {
-        setBusy(false);
-        if (outcome.ok && isProposal(outcome.value)) {
-          onAwaitingApproval();
-          return;
-        }
-        if (outcome.ok) {
+        executeReviseMarketDefinition,
+      ).pipe(
+        Effect.map((outcome): SaveOutcome => {
+          if (!outcome.ok) {
+            setFailure(outcome.reason);
+            return 'failed';
+          }
+          if (isProposal(outcome.value)) {
+            onAwaitingApproval();
+            return 'proposed';
+          }
           onDone(text('detail.editDialog.saved', { code: market.marketCode }));
-          return;
-        }
-        setFailure(outcome.reason);
-      },
-    );
-  };
+          return 'saved';
+        }),
+      ),
+    value: draft,
+  });
+  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
+  const guard = useUnsavedChangesGuard({
+    draft: record,
+    navigation: blocker,
+    onDiscard: () => setDraft(record.confirmed),
+  });
+  const handleSave = record.save;
+  const issues = definitionIssues(draft.form);
+  const showIssues = record.status === 'invalid';
   return (
-    <DialogFrame
-      busy={busy}
-      confirmLabel={text('detail.editDialog.save')}
-      confirmVariant="primary"
+    <FormDialogFrame
       description={text('detail.editDialog.description')}
-      failure={failure}
+      error={failure === null ? null : failureText(text, failure)}
+      guard={guard}
       onClose={onClose}
-      onConfirm={submit}
+      onSave={handleSave}
+      status={record.status}
       title={text('detail.editDialog.title', { code: market.marketCode })}
     >
       <DefinitionFields
         codeEditable={false}
-        form={form}
+        form={draft.form}
         issues={issues}
-        onChange={setForm}
+        onChange={(form) => setDraft((current) => ({ ...current, form }))}
         prefix="edit-market"
         showIssues={showIssues}
       />
       <ReasonField
         id="edit-market-reason"
         label={text('form.reason')}
-        onChange={setReason}
-        showIssue={showIssues}
-        value={reason}
+        onChange={(reason) => setDraft((current) => ({ ...current, reason }))}
+        showIssue={showIssues && !reasonValid(draft.reason)}
+        value={draft.reason}
       />
-    </DialogFrame>
+    </FormDialogFrame>
   );
 };
 

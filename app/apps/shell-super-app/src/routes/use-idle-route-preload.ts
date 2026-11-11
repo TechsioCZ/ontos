@@ -9,8 +9,7 @@ import { createRoot } from 'react-dom/client';
 
 import { isModuleDestination } from '../../shared/shell-platform-navigation.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
-import { prepareCanonicalTargets } from './[lang]/modules/[moduleId]/module-page-model.ts';
-import { awaitPrimaryModuleReads, forgetRecordedPageReads, withoutRecordedPageReads } from './browser-request-cache.ts';
+import { awaitPrimaryModuleReads, forgetRecordedPageReads } from './browser-request-cache.ts';
 import { useLiveChanges } from './live-changes.ts';
 import { staffRoutePreloads } from './route-preload-scheduler.ts';
 
@@ -76,52 +75,12 @@ const pageRouteComponents = (router: ReturnType<typeof useRouter>, language: str
   });
 };
 
-const preloadDestinations = (router: ReturnType<typeof useRouter>, language: string, hrefs: readonly string[]) =>
-  Effect.forEach(
-    hrefs,
-    (href) =>
-      staffRoutePreloads.schedule(
-        `/${language}${href}`,
-        'background',
-        withoutRecordedPageReads(() => router.preloadRoute({ to: `/${language}${href}` })).pipe(Effect.ignore),
-      ),
-    { concurrency: 64, discard: true },
-  );
-
 /**
- * Module destinations first get their page targets in one request (instead of one each), then load like the Shell's
- * own pages, which start at once. A failed batch only means each module loader resolves its own target.
- */
-const warmDestinations = (
-  router: ReturnType<typeof useRouter>,
-  language: string,
-  hrefs: string,
-  moduleHrefs: string,
-) => {
-  const destinations = hrefs === '' ? [] : hrefs.split('\n');
-  const modules = new Set(moduleHrefs === '' ? [] : moduleHrefs.split('\n'));
-  const [first] = modules;
-  return Effect.all(
-    [
-      preloadDestinations(
-        router,
-        language,
-        destinations.filter((href) => !modules.has(href)),
-      ),
-      (first === undefined
-        ? Effect.void
-        : prepareCanonicalTargets(new Request(new URL(`/${language}${first}`, globalThis.location.href)), [
-            ...modules,
-          ]).pipe(Effect.ignore)
-      ).pipe(Effect.andThen(preloadDestinations(router, language, [...modules]))),
-    ],
-    { concurrency: 2, discard: true },
-  );
-};
-
-/**
- * Native render preloads prepare code AND declared data concurrently. The only gate is the current page:
- * first let its loader settle and its already-issued primary reads finish, without an idle timer or dwell.
+ * Once the current page's loader has settled and its primary reads have finished, staff links may prepare their
+ * destination on intent (pointer, focus, touch): its module code and declared data, without an idle timer or dwell.
+ * Nothing is prepared in the background any more: warming every menu destination loaded the remote code and the
+ * primary reads of every module on each page, whether the person went there or not. Only the Shell's own lazy route
+ * components are resolved ahead (local chunks, no module code or reads).
  */
 export const useIdleRoutePreload = (
   navigation: readonly PreloadableNavigationItem[],
@@ -139,13 +98,10 @@ export const useIdleRoutePreload = (
   useLiveChanges(!disabled && navigation.some((item) => item.enabled && isModuleDestination(item)));
   const key = [contextKey, currentHref, generation].join('\n');
   const hrefs = navigation.flatMap((item) => (item.enabled && item.href !== undefined ? [item.href] : [])).join('\n');
-  const moduleHrefs = navigation
-    .flatMap((item) => (item.enabled && item.href !== undefined && isModuleDestination(item) ? [item.href] : []))
-    .join('\n');
 
   useEffect(() => {
     // A write drops cached reads and the router cache at once, but the menu prefetch starts over only once the
-    // writes are quiet: autosave writes every few seconds while someone types and must not re-read every module.
+    // writes are quiet: a form sends only on Uložit, and the re-read after it must not re-read every module.
     let pending: Fiber.Fiber<void> | undefined;
     const prefetchAgain = Effect.sync(() => setGeneration((previous) => previous + 1));
     const restart = () => {
@@ -188,13 +144,7 @@ export const useIdleRoutePreload = (
                 Effect.andThen(staffRoutePreloads.resume),
                 Effect.andThen(Effect.sync(() => setPreparedKey(key))),
                 Effect.andThen(
-                  Effect.all(
-                    [
-                      Effect.suspend(() => warmLazyRouteComponents(pageRouteComponents(router, language, hrefs))),
-                      warmDestinations(router, language, hrefs, moduleHrefs),
-                    ],
-                    { concurrency: 2, discard: true },
-                  ),
+                  Effect.suspend(() => warmLazyRouteComponents(pageRouteComponents(router, language, hrefs))),
                 ),
                 Effect.andThen(staffRoutePreloads.awaitIdle),
                 Effect.andThen(markPreparation('ontos:menu-prefetch-complete', currentHref)),
@@ -207,7 +157,7 @@ export const useIdleRoutePreload = (
       browserRuntime.runSync(staffRoutePreloads.pause);
       browserRuntime.runFork(Fiber.interrupt(fiber));
     };
-  }, [currentHref, disabled, hrefs, key, language, moduleHrefs, router, settledHref]);
+  }, [currentHref, disabled, hrefs, key, language, router, settledHref]);
 
   return {
     enabled: !disabled && currentHref === settledHref && preparedKey === key,

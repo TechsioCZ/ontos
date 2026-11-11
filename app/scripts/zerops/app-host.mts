@@ -7,6 +7,7 @@ import {
   TenantIntentLoaderLive,
 } from '../../packages/core-runtime/src/access/intent/tenant-intent-loader.ts';
 import { startProcessObservability } from './process-observability.mts';
+import { heapLimitArguments, heapLimitMiB, readContainerMemoryBytes } from './heap-limits.mts';
 import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
 import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
 import { authenticationQueryRedactions, credentialSubmissionRedirect } from '@app/shared-contracts/credential-url';
@@ -347,17 +348,40 @@ export const shellModuleEnrolment = (
     ? { [MODULE_BINDINGS_KEY]: '[]' }
     : {};
 
-/** Only the single-unit Shell process can use the packaged Bun binary. Every other unit process uses Node. */
-export const startUnitProcess = (ids: readonly string[], runtime: typeof ShellRuntime.Type, env: ChildEnvironment) =>
-  startChild(
-    ids.length === 1 ? (ids[0] ?? 'owners') : 'owners',
-    runtime === 'bun' && ids.length === 1 && ids[0] === SHELL_ID
-      ? path.join(workspaceRoot, '.zerops/bun/bin/bun')
-      : process.execPath,
-    [path.join(workspaceRoot, 'scripts/zerops/serve-units.mts'), ...ids],
-    workspaceRoot,
-    env,
+const mebibytes = (bytes: number) => String(Math.floor(bytes / 1024 / 1024));
+
+/**
+ * Only the single-unit Shell process can use the packaged Bun binary. Every other unit process uses Node. The Shell on
+ * Node gets its heap share of the container (heap-limits.mts); Bun has no V8 heap flag, and the owners keep Node's own.
+ */
+export const startUnitProcess = (
+  ids: readonly string[],
+  runtime: typeof ShellRuntime.Type,
+  env: ChildEnvironment,
+  memoryBytes: number,
+) => {
+  const name = ids.length === 1 ? (ids[0] ?? 'owners') : 'owners';
+  const shell = ids.length === 1 && ids[0] === SHELL_ID;
+  const bun = runtime === 'bun' && shell;
+  const heap = shell && !bun ? heapLimitArguments('shell', memoryBytes) : [];
+  let limit = 'Node default';
+  if (bun) {
+    limit = 'Bun default';
+  } else if (heap.length > 0) {
+    limit = `${String(heapLimitMiB('shell', memoryBytes))} MiB`;
+  }
+  return Console.log(`[app-host] ${name} heap limit: ${limit} (container ${mebibytes(memoryBytes)} MiB)`).pipe(
+    Effect.andThen(
+      startChild(
+        name,
+        bun ? path.join(workspaceRoot, '.zerops/bun/bin/bun') : process.execPath,
+        [...heap, path.join(workspaceRoot, 'scripts/zerops/serve-units.mts'), ...ids],
+        workspaceRoot,
+        env,
+      ),
+    ),
   );
+};
 
 /** Finite operator commands own private pools; only long-running hosts install a shared-pool registry. */
 export const finiteProcessEnvironment = (environment: ChildEnvironment): ChildEnvironment => ({
@@ -728,6 +752,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   );
   const node = process.execPath;
   const runtime = yield* shellRuntime;
+  const memoryBytes = yield* readContainerMemoryBytes;
   const published = yield* Ref.make(false);
   const database = yield* CoreDatabase;
   const readAuthority = database.executor.execute<{
@@ -778,11 +803,16 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     return yield* failure(`owners store different values for ${ownersEnvironment.conflicts.join(', ')}`);
   }
   const exits = [
-    yield* startUnitProcess([SHELL_ID], runtime, {
-      ...shellModuleEnrolment(ownerSecrets[SHELL_ID], containerModuleEnrolment),
-      ...shellEnvironment.environment,
-    }),
-    yield* startUnitProcess(ownerIds, runtime, ownersEnvironment.environment),
+    yield* startUnitProcess(
+      [SHELL_ID],
+      runtime,
+      {
+        ...shellModuleEnrolment(ownerSecrets[SHELL_ID], containerModuleEnrolment),
+        ...shellEnvironment.environment,
+      },
+      memoryBytes,
+    ),
+    yield* startUnitProcess(ownerIds, runtime, ownersEnvironment.environment, memoryBytes),
   ];
   yield* Console.log(`[app-host] Shell runtime ${runtime}; owners and Outbox runtime node`);
   yield* Console.log(`[app-host] serving ${String(units.length)} units; migrating`);
@@ -884,15 +914,24 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     // (`apps/shell-super-app/scripts/bootstrap-stage-accounts.mts`); the engine's canonical schema arrives with the
     // deployment's SpiceDB bootstrap file, and a live schema or tuple retirement is its own approved operation. The
     // release proves the projected access before it publishes (`verifyReleaseAccessIntent` above) and never mutates it.
-    const outbox = yield* startChild(OUTBOX_HOST_ID, node, [OUTBOX_HOST_BUNDLE], workspaceRoot, {
-      ...processEnvironment([OUTBOX_HOST_ID, ...ownerIds], ownerSecrets, derived).environment,
-      // The host's email trigger authenticates to the Shell's dispatch endpoint with the Shell's own secret.
-      ...Object.fromEntries(
-        Object.entries(ownerSecrets[SHELL_ID] ?? {}).filter(([key]) => key === 'ONTOS_EMAIL_DISPATCH_SECRET'),
-      ),
-      OUTBOX_WORKER_HEALTH_PORT: String(OUTBOX_HEALTH_PORT),
-      PORT: String(OUTBOX_HEALTH_PORT),
-    });
+    yield* Console.log(
+      `[app-host] ${OUTBOX_HOST_ID} heap limit: ${String(heapLimitMiB('outbox', memoryBytes))} MiB (container ${mebibytes(memoryBytes)} MiB)`,
+    );
+    const outbox = yield* startChild(
+      OUTBOX_HOST_ID,
+      node,
+      [...heapLimitArguments('outbox', memoryBytes), OUTBOX_HOST_BUNDLE],
+      workspaceRoot,
+      {
+        ...processEnvironment([OUTBOX_HOST_ID, ...ownerIds], ownerSecrets, derived).environment,
+        // The host's email trigger authenticates to the Shell's dispatch endpoint with the Shell's own secret.
+        ...Object.fromEntries(
+          Object.entries(ownerSecrets[SHELL_ID] ?? {}).filter(([key]) => key === 'ONTOS_EMAIL_DISPATCH_SECRET'),
+        ),
+        OUTBOX_WORKER_HEALTH_PORT: String(OUTBOX_HEALTH_PORT),
+        PORT: String(OUTBOX_HEALTH_PORT),
+      },
+    );
     // The host renews its own lease well inside the validity window; no external refresh schedule exists.
     const renew = publish.pipe(
       Effect.tapError((problem) => Console.error(`[app-host] composition renewal failed: ${String(problem)}`)),

@@ -1,7 +1,9 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { useDocumentTitle } from '@app/admin-ui';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import type { ReactNode } from 'react';
+import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 
 import { CustomerListItemSchema } from '../../shared/apis/customer-list.ts';
 import {
@@ -13,6 +15,7 @@ import {
 import { PartySchema } from '../../shared/domain/identity-contracts.ts';
 import { executeCounterpartyRead } from '../../src/api/counterparty-read-client.ts';
 import { executeCustomerList } from '../../src/api/customer-list-client.ts';
+import { updateParty } from '../../src/api/party-command-client.ts';
 import { executePartyContactPoints } from '../../src/api/party-contact-points-client.ts';
 import { executePartyDetail } from '../../src/api/party-detail-client.ts';
 import { executePartyOfficialIdentifierHistory } from '../../src/api/party-official-identifier-history-client.ts';
@@ -37,16 +40,20 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
 }));
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useBlocker: () => ({ status: 'idle' }),
   useNavigate: () => rstest.fn(),
   useParams: () => ({ id: '' }),
   useRouterState: () => '/cs/prodej/zakaznici',
 }));
-rstest.mock('../../src/routes/ultramodern-route-head.tsx', () => ({ UltramodernRouteHead: () => null }));
+rstest.mock('../../src/routes/ultramodern-route-head.tsx', () => ({
+  UltramodernRouteHead: () => null,
+}));
 rstest.mock('../../src/api/counterparty-read-client.ts');
 rstest.mock('../../src/api/party-detail-client.ts');
 rstest.mock('../../src/api/party-contact-points-client.ts');
 rstest.mock('../../src/api/party-official-identifier-history-client.ts');
 rstest.mock('../../src/api/customer-list-client.ts');
+rstest.mock('../../src/api/party-command-client.ts');
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const partyId = '20000000-0000-4000-8000-000000000001';
@@ -194,6 +201,19 @@ const expectDetailBody = () => {
   expectHumanReadable();
 };
 
+const fieldById = <T extends HTMLElement>(id: string) => {
+  const element = document.querySelector<T>(`[id="${id}"]`);
+  if (element === null) {
+    throw new Error(`missing field ${id}`);
+  }
+  return element;
+};
+const archiveButton = () =>
+  screen.getByRole<HTMLButtonElement>('button', { name: 'party-registry.pages.customers.detail.archive' });
+const saveButtons = () => screen.getAllByRole<HTMLButtonElement>('button', { name: 'Uložit' });
+/** The page's one Save button; `getByRole` also fails when there is more than one. */
+const saveButton = () => screen.getByRole<HTMLButtonElement>('button', { name: 'Uložit' });
+
 beforeEach(() => {
   rstest.resetAllMocks();
   customerDetailPageData.invalidate();
@@ -202,6 +222,7 @@ beforeEach(() => {
   rstest.mocked(executePartyContactPoints).mockReturnValue(Effect.succeed({ items: [] }));
   rstest.mocked(executePartyOfficialIdentifierHistory).mockReturnValue(Effect.succeed({ items: [] }));
   rstest.mocked(executeCustomerList).mockReturnValue(Effect.succeed({ items: [] }));
+  rstest.mocked(updateParty).mockReturnValue(Effect.succeed(party));
 });
 
 afterEach(cleanup);
@@ -215,6 +236,15 @@ it('renders the same complete detail body in the side panel and on the page', ()
 
   render(<CustomerDetailPageRecordView onChanged={noop} onRetry={noop} record={record} stale={false} />);
   expectDetailBody();
+});
+
+it('keeps the side panel save bar the last control of its footer', () => {
+  render(
+    <CustomerDetailDialog customer={customer} onOpenChange={noop} onRenamed={noop} onRetry={noop} snapshot={record} />,
+  );
+  expect(saveButtons()).toHaveLength(1);
+  const bar = saveButton().closest('[data-save-state]');
+  expect(bar?.parentElement?.lastElementChild).toBe(bar);
 });
 
 it('lists an ended identifier in the same dated history section on the page and in the panel', () => {
@@ -358,6 +388,89 @@ it.live('keeps the same-scope record read-only and offers a reload after a trans
     expect(screen.getByRole('heading', { name: 'Eva Bílá' })).toBeTruthy();
     expect(screen.getByText('party-registry.pages.customers.detail.createdAt')).toBeTruthy();
     expect(screen.queryByText('party-registry.pages.customers.detail.unavailable')).toBeNull();
+    // A failed reload is the one case the user must act on: actions wait for a current record.
+    expect(archiveButton().disabled).toBe(true);
+  }),
+);
+
+/** True when `second` comes after `first` in document order. */
+const follows = (first: Element, second: Element): boolean => {
+  const order = [...document.querySelectorAll('*')];
+  return order.indexOf(first) < order.indexOf(second);
+};
+
+it.live('the full page renders one Save button that sends the edited draft once', () =>
+  Effect.gen(function* pageSave() {
+    yield* customerDetailPageData.preload(pageInput);
+    render(<CustomerDetailPage context={context} routeParams={routeParams} />);
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByRole('heading', { name: 'Eva Bílá' })).toBeTruthy()));
+    expect(saveButtons()).toHaveLength(1);
+    expect(saveButton().disabled).toBe(true);
+    // The save bar sits directly under the editable fields, above the related records.
+    expect(follows(fieldById('customer-rename'), saveButton())).toBe(true);
+    expect(follows(saveButton(), screen.getByText('party-registry.pages.customers.detail.related'))).toBe(true);
+    fireEvent.change(fieldById<HTMLInputElement>('customer-evidence'), { target: { value: 'document:42' } });
+    fireEvent.change(fieldById<HTMLInputElement>('customer-reason'), { target: { value: 'Reviewed document' } });
+    fireEvent.change(fieldById<HTMLInputElement>('customer-rename'), { target: { value: 'Eva Černá' } });
+    expect(saveButtons()).toHaveLength(1);
+    expect(saveButton().disabled).toBe(false);
+    expect(updateParty).not.toHaveBeenCalled();
+    // Closing the tab with the unsaved draft asks the browser's own question.
+    const unload = new Event('beforeunload', { cancelable: true });
+    globalThis.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+    fireEvent.click(saveButton());
+    yield* Effect.promise(() => waitFor(() => expect(updateParty).toHaveBeenCalledTimes(1)));
+    yield* Effect.sleep('500 millis');
+    expect(updateParty).toHaveBeenCalledTimes(1);
+  }),
+);
+
+it.live('a background reload of the same record changes nothing on the full page', () =>
+  Effect.gen(function* backgroundReload() {
+    yield* customerDetailPageData.preload(pageInput);
+    render(<CustomerDetailPage context={context} routeParams={routeParams} />);
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByRole('heading', { name: 'Eva Bílá' })).toBeTruthy()));
+    fireEvent.change(fieldById<HTMLInputElement>('customer-evidence'), { target: { value: 'document:42' } });
+    fireEvent.change(fieldById<HTMLInputElement>('customer-reason'), { target: { value: 'Reviewed document' } });
+    expect(archiveButton().disabled).toBe(false);
+    // A live change: the strict store reloads the same record and reads as pending until it answers.
+    rstest.mocked(executeCounterpartyRead).mockReturnValue(Effect.never);
+    globalThis.dispatchEvent(new Event(moduleChangeEvent));
+    yield* Effect.promise(() =>
+      waitFor(() => expect(customerDetailPageData.snapshot(pageInput).state).toBe('pending')),
+    );
+    yield* Effect.sleep('100 millis');
+    expect(screen.queryByText('party-registry.pages.customers.detail.reload')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Eva Bílá' })).toBeTruthy();
+    expect(archiveButton().disabled).toBe(false);
+    expect(fieldById<HTMLInputElement>('customer-reason').value).toBe('Reviewed document');
+    expect(saveButtons()).toHaveLength(1);
+  }),
+);
+
+/** The Shell's frame: its title names the record a page gives, else its own destination. */
+const ShellFrameTitle = ({ children, shellName }: { readonly children: ReactNode; readonly shellName: string }) => {
+  const title = useDocumentTitle();
+  return (
+    <>
+      <title>{`${title ?? shellName} | OntOS`}</title>
+      {children}
+    </>
+  );
+};
+
+it.live('the full page names the browser tab after the customer through the Shell frame', () =>
+  Effect.gen(function* tabTitle() {
+    const copy = { customerTab: 'Eva Bílá | OntOS', name: 'Eva Bílá', shellName: 'shell-destination' } as const;
+    yield* customerDetailPageData.preload(pageInput);
+    render(
+      <ShellFrameTitle shellName={copy.shellName}>
+        <CustomerDetailPage context={context} routeParams={routeParams} />
+      </ShellFrameTitle>,
+    );
+    yield* Effect.promise(() => waitFor(() => expect(screen.getByRole('heading', { name: copy.name })).toBeTruthy()));
+    yield* Effect.promise(() => waitFor(() => expect(document.title).toBe(copy.customerTab)));
   }),
 );
 

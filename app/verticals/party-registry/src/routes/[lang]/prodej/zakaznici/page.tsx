@@ -53,6 +53,7 @@ import {
   customersQuery,
   customerWritesRefused,
   customersData,
+  customerDetailIntent,
   useCustomerDetailSelection,
   useCustomerIdentityReview,
   useCustomersSnapshot,
@@ -337,6 +338,10 @@ interface CustomersContentProps {
   readonly context?: ModulePageContext | undefined;
 }
 
+/** The customers the table shows on this page, in its sorted, paginated row-model order. */
+const tableRows = (table: TanstackTable<CustomerListItem> | undefined): readonly CustomerListItem[] =>
+  table?.getRowModel().rows.map((row) => row.original) ?? [];
+
 /** Rendered after DataTable so its controller already holds this render's sorted, paginated rows. */
 const CustomerTableDetailPrefetch = ({
   context,
@@ -345,7 +350,7 @@ const CustomerTableDetailPrefetch = ({
   readonly context: ModulePageContext | undefined;
   readonly table: TanstackTable<CustomerListItem> | undefined;
 }) => {
-  usePrefetchCustomerDetails(context, table?.getRowModel().rows.map((row) => row.original) ?? []);
+  usePrefetchCustomerDetails(context, tableRows(table));
   return null;
 };
 
@@ -459,6 +464,7 @@ const CustomersContent = ({ context }: CustomersContentProps) => {
   const [pagination, setPagination] = useState<Pagination>(initialPagination);
   const [sorting, setSorting] = useState<NonNullable<DataTableProps<CustomerListItem>['sorting']>>([]);
   const [table, setTable] = useState<TanstackTable<CustomerListItem>>();
+  const rowIntent = customerDetailIntent(context, () => tableRows(table));
   /** The owner refused a customer write for this role, so create and archive actions are hidden. */
   const [writesRefused, setWritesRefused] = useState(customerWritesRefused);
   const refuseWrites = () => {
@@ -683,6 +689,7 @@ const CustomersContent = ({ context }: CustomersContentProps) => {
           renderEmpty={renderEmpty}
           rowSelection={selection}
           size="sm"
+          slotProps={{ row: rowIntent }}
           sorting={sorting}
           stickyHeader
           striped

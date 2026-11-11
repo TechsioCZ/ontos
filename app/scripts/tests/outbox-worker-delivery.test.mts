@@ -11,6 +11,8 @@ import {
   createUltramodernReleaseBuildMarker,
   resolveUltramodernSourceRevision,
 } from '@modern-js/app-tools-extensions/release-identity';
+import { verifyNodeReleaseEnvelopeStaging } from '@modern-js/app-tools-extensions/release-envelope/framework-output';
+import { NodeServices } from '@effect/platform-node';
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -18,6 +20,7 @@ import { DEVELOPMENT_OVERLAY_PATH } from '../topology-development-ports.mjs';
 import { generateOutboxWorkerHostEntry } from '../generate-outbox-worker-deployment.mjs';
 import { materializeOutboxWorker, resolveOutboxWorker } from '../materialize-outbox-worker.mjs';
 import { OUTBOX_WORKER_HOST, OUTBOX_WORKER_HOST_EXPORT } from '../outbox-worker-delivery.mjs';
+import { makeSealedNodeBuildFixture } from './support/node-runtime-envelope-fixture.mts';
 
 const SHELL_UNIT_ID = 'app/shell-super-app';
 const SHELL_PACKAGE = '@app/shell-super-app';
@@ -39,7 +42,6 @@ const shellTopology = (sourceRevision = 'workspace') => ({
 const LEDGER_PACKAGE = '@app/ledger';
 const LEDGER_PATH = 'verticals/ledger';
 const LEDGER_MATERIALIZE_ARGS = ['--app', 'ledger', '--package', LEDGER_PACKAGE, '--package-dir', LEDGER_PATH] as const;
-const LEDGER_RUNTIME_DIR = '.zerops/runtime/ledger-worker';
 const HOST_MATERIALIZE_ARGS = ['--app', OUTBOX_WORKER_HOST.id, '--package', 'app', '--package-dir', '.'] as const;
 const HOST_RUNTIME_DIR = `.zerops/runtime/${OUTBOX_WORKER_HOST.id}`;
 const WORKER_HOST_ENTRY = 'src/worker-host/main.ts';
@@ -164,6 +166,7 @@ const makeFixture = () =>
         path.join(root, LEDGER_PATH, PACKAGE_MANIFEST),
         JSON.stringify({
           exports: { './outbox-worker-host': `./${WORKER_ENTRY}` },
+          modernjs: { appId: 'ledger' },
           name: LEDGER_PACKAGE,
           scripts: {
             'worker:start': `node --experimental-strip-types ./${WORKER_HOST_ENTRY}`,
@@ -939,9 +942,20 @@ for (const worker of [false, true]) {
     Effect.gen(function* publishedMaterializationBoundary() {
       const root = worker ? yield* makeReleaseMarkerFixture() : yield* makeFixture();
       const materializeArgs = worker ? HOST_MATERIALIZE_ARGS : LEDGER_MATERIALIZE_ARGS;
-      const runtimeDir = worker ? HOST_RUNTIME_DIR : LEDGER_RUNTIME_DIR;
       const bin = path.join(root, 'bin');
       const evidencePath = path.join(root, 'finalization.json');
+      const rebuildEvidencePath = path.join(root, 'rebuild.json');
+      const runtimeDir = worker ? HOST_RUNTIME_DIR : '.zerops/runtime/ledger';
+      const httpEntry = 'console.log("normal HTTP build fixture");\n';
+      const sealed = worker
+        ? undefined
+        : yield* makeSealedNodeBuildFixture({
+            appId: 'ledger',
+            entry: httpEntry,
+            packageDir: LEDGER_PATH,
+            packageName: LEDGER_PACKAGE,
+            workspaceRoot: root,
+          }).pipe(Effect.provide(NodeServices.layer));
       yield* Effect.tryPromise(() => mkdir(bin));
       const pnpm = path.join(bin, 'pnpm');
       yield* Effect.tryPromise(() =>
@@ -951,21 +965,37 @@ for (const worker of [false, true]) {
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 const manifest = ${JSON.stringify(`${runtimeDir}/package.json`)};
 const artifact = ${JSON.stringify(`${runtimeDir}/${WORKER_ARTIFACT}`)};
+const entry = ${JSON.stringify(`${runtimeDir}/${worker ? WORKER_BUNDLE : 'index.js'}`)};
 writeFileSync(${JSON.stringify(evidencePath)}, JSON.stringify({
   args: process.argv.slice(2),
   artifact: existsSync(artifact),
+  cwd: process.cwd(),
+  entry: existsSync(entry),
   manifest: existsSync(manifest) ? JSON.parse(readFileSync(manifest, 'utf-8')) : null,
 }));
 `,
         ),
       );
       yield* Effect.tryPromise(() => chmod(pnpm, 0o755));
+      const npm = path.join(bin, 'npm');
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          npm,
+          `#!${process.execPath}
+import { existsSync, writeFileSync } from 'node:fs';
+if (!existsSync(${JSON.stringify(evidencePath)})) process.exit(17);
+writeFileSync(${JSON.stringify(rebuildEvidencePath)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd() }));
+`,
+        ),
+      );
+      yield* Effect.tryPromise(() => chmod(npm, 0o700));
       const child = yield* scopedChild(() =>
         spawn(
           ENV_COMMAND,
           [
             `PATH=${bin}`,
             `ULTRAMODERN_WORKSPACE_ROOT=${root}`,
+            ...(sealed === undefined ? [] : [`ULTRAMODERN_SOURCE_REVISION=${sealed.sourceRevision}`]),
             process.execPath,
             new URL('../materialize-ontos-zerops-runtime.mjs', import.meta.url).pathname,
             ...materializeArgs,
@@ -983,6 +1013,11 @@ writeFileSync(${JSON.stringify(evidencePath)}, JSON.stringify({
       });
       yield* Effect.tryPromise((signal) => once(child, 'exit', { signal }));
       expect(child.exitCode, diagnostics).toBe(0);
+      if (!worker) {
+        yield* Effect.tryPromise(() =>
+          verifyNodeReleaseEnvelopeStaging({ outputDirectory: path.join(root, runtimeDir) }),
+        );
+      }
       const evidence = yield* Effect.tryPromise(() => readFile(evidencePath, 'utf-8')).pipe(
         Effect.flatMap(
           Schema.decodeUnknownEffect(
@@ -990,6 +1025,8 @@ writeFileSync(${JSON.stringify(evidencePath)}, JSON.stringify({
               Schema.Struct({
                 args: Schema.Array(Schema.String),
                 artifact: Schema.Boolean,
+                cwd: Schema.String,
+                entry: Schema.Boolean,
                 manifest: Schema.Union([
                   Schema.Null,
                   Schema.Struct({ scripts: Schema.Struct({ serve: Schema.String }) }),
@@ -1005,10 +1042,27 @@ writeFileSync(${JSON.stringify(evidencePath)}, JSON.stringify({
         'ultramodern',
         'zerops-materialize',
         ...materializeArgs,
-        ...(worker ? ['--finalize-only', '--runtime-dir', runtimeDir] : []),
+        '--finalize-only',
+        '--runtime-dir',
+        runtimeDir,
       ]);
+      expect(evidence.cwd).toBe(root);
+      expect(evidence.entry).toBe(true);
       expect(evidence.artifact).toBe(worker);
-      expect(evidence.manifest?.scripts.serve ?? null).toBe(worker ? `node ${WORKER_BUNDLE}` : null);
+      expect(evidence.manifest?.scripts.serve ?? null).toBe(worker ? `node ${WORKER_BUNDLE}` : 'node index.js');
+      if (!worker) {
+        expect(yield* Effect.tryPromise(() => readFile(path.join(root, runtimeDir, 'index.js'), 'utf-8'))).toBe(
+          httpEntry,
+        );
+      }
+      const rebuild = yield* Effect.tryPromise(() => readFile(rebuildEvidencePath, 'utf-8')).pipe(
+        Effect.flatMap(
+          Schema.decodeUnknownEffect(
+            Schema.fromJsonString(Schema.Struct({ args: Schema.Array(Schema.String), cwd: Schema.String })),
+          ),
+        ),
+      );
+      expect(rebuild).toEqual({ args: ['rebuild'], cwd: path.join(root, runtimeDir) });
     }),
   );
 }

@@ -3,8 +3,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
+import { FormInput, FormNumericInput } from '@app/admin-ui/form-controls';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { selectItem } from '../../../../ui/select-item.ts';
@@ -212,9 +211,9 @@ export const MovementForm = ({
   return (
     <form
       className="flex flex-col gap-200 border-border-primary border-t pt-200"
+      // Enter in a field does not record the movement; only its button does.
       onSubmit={(event) => {
         event.preventDefault();
-        submit();
       }}
     >
       <h3 className="font-semibold text-md">{k('movements.recordTitle')}</h3>
@@ -297,7 +296,14 @@ export const MovementForm = ({
         {...fieldError(submitted, noteError)}
       />
       <div className="flex justify-end">
-        <Button isLoading={busy} loadingText={k('movements.submit')} theme="outlined" type="submit" variant="secondary">
+        <Button
+          isLoading={busy}
+          loadingText={k('movements.submit')}
+          onClick={submit}
+          theme="outlined"
+          type="button"
+          variant="secondary"
+        >
           {k('movements.submit')}
         </Button>
       </div>

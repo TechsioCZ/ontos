@@ -214,12 +214,26 @@ export const principals = enableCoreGovernedRls(
       status: text('status').$type<PrincipalStatus>().notNull(),
       createdAt: createdAt(),
       disabledAt: timestamp('disabled_at', { withTimezone: true }),
+      /**
+       * The platform's own role of a `system` principal; set once, when Core creates it, and never changed. The one
+       * role today is the tenant's access release actor (`access/release/activation.ts`), which the role-revision
+       * guard recognises by this marker rather than by its kind or identifier.
+       */
+      platformRole: text('platform_role').$type<'access_release_actor'>(),
     },
     (table) => [
       uniqueIndex('core_principals_tenant_id_uk').on(table.tenantId, table.principalId),
       index('core_principals_tenant_kind_idx').on(table.tenantId, table.kind),
+      // One release actor per tenant.
+      uniqueIndex('core_principals_release_actor_uk')
+        .on(table.tenantId)
+        .where(sql`${table.platformRole} = 'access_release_actor'`),
       check('core_principals_kind_ck', sql`${table.kind} in ('human', 'service', 'integration', 'agent', 'system')`),
       check('core_principals_status_ck', sql`${table.status} in ('active', 'disabled', 'archived')`),
+      check(
+        'core_principals_platform_role_ck',
+        sql`${table.platformRole} is null or (${table.platformRole} = 'access_release_actor' and ${table.kind} = 'system')`,
+      ),
       sharedRuntimeAllPolicy('principals'),
     ],
   ),
@@ -721,6 +735,9 @@ export const outboxMessages = enableCoreGovernedRls(
       index('core_outbox_messages_unmatched_idx')
         .on(table.createdAt)
         .where(sql`${table.matchedAt} is null`),
+      // Completing a delivery walks its stream from the tenant's checkpoint by event sequence; without this the
+      // event-to-message step scanned every Outbox message (also covers the domain-event foreign key).
+      index('core_outbox_messages_tenant_domain_event_idx').on(table.tenantId, table.domainEventId),
       foreignKey({
         columns: [table.tenantId, table.domainEventId],
         foreignColumns: [domainEvents.tenantId, domainEvents.domainEventId],

@@ -13,6 +13,7 @@ import { CheckoutFields } from "./checkout-fields";
 import { CheckoutItems, CheckoutShipping, CheckoutTotals } from "./checkout-panels";
 import { EmptyCartView } from "./empty-cart-view";
 import { useCheckout } from "./use-checkout";
+import { usePortalAuth } from "./auth-view";
 
 const dateFormatters = {
   cs: new Intl.DateTimeFormat("cs", { dateStyle: "long", timeStyle: "short" }),
@@ -76,11 +77,11 @@ const ReceiptHeader = ({
   return (
     <section className="flex flex-col gap-3 rounded-xs border border-border-secondary p-4">
       <div className="flex flex-col items-start gap-2 sm:flex-row sm:justify-between">
-        <div className="min-w-0">
-          <h2 className="text-xl font-bold">
-            {d.checkout.orderNumber}: {result.orderNumber}
+        <div className="flex min-w-0 flex-col gap-1">
+          <h2 className="text-xl font-bold wrap-break-word">
+            {d.accountPage.orderNumber} {result.orderNumber}
           </h2>
-          {date !== null && <p className="text-sm text-fg-secondary">{date}</p>}
+          {date !== null && <p className="text-sm leading-normal text-fg-secondary">{date}</p>}
         </div>
         {result.status !== null && (
           <Badge size="md" variant={result.status === "CANCELLED" ? "danger" : "info"}>
@@ -89,7 +90,7 @@ const ReceiptHeader = ({
         )}
       </div>
       {receipt?.contact !== null && receipt?.contact !== undefined && (
-        <p className="text-sm text-fg-secondary">
+        <p className="text-sm leading-normal text-fg-secondary">
           {d.checkout.email}: {receipt.contact.email}
         </p>
       )}
@@ -115,6 +116,57 @@ const checkoutNeedsBackLink = (checkout: Checkout) =>
   checkout.guarded ||
   checkout.notice === "storage";
 
+/** Account navigation uses current Portal admission and the existing receipt dismissal. */
+const ConfirmedCheckoutActions = ({
+  dictionary: d,
+  dismiss,
+  locale,
+}: {
+  dictionary: Dictionary;
+  dismiss: Checkout["dismiss"];
+  locale: string;
+}) => {
+  const auth = usePortalAuth({ mode: "login" });
+  const router = useRouter();
+  const admitted = auth.loaded && !auth.pending && auth.outcome.state === "admitted";
+  const home = `/${locale}`;
+  const orders = `/${locale}/ucet?tab=orders`;
+  return (
+    <div className={admitted ? "grid gap-3 n1-compact:grid-cols-2" : "grid gap-3"}>
+      <LinkButton
+        as={NextLink}
+        block
+        href={home}
+        onClick={(event) => {
+          event.preventDefault();
+          dismiss(() => router.push(home));
+        }}
+        size="md"
+        theme="solid"
+        variant="secondary"
+      >
+        {d.shopping.backHome}
+      </LinkButton>
+      {admitted && (
+        <LinkButton
+          as={NextLink}
+          block
+          href={orders}
+          onClick={(event) => {
+            event.preventDefault();
+            dismiss(() => router.push(orders));
+          }}
+          size="md"
+          theme="solid"
+          variant="primary"
+        >
+          {d.accountPage.myOrders}
+        </LinkButton>
+      )}
+    </div>
+  );
+};
+
 const ConfirmedCheckout = ({
   checkout,
   dictionary: d,
@@ -126,7 +178,6 @@ const ConfirmedCheckout = ({
   locale: string;
   options: ReadyOptions;
 }) => {
-  const router = useRouter();
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     heading.current?.focus();
@@ -137,7 +188,6 @@ const ConfirmedCheckout = ({
   }
   const { receipt } = result;
   const shipping = options.shippingMethods.find((method) => method.id === receipt?.shippingMethod);
-  const home = `/${locale}`;
   const notice = noticeText(checkout, d);
   return (
     <article className="mx-auto flex w-full max-w-n1-product-content flex-col items-center gap-5 p-5">
@@ -153,20 +203,21 @@ const ConfirmedCheckout = ({
       <div className="flex w-full max-w-3xl flex-col gap-5">
         <ReceiptHeader checkout={checkout} dictionary={d} locale={locale} result={result} />
         <section className="flex flex-col gap-4 rounded-xs border border-border-secondary p-4">
-          <h2 className="text-lg font-semibold">{d.checkout.orderItems}</h2>
+          <h2 className="text-lg leading-n1-copy font-semibold">{d.checkout.orderItems}</h2>
           <CheckoutItems
             currency={result.scope.currency}
             dictionary={d}
             entries={checkout.receiptEntries}
             imageHosts={checkout.cart?.imageHosts ?? []}
             locale={locale}
+            presentation="receipt"
             result={result}
           />
         </section>
         {receipt?.deliveryAddress !== null && receipt?.deliveryAddress !== undefined && (
           <section className="flex flex-col gap-4 rounded-xs border border-border-secondary p-4">
-            <h2 className="text-lg font-semibold">{d.checkout.deliveryAddress}</h2>
-            <div className="text-sm text-fg-secondary">
+            <h2 className="text-lg leading-n1-copy font-semibold">{d.checkout.deliveryAddress}</h2>
+            <div className="text-sm leading-normal text-fg-secondary">
               {receipt.contact !== null && <p>{receipt.contact.name}</p>}
               <p>{receipt.deliveryAddress.street}</p>
               <p>
@@ -178,28 +229,15 @@ const ConfirmedCheckout = ({
         )}
         {shipping !== undefined && (
           <section className="flex flex-col gap-4 rounded-xs border border-border-secondary p-4">
-            <h2 className="text-lg font-semibold">{d.checkout.shipping}</h2>
-            <p className="text-sm text-fg-secondary">{shipping.title}</p>
+            <h2 className="text-lg leading-n1-copy font-semibold">{d.checkout.shipping}</h2>
+            <p className="text-sm leading-normal text-fg-secondary">{shipping.title}</p>
           </section>
         )}
-        <section className="flex flex-col gap-4 rounded-xs border border-border-secondary p-4">
-          <h2 className="text-lg font-semibold">{d.checkout.priceSummary}</h2>
+        <section className="n1-confirmation-totals flex flex-col gap-4 rounded-xs border border-border-secondary p-4">
+          <h2 className="text-lg leading-n1-copy font-semibold">{d.checkout.priceSummary}</h2>
           <CheckoutTotals
             actions={
-              <LinkButton
-                as={NextLink}
-                block
-                href={home}
-                onClick={(event) => {
-                  event.preventDefault();
-                  checkout.dismiss(() => router.push(home));
-                }}
-                size="md"
-                theme="solid"
-                variant="secondary"
-              >
-                {d.shopping.backHome}
-              </LinkButton>
+              <ConfirmedCheckoutActions dictionary={d} dismiss={checkout.dismiss} locale={locale} />
             }
             currency={result.scope.currency}
             dictionary={d}
@@ -231,6 +269,8 @@ const CheckoutActions = ({
   const pending = checkout.progress !== "idle";
   const confirming = checkout.quote?.outcome === "VALID";
   const pendingLabel = checkout.progress === "place" ? d.checkout.sending : d.checkout.checking;
+  const pendingShortLabel =
+    checkout.progress === "place" ? d.checkout.sendingShort : d.checkout.checkingShort;
   const actionLabel = confirming ? d.checkout.confirm : d.checkout.verify;
   const submit = useRef<HTMLButtonElement>(null);
   const restoreFocus = useRef(false);
@@ -285,9 +325,14 @@ const CheckoutActions = ({
         size="md"
         theme="solid"
         type="submit"
-        variant="primary"
+        variant="secondary"
       >
-        {pending && <span className="sr-only xl:not-sr-only">{pendingLabel}</span>}
+        {pending && (
+          <>
+            <span className="xl:hidden">{pendingShortLabel}</span>
+            <span className="hidden xl:inline">{pendingLabel}</span>
+          </>
+        )}
         {!pending && confirming && d.checkout.confirm}
         {!pending && !confirming && (
           <>

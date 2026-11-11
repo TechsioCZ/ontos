@@ -297,7 +297,16 @@ export const visibleActivities = (rows: readonly Activity[], scope: OperationalS
   Effect.succeed(rows.filter((row) => recordVisible(predicate, row, scope.tenantId)));
 
 /** The stored row as the owner transaction read it (still encoded). */
-export type LoadedRecords = { readonly revision: number; readonly state: unknown } | undefined;
+export interface LoadedRecords {
+  readonly revision: number;
+  readonly state: unknown;
+}
+
+/**
+ * A company whose state row was never written has no activities yet. Reads answer it at revision 0; the company's
+ * first write creates the row, so nothing is written on a read.
+ */
+export const EMPTY_RELATIONSHIPS_STATE = Object.freeze({ revision: 0, state: Object.freeze({ activities: [] }) });
 
 /** After commit: decodes the stored state, keeps what the person may see (SpiceDB row filter), shapes the response. */
 export const finishCrmActivitiesRecords = Effect.fn('Relationships.finishRecords')(function* finishRecords(
@@ -306,9 +315,6 @@ export const finishCrmActivitiesRecords = Effect.fn('Relationships.finishRecords
   grants: RecordsGrants,
   scope: OperationalScope,
 ) {
-  if (loaded === undefined) {
-    return yield* unavailable();
-  }
   const snapshot = {
     revision: loaded.revision,
     state: yield* Schema.decodeUnknownEffect(RelationshipsStateSchema)(loaded.state).pipe(Effect.mapError(unavailable)),
@@ -398,13 +404,11 @@ export const persistenceService = Effect.fn('Relationships.persistenceService')(
         .limit(1)
         .pipe(Effect.mapError(unavailable));
       const [row] = rows;
-      if (row === undefined) {
-        return yield* unavailable();
-      }
-      const state = yield* Schema.decodeUnknownEffect(RelationshipsStateSchema)(row.state).pipe(
+      const stored = row ?? EMPTY_RELATIONSHIPS_STATE;
+      const state = yield* Schema.decodeUnknownEffect(RelationshipsStateSchema)(stored.state).pipe(
         Effect.mapError(unavailable),
       );
-      return { revision: row.revision, state };
+      return { exists: row !== undefined, revision: stored.revision, state };
     });
     const apply = Effect.fn('Relationships.apply')(function* apply(
       command: ActivityCommand,
@@ -447,12 +451,22 @@ export const persistenceService = Effect.fn('Relationships.persistenceService')(
       const state = yield* Schema.encodeEffect(RelationshipsStateSchema)(change.state).pipe(
         Effect.mapError(unavailable),
       );
-      const rows = yield* transaction
-        .update(relationshipsStates)
-        .set({ revision: expectedRevision + 1, state, updatedAt: DateTime.toDateUtc(now) })
-        .where(and(whereScope, eq(relationshipsStates.revision, expectedRevision)))
-        .returning({ revision: relationshipsStates.revision })
-        .pipe(Effect.mapError(unavailable));
+      const next = { revision: expectedRevision + 1, state, updatedAt: DateTime.toDateUtc(now) };
+      // The company's first write creates its row. A concurrent first write blocks on the primary key; once it
+      // commits this insert does nothing, which is the same refusal a moved revision gets below.
+      const rows = snapshot.exists
+        ? yield* transaction
+            .update(relationshipsStates)
+            .set(next)
+            .where(and(whereScope, eq(relationshipsStates.revision, expectedRevision)))
+            .returning({ revision: relationshipsStates.revision })
+            .pipe(Effect.mapError(unavailable))
+        : yield* transaction
+            .insert(relationshipsStates)
+            .values({ ...next, legalEntityId, tenantId: scope.tenantId })
+            .onConflictDoNothing({ target: [relationshipsStates.tenantId, relationshipsStates.legalEntityId] })
+            .returning({ revision: relationshipsStates.revision })
+            .pipe(Effect.mapError(unavailable));
       if (rows.length !== 1) {
         return yield* new ActivityRevisionConflict({
           code: 'activity_revision_conflict',
@@ -472,7 +486,7 @@ export const persistenceService = Effect.fn('Relationships.persistenceService')(
         .where(whereScope)
         .limit(1)
         .pipe(
-          Effect.map(([row]): LoadedRecords => row),
+          Effect.map(([row]): LoadedRecords => row ?? EMPTY_RELATIONSHIPS_STATE),
           Effect.mapError(unavailable),
         );
     return { apply, loadRecords };

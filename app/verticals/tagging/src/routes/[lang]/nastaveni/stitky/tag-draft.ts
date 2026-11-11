@@ -1,5 +1,6 @@
-// The tag editor's form values: what the create dialog sends once and the edit panel autosaves.
+// The tag editor's form values: what the create dialog sends once and the edit panel sends on Save.
 import type { RevisionedSaveResult } from '@app/admin-ui';
+import { pendingProposalMessage } from '../../../../api/action-result.ts';
 import { Effect, Predicate, Schema } from 'effect';
 import type { TaggingCommand } from '../../../../../shared/actions/apply-command.ts';
 import { subjectKindValues } from '../../../../../shared/apis/records.ts';
@@ -77,14 +78,19 @@ export const tagUnchangedSince =
     return tag !== undefined && sameTagDraft(tagDraftOf(tag), base);
   };
 
-/** An autosave of the edit panel: a changed tag or a revision race is a conflict, any other failure `failed`. */
-export const tagAutosaveResult = <E>(
-  write: Effect.Effect<'applied' | 'stale', E>,
-): Effect.Effect<RevisionedSaveResult> =>
+/**
+ * How one Save of the edit panel ends: a changed tag or a revision race is a conflict, a change parked for approval
+ * is `proposed` (nothing changed yet), any other failure `failed`.
+ */
+export const tagSaveResult = <E>(write: Effect.Effect<'applied' | 'stale', E>): Effect.Effect<RevisionedSaveResult> =>
   write.pipe(
     Effect.match({
-      onFailure: (error): RevisionedSaveResult =>
-        Predicate.isTagged(error, 'UpdateTagActionConflictProblem') ? 'conflict' : 'failed',
+      onFailure: (error): RevisionedSaveResult => {
+        if (pendingProposalMessage(error) !== undefined) {
+          return 'proposed';
+        }
+        return Predicate.isTagged(error, 'UpdateTagActionConflictProblem') ? 'conflict' : 'failed';
+      },
       onSuccess: (applied): RevisionedSaveResult => (applied === 'applied' ? 'saved' : 'conflict'),
     }),
   );

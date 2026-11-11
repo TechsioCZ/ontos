@@ -1,4 +1,5 @@
 // @rstest-environment happy-dom
+import { LIST_WARM_ROWS } from '@app/admin-ui';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, rstest } from 'effect-rstest';
 import { Deferred, Effect, Schema } from 'effect';
@@ -63,17 +64,15 @@ const denied = Schema.decodeSync(CounterpartyReadForbiddenProblemSchema)({
 
 afterEach(cleanup);
 
-it.live('invalidating failed visible preloads starts exactly one bounded retry without changing the selection', () =>
+it.live('visible preloads warm each batch once, with bounded concurrency and no retry of failed rows', () =>
   Effect.gen(function* retryFailedVisiblePreloads() {
     rstest.resetAllMocks();
     customerDetailData.invalidate();
     const initialGate = yield* Deferred.make<true>();
-    const retryGate = yield* Deferred.make<true>();
-    let gate = initialGate;
     let active = 0;
     let peak = 0;
     rstest.mocked(executeCounterpartyRead).mockImplementation(() => {
-      const currentGate = gate;
+      const currentGate = initialGate;
       return Effect.acquireUseRelease(
         Effect.sync(() => {
           active += 1;
@@ -86,8 +85,9 @@ it.live('invalidating failed visible preloads starts exactly one bounded retry w
           }),
       );
     });
-    const visible = rows.slice(0, 200);
-    const overflow = rows.slice(200);
+    // Only the first rows are warmed; every other row waits for its intent.
+    const visible = rows.slice(0, LIST_WARM_ROWS);
+    const overflow = rows.slice(LIST_WARM_ROWS);
     const allFailed = () =>
       visible.every((customer) => customerDetailData.snapshot({ customer, scope }).state === 'failed');
     const { rerender, unmount } = renderHook(() => usePrefetchCustomerDetails(context, rows));
@@ -103,33 +103,21 @@ it.live('invalidating failed visible preloads starts exactly one bounded retry w
       waitFor(() => {
         expect(allFailed()).toBe(true);
         expect(active).toBe(0);
-        expect(executeCounterpartyRead).toHaveBeenCalledTimes(200);
+        expect(executeCounterpartyRead).toHaveBeenCalledTimes(LIST_WARM_ROWS);
       }),
     );
     rerender();
-    expect(executeCounterpartyRead).toHaveBeenCalledTimes(200);
+    expect(executeCounterpartyRead).toHaveBeenCalledTimes(LIST_WARM_ROWS);
 
-    gate = retryGate;
+    // A batch is warmed once: an invalidation or another render does not start a second one for the same rows.
     act(() => customerDetailData.invalidate());
-    yield* Effect.promise(() =>
-      waitFor(() => {
-        expect(active).toBe(2);
-        expect(executeCounterpartyRead).toHaveBeenCalledTimes(202);
-      }),
-    );
-    yield* Deferred.succeed(retryGate, true);
-    yield* Effect.promise(() =>
-      waitFor(() => {
-        expect(allFailed()).toBe(true);
-        expect(active).toBe(0);
-        expect(executeCounterpartyRead).toHaveBeenCalledTimes(400);
-      }),
-    );
-    // Persistent denial must not schedule a third batch, even on another render.
     rerender();
-    expect(executeCounterpartyRead).toHaveBeenCalledTimes(400);
+    yield* Effect.sleep('10 millis');
+    expect(executeCounterpartyRead).toHaveBeenCalledTimes(LIST_WARM_ROWS);
     expect(peak).toBe(2);
-    expect(overflow.map((customer) => customerDetailData.snapshot({ customer, scope }).state)).toEqual(['pending']);
+    expect(overflow.map((customer) => customerDetailData.snapshot({ customer, scope }).state)).toEqual(
+      overflow.map(() => 'pending'),
+    );
     unmount();
   }),
 );

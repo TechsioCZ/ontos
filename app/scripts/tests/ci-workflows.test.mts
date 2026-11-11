@@ -127,6 +127,7 @@ const RUNNER_TEMP_EXPRESSION = expression('runner.temp');
 const UNPACK_NATIVE_ARTIFACTS_SCRIPT = 'bash scripts/unpack-unit-build-outputs.sh';
 const UNPACK_NATIVE_ARTIFACTS_COMMAND = `${UNPACK_NATIVE_ARTIFACTS_SCRIPT} "$RUNNER_TEMP/native-composition-units" .output`;
 const BACKEND_INTEGRATION_CONDITION = "matrix.suite == 'integration'";
+const DERIVE_BUILT_COMPOSITION_COMMAND = 'node scripts/derive-built-application-composition.mts --snapshot-output';
 const FORMAT_AND_LINT_JOB = 'format-and-lint';
 /** Gate jobs rooted at the merge queue proof. */
 const ROOT_GATE_JOBS = [
@@ -688,9 +689,42 @@ it('formats and lints every tracked file in exactly one pre-commit hook shard', 
   expect(run).toContain('lefthook run pre-commit --files-from-stdin --no-auto-install');
   expect(run.trimEnd().endsWith('git diff --exit-code HEAD')).toBe(true);
   const select = run.slice(0, run.indexOf('mise exec'));
-  const repository = fileURLToPath(new URL('../../../', import.meta.url));
+  const sourceRepository = fileURLToPath(new URL('../../../', import.meta.url));
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lint-shards-'));
+  const repository = path.join(directory, 'repository');
+  const nativeGit = '/usr/bin/git';
   try {
+    mkdirSync(repository);
+    execFileSync(nativeGit, ['init', '--quiet', repository], { env: { PATH: STEP_PATH } });
+    const sourcePaths = [
+      '.github/workflows/ultramodern-workspace-gates.yml',
+      'README.md',
+      'app/apps/shell-super-app/package.json',
+      'app/package.json',
+      'app/packages/core-runtime/package.json',
+      'app/scripts/check.mts',
+      'app/scripts/zerops/build-app.sh',
+      'app/verticals/catalog/package.json',
+      'lefthook.yml',
+    ];
+    for (const file of sourcePaths) {
+      const destination = path.join(repository, file);
+      mkdirSync(path.dirname(destination), { recursive: true });
+      writeFileSync(destination, readFileSync(path.join(sourceRepository, file)));
+    }
+    const specialPaths = ['app/source/with spaces.ts', 'app/source/with\nnewline.ts', 'app/source/žluťoučký.ts'];
+    const fixturePaths = [
+      ...Array.from({ length: shards * 2 + 1 }, (_, index) => `app/source/file-${index}.ts`),
+      ...specialPaths,
+    ];
+    for (const file of fixturePaths) {
+      const destination = path.join(repository, file);
+      mkdirSync(path.dirname(destination), { recursive: true });
+      writeFileSync(destination, 'export {};\n');
+    }
+    execFileSync(nativeGit, ['-C', repository, 'add', '--all'], { env: { PATH: STEP_PATH } });
+    const untrackedPath = 'app/source/untracked-negative.ts';
+    writeFileSync(path.join(repository, untrackedPath), 'export {};\n');
     const selected = Array.from({ length: shards }, (_, index) => {
       execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', select], {
         cwd: repository,
@@ -698,13 +732,18 @@ it('formats and lints every tracked file in exactly one pre-commit hook shard', 
       });
       return readFileSync(path.join(directory, 'shard-files'), 'utf-8').split('\0').filter(Boolean);
     });
-    const tracked = execFileSync('/usr/bin/git', ['ls-files', '-z'], {
+    const tracked = execFileSync(nativeGit, ['ls-files', '-z'], {
       cwd: repository,
       encoding: 'utf-8',
       maxBuffer: 8 * 1024 * 1024,
     })
       .split('\0')
       .filter(Boolean);
+    expect(tracked).toHaveLength(sourcePaths.length + fixturePaths.length);
+    for (const file of specialPaths) {
+      expect(tracked).toContain(file);
+    }
+    expect(tracked).not.toContain(untrackedPath);
     expect(sorted(selected.flat())).toEqual(sorted(tracked));
     for (const files of selected) {
       expect(files.length).toBeGreaterThan(0);
@@ -851,10 +890,11 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   const { steps } = integration;
   const download = steps.findIndex(({ with: inputs }) => inputs?.pattern === NODE_BUILD_ARTIFACT_PATTERN);
   const unpack = steps.findIndex(({ run }) => run?.startsWith(UNPACK_NATIVE_ARTIFACTS_SCRIPT) === true);
+  const derive = steps.findIndex(({ run }) => run?.includes(DERIVE_BUILT_COMPOSITION_COMMAND) === true);
   const worker = steps.findIndex(({ run }) => run?.includes('zerops:materialize') === true);
   const tests = steps.findIndex(({ env }) => env?.PACKAGE_FILTERS !== undefined);
   expect(download).toBeGreaterThan(-1);
-  expect(download < unpack && unpack < worker && worker < tests).toBe(true);
+  expect(download < unpack && unpack < derive && derive < worker && worker < tests).toBe(true);
   expect(steps[download]?.uses).toMatch(/^actions\/download-artifact@[a-f0-9]{40}$/u);
   // No run-id, repository or token override: the artifacts must belong to this workflow run.
   expect(steps[download]?.with).toEqual({
@@ -870,9 +910,66 @@ it('restores same-run Node artifacts for every backend integration fixture and e
     expect(steps[index]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   }
   expect(steps[worker]?.if).toBe('matrix.root-suite == true');
+  expect(steps[derive]?.env).toEqual({ APP_ENV_PATH: '/dev/null' });
+  expect(steps[derive]?.if).toBe('matrix.native-composition == true');
+  expect(steps.filter(({ if: condition }) => condition === 'matrix.native-composition == true')).toHaveLength(1);
   const preproposal = integration.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
   expect(preproposal).toHaveLength(1);
   expect(preproposal[0]?.suite).toBe('integration');
+});
+
+it('exports the built Composition path to native tests only after its derivation succeeds', () => {
+  const { steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow()).jobs[
+    SERVICE_INTEGRATION_JOB
+  ];
+  const derive = steps.find(({ run }) => run?.includes(DERIVE_BUILT_COMPOSITION_COMMAND) === true);
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-native-composition-step-'));
+  try {
+    for (const exitCode of [0, 37]) {
+      const temporary = path.join(directory, String(exitCode));
+      mkdirSync(temporary);
+      const executable = path.join(temporary, 'mise');
+      // This executable checks only the workflow's CLI boundary, not the derivation codec.
+      writeFileSync(
+        executable,
+        `#!/bin/bash
+set -euo pipefail
+printf "%s\\n" "$@" > "$DERIVATION_ARGUMENTS"
+if [[ "$DERIVATION_EXIT_CODE" != 0 ]]; then exit "$DERIVATION_EXIT_CODE"; fi
+printf "derived-snapshot" > "$6"
+`,
+      );
+      chmodSync(executable, 0o755);
+      const environmentFile = path.join(temporary, 'environment');
+      const argumentsFile = path.join(temporary, 'arguments');
+      writeFileSync(environmentFile, '');
+      const passed = stepPasses(derive?.run ?? 'exit 1', {
+        DERIVATION_ARGUMENTS: argumentsFile,
+        DERIVATION_EXIT_CODE: String(exitCode),
+        GITHUB_ENV: environmentFile,
+        PATH: `${temporary}:${STEP_PATH}`,
+        RUNNER_TEMP: temporary,
+      });
+      const snapshot = path.join(temporary, 'native-composition-snapshot.json');
+      expect(passed).toBe(exitCode === 0);
+      expect(readFileSync(argumentsFile, 'utf-8').trimEnd().split('\n')).toEqual([
+        'exec',
+        '--',
+        'node',
+        'scripts/derive-built-application-composition.mts',
+        '--snapshot-output',
+        snapshot,
+      ]);
+      expect(readFileSync(environmentFile, 'utf-8')).toBe(
+        exitCode === 0 ? `NATIVE_1290_COMPOSITION_SNAPSHOT_PATH=${snapshot}\n` : '',
+      );
+      if (exitCode === 0) {
+        expect(readFileSync(snapshot, 'utf-8')).toBe('derived-snapshot');
+      }
+    }
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
 });
 
 it('ships a runnable fresh-database proof for the actual app artifact without overwriting existing contents', () => {

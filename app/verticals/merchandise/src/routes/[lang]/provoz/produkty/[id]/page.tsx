@@ -2,12 +2,13 @@ import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/run
 import { modulePagePreload } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { Effect, Match, Option, Result, Schema } from 'effect';
+import { constUndefined } from 'effect/Function';
 import { useState } from 'react';
 import { useNavigate, useParams, useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { Toaster } from '@app/admin-ui';
+import { DocumentTitle, Toaster } from '@app/admin-ui';
 import { browserRuntime } from '../../../../../runtime/browser-effect-runtime.ts';
 import { legalEntityOf } from '../../../../../runtime/page-data-hooks.ts';
 import {
@@ -103,7 +104,12 @@ const ProductDetailPageContent = ({ context, legalEntityId, routeParams, search 
     }
     setRefreshVersion((current) => current + 1);
   };
-  const reloadRequired = state.status === 'error' && state.reason === 'reload-required';
+  const failure = Match.value(state).pipe(
+    Match.when({ status: 'error' }, ({ reason }) => reason),
+    Match.when({ status: 'ready' }, ({ reloadFailure }) => reloadFailure),
+    Match.orElse(constUndefined),
+  );
+  const reloadRequired = failure === 'reload-required';
   const handleRetry = () => {
     if (reloadRequired) {
       window.location.reload();
@@ -118,6 +124,18 @@ const ProductDetailPageContent = ({ context, legalEntityId, routeParams, search 
   return (
     <>
       <UltramodernRouteHead />
+      <DocumentTitle title={state.status === 'ready' ? state.product.name : undefined} />
+      {/* A failed reload of the product on screen keeps the editor and its unsaved drafts; it only says so. */}
+      {state.status === 'ready' && failure !== undefined && (
+        <div className="flex flex-wrap items-center gap-200">
+          <StatusText showIcon status="error">
+            {k(reloadRequired ? 'states.reloadRequired' : 'states.reloadFailed')}
+          </StatusText>
+          <Button onClick={handleRetry} size="sm" theme="outlined" variant="secondary">
+            {k(reloadRequired ? 'common.reloadPage' : 'common.retry')}
+          </Button>
+        </div>
+      )}
       {state.status === 'ready' ? (
         <ProductDetailView
           canMoveStock={state.response.canWrite}

@@ -1370,10 +1370,20 @@ const readCellSets = Effect.fn('AccessDecision.readCellSets')(function* readCell
     distinct.set(cellQueryKey(query), query);
   }
   const entries = [...distinct.entries()];
-  // Each read is one pooled transaction: two at a time, so one batch never holds more of a small shared pool.
-  const reads = yield* Effect.forEach(entries, ([, query]) => Effect.option(authority.readCells(query)), {
-    concurrency: BATCH_READ_CONCURRENCY,
-  });
+  const readMany = authority.readCellsMany;
+  // One read for the whole batch when the port offers it; otherwise each read is one pooled transaction, two at a
+  // time, so one batch never holds more of a small shared pool. A failed read leaves its sets unreadable.
+  let reads: readonly (Option.Option<readonly AuthorityCell[]> | undefined)[] = [];
+  if (readMany === undefined) {
+    reads = yield* Effect.forEach(entries, ([, query]) => Effect.option(authority.readCells(query)), {
+      concurrency: BATCH_READ_CONCURRENCY,
+    });
+  } else if (entries.length > 0) {
+    reads = yield* readMany(entries.map(([, query]) => query)).pipe(
+      Effect.map((answers) => (answers.length === entries.length ? answers.map((cells) => Option.some(cells)) : [])),
+      Effect.orElseSucceed(() => []),
+    );
+  }
   const cells = new Map<string, CellRead>();
   for (const [index, [key]] of entries.entries()) {
     const read = reads[index];
