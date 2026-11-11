@@ -2,8 +2,15 @@ import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-prop
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { LIST_WARM_ROWS, makeIntentLimiter, makePointerDwell, rowIntentProps, useHeldSnapshot } from '@app/admin-ui';
 import type { RowIntentProps } from '@app/admin-ui';
-import { Data, Effect, Match, Predicate, Random, Result, Schema } from 'effect';
-import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
+import { Data, Effect, Match, MutableRef, Predicate, Random, Result, Schema } from 'effect';
+import {
+  changeConcerns,
+  definePageData,
+  moduleChangeEvent,
+  moduleWriteEvent,
+  pageDataPending,
+  pageDataScopeKey,
+} from '@app/shared-contracts/page-data';
 import type { ModulePageContext, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
@@ -352,10 +359,12 @@ const loadDetailInput = Effect.fn('OrdersRecords.loadDetailInput')(function* loa
   return { ...detail, order: record.order, revision: Math.max(record.revision, detail.revision) };
 });
 
+const ORDER_DETAIL_CHANGES_FROM = ['merchandise'];
+
 /** Only successful governed data is reusable. Missing rows and denials are retried on the next opening. */
-export const orderDetailData = definePageData({
+const orderDetailStore = definePageData({
   cancelWhenUnused: true,
-  changesFrom: ['merchandise'],
+  changesFrom: ORDER_DETAIL_CHANGES_FROM,
   key: (input: OrderDetailInput) =>
     Result.getOrThrow(encodeQueryIds([input.scope, input.orderId, String(input.revision)])),
   load: loadDetailInput,
@@ -363,6 +372,66 @@ export const orderDetailData = definePageData({
   retainStale: false,
   runtime: browserRuntime,
 });
+
+type OrderDetailValue = Effect.Success<ReturnType<typeof loadDetailInput>>;
+type OrderDetailSnapshot = ReturnType<typeof orderDetailStore.snapshot>;
+
+/**
+ * The last warm-up of each order in a scope: the detail input it used (so an opening without the list, the full
+ * order page, finds the same revision-qualified entry) and its result as a stable ready snapshot. The strict store
+ * reads as pending once that result is 20 s old; an opening of the same entry then shows this copy at once and the
+ * store reads the order again in the background, as for a panel that stays open. A write or a change of the orders
+ * drops every copy, so an invalidated order always loads again.
+ */
+interface WarmOrderDetail {
+  readonly input: OrderDetailInput;
+  readonly key: string;
+  readonly snapshot: OrderDetailSnapshot;
+}
+const WARM_ORDER_DETAILS = 256;
+const warmOrderDetails = MutableRef.make<ReadonlyMap<string, WarmOrderDetail>>(new Map());
+const forgetAllWarmOrderDetails = (): void => {
+  MutableRef.set(warmOrderDetails, new Map());
+};
+const warmDetailId = (scope: string, orderId: string): string => Result.getOrThrow(encodeQueryIds([scope, orderId]));
+
+const forgetWarmOrderDetails = (event: Event): void => {
+  if (changeConcerns(event, ORDER_DETAIL_CHANGES_FROM)) {
+    forgetAllWarmOrderDetails();
+  }
+};
+if ('addEventListener' in globalThis) {
+  globalThis.addEventListener(moduleWriteEvent, forgetWarmOrderDetails);
+  globalThis.addEventListener(moduleChangeEvent, forgetWarmOrderDetails);
+}
+
+/** The order detail store; invalidating it (every own write, every reload of the list) also drops the warm copies. */
+export const orderDetailData: typeof orderDetailStore = {
+  ...orderDetailStore,
+  invalidate: () => {
+    forgetAllWarmOrderDetails();
+    orderDetailStore.invalidate();
+  },
+};
+
+/** Remembers one warm-up. Bounded like the store itself; the oldest warm-ups go first. */
+const rememberWarmOrderDetail = (input: OrderDetailInput, value: OrderDetailValue): void => {
+  const id = warmDetailId(input.scope, input.orderId);
+  const warm: WarmOrderDetail = {
+    input,
+    key: orderDetailData.key(input),
+    snapshot: { refreshing: true, state: 'ready', value },
+  };
+  const others = [...MutableRef.get(warmOrderDetails)].filter(([known]) => known !== id);
+  MutableRef.set(warmOrderDetails, new Map([...others, [id, warm] as const].slice(-WARM_ORDER_DETAILS)));
+};
+
+/** Reads one order's detail for a warm-up and remembers it for an opening that comes later. */
+const warmOrderDetail = (input: OrderDetailInput): Effect.Effect<void> =>
+  orderDetailData.read(input).pipe(
+    Effect.tap((value) => Effect.sync(() => rememberWarmOrderDetail(input, value))),
+    Effect.ignore,
+  );
 
 /**
  * Caller supplies exactly the authorized current page, not a catalogue or all paginated results. Only its first
@@ -374,9 +443,7 @@ export const preloadOrderDetails = (input: OrdersPageInput, records: RecordsResp
     : Effect.forEach(
         records.orders.slice(0, Math.min(input.query.limit, LIST_WARM_ROWS)),
         (order) =>
-          orderDetailData
-            .read({ orderId: order.id, revision: records.revision, scope: input.scope ?? '', source: input })
-            .pipe(Effect.ignore),
+          warmOrderDetail({ orderId: order.id, revision: records.revision, scope: input.scope ?? '', source: input }),
         { concurrency: 2, discard: true },
       );
 
@@ -401,7 +468,7 @@ export const prefetchOrderDetail = (input: OrdersPageInput, records: RecordsResp
       done();
       return;
     }
-    browserRuntime.runFork(orderDetailData.read(detail).pipe(Effect.ignore, Effect.ensuring(Effect.sync(done))));
+    browserRuntime.runFork(warmOrderDetail(detail).pipe(Effect.ensuring(Effect.sync(done))));
   });
 };
 
@@ -704,6 +771,35 @@ const listedSummary = (
 };
 
 /**
+ * The list revision that qualifies the open order's entry. The list reads as pending while it reloads (every 20 s
+ * while shown) and the full order page has no list row at all: the order then keeps the revision it was opened
+ * with, or takes the one its warm-up used, so the opening finds the warmed entry instead of reading the order again.
+ */
+const useDetailRevision = (
+  detailId: string,
+  listRevision: number | undefined,
+  warmRevision: number | undefined,
+): number | undefined => {
+  const [opened, setOpened] = useState<{ readonly id: string; readonly revision: number }>();
+  const kept = opened?.id === detailId ? opened.revision : warmRevision;
+  const revision = listRevision ?? kept;
+  if (revision !== undefined && (opened?.id !== detailId || opened.revision !== revision)) {
+    setOpened({ id: detailId, revision });
+  }
+  return revision;
+};
+
+/**
+ * Nothing of this order shown yet and its warmed entry has aged: the warm copy of the same entry stands in while the
+ * detail reads it again. A failed or refused read replaces it at once, as it replaces a held read.
+ */
+const withWarmCopy = (
+  held: OrderDetailSnapshot,
+  warm: WarmOrderDetail | undefined,
+  key: string,
+): OrderDetailSnapshot => (held.state === 'pending' && warm?.key === key ? warm.snapshot : held);
+
+/**
  * The open order with the product records its detail and edit form need. `version` changes after every change the
  * page makes, so the detail reads again.
  */
@@ -717,8 +813,14 @@ export const useOrderDetail = (
   // A list row may summarize the open order only while it belongs to the same authenticated scope.
   const currentSource = source?.scope === scope ? source : undefined;
   const list = currentSource === undefined ? pageDataPending : ordersPageData.snapshot(currentSource);
-  const revision = list.state === 'ready' ? list.value.revision : undefined;
   const summary = listedSummary(orderId, scope, list);
+  const detailId = warmDetailId(scope ?? '', orderId ?? '');
+  const warm = orderId === null || scope === undefined ? undefined : MutableRef.get(warmOrderDetails).get(detailId);
+  const revision = useDetailRevision(
+    detailId,
+    list.state === 'ready' ? list.value.revision : undefined,
+    warm?.input.revision,
+  );
   const input: OrderDetailInput = {
     orderId: orderId ?? '',
     revision,
@@ -738,7 +840,7 @@ export const useOrderDetail = (
   // The strict store reads as pending while it reloads this order, and the entry moves with the list revision. The
   // detail and its edit form stay mounted on the last ready read of the same order in the same scope until the
   // reload settles; the form's draft decides what a reloaded order means for it (`useOrderEditDraft`).
-  const cached = useHeldSnapshot(Result.getOrThrow(encodeQueryIds([scope ?? '', orderId ?? ''])), stored);
+  const cached = withWarmCopy(useHeldSnapshot(detailId, stored), warm, orderDetailData.key(input));
   // Each answer names the request it answers, so a newer request reads as loading without a synchronous reset.
   const [answer, setAnswer] = useState<{ readonly request: string; readonly state: OrderDetailState } | null>(null);
   const request = Result.getOrThrow(
