@@ -1,8 +1,8 @@
 /**
  * Authentication of one MCP request, in-process: the bearer JWT is verified against the Shell's own authorization
  * server (exact issuer, audience `<shell>/mcp`, `ontos` scope, grant claim), then the grant is re-checked live
- * (`loadLiveConnection`) so a revoked connection, a removed right or a narrowed grant applies to the very next
- * request. The resulting principal is the trusted `oauth_connection` context gateway assertions are issued for.
+ * (`checkLiveGrant`) so a revoked connection applies to the very next request; a request that needs the grant's
+ * rights describes them live too (`describeLiveGrant`), so a removed right or a narrowed grant applies as well. The resulting principal is the trusted `oauth_connection` context gateway assertions are issued for.
  */
 import { OAuthAuthenticationAudit } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
@@ -17,8 +17,8 @@ import type { JWTVerifyGetKey } from 'jose';
 
 import type { OAuthServerEndpoint } from '../auth/oauth-server/policy.ts';
 import { AuthenticationService } from '../auth/service.ts';
-import type { LiveConnection } from '../oauth-connections/connection-service.ts';
-import { loadLiveConnection } from '../oauth-connections/connection-service.ts';
+import type { LiveConnection, LiveGrant } from '../oauth-connections/connection-service.ts';
+import { checkLiveGrant } from '../oauth-connections/connection-service.ts';
 import { ConnectionUnauthorized, ConnectionUnavailable } from '../oauth-connections/errors.ts';
 import { touchGrantLastUsed } from '../oauth-connections/grant-store.ts';
 import { loadOAuthServerConfig } from '../oauth-connections/server-config.ts';
@@ -171,7 +171,7 @@ export const connectionPrincipalContext = (live: LiveConnection) => {
 };
 
 /** The throttled `authn.connector_exchange` audit row (at most once a minute per grant). */
-const auditUse = Effect.fn('Mcp.auditUse')(function* auditUse(live: LiveConnection) {
+const auditUse = Effect.fn('Mcp.auditUse')(function* auditUse(live: LiveGrant) {
   if (yield* touchGrantLastUsed(live.grant.grantId)) {
     yield* (yield* OAuthAuthenticationAudit)
       .record({
@@ -188,10 +188,14 @@ const auditUse = Effect.fn('Mcp.auditUse')(function* auditUse(live: LiveConnecti
   }
 });
 
-/** Bearer token -> live connection. Unauthorized means HTTP 401 with a challenge; Unavailable means 503. */
+/**
+ * Bearer token -> live grant: the token, the grant and every live check, on every request. Unauthorized means HTTP
+ * 401 with a challenge; Unavailable means 503. The grant's authority is described separately, only for a request
+ * that needs it (`describeLiveGrant`).
+ */
 export const authenticateMcpRequest = Effect.fn('Mcp.authenticate')(function* authenticateMcpRequest(token: string) {
   const claims = yield* (yield* OAuthAccessTokens).verify(token);
-  const live = yield* loadLiveConnection(claims.grantId);
+  const live = yield* checkLiveGrant(claims.grantId);
   if (live.grant.userId !== claims.sub) {
     return yield* new ConnectionUnauthorized({ code: 'token_invalid' });
   }
