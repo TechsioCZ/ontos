@@ -451,7 +451,13 @@ export const subjectModuleAccess = Effect.fn('AgentPlatform.subjectModuleAccess'
       }
     }
     const byKey = new Map(inspected.authorities.map((authority) => [authority.actionKey, authority]));
-    if (byKey.size !== actionKeys.length || actionKeys.some((key) => !byKey.has(key))) {
+    // An unavailable answer is never a denial: a key the hints could not decide fails the whole description, exactly
+    // as asking everything at once fails it, instead of leaving its module out of run or propose.
+    if (
+      byKey.size !== actionKeys.length ||
+      actionKeys.some((key) => !byKey.has(key)) ||
+      inspected.authorities.some((authority) => authority.propose === 'unavailable' || authority.run === 'unavailable')
+    ) {
       return yield* new SubjectInspectionUnavailable({ reason: 'Action inspection returned incomplete authority' });
     }
     for (const [actionKey, authority] of byKey) {

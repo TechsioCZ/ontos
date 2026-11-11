@@ -1,4 +1,4 @@
-import { Context } from 'effect';
+import { Context, Schema } from 'effect';
 import type { Effect } from 'effect';
 
 import type { OperationalScope } from '../../operations/context.ts';
@@ -85,11 +85,15 @@ export interface SubjectScopeInspection {
   readonly reasonCodes: readonly string[];
 }
 
+/** An Action mode's answer; `unavailable` is never a denial, so a caller can fail closed on it. */
+export const SubjectActionAnswerSchema = Schema.Literals(['allowed', 'denied', 'unavailable']);
+export type SubjectActionAnswer = typeof SubjectActionAnswerSchema.Type;
+
 export interface SubjectActionInspection {
   readonly authorities: readonly {
     readonly actionKey: string;
-    readonly propose: 'allowed' | 'denied';
-    readonly run: 'allowed' | 'denied';
+    readonly propose: SubjectActionAnswer;
+    readonly run: SubjectActionAnswer;
   }[];
   readonly inspectionOnly: true;
 }
