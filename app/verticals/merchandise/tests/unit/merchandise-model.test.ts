@@ -249,3 +249,14 @@ it('preserves the encoded order snapshot and command patch, including replay ide
     command,
   );
 });
+
+it('round-trips optional direct category memberships without initializing absent fields', () => {
+  const wire = { additionalCategoryIds: ['secondary'], categoryId: 'primary' };
+  expect(Schema.encodeSync(ProductMetadataSchema)(Schema.decodeSync(ProductMetadataSchema)(wire))).toEqual(wire);
+  expect(Schema.encodeSync(ProductMetadataSchema)(Schema.decodeSync(ProductMetadataSchema)({}))).toEqual({});
+  expect(Schema.is(ProductMetadataSchema)({ additionalCategoryIds: null })).toBe(false);
+  expect(Schema.is(ProductMetadataSchema)({ additionalCategoryIds: [12] })).toBe(false);
+  expect(Schema.is(ProductMetadataSchema)({ additionalCategoryIds: Array.from({ length: 101 }, () => 'c') })).toBe(
+    false,
+  );
+});

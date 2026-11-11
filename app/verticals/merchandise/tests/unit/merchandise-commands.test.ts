@@ -582,3 +582,175 @@ it.effect('CreateProduct retains informational metadata and encodes optional mea
     });
   }),
 );
+
+const bulkMembershipState = Schema.decodeUnknownSync(MerchandiseStateSchema)({
+  categories: [
+    {
+      description: '',
+      hasChildren: true,
+      heading: 'Primary',
+      id: 'r',
+      imageAlt: '',
+      imageSrc: '',
+      longDescription: '',
+      name: 'Primary',
+      parentId: null,
+      position: 0,
+      slug: 'primary',
+    },
+    {
+      description: '',
+      hasChildren: false,
+      heading: 'Child',
+      id: 'c',
+      imageAlt: '',
+      imageSrc: '',
+      longDescription: '',
+      name: 'Child',
+      parentId: 'r',
+      position: 0,
+      slug: 'child',
+    },
+    {
+      description: '',
+      hasChildren: false,
+      heading: 'Secondary',
+      id: 's',
+      imageAlt: '',
+      imageSrc: '',
+      longDescription: '',
+      name: 'Secondary',
+      parentId: null,
+      position: 1,
+      slug: 'secondary',
+    },
+  ],
+  movements: [],
+  orders: [],
+  products: ['one', 'two'].map((id) => ({
+    active: true,
+    category: 'Primary',
+    categoryId: 'r',
+    categoryPathIds: ['r'],
+    createdAt: '2026-10-05T10:00:00.000Z',
+    currentPriceMinor: 100,
+    id,
+    lowStockThreshold: 0,
+    name: id,
+    priceHistory: [],
+    sku: id,
+    unit: 'ks',
+    updatedAt: '2026-10-05T10:00:00.000Z',
+    vatRate: 21,
+  })),
+});
+
+it('Bulk native category fields retain the existing finite command bounds and wire representation', () => {
+  const wire: CommandInput = {
+    _tag: 'BulkUpdateProducts',
+    ids: ['one'],
+    patch: { additionalCategoryIds: ['s'], categoryId: 'r' },
+  };
+  expect(Schema.encodeSync(MerchandiseCommandSchema)(decodeCommand(wire))).toEqual(wire);
+  expect(Schema.is(MerchandiseCommandSchema)({ ...wire, ids: [] })).toBe(false);
+  expect(Schema.is(MerchandiseCommandSchema)({ ...wire, ids: Array.from({ length: 500 }, () => 'one') })).toBe(true);
+  expect(Schema.is(MerchandiseCommandSchema)({ ...wire, ids: Array.from({ length: 501 }, () => 'one') })).toBe(false);
+  expect(Schema.is(MerchandiseCommandSchema)({ ...wire, patch: { additionalCategoryIds: [12] } })).toBe(false);
+});
+
+it.effect('Bulk native membership deduplicates products, audits, retains on a move, and removes explicitly', () =>
+  Effect.gen(function* bulkNativeCategoryMemberships() {
+    const added = yield* apply(
+      bulkMembershipState,
+      {
+        _tag: 'BulkUpdateProducts',
+        ids: ['one', 'one', 'two'],
+        patch: { additionalCategoryIds: ['s', 'r', 's'], categoryId: 'r' },
+      },
+      'bulk-add',
+      t1,
+    );
+    expect(added.entityIds).toEqual(['one', 'two']);
+    for (const product of added.state.products) {
+      expect(product.categoryId).toBe('r');
+      expect(product.additionalCategoryIds).toEqual(['s']);
+      expect(product.categoryPathIds).toEqual(['r', 's']);
+      expect(product.contentHistory?.at(-1)?.fields).toEqual(['Další kategorie']);
+      expect(product.currentPriceMinor).toBe(100);
+      expect(product.priceHistory).toEqual([]);
+    }
+    const moved = yield* apply(
+      added.state,
+      {
+        _tag: 'BulkUpdateProducts',
+        ids: ['one', 'two'],
+        patch: { categoryId: 'c' },
+      },
+      'bulk-move',
+      t1,
+    );
+    expect(moved.state.products.every((product) => product.categoryPathIds?.join(',') === 'c,r,s')).toBe(true);
+    const removed = yield* apply(
+      moved.state,
+      {
+        _tag: 'BulkUpdateProducts',
+        ids: ['one', 'two'],
+        patch: { additionalCategoryIds: [] },
+      },
+      'bulk-remove',
+      t1,
+    );
+    for (const product of removed.state.products) {
+      expect(product.categoryId).toBe('c');
+      expect(product.categoryPathIds).toEqual(['c', 'r']);
+      expect(product.additionalCategoryIds).toEqual([]);
+      expect(product.contentHistory?.at(-1)?.fields).toEqual(['Další kategorie']);
+    }
+  }),
+);
+
+it.effect('Bulk native assignment rejects mixed display fields and any invalid product/category without mutation', () =>
+  Effect.gen(function* invalidBulkNativeMemberships() {
+    const before = Schema.encodeSync(MerchandiseStateSchema)(bulkMembershipState);
+    const mixed = yield* Effect.flip(
+      apply(
+        bulkMembershipState,
+        {
+          _tag: 'BulkUpdateProducts',
+          ids: ['one', 'two'],
+          patch: { additionalCategoryIds: ['s'], category: 'Legacy display', categoryId: 'r' },
+        },
+        'bulk-mixed',
+        t1,
+      ),
+    );
+    expect(isConflict(mixed)).toBe(true);
+    const unknownProduct = yield* Effect.flip(
+      apply(
+        bulkMembershipState,
+        {
+          _tag: 'BulkUpdateProducts',
+          ids: ['one', 'missing'],
+          patch: { additionalCategoryIds: ['s'] },
+        },
+        'bulk-unknown-product',
+        t1,
+      ),
+    );
+    expect(isNotFound(unknownProduct)).toBe(true);
+    const unknownCategory = yield* Effect.flip(
+      apply(
+        bulkMembershipState,
+        {
+          _tag: 'BulkUpdateProducts',
+          ids: ['one', 'two'],
+          patch: { additionalCategoryIds: ['missing'] },
+        },
+        'bulk-unknown-category',
+        t1,
+      ),
+    );
+    expect(isConflict(unknownCategory)).toBe(true);
+    expect(Schema.encodeSync(MerchandiseStateSchema)(bulkMembershipState)).toEqual(before);
+  }),
+);

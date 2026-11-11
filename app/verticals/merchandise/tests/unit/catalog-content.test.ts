@@ -9,6 +9,7 @@ import {
 } from '../../shared/domain/merchandise-model.ts';
 import {
   assignCategory,
+  assignCategoryMemberships,
   categoryPathOf,
   contentChangeOf,
   createCategoryCommand,
@@ -216,5 +217,47 @@ it.effect('createCategoryCommand refuses an existing identifier and an unknown p
       }),
     );
     expect(Schema.is(MerchandiseNotFound)(orphan)).toBe(true);
+  }),
+);
+
+it.effect('derives primary-first union and deduplicates direct additional categories', () =>
+  Effect.gen(function* categoryMembershipUnion() {
+    const other = { ...rootCategory, id: categoryId('other'), name: 'Sport', slug: 'sport' };
+    const updated = yield* assignCategoryMemberships(
+      p1,
+      'c',
+      [other.id, categoryId('c'), other.id],
+      [...categories, other],
+    );
+    expect(updated.categoryId).toBe('c');
+    expect(updated.category).toBe('Metrické');
+    expect(updated.additionalCategoryIds).toEqual(['other']);
+    expect(updated.categoryPathIds).toEqual(['c', 'r', 'other']);
+    expect(contentChangeOf(p1, updated, input)?.fields).toEqual(['Další kategorie']);
+    const repeated = yield* assignCategoryMemberships(
+      updated,
+      'c',
+      [categoryId('c'), other.id, other.id],
+      [...categories, other],
+    );
+    expect(contentChangeOf(updated, repeated, input)).toBeUndefined();
+    const moved = yield* assignCategory(updated, 'r', [...categories, other]);
+    expect(moved.additionalCategoryIds).toEqual(['other']);
+    expect(moved.categoryPathIds).toEqual(['r', 'other']);
+    const promoted = yield* assignCategory(updated, 'other', [...categories, other]);
+    expect(promoted.additionalCategoryIds).toEqual([]);
+    expect(promoted.categoryPathIds).toEqual(['other']);
+  }),
+);
+
+it.effect('membership derivation rejects unknown direct ids, missing ancestors and cycles', () =>
+  Effect.gen(function* invalidCategoryMemberships() {
+    const unknown = yield* Effect.flip(assignCategoryMemberships(p1, 'c', [categoryId('missing')], categories));
+    expect(Schema.is(MerchandiseLifecycleConflict)(unknown)).toBe(true);
+    const missingAncestor = yield* Effect.flip(assignCategoryMemberships(p1, 'c', [], [childCategory]));
+    expect(Schema.is(MerchandiseLifecycleConflict)(missingAncestor)).toBe(true);
+    const cycle = { ...childCategory, parentId: Option.some(childCategory.id) };
+    const cyclic = yield* Effect.flip(assignCategoryMemberships(p1, 'c', [], [cycle]));
+    expect(Schema.is(MerchandiseLifecycleConflict)(cyclic)).toBe(true);
   }),
 );
