@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -104,22 +104,36 @@ it.live('publishes the emitted Node identity for a local compiled Shell', () =>
 it.live('requires the matching compiled identity for a clean release', () =>
   Effect.gen(function* validatesCompiledReleaseIdentity() {
     const { root, shellDirectory } = yield* fixture;
-    const generate = generateOntosShellRuntimeContract({ shellDirectory, target: 'dist' });
-    const rejected = generate.pipe(Effect.flip);
-    yield* writeCompiledIdentity(shellDirectory, { appId: 'another-shell' });
-    expect((yield* rejected).message).toBe('invalid compiled Shell identity');
-    const mismatch = 'the compiled Shell identity does not match the current release';
-    yield* writeCompiledIdentity(shellDirectory);
-    expect((yield* rejected).message).toBe(mismatch);
-    const { buildMarker, sourceRevision } = resolveUltramodernReleaseIdentity({
+    const sourceRevision = yield* git(root, 'rev-parse', 'HEAD');
+    const { buildMarker } = resolveUltramodernReleaseIdentity({
+      environment: { ULTRAMODERN_SOURCE_REVISION: sourceRevision },
       generationBuildMarker: topology.shell.deliveryUnit.buildMarker,
       unitId: topology.shell.deliveryUnit.unitId,
       workspaceRoot: root,
     });
+    const generate = () =>
+      spawnSync(process.execPath, [generatorPath, '--shell-directory', shellDirectory, '--target', 'dist'], {
+        encoding: 'utf-8',
+        env: { ULTRAMODERN_SOURCE_REVISION: sourceRevision },
+      });
+    const expectRejection = (message: string) => {
+      const result = generate();
+      expect(result.status).toBe(1);
+      expect(result.stderr + result.stdout).toContain(message);
+    };
+    yield* writeCompiledIdentity(shellDirectory, { appId: 'another-shell' });
+    expectRejection('invalid compiled Shell identity');
+    const mismatch = 'the compiled Shell identity does not match the current release';
+    yield* writeCompiledIdentity(shellDirectory);
+    expectRejection(mismatch);
     yield* writeCompiledIdentity(shellDirectory, { sourceRevision });
-    expect((yield* rejected).message).toBe(mismatch);
+    expectRejection(mismatch);
     yield* writeCompiledIdentity(shellDirectory, { buildMarker, sourceRevision });
-    expect((yield* readContract(yield* generate)).deployment).toEqual({ appId: shellAppId, buildMarker });
+    expect(generate().status).toBe(0);
+    const contract = yield* readContract(
+      path.join(shellDirectory, 'dist/public', ONTOS_SHELL_RUNTIME_CONTRACT_PATH.slice(1)),
+    );
+    expect(contract.deployment).toEqual({ appId: shellAppId, buildMarker });
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
