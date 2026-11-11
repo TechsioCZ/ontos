@@ -1,14 +1,16 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
-import { Effect, Exit, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Exit, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { HostedModuleCredentialsSchema } from '../../packages/core-runtime/src/auth/hosted-module-credentials.ts';
 import {
+  earliestExpiryOf,
   encodeModuleCredentialHandover,
   MODULE_CREDENTIAL_CALLERS,
   noProvisionedCredentials,
+  providerKeyIdsOf,
   ProvisioningOutputJsonSchema,
 } from '../zerops/module-credentials.mts';
 
@@ -65,32 +67,46 @@ describe('module credential handover', () => {
     }),
   );
 
-  it.effect('reports a pass with keys, provider key ids and the modules that got none, and refuses anything else', () =>
-    Effect.gen(function* provisioningOutput() {
-      const encoded = yield* Schema.encodeUnknownEffect(ProvisioningOutputJsonSchema)({
-        credentials,
-        failedAppIds: ['pricing'],
-        providerKeyIds: ['order-provider-key', 'party-provider-key'],
-        schemaVersion: 1,
-      });
-      const decoded = yield* Schema.decodeEffect(ProvisioningOutputJsonSchema)(encoded);
-      expect(decoded.failedAppIds).toEqual(['pricing']);
-      expect(decoded.providerKeyIds).toEqual(['order-provider-key', 'party-provider-key']);
-      for (const malformed of [
-        '{}',
-        '{"schemaVersion":1,"credentials":{"x":"short"},"failedAppIds":[],"providerKeyIds":[]}',
-      ]) {
-        expect(Exit.isFailure(yield* Effect.exit(Schema.decodeEffect(ProvisioningOutputJsonSchema)(malformed)))).toBe(
-          true,
-        );
-      }
-    }),
+  it.effect(
+    'reports a pass with keys, their provider ids and ends, and the modules that got none, and refuses anything else',
+    () =>
+      Effect.gen(function* provisioningOutput() {
+        const encoded = JSON.stringify({
+          credentials: Object.fromEntries(
+            Object.entries(credentials).map(([appId, key]) => [appId, Redacted.value(key)] as const),
+          ),
+          failedAppIds: ['pricing'],
+          keys: {
+            [ORDER]: { expiresAt: '2026-11-12T10:00:00.000Z', providerKeyId: 'order-provider-key' },
+            'party-registry': { expiresAt: '2026-11-12T09:00:00.000Z', providerKeyId: 'party-provider-key' },
+          },
+          schemaVersion: 1,
+        });
+        const decoded = yield* Schema.decodeEffect(ProvisioningOutputJsonSchema)(encoded);
+        // What a host decodes it encodes back unchanged, for the next handover.
+        const reencoded = yield* Schema.encodeEffect(ProvisioningOutputJsonSchema)(decoded);
+        expect(yield* Schema.decodeEffect(ProvisioningOutputJsonSchema)(reencoded)).toEqual(decoded);
+        expect(decoded.failedAppIds).toEqual(['pricing']);
+        expect(providerKeyIdsOf(decoded)).toEqual(['order-provider-key', 'party-provider-key']);
+        expect(earliestExpiryOf(decoded)).toBe(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-11-12T09:00:00.000Z')));
+        for (const malformed of [
+          '{}',
+          '{"schemaVersion":1,"credentials":{"x":"short"},"failedAppIds":[],"keys":{}}',
+          '{"schemaVersion":1,"credentials":{},"failedAppIds":[],"keys":{"x":{"providerKeyId":"p"}}}',
+          '{"schemaVersion":1,"credentials":{},"failedAppIds":[],"keys":{"x":{"expiresAt":"tomorrow","providerKeyId":"p"}}}',
+        ]) {
+          expect(Exit.isFailure(yield* Effect.exit(Schema.decodeEffect(ProvisioningOutputJsonSchema)(malformed)))).toBe(
+            true,
+          );
+        }
+      }),
   );
 
   it('leaves every caller without a key when no pass ran', () => {
     const none = noProvisionedCredentials([ORDER, 'pricing']);
     expect(none.credentials).toEqual({});
     expect(none.failedAppIds).toEqual([ORDER, 'pricing']);
-    expect(none.providerKeyIds).toEqual([]);
+    expect(providerKeyIdsOf(none)).toEqual([]);
+    expect(earliestExpiryOf(none)).toBeUndefined();
   });
 });

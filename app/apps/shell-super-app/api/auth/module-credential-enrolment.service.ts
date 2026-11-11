@@ -29,33 +29,42 @@ export class ModuleCredentialEnrolmentSource extends Context.Service<
 
 const unavailable = (cause: unknown) => new GatewayDelegationPolicyUnavailable({ cause });
 
+/** Every active module credential with the attestation stored with its key, read from the Core and Auth stores. */
+export const loadAttestedModuleCredentials = Effect.fn('ModuleCredentialEnrolment.loadAttested')(
+  function* loadAttestedEnrolment(
+    core: Parameters<typeof loadModuleCredentialEnrolment>[0],
+    auth: (typeof AuthDatabase.Service)['executor'],
+  ) {
+    const enrolment = yield* loadModuleCredentialEnrolment(core).pipe(Effect.mapError(unavailable));
+    if (enrolment.length === 0) {
+      return [];
+    }
+    const records = yield* auth
+      .select({ id: apikey.id, metadata: apikey.metadata })
+      .from(apikey)
+      .where(
+        inArray(
+          apikey.id,
+          enrolment.map((credential) => credential.providerKeyId),
+        ),
+      )
+      .pipe(Effect.mapError(unavailable));
+    const metadata = new Map(records.map((record) => [record.id, record.metadata]));
+    return enrolment.map((credential): AttestedModuleCredential => ({
+      ...credential,
+      attestation: attestationOf(metadata.get(credential.providerKeyId) ?? null),
+    }));
+  },
+);
+
 export const ModuleCredentialEnrolmentSourceLive = Layer.effect(
   ModuleCredentialEnrolmentSource,
   Effect.gen(function* makeModuleCredentialEnrolmentSource() {
     const database = yield* CoreDatabase;
     const { executor: auth } = yield* AuthDatabase;
-    const load = loadModuleCredentialEnrolment(database.executor).pipe(Effect.mapError(unavailable));
-    const loadAttested = Effect.gen(function* loadAttestedEnrolment() {
-      const enrolment = yield* load;
-      if (enrolment.length === 0) {
-        return [];
-      }
-      const records = yield* auth
-        .select({ id: apikey.id, metadata: apikey.metadata })
-        .from(apikey)
-        .where(
-          inArray(
-            apikey.id,
-            enrolment.map((credential) => credential.providerKeyId),
-          ),
-        )
-        .pipe(Effect.mapError(unavailable));
-      const metadata = new Map(records.map((record) => [record.id, record.metadata]));
-      return enrolment.map((credential): AttestedModuleCredential => ({
-        ...credential,
-        attestation: attestationOf(metadata.get(credential.providerKeyId) ?? null),
-      }));
-    });
-    return { load, loadAttested };
+    return {
+      load: loadModuleCredentialEnrolment(database.executor).pipe(Effect.mapError(unavailable)),
+      loadAttested: loadAttestedModuleCredentials(database.executor, auth),
+    };
   }),
 );

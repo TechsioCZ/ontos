@@ -7,7 +7,7 @@
 import { Socket } from 'node:net';
 
 import { fromReadable } from '@effect/platform-node/NodeStream';
-import { Config, Console, Duration, Effect, Option, Schema, Stream } from 'effect';
+import { Config, Console, DateTime, Duration, Effect, Option, Schema, Stream } from 'effect';
 import type { Redacted } from 'effect';
 
 import { claimHostedModuleCredentials } from '../../packages/core-runtime/src/auth/hosted-module-credential-store.ts';
@@ -53,7 +53,8 @@ const ProviderKeyIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(Sche
 
 /**
  * One handover message for one multi-owner process: exactly the given owners' credentials, nobody else's, as one
- * line on its channel. A process accepts messages for as long as the channel is open; each fills only empty slots.
+ * line on its channel. A process accepts messages for as long as the channel is open; each gives the named owners
+ * their current key (a first key, a fresh one after a revocation, or a rotated one), replacing the one they held.
  */
 export const encodeModuleCredentialHandover = Effect.fn('ModuleCredentials.encodeHandover')(function* encodeHandover(
   credentials: Readonly<Record<string, Redacted.Redacted>>,
@@ -87,8 +88,7 @@ export const applyModuleCredentialHandovers = <E,>(
       Schema.decodeEffect(HandoverJsonSchema)(line).pipe(
         Effect.flatMap(receiver.accept),
         Effect.flatMap(({ accepted, refused }) => {
-          const refusal =
-            refused.length === 0 ? '' : `; refused ${refused.join(', ')} (not served here, or already held)`;
+          const refusal = refused.length === 0 ? '' : `; refused ${refused.join(', ')} (not served here)`;
           return Console.log(
             `[module-credentials] received the credentials of ${accepted.join(', ') || 'no owner'}${refusal}`,
           );
@@ -102,8 +102,9 @@ export const applyModuleCredentialHandovers = <E,>(
 
 /**
  * Claims this multi-owner process for `owners` before any owner runs. With the handover switch it keeps reading its
- * private channel (file descriptor 3) in the background, so a host can hand over keys at start or later, once each;
- * without it, no owner ever holds a key and none falls back to a module key in the shared environment.
+ * private channel (file descriptor 3) in the background, so the host can hand over keys at start and replace them
+ * later (a late key, a fresh key after a revocation, a rotation), without a restart; without it, no owner ever holds
+ * a key and none falls back to a module key in the shared environment.
  */
 export const receiveModuleCredentialHandover = Effect.fn('ModuleCredentials.receiveHandover')(function* receive(
   owners: readonly string[],
@@ -131,17 +132,34 @@ export const receiveModuleCredentialHandover = Effect.fn('ModuleCredentials.rece
   return yield* Effect.void;
 });
 
+/** One issued key, not secret: its provider id (which decides what is superseded) and when it stops verifying. */
+const IssuedModuleKeySchema = Schema.Struct({
+  expiresAt: Schema.DateTimeUtcFromString,
+  providerKeyId: ProviderKeyIdSchema,
+});
+
 /**
- * What one provisioning pass writes to its standard output for the process that runs it: each module's fresh key, the
- * provider key ids of this pass (not secret; they decide what is superseded) and the modules that got no key.
+ * What one provisioning pass writes to its private channel for the process that runs it: each module's fresh key,
+ * each issued key's provider id and end of life, and the modules that got no key. A host keeps the same shape for
+ * what it holds now.
  */
 export const ProvisioningOutputSchema = Schema.Struct({
   credentials: HostedModuleCredentialsSchema.fields.credentials,
   failedAppIds: Schema.Array(ModuleAppIdSchema),
-  providerKeyIds: Schema.Array(ProviderKeyIdSchema),
+  keys: Schema.Record(Schema.String, IssuedModuleKeySchema),
   schemaVersion: Schema.Literal(1),
 });
 export type ProvisioningOutput = typeof ProvisioningOutputSchema.Type;
+
+/** The provider key ids a pass issued, or a host holds. */
+export const providerKeyIdsOf = (output: ProvisioningOutput): readonly string[] =>
+  Object.values(output.keys).map(({ providerKeyId }) => providerKeyId);
+
+/** The earliest end of life among the keys a host holds, in epoch milliseconds; `undefined` when it holds none. */
+export const earliestExpiryOf = (output: ProvisioningOutput): number | undefined => {
+  const ends = Object.values(output.keys).map(({ expiresAt }) => DateTime.toEpochMillis(expiresAt));
+  return ends.length === 0 ? undefined : Math.min(...ends);
+};
 
 /** The wire form of a provisioning pass's output. */
 export const ProvisioningOutputJsonSchema = Schema.fromJsonString(ProvisioningOutputSchema);
@@ -150,9 +168,15 @@ export const ProvisioningOutputJsonSchema = Schema.fromJsonString(ProvisioningOu
 export const noProvisionedCredentials = (appIds: readonly string[]): ProvisioningOutput => ({
   credentials: {},
   failedAppIds: appIds.map((appId) => ModuleAppIdSchema.make(appId)),
-  providerKeyIds: [],
+  keys: {},
   schemaVersion: 1,
 });
 
-/** How long an older host may finish delegated calls it already started once this one took the authority. */
+/**
+ * How long a process may finish delegated calls it already started with a key that is being replaced: after another
+ * host took the authority, after this host handed its owners rotated keys, and after it restarted.
+ */
 export const MODULE_CREDENTIAL_HANDOVER_GRACE = Duration.minutes(2);
+
+/** How long before its keys end a host rotates them; with the 24-hour lifetime, a key is rotated at about 16 hours. */
+export const MODULE_CREDENTIAL_ROTATION_LEAD = Duration.hours(8);

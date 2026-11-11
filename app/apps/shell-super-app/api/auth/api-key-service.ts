@@ -108,6 +108,8 @@ export interface ApiKeyServiceContract {
    * credential provisioning calls it; no HTTP endpoint reaches it.
    */
   readonly issueServerOwned: (input: {
+    /** The key's lifetime; it fails verification once it ends. */
+    readonly expiresInSeconds: number;
     readonly issuerPrincipalId: string;
     readonly lifecycleOperationId: string;
     readonly name: string;
@@ -354,7 +356,7 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
             catch: mapProviderError,
             try: api.createApiKey.bind(api, {
               body: {
-                expiresIn: null,
+                expiresIn: input.expiresInSeconds,
                 metadata: pendingBindingMarker(input),
                 name: input.name,
                 remaining: null,

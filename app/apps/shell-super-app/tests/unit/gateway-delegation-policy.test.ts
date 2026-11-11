@@ -17,6 +17,10 @@ import {
   ShellInstalledModuleCatalog,
 } from '../../api/modules/installed-module-catalog.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import {
+  ModuleCredentialBootIdSchema,
+  ModuleCredentialHostIdSchema,
+} from '../../api/auth/module-credential-attestation.ts';
 
 const revision = 'a'.repeat(64);
 const otherRevision = 'b'.repeat(64);
@@ -31,9 +35,11 @@ const source = { aud: 'commerce-order', compositionRevision: revision, targetBui
 const attested = (appId: string, buildMarker: string, compositionRevision: string) =>
   Option.some({
     appId: ModuleAppIdSchema.make(appId),
+    bootId: ModuleCredentialBootIdSchema.make('00000000-0000-4000-8000-000000000001'),
     buildMarker,
     compositionRevision,
-    ontosModuleCredential: 'attested_v1' as const,
+    hostId: ModuleCredentialHostIdSchema.make('fixture-host'),
+    ontosModuleCredential: 'attested_v2' as const,
   });
 const orderCredential = {
   appId: 'commerce-order',

@@ -253,13 +253,16 @@ export interface AuditedModuleCredential {
 
 /** One issue or retire pass, as the platform tenant's audit records it. */
 export interface ModuleCredentialPass {
+  /** The boot of the host that ran the pass: its own keys of other boots are what it retires as its own. */
+  readonly bootId: string;
   readonly compositionRevision: string;
   readonly credentials: readonly AuditedModuleCredential[];
   /** Retire passes only: the moment the host's revision took the authority, before which credentials are superseded. */
   readonly cutoff?: Date;
   readonly failed: readonly string[];
   readonly hostId: string;
-  readonly kind: 'issued' | 'retired';
+  /** `retired`: superseded by the authority holder's release; `retired_own`: the host's own keys of other boots. */
+  readonly kind: 'issued' | 'retired' | 'retired_own';
   readonly operationId: string;
   readonly outcome: 'denied' | 'failed' | 'succeeded';
   readonly outcomeCode: string;
@@ -285,6 +288,7 @@ export const recordModuleCredentialPass = Effect.fn('ModuleCredentials.recordPas
           authMethod: 'system',
           eventType: `platform.module_credentials.${pass.kind}`,
           evidenceJson: {
+            bootId: pass.bootId,
             compositionRevision: pass.compositionRevision,
             credentials: pass.credentials.map(({ appId, providerKeyId }) => ({ appId, providerKeyId })),
             cutoff: pass.cutoff === undefined ? null : DateTime.formatIso(DateTime.makeUnsafe(pass.cutoff)),

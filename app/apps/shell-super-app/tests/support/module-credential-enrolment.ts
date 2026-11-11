@@ -5,6 +5,10 @@ import {
   GatewayDelegationPolicyUnavailable,
   ModuleCredentialEnrolmentSource,
 } from '../../api/auth/gateway-delegation-policy.ts';
+import {
+  ModuleCredentialBootIdSchema,
+  ModuleCredentialHostIdSchema,
+} from '../../api/auth/module-credential-attestation.ts';
 
 /** What a test credential's issuing host attested: the module build and the release revision. */
 export interface TestModuleCredentialRelease {
@@ -42,9 +46,11 @@ export const enrolledModuleCredentials = (
               ? Option.none()
               : Option.some({
                   appId: ModuleAppIdSchema.make(credential.appId),
+                  bootId: ModuleCredentialBootIdSchema.make('00000000-0000-4000-8000-000000000001'),
                   buildMarker: release.buildMarker,
                   compositionRevision: release.compositionRevision,
-                  ontosModuleCredential: 'attested_v1' as const,
+                  hostId: ModuleCredentialHostIdSchema.make('fixture-host'),
+                  ontosModuleCredential: 'attested_v2' as const,
                 }),
         };
       }),

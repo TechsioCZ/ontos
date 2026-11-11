@@ -14,7 +14,7 @@ import { moduleCredentialConfigProvider } from '../../src/auth/owner-module-cred
 const ORDER_KEY = 'order-module-credential-0001';
 const PARTY_KEY = 'party-module-credential-0001';
 
-it.effect('claims a multi-owner process once; each owner slot is filled at most once, now or later', () =>
+it.effect('claims a multi-owner process once; only its receiver fills an owner slot, and replaces it later', () =>
   Effect.gen(function* claimOnce() {
     const environment = ConfigProvider.fromUnknown({ [MODULE_CREDENTIAL_VARIABLE]: 'environment-credential-000' });
     // A fresh read each time, as every delegated call reads its credential.
@@ -41,7 +41,7 @@ it.effect('claims a multi-owner process once; each owner slot is filled at most 
       }),
     ).toEqual({ accepted: ['commerce-order'], refused: ['pricing'] });
     expect(yield* heldHostedModuleCredentials).toEqual(['commerce-order']);
-    // A later handover fills the owner that still holds none, and never replaces a key already held.
+    // A later handover fills the owner that still holds none and replaces a held key (a renewal or a rotation).
     expect(
       yield* receiver.accept({
         credentials: {
@@ -50,8 +50,8 @@ it.effect('claims a multi-owner process once; each owner slot is filled at most 
         },
         schemaVersion: 1,
       }),
-    ).toEqual({ accepted: ['party-registry'], refused: ['commerce-order'] });
-    expect(yield* readAs('commerce-order')).toBe(ORDER_KEY);
+    ).toEqual({ accepted: ['commerce-order', 'party-registry'], refused: [] });
+    expect(yield* readAs('commerce-order')).toBe('replacement-order-module-key');
     expect(yield* readAs('party-registry')).toBe(PARTY_KEY);
     expect(yield* readAs('pricing')).toBeUndefined();
   }),

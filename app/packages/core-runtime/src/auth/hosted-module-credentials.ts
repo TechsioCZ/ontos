@@ -31,13 +31,13 @@ export const HostedModuleCredentialsSchema = Schema.Struct({
 });
 export type HostedModuleCredentials = typeof HostedModuleCredentialsSchema.Type;
 
-/** What one handover changed: the owners whose empty slot it filled, and the entries it refused. */
+/** What one handover changed: the owners whose slot now holds the handed key, and the entries it refused. */
 export interface HostedModuleCredentialAcceptance {
   readonly accepted: readonly string[];
   readonly refused: readonly string[];
 }
 
-/** The one receiver of a multi-owner process: only the host code that claimed it can fill the owners' slots. */
+/** The one receiver of a multi-owner process: only the host code that claimed it fills or replaces owners' keys. */
 export interface HostedModuleCredentialReceiver {
   readonly accept: (handover: HostedModuleCredentials) => Effect.Effect<HostedModuleCredentialAcceptance>;
   readonly owners: readonly string[];

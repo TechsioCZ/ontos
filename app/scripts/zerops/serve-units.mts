@@ -67,7 +67,7 @@ const command = Command.make('serve-units', { ids: Argument.String('app-id').pip
   Effect.gen(function* serveUnits() {
     yield* startProcessObservability(ids.length === 1 && ids[0] === 'shell-super-app' ? 'shell' : 'owners');
     // Before any owner loads: each owner then reads only its own module credential, never one from the environment,
-    // and the host can hand keys over on the private channel now or later (once per owner).
+    // and the host hands keys over on the private channel now and replaces them later (late, renewed, rotated).
     yield* receiveModuleCredentialHandover(ids);
     const units = yield* readHostedUnits;
     const selected = ids.map((id) => units.find((unit) => unit.id === id));

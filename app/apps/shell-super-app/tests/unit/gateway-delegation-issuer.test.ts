@@ -36,6 +36,10 @@ import {
 import { issueDelegatedGatewayContextAssertion } from '../../api/auth/gateway-delegation-issuer.ts';
 import { ModuleCredentialEnrolmentSource } from '../../api/auth/gateway-delegation-policy.ts';
 import { GatewayDelegationVerificationLive } from '../../api/auth/gateway-delegation-verification.ts';
+import {
+  ModuleCredentialBootIdSchema,
+  ModuleCredentialHostIdSchema,
+} from '../../api/auth/module-credential-attestation.ts';
 import { GatewayDelegationExchangeLedger } from '../../api/auth/gateway-delegation-exchanges.service.ts';
 import { GatewayDelegationExchangeReplay } from '../../api/auth/gateway-delegation-exchange-replay.ts';
 import { GatewayDelegationExchangeUnavailable } from '../../api/auth/gateway-delegation-exchange-unavailable.ts';
@@ -209,9 +213,11 @@ const attestedForCatalogBuild = <Credential extends object>(
         ? Option.none()
         : Option.some({
             appId: ModuleAppIdSchema.make('catalog'),
+            bootId: ModuleCredentialBootIdSchema.make('00000000-0000-4000-8000-000000000001'),
             buildMarker: catalogBuild.deployment.buildMarker,
             compositionRevision: installed.composition.revision,
-            ontosModuleCredential: 'attested_v1' as const,
+            hostId: ModuleCredentialHostIdSchema.make('fixture-host'),
+            ontosModuleCredential: 'attested_v2' as const,
           }),
   };
 };

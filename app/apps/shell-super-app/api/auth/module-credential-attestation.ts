@@ -4,13 +4,26 @@ import { Option, Schema } from 'effect';
 /**
  * What a module credential was issued for, recorded with the key (its provider metadata) when the issuing host bound
  * it: the module, that module's build marker and the composition revision of the release the issuing host serves.
- * The Shell binds the key only while the installed release has exactly that module build and that revision.
+ * The Shell binds the key only while the installed release has exactly that module build and that revision. It also
+ * names the issuing host and that host's boot, so a host can prove which keys are its own: those of its other boots
+ * and its rotated keys are what it retires itself.
  */
+/** One boot of a host process: a fresh id each time it starts. */
+export const ModuleCredentialBootIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('ModuleCredentialBootId'),
+);
+/** The host that issued a key: its container's host name. */
+export const ModuleCredentialHostIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(
+  Schema.brand('ModuleCredentialHostId'),
+);
+
 export const ModuleCredentialAttestationSchema = Schema.Struct({
   appId: ModuleAppIdSchema,
+  bootId: ModuleCredentialBootIdSchema,
   buildMarker: Schema.String.check(Schema.isMinLength(1)),
   compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
-  ontosModuleCredential: Schema.Literal('attested_v1'),
+  hostId: ModuleCredentialHostIdSchema,
+  ontosModuleCredential: Schema.Literal('attested_v2'),
 });
 export type ModuleCredentialAttestation = typeof ModuleCredentialAttestationSchema.Type;
 

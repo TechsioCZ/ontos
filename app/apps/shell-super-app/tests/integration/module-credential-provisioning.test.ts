@@ -4,13 +4,14 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { and, eq, like, sql } from 'drizzle-orm';
-import { Clock, Duration, Effect, Exit, Layer, Redacted, Schema, Stream } from 'effect';
+import { Clock, DateTime, Duration, Effect, Exit, Layer, Redacted, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 
 import { ApiKeyProviderUnavailableError, ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
+import { apikey } from '../../api/auth/db/schema.ts';
 import { GatewayDelegationError } from '../../api/auth/gateway-delegation-errors.ts';
 import {
   admitIntegrationCredential,
@@ -22,7 +23,9 @@ import {
 import { moduleCredentialReleaseOf } from '../../api/auth/module-credential-attestation.ts';
 import type { ModuleCredentialRelease } from '../../api/auth/module-credential-attestation.ts';
 import {
+  MODULE_CREDENTIAL_LIFETIME,
   provisionModuleCredentials,
+  retireOwnModuleCredentials,
   retireSupersededModuleCredentials,
 } from '../../api/auth/module-credential-provisioning.service.ts';
 import {
@@ -112,12 +115,18 @@ it.live('provisions, attests, retires and audits platform module credentials acr
       };
       const releaseTwo = otherRelease('b');
       const releaseThree = otherRelease('c');
+      // Every issue is its own boot of the named host.
       const issue = (hostId: string, release: ModuleCredentialRelease) =>
-        provisionModuleCredentials({ appIds: APP_IDS, hostId, operationId: crypto.randomUUID(), release }).pipe(
-          Effect.provide(services),
-        );
+        provisionModuleCredentials({
+          appIds: APP_IDS,
+          bootId: crypto.randomUUID(),
+          hostId,
+          operationId: crypto.randomUUID(),
+          release,
+        }).pipe(Effect.provide(services));
       const retire = (hostId: string, release: ModuleCredentialRelease, current: ReadonlySet<string>) =>
         retireSupersededModuleCredentials({
+          bootId: crypto.randomUUID(),
           compositionRevision: release.compositionRevision,
           current,
           hostId,
@@ -337,9 +346,13 @@ it.live(
             Layer.succeed(CoreDatabase, { executor: coreDatabase }),
           );
         const issueWith = (apiKeys: typeof ApiKeyService.Service, hostId: string) =>
-          provisionModuleCredentials({ appIds: APP_IDS, hostId, operationId: crypto.randomUUID(), release }).pipe(
-            Effect.provide(servicesWith(apiKeys)),
-          );
+          provisionModuleCredentials({
+            appIds: APP_IDS,
+            bootId: crypto.randomUUID(),
+            hostId,
+            operationId: crypto.randomUUID(),
+            release,
+          }).pipe(Effect.provide(servicesWith(apiKeys)));
         const bindingStatus = (providerKeyId: string) =>
           coreDatabase
             .select({ status: principalAuthBindings.status })
@@ -366,6 +379,7 @@ it.live(
             ),
         };
         const retired = yield* retireSupersededModuleCredentials({
+          bootId: crypto.randomUUID(),
           compositionRevision: release.compositionRevision,
           current: hostB.providerKeyIds,
           hostId: 'host-b',
@@ -405,6 +419,7 @@ it.live(
         const operationId = crypto.randomUUID();
         const pass = yield* provisionModuleCredentials({
           appIds: APP_IDS,
+          bootId: crypto.randomUUID(),
           hostId: 'host-c',
           operationId,
           release,
@@ -437,6 +452,7 @@ it.live('runs the provisioning program as the runtime role and hands its keys ov
           'issue',
           `--operation=${crypto.randomUUID()}`,
           '--host=integration-host',
+          `--boot=${crypto.randomUUID()}`,
           `--revision=${release.compositionRevision}`,
           ...builds,
         ],
@@ -477,7 +493,141 @@ it.live('runs the provisioning program as the runtime role and hands its keys ov
         const secret = output.credentials[appId];
         expect(secret !== undefined && (yield* verifies(keys, secret))).toBe(true);
         expect(secret !== undefined && logs.includes(Redacted.value(secret))).toBe(false);
+        // Each key's end of life travels with it, so the host can rotate it in time.
+        expect(output.keys[appId]?.expiresAt).toBeDefined();
       }
     }),
   ).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer))),
+);
+
+it.live(
+  "retires a host's own earlier boots' and rotated keys, never another host's, and lets every key end within a day",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* ownKeys() {
+        const { adminDatabase, authDatabase, catalog, coreDatabase, keys, services } = yield* platform;
+        const release: ModuleCredentialRelease = {
+          ...moduleCredentialReleaseOf(catalog),
+          buildMarkers: { ...moduleCredentialReleaseOf(catalog).buildMarkers, [NOT_INSTALLED]: 'commerce-cart-build' },
+        };
+        // The release already holds the authority when its containers boot: every key below is bound after it took it.
+        yield* adminDatabase
+          .update(applicationCompositionAuthority)
+          .set({ phase: 'active', revision: release.compositionRevision, revisionActivatedAt: sql`clock_timestamp()` })
+          .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+        yield* Effect.sleep(Duration.millis(20));
+        const issue = (hostId: string, bootId: string) =>
+          provisionModuleCredentials({
+            appIds: APP_IDS,
+            bootId,
+            hostId,
+            operationId: crypto.randomUUID(),
+            release,
+          }).pipe(Effect.provide(services));
+        const retireOwn = (hostId: string, bootId: string, keep: ReadonlySet<string>) =>
+          retireOwnModuleCredentials({
+            bootId,
+            compositionRevision: release.compositionRevision,
+            hostId,
+            keep,
+            operationId: crypto.randomUUID(),
+          }).pipe(Effect.provide(services));
+        const verifiesAll = (pass: { readonly credentials: ReadonlyMap<string, Redacted.Redacted> }) =>
+          Effect.forEach([...pass.credentials.values()], (secret) => verifies(keys, secret)).pipe(
+            Effect.map((verified) => verified.every(Boolean)),
+          );
+        const verifiesNone = (pass: { readonly credentials: ReadonlyMap<string, Redacted.Redacted> }) =>
+          Effect.forEach([...pass.credentials.values()], (secret) => verifies(keys, secret)).pipe(
+            Effect.map((verified) => verified.every((one) => !one)),
+          );
+
+        // Boot K1 of host A, then another container B of the same release, then A restarts as boot K2.
+        const issuedAt = yield* Clock.currentTimeMillis;
+        const bootOne = yield* issue('host-a', crypto.randomUUID());
+        const otherContainer = yield* issue('host-b', crypto.randomUUID());
+        const bootTwoId = crypto.randomUUID();
+        const bootTwo = yield* issue('host-a', bootTwoId);
+
+        // Every key ends a day after it was issued, whatever happens to its host.
+        for (const issued of bootOne.keys.values()) {
+          const lifetime = DateTime.toEpochMillis(issued.expiresAt) - issuedAt;
+          expect(Math.abs(lifetime - Duration.toMillis(MODULE_CREDENTIAL_LIFETIME))).toBeLessThan(60_000);
+          const stored = yield* keys.metadata(issued.providerKeyId);
+          expect(stored.expiresAt).toBe(DateTime.formatIso(issued.expiresAt));
+        }
+
+        // The authority holder's retirement leaves every key of this release alone: all were bound after it took the
+        // authority. Without a retirement of its own, boot K1's keys would stay usable until they end.
+        expect(
+          yield* retireSupersededModuleCredentials({
+            bootId: bootTwoId,
+            compositionRevision: release.compositionRevision,
+            current: bootTwo.providerKeyIds,
+            hostId: 'host-a',
+            operationId: crypto.randomUUID(),
+          }).pipe(Effect.provide(services)),
+        ).toEqual({ failed: 0, holdsAuthority: true, retired: 0 });
+        expect(yield* verifiesAll(bootOne)).toBe(true);
+
+        // Boot K2 retires host A's own other keys: exactly boot K1's, never container B's or its own.
+        expect(yield* retireOwn('host-a', bootTwoId, bootTwo.providerKeyIds)).toEqual({
+          failed: 0,
+          retired: APP_IDS.length,
+        });
+        expect(yield* verifiesNone(bootOne)).toBe(true);
+        expect(yield* verifiesAll(otherContainer)).toBe(true);
+        expect(yield* verifiesAll(bootTwo)).toBe(true);
+
+        // A rotation in boot K2: the rotated keys are handed over, then K2's earlier keys are retired the same way.
+        const rotated = yield* issue('host-a', bootTwoId);
+        expect(yield* retireOwn('host-a', bootTwoId, rotated.providerKeyIds)).toEqual({
+          failed: 0,
+          retired: APP_IDS.length,
+        });
+        expect(yield* verifiesNone(bootTwo)).toBe(true);
+        expect(yield* verifiesAll(rotated)).toBe(true);
+        expect(yield* verifiesAll(otherContainer)).toBe(true);
+
+        // A host that holds every key it was issued retires nothing; another host never names A's keys as its own.
+        expect(yield* retireOwn('host-a', bootTwoId, rotated.providerKeyIds)).toEqual({ failed: 0, retired: 0 });
+        expect(yield* retireOwn('host-c', crypto.randomUUID(), new Set())).toEqual({ failed: 0, retired: 0 });
+        expect(yield* verifiesAll(rotated)).toBe(true);
+
+        // Every key the Shell binds now is A's rotated key or B's; each own retirement is audited with host and boot.
+        const live = new Set(
+          (yield* loadModuleCredentialEnrolment(coreDatabase)).map(({ providerKeyId }) => providerKeyId),
+        );
+        expect([...live].toSorted()).toEqual([...rotated.providerKeyIds, ...otherContainer.providerKeyIds].toSorted());
+        const ownAudits = yield* coreDatabase
+          .select({ evidence: auditEvents.evidenceJson })
+          .from(auditEvents)
+          .where(
+            and(
+              eq(auditEvents.tenantId, PLATFORM_TENANT.tenantId),
+              eq(auditEvents.eventType, 'platform.module_credentials.retired_own'),
+            ),
+          );
+        expect(ownAudits).toHaveLength(4);
+        const recorded = JSON.stringify(ownAudits);
+        expect(recorded).toContain(`"bootId":"${bootTwoId}"`);
+        expect(recorded).toContain('"hostId":"host-a"');
+        for (const providerKeyId of [...bootOne.providerKeyIds, ...bootTwo.providerKeyIds]) {
+          expect(recorded).toContain(providerKeyId);
+        }
+        for (const providerKeyId of otherContainer.providerKeyIds) {
+          expect(recorded.includes(providerKeyId)).toBe(false);
+        }
+        // The Auth store keeps each retired key, disabled.
+        const disabled = yield* authDatabase.executor
+          .select({ enabled: apikey.enabled, id: apikey.id })
+          .from(apikey)
+          .where(eq(apikey.referenceId, 'ontos-platform-module-credentials'));
+        expect(
+          disabled
+            .filter(({ enabled }) => enabled === false)
+            .map(({ id }) => id)
+            .toSorted(),
+        ).toEqual([...bootOne.providerKeyIds, ...bootTwo.providerKeyIds].toSorted());
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer))),
 );

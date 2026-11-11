@@ -257,7 +257,8 @@ say "provisioning module credentials for the published composition"
 # The pass writes its output to file descriptor 3, captured here into memory; its logs go to the terminal.
 MODULE_CREDENTIALS="$(ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="http://127.0.0.1:$COMPOSITION_PORT/active" \
   "${WITH_ENV[@]}" node scripts/zerops/provision-module-credentials.mts issue-installed \
-  --operation="$(uuidgen | tr '[:upper:]' '[:lower:]')" --host="local-demo:$(hostname -s)" 3>&1 1>&2)" ||
+  --operation="$(uuidgen | tr '[:upper:]' '[:lower:]')" --host="local-demo:$(hostname -s)" \
+  --boot="$(uuidgen | tr '[:upper:]' '[:lower:]')" 3>&1 1>&2)" ||
   die "module credential provisioning failed"
 for id in "${VERTICALS[@]}"; do
   if is_caller "$id"; then hand_over_credential "$id" || true; fi

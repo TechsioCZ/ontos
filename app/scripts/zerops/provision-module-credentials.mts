@@ -3,14 +3,18 @@
  * The platform's module credential provisioning, run with the Shell's settings (its Better Auth secret and database).
  * Every environment runs this same program: the app host on each boot, the local demo on each start.
  *
- *   node scripts/zerops/provision-module-credentials.mts issue --operation <id> --host <host> --revision <rev> <app-id>=<build> ...
- *     Issues each module a fresh key attested for that module build and that composition revision (the release the
- *     issuing host serves), and writes the pass's output (keys included) to file descriptor 3, the private handover
- *     channel its parent opened. Standard output and standard error stay logs. Nothing is written to a file.
- *   node scripts/zerops/provision-module-credentials.mts issue-installed --operation <id> --host <host>
+ *   node scripts/zerops/provision-module-credentials.mts issue --operation <id> --host <host> --boot <id> --revision <rev> <app-id>=<build> ...
+ *     Issues each module a fresh 24-hour key attested for that module build, that composition revision (the release
+ *     the issuing host serves) and that host and boot, and writes the pass's output (keys included) to file
+ *     descriptor 3, the private handover channel its parent opened. Standard output and standard error stay logs.
+ *     Nothing is written to a file.
+ *   node scripts/zerops/provision-module-credentials.mts issue-installed --operation <id> --host <host> --boot <id>
  *     The same, for every calling module of the release the Shell serves now (the local demo serves them all).
- *   node scripts/zerops/provision-module-credentials.mts retire --operation <id> --host <host> --revision <rev> <provider-key-id> ...
+ *   node scripts/zerops/provision-module-credentials.mts retire --operation <id> --host <host> --boot <id> --revision <rev> <provider-key-id> ...
  *     When <revision> holds the authority, revokes every module credential bound before it took the authority.
+ *   node scripts/zerops/provision-module-credentials.mts retire-own --operation <id> --host <host> --boot <id> --revision <rev> [<provider-key-id> ...]
+ *     Revokes every module credential attested for <host> except the named ones it holds now: its earlier boots'
+ *     keys and the keys it rotated out.
  *
  * Logs name modules and counts only, never a key. Every pass is audited in the platform tenant.
  */
@@ -31,6 +35,7 @@ import { ShellCryptoLive } from '../../apps/shell-super-app/api/auth/gateway-iss
 import type { ModuleCredentialRelease } from '../../apps/shell-super-app/api/auth/module-credential-attestation.ts';
 import {
   provisionModuleCredentials,
+  retireOwnModuleCredentials,
   retireSupersededModuleCredentials,
 } from '../../apps/shell-super-app/api/auth/module-credential-provisioning.service.ts';
 import { AuthPersistenceLive } from '../../apps/shell-super-app/api/auth/runtime-infrastructure.ts';
@@ -86,10 +91,12 @@ const releaseOf = (compositionRevision: string, builds: readonly string[]) => {
 
 const OPERATION_ID = Flag.String('operation');
 const HOST_ID = Flag.String('host');
+const BOOT_ID = Flag.String('boot');
 const REVISION = Flag.String('revision');
 
 const issueFor = (input: {
   readonly appIds: readonly string[];
+  readonly bootId: string;
   readonly hostId: string;
   readonly operationId: string;
   readonly release: ModuleCredentialRelease;
@@ -99,7 +106,7 @@ const issueFor = (input: {
     const output = yield* Schema.encodeUnknownEffect(ProvisioningOutputJsonSchema)({
       credentials: Object.fromEntries(provisioned.credentials),
       failedAppIds: provisioned.failedAppIds,
-      providerKeyIds: [...provisioned.providerKeyIds],
+      keys: Object.fromEntries(provisioned.keys),
       schemaVersion: 1,
     });
     // Standard output is a log stream here; only the private channel carries keys.
@@ -114,22 +121,23 @@ const issueFor = (input: {
 const issue = Command.make(
   'issue',
   {
+    bootId: BOOT_ID,
     builds: Argument.String('app-id=build-marker').pipe(Argument.atLeast(1)),
     hostId: HOST_ID,
     operationId: OPERATION_ID,
     revision: REVISION,
   },
-  ({ builds, hostId, operationId, revision }) =>
+  ({ bootId, builds, hostId, operationId, revision }) =>
     Effect.gen(function* issueForRelease() {
       const release = yield* releaseOf(revision, builds);
-      return yield* issueFor({ appIds: Object.keys(release.buildMarkers), hostId, operationId, release });
+      return yield* issueFor({ appIds: Object.keys(release.buildMarkers), bootId, hostId, operationId, release });
     }),
 );
 
 const issueInstalled = Command.make(
   'issue-installed',
-  { hostId: HOST_ID, operationId: OPERATION_ID },
-  ({ hostId, operationId }) =>
+  { bootId: BOOT_ID, hostId: HOST_ID, operationId: OPERATION_ID },
+  ({ bootId, hostId, operationId }) =>
     Effect.gen(function* issueForInstalledRelease() {
       const installed = yield* installedModuleCatalog;
       const callers = installed.contracts.filter(({ deployment }) =>
@@ -137,6 +145,7 @@ const issueInstalled = Command.make(
       );
       return yield* issueFor({
         appIds: callers.map(({ deployment }) => deployment.appId),
+        bootId,
         hostId,
         operationId,
         release: {
@@ -152,13 +161,15 @@ const issueInstalled = Command.make(
 const retire = Command.make(
   'retire',
   {
+    bootId: BOOT_ID,
     hostId: HOST_ID,
     operationId: OPERATION_ID,
     providerKeyIds: Argument.String('provider-key-id').pipe(Argument.atLeast(1)),
     revision: REVISION,
   },
-  ({ hostId, operationId, providerKeyIds, revision }) =>
+  ({ bootId, hostId, operationId, providerKeyIds, revision }) =>
     retireSupersededModuleCredentials({
+      bootId,
       compositionRevision: revision,
       current: new Set(providerKeyIds),
       hostId,
@@ -174,8 +185,33 @@ const retire = Command.make(
     ),
 );
 
+const retireOwn = Command.make(
+  'retire-own',
+  {
+    bootId: BOOT_ID,
+    hostId: HOST_ID,
+    operationId: OPERATION_ID,
+    providerKeyIds: Argument.String('provider-key-id').pipe(Argument.variadic()),
+    revision: REVISION,
+  },
+  ({ bootId, hostId, operationId, providerKeyIds, revision }) =>
+    retireOwnModuleCredentials({
+      bootId,
+      compositionRevision: revision,
+      hostId,
+      keep: new Set(providerKeyIds),
+      operationId,
+    }).pipe(
+      Effect.flatMap((outcome) =>
+        Console.log(
+          `[module-credentials] retired ${String(outcome.retired)} of this host's own earlier credential(s); ${String(outcome.failed)} could not be`,
+        ),
+      ),
+    ),
+);
+
 const command = Command.make('provision-module-credentials').pipe(
-  Command.withSubcommands([issue, issueInstalled, retire]),
+  Command.withSubcommands([issue, issueInstalled, retire, retireOwn]),
   // The pools live in this provided scope and close as soon as the pass ends, so the process exits at once.
   Command.provide(ProvisioningLive),
 );
