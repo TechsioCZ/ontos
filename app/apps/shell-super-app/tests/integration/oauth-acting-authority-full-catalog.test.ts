@@ -48,7 +48,7 @@ import { spiceDbTransport } from '../../../../packages/core-runtime/src/permissi
 import { deriveOntosModuleDeploymentContract } from '../../../../scripts/generate-ontos-module-contract.mts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
-import { emptySubjectAccessTrace, moduleCarriers } from '../../api/agent-platform/caller.ts';
+import { emptySubjectAccessTrace, moduleCarriers, subjectModuleAccess } from '../../api/agent-platform/caller.ts';
 import {
   makeInstalledModuleCatalogLoader,
   ShellInstalledModuleCatalog,
@@ -470,6 +470,90 @@ const oneQuestionAtATime = (input: SubjectInspectionInput) =>
     return { access: [...access], run: [...run] };
   });
 
+/**
+ * The module hints as they were asked before the hints stopped at the first admitted question: every carrier and
+ * every Action in one batch. The reference the two-phase `subjectModuleAccess` must equal set for set.
+ */
+const everythingAtOnce = (input: SubjectInspectionInput) =>
+  Effect.gen(function* askEverything() {
+    const inspection = yield* SubjectAccessInspection;
+    const installed = yield* (yield* ShellInstalledModuleCatalog).load;
+    yield* inspection.scope(input);
+    const carriers = moduleCarriers(installed);
+    const actions = installed.contracts.flatMap(({ manifest }) =>
+      manifest.publicSurface.actions.filter((action) => action.legalEntityScope !== 'forbidden'),
+    );
+    const actionKeys = [...new Set(actions.map(({ actionKey }) => actionKey))];
+    const inspected = yield* inspection.capabilities({
+      ...input,
+      actionKeys,
+      questions: carriers.map((carrier) => ({
+        carrier: { accessDeclaration: carrier.declaration },
+        legalEntityScope: carrier.legalEntityScope,
+        listing: carrier.declaration?.kind === 'read' && carrier.declaration.selectors.length > 0,
+      })),
+    });
+    const access = new Set<string>();
+    const propose = new Set<string>();
+    const run = new Set<string>();
+    for (const [index, carrier] of carriers.entries()) {
+      const outcome = inspected.answers[index]?.decision.outcome;
+      if (outcome === 'ALLOWED' || outcome === 'NEEDS_APPROVAL') {
+        access.add(carrier.moduleId);
+      }
+    }
+    const byKey = new Map(inspected.authorities.map((authority) => [authority.actionKey, authority]));
+    for (const action of actions) {
+      const authority = byKey.get(action.actionKey);
+      if (authority?.run === 'allowed') {
+        run.add(action.owningModuleId);
+        access.add(action.owningModuleId);
+      }
+      if (authority?.propose === 'allowed') {
+        propose.add(action.owningModuleId);
+        access.add(action.owningModuleId);
+      }
+    }
+    return { access, propose, run };
+  });
+
+const sortedSet = (values: ReadonlySet<string>) => [...values].toSorted();
+
+/** The two-phase hints equal the everything-at-once reference and leave no more evidence rows than it does. */
+const expectSameHints = (input: {
+  readonly authorityCase: AuthorityCase;
+  readonly principalId: string;
+  readonly snapshot: ActiveApplicationCompositionSnapshot;
+}) =>
+  Effect.gen(function* sameHints() {
+    const { companyId, tenantId } = input.authorityCase;
+    const inspectionOf = (correlationId: string) =>
+      sessionScope({ correlationId, legalEntityId: companyId, principalId: input.principalId, tenantId }).pipe(
+        Effect.map((requesterScope): SubjectInspectionInput => ({
+          queryScope: { legalEntityId: companyId, tenantId },
+          requesterScope,
+          subject: { principalId: input.principalId, tenantId },
+        })),
+      );
+    const hints = yield* measured({
+      authorityCase: input.authorityCase,
+      correlationId: `hints-${input.principalId}`,
+      read: subjectModuleAccess(yield* inspectionOf(`hints-${input.principalId}`)),
+      snapshot: input.snapshot,
+    });
+    const reference = yield* measured({
+      authorityCase: input.authorityCase,
+      correlationId: `reference-${input.principalId}`,
+      read: everythingAtOnce(yield* inspectionOf(`reference-${input.principalId}`)),
+      snapshot: input.snapshot,
+    });
+    expect(sortedSet(hints.value.access)).toEqual(sortedSet(reference.value.access));
+    expect(sortedSet(hints.value.run)).toEqual(sortedSet(reference.value.run));
+    expect(sortedSet(hints.value.propose)).toEqual(sortedSet(reference.value.propose));
+    expect(hints.decisionRows).toBeLessThanOrEqual(reference.decisionRows);
+    return { hints, reference };
+  });
+
 const reportPath = Config.option(Config.String('ACTING_AUTHORITY_REPORT'));
 const ownerReportPath = Config.option(Config.String('OWNER_AUTHORITY_REPORT'));
 
@@ -516,13 +600,14 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
             ).length;
             const capabilityKeys = new Set(carriers.flatMap(({ declaration }) => declaration?.key ?? []));
             expect(snapshot.composition.modules.length).toBeGreaterThan(20);
-            expect(traced.carriers).toBe(carriers.length);
-            expect(traced.inspectionCalls).toBe(2);
-            expect(batch.counters.compositionLoads).toBeLessThanOrEqual(6);
+            // Only the carriers of modules no Action admitted are asked, in at most two capability batches.
+            expect(traced.carriers).toBeLessThanOrEqual(carriers.length);
+            expect(traced.inspectionCalls).toBeLessThanOrEqual(3);
+            expect(batch.counters.compositionLoads).toBeLessThanOrEqual(9);
             expect(batch.counters.checkBulk).toBeLessThanOrEqual(2 + listCarriers);
-            expect(batch.transactions - batch.cellReads).toBeLessThanOrEqual(16);
-            // Every cell set of the batch is read in ONE transaction; only a LIST question reads its own.
-            expect(batch.cellBatches).toBe(1);
+            expect(batch.transactions - batch.cellReads).toBeLessThanOrEqual(24);
+            // Every cell set of a capability batch is read in ONE transaction; only a LIST question reads its own.
+            expect(batch.cellBatches).toBeLessThanOrEqual(2);
             expect(batch.cellReads).toBeLessThanOrEqual(listCarriers);
             expect(capabilityKeys.size).toBeGreaterThan(100);
 
@@ -545,7 +630,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
             });
             expect(single.value.access).toEqual([...batch.value.live.read]);
             expect(batch.decisionRows).toBeGreaterThan(0);
-            expect(batch.decisionRows).toBe(single.decisionRows);
+            expect(batch.decisionRows).toBeLessThanOrEqual(single.decisionRows);
+            yield* expectSameHints({ authorityCase, principalId: person, snapshot });
             expect(batch.transactions * 4).toBeLessThan(single.transactions);
 
             const path = yield* reportPath;
@@ -606,14 +692,15 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               // The owner reaches every module the tenant runs.
               expect(owned.value.live.read.size).toBeGreaterThan(20);
               expect(owned.value.offered.length).toBe(owned.value.live.read.size);
-              expect((yield* Ref.get(trace)).inspectionCalls).toBe(2);
+              expect((yield* Ref.get(trace)).inspectionCalls).toBeLessThanOrEqual(3);
+              const { reference } = yield* expectSameHints({ authorityCase, principalId: owner, snapshot });
               expect(owned.counters.checkBulk).toBeLessThanOrEqual(2 + listCarriers);
               // The work does not grow with the rights the catalog declares (hundreds): one batched cell read, one
               // read per LIST question, a fixed number of identity, scope and evidence transactions. Before the batch,
               // this owner cost one transaction per capability and mode: 463 transactions, 3 252 statements.
-              expect(owned.cellBatches).toBe(1);
+              expect(owned.cellBatches).toBeLessThanOrEqual(2);
               expect(owned.cellReads).toBeLessThanOrEqual(listCarriers);
-              expect(owned.transactions - owned.cellReads).toBeLessThanOrEqual(16);
+              expect(owned.transactions - owned.cellReads).toBeLessThanOrEqual(24);
               expect(owned.statements).toBeLessThanOrEqual(300);
 
               const path = yield* ownerReportPath;
@@ -628,6 +715,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
                     modules: snapshot.composition.modules.length,
                     owner: reportOf(owned),
                     read: owned.value.live.read.size,
+                    reference: reportOf(reference),
                   }),
                 );
               }
