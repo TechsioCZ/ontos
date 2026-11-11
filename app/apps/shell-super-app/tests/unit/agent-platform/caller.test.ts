@@ -14,7 +14,7 @@ import {
 } from '@app/core-runtime/access/enforcement';
 import type { SubjectInspectionStages } from '@app/core-runtime/access/enforcement';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
-import { Effect, Fiber, Layer, Predicate, Ref, Result, Schema } from 'effect';
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Predicate, Ref, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -894,7 +894,12 @@ it.effect('denies a foreign-tenant subject without changing the requester tenant
 );
 
 /** One routine run Action of `owner`, under an access key unique within that module. */
-const moduleAction = (owner: string, actionKey: string, owningModuleId = owner): OntosActionContract => {
+const moduleAction = (
+  owner: string,
+  actionKey: string,
+  owningModuleId = owner,
+  legalEntityScope: OntosActionContract['legalEntityScope'] = 'required',
+): OntosActionContract => {
   actionFixtureSequence += 1;
   return Schema.decodeUnknownSync(OntosActionContractSchema)({
     accessDeclaration: {
@@ -916,7 +921,7 @@ const moduleAction = (owner: string, actionKey: string, owningModuleId = owner):
       scope: 'tenant',
     },
     idempotency: 'required',
-    legalEntityScope: 'required',
+    legalEntityScope,
     owningModuleId,
     schemaVersion: '1',
   });
@@ -1310,5 +1315,106 @@ it.effect('a request that goes away mid-description still lets every started evi
       [1, reference.first],
       [2, reference.second],
     ]);
+  }),
+);
+
+/** A module with one Action asked in the tenant context and one asked in the company. */
+const tenantAndCompanyCatalog = actionModulesCatalog({
+  'alpha.mod': [
+    moduleAction('alpha.mod', 'alpha.mod.tenant-wide', 'alpha.mod', 'optional'),
+    moduleAction('alpha.mod', 'alpha.mod.in-company'),
+  ],
+});
+const otherCompany = '71000000-0000-4000-8000-000000000099';
+
+it.effect(
+  'answers a denied scope as denied, with the plain path evidence, although preparing another context failed',
+  () =>
+    Effect.gen(function* preparedFailureUnderDeniedScope() {
+      const { installed, snapshot } = yield* tenantAndCompanyCatalog;
+      // The person belongs to another company, so the scope check denies; the tenant context cannot even be read.
+      const fixture = () =>
+        subjectInspectionFixture({
+          onScopeRead: (_principal, company) =>
+            company === undefined ? Effect.fail(accessDecisionUnavailable('tenant context unreadable')) : Effect.void,
+          snapshot,
+          subjects: [{ legalEntityId: otherCompany, principalId, tenantId }],
+        });
+      const staged = fixture();
+      const unshared = fixture();
+      const catalogLoad = { load: Effect.succeed(installed) };
+      const hints = yield* subjectModuleAccess(humanRequest).pipe(
+        Effect.provideService(ShellInstalledModuleCatalog, catalogLoad),
+        Effect.provide(staged.layer),
+      );
+      const reference = yield* subjectModuleAccess(humanRequest).pipe(
+        Effect.provideService(ShellInstalledModuleCatalog, catalogLoad),
+        Effect.provide(plainStages(unshared)),
+      );
+      expect(sortedHints(hints)).toEqual({ access: [], propose: [], run: [] });
+      expect(sortedHints(hints)).toEqual(sortedHints(reference));
+      expect(staged.reads.evidenceRows).toBe(unshared.reads.evidenceRows);
+    }),
+);
+
+it.effect('a scope check waiting on a shared resolution gets its own answer when the preparing caller fails', () =>
+  Effect.gen(function* preparingCallerFails() {
+    const { snapshot } = yield* tenantAndCompanyCatalog;
+    // The company read is slow; the tenant context fails at once. Preparing starts both before the scope check asks.
+    const fixture = subjectInspectionFixture({
+      onScopeRead: (_principal, company) =>
+        company === undefined
+          ? Effect.fail(accessDecisionUnavailable('tenant context unreadable'))
+          : Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow, { discard: true }),
+      snapshot,
+      subjects: [{ legalEntityId: otherCompany, principalId, tenantId }],
+    });
+    const outcome = yield* Effect.gen(function* stagedScope() {
+      const inspection = yield* SubjectAccessInspection;
+      return yield* inspection.staged(humanRequest, (stages) =>
+        Effect.all(
+          [
+            stages.prepare({ actionKeys: ['alpha.mod.tenant-wide', 'alpha.mod.in-company'], questions: [] }),
+            stages.scope,
+          ],
+          { concurrency: 2 },
+        ),
+      );
+    }).pipe(Effect.provide(fixture.layer), Effect.exit);
+    // The scope check answers as alone: the person is not in this company. Never an interruption or a failure.
+    expect(Exit.isSuccess(outcome) ? outcome.value[1].decision : Cause.pretty(outcome.cause)).toBe('denied');
+  }),
+);
+
+it.effect('a waiter on a shared resolution gets a definite answer when the caller that started it is interrupted', () =>
+  Effect.gen(function* firstCallerInterrupted() {
+    const { snapshot } = yield* tenantAndCompanyCatalog;
+    const entered = yield* Deferred.make<boolean>();
+    const release = yield* Deferred.make<boolean>();
+    const fixture = subjectInspectionFixture({
+      // The company read waits until the test releases it.
+      onScopeRead: (_principal, company) =>
+        company === undefined
+          ? Effect.void
+          : Deferred.succeed(entered, true).pipe(Effect.andThen(Deferred.await(release)), Effect.asVoid),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const outcome = yield* Effect.gen(function* twoCallers() {
+      const inspection = yield* SubjectAccessInspection;
+      return yield* inspection.staged(humanRequest, (stages) =>
+        Effect.gen(function* interruptTheFirst() {
+          const first = yield* Effect.forkChild(stages.scope);
+          yield* Deferred.await(entered);
+          const second = yield* Effect.forkChild(stages.scope.pipe(Effect.timeout('1 second'), Effect.exit));
+          yield* Fiber.interrupt(first);
+          yield* Deferred.succeed(release, true);
+          // A hang would end at the timeout, never stall the suite.
+          yield* TestClock.adjust('2 seconds');
+          return yield* Fiber.join(second);
+        }),
+      );
+    }).pipe(Effect.provide(fixture.layer));
+    expect(Exit.isSuccess(outcome) ? outcome.value.decision : Cause.pretty(outcome.cause)).toBe('allowed');
   }),
 );

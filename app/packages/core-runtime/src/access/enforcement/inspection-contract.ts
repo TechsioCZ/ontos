@@ -146,13 +146,14 @@ export interface SubjectInspectionStages {
     readonly questions: readonly SubjectCapabilityQuestion[];
   }) => Effect.Effect<SubjectCapabilityBatchInspection, SubjectInspectionUnavailable>;
   /**
-   * Resolves the subject in every company context these questions would be asked in, so a later stage does not wait
-   * for it. Decides nothing and records no evidence.
+   * Starts resolving the subject in every company context these questions would be asked in, so a later stage does
+   * not wait for it. Decides nothing, records no evidence and never fails: a context it could not resolve fails only
+   * the stage that asks it.
    */
   readonly prepare: (asked: {
     readonly actionKeys: readonly string[];
     readonly questions: readonly SubjectCapabilityQuestion[];
-  }) => Effect.Effect<void, SubjectInspectionUnavailable>;
+  }) => Effect.Effect<void>;
   readonly scope: Effect.Effect<SubjectScopeInspection, SubjectInspectionUnavailable>;
 }
 

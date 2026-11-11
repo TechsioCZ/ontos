@@ -126,7 +126,11 @@ export const subjectInspectionFixture = (input: {
    * fails or is interrupted here counts nothing.
    */
   readonly onEvidenceWrite?: (write: number) => Effect.Effect<void, AccessDecisionUnavailable>;
-  readonly onScopeRead?: (principalId: string) => Effect.Effect<void>;
+  /** Runs before each scope read of a person, with the company asked (none: the tenant context); may hold or fail it. */
+  readonly onScopeRead?: (
+    principalId: string,
+    legalEntityId: string | undefined,
+  ) => Effect.Effect<void, AccessDecisionUnavailable>;
   /** Tenant owners: Core answers their configure authority with the `Owner` basis, as for a stage tenant's owner. */
   readonly owners?: readonly string[];
   readonly snapshot: ActiveApplicationCompositionSnapshot;
@@ -176,7 +180,7 @@ export const subjectInspectionFixture = (input: {
           return Effect.gen(function* fixtureInspectionScope() {
             reads.scope += 1;
             if (principal !== undefined && principal._tag === 'Principal' && input.onScopeRead !== undefined) {
-              yield* input.onScopeRead(principal.principalId);
+              yield* input.onScopeRead(principal.principalId, query.legalEntityId);
             }
             if (!inScope) {
               return Option.none();

@@ -9,7 +9,7 @@ import {
 import type { SubjectInspectionInput, SubjectInspectionStages } from '@app/core-runtime/access/enforcement';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
 import type { AgentProposalSubmitRequest } from '@app/shared-contracts/agent-proposals';
-import { Clock, Data, DateTime, Effect, Exit, Ref } from 'effect';
+import { Clock, Data, DateTime, Effect, Ref } from 'effect';
 
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
@@ -400,25 +400,20 @@ const askInStages = Effect.fn('AgentPlatform.subjectAccessStages')(function* ask
   );
   yield* countInspection(progress, {});
   // While the scope is inspected, the subject is resolved in every company context the batches may ask in; nothing
-  // is decided or recorded there. Its failure counts only once the scope admits the subject: exactly when the first
-  // batch would have met the same failure resolving those contexts itself.
-  const [selected, prepared] = yield* Effect.all(
+  // is decided or recorded there, and preparing never fails: a context that cannot be resolved fails only the batch
+  // that asks it, exactly where resolving it in that batch would have failed.
+  const [selected] = yield* Effect.all(
     [
       tracedPhase(progress, 'scope', stages.scope),
-      stages
-        .prepare({
-          actionKeys: [...new Set(actions.map(({ actionKey }) => actionKey))],
-          questions: carriers.map(carrierQuestion),
-        })
-        .pipe(Effect.exit),
+      stages.prepare({
+        actionKeys: [...new Set(actions.map(({ actionKey }) => actionKey))],
+        questions: carriers.map(carrierQuestion),
+      }),
     ],
     { concurrency: 2 },
   );
   if (selected.decision === 'denied') {
     return 'denied' as const;
-  }
-  if (Exit.isFailure(prepared)) {
-    return yield* Effect.failCause(prepared.cause);
   }
   // Every distinct Action key with the modules that own it, and each module's keys in declaration order.
   const ownersOf = new Map<string, Set<string>>();
