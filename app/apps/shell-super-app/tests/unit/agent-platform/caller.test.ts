@@ -1173,6 +1173,20 @@ it.effect('never reads an unavailable first-batch Action answer as denied, even 
  * The published stages without sharing: `staged` answered by the plain calls, each resolving the subject on its own
  * and writing its evidence before it answers. The reference a staged description must equal.
  */
+type InspectionService = (typeof SubjectAccessInspection)['Service'];
+
+/** Stages answered by the plain calls of `service`; only the verified revision comes from the staged inspection. */
+const plainStagesOf = (
+  service: InspectionService,
+  input: Parameters<InspectionService['staged']>[0],
+  revision: string,
+): SubjectInspectionStages => ({
+  capabilities: (asked) => service.capabilities({ ...input, ...asked }),
+  prepare: () => Effect.void,
+  revision,
+  scope: service.scope(input),
+});
+
 const plainStages = (inspection: ReturnType<typeof subjectInspectionFixture>) =>
   Layer.effect(
     SubjectAccessInspection,
@@ -1180,12 +1194,7 @@ const plainStages = (inspection: ReturnType<typeof subjectInspectionFixture>) =>
       const service = yield* SubjectAccessInspection;
       return {
         ...service,
-        staged: (input, body) =>
-          body({
-            capabilities: (asked) => service.capabilities({ ...input, ...asked }),
-            prepare: () => Effect.void,
-            scope: service.scope(input),
-          }),
+        staged: (input, body) => service.staged(input, ({ revision }) => body(plainStagesOf(service, input, revision))),
       };
     }),
   ).pipe(Layer.provideMerge(inspection.layer));
@@ -1416,5 +1425,28 @@ it.effect('a waiter on a shared resolution gets a definite answer when the calle
       );
     }).pipe(Effect.provide(fixture.layer));
     expect(Exit.isSuccess(outcome) ? outcome.value.decision : Cause.pretty(outcome.cause)).toBe('allowed');
+  }),
+);
+
+it.effect('refuses hints when a release is published between the installed catalogue and the staged inspection', () =>
+  Effect.gen(function* releaseChangedUnderneath() {
+    // The caller loaded the installed catalogue of one release; the inspection answers in the next one.
+    const { installed } = yield* actionModulesCatalog({ 'alpha.mod': [moduleAction('alpha.mod', 'alpha.mod.first')] });
+    const { snapshot: published } = yield* actionModulesCatalog({
+      'alpha.mod': [moduleAction('alpha.mod', 'alpha.mod.first'), moduleAction('alpha.mod', 'alpha.mod.second')],
+    });
+    expect(published.composition.revision).not.toBe(installed.composition.revision);
+    const inspection = subjectInspectionFixture({
+      snapshot: published,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const failure = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+      Effect.flip,
+    );
+    expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
+    // Refused before any question: nothing was decided, so nothing was recorded.
+    expect(inspection.reads.evidenceWrites).toBe(0);
   }),
 );

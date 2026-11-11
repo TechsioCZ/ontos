@@ -162,12 +162,16 @@ const unsharedStages = Layer.effect(
     const service = yield* SubjectAccessInspection;
     return {
       ...service,
+      // The plain calls; only the verified revision is taken from a staged inspection.
       staged: (input, body) =>
-        body({
-          capabilities: (asked) => service.capabilities({ ...input, ...asked }),
-          prepare: () => Effect.void,
-          scope: service.scope(input),
-        }),
+        service.staged(input, ({ revision }) =>
+          body({
+            capabilities: (asked) => service.capabilities({ ...input, ...asked }),
+            prepare: () => Effect.void,
+            revision,
+            scope: service.scope(input),
+          }),
+        ),
     };
   }),
 );

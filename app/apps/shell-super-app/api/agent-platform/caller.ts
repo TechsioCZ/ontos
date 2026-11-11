@@ -394,6 +394,11 @@ const askInStages = Effect.fn('AgentPlatform.subjectAccessStages')(function* ask
   readonly stages: SubjectInspectionStages;
 }) {
   const { access, installed, progress, propose, run, stages } = context;
+  // The questions come from the installed catalogue; the stages answer them in the release they verify. Both must be
+  // one release, or the hints would name modules of one release with answers of another.
+  if (stages.revision !== installed.composition.revision) {
+    return yield* new SubjectInspectionUnavailable({ reason: 'Composition changed during subject inspection' });
+  }
   const carriers = moduleCarriers(installed);
   const actions = installed.contracts.flatMap(({ manifest }) =>
     manifest.publicSurface.actions.filter((action) => action.legalEntityScope !== 'forbidden'),

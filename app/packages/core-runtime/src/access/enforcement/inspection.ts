@@ -777,6 +777,7 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
     const outcome = yield* body({
       capabilities: (asked) => inspectBatch({ ...input, ...asked }, catalog, session),
       prepare: (asked) => prepareContexts({ ...input, ...asked }, catalog, session),
+      revision: catalog.revision,
       scope: inspectScope(input, session),
     }).pipe(Effect.exit);
     const written = yield* Fiber.awaitAll(writes);

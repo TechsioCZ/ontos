@@ -154,6 +154,8 @@ export interface SubjectInspectionStages {
     readonly actionKeys: readonly string[];
     readonly questions: readonly SubjectCapabilityQuestion[];
   }) => Effect.Effect<void>;
+  /** The composition revision every stage is answered in; checked again when the staged inspection ends. */
+  readonly revision: string;
   readonly scope: Effect.Effect<SubjectScopeInspection, SubjectInspectionUnavailable>;
 }
 
