@@ -1256,6 +1256,45 @@ const advanceUntil = (done: () => boolean, step = 0): Effect.Effect<void> =>
 /** Moves the test clock until `fiber` has finished (at most 1 s of test time). */
 const advanceUntilDone = (fiber: Fiber.Fiber<unknown, unknown>) => advanceUntil(() => fiber.pollUnsafe() !== undefined);
 
+it.effect('reports the failed stage, not a failed evidence write, and lets that write settle first', () =>
+  Effect.gen(function* stageAndWriteFail() {
+    // alpha's first Action is refused in batch one, whose evidence write then fails; batch two cannot read its key.
+    const { installed, keyOf, snapshot } = yield* actionModulesCatalog({
+      'alpha.mod': [moduleAction('alpha.mod', 'alpha.mod.first'), moduleAction('alpha.mod', 'alpha.mod.second')],
+    });
+    const broken = keyOf.get('alpha.mod.second') ?? '';
+    const settled = { write: false };
+    const inspection = subjectInspectionFixture({
+      capabilities: [{ key: broken, modes: ['run'] as const }],
+      onCapabilityRead: (key) =>
+        key === broken ? Effect.fail(accessDecisionUnavailable('second key unreadable')) : Effect.void,
+      onEvidenceWrite: () =>
+        Effect.sleep('40 millis').pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              settled.write = true;
+            }),
+          ),
+          Effect.andThen(Effect.fail(accessDecisionUnavailable('write refused'))),
+        ),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const described = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+      Effect.flip,
+      Effect.forkChild,
+    );
+    yield* advanceUntilDone(described);
+    const failure = yield* Fiber.join(described);
+    expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
+    // The unreadable key's answer, never the write's refusal; and the write had settled before the answer.
+    expect(failure.cause).toEqual([{ code: 'unavailable.intent' }]);
+    expect(settled.write).toBe(true);
+  }),
+);
+
 /** The evidence rows of each write a full description of `refusedTwoBatchCatalog` makes, without any write hook. */
 const referenceWrites = Effect.gen(function* referenceWrites() {
   const { installed, snapshot } = yield* refusedTwoBatchCatalog;
@@ -1364,6 +1403,52 @@ const tenantAndCompanyCatalog = actionModulesCatalog({
   ],
 });
 const otherCompany = '71000000-0000-4000-8000-000000000099';
+
+/** Counts the reads in flight at once; each counted read yields first, so concurrent reads overlap. */
+const inFlightReads = (counter: { now: number; peak: number }) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      counter.now += 1;
+      counter.peak = Math.max(counter.peak, counter.now);
+    }),
+    () => Effect.forEach(Array.from({ length: 5 }), () => Effect.yieldNow, { discard: true }),
+    () =>
+      Effect.sync(() => {
+        counter.now -= 1;
+      }),
+  );
+
+it.effect('a staged description never holds more than two pooled intent reads at once, in any stage', () =>
+  Effect.gen(function* stagedPermits() {
+    // Two modules, each with Actions asked in the tenant context and in the company: several reads per stage.
+    const { installed, snapshot } = yield* actionModulesCatalog({
+      'alpha.mod': [
+        moduleAction('alpha.mod', 'alpha.mod.tenant-one', 'alpha.mod', 'optional'),
+        moduleAction('alpha.mod', 'alpha.mod.tenant-two', 'alpha.mod', 'optional'),
+        moduleAction('alpha.mod', 'alpha.mod.company-one'),
+        moduleAction('alpha.mod', 'alpha.mod.company-two'),
+      ],
+      'beta.mod': [
+        moduleAction('beta.mod', 'beta.mod.tenant-one', 'beta.mod', 'optional'),
+        moduleAction('beta.mod', 'beta.mod.company-one'),
+        moduleAction('beta.mod', 'beta.mod.company-two'),
+      ],
+    });
+    const counter = { now: 0, peak: 0 };
+    const inspection = subjectInspectionFixture({
+      onCapabilityRead: () => inFlightReads(counter),
+      onScopeRead: () => inFlightReads(counter),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+    );
+    expect(inspection.reads.cells).toBeGreaterThan(2);
+    expect(counter.peak).toBeLessThanOrEqual(2);
+  }),
+);
 
 it.effect(
   'answers a denied scope as denied, with the plain path evidence, although preparing another context failed',
@@ -1495,6 +1580,30 @@ it.effect('a waiter on a shared resolution gets a definite answer when the calle
       );
     }).pipe(Effect.provide(fixture.layer));
     expect(Exit.isSuccess(outcome) ? outcome.value.decision : Cause.pretty(outcome.cause)).toBe('allowed');
+  }),
+);
+
+it.effect('fails a description when a release is published while its staged inspection runs', () =>
+  Effect.gen(function* releaseMidDescription() {
+    const { installed, snapshot } = yield* refusedTwoBatchCatalog;
+    const { snapshot: published } = yield* actionModulesCatalog({
+      'alpha.mod': [moduleAction('alpha.mod', 'alpha.mod.first')],
+    });
+    expect(published.composition.revision).not.toBe(snapshot.composition.revision);
+    // The inspection starts on the installed composition; every later load sees the newly published release.
+    const inspection = subjectInspectionFixture({
+      loadedSnapshot: (load) => (load === 1 ? snapshot : published),
+      snapshot,
+      subjects: [{ legalEntityId, principalId, tenantId }],
+    });
+    const failure = yield* subjectModuleAccess(humanRequest).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(inspection.layer),
+      Effect.flip,
+    );
+    expect(Predicate.isTagged(failure, 'SubjectInspectionUnavailable')).toBe(true);
+    // The decisions it took still left their evidence before it failed.
+    expect(inspection.reads.evidenceRows).toBeGreaterThan(0);
   }),
 );
 

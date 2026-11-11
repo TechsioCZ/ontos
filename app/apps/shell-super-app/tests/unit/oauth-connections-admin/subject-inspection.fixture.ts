@@ -119,6 +119,8 @@ export const subjectInspectionFixture = (input: {
   readonly capabilities?: readonly InspectionFixtureCapability[];
   /** The modules the tenant has installed (active); by default every module of the composition. */
   readonly installedModules?: readonly string[];
+  /** The composition each load answers (1-based load); by default `snapshot` every time. */
+  readonly loadedSnapshot?: (load: number) => ActiveApplicationCompositionSnapshot;
   /** Runs before each capability read: a test can hold it (to observe overlap) or fail it (an unreadable carrier). */
   readonly onCapabilityRead?: (capabilityKey: string) => Effect.Effect<void, AccessDecisionUnavailable>;
   /**
@@ -140,6 +142,7 @@ export const subjectInspectionFixture = (input: {
   /** Every scripted port call, so a test can bound the round trips one inspection makes. */
   const reads = { cells: 0, engine: 0, evidenceRows: 0, evidenceWrites: 0, facts: 0, kind: 0, scope: 0 };
   let writeAttempts = 0;
+  let compositionLoads = 0;
   /** The rows of each evidence write that completed, by the order writes were started (1-based attempt). */
   const writtenRows = new Map<number, number>();
   const subjectOf = (principalId: string) => input.subjects.find((subject) => subject.principalId === principalId);
@@ -218,7 +221,12 @@ export const subjectInspectionFixture = (input: {
   const inspectionLayer = SubjectAccessInspectionLive.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(input.snapshot) }),
+        Layer.succeed(ActiveApplicationCompositionService, {
+          load: Effect.sync(() => {
+            compositionLoads += 1;
+            return input.loadedSnapshot?.(compositionLoads) ?? input.snapshot;
+          }),
+        }),
         Layer.succeed(AccessIntent, intent),
         Layer.succeed(AccessPrincipalKindSource, {
           readKind: ({ principalId, scope, tenantId }) => {

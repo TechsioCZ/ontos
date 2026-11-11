@@ -4,7 +4,7 @@ import { expect, it } from 'effect-rstest';
 import type { AccessConfigureBasis } from '../../src/access/changes/authority.ts';
 import type { AccessDecision, DecisionCapabilityPolicy } from '../../src/access/decision/contract.ts';
 import type { AuthorityDeadline, ResolvedAccessScope } from '../../src/access/decision/authority.ts';
-import { decideAccess, decideAccessMany } from '../../src/access/decision/engine.ts';
+import { decideAccess, decideAccessMany, resolveListAccess } from '../../src/access/decision/engine.ts';
 import { accessDecisionUnavailable } from '../../src/access/decision/errors.ts';
 import { explainAccess } from '../../src/access/decision/explain.ts';
 import { withOptional } from '../../src/access/decision/optional.ts';
@@ -16,9 +16,11 @@ import type { AccessDeclaration, AccessDeclarationInput } from '../../src/author
 import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
 import {
   agent,
+  agentHolder,
   at,
   capability,
   cell,
+  connect,
   connectionId,
   makeAuthority,
   makeCheck,
@@ -835,6 +837,39 @@ it.effect("a gate batch over a caller's transaction holds one intent read at a t
     expect(counter.peak).toBe(1);
   }),
 );
+
+for (const joined of [false, true]) {
+  it.effect(
+    `lists an agent's two sides ${joined ? "one after the other through a caller's transaction" : 'together on the pool'}`,
+    () =>
+      Effect.gen(function* listSides() {
+        // An agent reads its own cells and its person's: two sides, each with its own cell and team reads.
+        const spec = {
+          cells: [cell({ capability: otherKey }), cell({ capability: otherKey, holder: agentHolder() })],
+          connection: connect({
+            ceiling: { cells: [{ capabilityKey: otherKey, mode: 'run' as const, selector: { _tag: 'all' as const } }] },
+          }),
+        };
+        const counter = { now: 0, peak: 0 };
+        const counted = inFlightCounted(makeAuthority(spec).port, counter);
+        const resolution = yield* resolveListAccess(
+          withOptional(counted, 'readsThroughCallerTransaction', joined ? (true as const) : undefined),
+          makeCheck({ authority: spec }).port,
+          {
+            actor: {
+              actor: { _tag: 'Agent', agentId: agent, connectionId, consentRevision: 1, principalId: person },
+              tenantId: tenant,
+            },
+            capability: { ...policy, capabilityKey: otherKey, kind: 'action', risk: 'routine' },
+            mode: 'run',
+            now,
+          },
+        );
+        expect(resolution.decision.outcome).toBe('ALLOWED');
+        expect(counter.peak).toBe(joined ? 1 : 2);
+      }),
+  );
+}
 
 const archiveKey: CapabilityKey = capability('core.access.roles.archive');
 /** Two routine keys a person holds through role cells in company A: nothing is decided structurally. */
