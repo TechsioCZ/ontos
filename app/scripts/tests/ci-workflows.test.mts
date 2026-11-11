@@ -2024,12 +2024,15 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
     'pnpm test:lint-rules',
     'pnpm lint:repository-policy',
     'pnpm api:check:ontos',
-    'pnpm test:scripts',
     'pnpm test:deployment-impact',
     'pnpm test:generation',
   ]) {
     expect(commands).toContain(check);
   }
+  const sourceShards = readGateCommandJobs()[WORKSPACE_GATE_JOB].strategy.matrix.include;
+  expect(
+    sourceShards.map((entry) => entry.commands.trim()).filter((command) => command.startsWith('pnpm test:scripts')),
+  ).toEqual(['pnpm test:scripts --shard 1/3', 'pnpm test:scripts --shard 2/3', 'pnpm test:scripts --shard 3/3']);
   // The module entrypoint boundary check runs inside the deployment impact gate.
   const { scripts } = readRootScripts();
   expect(scripts['test:deployment-impact']).toContain(scripts['module-entrypoints:check']);
