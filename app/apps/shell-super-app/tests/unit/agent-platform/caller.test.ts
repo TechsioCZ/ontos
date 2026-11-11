@@ -1395,6 +1395,47 @@ it.effect(
     }),
 );
 
+/** The real stages, except that preparing dies of a defect outside any context resolution. */
+const withDyingPrepare = (stages: SubjectInspectionStages): SubjectInspectionStages => ({
+  ...stages,
+  prepare: () => Effect.die('prepare defect'),
+});
+
+/** The staged inspection with `withDyingPrepare` stages. */
+const dyingPrepare = (inspection: ReturnType<typeof subjectInspectionFixture>) =>
+  Layer.effect(
+    SubjectAccessInspection,
+    Effect.gen(function* dyingPrepareInspection() {
+      const service = yield* SubjectAccessInspection;
+      return {
+        ...service,
+        staged: (input, body) => service.staged(input, (stages) => body(withDyingPrepare(stages))),
+      };
+    }),
+  ).pipe(Layer.provideMerge(inspection.layer));
+
+for (const company of [otherCompany, legalEntityId]) {
+  it.effect(
+    `answers exactly as the unshared stages when preparing dies (${company === legalEntityId ? 'allowed' : 'denied'} scope)`,
+    () =>
+      Effect.gen(function* prepareDefect() {
+        const { installed, snapshot } = yield* tenantAndCompanyCatalog;
+        const fixture = () =>
+          subjectInspectionFixture({ snapshot, subjects: [{ legalEntityId: company, principalId, tenantId }] });
+        const catalogLoad = { load: Effect.succeed(installed) };
+        const hints = yield* subjectModuleAccess(humanRequest).pipe(
+          Effect.provideService(ShellInstalledModuleCatalog, catalogLoad),
+          Effect.provide(dyingPrepare(fixture())),
+        );
+        const reference = yield* subjectModuleAccess(humanRequest).pipe(
+          Effect.provideService(ShellInstalledModuleCatalog, catalogLoad),
+          Effect.provide(plainStages(fixture())),
+        );
+        expect(sortedHints(hints)).toEqual(sortedHints(reference));
+      }),
+  );
+}
+
 it.effect('a scope check waiting on a shared resolution gets its own answer when the preparing caller fails', () =>
   Effect.gen(function* preparingCallerFails() {
     const { snapshot } = yield* tenantAndCompanyCatalog;

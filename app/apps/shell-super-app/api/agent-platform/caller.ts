@@ -410,10 +410,13 @@ const askInStages = Effect.fn('AgentPlatform.subjectAccessStages')(function* ask
   const [selected] = yield* Effect.all(
     [
       tracedPhase(progress, 'scope', stages.scope),
-      stages.prepare({
-        actionKeys: [...new Set(actions.map(({ actionKey }) => actionKey))],
-        questions: carriers.map(carrierQuestion),
-      }),
+      // Preparing only reads ahead: even a defect in it never fails a description the stages can answer.
+      stages
+        .prepare({
+          actionKeys: [...new Set(actions.map(({ actionKey }) => actionKey))],
+          questions: carriers.map(carrierQuestion),
+        })
+        .pipe(Effect.ignoreCause({ log: 'Warn', message: 'Preparing a staged description failed' })),
     ],
     { concurrency: 2 },
   );
