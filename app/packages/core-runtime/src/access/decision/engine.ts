@@ -1,4 +1,4 @@
-import { Context, DateTime, Effect, Match, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Exit, Match, Option, Schema } from 'effect';
 import type { Array as Arr } from 'effect';
 
 import type { AccessScopeId, CapabilityKey, LegalEntityId, PrincipalId, RecordKey } from '../ids.ts';
@@ -1355,11 +1355,23 @@ const requiredCellQueries = (params: {
   return queries;
 };
 
+/** The cell sets one guarded request needs. */
+const cellQueriesOf = (entry: GuardedRequest): readonly AuthorityCellQuery[] =>
+  requiredCellQueries({
+    modes: entry.modes,
+    parentRead: entry.parentRead,
+    request: entry.request,
+    resolved: entry.resolved,
+  });
+
 /** Pooled reads one batch runs at once; each holds one connection of the request's shared pool. */
 const BATCH_READ_CONCURRENCY = 2;
 
 /** A read cell set, or an intent read that failed: the latter is UNAVAILABLE, never empty intent. */
 type CellRead = { readonly cells: readonly AuthorityCell[] } | { readonly unreadable: true };
+
+/** Whether a read cell set is there and readable. */
+const isReadable = (read: CellRead | undefined): boolean => read !== undefined && 'cells' in read;
 
 const readCellSets = Effect.fn('AccessDecision.readCellSets')(function* readCellSetsProgram(
   authority: DecisionAuthorityPort,
@@ -1555,26 +1567,17 @@ const planGroup = Effect.fn('AccessDecision.planGroup')(function* planGroupProgr
   const guarded = prepared.flatMap(({ guarded: entry }) => (entry === undefined ? [] : [entry]));
   // One after another over a shared answer: only the first `admin` entry of an actor reads its configure bases.
   const structuralAuthority = sharedConfigureBases(authority);
-  // The structural answers and the cell sets are independent reads, so they overlap. Cell sets are read for every
-  // guarded request; a request the structural check decides simply leaves its sets unused (no decision, no row).
-  const [structural, cellSets] = yield* Effect.all(
+  // The structural answers and the cell sets are independent reads, so they overlap. Cell sets are read ahead for
+  // every guarded request; a request the structural check decides simply leaves its sets unused (no decision, no
+  // row). That read ahead is speculative: its failure or defect is kept, never raised, and decides nothing below.
+  const [structural, ahead] = yield* Effect.all(
     [
       Effect.forEach(
         guarded,
         (entry) => structuralAdminDecision(structuralAuthority, entry.resolved, entry.request, entry.now),
         { concurrency: 1 },
       ),
-      readCellSets(
-        authority,
-        guarded.flatMap((entry) =>
-          requiredCellQueries({
-            modes: entry.modes,
-            parentRead: entry.parentRead,
-            request: entry.request,
-            resolved: entry.resolved,
-          }),
-        ),
-      ),
+      readCellSets(authority, guarded.flatMap(cellQueriesOf)).pipe(Effect.exit),
     ],
     { concurrency: BATCH_READ_CONCURRENCY },
   );
@@ -1587,6 +1590,13 @@ const planGroup = Effect.fn('AccessDecision.planGroup')(function* planGroupProgr
     ),
   );
   const roleGuarded = guarded.filter((entry) => !structuralByIndex.has(entry.index));
+  // The structural answers are authoritative. The cell sets the remaining requests need come from the read ahead
+  // when it read every one of them; otherwise exactly those sets are read now, as when nothing was read ahead.
+  const needed = roleGuarded.flatMap(cellQueriesOf);
+  const cellSets =
+    Exit.isSuccess(ahead) && needed.every((query) => isReadable(ahead.value.get(cellQueryKey(query))))
+      ? ahead.value
+      : yield* readCellSets(authority, needed);
   const preloaded = preloadedAuthority(authority, cellSets);
   const planned = yield* Effect.forEach(roleGuarded, (entry) => planRequest(preloaded, entry), {
     concurrency: BATCH_READ_CONCURRENCY,

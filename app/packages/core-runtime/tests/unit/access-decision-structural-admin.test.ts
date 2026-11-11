@@ -675,3 +675,57 @@ it.effect('answers a marked surface in one batch exactly as one request on its o
     ]);
   }),
 );
+
+for (const batchReads of [false, true]) {
+  it.effect(
+    `a defect in the cell read of a structurally decided request never touches the rest of the batch (${batchReads ? 'batched' : 'single'} reads)`,
+    () =>
+      Effect.gen(function* containedSpeculativeRead() {
+        // The owner's admin key is decided structurally; the routine key needs its role cell.
+        const granted = cell({ capability: otherKey });
+        const spec = withOptional(
+          { batchReads, cells: [granted], legalEntityScope: companyScopeOf(companyA) },
+          'configureBases',
+          [owner] as const,
+        );
+        const routine: DecisionCapabilityPolicy = {
+          ...policy,
+          capabilityKey: otherKey,
+          kind: 'action',
+          risk: 'routine',
+        };
+        const requests = [policy, routine].map((one) => ({
+          actor: actorIn(companyA),
+          now,
+          request: { capability: one, mode: 'run' as const },
+        }));
+        // Reading the admin key's cells dies: only a read of every guarded request's cells asks for them.
+        const base = makeAuthority(spec).port;
+        const { readCellsMany } = base;
+        const dying = withOptional(
+          {
+            ...base,
+            readCells: (query: Parameters<typeof base.readCells>[0]) =>
+              query.capabilityKey === adminKey ? Effect.die('cell read of the admin key') : base.readCells(query),
+          },
+          'readCellsMany',
+          readCellsMany === undefined
+            ? undefined
+            : (queries: Parameters<typeof readCellsMany>[0]) =>
+                queries.some((query) => query.capabilityKey === adminKey)
+                  ? Effect.die('cell read of the admin key')
+                  : readCellsMany(queries),
+        );
+        const [answers] = yield* decideAccessMany(makeCheck({ authority: spec }).port, [
+          { authority: dying, inputs: requests },
+        ]);
+        const single = yield* Effect.forEach(
+          requests,
+          (input) => decideAccess(makeAuthority(spec).port, makeCheck({ authority: spec }).port, input),
+          { concurrency: 1 },
+        );
+        expect(answers?.map(verdictOf)).toEqual(single.map(verdictOf));
+        expect(answers?.map(({ reasons }) => reasons[0]?.code)).toEqual(['structural.owner', 'allow.granted']);
+      }),
+  );
+}
