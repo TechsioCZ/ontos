@@ -165,3 +165,16 @@ it('remembers at most 30 keys, the least recently used ones are dropped first', 
   expect(visit('bound-0', true)[0]).toBe('pending');
   expect(visit('bound-30', true)[0]).toBe('ready');
 });
+
+it('only a mount starts from the memory: a mounted reader that comes back to a key shows what the store has', () => {
+  store.publish('back-1', { state: 'ready', value: 'Cable 1' });
+  visit('back-1', true);
+  store.publish('back-1', pending);
+  store.publish('back-2', pending);
+
+  const view = render(<Reader id="back-2" remembered />);
+  rendered.length = 0;
+  view.rerender(<Reader id="back-1" remembered />);
+  expect(rendered[0]).toBe('pending');
+  view.unmount();
+});

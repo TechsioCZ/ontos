@@ -1,21 +1,6 @@
 import { MutableRef } from 'effect';
 import { useState } from 'react';
 
-/**
- * Keeps a detail on screen while its strict page-data store reloads the same record.
- *
- * A store defined with `retainStale: false` reads as `pending` whenever its entry is reloaded: after the 20 s
- * freshness window, after a live change or a settled write, and after an explicit refresh. A reader that renders
- * `pending` as its loading state then replaces the whole detail and remounts it, which loses the scroll position
- * and typed input. This hook answers `pending` with the last ready snapshot of the same `key` instead.
- *
- * The store's safeguards stay intact: a different key (another record, company, principal or tenant) never shows
- * the previous record, and a failed reload, including a refused one, replaces the held value at once.
- *
- * The held snapshot lasts only while the reader stays on its key. Once the reader reads another key, a closed panel
- * (a key with nothing to read) included, coming back shows what the store has, never the snapshot held earlier.
- */
-
 /** Module event names of `shared-contracts/page-data` (`moduleWriteEvent`, `moduleChangeEvent`); admin-ui does not import that package. */
 const moduleWriteEvent = 'ontos:module-write';
 const moduleChangeEvent = 'ontos:module-change';
@@ -82,13 +67,34 @@ const recall = <Snapshot extends { readonly state: string }>(
   return value;
 };
 
+/**
+ * Keeps a detail on screen while its strict page-data store reloads the same record.
+ *
+ * A store defined with `retainStale: false` reads as `pending` whenever its entry is reloaded: after the 20 s
+ * freshness window, after a live change or a settled write, and after an explicit refresh. A reader that renders
+ * `pending` as its loading state then replaces the whole detail and remounts it, which loses the scroll position
+ * and typed input. This hook answers `pending` with the last ready snapshot of the same `key` instead.
+ *
+ * The store's safeguards stay intact: a different key (another record, company, principal or tenant) never shows
+ * the previous record, and a failed reload, including a refused one, replaces the held value at once.
+ *
+ * The held snapshot lasts only while the reader stays on its key. Once the reader reads another key, a closed panel
+ * (a key with nothing to read) included, coming back shows what the store has, never the snapshot held earlier.
+ *
+ * With `memory`, a reader that mounts while its snapshot is pending starts from the last ready snapshot of its key,
+ * as if it had stayed mounted. Only the mount reads the memory; a reader that changes key behaves as without it.
+ */
 export const useHeldSnapshot = <Snapshot extends { readonly state: string }>(
   key: string,
   snapshot: Snapshot,
   options?: HeldSnapshotOptions<Snapshot>,
 ): Snapshot => {
-  const [held, setHeld] = useState<{ readonly key: string; readonly snapshot: Snapshot }>();
   const memory = options?.memory;
+  const [held, setHeld] = useState<{ readonly key: string; readonly snapshot: Snapshot } | undefined>(() => {
+    // A mounting reader whose store reads pending starts from what it would have held had it stayed mounted.
+    const kept = memory === undefined || snapshot.state !== 'pending' ? undefined : recall(memory, key);
+    return kept === undefined ? undefined : { key, snapshot: kept };
+  });
   if (snapshot.state !== 'pending') {
     // Store snapshots are stable per entry state, so each settled state is stored once.
     if (held?.key !== key || held.snapshot !== snapshot) {
@@ -100,12 +106,6 @@ export const useHeldSnapshot = <Snapshot extends { readonly state: string }>(
     return snapshot;
   }
   if (held === undefined) {
-    const kept = memory === undefined ? undefined : recall(memory, key);
-    if (kept !== undefined) {
-      // Adopt it as the held value, so a later pending read keeps it exactly as a mounted reader would.
-      setHeld({ key, snapshot: kept });
-      return kept;
-    }
     return snapshot;
   }
   if (held.key !== key) {
