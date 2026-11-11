@@ -636,6 +636,15 @@ const collectQuoteLogs = (logs: CapturedQuoteLog[]) =>
       logs.push(Logger.formatStructured.log(options));
     }),
   ]);
+/** The two context reads each log their own timing line; the quote's own diagnostic is the rest. */
+const quoteDiagnostics = (logs: readonly CapturedQuoteLog[]) => {
+  const reads = logs.filter((log) => log.message === "N1 gateway read");
+  expect(reads.map((log) => log.annotations.readName)).toEqual([
+    "current-market-catalog",
+    "records",
+  ]);
+  return logs.filter((log) => log.message !== "N1 gateway read");
+};
 const privateQuoteValues = [
   "PRIVATE_QUOTE_PASSWORD",
   "PRIVATE_QUOTE_COOKIE",
@@ -665,15 +674,16 @@ for (const nativeCode of [
         diagnostic: "native-action-unavailable",
         state: "unavailable",
       });
-      expect(logs).toHaveLength(1);
-      expect(logs[0]?.annotations).toEqual({
+      const diagnostics = quoteDiagnostics(logs);
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0]?.annotations).toEqual({
         nativeCode,
         nativeTag: "PlaceStorefrontOrderActionUnavailableProblem",
         operation: "cart-quote",
         transportReason: "none",
         upstreamStatus: "none",
       });
-      expect(logs[0]?.cause).toBeUndefined();
+      expect(diagnostics[0]?.cause).toBeUndefined();
       const text = JSON.stringify(logs);
       for (const value of [
         ...privateQuoteValues,
@@ -711,11 +721,14 @@ for (const scenario of ["unknown-code", "malformed-body", "transport"] as const)
         diagnostic: "native-action-unavailable",
         state: "unavailable",
       });
-      expect(logs).toHaveLength(1);
-      expect(logs[0]?.annotations.nativeCode).toBe("other");
-      expect(logs[0]?.annotations.upstreamStatus).toBe(scenario === "transport" ? "none" : 503);
-      expect(["HttpClientError", "SchemaError"]).toContain(logs[0]?.annotations.nativeTag);
-      expect(logs[0]?.cause).toBeUndefined();
+      const diagnostics = quoteDiagnostics(logs);
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0]?.annotations.nativeCode).toBe("other");
+      expect(diagnostics[0]?.annotations.upstreamStatus).toBe(
+        scenario === "transport" ? "none" : 503,
+      );
+      expect(["HttpClientError", "SchemaError"]).toContain(diagnostics[0]?.annotations.nativeTag);
+      expect(diagnostics[0]?.cause).toBeUndefined();
       const text = JSON.stringify(logs);
       for (const value of [
         ...privateQuoteValues,
