@@ -295,6 +295,33 @@ it.effect('a row warmed by pointer intent opens its panel at once: ready on the 
   }),
 );
 
+it.effect(
+  'a row warmed by pointer intent opens on the full order page at once: ready on the first render, no read',
+  () =>
+    Effect.gen(function* intentFullPage() {
+      yield* mountRoot(OrdersList);
+      yield* idle(5);
+      reads.length = 0;
+      const page = ordersPageData.snapshot(listInput);
+      const records = page.state === 'ready' ? page.value : undefined;
+      const row = document.createElement('tr');
+      row.dataset.index = String(LIST_WARM_ROWS);
+      const props = orderDetailIntent(listInput, records, records?.orders ?? []);
+      props.onPointerEnter({ currentTarget: row });
+      props.onFocus({ currentTarget: row });
+      yield* idle(1);
+      expect(count('detail')).toBe(DETAIL_READS);
+      reads.length = 0;
+
+      yield* mountRoot(fullPageFor(`order-${LIST_WARM_ROWS + 1}`));
+      yield* idle(2);
+      expect(statuses[0]).toBe('ready');
+      expect(statuses).not.toContain('loading');
+      expect(count('detail')).toBe(0);
+      expect(count('order')).toBe(0);
+    }),
+);
+
 it.effect('a warmed row older than the freshness window opens at once and is read again in the background', () =>
   Effect.gen(function* agedOpen() {
     yield* mountRoot(OrdersList);
