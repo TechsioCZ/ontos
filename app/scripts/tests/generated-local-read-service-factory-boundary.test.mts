@@ -138,7 +138,7 @@ it('proves the real Pricing phased lifecycle and empty service factory without i
       ) {
         collect(file);
       } else if (entry.isFile() && /\.(?:ts|json)$/u.test(entry.name)) {
-        sources.set(file, readFileSync(path.join(root, file), 'utf-8'));
+        sources.set(file, readFileSync(path.join(root, file), 'utf-8').replaceAll('\r\n', '\n'));
       }
     }
   };
@@ -192,6 +192,41 @@ it('proves the real Pricing phased lifecycle and empty service factory without i
     expect(invalid).not.toBe(read);
     expect(acceptsPricingRead(new Map([...sources, [pricingRead, invalid]]))).toBe(false);
   }
+});
+
+it('proves the real CCC staged Read with a native void service factory and rejects unproved factories', () => {
+  const customerContextOwner = 'verticals/commerce-customer-context';
+  const name = 'market-bootstrap-resolution';
+  const customerContextRead = `${customerContextOwner}/src/api/${name}.read.ts`;
+  const source = readFileSync(new URL(`../../${customerContextRead}`, import.meta.url), 'utf-8').replaceAll(
+    '\r\n',
+    '\n',
+  );
+  const diagnostics: string[] = [];
+  const acceptsRead = (candidate: string): boolean =>
+    hasCompleteGeneratedModuleRead(
+      new Map([[customerContextRead, candidate]]),
+      customerContextRead,
+      customerContextOwner,
+      'commerce.customer-context',
+      name,
+      diagnostics,
+    );
+  expect(acceptsRead(source), diagnostics.join('\n')).toBe(true);
+  const nativeFactory = '  () => Effect.void,\n);';
+  expect(source).toContain(nativeFactory);
+  expect(acceptsRead(source.replace(nativeFactory, '  () => Effect.succeed({}),\n);'))).toBe(true);
+  for (const factory of [
+    '() => undefined',
+    '() => foreign.void',
+    '() => Effect.succeed({ foreign: true })',
+    '() => { sideEffect(); return Effect.void; }',
+  ]) {
+    const invalid = source.replace(nativeFactory, `  ${factory},\n);`);
+    expect(invalid).not.toBe(source);
+    expect(acceptsRead(invalid), factory).toBe(false);
+  }
+  expect(acceptsRead(`${source}\nfunction shadow(Effect: unknown) {}`)).toBe(false);
 });
 
 it('rejects owner imports whose actual source is absent', () => {
