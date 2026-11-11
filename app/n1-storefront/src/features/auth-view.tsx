@@ -2,6 +2,7 @@
 
 import NextLink from "next/link";
 import { Button } from "@techsio/ui-kit/atoms/button";
+import { Link as KitLink } from "@techsio/ui-kit/atoms/link";
 import { Link } from "@/features/plain-link";
 import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
@@ -84,6 +85,24 @@ const inputAttributes = {
   },
 } as const;
 
+const passwordSuccessText = (
+  field: InputField,
+  mode: AuthMode,
+  validated: { password: boolean; passwordConfirmation: boolean },
+  d: Dictionary,
+) => {
+  if (mode !== "register") {
+    return null;
+  }
+  if (field === "password" && validated.password) {
+    return d.auth.passwordValid;
+  }
+  if (field === "passwordConfirmation" && validated.passwordConfirmation) {
+    return d.auth.passwordsMatch;
+  }
+  return null;
+};
+
 /** Form composition only: field values remain in native controls, never in React or persistent storage. */
 const AuthForm = ({
   dictionary: d,
@@ -142,21 +161,9 @@ const AuthForm = ({
     }
   };
   const finishPointerValidation = () => commitBlur(getBlurValidation().finish());
-  const successText = (field: InputField) => {
-    if (mode !== "register") {
-      return null;
-    }
-    if (field === "password" && validated.password) {
-      return d.auth.passwordValid;
-    }
-    if (field === "passwordConfirmation" && validated.passwordConfirmation) {
-      return d.auth.passwordsMatch;
-    }
-    return null;
-  };
   const input = (field: InputField) => {
     const error = errors[field] ?? (field === "password" ? passwordError : undefined);
-    const success = successText(field);
+    const success = passwordSuccessText(field, mode, validated, d);
     const helpText = error ?? success;
     const hasHelpText = helpText !== null && helpText.length > 0;
     let status: "default" | "error" | "success" = "default";
@@ -276,7 +283,9 @@ const AuthForm = ({
           commitBlur(getBlurValidation().start());
         }
       }}
-      onPointerLeave={finishPointerValidation}
+      onPointerLeave={(event) =>
+        commitBlur(getBlurValidation().finishOnPointerLeave(event.pointerType))
+      }
       onSubmit={(event) => {
         event.preventDefault();
         const fields = new FormData(event.currentTarget);
@@ -356,19 +365,34 @@ const AuthForm = ({
       </Button>
       {mode === "login" ? (
         <div className="flex justify-between gap-1">
-          <Link as={NextLink} href={`/${locale}/zapomenute-heslo`} onClick={() => onNavigate?.()}>
+          <KitLink
+            as={NextLink}
+            href={`/${locale}/zapomenute-heslo`}
+            onClick={() => onNavigate?.()}
+            size="sm"
+          >
             {d.auth.forgotPassword}
-          </Link>
-          <Link as={NextLink} href={`/${locale}/registrace`} onClick={() => onNavigate?.()}>
+          </KitLink>
+          <KitLink
+            as={NextLink}
+            href={`/${locale}/registrace`}
+            onClick={() => onNavigate?.()}
+            size="sm"
+          >
             {d.auth.register}
-          </Link>
+          </KitLink>
         </div>
       ) : (
-        <div className="flex flex-wrap justify-center gap-1">
-          <span>{d.auth.haveAccount}</span>
-          <Link as={NextLink} href={`/${locale}/prihlaseni`} onClick={() => onNavigate?.()}>
+        <div className="flex flex-wrap justify-center gap-1 text-sm">
+          <span className="text-fg-secondary">{d.auth.haveAccount}</span>
+          <KitLink
+            as={NextLink}
+            href={`/${locale}/prihlaseni`}
+            onClick={() => onNavigate?.()}
+            size="sm"
+          >
             {d.auth.signInInvitation}
-          </Link>
+          </KitLink>
         </div>
       )}
       <noscript>{d.auth.javascriptRequired}</noscript>

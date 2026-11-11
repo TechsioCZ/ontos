@@ -4,7 +4,7 @@ import NextImage from "next/image";
 import NextLink from "next/link";
 import type { ReactNode } from "react";
 import { Image } from "@techsio/ui-kit/atoms/image";
-import { Link } from "@/features/plain-link";
+import { Link } from "@techsio/ui-kit/atoms/link";
 import { StatusText } from "@techsio/ui-kit/atoms/status-text";
 import { RadioCard } from "@techsio/ui-kit/molecules/radio-card";
 import { TotalsSummary } from "@techsio/ui-kit/molecules/totals-summary";
@@ -130,7 +130,7 @@ export const CheckoutItems = ({
               {target === null ? (
                 <p>{line.name}</p>
               ) : (
-                <Link as={NextLink} href={target}>
+                <Link as={NextLink} href={target} size="sm">
                   {line.name}
                 </Link>
               )}
