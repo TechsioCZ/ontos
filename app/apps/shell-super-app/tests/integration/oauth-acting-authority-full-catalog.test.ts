@@ -238,6 +238,8 @@ const withAuthorityCase = <A, E>(
   moduleId: string,
   run: (authorityCase: AuthorityCase) => Effect.Effect<A, E>,
   companies = 1,
+  /** The one mode the person's role grants: `propose` makes an approval-only subject of the module. */
+  cellMode: 'propose' | 'run' = 'run',
 ) =>
   Effect.scoped(
     Effect.gen(function* authorityCase() {
@@ -318,8 +320,10 @@ const withAuthorityCase = <A, E>(
       const cells = catalog
         .flatMap(({ descriptors }) => descriptors.map(({ accessDeclaration }) => accessDeclaration))
         .flatMap((declaration) =>
-          declaration !== undefined && declaration.key.startsWith(`${moduleId}.`) && declaration.modes.includes('run')
-            ? [{ capabilityKey: declaration.key, mode: 'run', selector: { _tag: 'all' } }]
+          declaration !== undefined &&
+          declaration.key.startsWith(`${moduleId}.`) &&
+          declaration.modes.includes(cellMode)
+            ? [{ capabilityKey: declaration.key, mode: cellMode, selector: { _tag: 'all' } }]
             : [],
         );
       const roleId = yield* crypto.randomUUIDv4();
@@ -339,7 +343,7 @@ const withAuthorityCase = <A, E>(
           `insert into core.access_grant_incarnations
              (grant_incarnation_id, tenant_id, scope_id, role_id, capability_key, mode, slot, cell_json, status)
            values (gen_random_uuid(), '${tenantId}', '${companyScopeId}', '${roleId}', '${cell.capabilityKey}',
-                   'run', 'all', '${jsonText(cell)}'::jsonb, 'active')`,
+                   '${cell.mode}', 'all', '${jsonText(cell)}'::jsonb, 'active')`,
         );
       }
       yield* admin.unsafe(
@@ -721,6 +725,30 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               }
             }).pipe(Effect.provide(NodeServices.layer)),
           3,
+        ),
+      300_000,
+    );
+
+    // An approval-only subject: the role grants only `propose` over one module. The hints must find the module
+    // proposable but not runnable, exactly as asking everything does, so the connection's ceiling stays approval.
+    suite.effect(
+      'describes a propose-only person exactly as asking every carrier and Action at once',
+      () =>
+        withAuthorityCase(
+          'commerce.pricing',
+          (authorityCase) =>
+            Effect.gen(function* proposeOnlyHints() {
+              const snapshot = yield* installedComposition;
+              const { hints } = yield* expectSameHints({
+                authorityCase,
+                principalId: authorityCase.person,
+                snapshot,
+              });
+              expect([...hints.value.propose]).toContain('commerce.pricing');
+              expect([...hints.value.run]).not.toContain('commerce.pricing');
+            }).pipe(Effect.provide(NodeServices.layer)),
+          1,
+          'propose',
         ),
       300_000,
     );
