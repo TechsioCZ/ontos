@@ -1,12 +1,17 @@
 import { OperationContextUnavailable, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { ActionServicePreparationContext, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Crypto, Effect, Schema } from 'effect';
 
 import { AddSavedAddressPayloadSchema, UpdateSavedAddressPayloadSchema } from '../../shared/domain/address-actions.ts';
 import type { AddSavedAddressPayload, UpdateSavedAddressPayload } from '../../shared/domain/address-actions.ts';
 import { AddressBookUnavailable } from '../../shared/domain/address-errors.ts';
 import { readAddressProfileSnapshot } from '../persistence/profile-persistence.ts';
-import { assertPreparedPartyAddressCurrent, preparePartyAddressSource } from '../integrations/party-address-source.ts';
+import {
+  assertPreparedPartyAddressCurrent,
+  partyContactPointExecutorForScope,
+  preparePartyAddressSource,
+} from '../integrations/party-address-source.ts';
+import type { PartyAddressRequirementKey } from '../integrations/party-address-source.ts';
 import {
   AddressPreparationSnapshotSchema,
   addressActionPersistenceForTransaction,
@@ -77,7 +82,20 @@ export const prepareAddressPartyServices = Effect.fn('AddressAction.prepareServi
     const before = isParty
       ? yield* context.transaction((transaction) => ownerSnapshot(transaction, scope, selector, savedAddressId))
       : null;
-    const evidence = isParty ? yield* preparePartyAddressSource(selector, scope.correlationId) : null;
+    // Party is read for the Action's own verified actor (the original scope object carries its provenance), once,
+    // before any SQL, under the same module operation requirement the persistence validator uses.
+    const crypto = yield* Crypto.Crypto;
+    const requirementKey: PartyAddressRequirementKey =
+      update === undefined
+        ? 'commerce.customer-context.requirement.add-saved-address-party'
+        : 'commerce.customer-context.requirement.update-saved-address-party';
+    const evidence = isParty
+      ? yield* preparePartyAddressSource(
+          selector,
+          scope.correlationId,
+          partyContactPointExecutorForScope(context.scope, crypto, requirementKey),
+        )
+      : null;
     const validatePartySource = (candidate: Payload) =>
       matches(candidate) && evidence !== null
         ? assertPreparedPartyAddressCurrent(evidence)
