@@ -43,6 +43,11 @@ export interface BoundAccessGate {
    * transaction leaves it out and the decision reads in a transaction of the request scope.
    */
   readonly decide: (input: GateInput, transaction?: CoreTransaction) => Effect.Effect<AccessDecision>;
+  /** Batched decisions for a composition that supplies a gate with batch support. */
+  readonly decideMany?: (
+    input: readonly GateInput[],
+    transaction?: CoreTransaction,
+  ) => Effect.Effect<readonly AccessDecision[]>;
   /**
    * A list, search or history page: the owner applies the returned predicate in its own query (O25).
    * `transaction` joins a transaction the caller already owns, exactly as for `decide`.
@@ -63,6 +68,9 @@ export interface BoundAccessGate {
  */
 export interface UnboundAccessGate {
   readonly decide: (input: GateInput) => Effect.Effect<AccessDecision, never, AccessDecisionRequirements>;
+  readonly decideMany: (
+    input: readonly GateInput[],
+  ) => Effect.Effect<readonly AccessDecision[], never, AccessDecisionRequirements>;
   readonly list: (input: ListGateInput) => Effect.Effect<ListAccessResolution, never, AccessDecisionRequirements>;
   /**
    * The same seam over other ports (O75): a binding that joins a caller's transaction rebinds the
@@ -214,7 +222,7 @@ const decisionPortsOf = (ports: AccessEnforcementPorts): AccessDecisionPorts =>
  * The gate bound to these ports. The gate itself is the seam's own service (`AccessDecisionLive` in
  * a deployment, a scripted double in a suite); the ports are what this composition provides.
  */
-export const bindAccessGate = (gate: UnboundAccessGate, ports: AccessEnforcementPorts): BoundAccessGate => {
+export const bindAccessGate = (gate: UnboundAccessGate, ports: AccessEnforcementPorts) => {
   const context = contextOf(ports);
   // The request read isolation is the default: only a caller that hands its own transaction gets the
   // joined ports, so a preflight or a standalone decision keeps opening its own scoped read.
@@ -231,6 +239,10 @@ export const bindAccessGate = (gate: UnboundAccessGate, ports: AccessEnforcement
     decide: (input: GateInput, transaction?: CoreTransaction) => {
       const bound = boundTo(transaction);
       return bound.seam.decide(input).pipe(Effect.provideContext(bound.context));
+    },
+    decideMany: (input: readonly GateInput[], transaction?: CoreTransaction) => {
+      const bound = boundTo(transaction);
+      return bound.seam.decideMany(input).pipe(Effect.provideContext(bound.context));
     },
     list: (input: ListGateInput, transaction?: CoreTransaction) => {
       const bound = boundTo(transaction);

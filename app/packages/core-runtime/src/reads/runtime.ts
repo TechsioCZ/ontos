@@ -30,7 +30,7 @@ import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
 import { Cause, Context, DateTime, Effect, Exit, Layer, Match, Option, Predicate, Schema } from 'effect';
 import type { AccessDeclaration, AccessFieldGroup, AccessTarget } from '../authorization/access-declaration.ts';
 import type { AccessDecision, AccessRecordTarget, ParentReadRequirement } from '../access/decision/contract.ts';
-import type { GateInput } from '../access/enforcement/contract.ts';
+import type { GateInput, ListGateInput } from '../access/enforcement/contract.ts';
 import type { ListAccessResolution } from '../access/decision/engine.ts';
 import { capabilityPolicyOf } from '../access/enforcement/capability.ts';
 import { withOptional } from '../access/decision/optional.ts';
@@ -1810,11 +1810,27 @@ const readRuntimeFromDependencies = <
                 reason: 'Owner-local Read authorization is temporarily unavailable',
               });
             }
+            const decideMany = accessDecision?.decideMany;
+            const shellAccess =
+              isBoundShellSystemRead(input.registration, shellSystemReads) &&
+              accessDecision !== undefined &&
+              decideMany !== undefined
+                ? {
+                    decide: (question: GateInput) => accessDecision.decide({ ...question, scope }, transaction),
+                    decideMany: (questions: readonly GateInput[]) =>
+                      decideMany(
+                        questions.map((question) => ({ ...question, scope })),
+                        transaction,
+                      ),
+                    list: (question: ListGateInput) => accessDecision.list({ ...question, scope }, transaction),
+                  }
+                : undefined;
             const services = yield* getReadServiceFactory(input.registration)(
               scoped,
               scope,
               admittedCompositionRevision,
               gateAuthorization.listAccess,
+              shellAccess,
             );
             const handlerResult = yield* Effect.suspend(() =>
               getReadHandler(input.registration)(

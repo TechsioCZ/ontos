@@ -21,6 +21,7 @@ import type {
   AccessWorkloadInput,
 } from '../authorization/access-declaration.ts';
 import type { ListAccessPredicate } from '../access/decision/list-access.ts';
+import type { AccessDecisionService } from '../access/enforcement/contract.ts';
 import type { OwnerAccessFacts } from '../access/enforcement/owner-overlay.ts';
 import type { ActionPolicy } from '../actions/policy.ts';
 import { isActionPolicy } from '../actions/policy.ts';
@@ -537,6 +538,8 @@ export type ReadServiceFactory<Services, Requirements = never> = (
    * and an owner factory that both an Action and a read build simply declares no fourth parameter.
    */
   listAccess?: ListAccessPredicate,
+  /** The transaction-bound access gate is supplied only to registered Shell system reads. */
+  shellAccess?: Pick<AccessDecisionService, 'decide' | 'decideMany' | 'list'>,
 ) => Effect.Effect<Services, OperationContextUnavailable, Requirements>;
 
 export type ReadHandler<
