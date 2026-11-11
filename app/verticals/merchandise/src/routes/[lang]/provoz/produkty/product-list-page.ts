@@ -3,13 +3,13 @@
 import { useHeldSnapshot } from '@app/admin-ui';
 import { pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
-import { Result, Schema } from 'effect';
+import { MutableRef, Result, Schema } from 'effect';
 import { useEffect, useSyncExternalStore } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { useSettledPageData } from '../../../../runtime/page-data-hooks.ts';
 import type { SettledPageData } from '../../../../runtime/page-data-hooks.ts';
-import { categoryChoicesData, productListData, productScope } from './products-api.ts';
+import { categoryChoicesData, productListData, productListMemory, productScope } from './products-api.ts';
 import type { CategoryChoices, FailureReason, ProductListInput, ProductListQuery } from './products-api.ts';
 
 const NO_CHOICES: CategoryChoices = { hasTree: false, labels: [] };
@@ -98,7 +98,9 @@ export const useProductPage = (legalEntityId: string, query: ProductListQuery, c
   // The strict store reads as pending while it reloads this request (freshness window, live change, settled write).
   // The table keeps the last ready read of the same request until the reload settles; another request never reuses
   // it, and a failed or refused reload replaces it at once.
-  const settled = useSettledPageData(useHeldSnapshot(productListData.key(input), snapshot), input);
+  // A list reopened while its store reloads starts from its last ready read of this request (`memory`).
+  const held = useHeldSnapshot(productListData.key(input), snapshot, { memory: MutableRef.get(productListMemory) });
+  const settled = useSettledPageData(held, input);
   return {
     reload: () => {
       browserRuntime.runFork(productListData.refresh(input));
