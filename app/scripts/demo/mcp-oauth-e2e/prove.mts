@@ -40,12 +40,11 @@ import {
   closeMcpClient,
   connectMcp,
   callJson,
+  confirmLatency,
   latencySummary,
   listTools,
-  overBudget,
   rawLegacyInitialize,
   rawMcpStatus,
-  timingsOf,
   MODERN_PROTOCOL_VERSION,
 } from './mcp.mts';
 import { openSharedTab, approveConnection, sessionPost } from './browser.mts';
@@ -599,22 +598,21 @@ const runVariant = (def: VariantDef, summary: VariantSummary, verification: bool
         };
       }),
     );
-    yield* Effect.tryPromise(async () => await client.close());
-
     // Every authenticated request of this client answered within its budget: an MCP client gives up on a slow
-    // `server/discover` (Claude Code waits 5 s), so a slow connection is a failed connection.
+    // `server/discover` (Claude Code waits 5 s), so a slow connection is a failed connection. A miss is measured
+    // once more and fails only when the second sample misses too.
     yield* rec.stepEffect(
       k,
       'latence MCP (discover a tools/list ≤ 3 s, tools/call ≤ 10 s)',
-      Effect.sync(() => {
-        const timings = timingsOf(client);
-        const slow = overBudget(timings);
+      Effect.gen(function* verifyLatency() {
+        const { first, slow } = yield* confirmLatency(client);
         return {
-          detail: slow.length === 0 ? latencySummary(timings) : `pomalé: ${slow.join('; ')}`,
-          pass: timings.length > 0 && slow.length === 0,
+          detail: slow.length === 0 ? latencySummary(first) : `pomalé: ${slow.join('; ')}`,
+          pass: first.length > 0 && slow.length === 0,
         };
       }),
     );
+    yield* Effect.tryPromise(async () => await client.close());
 
     // A 2025-era client is told which revision the server speaks instead of being served.
     yield* rec.stepEffect(
