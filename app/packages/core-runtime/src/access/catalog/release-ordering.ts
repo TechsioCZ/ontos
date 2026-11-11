@@ -1,5 +1,7 @@
 import { Option, Schema } from 'effect';
 
+import { CapabilityKeySchema } from '../ids.ts';
+import type { CapabilityKey } from '../ids.ts';
 import type { CatalogSnapshot, CatalogSnapshotEntry } from '../model.ts';
 
 /**
@@ -12,11 +14,14 @@ import type { CatalogSnapshot, CatalogSnapshotEntry } from '../model.ts';
  *
  * - `Publish`: unpublished, and it covers the newest release; it becomes the newest release.
  * - `Current`: it is the newest release already; nothing is published and the tenants still follow it.
- * - `Superseded/published_before`: it was a release once and another one followed it; nothing changes.
- * - `Superseded/not_a_successor`: it drops or narrows something the newest release declares without lineage —
- *   the catalog of an older deployment, or a deployment that removes capabilities. Nothing is published and no
- *   tenant changes. A plain removal therefore never reaches a release: the removed entry stays in the newest
- *   release and is inert, because the gate only ever decides a declaration the running code presents.
+ * - `PublishedBefore`: it was a release once and another one followed it (an older deployment started again);
+ *   nothing changes.
+ * - `NotASuccessor`: it drops or narrows something the newest release declares without lineage — the catalog of a
+ *   deployment that never published (a side branch, an older build) or one that removes capabilities. Nothing is
+ *   published and no tenant changes, and it names what it lacks (`uncoveredKeys`): until an operator resolves it
+ *   (`docs/architecture/AUTHORIZATION.md`), no later deployment that also lacks those capabilities publishes either.
+ *   A removed entry stays in the newest release and is inert, because the gate only ever decides a declaration the
+ *   running code presents.
  *
  * The rule cannot tell an older deployment that only adds capabilities from a newer one; such a catalog may be
  * published, and then it only adds capabilities, which no running code can use unless it declares them.
@@ -24,7 +29,8 @@ import type { CatalogSnapshot, CatalogSnapshotEntry } from '../model.ts';
 export const CatalogReleaseOrderingSchema = Schema.Union([
   Schema.TaggedStruct('Publish', {}),
   Schema.TaggedStruct('Current', {}),
-  Schema.TaggedStruct('Superseded', { reason: Schema.Literals(['not_a_successor', 'published_before']) }),
+  Schema.TaggedStruct('PublishedBefore', {}),
+  Schema.TaggedStruct('NotASuccessor', { uncoveredKeys: Schema.NonEmptyArray(CapabilityKeySchema) }),
 ]);
 export type CatalogReleaseOrdering = typeof CatalogReleaseOrderingSchema.Type;
 
@@ -55,16 +61,22 @@ const claimedByLineage = (entries: readonly CatalogSnapshotEntry[]): ReadonlySet
   return claimed;
 };
 
-/** Whether every capability the newest release declares survives, at least as wide, in the candidate. */
-export const coversRelease = (candidate: CatalogSnapshot, newest: CatalogSnapshot): boolean => {
+/** Every capability of the newest release the candidate drops or narrows without lineage, sorted. */
+const uncoveredKeysOf = (candidate: CatalogSnapshot, newest: CatalogSnapshot): readonly CapabilityKey[] => {
   const byKey = new Map(candidate.entries.map((entry) => [entry.key, entry] as const));
   const claimed = claimedByLineage(candidate.entries);
-  return newest.entries.every((entry) => {
+  const uncovered: CapabilityKey[] = [];
+  for (const entry of newest.entries) {
     const successor = byKey.get(entry.key);
-    return successor === undefined
-      ? claimed.has(entry.key)
-      : includesAll(successor.modes, entry.modes) && includesAll(successor.selectors, entry.selectors);
-  });
+    const covered =
+      successor === undefined
+        ? claimed.has(entry.key)
+        : includesAll(successor.modes, entry.modes) && includesAll(successor.selectors, entry.selectors);
+    if (!covered) {
+      uncovered.push(entry.key);
+    }
+  }
+  return uncovered.toSorted();
 };
 
 /** Content decides, never "differs": the same content is the same release, and a narrower one never wins. */
@@ -77,8 +89,9 @@ export const orderCatalogRelease = (input: CatalogReleaseOrderingInput): Catalog
         return { _tag: 'Current' };
       }
       if (input.publishedDigests.has(candidate.digest)) {
-        return { _tag: 'Superseded', reason: 'published_before' };
+        return { _tag: 'PublishedBefore' };
       }
-      return coversRelease(candidate, newest) ? { _tag: 'Publish' } : { _tag: 'Superseded', reason: 'not_a_successor' };
+      const [first, ...rest] = uncoveredKeysOf(candidate, newest);
+      return first === undefined ? { _tag: 'Publish' } : { _tag: 'NotASuccessor', uncoveredKeys: [first, ...rest] };
     },
   });

@@ -1400,24 +1400,26 @@ const orderRelease = Effect.fn('AccessReleaseStore.orderRelease')(function* orde
     ordering,
     previous,
   });
+  const keptNewest = (current: CatalogSnapshot | undefined) =>
+    current === undefined
+      ? Effect.fail(
+          storeConflict('access_changes_catalog_conflict', 'a release is superseded although no release exists'),
+        )
+      : Effect.succeed(kept(current, Option.none()));
   return yield* Match.value(ordering).pipe(
     Match.tagsExhaustive({
       Current: () =>
         newest === undefined
           ? Effect.fail(storeConflict('access_changes_catalog_conflict', 'the newest release is missing'))
           : Effect.map(readPreviousRelease(transaction, history), (previous) => kept(newest, previous)),
+      NotASuccessor: () => keptNewest(newest),
       Publish: () => {
         const published = newest === undefined ? candidate : publishedAfter(candidate, newest);
         return (publish ? publishRelease(transaction, published) : Effect.void).pipe(
           Effect.as(kept(published, Option.fromUndefinedOr(newest))),
         );
       },
-      Superseded: () =>
-        newest === undefined
-          ? Effect.fail(
-              storeConflict('access_changes_catalog_conflict', 'a release is superseded although no release exists'),
-            )
-          : Effect.succeed(kept(newest, Option.none())),
+      PublishedBefore: () => keptNewest(newest),
     }),
   );
 });
@@ -1531,8 +1533,13 @@ export const makeAccessReleaseDrizzleStore = (database: AccessChangesDatabase): 
   const activateRelease: AccessReleaseStoreService['activateRelease'] = (candidate) =>
     inTransaction((transaction) => orderRelease(transaction, candidate, true));
 
+  // A preview decides under the same lock as an activation, in a transaction that cannot write.
   const previewRelease: AccessReleaseStoreService['previewRelease'] = (candidate) =>
-    inTransaction((transaction) => orderRelease(transaction, candidate, false));
+    durable(
+      database.executor.transaction((transaction) => orderRelease(transaction, candidate, false), {
+        accessMode: 'read only',
+      }),
+    );
 
   const ensureReleaseActor: AccessReleaseStoreService['ensureReleaseActor'] = (input) =>
     inTransaction((transaction) => writeReleaseActor(transaction, input));

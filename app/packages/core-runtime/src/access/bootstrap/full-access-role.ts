@@ -3,8 +3,9 @@ import type { Result } from 'effect';
 import type { AccessProjectionError } from '../compiler/projection-error.ts';
 import { RECORD_SELECTORS_NARROWEST_FIRST, compileRoleTemplateCells } from '../compiler/cells.ts';
 import type { CompiledRoleTemplate, RoleEditorSwitch, RoleTemplateIntent } from '../compiler/cells.ts';
-import { RoleTemplateKeySchema } from '../ids.ts';
-import type { RoleTemplateKey } from '../ids.ts';
+import { stableUuid } from '../catalog/stable-id.ts';
+import { RoleIdSchema, RoleTemplateKeySchema } from '../ids.ts';
+import type { RoleId, RoleTemplateKey } from '../ids.ts';
 import type { CatalogSnapshot, CatalogSnapshotEntry, RecordSelector } from '../model.ts';
 
 /** The one role every tenant starts with (O67-Q6): the label people see, never a technical key. */
@@ -12,6 +13,10 @@ export const FULL_ACCESS_ROLE_NAME = 'Plný přístup';
 
 /** Its template identity: what a role revision of this role records as its origin. */
 export const FULL_ACCESS_ROLE_TEMPLATE_KEY: RoleTemplateKey = RoleTemplateKeySchema.make('full_access');
+
+/** The tenant's own "Plný přístup": the role its permission bootstrap created, derived from the tenant alone. */
+export const fullAccessPresetRoleId = (tenantId: string): RoleId =>
+  RoleIdSchema.make(stableUuid(['ontos.access.bootstrap.role', tenantId, FULL_ACCESS_ROLE_TEMPLATE_KEY].join(':')));
 
 /** Widest first, so the first declared selector found is the widest one the capability allows. */
 const SELECTORS_WIDEST_FIRST: readonly RecordSelector[] = [...RECORD_SELECTORS_NARROWEST_FIRST].toReversed();

@@ -8,7 +8,11 @@ import type { AccessCatalogModule } from '../../authorization/access-declaration
 import { CoreDatabase } from '../../db/client.ts';
 import { tenants } from '../../db/schema.ts';
 import type { OperationalScope } from '../../operations/context.ts';
-import { FULL_ACCESS_ROLE_TEMPLATE_KEY, compileFullAccessRole } from '../bootstrap/full-access-role.ts';
+import {
+  FULL_ACCESS_ROLE_TEMPLATE_KEY,
+  compileFullAccessRole,
+  fullAccessPresetRoleId,
+} from '../bootstrap/full-access-role.ts';
 import { buildDeploymentCatalogRelease } from '../catalog/release.ts';
 import type { CatalogReleaseOrdering } from '../catalog/release-ordering.ts';
 import { stableUuid } from '../catalog/stable-id.ts';
@@ -33,11 +37,13 @@ import { ACCESS_MODEL_PARSE_OPTIONS } from '../model.ts';
  *
  *   1. The deployment's catalog becomes the newest release when it is new and covers the newest release
  *      (`orderCatalogRelease`: nothing the newest release declares is dropped or narrowed without declared
- *      lineage), decided under one global lock. Anything else changes nothing at all.
- *   2. In every active tenant, "Plný přístup" (the `full_access` template preset, found by its template key,
- *      never by its name) follows the newest release: an additions-only successor revision, so every holder in
- *      every company where the role is held gains exactly the new capabilities, and nothing is ever narrowed.
- *      A preset a person has changed (`customer_changed`) is a role like any other and does not follow. The
+ *      lineage), decided under one global lock. Anything else changes nothing at all, and the script reports a
+ *      catalog that is not a successor as a failed activation (see `AUTHORIZATION.md` for the remedy).
+ *   2. In every active tenant, "Plný přístup" (the tenant-wide role its bootstrap created, found by its derived
+ *      id, never by its name, and only while no person has written a revision of it after the first) follows the
+ *      newest release: an additions-only successor revision, so every holder in every company where the role is
+ *      held gains exactly the new capabilities, and nothing is ever narrowed. A preset a person has changed is a
+ *      role like any other: it does not follow and gets Novinky, and the tenant still takes the release. The
  *      write holds the same lock in shared mode and proves its release is still the newest, so a follow planned
  *      against a superseded release writes nothing.
  *   3. Every other role adopts nothing automatically: the changes between the release it is pinned to and the
@@ -82,13 +88,29 @@ export class AccessReleaseActivationError extends Schema.TaggedError<AccessRelea
 const refusal = (reason: string, cause?: unknown) =>
   new AccessReleaseActivationError(cause === undefined ? { reason } : { cause, reason });
 
-/** The untouched full-access preset of a tenant, when it has one. */
-export const fullAccessPresetOf = (roles: readonly RoleWithRevision[]): Option.Option<RoleWithRevision> =>
-  Option.fromUndefinedOr(
+/**
+ * The tenant's untouched "Plný přístup", when it has one: the role its permission bootstrap created
+ * (`fullAccessPresetRoleId`), tenant-wide, still the `full_access` template, and written after its first revision only
+ * by this tenant's release actor — the same history `core.require_role_revision_author` demands. Any other role is
+ * a role like every other one: it does not follow, and it gets Novinky.
+ */
+export const fullAccessPresetOf = (
+  tenantId: string,
+  roles: readonly RoleWithRevision[],
+): Option.Option<RoleWithRevision> => {
+  const presetId = fullAccessPresetRoleId(tenantId);
+  const actorId = releaseActorId(tenantId);
+  return Option.fromUndefinedOr(
     roles.find(
-      ({ revision }) => revision.provenance === 'template' && revision.templateKey === FULL_ACCESS_ROLE_TEMPLATE_KEY,
+      ({ revision, role }) =>
+        role.id === presetId &&
+        role.legalEntityId === undefined &&
+        revision.provenance === 'template' &&
+        revision.templateKey === FULL_ACCESS_ROLE_TEMPLATE_KEY &&
+        (revision.revision === 1 || revision.createdBy === actorId),
     ),
   );
+};
 
 export interface TenantReleaseFollowInput {
   readonly createdAt: Date;
@@ -110,6 +132,8 @@ export interface TenantReleaseFollowPlan {
   readonly items: readonly AccessChangeItem[];
   /** The preset's additions-only successor; none without a preset or when it already holds everything. */
   readonly presetEdit: Option.Option<RoleCellEdit>;
+  /** Whether the tenant has an untouched preset to follow at all (`fullAccessPresetOf`). */
+  readonly presetFound: boolean;
 }
 
 const decodeEdit = Schema.decodeUnknownResult(RoleCellEditSchema, ACCESS_MODEL_PARSE_OPTIONS);
@@ -259,7 +283,7 @@ const inertKeysOf = (preset: Option.Option<RoleWithRevision>, newest: CatalogSna
 export const planTenantReleaseFollow = (
   input: TenantReleaseFollowInput,
 ): Result.Result<TenantReleaseFollowPlan, AccessReleaseActivationError> => {
-  const preset = fullAccessPresetOf(input.state.roles);
+  const preset = fullAccessPresetOf(input.tenantId, input.state.roles);
   const others = input.state.roles.filter((role) => Option.getOrUndefined(preset) !== role);
   const presetEdit = Option.match(preset, {
     onNone: () => Result.succeed(Option.none<RoleCellEdit>()),
@@ -276,6 +300,7 @@ export const planTenantReleaseFollow = (
     inertKeys: inertKeysOf(preset, input.newest),
     items: items.success,
     presetEdit: presetEdit.success,
+    presetFound: Option.isSome(preset),
   });
 };
 
@@ -284,11 +309,15 @@ export interface TenantReleaseReport {
   readonly items: number;
   readonly outcome: 'failed' | 'followed' | 'planned' | 'unchanged';
   readonly presetCellsAdded: number;
+  /** Whether the tenant had an untouched "Plný přístup" to follow; false for a tenant that failed. */
+  readonly presetFound: boolean;
   readonly reason?: string;
   readonly tenantId: string;
 }
 
 export interface CatalogReleaseActivationReport {
+  /** The release identity of the deployment's own catalog, whatever the ordering decided. */
+  readonly deployedReleaseId: string;
   readonly entries: number;
   readonly ordering: CatalogReleaseOrdering;
   readonly previousEntries: number | undefined;
@@ -297,8 +326,6 @@ export interface CatalogReleaseActivationReport {
 }
 
 export interface ActivateCatalogReleaseInput {
-  /** Plan and report without a single write. */
-  readonly dryRun: boolean;
   /** Every module the deployed catalog declares (`topology/authorization-catalog.json`). */
   readonly modules: readonly AccessCatalogModule[];
 }
@@ -375,6 +402,7 @@ const reportOf = (
   items: plan.items.length,
   outcome,
   presetCellsAdded: Option.match(plan.presetEdit, { onNone: () => 0, onSome: ({ addedCells }) => addedCells.length }),
+  presetFound: plan.presetFound,
   tenantId,
 });
 
@@ -453,8 +481,50 @@ const failedTenant = (tenantId: string, failure: AccessReleaseActivationError): 
   items: 0,
   outcome: 'failed',
   presetCellsAdded: 0,
+  presetFound: false,
   reason: failure.reason,
   tenantId,
+});
+
+/** The deployment's catalog as a candidate release, and the ordering against what is published. */
+const orderedRelease = Effect.fn('AccessReleaseActivation.order')(function* orderedReleaseEffect(
+  input: ActivateCatalogReleaseInput,
+  publish: boolean,
+) {
+  const releases = yield* AccessReleaseStore;
+  const candidate = buildDeploymentCatalogRelease({ modules: input.modules, publishedAt: yield* DateTime.nowAsDate });
+  if (Result.isFailure(candidate)) {
+    return yield* refusal(`${candidate.failure.code}: ${candidate.failure.reason}`, candidate.failure);
+  }
+  const activation = yield* (publish ? releases.activateRelease : releases.previewRelease)(candidate.success).pipe(
+    Effect.mapError((failure) => refusal(`${failure.code}: ${failure.reason}`, failure)),
+  );
+  // Only a published or current release reaches the tenants; anything else changes no tenant at all.
+  const reached = Match.value(activation.ordering).pipe(
+    Match.tags({ Current: () => true, Publish: () => true }),
+    Match.orElse(() => false),
+  );
+  return {
+    activation,
+    deployedReleaseId: candidate.success.id,
+    release: { newest: activation.newest, previous: activation.previous } satisfies FollowedRelease,
+    tenantIds: reached ? yield* activeTenantIds : [],
+  };
+});
+
+const reportOfRelease = (
+  ordered: Effect.Success<ReturnType<typeof orderedRelease>>,
+  tenantReports: readonly TenantReleaseReport[],
+): CatalogReleaseActivationReport => ({
+  deployedReleaseId: ordered.deployedReleaseId,
+  entries: ordered.activation.newest.entries.length,
+  ordering: ordered.activation.ordering,
+  previousEntries: ordered.activation.previous.pipe(
+    Option.map(({ entries }) => entries.length),
+    Option.getOrUndefined,
+  ),
+  releaseId: ordered.activation.newest.id,
+  tenants: tenantReports,
 });
 
 /**
@@ -464,37 +534,34 @@ const failedTenant = (tenantId: string, failure: AccessReleaseActivationError): 
 export const activateCatalogRelease = Effect.fn('AccessReleaseActivation.activate')(function* activateEffect(
   input: ActivateCatalogReleaseInput,
 ) {
-  const releases = yield* AccessReleaseStore;
-  const candidate = buildDeploymentCatalogRelease({ modules: input.modules, publishedAt: yield* DateTime.nowAsDate });
-  if (Result.isFailure(candidate)) {
-    return yield* refusal(`${candidate.failure.code}: ${candidate.failure.reason}`, candidate.failure);
-  }
-  const activation = yield* (input.dryRun ? releases.previewRelease : releases.activateRelease)(candidate.success).pipe(
-    Effect.mapError((failure) => refusal(`${failure.code}: ${failure.reason}`, failure)),
-  );
-  const release: FollowedRelease = { newest: activation.newest, previous: activation.previous };
-  // An older catalog changes no tenant; the newest release keeps serving exactly as it is.
-  const reached = Match.value(activation.ordering).pipe(
-    Match.tag('Superseded', () => false),
-    Match.orElse(() => true),
-  );
-  const tenantIds = reached ? yield* activeTenantIds : [];
-  const reports = yield* Effect.all(
-    tenantIds.map((tenantId) =>
-      (input.dryRun ? planTenant(tenantId, release) : followTenant(tenantId, release)).pipe(
+  const ordered = yield* orderedRelease(input, true);
+  const tenantReports = yield* Effect.all(
+    ordered.tenantIds.map((tenantId) =>
+      followTenant(tenantId, ordered.release).pipe(
         Effect.catchTag('AccessReleaseActivationError', (failure) => Effect.succeed(failedTenant(tenantId, failure))),
       ),
     ),
     { concurrency: 1 },
   );
-  return {
-    entries: activation.newest.entries.length,
-    ordering: activation.ordering,
-    previousEntries: activation.previous.pipe(
-      Option.map(({ entries }) => entries.length),
-      Option.getOrUndefined,
+  return reportOfRelease(ordered, tenantReports);
+});
+
+/**
+ * The same decision and per-tenant plan as `activateCatalogRelease`, without a single write: nothing is published,
+ * no release actor is created, no role or item is recorded and the engine is never touched, so it needs the
+ * database alone. The ordering is decided against the releases as they stand.
+ */
+export const planCatalogRelease = Effect.fn('AccessReleaseActivation.plan')(function* planEffect(
+  input: ActivateCatalogReleaseInput,
+) {
+  const ordered = yield* orderedRelease(input, false);
+  const tenantReports = yield* Effect.all(
+    ordered.tenantIds.map((tenantId) =>
+      planTenant(tenantId, ordered.release).pipe(
+        Effect.catchTag('AccessReleaseActivationError', (failure) => Effect.succeed(failedTenant(tenantId, failure))),
+      ),
     ),
-    releaseId: activation.newest.id,
-    tenants: reports,
-  } satisfies CatalogReleaseActivationReport;
+    { concurrency: 1 },
+  );
+  return reportOfRelease(ordered, tenantReports);
 });
