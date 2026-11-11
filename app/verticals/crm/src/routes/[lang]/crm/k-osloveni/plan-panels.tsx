@@ -6,10 +6,8 @@ import { CrmFormSaveActions, useCrmFormSave } from '../../../../crm/form-save.ts
 // AREA: visits (C06) — owned by the crm-visits lane. Plan a contact / reschedule it / complete it (+ visit).
 import { DetailList, SidePanel, comboboxTranslations, surfaceTileClassName } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Combobox } from '@techsio/ui-kit/molecules/combobox';
+import { Combobox, FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useState } from 'react';

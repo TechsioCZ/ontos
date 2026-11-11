@@ -808,6 +808,34 @@ test('shows the Czech label a module declares for a Czech page', () => {
   expect(model.groups.flatMap(({ links }) => links.map(({ label }) => label))).toEqual(['Properties (cs)']);
 });
 
+test("marks a record page's destination current by its path when no destination names the page", () => {
+  const model = buildShellNavigation(
+    {
+      currentEntrypointKey: 'fixture.shop.page.product-detail',
+      currentHref: '/fixture-shop/products/product-1',
+      currentModuleId: 'fixture.shop',
+      language: 'en',
+      navigation: [orders, products],
+      unavailableDeployments: [],
+    },
+    (key) => key,
+  );
+  expect(model.current?.link.label).toBe('Products and stock');
+  expect(model.groups.flatMap(({ links }) => links.filter((link) => link.current))).toHaveLength(1);
+  const unrelated = buildShellNavigation(
+    {
+      currentEntrypointKey: 'fixture.shop.page.product-detail',
+      currentHref: '/fixture-shop/products-archive',
+      currentModuleId: 'fixture.shop',
+      language: 'en',
+      navigation: [orders, products],
+      unavailableDeployments: [],
+    },
+    (key) => key,
+  );
+  expect(unrelated.current).toBeUndefined();
+});
+
 test('names an unavailable deployment neutrally instead of by its technical app id', () => {
   const model = buildShellNavigation(
     {

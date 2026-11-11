@@ -4,8 +4,7 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { surfaceTileClassName } from '@app/admin-ui';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
+import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { Option } from 'effect';
 import { useState } from 'react';
 import type { ComponentProps } from 'react';

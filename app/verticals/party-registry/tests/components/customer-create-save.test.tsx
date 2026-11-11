@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { Effect } from 'effect';
 import { constVoid } from 'effect/Function';
 
-import { saveLabelsFor } from '@app/admin-ui';
+import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
 import { createCustomer } from '../../src/api/customers-client.ts';
 import type { CreatedCustomer } from '../../src/api/customers-client.ts';
 import { CustomerCreateDialog } from '../../src/routes/[lang]/prodej/zakaznici/customer-create-dialog.tsx';
@@ -79,6 +79,15 @@ it.live('typing only changes the draft and writes nothing', () =>
     type('customer-email', 'obchod@example.test');
     expect(createCustomer).not.toHaveBeenCalled();
     expect(button(labels.save).hasAttribute('disabled')).toBe(false);
+  }),
+);
+
+it.live('reads the required text of a required field in Czech', () =>
+  Effect.sync(() => {
+    renderDialog();
+    const label = document.querySelector<HTMLLabelElement>('label[for="customer-name"]');
+    expect(label?.textContent).toContain(requiredLabelFor('cs'));
+    expect(document.body.textContent).not.toContain('(required)');
   }),
 );
 

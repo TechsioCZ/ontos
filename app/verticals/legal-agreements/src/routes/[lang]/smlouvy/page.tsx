@@ -1,5 +1,13 @@
 import { RecordDiscussion } from '@app/facility-operations/ui/record-discussion';
-import { DetailList, PageHeader, SectionCard, formatDate, formatMoney, surfaceTileClassName } from '@app/admin-ui';
+import {
+  DetailList,
+  DocumentTitle,
+  PageHeader,
+  SectionCard,
+  formatDate,
+  formatMoney,
+  surfaceTileClassName,
+} from '@app/admin-ui';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
@@ -105,6 +113,7 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
   }
   return (
     <>
+      <DocumentTitle title={state.titleOf(selected)} />
       <div>
         <LinkButton
           href={`/${language}/smlouvy`}

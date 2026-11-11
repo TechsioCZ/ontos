@@ -7,7 +7,7 @@ import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedC
 import type { SaveOutcome } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { Effect, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';

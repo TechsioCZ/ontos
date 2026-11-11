@@ -1,7 +1,7 @@
 // @rstest-environment happy-dom
 // The manual signature form as a person uses it: typing and Enter record nothing, the one Uložit records the
 // signature once, a refusal keeps the input with its reason, and leaving with typed input asks first.
-import { saveLabelsFor } from '@app/admin-ui';
+import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
 import { Effect } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import type { AgreementOutcome } from '../../src/routes/[lang]/smlouvy/agreements-command.ts';
@@ -133,6 +133,16 @@ describe('manual signature', () => {
       yield* click(button(labels.discard));
       expect(navigation.proceeded).toBe(1);
       expect(sentDrafts).toHaveLength(0);
+    }),
+  );
+
+  it.effect('reads the required text of a required field in Czech', () =>
+    Effect.gen(function* readRequired() {
+      yield* mountForm();
+      expect(document.body.textContent).toContain(requiredLabelFor('cs'));
+      expect(document.body.textContent).not.toContain('(required)');
+      const label = document.querySelector('label[for="contract-signedBy"]');
+      expect(label?.textContent ?? '').toContain(requiredLabelFor('cs'));
     }),
   );
 });

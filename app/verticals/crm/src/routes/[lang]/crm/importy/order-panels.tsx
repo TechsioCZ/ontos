@@ -17,7 +17,7 @@ import {
 import { PairingForm } from './pairing-form.tsx';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
+import { FormTextarea } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { useState } from 'react';
 import type { ReactNode } from 'react';

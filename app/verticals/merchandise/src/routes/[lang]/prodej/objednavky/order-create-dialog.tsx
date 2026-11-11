@@ -1,7 +1,7 @@
 import { pendingProposalMessage } from '../../../../api/action-result.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Combobox } from '@techsio/ui-kit/molecules/combobox';
+import { Combobox } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import {
   DetailList,

@@ -1,7 +1,7 @@
 // @rstest-environment happy-dom
 // The bulk employee dialogs apply their change only from the shared Save button ("Uložit"), last in the footer:
 // typing and Enter change only the draft. Only the i18n runtime and the router blocker are replaced.
-import { saveLabelsFor } from '@app/admin-ui';
+import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
 import { Effect, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
@@ -185,6 +185,14 @@ describe('bulk employee dialogs', () => {
       await clickCancel();
       expect(closed).toEqual([]);
       expect(leaveQuestion()).toBe(true);
+    }),
+  );
+
+  it.live('reads the required text of a required field in Czech', () =>
+    Effect.promise(async () => {
+      await mount(<BulkDepartmentDialog commit={recording([])} ids={ids} onClose={constVoid} onSaved={constVoid} />);
+      expect(field('bulk-department').labels?.[0]?.textContent).toContain(requiredLabelFor('cs'));
+      expect(document.body.textContent).not.toContain('(required)');
     }),
   );
 });

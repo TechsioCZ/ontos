@@ -1,6 +1,6 @@
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
-import { rowIntentProps, useHeldSnapshot } from '@app/admin-ui';
+import { LIST_WARM_ROWS, makeIntentLimiter, makePointerDwell, rowIntentProps, useHeldSnapshot } from '@app/admin-ui';
 import type { RowIntentProps } from '@app/admin-ui';
 import { Data, Effect, Match, Predicate, Random, Result, Schema } from 'effect';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
@@ -364,12 +364,15 @@ export const orderDetailData = definePageData({
   runtime: browserRuntime,
 });
 
-/** Caller supplies exactly the authorized current page, not a catalogue or all paginated results. */
+/**
+ * Caller supplies exactly the authorized current page, not a catalogue or all paginated results. Only its first
+ * `LIST_WARM_ROWS` orders are warmed; every other row is warmed by its intent.
+ */
 export const preloadOrderDetails = (input: OrdersPageInput, records: RecordsResponse): Effect.Effect<void> =>
   input.scope === undefined
     ? Effect.void
     : Effect.forEach(
-        records.orders.slice(0, Math.min(input.query.limit, 200)),
+        records.orders.slice(0, Math.min(input.query.limit, LIST_WARM_ROWS)),
         (order) =>
           orderDetailData
             .read({ orderId: order.id, revision: records.revision, scope: input.scope ?? '', source: input })
@@ -377,18 +380,29 @@ export const preloadOrderDetails = (input: OrdersPageInput, records: RecordsResp
         { concurrency: 2, discard: true },
       );
 
+const orderIntentReads = makeIntentLimiter();
+const orderPointerDwell = makePointerDwell((effect) => browserRuntime.runFork(effect));
+
 /**
  * Warms one order's detail when the user shows the intent to open its row. The strict detail store does the rest: a
  * fresh entry answers at once without a request and a running read is joined, so each row has at most one read.
+ * At most two intent reads run at once; a sweep over many rows keeps only the newest waiting.
  */
 export const prefetchOrderDetail = (input: OrdersPageInput, records: RecordsResponse, orderId: string): void => {
   if (input.scope === undefined) {
     return;
   }
   const detail: OrderDetailInput = { orderId, revision: records.revision, scope: input.scope, source: input };
-  if (orderDetailData.snapshot(detail).state !== 'ready') {
-    browserRuntime.runFork(orderDetailData.read(detail).pipe(Effect.ignore));
+  if (orderDetailData.snapshot(detail).state === 'ready') {
+    return;
   }
+  orderIntentReads((done) => {
+    if (orderDetailData.snapshot(detail).state === 'ready') {
+      done();
+      return;
+    }
+    browserRuntime.runFork(orderDetailData.read(detail).pipe(Effect.ignore, Effect.ensuring(Effect.sync(done))));
+  });
 };
 
 /** Intent prefetch of the orders table: `orders` are its rows in table order (no client sorting). */
@@ -402,7 +416,7 @@ export const orderDetailIntent = (
     if (records !== undefined && order !== undefined) {
       prefetchOrderDetail(input, records, order.id);
     }
-  });
+  }, orderPointerDwell);
 
 /** One governed command. Every call carries a fresh idempotency key and the revision the caller last saw. */
 const submitCommand = Effect.fn('OrdersRecords.submitCommand')(function* submitCommand(

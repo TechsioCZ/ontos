@@ -1,6 +1,6 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { SidePanel } from '@app/admin-ui';
+import { DocumentTitle, SidePanel } from '@app/admin-ui';
 import { useState } from 'react';
 import type { Order } from '../../../../../shared/apis/records.ts';
 import type { OrderStatus } from '../../../../../shared/domain/merchandise-model.ts';
@@ -132,6 +132,7 @@ export const OrderDetailDialog = ({
       size="xl"
       title={orderDetailTitle({ editing, number: order.number, t })}
     >
+      <DocumentTitle title={order.number} />
       <OrderReloadNotice detail={detail} onRetry={onRetry} />
       <OrderDetailContent
         brand={brand}

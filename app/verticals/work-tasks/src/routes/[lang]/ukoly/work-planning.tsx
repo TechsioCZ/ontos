@@ -17,7 +17,7 @@ import { assignmentOptions, selectedPrincipal } from './assignment-options.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import { DateTime, Effect, Option, Schema } from 'effect';

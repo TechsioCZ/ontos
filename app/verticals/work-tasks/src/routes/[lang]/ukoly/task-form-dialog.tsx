@@ -1,4 +1,5 @@
 import {
+  DocumentTitle,
   SaveBar,
   SidePanel,
   UnsavedChangesDialog,
@@ -19,10 +20,7 @@ import { assignmentOptions, selectedPrincipal } from './assignment-options.ts';
 import { CalendarDate } from '@internationalized/date';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Combobox } from '@techsio/ui-kit/molecules/combobox';
-import { DatePicker } from '@techsio/ui-kit/molecules/date-picker';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
+import { Combobox, DatePicker, FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
@@ -886,6 +884,7 @@ const TaskPanel = ({
       size="lg"
       title={readOnly ? 'Detail úkolu' : t(isEdit ? `${key}.edit` : `${key}.create`)}
     >
+      <DocumentTitle title={task?.title} />
       <div className="flex flex-col gap-200 py-200">
         {error !== undefined && (
           <StatusText showIcon status="error">

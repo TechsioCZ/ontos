@@ -8,7 +8,7 @@ import { useNavigate, useParams, useRouterState } from '@modern-js/plugin-tansta
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { Toaster } from '@app/admin-ui';
+import { DocumentTitle, Toaster } from '@app/admin-ui';
 import { browserRuntime } from '../../../../../runtime/browser-effect-runtime.ts';
 import { legalEntityOf } from '../../../../../runtime/page-data-hooks.ts';
 import {
@@ -24,7 +24,7 @@ import {
 import { ProductDetailView } from '../product-detail-dialog.tsx';
 import type { ProductDetailTab } from '../product-detail-dialog.tsx';
 import { productVariantIdFromSearch } from '../product-variant-destination.ts';
-import { RecordRouteTitle, UltramodernRouteHead } from '../../../../ultramodern-route-head';
+import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
 import csResource from '../../../../../../locales/cs/merchandise.json';
 import enResource from '../../../../../../locales/en/merchandise.json';
 import '../../../../index.css';
@@ -124,7 +124,7 @@ const ProductDetailPageContent = ({ context, legalEntityId, routeParams, search 
   return (
     <>
       <UltramodernRouteHead />
-      <RecordRouteTitle name={state.status === 'ready' ? state.product.name : undefined} />
+      <DocumentTitle title={state.status === 'ready' ? state.product.name : undefined} />
       {/* A failed reload of the product on screen keeps the editor and its unsaved drafts; it only says so. */}
       {state.status === 'ready' && failure !== undefined && (
         <div className="flex flex-wrap items-center gap-200">

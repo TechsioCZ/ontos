@@ -1,3 +1,4 @@
+import { requiredLabelFor } from '@app/admin-ui';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, rstest } from 'effect-rstest';
 import { renderToString } from 'react-dom/server';
@@ -24,6 +25,16 @@ it('renders invitation acceptance with a fixed POST action and disables submissi
   expect(form?.getAttribute('action')).toBe('/cs/login');
   expect(form?.querySelector('button[type="submit"]')?.hasAttribute('disabled')).toBe(true);
   expect(form?.querySelectorAll('input[type="password"]').length).toBe(2);
+});
+
+it('reads the required text of a required field in Czech', () => {
+  const html = renderToString(<SetPasswordPage />);
+  expect(html).toContain(requiredLabelFor('cs'));
+  expect(html).not.toContain('(required)');
+
+  render(<SetPasswordPage />);
+  const password = screen.getByLabelText(/shell\.invitation\.newPassword/u);
+  expect(document.querySelector(`label[for="${password.id}"]`)?.textContent).toContain(requiredLabelFor('cs'));
 });
 
 it.each([false, true])('only calls the credential client when hydrated is %s', (hydrated) => {

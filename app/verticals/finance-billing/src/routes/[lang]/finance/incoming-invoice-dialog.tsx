@@ -3,7 +3,7 @@ import { DateTime, Effect } from 'effect';
 import { DetailList, formatMoney, SidePanel, UnsavedChangesDialog } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useRef, useState } from 'react';
 import { draftTotals, lineIssue, lineValueIssue, newDraftLine } from '../../../../shared/domain/invoice-draft.ts';

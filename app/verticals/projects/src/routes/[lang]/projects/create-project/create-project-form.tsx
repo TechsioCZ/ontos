@@ -8,9 +8,7 @@ import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedC
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime/consumer';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
-import { RadioGroup } from '@techsio/ui-kit/molecules/radio-group';
+import { FormInput, FormTextarea, RadioGroup } from '@app/admin-ui/form-controls';
 import { Effect, Option, Random, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { useRef, useState } from 'react';

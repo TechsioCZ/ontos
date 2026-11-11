@@ -1,7 +1,7 @@
 // A delegation of role management within one scope (manager, people, roles, permissions, limit and end date).
 import { SaveBar, UnsavedChangesDialog, saveLabelsFor } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormInput } from '@app/admin-ui/form-controls';
 import { useId, useState } from 'react';
 
 import { PeopleChoiceField } from './people-choice.tsx';

@@ -1,6 +1,7 @@
 // @rstest-environment happy-dom
-// A directly loaded product page names the browser tab after the product, over the title the Shell's frame renders
-// in the same commit. Only the product read, the detail view and the router are replaced.
+// A product page names the browser tab after the product through the Shell frame's title. Only the product read, the
+// detail view and the router are replaced.
+import { useDocumentTitle } from '@app/admin-ui';
 import { constVoid } from 'effect/Function';
 import { Effect } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
@@ -19,7 +20,11 @@ import {
   productScope,
 } from '../../src/routes/[lang]/provoz/produkty/products-api.ts' with { rstest: 'importActual' };
 
-const copy = { productName: 'product-name', productTab: 'product-name | OntOS', shellTitle: 'Domů | OntOS' } as const;
+const copy = {
+  productTab: 'product-name | OntOS',
+  shellName: 'shell-destination',
+  shellTitle: 'shell-destination | OntOS',
+} as const;
 
 const mocks = rstest.hoisted(() => ({ ready: true }));
 rstest.mock('../../src/routes/[lang]/provoz/produkty/products-api.ts', () => ({
@@ -48,42 +53,36 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   useParams: () => ({ id: 'product-1', lang: 'cs' }),
   useRouterState: () => '',
 }));
+// The module's own head is not the tab's title in the Shell; only the frame's title is.
+rstest.mock('../../src/routes/ultramodern-route-head.tsx', () => ({ UltramodernRouteHead: () => null }));
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   FederatedI18nBoundary: ({ children }: { readonly children: ReactNode }) => children,
   useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
 }));
 
 const roots: { readonly container: HTMLElement; readonly root: Root }[] = [];
-const mountPage = (lateShellTitle: boolean) => {
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
-  roots.push({ container, root });
-  act(() => {
-    // The Shell's frame renders its own title in the same commit as the page.
-    root.render(
-      <>
-        <title>{copy.shellTitle}</title>
-        <ProductDetailRoute />
-      </>,
-    );
-  });
-  if (lateShellTitle) {
-    // A Shell frame that commits its title after the page.
-    act(() => {
-      root.render(
-        <>
-          <title>{copy.shellTitle}</title>
-          <ProductDetailRoute />
-          <title>{copy.shellTitle}</title>
-        </>,
-      );
-    });
-  }
+
+/** The Shell's frame: its title names the record a page gives, else its own destination. */
+const Frame = ({ children }: { readonly children: ReactNode }) => {
+  const title = useDocumentTitle();
+  return (
+    <>
+      <title>{`${title ?? copy.shellName} | OntOS`}</title>
+      {children}
+    </>
+  );
 };
-// The head observer answers in a microtask, as in the browser.
-const mount = (lateShellTitle = false) =>
-  Effect.sync(() => mountPage(lateShellTitle)).pipe(Effect.andThen(Effect.promise(() => Promise.resolve())));
+
+const mount = (page: ReactNode = <ProductDetailRoute />) =>
+  Effect.sync(() => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    roots.push({ container, root });
+    act(() => {
+      root.render(<Frame>{page}</Frame>);
+    });
+  });
 
 beforeEach(() => {
   rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -110,11 +109,14 @@ it.effect('names the browser tab after the product once it is loaded', () =>
   ),
 );
 
-it.effect('keeps the product name when the Shell renders its title after the page', () =>
-  mount(true).pipe(
+it.effect('gives the tab back to the Shell once the page is left', () =>
+  mount().pipe(
     Effect.andThen(
       Effect.sync(() => {
-        expect(document.title).toBe(copy.productTab);
+        act(() => {
+          roots[0]?.root.render(<Frame>{null}</Frame>);
+        });
+        expect(document.title).toBe(copy.shellTitle);
       }),
     ),
   ),
@@ -127,7 +129,7 @@ it.effect('does not name the tab before the product has loaded', () =>
     Effect.andThen(mount()),
     Effect.andThen(
       Effect.sync(() => {
-        expect(document.title).not.toBe(copy.productTab);
+        expect(document.title).toBe(copy.shellTitle);
       }),
     ),
   ),

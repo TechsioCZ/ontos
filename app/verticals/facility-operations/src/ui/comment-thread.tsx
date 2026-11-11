@@ -13,15 +13,17 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Textarea } from '@techsio/ui-kit/atoms/textarea';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
-import { Fragment, useState } from 'react';
+import { Fragment, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { UnsavedChangesDialog, saveLabelsFor, surfaceTileClassName } from '@app/admin-ui';
+import type { SavableDraft, SaveState, UnsavedChangesGuard } from '@app/admin-ui';
 import type { CommentRecord, DocumentsState, SubjectRef } from '../../shared/domain/documents.ts';
 import { sameSubject } from '../../shared/domain/documents.ts';
 import { formatWhen, isoOf } from './documents-kit.tsx';
 import { LoadingSkeleton } from './loading-skeleton.tsx';
+import { useEditGuard } from './edit-guard.tsx';
 import { useAgendaRecords } from './use-agenda.ts';
 import type { CommandOutcome, FailureReason } from './use-agenda.ts';
-import { surfaceTileClassName } from '@app/admin-ui';
 
 const k = 'facility-operations.documents.comments';
 const NO_ATTACHMENT = '__none__';
@@ -67,6 +69,84 @@ export interface CommentThreadProps {
   readonly variant?: 'thread' | 'chat';
 }
 
+/**
+ * The leave question of typed comment text. Posting stays its own command button; leaving with text asks Zůstat /
+ * Zahodit změny / Uložit, and Uložit there sends the same command, leaving once it went through.
+ */
+const useCommentGuard = ({
+  busy,
+  dirty,
+  onDiscard,
+  send,
+  valid,
+}: {
+  readonly busy: boolean;
+  readonly dirty: boolean;
+  readonly onDiscard: () => void;
+  /** Sends the comment; `settle` tells whether it went through. */
+  readonly send: (settle: (ok: boolean) => void) => void;
+  readonly valid: boolean;
+}): UnsavedChangesGuard => {
+  const waiting = useRef<((status: SaveState) => void) | null>(null);
+  // A command can answer before the question asks how it ended; the answer then waits here.
+  const answered = useRef<SaveState | null>(null);
+  const finish = (ok: boolean) => {
+    const done = waiting.current;
+    waiting.current = null;
+    const answer: SaveState = ok ? 'saved' : 'error';
+    if (done === null) {
+      answered.current = answer;
+      return;
+    }
+    done(answer);
+  };
+  const unsaved: SaveState = valid ? 'dirty' : 'invalid';
+  const resting: SaveState = dirty ? unsaved : 'idle';
+  const status: SaveState = busy ? 'saving' : resting;
+  const draft: SavableDraft = {
+    afterSave: (done) => {
+      const answer = answered.current;
+      answered.current = null;
+      if (answer !== null) {
+        done(answer);
+        return;
+      }
+      if (status === 'dirty') {
+        waiting.current = done;
+        return;
+      }
+      done(status);
+    },
+    canSave: status === 'dirty',
+    dirty,
+    save: () => {
+      answered.current = null;
+      if (status === 'dirty') {
+        send(finish);
+      }
+    },
+    status,
+  };
+  return useEditGuard(draft, onDiscard);
+};
+
+/** Only an open, changed edit is input to keep; a save already on its way is not asked about again. */
+const editChanged = (edit: {
+  readonly body: string;
+  readonly busy: boolean;
+  readonly draft: string;
+  readonly editing: boolean;
+  readonly retracted: boolean;
+}) => edit.editing && !edit.retracted && !edit.busy && edit.draft.trim() !== edit.body;
+
+/** Asked only while the composer is on screen with text, and not while that text is already being posted. */
+const composerHasText = (composer: {
+  readonly body: string;
+  readonly busy: boolean;
+  readonly status: string;
+  readonly view: { readonly canWrite: boolean } | undefined;
+}) => composer.status === 'ready' && composer.view?.canWrite === true && !composer.busy && composer.body.trim() !== '';
+
 const CommentItem = ({
   canWrite,
   comment,
@@ -89,6 +169,10 @@ const CommentItem = ({
   const [busy, setBusy] = useState(false);
   const mine = meId !== undefined && comment.createdBy.principalId === meId;
   const retracted = comment.retractedAt !== undefined;
+  const stopEditing = () => {
+    setDraft(comment.body);
+    setEditing(false);
+  };
 
   const fail = (reason: FailureReason) =>
     toast.create({ title: t(`facility-operations.common.errors.${reason}`), type: 'error' });
@@ -111,18 +195,31 @@ const CommentItem = ({
         fail(outcome.reason);
       }
     });
-  const saveEdit = (): Effect.Effect<void> =>
+  /** Saves the edited wording; succeeds with whether the edit is safe (saved or nothing to save). */
+  const saveEdit = (): Effect.Effect<boolean> =>
     Effect.suspend(() => {
       const body = draft.trim();
       if (body === '' || body === comment.body) {
-        return Effect.sync(() => setEditing(false));
+        return Effect.sync(() => {
+          setEditing(false);
+          return true;
+        });
       }
       setBusy(true);
       return run({ _tag: 'DocumentCommentEdit', body, commentId: comment.id }).pipe(
         Effect.tap(finishSave),
-        Effect.asVoid,
+        Effect.map((outcome) => outcome.ok),
       );
     });
+  const edit = useCommentGuard({
+    busy,
+    dirty: editChanged({ body: comment.body, busy, draft, editing, retracted }),
+    onDiscard: stopEditing,
+    send: (settle) => {
+      browserRuntime.runFork(saveEdit().pipe(Effect.tap((ok) => Effect.sync(() => settle(ok)))));
+    },
+    valid: draft.trim() !== '',
+  });
 
   const retract = (): Effect.Effect<void> =>
     Effect.suspend(() => {
@@ -176,18 +273,11 @@ const CommentItem = ({
               >
                 {t(`${k}.save`)}
               </Button>
-              <Button
-                onClick={() => {
-                  setDraft(comment.body);
-                  setEditing(false);
-                }}
-                size="sm"
-                theme="outlined"
-                variant="secondary"
-              >
+              <Button onClick={() => edit.request(stopEditing)} size="sm" theme="outlined" variant="secondary">
                 {t(`${k}.cancel`)}
               </Button>
             </div>
+            <UnsavedChangesDialog labels={saveLabelsFor(language)} prompt={edit.prompt} />
           </div>
         )}
         {!retracted && !editing && (
@@ -235,7 +325,10 @@ const CommentItem = ({
           <div className="flex flex-wrap items-center gap-100">
             <button
               className="text-fg-secondary text-xs hover:text-fg-primary hover:underline"
-              onClick={() => setEditing(true)}
+              onClick={() => {
+                setDraft(comment.body);
+                setEditing(true);
+              }}
               type="button"
             >
               {t(`${k}.edit`)}
@@ -326,7 +419,7 @@ export const CommentThread = ({
   title,
   variant = 'thread',
 }: CommentThreadProps) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const toast = useToast();
   // The page's records when it passes them (same store entry, no second read), else this panel's own documents read.
   const own = useAgendaRecords(['documents'], { enabled: records === undefined });
@@ -339,6 +432,43 @@ export const CommentThread = ({
   const presentation = threadPresentation(variant);
   const withAttachment = allowAttachment ?? presentation.attachments;
   const heading = title ?? t(`${k}.title`);
+  const finishPost = (outcome: CommandOutcome) =>
+    Effect.sync(() => {
+      setBusy(false);
+      if (outcome.ok) {
+        setBody('');
+        setAttachment(NO_ATTACHMENT);
+        toast.create({ title: t(`${k}.posted`), type: 'success' });
+      } else {
+        setError(outcome.reason);
+      }
+    });
+  /** Posts the typed comment; succeeds with whether it went through. */
+  const submit = (): Effect.Effect<boolean> =>
+    Effect.suspend(() => {
+      const text = body.trim();
+      if (text === '' || busy || view === undefined) {
+        return Effect.succeed(false);
+      }
+      setBusy(true);
+      setError(undefined);
+      return ops.run(postCommentCommand(text, { attachment, documents: view.documents, subject })).pipe(
+        Effect.tap(finishPost),
+        Effect.map((outcome) => outcome.ok),
+      );
+    });
+  const composer = useCommentGuard({
+    busy,
+    dirty: composerHasText({ body, busy, status: ops.status, view }),
+    onDiscard: () => {
+      setBody('');
+      setAttachment(NO_ATTACHMENT);
+    },
+    send: (settle) => {
+      browserRuntime.runFork(submit().pipe(Effect.tap((ok) => Effect.sync(() => settle(ok)))));
+    },
+    valid: body.trim() !== '',
+  });
 
   if (ops.status === 'loading') {
     return <LoadingSkeleton rows={2} />;
@@ -352,29 +482,6 @@ export const CommentThread = ({
   }
 
   const { canWrite, comments, documents, meId, visibleCount } = view;
-  const finishPost = (outcome: CommandOutcome) =>
-    Effect.sync(() => {
-      setBusy(false);
-      if (outcome.ok) {
-        setBody('');
-        setAttachment(NO_ATTACHMENT);
-        toast.create({ title: t(`${k}.posted`), type: 'success' });
-      } else {
-        setError(outcome.reason);
-      }
-    });
-  const submit = (): Effect.Effect<void> =>
-    Effect.suspend(() => {
-      const text = body.trim();
-      if (text === '' || busy) {
-        return Effect.void;
-      }
-      setBusy(true);
-      setError(undefined);
-      return ops
-        .run(postCommentCommand(text, { attachment, documents, subject }))
-        .pipe(Effect.tap(finishPost), Effect.asVoid);
-    });
 
   return (
     <section aria-label={heading} className="flex flex-col gap-200" data-testid="comment-thread">
@@ -458,6 +565,7 @@ export const CommentThread = ({
               {variant === 'chat' ? t(`${k}.send`) : t(`${k}.submit`)}
             </Button>
           </div>
+          <UnsavedChangesDialog labels={saveLabelsFor(language)} prompt={composer.prompt} />
         </div>
       ) : (
         <p className="text-fg-secondary text-xs">{t(`${k}.readOnly`)}</p>

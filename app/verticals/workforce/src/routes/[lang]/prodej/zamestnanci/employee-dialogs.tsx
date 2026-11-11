@@ -1,4 +1,5 @@
 import {
+  DocumentTitle,
   SaveBar,
   SidePanel,
   UnsavedChangesDialog,
@@ -12,8 +13,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Switch } from '@techsio/ui-kit/molecules/switch';
+import { FormInput, Switch } from '@app/admin-ui/form-controls';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { Effect, Option, Predicate, Schema } from 'effect';
 import { Url } from 'effect/http';
@@ -532,6 +532,7 @@ const EmployeeEditPanel = ({
   const handleReloadLatest = record.reloadLatest;
   return (
     <>
+      <DocumentTitle title={employee.fullName} />
       <SidePanel
         actions={
           <div className="workforce-employee-form-actions">
@@ -747,6 +748,7 @@ const EmployeeReadOnlyPanel = ({
       title={employee.fullName}
     >
       <div className="flex flex-col gap-200 py-200" data-employee-detail>
+        <DocumentTitle title={employee.fullName} />
         <EmployeeFields
           availablePrincipals={availablePrincipals}
           disabled

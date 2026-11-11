@@ -2,7 +2,7 @@
 // The lease and stay form as a person uses it: one Save button last in the footer, typing changes only the draft, a
 // save goes out once (an edit against the revision the draft was read at), and leaving with unsaved input asks first.
 // Only the generated clients, the reference credentials, the i18n runtime and the router are replaced.
-import { saveLabelsFor } from '@app/admin-ui';
+import { requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
 import type { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { Effect, Option } from 'effect';
 import { constVoid } from 'effect/Function';
@@ -231,6 +231,15 @@ describe('lease draft', () => {
 });
 
 describe('new lease and stay', () => {
+  it.effect('reads the required text of a required field in Czech', () =>
+    Effect.gen(function* requiredText() {
+      yield* mount(<Form mode="stay" />);
+      expect(document.body.textContent).toContain(requiredLabelFor('cs'));
+      expect(document.body.textContent).not.toContain('(required)');
+      expect(document.querySelector('label[for="stay-people-count"]')?.textContent).toContain(requiredLabelFor('cs'));
+    }),
+  );
+
   it.effect('an untouched new lease closes without asking', () =>
     Effect.gen(function* untouched() {
       yield* mount(<Form mode="lease" />);

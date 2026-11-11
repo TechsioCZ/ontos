@@ -38,7 +38,7 @@ export const OrderLineEditor = ({ canRemove, error, line, onChange, onRecord, on
   return (
     <div className={`${surfaceTileClassName} flex flex-col gap-100 p-150`}>
       {/* On a phone the product search takes its own row; quantity and removal sit below it. */}
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-150 sm:grid-cols-[minmax(0,1fr)_7rem_auto]">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-150 sm:grid-cols-[minmax(0,1fr)_9rem_auto]">
         <div className="col-span-2 min-w-0 sm:col-span-1">
           <ProductSearchCombobox
             activeOnly
