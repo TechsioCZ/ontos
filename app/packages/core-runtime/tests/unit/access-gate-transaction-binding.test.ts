@@ -141,6 +141,12 @@ it.effect('a bound decision reads the request authority until a transaction is n
     expect(ownerDecision.outcome).toBe('ALLOWED');
     expect(joined.calls.readScope).toBeGreaterThan(0);
     expect(joined.calls.readCells).toBeGreaterThan(0);
+    const joinedReads = joined.calls.readScope;
+    const ownerBatch = yield* executor.transaction((transaction) =>
+      bound.decideMany([gateInput, gateInput], transaction),
+    );
+    expect(ownerBatch.map(({ outcome }) => outcome)).toEqual(['ALLOWED', 'ALLOWED']);
+    expect(joined.calls.readScope).toBeGreaterThan(joinedReads);
     expect(request.calls.readScope).toBe(requestReads);
     expect(request.calls.readCells).toBe(requestCellReads);
   }),

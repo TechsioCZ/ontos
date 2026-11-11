@@ -1,4 +1,5 @@
 import {
+  OperationContextUnavailable,
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
   ReadPermissionDenied,
@@ -7,10 +8,10 @@ import {
   defineRead,
   defineSystemModuleEntrypoint,
 } from '@app/core-runtime';
-import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import type {
   ReadCoreError,
   ReadHandlerResult,
+  ReadServiceFactory,
   TrustedPrincipalContext,
   TenantModuleStateServiceContract,
   makeTenantModuleStateService,
@@ -127,19 +128,28 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
     ShellScopedModuleStateFactory,
   ]
 ) {
-  const access = yield* AccessDecisionGate;
   const moduleStates = yield* TenantModuleStateService;
   const compositionFactory = yield* ShellCompositionFactory;
   const resourceServicesFactory = yield* ShellResourceServicesFactory;
   const dependencies = {
     ...assertionIssuer,
-    access,
     catalog: capturedShellCatalog,
     moduleStates,
   };
-  const serviceFactory = (transaction: Parameters<typeof makeTenantModuleStateService>[0]['executor']) => {
+  const serviceFactory = (
+    ...[transaction, _scope, _compositionRevision, _listAccess, access]: Parameters<ReadServiceFactory<unknown>>
+  ) => {
+    if (access === undefined) {
+      return Effect.fail(
+        new OperationContextUnavailable({
+          code: 'operation_context_unavailable',
+          reason: 'The transaction-bound Shell access gate is unavailable',
+        }),
+      );
+    }
     const scopedDependencies = {
       ...dependencies,
+      access,
       moduleStates: scopedModuleStateFactory(transaction),
     };
     return Effect.succeed(
