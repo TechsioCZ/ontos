@@ -54,15 +54,16 @@ import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identi
 /*
  * The tenant intent loader is the one reader of intent, so it has to be exact twice over: complete and
  * consistent for the projection writer (D13), and claim-by-claim right for the decision engine's
- * resolver ports (guarantee 5, D6). These suites apply the real access migration into a database of
+ * resolver ports (guarantee 5, D6). These suites apply the real access migrations into a database of
  * their own, write intent through the stores and the tables Core's writers use, and read it back
  * through the loader, with a negative control beside every claim.
  */
 const databasePrefix = 'ontos_test_access_intent_loader_';
-const migrationPath = new URL(
+/** The access-intent migration and every later migration that changes the tables it creates, in order. */
+const migrationPaths = [
   '../../drizzle/20261103093547_authorization-v2-access-intent/migration.sql',
-  import.meta.url,
-).pathname;
+  '../../drizzle/20261110141804_access-membership-ended-by/migration.sql',
+].map((path) => new URL(path, import.meta.url).pathname);
 
 const uid = (value: number) => `00000000-0000-4000-8000-${value.toString().padStart(12, '0')}`;
 const tenantA = uid(1);
@@ -453,10 +454,12 @@ const makeIntentLoaderSchema = Effect.gen(function* intentLoaderSchema() {
   for (const statement of REQUIRED_IDENTITY_TABLES) {
     yield* admin.unsafe(statement);
   }
-  const migration = yield* fileSystem.readFileString(migrationPath);
-  for (const statement of migration.split('--> statement-breakpoint')) {
-    if (statement.trim().length > 0) {
-      yield* admin.unsafe(statement);
+  for (const migrationPath of migrationPaths) {
+    const migration = yield* fileSystem.readFileString(migrationPath);
+    for (const statement of migration.split('--> statement-breakpoint')) {
+      if (statement.trim().length > 0) {
+        yield* admin.unsafe(statement);
+      }
     }
   }
   for (const statement of [
