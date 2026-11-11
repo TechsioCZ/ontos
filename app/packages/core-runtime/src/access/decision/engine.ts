@@ -1309,9 +1309,12 @@ const cellQueryOf = (params: {
       };
 };
 
-/** One cell set per holder, capability and mode, whatever request or side asked for it. */
+/**
+ * One cell set per tenant, access scope, holder, capability and mode, whatever request or side asked for it. One batch
+ * can ask the same holder and capability in two companies, and each company's scope has cells of its own.
+ */
 const cellQueryKey = (query: AuthorityCellQuery): string =>
-  [holderIdOf(query.holder), query.capabilityKey, query.mode].join('\u0000');
+  [query.tenantId, query.scopeId, holderIdOf(query.holder), query.capabilityKey, query.mode].join('\u0000');
 
 /** The cell sets one request needs, so the whole batch reads each of them exactly once. */
 const requiredCellQueries = (params: {
