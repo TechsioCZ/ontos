@@ -39,11 +39,8 @@ import {
 } from './portal-auth/verification-http/problems.ts';
 import { PgClient } from '@effect/sql-pg';
 import { Reactivity } from 'effect/reactivity';
-import type {
-  ActiveApplicationCompositionService} from '@app/core-runtime/modules/active-application-composition';
-import {
-  ActiveApplicationCompositionConfigLive
-} from '@app/core-runtime/modules/active-application-composition';
+import type { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { EmailDeliveryService } from '@app/email-delivery/server';
