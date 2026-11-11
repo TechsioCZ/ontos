@@ -23,18 +23,9 @@ import type { Redacted } from 'effect';
 import { ApiKeyService } from './api-key-service.ts';
 import { AuthDatabase } from './db/client.ts';
 import { apikey, user } from './db/schema.ts';
+import { PLATFORM_KEY_OWNER } from './platform-key-owner.ts';
 import { ModuleCredentialAttestationJson, ModuleCredentialAttestationSchema } from './module-credential-attestation.ts';
 import type { ModuleCredentialAttestation, ModuleCredentialRelease } from './module-credential-attestation.ts';
-
-/**
- * The provider user every module credential belongs to. It has no account and no password, so nobody signs in as it,
- * and no principal binding names it, so it never resolves to anyone.
- */
-export const PLATFORM_KEY_OWNER = Object.freeze({
-  email: 'module-credentials@ontos-platform.invalid',
-  id: 'ontos-platform-module-credentials',
-  name: 'OntOS platform module credentials',
-});
 
 /** One provisioning pass: each calling module's fresh key, in memory only, and the modules that got none. */
 export interface ProvisionedModuleCredentials {
