@@ -28,6 +28,7 @@ const contentFieldEntries = [
   ['imageSrc', 'Hlavní obrázek'],
   ['imageAlt', 'Popis obrázku'],
   ['category', 'Kategorie'],
+  ['additionalCategoryIds', 'Další kategorie'],
   ['parameters', 'Parametry'],
   ['isAction', 'Akce'],
   ['isRecommended', 'Doporučujeme'],
@@ -135,12 +136,61 @@ export const withContentHistory = (
   return { ...after, contentHistory: [...(before.contentHistory ?? []), change].slice(-MAX_HISTORY) };
 };
 
+/** Opt-in multiple membership: validate every direct id and ancestor; callers never author category paths. */
+export const assignCategoryMemberships = Effect.fn('Merchandise.assignCategoryMemberships')(
+  function* assignCategoryMemberships(
+    product: Product,
+    categoryId: string,
+    additionalCategoryIds: readonly CatalogCategoryId[],
+    categories: readonly CatalogCategory[] | undefined,
+  ): Effect.fn.Return<Product, MerchandiseCommandError> {
+    const byId = new Map<string, CatalogCategory>((categories ?? []).map((category) => [category.id, category]));
+    const primary = byId.get(categoryId);
+    if (primary === undefined) {
+      return yield* new MerchandiseLifecycleConflict({
+        code: 'merchandise_lifecycle_conflict',
+        reason: 'Vybraná kategorie neexistuje',
+      });
+    }
+    const additional = [...new Set(additionalCategoryIds)].filter((id) => id !== primary.id).toSorted();
+    const path: CatalogCategoryId[] = [];
+    for (const id of [primary.id, ...additional]) {
+      const seen = new Set<string>();
+      let next: string | null = id;
+      while (next !== null) {
+        const category = byId.get(next);
+        if (category === undefined || seen.has(next)) {
+          return yield* new MerchandiseLifecycleConflict({
+            code: 'merchandise_lifecycle_conflict',
+            reason: category === undefined ? 'Nadřazená kategorie neexistuje' : 'Strom kategorií obsahuje cyklus',
+          });
+        }
+        seen.add(next);
+        if (!path.includes(category.id)) {
+          path.push(category.id);
+        }
+        next = Option.getOrNull(category.parentId);
+      }
+    }
+    return {
+      ...product,
+      additionalCategoryIds: additional,
+      category: primary.name.slice(0, 120),
+      categoryId: primary.id,
+      categoryPathIds: path,
+    };
+  },
+);
+
 /** Moves the product to an existing category: sets categoryId, categoryPathIds and the `category` name. */
 export const assignCategory = (
   product: Product,
   categoryId: string,
   categories: readonly CatalogCategory[] | undefined,
 ): Effect.Effect<Product, MerchandiseCommandError> => {
+  if (product.additionalCategoryIds !== undefined) {
+    return assignCategoryMemberships(product, categoryId, product.additionalCategoryIds, categories);
+  }
   const all = categories ?? [];
   const category = all.find((candidate) => candidate.id === categoryId);
   if (category === undefined) {

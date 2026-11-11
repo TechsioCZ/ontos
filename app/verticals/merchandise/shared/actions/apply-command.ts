@@ -85,7 +85,10 @@ export type ProductImageChange = typeof ProductImageChangeSchema.Type;
 
 export const BulkProductPatchSchema = Schema.Struct({
   active: Schema.optionalKey(Schema.Boolean),
+  /** Native category assignment is distinct from the legacy display-only `category` patch. */
+  additionalCategoryIds: ProductMetadataSchema.fields.additionalCategoryIds,
   category: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
+  categoryId: ProductMetadataSchema.fields.categoryId,
   /** Whole-percent change applied to currentPriceMinor; each changed product appends a priceHistory entry. */
   priceChangePercent: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ maximum: 1000, minimum: -90 }))),
 });

@@ -180,12 +180,15 @@ export type CategoryNode = typeof CategoryNodeSchema.Type;
 
 export const ProductMetadataSchema = Schema.Struct({
   ...CatalogFieldsSchema.fields,
-  /** Alt text of the main image (storefront `imageAlt`). The gallery is `images`; paragraphs derive from `description`. */
+  /** Optional direct memberships in addition to the primary category; absent preserves legacy behavior. */
+  additionalCategoryIds: Schema.optionalKey(Schema.Array(CatalogCategoryIdSchema).check(Schema.isMaxLength(100))),
   categoryId: Schema.optionalKey(CatalogCategoryIdSchema),
+  /** Owner-derived membership closure: primary leaf-to-root first, then additional paths without duplicates. */
   categoryPathIds: Schema.optionalKey(Schema.Array(CatalogCategoryIdSchema)),
   description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(20_000))),
   featuredPosition: Schema.optionalKey(Schema.OptionFromNullOr(Schema.Finite)),
   heightMm: Schema.optionalKey(MeasurementSchema),
+  /** Alt text of the main image (storefront `imageAlt`). The gallery is `images`; paragraphs derive from `description`. */
   imageAlt: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(300))),
   images: Schema.optionalKey(Schema.Array(ImageRefSchema).check(Schema.isMaxLength(20))),
   isAction: Schema.optionalKey(Schema.Boolean),

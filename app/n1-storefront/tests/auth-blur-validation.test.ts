@@ -18,6 +18,39 @@ describe("auth blur validation during pointer activation", () => {
     expect(validation.finish()).toBeNull();
   });
 
+  it.each(["touch", "pen"])(
+    "keeps the %s activation open when pointerleave precedes compatibility-mouse blur",
+    (pointerType) => {
+      const validation = makeAuthBlurValidation<string>();
+      validation.start();
+      expect(validation.finishOnPointerLeave(pointerType)).toBeNull();
+      expect(validation.validateOnBlur(mismatch)).toBeNull();
+      expect(validation.finish()).toEqual(mismatch);
+    },
+  );
+
+  it.each(["touch", "pen"])(
+    "retains deferred validation through %s pointerleave until click",
+    (pointerType) => {
+      const validation = makeAuthBlurValidation<string>();
+      validation.start();
+      validation.validateOnBlur(mismatch);
+      expect(validation.finishOnPointerLeave(pointerType)).toBeNull();
+      expect(validation.finish()).toEqual(mismatch);
+    },
+  );
+
+  it("finishes a mouse activation when the pointer leaves the form", () => {
+    const validation = makeAuthBlurValidation<string>();
+    validation.start();
+    validation.validateOnBlur(mismatch);
+    expect(validation.finishOnPointerLeave("mouse")).toEqual(mismatch);
+    expect(validation.validateOnBlur({ ...mismatch, valid: true })).toEqual({
+      ...mismatch,
+      valid: true,
+    });
+  });
+
   it("publishes deferred validation on cancellation and restores immediate blur", () => {
     const validation = makeAuthBlurValidation<string>();
     validation.start();
