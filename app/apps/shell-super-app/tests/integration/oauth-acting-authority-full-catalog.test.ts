@@ -222,6 +222,9 @@ interface AuthorityCase {
   /** The case database's administrator client, for reading back the evidence rows a read wrote. */
   readonly admin: PgClient.PgClient;
   readonly companyId: string;
+  /** Every company of the tenant, `companyId` first; the owner is bootstrapped into all of them. */
+  readonly companyIds: readonly string[];
+  readonly owner: string;
   readonly person: string;
   readonly runtime: DatabaseConnectionPair['runtime'];
   readonly tenantId: string;
@@ -231,7 +234,11 @@ interface AuthorityCase {
  * One cloned database with one tenant, one company, its bootstrapped owner and one person who holds a role with every
  * `run` capability of `moduleId` in that company, projected into SpiceDB by the one Core writer.
  */
-const withAuthorityCase = <A, E>(moduleId: string, run: (authorityCase: AuthorityCase) => Effect.Effect<A, E>) =>
+const withAuthorityCase = <A, E>(
+  moduleId: string,
+  run: (authorityCase: AuthorityCase) => Effect.Effect<A, E>,
+  companies = 1,
+) =>
   Effect.scoped(
     Effect.gen(function* authorityCase() {
       const crypto = yield* Crypto.Crypto;
@@ -259,18 +266,22 @@ const withAuthorityCase = <A, E>(moduleId: string, run: (authorityCase: Authorit
       );
       const catalog = yield* publishedCatalog;
       const tenantId = yield* crypto.randomUUIDv4();
-      const companyId = yield* crypto.randomUUIDv4();
+      const companyIds = yield* Effect.forEach(Array.from({ length: companies }), () => crypto.randomUUIDv4());
+      const [companyId = ''] = companyIds;
       const owner = yield* crypto.randomUUIDv4();
       const person = yield* crypto.randomUUIDv4();
       yield* admin.unsafe(
         `insert into core.tenants (tenant_id, slug, name, status, default_locale)
          values ('${tenantId}', 'acting-${tenantId.slice(0, 8)}', 'Acting authority tenant', 'active', 'cs')`,
       );
-      yield* admin.unsafe(
-        `insert into core.legal_entities
-           (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status)
-         values ('${companyId}', '${tenantId}', 'Acting authority company', 'CZ', '${companyId.slice(-8)}', 'active')`,
-      );
+      for (const legalEntityId of companyIds) {
+        yield* admin.unsafe(
+          `insert into core.legal_entities
+             (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status)
+           values ('${legalEntityId}', '${tenantId}', 'Acting authority company', 'CZ', '${legalEntityId.slice(-8)}',
+                   'active')`,
+        );
+      }
       for (const principalId of [owner, person]) {
         yield* admin.unsafe(
           `insert into core.principals (principal_id, tenant_id, kind, display_name, status)
@@ -286,7 +297,7 @@ const withAuthorityCase = <A, E>(moduleId: string, run: (authorityCase: Authorit
       const graph = yield* buildAccessGraph({ adminUrl: databases.runtime.connectionString, configuration });
       const ownerScope = yield* sessionScope({ correlationId: 'acting-authority-seed', principalId: owner, tenantId });
       const bootstrap = yield* graph.bootstrap.bootstrapTenantAccess({
-        legalEntityIds: [LegalEntityIdSchema.make(companyId)],
+        legalEntityIds: companyIds.map((legalEntityId) => LegalEntityIdSchema.make(legalEntityId)),
         modules: catalog,
         scope: ownerScope,
       });
@@ -338,7 +349,7 @@ const withAuthorityCase = <A, E>(moduleId: string, run: (authorityCase: Authorit
                  '${roleRevisionId}', 'active', '${owner}', now() - interval '1 day')`,
       );
       yield* graph.writer.reconcileTenant({ scope: ownerScope });
-      return yield* run({ admin, companyId, person, runtime: databases.runtime, tenantId });
+      return yield* run({ admin, companyId, companyIds, owner, person, runtime: databases.runtime, tenantId });
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
@@ -363,18 +374,26 @@ const measured = <A, E, R>(input: {
   Effect.gen(function* measuredRead() {
     const counters: Counters = { checkBulk: 0, checkItems: 0, compositionLoads: 0 };
     const records: SpanRecord[] = [];
+    // Process CPU time of the read (user + system): the suite runs one read at a time, so it is the read's own.
+    const cpuBefore = process.cpuUsage();
     const value = yield* input.read.pipe(
+      Effect.withSpan('measured.read'),
       Effect.withTracer(recordingTracer(records)),
       Effect.provide(inspectionLayer({ authorityCase: input.authorityCase, counters, snapshot: input.snapshot })),
     );
+    const cpu = process.cpuUsage(cpuBefore);
     const [rows] = yield* input.authorityCase.admin.unsafe<{ readonly count: number }>(
       `select count(*)::int as count from core.access_decision_logs where correlation_id = '${input.correlationId}'`,
     );
     const spans = tally(records);
     return {
+      cellBatches: countOf(spans, 'TenantIntentLoader.loadAuthorityCellsMany'),
       cellReads: countOf(spans, 'TenantIntentLoader.loadAuthorityCells'),
       counters,
+      cpuMs: Math.round((cpu.user + cpu.system) / 1000),
       decisionRows: rows?.count ?? -1,
+      // Wall time of the read itself, from the span the recording tracer closed around it.
+      ms: Math.round(spans.get('measured.read')?.ms ?? -1),
       spans,
       statements: countOf(spans, 'postgres'),
       transactions: countOf(spans, 'sql.transaction'),
@@ -383,9 +402,12 @@ const measured = <A, E, R>(input: {
   });
 
 const reportOf = (result: Effect.Success<ReturnType<typeof measured>>) => ({
+  cellBatches: result.cellBatches,
   cellReads: result.cellReads,
   counters: result.counters,
+  cpuMs: result.cpuMs,
   decisionRows: result.decisionRows,
+  ms: result.ms,
   slowest: [...result.spans.entries()]
     .toSorted(([, left], [, right]) => right.ms - left.ms)
     .slice(0, 25)
@@ -449,6 +471,7 @@ const oneQuestionAtATime = (input: SubjectInspectionInput) =>
   });
 
 const reportPath = Config.option(Config.String('ACTING_AUTHORITY_REPORT'));
+const ownerReportPath = Config.option(Config.String('OWNER_AUTHORITY_REPORT'));
 
 it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 seconds' })(
   'acting authority over the installed release',
@@ -498,8 +521,10 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
             expect(batch.counters.compositionLoads).toBeLessThanOrEqual(6);
             expect(batch.counters.checkBulk).toBeLessThanOrEqual(2 + listCarriers);
             expect(batch.transactions - batch.cellReads).toBeLessThanOrEqual(16);
-            // Each distinct capability is read at most once per mode it is asked in (run, and propose for Actions).
-            expect(batch.cellReads).toBeLessThanOrEqual(capabilityKeys.size * 2);
+            // Every cell set of the batch is read in ONE transaction; only a LIST question reads its own.
+            expect(batch.cellBatches).toBe(1);
+            expect(batch.cellReads).toBeLessThanOrEqual(listCarriers);
+            expect(capabilityKeys.size).toBeGreaterThan(100);
 
             // The same questions one at a time, as the Shell asked them before: identical modules, identical
             // evidence rows, and the round trips the batch no longer makes.
@@ -539,6 +564,75 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               );
             }
           }).pipe(Effect.provide(NodeServices.layer)),
+        ),
+      300_000,
+    );
+
+    // Every MCP request re-describes its connection live (`loadLiveConnection` -> `loadActingAuthority`). For the
+    // tenant owner, who holds every right of the release in each of several companies, that description must cost
+    // a fixed number of round trips, never one intent read per capability the catalog declares.
+    suite.effect(
+      "describes a full-access owner's connection authority in a fixed number of round trips",
+      () =>
+        withAuthorityCase(
+          'work.tasks',
+          (authorityCase) =>
+            Effect.gen(function* ownerAuthority() {
+              const snapshot = yield* installedComposition;
+              const { companyId, companyIds, owner, tenantId } = authorityCase;
+              const asker = yield* sessionScope({
+                correlationId: 'owner-authority-batch',
+                legalEntityId: companyId,
+                principalId: owner,
+                tenantId,
+              });
+              const trace = yield* Ref.make(emptySubjectAccessTrace);
+              const owned = yield* measured({
+                authorityCase,
+                correlationId: 'owner-authority-batch',
+                read: loadActingAuthority(
+                  asker,
+                  { actingKind: 'human', actingPrincipalId: owner, legalEntityId: companyId, tenantId },
+                  trace,
+                ),
+                snapshot,
+              });
+              const installed = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
+              const carriers = moduleCarriers(installed);
+              const listCarriers = carriers.filter(
+                ({ declaration }) => declaration?.kind === 'read' && declaration.selectors.length > 0,
+              ).length;
+              expect(companyIds.length).toBe(3);
+              // The owner reaches every module the tenant runs.
+              expect(owned.value.live.read.size).toBeGreaterThan(20);
+              expect(owned.value.offered.length).toBe(owned.value.live.read.size);
+              expect((yield* Ref.get(trace)).inspectionCalls).toBe(2);
+              expect(owned.counters.checkBulk).toBeLessThanOrEqual(2 + listCarriers);
+              // The work does not grow with the rights the catalog declares (hundreds): one batched cell read, one
+              // read per LIST question, a fixed number of identity, scope and evidence transactions. Before the batch,
+              // this owner cost one transaction per capability and mode: 463 transactions, 3 252 statements.
+              expect(owned.cellBatches).toBe(1);
+              expect(owned.cellReads).toBeLessThanOrEqual(listCarriers);
+              expect(owned.transactions - owned.cellReads).toBeLessThanOrEqual(16);
+              expect(owned.statements).toBeLessThanOrEqual(300);
+
+              const path = yield* ownerReportPath;
+              if (Option.isSome(path)) {
+                const fileSystem = yield* FileSystem.FileSystem;
+                yield* fileSystem.writeFileString(
+                  path.value,
+                  yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+                    carriers: carriers.length,
+                    companies: companyIds.length,
+                    listCarriers,
+                    modules: snapshot.composition.modules.length,
+                    owner: reportOf(owned),
+                    read: owned.value.live.read.size,
+                  }),
+                );
+              }
+            }).pipe(Effect.provide(NodeServices.layer)),
+          3,
         ),
       300_000,
     );

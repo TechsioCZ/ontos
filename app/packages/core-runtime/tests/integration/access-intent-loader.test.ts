@@ -286,6 +286,7 @@ const scopeOf = (tenantId: string, principalId: string, legalEntityId?: string):
  */
 const onLiveClock = (loader: TenantIntentLoaderService): TenantIntentLoaderService => ({
   loadAuthorityCells: (scope, query) => TestClock.withLive(loader.loadAuthorityCells(scope, query)),
+  loadAuthorityCellsMany: (scope, queries) => TestClock.withLive(loader.loadAuthorityCellsMany(scope, queries)),
   loadConfigureBases: (scope, query) => TestClock.withLive(loader.loadConfigureBases(scope, query)),
   loadConnection: (scope, query) => TestClock.withLive(loader.loadConnection(scope, query)),
   loadProjection: (scope) => TestClock.withLive(loader.loadProjection(scope)),
@@ -931,6 +932,40 @@ it.layer(NodeServices.layer)('the tenant intent loader', (suite) => {
           tenantId: TenantIdSchema.make(tenantA),
         }),
       ).toEqual([]);
+      // One batched read answers every query exactly as it answers alone, in the asked order, across holders,
+      // scopes, modes and capabilities — including the revoked delegation, the expired and the agent's queries.
+      const cellQueries = [
+        { capabilityKey: capability(readKey), holder: person(jana), scope: scopeAkros },
+        { capabilityKey: capability(payKey), holder: person(jana), scope: scopeAkros },
+        { capabilityKey: capability(voidKey), holder: person(eva), scope: scopeAkros },
+        { capabilityKey: capability(readKey), holder: person(jana), scope: scopeNajempark },
+        { capabilityKey: capability(readKey), holder: agentHolder(janaAgent), scope: scopeAkros },
+        { capabilityKey: capability(readKey), holder: person(jana), mode: 'propose' as const, scope: scopeAkros },
+      ].map(({ capabilityKey, holder, mode, scope }) => ({
+        capabilityKey,
+        holder,
+        mode: mode ?? ('run' as const),
+        scopeId: AccessScopeIdSchema.make(scope),
+        tenantId: TenantIdSchema.make(tenantA),
+      }));
+      const alone = yield* Effect.forEach(cellQueries, (query) => loader.loadAuthorityCells(schema.scopeAkros, query), {
+        concurrency: 1,
+      });
+      expect(yield* loader.loadAuthorityCellsMany(schema.scopeAkros, cellQueries)).toEqual(alone);
+      expect(alone[0]).toEqual(readCells);
+      expect(yield* loader.loadAuthorityCellsMany(schema.scopeAkros, [])).toEqual([]);
+      const foreignBatch = yield* failureOf(
+        loader.loadAuthorityCellsMany(schema.scopeTenant, [
+          {
+            capabilityKey: capability(readKey),
+            holder: person(jana),
+            mode: 'run',
+            scopeId: AccessScopeIdSchema.make(scopeAkros),
+            tenantId: TenantIdSchema.make(tenantB),
+          },
+        ]),
+      );
+      expect(foreignBatch?.code).toBe('access_intent_scope_mismatch');
 
       // ---- the connection read is fresh, consented and revision-exact (guarantee 6) -------------
       const connection = yield* loader.loadConnection(schema.scopeTenant, {
@@ -1048,6 +1083,39 @@ it.layer(NodeServices.layer)('the tenant intent loader over delegated money limi
         tenantId: TenantIdSchema.make(tenantA),
       });
       expect(unknown).toEqual([]);
+
+      // The batched read applies the same envelopes and catalog entries per capability, and answers queries of
+      // other scopes, modes and holders in the same batch exactly as each alone, in the asked order.
+      const delegatedQueries = [payKey, readKey, unknownKey].map((key) => ({
+        capabilityKey: capability(key),
+        holder: person(jana),
+        mode: 'run' as const,
+        scopeId: AccessScopeIdSchema.make(scopeAkros),
+        tenantId: TenantIdSchema.make(tenantA),
+      }));
+      const asked = {
+        capabilityKey: capability(readKey),
+        holder: person(jana),
+        mode: 'run' as const,
+        scopeId: AccessScopeIdSchema.make(scopeAkros),
+        tenantId: TenantIdSchema.make(tenantA),
+      };
+      const otherQueries = [
+        { ...asked, capabilityKey: capability(payKey), mode: 'propose' as const },
+        { ...asked, scopeId: AccessScopeIdSchema.make(scopeNajempark) },
+        { ...asked, holder: person(eva) },
+      ];
+      const otherAlone = yield* Effect.forEach(
+        otherQueries,
+        (query) => loader.loadAuthorityCells(schema.scopeAkros, query),
+        { concurrency: 1 },
+      );
+      expect(yield* loader.loadAuthorityCellsMany(schema.scopeAkros, [...delegatedQueries, ...otherQueries])).toEqual([
+        cells,
+        reads,
+        unknown,
+        ...otherAlone,
+      ]);
     }),
   );
 });

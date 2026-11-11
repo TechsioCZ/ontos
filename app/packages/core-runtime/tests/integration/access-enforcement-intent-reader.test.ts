@@ -270,6 +270,7 @@ const enforcementDatabase = Effect.gen(function* enforcementDatabaseEffect() {
   // as the intent loader suite does it (C02a).
   const reads: AccessIntentReads = {
     loadAuthorityCells: (scope, query) => TestClock.withLive(loader.loadAuthorityCells(scope, query)),
+    loadAuthorityCellsMany: (scope, queries) => TestClock.withLive(loader.loadAuthorityCellsMany(scope, queries)),
     loadConfigureBases: (scope, query) => TestClock.withLive(loader.loadConfigureBases(scope, query)),
     loadConnection: (scope, query) => TestClock.withLive(loader.loadConnection(scope, query)),
     loadScope: (scope, query) => TestClock.withLive(loader.loadScope(scope, query)),

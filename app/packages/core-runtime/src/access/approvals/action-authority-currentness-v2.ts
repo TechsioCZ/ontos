@@ -33,8 +33,10 @@ const boundAuthority = (
   requiredWitnesses: BoundQuestion['saved']['witnesses'],
 ): DecisionAuthorityPort => {
   const holder = { _tag: 'Principal', principalId: proof.principalId } as const;
+  // The unrestricted batch read is dropped, so every cell set the engine sees passes the bound filter below.
+  const { readCellsMany: _unrestricted, ...restricted } = authority;
   return {
-    ...authority,
+    ...restricted,
     readCells: (query) =>
       authority.readCells(query).pipe(
         Effect.map((cells) => {
