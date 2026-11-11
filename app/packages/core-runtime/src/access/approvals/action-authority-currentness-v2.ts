@@ -2,7 +2,7 @@ import { Effect, Match, Option } from 'effect';
 
 import { ActionPermissionCheckError, ActionPermissionDenied } from '../../actions/errors.ts';
 import type { OperationalScope } from '../../operations/context.ts';
-import type { AuthorityCell, DecisionAuthorityPort } from '../decision/authority.ts';
+import type { AuthorityCell, AuthorityCellQuery, DecisionAuthorityPort, ScopeQuery } from '../decision/authority.ts';
 import type { AccessDecisionRequest } from '../decision/contract.ts';
 import { decideAccessMany } from '../decision/engine.ts';
 import type { DecisionBatchGroup, DecisionCheckPort } from '../decision/engine.ts';
@@ -25,6 +25,9 @@ const lost = (reason: string) => new ActionPermissionDenied({ code: 'action_perm
  * Restrict the ordinary intent port to the exact saved grant/assignment pairs of ONE question.
  * A different live grant cannot rescue a revoked bound witness. No selector, amount, membership,
  * role-binding or engine rule is reimplemented here; the canonical planner decides those facts.
+ *
+ * The port is built from an allow-list: a read added to `DecisionAuthorityPort` later is not offered here until it
+ * is restricted too. Both cell reads pass every answer through the same witness filter.
  */
 const boundAuthority = (
   authority: DecisionAuthorityPort,
@@ -33,51 +36,70 @@ const boundAuthority = (
   requiredWitnesses: BoundQuestion['saved']['witnesses'],
 ): DecisionAuthorityPort => {
   const holder = { _tag: 'Principal', principalId: proof.principalId } as const;
-  // The unrestricted batch read is dropped, so every cell set the engine sees passes the bound filter below.
-  const { readCellsMany: _unrestricted, ...restricted } = authority;
-  return {
-    ...restricted,
-    readCells: (query) =>
-      authority.readCells(query).pipe(
-        Effect.map((cells) => {
-          if (query.scopeId !== proof.scopeId || query.mode !== bound.saved.mode || !sameHolder(query.holder, holder)) {
-            return [];
-          }
-          const required = requiredWitnesses.filter((witness) => witness.capabilityKey === query.capabilityKey);
-          const selected: AuthorityCell[] = [];
-          for (const witness of required) {
-            const cell = cells.find(
-              (candidate) =>
-                candidate.assignmentIncarnationId === witness.assignmentIncarnationId &&
-                candidate.grantIncarnationId === witness.grantIncarnationId &&
-                candidate.capabilityKey === witness.capabilityKey &&
-                candidate.mode === bound.saved.mode &&
-                sameHolder(candidate.holder, holder),
-            );
-            if (cell === undefined) {
-              return [];
-            }
-            selected.push(cell);
-          }
-          return selected;
-        }),
-      ),
-    readScope: (query) =>
-      authority.readScope(query).pipe(
-        Effect.map(
-          Option.filter((scope) => {
-            const sameContext = Match.value(scope.scope).pipe(
-              Match.tags({
-                LegalEntity: ({ legalEntityId }) => legalEntityId === query.legalEntityId,
-                TenantContext: () => query.legalEntityId === undefined,
-              }),
-              Match.exhaustive,
-            );
-            return scope.scopeId === proof.scopeId && scope.tenantId === query.tenantId && sameContext;
-          }),
-        ),
-      ),
+  /** The saved witnesses' own cells of one query, or none when a saved witness is no longer live. */
+  const witnessedCells = (query: AuthorityCellQuery, cells: readonly AuthorityCell[]): readonly AuthorityCell[] => {
+    if (query.scopeId !== proof.scopeId || query.mode !== bound.saved.mode || !sameHolder(query.holder, holder)) {
+      return [];
+    }
+    const required = requiredWitnesses.filter((witness) => witness.capabilityKey === query.capabilityKey);
+    const selected: AuthorityCell[] = [];
+    for (const witness of required) {
+      const cell = cells.find(
+        (candidate) =>
+          candidate.assignmentIncarnationId === witness.assignmentIncarnationId &&
+          candidate.grantIncarnationId === witness.grantIncarnationId &&
+          candidate.capabilityKey === witness.capabilityKey &&
+          candidate.mode === bound.saved.mode &&
+          sameHolder(candidate.holder, holder),
+      );
+      if (cell === undefined) {
+        return [];
+      }
+      selected.push(cell);
+    }
+    return selected;
   };
+  const { readCellsMany } = authority;
+  return withOptional(
+    withOptional(
+      {
+        readCells: (query: AuthorityCellQuery) =>
+          authority.readCells(query).pipe(Effect.map((cells) => witnessedCells(query, cells))),
+        readConnection: authority.readConnection,
+        readScope: (query: ScopeQuery) =>
+          authority.readScope(query).pipe(
+            Effect.map(
+              Option.filter((scope) => {
+                const sameContext = Match.value(scope.scope).pipe(
+                  Match.tags({
+                    LegalEntity: ({ legalEntityId }) => legalEntityId === query.legalEntityId,
+                    TenantContext: () => query.legalEntityId === undefined,
+                  }),
+                  Match.exhaustive,
+                );
+                return scope.scopeId === proof.scopeId && scope.tenantId === query.tenantId && sameContext;
+              }),
+            ),
+          ),
+        readTeamIds: authority.readTeamIds,
+      },
+      'readConfigureBases',
+      authority.readConfigureBases,
+    ),
+    'readCellsMany',
+    readCellsMany === undefined
+      ? undefined
+      : (queries: readonly AuthorityCellQuery[]) =>
+          readCellsMany(queries).pipe(
+            // Each answer keeps its position, so an answer of the wrong length stays unreadable for the engine.
+            Effect.map((answers) =>
+              answers.map((cells, index) => {
+                const query = queries[index];
+                return query === undefined ? [] : witnessedCells(query, cells);
+              }),
+            ),
+          ),
+  );
 };
 
 const requiredPathsOf = ({ question, saved }: BoundQuestion): readonly BoundQuestion['saved']['witnesses'][] => {
