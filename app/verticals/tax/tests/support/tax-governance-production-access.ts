@@ -186,8 +186,11 @@ export const makeTaxGovernanceAccessFixture = Effect.fn('TaxProductionRuntimeTes
         scoped();
         const mode = Schema.decodeUnknownSync(Schema.Literals(['run', 'propose']))(params[4]);
         expect(params).toEqual([tenantId, sellerScopeId, 'active', capabilityKey, mode, roleId]);
+        // The loader indexes a batch's grants by the capability and mode each row carries, as the table stores them.
         return Option.some(
-          Effect.succeed(mode === 'run' ? [{ grantIncarnationId: grantId, roleId, slot: 'all' }] : []),
+          Effect.succeed(
+            mode === 'run' ? [{ capabilityKey, grantIncarnationId: grantId, mode, roleId, slot: 'all' }] : [],
+          ),
         );
       }
       if (sql.includes('from "core"."access_delegations"')) {
