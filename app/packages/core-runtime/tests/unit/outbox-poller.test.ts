@@ -7,13 +7,7 @@ import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/
 import { defineOutboxWorker } from '../../src/outbox/definition.ts';
 import { PersistenceFailure } from '../../src/database/persistence-failure.ts';
 import { OutboxPollerConfigError } from '../../src/outbox/errors.ts';
-import {
-  IDLE_BACKOFF_FACTOR,
-  nextPollDelayMs,
-  parseOutboxPollingConfig,
-  repeatWithIdleBackoff,
-  runOutboxPollingLoop,
-} from '../../src/outbox/poller.ts';
+import { parseOutboxPollingConfig, repeatWithIdleBackoff, runOutboxPollingLoop } from '../../src/outbox/poller.ts';
 import type { OutboxCycleRunner } from '../../src/outbox/poller.ts';
 import type { OutboxClaim, OutboxRepositoryService } from '../../src/outbox/repository.ts';
 import { makeOutboxRuntime, OutboxRuntime } from '../../src/outbox/runtime.ts';
@@ -306,15 +300,6 @@ it.effect('the default poller preserves operation time across a slow sequential 
   }),
 );
 
-it('idle polls wait the interval, then double up to the cap; a poll that found work is followed at once', () => {
-  expect(IDLE_BACKOFF_FACTOR).toBe(2);
-  expect([0, 1, 2, 3, 4, 100, Number.MAX_SAFE_INTEGER].map((streak) => nextPollDelayMs(streak, 1000))).toEqual([
-    0, 1000, 2000, 2000, 2000, 2000, 2000,
-  ]);
-  expect(nextPollDelayMs(1, 10)).toBe(10);
-  expect(nextPollDelayMs(5, 10)).toBe(20);
-});
-
 /** The poll instants (TestClock milliseconds) of one loop whose `found` decides, per call, whether it found work. */
 const pollInstants = (found: (call: number) => boolean, intervalMs: number) =>
   Effect.gen(function* recordPolls() {
@@ -391,5 +376,34 @@ it.effect('a cycle that claimed work is followed at once; a failed cycle backs o
     yield* Fiber.interrupt(running);
     // claimed@0 → at once; empty@0 → 10; failed@10 → 20; claimed@30 → at once; empty@30 → 10; then 20 apart.
     expect(instants).toEqual([0, 0, 10, 30, 30, 40, 60, 80, 100]);
+  }),
+);
+
+it.effect('a cycle whose every claimed delivery failed waits at least one interval; one with a success does not', () =>
+  Effect.gen(function* failingCyclePacing() {
+    const start = yield* Clock.currentTimeMillis;
+    const instants: number[] = [];
+    const failedOnly = { ...emptyResult, claimed: 1, failed: 1, retried: 1 };
+    const mixed = { ...emptyResult, claimed: 2, failed: 1, retried: 1, succeeded: 1 };
+    // A zero initial retry backoff makes the failed delivery due again at once: only the poller paces it.
+    const outcomes = [failedOnly, failedOnly, failedOnly, mixed, emptyResult];
+    const runCycle: OutboxCycleRunner<typeof registration, never> = () =>
+      Effect.gen(function* recordCycle() {
+        instants.push((yield* Clock.currentTimeMillis) - start);
+        return outcomes[instants.length - 1] ?? failedOnly;
+      });
+    const running = yield* runOutboxPollingLoop(
+      {
+        admitComposition: Effect.succeed('a'.repeat(64)),
+        config: { claimOwner: 'consumer:test', maxDeliveries: 10, pollIntervalMs: 10 },
+        registrations: [registration],
+        subscriptions: [registration.descriptor],
+      },
+      runCycle,
+    ).pipe(Effect.forkChild);
+    yield* TestClock.adjust('50 millis');
+    yield* Fiber.interrupt(running);
+    // failed@0 → 10; failed@10 → 20; failed@30 → 20; mixed@50 → at once; empty@50 → 10.
+    expect(instants).toEqual([0, 10, 30, 50, 50]);
   }),
 );
