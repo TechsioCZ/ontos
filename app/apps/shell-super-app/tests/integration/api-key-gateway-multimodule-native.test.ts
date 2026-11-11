@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime';
+import { ActiveApplicationCompositionSnapshotSchema, OntosShellRuntimeContractSchema } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
@@ -23,12 +23,14 @@ import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { createLocalJWKSet, jwtVerify } from 'jose';
 
+import { createShellRuntimeContract } from '../../../../scripts/ontos-shell-runtime-contract.ts';
 import {
   ApiKeyGatewayNativeFixtureError,
   ShellNativeGatewayProblemSchema,
+  makeApiKeyGatewayNativeComposition,
   makeApiKeyGatewayNativeFixture,
+  resolveShellFixtureRelease,
 } from '../fixtures/api-key-gateway-native.ts';
-import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -70,7 +72,12 @@ it.live(
     Effect.scoped(
       Effect.gen(function* independentModuleCredentials() {
         // These empty module contracts grant no business operations. This test proves real Shell credential enrollment only.
-        const snapshot = yield* makeCompositionSnapshot(
+        const release = yield* resolveShellFixtureRelease();
+        const shellContract = createShellRuntimeContract(release.buildMarker);
+        const document = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+          shellContract,
+        );
+        const snapshot = yield* makeApiKeyGatewayNativeComposition(
           [
             makeModuleContractFixture({ appId: 'symmy-integration', moduleId: 'integration.symmy' }),
             makeModuleContractFixture({ appId: 'party-registry', moduleId: 'party.registry' }),
@@ -79,6 +86,7 @@ it.live(
             makeModuleContractFixture({ appId: 'commerce-customer-context', moduleId: 'commerce.customer-context' }),
           ],
           600_000,
+          { document, receiverDeployment: shellContract.deployment },
         );
         const ownedDatabase = yield* makeIsolatedNativeDatabaseFixture({
           compositionSnapshot: snapshot,

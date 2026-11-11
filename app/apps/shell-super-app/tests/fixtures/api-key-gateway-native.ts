@@ -431,28 +431,35 @@ export const decodeShellNativePriceReadEnvironment = Effect.fn('ShellNativeFixtu
 
 export { makeCompositionSnapshot as makeApiKeyGatewayNativeComposition } from './application-composition.ts';
 
+export const resolveShellFixtureRelease = Effect.fn('ApiKeyGatewayNativeFixture.resolveRelease')(
+  function* resolveShellFixtureRelease() {
+    const filesystem = yield* FileSystem.FileSystem;
+    const generated = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          deliveryUnit: Schema.Struct({
+            buildMarker: Schema.String,
+            unitId: Schema.String.pipe(Schema.brand('UltramodernDeliveryUnitId')),
+          }),
+        }),
+      ),
+    )(yield* filesystem.readFileString(new URL('../../shared/ultramodern-build.json', import.meta.url).pathname));
+    return yield* Effect.try({
+      catch: unavailable,
+      try: () =>
+        resolveUltramodernReleaseIdentity({
+          generationBuildMarker: generated.deliveryUnit.buildMarker,
+          unitId: generated.deliveryUnit.unitId,
+          workspaceRoot: appRoot,
+        }),
+    });
+  },
+);
+
 const bundleChild = Effect.fn('ApiKeyGatewayNativeFixture.bundle')(function* bundleChild(expectedBuildMarker: string) {
   const filesystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const generated = yield* Schema.decodeUnknownEffect(
-    Schema.fromJsonString(
-      Schema.Struct({
-        deliveryUnit: Schema.Struct({
-          buildMarker: Schema.String,
-          unitId: Schema.String.pipe(Schema.brand('UltramodernDeliveryUnitId')),
-        }),
-      }),
-    ),
-  )(yield* filesystem.readFileString(new URL('../../shared/ultramodern-build.json', import.meta.url).pathname));
-  const release = yield* Effect.try({
-    catch: unavailable,
-    try: () =>
-      resolveUltramodernReleaseIdentity({
-        generationBuildMarker: generated.deliveryUnit.buildMarker,
-        unitId: generated.deliveryUnit.unitId,
-        workspaceRoot: appRoot,
-      }),
-  });
+  const release = yield* resolveShellFixtureRelease();
   const compiled =
     release.sourceRevision === 'workspace' && release.buildMarker !== expectedBuildMarker
       ? yield* readCompiledNodeShellIdentity(`${appRoot}apps/shell-super-app`).pipe(Effect.mapError(unavailable))
