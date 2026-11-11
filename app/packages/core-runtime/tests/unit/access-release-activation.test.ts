@@ -1,7 +1,11 @@
 import { DateTime, Option, Result } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { FULL_ACCESS_ROLE_TEMPLATE_KEY, compileFullAccessRole } from '../../src/access/bootstrap/full-access-role.ts';
+import {
+  FULL_ACCESS_ROLE_TEMPLATE_KEY,
+  compileFullAccessRole,
+  fullAccessPresetRoleId,
+} from '../../src/access/bootstrap/full-access-role.ts';
 import {
   buildAccessCatalogRelease,
   buildDeploymentCatalogRelease,
@@ -12,6 +16,7 @@ import { orderCatalogRelease } from '../../src/access/catalog/release-ordering.t
 import type { RoleWithRevision } from '../../src/access/changes/role-edits.ts';
 import {
   CapabilityKeySchema,
+  LegalEntityIdSchema,
   ModuleKeySchema,
   PrincipalIdSchema,
   RoleIdSchema,
@@ -97,21 +102,31 @@ const role = (input: Parameters<typeof manualRole>[0]): RoleWithRevision => {
   return { ...built, revision };
 };
 
-const plan = (
+/** The tenant's own "Plný přístup": the bootstrap role, under its derived id. */
+const presetRole = (
+  cells: readonly Cell[],
+  pinned: CatalogSnapshot,
+  overrides: Partial<RoleWithRevision['revision']> = {},
+): RoleWithRevision => {
+  const built = role({ cells, id: 10, pinned, provenance: 'template' });
+  const roleId = fullAccessPresetRoleId(tenantId);
+  return { revision: { ...built.revision, roleId, ...overrides }, role: { ...built.role, id: roleId } };
+};
+
+const planned = (
   roles: readonly RoleWithRevision[],
   newest: CatalogSnapshot,
-  previous?: CatalogSnapshot,
+  pinned: readonly CatalogSnapshot[] = [],
   items: readonly AccessChangeItem[] = [],
 ) =>
-  Result.getOrThrow(
-    planTenantReleaseFollow({
-      createdAt: at,
-      newest,
-      previous: Option.fromUndefinedOr(previous),
-      state: { items, roles },
-      tenantId,
-    }),
-  );
+  planTenantReleaseFollow({
+    createdAt: at,
+    newest,
+    pinnedReleases: new Map(pinned.map((release) => [release.id, release] as const)),
+    state: { items, roles },
+    tenantId,
+  });
+const plan = (...input: Parameters<typeof planned>) => Result.getOrThrow(planned(...input));
 
 const keysOf = (cells: readonly Cell[]) => [...new Set(cells.map(({ capabilityKey }) => capabilityKey))].toSorted();
 
@@ -139,7 +154,7 @@ describe('ordering a deployment catalog against the published releases', () => {
         newest: Option.some(second),
         publishedDigests: new Set([first.digest, second.digest]),
       }),
-    ).toEqual({ _tag: 'Superseded', reason: 'published_before' });
+    ).toEqual({ _tag: 'PublishedBefore' });
     // An older deployment whose own activation never published: narrower than the newest release.
     expect(
       orderCatalogRelease({
@@ -147,7 +162,76 @@ describe('ordering a deployment catalog against the published releases', () => {
         newest: Option.some(third),
         publishedDigests: new Set([first.digest, third.digest]),
       }),
-    ).toEqual({ _tag: 'Superseded', reason: 'narrower_than_newest' });
+    ).toEqual({ _tag: 'NotASuccessor', uncoveredKeys: [VOID] });
+  });
+
+  it('never publishes an older catalog that still holds what the newest release renamed or narrowed', () => {
+    // The newest release renamed `void` to `cancel`; an older deployment never published still declares `void`.
+    const cancel = entry('billing.invoices.invoice.cancel', {
+      lineage: { renamedFrom: [CapabilityKeySchema.make(VOID)] },
+      modes: ['run', 'propose', 'approve'],
+      risk: 'critical',
+    });
+    const renamed = releaseOf([...second.entries, cancel]);
+    expect(
+      orderCatalogRelease({
+        candidate: third,
+        newest: Option.some(renamed),
+        publishedDigests: new Set([renamed.digest]),
+      }),
+    ).toEqual({
+      _tag: 'NotASuccessor',
+      uncoveredKeys: ['billing.invoices.invoice.cancel'],
+    });
+    // The rename itself moved `void` along declared lineage, so it was a successor of the release before.
+    expect(
+      orderCatalogRelease({
+        candidate: renamed,
+        newest: Option.some(third),
+        publishedDigests: new Set([third.digest]),
+      }),
+    ).toEqual({
+      _tag: 'Publish',
+    });
+    // Dropping a mode the newest release declares is a narrowing, whatever else the catalog adds.
+    const narrowed = releaseOf([
+      ...first.entries,
+      entry(APPROVE, { modes: ['propose'] }),
+      entry('billing.invoices.invoice.export', { kind: 'read', modes: ['run'] }),
+    ]);
+    expect(
+      orderCatalogRelease({
+        candidate: narrowed,
+        newest: Option.some(second),
+        publishedDigests: new Set([second.digest]),
+      }),
+    ).toEqual({
+      _tag: 'NotASuccessor',
+      uncoveredKeys: [APPROVE],
+    });
+  });
+
+  it('withholds a plain removal, which stays inert in the newest release', () => {
+    expect(
+      orderCatalogRelease({
+        candidate: first,
+        newest: Option.some(second),
+        publishedDigests: new Set([second.digest]),
+      }),
+    ).toEqual({
+      _tag: 'NotASuccessor',
+      uncoveredKeys: [APPROVE],
+    });
+  });
+
+  it('keeps the newest release when the newer deployment restarts after an older one tried', () => {
+    const published = new Set([first.digest, third.digest]);
+    expect(
+      orderCatalogRelease({ candidate: second, newest: Option.some(third), publishedDigests: published })._tag,
+    ).toBe('NotASuccessor');
+    expect(orderCatalogRelease({ candidate: third, newest: Option.some(third), publishedDigests: published })).toEqual({
+      _tag: 'Current',
+    });
   });
 
   it('publishes a catalog whose entries changed even when it declares the same keys', () => {
@@ -208,8 +292,8 @@ describe('the deployment release', () => {
 
 describe('a tenant following the newest release', () => {
   it('extends "Plný přístup" by exactly the new cells, and only by additions', () => {
-    const preset = role({ cells: cellsOf(first), id: 10, pinned: first, provenance: 'template' });
-    const followed = plan([preset], third, second);
+    const preset = presetRole(cellsOf(first), first);
+    const followed = plan([preset], third);
     const edit = Option.getOrThrow(followed.presetEdit);
     expect(edit.removedCells).toEqual([]);
     expect(keysOf(edit.addedCells)).toEqual([APPROVE, VOID]);
@@ -222,56 +306,100 @@ describe('a tenant following the newest release', () => {
   });
 
   it('is idempotent: the same release plans the same successor, and a preset that took it plans nothing', () => {
-    const preset = role({ cells: cellsOf(first), id: 10, pinned: first, provenance: 'template' });
-    expect(Option.getOrThrow(plan([preset], third, second).presetEdit).targetRevisionId).toBe(
-      Option.getOrThrow(plan([preset], third, second).presetEdit).targetRevisionId,
+    const preset = presetRole(cellsOf(first), first);
+    expect(Option.getOrThrow(plan([preset], third).presetEdit).targetRevisionId).toBe(
+      Option.getOrThrow(plan([preset], third).presetEdit).targetRevisionId,
     );
-    const followed = role({ cells: cellsOf(third), id: 10, pinned: third, provenance: 'template' });
-    const again = plan([followed], third, second);
+    const followed = presetRole(cellsOf(third), third);
+    const again = plan([followed], third);
     expect(Option.isNone(again.presetEdit)).toBe(true);
     expect(again.items).toEqual([]);
   });
 
   it('gives every other role Novinky instead of grants, with stable item identities', () => {
-    const preset = role({ cells: cellsOf(first), id: 10, pinned: first, provenance: 'template' });
+    const preset = presetRole(cellsOf(first), first);
     const custom = role({ cells: cellsOf(first), id: 20, pinned: first, provenance: 'manual' });
-    const followed = plan([preset, custom], second, first);
+    const followed = plan([preset, custom], second, [first]);
     expect(followed.items.map(({ capabilityKey, kind, status }) => [capabilityKey, kind, status])).toEqual([
       [APPROVE, 'new', 'pending'],
     ]);
     // The preset follows by itself, so the item never suggests adopting into it.
     expect(followed.items.flatMap(({ suggestedRoleIds }) => suggestedRoleIds)).not.toContain(preset.role.id);
-    expect(plan([preset, custom], second, first).items.map(({ id }) => id)).toEqual(followed.items.map(({ id }) => id));
+    expect(plan([preset, custom], second, [first]).items.map(({ id }) => id)).toEqual(
+      followed.items.map(({ id }) => id),
+    );
     // Once recorded, the same release plans no item again.
-    expect(plan([preset, custom], second, first, followed.items).items).toEqual([]);
+    expect(plan([preset, custom], second, [first], followed.items).items).toEqual([]);
     // A role created against the newest release already chose from it.
     const current = role({ cells: [], id: 30, pinned: second, provenance: 'manual' });
-    expect(plan([preset, current], second, first).items).toEqual([]);
+    expect(plan([preset, current], second, [first]).items).toEqual([]);
   });
 
   it('treats a preset a person changed as a role like any other', () => {
-    const changed = role({ cells: cellsOf(first), id: 10, pinned: first, provenance: 'customer_changed' });
-    const followed = plan([changed], second, first);
+    const changed = presetRole(cellsOf(first), first, { provenance: 'customer_changed', revision: 2 });
+    const followed = plan([changed], second, [first]);
     expect(Option.isNone(followed.presetEdit)).toBe(true);
     expect(followed.items.map(({ capabilityKey }) => capabilityKey)).toEqual([APPROVE]);
   });
 
   it('keeps a capability the newest release no longer declares, inert and reported, never removed', () => {
-    const preset = role({ cells: cellsOf(third), id: 10, pinned: third, provenance: 'template' });
+    const preset = presetRole(cellsOf(third), third);
     const narrower = releaseOf([
       ...first.entries,
       entry('billing.invoices.invoice.export', { kind: 'read', modes: ['run'] }),
     ]);
-    const followed = plan([preset], narrower, third);
+    const followed = plan([preset], narrower);
     expect(followed.inertKeys).toEqual([APPROVE, VOID]);
     const edit = Option.getOrThrow(followed.presetEdit);
     expect(edit.removedCells).toEqual([]);
     expect(keysOf(edit.addedCells)).toEqual(['billing.invoices.invoice.export']);
   });
 
-  it('records no Novinky without a previous release, and names one release actor per tenant', () => {
-    const custom = role({ cells: [], id: 20, pinned: first, provenance: 'manual' });
-    expect(plan([custom], second).items).toEqual([]);
+  it('lists every change since the release each role is pinned to, even across a skipped release', () => {
+    const preset = presetRole(cellsOf(third), third);
+    // One role stayed on the first release while the tenant never saw the second one.
+    const behind = role({ cells: cellsOf(first), id: 20, pinned: first, provenance: 'manual' });
+    const current = role({ cells: cellsOf(second), id: 30, pinned: second, provenance: 'manual' });
+    const followed = plan([preset, behind, current], third, [first, second]);
+    expect(followed.items.map(({ capabilityKey, kind }) => [capabilityKey, kind])).toEqual([
+      [APPROVE, 'new'],
+      [VOID, 'new'],
+    ]);
+    // A release a role is pinned to that was never published is a refusal, never a silent skip.
+    expect(Result.isFailure(planned([preset, behind], third, [second]))).toBe(true);
+  });
+
+  it('follows only the tenant-wide bootstrap preset whose history no person wrote, and still lists Novinky', () => {
+    const company = LegalEntityIdSchema.make(uid(4));
+    const notFollowing: readonly RoleWithRevision[] = [
+      // A full-access template role that is not the tenant's bootstrap role.
+      role({ cells: cellsOf(first), id: 11, pinned: first, provenance: 'template' }),
+      // The bootstrap role made company-local.
+      {
+        ...presetRole(cellsOf(first), first),
+        role: { ...presetRole(cellsOf(first), first).role, legalEntityId: company },
+      },
+      // A person wrote a later revision that still claims to be the untouched template.
+      presetRole(cellsOf(first), first, { revision: 2 }),
+    ];
+    for (const candidate of notFollowing) {
+      const followed = plan([candidate], second, [first]);
+      expect(followed.presetFound).toBe(false);
+      expect(Option.isNone(followed.presetEdit)).toBe(true);
+      // The tenant still takes the release: the role is a role like any other and gets Novinky.
+      expect(followed.items.map(({ capabilityKey }) => capabilityKey)).toEqual([APPROVE]);
+    }
+    // A later revision the release actor wrote keeps the preset untouched.
+    const followedBefore = presetRole(cellsOf(first), first, {
+      createdBy: PrincipalIdSchema.make(releaseActorId(tenantId)),
+      revision: 2,
+    });
+    const followed = plan([followedBefore], second, [first]);
+    expect(followed.presetFound).toBe(true);
+    expect(keysOf(Option.getOrThrow(followed.presetEdit).addedCells)).toEqual([APPROVE]);
+  });
+
+  it('names one release actor per tenant', () => {
     expect(releaseActorId(tenantId)).toBe(releaseActorId(tenantId));
     expect(releaseActorId(tenantId)).not.toBe(releaseActorId(uid(9)));
   });

@@ -410,7 +410,8 @@ it.effect('fails fast when one loop dies and disposes every hosted runtime befor
     yield* driveCycles(ledger, 2);
     yield* Ref.set(billing.outcome, 'defect');
 
-    yield* TestClock.adjust('10 millis');
+    // An idle loop waits up to twice the interval before its next poll.
+    yield* TestClock.adjust('20 millis');
     const exit = yield* Fiber.await(host);
     expect(Exit.isFailure(exit)).toBe(true);
     expect(yield* Ref.get(billing.disposed)).toBe(true);
@@ -548,7 +549,8 @@ it.effect('keeps health alive during an authority outage and admits later revisi
     expect(yield* readiness).toBe(503);
 
     available = true;
-    yield* TestClock.adjust('10 millis');
+    // The failing loop backed off to twice the interval.
+    yield* TestClock.adjust('20 millis');
     yield* Deferred.await(firstCycle);
     const admittedLoads = loads;
     expect(yield* readiness).toBe(200);

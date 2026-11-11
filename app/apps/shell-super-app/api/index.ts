@@ -192,8 +192,8 @@ import { LiveScopeUnavailable } from './live-changes/live-scope-unavailable.ts';
 import { LiveChangesRouteLive } from './live-changes/transport.ts';
 import { dispatchEmailBatch } from '@app/email-delivery/dispatcher';
 import { listDeliveries } from '@app/email-delivery/deliveries';
-import { PgClient } from '@effect/sql-pg';
 
+import { EmailRequestDatabaseLive } from './email/request-database.ts';
 import { EmailDeliveryRequests, ShellEmailReceiptHandlersLive } from './email/transport.ts';
 import type { EmailDeliveryQuery } from './email/transport.ts';
 import { DocumentHomeCorrelationId, resolveDocumentHome } from './modules/shell-document-home.ts';
@@ -3802,15 +3802,11 @@ export const makeShellAuthenticationApiRuntime = (
         ),
       )
     : Layer.empty;
-  // These factories are installed with request services, but open a pool only after the email route has authorized its work.
-  // Each operation owns a fresh scope, retaining the per-operation pool lifetime on both Node and Workers.
-  const emailDatabaseLive = Layer.effect(
-    PgClient.PgClient,
-    Effect.gen(function* makeEmailRequestDatabase() {
-      const config = yield* DatabaseConfig;
-      return yield* PgClient.makeClient({ url: Redacted.make(config.connectionString) });
-    }),
-  ).pipe(Layer.provide(Layer.mergeAll(DatabaseConfigLive, Reactivity.layer)));
+  // These factories are installed with request services, but reach the database only after the email route has
+  // authorized its work. Each operation owns a fresh scope; on the Node host it borrows the shared runtime pool.
+  const emailDatabaseLive = EmailRequestDatabaseLive.pipe(
+    Layer.provide(Layer.mergeAll(DatabaseConfigLive, Reactivity.layer)),
+  );
   const emailDeliveryRequestsLive = Layer.succeed(EmailDeliveryRequests, {
     dispatch: Effect.scoped(
       Effect.gen(function* dispatchRequestEmailBatch() {

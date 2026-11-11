@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
+import type { PgTransactionConfig } from 'drizzle-orm/pg-core';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { DateTime, Effect, Layer, Match, Option, Result, Schema } from 'effect';
 
@@ -1150,15 +1151,21 @@ const scopedTransaction = <Value>(
   database: AccessChangesDatabase,
   scope: OperationalScope,
   body: (transaction: CoreTransaction) => Effect.Effect<Value, StoreFailure>,
+  config?: PgTransactionConfig,
 ): Effect.Effect<Value, AccessChangesStoreError> =>
   durable(
-    database.executor.transaction((transaction) =>
-      installOperationalScope(transaction, scope, database.enrollment).pipe(
-        Effect.mapError((failure) => storeUnavailable('The tenant scope could not be installed', failure)),
-        Effect.andThen(() => body(transaction)),
-      ),
+    database.executor.transaction(
+      (transaction) =>
+        installOperationalScope(transaction, scope, database.enrollment).pipe(
+          Effect.mapError((failure) => storeUnavailable('The tenant scope could not be installed', failure)),
+          Effect.andThen(() => body(transaction)),
+        ),
+      config,
     ),
   );
+
+/** What a dry run reads in: PostgreSQL itself refuses every write in it. */
+const READ_ONLY: PgTransactionConfig = { accessMode: 'read only' };
 
 export const makeAccessChangesDrizzleStore = (database: AccessChangesDatabase): AccessChangesStoreService => {
   const runScoped = <Value>(
@@ -1377,7 +1384,8 @@ const readPreviousRelease = Effect.fn('AccessReleaseStore.readPreviousRelease')(
 
 /**
  * The ordering of one candidate in one transaction (`orderCatalogRelease`). Only an activation takes the global
- * lock and publishes; a preview reads the same answer and writes nothing.
+ * lock and publishes; a preview takes no lock, so an activation running beside it may publish right after the
+ * preview decided, and it writes nothing (its caller runs it read-only).
  */
 const orderRelease = Effect.fn('AccessReleaseStore.orderRelease')(function* orderReleaseEffect(
   transaction: CoreTransaction,
@@ -1400,24 +1408,26 @@ const orderRelease = Effect.fn('AccessReleaseStore.orderRelease')(function* orde
     ordering,
     previous,
   });
+  const keptNewest = (current: CatalogSnapshot | undefined) =>
+    current === undefined
+      ? Effect.fail(
+          storeConflict('access_changes_catalog_conflict', 'a release is superseded although no release exists'),
+        )
+      : Effect.succeed(kept(current, Option.none()));
   return yield* Match.value(ordering).pipe(
     Match.tagsExhaustive({
       Current: () =>
         newest === undefined
           ? Effect.fail(storeConflict('access_changes_catalog_conflict', 'the newest release is missing'))
           : Effect.map(readPreviousRelease(transaction, history), (previous) => kept(newest, previous)),
+      NotASuccessor: () => keptNewest(newest),
       Publish: () => {
         const published = newest === undefined ? candidate : publishedAfter(candidate, newest);
         return (publish ? publishRelease(transaction, published) : Effect.void).pipe(
           Effect.as(kept(published, Option.fromUndefinedOr(newest))),
         );
       },
-      Superseded: () =>
-        newest === undefined
-          ? Effect.fail(
-              storeConflict('access_changes_catalog_conflict', 'a release is superseded although no release exists'),
-            )
-          : Effect.succeed(kept(newest, Option.none())),
+      PublishedBefore: () => keptNewest(newest),
     }),
   );
 });
@@ -1432,17 +1442,28 @@ const writeReleaseActor = Effect.fn('AccessReleaseStore.writeReleaseActor')(func
     .values({
       displayName: input.displayName,
       kind: 'system',
+      platformRole: 'access_release_actor',
       principalId: input.principalId,
       status: 'active',
       tenantId: input.tenantId,
     })
     .onConflictDoNothing({ target: principals.principalId });
   const [stored] = yield* transaction
-    .select({ kind: principals.kind, status: principals.status, tenantId: principals.tenantId })
+    .select({
+      kind: principals.kind,
+      platformRole: principals.platformRole,
+      status: principals.status,
+      tenantId: principals.tenantId,
+    })
     .from(principals)
     .where(eq(principals.principalId, input.principalId));
   // The identity is derived from the tenant, so a row that is anything else was never this actor.
-  if (stored?.kind !== 'system' || stored.status !== 'active' || stored.tenantId !== input.tenantId) {
+  if (
+    stored?.kind !== 'system' ||
+    stored.platformRole !== 'access_release_actor' ||
+    stored.status !== 'active' ||
+    stored.tenantId !== input.tenantId
+  ) {
     return yield* storeConflict(
       'access_changes_record_conflict',
       `principal ${input.principalId} is not the active release actor of tenant ${input.tenantId}`,
@@ -1466,11 +1487,23 @@ const followIssue = (input: RecordReleaseFollowInput): string | null => {
     : `item ${decided.id} is recorded as ${decided.status}; a release creates pending items only`;
 };
 
-/** The items and the preset's successor are one write: a tenant either took the release or it did not. */
+/**
+ * The items and the preset's successor are one write: a tenant either took the release or it did not. The write
+ * holds the activation lock in shared mode and proves its release is still the newest one, so a follow planned
+ * against a release that another activation has since superseded writes nothing.
+ */
 const writeReleaseFollow = Effect.fn('AccessReleaseStore.writeReleaseFollow')(function* writeReleaseFollowEffect(
   transaction: CoreTransaction,
   input: RecordReleaseFollowInput,
 ) {
+  yield* transaction.execute(sql`select pg_advisory_xact_lock_shared(hashtextextended(${RELEASE_ACTIVATION_LOCK}, 0))`);
+  const newestRow = (yield* readReleaseHistory(transaction)).at(-1);
+  if (newestRow?.catalogSnapshotId !== input.catalogSnapshotId) {
+    return yield* storeConflict(
+      'access_changes_catalog_conflict',
+      `release ${input.catalogSnapshotId} is no longer the newest release; the next activation follows the newest one`,
+    );
+  }
   yield* Effect.forEach(input.items, (item) => writeChangeItem(transaction, item), { concurrency: 1, discard: true });
   if (input.presetEdit !== undefined) {
     yield* recordRevision(transaction, {
@@ -1482,6 +1515,22 @@ const writeReleaseFollow = Effect.fn('AccessReleaseStore.writeReleaseFollow')(fu
       tenantId: input.scope.tenantId,
     });
   }
+  return yield* Effect.void;
+});
+
+/** The published releases with these identifiers, oldest first, with their entries. */
+const readReleasesNamed = Effect.fn('AccessReleaseStore.readReleasesNamed')(function* readReleasesNamedEffect(
+  transaction: CoreTransaction,
+  ids: readonly string[],
+) {
+  const wanted = new Set<string>(ids);
+  const rows = (yield* readReleaseHistory(transaction)).filter(({ catalogSnapshotId }) =>
+    wanted.has(catalogSnapshotId),
+  );
+  return yield* Effect.all(
+    rows.map((row) => readRelease(transaction, row)),
+    { concurrency: 1 },
+  );
 });
 
 /** The release-activation writes over the same tables, transactions and helpers as the Novinky store. */
@@ -1492,8 +1541,12 @@ export const makeAccessReleaseDrizzleStore = (database: AccessChangesDatabase): 
   const activateRelease: AccessReleaseStoreService['activateRelease'] = (candidate) =>
     inTransaction((transaction) => orderRelease(transaction, candidate, true));
 
+  // A preview takes no lock (`orderRelease` locks only to publish) and decides in a transaction that cannot write.
   const previewRelease: AccessReleaseStoreService['previewRelease'] = (candidate) =>
-    inTransaction((transaction) => orderRelease(transaction, candidate, false));
+    durable(database.executor.transaction((transaction) => orderRelease(transaction, candidate, false), READ_ONLY));
+
+  const previewTenantChanges: AccessReleaseStoreService['previewTenantChanges'] = (scope) =>
+    scopedTransaction(database, scope, (transaction) => readTenantChanges(transaction, scope), READ_ONLY);
 
   const ensureReleaseActor: AccessReleaseStoreService['ensureReleaseActor'] = (input) =>
     inTransaction((transaction) => writeReleaseActor(transaction, input));
@@ -1505,7 +1558,18 @@ export const makeAccessReleaseDrizzleStore = (database: AccessChangesDatabase): 
       : Effect.fail(storeConflict('access_changes_scope_mismatch', issue));
   };
 
-  return Object.freeze({ activateRelease, ensureReleaseActor, previewRelease, recordReleaseFollow });
+  // Reads only, for the plan and the follow alike.
+  const loadReleases: AccessReleaseStoreService['loadReleases'] = (ids) =>
+    durable(database.executor.transaction((transaction) => readReleasesNamed(transaction, ids), READ_ONLY));
+
+  return Object.freeze({
+    activateRelease,
+    ensureReleaseActor,
+    loadReleases,
+    previewRelease,
+    previewTenantChanges,
+    recordReleaseFollow,
+  });
 };
 
 export const AccessReleaseStoreLive = Layer.effect(

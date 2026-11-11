@@ -7,6 +7,7 @@ import type { CatalogSnapshotId } from '../../ids.ts';
 import type { AccessChangeItem, CatalogSnapshot } from '../../model.ts';
 import type { RoleCellEdit } from '../role-edits.ts';
 import type { AccessChangesStoreError } from './errors/index.ts';
+import type { AccessChangesState } from './store.ts';
 
 /** Where a release activation left the catalog: the newest release and the one published just before it. */
 export interface CatalogReleaseActivation {
@@ -55,10 +56,21 @@ export interface AccessReleaseStoreService {
   ) => Effect.Effect<CatalogReleaseActivation, AccessChangesStoreError>;
   /** Creates the tenant's release actor when it is missing and refuses an identity that is not one. */
   readonly ensureReleaseActor: (input: EnsureReleaseActorInput) => Effect.Effect<void, AccessChangesStoreError>;
-  /** The same ordering as `activateRelease`, read-only: what an activation would do, for a dry run. */
+  /** The published releases with these identifiers, with their entries; unknown identifiers are skipped. */
+  readonly loadReleases: (
+    ids: readonly CatalogSnapshotId[],
+  ) => Effect.Effect<readonly CatalogSnapshot[], AccessChangesStoreError>;
+  /**
+   * The same ordering as `activateRelease` for a dry run: it takes no lock (an activation running at the same time
+   * may publish right after it decided) and reads in a transaction the database keeps read-only.
+   */
   readonly previewRelease: (
     candidate: CatalogSnapshot,
   ) => Effect.Effect<CatalogReleaseActivation, AccessChangesStoreError>;
+  /** A tenant's roles and Novinky as `loadTenantChanges` reads them, in a read-only transaction, for a dry run. */
+  readonly previewTenantChanges: (
+    scope: OperationalScope,
+  ) => Effect.Effect<AccessChangesState, AccessChangesStoreError>;
   readonly recordReleaseFollow: (input: RecordReleaseFollowInput) => Effect.Effect<void, AccessChangesStoreError>;
 }
 

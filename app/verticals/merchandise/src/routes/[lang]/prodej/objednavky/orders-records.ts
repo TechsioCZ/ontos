@@ -2,7 +2,7 @@ import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-prop
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { LIST_WARM_ROWS, makeIntentLimiter, makePointerDwell, rowIntentProps, useHeldSnapshot } from '@app/admin-ui';
 import type { RowIntentProps } from '@app/admin-ui';
-import { Data, Effect, Match, MutableRef, Predicate, Random, Result, Schema } from 'effect';
+import { Data, Effect, Match, MutableRef, Option, Predicate, Random, Result, Schema } from 'effect';
 import {
   changeConcerns,
   definePageData,
@@ -347,8 +347,24 @@ interface OrderDetailInput {
   readonly source?: OrdersPageInput | undefined;
 }
 
+/** Readers per list key that are mounted now: a list a reader shows is one the detail may read and join. */
+const mountedLists = MutableRef.make<ReadonlyMap<string, number>>(new Map());
+
+/**
+ * The rows of the list an order was opened from. A list a mounted reader shows is read as before (fresh, or joined
+ * while it loads). A list nobody shows answers only from a ready snapshot; otherwise it stays unread and the order
+ * loads by id, so a background refresh never reads the whole list again.
+ */
+const listedRows = (source: OrdersPageInput): Effect.Effect<Option.Option<RecordsResponse>, LoadFailure> => {
+  if (MutableRef.get(mountedLists).has(ordersPageData.key(source))) {
+    return ordersPageData.read(source).pipe(Effect.map(Option.some));
+  }
+  const snapshot = ordersPageData.snapshot(source);
+  return Effect.succeed(snapshot.state === 'ready' ? Option.some(snapshot.value) : Option.none());
+};
+
 const loadDetailInput = Effect.fn('OrdersRecords.loadDetailInput')(function* loadDetailInput(input: OrderDetailInput) {
-  const source = input.source === undefined ? undefined : yield* ordersPageData.read(input.source);
+  const source = input.source === undefined ? undefined : Option.getOrUndefined(yield* listedRows(input.source));
   const listed = source?.orders.find((order) => order.id === input.orderId);
   const record =
     listed === undefined ? yield* loadOrderById(input.orderId) : { order: listed, revision: source?.revision ?? 0 };
@@ -601,24 +617,47 @@ export const changeOrderStatuses = (input: {
     (progress, order) => applyStatusStep(progress, order, input.status, input.reason),
   );
 
+// A reader that shows no counts listens to none.
+const noopSubscribe = (): (() => void) => () => {
+  // Nothing to unsubscribe: the counts store is not read.
+};
+
+/**
+ * `counts: false` leaves the header counts unread and unmounted; `warm: false` skips the warm-up of the first rows.
+ * Both default on, the orders list's behaviour. A reader that shows neither (the full order page takes only the
+ * permissions) passes both off.
+ */
+export interface UseOrdersOptions {
+  readonly counts?: boolean;
+  readonly warm?: boolean;
+}
+
 /**
  * One page of orders for `query` with the header counts. `state.query` tells which query the state answers: while
  * another query loads it is still the previous one, and the table shows its loading rows. A reload of the query on
  * screen keeps its rows, capabilities and counts until the reload settles. `load` reads the page and the counts
  * again after a change.
  */
-export const useOrders = (legalEntityId: string, query: OrdersQuery, context?: ModulePageContext) => {
+export const useOrders = (
+  legalEntityId: string,
+  query: OrdersQuery,
+  context?: ModulePageContext,
+  options: UseOrdersOptions = {},
+) => {
+  const countsOn = options.counts !== false;
+  const warmOn = options.warm !== false;
   const scope = pageDataScopeKey(context, ORDERS_MODULE);
   const countsKey = scope ?? legalEntityId;
   const input: OrdersPageInput = { legalEntityId, query, scope };
+  const listKey = ordersPageData.key(input);
   const page = useSyncExternalStore(
     (listener) => ordersPageData.subscribe(listener, input),
     () => ordersPageData.snapshot(input),
     () => pageDataPending,
   );
   const counts = useSyncExternalStore(
-    (listener) => orderCountsData.subscribe(listener, countsKey),
-    () => orderCountsData.snapshot(countsKey),
+    countsOn ? (listener) => orderCountsData.subscribe(listener, countsKey) : noopSubscribe,
+    () => (countsOn ? orderCountsData.snapshot(countsKey) : pageDataPending),
     () => pageDataPending,
   );
   const { limit, offset, search, status } = query;
@@ -639,9 +678,29 @@ export const useOrders = (legalEntityId: string, query: OrdersQuery, context?: M
       scope,
     });
   }, [customerPartyIdsJson, legalEntityId, limit, offset, scope, search, status, taggedIdsJson]);
+  // A reader that shows the list keeps its key registered, so a detail read of the same list joins it instead of
+  // skipping it (`listedRows`).
   useEffect(() => {
-    orderCountsData.ensure(countsKey);
-  }, [countsKey]);
+    const setReaders = (update: (readers: number) => number) => {
+      const next = new Map(MutableRef.get(mountedLists));
+      const readers = update(next.get(listKey) ?? 0);
+      if (readers > 0) {
+        next.set(listKey, readers);
+      } else {
+        next.delete(listKey);
+      }
+      MutableRef.set(mountedLists, next);
+    };
+    setReaders((readers) => readers + 1);
+    return () => {
+      setReaders((readers) => readers - 1);
+    };
+  }, [listKey]);
+  useEffect(() => {
+    if (countsOn) {
+      orderCountsData.ensure(countsKey);
+    }
+  }, [countsKey, countsOn]);
   // The strict stores read as pending while they reload (freshness window, live change, settled write). The table
   // keeps the last ready read of the same request and the header its counts until the reload settles; another
   // request never reuses them, and a failed or refused reload replaces them at once.
@@ -675,6 +734,7 @@ export const useOrders = (legalEntityId: string, query: OrdersQuery, context?: M
   // Prefetch only the current request, never the previous page retained while a filter loads.
   useEffect(() => {
     const fiber =
+      warmOn &&
       scope !== undefined &&
       page.state === 'ready' &&
       !page.refreshing &&
@@ -685,12 +745,12 @@ export const useOrders = (legalEntityId: string, query: OrdersQuery, context?: M
     return () => {
       fiber?.interruptUnsafe();
     };
-  }, [batch, page, scope]);
+  }, [batch, page, scope, warmOn]);
   return {
     load: () => {
       orderDetailData.invalidate();
       browserRuntime.runFork(
-        Effect.all([ordersPageData.refresh(input), orderCountsData.refresh(countsKey)], {
+        Effect.all([ordersPageData.refresh(input), ...(countsOn ? [orderCountsData.refresh(countsKey)] : [])], {
           concurrency: 2,
           discard: true,
         }),
@@ -705,7 +765,7 @@ export const useOrders = (legalEntityId: string, query: OrdersQuery, context?: M
         (settled.snapshot === shownPage || ordersPageData.snapshot(settled.input) === settled.snapshot)
         ? settled
         : undefined,
-      shownCounts,
+      countsOn ? shownCounts : pageDataPending,
     ),
   };
 };

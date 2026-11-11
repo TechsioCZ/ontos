@@ -8,6 +8,7 @@ import {
   TenantIntentLoaderLive,
 } from '../../packages/core-runtime/src/access/intent/tenant-intent-loader.ts';
 import { startProcessObservability } from './process-observability.mts';
+import { heapLimitArguments, heapLimitMiB, readContainerMemoryBytes } from './heap-limits.mts';
 import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
 import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
 import {
@@ -409,23 +410,42 @@ export const makeSupervisedChild = Effect.fn('AppHost.makeSupervisedChild')(func
   } satisfies SupervisedChild<Exclude<Requirements, Scope.Scope>>;
 });
 
-/** Only the single-unit Shell process can use the packaged Bun binary. Every other unit process uses Node. */
+const mebibytes = (bytes: number) => String(Math.floor(bytes / 1024 / 1024));
+
+/**
+ * Only the single-unit Shell process can use the packaged Bun binary. Every other unit process uses Node. The Shell on
+ * Node gets its heap share of the container (heap-limits.mts); Bun has no V8 heap flag, and the owners keep Node's own.
+ */
 export const startUnitProcess = (
   ids: readonly string[],
   runtime: typeof ShellRuntime.Type,
   env: ChildEnvironment,
+  memoryBytes: number,
   channel?: HandoverChannel,
-) =>
-  startChild(
-    ids.length === 1 ? (ids[0] ?? 'owners') : 'owners',
-    runtime === 'bun' && ids.length === 1 && ids[0] === SHELL_ID
-      ? path.join(workspaceRoot, '.zerops/bun/bin/bun')
-      : process.execPath,
-    [path.join(workspaceRoot, 'scripts/zerops/serve-units.mts'), ...ids],
-    workspaceRoot,
-    env,
-    channel,
+) => {
+  const name = ids.length === 1 ? (ids[0] ?? 'owners') : 'owners';
+  const shell = ids.length === 1 && ids[0] === SHELL_ID;
+  const bun = runtime === 'bun' && shell;
+  const heap = shell && !bun ? heapLimitArguments('shell', memoryBytes) : [];
+  let limit = 'Node default';
+  if (bun) {
+    limit = 'Bun default';
+  } else if (heap.length > 0) {
+    limit = `${String(heapLimitMiB('shell', memoryBytes))} MiB`;
+  }
+  return Console.log(`[app-host] ${name} heap limit: ${limit} (container ${mebibytes(memoryBytes)} MiB)`).pipe(
+    Effect.andThen(
+      startChild(
+        name,
+        bun ? path.join(workspaceRoot, '.zerops/bun/bin/bun') : process.execPath,
+        [...heap, path.join(workspaceRoot, 'scripts/zerops/serve-units.mts'), ...ids],
+        workspaceRoot,
+        env,
+        channel,
+      ),
+    ),
   );
+};
 
 /** Finite operator commands own private pools; only long-running hosts install a shared-pool registry. */
 export const finiteProcessEnvironment = (environment: ChildEnvironment): ChildEnvironment => ({
@@ -1024,6 +1044,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   );
   const node = process.execPath;
   const runtime = yield* shellRuntime;
+  const memoryBytes = yield* readContainerMemoryBytes;
   const published = yield* Ref.make(false);
   const database = yield* CoreDatabase;
   const readAuthority = database.executor.execute<{
@@ -1079,9 +1100,9 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   // none. The owners process is supervised, so revoked keys can be replaced by a controlled restart.
   const callers = moduleCredentialCallersOf(ownerIds);
   const owners = yield* makeSupervisedChild('owners', (channel) =>
-    startUnitProcess(ownerIds, runtime, ownersEnvironment.environment, channel),
+    startUnitProcess(ownerIds, runtime, ownersEnvironment.environment, memoryBytes, channel),
   );
-  const exits = [yield* startUnitProcess([SHELL_ID], runtime, shellEnvironment.environment), owners.exit];
+  const exits = [yield* startUnitProcess([SHELL_ID], runtime, shellEnvironment.environment, memoryBytes), owners.exit];
   const credentialHolders = yield* Ref.make<readonly Pick<SupervisedChild, 'handOver' | 'restartWith'>[]>([owners]);
   const heldCredentials = yield* Ref.make(noProvisionedCredentials(callers));
   const issueFor = (release: HostRelease) => (appIds: readonly string[]) =>
@@ -1232,13 +1253,16 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       (yield* Ref.get(heldCredentials)).credentials,
       callers,
     ).pipe(Effect.mapError((problem) => failure(problem.reason)));
+    yield* Console.log(
+      `[app-host] ${OUTBOX_HOST_ID} heap limit: ${String(heapLimitMiB('outbox', memoryBytes))} MiB (container ${mebibytes(memoryBytes)} MiB)`,
+    );
     const outboxHost = yield* makeSupervisedChild(
       OUTBOX_HOST_ID,
       (channel) =>
         startChild(
           OUTBOX_HOST_ID,
           node,
-          [OUTBOX_HOST_BUNDLE],
+          [...heapLimitArguments('outbox', memoryBytes), OUTBOX_HOST_BUNDLE],
           workspaceRoot,
           {
             ...processEnvironment([OUTBOX_HOST_ID, ...ownerIds], ownerSecrets, derived).environment,

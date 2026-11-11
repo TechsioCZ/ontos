@@ -262,7 +262,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('identity runtime', (s
           },
         ]);
         // The identity Actions run under the Tenant's real access fence.
-        yield* writeTestTenantScopes(admin, { principalId: administratorPrincipalId, tenantId });
+        // Scopes are written through the shared runtime identity, the one role that installs a tenant scope.
+        yield* writeTestTenantScopes(runtimeDatabase, { principalId: administratorPrincipalId, tenantId });
         yield* admin.insert(principals).values([
           {
             displayName: 'Identity administrator',

@@ -16,7 +16,7 @@ import type { TenantProjectionWrite } from '../intent/projection-writer.ts';
 import { TenantIntentLoader } from '../intent/tenant-intent-loader.ts';
 import { holderKey } from '../model.ts';
 import type { Cell, Role, RoleRevision } from '../model.ts';
-import { LegalEntityIdSchema, PrincipalIdSchema, RoleIdSchema, RoleRevisionIdSchema, TenantIdSchema } from '../ids.ts';
+import { LegalEntityIdSchema, PrincipalIdSchema, RoleRevisionIdSchema, TenantIdSchema } from '../ids.ts';
 import type {
   AccessScopeId,
   CatalogSnapshotId,
@@ -28,7 +28,12 @@ import type {
 } from '../ids.ts';
 import { bootstrapRefusal, bootstrapSourceRefusal } from './errors.ts';
 import type { AccessBootstrapError } from './errors.ts';
-import { FULL_ACCESS_ROLE_NAME, FULL_ACCESS_ROLE_TEMPLATE_KEY, compileFullAccessRole } from './full-access-role.ts';
+import {
+  FULL_ACCESS_ROLE_NAME,
+  FULL_ACCESS_ROLE_TEMPLATE_KEY,
+  compileFullAccessRole,
+  fullAccessPresetRoleId,
+} from './full-access-role.ts';
 import { bootstrapScopesOf, tenantContextScopeId, writeBootstrapScopes, writeOwnerAssignments } from './persistence.ts';
 import type { BootstrapScope } from './persistence.ts';
 
@@ -232,9 +237,7 @@ export const bootstrapTenantAccessProgram = Effect.fn('TenantAccessBootstrap.boo
         compiled.failure.map((failure) => `${failure.code}: ${failure.reason}`).join('; '),
       );
     }
-    const roleId = RoleIdSchema.make(
-      stableUuid(['ontos.access.bootstrap.role', tenantId, FULL_ACCESS_ROLE_TEMPLATE_KEY].join(':')),
-    );
+    const roleId = fullAccessPresetRoleId(tenantId);
     const loaded = yield* changes.loadTenantChanges(scope).pipe(Effect.mapError(intentRefused));
     if (findRole(loaded.roles, roleId) === undefined) {
       // The role and its first revision are one write of one person, pinned to the release the cells

@@ -1,27 +1,31 @@
 import { eq } from 'drizzle-orm';
-import { DateTime, Effect, Match, Option, Result, Schema } from 'effect';
+import { Clock, DateTime, Effect, Match, Option, Result, Schema } from 'effect';
 
 import { TrustedPrincipalContextSchema } from '../../actions/principal-context.ts';
-import { PLATFORM_TENANT } from '../../auth/module-credentials.ts';
 import { makeSystemPrincipalContextResolver, registerSystemWorkload } from '../../auth/system-principal-context.ts';
 import { preserveSystemPrincipalContextTrust } from '../../auth/system-principal-context-provenance.ts';
 import type { AccessCatalogModule } from '../../authorization/access-declaration.ts';
 import { CoreDatabase } from '../../db/client.ts';
 import { tenants } from '../../db/schema.ts';
 import type { OperationalScope } from '../../operations/context.ts';
-import { FULL_ACCESS_ROLE_TEMPLATE_KEY, compileFullAccessRole } from '../bootstrap/full-access-role.ts';
+import {
+  FULL_ACCESS_ROLE_TEMPLATE_KEY,
+  compileFullAccessRole,
+  fullAccessPresetRoleId,
+} from '../bootstrap/full-access-role.ts';
 import { buildDeploymentCatalogRelease } from '../catalog/release.ts';
 import type { CatalogReleaseOrdering } from '../catalog/release-ordering.ts';
 import { stableUuid } from '../catalog/stable-id.ts';
 import { diffCatalogSnapshots } from '../changes/catalog-diff.ts';
 import { blueprintChangeItems, changeItemIdentityKey, planChangeItems } from '../changes/items.ts';
+import type { ChangeItemBlueprint } from '../changes/items.ts';
 import { AccessReleaseStore } from '../changes/persistence/release-store.ts';
 import type { RecordReleaseFollowInput } from '../changes/persistence/release-store.ts';
 import { AccessChangesStore } from '../changes/persistence/store.ts';
 import type { AccessChangesState } from '../changes/persistence/store.ts';
 import { RoleCellEditSchema, planRoleCellEdit } from '../changes/role-edits.ts';
 import type { RoleCellEdit, RoleWithRevision } from '../changes/role-edits.ts';
-import type { CapabilityKey } from '../ids.ts';
+import type { CapabilityKey, CatalogSnapshotId } from '../ids.ts';
 import { AccessProjectionWriter } from '../intent/projection-writer.ts';
 import type { AccessChangeItem, CatalogSnapshot } from '../model.ts';
 import { ACCESS_MODEL_PARSE_OPTIONS } from '../model.ts';
@@ -31,23 +35,33 @@ import { ACCESS_MODEL_PARSE_OPTIONS } from '../model.ts';
  * deployment activates. It runs once per activation, after the migrations and before the release takes the
  * authority (`scripts/activate-access-catalog-release.mts`, called by the migrator):
  *
- *   1. The deployment's catalog becomes the newest release when it is newer than every published release
- *      (`orderCatalogRelease`, under one global lock), so an older deployment that starts again while a newer
- *      one serves can never move the catalog back. An older catalog changes nothing at all.
- *   2. In every active tenant, "Plný přístup" (the `full_access` template preset, found by its template key,
- *      never by its name) follows the newest release: an additions-only successor revision, so every holder in
- *      every company where the role is held gains exactly the new capabilities, and nothing is ever narrowed.
- *      A preset a person has changed (`customer_changed`) is a role like any other and does not follow.
- *   3. Every other role adopts nothing automatically: the release's changes are recorded as pending Novinky
- *      items for an administrator to adopt, exactly as `docs/architecture/AUTHORIZATION.md` describes.
+ *   1. The deployment's catalog becomes the newest release when it is new and covers the newest release
+ *      (`orderCatalogRelease`: nothing the newest release declares is dropped or narrowed without declared
+ *      lineage), decided under one global lock. Anything else changes nothing at all, and the script reports a
+ *      catalog that is not a successor as a failed activation (see `AUTHORIZATION.md` for the remedy).
+ *   2. In every active tenant, "Plný přístup" (the tenant-wide role its bootstrap created, found by its derived
+ *      id, never by its name, and only while no person has written a revision of it after the first) follows the
+ *      newest release: an additions-only successor revision, so every holder in every company where the role is
+ *      held gains exactly the new capabilities, and nothing is ever narrowed. A preset a person has changed is a
+ *      role like any other: it does not follow and gets Novinky, and the tenant still takes the release. The
+ *      write holds the same lock in shared mode and proves its release is still the newest, so a follow planned
+ *      against a superseded release writes nothing.
+ *   3. Every other role adopts nothing automatically: the changes between the release it is pinned to and the
+ *      newest one are recorded as pending Novinky items for an administrator to adopt, exactly as
+ *      `docs/architecture/AUTHORIZATION.md` describes.
  *   4. The tenant's projection is reconciled from intent, so the engine serves what intent now says.
  *
- * The writes are the platform's: each tenant has one `system` principal, the release actor, which authors the
- * preset's successor revision. It is never a person, holds no Role and is never a v2 subject. Agents, service
- * principals, workload bindings and agent write policies are untouched.
+ * The writes are the platform's: each tenant has one `system` principal whose `platform_role` is
+ * `access_release_actor`, which authors the preset's successor revision. It is never a person, holds no Role and is
+ * never a v2 subject; the database accepts it as an author for exactly that successor and nothing else
+ * (`core.require_role_revision_author`). Agents, service principals, workload bindings and agent write policies
+ * are untouched.
  *
- * Failure is fail-closed and retried: a tenant whose follow fails keeps its previous release (new capabilities
- * stay denied there), the report names it, and the next activation repeats the idempotent writes.
+ * Failure is fail-closed. A tenant whose follow fails keeps its previous release, so new capabilities stay denied
+ * there, and the report names it. If intent was recorded but its projection could not be written, the release
+ * access verification that follows the migrator finds intent and engine apart and stops the boot before the release
+ * takes the authority (`scripts/zerops/app-host.mts`, `verifyReleaseAccessIntent` before `publishSnapshot`); the
+ * restarted host activates again, and this module reconciles every tenant on every activation.
  */
 
 /** The job a release actor's trusted system context is resolved for. */
@@ -74,19 +88,38 @@ export class AccessReleaseActivationError extends Schema.TaggedError<AccessRelea
 const refusal = (reason: string, cause?: unknown) =>
   new AccessReleaseActivationError(cause === undefined ? { reason } : { cause, reason });
 
-/** The untouched full-access preset of a tenant, when it has one. */
-export const fullAccessPresetOf = (roles: readonly RoleWithRevision[]): Option.Option<RoleWithRevision> =>
-  Option.fromUndefinedOr(
+/**
+ * The tenant's untouched "Plný přístup", when it has one: the role its permission bootstrap created
+ * (`fullAccessPresetRoleId`), tenant-wide, still the `full_access` template, and written after its first revision only
+ * by this tenant's release actor — the same history `core.require_role_revision_author` demands. Any other role is
+ * a role like every other one: it does not follow, and it gets Novinky.
+ */
+export const fullAccessPresetOf = (
+  tenantId: string,
+  roles: readonly RoleWithRevision[],
+): Option.Option<RoleWithRevision> => {
+  const presetId = fullAccessPresetRoleId(tenantId);
+  const actorId = releaseActorId(tenantId);
+  return Option.fromUndefinedOr(
     roles.find(
-      ({ revision }) => revision.provenance === 'template' && revision.templateKey === FULL_ACCESS_ROLE_TEMPLATE_KEY,
+      ({ revision, role }) =>
+        role.id === presetId &&
+        role.legalEntityId === undefined &&
+        revision.provenance === 'template' &&
+        revision.templateKey === FULL_ACCESS_ROLE_TEMPLATE_KEY &&
+        (revision.revision === 1 || revision.createdBy === actorId),
     ),
   );
+};
 
 export interface TenantReleaseFollowInput {
   readonly createdAt: Date;
   readonly newest: CatalogSnapshot;
-  /** The release published immediately before `newest`; without one there is no change to list. */
-  readonly previous: Option.Option<CatalogSnapshot>;
+  /**
+   * The releases the tenant's other roles are pinned to. Each role's Novinky are the difference between the release
+   * it is pinned to and the newest one, so a tenant that skipped a release still sees every change since.
+   */
+  readonly pinnedReleases: ReadonlyMap<string, CatalogSnapshot>;
   /** The tenant's roles and the Novinky items it already holds, so a repeated follow plans nothing twice. */
   readonly state: Pick<AccessChangesState, 'items' | 'roles'>;
   readonly tenantId: string;
@@ -99,6 +132,8 @@ export interface TenantReleaseFollowPlan {
   readonly items: readonly AccessChangeItem[];
   /** The preset's additions-only successor; none without a preset or when it already holds everything. */
   readonly presetEdit: Option.Option<RoleCellEdit>;
+  /** Whether the tenant has an untouched preset to follow at all (`fullAccessPresetOf`). */
+  readonly presetFound: boolean;
 }
 
 const decodeEdit = Schema.decodeUnknownResult(RoleCellEditSchema, ACCESS_MODEL_PARSE_OPTIONS);
@@ -129,29 +164,79 @@ const presetEditOf = (
     : Result.fail(refusal(`the preset successor of role ${preset.role.id} is invalid`, decoded.failure));
 };
 
-/** The Novinky of the newest release for the roles that do not follow it: they adopt, or they do not. */
-const itemsOf = (
-  others: readonly RoleWithRevision[],
-  previous: CatalogSnapshot,
-  input: TenantReleaseFollowInput,
-): Result.Result<readonly AccessChangeItem[], AccessReleaseActivationError> => {
-  const { newest } = input;
-  const drafts = diffCatalogSnapshots(previous, newest);
+/** One release's changes as Novinky blueprints, suggested to the roles pinned to that release. */
+const blueprintsSince = (
+  pinned: CatalogSnapshot,
+  roles: readonly RoleWithRevision[],
+  newest: CatalogSnapshot,
+): Result.Result<readonly ChangeItemBlueprint[], AccessReleaseActivationError> => {
+  const drafts = diffCatalogSnapshots(pinned, newest);
   if (Result.isFailure(drafts)) {
     return Result.fail(refusal(`${drafts.failure.code}: ${drafts.failure.reason}`, drafts.failure));
   }
-  const blueprints = blueprintChangeItems({ drafts: drafts.success, entries: newest.entries, roles: others });
-  if (Result.isFailure(blueprints)) {
-    return Result.fail(refusal(`${blueprints.failure.code}: ${blueprints.failure.reason}`, blueprints.failure));
+  const blueprints = blueprintChangeItems({ drafts: drafts.success, entries: newest.entries, roles });
+  return Result.isSuccess(blueprints)
+    ? Result.succeed(blueprints.success)
+    : Result.fail(refusal(`${blueprints.failure.code}: ${blueprints.failure.reason}`, blueprints.failure));
+};
+
+/** One change seen from several pinned releases is one item, suggested to every role it reaches. */
+const mergeBlueprints = (groups: readonly (readonly ChangeItemBlueprint[])[]): readonly ChangeItemBlueprint[] => {
+  const merged = new Map<string, ChangeItemBlueprint>();
+  for (const blueprint of groups.flat()) {
+    const identity = changeItemIdentityKey(blueprint.kind, blueprint.capabilityKey);
+    const known = merged.get(identity);
+    merged.set(
+      identity,
+      known === undefined
+        ? blueprint
+        : {
+            ...known,
+            suggestedRoleIds: [...new Set([...known.suggestedRoleIds, ...blueprint.suggestedRoleIds])].toSorted(),
+          },
+    );
+  }
+  return [...merged.values()];
+};
+
+/** The Novinky of the newest release for the roles that do not follow it: they adopt, or they do not. */
+const itemsOf = (
+  others: readonly RoleWithRevision[],
+  input: TenantReleaseFollowInput,
+): Result.Result<readonly AccessChangeItem[], AccessReleaseActivationError> => {
+  const { newest } = input;
+  // A role created against the newest release already chose from it; only a role behind it has news.
+  const behind = new Map<string, RoleWithRevision[]>();
+  for (const role of others) {
+    const pinnedId = role.revision.catalogSnapshotId;
+    if (pinnedId !== newest.id) {
+      behind.set(pinnedId, [...(behind.get(pinnedId) ?? []), role]);
+    }
+  }
+  const groups: (readonly ChangeItemBlueprint[])[] = [];
+  for (const [catalogSnapshotId, roles] of behind) {
+    const pinned = input.pinnedReleases.get(catalogSnapshotId);
+    if (pinned === undefined) {
+      return Result.fail(refusal(`release ${catalogSnapshotId}, which a role is pinned to, is not published`));
+    }
+    const blueprints = blueprintsSince(pinned, roles, newest);
+    if (Result.isFailure(blueprints)) {
+      return Result.fail(blueprints.failure);
+    }
+    groups.push(blueprints.success);
+  }
+  const blueprints = mergeBlueprints(groups);
+  if (blueprints.length === 0) {
+    return Result.succeed([]);
   }
   const planned = planChangeItems({
     // The affected-holder preview is computed when an administrator opens the item, never stored with it.
     assignments: [],
-    blueprints: blueprints.success,
+    blueprints,
     catalogSnapshotId: newest.id,
     createdAt: input.createdAt,
     itemIds: new Map(
-      blueprints.success.map(({ capabilityKey, kind }) => {
+      blueprints.map(({ capabilityKey, kind }) => {
         const identity = changeItemIdentityKey(kind, capabilityKey);
         return [identity, releaseItemId(input.tenantId, newest.id, identity)] as const;
       }),
@@ -198,7 +283,7 @@ const inertKeysOf = (preset: Option.Option<RoleWithRevision>, newest: CatalogSna
 export const planTenantReleaseFollow = (
   input: TenantReleaseFollowInput,
 ): Result.Result<TenantReleaseFollowPlan, AccessReleaseActivationError> => {
-  const preset = fullAccessPresetOf(input.state.roles);
+  const preset = fullAccessPresetOf(input.tenantId, input.state.roles);
   const others = input.state.roles.filter((role) => Option.getOrUndefined(preset) !== role);
   const presetEdit = Option.match(preset, {
     onNone: () => Result.succeed(Option.none<RoleCellEdit>()),
@@ -207,12 +292,7 @@ export const planTenantReleaseFollow = (
   if (Result.isFailure(presetEdit)) {
     return Result.fail(presetEdit.failure);
   }
-  // A role created against the newest release already chose from it; only a role behind it has news.
-  const behind = others.some(({ revision }) => revision.catalogSnapshotId !== input.newest.id);
-  const items = Option.match(input.previous, {
-    onNone: () => Result.succeed<readonly AccessChangeItem[]>([]),
-    onSome: (previous) => (behind ? itemsOf(others, previous, input) : Result.succeed([])),
-  });
+  const items = itemsOf(others, input);
   if (Result.isFailure(items)) {
     return Result.fail(items.failure);
   }
@@ -220,19 +300,29 @@ export const planTenantReleaseFollow = (
     inertKeys: inertKeysOf(preset, input.newest),
     items: items.success,
     presetEdit: presetEdit.success,
+    presetFound: Option.isSome(preset),
   });
 };
 
 export interface TenantReleaseReport {
+  /** Wall time of this tenant's plan or follow, its projection reconcile included. */
+  readonly elapsedMillis: number;
   readonly inertKeys: readonly string[];
   readonly items: number;
   readonly outcome: 'failed' | 'followed' | 'planned' | 'unchanged';
   readonly presetCellsAdded: number;
+  /** Whether the tenant had an untouched "Plný přístup" to follow; false for a tenant that failed. */
+  readonly presetFound: boolean;
   readonly reason?: string;
+  /** The SpiceDB relationships the reconcile touched and deleted; 0 for a plan. */
+  readonly relationshipDeletions: number;
+  readonly relationshipTouches: number;
   readonly tenantId: string;
 }
 
 export interface CatalogReleaseActivationReport {
+  /** The release identity of the deployment's own catalog, whatever the ordering decided. */
+  readonly deployedReleaseId: string;
   readonly entries: number;
   readonly ordering: CatalogReleaseOrdering;
   readonly previousEntries: number | undefined;
@@ -241,8 +331,6 @@ export interface CatalogReleaseActivationReport {
 }
 
 export interface ActivateCatalogReleaseInput {
-  /** Plan and report without a single write. */
-  readonly dryRun: boolean;
   /** Every module the deployed catalog declares (`topology/authorization-catalog.json`). */
   readonly modules: readonly AccessCatalogModule[];
 }
@@ -252,7 +340,7 @@ interface FollowedRelease {
   readonly previous: Option.Option<CatalogSnapshot>;
 }
 
-/** The tenants a release reaches: every active one except the platform tenant, which serves no person. */
+/** The tenants a release reaches: every active one, as the release access verification proves them. */
 const activeTenantIds = Effect.gen(function* readActiveTenants() {
   const { executor } = yield* CoreDatabase;
   const rows = yield* executor
@@ -260,13 +348,7 @@ const activeTenantIds = Effect.gen(function* readActiveTenants() {
     .from(tenants)
     .where(eq(tenants.status, 'active'))
     .pipe(Effect.mapError((failure) => refusal('The active tenants could not be read', failure)));
-  const reached: string[] = [];
-  for (const { tenantId } of rows) {
-    if (tenantId !== PLATFORM_TENANT.tenantId) {
-      reached.push(tenantId);
-    }
-  }
-  return reached.toSorted();
+  return rows.map(({ tenantId }) => tenantId).toSorted();
 });
 
 /** The release actor's trusted system scope; the actor exists before it is resolved, and it is resolved, never minted. */
@@ -289,19 +371,19 @@ const releaseScopeOf = Effect.fn('AccessReleaseActivation.scope')(function* rele
   }) satisfies OperationalScope;
 });
 
-/** A dry run reads the roles under a scope it never writes with; the release actor may not exist yet. */
+/** A dry run reads the roles under a scope it never writes with, read-only; the release actor may not exist yet. */
 const readOnlyChanges = Effect.fn('AccessReleaseActivation.readOnlyChanges')(function* readOnlyChangesEffect(
   tenantId: string,
 ) {
-  const changes = yield* AccessChangesStore;
+  const releases = yield* AccessReleaseStore;
   const context = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
     authContextRef: `job:${RELEASE_ACTIVATION_JOB.jobKey}:run:dry-run`,
     authMethod: 'system',
     principalId: releaseActorId(tenantId),
     tenantId,
   }).pipe(Effect.mapError((failure) => refusal('the dry-run scope is invalid', failure)));
-  return yield* changes
-    .loadTenantChanges({ ...context, correlationId: 'access-release-activation:dry-run' })
+  return yield* releases
+    .previewTenantChanges({ ...context, correlationId: 'access-release-activation:dry-run' })
     .pipe(Effect.mapError((failure) => refusal(`the roles could not be read: ${failure.reason}`, failure)));
 });
 
@@ -320,25 +402,57 @@ const reportOf = (
   tenantId: string,
   plan: TenantReleaseFollowPlan,
   outcome: TenantReleaseReport['outcome'],
+  measured: Pick<TenantReleaseReport, 'elapsedMillis' | 'relationshipDeletions' | 'relationshipTouches'>,
 ): TenantReleaseReport => ({
+  ...measured,
   inertKeys: plan.inertKeys,
   items: plan.items.length,
   outcome,
   presetCellsAdded: Option.match(plan.presetEdit, { onNone: () => 0, onSome: ({ addedCells }) => addedCells.length }),
+  presetFound: plan.presetFound,
   tenantId,
 });
 
-const planFor = (tenantId: string, release: FollowedRelease, state: AccessChangesState, createdAt: Date) =>
-  planTenantReleaseFollow({ createdAt, newest: release.newest, previous: release.previous, state, tenantId });
+/** The plan of one tenant, over the releases its other roles are actually pinned to. */
+const planFor = Effect.fn('AccessReleaseActivation.planFor')(function* planForEffect(
+  tenantId: string,
+  release: FollowedRelease,
+  state: AccessChangesState,
+  createdAt: Date,
+) {
+  const releases = yield* AccessReleaseStore;
+  const pinnedIds = new Set<CatalogSnapshotId>();
+  for (const { revision } of state.roles) {
+    if (revision.catalogSnapshotId !== release.newest.id) {
+      pinnedIds.add(revision.catalogSnapshotId);
+    }
+  }
+  const pinned =
+    pinnedIds.size === 0
+      ? []
+      : yield* releases
+          .loadReleases([...pinnedIds])
+          .pipe(Effect.mapError((failure) => refusal(`${failure.code}: ${failure.reason}`, failure)));
+  const planned = planTenantReleaseFollow({
+    createdAt,
+    newest: release.newest,
+    pinnedReleases: new Map(pinned.map((snapshot) => [snapshot.id, snapshot] as const)),
+    state,
+    tenantId,
+  });
+  return Result.isFailure(planned) ? yield* planned.failure : planned.success;
+});
 
 /** One tenant's dry run: the plan, never a write. */
 const planTenant = Effect.fn('AccessReleaseActivation.planTenant')(function* planTenantEffect(
   tenantId: string,
   release: FollowedRelease,
 ) {
+  const startedAt = yield* Clock.currentTimeMillis;
   const state = yield* readOnlyChanges(tenantId);
-  const plan = planFor(tenantId, release, state, yield* DateTime.nowAsDate);
-  return Result.isFailure(plan) ? yield* plan.failure : reportOf(tenantId, plan.success, 'planned');
+  const plan = yield* planFor(tenantId, release, state, yield* DateTime.nowAsDate);
+  const elapsedMillis = (yield* Clock.currentTimeMillis) - startedAt;
+  return reportOf(tenantId, plan, 'planned', { elapsedMillis, relationshipDeletions: 0, relationshipTouches: 0 });
 });
 
 /** One tenant's follow: its actor, its writes in one transaction, and a reconcile that always runs. */
@@ -349,6 +463,7 @@ const followTenant = Effect.fn('AccessReleaseActivation.followTenant')(function*
   const releases = yield* AccessReleaseStore;
   const changes = yield* AccessChangesStore;
   const projection = yield* AccessProjectionWriter;
+  const startedAt = yield* Clock.currentTimeMillis;
   yield* releases
     .ensureReleaseActor({ displayName: RELEASE_ACTOR_DISPLAY_NAME, principalId: releaseActorId(tenantId), tenantId })
     .pipe(Effect.mapError((failure) => refusal(`${failure.code}: ${failure.reason}`, failure)));
@@ -357,11 +472,7 @@ const followTenant = Effect.fn('AccessReleaseActivation.followTenant')(function*
     .loadTenantChanges(scope)
     .pipe(Effect.mapError((failure) => refusal(`the roles could not be read: ${failure.reason}`, failure)));
   const decidedAt = yield* DateTime.nowAsDate;
-  const planned = planFor(tenantId, release, state, decidedAt);
-  if (Result.isFailure(planned)) {
-    return yield* planned.failure;
-  }
-  const plan = planned.success;
+  const plan = yield* planFor(tenantId, release, state, decidedAt);
   const changed = Option.isSome(plan.presetEdit) || plan.items.length > 0;
   if (changed) {
     yield* releases
@@ -369,19 +480,68 @@ const followTenant = Effect.fn('AccessReleaseActivation.followTenant')(function*
       .pipe(Effect.mapError((failure) => refusal(`${failure.code}: ${failure.reason}`, failure)));
   }
   // Always: a previous activation may have recorded intent and failed before its projection was written.
-  yield* projection
+  const written = yield* projection
     .reconcileTenant({ scope })
     .pipe(Effect.mapError((failure) => refusal(`the projection could not be reconciled: ${failure.reason}`, failure)));
-  return reportOf(tenantId, plan, changed ? 'followed' : 'unchanged');
+  return reportOf(tenantId, plan, changed ? 'followed' : 'unchanged', {
+    elapsedMillis: (yield* Clock.currentTimeMillis) - startedAt,
+    relationshipDeletions: written.deletions,
+    relationshipTouches: written.touches,
+  });
 });
 
 const failedTenant = (tenantId: string, failure: AccessReleaseActivationError): TenantReleaseReport => ({
+  elapsedMillis: 0,
   inertKeys: [],
   items: 0,
   outcome: 'failed',
   presetCellsAdded: 0,
+  presetFound: false,
   reason: failure.reason,
+  relationshipDeletions: 0,
+  relationshipTouches: 0,
   tenantId,
+});
+
+/** The deployment's catalog as a candidate release, and the ordering against what is published. */
+const orderedRelease = Effect.fn('AccessReleaseActivation.order')(function* orderedReleaseEffect(
+  input: ActivateCatalogReleaseInput,
+  publish: boolean,
+) {
+  const releases = yield* AccessReleaseStore;
+  const candidate = buildDeploymentCatalogRelease({ modules: input.modules, publishedAt: yield* DateTime.nowAsDate });
+  if (Result.isFailure(candidate)) {
+    return yield* refusal(`${candidate.failure.code}: ${candidate.failure.reason}`, candidate.failure);
+  }
+  const activation = yield* (publish ? releases.activateRelease : releases.previewRelease)(candidate.success).pipe(
+    Effect.mapError((failure) => refusal(`${failure.code}: ${failure.reason}`, failure)),
+  );
+  // Only a published or current release reaches the tenants; anything else changes no tenant at all.
+  const reached = Match.value(activation.ordering).pipe(
+    Match.tags({ Current: () => true, Publish: () => true }),
+    Match.orElse(() => false),
+  );
+  return {
+    activation,
+    deployedReleaseId: candidate.success.id,
+    release: { newest: activation.newest, previous: activation.previous } satisfies FollowedRelease,
+    tenantIds: reached ? yield* activeTenantIds : [],
+  };
+});
+
+const reportOfRelease = (
+  ordered: Effect.Success<ReturnType<typeof orderedRelease>>,
+  tenantReports: readonly TenantReleaseReport[],
+): CatalogReleaseActivationReport => ({
+  deployedReleaseId: ordered.deployedReleaseId,
+  entries: ordered.activation.newest.entries.length,
+  ordering: ordered.activation.ordering,
+  previousEntries: ordered.activation.previous.pipe(
+    Option.map(({ entries }) => entries.length),
+    Option.getOrUndefined,
+  ),
+  releaseId: ordered.activation.newest.id,
+  tenants: tenantReports,
 });
 
 /**
@@ -391,37 +551,36 @@ const failedTenant = (tenantId: string, failure: AccessReleaseActivationError): 
 export const activateCatalogRelease = Effect.fn('AccessReleaseActivation.activate')(function* activateEffect(
   input: ActivateCatalogReleaseInput,
 ) {
-  const releases = yield* AccessReleaseStore;
-  const candidate = buildDeploymentCatalogRelease({ modules: input.modules, publishedAt: yield* DateTime.nowAsDate });
-  if (Result.isFailure(candidate)) {
-    return yield* refusal(`${candidate.failure.code}: ${candidate.failure.reason}`, candidate.failure);
-  }
-  const activation = yield* (input.dryRun ? releases.previewRelease : releases.activateRelease)(candidate.success).pipe(
-    Effect.mapError((failure) => refusal(`${failure.code}: ${failure.reason}`, failure)),
-  );
-  const release: FollowedRelease = { newest: activation.newest, previous: activation.previous };
-  // An older catalog changes no tenant; the newest release keeps serving exactly as it is.
-  const reached = Match.value(activation.ordering).pipe(
-    Match.tag('Superseded', () => false),
-    Match.orElse(() => true),
-  );
-  const tenantIds = reached ? yield* activeTenantIds : [];
-  const reports = yield* Effect.all(
-    tenantIds.map((tenantId) =>
-      (input.dryRun ? planTenant(tenantId, release) : followTenant(tenantId, release)).pipe(
+  const ordered = yield* orderedRelease(input, true);
+  const tenantReports = yield* Effect.all(
+    ordered.tenantIds.map((tenantId) =>
+      followTenant(tenantId, ordered.release).pipe(
         Effect.catchTag('AccessReleaseActivationError', (failure) => Effect.succeed(failedTenant(tenantId, failure))),
       ),
     ),
     { concurrency: 1 },
   );
-  return {
-    entries: activation.newest.entries.length,
-    ordering: activation.ordering,
-    previousEntries: activation.previous.pipe(
-      Option.map(({ entries }) => entries.length),
-      Option.getOrUndefined,
+  return reportOfRelease(ordered, tenantReports);
+});
+
+/**
+ * The same decision and per-tenant plan as `activateCatalogRelease`, without a single write: nothing is published,
+ * no release actor is created, no role or item is recorded and the engine is never touched, so it needs the
+ * database alone. Every read runs in a read-only transaction, so PostgreSQL itself refuses a write. It takes no
+ * lock: the ordering is decided against the releases as they stand, and an activation running beside it may
+ * publish right after.
+ */
+export const planCatalogRelease = Effect.fn('AccessReleaseActivation.plan')(function* planEffect(
+  input: ActivateCatalogReleaseInput,
+) {
+  const ordered = yield* orderedRelease(input, false);
+  const tenantReports = yield* Effect.all(
+    ordered.tenantIds.map((tenantId) =>
+      planTenant(tenantId, ordered.release).pipe(
+        Effect.catchTag('AccessReleaseActivationError', (failure) => Effect.succeed(failedTenant(tenantId, failure))),
+      ),
     ),
-    releaseId: activation.newest.id,
-    tenants: reports,
-  } satisfies CatalogReleaseActivationReport;
+    { concurrency: 1 },
+  );
+  return reportOfRelease(ordered, tenantReports);
 });

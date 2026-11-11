@@ -1,9 +1,9 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "70a588da-0b05-4f63-b481-6ddab14e871a",
+  "id": "fb9ef0bc-8125-4f95-9e4a-7b28b5553c48",
   "prevIds": [
-    "50187836-8a81-4f55-b740-68428f1cdc67"
+    "012cdf04-b59e-4382-9f09-883cb6607b10"
   ],
   "ddl": [
     {
@@ -1988,6 +1988,45 @@
       "table": "access_memberships"
     },
     {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "ended_at",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "access_memberships"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "ended_by",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "access_memberships"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "ended_reason",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "access_memberships"
+    },
+    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -3244,19 +3283,6 @@
       "generated": null,
       "identity": null,
       "name": "updated_at",
-      "entityType": "columns",
-      "schema": "core",
-      "table": "application_composition_authority"
-    },
-    {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
-      "name": "revision_activated_at",
       "entityType": "columns",
       "schema": "core",
       "table": "application_composition_authority"
@@ -7162,6 +7188,19 @@
       "table": "principals"
     },
     {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "platform_role",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "principals"
+    },
+    {
       "type": "uuid",
       "typeSchema": null,
       "notNull": true,
@@ -10974,6 +11013,34 @@
       "nameExplicit": true,
       "columns": [
         {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "domain_event_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_outbox_messages_tenant_domain_event_idx",
+      "entityType": "indexes",
+      "schema": "core",
+      "table": "outbox_messages"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
           "value": "verification_id",
           "isExpression": false,
           "asc": true,
@@ -11225,6 +11292,27 @@
       "method": "btree",
       "concurrently": false,
       "name": "core_principals_tenant_kind_idx",
+      "entityType": "indexes",
+      "schema": "core",
+      "table": "principals"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": "\"platform_role\" = 'access_release_actor'",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "core_principals_release_actor_uk",
       "entityType": "indexes",
       "schema": "core",
       "table": "principals"
@@ -12461,6 +12549,25 @@
       "onUpdate": "NO ACTION",
       "onDelete": "RESTRICT",
       "name": "access_memberships_recorder_fk",
+      "entityType": "fks",
+      "schema": "core",
+      "table": "access_memberships"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "ended_by"
+      ],
+      "schemaTo": "core",
+      "tableTo": "principals",
+      "columnsTo": [
+        "tenant_id",
+        "principal_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "access_memberships_ender_fk",
       "entityType": "fks",
       "schema": "core",
       "table": "access_memberships"
@@ -15151,6 +15258,20 @@
       "table": "access_mandates"
     },
     {
+      "value": "(\"ended_by\" is null and \"ended_at\" is null and \"ended_reason\" is null) or (\"status\" = 'revoked' and \"ended_by\" is not null and \"ended_at\" is not null)",
+      "name": "access_memberships_end_ck",
+      "entityType": "checks",
+      "schema": "core",
+      "table": "access_memberships"
+    },
+    {
+      "value": "\"ended_reason\" is null or length(\"ended_reason\") between 1 and 500",
+      "name": "access_memberships_end_reason_ck",
+      "entityType": "checks",
+      "schema": "core",
+      "table": "access_memberships"
+    },
+    {
       "value": "(\"principal_id\" is null) <> (\"agent_id\" is null)",
       "name": "access_memberships_holder_xor_ck",
       "entityType": "checks",
@@ -15783,6 +15904,13 @@
     {
       "value": "\"status\" in ('active', 'disabled', 'archived')",
       "name": "core_principals_status_ck",
+      "entityType": "checks",
+      "schema": "core",
+      "table": "principals"
+    },
+    {
+      "value": "\"platform_role\" is null or (\"platform_role\" = 'access_release_actor' and \"kind\" = 'system')",
+      "name": "core_principals_platform_role_ck",
       "entityType": "checks",
       "schema": "core",
       "table": "principals"

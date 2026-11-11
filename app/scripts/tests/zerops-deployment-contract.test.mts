@@ -337,7 +337,7 @@ it('declares the import list of the data plane, the migrator secrets, the app an
   }
 });
 
-it('reserves the application working set and one dedicated CPU while preserving free-memory and replica limits', () => {
+it('fixes the application at 4 GiB and one dedicated CPU while preserving free-memory and replica limits', () => {
   const services = Schema.decodeUnknownSync(Schema.instanceOf(YAMLSeq))(
     parseDocument(readFileSync(zeropsImportPath, 'utf-8')).get('services', true),
   );
@@ -345,7 +345,7 @@ it('reserves the application working set and one dedicated CPU while preserving 
     services.items.find((service) => isMap(service) && service.get('hostname') === 'app'),
   );
 
-  expect(app.getIn(['verticalAutoscaling', 'minRam'])).toBe(2.5);
+  expect(app.getIn(['verticalAutoscaling', 'minRam'])).toBe(4);
   expect(app.getIn(['verticalAutoscaling', 'maxRam'])).toBe(4);
   expect(app.getIn(['verticalAutoscaling', 'minFreeRamGB'])).toBe(0.5);
   expect(app.getIn(['verticalAutoscaling', 'cpuMode'])).toBe('DEDICATED');
