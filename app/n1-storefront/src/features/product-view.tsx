@@ -8,7 +8,7 @@ import { DataTable } from "@techsio/ui-kit/organisms/data-table";
 import type { ColumnDef } from "@techsio/ui-kit/organisms/data-table";
 import { Breadcrumb } from "@techsio/ui-kit/molecules/breadcrumb";
 import { Tabs } from "@techsio/ui-kit/molecules/tabs";
-import { Link } from "@/features/plain-link";
+import { Link } from "@techsio/ui-kit/atoms/link";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { AvailabilityStatus } from "@techsio/ui-kit/molecules/availability-status";
 import { PriceBlock } from "@techsio/ui-kit/molecules/price-block";
@@ -24,6 +24,14 @@ import { productShareHref, productShareOrigin } from "./product-share";
 
 type Parameter = ProductDetailModel["parameters"][number];
 const emptyCategories: CatalogModel["categories"] = [];
+const galleryItems = (images: readonly string[], imageAlt: string) =>
+  images.map((src, index) => ({
+    alt: imageAlt,
+    id: src,
+    imageProps: { height: 448, priority: index === 0, width: 448 },
+    src,
+    thumbnailImageProps: { height: 64, width: 64 },
+  }));
 const mobileInformationOrder = (selectionRequired: boolean) =>
   selectionRequired
     ? { price: "order-1", stock: "order-2" }
@@ -33,16 +41,14 @@ const parameterColumns = (d: Dictionary, desktop = false): ColumnDef<Parameter>[
     accessorKey: "label",
     header: d.parameterName,
     id: "label",
+    meta: { width: desktop ? "55%" : "50%" },
   };
   const value: ColumnDef<Parameter> = {
     accessorFn: (row) => (row.unit.length > 0 ? `${row.value} ${row.unit}` : row.value),
     header: d.parameterValue,
     id: "value",
+    meta: { width: desktop ? "45%" : "50%" },
   };
-  if (desktop) {
-    label.meta = { width: "55%" };
-    value.meta = { width: "45%" };
-  }
   return [label, value];
 };
 
@@ -111,32 +117,34 @@ export const ProductView = ({
   }
   return (
     <article className="mx-auto max-w-n1-product-content p-4 md:py-6">
-      <Breadcrumb aria-label={d.catalog} size="md">
-        <Breadcrumb.List>
-          <Breadcrumb.Item>
-            <Breadcrumb.Link as={NextLink} href={`/${locale}`}>
-              {d.home}
-            </Breadcrumb.Link>
-          </Breadcrumb.Item>
-          {trail.map((item) => (
-            <Fragment key={item.id}>
-              <Breadcrumb.Separator />
-              <Breadcrumb.Item>
-                <Breadcrumb.Link
-                  as={NextLink}
-                  href={`/${locale}/kategorie/${encodeURIComponent(item.slug)}`}
-                >
-                  {item.name}
-                </Breadcrumb.Link>
-              </Breadcrumb.Item>
-            </Fragment>
-          ))}
-          <Breadcrumb.Separator className="hidden md:inline-flex" />
-          <Breadcrumb.Item className="hidden md:inline-flex">
-            <Breadcrumb.CurrentLink>{product.name}</Breadcrumb.CurrentLink>
-          </Breadcrumb.Item>
-        </Breadcrumb.List>
-      </Breadcrumb>
+      <div className="flex justify-center md:block">
+        <Breadcrumb aria-label={d.catalog} size="md">
+          <Breadcrumb.List>
+            <Breadcrumb.Item>
+              <Breadcrumb.Link as={NextLink} href={`/${locale}`}>
+                {d.home}
+              </Breadcrumb.Link>
+            </Breadcrumb.Item>
+            {trail.map((item) => (
+              <Fragment key={item.id}>
+                <Breadcrumb.Separator />
+                <Breadcrumb.Item>
+                  <Breadcrumb.Link
+                    as={NextLink}
+                    href={`/${locale}/kategorie/${encodeURIComponent(item.slug)}`}
+                  >
+                    {item.name}
+                  </Breadcrumb.Link>
+                </Breadcrumb.Item>
+              </Fragment>
+            ))}
+            <Breadcrumb.Separator className="hidden md:inline-flex" />
+            <Breadcrumb.Item className="hidden md:inline-flex">
+              <Breadcrumb.CurrentLink>{product.name}</Breadcrumb.CurrentLink>
+            </Breadcrumb.Item>
+          </Breadcrumb.List>
+        </Breadcrumb>
+      </div>
       <div className="relative my-8 md:my-6">
         <h1 className="text-2xl font-bold leading-normal md:text-xl md:leading-9">
           {product.name}
@@ -159,13 +167,7 @@ export const ProductView = ({
             }}
             emptyState={<p className="py-12 text-center text-fg-secondary">{d.imageUnavailable}</p>}
             getThumbnailAriaLabel={({ index }) => `${product.name}: ${d.heroSlide} ${index + 1}`}
-            items={images.map((src, index) => ({
-              alt: product.imageAlt,
-              id: src,
-              imageProps: { height: 448, priority: index === 0, width: 448 },
-              src,
-              thumbnailImageProps: { height: 64, width: 64 },
-            }))}
+            items={galleryItems(images, product.imageAlt)}
             orientation="horizontal"
             thumbnailImageAs={NextImage}
             thumbnailSize={66}
@@ -335,6 +337,7 @@ export const ProductView = ({
                       hideHeader
                       size="sm"
                       slotProps={{ root: { "aria-label": d.productParameters } }}
+                      tableLayout="fixed"
                       variant="line"
                     />
                   </div>
@@ -361,6 +364,15 @@ export const ProductView = ({
           </Tabs.Content>
         </Tabs>
       </div>
+      <section
+        aria-labelledby="product-related-heading"
+        className="mt-8 flex flex-col gap-8 md:hidden"
+      >
+        <h2 className="text-xl font-semibold leading-9" id="product-related-heading">
+          {d.relatedProducts}
+        </h2>
+        <p className="text-md leading-6 text-fg-secondary">{d.empty}</p>
+      </section>
     </article>
   );
 };
