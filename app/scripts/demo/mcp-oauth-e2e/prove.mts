@@ -603,7 +603,7 @@ const runVariant = (def: VariantDef, summary: VariantSummary, verification: bool
     // once more and fails only when the second sample misses too.
     yield* rec.stepEffect(
       k,
-      'latence MCP (discover a tools/list ≤ 3 s, tools/call ≤ 10 s)',
+      'latence MCP (připojení ≤ 5 s; discover a tools/list ≤ 3 s, tools/call ≤ 10 s)',
       Effect.gen(function* verifyLatency() {
         const { first, slow } = yield* confirmLatency(client);
         return {

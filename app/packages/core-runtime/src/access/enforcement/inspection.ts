@@ -31,6 +31,7 @@ import type {
   SubjectAccessInspectionService,
   SubjectCapabilityAnswer,
   SubjectCapabilityInspectionInput,
+  SubjectActionAnswer,
   SubjectCapabilityQuestion,
   SubjectInspectionInput,
   SubjectListInspection,
@@ -574,14 +575,20 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
     });
     const answers = yield* evaluateMany(input, [...capabilityQuestions, ...actionQuestions]);
     const offset = capabilityQuestions.length;
-    const allowed = (index: number) =>
-      answers[offset + index]?.decision.outcome === 'ALLOWED' ? ('allowed' as const) : ('denied' as const);
+    // A missing or UNAVAILABLE answer is `unavailable`, never `denied`, so no caller can read it as a refusal.
+    const answerOf = (index: number): SubjectActionAnswer => {
+      const outcome = answers[offset + index]?.decision.outcome;
+      if (outcome === 'ALLOWED') {
+        return 'allowed';
+      }
+      return outcome === undefined || outcome === 'UNAVAILABLE' ? 'unavailable' : 'denied';
+    };
     return {
       answers: answers.slice(0, offset),
       authorities: input.actionKeys.map((actionKey, index) => ({
         actionKey,
-        propose: allowed(index * ACTION_MODES.length),
-        run: allowed(index * ACTION_MODES.length + 1),
+        propose: answerOf(index * ACTION_MODES.length),
+        run: answerOf(index * ACTION_MODES.length + 1),
       })),
       inspectionOnly: true as const,
     };
