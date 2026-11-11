@@ -729,3 +729,74 @@ for (const batchReads of [false, true]) {
       }),
   );
 }
+
+/** The port with every read counted while it is in flight; each read yields so concurrent reads can overlap. */
+const inFlightCounted = (port: ReturnType<typeof makeAuthority>['port'], counter: { now: number; peak: number }) => {
+  const counted = <A, E>(read: Effect.Effect<A, E>): Effect.Effect<A, E> =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        counter.now += 1;
+        counter.peak = Math.max(counter.peak, counter.now);
+      }),
+      () =>
+        Effect.forEach(Array.from({ length: 5 }), () => Effect.yieldNow, { discard: true }).pipe(Effect.andThen(read)),
+      () =>
+        Effect.sync(() => {
+          counter.now -= 1;
+        }),
+    );
+  const { readCellsMany, readConfigureBases } = port;
+  return withOptional(
+    withOptional(
+      {
+        readCells: (query: Parameters<typeof port.readCells>[0]) => counted(port.readCells(query)),
+        readConnection: (query: Parameters<typeof port.readConnection>[0]) => counted(port.readConnection(query)),
+        readScope: (query: Parameters<typeof port.readScope>[0]) => counted(port.readScope(query)),
+        readTeamIds: (query: Parameters<typeof port.readTeamIds>[0]) => counted(port.readTeamIds(query)),
+      },
+      'readCellsMany',
+      readCellsMany === undefined
+        ? undefined
+        : (queries: Parameters<typeof readCellsMany>[0]) => counted(readCellsMany(queries)),
+    ),
+    'readConfigureBases',
+    readConfigureBases === undefined
+      ? undefined
+      : (query: Parameters<typeof readConfigureBases>[0]) => counted(readConfigureBases(query)),
+  );
+};
+
+it.effect('one gate batch never holds more than two pooled intent reads at once, however many groups it plans', () =>
+  Effect.gen(function* boundedReads() {
+    // Two groups, each with a structurally decided admin key and role-cell keys: every read could overlap.
+    const granted = [otherKey, capability('core.access.roles.archive')].map((key) => cell({ capability: key }));
+    const spec = withOptional({ cells: granted, legalEntityScope: companyScopeOf(companyA) }, 'configureBases', [
+      owner,
+    ] as const);
+    const counter = { now: 0, peak: 0 };
+    const requests = [
+      policy,
+      ...granted.map(({ capabilityKey }) => ({
+        ...policy,
+        capabilityKey,
+        kind: 'action' as const,
+        risk: 'routine' as const,
+      })),
+    ].map((one) => ({
+      actor: actorIn(companyA),
+      now,
+      request: { capability: one, mode: 'run' as const },
+    }));
+    const groups = [0, 1].map(() => ({
+      authority: inFlightCounted(makeAuthority(spec).port, counter),
+      inputs: requests,
+    }));
+    const answers = yield* decideAccessMany(makeCheck({ authority: spec }).port, groups);
+    expect(answers.map((group) => group.map(({ reasons }) => reasons[0]?.code))).toEqual([
+      ['structural.owner', 'allow.granted', 'allow.granted'],
+      ['structural.owner', 'allow.granted', 'allow.granted'],
+    ]);
+    // The documented bound of a batch on the request's shared pool.
+    expect(counter.peak).toBeLessThanOrEqual(2);
+  }),
+);

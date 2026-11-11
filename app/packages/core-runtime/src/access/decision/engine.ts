@@ -1,4 +1,4 @@
-import { Context, DateTime, Effect, Exit, Match, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Exit, Match, Option, Schema, Semaphore } from 'effect';
 import type { Array as Arr } from 'effect';
 
 import type { AccessScopeId, CapabilityKey, LegalEntityId, PrincipalId, RecordKey } from '../ids.ts';
@@ -25,8 +25,11 @@ import type {
   ActorResolution,
   AuthorityCell,
   AuthorityCellQuery,
+  ConnectionQuery,
   DecisionAuthorityPort,
   ResolvedActor,
+  ScopeQuery,
+  TeamMembershipQuery,
 } from './authority.ts';
 import { decisionReason, earliestDeadline, sameRecord } from './contract.ts';
 import type {
@@ -1355,6 +1358,29 @@ const requiredCellQueries = (params: {
   return queries;
 };
 
+/** The same port, every read taking one of the batch's permits while it runs. */
+const permittedReads = (authority: DecisionAuthorityPort, permits: Semaphore.Semaphore): DecisionAuthorityPort => {
+  const { readCellsMany, readConfigureBases } = authority;
+  return withOptional(
+    withOptional(
+      {
+        readCells: (query: AuthorityCellQuery) => permits.withPermit(authority.readCells(query)),
+        readConnection: (query: ConnectionQuery) => permits.withPermit(authority.readConnection(query)),
+        readScope: (query: ScopeQuery) => permits.withPermit(authority.readScope(query)),
+        readTeamIds: (query: TeamMembershipQuery) => permits.withPermit(authority.readTeamIds(query)),
+      },
+      'readCellsMany',
+      readCellsMany === undefined
+        ? undefined
+        : (queries: readonly AuthorityCellQuery[]) => permits.withPermit(readCellsMany(queries)),
+    ),
+    'readConfigureBases',
+    readConfigureBases === undefined
+      ? undefined
+      : (query: Parameters<typeof readConfigureBases>[0]) => permits.withPermit(readConfigureBases(query)),
+  );
+};
+
 /** The cell sets one guarded request needs. */
 const cellQueriesOf = (entry: GuardedRequest): readonly AuthorityCellQuery[] =>
   requiredCellQueries({
@@ -1624,9 +1650,13 @@ const decideAccessManyEffect: (
   groups: readonly DecisionBatchGroup[],
 ) => Effect.Effect<readonly (readonly AccessDecision[])[]> = Effect.fn('AccessDecision.decideMany')(
   function* decideAccessManyProgram(check: DecisionCheckPort, groups: readonly DecisionBatchGroup[]) {
-    const plannedGroups = yield* Effect.forEach(groups, (group) => planGroup(group), {
-      concurrency: BATCH_READ_CONCURRENCY,
-    });
+    // However its groups and reads overlap, one batch holds at most BATCH_READ_CONCURRENCY pooled reads at once.
+    const permits = yield* Semaphore.make(BATCH_READ_CONCURRENCY);
+    const plannedGroups = yield* Effect.forEach(
+      groups,
+      (group) => planGroup({ ...group, authority: permittedReads(group.authority, permits) }),
+      { concurrency: BATCH_READ_CONCURRENCY },
+    );
     // ONE snapshot for every request's items: a batch can never be answered from two views.
     const { engineFailed, evaluation } = yield* runSnapshot(
       check,
