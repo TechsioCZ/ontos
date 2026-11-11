@@ -62,43 +62,47 @@ const boundAuthority = (
   const { readCellsMany } = authority;
   return withOptional(
     withOptional(
-      {
-        readCells: (query: AuthorityCellQuery) =>
-          authority.readCells(query).pipe(Effect.map((cells) => witnessedCells(query, cells))),
-        readConnection: authority.readConnection,
-        readScope: (query: ScopeQuery) =>
-          authority.readScope(query).pipe(
-            Effect.map(
-              Option.filter((scope) => {
-                const sameContext = Match.value(scope.scope).pipe(
-                  Match.tags({
-                    LegalEntity: ({ legalEntityId }) => legalEntityId === query.legalEntityId,
-                    TenantContext: () => query.legalEntityId === undefined,
-                  }),
-                  Match.exhaustive,
-                );
-                return scope.scopeId === proof.scopeId && scope.tenantId === query.tenantId && sameContext;
-              }),
+      withOptional(
+        {
+          readCells: (query: AuthorityCellQuery) =>
+            authority.readCells(query).pipe(Effect.map((cells) => witnessedCells(query, cells))),
+          readConnection: authority.readConnection,
+          readScope: (query: ScopeQuery) =>
+            authority.readScope(query).pipe(
+              Effect.map(
+                Option.filter((scope) => {
+                  const sameContext = Match.value(scope.scope).pipe(
+                    Match.tags({
+                      LegalEntity: ({ legalEntityId }) => legalEntityId === query.legalEntityId,
+                      TenantContext: () => query.legalEntityId === undefined,
+                    }),
+                    Match.exhaustive,
+                  );
+                  return scope.scopeId === proof.scopeId && scope.tenantId === query.tenantId && sameContext;
+                }),
+              ),
             ),
-          ),
-        readTeamIds: authority.readTeamIds,
-      },
-      'readConfigureBases',
-      authority.readConfigureBases,
+          readTeamIds: authority.readTeamIds,
+        },
+        'readConfigureBases',
+        authority.readConfigureBases,
+      ),
+      'readCellsMany',
+      readCellsMany === undefined
+        ? undefined
+        : (queries: readonly AuthorityCellQuery[]) =>
+            readCellsMany(queries).pipe(
+              // Each answer keeps its position, so an answer of the wrong length stays unreadable for the engine.
+              Effect.map((answers) =>
+                answers.map((cells, index) => {
+                  const query = queries[index];
+                  return query === undefined ? [] : witnessedCells(query, cells);
+                }),
+              ),
+            ),
     ),
-    'readCellsMany',
-    readCellsMany === undefined
-      ? undefined
-      : (queries: readonly AuthorityCellQuery[]) =>
-          readCellsMany(queries).pipe(
-            // Each answer keeps its position, so an answer of the wrong length stays unreadable for the engine.
-            Effect.map((answers) =>
-              answers.map((cells, index) => {
-                const query = queries[index];
-                return query === undefined ? [] : witnessedCells(query, cells);
-              }),
-            ),
-          ),
+    'readsThroughCallerTransaction',
+    authority.readsThroughCallerTransaction,
   );
 };
 

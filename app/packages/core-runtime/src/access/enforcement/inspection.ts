@@ -179,30 +179,36 @@ const scopeQueryKey = (query: ScopeQuery): string =>
 const batchAuthorityOf = (authority: DecisionAuthorityPort, scope: Scope.Scope): DecisionAuthorityPort =>
   withOptional(
     withOptional(
-      {
-        readCells: sharedPerKey(
-          (query: AuthorityCellQuery) =>
-            [query.tenantId, query.scopeId, holderIdOf(query.holder), query.capabilityKey, query.mode].join('\u0000'),
-          authority.readCells,
-          scope,
-        ),
-        readConnection: authority.readConnection,
-        readScope: sharedPerKey(scopeQueryKey, authority.readScope, scope),
-        readTeamIds: authority.readTeamIds,
-      },
-      // The engine reads one batch's cell sets in one call; each set is still read once per batch.
-      'readCellsMany',
-      authority.readCellsMany,
+      withOptional(
+        {
+          readCells: sharedPerKey(
+            (query: AuthorityCellQuery) =>
+              [query.tenantId, query.scopeId, holderIdOf(query.holder), query.capabilityKey, query.mode].join('\u0000'),
+            authority.readCells,
+            scope,
+          ),
+          readConnection: authority.readConnection,
+          readScope: sharedPerKey(scopeQueryKey, authority.readScope, scope),
+          readTeamIds: authority.readTeamIds,
+        },
+        // The engine reads one batch's cell sets in one call; each set is still read once per batch.
+        'readCellsMany',
+        authority.readCellsMany,
+      ),
+      'readConfigureBases',
+      authority.readConfigureBases === undefined
+        ? undefined
+        : sharedPerKey(
+            (query: { readonly actor: string; readonly at: Date; readonly tenantId: string }) =>
+              [query.tenantId, query.actor, String(DateTime.toEpochMillis(DateTime.makeUnsafe(query.at)))].join(
+                '\u0000',
+              ),
+            authority.readConfigureBases,
+            scope,
+          ),
     ),
-    'readConfigureBases',
-    authority.readConfigureBases === undefined
-      ? undefined
-      : sharedPerKey(
-          (query: { readonly actor: string; readonly at: Date; readonly tenantId: string }) =>
-            [query.tenantId, query.actor, String(DateTime.toEpochMillis(DateTime.makeUnsafe(query.at)))].join('\u0000'),
-          authority.readConfigureBases,
-          scope,
-        ),
+    'readsThroughCallerTransaction',
+    authority.readsThroughCallerTransaction,
   );
 
 /** Each Action is asked in both modes, in this order. */

@@ -800,3 +800,37 @@ it.effect('one gate batch never holds more than two pooled intent reads at once,
     expect(counter.peak).toBeLessThanOrEqual(2);
   }),
 );
+
+it.effect("a gate batch over a caller's transaction holds one intent read at a time", () =>
+  Effect.gen(function* joinedReadsSerial() {
+    // The same two-group batch as above, but its ports read through one transaction a caller owns.
+    const granted = [otherKey, capability('core.access.roles.archive')].map((key) => cell({ capability: key }));
+    const spec = withOptional({ cells: granted, legalEntityScope: companyScopeOf(companyA) }, 'configureBases', [
+      owner,
+    ] as const);
+    const counter = { now: 0, peak: 0 };
+    const requests = [
+      policy,
+      ...granted.map(({ capabilityKey }) => ({
+        ...policy,
+        capabilityKey,
+        kind: 'action' as const,
+        risk: 'routine' as const,
+      })),
+    ].map((one) => ({ actor: actorIn(companyA), now, request: { capability: one, mode: 'run' as const } }));
+    const groups = [0, 1].map(() => ({
+      authority: {
+        ...inFlightCounted(makeAuthority(spec).port, counter),
+        readsThroughCallerTransaction: true as const,
+      },
+      inputs: requests,
+    }));
+    const answers = yield* decideAccessMany(makeCheck({ authority: spec }).port, groups);
+    expect(answers.map((group) => group.map(({ reasons }) => reasons[0]?.code))).toEqual([
+      ['structural.owner', 'allow.granted', 'allow.granted'],
+      ['structural.owner', 'allow.granted', 'allow.granted'],
+    ]);
+    // Each read installs its scope with its own statement on the one connection: they never overlap.
+    expect(counter.peak).toBe(1);
+  }),
+);

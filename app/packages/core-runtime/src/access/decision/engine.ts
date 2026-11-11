@@ -1650,8 +1650,12 @@ const decideAccessManyEffect: (
   groups: readonly DecisionBatchGroup[],
 ) => Effect.Effect<readonly (readonly AccessDecision[])[]> = Effect.fn('AccessDecision.decideMany')(
   function* decideAccessManyProgram(check: DecisionCheckPort, groups: readonly DecisionBatchGroup[]) {
-    // However its groups and reads overlap, one batch holds at most BATCH_READ_CONCURRENCY pooled reads at once.
-    const permits = yield* Semaphore.make(BATCH_READ_CONCURRENCY);
+    // However its groups and reads overlap, one batch holds at most BATCH_READ_CONCURRENCY pooled reads at once,
+    // and one read at a time when any of its ports reads through a caller's transaction: each such read installs
+    // its scope with its own statement on that one connection, so two must never interleave.
+    const permits = yield* Semaphore.make(
+      groups.some(({ authority }) => authority.readsThroughCallerTransaction === true) ? 1 : BATCH_READ_CONCURRENCY,
+    );
     const plannedGroups = yield* Effect.forEach(
       groups,
       (group) => planGroup({ ...group, authority: permittedReads(group.authority, permits) }),
@@ -1909,9 +1913,10 @@ const readListSides: (
     capability: DecisionCapabilityPolicy,
     modes: EvaluationModes,
   ) {
+    // The sides overlap on pooled reads, but never through a caller's one transaction (see DecisionAuthorityPort).
     const reads = yield* Effect.all(
       sidesOf(resolved).map((side) => readSideWithTeams(authority, resolved, capability, modes.effectiveMode, side)),
-      { concurrency: 2 },
+      { concurrency: authority.readsThroughCallerTransaction === true ? 1 : 2 },
     );
     const readSides: ReadSide[] = [];
     for (const read of reads) {
