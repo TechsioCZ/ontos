@@ -104,6 +104,7 @@ import { commerceCustomerContextApi } from '../../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import {
   delegatedGatewayConfiguration,
+  holdDelegatedCallerKey,
   delegatedGatewayRoute,
   serveDelegatedGatewayContext,
 } from './delegated-gateway-shell.fixture.ts';
@@ -1104,6 +1105,7 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
   );
   const context = yield* Layer.build(NodeHttpServer.layerTest);
   const server = Context.get(context, HttpServer.HttpServer);
+  yield* holdDelegatedCallerKey;
   const requestContext = Context.add(
     Context.makeUnsafe<unknown>(new Map()),
     ConfigProvider.ConfigProvider,

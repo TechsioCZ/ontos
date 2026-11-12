@@ -135,6 +135,7 @@ import {
 } from '@app/shared-contracts/external-identity';
 import { outboxWorkers } from '../../src/workers/index.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
+import { holdOwnStoreCopy, receiveModuleCredentialHandover } from '../../../../scripts/zerops/module-credentials.mts';
 
 class RetainedConsentOwnerFixtureError extends Schema.TaggedError<RetainedConsentOwnerFixtureError>()(
   'RetainedConsentOwnerFixtureError',
@@ -838,6 +839,9 @@ const readOwnedBinding = Effect.fn('RetainedConsentOwner.readOwnedBinding')(func
 });
 const serve = Effect.scoped(
   Effect.gen(function* retainedConsentOwnerServer() {
+    // Commerce's own module key arrives only over this process's private channel, as a host hands it over.
+    const credentials = yield* receiveModuleCredentialHandover([CUSTOMER_CONTEXT_APP_ID]);
+    yield* holdOwnStoreCopy(credentials, [CUSTOMER_CONTEXT_APP_ID]);
     const { pull, writer } = yield* openPrivateCommandSocket();
     yield* verifyPreparedProviderStorage();
     const configuredOrigin = yield* Config.String('COMMERCE_PORTAL_AUTH_URL');

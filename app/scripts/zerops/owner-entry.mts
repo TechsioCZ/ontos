@@ -4,7 +4,9 @@
  * node`) into `<unit>/dist/zerops-entry.mjs`, which exports `start(port, configureServer)` instead of listening on
  * `PORT` at import; `configureServer` receives the unit's Node server before it listens.
  * The app host imports every owner's entry into one process; all of them resolve their packages through the one
- * installed workspace, so shared dependencies load once.
+ * installed workspace, so shared dependencies load once. When the unit's API bundle carries a credential store copy,
+ * the entry also re-exports that copy's claim, which the host calls before the unit serves
+ * (`hosted-credential-claim.mts`); the build fails if anything the unit serves carries a copy no host can claim.
  *
  *   node scripts/zerops/owner-entry.mts <unit directory> [...]
  */
@@ -14,6 +16,8 @@ import path from 'node:path';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Console, Effect, FileSystem, Layer, Schema } from 'effect';
 import { Argument, Command } from 'effect/cli';
+
+import { checkUnitClaims, entryClaimExport, exposeUnitClaims } from './hosted-credential-claim.mts';
 
 export class OwnerEntryError extends Schema.TaggedError<OwnerEntryError>()('OwnerEntryError', {
   reason: Schema.String,
@@ -111,12 +115,19 @@ const writeOwnerEntry = Effect.fn('OwnerEntry.write')(function* writeOwnerEntry(
     return yield* new OwnerEntryError({ reason: `${unitDirectory}/.output/index.js has an unexpected shape` });
   }
   const entry = path.join(dist, 'zerops-entry.mjs');
+  const [carriesStore] = yield* exposeUnitClaims([unit]);
   if (isCommonJsEntry(generated)) {
+    if (carriesStore) {
+      return yield* new OwnerEntryError({
+        reason: `${unitDirectory} is CommonJS; its credential claim cannot be exported`,
+      });
+    }
     yield* fs.writeFileString(path.join(dist, 'zerops-entry.cjs'), source);
     yield* fs.writeFileString(entry, COMMONJS_SHIM);
   } else {
-    yield* fs.writeFileString(entry, source);
+    yield* fs.writeFileString(entry, carriesStore ? `${source.trimEnd()}\n${entryClaimExport}\n` : source);
   }
+  yield* checkUnitClaims([unit]).pipe(Effect.mapError((problem) => new OwnerEntryError({ reason: problem.reason })));
   return yield* Console.log(`wrote ${path.relative(workspaceRoot, entry)}`);
 });
 

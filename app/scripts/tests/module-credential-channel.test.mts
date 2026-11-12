@@ -3,14 +3,14 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Config, ConfigProvider, Effect, Fiber, Option, Queue, Redacted, Ref, Schema, Stream } from 'effect';
+import { Effect, Fiber, Option, Queue, Redacted, Ref, Schema, Stream } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
 import { claimHostedModuleCredentials } from '../../packages/core-runtime/src/auth/hosted-module-credential-store.ts';
 import { HostedModuleCredentialsSchema } from '../../packages/core-runtime/src/auth/hosted-module-credentials.ts';
 import {
-  moduleCredentialConfigProvider,
+  ownModuleCredential,
   ownWorkloadCredential,
 } from '../../packages/core-runtime/src/auth/owner-module-credential.ts';
 import {
@@ -28,6 +28,7 @@ import type { HandoverChannel, ModuleCredentialHealingStreaks } from '../zerops/
 import {
   applyModuleCredentialHandovers,
   encodeModuleCredentialHandover,
+  makeHostedCredentialHolders,
   noProvisionedCredentials,
   providerKeyIdsOf,
   ProvisioningOutputJsonSchema,
@@ -66,9 +67,7 @@ const decoder = new TextDecoder();
 
 /** What one owner of this process reads as its module credential, per call. */
 const readOwnerCredential = (appId: string) =>
-  Config.option(Config.String('ONTOS_GATEWAY_MODULE_API_KEY'))
-    .parse(moduleCredentialConfigProvider(ConfigProvider.fromUnknown({}), appId))
-    .pipe(Effect.map(Option.getOrUndefined));
+  ownModuleCredential(appId).pipe(Effect.map((key) => (Option.isSome(key) ? Redacted.value(key.value) : undefined)));
 
 /** Keys issued at the test clock's start live a day, as the platform issues them. */
 const DAY = 24 * 60 * 60 * 1000;
@@ -199,6 +198,91 @@ describe('a process receiving handovers on its channel', () => {
         );
         expect(stranger).toEqual({ accepted: [], refused: [PRICING_WORKLOAD_ENTRY] });
       }),
+  );
+});
+
+/** A store copy as one built bundle carries it: it serves its own modules and refuses any other. */
+const bundleCopy = (owners: readonly string[]) => {
+  const held = new Map<string, string>();
+  const workloads = new Map<string, string>();
+  return {
+    copy: {
+      accept: (handover: typeof HostedModuleCredentialsSchema.Type) =>
+        Effect.sync(() => {
+          const named = Object.keys(handover.credentials).filter((owner) => owners.includes(owner));
+          for (const owner of named) {
+            const key = handover.credentials[owner];
+            if (key !== undefined) {
+              held.set(owner, Redacted.value(key));
+            }
+          }
+          for (const [entry, key] of Object.entries(handover.workloads ?? {})) {
+            if (owners.some((owner) => entry.startsWith(`${owner}/`))) {
+              workloads.set(entry, Redacted.value(key));
+            }
+          }
+          return {
+            accepted: named,
+            refused: Object.keys(handover.credentials).filter((owner) => !owners.includes(owner)),
+          };
+        }),
+      owners,
+    },
+    held,
+    workloads,
+  };
+};
+
+describe('a process holding one store copy per loaded bundle', () => {
+  it.effect(
+    'hands every line to every claimed copy, each its own keys, and replays the current keys to a late copy',
+    () =>
+      Effect.gen(function* everyCopy() {
+        const { holders, receiver } = yield* makeHostedCredentialHolders([ORDER, PARTY]);
+        const order = bundleCopy([ORDER]);
+        yield* holders.hold(order.copy);
+        const first = yield* receiver.accept(
+          Schema.decodeUnknownSync(HostedModuleCredentialsSchema)({
+            credentials: { [ORDER]: ORDER_KEY_ONE, [PARTY]: PARTY_KEY_ONE, pricing: 'pricing-module-key-00000' },
+            schemaVersion: 1,
+            workloads: { [ORDER_WORKLOAD_ENTRY]: WORKLOAD_KEY_ONE },
+          }),
+        );
+        // Keys of modules this process serves are taken, a stranger's refused; nothing reaches a copy not its own.
+        expect(first.accepted.toSorted()).toEqual([ORDER, ORDER_WORKLOAD_ENTRY, PARTY].toSorted());
+        expect(first.refused).toEqual(['pricing']);
+        expect([...order.held]).toEqual([[ORDER, ORDER_KEY_ONE]]);
+        expect([...order.workloads]).toEqual([[ORDER_WORKLOAD_ENTRY, WORKLOAD_KEY_ONE]]);
+        // A bundle loaded after the line arrived gets its module's current key at once.
+        const party = bundleCopy([PARTY]);
+        yield* holders.hold(party.copy);
+        expect([...party.held]).toEqual([[PARTY, PARTY_KEY_ONE]]);
+        // A rotation reaches every copy in place.
+        yield* receiver.accept(
+          Schema.decodeUnknownSync(HostedModuleCredentialsSchema)({
+            credentials: { [ORDER]: ORDER_KEY_TWO, [PARTY]: PARTY_KEY_TWO },
+            schemaVersion: 1,
+            workloads: {},
+          }),
+        );
+        expect(order.held.get(ORDER)).toBe(ORDER_KEY_TWO);
+        expect(party.held.get(PARTY)).toBe(PARTY_KEY_TWO);
+        expect(party.held.has(ORDER)).toBe(false);
+        // A copy loaded after the rotation gets the rotated key, and no longer the workload its module was not handed.
+        const lateOrder = bundleCopy([ORDER]);
+        yield* holders.hold(lateOrder.copy);
+        expect(lateOrder.held.get(ORDER)).toBe(ORDER_KEY_TWO);
+        expect([...lateOrder.workloads]).toEqual([]);
+      }),
+  );
+
+  it.effect('gives a copy nothing while no line arrived', () =>
+    Effect.gen(function* nothingYet() {
+      const { holders } = yield* makeHostedCredentialHolders([ORDER]);
+      const order = bundleCopy([ORDER]);
+      yield* holders.hold(order.copy);
+      expect([...order.held]).toEqual([]);
+    }),
   );
 });
 

@@ -8,9 +8,6 @@ export const ModuleAppIdSchema = Schema.String.check(Schema.isPattern(/^[a-z][a-
   Schema.brand('ModuleAppId'),
 );
 
-/** The variable every module deployment reads as its own module credential. */
-export const MODULE_CREDENTIAL_VARIABLE = 'ONTOS_GATEWAY_MODULE_API_KEY';
-
 const MINIMUM_KEY_LENGTH = 16;
 const WORKLOAD_ENTRY =
   /^[a-z][a-z0-9-]{0,99}\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+\/[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/u;

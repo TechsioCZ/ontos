@@ -12,15 +12,16 @@ import { workloadEntryAppId } from './hosted-module-credentials.ts';
 type Slot = Ref.Ref<Option.Option<Redacted.Redacted>>;
 
 /**
- * This process's hosted module credentials, private to this module: no global handle reaches them, and no package
- * export reaches this file. The host imports it by its workspace path (`scripts/zerops/module-credentials.mts`); an
- * owner reaches only its own slot, through `@app/core-runtime/auth/owner-module-credential`, which the delegated
- * gateway client alone imports (`scripts/tests/module-credential-reader-boundary.test.mts`).
+ * One copy of the hosted module credentials, private to this module: no global handle reaches it, and no package
+ * export reaches this file. An owner reaches only its own slot, through `@app/core-runtime/auth/owner-module-credential`,
+ * which the delegated gateway client alone imports (`scripts/tests/module-credential-reader-boundary.test.mts`).
  *
- * Claiming the process completes `hostedClaim` once with one slot per served owner; only the claimed receiver, fed by
- * the host's private channel, fills or replaces a slot. Every owner bundle of the process resolves `@app/core-runtime`
- * to this same module file, so they all share these slots (`scripts/tests/hosted-module-credential-instance.test.mts`). The isolation between owners of one process is
- * cooperative: see DEPLOYMENT.md, "Module credentials and bindings".
+ * A built owner bundle inlines its own copy of this module, so a process that serves several bundles holds several
+ * copies. The host program claims each one: the unit's build exposes exactly its bundle's claim, the unit's generated
+ * entry re-exports it, and the host claims that copy for the unit's own module right after loading the unit and before
+ * it serves (`scripts/zerops/hosted-credential-claim.mts`, `scripts/zerops/serve-units.mts`). A copy nobody claimed
+ * holds no key: its owner's delegated calls fail closed, and nothing is ever read from the environment. The isolation
+ * between owners of one process is cooperative: see DEPLOYMENT.md, "Module credentials and bindings".
  */
 interface HostedSlots {
   readonly owners: ReadonlyMap<string, Slot>;
@@ -31,9 +32,9 @@ interface HostedSlots {
 const hostedClaim = Deferred.makeUnsafe<HostedSlots>();
 
 /**
- * Claims this process as a multi-owner host serving `owners`, before any owner runs. From then on each owner reads
- * only its own slot, which starts empty, and never a module key from the shared environment. Claiming twice is
- * refused, so code that runs later cannot obtain a receiver.
+ * Claims this copy for the `owners` it serves, before any of them serves. Each slot starts empty and only the returned
+ * receiver, fed by the host's private channel, fills or replaces it; a handover naming another module is refused.
+ * Claiming a copy twice is refused, so code that runs later cannot obtain a receiver.
  */
 export const claimHostedModuleCredentials = Effect.fn('HostedModuleCredentials.claim')(function* claim(
   owners: readonly string[],
@@ -44,7 +45,7 @@ export const claimHostedModuleCredentials = Effect.fn('HostedModuleCredentials.c
   const workloads = Ref.makeUnsafe<ReadonlyMap<string, Redacted.Redacted>>(new Map());
   if (!(yield* Deferred.succeed(hostedClaim, { owners: slots, workloads }))) {
     return yield* new HostedModuleCredentialsSealedError({
-      reason: 'This process already claimed its hosted module credentials',
+      reason: 'These hosted module credentials are already claimed',
     });
   }
   const accept = Effect.fn('HostedModuleCredentials.accept')(function* accept(handover: HostedModuleCredentials) {
@@ -87,17 +88,17 @@ export const claimHostedModuleCredentials = Effect.fn('HostedModuleCredentials.c
   return { accept, owners: [...slots.keys()] } satisfies HostedModuleCredentialReceiver;
 });
 
-/** The owner's slot of a claimed process: `none` when the process serves one module, else its key if it holds one. */
+/** The owner's own module credential in this copy: none when the host has not claimed it or handed no key over. */
 export const hostedSlot = Effect.fn('HostedModuleCredentials.hostedSlot')(function* readHostedSlot(appId: string) {
   const claim = yield* Deferred.poll(hostedClaim);
   if (Option.isNone(claim)) {
-    return Option.none<Option.Option<Redacted.Redacted>>();
+    return Option.none<Redacted.Redacted>();
   }
   const slot = (yield* claim.value).owners.get(appId);
-  return Option.some(slot === undefined ? Option.none<Redacted.Redacted>() : yield* Ref.get(slot));
+  return slot === undefined ? Option.none<Redacted.Redacted>() : yield* Ref.get(slot);
 });
 
-/** An owner's internal workload credential in one tenant, if the host handed one over; none outside a claimed host. */
+/** An owner's internal workload credential in one tenant, if the host handed one over; none in an unclaimed copy. */
 export const hostedWorkloadSlot = Effect.fn('HostedModuleCredentials.hostedWorkloadSlot')(function* readWorkloadSlot(
   entry: string,
 ) {
@@ -106,14 +107,4 @@ export const hostedWorkloadSlot = Effect.fn('HostedModuleCredentials.hostedWorkl
     return Option.none<Redacted.Redacted>();
   }
   return Option.fromUndefinedOr((yield* Ref.get((yield* claim.value).workloads)).get(entry));
-});
-
-/** Which owners of this host hold a credential now; names only, never a key. */
-export const heldHostedModuleCredentials = Effect.gen(function* heldCredentials() {
-  const claim = yield* Deferred.poll(hostedClaim);
-  if (Option.isNone(claim)) {
-    return [];
-  }
-  const slots = [...(yield* claim.value).owners.entries()];
-  return slots.flatMap(([owner, slot]) => (Option.isSome(Ref.getUnsafe(slot)) ? [owner] : []));
 });

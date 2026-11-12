@@ -8,17 +8,19 @@ import { expect, it } from 'effect-rstest';
 const workspace = path.resolve(import.meta.dirname, '../..');
 
 /**
- * What one Node process sees when the host code and an owner bundle load the hosted credential store: the host by its
- * workspace path (as serve-units and the Outbox host import it), an owner through its own `@app/core-runtime`
- * dependency, by `import` (ESM owners) and by `require` (CommonJS owners). It claims through the host's copy and reads
- * through each owner's reader, so it proves the slots are one module-private store, without any global handle, and
- * that no package export hands an owner the store, the claim or a receiver.
+ * What one Node process sees when host code and owner code load the hosted credential store FROM SOURCE: the host by
+ * its workspace path, an owner through its own `@app/core-runtime` dependency, by `import` and by `require`. It claims
+ * through the host's copy and reads through each owner's reader, so unbundled code shares one module-private store,
+ * without any global handle, and no package export hands an owner the store, the claim or a receiver.
+ *
+ * It says nothing about BUILT owners: each built API bundle inlines its own copy (the host claims each one through the
+ * unit's entry). `scripts/tests/hosted-credential-claim.test.mts` and the packaged tests cover built artefacts.
  */
 const PROBE = `
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { ConfigProvider, Config, Effect, Redacted } from 'effect';
+import { Effect, Option, Redacted } from 'effect';
 const workspace = process.argv[1];
 const host = await import(pathToFileURL(path.join(workspace, 'packages/core-runtime/src/auth/hosted-module-credential-store.ts')).href);
 const owner = createRequire(path.join(workspace, 'verticals/pricing/package.json'));
@@ -36,9 +38,9 @@ const unexported = (specifier) => {
 };
 const receiver = await Effect.runPromise(host.claimHostedModuleCredentials(['pricing']));
 await Effect.runPromise(receiver.accept({ credentials: { pricing: Redacted.make('pricing-module-key-0000') }, schemaVersion: 1 }));
-const read = (reader) => Effect.runPromise(Config.String('ONTOS_GATEWAY_MODULE_API_KEY').parse(
-  reader.moduleCredentialConfigProvider(ConfigProvider.fromUnknown({}), 'pricing'),
-));
+const read = (reader) => Effect.runPromise(reader.ownModuleCredential('pricing')).then((key) =>
+  Option.isSome(key) ? Redacted.value(key.value) : null,
+);
 console.log(JSON.stringify({
   globalHandle: Object.getOwnPropertySymbols(globalThis).some((symbol) => String(symbol).includes('module-credentials')),
   imported: await read(imported),
@@ -50,7 +52,7 @@ console.log(JSON.stringify({
 `;
 
 it.live(
-  'shares one module-private credential store between the host and every owner bundle, reachable by no package export',
+  'from source, host and owner code share one module-private credential store, reachable by no package export',
   () =>
     Effect.scoped(
       Effect.gen(function* oneStorePerProcess() {
@@ -73,7 +75,6 @@ it.live(
           publicSurface: [
             'HostedModuleCredentialsSchema',
             'HostedModuleCredentialsSealedError',
-            'MODULE_CREDENTIAL_VARIABLE',
             'ModuleAppIdSchema',
             'WorkloadCredentialsSchema',
             'workloadEntryAppId',

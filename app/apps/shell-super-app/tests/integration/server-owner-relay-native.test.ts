@@ -3718,7 +3718,7 @@ it.live(
             expect(yield* catalog.child.isRunning).toBe(true);
             yield* catalog.child.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
             expect(yield* catalog.child.isRunning).toBe(false);
-            const enrolledCatalog = yield* startPackagedApplication({
+            let enrolledCatalog = yield* startPackagedApplication({
               appId: 'catalog',
               compositionUrl,
               gateway: { issuer: fixture.origin, publicJwks: gatewayMaterial.publicJwks },
@@ -4167,6 +4167,64 @@ it.live(
               savedRelationAndRevisionUnchangedAfterRestoringOriginalGrants: true,
               sourceWorkloadOwnGatewayContextRefused: true,
             });
+
+            // The same build with no key handed over: served by the owners process, which claims its store copy but gets
+            // no key on the channel, its delegated call fails closed with the reason; no environment variable can stand
+            // in. Then it is served again with its key, as before, for the controls below.
+            yield* enrolledCatalog.child.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
+            const keylessCatalog = yield* startPackagedApplication({
+              appId: 'catalog',
+              compositionUrl,
+              gateway: { issuer: fixture.origin, publicJwks: gatewayMaterial.publicJwks },
+              relativeDirectory: '../../verticals/catalog',
+            });
+            children.push(keylessCatalog.child);
+            expect(keylessCatalog.origin).toBe(catalog.origin);
+            const keylessAuthorization = yield* issueNativeApiKeyGatewayAuthorization({
+              apiKey: personalKey.secret,
+              audience: 'catalog',
+              authBindingId: personalKey.authBindingId,
+              authContextRef: personalAuthContextRef,
+              buildMarker: catalog.compiled.buildMarker,
+              origin: fixture.origin,
+              principalId: fixture.core.manager.principalId,
+              publicKey: signingKeyPair.publicKey,
+              revision: approved.composition.revision,
+            });
+            const keyless = yield* client.post(
+              `${keylessCatalog.origin}${keylessCatalog.apiPrefix}/catalog/actions/set-product-manufacturer`,
+              {
+                body: yield* HttpBody.json({
+                  effectivePeriod: {},
+                  evidenceRefs: ['native/manufacturer'],
+                  reason: 'Manufacturer identity verified through Party without a module credential',
+                  relationId: yield* crypto.randomUUIDv4(),
+                  subject: productRef,
+                  target: { kind: 'PARTY', partyRef },
+                }),
+                headers: {
+                  authorization: Redacted.value(keylessAuthorization.authorization),
+                  'idempotency-key': yield* crypto.randomUUIDv4(),
+                  'x-correlation-id': yield* crypto.randomUUIDv4(),
+                  'x-ontos-composition-revision': approved.composition.revision,
+                },
+              },
+            );
+            expect(keyless.status).not.toBe(200);
+            expect(
+              keylessCatalog.diagnostics.some((line) =>
+                Redacted.value(line).includes('No module credential of catalog in this process'),
+              ),
+            ).toBe(true);
+            yield* keylessCatalog.child.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
+            enrolledCatalog = yield* startPackagedApplication({
+              appId: 'catalog',
+              compositionUrl,
+              gateway: { issuer: fixture.origin, publicJwks: gatewayMaterial.publicJwks },
+              relativeDirectory: '../../verticals/catalog',
+              relaySource: { apiKey: issued.secret, shellBaseUrl: `${fixture.origin}/shell-super-app-api` },
+            });
+            children.push(enrolledCatalog.child);
 
             yield* assertNativeLegalEntityWithPartyStopped({
               catalog: enrolledCatalog,

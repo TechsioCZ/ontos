@@ -14,6 +14,7 @@ import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import type { ActionOwnerTransaction } from '../../../../packages/core-runtime/src/actions/context.ts';
 import {
   getActionServiceFactory,
@@ -139,11 +140,13 @@ it('prepares all four Catalog-dependent Actions and leaves Remove Actions local'
 // Owner phase: the real IO guard marks both owner transactions exactly as the Action runtime does.
 const ownerPhaseKey = assignCustomerPriceGroupAction.descriptor.actionKey;
 const ownerPhaseNow = DateTime.makeUnsafe('2026-11-10T09:00:00.000Z');
-const gatewayConfiguration = ConfigProvider.layer(
-  ConfigProvider.fromUnknown({
-    ONTOS_GATEWAY_MODULE_API_KEY: 'test-only-customer-context-module-key',
-    ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
-  }),
+const gatewayConfiguration = Layer.merge(
+  ConfigProvider.layer(
+    ConfigProvider.fromUnknown({ ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api' }),
+  ),
+  Layer.effectDiscard(
+    holdTestModuleCredentials({ 'commerce-customer-context': 'test-only-customer-context-module-key' }),
+  ),
 );
 const gatewayScope = trustVerifiedGatewayPrincipalContext(
   {

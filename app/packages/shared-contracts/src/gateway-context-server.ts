@@ -1,6 +1,5 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
-import { MODULE_CREDENTIAL_VARIABLE } from '@app/core-runtime/auth/hosted-module-credentials';
-import { moduleCredentialConfigProvider, ownWorkloadCredential } from '@app/core-runtime/auth/owner-module-credential';
+import { ownModuleCredential, ownWorkloadCredential } from '@app/core-runtime/auth/owner-module-credential';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import {
   readVerifiedGatewayCompositionRevision,
@@ -120,22 +119,21 @@ export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acqui
   request: GatewayDelegationRequest,
   crypto: Crypto.Crypto,
 ) {
-  // Every delegated call reads its caller's own key through the per-owner view, whichever runtime, worker or
-  // background fiber it runs in; nothing else in a process reads a module credential.
-  const owner = moduleCredentialConfigProvider(yield* ConfigProvider.ConfigProvider, request.callingAppId);
-  const [configuration, source] = yield* Effect.all(
+  // Every delegated call reads its caller's own key from the slot the host claimed for that module, whichever
+  // runtime, worker or background fiber it runs in; nothing else in a process reads a module credential.
+  const apiKey = yield* ownModuleCredential(request.callingAppId);
+  if (Option.isNone(apiKey)) {
+    return yield* new GatewayDelegationSourceError({
+      reason: `No module credential of ${request.callingAppId} in this process: the host has not handed one over`,
+    });
+  }
+  const [baseUrl, source] = yield* Effect.all(
     [
-      Config.all({
-        apiKey: Config.Redacted(MODULE_CREDENTIAL_VARIABLE),
-        baseUrl: ShellGatewayBaseUrl,
-      })
-        .parse(owner)
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new GatewayDelegationSourceError({ cause, reason: 'Gateway delegation transport is unavailable' }),
-          ),
+      ShellGatewayBaseUrl.parse(yield* ConfigProvider.ConfigProvider).pipe(
+        Effect.mapError(
+          (cause) => new GatewayDelegationSourceError({ cause, reason: 'Gateway delegation transport is unavailable' }),
         ),
+      ),
       subjectWireOf(request.subject),
     ],
     { concurrency: 1 },
@@ -156,8 +154,8 @@ export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acqui
     subject: source.subject,
   };
   const response = yield* issueDelegatedGatewayContext(payload, {
-    apiKey: configuration.apiKey,
-    baseUrl: configuration.baseUrl,
+    apiKey: apiKey.value,
+    baseUrl,
     requestCorrelation: request.requestCorrelation,
   });
   if (response.compositionRevision !== source.compositionRevision) {
@@ -165,7 +163,7 @@ export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acqui
   }
   const authorization: `Bearer ${string}` = `Bearer ${response.token}`;
   return {
-    apiBaseUrl: new URL(response.apiBaseUrl, configuration.baseUrl).toString(),
+    apiBaseUrl: new URL(response.apiBaseUrl, baseUrl).toString(),
     authorization,
     compositionRevision: response.compositionRevision,
     expiresAt: response.expiresAt,

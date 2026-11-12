@@ -25,6 +25,7 @@ import type { Crypto, Scope } from 'effect';
 import { FetchHttpClient, HttpServerResponse } from 'effect/http';
 import { SignJWT, decodeJwt } from 'jose';
 
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { bindRetailPortalProfileActionApiLive } from '../../api/bind-retail-portal-profile-action-server.ts';
 import { enrollmentCommandRecoveryLive } from '../../api/enrollment-command-recovery.ts';
 import { ensureRetailCustomerProfileActionApiLive } from '../../api/ensure-retail-customer-profile-action-server.ts';
@@ -278,10 +279,11 @@ export const makeEnrollmentProfileReconciliationFixture = Effect.fn('EnrollmentP
     const apiKey = `enrollment-profile-${randomUUID()}`;
     /** The calling module the Shell signs in `act`; never the subject the assertion acts for. */
     const actorPrincipalId = randomUUID();
+    // Commerce's own module key, handed over the way the host does.
+    yield* holdTestModuleCredentials({ 'commerce-customer-context': apiKey });
     const configuration = ConfigProvider.layer(
       ConfigProvider.fromUnknown({
         ONTOS_GATEWAY_ISSUER: gateway.issuer,
-        ONTOS_GATEWAY_MODULE_API_KEY: apiKey,
         ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [gateway.publicJwk] }),
         ONTOS_SHELL_GATEWAY_BASE_URL: `${origin}${shellGatewayContextContract.apiPrefix}`,
       }),

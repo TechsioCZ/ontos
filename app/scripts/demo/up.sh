@@ -220,6 +220,8 @@ start() { # start <name> <command...>
 }
 start_module() { # start_module <app-id> <directory>: a module's own server; a calling module holds only its own key
   if is_caller "$1"; then
+    # Its API bundle carries its own credential store copy; expose that copy's claim for serve-module (idempotent).
+    node scripts/zerops/hosted-credential-claim-cli.mts expose "$2" >/dev/null || die "credential claim of $1 not exposable"
     # The server keeps its channel open (read-write, so it never sees an end); hand_over fills it later.
     channel_open "$1"
     ONTOS_MODULE_CREDENTIAL_HANDOVER=fd3 start "$1" "${WITH_ENV[@]}" node scripts/demo/serve-module.mts "$1" "$2" \

@@ -73,6 +73,32 @@ it('lets only the delegated gateway client read an owner slot, and only the host
   ).toEqual([]);
 });
 
+it('lets only the host programs reach a built bundle claim, and no host load an unclaimable bundle', () => {
+  // The claim export: defined by the build step, generated into each unit's entry, called by the host programs.
+  const claimNames =
+    /\b(?:ontosClaimHostedModuleCredentials|claimModuleCredentials|BUNDLE_CLAIM_EXPORT|ENTRY_CLAIM_EXPORT)\b/u;
+  expect(production.filter((file) => claimNames.test(read(file))).toSorted()).toEqual([
+    'scripts/demo/serve-module.mts',
+    'scripts/zerops/hosted-credential-claim.mts',
+    'scripts/zerops/serve-units.mts',
+  ]);
+  expect(importersOf(/hosted-credential-claim(?:\.mts)?$/u).toSorted()).toEqual([
+    'scripts/demo/serve-module.mts',
+    'scripts/zerops/hosted-credential-claim-cli.mts',
+    'scripts/zerops/owner-entry.mts',
+    'scripts/zerops/serve-units.mts',
+  ]);
+  // The backend federation remote carries a copy no host claims: only its build configuration names it, no runtime.
+  expect(
+    production.filter(
+      (file) =>
+        read(file).includes('backendRemoteEntry') &&
+        !file.endsWith('/backend-federation.config.ts') &&
+        file !== 'scripts/zerops/hosted-credential-claim.mts',
+    ),
+  ).toEqual([]);
+});
+
 /** A string constant: a literal, or one cast `as const`. */
 const literalOf = (node: Expression | null): string | undefined => {
   if (node === null) {
