@@ -1,3 +1,4 @@
+import { AccessDecisionGate } from '../access/enforcement/contract.ts';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Context, Deferred, Effect, Layer, Option, Schema, Stream } from 'effect';
@@ -344,10 +345,10 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       ),
     recheckWrite: () => Effect.void,
   });
+  // The same scripted gate answers the runtime and any owner code that asks the gate itself (O62).
+  const scriptedGate = makeScriptedBoundAccessGate(options.access ?? options.permissionDecision ?? 'denied');
   let runtimeOptions: ReadRuntimeOptions = {
-    accessDecision:
-      options.accessDecision ??
-      makeScriptedBoundAccessGate(options.access ?? options.permissionDecision ?? 'denied').bound,
+    accessDecision: options.accessDecision ?? scriptedGate.bound,
     databaseIdentities,
     onStage: (stage) => {
       stages.push(stage);
@@ -377,7 +378,11 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       : { ...runtimeOptions, ownerRegistration: options.ownerRegistration },
   );
   return {
-    layer: Layer.mergeAll(Layer.succeed(ReadRuntime, runtime), Layer.succeed(ContextAccess, contextAccess)),
+    layer: Layer.mergeAll(
+      Layer.succeed(ReadRuntime, runtime),
+      Layer.succeed(ContextAccess, contextAccess),
+      Layer.succeed(AccessDecisionGate, scriptedGate.accessDecision),
+    ),
     ownerServices: Layer.mergeAll(
       Layer.succeed(CoreDatabase, database),
       Layer.succeed(DatabaseIdentityEnrollmentContext, databaseIdentities),
