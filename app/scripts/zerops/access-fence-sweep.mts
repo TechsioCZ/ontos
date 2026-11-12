@@ -59,8 +59,14 @@ export const AccessFenceSweepDelay = Context.Reference<(duration: Duration.Durat
 
 const minutes = (millis: number) => `${String(Math.ceil(millis / 60_000))} min`;
 
-/** The lines one tick prints: one per tenant reopened, one per tenant still closed. Nothing when idle. */
+/**
+ * The lines one tick prints: one per tenant reopened, one per tenant still closed (an error line), and a plain one per
+ * tenant another writer was already healing. Nothing when idle.
+ */
 export const accessFenceSweepLines = (report: AccessFenceSweepReport) => ({
+  busy: report.busy.map(
+    (tenantId) => `[access-fence-sweep] tenant ${tenantId}: another writer is healing it; left to that writer`,
+  ),
   failed: report.failed.map(
     ({ reason, retryInMillis, tenantId }) =>
       `[access-fence-sweep] TENANT ${tenantId} STAYS CLOSED: ${reason}; next try in ${minutes(retryInMillis)}`,
@@ -72,10 +78,11 @@ export const accessFenceSweepLines = (report: AccessFenceSweepReport) => ({
 });
 
 const printSweep = (report: AccessFenceSweepReport) => {
-  const { failed, healed } = accessFenceSweepLines(report);
+  const { busy, failed, healed } = accessFenceSweepLines(report);
+  const quiet = [...healed, ...busy];
   return Effect.all(
     [
-      healed.length === 0 ? Effect.void : Console.log(healed.join('\n')),
+      quiet.length === 0 ? Effect.void : Console.log(quiet.join('\n')),
       failed.length === 0 ? Effect.void : Console.error(failed.join('\n')),
     ],
     { discard: true },

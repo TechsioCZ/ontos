@@ -10,6 +10,7 @@ import { AccessProjectionError } from '../../src/access/compiler/projection-erro
 import type { AccessProjectionCompiler as AccessProjectionCompilerEngine } from '../../src/access/compiler/spice-db-compiler.ts';
 import type { TenantId } from '../../src/access/ids.ts';
 import { AccessProjectionWriter } from '../../src/access/intent/projection-writer.ts';
+import { activateCatalogRelease } from '../../src/access/release/activation.ts';
 import { makeAccessFenceSweepBackoffs, sweepLapsedAccessFences } from '../../src/access/lifecycle/fence-sweeper.ts';
 import type { AccessFenceSweepBackoffs, AccessFenceSweepReport } from '../../src/access/lifecycle/fence-sweeper.ts';
 import type { TenantIntentLoaderService } from '../../src/access/intent/tenant-intent-loader.ts';
@@ -178,6 +179,35 @@ const renewalsFail = (admin: PgClient.PgClient, failing: boolean) =>
 
 /** The finalizer that gives the runtime role its fence writes back. */
 const renewalsRestored = (admin: PgClient.PgClient) => () => renewalsFail(admin, false);
+
+const OTHER_HEALER = scenarioUid(901);
+
+/** Another writer takes the tenant's fence under a fresh lease (another sweep, a deploy's activation). */
+const otherHealerTakes = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  Effect.forEach(
+    [
+      `insert into core.access_operation_journals
+         (operation_id, tenant_id, scope_id, command_digest, phase, started_at, updated_at)
+       select '${OTHER_HEALER}', f.tenant_id, f.scope_id, '${'e'.repeat(64)}', 'fenced', now(), now()
+         from core.access_scope_fences f where f.tenant_id = '${tenantId}' and f.state = 'Changing'`,
+      `update core.access_scope_fences
+          set owning_operation_id = '${OTHER_HEALER}', revision = revision + 1,
+              lease_expires_at = now() + interval '2 minutes'
+        where tenant_id = '${tenantId}' and state = 'Changing'`,
+    ],
+    (statement) => admin.unsafe(statement).pipe(Effect.orDie),
+    { discard: true },
+  );
+
+/** Whoever holds the tenant's fence gives it back, as a completed projection does. */
+const holderReleases = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  admin
+    .unsafe(
+      `update core.access_scope_fences
+          set state = 'Ready', owning_operation_id = null, lease_expires_at = null, revision = revision + 1
+        where tenant_id = '${tenantId}' and state = 'Changing'`,
+    )
+    .pipe(Effect.orDie);
 
 /** The dead holder's journal last moved `age` ago. */
 const idleJournal = (admin: PgClient.PgClient, age: string) =>
@@ -605,7 +635,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
       Effect.gen(function* sweptOpen() {
         yield* bootstrapTenant(tenantId);
         const backoffs = yield* makeAccessFenceSweepBackoffs;
-        const idle = { deferred: 0, failed: [], healed: [] };
+        const idle = { busy: [], deferred: 0, failed: [], healed: [] };
         expect(yield* sweepLapsedAccessFences(backoffs, 'tick-1')).toEqual(idle);
         const before = yield* journals(admin, tenantId);
         yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
@@ -643,7 +673,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
             // only after its backoff.
             yield* lapseLease(admin, tenantId);
             const journaled = (yield* journals(admin, tenantId)).length;
-            expect(yield* sweep('tick-2')).toEqual({ deferred: 1, failed: [], healed: [] });
+            expect(yield* sweep('tick-2')).toEqual({ busy: [], deferred: 1, failed: [], healed: [] });
             expect(yield* journals(admin, tenantId)).toHaveLength(journaled);
             yield* TestClock.adjust('61 seconds').pipe(Effect.provide(clock));
             const second = yield* sweep('tick-3');
@@ -651,7 +681,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
             yield* lapseLease(admin, tenantId);
             yield* Ref.set(failing, false);
             yield* TestClock.adjust('121 seconds').pipe(Effect.provide(clock));
-            expect(yield* sweep('tick-4')).toEqual({ deferred: 0, failed: [], healed: [tenantId] });
+            expect(yield* sweep('tick-4')).toEqual({ busy: [], deferred: 0, failed: [], healed: [tenantId] });
             expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
           }),
       );
@@ -735,5 +765,71 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
           expect(grantees).not.toContainEqual({ grantee: 'PUBLIC' });
         }),
       ),
+  );
+
+  suite.effect(
+    'a sweep that loses the take to another healer leaves the tenant to it, quietly and without backoff',
+    () =>
+      Effect.gen(function* lostToOtherHealer() {
+        const afterRead = yield* Ref.make(Option.none<Effect.Effect<void>>());
+        yield* withProjectionTenant(
+          { activeModules: [MODULE], wrapIntentLoader: interleavedLoader(afterRead) },
+          (tenantId, admin) =>
+            Effect.gen(function* otherHealerFirst() {
+              yield* bootstrapTenant(tenantId);
+              yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+              yield* lapseLease(admin, tenantId);
+              // Right after this sweep read the tenant, another healer takes the lapsed fence.
+              yield* Ref.set(afterRead, Option.some(otherHealerTakes(admin, tenantId)));
+              const backoffs = yield* makeAccessFenceSweepBackoffs;
+              expect(yield* sweepLapsedAccessFences(backoffs, 'tick-1')).toEqual({
+                busy: [tenantId],
+                deferred: 0,
+                failed: [],
+                healed: [],
+              });
+              expect((yield* Ref.get(backoffs)).size).toBe(0);
+              expect(yield* tenantFence(admin, tenantId)).toEqual([
+                { owning_operation_id: OTHER_HEALER, state: 'Changing' },
+              ]);
+            }),
+        );
+      }),
+  );
+
+  suite.effect('two sweeps at once heal a lapsed tenant once, and neither reports a failure', () =>
+    withProjectionTenant({ activeModules: [MODULE] }, (tenantId, admin) =>
+      Effect.gen(function* twoSweeps() {
+        yield* bootstrapTenant(tenantId);
+        yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+        yield* lapseLease(admin, tenantId);
+        const reports = yield* Effect.all(
+          [
+            makeAccessFenceSweepBackoffs.pipe(Effect.flatMap((backoffs) => sweepLapsedAccessFences(backoffs, 'a'))),
+            makeAccessFenceSweepBackoffs.pipe(Effect.flatMap((backoffs) => sweepLapsedAccessFences(backoffs, 'b'))),
+          ],
+          { concurrency: 2 },
+        );
+        expect(reports.flatMap(({ healed }) => healed)).toEqual([tenantId]);
+        expect(reports.flatMap(({ failed }) => failed)).toEqual([]);
+        expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+      }),
+    ),
+  );
+
+  suite.effect('a deploy activation that finds another writer holding the fence waits for it instead of failing', () =>
+    withProjectionTenant({ activeModules: [MODULE] }, (tenantId, admin) =>
+      Effect.gen(function* activationWaits() {
+        yield* bootstrapTenant(tenantId);
+        // A sweep is healing the tenant: its fence is held under a live lease while the deploy activates the catalog.
+        yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+        const activation = yield* activateCatalogRelease({ modules: deployment }).pipe(Effect.orDie, Effect.forkChild);
+        yield* Effect.sleep('3 seconds');
+        yield* holderReleases(admin, tenantId);
+        const activated = yield* Fiber.join(activation);
+        expect(activated.tenants.find((entry) => entry.tenantId === tenantId)?.outcome).not.toBe('failed');
+        expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+      }),
+    ),
   );
 });

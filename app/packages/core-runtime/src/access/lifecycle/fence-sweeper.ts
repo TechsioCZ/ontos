@@ -1,8 +1,8 @@
 import { sql } from 'drizzle-orm';
-import { Clock, Duration, Effect, Ref, Result, Schema } from 'effect';
+import { Clock, Duration, Effect, Option, Ref, Result, Schema } from 'effect';
 
 import { AccessReleaseStore } from '../changes/persistence/release-store.ts';
-import { AccessProjectionWriter } from '../intent/projection-writer.ts';
+import { AccessProjectionWriter, isFenceBusy } from '../intent/projection-writer.ts';
 import { RELEASE_ACTOR_DISPLAY_NAME, releaseActorId } from '../release/activation.ts';
 import { makeSystemPrincipalContextResolver, registerSystemWorkload } from '../../auth/system-principal-context.ts';
 import { preserveSystemPrincipalContextTrust } from '../../auth/system-principal-context-provenance.ts';
@@ -53,14 +53,19 @@ export interface AccessFenceSweepFailure {
   readonly tenantId: string;
 }
 
-/** What one tick did. Tenants still waiting out their backoff, or beyond this tick's bound, are `deferred`. */
+/**
+ * What one tick did. Tenants still waiting out their backoff, or beyond this tick's bound, are `deferred`; `busy`
+ * ones were being projected by another writer (another sweep, a deploy's activation, an Action's reconcile) when
+ * this one tried, and are left to it, with no failure and no backoff.
+ */
 export interface AccessFenceSweepReport {
+  readonly busy: readonly string[];
   readonly deferred: number;
   readonly failed: readonly AccessFenceSweepFailure[];
   readonly healed: readonly string[];
 }
 
-const NOTHING_LAPSED: AccessFenceSweepReport = Object.freeze({ deferred: 0, failed: [], healed: [] });
+const NOTHING_LAPSED: AccessFenceSweepReport = Object.freeze({ busy: [], deferred: 0, failed: [], healed: [] });
 
 /** A tenant's failed attempts so far and when it is due again, on the host's clock. */
 export interface Backoff {
@@ -145,34 +150,47 @@ const sweepScopeOf = Effect.fn('AccessFenceSweeper.scope')(function* sweepScopeE
   }) satisfies OperationalScope;
 });
 
-/** Reconcile one tenant through the one writer; the writer takes the lapsed fence over and opens it on success. */
+/**
+ * Reconcile one tenant through the one writer; the writer takes the lapsed fence over and opens it on success. It
+ * answers `false` when another writer took the fence first (it holds it under a live lease, or moved it since): that
+ * writer is healing the tenant.
+ */
 const healTenant = Effect.fn('AccessFenceSweeper.healTenant')(function* healTenantEffect(
   tenantId: string,
   runReference: string,
 ) {
   const writer = yield* AccessProjectionWriter;
   const scope = yield* sweepScopeOf(tenantId, runReference);
-  yield* writer.reconcileTenant({ scope }).pipe(Effect.mapError(sweepFailure('the projection was not reconciled')));
-  return yield* Effect.void;
+  return yield* writer.reconcileTenant({ scope }).pipe(
+    Effect.as(true),
+    Effect.catchIf(isFenceBusy, () => Effect.succeed(false)),
+    Effect.mapError(sweepFailure('the projection was not reconciled')),
+  );
 });
 
-/** One tenant: healed (every backoff forgotten), or failed (its wait doubled). */
+/**
+ * One tenant: healed (`Some`, every backoff forgotten), busy with another writer (`None`, nothing recorded), or
+ * failed (its wait doubled).
+ */
 const attemptTenant = Effect.fn('AccessFenceSweeper.attempt')(function* attemptTenantEffect(
   backoffs: AccessFenceSweepBackoffs,
   tenantId: string,
   runReference: string,
 ): Effect.fn.Return<
-  Result.Result<string, AccessFenceSweepFailure>,
+  Result.Result<Option.Option<string>, AccessFenceSweepFailure>,
   never,
   AccessProjectionWriter | AccessReleaseStore | CoreDatabase
 > {
   const healed = yield* Effect.result(healTenant(tenantId, runReference));
+  if (Result.isSuccess(healed) && !healed.success) {
+    return Result.succeed(Option.none());
+  }
   const now = yield* Clock.currentTimeMillis;
   const after = yield* Ref.updateAndGet(backoffs, (current) =>
     accessFenceSweepBackoffsAfter(current, { healed: Result.isSuccess(healed), now, tenantId }),
   );
   if (Result.isSuccess(healed)) {
-    return Result.succeed(tenantId);
+    return Result.succeed(Option.some(tenantId));
   }
   const retryInMillis = (after.get(tenantId)?.retryAt ?? now) - now;
   return Result.fail({ reason: healed.failure.reason, retryInMillis, tenantId });
@@ -201,9 +219,15 @@ export const sweepLapsedAccessFences = Effect.fn('AccessFenceSweeper.sweep')(fun
   const outcomes = yield* Effect.forEach(chosen, (tenantId) => attemptTenant(backoffs, tenantId, runReference), {
     concurrency: 1,
   });
+  const settled = outcomes.flatMap((outcome) => (Result.isSuccess(outcome) ? [outcome.success] : []));
+  const healed = settled.flatMap((tenant) => Option.toArray(tenant));
   return {
+    busy: chosen.filter((_tenantId, index) => {
+      const outcome = outcomes[index];
+      return outcome !== undefined && Result.isSuccess(outcome) && Option.isNone(outcome.success);
+    }),
     deferred: waiting.length + lapsed.length - chosen.length,
     failed: outcomes.flatMap((outcome) => (Result.isFailure(outcome) ? [outcome.failure] : [])),
-    healed: outcomes.flatMap((outcome) => (Result.isSuccess(outcome) ? [outcome.success] : [])),
+    healed,
   } satisfies AccessFenceSweepReport;
 });

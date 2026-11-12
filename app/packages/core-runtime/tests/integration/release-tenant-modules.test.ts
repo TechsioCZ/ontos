@@ -488,6 +488,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('release-time instal
               yield* lapseLeaseOf(admin, tenantId);
               const backoffs = yield* makeAccessFenceSweepBackoffs;
               expect(yield* sweepLapsedAccessFences(backoffs, 'tick-1')).toEqual({
+                busy: [],
                 deferred: 0,
                 failed: [],
                 healed: [tenantId],

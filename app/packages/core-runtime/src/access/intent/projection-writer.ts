@@ -244,6 +244,15 @@ const intentFailure = (error: AccessIntentError): AccessProjectionWriteError =>
 const fenceRefusalError = (error: AccessLifecycleError): AccessProjectionWriteError =>
   projectionWriteRefusal('access_projection_write_fence_refused', `${error.code}: ${error.reason}`);
 
+/**
+ * Whether a refusal only means another writer holds the tenant's fence under a live hold, or moved it since this
+ * reconcile pinned it: somebody else is projecting the tenant right now. Waiting for it, or leaving the tenant to it,
+ * is correct; it is not a failure of this caller.
+ */
+export const isFenceBusy = (error: AccessProjectionWriteError): boolean =>
+  error.code === 'access_projection_write_fence_refused' &&
+  (error.reason.startsWith('fence_held_by_other_operation:') || error.reason.startsWith('fence_revision_conflict:'));
+
 /** How many times one reconcile reads a tenant whose intent keeps moving before it gives up. */
 export const ACCESS_PROJECTION_INTENT_ATTEMPTS = 3;
 

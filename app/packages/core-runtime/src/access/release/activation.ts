@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { Clock, DateTime, Effect, Match, Option, Result, Schema } from 'effect';
+import { Clock, DateTime, Duration, Effect, Match, Option, Result, Schedule, Schema } from 'effect';
 
 import { TrustedPrincipalContextSchema } from '../../actions/principal-context.ts';
 import { makeSystemPrincipalContextResolver, registerSystemWorkload } from '../../auth/system-principal-context.ts';
@@ -26,7 +26,7 @@ import type { AccessChangesState } from '../changes/persistence/store.ts';
 import { RoleCellEditSchema, planRoleCellEdit } from '../changes/role-edits.ts';
 import type { RoleCellEdit, RoleWithRevision } from '../changes/role-edits.ts';
 import type { CapabilityKey, CatalogSnapshotId } from '../ids.ts';
-import { AccessProjectionWriter } from '../intent/projection-writer.ts';
+import { AccessProjectionWriter, isFenceBusy } from '../intent/projection-writer.ts';
 import type { AccessChangeItem, CatalogSnapshot } from '../model.ts';
 import { ACCESS_MODEL_PARSE_OPTIONS } from '../model.ts';
 
@@ -455,6 +455,15 @@ const planTenant = Effect.fn('AccessReleaseActivation.planTenant')(function* pla
   return reportOf(tenantId, plan, 'planned', { elapsedMillis, relationshipDeletions: 0, relationshipTouches: 0 });
 });
 
+/**
+ * How long a tenant's follow waits for another writer that holds its fence: a full lease (a holder that died lapses
+ * within it, and this reconcile then takes over) and some. Only then is the tenant reported failed.
+ */
+export const ACTIVATION_BUSY_FENCE_WAIT = Duration.minutes(3);
+const ACTIVATION_BUSY_FENCE_RETRY = Schedule.spaced(Duration.seconds(2)).pipe(
+  Schedule.upTo({ duration: ACTIVATION_BUSY_FENCE_WAIT }),
+);
+
 /** One tenant's follow: its actor, its writes in one transaction, and a reconcile that always runs. */
 const followTenant = Effect.fn('AccessReleaseActivation.followTenant')(function* followTenantEffect(
   tenantId: string,
@@ -479,10 +488,12 @@ const followTenant = Effect.fn('AccessReleaseActivation.followTenant')(function*
       .recordReleaseFollow(followInputOf(scope, release, plan, decidedAt))
       .pipe(Effect.mapError((failure) => refusal(`${failure.code}: ${failure.reason}`, failure)));
   }
-  // Always: a previous activation may have recorded intent and failed before its projection was written.
-  const written = yield* projection
-    .reconcileTenant({ scope })
-    .pipe(Effect.mapError((failure) => refusal(`the projection could not be reconciled: ${failure.reason}`, failure)));
+  // Always: a previous activation may have recorded intent and failed before its projection was written. Another
+  // writer of the same tenant (the fence sweep, a live reconcile) is waited for, never reported as this tenant failing.
+  const written = yield* projection.reconcileTenant({ scope }).pipe(
+    Effect.retry({ schedule: ACTIVATION_BUSY_FENCE_RETRY, while: isFenceBusy }),
+    Effect.mapError((failure) => refusal(`the projection could not be reconciled: ${failure.reason}`, failure)),
+  );
   return reportOf(tenantId, plan, changed ? 'followed' : 'unchanged', {
     elapsedMillis: (yield* Clock.currentTimeMillis) - startedAt,
     relationshipDeletions: written.deletions,
