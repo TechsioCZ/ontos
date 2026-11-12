@@ -14,12 +14,13 @@ import {
   captureChannel,
   healModuleCredentialsOnce,
   makeCredentialHolder,
+  makeReplacedKeyLedger,
   planModuleCredentialHealing,
   provisionModuleCredentialsForReleaseWith,
   recordHostBoot,
   retireAfterHandoverWith,
 } from '../zerops/app-host.mts';
-import type { HandoverChannel } from '../zerops/app-host.mts';
+import type { HandoverChannel, ModuleCredentialHealingStreaks } from '../zerops/app-host.mts';
 import {
   applyModuleCredentialHandovers,
   encodeModuleCredentialHandover,
@@ -204,22 +205,29 @@ describe('module credential healing', () => {
   const held = output({ [ORDER]: ORDER_KEY_ONE }, [PARTY]);
 
   it('renews when a held key was revoked or its keys near their end, fills callers without a key, and otherwise does nothing', () => {
-    expect(planModuleCredentialHealing(held, new Set(), 0)).toEqual({ kind: 'renew', reason: 'revoked' });
-    expect(planModuleCredentialHealing(held, new Set([ORDER_PROVIDER_KEY]), 0)).toEqual({
+    expect(planModuleCredentialHealing(held, Option.some(new Set()), 0)).toEqual({ kind: 'renew', reason: 'revoked' });
+    expect(planModuleCredentialHealing(held, Option.some(new Set([ORDER_PROVIDER_KEY])), 0)).toEqual({
       appIds: [PARTY],
       kind: 'fill',
     });
     const whole = output({ [ORDER]: ORDER_KEY_ONE });
-    expect(planModuleCredentialHealing(whole, new Set([ORDER_PROVIDER_KEY]), 15 * HOUR)).toEqual({ kind: 'none' });
+    expect(planModuleCredentialHealing(whole, Option.some(new Set([ORDER_PROVIDER_KEY])), 15 * HOUR)).toEqual({
+      kind: 'none',
+    });
     // Eight hours before a 24-hour key ends it is rotated, whatever else the host holds.
-    expect(planModuleCredentialHealing(whole, new Set([ORDER_PROVIDER_KEY]), 16 * HOUR)).toEqual({
+    expect(planModuleCredentialHealing(whole, Option.some(new Set([ORDER_PROVIDER_KEY])), 16 * HOUR)).toEqual({
       kind: 'renew',
       reason: 'expiring',
     });
-    expect(planModuleCredentialHealing(noProvisionedCredentials([ORDER]), new Set(), 0)).toEqual({
+    expect(planModuleCredentialHealing(noProvisionedCredentials([ORDER]), Option.some(new Set()), 0)).toEqual({
       appIds: [ORDER],
       kind: 'fill',
     });
+    // Without a liveness read nothing is filled or renewed for a revocation, but rotation by end of life still is:
+    // the ends are held locally.
+    expect(planModuleCredentialHealing(whole, Option.none(), 15 * HOUR)).toEqual({ kind: 'none' });
+    expect(planModuleCredentialHealing(held, Option.none(), 0)).toEqual({ kind: 'none' });
+    expect(planModuleCredentialHealing(whole, Option.none(), 16 * HOUR)).toEqual({ kind: 'renew', reason: 'expiring' });
   });
 
   const healing = (
@@ -227,6 +235,7 @@ describe('module credential healing', () => {
     issued: ProvisioningOutput,
     start: ProvisioningOutput = held,
     nowMillis = 0,
+    streaks: Ref.Ref<ModuleCredentialHealingStreaks> = Ref.makeUnsafe({ revocations: 0, unreadable: 0 }),
   ) =>
     Effect.gen(function* healOnce() {
       yield* TestClock.setTime(nowMillis);
@@ -237,16 +246,19 @@ describe('module credential healing', () => {
       const holder = {
         handOver: (message: Uint8Array) => Effect.sync(() => messages.push(decoder.decode(message))),
       };
-      const healthy = yield* healModuleCredentialsOnce({
-        activeProviderKeyIds: active,
-        callers: [ORDER, PARTY],
-        held: state,
-        holders: Effect.succeed([holder, holder]),
-        issue: (appIds) => Effect.sync(() => issues.push(appIds)).pipe(Effect.as(issued)),
-        retireOwn: (keep) => Effect.sync(() => retirements.push(keep)),
-        serving: Effect.succeed(true),
-      });
-      return { healthy, held: yield* Ref.get(state), issues, messages, retirements };
+      const healthy = yield* healModuleCredentialsOnce(
+        {
+          activeProviderKeyIds: active,
+          callers: [ORDER, PARTY],
+          held: state,
+          holders: Effect.succeed([holder, holder]),
+          issue: (appIds) => Effect.sync(() => issues.push(appIds)).pipe(Effect.as(issued)),
+          retireOwn: (keep) => Effect.sync(() => retirements.push(keep)),
+          serving: Effect.succeed(true),
+        },
+        streaks,
+      );
+      return { healthy, held: yield* Ref.get(state), issues, messages, retirements, streaks: yield* Ref.get(streaks) };
     });
 
   it.effect('hands fresh keys to every holder when its own keys were revoked, then retires what they replaced', () =>
@@ -260,7 +272,13 @@ describe('module credential healing', () => {
       expect(result.messages.every((message) => message.includes(PARTY_KEY_TWO))).toBe(true);
       // Exactly the key it replaced; the caller that held none replaced nothing.
       expect(result.retirements).toEqual([[ORDER_PROVIDER_KEY]]);
-      expect(result.healthy).toBe(true);
+      // A revocation renewal backs off like a failure, so a store that keeps saying "not live" is not hit every minute.
+      expect(result.healthy).toBe(false);
+      expect(result.streaks.revocations).toBe(1);
+      const streaks = Ref.makeUnsafe<ModuleCredentialHealingStreaks>({ revocations: 2, unreadable: 0 });
+      const again = yield* healing(Effect.succeed(new Set()), fresh, held, 0, streaks);
+      expect(again.healthy).toBe(false);
+      expect(again.streaks.revocations).toBe(3);
     }),
   );
 
@@ -316,12 +334,26 @@ describe('module credential healing', () => {
     }),
   );
 
-  it.effect('treats an unreadable enrolment as no evidence and changes nothing', () =>
+  it.effect('treats an unreadable enrolment as no evidence of a revocation and changes nothing else', () =>
     Effect.gen(function* unreadable() {
       const result = yield* healing(Effect.fail('unreadable'), output({}));
       expect(result.issues).toEqual([]);
       expect(result.messages).toEqual([]);
       expect(result.held).toEqual(held);
+      expect(result.streaks.unreadable).toBe(1);
+    }),
+  );
+
+  it.effect('still rotates keys before they end while liveness stays unreadable', () =>
+    Effect.gen(function* rotationWithoutRead() {
+      const current = output({ [ORDER]: ORDER_KEY_ONE, [PARTY]: PARTY_KEY_ONE });
+      const rotated = output({ [ORDER]: ORDER_KEY_TWO, [PARTY]: PARTY_KEY_TWO }, [], GENERATION_TWO, 40 * HOUR);
+      const streaks = Ref.makeUnsafe<ModuleCredentialHealingStreaks>({ revocations: 0, unreadable: 3 });
+      const result = yield* healing(Effect.fail('unreadable'), rotated, current, 17 * HOUR, streaks);
+      expect(result.issues).toEqual([[ORDER, PARTY]]);
+      expect(result.held).toEqual(rotated);
+      expect(result.retirements).toEqual([providerKeyIdsOf(current)]);
+      expect(result.streaks.unreadable).toBe(4);
     }),
   );
 
@@ -364,6 +396,7 @@ describe("a container's record of its host boots", () => {
 });
 
 const BOOT_ORDER_KEY = 'boot-order-key';
+const RENEWED_ORDER_KEY = 'renewed-order-key';
 
 describe('retirement after a handover', () => {
   it.effect('keeps every key the host holds when the superseded retirement runs, not only those of the boot pass', () =>
@@ -388,6 +421,37 @@ describe('retirement after a handover', () => {
       yield* TestClock.adjust('1 minute');
       yield* Fiber.join(retirement);
       expect(runs).toEqual([['retire', [BOOT_ORDER_KEY, 'filled-party-key']]]);
+    }),
+  );
+
+  it.effect('never retires a key a renewal replaced less than the grace period ago', () =>
+    Effect.gen(function* renewalDuringGrace() {
+      const held = yield* Ref.make<readonly string[]>([BOOT_ORDER_KEY]);
+      const ledger = yield* makeReplacedKeyLedger;
+      const runs: (readonly [string, readonly string[]])[] = [];
+      const run = (pass: 'retire' | 'retire-own', retiring: { readonly providerKeyIds: readonly string[] }) =>
+        Effect.sync(() => runs.push([pass, retiring.providerKeyIds]));
+      const retirement = yield* Effect.forkChild(
+        retireAfterHandoverWith(run)({
+          compositionRevision: 'a'.repeat(64),
+          current: ledger.keptWith(Ref.get(held)),
+          earlierBoots: [],
+          replaced: [],
+          shellEnvironment: {},
+          superseded: true,
+        }),
+      );
+      // A minute and a half after publishing a revocation renewal replaces the boot key and hands over a fresh one.
+      yield* TestClock.adjust('90 seconds');
+      yield* ledger.record([BOOT_ORDER_KEY]);
+      yield* Ref.set(held, [RENEWED_ORDER_KEY]);
+      yield* TestClock.adjust('30 seconds');
+      yield* Fiber.join(retirement);
+      // The superseded retirement keeps the replaced key: its own renewal retires it two minutes after its hand-over.
+      expect(runs).toEqual([['retire', [RENEWED_ORDER_KEY, BOOT_ORDER_KEY]]]);
+      // Once that grace has passed, it is no longer kept.
+      yield* TestClock.adjust('2 minutes');
+      expect(yield* ledger.keptWith(Ref.get(held))).toEqual([RENEWED_ORDER_KEY]);
     }),
   );
 

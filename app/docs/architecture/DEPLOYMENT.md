@@ -261,6 +261,23 @@ The platform provisions module credentials itself, on every environment and with
 - **Healing and failure.** A pass that fails or overruns never stops the host or holds its publication: it logs `MODULE CREDENTIAL PROVISIONING FAILED` (or `MODULE CREDENTIALS UNAVAILABLE for <modules>`), the affected owners' delegated calls fail closed, and a background loop retries every minute, backing off to a quarter hour while it keeps failing; a key it obtains is handed to the empty slots without a restart. If the host finds its own keys revoked (a binding no longer active, or a key disabled or ended in the key store, checked every minute), it logs `MODULE CREDENTIALS OF THIS HOST WERE REVOKED`, issues every caller a fresh key and hands it over on the open channels, without a restart. A renewal or rotation that issues nothing changes nothing: the keys held stay in use until they end, and the loop retries with backoff; a module the pass missed keeps its old key. Healing stops once a newer release holds the authority. A retirement that fails is logged and repeated by the next boot.
 - **Local demo.** `scripts/demo/up.sh` keeps the pass's output in its own memory (never exported) and gives each calling module's server (`scripts/demo/serve-module.mts`, which runs `modern serve` in-process) a private FIFO on its file descriptor 3, writing that module's line once the keys exist; the Outbox Worker host gets its line on a pipe. The demo does not rotate or run `retire-own`: its keys simply end after 24 hours, so a demo left running longer than a day needs `up.sh` again.
 
+What happens to the owners process or the Outbox Worker host on its key channel:
+
+| Channel state                                                 | What the process does                                                                    |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `ONTOS_MODULE_CREDENTIAL_HANDOVER` unset                      | Opens no socket; no owner holds a key and none falls back to the environment (as before) |
+| End of the channel after a hand-over (the launcher closed it) | Keeps running with the keys it holds                                                     |
+| Malformed or partial line                                     | Refuses that line, keeps reading                                                         |
+| Socket error or a premature close while reading               | Stops (`HANDOVER CHANNEL LOST`); the app host stops and the container restarts           |
+| File descriptor 3 is not a pipe                               | Stops, as for a socket error                                                             |
+
+How long delegated calls can be without a key around a deploy:
+
+- **Normally: 0 minutes.** The new host issues its keys and hands them over before it verifies release access and publishes, so its owners hold keys before they serve; the old host keeps its keys until 2 minutes after the new release took the authority, when it no longer serves governed requests.
+- **When the boot pass fails: about 1 to 1.5 minutes.** The host publishes without keys (one attempt, at most `PROVISIONING_BUDGET`, two minutes), and the healing loop issues the keys on its first step about a minute later.
+- **Liveness unreadable:** revocations are not noticed until the read works again, but keys are still rotated before they end; the failed read is logged once per streak.
+- **Keys reported revoked again and again:** renewals back off to 2, 4, 8 and then 15 minutes, and the log names how many came in a row.
+
 ### SpiceDB
 
 Distinguish Authzed datastore migrations from the OntOS authorization schema. A datastore migration does not publish a changed permission model.

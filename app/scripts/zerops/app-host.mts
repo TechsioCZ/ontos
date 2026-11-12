@@ -700,6 +700,38 @@ export const retireAfterHandoverWith =
 
 export const retireAfterHandover = retireAfterHandoverWith(runRetirement);
 
+/**
+ * The keys this boot replaced, with when: a replaced key stays in use for the grace period after its hand-over (calls
+ * already started with it), and its own renewal retires it then. Until that moment the superseded-key retirement must
+ * keep it too, or a renewal in the first minutes after publishing would have its replaced keys revoked at once.
+ */
+interface ReplacedKey {
+  readonly at: number;
+  readonly providerKeyId: string;
+}
+const replacedAt =
+  (at: number) =>
+  (providerKeyId: string): ReplacedKey => ({ at, providerKeyId });
+const replacedWithin = (now: number, grace: number) => (replaced: ReplacedKey) => now - replaced.at < grace;
+const replacedKeyIdOf = (replaced: ReplacedKey) => replaced.providerKeyId;
+
+export const makeReplacedKeyLedger = Effect.gen(function* replacedKeyLedger() {
+  const replaced = yield* Ref.make<readonly ReplacedKey[]>([]);
+  const record = Effect.fn('AppHost.recordReplacedKeys')(function* recordReplacedKeys(
+    providerKeyIds: readonly string[],
+  ) {
+    const stamp = replacedAt(yield* Clock.currentTimeMillis);
+    yield* Ref.update(replaced, (earlier) => [...earlier, ...providerKeyIds.map(stamp)]);
+  });
+  /** The keys held now and those replaced less than the grace period ago: what a superseded retirement keeps. */
+  const keptWith = Effect.fn('AppHost.keptKeys')(function* keptKeys(held: Effect.Effect<readonly string[]>) {
+    const within = replacedWithin(yield* Clock.currentTimeMillis, Duration.toMillis(MODULE_CREDENTIAL_HANDOVER_GRACE));
+    const recent = yield* Ref.updateAndGet(replaced, (all) => all.filter(within));
+    return [...new Set([...(yield* held), ...recent.map(replacedKeyIdOf)])];
+  });
+  return { keptWith, record };
+});
+
 /** The provider key ids `held` had for the modules `fresh` gave a new key: what a renewal replaced. */
 export const replacedKeyIdsOf = (held: ProvisioningOutput, fresh: ProvisioningOutput): readonly string[] =>
   Object.entries(held.keys).flatMap(([appId, key]) =>
@@ -726,21 +758,41 @@ export type ModuleCredentialHealing =
   | { readonly kind: 'none' }
   | { readonly kind: 'renew'; readonly reason: 'expiring' | 'revoked' };
 
-/** What healing does next, given what the host holds, which module credentials are still active, and the time. */
+/** Whether the keys the host holds end within `MODULE_CREDENTIAL_ROTATION_LEAD`: known locally, no read needed. */
+const nearTheirEnd = (held: ProvisioningOutput, nowMillis: number) => {
+  const earliest = earliestExpiryOf(held);
+  return earliest !== undefined && earliest - Duration.toMillis(MODULE_CREDENTIAL_ROTATION_LEAD) <= nowMillis;
+};
+
+/**
+ * What healing does next, given what the host holds, which module credentials are still active (`none` when that
+ * could not be read), and the time. Without the read only rotation by end of life is decided: it needs nothing but
+ * the ends the host holds, so an unreadable store never lets keys run out.
+ */
 export const planModuleCredentialHealing = (
   held: ProvisioningOutput,
-  activeProviderKeyIds: ReadonlySet<string>,
+  activeProviderKeyIds: Option.Option<ReadonlySet<string>>,
   nowMillis: number,
 ): ModuleCredentialHealing => {
-  if (providerKeyIdsOf(held).some((providerKeyId) => !activeProviderKeyIds.has(providerKeyId))) {
+  if (
+    Option.isSome(activeProviderKeyIds) &&
+    providerKeyIdsOf(held).some((providerKeyId) => !activeProviderKeyIds.value.has(providerKeyId))
+  ) {
     return { kind: 'renew', reason: 'revoked' };
   }
-  const earliest = earliestExpiryOf(held);
-  if (earliest !== undefined && earliest - Duration.toMillis(MODULE_CREDENTIAL_ROTATION_LEAD) <= nowMillis) {
+  if (nearTheirEnd(held, nowMillis)) {
     return { kind: 'renew', reason: 'expiring' };
   }
-  return held.failedAppIds.length === 0 ? { kind: 'none' } : { appIds: held.failedAppIds, kind: 'fill' };
+  return Option.isNone(activeProviderKeyIds) || held.failedAppIds.length === 0
+    ? { kind: 'none' }
+    : { appIds: held.failedAppIds, kind: 'fill' };
 };
+
+/** How many healing steps in a row could not read liveness, and renewed because keys looked revoked. */
+export interface ModuleCredentialHealingStreaks {
+  readonly revocations: number;
+  readonly unreadable: number;
+}
 
 const HEALING_INTERVAL = Duration.minutes(1);
 const HEALING_BACKOFF_CAP = Duration.minutes(15);
@@ -767,19 +819,37 @@ export interface ModuleCredentialHealingInput<Requirements> {
  */
 export const healModuleCredentialsOnce = Effect.fn('AppHost.healModuleCredentialsOnce')(function* healOnce<
   Requirements,
->(input: ModuleCredentialHealingInput<Requirements>) {
+>(input: ModuleCredentialHealingInput<Requirements>, streaks: Ref.Ref<ModuleCredentialHealingStreaks>) {
   const active = yield* input.activeProviderKeyIds.pipe(Effect.option);
-  if (Option.isNone(active)) {
-    return true;
+  const before = yield* Ref.getAndUpdate(streaks, (counted) => ({
+    ...counted,
+    unreadable: Option.isNone(active) ? counted.unreadable + 1 : 0,
+  }));
+  if (Option.isNone(active) && before.unreadable === 0) {
+    yield* Console.error(
+      '[app-host] module credential liveness could not be read; keys are still rotated before they end, revocations are noticed once it can be read again',
+    );
+  }
+  if (Option.isSome(active) && before.unreadable > 0) {
+    yield* Console.log(
+      `[app-host] module credential liveness readable again after ${String(before.unreadable)} step(s)`,
+    );
   }
   const held = yield* Ref.get(input.held);
-  const plan = planModuleCredentialHealing(held, active.value, yield* Clock.currentTimeMillis);
+  const plan = planModuleCredentialHealing(held, active, yield* Clock.currentTimeMillis);
+  const revoked = plan.kind === 'renew' && plan.reason === 'revoked';
+  const { revocations } = yield* Ref.updateAndGet(streaks, (counted) => ({
+    ...counted,
+    revocations: revoked ? counted.revocations + 1 : 0,
+  }));
   if (plan.kind === 'none') {
     return true;
   }
   if (plan.kind === 'renew') {
-    yield* plan.reason === 'revoked'
-      ? Console.error('[app-host] MODULE CREDENTIALS OF THIS HOST WERE REVOKED; issuing and handing over fresh ones')
+    yield* revoked
+      ? Console.error(
+          `[app-host] MODULE CREDENTIALS OF THIS HOST WERE REVOKED (${String(revocations)} renewal(s) in a row); issuing and handing over fresh ones`,
+        )
       : Console.log('[app-host] module credentials near their end; rotating them');
   }
   const appIds = plan.kind === 'fill' ? plan.appIds : input.callers;
@@ -797,7 +867,9 @@ export const healModuleCredentialsOnce = Effect.fn('AppHost.healModuleCredential
     // Exactly the keys this renewal replaced, which only this boot ever held: never a key it was not told about.
     yield* input.retireOwn(replacedKeyIdsOf(held, fresh));
   }
-  return fresh.failedAppIds.length === 0;
+  // A renewal because keys looked revoked backs off like a failure: if the store keeps saying "not live" (wrongly or
+  // not), the host reissues after 2, 4, 8 and then every 15 minutes, never every minute.
+  return fresh.failedAppIds.length === 0 && !revoked;
 });
 
 /**
@@ -807,8 +879,9 @@ export const healModuleCredentialsOnce = Effect.fn('AppHost.healModuleCredential
 export const healModuleCredentials = <Requirements,>(input: ModuleCredentialHealingInput<Requirements>) =>
   Effect.gen(function* healCredentials() {
     let backoff = HEALING_INTERVAL;
+    const streaks = yield* Ref.make<ModuleCredentialHealingStreaks>({ revocations: 0, unreadable: 0 });
     while (yield* input.serving.pipe(Effect.delay(backoff))) {
-      const healthy = yield* healModuleCredentialsOnce(input);
+      const healthy = yield* healModuleCredentialsOnce(input, streaks);
       backoff = healthy ? HEALING_INTERVAL : Duration.min(Duration.times(backoff, 2), HEALING_BACKOFF_CAP);
     }
     return yield* Console.log('[app-host] superseded; module credential healing stops');
@@ -1216,6 +1289,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   );
   const exits = [yield* startUnitProcess([SHELL_ID], runtime, shellEnvironment.environment, memoryBytes), owners.exit];
   const credentialHolders = yield* Ref.make<readonly Pick<CredentialHolder, 'handOver'>[]>([owners]);
+  const replacedKeys = yield* makeReplacedKeyLedger;
   const heldCredentials = yield* Ref.make(noProvisionedCredentials(callers));
   const issueFor = (release: HostRelease) => (appIds: readonly string[]) =>
     provisionModuleCredentialsForRelease({
@@ -1243,8 +1317,9 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     retireAfterHandover({
       ...retiring,
       compositionRevision: release.compositionRevision,
-      // Read when the retirement runs, after the grace period: every key the host holds then is kept.
-      current: Ref.get(heldCredentials).pipe(Effect.map(providerKeyIdsOf)),
+      // Read when the retirement runs: every key the host holds then is kept, and every key a renewal replaced less
+      // than the grace period ago (that renewal retires it when its own grace ends).
+      current: replacedKeys.keptWith(Ref.get(heldCredentials).pipe(Effect.map(providerKeyIdsOf))),
       earlierBoots,
       shellEnvironment: shellEnvironment.environment,
     });
@@ -1258,7 +1333,8 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       held: heldCredentials,
       holders: Ref.get(credentialHolders),
       issue: issueFor(release),
-      retireOwn: (replaced) => retireReplaced(release, { replaced, superseded: false }),
+      retireOwn: (replaced) =>
+        replacedKeys.record(replaced).pipe(Effect.andThen(retireReplaced(release, { replaced, superseded: false }))),
       serving,
     });
   yield* Console.log(`[app-host] Shell runtime ${runtime}; owners and Outbox runtime node`);
