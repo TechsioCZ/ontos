@@ -135,9 +135,12 @@ const handleRequestPaymentCancellation = Effect.fn('RequestPaymentCancellation.h
     subjectResourceId: aggregate.payment.paymentId,
     subjectResourceType: 'payment.core.payment',
   });
+  // The target is a gateway collection (checked above): stopping it is an effect-capable provider call and
+  // Core durable work of this invocation's revision until the executor completes it (#1158).
   yield* context.addOutboxMessage(
     event,
     createRequestPaymentCancellationPaymentCoreOperationRequestedV1OutboxMessage(requested),
+    { consumerModuleKey: PAYMENT_MODULE_KEY },
   );
   return {
     coverageRevision: current.coverageRevision,

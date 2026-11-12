@@ -26,6 +26,18 @@ type ProblemOf<Tag extends ConfigureProviderAccountBindingActionProblem['_tag']>
   ConfigureProviderAccountBindingActionProblem,
   { readonly _tag: Tag }
 >;
+type DomainProblemIdentity =
+  | {
+      readonly code:
+        | 'gateway_binding_current_exists'
+        | 'gateway_binding_not_current'
+        | 'gateway_binding_replacement_mismatch'
+        | 'gateway_binding_revision_conflict'
+        | 'gateway_credential_unchanged';
+      readonly kind: 'conflict';
+    }
+  | { readonly code: 'gateway_binding_not_found'; readonly kind: 'notFound' }
+  | { readonly code: 'payment_unavailable'; readonly kind: 'unavailable' };
 
 const problemStatus = {
   authentication: 401,
@@ -40,6 +52,17 @@ const problemStatus = {
   timeout: 504,
   unavailable: 503,
 } as const;
+
+const providerAccountBindingConflictProblemByCode = {
+  gateway_binding_current_exists: { code: 'gateway_binding_current_exists', kind: 'conflict' },
+  gateway_binding_not_current: { code: 'gateway_binding_not_current', kind: 'conflict' },
+  gateway_binding_replacement_mismatch: { code: 'gateway_binding_replacement_mismatch', kind: 'conflict' },
+  gateway_binding_revision_conflict: { code: 'gateway_binding_revision_conflict', kind: 'conflict' },
+  gateway_credential_unchanged: { code: 'gateway_credential_unchanged', kind: 'conflict' },
+} as const satisfies Record<
+  Extract<DomainError, { readonly _tag: 'ProviderAccountBindingConflict' }>['code'],
+  DomainProblemIdentity
+>;
 
 export const configureProviderAccountBindingActionProblem = {
   authentication: (): ProblemOf<'ConfigureProviderAccountBindingActionAuthenticationProblem'> =>
@@ -123,11 +146,28 @@ export const configureProviderAccountBindingActionProblem = {
     }),
 } as const;
 
+const mapDomainIdentity = (identity: DomainProblemIdentity): ConfigureProviderAccountBindingActionProblem =>
+  Match.value(identity).pipe(
+    Match.when({ kind: 'conflict' as const }, (matched) =>
+      configureProviderAccountBindingActionProblem.conflict(matched.code),
+    ),
+    Match.when({ kind: 'notFound' as const }, (matched) =>
+      configureProviderAccountBindingActionProblem.notFound(matched.code),
+    ),
+    Match.when({ kind: 'unavailable' as const }, (matched) =>
+      configureProviderAccountBindingActionProblem.unavailable(matched.code),
+    ),
+    Match.exhaustive,
+  );
+
 const mapDomainProblem = (error: DomainError): ConfigureProviderAccountBindingActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      ConfigureProviderAccountBindingNotImplemented: () =>
-        configureProviderAccountBindingActionProblem.ineligible('action_not_implemented'),
+      PaymentUnavailable: () => configureProviderAccountBindingActionProblem.unavailable('payment_unavailable'),
+      ProviderAccountBindingConflict: (failure) =>
+        mapDomainIdentity(providerAccountBindingConflictProblemByCode[failure.code]),
+      ProviderAccountBindingNotFound: () =>
+        configureProviderAccountBindingActionProblem.notFound('gateway_binding_not_found'),
     }),
     Match.exhaustive,
   );

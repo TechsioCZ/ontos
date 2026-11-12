@@ -51,14 +51,21 @@ import {
   withScopedTransaction,
 } from '../support/refund-native-runtime.ts';
 import type { RefundNativeRuntime } from '../support/refund-native-runtime.ts';
-import { paymentTestRelations } from './database-fixture.ts';
+import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
+import { paymentTestRelations, COMPOSITION_REVISION } from './database-fixture.ts';
 
 // One funds snapshot for every reader (#1150, #1149): Current coverage, prepaid proof issuance and prepaid proof
 // validation all build the snapshot through the refund persistence builder (selectFunds), so they read the same
 // collection and the same prior returns.
 
+/**
+ * Every case runs under the shared test authority of COMPOSITION_REVISION with Payment's registered
+ * subscriptions: a gateway REFUND or CANCEL_OR_VOID is completion-bound executor work of that revision (#1158).
+ */
 const native = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
+  Effect.scoped(installPaymentTestCompositionAuthority(COMPOSITION_REVISION).pipe(Effect.andThen(effect))).pipe(
+    Effect.provide(NodeCrypto.layer),
+  );
 
 const nativeRuntime = Effect.gen(function* acquireFundsSnapshotRuntime() {
   const { admin, runtime } = yield* testDatabaseClients;
@@ -75,6 +82,7 @@ const nativeRuntime = Effect.gen(function* acquireFundsSnapshotRuntime() {
       contextAccess: refundRuntimeContextAccess,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
+      resolveCompositionRevision: () => Effect.succeed(COMPOSITION_REVISION),
     },
   );
   return { actionRuntime, admin, coreAdmin, database } satisfies RefundNativeRuntime;

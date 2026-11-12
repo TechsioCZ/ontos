@@ -3,6 +3,7 @@ import { Context } from 'effect';
 import type { Effect, Option } from 'effect';
 
 import type { PaymentCustomerConfigurationIdSchema } from '../../../shared/domain/payment-identifiers.ts';
+import type { PaymentGatewayProviderFamilySchema } from '../../../shared/domain/payment-vocabulary.ts';
 import type { GatewayProviderAccountRef } from '../../../shared/domain/psp-configuration.ts';
 import type { GatewayEnvironment } from '../../../shared/domain/psp-vocabulary.ts';
 import type { GatewayProviderUnavailableError } from './psp-errors.ts';
@@ -11,7 +12,8 @@ import type { GatewayExecutionTarget } from './psp-request.ts';
 /**
  * Resolves the exact Provider Account Binding named by a C16 operation binding or a notification
  * route (#1155). Retired bindings resolve for their historical operations; the Current binding is
- * never substituted. Unknown refs, environment mismatches and credential gaps are UNAVAILABLE.
+ * never substituted. Unknown refs, environment mismatches, a binding of another family, unreadable
+ * routines and credential gaps are UNAVAILABLE for the query's family (never a defect).
  *
  * Credential rule (#1158): every resolution returns the binding's current ACTIVE credential revision.
  * A rotation authenticates the same account, so replay, lookup and notification processing after a
@@ -25,6 +27,8 @@ export interface GatewayExecutionTargetQuery {
   readonly customerConfigurationId: Option.Option<typeof PaymentCustomerConfigurationIdSchema.Type>;
   readonly environment: GatewayEnvironment;
   readonly providerAccountRef: GatewayProviderAccountRef;
+  /** Family of the C16 operation binding; a resolved binding of another family is UNAVAILABLE. */
+  readonly providerFamily: typeof PaymentGatewayProviderFamilySchema.Type;
   /** Core-verified worker scope; tenant and legal entity never come from the message payload. */
   readonly scope: OutboxWorkerLegalEntityScope;
 }
@@ -32,6 +36,8 @@ export interface GatewayExecutionTargetQuery {
 export interface GatewayNotificationTargetQuery {
   readonly environment: GatewayEnvironment;
   readonly providerAccountRef: GatewayProviderAccountRef;
+  /** Family of the stored notification's route. */
+  readonly providerFamily: typeof PaymentGatewayProviderFamilySchema.Type;
   readonly scope: OutboxWorkerLegalEntityScope;
 }
 

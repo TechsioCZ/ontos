@@ -481,7 +481,12 @@ const OperationRequestedReferenceSchema = Schema.Struct({ operationId: PaymentOp
 export const operationRequestedMessages = Effect.fn('RefundNativeRuntime.operationRequestedMessages')(
   function* operationRequestedMessages(native: RefundNativeRuntime, scope: PaymentTestScope, operationId: string) {
     const rows = yield* native.coreAdmin
-      .select({ payloadJson: outboxMessages.payloadJson, producerModuleKey: outboxMessages.producerModuleKey })
+      .select({
+        completionConsumerModuleKey: outboxMessages.completionConsumerModuleKey,
+        completionOriginalRevision: outboxMessages.completionOriginalRevision,
+        payloadJson: outboxMessages.payloadJson,
+        producerModuleKey: outboxMessages.producerModuleKey,
+      })
       .from(outboxMessages)
       .where(
         and(

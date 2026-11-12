@@ -26,6 +26,17 @@ type ProblemOf<Tag extends ConfigureGatewayEnablementActionProblem['_tag']> = Ex
   ConfigureGatewayEnablementActionProblem,
   { readonly _tag: Tag }
 >;
+type DomainProblemIdentity =
+  | { readonly code: 'gateway_enablement_revision_conflict'; readonly kind: 'conflict' }
+  | { readonly code: 'gateway_binding_not_current'; readonly kind: 'ineligible' }
+  | {
+      readonly code:
+        | 'gateway_binding_not_found'
+        | 'gateway_payer_contact_source_missing'
+        | 'gateway_source_authority_missing';
+      readonly kind: 'notFound';
+    }
+  | { readonly code: 'payment_unavailable'; readonly kind: 'unavailable' };
 
 const problemStatus = {
   authentication: 401,
@@ -40,6 +51,17 @@ const problemStatus = {
   timeout: 504,
   unavailable: 503,
 } as const;
+
+const gatewayEnablementRejectedProblemByCode = {
+  gateway_binding_not_current: { code: 'gateway_binding_not_current', kind: 'ineligible' },
+  gateway_binding_not_found: { code: 'gateway_binding_not_found', kind: 'notFound' },
+  gateway_enablement_revision_conflict: { code: 'gateway_enablement_revision_conflict', kind: 'conflict' },
+  gateway_payer_contact_source_missing: { code: 'gateway_payer_contact_source_missing', kind: 'notFound' },
+  gateway_source_authority_missing: { code: 'gateway_source_authority_missing', kind: 'notFound' },
+} as const satisfies Record<
+  Extract<DomainError, { readonly _tag: 'GatewayEnablementRejected' }>['code'],
+  DomainProblemIdentity
+>;
 
 export const configureGatewayEnablementActionProblem = {
   authentication: (): ProblemOf<'ConfigureGatewayEnablementActionAuthenticationProblem'> =>
@@ -123,11 +145,28 @@ export const configureGatewayEnablementActionProblem = {
     }),
 } as const;
 
+const mapDomainIdentity = (identity: DomainProblemIdentity): ConfigureGatewayEnablementActionProblem =>
+  Match.value(identity).pipe(
+    Match.when({ kind: 'conflict' as const }, (matched) =>
+      configureGatewayEnablementActionProblem.conflict(matched.code),
+    ),
+    Match.when({ kind: 'ineligible' as const }, (matched) =>
+      configureGatewayEnablementActionProblem.ineligible(matched.code),
+    ),
+    Match.when({ kind: 'notFound' as const }, (matched) =>
+      configureGatewayEnablementActionProblem.notFound(matched.code),
+    ),
+    Match.when({ kind: 'unavailable' as const }, (matched) =>
+      configureGatewayEnablementActionProblem.unavailable(matched.code),
+    ),
+    Match.exhaustive,
+  );
+
 const mapDomainProblem = (error: DomainError): ConfigureGatewayEnablementActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      ConfigureGatewayEnablementNotImplemented: () =>
-        configureGatewayEnablementActionProblem.ineligible('action_not_implemented'),
+      GatewayEnablementRejected: (failure) => mapDomainIdentity(gatewayEnablementRejectedProblemByCode[failure.code]),
+      PaymentUnavailable: () => configureGatewayEnablementActionProblem.unavailable('payment_unavailable'),
     }),
     Match.exhaustive,
   );

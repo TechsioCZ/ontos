@@ -13,7 +13,7 @@ import {
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
-import { paymentTestRelations } from './database-fixture.ts';
+import { paymentTestRelations, COMPOSITION_REVISION } from './database-fixture.ts';
 import {
   acceptObservation,
   itemsRefund,
@@ -31,8 +31,14 @@ import {
 import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import type { RefundNativeRuntime } from '../support/refund-native-runtime.ts';
 
+/**
+ * Every case runs under the shared test authority of COMPOSITION_REVISION with Payment's registered
+ * subscriptions: a gateway REFUND or CANCEL_OR_VOID is completion-bound executor work of that revision (#1158).
+ */
 const native = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
+  Effect.scoped(installPaymentTestCompositionAuthority(COMPOSITION_REVISION).pipe(Effect.andThen(effect))).pipe(
+    Effect.provide(NodeCrypto.layer),
+  );
 
 const nativeRuntime = Effect.gen(function* acquireRefundEvidenceRuntime() {
   const { admin, runtime } = yield* testDatabaseClients;
@@ -49,6 +55,7 @@ const nativeRuntime = Effect.gen(function* acquireRefundEvidenceRuntime() {
       contextAccess: refundRuntimeContextAccess,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
+      resolveCompositionRevision: () => Effect.succeed(COMPOSITION_REVISION),
     },
   );
   return { actionRuntime, admin, coreAdmin, database } satisfies RefundNativeRuntime;
@@ -126,8 +133,6 @@ it.live(
 it.live('#1152 a qualified bank refund reports unknown outcome without releasing its reservation', () =>
   native(
     Effect.gen(function* refundOutcomeUnknown() {
-      const revision = yield* openActionRuntimeOptions.resolveCompositionRevision();
-      yield* installPaymentTestCompositionAuthority(revision);
       const refundCase = yield* refundCaseFor(yield* nativeRuntime, {
         amountMinor: 100_000,
         collected: true,

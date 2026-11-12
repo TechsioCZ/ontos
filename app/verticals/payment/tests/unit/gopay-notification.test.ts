@@ -1,0 +1,134 @@
+import { describe, expect, it } from 'effect-rstest';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
+
+import { mapGopayLookup } from '../../src/integrations/gopay/gopay-evidence.ts';
+import { verifyGopayNotification } from '../../src/integrations/gopay/gopay-notification.ts';
+import { GopayPaymentFromJsonSchema, gopayProviderObjectId } from '../../src/integrations/gopay/gopay-wire.ts';
+import type { RawProviderNotification } from '../../src/integrations/psp/notification-envelope.ts';
+import { deriveProviderCorrelation } from '../../src/integrations/psp/psp-correlation.ts';
+import { GOPAY_FIXTURE_ACCOUNT_REF, gopayExecutionTarget } from '../fixtures/gopay/execution-target.ts';
+import { GOPAY_FIXTURE_PAYMENT_ID, gopayInquiryResponseBody } from '../fixtures/gopay/payment-responses.ts';
+
+/**
+ * GoPay sends an unsigned HTTP GET with `?id=<payment id>` (https://doc.gopay.com/#receiving-the-http-notification).
+ */
+
+const operationId = '0f8b5c1e-3a2d-4c7b-9e1f-5a6b7c8d9e0f';
+const { orderReference } = deriveProviderCorrelation(operationId);
+const target = gopayExecutionTarget();
+const verifiedInstant = DateTime.makeUnsafe('2026-11-12T10:05:00.000Z');
+
+const notification = (overrides: Partial<RawProviderNotification> = {}): RawProviderNotification => ({
+  environment: 'SANDBOX',
+  family: 'GOPAY',
+  headers: { contentType: Option.none(), stripeSignature: Option.none() },
+  providerAccountRef: GOPAY_FIXTURE_ACCOUNT_REF,
+  query: { parentPaymentRef: Option.none(), paymentRef: Option.some(GOPAY_FIXTURE_PAYMENT_ID) },
+  rawBody: new Uint8Array(),
+  receivedAt: DateTime.makeUnsafe('2026-11-12T10:04:59.000Z'),
+  transportDeliveryRef: 'relay-delivery-0001',
+  ...overrides,
+});
+
+const verifyAt = (raw: RawProviderNotification) =>
+  Effect.gen(function* verifyAtFixedClock() {
+    yield* TestClock.setTime(DateTime.toEpochMillis(verifiedInstant));
+    return yield* verifyGopayNotification(target, raw);
+  });
+
+const rejectionOf = (raw: RawProviderNotification) =>
+  verifyAt(raw).pipe(
+    Effect.flip,
+    Effect.map((failure) => failure.reason),
+  );
+
+describe('#1157 GoPay notification', () => {
+  it.effect('#1157 GoPay notification triggers lookup only', () =>
+    Effect.gen(function* lookupOnlyTrigger() {
+      const trigger = yield* verifyAt(notification());
+      const paymentRef = gopayProviderObjectId(Number(GOPAY_FIXTURE_PAYMENT_ID));
+      expect(trigger).toEqual({
+        actionable: true,
+        authenticity: 'LOOKUP_REQUIRED',
+        claimedStatus: Option.none(),
+        deliveryIdentity: `gopay:${GOPAY_FIXTURE_PAYMENT_ID}:relay-delivery-0001`,
+        family: 'GOPAY',
+        providerEventAt: Option.none(),
+        providerOccurrenceId: Option.none(),
+        providerRefs: [{ _tag: 'GOPAY_PAYMENT', id: paymentRef }],
+        signedObject: Option.none(),
+        verifiedAt: verifiedInstant,
+      });
+    }),
+  );
+
+  it.effect('#1157 A malformed or absent id is rejected as MALFORMED', () =>
+    Effect.gen(function* malformedIds() {
+      const query = (paymentRef: Option.Option<string>, parentPaymentRef: Option.Option<string> = Option.none()) =>
+        notification({ query: { parentPaymentRef, paymentRef } });
+      const reasons = yield* Effect.all([
+        rejectionOf(query(Option.none())),
+        rejectionOf(query(Option.some('abc'))),
+        rejectionOf(query(Option.some('0123'))),
+        rejectionOf(query(Option.some('-5'))),
+        rejectionOf(query(Option.some('3123456789 '))),
+        rejectionOf(query(Option.some('99999999999999999'))),
+        rejectionOf(query(Option.some(GOPAY_FIXTURE_PAYMENT_ID), Option.some('x1'))),
+        rejectionOf(notification({ rawBody: new TextEncoder().encode('state=PAID') })),
+      ]);
+      expect(reasons).toEqual(Array.from({ length: 8 }, () => 'MALFORMED'));
+    }),
+  );
+
+  it.effect('#1157 A notification addressed to another binding or environment is rejected', () =>
+    Effect.gen(function* foreignBinding() {
+      const reasons = yield* Effect.all([
+        rejectionOf(notification({ providerAccountRef: `pab_${'b2'.repeat(16)}` })),
+        rejectionOf(notification({ family: 'STRIPE' })),
+        rejectionOf(notification({ environment: 'LIVE' })),
+      ]);
+      expect(reasons).toEqual(['BINDING_UNKNOWN', 'BINDING_UNKNOWN', 'ENVIRONMENT_MISMATCH']);
+    }),
+  );
+
+  it.effect('#1157 A recurring payment notification is stored but not actionable', () =>
+    Effect.gen(function* recurringNotification() {
+      const trigger = yield* verifyAt(
+        notification({
+          query: { parentPaymentRef: Option.some('3123456700'), paymentRef: Option.some(GOPAY_FIXTURE_PAYMENT_ID) },
+        }),
+      );
+      expect(trigger.actionable).toBe(false);
+      expect(trigger.authenticity).toBe('LOOKUP_REQUIRED');
+    }),
+  );
+
+  it.effect('#1156 Notification for another merchant is not submitted', () =>
+    Effect.gen(function* foreignMerchant() {
+      const trigger = yield* verifyAt(notification());
+      expect(trigger.providerRefs).toEqual([{ _tag: 'GOPAY_PAYMENT', id: GOPAY_FIXTURE_PAYMENT_ID }]);
+      const foreignPayment = Schema.decodeUnknownSync(GopayPaymentFromJsonSchema)(
+        gopayInquiryResponseBody({ amount: 10_000, goid: '8123456780', orderNumber: orderReference, state: 'PAID' }),
+      );
+      const findings = mapGopayLookup({
+        observedAt: trigger.verifiedAt,
+        origin: 'NOTIFICATION_LOOKUP',
+        paymentRef: gopayProviderObjectId(foreignPayment.id),
+        request: {
+          dispatchedAt: Option.none(),
+          expected: { _tag: 'COLLECT', amount: { amountMinor: 10_000, currency: 'CZK' }, operationId },
+          target: {
+            _tag: 'PROVIDER_OBJECT',
+            ref: { _tag: 'GOPAY_PAYMENT', id: gopayProviderObjectId(foreignPayment.id) },
+          },
+        },
+        result: { _tag: 'FOUND', payment: foreignPayment, refunds: Option.none() },
+        target,
+      });
+      expect(findings.map((finding) => [finding.finding, finding.evidence, finding.orderReference])).toEqual([
+        ['VERIFICATION_CONFLICT', Option.none(), Option.none()],
+      ]);
+    }),
+  );
+});

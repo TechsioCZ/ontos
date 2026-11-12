@@ -14,6 +14,7 @@ import type { ActionRuntimeOptions } from '../../../../packages/core-runtime/src
 import {
   accessScopeFences,
   accessScopes,
+  applicationCompositionDurableWork,
   coreRelations,
   legalEntities,
   outboxMessages,
@@ -72,7 +73,6 @@ import {
 import { configuredRefundExecutionRouteFor } from '../support/refund-execution-route.fixture.ts';
 import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import {
-  COMPOSITION_REVISION,
   failureCodeOf,
   makeTestScope,
   newPaymentInput,
@@ -91,8 +91,22 @@ import type { PaymentTestScope } from './database-fixture.ts';
  * nothing is deleted.
  */
 
-const runNative = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) =>
-  Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
+const COMPOSITION_R1 = '1'.repeat(64);
+const COMPOSITION_R2 = '2'.repeat(64);
+
+type TrackedComposition = Effect.Success<ReturnType<typeof installPaymentTestCompositionAuthority>>;
+
+/**
+ * Every case runs under the shared test authority of R1 with Payment's registered subscriptions: a
+ * gateway COLLECT is completion-bound executor work of the admitting revision (#1158).
+ */
+const runTracked = <A, E>(
+  body: (composition: TrackedComposition) => Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>,
+) =>
+  Effect.scoped(installPaymentTestCompositionAuthority(COMPOSITION_R1).pipe(Effect.flatMap(body))).pipe(
+    Effect.provide(NodeCrypto.layer),
+  );
+const runNative = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) => runTracked(() => effect);
 
 const PAYMENT_CREATED = 'payment.core.payment-created.v1';
 const OPERATION_REQUESTED = 'payment.core.operation-requested.v1';
@@ -103,8 +117,6 @@ const OPERATION_REQUESTED = 'payment.core.operation-requested.v1';
  * scripted open (permissions are not the subject here; #1153 owns the access matrix). Every scope
  * uses fresh random Tenant/LE/principal identities; nothing is deleted afterwards.
  */
-const COMPOSITION_R1 = '1'.repeat(64);
-const COMPOSITION_R2 = '2'.repeat(64);
 const authenticationNamespaceId = 'test.payment-lifecycle.v1';
 
 const allowedPermission = { checkActionPermission: () => Effect.succeed('allowed' as const) };
@@ -381,14 +393,18 @@ const lifecycleScenario = Effect.fn('LifecycleScenario.make')(function* lifecycl
     compositionRevision?: string,
   ) =>
     Effect.gen(function* settleOutcome() {
-      const provenance = yield* provenanceFor(scope);
+      // Evidence is recorded by this scenario's R1 runtime unless a later compatible revision is named.
+      const provenance = {
+        ...(yield* provenanceFor(scope)),
+        compositionRevision: compositionRevision ?? COMPOSITION_R1,
+      };
       return yield* persist((persistence) =>
         persistence.transitionOperationOutcome({
           causedBy: { kind: 'OBSERVATION' },
           expectedOutcomeRevision,
           operationId,
           paymentId,
-          provenance: compositionRevision === undefined ? provenance : { ...provenance, compositionRevision },
+          provenance,
           to,
         }),
       );
@@ -482,13 +498,13 @@ it.live('#1148 the same intent key recovers the same Payment; a changed meaning 
 );
 
 it.live('#1148 creates bank transfer with exact Checkout facts and refuses a forged correlation or amount', () =>
-  runNative(
+  runTracked((tracked) =>
     Effect.gen(function* governedPurchaseCreation() {
       const scenario = yield* lifecycleScenario();
       yield* enableMethod(scenario.native, scenario.scope, CUSTOMER_CONFIGURATION, 'BANK_TRANSFER_ADVANCE');
       const composition = yield* makePaymentTermOwnerComposition();
       const { revision } = composition.composition;
-      yield* installPaymentTestCompositionAuthority(revision);
+      yield* tracked.activate(revision);
       const { actions } = yield* makeLifecycleRuntimes(scenario.native, revision, {
         applicationComposition: { load: Effect.succeed(composition) },
         expectedDeployment: paymentTermFixtureDeployment,
@@ -699,7 +715,6 @@ it.live(
   () =>
     runNative(
       Effect.gen(function* changingAmount() {
-        yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
         const scenario = yield* lifecycleScenario();
         const purchaseCorrelationId = `purchase-${randomUUID()}`;
         const original = yield* scenario.create(
@@ -1018,7 +1033,6 @@ it.live(
   () =>
     runNative(
       Effect.gen(function* samePurchaseUnresolved() {
-        yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
         const scenario = yield* lifecycleScenario();
         yield* enableMethod(scenario.native, scenario.scope, CUSTOMER_CONFIGURATION, 'BANK_TRANSFER_ADVANCE');
         const purchaseCorrelationId = `purchase-${randomUUID()}`;
@@ -1295,46 +1309,72 @@ const collectRows = (scenario: Scenario, paymentId: string) =>
       ),
     );
 
-it.live('#1149 start-payment-collection emits operation-requested with the original binding and true provenance', () =>
-  runNative(
-    Effect.gen(function* collectionRequested() {
-      const scenario = yield* lifecycleScenario();
-      const { paymentId, request } = yield* paymentWithCollection(scenario);
-      const started = yield* scenario.collect(request('collect-1'));
+it.live(
+  '#1149 #1158 Gateway collection dispatch is tracked durable work: operation-requested keeps the original binding and true provenance',
+  () =>
+    runNative(
+      Effect.gen(function* collectionRequested() {
+        const scenario = yield* lifecycleScenario();
+        const { paymentId, request } = yield* paymentWithCollection(scenario);
+        const started = yield* scenario.collect(request('collect-1'));
 
-      expect(started.replayed).toBe(false);
-      expect(started.operation).toMatchObject({
-        binding: LIFECYCLE_GATEWAY_BINDING,
-        kind: 'COLLECT',
-        outcome: 'PENDING',
-        provenance: { actorPrincipalId: scenario.scope.principalId, compositionRevision: COMPOSITION_R1 },
-      });
-      const [event] = yield* outboxPayloads(scenario.native, scenario.scope.tenantId, OPERATION_REQUESTED);
-      expect(event).toMatchObject({
-        amount: { amountMinor: 100_000, currency: 'CZK' },
-        binding: LIFECYCLE_GATEWAY_BINDING,
-        kind: 'COLLECT',
-        method: 'ONLINE_GATEWAY',
-        operationId: started.operation.operationId,
-        paymentId,
-        provenance: {
-          actionInvocationId: started.operation.provenance.actionInvocationId,
-          compositionRevision: COMPOSITION_R1,
-        },
-      });
-      const current = yield* scenario.read(paymentId);
-      expect(current.unresolved.unresolvedOperationIds).toStrictEqual([started.operation.operationId]);
-      expect(current.coverage).toStrictEqual(
-        PaymentCoverageNotCollectedSchema.make({ liveCollectOperationId: Option.some(started.operation.operationId) }),
-      );
-    }),
-  ),
+        expect(started.replayed).toBe(false);
+        expect(started.operation).toMatchObject({
+          binding: LIFECYCLE_GATEWAY_BINDING,
+          kind: 'COLLECT',
+          outcome: 'PENDING',
+          provenance: { actorPrincipalId: scenario.scope.principalId, compositionRevision: COMPOSITION_R1 },
+        });
+        const [event] = yield* outboxPayloads(scenario.native, scenario.scope.tenantId, OPERATION_REQUESTED);
+        // #1158 Gateway collection dispatch is tracked durable work of the admitting revision R1.
+        const [dispatch, ...others] = yield* scenario.native.coreAdmin
+          .select({
+            completionConsumer: outboxMessages.completionConsumerModuleKey,
+            completionRevision: outboxMessages.completionOriginalRevision,
+            outboxMessageId: outboxMessages.outboxMessageId,
+          })
+          .from(outboxMessages)
+          .where(
+            and(eq(outboxMessages.tenantId, scenario.scope.tenantId), eq(outboxMessages.topic, OPERATION_REQUESTED)),
+          );
+        expect(others).toHaveLength(0);
+        expect(dispatch).toMatchObject({ completionConsumer: 'payment.core', completionRevision: COMPOSITION_R1 });
+        const dispatchWork = yield* scenario.native.coreAdmin
+          .select({ originalRevision: applicationCompositionDurableWork.originalRevision })
+          .from(applicationCompositionDurableWork)
+          .where(
+            and(
+              eq(applicationCompositionDurableWork.ownerModuleKey, 'payment.core'),
+              eq(applicationCompositionDurableWork.workId, `outbox:${dispatch?.outboxMessageId}:payment.core`),
+            ),
+          );
+        expect(dispatchWork).toStrictEqual([{ originalRevision: COMPOSITION_R1 }]);
+        expect(event).toMatchObject({
+          amount: { amountMinor: 100_000, currency: 'CZK' },
+          binding: LIFECYCLE_GATEWAY_BINDING,
+          kind: 'COLLECT',
+          method: 'ONLINE_GATEWAY',
+          operationId: started.operation.operationId,
+          paymentId,
+          provenance: {
+            actionInvocationId: started.operation.provenance.actionInvocationId,
+            compositionRevision: COMPOSITION_R1,
+          },
+        });
+        const current = yield* scenario.read(paymentId);
+        expect(current.unresolved.unresolvedOperationIds).toStrictEqual([started.operation.operationId]);
+        expect(current.coverage).toStrictEqual(
+          PaymentCoverageNotCollectedSchema.make({
+            liveCollectOperationId: Option.some(started.operation.operationId),
+          }),
+        );
+      }),
+    ),
 );
 
 it.live('#1148 Retrying a collection: an INDETERMINATE COLLECT replayed by a new invocation keeps its identity', () =>
   runNative(
     Effect.gen(function* retryIndeterminate() {
-      yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
       const scenario = yield* lifecycleScenario();
       const { paymentId, request } = yield* paymentWithCollection(scenario);
       const original = yield* scenario.collect(request('collect-retry'));

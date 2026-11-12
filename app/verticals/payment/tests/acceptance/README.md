@@ -145,10 +145,14 @@ U = `tests/unit`, I = `tests/integration`.
   which uses Core's close-admission, drain, seal and Outbox matcher.
 - An INDETERMINATE Payment Operation (unknown monetary effect) is Core durable work of `payment.core` under the
   revision of the invocation that made it unknown (custom migration `enforce-payment-ledgers`). While
-  it exists Core refuses to drain or seal that release; a proven outcome or governed decision clears it. Business
-  waiting (PENDING) and the operation-requested Outbox handoff are not tracked: with no consumer of
-  `payment.core.operation-requested.v1` in the composition, Core's matcher records those rows as matched with zero
-  deliveries. Integration tests that create INDETERMINATE work publish the matching revision through
-  `tests/integration/composition-authority-fixture.ts`, which holds the authority lock Core's native suites share.
+  it exists Core refuses to drain or seal that release; a proven outcome or governed decision clears it. Every
+  effect-capable dispatch is completion-bound (#1158): the `payment.core.operation-requested.v1` row of a gateway
+  COLLECT, CANCEL_OR_VOID or REFUND, and every lookup or replay `payment.core.operation-recovery-requested.v1` row,
+  is Core durable work of the admitting revision until Payment's registered worker completes its delivery, so R1
+  neither drains nor seals while a gateway dispatch is unfinished. Business waiting (PENDING) and the request of a
+  non-gateway binding (bank, COD, pickup) are not tracked. Integration tests that admit tracked work publish the
+  matching revision with Payment's real registered subscriptions through `installPaymentTestCompositionAuthority`
+  (`tests/integration/composition-authority-fixture.ts`), which holds the authority lock Core's native suites
+  share; isolated clones publish the same registration.
 - Downstream owners (Storefront, Cart, Delivery, Order, Commitment #331, Fulfillment, Billing, bank/ERP/POS/
   carrier transports) are represented only by named public-contract fixtures. No production journey exists.

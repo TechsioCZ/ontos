@@ -191,7 +191,7 @@ export const handleRequestPaymentOperationRecovery = Effect.fn('RequestPaymentOp
     const replayGuarantee = plan.mode === 'PROVIDER_IDEMPOTENT_REPLAY' ? guarantee : undefined;
     const result: RequestPaymentOperationRecoveryResult = {
       executorWorkAdmitted: plan.executorWork,
-      executorWorkTracked: replayGuarantee !== undefined,
+      executorWorkTracked: plan.executorWork,
       heldForReconciliation: plan.hold,
       modeDowngraded: plan.modeDowngraded,
       operationId: operation.operationId,
@@ -234,11 +234,12 @@ export const handleRequestPaymentOperationRecovery = Effect.fn('RequestPaymentOp
       subjectResourceType: 'payment.core.payment',
     });
     // Only replay/lookup is concrete executor work; waiting for evidence is not a fabricated task (TECH-01).
+    // Both are Core durable work of this invocation's revision until the executor completes them (#1158).
     if (plan.executorWork) {
       yield* context.addOutboxMessage(
         event,
         createRequestPaymentOperationRecoveryPaymentCoreOperationRecoveryRequestedV1OutboxMessage(eventPayload),
-        replayGuarantee === undefined ? undefined : { consumerModuleKey: MODULE_KEY },
+        { consumerModuleKey: MODULE_KEY },
       );
     }
     return result;

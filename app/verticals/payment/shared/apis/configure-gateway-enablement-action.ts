@@ -38,17 +38,30 @@ export const ConfigureGatewayEnablementActionForbiddenProblemSchema = makeProble
 export const ConfigureGatewayEnablementActionNotFoundProblemSchema = makeProblemDetailsSchema(
   'ConfigureGatewayEnablementActionNotFoundProblem',
   404,
-  { code: Schema.Literal('action_invocation_not_found') },
+  {
+    code: Schema.Literals([
+      'action_invocation_not_found',
+      'gateway_binding_not_found',
+      'gateway_payer_contact_source_missing',
+      'gateway_source_authority_missing',
+    ]),
+  },
 );
 export const ConfigureGatewayEnablementActionConflictProblemSchema = makeProblemDetailsSchema(
   'ConfigureGatewayEnablementActionConflictProblem',
   409,
-  { code: Schema.Literals(['action_request_hash_conflict', 'action_invocation_state_invalid']) },
+  {
+    code: Schema.Literals([
+      'action_request_hash_conflict',
+      'action_invocation_state_invalid',
+      'gateway_enablement_revision_conflict',
+    ]),
+  },
 );
 export const ConfigureGatewayEnablementActionIneligibleProblemSchema = makeProblemDetailsSchema(
   'ConfigureGatewayEnablementActionIneligibleProblem',
   422,
-  { code: Schema.Literals(['action_policy_denied', 'action_not_implemented']) },
+  { code: Schema.Literals(['action_policy_denied', 'gateway_binding_not_current']) },
 );
 export const ConfigureGatewayEnablementActionPreconditionProblemSchema = makeProblemDetailsSchema(
   'ConfigureGatewayEnablementActionPreconditionProblem',
@@ -65,6 +78,7 @@ export const ConfigureGatewayEnablementActionUnavailableProblemSchema = makeRetr
       'action_transaction_failed',
       'module_state_check_unavailable',
       'operation_context_unavailable',
+      'payment_unavailable',
     ]),
   },
 );

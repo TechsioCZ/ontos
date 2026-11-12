@@ -4,7 +4,7 @@ import { GatewayAssertionRedemptionService } from '@app/core-runtime';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { Clock, Crypto, DateTime, Effect, Exit, Fiber, Layer, Option, Predicate, Ref, Schema } from 'effect';
 import type { Scope } from 'effect';
 import type { ChildProcessSpawner } from 'effect/process';
@@ -22,7 +22,6 @@ import {
   tenantModuleStates,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { lockApplicationCompositionAuthority } from '../../../../packages/core-runtime/src/modules/application-composition-authority.ts';
-import { defineTenantModuleEntrypoint } from '../../../../packages/core-runtime/src/modules/module-entrypoint.ts';
 import {
   defineOutboxWorker,
   extractOutboxWorkerSubscriptions,
@@ -41,6 +40,7 @@ import {
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
 import { makeNativeOutboxWorkerFixture } from '../../../../packages/core-runtime/tests/support/outbox-worker-native-fixture.ts';
+import { getVerticalRuntimeOutboxWorkers } from '../../../../packages/core-runtime/src/modules/runtime-registration.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 import { PaymentProviderReplayGuaranteeSchema } from '../../shared/domain/evidence-contract.ts';
 import type { PaymentGatewayAccountBinding } from '../../shared/domain/payment-execution-binding.ts';
@@ -49,6 +49,8 @@ import { OutboxPayloadSchema as RecoveryRequestedSchema } from '../../shared/out
 import type { OutboxPayload as RecoveryRequested } from '../../shared/outbox/payment-core-operation-recovery-requested-v1.ts';
 import { OutboxPayloadSchema as OutcomeChangedSchema } from '../../shared/outbox/payment-core-operation-outcome-changed-v1.ts';
 import { startPaymentCollectionAction } from '../../src/actions/start-payment-collection.action.ts';
+import { executeGatewayOperationWorker } from '../../src/workers/execute-gateway-operation.worker.ts';
+import { recoverGatewayOperationWorker } from '../../src/workers/recover-gateway-operation.worker.ts';
 import { currentPaymentRead } from '../../src/api/current-payment.read.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
@@ -140,6 +142,44 @@ const unknownEffectWork = (evidence: EvidenceScenario, operationId: string) =>
     )
     .pipe(Effect.map((rows) => rows.map((row) => row.originalRevision)));
 
+/** Completion declarations of this Tenant's Payment Outbox rows of one topic, oldest first. */
+const completionOf = (evidence: EvidenceScenario, topic: string) =>
+  evidence.native.coreAdmin
+    .select({
+      consumer: outboxMessages.completionConsumerModuleKey,
+      revision: outboxMessages.completionOriginalRevision,
+    })
+    .from(outboxMessages)
+    .where(
+      and(
+        eq(outboxMessages.tenantId, evidence.scope.tenantId),
+        eq(outboxMessages.producerModuleKey, 'payment.core'),
+        eq(outboxMessages.topic, topic),
+      ),
+    )
+    .orderBy(outboxMessages.createdAt);
+
+/** Core durable work admitted for one Outbox row and its completion consumer. */
+const outboxWork = (evidence: EvidenceScenario, topic: string) =>
+  evidence.native.coreAdmin
+    .select({ originalRevision: applicationCompositionDurableWork.originalRevision })
+    .from(applicationCompositionDurableWork)
+    .innerJoin(
+      outboxMessages,
+      eq(
+        applicationCompositionDurableWork.workId,
+        sql`'outbox:' || ${outboxMessages.outboxMessageId}::text || ':payment.core'`,
+      ),
+    )
+    .where(
+      and(
+        eq(applicationCompositionDurableWork.ownerModuleKey, 'payment.core'),
+        eq(outboxMessages.tenantId, evidence.scope.tenantId),
+        eq(outboxMessages.topic, topic),
+      ),
+    )
+    .pipe(Effect.map((rows) => rows.map((row) => row.originalRevision)));
+
 const scenario = Effect.fn('EvidenceRecoveryTest.scenario')(function* scenario() {
   const database = yield* nativeDatabase;
   const scope = yield* makeTestScope;
@@ -190,30 +230,26 @@ const providerGuarantee = (
     startsAtEpochMs,
   });
 
+/** Fast test leases and retries; runtime-only changes that keep the published subscription bytes. */
+const fixtureRuntime = {
+  leaseDurationMs: 1000,
+  retryPolicy: { initialBackoffMs: 0, maxAttempts: 3, maxBackoffMs: 0, multiplier: 1 },
+} as const;
+
+/** The C17 provider contract fixture bound to Payment's real registered recovery worker subscription. */
 const recoveryWorker = <Failure>(handler: OutboxWorkerHandler<RecoveryRequested, Failure>) =>
-  defineOutboxWorker(
-    {
-      consumerModuleKey: 'payment.core',
-      entrypoint: defineTenantModuleEntrypoint({
-        access: 'background',
-        authorization: { kind: 'owner_local_background' },
-        entrypointKey: 'payment.core.recovery-contract-fixture',
-        moduleKey: 'payment.core',
-        role: 'worker',
-      }),
-      leaseDurationMs: 1000,
-      payloadSchema: RecoveryRequestedSchema,
-      producerModuleKey: 'payment.core',
-      retryPolicy: { initialBackoffMs: 0, maxAttempts: 3, maxBackoffMs: 0, multiplier: 1 },
-      topic: RECOVERY_REQUESTED,
-      workerKey: 'payment.core.recovery-contract-fixture',
-    },
-    handler,
-  );
+  defineOutboxWorker({ ...recoverGatewayOperationWorker.descriptor, ...fixtureRuntime }, handler);
+
+/** The C17 executor contract fixture: the original dispatch reached its safe checkpoint (#1158). */
+const executorCheckpoint = defineOutboxWorker(
+  { ...executeGatewayOperationWorker.descriptor, ...fixtureRuntime },
+  () => Effect.void,
+);
 
 const recoveryDelivery = Effect.fn('EvidenceRecoveryTest.delivery')(function* recoveryDelivery() {
   const template = recoveryWorker(() => Effect.void);
-  const fixture = makeNativeOutboxWorkerFixture([template]);
+  // The composition publishes Payment's real registered subscriptions (executor, notification, recovery).
+  const fixture = makeNativeOutboxWorkerFixture(getVerticalRuntimeOutboxWorkers(paymentRegistration));
   const snapshot = yield* fixture.authority.load;
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
     compositionSnapshot: snapshot,
@@ -351,9 +387,46 @@ it.live(
     ),
 );
 
+it.live('#1158 Lookup recovery delivery is tracked: Core durable work of the recovering revision until done', () =>
+  native(
+    Effect.gen(function* lookupRecoveryTracked() {
+      // The operation was admitted under R1; a later compatible runtime R2 asks for the lookup, so the
+      // delivery is Core durable work of that recovering invocation, never relabelled R1 work.
+      yield* installPaymentTestCompositionAuthority(COMPOSITION_R2);
+      const evidence = yield* scenario();
+      const payment = yield* evidence.createPayment();
+      const collect = yield* evidence.startOperation({
+        amountMinor: 100_000,
+        operationKey: 'collect-lookup-tracked',
+        paymentId: payment.paymentId,
+      });
+      const recovered = yield* evidence.recover(
+        {
+          operationId: collect.operationId,
+          paymentId: payment.paymentId,
+          reason: 'The provider create response was lost in transport',
+          trigger: 'EXECUTION_OUTCOME_UNKNOWN',
+        },
+        { runtimes: evidence.r2 },
+      );
+      expect(recovered).toMatchObject({
+        executorWorkAdmitted: true,
+        executorWorkTracked: true,
+        originalCompositionRevision: COMPOSITION_R1,
+        recoveryMode: 'AUTHORITATIVE_LOOKUP',
+      });
+      expect(yield* completionOf(evidence, RECOVERY_REQUESTED)).toEqual([
+        { consumer: 'payment.core', revision: COMPOSITION_R2 },
+      ]);
+      expect(yield* outboxWork(evidence, RECOVERY_REQUESTED)).toEqual([COMPOSITION_R2]);
+    }),
+  ),
+);
+
 it.live('#1151 Provider idempotency window has expired: recovery falls back to lookup, never a replay', () =>
   native(
     Effect.gen(function* expiredProviderWindow() {
+      yield* installPaymentTestCompositionAuthority(COMPOSITION_R1);
       const evidence = yield* scenario();
       const payment = yield* evidence.createPayment(100_000, stripeBinding);
       const collect = yield* evidence.startOperation({
@@ -373,8 +446,9 @@ it.live('#1151 Provider idempotency window has expired: recovery falls back to l
         requestedMode: 'PROVIDER_IDEMPOTENT_REPLAY',
         trigger: 'OPERATOR_REQUEST',
       } as const;
+      // Lookup is concrete executor work: it is completion-bound like a replay (#1158).
       expect(yield* evidence.recover(request)).toMatchObject({
-        executorWorkTracked: false,
+        executorWorkTracked: true,
         providerReplay: 'NOT_PROVEN',
         recoveryMode: 'AUTHORITATIVE_LOOKUP',
       });
@@ -516,7 +590,8 @@ it.live(
 
         yield* isolated.composition.closeAdmission();
         expect(Exit.isFailure(yield* Effect.exit(isolated.composition.drain()))).toBe(true);
-        expect((yield* repository.matchUnmatched(revision, yield* DateTime.nowAsDate)).deliveriesCreated).toBe(2);
+        // The original gateway dispatch and both replays are matched to Payment's registered workers.
+        expect((yield* repository.matchUnmatched(revision, yield* DateTime.nowAsDate)).deliveriesCreated).toBe(3);
         const claimedAt = DateTime.add(yield* DateTime.now, { seconds: 1 });
         const abandoned = yield* Effect.fromOption(
           yield* fixture.bind(
@@ -585,6 +660,20 @@ it.live(
           { compositionRevision: revision, operationId: collect.operationId, outcome: 'EFFECT_CONFIRMED' },
         ]);
         expect(yield* unknownEffectWork(evidence, collect.operationId)).toEqual([]);
+        // The unfinished original dispatch still holds the release (#1153) until the executor completes it.
+        expect(Exit.isFailure(yield* Effect.exit(isolated.composition.drain()))).toBe(true);
+        const dispatched = yield* fixture.bind(
+          [executorCheckpoint],
+          restarted.runCycle({
+            claimOwner: 'original-executor',
+            compositionRevision: revision,
+            maxDeliveries: 1,
+            now: afterLease,
+            registrations: [executorCheckpoint],
+            subscriptions: extractOutboxWorkerSubscriptions([executorCheckpoint]),
+          }),
+        );
+        expect(dispatched).toMatchObject({ claimed: 1, failed: 0, succeeded: 1 });
         yield* isolated.composition.drain();
       }),
     ),
@@ -763,6 +852,7 @@ it.live('#1151 Closing admission retains unresolved accepted work: missing autho
 it.live('#1151 recovery refuses resolved operations and foreign scopes', () =>
   native(
     Effect.gen(function* refusedRecovery() {
+      yield* installPaymentTestCompositionAuthority(COMPOSITION_R1);
       const evidence = yield* scenario();
       const payment = yield* evidence.createPayment();
       const collect = yield* evidence.startOperation({

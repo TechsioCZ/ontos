@@ -3,9 +3,54 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-export const GatewayConfigurationRequestSchema = Schema.Struct({});
+import { PaymentCustomerConfigurationIdSchema, PaymentRevisionSchema } from '../domain/payment-identifiers.ts';
+import {
+  GatewayEnablementViewSchema,
+  GatewayHttpsUrlSchema,
+  GatewayProviderAccountBindingIdSchema,
+  GatewayProviderAccountBindingViewSchema,
+  GatewayProviderAccountRefSchema,
+} from '../domain/psp-configuration.ts';
+import { GatewayEnvironmentSchema } from '../domain/psp-vocabulary.ts';
+
+/** At most this many bindings and this many enablements are returned; `truncated` reports more. */
+export const GATEWAY_CONFIGURATION_LIMIT = 200;
+
+/**
+ * Gateway configuration of the trusted Selling Legal Entity (#1155): every Provider Account Binding
+ * (Current and retired) and the Current Gateway Enablements, optionally of one Customer Configuration.
+ * No secret and no secret reference is ever part of it.
+ */
+export const GatewayConfigurationRequestSchema = Schema.Struct({
+  customerConfigurationId: Schema.optionalKey(PaymentCustomerConfigurationIdSchema),
+});
 export type GatewayConfigurationRequest = typeof GatewayConfigurationRequestSchema.Type;
-export const GatewayConfigurationResponseSchema = Schema.Struct({ ok: Schema.Literal(true) });
+
+const GatewayConfigurationBindingSchema = Schema.Struct({
+  ...GatewayProviderAccountBindingViewSchema.fields,
+  configuredAt: Schema.DateTimeUtcFromString,
+  /** The number of the binding's ACTIVE credential revision; the material is never named here. */
+  currentCredentialRevision: PaymentRevisionSchema,
+  notificationUrl: GatewayHttpsUrlSchema,
+});
+
+const GatewayConfigurationEnablementSchema = Schema.Struct({
+  ...GatewayEnablementViewSchema.fields,
+  bindingId: GatewayProviderAccountBindingIdSchema,
+  configuredAt: Schema.DateTimeUtcFromString,
+  customerConfigurationId: PaymentCustomerConfigurationIdSchema,
+  environment: GatewayEnvironmentSchema,
+  providerAccountRef: GatewayProviderAccountRefSchema,
+  returnUrl: GatewayHttpsUrlSchema,
+});
+
+export const GatewayConfigurationResponseSchema = Schema.Struct({
+  bindings: Schema.Array(GatewayConfigurationBindingSchema),
+  enablements: Schema.Array(GatewayConfigurationEnablementSchema),
+  observedAt: Schema.DateTimeUtcFromString,
+  truncated: Schema.Boolean,
+});
+export type GatewayConfigurationResponse = typeof GatewayConfigurationResponseSchema.Type;
 
 export const GatewayConfigurationAuthenticationProblemSchema = makeProblemDetailsSchema(
   'GatewayConfigurationAuthenticationProblem',

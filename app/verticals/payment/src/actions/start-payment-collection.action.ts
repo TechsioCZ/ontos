@@ -21,6 +21,7 @@ import { PaymentLifecycleConflict, paymentLifecycleConflict } from '../../shared
 import { PaymentConflict, paymentConflict } from '../../shared/domain/payment-conflict.ts';
 import {
   isBankAccountingReceiptBinding,
+  PaymentGatewayAccountBindingSchema,
   sameBankReceiptAuthority,
 } from '../../shared/domain/payment-execution-binding.ts';
 import type {
@@ -64,6 +65,7 @@ const ErrorSchema = Schema.Union([
   PaymentUnavailable,
 ]);
 const domainEvents = { [OPERATION_REQUESTED]: OperationRequestedPayloadSchema } as const;
+const isGatewayAccountBinding = Schema.is(PaymentGatewayAccountBindingSchema);
 
 /**
  * A new COLLECT executes under the Payment's original binding only. For a gateway binding the C17
@@ -274,9 +276,12 @@ export const handleStartPaymentCollection = Effect.fn('StartPaymentCollectionAct
       subjectResourceId: payment.paymentId,
       subjectResourceType: 'payment.core.payment',
     });
+    // Only a gateway dispatch is an actual effect-capable provider call: it is Core durable work of this
+    // invocation's revision until the executor completes it (#1158). Other bindings wait for owner evidence.
     yield* context.addOutboxMessage(
       event,
       createStartPaymentCollectionPaymentCoreOperationRequestedV1OutboxMessage(requested),
+      isGatewayAccountBinding(requested.binding) ? { consumerModuleKey: MODULE_KEY } : undefined,
     );
     return result;
   },
