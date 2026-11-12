@@ -273,3 +273,11 @@ it.effect('a company that is not a VAT payer orders at 0 %: the line says so and
     expect(sent()).toEqual([expect.objectContaining({ _tag: 'CreateOrder' })]);
   }),
 );
+
+it.effect('rates the tax module has not confirmed yet are named as such above the lines', () =>
+  Effect.promise(async () => {
+    vat = { ...payer, confirmedAt: null };
+    await mount();
+    expect(text()).toContain('Sazby DPH zatím nepotvrdil modul Daně');
+  }),
+);

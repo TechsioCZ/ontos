@@ -27,6 +27,7 @@ import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts'
 import type { NewOrderLine } from './orders-records.ts';
 import { createOrder, isRevisionConflict } from './orders-records.ts';
 import { OrderLineEditor } from './order-line-editor.tsx';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { activeVariants, lineClassification, lineProduct } from './order-line-draft.ts';
 import { useTaxLabels } from '../../provoz/produkty/product-tax-classification.ts';
 import type { CompanyVat } from '../../provoz/produkty/product-tax-classification.ts';
@@ -105,6 +106,7 @@ export const OrderCreateDialog = ({
 }: OrderCreateDialogProps) => {
   const { language, t } = useModernI18n();
   const taxLabels = useTaxLabels();
+  const ratesConfirmation = taxLabels.confirmation(vat, DateTime.nowUnsafe());
   const now = DateTime.nowUnsafe();
   const toaster = useToast();
   const lineSequence = useRef(1);
@@ -286,6 +288,11 @@ export const OrderCreateDialog = ({
 
           <div className="flex flex-col gap-150">
             <span className="font-medium text-sm">{t(key('create.lines'))}</span>
+            {ratesConfirmation !== undefined && (
+              <StatusText showIcon size="sm" status="warning">
+                {ratesConfirmation}
+              </StatusText>
+            )}
             {draft.lines.map((line, index) => (
               <OrderLineEditor
                 canRemove={draft.lines.length > 1}

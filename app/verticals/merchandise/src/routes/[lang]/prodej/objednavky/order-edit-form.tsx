@@ -197,6 +197,7 @@ const useOrderEditForm = ({
   const pickedVariants = activeVariants(pickedProduct);
   // A product whose classification has no rate in force cannot go on the order: the server snapshots that rate.
   const pickedClassification = lineClassification(pickedProduct, vat, DateTime.nowUnsafe());
+  const ratesConfirmation = taxLabels.confirmation(vat, DateTime.nowUnsafe());
   const pickedRateMissing =
     pickedClassification !== null && pickedClassification.current === undefined
       ? taxLabels.rateMissing(pickedClassification.code)
@@ -349,6 +350,7 @@ const useOrderEditForm = ({
     pickedVariants,
     pickProduct,
     preview,
+    ratesConfirmation,
     record,
     setPickedVariantId,
     shippingInvalid,
@@ -505,6 +507,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
     pickedVariants,
     pickProduct,
     preview,
+    ratesConfirmation,
     record,
     setPickedVariantId,
     t,
@@ -692,6 +695,11 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
             {pickedRateMissing !== undefined && (
               <StatusText showIcon status="error">
                 {pickedRateMissing}
+              </StatusText>
+            )}
+            {ratesConfirmation !== undefined && (
+              <StatusText showIcon size="sm" status="warning">
+                {ratesConfirmation}
               </StatusText>
             )}
             {pick?.record.status === 'error' && (

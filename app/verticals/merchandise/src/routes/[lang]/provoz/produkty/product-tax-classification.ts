@@ -4,7 +4,7 @@ import { formatDate, formatNumber } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { CZ_VAT_STANDARD, czVatClassificationCodes } from '@app/shared-contracts/cz-vat-classifications';
 import type { CzVatClassificationCode, TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
-import { DateTime } from 'effect';
+import { DateTime, Duration } from 'effect';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 
 const KEY_PREFIX = 'merchandise.tax';
@@ -120,8 +120,21 @@ export const ratePercentText = (ratePercent: number): string => `${formatNumber(
 
 type Translate = (key: string, values?: Record<string, number | string>) => string;
 
+/** How old the company's rates may be before the staff screens say when Tax last confirmed them. */
+const CONFIRMATION_SHOWN_AFTER = Duration.minutes(30);
+
+/** A date (and time) in the screen's language, in Prague time. */
+const dateFormatOf = (language: string, withTime: boolean) => {
+  const options: Intl.DateTimeFormatOptions = { dateStyle: 'medium', timeZone: 'Europe/Prague' };
+  if (withTime) {
+    options.timeStyle = 'short';
+  }
+  return new Intl.DateTimeFormat(language === 'en' ? 'en-GB' : 'cs-CZ', options);
+};
+
 /** Words for the classifications and their rates. Pure, so the forms and their tests read the same text. */
-export const taxLabelsOf = (t: Translate) => {
+export const taxLabelsOf = (t: Translate, language = 'cs') => {
+  const dateTime = dateFormatOf(language, true);
   const name = (code: CzVatClassificationCode) => t(`${KEY_PREFIX}.classification.${nameKeys[code]}`);
   const notSet = t(`${KEY_PREFIX}.notSet`);
   const nonPayer = t(`${KEY_PREFIX}.nonPayer`);
@@ -156,8 +169,22 @@ export const taxLabelsOf = (t: Translate) => {
   /** Why a product cannot go on an order line: its classification has no rate in force for the company. */
   const rateMissing = (code: CzVatClassificationCode | undefined) =>
     t(`${KEY_PREFIX}.rateMissing`, { name: code === undefined ? notSet : name(code) });
+  /**
+   * When the company's rates are not current: not yet confirmed by Tax (taken over from the stored prices), or last
+   * confirmed long enough ago to say when. Nothing while they are recent or unknown.
+   */
+  const confirmation = (vat: CompanyVat, now: DateTime.Utc) => {
+    if (vat.confirmedAt === null) {
+      return t(`${KEY_PREFIX}.unconfirmed`);
+    }
+    return vat.confirmedAt === undefined ||
+      Duration.isLessThan(DateTime.distance(vat.confirmedAt, now), CONFIRMATION_SHOWN_AFTER)
+      ? undefined
+      : t(`${KEY_PREFIX}.confirmedAt`, { at: dateTime.format(DateTime.toEpochMillis(vat.confirmedAt)) });
+  };
   return {
     choice,
+    confirmation,
     line,
     name,
     noRates: t(`${KEY_PREFIX}.noRates`),
@@ -171,6 +198,6 @@ export const taxLabelsOf = (t: Translate) => {
 export type TaxLabels = ReturnType<typeof taxLabelsOf>;
 
 export const useTaxLabels = (): TaxLabels => {
-  const { t } = useModernI18n();
-  return taxLabelsOf(t);
+  const { language, t } = useModernI18n();
+  return taxLabelsOf(t, language);
 };

@@ -27,7 +27,9 @@ export const TaxClassificationSelect = ({ disabled = false, onChange, value, vat
   const none = noTaxRates(vat);
   const scheduledHint = selected === undefined ? undefined : labels.scheduled(selected);
   const regimeHint = vat.regime === 'NON_PAYER' ? labels.nonPayerHint : scheduledHint;
-  const hint = none ? labels.noRates : regimeHint;
+  const confirmation = labels.confirmation(vat, DateTime.nowUnsafe());
+  const shown = none ? labels.noRates : regimeHint;
+  const hint = [shown, confirmation].filter((part) => part !== undefined).join(' ') || undefined;
   return (
     <SelectTemplate
       disabled={disabled || none}

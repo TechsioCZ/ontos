@@ -124,3 +124,25 @@ describe('a company that is not a VAT payer', () => {
     expect(cs.scheduled(classificationChoice(nonPayerVat, CZ_VAT_STANDARD, now))).toBeUndefined();
   });
 });
+
+describe('how current the company rates are', () => {
+  it('says when Tax has not confirmed them yet, and when it last did once that is long ago', () => {
+    expect(cs.confirmation({ confirmedAt: null, rates: [standardNow], regime: 'VAT_PAYER' }, now)).toBe(
+      'Sazby DPH zatím nepotvrdil modul Daně; platí sazby převzaté z dosud uložených cen.',
+    );
+    const recent = {
+      confirmedAt: DateTime.subtract(now, { minutes: 5 }),
+      rates: [standardNow],
+      regime: 'VAT_PAYER' as const,
+    };
+    expect(cs.confirmation(recent, now)).toBeUndefined();
+    expect(cs.confirmation({ rates: [standardNow], regime: 'VAT_PAYER' }, now)).toBeUndefined();
+    const stale = { ...recent, confirmedAt: at('2026-11-12T07:30:00Z') };
+    expect(cs.confirmation(stale, now)?.replaceAll(' ', ' ')).toBe(
+      'Sazby DPH naposledy potvrdil modul Daně 12. 11. 2026 8:30; modul Daně teď neodpovídá.',
+    );
+    expect(taxLabelsOf(translateIn('en'), 'en').confirmation(stale, now)).toBe(
+      'The tax module last confirmed the VAT rates on 12 Nov 2026, 08:30; it is not answering now.',
+    );
+  });
+});
