@@ -139,7 +139,11 @@ const sourcesUnder = (directory: string): string[] =>
     ? readdirSync(path.join(workspace, directory), { withFileTypes: true }).flatMap((entry) => {
         const relative = path.posix.join(directory, entry.name);
         if (entry.isDirectory()) {
-          return ['node_modules', 'tests', 'dist', '.output'].includes(entry.name) ? [] : sourcesUnder(relative);
+          // `src/testing/` holds an owner's test-only exports (main's layout): nothing a host serves starts there, and a
+          // production import that reaches one is still followed from its importer.
+          return ['node_modules', 'tests', 'testing', 'dist', '.output'].includes(entry.name)
+            ? []
+            : sourcesUnder(relative);
         }
         return SOURCE.test(entry.name) && !entry.name.includes('.test.') ? [relative] : [];
       })

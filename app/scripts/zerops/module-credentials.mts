@@ -57,6 +57,7 @@ export const MODULE_INTERNAL_WORKLOADS: ReadonlyMap<string, readonly string[]> =
  * derives the same list from source, so a new caller cannot be missed and a former one keeps no key.
  */
 export const MODULE_CREDENTIAL_CALLERS: readonly string[] = Object.freeze([
+  'assortment',
   'catalog',
   'commerce-cart',
   'commerce-customer-context',
@@ -65,6 +66,8 @@ export const MODULE_CREDENTIAL_CALLERS: readonly string[] = Object.freeze([
   'crm',
   'party-registry',
   'pricing',
+  'privacy',
+  'symmy-integration',
 ]);
 
 /**
