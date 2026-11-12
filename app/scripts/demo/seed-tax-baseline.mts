@@ -97,7 +97,11 @@ const allRights: readonly string[] = Object.values(taxBaselineRights);
 
 export class TaxBaselineFailure extends Schema.TaggedError<TaxBaselineFailure>()('TaxBaselineFailure', {
   reason: Schema.String,
-}) {}
+}) {
+  override get message(): string {
+    return this.reason;
+  }
+}
 const fail = (reason: string) => new TaxBaselineFailure({ reason });
 
 /** Why one tax call was refused; a port maps its transport's problems onto these. */
@@ -572,8 +576,10 @@ export const runTaxBaseline = Effect.fn('TaxBaseline.run')(function* runTaxBasel
   mode: TaxBaselineMode,
   tenant: TaxBaselineTenantPort,
   reviewed: Option.Option<string>,
+  /** The Tenants this run may write to; only the integration test names its private Tenant here. */
+  allowedTenants: ReadonlyMap<string, string> = taxBaselineTenants,
 ) {
-  if (!taxBaselineTenants.has(tenant.tenantId)) {
+  if (!allowedTenants.has(tenant.tenantId)) {
     return yield* fail('The tax baseline is seeded only in the three selling stage Tenants');
   }
   if (tenant.companies.length === 0) {
@@ -765,7 +771,9 @@ const authorizeTax = (shell: ShellSession, compositionRevision: string, legalEnt
       ),
     );
 
-const toRuleObservation = (answer: Effect.Success<ReturnType<typeof executeApplicableTaxRuleSetWithAuthorization>>) =>
+export const toRuleObservation = (
+  answer: Effect.Success<ReturnType<typeof executeApplicableTaxRuleSetWithAuthorization>>,
+) =>
   RuleObservationSchema.make({
     applicable: answer.applicable.map(({ effectiveFrom, effectiveTo, ratePercent, revisionNumber }) => ({
       effectiveFrom,
@@ -775,7 +783,7 @@ const toRuleObservation = (answer: Effect.Success<ReturnType<typeof executeAppli
     })),
     outcome: answer.outcome,
   });
-const toRegimeObservation = (
+export const toRegimeObservation = (
   answer: Effect.Success<ReturnType<typeof executeSellerVatRegimeAtInstantWithAuthorization>>,
 ): RegimeObservation => ({
   headRevision: answer.headRevision,
@@ -784,7 +792,7 @@ const toRegimeObservation = (
     NOT_DECLARED: () => RegimeSelectionSchema.members[1].make({}),
   }),
 });
-const toDeclareAnswer = (
+export const toDeclareAnswer = (
   answer: Effect.Success<ReturnType<typeof executeDeclareSellerVatRegimeWithAuthorization>>,
 ): DeclareRegimeAnswer =>
   Match.valueTags(answer, {

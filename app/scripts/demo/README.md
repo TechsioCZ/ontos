@@ -270,13 +270,13 @@ at the end of the local launcher after grants have been installed; when the Shel
 deferred. Conflicting company identity or an Action denial fails setup. Existing business rows are
 retained. Rental example data is added separately with `demo:seed:rental --apply`.
 
-| Login / principal      | Role            | Write                                                 | Read only                                 |
-| ---------------------- | --------------- | ----------------------------------------------------- | ----------------------------------------- |
-| `obchod@demo.ontos`    | Vedoucí obchodu | everything, plus identity admin (creates the bot key) |                                           |
-| `obchodnik@demo.ontos` | Obchodník       | customers, tagging, opportunities, tasks              | employees, products, statistics, invoices |
-| `ucetni@demo.ontos`    | Účetní          | invoices, tasks                                       | customers, statistics                     |
-| `sklad@demo.ontos`     | Skladník        | products, tasks                                       |                                           |
-| `agent-bot` (API key)  | service         | none; no reviewed workload binding                    | none on human declaration carriers        |
+| Login / principal      | Role            | Write                                                 | Read only                                            |
+| ---------------------- | --------------- | ----------------------------------------------------- | ---------------------------------------------------- |
+| `obchod@demo.ontos`    | Vedoucí obchodu | everything, plus identity admin (creates the bot key) |                                                      |
+| `obchodnik@demo.ontos` | Obchodník       | customers, tagging, opportunities, tasks              | employees, products, statistics, invoices, VAT rates |
+| `ucetni@demo.ontos`    | Účetní          | invoices, tasks, VAT rules and seller VAT regime      | customers, statistics                                |
+| `sklad@demo.ontos`     | Skladník        | products, tasks                                       | VAT rates                                            |
+| `agent-bot` (API key)  | service         | none; no reviewed workload binding                    | none on human declaration carriers                   |
 
 Customer writers (`obchod`, `obchodnik`) receive the reviewed Party capability cells, including
 `party.registry.duplicate-candidate.resolve-create`. These do not include the dedicated
@@ -318,6 +318,19 @@ printf %s "$OWNER_PASSWORD" | pnpm demo:stage:reviewed-people \
   compared with the stage release and with the server's preview, never echoed back unseen.
 - It stops at the first refusal and is safe to re-run. A role that already holds other cells, a managed role
   held by anyone else, or a used-up generation halts it before any write.
+- A role saved earlier that holds only plain reviewed cells is extended, never rewritten: when the review adds
+  rights (Phase 1 added the tax rights below), the plan prints `adds to the saved role <key>:` with every added
+  cell (`+ <capability> <mode> <selector>`), each dangerous effect (`!`) and admin-kind cell, and the Shell's
+  preview must add exactly those cells. Nobody gains a right that the plan did not name.
+
+VAT rights (`commerce.tax`), named key by key in `permissions.mts`: Účetní reads and manages the rules and the
+seller's VAT regime (`tax-rule.create`, `tax-rule-revision.create|end|correct`,
+`seller-vat-regime-declaration.declare`, the two history reads and the two governed reads); Obchodník, Skladník
+and the e-shop administrators read only `tax-rule-set.read` and `seller-vat-regime.read-at-instant` (they pick a
+VAT classification on products). Order-tax finalization (a commerce-order service call) and the regime import (a
+migration tool) are in no human role. The Novinky review cannot place these rights: it only suggests a new
+capability to roles that already hold the same editor group, and these roles held no tax capability.
+
 - Exits: 0 done, 2 usage, 3 not the tenant owner, 4 validation halt, 5 HTTP refusal or unexpected answer.
 
 ### CRM and e-shop companies (demo v2)
@@ -441,6 +454,51 @@ Run it on the app host with only `DATABASE_URL` set: `--mode dry-run` prints eve
 `--mode verify` reads each one back through the gate's reader. It refuses keys the deployed catalog does not declare,
 non-machine principals, inactive companies, an owner that is not the Tenant's current human owner, and a binding
 already registered for another company. It writes no Role, grant, membership or key.
+
+### Tenant-wide module activation on stage
+
+`activate-market-stage.mts` installs one module tenant-wide through Core's own
+`core.modules.change-tenant-module-state` Action, signed in as a tenant-only operator (`ONTOS_AGENT_SETUP_EMAIL`,
+`ONTOS_AGENT_SETUP_PASSWORD`; on the app host also the Shell's `BETTER_AUTH_*`,
+`ULTRAMODERN_DEPLOYMENT_ENVIRONMENT=stage`, `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`). Each Tenant has an explicit
+allowlist: the demo Tenant market catalogue, storefront registry, Projekty and `commerce.tax`; N1 Tasks and
+`commerce.tax`; the AKROS playground `commerce.tax`. `commerce.tax` is installed only where the Tenant already has
+`demo.merchandise` or `finance.billing` active, and those selling modules are part of the reviewed plan. The local
+development (`…0010`) and verification (`…0090`) Tenants neither sell nor invoice and are not listed.
+
+```bash
+node scripts/demo/activate-market-stage.mts --module commerce.tax --plan "$WORK/plan.json"            # dry-run
+node scripts/demo/activate-market-stage.mts --module commerce.tax --plan "$WORK/plan.json" --mode apply \
+  --reviewed-plan-sha256 "$(sha256sum "$WORK/plan.json" | cut -d' ' -f1)"
+node scripts/demo/activate-market-stage.mts --module commerce.tax --plan "$WORK/plan.json" --mode verify \
+  --reviewed-plan-sha256 <same>
+```
+
+It refuses a module the active composition does not publish, a company-scoped or non-session operator, a changed
+composition, and any explicit lifecycle state other than inactive/active. A refusal prints its reason.
+
+### VAT baseline (`commerce.tax`) on stage
+
+`seed-tax-baseline.mts` gives every company of a selling stage Tenant its VAT baseline through tax's real Actions,
+from a company-scoped session of the operator, over the Shell's own endpoints: the seller is a VAT payer from
+2024-01-01 (no company fixture says otherwise), and `cz.vat.standard` 21 % and `cz.vat.reduced` 12 % apply from
+2024-01-01. It first reads the state through tax's governed reads and plans only what is missing; a regime or
+rule that somebody set differently is never overwritten and stops the plan by name. Before a write it asks the
+Shell's "Proč?" explain endpoint whether the operator holds `commerce.tax.tax-rule.create` and
+`commerce.tax.seller-vat-regime-declaration.declare` (and reads `…tax-rule-set.read`,
+`…seller-vat-regime.read-at-instant`) in each company, and stops naming the missing one; an Action refusal names
+the same right. A second `apply` plans nothing and adds no revision.
+
+```bash
+export ONTOS_DEMO_SEED_URL=https://ontos-stage.web-revolution.cz ONTOS_DEMO_SEED_TENANT_ID=<tenant>
+export ONTOS_DEMO_SEED_EMAIL=<operator> ONTOS_DEMO_SEED_PASSWORD=<from a secret prompt>
+node scripts/demo/seed-tax-baseline.mts --mode dry-run          # table per company + plan fingerprint
+node scripts/demo/seed-tax-baseline.mts --mode apply --reviewed-plan-sha256 <fingerprint>
+node scripts/demo/seed-tax-baseline.mts --mode verify           # exits 1 unless every company has the baseline
+```
+
+The human table names companies only; `--json` adds ids, the plan and per-write `created`. Only the demo, N1 and
+AKROS playground Tenants are accepted.
 
 ## Pseudonymous demo catalog (lane P/b)
 
