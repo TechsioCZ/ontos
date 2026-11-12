@@ -57,6 +57,8 @@ export const taxRuleHistoryRead = defineRead(
       reason:
         'Merchandise (and Finance for its clerks) reads the dated revisions of an applicable Tax rule for the staff member or registered Storefront it already admitted, so the rate at any instant is known.',
       subject: 'identity',
+      // Only Merchandise acts for a registered Storefront; Finance acts only for its staff.
+      subjectWorkloadCallers: ['merchandise'],
       subjectWorkloads: ['demo.storefront-client'],
     },
     accessDeclaration: {

@@ -13427,6 +13427,9 @@
             "subject": "identity",
             "subjectWorkloads": [
               "demo.storefront-client"
+            ],
+            "subjectWorkloadCallers": [
+              "merchandise"
             ]
           }
         },
@@ -13651,6 +13654,9 @@
             "subject": "identity",
             "subjectWorkloads": [
               "demo.storefront-client"
+            ],
+            "subjectWorkloadCallers": [
+              "merchandise"
             ]
           }
         },
@@ -13715,6 +13721,9 @@
             "subject": "identity",
             "subjectWorkloads": [
               "demo.storefront-client"
+            ],
+            "subjectWorkloadCallers": [
+              "merchandise"
             ]
           }
         }
