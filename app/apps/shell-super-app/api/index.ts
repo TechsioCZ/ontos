@@ -13,6 +13,8 @@ import {
 } from '@app/core-runtime/auth/external-identity-admission';
 import { delegationUnavailable } from './auth/gateway-delegation-errors.ts';
 import { GatewayDelegationVerificationLive } from './auth/gateway-delegation-verification.ts';
+import { gatewayReleaseRefusal } from './auth/gateway-release-refusal.ts';
+import type { GatewayReleaseRefusalHeaders } from './auth/gateway-release-refusal.ts';
 import {
   staffAuthenticationNamespaceRegistration,
   STAFF_AUTHENTICATION_NAMESPACE_ID,
@@ -2439,6 +2441,8 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
 
 const requireGatewayRelease = Effect.fn('ShellGateway.requireRelease')(function* requireGatewayReleaseEffect(
   compositionRevision: string | undefined,
+  /** For a browser-session endpoint: what to log when its document's release is refused. */
+  caller?: { readonly endpoint: string; readonly headers: GatewayReleaseRefusalHeaders },
 ) {
   const authority = yield* ShellInstalledModuleCatalog;
   const catalog = yield* authority.load.pipe(
@@ -2453,6 +2457,19 @@ const requireGatewayRelease = Effect.fn('ShellGateway.requireRelease')(function*
     catalog.composition.shell.deployment.appId !== ultramodernDeliveryUnit.appId ||
     catalog.composition.shell.deployment.buildMarker !== ultramodernDeliveryUnit.buildMarker
   ) {
+    if (caller !== undefined) {
+      yield* Effect.logInfo('gateway release refused').pipe(
+        Effect.annotateLogs({
+          ...gatewayReleaseRefusal({
+            currentRevision: catalog.composition.revision,
+            endpoint: caller.endpoint,
+            headers: caller.headers,
+            sentRevision: compositionRevision ?? null,
+          }),
+          shellBuildCurrent: catalog.composition.shell.deployment.buildMarker === ultramodernDeliveryUnit.buildMarker,
+        }),
+      );
+    }
     return yield* failGatewayProblem(
       extendedProblemDetails(
         'GatewayReloadRequiredProblem',
@@ -2573,7 +2590,10 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
     .handle('issueGatewayContext', ({ payload, request }) =>
       Effect.gen(function* issueGatewayContextHandler() {
         yield* noStore;
-        yield* requireGatewayRelease(payload.compositionRevision);
+        yield* requireGatewayRelease(payload.compositionRevision, {
+          endpoint: 'auth/gateway-context',
+          headers: { referer: request.headers['referer'], 'user-agent': request.headers['user-agent'] },
+        });
         const authentication = yield* AuthenticationService;
         const sessionResult = yield* authentication
           .resolveShellContext(requestHeaders(request.headers))
@@ -2736,7 +2756,10 @@ const documentGatewayGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'd
   handlers.handle('issueDocumentGatewayContexts', ({ payload, request }) =>
     Effect.gen(function* issueDocumentGatewayContextsHandler() {
       yield* noStore;
-      yield* requireGatewayRelease(payload.compositionRevision);
+      yield* requireGatewayRelease(payload.compositionRevision, {
+        endpoint: 'auth/gateway-contexts',
+        headers: { referer: request.headers['referer'], 'user-agent': request.headers['user-agent'] },
+      });
       const authentication = yield* AuthenticationService;
       const sessionResult = yield* authentication
         .resolveShellContext(requestHeaders(request.headers))
