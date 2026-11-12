@@ -12,7 +12,7 @@ import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-
 import type { PageData, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { OverviewResponse } from '../../../shared/apis/overview.ts';
-import { readFinance } from '../../api/finance-reads.ts';
+import { readFinance } from '../finance-reads.ts';
 import { executeOverview } from '../../api/overview-client.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { loadSalesCases } from './sales-source.ts';

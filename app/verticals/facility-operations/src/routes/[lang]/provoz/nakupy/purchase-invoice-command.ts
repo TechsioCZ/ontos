@@ -1,10 +1,31 @@
-import { FinanceCommandSchema } from '@app/finance-billing/contracts/apply-command';
-import type { FinanceCommand } from '@app/finance-billing/contracts/apply-command';
+import type { executeApplyCommand } from '@app/finance-billing/clients/apply-command';
+import {
+  CalendarDateSchema,
+  FinanceCompanyIdSchema,
+  FinanceTextSchema,
+  InvoiceLinesSchema,
+  MoneyMinorSchema,
+  SourceOrderSchema,
+} from '@app/finance-billing/contracts/records';
 import { Option, Schema } from 'effect';
 import type { PurchaseOrder, Supplier } from '../../../../../shared/domain/purchasing.ts';
 
+type FinanceCommand = Parameters<typeof executeApplyCommand>[0]['command'];
 type IncomingInvoice = Extract<FinanceCommand, { readonly _tag: 'RecordIncomingInvoice' }>;
-type IncomingInvoiceInput = Extract<typeof FinanceCommandSchema.Encoded, { readonly _tag: 'RecordIncomingInvoice' }>;
+
+/** The incoming-invoice fields a purchase order fills, decoded with Finance's published field schemas. */
+const IncomingInvoiceDraftSchema = Schema.TaggedStruct('RecordIncomingInvoice', {
+  documentNumber: FinanceTextSchema,
+  dueDate: CalendarDateSchema,
+  issueDate: CalendarDateSchema,
+  lines: Schema.optionalKey(InvoiceLinesSchema),
+  note: Schema.optionalKey(FinanceTextSchema),
+  sourceOrder: Schema.optionalKey(SourceOrderSchema),
+  supplierCompanyId: Schema.optionalKey(FinanceCompanyIdSchema),
+  supplierName: FinanceTextSchema,
+  totalMinor: MoneyMinorSchema.check(Schema.isGreaterThan(0)),
+});
+type IncomingInvoiceInput = typeof IncomingInvoiceDraftSchema.Encoded;
 type MutableIncomingInvoiceInput = {
   -readonly [Key in keyof IncomingInvoiceInput]: IncomingInvoiceInput[Key];
 };
@@ -15,7 +36,11 @@ export interface PurchaseInvoiceInput extends Pick<IncomingInvoice, 'dueDate' | 
 }
 
 /** Build only a command supported by Finance's public incoming-invoice contract. */
-export const purchaseInvoiceCommandOf = ({ order, supplier, ...invoice }: PurchaseInvoiceInput) => {
+export const purchaseInvoiceCommandOf = ({
+  order,
+  supplier,
+  ...invoice
+}: PurchaseInvoiceInput): Option.Option<IncomingInvoice> => {
   // RecordIncomingInvoice currently records CZK only. No implicit conversion is permitted.
   if (order.currency !== 'CZK') {
     return Option.none();
@@ -31,5 +56,5 @@ export const purchaseInvoiceCommandOf = ({ order, supplier, ...invoice }: Purcha
   if (supplier.ico !== undefined) {
     command.supplierCompanyId = supplier.ico;
   }
-  return Schema.decodeUnknownOption(FinanceCommandSchema)(command);
+  return Schema.decodeUnknownOption(IncomingInvoiceDraftSchema)(command);
 };
