@@ -22,7 +22,7 @@ import { expect, it } from 'effect-rstest';
 import { OccupancyStateSchema } from '../../shared/apis/records.ts';
 import type { OccupancyState } from '../../shared/apis/records.ts';
 import { leasesRead } from '../../src/search/leases.provider.ts';
-import { buildSearchDocuments } from '../../src/search/projection.ts';
+import { buildSearchDocuments } from '../../src/services/search-projection.ts';
 import { propertyLeasingRegistration } from '../../vertical.registration.ts';
 import { leaseSearchCompanyId, leaseSearchState, leaseSearchTenantId } from '../fixtures/lease-search-state.ts';
 

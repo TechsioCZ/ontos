@@ -5,7 +5,7 @@ import { Effect } from 'effect';
 import type { Cause } from 'effect';
 import { useEffect, useState } from 'react';
 import type { SubjectRef } from '../../shared/domain/documents.ts';
-import { readFinance } from '../api/finance-reads.ts';
+import { readFinance } from './finance-reads.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 
 export type OptionsState<Failure> =

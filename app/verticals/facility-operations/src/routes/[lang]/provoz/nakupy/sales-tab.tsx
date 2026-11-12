@@ -28,7 +28,7 @@ import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate as Select } from '@app/admin-ui/select-template';
-import { Effect, Random, Result, Schema } from 'effect';
+import { Effect, Predicate, Random, Result, Schema } from 'effect';
 import { useEffect, useId, useRef, useState } from 'react';
 import { salesRemainder } from '../../../../../shared/commands/sales.ts';
 import type {
@@ -40,7 +40,8 @@ import type {
 } from '../../../../../shared/domain/purchasing.ts';
 import { salesTotals } from '../../../../../shared/domain/purchasing.ts';
 import { ChangeHistory } from '../../../../ui/change-history.tsx';
-import { applyFinanceCommand, readFinance } from '../../../../api/finance-reads.ts';
+import { executeApplyCommand as applyFinanceCommand } from '@app/finance-billing/clients/apply-command';
+import { readFinance } from '../../../../ui/finance-reads.ts';
 import { useIncomingInvoiceLinks } from './finance-links.tsx';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { quoteDraftOf } from './sales-quote-draft.ts';
@@ -950,7 +951,8 @@ const prepareSalesInvoice = Effect.fn('FacilityOperations.Purchasing.prepareSale
       'facility-operations.sales-invoice.create',
       { idempotencyKey, referenceCredentials },
     );
-    if (result.invoice === undefined) {
+    // No proposal intent is sent, so Finance answers with the stored invoice; anything else is not a created draft.
+    if (Predicate.isTagged(result, 'ActionProposalAccepted') || result.invoice === undefined) {
       return yield* new SalesInvoiceSnapshotMissing({ orderId: order.id });
     }
     return result.invoice;

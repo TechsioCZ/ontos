@@ -1,5 +1,5 @@
 import { ReadHandlerUnavailable, ReadPermissionDenied } from '@app/core-runtime';
-import type { OperationalScope, ScopedTransactionExecutor, ReadServiceFactory } from '@app/core-runtime';
+import type { OperationalScope, ReadServiceFactory, ScopedTransactionExecutor } from '@app/core-runtime';
 import { ListAccessConditionSchema, evaluateListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
 import type { ListAccessCondition, ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
 import { RecordKeySchema } from '@app/core-runtime/access/ids';
@@ -8,7 +8,7 @@ import type { SQL } from 'drizzle-orm';
 import { Effect, Match, Result, Schema } from 'effect';
 import { OpsIdSchema } from '../../shared/domain/common.ts';
 import { agendaStates } from '../database/schema.ts';
-import { facilityOperationsGrants } from '../services/persistence.service.ts';
+import { facilityOperationsGrants } from './persistence.service.ts';
 
 const predicateSchema = Schema.Struct({
   groups: Schema.Array(

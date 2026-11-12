@@ -14,7 +14,7 @@ export const mapFinanceConflictProblem = (failure: FinanceConflict): typeof Fina
   FinanceConflictProblemSchema.make({
     code: 'finance_conflict',
     detail: failure.reason,
-    status: 409,
+    status: FinanceConflictProblemSchema.fields.status.literal,
     title: 'Action conflict',
     type: 'https://ontos.dev/problems/action-conflict',
   });
@@ -27,7 +27,7 @@ export const mapFinanceNotFoundProblem = (failure: FinanceNotFound): typeof Fina
   FinanceNotFoundProblemSchema.make({
     code: 'finance_not_found',
     detail: failure.reason,
-    status: 404,
+    status: FinanceNotFoundProblemSchema.fields.status.literal,
     title: 'Resource not found',
     type: 'https://ontos.dev/problems/action-resource-not-found',
   });
@@ -47,7 +47,7 @@ export const mapFinancePersistenceUnavailableProblem = (
     code: 'finance_persistence_unavailable',
     detail: failure.reason,
     retryable: true,
-    status: 503,
+    status: FinancePersistenceUnavailableProblemSchema.fields.status.literal,
     title: 'Action unavailable',
     type: 'https://ontos.dev/problems/action-unavailable',
   });
@@ -67,7 +67,7 @@ export const mapFinanceReferenceUnavailableProblem = (
     code: 'finance_reference_unavailable',
     detail: failure.reason,
     retryable: true,
-    status: 503,
+    status: FinanceReferenceUnavailableProblemSchema.fields.status.literal,
     title: 'Action unavailable',
     type: 'https://ontos.dev/problems/action-unavailable',
   });
@@ -80,7 +80,7 @@ export const mapFinanceRejectedProblem = (failure: FinanceRejected): typeof Fina
   FinanceRejectedProblemSchema.make({
     code: 'finance_rejected',
     detail: failure.reason,
-    status: 422,
+    status: FinanceRejectedProblemSchema.fields.status.literal,
     title: 'Action ineligible',
     type: 'https://ontos.dev/problems/action-ineligible',
   });

@@ -3,7 +3,7 @@
 // sheet and a prepared notice save once from the shared Uložit only; typing and Enter change only the draft; leaving
 // with typed input asks first and an untouched form leaves at once. Only the i18n runtime and the router are replaced.
 import { saveLabelsFor } from '@app/admin-ui';
-import { Effect, Option } from 'effect';
+import { Effect, Option, Predicate } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import type { OccupancyCommand } from '../../shared/actions/apply-command.ts';
 import { DossierCommunication } from '../../src/routes/[lang]/najmy/dossier-communication.tsx';
@@ -183,8 +183,8 @@ describe('dossier and stay forms save from Uložit only', () => {
       yield* click(button(labels.save));
       yield* waitUntil(() => left.length === 1);
       expect(sent).toHaveLength(1);
+      expect(Predicate.isTagged(sent[0], 'CreateRegistrationSheet')).toBe(true);
       expect(sent[0]).toMatchObject({
-        _tag: 'CreateRegistrationSheet',
         note: '',
         occupants: [{ identityDocument: 'OP 123456', name: 'Jana Nováková' }],
         purpose: 'Podnikání – nájem',
@@ -214,12 +214,8 @@ describe('dossier and stay forms save from Uložit only', () => {
 
       yield* click(button(labels.save));
       yield* waitUntil(() => sent.length === 1);
-      expect(sent[0]).toMatchObject({
-        _tag: 'PrepareNotice',
-        channel: 'EMAIL',
-        recipient: 'najemce@dolce.cz',
-        subject: 'Předání kanceláře',
-      });
+      expect(Predicate.isTagged(sent[0], 'PrepareNotice')).toBe(true);
+      expect(sent[0]).toMatchObject({ channel: 'EMAIL', recipient: 'najemce@dolce.cz', subject: 'Předání kanceláře' });
       yield* waitUntil(() => !navigation.shouldBlock());
       expect(text()).not.toContain(labels.unsaved);
     }),

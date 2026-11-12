@@ -1,20 +1,16 @@
-// Facility operations → Finance (finance-billing) through Finance's PUBLIC governed read and action, with the
-// person's own gateway credential (audience `finance-billing`). Finance stays the owner and enforces every
-// permission server-side. The schemas below name only the fields provoz uses and decode enumerations as plain
-// strings, so additive Finance contract changes (new optional fields, new states or document kinds) never break
-// provoz screens. Commands are still encoded with Finance's own command schema.
-import { ApplyCommandPayloadSchema } from '@app/finance-billing/contracts/apply-command';
-import type { ApplyCommandPayload } from '@app/finance-billing/contracts/apply-command';
+// Facility operations → Finance (finance-billing) through Finance's PUBLIC governed read, with the person's own
+// gateway credential (audience `finance-billing`). Finance stays the owner and enforces every permission
+// server-side. The schemas below name only the fields provoz uses and decode enumerations as plain strings, so
+// additive Finance contract changes (new optional fields, new states or document kinds) never break provoz
+// screens. Finance commands go through Finance's generated `@app/finance-billing/clients/apply-command` client.
 import { CalendarDateWireSchema, issueGatewayContext, makeOperationGateway } from '@app/shared-contracts';
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
-import type { EffectBffClientOptions } from '@app/shared-contracts/client-runtime';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Effect, Redacted, Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 const FINANCE_AUDIENCE = 'finance-billing' as const;
 const FINANCE_API_PREFIX = '/finance-billing-api';
-type FinanceTransportOptions = { -readonly [K in keyof EffectBffClientOptions]: EffectBffClientOptions[K] };
 
 const FinanceResourceIdSchema = Schema.String.pipe(
   Schema.brand('FacilityFinanceResourceId'),
@@ -102,8 +98,6 @@ const FinanceDocumentIdSchema = Schema.String.pipe(
 );
 const FinanceRecordsRequestSchema = Schema.Struct({ documentId: Schema.optionalKey(FinanceDocumentIdSchema) });
 
-const problemCode = { code: Schema.optionalKey(Schema.String) };
-
 const FinanceRecordsApi = HttpApi.make('FacilityOperationsFinanceRecordsApi').add(
   HttpApiGroup.make('records').add(
     HttpApiEndpoint.post('execute', '/reads/records', {
@@ -119,42 +113,6 @@ const FinanceRecordsApi = HttpApi.make('FacilityOperationsFinanceRecordsApi').ad
       ],
       payload: FinanceRecordsRequestSchema,
       success: FinanceRecordsViewSchema,
-    }),
-  ),
-);
-
-/** Result of a Finance command as provoz needs it; the invoice is the stored one (number, id, total). */
-export const FinanceCommandResultViewSchema = Schema.Struct({
-  changed: Schema.optionalKey(Schema.Boolean),
-  invoice: Schema.optionalKey(
-    Schema.Struct({
-      documentNumber: Schema.String,
-      number: optionalText,
-      ref: RefSchema,
-      totalMinor: Schema.Finite,
-    }),
-  ),
-  revision: Schema.Finite,
-});
-
-const FinanceApplyCommandApi = HttpApi.make('FacilityOperationsFinanceApplyCommandApi').add(
-  HttpApiGroup.make('applyCommand').add(
-    HttpApiEndpoint.post('execute', '/finance-billing/actions/apply-command', {
-      error: [
-        makeProblemDetailsSchema('ApplyCommandActionInvalidProblem', 400, problemCode),
-        makeProblemDetailsSchema('ApplyCommandActionAuthenticationProblem', 401, problemCode),
-        makeProblemDetailsSchema('ApplyCommandActionForbiddenProblem', 403, problemCode),
-        makeProblemDetailsSchema('ApplyCommandActionNotFoundProblem', 404, problemCode),
-        makeProblemDetailsSchema('ApplyCommandActionConflictProblem', 409, problemCode),
-        makeProblemDetailsSchema('ApplyCommandActionAlreadyCommittedProblem', 409, problemCode),
-        makeProblemDetailsSchema('ApplyCommandActionIneligibleProblem', 422, problemCode),
-        makeProblemDetailsSchema('ApplyCommandActionPreconditionProblem', 428, problemCode),
-        makeRetryableProblemDetailsSchema('ApplyCommandActionUnavailableProblem', 503, problemCode),
-        makeProblemDetailsSchema('ApplyCommandActionCommitIndeterminateProblem', 503, problemCode),
-        makeProblemDetailsSchema('ApplyCommandActionInternalProblem', 500, problemCode),
-      ],
-      payload: Schema.toEncoded(ApplyCommandPayloadSchema),
-      success: FinanceCommandResultViewSchema,
     }),
   ),
 );
@@ -178,32 +136,5 @@ export const readFinance = (requestCorrelation: string, request: { readonly docu
           payload: request.documentId === undefined ? {} : { documentId: request.documentId },
         }),
       ),
-    ),
-  );
-
-/** Runs one Finance command as the current person; Finance rejects it (403) when the role may not write. */
-export const applyFinanceCommand = (
-  payload: ApplyCommandPayload,
-  requestCorrelation: string,
-  options: { readonly idempotencyKey: string; readonly referenceCredentials?: Redacted.Redacted },
-) =>
-  gateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
-    Schema.encodeUnknownEffect(ApplyCommandPayloadSchema)(payload).pipe(
-      Effect.flatMap((encoded) => {
-        const transportOptions: FinanceTransportOptions = { baseUrl: apiBaseUrl, compositionRevision };
-        if (options.referenceCredentials !== undefined) {
-          transportOptions.referenceCredentials = options.referenceCredentials;
-        }
-        return makeGovernedEffectBffClient(
-          {
-            api: FinanceApplyCommandApi,
-            credential: Redacted.make(credential),
-            defaultApiPrefix: FINANCE_API_PREFIX,
-            idempotencyKey: options.idempotencyKey,
-            requestCorrelation,
-          },
-          transportOptions,
-        ).pipe(Effect.flatMap((client) => client.applyCommand.execute({ payload: encoded })));
-      }),
     ),
   );

@@ -2,7 +2,7 @@
 // The create forms (recurring template, received invoice, new invoice) create their record only from the shared Save
 // button ("Uložit"), last in the footer: typing changes only the draft, an untouched form closes without asking, and
 // typed input asks before it is left. Only the i18n runtime, the router blocker and the two pickers are replaced.
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { createElement } from 'react';
@@ -157,13 +157,8 @@ describe('create forms save from Uložit only', () => {
       yield* clickSave;
       yield* waitUntil(() => left.length === 1);
       expect(sent).toHaveLength(1);
-      expect(sent[0]).toMatchObject({
-        _tag: 'CreateRecurringTemplate',
-        dueDays: 14,
-        issueDay: 1,
-        name: 'Nájem kavárna',
-        partyId: customer.partyId,
-      });
+      expect(Predicate.isTagged(sent[0], 'CreateRecurringTemplate')).toBe(true);
+      expect(sent[0]).toMatchObject({ dueDays: 14, issueDay: 1, name: 'Nájem kavárna', partyId: customer.partyId });
     }),
   );
 
@@ -190,12 +185,8 @@ describe('create forms save from Uložit only', () => {
       yield* clickSave;
       yield* waitUntil(() => closes.length === 1);
       expect(sent).toHaveLength(1);
-      expect(sent[0]).toMatchObject({
-        _tag: 'RecordIncomingInvoice',
-        documentNumber: 'ZF-2026-77',
-        supplierName: 'ČEZ Prodej',
-        totalMinor: 121_000,
-      });
+      expect(Predicate.isTagged(sent[0], 'RecordIncomingInvoice')).toBe(true);
+      expect(sent[0]).toMatchObject({ documentNumber: 'ZF-2026-77', supplierName: 'ČEZ Prodej', totalMinor: 121_000 });
     }),
   );
 

@@ -29,11 +29,13 @@ rstest.mock('@techsio/ui-kit/molecules/toast', () => ({
   toaster: { attrs: {} },
   useToast: () => ({ create: constVoid }),
 }));
-rstest.mock('../../src/api/finance-reads.ts', () => ({
-  applyFinanceCommand: (payload: { readonly command: unknown }) =>
+rstest.mock('@app/finance-billing/clients/apply-command', () => ({
+  executeApplyCommand: (payload: { readonly command: unknown }) =>
     Effect.sync(() => {
       financeCommands.push(payload.command);
     }),
+}));
+rstest.mock('../../src/ui/finance-reads.ts', () => ({
   readFinance: () => Effect.succeed({ canWrite: true, revision: 7 }),
 }));
 
