@@ -50,6 +50,7 @@ import { ResetDemoDialog } from './reset-demo-dialog.tsx';
 import { commonOrderTransitions, ordersPageSummary, orderStatuses, transitionsFrom } from './orders-model.ts';
 import {
   changeOrderStatuses,
+  openOrderDetail,
   orderDetailIntent,
   preloadOrdersPage,
   recordsCanEditOrders,
@@ -251,6 +252,9 @@ const useOrdersPage = ({ context, legalEntityId }: OrdersPageContentProps) => {
     if (viewMode === 'panel') {
       setDetailId(id);
       return;
+    }
+    if (ready !== undefined && !stale) {
+      openOrderDetail({ legalEntityId, query: ready.query, scope: ordersScope }, ready.records, id);
     }
     void browserRuntime.runPromise(
       Effect.tryPromise(

@@ -32,6 +32,7 @@ import { ProposalSchema } from '../../src/access/model.ts';
 import { capabilityPolicyOf } from '../../src/access/enforcement/capability.ts';
 import { prepareEngineEvidence } from '../../src/access/enforcement/prepared-check.ts';
 import { accessDecisionUnavailable } from '../../src/access/decision/errors.ts';
+import { withOptional } from '../../src/access/decision/optional.ts';
 import type { DecisionAuthorityPort } from '../../src/access/decision/authority.ts';
 import { makeAccessDecisionService } from '../../src/access/enforcement/service.ts';
 import {
@@ -743,3 +744,70 @@ it.effect('distinguishes lost membership, expired deadlines, foreign scope and u
     ).toBe('ActionPermissionCheckError');
   }),
 );
+
+/** The port with its reads counted while in flight; each read yields first, so concurrent reads overlap. */
+const countedInFlight = (
+  port: DecisionAuthorityPort,
+  counter: { now: number; peak: number },
+): DecisionAuthorityPort => {
+  const counted = <A, E>(read: Effect.Effect<A, E>): Effect.Effect<A, E> =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        counter.now += 1;
+        counter.peak = Math.max(counter.peak, counter.now);
+      }),
+      () =>
+        Effect.forEach(Array.from({ length: 5 }), () => Effect.yieldNow, { discard: true }).pipe(Effect.andThen(read)),
+      () =>
+        Effect.sync(() => {
+          counter.now -= 1;
+        }),
+    );
+  const { readCellsMany, readConfigureBases } = port;
+  return withOptional(
+    withOptional(
+      {
+        readCells: (query) => counted(port.readCells(query)),
+        readConnection: (query) => counted(port.readConnection(query)),
+        readScope: (query) => counted(port.readScope(query)),
+        readTeamIds: (query) => counted(port.readTeamIds(query)),
+      },
+      'readCellsMany',
+      readCellsMany === undefined
+        ? undefined
+        : (queries: Parameters<typeof readCellsMany>[0]) => counted(readCellsMany(queries)),
+    ),
+    'readConfigureBases',
+    readConfigureBases === undefined
+      ? undefined
+      : (query: Parameters<typeof readConfigureBases>[0]) => counted(readConfigureBases(query)),
+  );
+};
+
+for (const joined of [false, true]) {
+  it.effect(
+    `an approval recheck ${joined ? "through a caller's transaction holds one intent read at a time" : 'on the pool overlaps its reads'}`,
+    () =>
+      Effect.gen(function* recheckPermits() {
+        const fixture = yield* makeFixture('approver');
+        const counter = { now: 0, peak: 0 };
+        const authority = withOptional(
+          countedInFlight(makeAuthority(fixture.spec).port, counter),
+          'readsThroughCallerTransaction',
+          joined ? (true as const) : undefined,
+        );
+        const live = yield* recheckActionAuthorityV2({
+          authority,
+          check: fixture.check,
+          command: fixture.command,
+          expectation: fixture.expectation,
+          now,
+          proof: fixture.proof,
+          scope,
+        });
+        expect(live).toEqual(fixture.proof);
+        // Each bound question and path is its own group, so a pooled recheck reads two at once; a joined one never.
+        expect(counter.peak).toBe(joined ? 1 : 2);
+      }),
+  );
+}

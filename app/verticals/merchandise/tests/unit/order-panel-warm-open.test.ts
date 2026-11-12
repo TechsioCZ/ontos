@@ -4,7 +4,7 @@
 // `order-detail-page.tsx` (full page, the default view, without a source). Only the records client is replaced.
 import { moduleChangeEvent, moduleWriteEvent, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
-import { Effect, Schema } from 'effect';
+import { Deferred, Effect, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -17,6 +17,7 @@ import { customerDirectoryData } from '../../src/routes/[lang]/prodej/objednavky
 import {
   changeOrderStatuses,
   firstOrdersPage,
+  openOrderDetail,
   orderCountsData,
   orderDetailData,
   orderDetailIntent,
@@ -101,11 +102,14 @@ const responseOf = (rows: { readonly orders?: typeof orders; readonly products?:
 
 /** Every records read the page sent, by what it asked for. */
 const reads: string[] = [];
+/** While set, detail reads wait for it to be released; unset, they answer in the same tick. */
+let detailGate: Deferred.Deferred<boolean> | null = null;
 const serve = () => {
   rstest.mocked(executeRecords).mockImplementation(({ view }) => {
     if (view?.productIds !== undefined || view?.productId !== undefined) {
       reads.push('detail');
-      return Effect.succeed(responseOf({ products: [{ ...product, stockOnHand: register.stock }] }));
+      const answer = Effect.succeed(responseOf({ products: [{ ...product, stockOnHand: register.stock }] }));
+      return detailGate === null ? answer : Deferred.await(detailGate).pipe(Effect.andThen(answer));
     }
     if (view?.orderId !== undefined) {
       reads.push('order');
@@ -227,6 +231,7 @@ beforeEach(() => {
   customerDirectoryData.invalidate();
   register.revision = 7;
   register.stock = 10;
+  detailGate = null;
   shownStock.length = 0;
   reads.length = 0;
   statuses.length = 0;
@@ -424,5 +429,62 @@ it.effect('a live change of another module keeps the warmed copy', () =>
     expect(statuses[0]).toBe('ready');
     yield* idle(2);
     expect(statuses).not.toContain('loading');
+  }),
+);
+
+it.effect('a row opened on the full order page while the list still warms it joins that read', () =>
+  Effect.gen(function* openWhileWarming() {
+    const release = yield* Deferred.make<boolean>();
+    detailGate = release;
+    yield* mountRoot(OrdersList);
+    yield* idle(1);
+    // The warm-up of the first rows has started and waits for its detail reads.
+    expect(count('detail')).toBeGreaterThan(0);
+    reads.length = 0;
+
+    // A row click hands the read over, then the default view replaces the list with the full order page.
+    const page = ordersPageData.snapshot(listInput);
+    expect(page.state).toBe('ready');
+    if (page.state === 'ready') {
+      openOrderDetail(listInput, page.value, 'order-1');
+    }
+    unmounts.shift()?.();
+    yield* mountRoot(fullPageFor('order-1'));
+    yield* Deferred.succeed(release, true);
+    yield* idle(2);
+    expect(statuses.at(-1)).toBe('ready');
+    // The order comes from the warm-up already under way: nothing of it is read again, not even the order by id.
+    expect(count('order')).toBe(0);
+    expect(count('detail')).toBe(DETAIL_READS - 1);
+  }),
+);
+
+it.effect('a queued row whose warm-up the list starts after the click still opens from the handed-over read', () =>
+  Effect.gen(function* openQueuedRow() {
+    const first = yield* Deferred.make<boolean>();
+    detailGate = first;
+    yield* mountRoot(OrdersList);
+    yield* idle(1);
+    // Two rows warm at once; the third waits for one of them.
+    const page = ordersPageData.snapshot(listInput);
+    expect(page.state).toBe('ready');
+    const clicked = yield* Deferred.make<boolean>();
+    detailGate = clicked;
+    if (page.state === 'ready') {
+      openOrderDetail(listInput, page.value, 'order-3');
+    }
+    detailGate = null;
+    // The first rows finish and the list reaches the clicked row: its warm-up joins the handed-over read.
+    yield* Deferred.succeed(first, true);
+    yield* idle(1);
+    reads.length = 0;
+
+    unmounts.shift()?.();
+    yield* mountRoot(fullPageFor('order-3'));
+    yield* Deferred.succeed(clicked, true);
+    yield* idle(2);
+    expect(statuses.at(-1)).toBe('ready');
+    expect(count('order')).toBe(0);
+    expect(count('detail')).toBe(DETAIL_READS - 1);
   }),
 );

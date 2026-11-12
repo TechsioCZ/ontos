@@ -164,6 +164,11 @@ export interface DecisionAuthorityPort {
   readonly readScope: (
     query: ScopeQuery,
   ) => Effect.Effect<Option.Option<ResolvedAccessScope>, AccessDecisionUnavailable>;
+  /**
+   * The reads run in a transaction a caller owns (O75). Each one installs its scope with its own statement on that
+   * one connection, so they must never overlap: the engine reads through such a port one read at a time.
+   */
+  readonly readsThroughCallerTransaction?: true;
   readonly readTeamIds: (
     query: TeamMembershipQuery,
   ) => Effect.Effect<readonly AccessTeamId[], AccessDecisionUnavailable>;

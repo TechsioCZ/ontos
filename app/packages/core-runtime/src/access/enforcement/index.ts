@@ -98,6 +98,7 @@ export type {
   SubjectCapabilityAnswer,
   SubjectCapabilityBatchInspection,
   SubjectCapabilityInspection,
+  SubjectInspectionStages,
   SubjectCapabilityInspectionInput,
   SubjectCapabilityQuestion,
   SubjectInspectionInput,
