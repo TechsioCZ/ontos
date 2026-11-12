@@ -1,5 +1,10 @@
 import { AgentAppIdSchema } from '@app/shared-contracts/agent-proposals';
-import type { AccessDeclarationInput, OntosActionContract, OperationalScope } from '@app/core-runtime';
+import type {
+  AccessDeclarationInput,
+  OntosActionContract,
+  OperationalScope,
+  TenantModuleState,
+} from '@app/core-runtime';
 import {
   OntosActionContractSchema,
   OntosModuleIdSchema,
@@ -717,9 +722,11 @@ it.effect('offers a tenant owner only the modules its tenant has installed, not 
     expect([...authority.live.write]).toEqual([moduleId]);
     expect(authority.offered.map((module) => [module.moduleId, module.write])).toEqual([[moduleId, true]]);
     expect(authority.policyCap).toBe('direct');
-    // One state read for every module the gate answered, so no module escapes the tenant's own installation.
+    // One state read of every composed module chooses what is asked; one more, of every module the gate answered,
+    // decides what is kept, so no module escapes the tenant's own installation, even one deactivated meanwhile.
     expect(inspection.stateReads.map((read) => ({ ...read, moduleKeys: read.moduleKeys.toSorted() }))).toEqual([
       { moduleKeys: [uninstalledModuleId, moduleId].toSorted(), tenantId },
+      { moduleKeys: [moduleId], tenantId },
     ]);
   }),
 );
@@ -1152,6 +1159,8 @@ it.effect('answers an Action key that two modules declare exactly as asking ever
   }),
 );
 
+const sorted = (values: Iterable<string>) => [...values].toSorted();
+
 /** The members of `set` that are in `kept`. */
 const keptOf = (set: ReadonlySet<string>, kept: ReadonlySet<string>) => new Set([...set].filter((id) => kept.has(id)));
 
@@ -1217,6 +1226,108 @@ it.effect('asks only the askable modules and answers them exactly as asking ever
     expect(gammaKeys.some((key) => everything.asked.has(key))).toBe(true);
     expect(gammaKeys.some((key) => restricted.asked.has(key))).toBe(false);
     expect(restricted.rows).toBeLessThan(everything.rows);
+  }),
+);
+
+/** One module per tenant module state, and one with no state row at all. */
+const MODULE_STATES = new Map<string, TenantModuleState | undefined>([
+  ['active.mod', 'active'],
+  ['read-only.mod', 'read_only'],
+  ['deprecated.mod', 'deprecated'],
+  ['suspended.mod', 'suspended'],
+  ['inactive.mod', 'inactive'],
+  ['archived.mod', 'archived'],
+  ['absent.mod', undefined],
+]);
+
+/** Tenant module states answered per read (1-based), so a state can change between two reads of one load. */
+const statesByRead = (stateAt: (read: number, moduleKey: string) => TenantModuleState | undefined) => {
+  let reads = 0;
+  return Layer.mock(TenantModuleStateService, {
+    getTenantModuleStates: (_tenantId, moduleKeys) =>
+      Effect.sync(() => {
+        reads += 1;
+        const read = reads;
+        return moduleKeys.flatMap((moduleKey) => {
+          const state = stateAt(read, moduleKey);
+          return state === undefined ? [] : [{ moduleKey: OntosModuleIdSchema.make(moduleKey), state }];
+        });
+      }),
+  });
+};
+
+/** One Action per module of `MODULE_STATES` (and `extra`), each module's Action key named after it. */
+const stateModulesCatalog = (extra: readonly string[] = []) =>
+  actionModulesCatalog(
+    Object.fromEntries([...MODULE_STATES.keys(), ...extra].map((id) => [id, [moduleAction(id, `${id}.act`)]])),
+  );
+
+/** `callerModuleAccess` over `installed` with every gate and Action answer allowed, and these module states. */
+const allowedCallerRights = (
+  installed: Effect.Success<ReturnType<typeof makeInstalledModuleCatalogLoader>>,
+  states: ReturnType<typeof statesByRead>,
+) =>
+  callerModuleAccess(caller).pipe(
+    Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+    Effect.provide(states),
+    Effect.provideService(AccessDecisionGate, gateAnswering('ALLOWED')),
+    Effect.provideService(
+      ActionAuthority,
+      actionAuthority(() => ({ execute: 'allowed' as const, propose: 'allowed' as const })),
+    ),
+  );
+
+it.effect("drops an approval caller's module that was deactivated while its rights were being decided", () =>
+  Effect.gen(function* deactivatedMidway() {
+    const installed = yield* catalog();
+    const stillActive = yield* allowedCallerRights(
+      installed,
+      statesByRead(() => 'active'),
+    );
+    expect([...stillActive.access]).toEqual([moduleId]);
+    // Active when the questions were chosen, suspended by the time the answers are kept: the module is not offered.
+    const deactivated = yield* allowedCallerRights(
+      installed,
+      statesByRead((read) => (read === 1 ? 'active' : 'suspended')),
+    );
+    expect({
+      access: deactivated.access.size,
+      propose: deactivated.propose.size,
+      write: deactivated.write.size,
+    }).toEqual({
+      access: 0,
+      propose: 0,
+      write: 0,
+    });
+  }),
+);
+
+/** The connection's acting authority over `installed`, with the fixture's inspection and module states. */
+const actingAuthorityOf = (
+  installed: Effect.Success<ReturnType<typeof makeInstalledModuleCatalogLoader>>,
+  inspection: ReturnType<typeof subjectInspectionFixture>,
+) =>
+  loadActingAuthority(scope, { actingKind: 'human', actingPrincipalId: principalId, legalEntityId, tenantId }).pipe(
+    Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+    Effect.provide(inspection.layer),
+  );
+
+it.effect("drops a connection's module that was deactivated while its authority was being decided", () =>
+  Effect.gen(function* connectionDeactivatedMidway() {
+    const { installed, keyOf, snapshot } = yield* stateModulesCatalog();
+    const describe = (stateAt: (read: number) => TenantModuleState) =>
+      actingAuthorityOf(
+        installed,
+        subjectInspectionFixture({
+          capabilities: [{ key: keyOf.get('active.mod.act') ?? '', modes: ['run'] as const }],
+          moduleStateAt: (read, key) => (key === 'active.mod' ? stateAt(read) : undefined),
+          snapshot,
+          subjects: [{ legalEntityId, principalId, tenantId }],
+        }),
+      );
+    expect(sorted((yield* describe(() => 'active')).live.read)).toEqual(['active.mod']);
+    const deactivated = yield* describe((read) => (read === 1 ? 'active' : 'inactive'));
+    expect({ read: deactivated.live.read.size, write: deactivated.live.write.size }).toEqual({ read: 0, write: 0 });
   }),
 );
 

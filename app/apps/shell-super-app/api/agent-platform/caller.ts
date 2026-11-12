@@ -320,9 +320,22 @@ export const callerModuleAccess = Effect.fn('AgentPlatform.callerModuleAccess')(
   const writeAnswered = new Set(
     actions.flatMap(({ actionKey, owningModuleId }) => (executable.has(actionKey) ? [owningModuleId] : [])),
   );
+  // The states are read once more after the decisions, as they were before the first read narrowed the questions: a
+  // module deactivated while the description ran (its rights not yet withdrawn from the projection) is dropped. One
+  // indexed statement, outside any transaction.
+  const current = yield* callerPhase(
+    progress,
+    'states',
+    (yield* TenantModuleStateService)
+      .getTenantModuleStates(caller.scope.tenantId, [...visible])
+      .pipe(Effect.mapError((cause) => new AgentStoreUnavailable({ cause }))),
+  );
+  const currentStateOf = new Map(current.map(({ moduleKey, state }) => [moduleKey, state]));
   const admitted = (modules: ReadonlySet<string>, access: 'read' | 'write'): Set<string> =>
     new Set(
-      [...modules].filter((moduleId) => decideModuleStateAccess(stateOf.get(moduleId) ?? null, access) === 'allow'),
+      [...modules].filter(
+        (moduleId) => decideModuleStateAccess(currentStateOf.get(moduleId) ?? null, access) === 'allow',
+      ),
     );
   return {
     access: admitted(visible, 'read'),

@@ -188,7 +188,6 @@ export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingA
     // installed. The gate itself answers over the whole composition (a tenant owner is admitted on every
     // administration declaration, also of a module this tenant never installed).
     const moduleStates = yield* TenantModuleStateService;
-    const stateOf = new Map<string, TenantModuleState>();
     const sets = yield* subjectModuleAccess(
       {
         queryScope: { legalEntityId: input.legalEntityId, tenantId: input.tenantId },
@@ -199,18 +198,22 @@ export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingA
       (moduleIds) =>
         moduleStates.getTenantModuleStates(input.tenantId, moduleIds).pipe(
           Effect.map((states) => {
-            for (const { moduleKey, state } of states) {
-              stateOf.set(moduleKey, state);
-            }
-            return new Set(
-              moduleIds.filter(
-                (moduleId) => decideModuleStateAccess(stateOf.get(moduleId) ?? null, 'read') === 'allow',
+            const readable = new Set(
+              states.flatMap(({ moduleKey, state }) =>
+                decideModuleStateAccess(state, 'read') === 'allow' ? [moduleKey] : [],
               ),
             );
+            return new Set(moduleIds.filter((moduleId) => readable.has(moduleId)));
           }),
         ),
     );
     const { labelOf } = composedModulesOf(mcpModulesOf(sets.installed.composition));
+    // The states are read once more after the decisions, as they were before the first read narrowed the questions: a
+    // module deactivated while the description ran (its rights not yet withdrawn from the projection) is dropped. One
+    // indexed statement, outside any transaction.
+    const answered = [...new Set([...sets.access, ...sets.run, ...sets.propose])];
+    const states = yield* moduleStates.getTenantModuleStates(input.tenantId, answered);
+    const stateOf = new Map<string, TenantModuleState>(states.map(({ moduleKey, state }) => [moduleKey, state]));
     const admitted = (modules: ReadonlySet<string>, access: 'read' | 'write'): ReadonlySet<string> =>
       new Set(
         [...modules].filter((moduleId) => decideModuleStateAccess(stateOf.get(moduleId) ?? null, access) === 'allow'),

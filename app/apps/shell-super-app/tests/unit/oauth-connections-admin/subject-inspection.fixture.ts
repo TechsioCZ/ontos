@@ -1,4 +1,4 @@
-import type { ActiveApplicationCompositionSnapshot, OperationalScope } from '@app/core-runtime';
+import type { ActiveApplicationCompositionSnapshot, OperationalScope, TenantModuleState } from '@app/core-runtime';
 import { OntosModuleIdSchema, TenantModuleStateService } from '@app/core-runtime';
 import {
   AccessDecisionLogBatch,
@@ -121,6 +121,11 @@ export const subjectInspectionFixture = (input: {
   readonly installedModules?: readonly string[];
   /** The composition each load answers (1-based load); by default `snapshot` every time. */
   readonly loadedSnapshot?: (load: number) => ActiveApplicationCompositionSnapshot;
+  /**
+   * The state each module state read (1-based) answers for a module, none for no state row; overrides
+   * `installedModules`, so a state can change between two reads of one description.
+   */
+  readonly moduleStateAt?: (read: number, moduleKey: string) => TenantModuleState | undefined;
   /** Runs before each capability read: a test can hold it (to observe overlap) or fail it (an unreadable carrier). */
   readonly onCapabilityRead?: (capabilityKey: string) => Effect.Effect<void, AccessDecisionUnavailable>;
   /**
@@ -207,15 +212,20 @@ export const subjectInspectionFixture = (input: {
   const installed = new Set(
     input.installedModules ?? input.snapshot.composition.modules.map(({ moduleId }) => moduleId),
   );
+  /** An installed module is active; any other has no state row. */
+  const defaultStateOf = (moduleKey: string): TenantModuleState | undefined =>
+    input.moduleStateAt === undefined && installed.has(moduleKey) ? 'active' : undefined;
   /** Every tenant module state read: the tenant and the module keys asked about. */
   const stateReads: { readonly moduleKeys: readonly string[]; readonly tenantId: string }[] = [];
   const moduleStates = Layer.mock(TenantModuleStateService, {
     getTenantModuleStates: (tenantId, moduleKeys) =>
       Effect.sync(() => {
         stateReads.push({ moduleKeys: [...moduleKeys], tenantId });
-        return moduleKeys
-          .filter((moduleKey) => installed.has(moduleKey))
-          .map((moduleKey) => ({ moduleKey: OntosModuleIdSchema.make(moduleKey), state: 'active' as const }));
+        const read = stateReads.length;
+        return moduleKeys.flatMap((moduleKey) => {
+          const state = input.moduleStateAt?.(read, moduleKey) ?? defaultStateOf(moduleKey);
+          return state === undefined ? [] : [{ moduleKey: OntosModuleIdSchema.make(moduleKey), state }];
+        });
       }),
   });
   const inspectionLayer = SubjectAccessInspectionLive.pipe(
@@ -288,5 +298,11 @@ export const subjectInspectionFixture = (input: {
       ),
     ),
   );
-  return { layer: Layer.merge(inspectionLayer, moduleStates), reads, requesterScopes, stateReads, writtenRows };
+  return {
+    layer: Layer.merge(inspectionLayer, moduleStates),
+    reads,
+    requesterScopes,
+    stateReads,
+    writtenRows,
+  };
 };
