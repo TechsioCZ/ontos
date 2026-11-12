@@ -95,6 +95,8 @@ const driverRow = (row: typeof agentProposals.$inferSelect = rawProposal) => {
 
 const executableComposition = Effect.fn('AgentProposalQueueReadTest.composition')(function* executableComposition(
   privateRecords: boolean | 'no-review' = 'no-review',
+  /** More Actions of the same module, by slug, besides `update`. */
+  additionalSlugs: readonly string[] = [],
 ) {
   const base = makeOutboxWorkerComposition([{ appId: 'task-service', moduleId: 'work.tasks' }]);
   const module = base.modules.at(0);
@@ -132,6 +134,30 @@ const executableComposition = Effect.fn('AgentProposalQueueReadTest.composition'
         owningModuleId: 'work.tasks',
         schemaVersion: '1',
       },
+      ...additionalSlugs.map((slug) => ({
+        accessDeclaration: {
+          key: `work.tasks.task.${slug}`,
+          kind: 'action' as const,
+          modes: ['run' as const],
+          placement: { group: 'tasks', level: 'basic' as const },
+          risk: 'routine' as const,
+          selectors: [],
+        },
+        actionKey: `work.tasks.${slug}`,
+        auditProfile: 'standard' as const,
+        entrypoint: {
+          access: 'write' as const,
+          authorization: { kind: 'protected' as const },
+          entrypointKey: `work.tasks.${slug}`,
+          moduleKey: 'work.tasks',
+          role: 'action' as const,
+          scope: 'tenant' as const,
+        },
+        idempotency: 'required' as const,
+        legalEntityScope: 'required' as const,
+        owningModuleId: 'work.tasks',
+        schemaVersion: '1' as const,
+      })),
     ],
   };
   if (privateRecords !== 'no-review') {
@@ -210,6 +236,20 @@ const retainedCommand = (
 const authority = (execute: 'allowed' | 'denied' = 'allowed'): ActionAuthorityService => ({
   checkActionAuthorities: (query) =>
     Effect.succeed(query.actionKeys.map((actionKey) => ({ actionKey, execute, propose: 'allowed' as const }))),
+  checkActionProposalPermission: () => Effect.die('Proposal permission never authorizes queue reads'),
+});
+
+/** Execution rights for exactly `executable`, recording every Action key asked in `asked`. */
+const recordingAuthority = (executable: ReadonlySet<string>, asked: string[]): ActionAuthorityService => ({
+  checkActionAuthorities: (query) =>
+    Effect.sync(() => {
+      asked.push(...query.actionKeys);
+      return query.actionKeys.map((actionKey) => ({
+        actionKey,
+        execute: executable.has(actionKey) ? ('allowed' as const) : ('denied' as const),
+        propose: 'allowed' as const,
+      }));
+    }),
   checkActionProposalPermission: () => Effect.die('Proposal permission never authorizes queue reads'),
 });
 
@@ -587,6 +627,80 @@ it.layer(
         expect(result.candidates).toHaveLength(1);
       }),
     );
+  }
+
+  /*
+   * An exact batch read asks the Action authority about exactly the Actions its rows name (every declared one when
+   * it has no row), never about every Action of the release; its answer is the one asking every Action gave: the
+   * person must be able to run every row's Action, and at least one Action at all.
+   */
+  for (const scenario of [
+    { executable: ['update', 'archive'], rows: ['update'] },
+    { executable: ['archive'], rows: ['update'] },
+    { executable: [], rows: ['update'] },
+    { executable: ['update'], rows: ['update', 'update'] },
+    { executable: ['archive'], rows: [] },
+    { executable: [], rows: [] },
+    { executable: ['update', 'archive'], rows: ['other'] },
+  ] as const) {
+    for (const mode of ['batch', 'batch-state'] as const) {
+      suite.effect(
+        `answers a ${mode} read exactly as asking every Action, asking only its rows' (${JSON.stringify(scenario)})`,
+        () =>
+          Effect.gen(function* exactBatchAuthority() {
+            const rows = scenario.rows.map((slug, index) =>
+              driverRow({
+                ...rawProposal,
+                actionSlug: slug,
+                position: index,
+                proposalId: `60000000-0000-4000-8000-00000000000${index + 1}`,
+              }),
+            );
+            const harness = yield* makeReadTestHarness({
+              executeOwnerQuery: (query) =>
+                Effect.succeed(query.sql.includes('from "core"."principals"') ? [{ principalId }] : rows),
+              operationTime,
+              ownerAuthorizationDecision: 'allowed',
+              permissionDecision: 'allowed',
+              scope,
+            });
+            const services = yield* Layer.build(
+              Layer.mergeAll(
+                harness.layer,
+                outboxWorkerCompositionLayer(yield* executableComposition('no-review', ['archive'])),
+              ),
+            );
+            const asked: string[] = [];
+            const executable = new Set<string>(scenario.executable.map((slug) => `work.tasks.${slug}`));
+            const outcome = yield* harness.runtime
+              .runRead({ input: { batchId, mode }, principal: scope, registration: agentProposalQueueRead, transport })
+              .pipe(
+                Effect.provideService(ActionAuthority, recordingAuthority(executable, asked)),
+                Effect.provide(services),
+                Effect.match({
+                  onFailure: (failure) => (Schema.is(ReadPermissionDenied)(failure) ? 'denied' : 'failed'),
+                  onSuccess: (read) => `rows ${read.proposals.length}`,
+                }),
+              );
+            // The answer asking every Action gave: refused unless the person can run every row's declared Action
+            // and at least one Action at all.
+            const declared = new Set(['update', 'archive']);
+            const runnable = new Set<string>(scenario.executable);
+            const everyRowRunnable = scenario.rows.every((slug) => declared.has(slug) && runnable.has(slug));
+            const expected =
+              scenario.executable.length > 0 && everyRowRunnable
+                ? `rows ${mode === 'batch-state' ? 0 : scenario.rows.length}`
+                : 'denied';
+            expect(outcome).toBe(expected);
+            const rowActions = new Set(
+              scenario.rows.filter((slug) => declared.has(slug)).map((slug) => `work.tasks.${slug}`),
+            );
+            expect(new Set(asked)).toEqual(
+              scenario.rows.length === 0 ? new Set(['work.tasks.update', 'work.tasks.archive']) : rowActions,
+            );
+          }),
+      );
+    }
   }
 
   suite.effect('batch access refuses a partial owning-Action view instead of weakening revert-all', () =>

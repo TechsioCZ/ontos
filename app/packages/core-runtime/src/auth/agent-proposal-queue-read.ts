@@ -27,6 +27,31 @@ import {
   agentProposalQueueUnavailable as unavailable,
 } from './agent-proposal-queue-unavailable.ts';
 
+/** A read of one exact batch: its rows are selected by the batch alone, and every one of them must be authorized. */
+const isExactBatchRead = (input: AgentProposalQueueInput): boolean =>
+  input.mode === 'batch' || input.mode === 'batch-state' || input.mode === AGENT_PROPOSAL_COMMAND_RECOVERY_MODE;
+
+/**
+ * The Actions of `actions` the acting person may run. One gate question per Action over this request's own trusted
+ * scope: no scalar identity is re-derived from client input (O66). The Action's answer is its module's: no retired
+ * `module_access` relation is asked beside it.
+ */
+const executableActions = Effect.fn('AgentProposalQueueRead.executableActions')(function* executableActions(
+  actions: readonly AgentProposalQueueAction[],
+  scope: ReadPrepareContext['scope'],
+) {
+  if (actions.length === 0) {
+    return [];
+  }
+  const decisions = yield* (yield* ActionAuthority)
+    .checkActionAuthorities({ actionKeys: actions.map(({ actionKey }) => actionKey), scope })
+    .pipe(Effect.mapError(unavailable));
+  const executable = new Set(
+    decisions.flatMap((decision) => (decision.execute === 'allowed' ? [decision.actionKey] : [])),
+  );
+  return actions.filter((action) => executable.has(action.actionKey));
+});
+
 const prepare = Effect.fn('AgentProposalQueueRead.prepare')(function* prepare(
   input: AgentProposalQueueInput,
   context: ReadPrepareContext,
@@ -82,20 +107,17 @@ const prepare = Effect.fn('AgentProposalQueueRead.prepare')(function* prepare(
       ];
     });
   });
-  // One gate question per Action over this request's own trusted scope: the queue lists exactly the
-  // Actions the acting person may run, and no scalar identity is re-derived from client input (O66). The
-  // Action's answer is its module's: no retired `module_access` relation is asked beside it.
-  const decisions = yield* (yield* ActionAuthority)
-    .checkActionAuthorities({ actionKeys: declared.map(({ actionKey }) => actionKey), scope: context.scope })
-    .pipe(Effect.mapError(unavailable));
-  const executable = new Set(
-    decisions.flatMap((decision) => (decision.execute === 'allowed' ? [decision.actionKey] : [])),
-  );
-  const actions = declared.filter(
+  // An Action a row can name: one declared Action per app and slug, so a row never matches two.
+  const unique = declared.filter(
     (action) =>
-      executable.has(action.actionKey) &&
       declared.filter((other) => other.appId === action.appId && other.actionSlug === action.actionSlug).length === 1,
   );
+  if (isExactBatchRead(input)) {
+    // An exact batch read selects its rows by batch alone and authorizes every row's Action in `finish`: only the
+    // Actions its rows name are asked there, never every Action of the release.
+    return { actions: unique, revision };
+  }
+  const actions = yield* executableActions(unique, context.scope);
   if (actions.length === 0) {
     return yield* agentProposalQueueDenied();
   }
@@ -186,13 +208,24 @@ const finish = Effect.fn('AgentProposalQueueRead.finish')(function* finish(
     return { evidence: { resultCount: loaded.proposals.length }, result: loaded };
   }
   const batchState = input.mode === 'batch-state';
-  const exactBatch = input.mode === 'batch' || batchState || input.mode === AGENT_PROPOSAL_COMMAND_RECOVERY_MODE;
-  if (exactBatch && loaded.proposals.some((row) => actionOf(row, prepared.actions) === undefined)) {
+  const exactBatch = isExactBatchRead(input);
+  // An exact batch asks exactly the Actions its rows name (every declared one when it has no row, so a person who may
+  // run no Action at all is still refused), after commit and never inside the scoped SQL transaction.
+  const named = [
+    ...new Set(loaded.proposals.map((row) => actionOf(row, prepared.actions)).filter((action) => action !== undefined)),
+  ];
+  const actions = exactBatch
+    ? yield* executableActions(loaded.proposals.length === 0 ? prepared.actions : named, context.scope)
+    : prepared.actions;
+  if (exactBatch && actions.length === 0) {
     return yield* agentProposalQueueDenied();
   }
-  const authorized = loaded.proposals.filter((row) => actionOf(row, prepared.actions) !== undefined);
+  if (exactBatch && loaded.proposals.some((row) => actionOf(row, actions) === undefined)) {
+    return yield* agentProposalQueueDenied();
+  }
+  const authorized = loaded.proposals.filter((row) => actionOf(row, actions) !== undefined);
   // Remote owner reads are after commit, never inside the scoped SQL transaction.
-  const modules = [...new Map(prepared.actions.map((action) => [action.appId, action])).values()];
+  const modules = [...new Map(actions.map((action) => [action.appId, action])).values()];
   const visibility = yield* Effect.forEach(
     modules,
     (action) =>
