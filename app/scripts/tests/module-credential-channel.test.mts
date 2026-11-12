@@ -23,6 +23,7 @@ import {
   provisionModuleCredentialsForReleaseWith,
   recordHostBoot,
   retireAfterHandoverWith,
+  workloadKeysDiffer,
 } from '../zerops/app-host.mts';
 import type { HandoverChannel, ModuleCredentialHealingStreaks } from '../zerops/app-host.mts';
 import {
@@ -402,6 +403,7 @@ describe('module credential healing', () => {
     start: ProvisioningOutput = held,
     nowMillis = 0,
     streaks: Ref.Ref<ModuleCredentialHealingStreaks> = Ref.makeUnsafe({ revocations: 0, unreadable: 0 }),
+    renewal: Ref.Ref<boolean> = Ref.makeUnsafe(false),
   ) =>
     Effect.gen(function* healOnce() {
       yield* TestClock.setTime(nowMillis);
@@ -419,6 +421,7 @@ describe('module credential healing', () => {
           held: state,
           holders: Effect.succeed([holder, holder]),
           issue: (appIds) => Effect.sync(() => issues.push(appIds)).pipe(Effect.as(issued)),
+          renewal,
           retireOwn: (keep) => Effect.sync(() => retirements.push(keep)),
           serving: Effect.succeed(true),
         },
@@ -426,6 +429,40 @@ describe('module credential healing', () => {
       );
       return { healthy, held: yield* Ref.get(state), issues, messages, retirements, streaks: yield* Ref.get(streaks) };
     });
+
+  it.effect('renews every caller once when the internal workload registrations changed, keys live or not', () =>
+    Effect.gen(function* registrationsChanged() {
+      const current = output({ [ORDER]: ORDER_KEY_ONE, [PARTY]: PARTY_KEY_ONE });
+      const live = new Set(providerKeyIdsOf(current));
+      const fresh = output({ [ORDER]: ORDER_KEY_TWO, [PARTY]: PARTY_KEY_TWO }, [], GENERATION_TWO, 40 * HOUR, {
+        [ORDER_WORKLOAD_ENTRY]: WORKLOAD_KEY_ONE,
+      });
+      const renewal = Ref.makeUnsafe(true);
+      const result = yield* healing(Effect.succeed(live), fresh, current, HOUR, undefined, renewal);
+      expect(result.issues).toEqual([[ORDER, PARTY]]);
+      expect(result.messages.every((message) => message.includes(WORKLOAD_KEY_ONE))).toBe(true);
+      expect(result.retirements).toEqual([providerKeyIdsOf(current)]);
+      expect(yield* Ref.get(renewal)).toBe(false);
+      // Asked once: the next step, with nothing new, renews nothing.
+      const quiet = yield* healing(
+        Effect.succeed(new Set(providerKeyIdsOf(fresh))),
+        fresh,
+        fresh,
+        HOUR,
+        undefined,
+        renewal,
+      );
+      expect(quiet.issues).toEqual([]);
+    }),
+  );
+
+  it('compares the registrations with the workload keys held, company by company', () => {
+    const holding = output({ [ORDER]: ORDER_KEY_ONE }, [], '', DAY, { [ORDER_WORKLOAD_ENTRY]: WORKLOAD_KEY_ONE });
+    const registration = { appId: ORDER, legalEntityId: COMPANY, tenantId: TENANT, workloadKey: 'demo.order.intake' };
+    expect(workloadKeysDiffer(holding, [registration])).toBe(false);
+    expect(workloadKeysDiffer(holding, [registration, { ...registration, legalEntityId: OTHER_COMPANY }])).toBe(true);
+    expect(workloadKeysDiffer(holding, [])).toBe(true);
+  });
 
   it.effect('hands fresh keys to every holder when its own keys were revoked, then retires what they replaced', () =>
     Effect.gen(function* revoked() {
