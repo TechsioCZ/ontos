@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { Visitor } from 'oxc-parser';
 import type {
   ArrowFunctionExpression,
@@ -182,6 +184,8 @@ export interface NativeSqlProofModule {
   }[];
   readonly file: string;
   readonly program: Program;
+  /** The text `program` was parsed from. */
+  readonly source: string;
 }
 export type NativeSqlImportEdge =
   | { readonly kind: 'native-drizzle' | 'native-drizzle-effect' | 'native-pg-root' | 'native-effect' }
@@ -192,6 +196,8 @@ export interface NativeSqlCallableReference {
   readonly implementation: ArrowFunctionExpression | FunctionNode;
 }
 export interface NativeSqlProofEnvironment {
+  /** `<workspace root>/packages/core-runtime/src/db/`: the only directory whose guarded pool the fence accepts. */
+  readonly coreDatabaseDirectory: string;
   readonly modules: readonly NativeSqlProofModule[];
   readonly resolveFunction?: (reference: NativeSqlSourceReference) => NativeSqlCallableReference | undefined;
   readonly resolveImport: (file: string, source: string) => NativeSqlImportEdge | undefined;
@@ -336,9 +342,8 @@ const nativeIdentity = (
 /*
  * Security fence: guarded Core pool (transaction I/O guard + session-role check). Core builds its client through
  * these exports of its own database modules; each is accepted only as the import of that exact Core module, named
- * from Core's `db/client.ts`, never by name alone.
+ * from Core's `db/client.ts` at `<workspace root>/packages/core-runtime/src/db/`, never by name or path suffix.
  */
-const coreDatabaseDirectory = '/packages/core-runtime/src/db/';
 const coreDatabaseClient = 'client.ts';
 const coreDatabaseExports = new Map([
   ['configureDatabasePool', 'pool-configuration.ts'],
@@ -347,19 +352,38 @@ const coreDatabaseExports = new Map([
   ['refuseInsideDatabaseTransaction', transactionIoGuardModule],
   ['verifySessionRoleOnFirstUse', 'session-identity.ts'],
 ]);
-/** The Core modules whose guard implementations the fence trusts as Core's own. */
-const coreDatabaseGuardModules = new Set(['database-client.ts', 'session-identity.ts', transactionIoGuardModule]);
-const coreDatabaseDirectoryOf = (file: string): string | undefined =>
-  file.endsWith(`${coreDatabaseDirectory}${coreDatabaseClient}`)
-    ? file.slice(0, file.length - coreDatabaseClient.length)
+/**
+ * Security fence: guarded Core pool. The proofs do not close the guard modules' own code (Proxy traps, session
+ * state, the shared-pool registry); they trust it only as the exact reviewed source. Each digest is SHA-256 over the
+ * module's source text, so any change (a no-op guard, a skipped role query, injected codecs, an appended statement,
+ * and equally a reworded comment) fails closed until the guard is reviewed again and its digest updated here.
+ */
+const reviewedCoreDatabaseGuardModules = new Map([
+  ['database-client.ts', '1f749b737c5a0eb691cd602f6aa14a4145ff66913b73d1839a17ab55752036c8'],
+  ['session-identity.ts', 'f3f193b79b717163ec79197fb3db7abc829a86d6939c13cab5e6f374fca01223'],
+  [transactionIoGuardModule, '4417b2144e1b7b549e5fe0d842f6191076ddb94f12a8538e154dab7ec7499599'],
+]);
+const reviewedSources = new WeakMap<Program, boolean>();
+const isCoreDatabaseClient = (environment: NativeSqlProofEnvironment, file: string): boolean =>
+  file === `${environment.coreDatabaseDirectory}${coreDatabaseClient}`;
+/** One of Core's guard modules, at Core's own database directory, exactly as reviewed. */
+export const isReviewedCoreDatabaseGuardModule = (
+  module: Pick<NativeSqlProofModule, 'file' | 'program' | 'source'>,
+  coreDatabaseDirectory: string,
+): boolean => {
+  const name = module.file.startsWith(coreDatabaseDirectory)
+    ? module.file.slice(coreDatabaseDirectory.length)
     : undefined;
-const isCoreDatabaseClient = (file: string): boolean => coreDatabaseDirectoryOf(file) !== undefined;
-export const isCoreDatabaseGuardModule = (file: string): boolean => {
-  const separator = file.lastIndexOf('/');
-  return (
-    file.slice(0, separator + 1).endsWith(coreDatabaseDirectory) &&
-    coreDatabaseGuardModules.has(file.slice(separator + 1))
-  );
+  const reviewed = name === undefined ? undefined : reviewedCoreDatabaseGuardModules.get(name);
+  if (reviewed === undefined) {
+    return false;
+  }
+  let matches = reviewedSources.get(module.program);
+  if (matches === undefined) {
+    matches = createHash('sha256').update(module.source).digest('hex') === reviewed;
+    reviewedSources.set(module.program, matches);
+  }
+  return matches;
 };
 /** One exported top-level `const` of this name, and no other top-level declaration of it. */
 const declaresExportedConst = (module: NativeSqlProofModule, name: string): boolean => {
@@ -394,7 +418,7 @@ const coreDatabaseExport = (
   environment: NativeSqlProofEnvironment,
   reference: NativeSqlSourceReference,
 ): string | undefined => {
-  const directory = coreDatabaseDirectoryOf(reference.file);
+  const directory = isCoreDatabaseClient(environment, reference.file) ? environment.coreDatabaseDirectory : undefined;
   const { expression } = reference;
   const binding =
     expression.type === 'Identifier' && sourceExists(environment, reference)
@@ -409,7 +433,11 @@ const coreDatabaseExport = (
     edge?.kind === 'module' && edge.file === `${directory}${declaredIn}`
       ? environment.modules.find((candidate) => candidate.file === edge.file)
       : undefined;
-  return module !== undefined && declaresExportedConst(module, binding.origin.imported)
+  const reviewed =
+    module !== undefined &&
+    (!reviewedCoreDatabaseGuardModules.has(declaredIn) ||
+      isReviewedCoreDatabaseGuardModule(module, environment.coreDatabaseDirectory));
+  return module !== undefined && reviewed && declaresExportedConst(module, binding.origin.imported)
     ? binding.origin.imported
     : undefined;
 };
@@ -423,8 +451,8 @@ const hasClosedNativeModuleHandles = (
   module: NativeSqlProofModule,
 ): boolean => {
   // Security fence: guarded Core pool (transaction I/O guard + session-role check). Core's own guard modules
-  // hold the client inside their guards; their implementations are Core's, not owner code this proof closes.
-  if (isCoreDatabaseGuardModule(module.file)) {
+  // hold the client inside their guards; only their exact reviewed source is skipped here.
+  if (isReviewedCoreDatabaseGuardModule(module, environment.coreDatabaseDirectory)) {
     return true;
   }
   let valid = true;
@@ -437,7 +465,7 @@ const hasClosedNativeModuleHandles = (
   const coreClientTag = (call: Extract<Expression, { type: 'CallExpression' }>): Expression | undefined => {
     const identity = nativeIdentity(environment, reference(call.callee));
     const tag = call.arguments[identity === nativeLayerEffect ? 0 : 1];
-    return isCoreDatabaseClient(module.file) &&
+    return isCoreDatabaseClient(environment, module.file) &&
       call.arguments.length === 2 &&
       (identity === nativeLayerEffect || identity === nativeContextGet) &&
       tag !== undefined &&
@@ -1218,7 +1246,7 @@ const guardedCorePool = (
   const acquisitions =
     layer === undefined ||
     body === undefined ||
-    !isCoreDatabaseClient(layer.file) ||
+    !isCoreDatabaseClient(environment, layer.file) ||
     !isNativeTag(environment, layer, plainArgument(layerCall, 0))
       ? undefined
       : guardedLayerAcquisitions(environment, { ...layer, expression: body });

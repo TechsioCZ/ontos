@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import nodePath from 'node:path';
+
 import { Effect, Path, Schema } from 'effect';
 import { parseSync, Visitor } from 'oxc-parser';
 import type { Expression, Span } from 'oxc-parser';
@@ -7,6 +10,7 @@ import {
   describeNativeSqlTransaction,
   describeNativeSqlExecute,
   describeNativeSqlTextSelection,
+  isReviewedCoreDatabaseGuardModule,
   parseClosedNativeSelectProjection,
 } from '../native-sql-success-proof.mts';
 import type {
@@ -15,6 +19,9 @@ import type {
   NativeSqlSourceReference,
 } from '../native-sql-success-proof.mts';
 import { expect, it } from 'effect-rstest';
+
+/** These fixtures build no guarded Core pool; the fence's Core directory is one they never use. */
+const coreDatabaseFixtureDirectory = '/workspace/packages/core-runtime/src/db/';
 
 it('derives own wire aliases from the actual closed scope verification SELECT', () => {
   expect(
@@ -131,6 +138,7 @@ const fixtureProof = (
       witnessCaptures.set(captureBinding.node, { expression: captureSource, file });
     }
     const environment: NativeSqlProofEnvironment = {
+      coreDatabaseDirectory: coreDatabaseFixtureDirectory,
       modules,
       resolveFunction: (ref) => resolver.resolveNativeSqlFunction(ref),
       resolveImport: (_file, specifier) => {
@@ -344,6 +352,7 @@ const selectedProof = (column = nativeTextColumn, receiver = 'db', suffix = '') 
       return undefined;
     }
     const environment: NativeSqlProofEnvironment = {
+      coreDatabaseDirectory: coreDatabaseFixtureDirectory,
       modules,
       resolveFunction: (ref) => resolver.resolveNativeSqlFunction(ref),
       resolveImport: (from, specifier) => {
@@ -441,4 +450,22 @@ it.effect('keeps trusted capture facts private when public map storage is replac
   fixtureProof(nativeFixture(), 'captureReplacement').pipe(
     Effect.map((fields) => expect(fields).toEqual(['role', 'tenant_id'])),
   ),
+);
+
+/*
+ * Security fence: guarded Core pool. The proofs trust Core's transaction I/O, session-role and pool-client guard
+ * modules only as reviewed source. A failure here means one of them changed: review the change as a security change
+ * to the guarded pool, then update its digest in `reviewedCoreDatabaseGuardModules`.
+ */
+it.each(['database-client.ts', 'session-identity.ts', 'transaction-io-guard.ts'])(
+  "pins Core's reviewed guard module %s",
+  (name) => {
+    const directory = `${nodePath.resolve(import.meta.dirname, '../../packages/core-runtime/src/db')}/`;
+    const file = `${directory}${name}`;
+    const source = readFileSync(file, 'utf-8');
+    const module = (text: string) => ({ file, program: parseSync(file, text).program, source: text });
+    expect(isReviewedCoreDatabaseGuardModule(module(source), directory)).toBe(true);
+    expect(isReviewedCoreDatabaseGuardModule(module(source), '/elsewhere/packages/core-runtime/src/db/')).toBe(false);
+    expect(isReviewedCoreDatabaseGuardModule(module(`${source}\nexport const appended = 1;`), directory)).toBe(false);
+  },
 );
