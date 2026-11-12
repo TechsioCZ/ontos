@@ -113,13 +113,11 @@ export interface ScannedEntrypoint {
 }
 
 /** Static literal values only: a computed declaration is reported instead of guessed. */
-export type LiteralObject = Schema.JsonObject;
-export type LiteralValue = Schema.Json;
+export interface LiteralObject {
+  readonly [key: string]: LiteralValue;
+}
 
-const isLiteralObject = Schema.is(Schema.JsonObject);
-const isLiteralArray = EffectArray.isArray<LiteralValue | undefined>;
-const isLiteralString = Schema.is(Schema.String);
-const encodeLiteral = Schema.encodeResult(Schema.fromJsonString(Schema.Json));
+export type LiteralValue = boolean | LiteralObject | null | number | readonly LiteralValue[] | string;
 
 /**
  * One declaration carrier found in source, with its optional raw declaration literal, its raw field
@@ -171,7 +169,7 @@ interface PropertyRead {
 }
 
 interface ScanContext {
-  readonly constants: ReadonlyMap<string, LiteralValue>;
+  readonly constants: ReadonlyMap<string, string>;
   readonly declarationSources: ReadonlyMap<string, string>;
   readonly delimiters: ReadonlyMap<number, number>;
   readonly file: string;
@@ -272,21 +270,6 @@ const isPropertyName = (token: CatalogToken | undefined): boolean =>
     token.kind === SyntaxKind.StringLiteral ||
     token.kind === SyntaxKind.NumericLiteral);
 
-const literalEnd = (
-  tokens: readonly CatalogToken[],
-  delimiters: ReadonlyMap<number, number>,
-  start: number,
-): number => {
-  if (tokens[start]?.kind === SyntaxKind.TemplateHead) {
-    for (let index = start + 1; index < tokens.length; index += 1) {
-      if (tokens[index]?.kind === SyntaxKind.TemplateTail) {
-        return index;
-      }
-    }
-  }
-  return delimiters.get(start) ?? start;
-};
-
 /** One `name: value` or shorthand `name` property of the object literal open at `cursor`. */
 const readProperty = (
   tokens: readonly CatalogToken[],
@@ -308,10 +291,7 @@ const readProperty = (
     return { entry: null, next: cursor + 1 };
   }
   const start = cursor + 2;
-  const end =
-    isContainer(tokens[start]) || tokens[start]?.kind === SyntaxKind.TemplateHead
-      ? literalEnd(tokens, delimiters, start)
-      : start;
+  const end = isContainer(tokens[start]) ? (delimiters.get(start) ?? start) : start;
   return { entry: [propertyName, { end, start }], next: end + 1 };
 };
 
@@ -344,14 +324,14 @@ const numericValue = (value: string): number | null => {
 
 /** Recursive literal reader: methods keep the mutual recursion ordered and readable. */
 class LiteralParser {
-  readonly #constants: ReadonlyMap<string, LiteralValue>;
+  readonly #constants: ReadonlyMap<string, string>;
   readonly #delimiters: ReadonlyMap<number, number>;
   readonly #tokens: readonly CatalogToken[];
 
   constructor(
     tokens: readonly CatalogToken[],
     delimiters: ReadonlyMap<number, number>,
-    constants: ReadonlyMap<string, LiteralValue>,
+    constants: ReadonlyMap<string, string>,
   ) {
     this.#tokens = tokens;
     this.#delimiters = delimiters;
@@ -359,114 +339,68 @@ class LiteralParser {
   }
 
   /**
-   * Only static values decode: literals and resolved owner-local constants. A computed
+   * Only static values decode: literals and the module's own top-level string constants. A computed
    * value returns `undefined`.
    */
   value(start: number): LiteralValue | undefined {
     const token = this.#tokens[start];
-    if (token === undefined) {
-      return undefined;
-    }
-    if (token.kind === SyntaxKind.StringLiteral || token.kind === SyntaxKind.NoSubstitutionTemplateLiteral) {
+    if (token?.kind === SyntaxKind.StringLiteral) {
       return token.value;
     }
-    if (token.kind === SyntaxKind.TemplateHead) {
-      return this.template(start, token.value);
+    if (token?.kind === SyntaxKind.Identifier && this.#tokens[start + 1]?.kind !== SyntaxKind.DotToken) {
+      return this.#constants.get(token.value);
     }
-    if (token.kind === SyntaxKind.Identifier) {
-      return this.reference(start, token.value);
-    }
-    if (token.kind === SyntaxKind.NumericLiteral) {
+    if (token?.kind === SyntaxKind.NumericLiteral) {
       return numericValue(token.value) ?? undefined;
     }
-    if (token.kind === SyntaxKind.TrueKeyword) {
+    if (token?.kind === SyntaxKind.TrueKeyword) {
       return true;
     }
-    if (token.kind === SyntaxKind.FalseKeyword) {
+    if (token?.kind === SyntaxKind.FalseKeyword) {
       return false;
     }
-    if (token.kind === SyntaxKind.NullKeyword) {
+    if (token?.kind === SyntaxKind.NullKeyword) {
       return null;
     }
-    if (token.kind === SyntaxKind.OpenBraceToken) {
+    if (token?.kind === SyntaxKind.OpenBraceToken) {
       return this.object(start);
     }
-    return token.kind === SyntaxKind.OpenBracketToken ? this.array(start) : undefined;
-  }
-
-  template(start: number, head: string): string | undefined {
-    let value = head;
-    for (let cursor = start + 1; cursor < this.#tokens.length; cursor += 2) {
-      const expression = this.#tokens[cursor];
-      const suffix = this.#tokens[cursor + 1];
-      const part = expression?.kind === SyntaxKind.Identifier ? this.#constants.get(expression.value) : undefined;
-      if (
-        !isLiteralString(part) ||
-        (suffix?.kind !== SyntaxKind.TemplateMiddle && suffix?.kind !== SyntaxKind.TemplateTail)
-      ) {
-        return undefined;
-      }
-      value += part + suffix.value;
-      if (suffix.kind === SyntaxKind.TemplateTail) {
-        return value;
-      }
-    }
-    return undefined;
-  }
-
-  reference(start: number, name: string): LiteralValue | undefined {
-    const next = this.#tokens[start + 1]?.kind;
-    const suffixes = [
-      SyntaxKind.CommaToken,
-      SyntaxKind.CloseBraceToken,
-      SyntaxKind.CloseBracketToken,
-      SyntaxKind.SemicolonToken,
-      SyntaxKind.AsKeyword,
-      SyntaxKind.SatisfiesKeyword,
-    ];
-    return next === undefined || suffixes.includes(next) ? this.#constants.get(name) : undefined;
+    return token?.kind === SyntaxKind.OpenBracketToken ? this.array(start) : undefined;
   }
 
   object(openIndex: number): LiteralObject | undefined {
-    const values = new Map<string, LiteralValue>();
+    const value: Record<string, LiteralValue> = {};
+    for (const [key, entry] of objectEntries(this.#tokens, this.#delimiters, openIndex)) {
+      const parsed = this.value(entry.start);
+      if (parsed === undefined) {
+        return undefined;
+      }
+      value[key] = parsed;
+    }
+    return value;
+  }
+
+  /** A list of object literals only: every element must open a brace, so nothing else is guessed. */
+  objects(openIndex: number): readonly LiteralObject[] | undefined {
     const closeIndex = this.#delimiters.get(openIndex) ?? this.#tokens.length;
-    for (let cursor = openIndex + 1; cursor < closeIndex;) {
+    const values: LiteralObject[] = [];
+    let cursor = openIndex + 1;
+    while (cursor < closeIndex) {
       if (this.#tokens[cursor]?.kind === SyntaxKind.CommaToken) {
         cursor += 1;
-        continue;
-      }
-      if (this.#tokens[cursor]?.kind === SyntaxKind.DotDotDotToken) {
-        // Only already-resolved literal objects may be spread. Never evaluate an expression or
-        // omit an unresolved spread: either would publish different data from the owner's declaration.
-        if (this.#tokens[cursor + 1]?.kind !== SyntaxKind.Identifier) {
-          return undefined;
-        }
-        const spread = this.value(cursor + 1);
-        if (!isLiteralObject(spread)) {
-          return undefined;
-        }
-        for (const [key, value] of Object.entries(spread)) {
-          values.set(key, value);
-        }
-        cursor += 2;
       } else {
-        const property = readProperty(this.#tokens, this.#delimiters, cursor, closeIndex);
-        if (property.entry === null) {
+        if (this.#tokens[cursor]?.kind !== SyntaxKind.OpenBraceToken) {
           return undefined;
         }
-        const [key, entry] = property.entry;
-        const parsed = this.value(entry.start);
+        const parsed = this.object(cursor);
         if (parsed === undefined) {
           return undefined;
         }
-        values.set(key, parsed);
-        cursor = property.next;
-      }
-      if (cursor < closeIndex && this.#tokens[cursor]?.kind !== SyntaxKind.CommaToken) {
-        return undefined;
+        values.push(parsed);
+        cursor = (this.#delimiters.get(cursor) ?? cursor) + 1;
       }
     }
-    return Object.fromEntries(values);
+    return values;
   }
 
   array(openIndex: number): readonly LiteralValue[] | undefined {
@@ -477,131 +411,52 @@ class LiteralParser {
       const token = this.#tokens[cursor];
       if (token?.kind === SyntaxKind.CommaToken) {
         cursor += 1;
-      } else if (token?.kind === SyntaxKind.DotDotDotToken) {
-        const parsed = this.value(cursor + 1);
-        if (!isLiteralArray(parsed)) {
-          return undefined;
-        }
-        values.push(...parsed);
-        cursor += 2;
       } else {
         const parsed = this.value(cursor);
         if (parsed === undefined) {
           return undefined;
         }
         values.push(parsed);
-        cursor = literalEnd(this.#tokens, this.#delimiters, cursor) + 1;
+        cursor = (this.#delimiters.get(cursor) ?? cursor) + 1;
       }
     }
     return values;
   }
 }
 
-/** A literal may end with a const assertion and one named type, never a value expression. */
-const closedLiteralSuffix = (tokens: readonly CatalogToken[], end: number): boolean => {
-  let cursor = end + 1;
-  if (tokens[cursor]?.kind === SyntaxKind.AsKeyword) {
-    if (tokens[cursor + 1]?.kind !== SyntaxKind.ConstKeyword) {
-      return false;
-    }
-    cursor += 2;
+const stringConstantAt = (tokens: readonly CatalogToken[], index: number): readonly [string, string] | null => {
+  if (
+    tokens[index]?.kind !== SyntaxKind.ConstKeyword ||
+    tokens[index + 1]?.kind !== SyntaxKind.Identifier ||
+    tokens[index + 2]?.kind !== SyntaxKind.EqualsToken ||
+    tokens[index + 3]?.kind !== SyntaxKind.StringLiteral
+  ) {
+    return null;
   }
-  if (tokens[cursor]?.kind === SyntaxKind.SatisfiesKeyword) {
-    if (tokens[cursor + 1]?.kind !== SyntaxKind.Identifier) {
-      return false;
-    }
-    cursor += 2;
-  }
-  return tokens[cursor] === undefined || tokens[cursor]?.kind === SyntaxKind.SemicolonToken;
+  return [tokens[index + 1]?.value ?? '', tokens[index + 3]?.value ?? ''];
 };
 
-/**
- * Traverse top-level syntax only, skipping nested literal and executable bodies without evaluating them.
- * @yields {[number, CatalogToken]} The source offset and token at each top-level syntax position.
- */
-const topLevelTokens = function* topLevelTokens(
-  tokens: readonly CatalogToken[],
-  delimiters: ReadonlyMap<number, number>,
-): Generator<readonly [number, CatalogToken]> {
-  let index = 0;
-  while (index < tokens.length) {
-    const token = tokens[index];
-    if (token !== undefined) {
-      yield [index, token];
+const stringConstants = (tokens: readonly CatalogToken[]): ReadonlyMap<string, string> => {
+  const constants = new Map<string, string>();
+  for (const [index] of tokens.entries()) {
+    const constant = stringConstantAt(tokens, index);
+    if (constant !== null) {
+      constants.set(constant[0], constant[1]);
     }
-    const end = token !== undefined && OPEN_DELIMITERS.has(token.kind) ? delimiters.get(index) : undefined;
-    index = (end ?? index) + 1;
   }
+  return constants;
 };
 
-interface LiteralConstantDeclaration {
-  readonly exported: boolean;
-  readonly name: string;
-  readonly start: number;
-}
-
-const literalConstantDeclarations = (
-  tokens: readonly CatalogToken[],
-  delimiters: ReadonlyMap<number, number>,
-): readonly LiteralConstantDeclaration[] => {
-  const declarations: LiteralConstantDeclaration[] = [];
-  for (const [index, token] of topLevelTokens(tokens, delimiters)) {
-    if (
-      token.kind === SyntaxKind.ConstKeyword &&
-      tokens[index + 1]?.kind === SyntaxKind.Identifier &&
-      tokens[index + 2]?.kind === SyntaxKind.EqualsToken
-    ) {
-      declarations.push({
-        exported: tokens[index - 1]?.kind === SyntaxKind.ExportKeyword,
-        name: tokens[index + 1]?.value ?? '',
-        start: index + 3,
-      });
+/** Exported top-level string constants of a module; a name declared twice is ambiguous and dropped. */
+const exportedStringConstants = (tokens: readonly CatalogToken[]): ReadonlyMap<string, string> => {
+  const found: (readonly [string, string])[] = [];
+  for (const [index, token] of tokens.entries()) {
+    const constant = token.kind === SyntaxKind.ExportKeyword ? stringConstantAt(tokens, index + 1) : null;
+    if (constant !== null) {
+      found.push(constant);
     }
   }
-  return declarations;
-};
-
-/** Only top-level const initializers made of literals and resolved constants, never calls. */
-const staticConstants = (
-  tokens: readonly CatalogToken[],
-  imported: ReadonlyMap<string, LiteralValue>,
-  exportedOnly = false,
-): ReadonlyMap<string, LiteralValue> => {
-  const delimiters = matchDelimiters(tokens);
-  const declarations = literalConstantDeclarations(tokens, delimiters);
-  const constants = new Map(imported);
-  // Each successful pass resolves at least one declaration; forward references cannot loop forever.
-  let remaining = declarations.length;
-  while (remaining > 0) {
-    remaining -= 1;
-    let changed = false;
-    for (const declaration of declarations) {
-      if (constants.has(declaration.name)) {
-        continue;
-      }
-      const parsed = new LiteralParser(tokens, delimiters, constants).value(declaration.start);
-      const end = literalEnd(tokens, delimiters, declaration.start);
-      if (parsed !== undefined && closedLiteralSuffix(tokens, end)) {
-        constants.set(declaration.name, parsed);
-        changed = true;
-      }
-    }
-    if (!changed) {
-      break;
-    }
-  }
-  const selected = new Map<string, LiteralValue>();
-  for (const { exported, name } of declarations) {
-    const value = constants.get(name);
-    if (
-      value !== undefined &&
-      (!exportedOnly || exported) &&
-      declarations.filter((other) => other.name === name).length === 1
-    ) {
-      selected.set(name, value);
-    }
-  }
-  return selected;
+  return new Map(found.filter(([name]) => found.filter(([other]) => other === name).length === 1));
 };
 
 interface NamedImport {
@@ -664,54 +519,19 @@ export const ownerLocalImportTargets = (source: string, file: string): readonly 
   ...new Set(namedImports(tokenize(source), file).map((binding) => binding.target)),
 ];
 
-/** Resolve only owner-local named exports of literal data, with cycles left unresolved. */
-const importedLiteralConstants = (
+/** Imported string constants, keyed by the local name, read from the exports of the same-module files. */
+const importedStringConstants = (
   tokens: readonly CatalogToken[],
   file: string,
   moduleSources: ReadonlyMap<string, string>,
-  visiting: ReadonlySet<string> = new Set(),
-): ReadonlyMap<string, LiteralValue> => {
-  const constants = new Map<string, LiteralValue>();
-  const path = new Set([...visiting, file]);
+): ReadonlyMap<string, string> => {
+  const constants = new Map<string, string>();
   for (const binding of namedImports(tokens, file)) {
-    const source = moduleSources.get(binding.target);
-    if (source !== undefined && !path.has(binding.target)) {
-      const targetTokens = tokenize(source);
-      // Executable exports are not literal candidates. Do not traverse their runtime import graph.
-      const candidate = targetTokens.some((token, index) => {
-        if (
-          token.kind !== SyntaxKind.ExportKeyword ||
-          targetTokens[index + 1]?.kind !== SyntaxKind.ConstKeyword ||
-          targetTokens[index + 2]?.value !== binding.imported ||
-          targetTokens[index + 3]?.kind !== SyntaxKind.EqualsToken
-        ) {
-          return false;
-        }
-        const start = targetTokens[index + 4]?.kind;
-        const suffix = targetTokens[index + 5]?.kind;
-        return (
-          start === SyntaxKind.OpenBraceToken ||
-          start === SyntaxKind.OpenBracketToken ||
-          start === SyntaxKind.StringLiteral ||
-          start === SyntaxKind.NumericLiteral ||
-          start === SyntaxKind.TrueKeyword ||
-          start === SyntaxKind.FalseKeyword ||
-          start === SyntaxKind.NullKeyword ||
-          (start === SyntaxKind.Identifier &&
-            suffix !== undefined &&
-            [SyntaxKind.SemicolonToken, SyntaxKind.AsKeyword, SyntaxKind.SatisfiesKeyword].includes(suffix))
-        );
-      });
-      if (candidate) {
-        const value = staticConstants(
-          targetTokens,
-          importedLiteralConstants(targetTokens, binding.target, moduleSources, path),
-          true,
-        ).get(binding.imported);
-        if (value !== undefined) {
-          constants.set(binding.local, value);
-        }
-      }
+    const targetSource = moduleSources.get(binding.target);
+    const value =
+      targetSource === undefined ? undefined : exportedStringConstants(tokenize(targetSource)).get(binding.imported);
+    if (value !== undefined) {
+      constants.set(binding.local, value);
     }
   }
   return constants;
@@ -762,14 +582,13 @@ const entrypointLiteralSites = (tokens: readonly CatalogToken[]): ReadonlyMap<st
 const resolveString = (
   span: TokenSpan | undefined,
   tokens: readonly CatalogToken[],
-  constants: ReadonlyMap<string, LiteralValue>,
+  constants: ReadonlyMap<string, string>,
 ): string | null => {
   const token = span === undefined ? undefined : tokens[span.start];
   if (token?.kind === SyntaxKind.StringLiteral) {
     return token.value;
   }
-  const value = token?.kind === SyntaxKind.Identifier ? constants.get(token.value) : undefined;
-  return isLiteralString(value) ? value : null;
+  return token?.kind === SyntaxKind.Identifier ? (constants.get(token.value) ?? null) : null;
 };
 
 const AUTHORIZATION_KINDS = [
@@ -787,20 +606,17 @@ const readAuthorization = (
   span: TokenSpan | undefined,
   tokens: readonly CatalogToken[],
   delimiters: ReadonlyMap<number, number>,
-  constants: ReadonlyMap<string, LiteralValue>,
+  constants: ReadonlyMap<string, string>,
 ): ScannedAuthorization | null => {
-  if (span === undefined) {
+  if (span === undefined || tokens[span.start]?.kind !== SyntaxKind.OpenBraceToken) {
     return null;
   }
-  const value = new LiteralParser(tokens, delimiters, constants).value(span.start);
-  if (!isLiteralObject(value)) {
-    return null;
-  }
-  const { credential: rawCredential, kind } = value;
+  const entries = objectEntries(tokens, delimiters, span.start);
+  const kind = resolveString(entries.get('kind'), tokens, constants);
   if (!Schema.is(AUTHORIZATION_KIND_SCHEMA)(kind)) {
     return null;
   }
-  const credential = isLiteralString(rawCredential) ? rawCredential : null;
+  const credential = resolveString(entries.get('credential'), tokens, constants);
   if (kind === 'capability_issuance') {
     // The credential kind is a classification token, never secret material; redact it regardless.
     return credential === null ? null : { credential: Redacted.make(credential), kind };
@@ -849,25 +665,9 @@ const readEntrypoint = (
   span: TokenSpan | undefined,
   tokens: readonly CatalogToken[],
   delimiters: ReadonlyMap<number, number>,
-  constants: ReadonlyMap<string, LiteralValue>,
+  constants: ReadonlyMap<string, string>,
   sites: ReadonlyMap<string, EntrypointLiteral>,
 ): { readonly problem: string } | { readonly value: ScannedEntrypoint } => {
-  const reference = span === undefined ? undefined : tokens[span.start];
-  const constant = reference?.kind === SyntaxKind.Identifier ? constants.get(reference.value) : undefined;
-  if (isLiteralObject(constant)) {
-    const encoded = encodeLiteral(constant);
-    if (Result.isFailure(encoded)) {
-      return { problem: MISSING_ENTRYPOINT };
-    }
-    const resolvedTokens = tokenize(encoded.success);
-    return readEntrypoint(
-      { end: resolvedTokens.length - 1, start: 0 },
-      resolvedTokens,
-      matchDelimiters(resolvedTokens),
-      new Map(),
-      new Map(),
-    );
-  }
   const literal = openEntrypointLiteral(span, tokens, sites);
   if (literal === null) {
     return { problem: MISSING_ENTRYPOINT };
@@ -887,9 +687,14 @@ const readEntrypoint = (
     role === null ||
     scope === null
   ) {
-    const missing = Object.entries({ access, authorization, entrypointKey, moduleKey, role, scope })
-      .filter(([, value]) => value === null)
-      .map(([key]) => key);
+    const missing = [
+      access === null ? 'access' : null,
+      authorization === null ? 'authorization' : null,
+      entrypointKey === null ? 'entrypointKey' : null,
+      moduleKey === null ? 'moduleKey' : null,
+      role === null ? 'role' : null,
+      scope === null ? 'scope' : null,
+    ].filter(Predicate.isString);
     return { problem: `entrypoint is missing ${missing.join(', ')}` };
   }
   return { value: { access, authorization, entrypointKey, moduleKey, role, scope } };
@@ -948,25 +753,24 @@ const declaredValue = (
   span: TokenSpan | undefined,
   tokens: readonly CatalogToken[],
   delimiters: ReadonlyMap<number, number>,
-  constants: ReadonlyMap<string, LiteralValue>,
+  constants: ReadonlyMap<string, string>,
   declarationSources?: ReadonlyMap<string, string>,
 ): DeclaredValue => {
   if (span === undefined) {
     return { kind: 'absent' };
   }
-  const parsed = new LiteralParser(tokens, delimiters, constants).value(span.start);
-  if (isLiteralObject(parsed)) {
-    return { kind: 'object', value: parsed };
-  }
-  // A carrier may name a closed, module-local declaration literal instead of writing it inline.
-  const token = tokens[span.start];
-  const literal = token?.kind === SyntaxKind.Identifier ? declarationSources?.get(token.value) : undefined;
-  if (literal === undefined) {
+  if (tokens[span.start]?.kind !== SyntaxKind.OpenBraceToken) {
+    const token = tokens[span.start];
+    const literal = token?.kind === SyntaxKind.Identifier ? declarationSources?.get(token.value) : undefined;
+    if (literal !== undefined) {
+      const literalTokens = tokenize(literal);
+      const value = new LiteralParser(literalTokens, matchDelimiters(literalTokens), new Map()).object(0);
+      return value === undefined ? { kind: 'problem' } : { kind: 'object', value };
+    }
     return { kind: 'problem' };
   }
-  const literalTokens = tokenize(literal);
-  const value = new LiteralParser(literalTokens, matchDelimiters(literalTokens), new Map()).value(0);
-  return isLiteralObject(value) ? { kind: 'object', value } : { kind: 'problem' };
+  const parsed = new LiteralParser(tokens, delimiters, constants).object(span.start);
+  return parsed === undefined ? { kind: 'problem' } : { kind: 'object', value: parsed };
 };
 
 type DeclaredGroups =
@@ -974,18 +778,21 @@ type DeclaredGroups =
   | { readonly kind: 'groups'; readonly value: readonly LiteralObject[] }
   | { readonly kind: 'problem' };
 
-/** Resolve a field-group list as closed literal data; anything executable or unresolved is reported. */
+/** A field-group list is only read as a static array of object literals; anything else is reported. */
 const declaredGroupsValue = (
   span: TokenSpan | undefined,
   tokens: readonly CatalogToken[],
   delimiters: ReadonlyMap<number, number>,
-  constants: ReadonlyMap<string, LiteralValue>,
+  constants: ReadonlyMap<string, string>,
 ): DeclaredGroups => {
   if (span === undefined) {
     return { kind: 'absent' };
   }
-  const groups = new LiteralParser(tokens, delimiters, constants).value(span.start);
-  return Schema.is(Schema.Array(Schema.JsonObject))(groups) ? { kind: 'groups', value: groups } : { kind: 'problem' };
+  if (tokens[span.start]?.kind !== SyntaxKind.OpenBracketToken) {
+    return { kind: 'problem' };
+  }
+  const groups = new LiteralParser(tokens, delimiters, constants).objects(span.start);
+  return groups === undefined ? { kind: 'problem' } : { kind: 'groups', value: groups };
 };
 
 interface DeclaredCarrierLiterals {
@@ -1005,7 +812,7 @@ const declaredCarriers = (
   properties: ReadonlyMap<string, TokenSpan>,
   tokens: readonly CatalogToken[],
   delimiters: ReadonlyMap<number, number>,
-  constants: ReadonlyMap<string, LiteralValue>,
+  constants: ReadonlyMap<string, string>,
   declarationSources: ReadonlyMap<string, string>,
 ): DeclaredCarrierParse => {
   const declaration = declaredValue(
@@ -1187,101 +994,11 @@ const scanAccessCatalogSourceWith = ({
   return { carriers, entrypoints, problems };
 };
 
-interface LiteralFactory {
-  readonly body: number;
-  readonly parameter: string;
-}
-
-const LITERAL_FACTORY_SIGNATURE = [
-  SyntaxKind.ConstKeyword,
-  SyntaxKind.Identifier,
-  SyntaxKind.EqualsToken,
-  SyntaxKind.OpenParenToken,
-  SyntaxKind.Identifier,
-  SyntaxKind.ColonToken,
-  SyntaxKind.StringKeyword,
-  SyntaxKind.CloseParenToken,
-  SyntaxKind.EqualsGreaterThanToken,
-];
-
-const literalFactoryAt = (
-  tokens: readonly CatalogToken[],
-  delimiters: ReadonlyMap<number, number>,
-  index: number,
-): LiteralFactory | undefined => {
-  if (!LITERAL_FACTORY_SIGNATURE.every((kind, offset) => tokens[index + offset]?.kind === kind)) {
-    return undefined;
-  }
-  const body = index + 9;
-  const end = literalEnd(tokens, delimiters, body);
-  return closedLiteralSuffix(tokens, end) ? { body, parameter: tokens[index + 4]?.value ?? '' } : undefined;
-};
-
-const literalFactoryCall = (
-  tokens: readonly CatalogToken[],
-  delimiters: ReadonlyMap<number, number>,
-  constants: ReadonlyMap<string, LiteralValue>,
-  factory: LiteralFactory | undefined,
-  index: number,
-): readonly CatalogToken[] | undefined => {
-  const argument = tokens[index + 2];
-  if (
-    factory === undefined ||
-    tokens[index + 1]?.kind !== SyntaxKind.OpenParenToken ||
-    argument?.kind !== SyntaxKind.StringLiteral ||
-    tokens[index + 3]?.kind !== SyntaxKind.CloseParenToken
-  ) {
-    return undefined;
-  }
-  const parsed = new LiteralParser(
-    tokens,
-    delimiters,
-    new Map([...constants, [factory.parameter, argument.value]]),
-  ).value(factory.body);
-  if (parsed === undefined) {
-    return undefined;
-  }
-  const encoded = encodeLiteral(parsed);
-  return Result.isFailure(encoded) ? undefined : tokenize(encoded.success);
-};
-
-/** A closed literal factory with one string argument, not an executable source import. */
-const expandLiteralFactories = (
-  tokens: readonly CatalogToken[],
-  constants: ReadonlyMap<string, LiteralValue>,
-): readonly CatalogToken[] => {
-  const delimiters = matchDelimiters(tokens);
-  const factories = new Map<string, LiteralFactory>();
-  for (const [index] of topLevelTokens(tokens, delimiters)) {
-    const factory = literalFactoryAt(tokens, delimiters, index);
-    if (factory !== undefined) {
-      factories.set(tokens[index + 1]?.value ?? '', factory);
-    }
-  }
-  const expanded: CatalogToken[] = [];
-  let index = 0;
-  while (index < tokens.length) {
-    const token = tokens[index];
-    const factory = token?.kind === SyntaxKind.Identifier ? factories.get(token.value) : undefined;
-    const call = literalFactoryCall(tokens, delimiters, constants, factory, index);
-    if (call === undefined) {
-      if (token !== undefined) {
-        expanded.push(token);
-      }
-      index += 1;
-    } else {
-      expanded.push(...call);
-      index += 4;
-    }
-  }
-  return expanded;
-};
-
 /**
  * Pure source scan: every carrier descriptor (Action, governed read, Shell contribution or page
  * metadata), its entrypoint and its optional raw declaration, plus unresolvable references.
  * `moduleSources` holds sources by repository-relative file. A named import of a same-module `.ts` file
- * resolves only literal data from there; executable imports and unresolved values stay refused.
+ * resolves its exported string constants from there; every other reference stays unresolved.
  */
 export const scanAccessCatalogSource = (
   source: string,
@@ -1292,12 +1009,9 @@ export const scanAccessCatalogSource = (
   if (!SOURCE_FILE_PATTERN.test(file)) {
     return { carriers: [], entrypoints: [], problems: [] };
   }
-  const rawTokens = tokenize(source);
-  const imported = importedLiteralConstants(rawTokens, file, moduleSources);
-  const constants = new Map([...imported, ...staticConstants(rawTokens, imported)]);
-  const tokens = expandLiteralFactories(rawTokens, constants);
+  const tokens = tokenize(source);
   return scanAccessCatalogSourceWith({
-    constants,
+    constants: new Map([...importedStringConstants(tokens, file, moduleSources), ...stringConstants(tokens)]),
     declarationSources: closedAccessDeclarationLiteralSources(source, file, moduleSources),
     delimiters: matchDelimiters(tokens),
     file,
