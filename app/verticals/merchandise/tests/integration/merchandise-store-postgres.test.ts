@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { asc } from 'drizzle-orm';
-import { DateTime, Effect, Match, Schema } from 'effect';
+import { DateTime, Effect, Match, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -347,6 +347,51 @@ it.live('PlaceStorefrontOrder writes one order, its ORDER movements and stock co
       expect(replay.change.storefrontOrder?.outcome).toBe('REPLAYED');
       expect(replay.change.state).toBe(replay.working.state);
       expect(yield* rowsOf(fixture)).toEqual(after);
+    }),
+  ),
+);
+
+/** The order row with this id. */
+const orderById = <Row extends { readonly id: string }>(rows: readonly Row[], id: string) =>
+  rows.find((row) => row.id === id);
+
+/** What VAT an order holds as stored: each line's price, rate and classification, and the totals. */
+const orderVatOf = (row: { readonly document: unknown; readonly totalMinor: number } | undefined) =>
+  Effect.map(decodeOrderDocument(row?.document), (order) => ({
+    lines: order.lines.map(({ productId, taxClassificationCode, unitPriceMinor, vatRate }) => ({
+      productId,
+      taxClassificationCode,
+      unitPriceMinor,
+      vatRate,
+    })),
+    totalMinor: row?.totalMinor,
+    totalVatMinor: order.totalVatMinor,
+  }));
+
+it.live('removing a cancelled order keeps its VAT as stored; an order not cancelled is still refused', () =>
+  withMerchandise(catalogState, (fixture) =>
+    Effect.gen(function* removeCancelledOrder() {
+      const orderRow = (id: string) => rowsOf(fixture).pipe(Effect.map(({ orders: stored }) => orderById(stored, id)));
+      const before = yield* orderVatOf(yield* orderRow('o1'));
+      const companyRates = rowsOf(fixture).pipe(Effect.map((rows) => rows.head?.taxRates));
+      const ratesBefore = yield* companyRates;
+      // Not cancelled (and no DEMO storefront order): refused, nothing written.
+      const refused = yield* runCommand(fixture, {
+        _tag: 'RemoveDemoOrder',
+        id: 'o1',
+        reason: 'Úklid objednávky',
+      }).pipe(Effect.flip);
+      expect(Predicate.isTagged(refused, 'MerchandiseLifecycleConflict')).toBe(true);
+      expect(yield* orderVatOf(yield* orderRow('o1'))).toEqual(before);
+      // Cancelled, then removed: soft removal; every line keeps its rate, its classification and its amounts.
+      yield* runCommand(fixture, { _tag: 'ChangeOrderStatus', id: 'o1', status: 'CANCELLED' });
+      yield* runCommand(fixture, { _tag: 'RemoveDemoOrder', id: 'o1', reason: 'Úklid stornované objednávky' });
+      const removed = yield* orderRow('o1');
+      expect(removed?.removed).toBe(true);
+      expect(yield* orderVatOf(removed)).toEqual(before);
+      expect(before.lines.every((line) => line.taxClassificationCode !== undefined)).toBe(true);
+      // The company's rates and holds, the only VAT state not on the order, do not move.
+      expect(yield* companyRates).toEqual(ratesBefore);
     }),
   ),
 );
