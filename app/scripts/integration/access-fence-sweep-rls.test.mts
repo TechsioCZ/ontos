@@ -5,6 +5,7 @@ import { expect, it } from 'effect-rstest';
 import { loadDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
 import { makeTestPgSession } from '../../packages/core-runtime/tests/support/database.ts';
 import {
+  ACCESS_FENCE_SWEEP_ROUTINE,
   explicitEntries,
   grantExplicitRole,
   grantSharedRuntimeRole,
@@ -136,6 +137,48 @@ it.live('finds lapsed fences of every tenant for the runtime role, which itself 
           .toSorted((left, right) => left.localeCompare(right)),
       ).toEqual([...TENANTS]);
       expect(Object.keys(lapsed[0] ?? {})).toEqual(['tenant_id']);
+    }),
+  ),
+);
+
+const bootstrap = (admin: PgClient.PgClient) =>
+  Effect.gen(function* deployBootstrap() {
+    yield* revokePublicStatementStatistics(admin);
+    yield* Effect.forEach(legacySharedEntries, (entry) => grantSharedRuntimeRole(admin, entry), { discard: true });
+    yield* Effect.forEach(explicitEntries, (entry) => grantExplicitRole(admin, entry), { discard: true });
+    yield* grantTrustAuthority(admin);
+  });
+
+/** Every role that may execute the sweep function besides its owner, and the function's whole ACL. */
+const executorsOf = (admin: PgClient.PgClient) =>
+  rowsOf(
+    admin,
+    `select coalesce((select string_agg(case when a.grantee = 0 then 'PUBLIC' else pg_get_userbyid(a.grantee) end, ',')
+                         from aclexplode(p.proacl) a
+                        where a.privilege_type = 'EXECUTE' and a.grantee <> p.proowner), '') as executors,
+            p.proacl::text as acl
+       from pg_proc p
+      where p.oid = '${ACCESS_FENCE_SWEEP_ROUTINE}'::regprocedure`,
+  );
+
+it.live('the runtime-role bootstrap grants the sweep function to ontos_runtime alone, even when migrated first', () =>
+  Effect.scoped(
+    Effect.gen(function* bootstrapOwnsGrant() {
+      const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+      const admin = yield* makeTestPgSession(connections.admin.connectionString);
+      // A database migrated before `ontos_runtime` existed: the migration's conditional grant was skipped, so the
+      // function carries no grant beyond its owner (PUBLIC is revoked by the migration itself).
+      yield* admin
+        .unsafe(`revoke all on function ${ACCESS_FENCE_SWEEP_ROUTINE} from public, ontos_runtime`)
+        .pipe(Effect.orDie);
+      const [before] = yield* executorsOf(admin);
+      expect(before?.executors).toBe('');
+      yield* bootstrap(admin);
+      const [granted] = yield* executorsOf(admin);
+      expect(granted?.executors).toBe('ontos_runtime');
+      // Running the bootstrap again changes nothing.
+      yield* bootstrap(admin);
+      expect(yield* executorsOf(admin)).toEqual([granted]);
     }),
   ),
 );
