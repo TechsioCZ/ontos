@@ -1,6 +1,6 @@
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Clock, Deferred, Effect, Fiber, FileSystem, Layer, Option, Ref, Schema } from 'effect';
+import { Clock, Deferred, Duration, Effect, Fiber, FileSystem, Layer, Option, Ref, Schema } from 'effect';
 import type { Context } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
@@ -960,5 +960,29 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
         }),
       );
     }),
+  );
+
+  suite.effect(
+    'an activation whose waiting budget runs out leaves the tenant unfollowed and its projection exact',
+    () =>
+      withProjectionTenant({ activeModules: [MODULE] }, (tenantId, admin) =>
+        Effect.gen(function* budgetSpent() {
+          const scope = yield* bootstrapTenant(tenantId);
+          // Another writer holds the fence for longer than the whole activation may wait.
+          yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+          const activated = yield* activateCatalogRelease({
+            busyFenceBudget: Duration.seconds(3),
+            modules: deployment,
+          }).pipe(Effect.orDie);
+          const tenant = activated.tenants.find((entry) => entry.tenantId === tenantId);
+          expect(tenant?.outcome).toBe('deferred');
+          expect(tenant?.reason).toContain('not followed this deploy');
+          // Nothing was recorded: once the other writer is done, the graph is still exactly the tenant's intent.
+          yield* holderReleases(admin, tenantId);
+          const writer = yield* AccessProjectionWriter;
+          const after = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+          expect({ deletions: after.deletions, touches: after.touches }).toEqual({ deletions: 0, touches: 0 });
+        }),
+      ),
   );
 });

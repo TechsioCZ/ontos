@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { Clock, DateTime, Duration, Effect, Match, Option, Result, Schedule, Schema } from 'effect';
+import { Clock, DateTime, Duration, Effect, Match, Option, Result, Schema } from 'effect';
 
 import { TrustedPrincipalContextSchema } from '../../actions/principal-context.ts';
 import { makeSystemPrincipalContextResolver, registerSystemWorkload } from '../../auth/system-principal-context.ts';
@@ -27,6 +27,7 @@ import { RoleCellEditSchema, planRoleCellEdit } from '../changes/role-edits.ts';
 import type { RoleCellEdit, RoleWithRevision } from '../changes/role-edits.ts';
 import type { CapabilityKey, CatalogSnapshotId } from '../ids.ts';
 import { AccessProjectionWriter, isFenceBusy } from '../intent/projection-writer.ts';
+import type { TenantProjectionWrite } from '../intent/projection-writer.ts';
 import type { AccessChangeItem, CatalogSnapshot } from '../model.ts';
 import { ACCESS_MODEL_PARSE_OPTIONS } from '../model.ts';
 
@@ -309,7 +310,11 @@ export interface TenantReleaseReport {
   readonly elapsedMillis: number;
   readonly inertKeys: readonly string[];
   readonly items: number;
-  readonly outcome: 'failed' | 'followed' | 'planned' | 'unchanged';
+  /**
+   * `deferred`: another writer held the tenant's fence for the whole of this activation's waiting budget, so it was
+   * not followed this deploy (nothing was recorded) and the next activation follows it.
+   */
+  readonly outcome: 'deferred' | 'failed' | 'followed' | 'planned' | 'unchanged';
   readonly presetCellsAdded: number;
   /** Whether the tenant had an untouched "Plný přístup" to follow; false for a tenant that failed. */
   readonly presetFound: boolean;
@@ -331,6 +336,11 @@ export interface CatalogReleaseActivationReport {
 }
 
 export interface ActivateCatalogReleaseInput {
+  /**
+   * How long, across all tenants together, this activation may wait for fences other writers hold;
+   * `ACTIVATION_BUSY_FENCE_BUDGET` unless a suite sets it.
+   */
+  readonly busyFenceBudget?: Duration.Duration;
   /** Every module the deployed catalog declares (`topology/authorization-catalog.json`). */
   readonly modules: readonly AccessCatalogModule[];
 }
@@ -456,48 +466,106 @@ const planTenant = Effect.fn('AccessReleaseActivation.planTenant')(function* pla
 });
 
 /**
- * How long a tenant's follow waits for another writer that holds its fence: a full lease (a holder that died lapses
- * within it, and this reconcile then takes over) and some. Only then is the tenant reported failed.
+ * How long one activation, across all its tenants together, waits for fences other writers hold (the fence sweep, a
+ * live reconcile). The migrator stops the activation after five minutes, so this leaves two for the reconciles
+ * themselves. A tenant whose fence stays held past it is not followed this deploy; the next activation follows it.
  */
-export const ACTIVATION_BUSY_FENCE_WAIT = Duration.minutes(3);
-const ACTIVATION_BUSY_FENCE_RETRY = Schedule.spaced(Duration.seconds(2)).pipe(
-  Schedule.upTo({ duration: ACTIVATION_BUSY_FENCE_WAIT }),
+export const ACTIVATION_BUSY_FENCE_BUDGET = Duration.minutes(3);
+const ACTIVATION_BUSY_FENCE_SPACING = Duration.seconds(2);
+
+/**
+ * Reconcile, and while another writer holds the fence try again every two seconds, as long as the activation's shared
+ * waiting budget (an instant, on this process's clock) allows. `None`: the budget ran out with the fence still held.
+ */
+const reconcileWhenFenceFree = Effect.fn('AccessReleaseActivation.reconcileWhenFenceFree')(
+  function* reconcileWhenFenceFreeEffect(
+    scope: OperationalScope,
+    waitUntil: number,
+  ): Effect.fn.Return<Option.Option<TenantProjectionWrite>, AccessReleaseActivationError, AccessProjectionWriter> {
+    const projection = yield* AccessProjectionWriter;
+    const written = yield* Effect.result(projection.reconcileTenant({ scope }));
+    if (Result.isSuccess(written)) {
+      return Option.some(written.success);
+    }
+    if (!isFenceBusy(written.failure)) {
+      return yield* refusal(`the projection could not be reconciled: ${written.failure.reason}`, written.failure);
+    }
+    const now = yield* Clock.currentTimeMillis;
+    if (now + Duration.toMillis(ACTIVATION_BUSY_FENCE_SPACING) > waitUntil) {
+      return Option.none();
+    }
+    yield* Effect.sleep(ACTIVATION_BUSY_FENCE_SPACING);
+    return yield* reconcileWhenFenceFree(scope, waitUntil);
+  },
 );
 
-/** One tenant's follow: its actor, its writes in one transaction, and a reconcile that always runs. */
+const NOT_FOLLOWED =
+  'another writer held its access fence for the whole waiting budget; not followed this deploy, the next activation follows it';
+
+const deferredTenant = (tenantId: string): TenantReleaseReport => ({
+  elapsedMillis: 0,
+  inertKeys: [],
+  items: 0,
+  outcome: 'deferred',
+  presetCellsAdded: 0,
+  presetFound: false,
+  reason: NOT_FOLLOWED,
+  relationshipDeletions: 0,
+  relationshipTouches: 0,
+  tenantId,
+});
+
+/**
+ * One tenant's follow: its actor, a reconcile, its writes in one transaction, and a reconcile of those writes.
+ *
+ * The first reconcile runs before anything is recorded: it waits out another writer holding the fence, and a tenant
+ * whose fence stays held past the shared budget is left exactly as it was (`deferred`), its projection still the
+ * projection of its intent, which the boot's access verification requires. It also repairs a previous activation that
+ * recorded intent and failed before its projection was written. A tenant the release changes is then recorded and
+ * reconciled again; an unchanged one costs that one reconcile.
+ */
 const followTenant = Effect.fn('AccessReleaseActivation.followTenant')(function* followTenantEffect(
   tenantId: string,
   release: FollowedRelease,
+  waitUntil: number,
 ) {
   const releases = yield* AccessReleaseStore;
   const changes = yield* AccessChangesStore;
-  const projection = yield* AccessProjectionWriter;
   const startedAt = yield* Clock.currentTimeMillis;
   yield* releases
     .ensureReleaseActor({ displayName: RELEASE_ACTOR_DISPLAY_NAME, principalId: releaseActorId(tenantId), tenantId })
     .pipe(Effect.mapError((failure) => refusal(`${failure.code}: ${failure.reason}`, failure)));
   const scope = yield* releaseScopeOf(tenantId, release.newest.id);
+  const before = yield* reconcileWhenFenceFree(scope, waitUntil);
+  if (Option.isNone(before)) {
+    return { ...deferredTenant(tenantId), elapsedMillis: (yield* Clock.currentTimeMillis) - startedAt };
+  }
   const state = yield* changes
     .loadTenantChanges(scope)
     .pipe(Effect.mapError((failure) => refusal(`the roles could not be read: ${failure.reason}`, failure)));
   const decidedAt = yield* DateTime.nowAsDate;
   const plan = yield* planFor(tenantId, release, state, decidedAt);
   const changed = Option.isSome(plan.presetEdit) || plan.items.length > 0;
-  if (changed) {
-    yield* releases
-      .recordReleaseFollow(followInputOf(scope, release, plan, decidedAt))
-      .pipe(Effect.mapError((failure) => refusal(`${failure.code}: ${failure.reason}`, failure)));
+  if (!changed) {
+    return reportOf(tenantId, plan, 'unchanged', {
+      elapsedMillis: (yield* Clock.currentTimeMillis) - startedAt,
+      relationshipDeletions: before.value.deletions,
+      relationshipTouches: before.value.touches,
+    });
   }
-  // Always: a previous activation may have recorded intent and failed before its projection was written. Another
-  // writer of the same tenant (the fence sweep, a live reconcile) is waited for, never reported as this tenant failing.
-  const written = yield* projection.reconcileTenant({ scope }).pipe(
-    Effect.retry({ schedule: ACTIVATION_BUSY_FENCE_RETRY, while: isFenceBusy }),
-    Effect.mapError((failure) => refusal(`the projection could not be reconciled: ${failure.reason}`, failure)),
-  );
-  return reportOf(tenantId, plan, changed ? 'followed' : 'unchanged', {
+  yield* releases
+    .recordReleaseFollow(followInputOf(scope, release, plan, decidedAt))
+    .pipe(Effect.mapError((failure) => refusal(`${failure.code}: ${failure.reason}`, failure)));
+  const written = yield* reconcileWhenFenceFree(scope, waitUntil);
+  if (Option.isNone(written)) {
+    return yield* refusal(
+      'the follow was recorded, but another writer held the access fence for the rest of the waiting budget; the next reconcile of the tenant projects it',
+    );
+  }
+  return reportOf(tenantId, plan, 'followed', {
     elapsedMillis: (yield* Clock.currentTimeMillis) - startedAt,
-    relationshipDeletions: written.deletions,
-    relationshipTouches: written.touches,
+    relationshipDeletions: before.value.deletions + written.value.deletions,
+    relationshipTouches: before.value.touches + written.value.touches,
   });
 });
 
@@ -563,9 +631,12 @@ export const activateCatalogRelease = Effect.fn('AccessReleaseActivation.activat
   input: ActivateCatalogReleaseInput,
 ) {
   const ordered = yield* orderedRelease(input, true);
+  // One waiting budget for the whole activation, never one per tenant.
+  const waitUntil =
+    (yield* Clock.currentTimeMillis) + Duration.toMillis(input.busyFenceBudget ?? ACTIVATION_BUSY_FENCE_BUDGET);
   const tenantReports = yield* Effect.all(
     ordered.tenantIds.map((tenantId) =>
-      followTenant(tenantId, ordered.release).pipe(
+      followTenant(tenantId, ordered.release, waitUntil).pipe(
         Effect.catchTag('AccessReleaseActivationError', (failure) => Effect.succeed(failedTenant(tenantId, failure))),
       ),
     ),
