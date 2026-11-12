@@ -27,6 +27,7 @@ import type { OperationJournal, OperationPhase, ScopeFence } from '../../model.t
 import type { AccessLifecycleError } from '../errors.ts';
 import { lifecycleRefusal } from '../errors.ts';
 import {
+  ACCESS_FAILURES_BEFORE_ENGINE_WRITE,
   ACCESS_FENCE_CLOCK_SKEW_MARGIN,
   ACCESS_FENCE_LEASE,
   ACCESS_FENCE_PRE_LEASE_IDLE,
@@ -526,9 +527,9 @@ const renewFenceLease = Effect.fn('accessLifecycle.persistence.renewFenceLease')
  * engine, so that idle time is longer than any real projection; the journal's timestamp comes from the writer's
  * clock, hence the margin.
  *
- * A hold whose operation's journal already ended as `failed` is lapsed at once, whatever its lease: a failed
- * operation never writes or commits again (its writer marks the journal only after it stopped), so the fence it
- * kept closed only waits for the next writer to take it over and finish a whole projection.
+ * A hold whose operation failed before it sent the engine anything (`ACCESS_FAILURES_BEFORE_ENGINE_WRITE`) is lapsed
+ * at once, whatever its lease. Any other failed operation keeps its lease: an engine write it sent may still be under
+ * way in SpiceDB, and a take-over before the call's deadline passed could be overwritten by it afterwards.
  */
 const PRE_LEASE_LAPSE_SECONDS =
   Duration.toSeconds(ACCESS_FENCE_PRE_LEASE_IDLE) + Duration.toSeconds(ACCESS_FENCE_CLOCK_SKEW_MARGIN);
@@ -541,6 +542,10 @@ const holdLapsed = (previousOperationId: string) => sql`coalesce(
   select 1 from core.access_operation_journals j
    where j.tenant_id = ${accessScopeFences.tenantId} and j.operation_id = ${previousOperationId}::uuid
      and j.phase = 'failed'
+     and j.failure_code in (${sql.join(
+       ACCESS_FAILURES_BEFORE_ENGINE_WRITE.map((code) => sql`${code}`),
+       sql`, `,
+     )})
 )`;
 
 /**

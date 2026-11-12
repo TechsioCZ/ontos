@@ -17,7 +17,15 @@ import { MANAGED_RELATIONS } from './relationship.ts';
 import { decodeObjectId, tenantObjectIdPrefix } from './object-id.ts';
 import { fromSpiceDbRelationship, toSpiceDbRelationship } from './spicedb-relationship.ts';
 
-/** A whole-projection read is bigger than one permission check, so it gets its own deadline. */
+/**
+ * The deadline of every engine call on the projection path. A whole-projection read is bigger than one permission
+ * check, so it gets its own. The deadline is the engine's too (a gRPC deadline, `Grpc-Timeout` over HTTP), so a call
+ * that outlives it is cancelled in SpiceDB, never committed later.
+ *
+ * It must stay below the lease minus the holder's unproved limit: RPC deadline 15 s < lease 120 s − 90 s = 30 s. A
+ * holder sends a write only while its hold was proved within 90 s, and that proof keeps the lease live for 120 s after
+ * it, so every write it sent is either committed or cancelled before the lease can lapse to a taker.
+ */
 export const ACCESS_PROJECTION_RPC_TIMEOUT_MS = 15_000;
 const READ_CONCURRENCY = 4;
 /** gRPC INVALID_ARGUMENT: the engine read the request and refused it, so a retry cannot succeed. */

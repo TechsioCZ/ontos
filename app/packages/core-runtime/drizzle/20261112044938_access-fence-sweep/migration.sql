@@ -5,7 +5,8 @@ SET LOCAL lock_timeout TO DEFAULT;--> statement-breakpoint
 -- The access fence sweeper runs as ontos_runtime without a tenant until it knows which tenants need it. This is its
 -- only cross-tenant read: the ids of tenants whose access fence is held by an operation whose hold has lapsed (its
 -- lease expired, or, for a hold taken before leases existed, its journal idle for longer than p_pre_lease_idle; or
--- its operation already failed, which never writes again),
+-- its operation failed before it sent the engine anything: fence_refused, intent_moved, intent_unavailable. Any other
+-- failure keeps its lease, since an engine write it sent may still be under way),
 -- never any intent. Oldest lapse first, without the tenants the sweeper is still backing off from (p_skip), so a
 -- tenant that keeps failing can never hide the others behind the page limit. The sweeper then reconciles each of
 -- them under that tenant's own scope.
@@ -39,6 +40,7 @@ BEGIN
                EXISTS (
                  SELECT 1 FROM core.access_operation_journals AS j
                   WHERE j.tenant_id = f.tenant_id AND j.operation_id = f.owning_operation_id AND j.phase = 'failed'
+                    AND j.failure_code IN ('fence_refused', 'intent_moved', 'intent_unavailable')
                ) AS holder_failed
           FROM core.access_scope_fences AS f
          WHERE f.state = 'Changing'

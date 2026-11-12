@@ -317,7 +317,9 @@ const failingEngine =
   });
 
 /** The connection lost in the middle of an engine write. */
-const midWriteLoss = [new AccessProjectionError({ code: 'access_projection_unavailable', reason: 'connection lost' })];
+const midWriteLoss = [
+  new AccessProjectionError({ code: 'access_projection_unavailable', reason: 'SpiceDB client operation timed out' }),
+];
 
 /**
  * An engine whose next `failures` reconciles send their first relationship write (the compiler's `beforeWrite` runs)
@@ -589,8 +591,18 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
             expect(yield* journalOf(admin, failed?.operation_id ?? '')).toEqual([
               { failure_code: 'projection_failed', phase: 'failed' },
             ]);
-            // Once the lease lapsed the next reconcile takes the fence over and opens it on a full projection.
+            // The write that failed (a client-side timeout, say) may still be under way in the engine until its
+            // deadline passes: neither a reconcile nor the sweep takes the hold over before its lease lapsed.
             yield* Ref.set(failures, 0);
+            expect(yield* refusalOf(writer.reconcileTenant({ scope }))).toContain('whose hold has not lapsed');
+            const backoffs = yield* makeAccessFenceSweepBackoffs;
+            expect(yield* sweepLapsedAccessFences(backoffs, 'tick-1')).toEqual({
+              busy: [],
+              deferred: 0,
+              failed: [],
+              healed: [],
+            });
+            // Once the lease lapsed the next reconcile takes the fence over and opens it on a full projection.
             yield* lapseLease(admin, tenantId);
             yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
             expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);

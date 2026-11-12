@@ -335,6 +335,16 @@ export const advanceOperationJournal = (
 export const ACCESS_FENCE_LEASE = Duration.minutes(2);
 
 /**
+ * The journal failure codes an operation records strictly before its first engine write: its take was refused
+ * (`fence_refused`), or the intent it re-read under the fence moved or could not be read (`intent_moved`,
+ * `intent_unavailable`). Such an operation never sent the engine anything, so its hold lapses at once. Every other
+ * failure (`projection_failed` above all) may have a write still under way in the engine, and keeps its hold until
+ * the lease lapses: by then no call of that holder can still be accepted (see `ACCESS_PROJECTION_RPC_TIMEOUT_MS`).
+ */
+export const ACCESS_FAILURES_BEFORE_ENGINE_WRITE = ['fence_refused', 'intent_moved', 'intent_unavailable'] as const;
+export type AccessFailureBeforeEngineWrite = (typeof ACCESS_FAILURES_BEFORE_ENGINE_WRITE)[number];
+
+/**
  * A hold taken before leases existed has none to lapse. It counts as lapsed once its journal has not moved for
  * `ACCESS_FENCE_PRE_LEASE_IDLE` plus `ACCESS_FENCE_CLOCK_SKEW_MARGIN`. A holder moves its journal only between
  * phases, never during an engine write, so the idle time must exceed any real projection, not a renewal interval.

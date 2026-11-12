@@ -42,7 +42,7 @@ import {
   runAccessWrite,
   validateAccessChange,
 } from '../lifecycle/fence.ts';
-import type { AccessWriteJournalPortService } from '../lifecycle/fence.ts';
+import type { AccessFailureBeforeEngineWrite, AccessWriteJournalPortService } from '../lifecycle/fence.ts';
 import { AccessWriteJournalStore } from '../lifecycle/persistence/journal-store.ts';
 import type { AccessIntentError } from './errors.ts';
 import { AccessProjectionCompiler } from './projection-compiler.ts';
@@ -702,7 +702,7 @@ interface FencedReconcileInput {
  * with nobody to finish it. A journal the caller resumed is the caller's, and is left as it is.
  */
 const abandonOpenedJournal = Effect.fn('AccessProjectionWriter.abandonOpenedJournal')(
-  function* abandonOpenedJournalEffect(input: FencedReconcileInput, failureCode: string) {
+  function* abandonOpenedJournalEffect(input: FencedReconcileInput, failureCode: AccessFailureBeforeEngineWrite) {
     if (!input.openedJournal) {
       return yield* Effect.void;
     }
@@ -746,8 +746,8 @@ const intentStillPlanned = Effect.fn('AccessProjectionWriter.intentStillPlanned'
   }
   yield* abandonOpenedJournal(input, 'intent_moved');
   // The reconcile starts again under a new operation. A fence taken over from a dead holder stays closed meanwhile:
-  // this operation's journal has failed, so the next attempt takes the fence over from it at once and projects the
-  // fresh intent before the fence opens.
+  // this operation failed before it sent the engine anything (`intent_moved`), so the next attempt takes the fence
+  // over from it at once and projects the fresh intent before the fence opens.
   return yield* new ProjectionIntentMoved({
     reason: `Tenant ${input.tenantId}'s access intent changed between this reconcile's read and its fence (plan ${input.digest.slice(0, 12)} became ${fresh.digest.slice(0, 12)}), so the plan it read was not projected`,
   });
@@ -841,8 +841,9 @@ const reconcileUnderFence = Effect.fn('AccessProjectionWriter.reconcileUnderFenc
  * Read and inspection gates do not check the fence (`bindLiveActionAccessGate` adds currentness for Actions only), so
  * reads keep answering from the graph as it is until a reconcile completes; the compiler sends revocations before
  * grants, so a half-written graph can only lack a grant being added, never keep a revoked one beside it. The fence
- * stays closed until the next reconcile (the fence sweeper, a deploy's activation, any intent write) takes it over,
- * at once since this operation's journal has failed, and opens it only on a completed projection. A committed
+ * stays closed until the next reconcile (the fence sweeper, a deploy's activation, any intent write) takes it over
+ * once this operation's lease lapsed (an engine write it sent may still be under way until its deadline passes), and
+ * opens it only on a completed projection. A committed
  * reconcile already released the fence, and releasing an operation's released fence is a no-op.
  */
 const releaseAfterReconcile = Effect.fn('AccessProjectionWriter.releaseAfterReconcile')(
@@ -856,7 +857,7 @@ const releaseAfterReconcile = Effect.fn('AccessProjectionWriter.releaseAfterReco
       Option.exists(current, (fence) => fence.state === 'Changing' && fence.owningOperationId === taken.operationId)
     ) {
       yield* Effect.logError(
-        `ACCESS FENCE KEPT CLOSED: tenant ${taken.tenantId}'s projection failed after operation ${taken.operationId} began writing the engine. Actions of the tenant are refused until a reconcile completes, while reads answer from the graph as it is; the fence sweeper takes it over on its next tick (within ${Duration.format(ACCESS_FENCE_LEASE)} if the journal could not be ended)`,
+        `ACCESS FENCE KEPT CLOSED: tenant ${taken.tenantId}'s projection failed after operation ${taken.operationId} began writing the engine. Actions of the tenant are refused until a reconcile completes, while reads answer from the graph as it is; the fence sweeper takes it over once its lease lapsed (within ${Duration.format(ACCESS_FENCE_LEASE)})`,
       );
     }
     return yield* Effect.void;
