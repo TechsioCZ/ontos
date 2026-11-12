@@ -24,6 +24,7 @@ import { Reactivity } from 'effect/reactivity';
 import { createLocalJWKSet, jwtVerify } from 'jose';
 
 import { createShellRuntimeContract } from '../../../../scripts/ontos-shell-runtime-contract.ts';
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
 import {
   ApiKeyGatewayNativeFixtureError,
   ShellNativeGatewayProblemSchema,
@@ -86,6 +87,8 @@ it.live(
         );
         const ownedDatabase = yield* makeIsolatedNativeDatabaseFixture({
           compositionSnapshot: snapshot,
+          // The production Shell enrolls Party Registry for gateway scope grants; the clone's trust catalog must too.
+          databaseIdentities: SHELL_DATABASE_IDENTITY_ENROLLMENT,
           mode: 'schema-only',
           purpose: 'implementation-1096-registered-workload-gateway',
         });

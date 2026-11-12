@@ -308,6 +308,8 @@ import {
   GatewayIssuer,
   GatewayIssuerLive,
   ShellCryptoLive,
+  gatewayIssuerFailureClass,
+  gatewayIssuerRefusalReason,
   issueGatewayContextAssertion,
   issueSymmyGatewayContextAssertion,
 } from './auth/gateway-issuer.ts';
@@ -698,13 +700,16 @@ const gatewayIssuerProblem = (
         'Invalid gateway audience',
         'https://ontos.dev/problems/gateway-audience-invalid',
       )
-    : extendedProblemDetails(
-        'GatewayUnavailableProblem',
-        'Gateway assertion issuance is temporarily unavailable. Please retry.',
-        503,
-        'Gateway unavailable',
-        'https://ontos.dev/problems/gateway-unavailable',
-        { retryable: true as const },
+    : withRefusalReason(
+        extendedProblemDetails(
+          'GatewayUnavailableProblem',
+          'Gateway assertion issuance is temporarily unavailable. Please retry.',
+          503,
+          'Gateway unavailable',
+          'https://ontos.dev/problems/gateway-unavailable',
+          { retryable: true as const },
+        ),
+        gatewayIssuerRefusalReason(error),
       );
 };
 
@@ -716,6 +721,7 @@ const logGatewayIssuerFailure = (
   Effect.annotateLogs(
     Effect.logError('Shell gateway assertion issuance failed'),
     requestLogAnnotations(request, {
+      failureCause: gatewayIssuerFailureClass(error),
       failureCode: error.code,
       failureStage: error.stage,
       operation,
@@ -2957,15 +2963,7 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
                   error.reason,
                 ),
               ),
-            GatewayIssuerError: (error) =>
-              failApiKeyGatewayProblem(
-                Match.value(gatewayIssuerProblem(error)).pipe(
-                  Match.tag('GatewayUnavailableProblem', (issuerProblem) =>
-                    withRefusalReason(issuerProblem, 'issuer_unavailable'),
-                  ),
-                  Match.orElse((issuerProblem) => issuerProblem),
-                ),
-              ),
+            GatewayIssuerError: (error) => failApiKeyGatewayProblem(gatewayIssuerProblem(error)),
           }),
         );
       }).pipe(

@@ -29,7 +29,12 @@ import {
   organizationGovernanceReadOperationContract,
   privacyDispatchOperationContract,
 } from '@app/shared-contracts';
-import type { GatewayActorClaim, GatewayContextResponse, GatewayTrustedPrincipalContext } from '@app/shared-contracts';
+import type {
+  GatewayActorClaim,
+  GatewayContextResponse,
+  GatewayRefusalReason,
+  GatewayTrustedPrincipalContext,
+} from '@app/shared-contracts';
 import {
   Cache,
   Clock,
@@ -170,6 +175,29 @@ const unavailable = (
           stage,
         },
   );
+
+/**
+ * The refusal code a caller logs for an issuer failure: a scope grant the database would not register is the scope's
+ * step, every other unavailable step is the issuer's.
+ */
+export const gatewayIssuerRefusalReason = (error: GatewayIssuerError): GatewayRefusalReason =>
+  error.stage === 'scope_grant' ? 'scope_unavailable' : 'issuer_unavailable';
+
+const decodeFailureCauseClass = Schema.decodeUnknownOption(
+  Schema.Struct({ _tag: Schema.String, sqlState: Schema.optionalKey(Schema.String) }),
+);
+
+/**
+ * The class of an issuer failure's cause for an operator log: its tag and, for a scope grant the database refused, the
+ * SQLSTATE (for example `GatewayScopeGrantUnavailableError[22023]`). Never a message, statement, parameter or token.
+ */
+export const gatewayIssuerFailureClass = (error: GatewayIssuerError): string =>
+  error.failureCause === undefined
+    ? 'none'
+    : Option.match(decodeFailureCauseClass(error.failureCause), {
+        onNone: () => 'untagged',
+        onSome: ({ _tag, sqlState }) => (sqlState === undefined ? _tag : `${_tag}[${sqlState}]`),
+      });
 
 const symmyAudienceForbidden = () =>
   new GatewayIssuerErrorConstructor({

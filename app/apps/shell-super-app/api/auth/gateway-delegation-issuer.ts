@@ -36,6 +36,8 @@ import type { InstalledModuleCatalogError, ShellInstalledCatalog } from '../modu
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import {
   GatewayIssuer,
+  gatewayIssuerFailureClass,
+  gatewayIssuerRefusalReason,
   issuePrivacyDispatchGatewayContextAssertion,
   issueOrganizationGovernanceReadGatewayContextAssertion,
   issueOrganizationProcessingReadGatewayContextAssertion,
@@ -732,7 +734,13 @@ export const issueDelegatedGatewayContextAssertion = Effect.fn('GatewayDelegatio
       Effect.tapErrorTag('GatewayIssuerError', (failure) =>
         Ref.get(learned).pipe(
           Effect.flatMap((context) =>
-            logDelegationRefusal({ audience, context, reason: 'issuer_unavailable', status: failure.code }),
+            logDelegationRefusal({
+              audience,
+              context,
+              failureCause: gatewayIssuerFailureClass(failure),
+              reason: gatewayIssuerRefusalReason(failure),
+              status: failure.code,
+            }),
           ),
         ),
       ),

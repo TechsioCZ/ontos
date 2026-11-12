@@ -27,6 +27,8 @@ import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-con
 import {
   GatewayIssuer,
   GatewayIssuerError,
+  gatewayIssuerFailureClass,
+  gatewayIssuerRefusalReason,
   issueGatewayContextAssertion,
   issueRouteScopedGatewayContextAssertion,
   issueSymmyGatewayContextAssertion,
@@ -1091,6 +1093,7 @@ it.effect('returns no token when the scope grant registration fails', () =>
                     return Effect.fail(
                       new GatewayScopeGrantUnavailableError({
                         reason: 'The gateway scope grant could not be registered',
+                        sqlState: '22023',
                       }),
                     );
                   }),
@@ -1105,6 +1108,9 @@ it.effect('returns no token when the scope grant registration fails', () =>
     expect(error.code).toBe('gateway_issuer_unavailable');
     expect(error.stage).toBe('scope_grant');
     expect(error.reason).toBe('The gateway assertion issuer is unavailable');
+    // The refusal names the scope step, and the operator log names the database's answer, never its message.
+    expect(gatewayIssuerRefusalReason(error)).toBe('scope_unavailable');
+    expect(gatewayIssuerFailureClass(error)).toBe('GatewayScopeGrantUnavailableError[22023]');
     expect(JSON.stringify(error)).not.toMatch(/eyJ/u);
   }),
 );

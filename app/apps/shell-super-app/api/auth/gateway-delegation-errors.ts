@@ -44,6 +44,8 @@ export const refusalTenant = (tenantId: string): RefusalContext =>
 export interface DelegationRefusal {
   readonly audience: string;
   readonly context: RefusalContext;
+  /** The class of an issuer failure's cause chain, never its message. */
+  readonly failureCause?: string;
   readonly reason: GatewayRefusalReason;
   readonly status: string;
 }
@@ -57,6 +59,7 @@ export const logDelegationRefusal = (refusal: DelegationRefusal) =>
     Effect.annotateLogs({
       audience: refusal.audience,
       callerAppId: refusal.context.callerAppId ?? 'unknown',
+      failureCause: refusal.failureCause ?? 'none',
       reason: refusal.reason,
       status: refusal.status,
       subjectTenant: refusal.context.tenantId ?? 'unknown',

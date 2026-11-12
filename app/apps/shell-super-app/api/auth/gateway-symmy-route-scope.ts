@@ -17,6 +17,7 @@ import { resolveSymmyOwnerReleaseBase } from '../symmy/owner-release-transport.t
 import { GatewayDelegationError, delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
 import { gatewayPublishedOperationAccess } from './gateway-delegation-policy.ts';
 import {
+  gatewayIssuerRefusalReason,
   issueGatewayContextAssertion,
   issueRouteScopedGatewayContextAssertion,
   issueSymmyGatewayContextAssertion,
@@ -163,7 +164,7 @@ export const acquireSymmyRouteScopeProof = Effect.fn('SymmyRouteScope.acquire')(
     compositionRevision: input.compositionRevision,
     principal,
     principalKind: 'integration',
-  }).pipe(Effect.mapError(delegationUnavailable('issuer_unavailable')));
+  }).pipe(Effect.mapError((failure) => delegationUnavailable(gatewayIssuerRefusalReason(failure))(failure)));
   if (assertion.compositionRevision !== input.compositionRevision) {
     return yield* delegationForbidden('symmy_route_not_admitted')();
   }
@@ -314,7 +315,7 @@ export const issueSymmyRouteScopeAssertion = Effect.fn('SymmyRouteScope.issueAss
             compositionRevision: facts.compositionRevision,
             principal,
           })
-    ).pipe(Effect.mapError(delegationUnavailable('issuer_unavailable')));
+    ).pipe(Effect.mapError((failure) => delegationUnavailable(gatewayIssuerRefusalReason(failure))(failure)));
   }
   const route = yield* readSymmyRouteScope(proof);
   const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(
@@ -348,5 +349,5 @@ export const issueSymmyRouteScopeAssertion = Effect.fn('SymmyRouteScope.issueAss
     compositionRevision: facts.compositionRevision,
     principal,
     routeScope,
-  }).pipe(Effect.mapError(delegationUnavailable('issuer_unavailable')));
+  }).pipe(Effect.mapError((failure) => delegationUnavailable(gatewayIssuerRefusalReason(failure))(failure)));
 });
