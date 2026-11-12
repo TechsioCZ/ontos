@@ -584,6 +584,7 @@
       "variantPriceHistory": "Historie cen variant",
       "searchVariants": "Hledat variantu",
       "variantSearchPlaceholder": "SKU nebo název varianty",
+      "variantsIntro": "Varianta má vlastní SKU, cenu, sklad a stav. Cenu zadáváte bez DPH; cena s DPH, kterou zákazník vidí v e-shopu, se uloží při uložení ceny podle sazby {{vat}}.",
       "variantsScrollLabel": "Varianty — posuňte vodorovně pro cenu, sklad a aktivitu",
       "customerProductView": "Jak produkt vidí zákazník",
       "archiveDemoProduct": "Archivace DEMO produktu",

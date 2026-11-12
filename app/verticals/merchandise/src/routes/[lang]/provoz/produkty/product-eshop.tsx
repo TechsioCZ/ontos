@@ -515,8 +515,7 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
         </StatusText>
       ) : null}
       <p className="text-fg-secondary text-sm">
-        Varianta má vlastní SKU, cenu, sklad a stav. Cena se zadává bez DPH, zákazník v e-shopu vidí cenu s DPH (sazba{' '}
-        {taxLabels.choice(classification)}), kterou spočítá server.
+        {t('merchandise.ui.variantsIntro', { vat: taxLabels.choice(classification) })}
       </p>
       <div className="flex flex-wrap items-center gap-150">
         <FormInput

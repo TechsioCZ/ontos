@@ -580,6 +580,7 @@
       "variantPriceHistory": "Variant price history",
       "searchVariants": "Search variants",
       "variantSearchPlaceholder": "SKU or variant name",
+      "variantsIntro": "Each variant has its own SKU, price, stock and status. You enter the price excluding VAT; the price including VAT that customers see in the shop is stored when you save the price, at the rate {{vat}}.",
       "variantsScrollLabel": "Variants — scroll horizontally for price, stock and active status",
       "customerProductView": "How customers see the product",
       "archiveDemoProduct": "Archive DEMO product",

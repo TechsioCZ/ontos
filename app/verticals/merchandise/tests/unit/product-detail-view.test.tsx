@@ -14,7 +14,7 @@ import { executeManageCatalog } from '../../src/api/manage-catalog-action-client
 import { ProductDetailView } from '../../src/routes/[lang]/provoz/produkty/product-detail-dialog.tsx';
 import type { CompanyVat } from '../../src/routes/[lang]/provoz/produkty/product-tax-classification.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-import { translateTaxCs } from './merchandise-translate.ts';
+import { translateIn, translateTaxCs } from './merchandise-translate.ts';
 
 rstest.mock('../../src/api/records-consumer.ts');
 rstest.mock('../../src/api/manage-catalog-action-client.ts');
@@ -85,6 +85,8 @@ let vat: CompanyVat = { rates: companyRates, regime: 'VAT_PAYER' };
 
 /** The product the page passes in; a test replaces it to deliver a reloaded record. */
 let shown = product;
+/** The editor tab the test shows. */
+let shownTab: 'detail' | 'variants' = 'detail';
 
 /** The record as a reload delivers it after someone saved it: a newer `updatedAt` and the given changes. */
 const reloaded = (changes: Partial<typeof ProductRecordSchema.Encoded>) =>
@@ -117,7 +119,7 @@ const mount = async () => {
           onTabChange={constVoid}
           product={shown}
           revision={1}
-          tab="detail"
+          tab={shownTab}
           vat={vat}
         />,
       );
@@ -193,6 +195,7 @@ beforeEach(() => {
   navigation.reset = 0;
   navigation.status = 'idle';
   shown = product;
+  shownTab = 'detail';
   vat = { rates: companyRates, regime: 'VAT_PAYER' };
 });
 
@@ -426,6 +429,20 @@ describe('the price including VAT on the product editor', () => {
       yield* Effect.promise(() => typeInto('detail-price', '20'));
       expect(fieldById('detail-price-gross').value.replaceAll('\u00A0', ' ')).toBe('24,20 Kč');
       expect(text()).toContain('merchandise.pages.products.fields.priceGrossPreview');
+    }),
+  );
+});
+
+describe('the variants tab', () => {
+  it.effect('explains prices in one translated sentence that names the classification', () =>
+    Effect.gen(function* variantsIntro() {
+      shownTab = 'variants';
+      yield* Effect.promise(mount);
+      expect(text()).toContain('merchandise.ui.variantsIntro');
+      expect(text()).not.toContain('Varianta má vlastní SKU');
+      const english = translateIn('en')('merchandise.ui.variantsIntro', { vat: 'Reduced (12 %)' });
+      expect(english).toContain('at the rate Reduced (12 %).');
+      expect(english).not.toMatch(/[áčďéěíňóřšťúůýž]/u);
     }),
   );
 });
