@@ -1,12 +1,18 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
+import { readFileSync } from 'node:fs';
+
 import { ConfigProvider, Crypto, Effect, Match, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { holdTestModuleCredentials } from '../../../core-runtime/tests/support/module-credentials.ts';
 import { GatewayDelegationSourceError, acquireDelegatedGatewayContext } from '../../src/gateway-context-server.ts';
-import { GatewayDelegatedContextRequestSchema } from '../../src/gateway-context.ts';
+import {
+  GATEWAY_AUDIENCE_MAX_LENGTH,
+  GatewayAudienceSchema,
+  GatewayDelegatedContextRequestSchema,
+} from '../../src/gateway-context.ts';
 
 type DecodedSubject = Schema.Schema.Type<typeof GatewayDelegatedContextRequestSchema>['subject'];
 
@@ -265,3 +271,17 @@ it.effect('refuses a response for a different admitted release', () =>
     expect(Schema.is(GatewayDelegationSourceError)(failure)).toBe(true);
   }),
 );
+
+it('bounds an audience: every topology app id fits, and an oversized one is refused before anything reads it', () => {
+  const TopologySchema = Schema.Struct({ verticals: Schema.Array(Schema.Struct({ id: Schema.String })) });
+  const topology = Schema.decodeUnknownSync(Schema.fromJsonString(TopologySchema))(
+    readFileSync(new URL('../../../../topology/reference-topology.json', import.meta.url), 'utf-8'),
+  );
+  const appIds = [...topology.verticals.map(({ id }) => id), 'shell-super-app'];
+  for (const appId of appIds) {
+    expect(appId.length).toBeLessThanOrEqual(GATEWAY_AUDIENCE_MAX_LENGTH);
+    expect(Schema.is(GatewayAudienceSchema)(appId)).toBe(true);
+  }
+  expect(Schema.is(GatewayAudienceSchema)('a'.repeat(GATEWAY_AUDIENCE_MAX_LENGTH))).toBe(true);
+  expect(Schema.is(GatewayAudienceSchema)('a'.repeat(GATEWAY_AUDIENCE_MAX_LENGTH + 1))).toBe(false);
+});

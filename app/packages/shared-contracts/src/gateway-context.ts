@@ -33,7 +33,11 @@ const TenantIdSchema = uuid.pipe(Schema.brand('TenantId'));
 const ActionInvocationIdSchema = uuid.pipe(Schema.brand('ActionInvocationId'));
 const EXACT_LIFETIME_ISSUE = 'exp must be exactly 300 seconds after iat';
 const SUBJECT_IS_PRINCIPAL_ISSUE = 'sub must equal principal.principalId';
+/** The longest audience a request may name; the longest topology app id today has 25 characters. */
+export const GATEWAY_AUDIENCE_MAX_LENGTH = 200;
+
 export const GatewayAudienceSchema = nonEmptyString.check(
+  Schema.isMaxLength(GATEWAY_AUDIENCE_MAX_LENGTH),
   Schema.makeFilter((value) =>
     /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u.test(value) ? undefined : 'audience must be a stable topology app ID',
   ),

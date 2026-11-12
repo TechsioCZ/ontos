@@ -11,8 +11,7 @@ import {
   AuthenticationNamespaceRegistry,
   makeAuthenticationNamespaceRegistryEffect,
 } from '@app/core-runtime/auth/external-identity-admission';
-import { delegationUnavailable, logDelegationRefusal, refusalTenant } from './auth/gateway-delegation-errors.ts';
-import type { RefusalContext } from './auth/gateway-delegation-errors.ts';
+import { delegationUnavailable, logDelegationRefusal } from './auth/gateway-delegation-errors.ts';
 import { GatewayDelegationVerificationLive } from './auth/gateway-delegation-verification.ts';
 import { gatewayReleaseRefusal } from './auth/gateway-release-refusal.ts';
 import type { GatewayReleaseRefusalHeaders } from './auth/gateway-release-refusal.ts';
@@ -2728,17 +2727,12 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
     )
     .handle('issueDelegatedGatewayContext', ({ headers, payload, request }) =>
       Effect.gen(function* issueDelegatedGatewayContextHandler() {
-        // Before the issuer admits a subject, only an asynchronous subject names its tenant (as the caller states it).
-        const statedContext: RefusalContext = Match.value(payload.subject).pipe(
-          Match.tag('Originator', ({ tenantId }) => refusalTenant(tenantId)),
-          Match.tag('Assertion', () => ({})),
-          Match.exhaustive,
-        );
-        // A refusal before the issuer runs: one warning, and its reason in the problem the caller receives.
+        // A refusal before the issuer runs: one warning, and its reason in the problem the caller receives. Nothing
+        // here is authenticated yet, so the warning names no calling module and no tenant from the request body.
         const refuse = <Problem extends GatewayContextProblem>(refusedProblem: Problem, reason: GatewayRefusalReason) =>
           logDelegationRefusal({
             audience: payload.audience,
-            context: statedContext,
+            context: {},
             reason,
             status: refusedProblem._tag,
           }).pipe(Effect.andThen(failApiKeyGatewayProblem(withRefusalReason(refusedProblem, reason))));
