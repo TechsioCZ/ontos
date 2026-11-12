@@ -1661,9 +1661,13 @@ export const evolveMerchandiseState = (
         if (order === undefined) {
           return yield* notFound(ORDER_NOT_FOUND_REASON);
         }
-        if (order.demo !== true || order.channel !== 'STOREFRONT') {
-          return yield* conflict('Odstranit lze pouze DEMO objednávku z e-shopu');
+        const demoStorefront = order.demo === true && order.channel === 'STOREFRONT';
+        if (!demoStorefront && order.status !== 'CANCELLED') {
+          return yield* conflict('Odstranit lze pouze stornovanou objednávku nebo DEMO objednávku z e-shopu');
         }
+        // Czech needs both cases: «odstraněná objednávka» and «sklad odstraněné objednávky».
+        const removedOrder = demoStorefront ? 'DEMO objednávka' : 'objednávka';
+        const ofRemovedOrder = demoStorefront ? 'DEMO objednávky' : 'objednávky';
         const entity = yield* entityIdOf(order.id);
         if (order.demoCleanup !== undefined) {
           if (value.repairStock !== true) {
@@ -1673,7 +1677,7 @@ export const evolveMerchandiseState = (
             state,
             order,
             input,
-            `Dorovnání skladu odstraněné DEMO objednávky ${order.number}`,
+            `Dorovnání skladu odstraněné ${ofRemovedOrder} ${order.number}`,
           );
           if (returned.length === 0) {
             return { entityIds: [entity], state };
@@ -1683,7 +1687,7 @@ export const evolveMerchandiseState = (
             history: [
               ...(order.history ?? []),
               historyEntry(input, {
-                after: 'Dorovnán sklad odstraněné DEMO objednávky',
+                after: `Dorovnán sklad odstraněné ${ofRemovedOrder}`,
                 kind: 'NOTE',
                 reason: value.reason,
               }),
@@ -1705,8 +1709,10 @@ export const evolveMerchandiseState = (
           history: [
             ...(order.history ?? []),
             historyEntry(input, {
-              after: 'Odstraněna z prezentačního seznamu; audit zachován',
-              before: 'Viditelná DEMO objednávka',
+              after: demoStorefront
+                ? 'Odstraněna z prezentačního seznamu; audit zachován'
+                : 'Odstraněna ze seznamu; audit zachován',
+              before: demoStorefront ? 'Viditelná DEMO objednávka' : 'Viditelná objednávka',
               kind: 'NOTE',
               reason: value.reason,
             }),
@@ -1718,7 +1724,7 @@ export const evolveMerchandiseState = (
           state,
           order,
           input,
-          `Vráceno – odstraněná DEMO objednávka ${order.number}`,
+          `Vráceno – odstraněná ${removedOrder} ${order.number}`,
         );
         return {
           entityIds: [entity],
