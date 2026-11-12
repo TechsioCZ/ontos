@@ -11,26 +11,33 @@ import {
   AKROS_PLAYGROUND_TENANT_ID,
   sellingModuleKeys,
   stageActivationScopes,
-  stageMarketModuleKeys,
   stageReleaseTenantModules,
 } from './stage-tenant-modules.mts';
 
 const tax = 'commerce.tax';
 const selling = ['demo.merchandise', 'finance.billing'];
 
-it('the release installs exactly the pairs the reviewed manual path may activate', () => {
+it('the release installs only its own reviewed pairs, each of them also a manual pair', () => {
   const released = stageReleaseTenantModules.map(({ moduleKey, tenantId }) => `${tenantId} ${moduleKey}`);
-  expect(released).toEqual(
-    stageActivationScopes.flatMap(({ moduleKeys, tenantId }) => moduleKeys.map((key) => `${tenantId} ${key}`)),
-  );
-  // One source: every pair the release installs is one the operator could activate by hand, and nothing else.
-  for (const tenantId of [demoTenantId, N1_TENANT_ID, AKROS_PLAYGROUND_TENANT_ID]) {
-    for (const moduleKey of stageMarketModuleKeys) {
-      expect(marketActivationScopeAllowed(tenantId, moduleKey, 'session')).toBe(
-        released.includes(`${tenantId} ${moduleKey}`),
-      );
-    }
+  // Exactly commerce.tax for the three selling Tenants: market catalogue, storefront registry, Projekty and Tasks
+  // stay manual, and whatever is added to the manual list later is never installed by a release on its own.
+  expect(released).toEqual([
+    `${demoTenantId} ${tax}`,
+    `${N1_TENANT_ID} ${tax}`,
+    `${AKROS_PLAYGROUND_TENANT_ID} ${tax}`,
+  ]);
+  for (const { moduleKey, tenantId } of stageReleaseTenantModules) {
+    expect(marketActivationScopeAllowed(tenantId, moduleKey, 'session')).toBe(true);
   }
+  const manual = stageActivationScopes.flatMap(({ moduleKeys, tenantId }) =>
+    moduleKeys.map((key) => `${tenantId} ${key}`),
+  );
+  expect(manual.filter((pair) => !released.includes(pair))).toEqual([
+    `${demoTenantId} commerce.market-catalog`,
+    `${demoTenantId} commerce.storefront-registry`,
+    `${demoTenantId} projects.core`,
+    `${N1_TENANT_ID} work.tasks`,
+  ]);
 });
 
 it('declares commerce.tax for the three selling Tenants, only where they already sell or invoice', () => {

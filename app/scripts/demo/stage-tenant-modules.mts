@@ -1,9 +1,11 @@
 /**
- * The one per-Tenant list of modules approved to be active on stage, shared by the platform and the operator:
+ * The per-Tenant modules approved for stage, in two explicit lists:
  *
- * - every release installs any of these a Tenant still lacks (`release-tenant-modules.mts`, run by the app host
- *   after it publishes the composition; additive only, it never changes a state a person set);
- * - `activate-market-stage.mts` is the reviewed manual path for exactly the same pairs.
+ * - `stageActivationScopes`: what `activate-market-stage.mts`, the reviewed manual path, may activate;
+ * - `stageReleaseTenantModules`: the pairs a release installs by itself when a Tenant still lacks them
+ *   (`release-tenant-modules.mts`, run by the app host after it publishes the composition; additive only, it never
+ *   changes a state a person set). Every pair is reviewed into it one by one and must also be a manual pair; adding a
+ *   module to the manual list never makes a release install it.
  *
  * `commerce.tax` is the one source of VAT rates and seller VAT regime, so every stage Tenant that sells or
  * invoices gets it, and only where one of `sellingModuleKeys` is already active. The local development (`…0010`)
@@ -68,11 +70,16 @@ export const activationSellingEvidence = (
       );
 };
 
-/** Every approved (Tenant, module) pair with the selling modules it needs, in list order: what each release ensures. */
-export const stageReleaseTenantModules = stageActivationScopes.flatMap(({ moduleKeys, tenantId }) =>
-  moduleKeys.map((moduleKey) => ({
-    moduleKey,
-    sellingModuleKeys: sellingPrerequisite.has(moduleKey) ? [...sellingModuleKeys] : [],
-    tenantId,
-  })),
-);
+/** One module a release installs where a Tenant still lacks it, with the selling modules it needs. */
+export interface StageReleaseTenantModule {
+  readonly moduleKey: StageMarketModuleKey;
+  readonly sellingModuleKeys: readonly (typeof sellingModuleKeys)[number][];
+  readonly tenantId: string;
+}
+
+/** The release's own list, today exactly `commerce.tax` for the three selling Tenants. */
+export const stageReleaseTenantModules: readonly StageReleaseTenantModule[] = [
+  { moduleKey: taxModuleKey, sellingModuleKeys, tenantId: demoTenantId },
+  { moduleKey: taxModuleKey, sellingModuleKeys, tenantId: N1_TENANT_ID },
+  { moduleKey: taxModuleKey, sellingModuleKeys, tenantId: AKROS_PLAYGROUND_TENANT_ID },
+];

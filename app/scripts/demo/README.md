@@ -457,14 +457,16 @@ already registered for another company. It writes no Role, grant, membership or 
 
 ### Tenant-wide modules on stage: installed by every release
 
-`stage-tenant-modules.mts` is the one per-Tenant list of modules approved to be active on stage: the demo Tenant
-market catalogue, storefront registry, Projekty and `commerce.tax`; N1 Tasks and `commerce.tax`; the AKROS
-playground `commerce.tax`. `commerce.tax` needs a Tenant that sells or invoices (`demo.merchandise` or
-`finance.billing` active). The local development (`…0010`) and verification (`…0090`) Tenants are not listed.
+`stage-tenant-modules.mts` holds two explicit per-Tenant lists. The manual list (`activate-market-stage.mts`): the
+demo Tenant market catalogue, storefront registry, Projekty and `commerce.tax`; N1 Tasks and `commerce.tax`; the AKROS
+playground `commerce.tax`. The release list, reviewed pair by pair and always a subset of the manual list: today only
+`commerce.tax` for those three Tenants. Adding a module to the manual list never makes a release install it.
+`commerce.tax` needs a Tenant that sells or invoices (`demo.merchandise` or `finance.billing` active). The local
+development (`…0010`) and verification (`…0090`) Tenants are on neither list.
 
-Every release installs what is missing, with no person and no host shell: right after the app host publishes the
+Every release installs what is missing from the release list, with no person and no host shell: right after the app host publishes the
 composition it runs `release-tenant-modules.mts` (Core: `packages/core-runtime/src/install/release-tenant-modules.ts`).
-For each listed pair it installs a module that has no state yet (state and history written as `system`), leaves an
+For each pair on the release list it installs a module that has no state yet (state and history written as `system`), leaves an
 active one alone, and never touches a state a person set (inactive, suspended, …). It refuses a module the published
 composition does not serve. Each Tenant that gained a module is then projected into SpiceDB under its platform
 release actor, the same writer the migrator's access release activation uses, so the owner's "Plný přístup" rights
@@ -477,7 +479,7 @@ Outbox host. A failure is one loud `RELEASE MODULE INSTALLATION FAILED` line; th
 `core.modules.change-tenant-module-state` Action, signed in as a tenant-only operator (`ONTOS_AGENT_SETUP_EMAIL`,
 `ONTOS_AGENT_SETUP_PASSWORD`; on the app host also the Shell's `BETTER_AUTH_*`,
 `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT=stage`, `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`). Each Tenant has an explicit
-allowlist, the same list as above. The selling modules `commerce.tax` needs are part of the reviewed plan. It is
+allowlist, the manual list above. The selling modules `commerce.tax` needs are part of the reviewed plan. It is
 the reviewed manual path for exactly the pairs a release installs; it needs the app host, so routine installs leave
 it to the release.
 
