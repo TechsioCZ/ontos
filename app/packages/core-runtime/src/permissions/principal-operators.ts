@@ -3,21 +3,7 @@
  * A person may connect an agent only while `operate` holds, i.e. the operator relation AND the operator's
  * tenant access. Writes go through the same SpiceDB RPC port the other demo grant helpers use.
  */
-import {
-  ObjectReference,
-  Relationship,
-  RelationshipUpdate,
-  RelationshipUpdate_Operation,
-  SubjectReference,
-} from '@authzed/authzed-node/v1/core';
-import {
-  CheckPermissionRequest,
-  CheckPermissionResponse_Permissionship,
-  Consistency,
-  ReadRelationshipsRequest,
-  RelationshipFilter,
-  WriteRelationshipsRequest,
-} from '@authzed/authzed-node/v1/permissions';
+import { v1 } from '@authzed/authzed-node';
 import { openSpiceDbRpc } from './spicedb-transaction-guard.ts';
 import { Effect } from 'effect';
 
@@ -34,9 +20,9 @@ const unavailable = (cause: unknown) =>
     'cause',
     { configurable: true, value: cause },
   );
-const fullyConsistent = Consistency.create({ requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } });
+const fullyConsistent = v1.Consistency.create({ requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } });
 const principalObject = (principalId: string) =>
-  ObjectReference.create({ objectId: principalId, objectType: 'principal' });
+  v1.ObjectReference.create({ objectId: principalId, objectType: 'principal' });
 
 /** Pure: which operator relations to add and remove to reach `desired`. */
 export const operatorChanges = (current: readonly string[], desired: readonly string[]) => {
@@ -66,9 +52,9 @@ const makeOperators = (rpc: SpiceDbRpc): PrincipalOperators => {
   const operatorsOf = (agentPrincipalId: string) =>
     rpc
       .readRelationships(
-        ReadRelationshipsRequest.create({
+        v1.ReadRelationshipsRequest.create({
           consistency: fullyConsistent,
-          relationshipFilter: RelationshipFilter.create({
+          relationshipFilter: v1.RelationshipFilter.create({
             optionalRelation: 'operator',
             optionalResourceId: agentPrincipalId,
             resourceType: 'principal',
@@ -88,15 +74,17 @@ const makeOperators = (rpc: SpiceDbRpc): PrincipalOperators => {
     canOperate: (agentPrincipalId, operatorPrincipalId) =>
       rpc
         .checkPermission(
-          CheckPermissionRequest.create({
+          v1.CheckPermissionRequest.create({
             consistency: fullyConsistent,
             permission: 'operate',
             resource: principalObject(agentPrincipalId),
-            subject: SubjectReference.create({ object: principalObject(operatorPrincipalId) }),
+            subject: v1.SubjectReference.create({ object: principalObject(operatorPrincipalId) }),
           }),
         )
         .pipe(
-          Effect.map((response) => response.permissionship === CheckPermissionResponse_Permissionship.HAS_PERMISSION),
+          Effect.map(
+            (response) => response.permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
+          ),
           Effect.mapError(unavailable),
         ),
     operatorsOf,
@@ -105,25 +93,27 @@ const makeOperators = (rpc: SpiceDbRpc): PrincipalOperators => {
       const { add, remove } = operatorChanges(current, input.operatorPrincipalIds);
       const resource = principalObject(input.agentPrincipalId);
       const relationUpdate = (
-        operation: RelationshipUpdate_Operation,
+        operation: v1.RelationshipUpdate_Operation,
         relation: string,
         objectId: string,
         objectType: string,
       ) =>
-        RelationshipUpdate.create({
+        v1.RelationshipUpdate.create({
           operation,
-          relationship: Relationship.create({
+          relationship: v1.Relationship.create({
             relation,
             resource,
-            subject: SubjectReference.create({ object: ObjectReference.create({ objectId, objectType }) }),
+            subject: v1.SubjectReference.create({ object: v1.ObjectReference.create({ objectId, objectType }) }),
           }),
         });
       const updates = [
-        relationUpdate(RelationshipUpdate_Operation.TOUCH, 'tenant', input.tenantId, 'tenant'),
-        ...add.map((id) => relationUpdate(RelationshipUpdate_Operation.TOUCH, 'operator', id, 'principal')),
-        ...remove.map((id) => relationUpdate(RelationshipUpdate_Operation.DELETE, 'operator', id, 'principal')),
+        relationUpdate(v1.RelationshipUpdate_Operation.TOUCH, 'tenant', input.tenantId, 'tenant'),
+        ...add.map((id) => relationUpdate(v1.RelationshipUpdate_Operation.TOUCH, 'operator', id, 'principal')),
+        ...remove.map((id) => relationUpdate(v1.RelationshipUpdate_Operation.DELETE, 'operator', id, 'principal')),
       ];
-      yield* rpc.writeRelationships(WriteRelationshipsRequest.create({ updates })).pipe(Effect.mapError(unavailable));
+      yield* rpc
+        .writeRelationships(v1.WriteRelationshipsRequest.create({ updates }))
+        .pipe(Effect.mapError(unavailable));
       return { added: add.length, removed: remove.length };
     }),
   };

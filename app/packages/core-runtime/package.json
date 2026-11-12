@@ -81,7 +81,6 @@
     "./testing/reads": "./src/testing/reads.ts",
     "./testing/native-reads": "./src/testing/native-reads.ts",
     "./testing/native-action-v2": {
-      "types": "./tests/support/action-live-v2.ts",
       "node": "./tests/support/action-live-v2.ts"
     },
     "./testing/isolated-native-database": "./src/testing/isolated-native-database.ts",
@@ -117,7 +116,6 @@
       "default": "./src/db/database-runtime.node.ts"
     },
     "#unit-service-fetch": {
-      "types": "./src/http/unit-service-fetch.ts",
       "workerd": "./src/http/unit-service-fetch.workerd.ts",
       "node": "./src/http/unit-service-fetch.node.ts"
     },
