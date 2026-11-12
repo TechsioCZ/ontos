@@ -561,7 +561,7 @@
         "standard": "Základní"
       },
       "nonPayer": "firma není plátce DPH",
-      "nonPayerHint": "Firma není plátce DPH: prodává bez DPH, cena s DPH je rovna ceně bez DPH.",
+      "nonPayerHint": "Firma není plátce DPH: nové ceny se ukládají bez DPH (cena s DPH je rovna ceně bez DPH). Ceny uložené dříve, kdy firma plátcem byla, zůstávají, jak byly uloženy.",
       "unconfirmed": "Sazby DPH zatím nepotvrdil modul Daně; platí sazby převzaté z dosud uložených cen.",
       "confirmedAt": "Sazby DPH naposledy potvrdil modul Daně {{at}}; modul Daně teď neodpovídá.",
       "noRateToCreate": "Firma zatím nemá v modulu Daně platnou sazbu DPH, produkt proto nelze založit.",

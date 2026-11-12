@@ -127,6 +127,15 @@ describe('a company that is not a VAT payer', () => {
   });
 });
 
+describe('the hint for a company that is not a VAT payer', () => {
+  it('stays true for a former payer whose products keep the gross they were stored with', () => {
+    expect(cs.nonPayerHint).toBe(
+      'Firma není plátce DPH: nové ceny se ukládají bez DPH (cena s DPH je rovna ceně bez DPH). Ceny uložené dříve, kdy firma plátcem byla, zůstávají, jak byly uloženy.',
+    );
+    expect(taxLabelsOf(translateIn('en')).nonPayerHint).toContain('Prices stored while the company was a payer stay');
+  });
+});
+
 describe('how current the company rates are', () => {
   it('says when Tax has not confirmed them yet, and when it last did once that is long ago', () => {
     expect(cs.confirmation({ rates: [standardNow], regime: 'VAT_PAYER', source: 'MIGRATION' }, now)).toBe(

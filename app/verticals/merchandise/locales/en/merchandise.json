@@ -557,7 +557,7 @@
         "standard": "Standard"
       },
       "nonPayer": "the company is not a VAT payer",
-      "nonPayerHint": "The company is not a VAT payer: it sells without VAT, the price including VAT equals the price excluding VAT.",
+      "nonPayerHint": "The company is not a VAT payer: new prices are stored without VAT (the price including VAT equals the price excluding VAT). Prices stored while the company was a payer stay as they were stored.",
       "unconfirmed": "The tax module has not confirmed the VAT rates yet; the rates taken over from the stored prices apply.",
       "confirmedAt": "The tax module last confirmed the VAT rates on {{at}}; it is not answering now.",
       "noRateToCreate": "The company has no VAT rate in force in the tax module yet, so the product cannot be created.",
