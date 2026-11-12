@@ -35,6 +35,7 @@ export const ManageProductPricesBulkActionForbiddenProblemSchema = makeProblemDe
       'operation_context_invalid',
       'BULK_SCOPE_MISMATCH',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ManageProductPricesBulkActionNotFoundProblemSchema = makeProblemDetailsSchema(

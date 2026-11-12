@@ -37,6 +37,7 @@ export const UpdatePersonalAgendaActionForbiddenProblemSchema = makeProblemDetai
       'facility_operations_permission_denied',
       'facility_operations_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const UpdatePersonalAgendaActionNotFoundProblemSchema = makeProblemDetailsSchema(

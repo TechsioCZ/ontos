@@ -107,10 +107,12 @@ export const defineCommercialFeeActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'DefineCommercialFeeActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'DefineCommercialFeeActionForbiddenProblem'> =>
     DefineCommercialFeeActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -228,7 +230,8 @@ const mapCoreProblem = (error: ActionCoreError): DefineCommercialFeeActionProble
       ActionInvocationStateError: (failure) => defineCommercialFeeActionProblem.conflict(failure.code),
       ActionPayloadValidationError: defineCommercialFeeActionProblem.invalid,
       ActionPermissionCheckError: (failure) => defineCommercialFeeActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => defineCommercialFeeActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        defineCommercialFeeActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => defineCommercialFeeActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => defineCommercialFeeActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => defineCommercialFeeActionProblem.conflict(failure.code),

@@ -61,10 +61,12 @@ export const recoverInventoryEffectActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RecoverInventoryEffectActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RecoverInventoryEffectActionForbiddenProblem'> =>
     RecoverInventoryEffectActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -172,7 +174,8 @@ const mapCoreProblem = (error: ActionCoreError): RecoverInventoryEffectActionPro
       ActionInvocationStateError: (failure) => recoverInventoryEffectActionProblem.conflict(failure.code),
       ActionPayloadValidationError: recoverInventoryEffectActionProblem.invalid,
       ActionPermissionCheckError: (failure) => recoverInventoryEffectActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => recoverInventoryEffectActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        recoverInventoryEffectActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => recoverInventoryEffectActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => recoverInventoryEffectActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => recoverInventoryEffectActionProblem.conflict(failure.code),

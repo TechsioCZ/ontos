@@ -78,10 +78,12 @@ export const commitOrderActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'CommitOrderActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'CommitOrderActionForbiddenProblem'> =>
     CommitOrderActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -190,7 +192,7 @@ const mapCoreProblem = (error: ActionCoreError): CommitOrderActionProblem =>
       ActionInvocationStateError: (failure) => commitOrderActionProblem.conflict(failure.code),
       ActionPayloadValidationError: commitOrderActionProblem.invalid,
       ActionPermissionCheckError: (failure) => commitOrderActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => commitOrderActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => commitOrderActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => commitOrderActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => commitOrderActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => commitOrderActionProblem.conflict(failure.code),

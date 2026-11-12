@@ -81,10 +81,12 @@ export const recordDsrDeadlineActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RecordDsrDeadlineActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RecordDsrDeadlineActionForbiddenProblem'> =>
     RecordDsrDeadlineActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -193,7 +195,8 @@ const mapCoreProblem = (error: ActionCoreError): RecordDsrDeadlineActionProblem 
       ActionInvocationStateError: (failure) => recordDsrDeadlineActionProblem.conflict(failure.code),
       ActionPayloadValidationError: recordDsrDeadlineActionProblem.invalid,
       ActionPermissionCheckError: (failure) => recordDsrDeadlineActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => recordDsrDeadlineActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        recordDsrDeadlineActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => recordDsrDeadlineActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => recordDsrDeadlineActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => recordDsrDeadlineActionProblem.conflict(failure.code),

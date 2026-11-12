@@ -29,6 +29,7 @@ export const ApplyCommandActionForbiddenProblemSchema = makeProblemDetailsSchema
       'activity_permission_denied',
       'activity_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ApplyCommandActionNotFoundProblemSchema = makeProblemDetailsSchema(

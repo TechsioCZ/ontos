@@ -61,10 +61,12 @@ export const governVariantAllowedValuesActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'GovernVariantAllowedValuesActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'GovernVariantAllowedValuesActionForbiddenProblem'> =>
     GovernVariantAllowedValuesActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -167,7 +169,8 @@ const mapCoreProblem = (error: ActionCoreError): GovernVariantAllowedValuesActio
       ActionInvocationStateError: (failure) => governVariantAllowedValuesActionProblem.conflict(failure.code),
       ActionPayloadValidationError: governVariantAllowedValuesActionProblem.invalid,
       ActionPermissionCheckError: (failure) => governVariantAllowedValuesActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => governVariantAllowedValuesActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        governVariantAllowedValuesActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => governVariantAllowedValuesActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => governVariantAllowedValuesActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => governVariantAllowedValuesActionProblem.conflict(failure.code),

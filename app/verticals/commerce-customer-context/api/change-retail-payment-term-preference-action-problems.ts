@@ -96,10 +96,12 @@ export const changeRetailPaymentTermPreferenceActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ChangeRetailPaymentTermPreferenceActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ChangeRetailPaymentTermPreferenceActionForbiddenProblem'> =>
     ChangeRetailPaymentTermPreferenceActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -220,7 +222,8 @@ const mapCoreProblem = (error: ActionCoreError): ChangeRetailPaymentTermPreferen
       ActionInvocationStateError: (failure) => changeRetailPaymentTermPreferenceActionProblem.conflict(failure.code),
       ActionPayloadValidationError: changeRetailPaymentTermPreferenceActionProblem.invalid,
       ActionPermissionCheckError: (failure) => changeRetailPaymentTermPreferenceActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => changeRetailPaymentTermPreferenceActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        changeRetailPaymentTermPreferenceActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => changeRetailPaymentTermPreferenceActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) =>
         changeRetailPaymentTermPreferenceActionProblem.unavailable(failure.code),

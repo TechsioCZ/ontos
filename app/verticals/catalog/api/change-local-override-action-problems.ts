@@ -61,10 +61,12 @@ export const changeLocalOverrideActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ChangeLocalOverrideActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ChangeLocalOverrideActionForbiddenProblem'> =>
     ChangeLocalOverrideActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -165,7 +167,8 @@ const mapCoreProblem = (error: ActionCoreError): ChangeLocalOverrideActionProble
       ActionInvocationStateError: (failure) => changeLocalOverrideActionProblem.conflict(failure.code),
       ActionPayloadValidationError: changeLocalOverrideActionProblem.invalid,
       ActionPermissionCheckError: (failure) => changeLocalOverrideActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => changeLocalOverrideActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        changeLocalOverrideActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => changeLocalOverrideActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => changeLocalOverrideActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => changeLocalOverrideActionProblem.conflict(failure.code),

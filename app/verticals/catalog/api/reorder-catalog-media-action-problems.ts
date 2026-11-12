@@ -61,10 +61,12 @@ export const reorderCatalogMediaActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ReorderCatalogMediaActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ReorderCatalogMediaActionForbiddenProblem'> =>
     ReorderCatalogMediaActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -166,7 +168,8 @@ const mapCoreProblem = (error: ActionCoreError): ReorderCatalogMediaActionProble
       ActionInvocationStateError: (failure) => reorderCatalogMediaActionProblem.conflict(failure.code),
       ActionPayloadValidationError: reorderCatalogMediaActionProblem.invalid,
       ActionPermissionCheckError: (failure) => reorderCatalogMediaActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => reorderCatalogMediaActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        reorderCatalogMediaActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => reorderCatalogMediaActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => reorderCatalogMediaActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => reorderCatalogMediaActionProblem.conflict(failure.code),

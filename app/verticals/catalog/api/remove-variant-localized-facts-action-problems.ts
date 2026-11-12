@@ -61,10 +61,12 @@ export const removeVariantLocalizedFactsActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RemoveVariantLocalizedFactsActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RemoveVariantLocalizedFactsActionForbiddenProblem'> =>
     RemoveVariantLocalizedFactsActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -166,7 +168,8 @@ const mapCoreProblem = (error: ActionCoreError): RemoveVariantLocalizedFactsActi
       ActionInvocationStateError: (failure) => removeVariantLocalizedFactsActionProblem.conflict(failure.code),
       ActionPayloadValidationError: removeVariantLocalizedFactsActionProblem.invalid,
       ActionPermissionCheckError: (failure) => removeVariantLocalizedFactsActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => removeVariantLocalizedFactsActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        removeVariantLocalizedFactsActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => removeVariantLocalizedFactsActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => removeVariantLocalizedFactsActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => removeVariantLocalizedFactsActionProblem.conflict(failure.code),

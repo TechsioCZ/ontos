@@ -61,10 +61,12 @@ export const setVariantAttributeOverrideActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'SetVariantAttributeOverrideActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'SetVariantAttributeOverrideActionForbiddenProblem'> =>
     SetVariantAttributeOverrideActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -181,7 +183,8 @@ const mapCoreProblem = (error: ActionCoreError): SetVariantAttributeOverrideActi
       ActionInvocationStateError: (failure) => setVariantAttributeOverrideActionProblem.conflict(failure.code),
       ActionPayloadValidationError: setVariantAttributeOverrideActionProblem.invalid,
       ActionPermissionCheckError: (failure) => setVariantAttributeOverrideActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => setVariantAttributeOverrideActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        setVariantAttributeOverrideActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => setVariantAttributeOverrideActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => setVariantAttributeOverrideActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => setVariantAttributeOverrideActionProblem.conflict(failure.code),

@@ -63,10 +63,12 @@ export const manageCatalogActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'ManageCatalogActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'ManageCatalogActionForbiddenProblem'> =>
     ManageCatalogActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -175,7 +177,7 @@ const mapCoreProblem = (error: ActionCoreError): ManageCatalogActionProblem =>
       ActionInvocationStateError: (failure) => manageCatalogActionProblem.conflict(failure.code),
       ActionPayloadValidationError: manageCatalogActionProblem.invalid,
       ActionPermissionCheckError: (failure) => manageCatalogActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => manageCatalogActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) => manageCatalogActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => manageCatalogActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => manageCatalogActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => manageCatalogActionProblem.conflict(failure.code),

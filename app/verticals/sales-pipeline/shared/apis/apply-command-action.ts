@@ -38,6 +38,7 @@ export const ApplyCommandActionForbiddenProblemSchema = makeProblemDetailsSchema
       'operation_context_invalid',
       'sales_pipeline_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ApplyCommandActionNotFoundProblemSchema = makeProblemDetailsSchema(

@@ -29,6 +29,7 @@ export const ApplyCommandActionForbiddenProblemSchema = makeProblemDetailsSchema
       'tagging_permission_denied',
       'tagging_scope_mismatch',
     ]),
+    reasons: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 );
 export const ApplyCommandActionNotFoundProblemSchema = makeProblemDetailsSchema(

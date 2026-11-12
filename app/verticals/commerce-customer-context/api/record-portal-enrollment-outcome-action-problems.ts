@@ -92,10 +92,12 @@ export const recordPortalEnrollmentOutcomeActionProblem = {
     }),
   forbidden: (
     code: ProblemOf<'RecordPortalEnrollmentOutcomeActionForbiddenProblem'>['code'],
+    reasons: readonly string[] = [],
   ): ProblemOf<'RecordPortalEnrollmentOutcomeActionForbiddenProblem'> =>
     RecordPortalEnrollmentOutcomeActionForbiddenProblemSchema.make({
       code,
       detail: 'The principal is not permitted to perform this Action.',
+      reasons,
       status: problemStatus.forbidden,
       title: 'Action forbidden',
       type: 'https://ontos.dev/problems/action-forbidden',
@@ -220,7 +222,8 @@ const mapCoreProblem = (error: ActionCoreError): RecordPortalEnrollmentOutcomeAc
       ActionInvocationStateError: (failure) => recordPortalEnrollmentOutcomeActionProblem.conflict(failure.code),
       ActionPayloadValidationError: recordPortalEnrollmentOutcomeActionProblem.invalid,
       ActionPermissionCheckError: (failure) => recordPortalEnrollmentOutcomeActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => recordPortalEnrollmentOutcomeActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        recordPortalEnrollmentOutcomeActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => recordPortalEnrollmentOutcomeActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => recordPortalEnrollmentOutcomeActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => recordPortalEnrollmentOutcomeActionProblem.conflict(failure.code),

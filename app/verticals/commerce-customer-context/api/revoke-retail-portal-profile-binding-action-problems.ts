@@ -137,7 +137,8 @@ const mapCoreProblem = (error: ActionCoreError): RevokeRetailPortalProfileBindin
       ActionInvocationStateError: (failure) => revokeRetailPortalProfileBindingActionProblem.conflict(failure.code),
       ActionPayloadValidationError: revokeRetailPortalProfileBindingActionProblem.invalid,
       ActionPermissionCheckError: (failure) => revokeRetailPortalProfileBindingActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => revokeRetailPortalProfileBindingActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        revokeRetailPortalProfileBindingActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => revokeRetailPortalProfileBindingActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => revokeRetailPortalProfileBindingActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => revokeRetailPortalProfileBindingActionProblem.conflict(failure.code),

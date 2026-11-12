@@ -154,7 +154,8 @@ const mapCoreProblem = (error: ActionCoreError): MigrateCustomerPriceGroupAction
       ActionInvocationStateError: (failure) => migrateCustomerPriceGroupActionProblem.conflict(failure.code),
       ActionPayloadValidationError: migrateCustomerPriceGroupActionProblem.invalid,
       ActionPermissionCheckError: (failure) => migrateCustomerPriceGroupActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => migrateCustomerPriceGroupActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        migrateCustomerPriceGroupActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => migrateCustomerPriceGroupActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => migrateCustomerPriceGroupActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => migrateCustomerPriceGroupActionProblem.conflict(failure.code),

@@ -148,7 +148,8 @@ const mapCoreProblem = (error: ActionCoreError): GrantCounterpartyCommerceAccess
       ActionInvocationStateError: (failure) => grantCounterpartyCommerceAccessActionProblem.conflict(failure.code),
       ActionPayloadValidationError: grantCounterpartyCommerceAccessActionProblem.invalid,
       ActionPermissionCheckError: (failure) => grantCounterpartyCommerceAccessActionProblem.unavailable(failure.code),
-      ActionPermissionDenied: (failure) => grantCounterpartyCommerceAccessActionProblem.forbidden(failure.code),
+      ActionPermissionDenied: (failure) =>
+        grantCounterpartyCommerceAccessActionProblem.forbidden(failure.code, failure.reasons ?? []),
       ActionPolicyDenied: (failure) => grantCounterpartyCommerceAccessActionProblem.ineligible(failure.code),
       ActionPolicyEvaluationError: (failure) => grantCounterpartyCommerceAccessActionProblem.unavailable(failure.code),
       ActionRequestHashConflict: (failure) => grantCounterpartyCommerceAccessActionProblem.conflict(failure.code),
