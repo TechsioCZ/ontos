@@ -214,13 +214,16 @@ export const taxLabelsOf = (t: Translate) => {
 
   /**
    * When the company's rates are not current: not yet confirmed by Tax (taken over from the stored prices), or last
-   * confirmed long enough ago to say when. Nothing while they are recent, or when the company has no rates at all.
+   * confirmed long enough ago to say when. Nothing while they are recent, when the company has no rates at all, or
+   * for a non-payer (it sells without VAT, no rate applies).
    */
   const confirmation = (vat: CompanyVat, now: DateTime.Utc) => {
-    if (vat.source === 'MIGRATION') {
+    const payer = vat.regime !== 'NON_PAYER';
+    if (payer && vat.source === 'MIGRATION') {
       return t(`${KEY_PREFIX}.unconfirmed`);
     }
-    return vat.confirmedAt === undefined ||
+    return !payer ||
+      vat.confirmedAt === undefined ||
       Duration.isLessThan(DateTime.distance(vat.confirmedAt, now), CONFIRMATION_SHOWN_AFTER)
       ? undefined
       : t(`${KEY_PREFIX}.confirmedAt`, { at: dateTime.format(DateTime.toEpochMillis(vat.confirmedAt)) });

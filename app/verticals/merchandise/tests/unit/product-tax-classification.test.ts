@@ -157,6 +157,14 @@ describe('how current the company rates are', () => {
     );
   });
 
+  it('says nothing about rates to a company that is not a VAT payer', () => {
+    const nonPayer = { rates: [], regime: 'NON_PAYER' as const };
+    expect(cs.confirmation({ ...nonPayer, source: 'MIGRATION' }, now)).toBeUndefined();
+    expect(
+      cs.confirmation({ ...nonPayer, confirmedAt: at('2026-11-12T07:30:00Z'), source: 'TAX' }, now),
+    ).toBeUndefined();
+  });
+
   it('tells the migrated rates from none at all, as the staff read states their source', () => {
     const migrated = companyVatOf({
       sellerVatRegime: 'VAT_PAYER',
