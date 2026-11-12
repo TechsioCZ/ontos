@@ -13,7 +13,7 @@ import {
 import { executeRecordsWithAuthorization as executePropertyRecords } from '@app/property-portfolio/clients/records';
 import { executeRecordsWithAuthorization as executeAgreementsRecords } from '@app/legal-agreements/clients/records';
 import { and, eq } from 'drizzle-orm';
-import { DateTime, Effect, Match, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
 
 import {
   OccupancyConflict,
@@ -807,7 +807,7 @@ export const persistenceService = (
   });
 };
 
-export const makeOccupancyValidators = Effect.fn('Occupancy.validators')(function* makeOccupancyValidators(
+const makeOccupancyValidators = Effect.fn('Occupancy.validators')(function* makeOccupancyValidators(
   scope: OperationalScope,
 ) {
   if (scope.legalEntityId === undefined) {
@@ -897,4 +897,26 @@ export const makeOccupancyValidators = Effect.fn('Occupancy.validators')(functio
       };
     }),
   } satisfies OccupancyValidators;
+});
+
+/**
+ * Builds the command reference validators of one request from that request's operational scope (tenant and
+ * company). Every call returns new validators over a new reference credential source, so two requests never
+ * share a validator or what it looked up. Required by the apply-command Action; provided once in the API root.
+ */
+export class OccupancyReferenceValidators extends Context.Service<
+  OccupancyReferenceValidators,
+  {
+    readonly forScope: (
+      scope: OperationalScope,
+    ) => Effect.Effect<
+      OccupancyValidators,
+      Effect.Error<ReturnType<typeof makeOccupancyValidators>>,
+      Effect.Services<ReturnType<typeof makeOccupancyValidators>>
+    >;
+  }
+>()('@app/property-leasing/services/persistence.service/OccupancyReferenceValidators') {}
+
+export const OccupancyReferenceValidatorsLive = Layer.succeed(OccupancyReferenceValidators, {
+  forScope: makeOccupancyValidators,
 });

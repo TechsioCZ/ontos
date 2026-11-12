@@ -51,6 +51,7 @@ import {
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
+import { OccupancyReferenceValidatorsLive } from '../src/services/persistence.service.ts';
 import { agentReviewReadApiLive } from './agent-review-read-server.ts';
 import { applyCommandActionApiLive } from './apply-command-action-server.ts';
 import { leasesReadApiLive } from './leases-search-server.ts';
@@ -162,6 +163,8 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
     ),
   ),
   // </generated-governed-http-handler-support-layers>
+  // apply-command builds its contract, party and unit reference validators per request from that request's scope.
+  GovernedReadLayer.provide(OccupancyReferenceValidatorsLive),
   GovernedReadLayer.provide(GovernedReadLayer.mergeAll(ActionPermissionLive)),
   // Owner read callbacks (the write capability) ask the v2 access gate themselves; ReadRuntime keeps its own private.
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
