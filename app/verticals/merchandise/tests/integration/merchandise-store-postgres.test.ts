@@ -139,7 +139,7 @@ const runCommand = (
         const revision =
           change.state === working.state
             ? working.revision
-            : yield* persistChange(transaction, fixture.scope, working, change.state, now, TEST_RATES);
+            : yield* persistChange(transaction, fixture.scope, working, change.state, now, TEST_RATES, {});
         return { change, revision, working };
       }),
     );
@@ -488,7 +488,7 @@ it.live('persistChange against a stale revision reports a conflict instead of a 
               tax: TEST_TAX,
             });
             const stale = { ...working, revision: working.revision + 7 };
-            const revision = yield* persistChange(transaction, fixture.scope, stale, change.state, now, TEST_RATES);
+            const revision = yield* persistChange(transaction, fixture.scope, stale, change.state, now, TEST_RATES, {});
             // Persistence turns `undefined` into a revision conflict, which rolls the transaction back.
             return revision ?? (yield* Effect.fail('conflict'));
           }),

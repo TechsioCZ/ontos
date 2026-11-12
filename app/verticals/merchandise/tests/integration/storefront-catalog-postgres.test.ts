@@ -533,6 +533,7 @@ const changeSearchVariantActivity = (fixture: MerchandiseFixture, activity: Opti
         changed,
         DateTime.makeUnsafe(catalogInput.products[0].updatedAt),
         TEST_RATES,
+        {},
       );
       expect(revision).toBe(head.revision + 1);
       return revision;
@@ -1487,7 +1488,7 @@ const placeMarketOrder = (
         tax: TEST_TAX,
       });
       if (change.state !== working.state) {
-        yield* persistChange(transaction, fixture.scope, working, change.state, marketNow, TEST_RATES);
+        yield* persistChange(transaction, fixture.scope, working, change.state, marketNow, TEST_RATES, {});
       }
       return { resourceId, result: change.storefrontOrder };
     }),
