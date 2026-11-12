@@ -1,4 +1,5 @@
 import { proposalLifecycleAdministrator } from '@app/core-runtime';
+import { administersOAuthConnections } from '../../../../packages/core-runtime/src/auth/oauth-connection-administration-read.ts';
 import { mayFindPeople } from '@app/core-runtime/people/search';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { Effect } from 'effect';
@@ -83,6 +84,15 @@ const withdrawsAgentProposals = Effect.fn('LegacyRows.withdrawsAgentProposals')(
   return yield* proposalLifecycleAdministrator(scope).pipe(Effect.provideService(AccessDecisionGate, accessCase.gate));
 });
 
+const administersConnections = Effect.fn('LegacyRows.administersConnections')(function* administersConnections(
+  accessCase: AccessAdminCase,
+  persona: Persona,
+  company: string | undefined,
+) {
+  const scope = yield* companyPrincipal(accessCase, persona, company);
+  return yield* administersOAuthConnections(scope).pipe(Effect.provideService(AccessDecisionGate, accessCase.gate));
+});
+
 const findsPeople = Effect.fn('LegacyRows.findsPeople')(function* findsPeople(
   accessCase: AccessAdminCase,
   persona: Persona,
@@ -137,6 +147,19 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '120 se
           expect(yield* withdrawsAgentProposals(accessCase, 'member', companyA)).toBe(false);
           expect(yield* withdrawsAgentProposals(accessCase, 'companyAdmin', companyB)).toBe(false);
           expect(yield* withdrawsAgentProposals(accessCase, 'foreignOwner', companyA)).toBe(false);
+        }),
+      ),
+    );
+
+    suite.effect("row 5: connected-apps administration and others' revocation notes follow the new admin right", () =>
+      withAccessAdminCase((accessCase) =>
+        Effect.gen(function* connectedAppsAdministration() {
+          const [companyA, companyB] = accessCase.companies;
+          expect(yield* administersConnections(accessCase, 'owner', companyA)).toBe(true);
+          expect(yield* administersConnections(accessCase, 'companyAdmin', companyA)).toBe(true);
+          expect(yield* administersConnections(accessCase, 'member', companyA)).toBe(false);
+          expect(yield* administersConnections(accessCase, 'companyAdmin', companyB)).toBe(false);
+          expect(yield* administersConnections(accessCase, 'foreignOwner', companyA)).toBe(false);
         }),
       ),
     );

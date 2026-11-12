@@ -48,6 +48,7 @@ import {
   AgentProposalCommandPreparationLive,
   AgentProposalCommandAuthorizationPreflightLive,
   IdentityAdministrationDeniedAuditLive,
+  oauthConnectionAdministrationRead,
   ActiveApplicationCompositionUnavailableError,
   makeReadRuntimeLive,
   ContextAccessLive,
@@ -295,7 +296,6 @@ import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
 import { GatewayTimings, gatewayTimingCollector, observeGatewayPhase } from './auth/gateway-timing.ts';
 import { preserveSystemPrincipalContextTrust } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { peopleAdministrationCapability } from './auth/demo-accounts.ts';
-import { legacyCompanyConnectionsAdministrator } from './oauth-connections-admin/company-connections-administrator.ts';
 import { rebrandRentalDemoAccounts } from './auth/rental-demo-brand-runtime-infrastructure.ts';
 import { listAgentEntities, manageAgentEntity } from './auth/agent-entities.ts';
 import { IdentityLifecycle, IdentityLifecycleLive } from './auth/identity-lifecycle.ts';
@@ -3204,8 +3204,20 @@ const connectionsCaller = Effect.fn('shell.connectionsAdmin.caller')(function* c
   withAdminRight: boolean,
 ) {
   const caller = yield* agentPlatformSessionCaller(request);
+  // The company's connected applications are administered through Core's own capability carrier,
+  // `core.identity.oauth-connection.administer`: admitting the read is the answer.
   const isCompanyAdmin = withAdminRight
-    ? yield* legacyCompanyConnectionsAdministrator(caller.principal).pipe(Effect.orElseSucceed(() => false))
+    ? yield* (yield* ReadRuntime)
+        .runRead({
+          input: {},
+          principal: caller.principal,
+          registration: oauthConnectionAdministrationRead,
+          transport: { correlationId: correlationFromRequest(request) },
+        })
+        .pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        )
     : false;
   const result: ConnectionsCaller = {
     isCompanyAdmin,

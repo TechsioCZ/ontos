@@ -262,6 +262,11 @@ export {
   OAuthConnectionRevocationNotesResultSchema,
   oauthConnectionRevocationNotesRead,
 } from './auth/oauth-connection-revocation-notes-read.ts';
+export {
+  OAuthConnectionAdministrationInputSchema,
+  OAuthConnectionAdministrationResultSchema,
+  oauthConnectionAdministrationRead,
+} from './auth/oauth-connection-administration-read.ts';
 // @ontos-codesmith-core-read-exports:start
 
 // @ontos-core-read legal-entity-detail
