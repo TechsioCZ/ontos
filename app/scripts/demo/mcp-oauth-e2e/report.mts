@@ -1,4 +1,6 @@
-import { Cause, Clock, Console, DateTime, Effect, FileSystem, Match, Option, Schema } from 'effect';
+import { Cause, Clock, Console, DateTime, Effect, FileSystem, Match, MutableRef, Option, Schema } from 'effect';
+
+import { proofRetryLog } from './tool-call.mts';
 
 const StepResultSchema = Schema.Struct({
   detail: Schema.String,
@@ -84,6 +86,8 @@ export class Recorder {
   stepEffect<A, E, R>(variant: string, name: string, body: Effect.Effect<StepOutcome<A>, E, R>) {
     return Effect.gen({ self: this }, function* recordStep() {
       const started = yield* Clock.monotonicTimeNanos;
+      // Steps run one at a time: every retry logged while this body runs belongs to this step.
+      const retriesBefore = MutableRef.get(proofRetryLog).length;
       const outcome: StepOutcome<A> = yield* body.pipe(
         Effect.catchCause((cause) =>
           Cause.hasInterrupts(cause)
@@ -92,7 +96,11 @@ export class Recorder {
         ),
       );
       const ms = Number(((yield* Clock.monotonicTimeNanos) - started) / 1_000_000n);
-      const { detail, pass, value } = outcome;
+      const retried = MutableRef.get(proofRetryLog).slice(retriesBefore);
+      const { pass, value } = outcome;
+      // A step that needed a same-key retry says so: which call failed first, and that it was retried once.
+      const notes = retried.map((message) => [message, 'opakováno jednou'].join(' → ')).join('; ');
+      const detail = retried.length === 0 ? outcome.detail : [outcome.detail, ` [po opakování: ${notes}]`].join('');
       this.steps.push({ detail, ms, name, pass, variant });
       yield* this.log(`${pass ? 'PASS' : 'FAIL'} [${variant}] ${name} — ${detail} (${ms} ms)`);
       return Option.fromUndefinedOr(value);

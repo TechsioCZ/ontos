@@ -4,6 +4,7 @@ import { TestClock } from 'effect/testing';
 import { expect, it, rs } from 'effect-rstest';
 import { refreshIsRejected } from './flow.mts';
 import { E2eOAuthProvider } from './provider.mts';
+import { Recorder } from './report.mts';
 import { proofToolCall } from './tool-call.mts';
 
 const issuer = 'https://issuer.example';
@@ -125,7 +126,7 @@ it.effect('names what answered an unclassified failure: status, body excerpt and
     expect(failure.retryable).toBe(false);
     // A reset before any response byte, wrapped by the SDK, is still a transport failure of a stable write.
     const reset = Object.assign(new Error('wrapped'), {
-      cause: Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } }),
+      cause: Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' }, name: 'TypeError' }),
       name: 'SdkError',
     });
     // (A read, so no same-key retry runs here; a stable write would be retried once.)
@@ -135,6 +136,34 @@ it.effect('names what answered an unclassified failure: status, body excerpt and
       Effect.fail(new Cause.UnknownError(reset)),
     ).pipe(Effect.flip);
     expect(resetFailure.message).toContain('transport ECONNRESET before any response');
+  }),
+);
+
+it.effect('a step that passed only on a same-key retry says so in its own line', () =>
+  Effect.gen(function* retriedStep() {
+    let attempts = 0;
+    const reset = Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' }, name: 'TypeError' });
+    const invoke = Effect.suspend(() => {
+      attempts += 1;
+      return attempts === 1 ? Effect.fail(new Cause.UnknownError(reset)) : Effect.succeed('executed');
+    });
+    const recorder = new Recorder();
+    const step = yield* recorder
+      .stepEffect(
+        'v1',
+        'zápis s opakováním',
+        proofToolCall('ontos_execute', stableWrite, invoke).pipe(
+          Effect.map((value) => ({ detail: value, pass: value === 'executed' })),
+        ),
+      )
+      .pipe(Effect.forkChild);
+    yield* TestClock.adjust('1 second');
+    yield* Fiber.join(step);
+    expect(attempts).toBe(2);
+    const [line] = recorder.steps;
+    expect(line?.pass).toBe(true);
+    expect(line?.detail).toContain('po opakování');
+    expect(line?.detail).toContain('transport ECONNRESET before any response');
   }),
 );
 
