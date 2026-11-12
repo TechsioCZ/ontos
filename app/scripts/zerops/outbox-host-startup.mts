@@ -3,6 +3,7 @@ import { startProcessObservability } from './process-observability.mts';
 import { Effect } from 'effect';
 import { startEmailDispatchTrigger } from '../email-dispatch-trigger.mts';
 import { startProcessDatabasePools } from './process-database-pools.mts';
+import { startProcessCompositionSourceReads } from './process-composition-source-reads.mts';
 import { startSearchDerivedStampSweep } from './search-derived-stamp-sweep.mts';
 
 export const startZeropsOutboxHost = () =>
@@ -10,7 +11,7 @@ export const startZeropsOutboxHost = () =>
     // Before any worker runs: each hosted owner reads only its own module credential from the host's handover.
     Effect.andThen(startProcessObservability('outbox'), receiveModuleCredentialHandover(MODULE_CREDENTIAL_CALLERS)),
     Effect.andThen(
-      startProcessDatabasePools,
+      Effect.andThen(startProcessDatabasePools, startProcessCompositionSourceReads),
       Effect.andThen(startEmailDispatchTrigger(), startSearchDerivedStampSweep()),
     ),
   );
