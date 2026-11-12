@@ -102,6 +102,14 @@ it('lets only the host programs reach a built bundle claim, and no host load an 
   ).toEqual([]);
 });
 
+it('reads the Shell gateway address under one rule, in every client that presents a key there', () => {
+  // `ONTOS_SHELL_GATEWAY_BASE_URL` is read only through `shellGatewayBaseUrlConfig`: HTTPS, or plain HTTP to loopback.
+  const ownRule = /Config\.[A-Za-z]+\([^;]*?'ONTOS_SHELL_GATEWAY_BASE_URL'/su;
+  expect(production.filter((file) => ownRule.test(read(file))).toSorted()).toEqual([
+    'packages/shared-contracts/src/shell-gateway-url.ts',
+  ]);
+});
+
 /** A string constant: a literal, or one cast `as const`. */
 const literalOf = (node: Expression | null): string | undefined => {
   if (node === null) {

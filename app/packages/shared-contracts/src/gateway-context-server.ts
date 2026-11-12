@@ -6,9 +6,10 @@ import {
   readVerifiedGatewayScopeAssertion,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { Crypto } from 'effect';
-import { Config, ConfigProvider, Effect, Match, Option, Redacted, Schema } from 'effect';
+import { ConfigProvider, Effect, Match, Option, Redacted, Schema } from 'effect';
 
 import { issueApiKeyGatewayContext, issueDelegatedGatewayContext } from './gateway-context-api-key.ts';
+import { shellGatewayBaseUrlConfig } from './shell-gateway-url.ts';
 import type {
   GatewayContextClientError,
   GatewayContextProblem,
@@ -148,23 +149,7 @@ const subjectWireOf = (
     Match.exhaustive,
   );
 
-/** Hosts a module may reach the Shell on over plain HTTP: the same machine (the app host's loopback relay, a dev box). */
-const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
-
-/** Where a module's keys are presented: HTTPS, or plain HTTP to the same machine only. */
-const ShellGatewayBaseUrl = Config.schema(
-  Schema.URLFromString.check(
-    Schema.makeFilter((url) =>
-      (url.protocol === 'https:' || (url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname))) &&
-      url.username === '' &&
-      url.password === '' &&
-      url.hash === ''
-        ? undefined
-        : 'Gateway transport requires HTTPS (plain HTTP only to a loopback host) without credentials or fragment',
-    ),
-  ),
-  'ONTOS_SHELL_GATEWAY_BASE_URL',
-);
+const ShellGatewayBaseUrl = shellGatewayBaseUrlConfig;
 
 /** Requests a fresh module-to-module context authenticated by this deployment's own module credential. */
 export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acquire')(
