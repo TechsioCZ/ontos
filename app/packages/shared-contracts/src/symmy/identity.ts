@@ -1,4 +1,4 @@
-import { OntosModuleIdSchema, OntosRequiredOperationContractSchema } from '@app/core-runtime';
+import { OntosModuleIdSchema, OntosRequiredOperationContractSchema } from '@app/core-runtime/modules/manifest';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { Effect, Schema } from 'effect';
