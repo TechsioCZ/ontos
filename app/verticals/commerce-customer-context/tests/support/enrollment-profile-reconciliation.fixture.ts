@@ -58,7 +58,10 @@ import { profileCounterpartyRoleEligibilityResolverFactoryLive } from '../../src
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
 import { enrollmentApplicationCompositionSnapshot } from './enrollment-application-composition.ts';
-import { makeAcceptanceGatewayIssuer } from './enrollment-acceptance-identity-gateway-assertion.ts';
+import {
+  AcceptanceGatewayIssuers,
+  AcceptanceGatewayIssuersLive,
+} from './enrollment-acceptance-identity-gateway-assertion.ts';
 
 /**
  * Commerce-owned reconciliation over real Action execution, recovery handlers and durable owner rows.
@@ -114,6 +117,7 @@ export const enrollmentProfileReconciliationLayer = Layer.effect(
   EnrollmentProfileDatabase,
   acquireProfileDatabase,
 ).pipe(
+  Layer.provideMerge(AcceptanceGatewayIssuersLive),
   Layer.provideMerge(
     NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer), Layer.provideMerge(NodeCrypto.layer)),
   ),
@@ -275,7 +279,8 @@ export const makeEnrollmentProfileReconciliationFixture = Effect.fn('EnrollmentP
         .pipe(Effect.provideContext(context));
 
     const origin = `https://enrollment-profile-${randomUUID()}.test`;
-    const gateway = yield* makeAcceptanceGatewayIssuer(`${origin}/issuer`, 'owned-profile');
+    const issuers = yield* AcceptanceGatewayIssuers;
+    const gateway = yield* issuers.make(`${origin}/issuer`, 'owned-profile');
     const apiKey = `enrollment-profile-${randomUUID()}`;
     /** The calling module the Shell signs in `act`; never the subject the assertion acts for. */
     const actorPrincipalId = randomUUID();
