@@ -53,6 +53,7 @@ const configuration = Layer.mergeAll(
     decide: () => Effect.die('Unexpected access decision in the session transport fixture'),
     decideMany: () => Effect.die('Unexpected bulk access decision in the session transport fixture'),
     list: () => Effect.die('Unexpected list access in the session transport fixture'),
+    listMany: () => Effect.die('Unexpected bulk list access in the session transport fixture'),
     selectableLegalEntities: () => Effect.die('Unexpected company selection in the session transport fixture'),
   }),
 );
