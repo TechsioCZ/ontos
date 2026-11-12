@@ -1,4 +1,4 @@
-import { defineOntosMcpContribution, OntosMcpHidden } from '@app/core-runtime';
+import { defineOntosMcpContribution, OntosMcpHidden } from '@app/core-runtime/modules/mcp-contribution';
 
 export const commerceCustomerContextMcpContribution = defineOntosMcpContribution({
   actions: {

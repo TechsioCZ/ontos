@@ -9,6 +9,7 @@
     "./api/source-processing-eligibility/client": "./src/api/source-processing-eligibility-client.ts",
     "./api/measure-execution-eligibility": "./shared/apis/measure-execution-eligibility.ts",
     "./api/record-owner-execution-outcome-action": "./shared/apis/record-owner-execution-outcome-action.ts",
+    "./api/record-owner-execution-outcome-action/client": "./src/api/record-owner-execution-outcome-action-client.ts",
     "./api/organization-business-applicability": "./shared/apis/organization-business-applicability.ts",
     "./api/organization-business-applicability/client": "./src/api/organization-business-applicability-client.ts",
     "./api/organization-profile-ico-applicability": "./shared/apis/organization-profile-ico-applicability.ts",
