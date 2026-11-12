@@ -7,6 +7,7 @@ import { getTableColumns } from 'drizzle-orm';
 import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { ActionPermissionCheckError } from '../../src/actions/errors.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { computeActionRequestHash, computeCanonicalValueHash } from '../../src/actions/repository.ts';
 import { AgentProposalCommandPayloadSchema } from '../../src/auth/agent-proposal-command-contract.ts';
@@ -696,7 +697,7 @@ it.layer(
     { executable: [], rows: [] },
     { executable: ['update', 'archive'], rows: ['other'] },
   ] as const) {
-    for (const mode of ['batch', 'batch-state'] as const) {
+    for (const mode of ['batch', 'batch-state', 'command-recovery'] as const) {
       suite.effect(`answers a ${mode} read exactly as asking every Action (${JSON.stringify(scenario)})`, () =>
         Effect.gen(function* exactBatchAuthority() {
           const rows = scenario.rows.map((slug, index) => tableRow(slug, index));
@@ -748,6 +749,107 @@ it.layer(
       );
     }
   }
+
+  suite.effect("refuses a batch spanning two modules when one row's Action may not run, having asked that Action", () =>
+    Effect.gen(function* twoModules() {
+      const rows = [
+        tableRow('update', 0),
+        { ...tableRow('update', 1), appId: 'party-service', moduleKey: 'party.registry' },
+      ];
+      const harness = yield* makeReadTestHarness({
+        executeOwnerQuery: tableQueries(rows),
+        operationTime,
+        ownerAuthorizationDecision: 'allowed',
+        permissionDecision: 'allowed',
+        scope,
+      });
+      const composition = yield* executableComposition('no-review', [], {
+        appId: 'party-service',
+        moduleId: 'party.registry',
+      });
+      const services = yield* Layer.build(Layer.mergeAll(harness.layer, outboxWorkerCompositionLayer(composition)));
+      const calls: string[][] = [];
+      const outcome = yield* harness.runtime
+        .runRead({ input: tableInput('batch'), principal: scope, registration: agentProposalQueueRead, transport })
+        .pipe(
+          Effect.provideService(ActionAuthority, recordingAuthority(new Set(['work.tasks.update']), calls)),
+          Effect.provide(services),
+          Effect.match({ onFailure: outcomeOfFailure, onSuccess: () => 'allowed' }),
+        );
+      expect(outcome).toBe('denied');
+      // The refused row's own Action was asked (so its denial is decided and recorded), with its sibling's.
+      expect(new Set(calls.at(-1))).toEqual(new Set(['work.tasks.update', 'party.registry.update']));
+    }),
+  );
+
+  suite.effect('refuses an exact batch whose private row the owner review hides', () =>
+    Effect.gen(function* hiddenPrivateRow() {
+      const harness = yield* makeReadTestHarness({
+        executeOwnerQuery: tableQueries([tableRow('update', 0)]),
+        operationTime,
+        ownerAuthorizationDecision: 'allowed',
+        permissionDecision: 'allowed',
+        scope,
+      });
+      const services = yield* Layer.build(
+        Layer.mergeAll(harness.layer, outboxWorkerCompositionLayer(yield* executableComposition(true))),
+      );
+      const outcome = yield* harness.runtime
+        .runRead({ input: tableInput('batch'), principal: scope, registration: agentProposalQueueRead, transport })
+        .pipe(
+          Effect.provideService(ActionAuthority, authority()),
+          Effect.provideService(AgentProposalQueueModuleReview, {
+            review: (input) =>
+              Effect.succeed({ items: input.subjects.map(({ key }) => ({ key, visible: false })), state: 'ok' }),
+          }),
+          Effect.provide(services),
+          Effect.match({ onFailure: outcomeOfFailure, onSuccess: () => 'allowed' }),
+        );
+      expect(outcome).toBe('denied');
+    }),
+  );
+
+  suite.effect(
+    "answers an exact batch unavailable, never refused or allowed, when its rows' Actions cannot be asked",
+    () =>
+      Effect.gen(function* authorityUnavailable() {
+        const harness = yield* makeReadTestHarness({
+          executeOwnerQuery: tableQueries([tableRow('update', 0)]),
+          operationTime,
+          ownerAuthorizationDecision: 'allowed',
+          permissionDecision: 'allowed',
+          scope,
+        });
+        const services = yield* Layer.build(
+          Layer.mergeAll(harness.layer, outboxWorkerCompositionLayer(yield* executableComposition())),
+        );
+        const asked = { count: 0 };
+        const outcome = yield* harness.runtime
+          .runRead({ input: tableInput('batch'), principal: scope, registration: agentProposalQueueRead, transport })
+          .pipe(
+            Effect.provideService(ActionAuthority, {
+              ...authority(),
+              // `prepare`'s question is answered; the rows' own one in `finish` cannot be.
+              checkActionAuthorities: (query) =>
+                Effect.suspend(() => {
+                  asked.count += 1;
+                  return asked.count === 1
+                    ? authority().checkActionAuthorities(query)
+                    : Effect.fail(
+                        new ActionPermissionCheckError({
+                          code: 'action_permission_check_failed',
+                          reason: 'engine down',
+                        }),
+                      );
+                }),
+            }),
+            Effect.provide(services),
+            Effect.match({ onFailure: outcomeOfFailure, onSuccess: () => 'allowed' }),
+          );
+        expect(asked.count).toBe(2);
+        expect(outcome).toBe('unavailable');
+      }),
+  );
 
   suite.effect('batch access refuses a partial owning-Action view instead of weakening revert-all', () =>
     Effect.gen(function* partialBatch() {
