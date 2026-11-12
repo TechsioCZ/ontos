@@ -13,10 +13,10 @@ import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-
 import { PrivacySubjectPartyOwner } from '../../src/persistence/privacy-subject-party-owner.ts';
 import { PrivacySubjectOwnerEvidenceSchema, PrivacySubjectRecordSchema } from '../../shared/domain/privacy-subject.ts';
 import { privacyRegistration } from '../../vertical.registration.ts';
+import { privacySubjectsPartyProviderComposition } from '../support/party-provider-composition.fixture.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000004';
-const compositionRevision = 'b'.repeat(64);
 const now = DateTime.makeUnsafe('2026-11-09T12:00:00.000Z');
 const identity = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
   authBindingId: '20000000-0000-4000-8000-000000000003',
@@ -26,7 +26,6 @@ const identity = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
   principalId: '20000000-0000-4000-8000-000000000002',
   tenantId,
 });
-const principal = trustVerifiedGatewayPrincipalContext(identity, compositionRevision);
 const partyRef = {
   moduleId: 'party.registry',
   resourceId: '20000000-0000-4000-8000-000000000007',
@@ -73,8 +72,13 @@ const ownerEvidence = Schema.decodeUnknownSync(PrivacySubjectOwnerEvidenceSchema
 });
 
 const ownerPhase = Effect.fn('PrivacySubjectsRead.ownerPhaseTest')(function* ownerPhase() {
+  // Party publishes the required party-detail and source-person Read contracts through a synthetic provider.
+  const { applicationComposition, expectedDeployment, snapshot } = yield* privacySubjectsPartyProviderComposition;
+  const compositionRevision = snapshot.composition.revision;
+  const principal = trustVerifiedGatewayPrincipalContext(identity, compositionRevision);
   const harness = yield* makeReadTestHarness({
     access: 'allowed',
+    applicationComposition,
     compositionRevision,
     executeOwnerQuery: ({ scope, sql }) => {
       if (scope.tenantId !== tenantId || scope.legalEntityId !== legalEntityId) {
@@ -90,6 +94,7 @@ const ownerPhase = Effect.fn('PrivacySubjectsRead.ownerPhaseTest')(function* own
       }
       return Effect.die(`Unexpected Privacy Subject owner SQL: ${sql}`);
     },
+    expectedDeployment,
     operationTime: DateTime.toDateUtc(now),
     ownerAuthorizationDecision: 'allowed',
     ownerRegistration: privacyRegistration,
