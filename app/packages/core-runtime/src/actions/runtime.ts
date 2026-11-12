@@ -100,6 +100,7 @@ import {
   failClosedOwnerAuthorizationOverlay,
   ownerAuthorizationFromExit,
 } from '../access/enforcement/owner-overlay.ts';
+import { reportableReasonCodes } from '../access/enforcement/reason-codes.ts';
 import type {
   DecodedOwnerAuthorization,
   OwnerAccessFacts,
@@ -574,12 +575,36 @@ const requestHashConflict = () =>
   });
 
 /** O67-Q9: a person who may propose but not run is told to seek an approval, never simply refused. */
+/**
+ * The reason codes a refusal carries: only codes Core may report (R3), exactly the ones a recorded
+ * rejection keeps, so the first answer and a same-key retry always say the same.
+ */
+const reportedCodes = (codes: readonly string[]): readonly string[] =>
+  Option.getOrElse(reportableReasonCodes(codes), () => []);
+
+/** The same refusal with only reportable codes; a refusal without any keeps no `reasons` at all. */
+const withReportedReasons = (failure: ActionPermissionDenied): ActionPermissionDenied => {
+  if (failure.reasons === undefined) {
+    return failure;
+  }
+  const reasons = reportedCodes(failure.reasons);
+  return reasons.length === failure.reasons.length
+    ? failure
+    : new ActionPermissionDenied(
+        reasons.length === 0
+          ? { code: failure.code, reason: failure.reason }
+          : { code: failure.code, reason: failure.reason, reasons },
+      );
+};
+
 const approvalRequiredFailure = (decision: AccessDecision) =>
-  new ActionPermissionDenied({
-    code: 'action_approval_required',
-    reason: 'This Action needs an approved mandate before it can run',
-    reasons: decision.reasons.map(({ code }) => code),
-  });
+  withReportedReasons(
+    new ActionPermissionDenied({
+      code: 'action_approval_required',
+      reason: 'This Action needs an approved mandate before it can run',
+      reasons: decision.reasons.map(({ code }) => code),
+    }),
+  );
 
 /**
  * O80: an explicit propose intent on a command the gate already allows is refused, so the client runs
@@ -600,11 +625,13 @@ const toActionProposalAccepted = (parked: ActionProposalParked): ActionProposalA
 
 /** The gate's denial, carrying the engine's own reason codes for the decision log and "Proč?". */
 const accessDeniedFailure = (decision: AccessDecision) =>
-  new ActionPermissionDenied({
-    code: 'action_permission_denied',
-    reason: NOT_PERMITTED_REASON,
-    reasons: decision.reasons.map(({ code }) => code),
-  });
+  withReportedReasons(
+    new ActionPermissionDenied({
+      code: 'action_permission_denied',
+      reason: NOT_PERMITTED_REASON,
+      reasons: decision.reasons.map(({ code }) => code),
+    }),
+  );
 
 const permissionUnavailable = () =>
   new ActionPermissionCheckError({
@@ -1874,32 +1901,36 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           });
         },
       );
-      const rejectPermission = (failure: ActionPermissionDenied) =>
-        repository
-          .rejectPermissionDenied(
-            invocationScopeExecutor(scope),
-            withOptionalProperty(
-              {
-                actionInvocationId: invocation.actionInvocationId,
-                actionKey: input.registration.descriptor.actionKey,
-                auditProfile: input.registration.descriptor.auditProfile,
-                principal,
-                reasonCodes: failure.reasons,
-                transport: governedTransport,
-              },
-              deniedAuditEvidence !== undefined,
-              'deniedAuditEvidence',
-              deniedAuditEvidence,
-              {},
-            ),
-          )
-          .pipe(
-            Effect.tapErrorTag('ActionInvocationPersistenceError', logPermissionInvocationFailure),
-            Effect.tapErrorTag('ActionTransactionError', logPermissionTransactionFailure),
-            Effect.flatMap((earlierRejection) =>
-              Effect.fail(Option.isSome(earlierRejection) ? recordedRejectionFailure(earlierRejection) : failure),
-            ),
-          );
+      const rejectPermission = (refused: ActionPermissionDenied) =>
+        Effect.succeed(withReportedReasons(refused)).pipe(
+          Effect.flatMap((failure) =>
+            repository
+              .rejectPermissionDenied(
+                invocationScopeExecutor(scope),
+                withOptionalProperty(
+                  {
+                    actionInvocationId: invocation.actionInvocationId,
+                    actionKey: input.registration.descriptor.actionKey,
+                    auditProfile: input.registration.descriptor.auditProfile,
+                    principal,
+                    reasonCodes: failure.reasons,
+                    transport: governedTransport,
+                  },
+                  deniedAuditEvidence !== undefined,
+                  'deniedAuditEvidence',
+                  deniedAuditEvidence,
+                  {},
+                ),
+              )
+              .pipe(
+                Effect.tapErrorTag('ActionInvocationPersistenceError', logPermissionInvocationFailure),
+                Effect.tapErrorTag('ActionTransactionError', logPermissionTransactionFailure),
+                Effect.flatMap((earlierRejection) =>
+                  Effect.fail(Option.isSome(earlierRejection) ? recordedRejectionFailure(earlierRejection) : failure),
+                ),
+              ),
+          ),
+        );
 
       const prepareAuthorizationPreflight = Effect.fn('ActionRuntime.prepareAuthorizationPreflight')(
         function* prepareAuthorizationPreflightEffect() {
@@ -2903,34 +2934,44 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               ownerTargets,
               (ownerTarget) =>
                 Effect.exit(
-                  ownerAuthorizationOverlay.authorize(
-                    scopedTransaction,
-                    Object.freeze(
-                      withOptionalProperty(
+                  Effect.suspend(() =>
+                    ownerAuthorizationOverlay.authorize(
+                      scopedTransaction,
+                      Object.freeze(
                         withOptionalProperty(
-                          {
-                            capabilityKey:
-                              declaredCarrier.accessDeclaration?.key ?? input.registration.descriptor.actionKey,
-                            operation: 'action' as const,
-                            operationAt,
-                            operationKey: input.registration.descriptor.actionKey,
-                            owningModuleKey: input.registration.descriptor.owningModuleKey,
-                            scope,
-                            targets: frozenOwnerAuthorizationTargets,
-                          },
-                          ownerTarget !== undefined,
-                          'target',
-                          ownerTarget,
+                          withOptionalProperty(
+                            {
+                              capabilityKey:
+                                declaredCarrier.accessDeclaration?.key ?? input.registration.descriptor.actionKey,
+                              operation: 'action' as const,
+                              operationAt,
+                              operationKey: input.registration.descriptor.actionKey,
+                              owningModuleKey: input.registration.descriptor.owningModuleKey,
+                              scope,
+                              targets: frozenOwnerAuthorizationTargets,
+                            },
+                            ownerTarget !== undefined,
+                            'target',
+                            ownerTarget,
+                            {},
+                          ),
+                          Option.isSome(accessOwnerFacts),
+                          'ownerFacts',
+                          Option.getOrUndefined(accessOwnerFacts),
                           {},
                         ),
-                        Option.isSome(accessOwnerFacts),
-                        'ownerFacts',
-                        Option.getOrUndefined(accessOwnerFacts),
-                        {},
                       ),
                     ),
                   ),
-                ).pipe(Effect.flatMap(ownerAuthorizationFromExit)),
+                ).pipe(
+                  Effect.flatMap(
+                    ownerAuthorizationFromExit({
+                      capabilityKey: declaredCarrier.accessDeclaration?.key ?? input.registration.descriptor.actionKey,
+                      operationKey: input.registration.descriptor.actionKey,
+                      owningModuleKey: input.registration.descriptor.owningModuleKey,
+                    }),
+                  ),
+                ),
               { concurrency: 1 },
             );
             yield* ownerAuthorizationFailure(ownerAuthorizationDecisions);

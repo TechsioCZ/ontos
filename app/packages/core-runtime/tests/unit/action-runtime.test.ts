@@ -1376,6 +1376,58 @@ for (const [label, answer] of OUT_OF_CONTRACT_OWNER_ANSWERS) {
   );
 }
 
+it.effect('a synchronous throw inside the owner overlay is unavailable with one warning, never a 500', () =>
+  Effect.gen(function* synchronousOwnerThrow() {
+    const entries: string[] = [];
+    const harness = yield* makeHarness({
+      ownerAuthorizationOverlay: {
+        authorize: () => {
+          throw new TypeError('owner rule private detail');
+        },
+      },
+    });
+    const failure = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 3 },
+        principal,
+        registration: registration(),
+        transport: transport('owner-sync-throw'),
+      }),
+      // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
+    ).pipe(Effect.provide(capturedLogs(entries)));
+    expect(failure).toMatchObject({ _tag: 'ActionPermissionCheckError', code: 'action_permission_check_failed' });
+    expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+    const warning = entries.find((entry) => entry.includes('Owner authorization overlay failed'));
+    expect(warning).toContain('"failure":"TypeError"');
+    expect(warning).toContain('"operationKey":"shell.counter.change"');
+    expect(warning).toContain('"owningModuleKey":"core.shell"');
+    expect(warning).not.toContain('private detail');
+  }),
+);
+
+it.effect('an owner answer outside the contract is unavailable with one warning naming its kind, never its value', () =>
+  Effect.gen(function* outOfContractWarning() {
+    const entries: string[] = [];
+    const harness = yield* makeHarness({
+      ownerAuthorizationOverlay: { authorize: () => outOfContract({ secret: 'value' }).pipe(Effect.orDie) },
+    });
+    yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 3 },
+        principal,
+        registration: registration(),
+        transport: transport('owner-odd-warning'),
+      }),
+      // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
+    ).pipe(Effect.provide(capturedLogs(entries)));
+    const warning = entries.find((entry) => entry.includes('Owner authorization answer outside the contract'));
+    expect(warning).toContain('"answerKind":"object"');
+    expect(warning).toContain('"capabilityKey":');
+    expect(warning).toContain('"operationKey":"shell.counter.change"');
+    expect(warning).not.toContain('secret');
+  }),
+);
+
 it.effect('reports only reason codes Core may report; anything else collapses to deny.owner_rule (R3)', () =>
   Effect.gen(function* ownerReasonsChecked() {
     const unreportable: readonly (readonly [string, ...string[]])[] = [

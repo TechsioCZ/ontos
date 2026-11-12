@@ -454,6 +454,43 @@ it.effect('does not require a field grant when the command writes none of that g
   }),
 );
 
+for (const [label, malformed] of [
+  ['ALLOWED', 'ALLOWED'],
+  ['{decision: allowed}', { decision: 'allowed' }],
+  ['{}', {}],
+] as const) {
+  it.effect(`one owner answer outside the contract (${label}) among allowed targets refuses the whole set`, () =>
+    Effect.gen(function* oneMalformedOwnerAnswer() {
+      const subject = fixture();
+      const gate = canonicalGate();
+      let answers = 0;
+      const harness = yield* makeActionTestHarness({
+        accessDecision: gate.bound,
+        applicationComposition: subject.owner.applicationComposition,
+        expectedDeployment: subject.owner.expectedDeployment,
+        onOwnerAuthorization: () => {
+          answers += 1;
+          // An untyped value, as a separately built owner unit could answer for the second record only.
+          return answers === 2 ? Schema.decodeUnknownSync(Schema.Any)(malformed) : 'allowed';
+        },
+        ownerRegistration: subject.owner.ownerRegistration,
+      });
+      const exit = yield* Effect.exit(
+        harness.runtime.runAction({
+          payload,
+          principal,
+          registration: subject.action,
+          transport: { correlationId: `bulk-odd-${label}`, idempotencyKey: `bulk-odd-${label}` },
+        }),
+      );
+      expect(Schema.is(ActionPermissionCheckError)(failureOf(exit))).toBe(true);
+      expect(answers).toBe(2);
+      expect(subject.writes).toEqual([]);
+      expect(harness.snapshot().committed).toHaveLength(0);
+    }),
+  );
+}
+
 it.effect('any unavailable target is retryable, even beside a denied record', () =>
   Effect.gen(function* unavailableRecord() {
     const subject = fixture();

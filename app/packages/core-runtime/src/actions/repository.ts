@@ -238,7 +238,9 @@ const decodeRecordedReasonCodes = Schema.decodeUnknownOption(RecordedReasonCodes
 
 /** A refusal's evidence: the denied-audit fields, the Action key and, when it has any, its reportable codes. */
 const rejectionEvidence = (input: RejectPermissionDeniedInput) => {
-  const base = { ...input.deniedAuditEvidence, actionKey: input.actionKey };
+  // A module's own evidence never supplies the codes: Core's own reportable codes are the only ones kept.
+  const { reasonCodes: _moduleCodes, ...moduleEvidence } = input.deniedAuditEvidence ?? {};
+  const base = { ...moduleEvidence, actionKey: input.actionKey };
   const reasonCodes = Option.getOrElse(reportableReasonCodes(input.reasonCodes ?? []), () => []);
   return reasonCodes.length === 0 ? base : { ...base, reasonCodes: [...reasonCodes] };
 };
