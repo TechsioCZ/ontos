@@ -36,6 +36,7 @@ import type {
   HostedModuleCredentials,
 } from '../../packages/core-runtime/src/auth/hosted-module-credentials.ts';
 import type { HostedModuleCredentialsSealedError } from '../../packages/core-runtime/src/auth/hosted-module-credentials-sealed-error.ts';
+import { DECLARED_DELEGATED_CALLERS } from './module-credential-callers.generated.mts';
 
 export class ModuleCredentialHandoverError extends Schema.TaggedError<ModuleCredentialHandoverError>()(
   'ModuleCredentialHandoverError',
@@ -53,19 +54,12 @@ export const MODULE_INTERNAL_WORKLOADS: ReadonlyMap<string, readonly string[]> =
 ]);
 
 /**
- * The modules that call other modules through the Shell's delegated issuance, and so get a module credential. A test
- * derives the same list from source, so a new caller cannot be missed and a former one keeps no key.
+ * The modules that call other modules through the Shell's delegated issuance, and so get a module credential: every
+ * module a carrier admits as its delegated caller. It is generated from those declarations with the catalog artifact
+ * (`pnpm authorization:catalog:artifact`, checked by `--check`), so a module that starts calling another gets its key
+ * from the declaration that admits it, and a test fails when a module calls without one.
  */
-export const MODULE_CREDENTIAL_CALLERS: readonly string[] = Object.freeze([
-  'catalog',
-  'commerce-cart',
-  'commerce-customer-context',
-  'commerce-market-catalog',
-  'commerce-order',
-  'crm',
-  'party-registry',
-  'pricing',
-]);
+export const MODULE_CREDENTIAL_CALLERS: readonly string[] = DECLARED_DELEGATED_CALLERS;
 
 /**
  * Set by whoever starts a multi-owner process with its private handover channel open as file descriptor 3. The switch
