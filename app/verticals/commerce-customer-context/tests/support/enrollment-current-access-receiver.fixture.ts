@@ -72,7 +72,6 @@ const serve = Effect.scoped(
         'BETTER_AUTH_SECRET',
         'DATABASE_URL',
         'COMMERCE_TENANT_CREDENTIALS',
-        'ONTOS_GATEWAY_MODULE_API_KEY',
         'SPICEDB_PRESHARED_KEY',
         'ONTOS_GATEWAY_PRIVATE_JWK',
         'RESEND_API_KEY',

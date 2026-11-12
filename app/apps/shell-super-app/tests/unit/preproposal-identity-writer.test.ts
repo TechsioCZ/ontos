@@ -25,7 +25,7 @@ for (const brokenDescriptor of [false, true]) {
         import { Cause, Effect, Stream } from 'effect';
         NodeRuntime.runMain(Effect.scoped(Effect.gen(function* writerProtocol() {
           ${fixture.slice(begin, end)}
-          ${brokenDescriptor ? 'closeSync(3);' : ''}
+          ${brokenDescriptor ? 'closeSync(5);' : ''}
           const send = frame => Stream.make(JSON.stringify(frame) + '\n').pipe(
             Stream.run(NodeSink.fromWritable({ endOnDone: false, evaluate: () => output, onError: error => error })),
           );
@@ -47,8 +47,8 @@ for (const brokenDescriptor of [false, true]) {
           Effect.gen(function* ownedWriterChild() {
             const child = yield* ChildProcess.make(process.execPath, ['--input-type=module', '-e', source], {
               additionalFds: {
-                fd3: { type: 'output' },
                 fd4: { stream: Stream.make(new TextEncoder().encode('{"operation":"STOP"}\n')), type: 'input' },
+                fd5: { type: 'output' },
               },
               cwd: new URL('../../', import.meta.url).pathname,
               stderr: 'pipe',
@@ -58,7 +58,7 @@ for (const brokenDescriptor of [false, true]) {
             const [exitCode, frames, stderr] = yield* Effect.all(
               [
                 child.exitCode,
-                child.getOutputFd(3).pipe(Stream.decodeText(), Stream.splitLines, Stream.runCollect),
+                child.getOutputFd(5).pipe(Stream.decodeText(), Stream.splitLines, Stream.runCollect),
                 child.stderr.pipe(Stream.decodeText(), Stream.mkString),
                 Stream.runDrain(child.stdout),
               ],
