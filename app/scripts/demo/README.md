@@ -365,10 +365,11 @@ missing evidence fails closed. Both Party purpose carriers declare `accessActor.
 caller `crm` and `subjectWorkloads: ['demo.crm.party-intake']`, with no human declaration, workload
 marker or field groups. They contribute no human catalog entries or full-owner cells. The workload key
 belongs to producer module `demo.crm`; topology app ID `crm` is the caller, not a renamed workload
-namespace. No human Role or broad CRM/Party data grant belongs to this service. Its key is not issued
-by hand: `reset-permissions.mts` registers the principal and its workload, and module credential
-provisioning (run by `up.sh` right after the permissions) issues, hands over on CRM's credential channel,
-rotates and retires that principal's key beside CRM's module key (`MODULE_INTERNAL_WORKLOADS`). The bootstrap owner's
+namespace. No human Role or broad CRM/Party data grant belongs to this service. Nobody registers or keys it
+by hand: `up.sh` runs the platform's release step (`release-internal-workloads.mts`) right after the
+permissions, which registers the workload once per company of the tenant, and module credential provisioning
+then issues, hands over on CRM's credential channel, rotates and retires each company's key beside CRM's
+module key (`MODULE_INTERNAL_WORKLOADS`). The bootstrap owner's
 full-access compiler remains unchanged. Owner native negative proofs and final catalog publication
 are still required before claiming activation.
 

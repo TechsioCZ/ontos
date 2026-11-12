@@ -25,4 +25,6 @@ The file also lists retired Tenants and retired account emails. For each retired
 
 The reconcile after the revocation removes the projected tuples, so a retired Tenant's graph stops answering. Adding or changing grants is not revocation: only removing or changing the account's data does that, and the operator must re-run the bootstrap and reconcile to make it take effect.
 
+Workload registrations follow the same split. A storefront's or another external system's workload binding is operator data: the operator registers it per Tenant and company (`app/scripts/demo/register-stage-workloads.mts`), and it carries no key the platform issues. A module's own declared internal workload is not operator data. At every release the platform registers it in each Tenant where the module is installed, once per active company: one service principal, one workload binding, one company binding. The platform also issues, rotates and retires its key. When the module is uninstalled, the workload leaves the catalogue or a company ends, the platform retires that registration and its key, and deletes nothing. Nobody registers or keys an internal workload by hand. A hand-made registration is left as it is and gets no key.
+
 Production stays strict. It has no fixed accounts.
