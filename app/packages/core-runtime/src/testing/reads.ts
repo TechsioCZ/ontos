@@ -164,6 +164,16 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       ) {
         return [{ phase: 'active', revision: options.compositionRevision, subscriptionsJson: [], unexpired: true }];
       }
+      if (
+        text ===
+        "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id"
+      ) {
+        // A session-setting role installs its scope and reads back the connected role in one statement.
+        [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(params).pipe(
+          Effect.orDie,
+        );
+        return [{ legal_entity_id: scope.legalEntityId, role: connection.role, tenant_id: scope.tenantId }];
+      }
       if (text === "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)") {
         [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(params).pipe(
           Effect.orDie,
