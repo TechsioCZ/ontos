@@ -392,6 +392,9 @@ jobs:
           - name: Database Access Boundaries
             if: ${{ !cancelled() && steps.install.outcome == 'success' }}
             working-directory: app
+            env:
+              # The whole-workspace prover peaks at about 5.3 GiB, above V8's ~4 GiB default heap.
+              NODE_OPTIONS: --max-old-space-size=8192
             run: mise exec -- pnpm database-access:check
 
           - name: Lean Core Dependencies
