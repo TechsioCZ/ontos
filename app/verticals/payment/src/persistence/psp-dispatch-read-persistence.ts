@@ -61,7 +61,8 @@ export interface PspDispatchReadPersistence {
    * operations still not definitive once the gateway wait budget after their request has passed (a lost
    * callback or an accepted pending observation leaves them without queued evidence), and every operation
    * with PENDING_SUBMISSION evidence. `recommendedTrigger` is EXECUTION_OUTCOME_UNKNOWN for
-   * OUTCOME_UNKNOWN and TARGET_UNRESOLVED, otherwise OUTCOME_OVERDUE (plan §2.2).
+   * OUTCOME_UNKNOWN and TARGET_UNRESOLVED, otherwise OUTCOME_OVERDUE (plan §2.2); it is absent once the
+   * Payment outcome is definitive, since recovery refuses a resolved operation.
    */
   readonly selectReconciliationDebt: (
     query: PspReconciliationDebtPageQuery,
@@ -84,6 +85,7 @@ const DEFINITIVE_OUTCOMES = [
   'EFFECT_CONFIRMED',
   'NOT_EFFECTED_CONFIRMED',
 ] as const satisfies readonly PaymentOperationOutcome[];
+const DEFINITIVE_OUTCOME_SET: ReadonlySet<string> = new Set(DEFINITIVE_OUTCOMES);
 const AWAITING_PROVIDER_STATES: ReadonlySet<string> = new Set(['AWAITING_TARGET', 'PREPARED', 'OUTCOME_UNKNOWN']);
 const UNKNOWN_EXECUTION_STATES: ReadonlySet<string> = new Set(['OUTCOME_UNKNOWN', 'TARGET_UNRESOLVED']);
 
@@ -134,6 +136,7 @@ const encodedDebtRowOf = (row: {
   readonly oldestPendingAt: null | string;
   readonly operationId: string;
   readonly operationKind: PaymentOperationKind;
+  readonly outcome: PaymentOperationOutcome;
   readonly paymentId: string;
   readonly pendingEvidenceCount: number;
 }) => {
@@ -143,8 +146,12 @@ const encodedDebtRowOf = (row: {
     operationKind: row.operationKind,
     paymentId: row.paymentId,
     pendingEvidenceCount: row.pendingEvidenceCount,
-    recommendedTrigger: UNKNOWN_EXECUTION_STATES.has(row.ledgerState) ? 'EXECUTION_OUTCOME_UNKNOWN' : 'OUTCOME_OVERDUE',
   };
+  if (!DEFINITIVE_OUTCOME_SET.has(row.outcome)) {
+    encoded.recommendedTrigger = UNKNOWN_EXECUTION_STATES.has(row.ledgerState)
+      ? 'EXECUTION_OUTCOME_UNKNOWN'
+      : 'OUTCOME_OVERDUE';
+  }
   if (row.notSentReason !== null) {
     encoded.notSentReason = row.notSentReason;
   }
@@ -251,6 +258,7 @@ export const pspDispatchReadPersistenceForTransaction = (
           oldestPendingAt,
           operationId: pspProviderDispatches.operationId,
           operationKind: pspProviderDispatches.operationKind,
+          outcome: paymentOperations.outcome,
           paymentId: pspProviderDispatches.paymentId,
           pendingEvidenceCount,
         })

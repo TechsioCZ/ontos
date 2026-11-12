@@ -75,6 +75,15 @@ describe('#1155 PSP configuration contracts', () => {
     expect(Result.isSuccess(decodeRow(row))).toBe(true);
     expect(Result.isSuccess(decodeRow({ ...row, recommendedTrigger: 'OUTCOME_OVERDUE' }))).toBe(true);
     expect(Result.isFailure(decodeRow({ ...row, recommendedTrigger: 'OPERATOR_REQUEST' }))).toBe(true);
+    // A resolved operation's still pending evidence needs a person: no trigger at all.
+    const resolved = {
+      ledgerState: 'ACKNOWLEDGED',
+      operationId: row.operationId,
+      operationKind: row.operationKind,
+      paymentId: row.paymentId,
+      pendingEvidenceCount: 1,
+    };
+    expect(Result.isSuccess(decodeRow(resolved))).toBe(true);
     expect(Result.isFailure(decodeRow({ ...row, pendingEvidenceCount: -1 }))).toBe(true);
   });
 });

@@ -46,6 +46,7 @@ import {
   newPaymentInput,
   operationalScopeOf,
   paymentTestRelations,
+  provenanceFor,
   randomUuid,
   withPersistence,
 } from './database-fixture.ts';
@@ -470,6 +471,40 @@ it.live('#1158 Pending NOT_EFFECTED evidence appears as debt', () =>
       // Acknowledged dispatches are not unknown: the evidence is overdue reconciliation, not an unknown outcome.
       expect(row?.recommendedTrigger).toBe('OUTCOME_OVERDUE');
       expect(row !== undefined && DateTime.isDateTime(row.oldestPendingAt)).toBe(true);
+    }),
+  ),
+);
+
+it.live('#1158 Evidence still pending on a resolved operation is listed without a recovery trigger', () =>
+  Effect.scoped(
+    Effect.gen(function* resolvedPendingNeedsAPerson() {
+      const { runtime: runtimeClient } = yield* testDatabaseClients;
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, paymentTestRelations);
+      const scope = yield* makeTestScope;
+      const fixture = yield* debtFixture(runtime, runtimeClient, scope, 'GOPAY');
+      yield* prepareThroughLedger(runtime, fixture);
+      yield* acknowledge(runtime, fixture, { _tag: 'GOPAY_PAYMENT', id: 'gp_resolved_pending' });
+      yield* appendPendingNotEffected(runtimeClient, runtime, fixture, 'gopay:evt:resolved-pending');
+
+      // Another statement confirmed the collection; the row the governed path refused is still pending.
+      const provenance = yield* provenanceFor(scope);
+      yield* withPersistence(runtime, scope, (persistence) =>
+        persistence.transitionOperationOutcome({
+          causedBy: { kind: 'OBSERVATION', sourceId: 'observation:confirmed' },
+          expectedOutcomeRevision: 1,
+          operationId: fixture.collect.operationId,
+          paymentId: fixture.paymentId,
+          provenance,
+          to: 'EFFECT_CONFIRMED',
+        }),
+      );
+
+      const page = yield* readDebt(runtime, scope, { limit: 50 });
+      expect(page.rows.map((row) => [row.operationId, row.pendingEvidenceCount])).toEqual([
+        [fixture.collect.operationId, 1],
+      ]);
+      // Recovery refuses a resolved operation (payment_recovery_operation_already_resolved): no trigger applies.
+      expect(page.rows.map((row) => Object.hasOwn(row, 'recommendedTrigger'))).toEqual([false]);
     }),
   ),
 );
