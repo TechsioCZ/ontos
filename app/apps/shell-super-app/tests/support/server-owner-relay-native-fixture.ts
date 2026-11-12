@@ -189,6 +189,8 @@ const HostedOwnerAppIdSchema = Schema.Literals([
   CUSTOMER_CONTEXT_APP_ID,
   MARKET_APP_ID,
   'merchandise',
+  'tax',
+  'finance-billing',
 ]);
 type HostedOwnerAppId = typeof HostedOwnerAppIdSchema.Type;
 const HostedOwnerBuildSchema = Schema.Struct({
