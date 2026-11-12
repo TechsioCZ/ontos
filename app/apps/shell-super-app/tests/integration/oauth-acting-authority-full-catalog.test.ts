@@ -854,8 +854,19 @@ const MAIN_DEMO_MODULES = [
   'work.tasks',
 ];
 
-/** The CI proof shape's round-trip bounds; before they were 13 transactions, 102 statements and 5 SpiceDB calls. */
-const CI_BOUNDS = { spicedb: 4, statements: 96, transactions: 12 };
+/**
+ * Every scoped transaction first reads its connected role (`select current_user`, main's
+ * `OperationalScope.resolveDatabaseAuthority`): the role, not the presence of a gateway assertion, picks how the
+ * scope is installed, and an unknown role fails closed. A description runs 12 scoped transactions, so it issues 12
+ * more statements than before that check.
+ */
+const SCOPE_ROLE_READS = 12;
+
+/**
+ * The CI proof shape's round-trip bounds; before they were 13 transactions, 102 statements and 5 SpiceDB calls. It
+ * measures 95 statements plus the scoped transactions' role reads.
+ */
+const CI_BOUNDS = { spicedb: 4, statements: 95 + SCOPE_ROLE_READS, transactions: 12 };
 
 /**
  * One connection description as stage runs it, with `installed` the tenant's modules: its round trips per phase, and
@@ -1225,7 +1236,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               // Before: 23 transactions, 158 statements, 15 SpiceDB calls (12 LIST questions each with its own cell
               // read and snapshot) and 517 evidence rows; stage measured 24 / 164 / 16 with one more LIST.
               expect(report.transactions).toBeLessThanOrEqual(12);
-              expect(report.statements).toBeLessThanOrEqual(82);
+              // 81 statements plus the scoped transactions' role reads.
+              expect(report.statements).toBeLessThanOrEqual(81 + SCOPE_ROLE_READS);
               expect(report.spicedb).toBeLessThanOrEqual(4);
             }).pipe(Effect.provide(NodeServices.layer)),
           1,
