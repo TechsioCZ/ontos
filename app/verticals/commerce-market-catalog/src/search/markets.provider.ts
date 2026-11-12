@@ -136,12 +136,12 @@ export const marketsRead = defineRead(
     schemaVersion: '1',
   },
   {
+    prepare: prepareMarkets,
     load: (_input, context: ReadLoadContext<Record<never, never>, MarketsProviderResponse>) =>
       Effect.succeed({
         evidence: { resultCount: context.prepared.length },
         result: context.prepared,
       }),
-    prepare: prepareMarkets,
   },
   // Core Search owns its scoped index transaction in prepare. No owner SQL or service
   // lookup remains inside this Read's load transaction; Core retains its disclosure fence.

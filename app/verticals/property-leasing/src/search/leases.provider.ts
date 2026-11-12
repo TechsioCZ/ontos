@@ -69,6 +69,20 @@ export const leasesRead = defineRead(
     schemaVersion: '1',
   },
   {
+    prepare: Effect.fn('LeasesSearch.prepare')(function* prepareSearch(
+      _input: LeasesProviderRequest,
+      context: ReadPrepareContext,
+    ) {
+      const paths = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Array(Schema.String)))(
+        context.deniedFieldPaths,
+      ).pipe(Effect.mapError(unavailable));
+      if (paths.length !== 0) {
+        return yield* unavailable('Undeclared search field restrictions');
+      }
+      return yield* requireLeaseSearchPredicate(context.listAccess).pipe(Effect.mapError(unavailable));
+    }),
+    load: (_input: LeasesProviderRequest, context: ReadLoadContext<SearchServices, ListAccessPredicate>) =>
+      context.services.load().pipe(Effect.mapError(unavailable)),
     finish: Effect.fn('LeasesSearch.finish')(function* finishSearch(
       input: LeasesProviderRequest,
       context: ReadFinishContext<ListAccessPredicate, LeaseSearchCurrentState>,
@@ -81,20 +95,6 @@ export const leasesRead = defineRead(
         context.loaded,
       ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(LeasesProviderResponseSchema)), Effect.mapError(unavailable));
       return { evidence: { resultCount: result.length }, result };
-    }),
-    load: (_input: LeasesProviderRequest, context: ReadLoadContext<SearchServices, ListAccessPredicate>) =>
-      context.services.load().pipe(Effect.mapError(unavailable)),
-    prepare: Effect.fn('LeasesSearch.prepare')(function* prepareSearch(
-      _input: LeasesProviderRequest,
-      context: ReadPrepareContext,
-    ) {
-      const paths = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Array(Schema.String)))(
-        context.deniedFieldPaths,
-      ).pipe(Effect.mapError(unavailable));
-      if (paths.length !== 0) {
-        return yield* unavailable('Undeclared search field restrictions');
-      }
-      return yield* requireLeaseSearchPredicate(context.listAccess).pipe(Effect.mapError(unavailable));
     }),
   },
   makeSearchServices,

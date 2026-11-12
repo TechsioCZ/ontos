@@ -122,6 +122,8 @@ export const noticePresentationRead = defineRead(
     schemaVersion: '1',
   },
   {
+    load: (_input, context: ReadLoadContext<NoticeSnapshotServices>) =>
+      context.services.load().pipe(Effect.mapError(snapshotUnavailable)),
     finish: Effect.fn('PrivacyNotice.finishPresentation')(function* finishPresentation(
       input: typeof NoticePresentationRequestSchema.Type,
       context: ReadFinishContext<undefined, NoticeSnapshot>,
@@ -146,8 +148,6 @@ export const noticePresentationRead = defineRead(
         .pipe(Effect.mapError(readFailure));
       return { evidence: { resultCount: 1 }, result };
     }),
-    load: (_input, context: ReadLoadContext<NoticeSnapshotServices>) =>
-      context.services.load().pipe(Effect.mapError(snapshotUnavailable)),
   },
   (transaction, scope) => Effect.succeed({ load: () => readNoticeSnapshot(transaction, scope) }),
 );

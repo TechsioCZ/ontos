@@ -309,8 +309,8 @@ export const currentPricingDecisionRead = defineRead(
   {
     prepare: prepareCurrentPricingDecision,
     // The Read's transaction admits the composition and checks owner authorization; the evaluation reads after it.
-    finish: makeFinishCurrentPricingDecision(),
     load: () => Effect.void,
+    finish: makeFinishCurrentPricingDecision(),
   },
   () => Effect.succeed({}),
 );

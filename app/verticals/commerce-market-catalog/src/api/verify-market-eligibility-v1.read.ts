@@ -186,8 +186,8 @@ export const verifyMarketEligibilityV1Read = defineRead(
     schemaVersion: '1',
   },
   {
-    load: handleVerifyMarketEligibilityV1,
     prepare: (input, context) => prepareVerifyMarketEligibilityV1(input, context),
+    load: handleVerifyMarketEligibilityV1,
   },
   marketResolutionPersistenceForScope,
 );

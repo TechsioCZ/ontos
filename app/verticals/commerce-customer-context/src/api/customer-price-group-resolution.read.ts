@@ -338,6 +338,10 @@ export const customerPriceGroupResolutionRead = defineRead(
     schemaVersion: '1',
   },
   {
+    load: (
+      input: CustomerPriceGroupResolutionRequest,
+      context: ReadLoadContext<CustomerPriceGroupResolutionServices>,
+    ) => loadCustomerPriceGroupSnapshot(input, context.scope.tenantId, context.services),
     finish: Effect.fn('CustomerPriceGroupResolution.finish')(function* finish(
       input: CustomerPriceGroupResolutionRequest,
       context: ReadFinishContext<undefined, CustomerPriceGroupSnapshot>,
@@ -366,10 +370,6 @@ export const customerPriceGroupResolutionRead = defineRead(
             : 1;
       return { evidence: { resultCount }, result };
     }),
-    load: (
-      input: CustomerPriceGroupResolutionRequest,
-      context: ReadLoadContext<CustomerPriceGroupResolutionServices>,
-    ) => loadCustomerPriceGroupSnapshot(input, context.scope.tenantId, context.services),
   },
   customerPriceGroupResolutionServicesForTransaction,
 );

@@ -77,6 +77,8 @@ export const agentReviewRead = defineRead(
     schemaVersion: '1',
   },
   {
+    prepare: (_input, context) => workRecordsGrants(context.scope).pipe(Effect.mapError(tasksUnavailable)),
+    load: (_input, context) => context.services.loadRecords(context.prepared).pipe(Effect.mapError(tasksUnavailable)),
     finish: Effect.fn('Work.agentReview.finish')(function* finishReview(
       input: AgentReviewRequest,
       context: FinishContext,
@@ -128,8 +130,6 @@ export const agentReviewRead = defineRead(
       );
       return { evidence: { resultCount: items.length }, result: { items, seesAllRecords: true } };
     }),
-    load: (_input, context) => context.services.loadRecords(context.prepared).pipe(Effect.mapError(tasksUnavailable)),
-    prepare: (_input, context) => workRecordsGrants(context.scope).pipe(Effect.mapError(tasksUnavailable)),
   },
   makeAgentReviewServices,
 );

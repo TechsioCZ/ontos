@@ -45,6 +45,11 @@ export const assetsRead = defineRead(
     schemaVersion: '1',
   },
   {
+    prepare: (_input, context: ReadPrepareContext) => prepareFacilitySearch(context.scope, context.listAccess),
+    load: (
+      _input: AssetsProviderRequest,
+      context: ReadLoadContext<FacilitySearchServices, FacilitySearchPreparation>,
+    ) => context.services.load(context.prepared, false),
     finish: Effect.fn('FacilitySearch.assets.finish')(function* finishSearch(
       input: AssetsProviderRequest,
       context: ReadFinishContext<FacilitySearchPreparation, FacilitySearchRecords>,
@@ -61,11 +66,6 @@ export const assetsRead = defineRead(
       });
       return { evidence: { resultCount: result.length }, result };
     }),
-    load: (
-      _input: AssetsProviderRequest,
-      context: ReadLoadContext<FacilitySearchServices, FacilitySearchPreparation>,
-    ) => context.services.load(context.prepared, false),
-    prepare: (_input, context: ReadPrepareContext) => prepareFacilitySearch(context.scope, context.listAccess),
   },
   makeFacilitySearchServices('asset'),
 );

@@ -45,6 +45,11 @@ export const documentsRead = defineRead(
     schemaVersion: '1',
   },
   {
+    prepare: (_input, context: ReadPrepareContext) => prepareFacilitySearch(context.scope, context.listAccess),
+    load: (
+      _input: DocumentsProviderRequest,
+      context: ReadLoadContext<FacilitySearchServices, FacilitySearchPreparation>,
+    ) => context.services.load(context.prepared, false),
     finish: Effect.fn('FacilitySearch.documents.finish')(function* finishSearch(
       input: DocumentsProviderRequest,
       context: ReadFinishContext<FacilitySearchPreparation, FacilitySearchRecords>,
@@ -61,11 +66,6 @@ export const documentsRead = defineRead(
       });
       return { evidence: { resultCount: result.length }, result };
     }),
-    load: (
-      _input: DocumentsProviderRequest,
-      context: ReadLoadContext<FacilitySearchServices, FacilitySearchPreparation>,
-    ) => context.services.load(context.prepared, false),
-    prepare: (_input, context: ReadPrepareContext) => prepareFacilitySearch(context.scope, context.listAccess),
   },
   makeFacilitySearchServices('document'),
 );

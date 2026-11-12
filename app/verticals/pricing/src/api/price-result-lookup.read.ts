@@ -182,6 +182,14 @@ export const priceResultLookupRead = defineRead(
   },
   {
     // A registered recovery reads the original's exact result through owner-local evidence in the transaction.
+    prepare: (input, context) =>
+      readVerifiedGatewayRecovery(context.scope) === undefined
+        ? resolveCommitForScope(context.scope).pipe(
+            Effect.flatMap((resolveCommit) =>
+              resolvePriceResultCommit(input, { legalEntityId: context.scope.legalEntityId }, resolveCommit),
+            ),
+          )
+        : Effect.undefined,
     load: Effect.fn('PriceResultLookupRead.load')(function* loadPriceResult(
       input: PriceResultLookupRequest,
       context: ReadLoadContext<PriceResultLookupServices, PriceActionCommitResolution | undefined>,
@@ -198,14 +206,6 @@ export const priceResultLookupRead = defineRead(
       const result = yield* readPriceResult(input, resolution, persistence);
       return { evidence: { resultCount: result.outcome === 'PRICE_ACTION_RESULT_FOUND' ? 1 : 0 }, result };
     }),
-    prepare: (input, context) =>
-      readVerifiedGatewayRecovery(context.scope) === undefined
-        ? resolveCommitForScope(context.scope).pipe(
-            Effect.flatMap((resolveCommit) =>
-              resolvePriceResultCommit(input, { legalEntityId: context.scope.legalEntityId }, resolveCommit),
-            ),
-          )
-        : Effect.undefined,
   },
   priceResultLookupServicesForScope,
 );

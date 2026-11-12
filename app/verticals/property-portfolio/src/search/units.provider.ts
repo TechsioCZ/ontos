@@ -54,6 +54,13 @@ export const unitsRead = defineRead(
     schemaVersion: '1',
   },
   {
+    prepare: (_input, context) =>
+      prepareOwnerSearch(context.listAccess, context.deniedFieldPaths).pipe(Effect.mapError(unavailable)),
+    load: (_input: UnitsProviderRequest, context: ReadLoadContext<SearchServices, ListAccessPredicate>) =>
+      context.services.load().pipe(
+        Effect.map(({ state }) => state),
+        Effect.mapError(unavailable),
+      ),
     finish: Effect.fn('UnitsSearch.finish')(function* finishSearch(
       input: UnitsProviderRequest,
       context: ReadFinishContext<ListAccessPredicate, PropertyState>,
@@ -68,13 +75,6 @@ export const unitsRead = defineRead(
       ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(UnitsProviderResponseSchema)));
       return { evidence: { resultCount: result.length }, result };
     }, Effect.mapError(unavailable)),
-    load: (_input: UnitsProviderRequest, context: ReadLoadContext<SearchServices, ListAccessPredicate>) =>
-      context.services.load().pipe(
-        Effect.map(({ state }) => state),
-        Effect.mapError(unavailable),
-      ),
-    prepare: (_input, context) =>
-      prepareOwnerSearch(context.listAccess, context.deniedFieldPaths).pipe(Effect.mapError(unavailable)),
   },
   makeSearchServices,
 );

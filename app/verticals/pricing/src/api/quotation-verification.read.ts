@@ -233,6 +233,8 @@ export const quotationVerificationRead = defineRead(
     schemaVersion: '1',
   },
   {
+    load: (input: QuotationVerificationRequest, context: ReadLoadContext<QuotationPersistence>) =>
+      loadVerification(input, context.services, context.scope),
     finish: (input: QuotationVerificationRequest, context: ReadFinishContext<undefined, PricingQuotationIssued>) =>
       readVerification(input, context).pipe(
         Effect.flatMap((result) =>
@@ -248,8 +250,6 @@ export const quotationVerificationRead = defineRead(
           ),
         ),
       ),
-    load: (input: QuotationVerificationRequest, context: ReadLoadContext<QuotationPersistence>) =>
-      loadVerification(input, context.services, context.scope),
   },
   servicesForScope,
 );

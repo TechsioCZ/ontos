@@ -55,6 +55,13 @@ export const assetsRead = defineRead(
     schemaVersion: '1',
   },
   {
+    prepare: (_input, context) =>
+      prepareOwnerSearch(context.listAccess, context.deniedFieldPaths).pipe(Effect.mapError(unavailable)),
+    load: (_input: AssetsProviderRequest, context: ReadLoadContext<SearchServices, ListAccessPredicate>) =>
+      context.services.load().pipe(
+        Effect.map(({ state }) => state),
+        Effect.mapError(unavailable),
+      ),
     finish: Effect.fn('AssetsSearch.finish')(function* finishSearch(
       input: AssetsProviderRequest,
       context: ReadFinishContext<ListAccessPredicate, PropertyState>,
@@ -69,13 +76,6 @@ export const assetsRead = defineRead(
       ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(AssetsProviderResponseSchema)));
       return { evidence: { resultCount: result.length }, result };
     }, Effect.mapError(unavailable)),
-    load: (_input: AssetsProviderRequest, context: ReadLoadContext<SearchServices, ListAccessPredicate>) =>
-      context.services.load().pipe(
-        Effect.map(({ state }) => state),
-        Effect.mapError(unavailable),
-      ),
-    prepare: (_input, context) =>
-      prepareOwnerSearch(context.listAccess, context.deniedFieldPaths).pipe(Effect.mapError(unavailable)),
   },
   makeSearchServices,
 );

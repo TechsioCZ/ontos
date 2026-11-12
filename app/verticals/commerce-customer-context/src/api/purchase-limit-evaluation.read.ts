@@ -130,6 +130,12 @@ export const purchaseLimitEvaluationRead = defineRead(
     schemaVersion: '1',
   },
   {
+    load: (
+      input: PurchaseLimitEvaluationRequest,
+      context: ReadLoadContext<{
+        readonly load: (input: PurchaseLimitEvaluationRequest) => ReturnType<typeof loadLimitSnapshot>;
+      }>,
+    ) => context.services.load(input).pipe(Effect.mapError(unavailable)),
     finish: Effect.fn('PurchaseLimitEvaluationRead.finish')(function* finish(
       input: PurchaseLimitEvaluationRequest,
       context: ReadFinishContext<undefined, LimitSnapshot>,
@@ -195,12 +201,6 @@ export const purchaseLimitEvaluationRead = defineRead(
       );
       return { evidence: { resultCount: 1 }, result: evaluatePurchaseLimit(evaluation) };
     }),
-    load: (
-      input: PurchaseLimitEvaluationRequest,
-      context: ReadLoadContext<{
-        readonly load: (input: PurchaseLimitEvaluationRequest) => ReturnType<typeof loadLimitSnapshot>;
-      }>,
-    ) => context.services.load(input).pipe(Effect.mapError(unavailable)),
   },
   (transaction, scope, compositionRevision) =>
     Effect.succeed({

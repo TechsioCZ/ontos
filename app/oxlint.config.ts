@@ -37,6 +37,18 @@ const antiSlopEffectRules = {
   'anti-slop-effect/no-service-constructor-imports': 'error',
 };
 
+// Only a top-level call can use this exact value import without a nested binding
+// shadowing it. Aliases and nested calls fail closed. The second argument alone
+// owns Core's inference-sensitive prepare/load/finish order, not its nested data.
+const coreReadValueImport =
+  'Program:has(ImportDeclaration[source.value="@app/core-runtime"][importKind!="type"] > ImportSpecifier[imported.name="defineRead"][local.name="defineRead"][importKind!="type"])';
+const coreReadPipelineArgument =
+  'VariableDeclarator > CallExpression[callee.type="Identifier"][callee.name="defineRead"] > ObjectExpression.arguments:nth-child(2)';
+const coreReadPipelineSelector = [
+  `${coreReadValueImport} > VariableDeclaration > ${coreReadPipelineArgument}`,
+  `${coreReadValueImport} > ExportNamedDeclaration > VariableDeclaration > ${coreReadPipelineArgument}`,
+].join(', ');
+
 // Effect-native architecture rules derived from docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md.
 // Each rule cites the audit finding it enforces; see tools/oxlint/effect-native/README.md.
 const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']> = {
@@ -953,6 +965,12 @@ export default defineConfig({
       rules: { 'perfectionist/sort-objects': 'off' },
     },
     {
+      // The demo-only exception sections (owner approvals, staged reads, owner-declared Search) are appended
+      // after main's helpers as marked blocks; main's proofs call into them, so definition order cannot follow use.
+      files: ['scripts/generated-governed-http-boundary.mts'],
+      rules: { 'eslint/no-use-before-define': 'off' },
+    },
+    {
       // The scripted driver rows are positional, in the exact real Drizzle table projection order;
       // alphabetizing them would stop the fixture from proving the physical column contract.
       files: ['packages/core-runtime/tests/unit/search-evidence-codec.test.ts'],
@@ -1384,7 +1402,18 @@ export default defineConfig({
     'perfectionist/sort-interfaces': 'error',
     'perfectionist/sort-jsx-props': 'error',
     'perfectionist/sort-object-types': 'error',
-    'perfectionist/sort-objects': ['error', { partitionByComment: true }],
+    'perfectionist/sort-objects': [
+      'error',
+      {
+        // Core's staged reads infer `prepared` from the prepare/load/finish order (demo-only exception 3).
+        type: 'unsorted',
+        useConfigurationIf: {
+          allNamesMatchPattern: '^(?:prepare|load|finish)$',
+          matchesAstSelector: coreReadPipelineSelector,
+        },
+      },
+      { partitionByComment: true },
+    ],
     'react/no-unknown-property': 'error',
     // The base rule conflicts with the type-aware promise-function-async rule:
     // removing `async` immediately recreates the type-aware diagnostic.

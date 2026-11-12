@@ -192,6 +192,6 @@ export const resolveCommerceMarketRead = defineRead(
     resultSchema: ResolveCommerceMarketResponseSchema,
     schemaVersion: '1',
   },
-  { load: handleResolveCommerceMarket, prepare: (input, context) => prepareResolveCommerceMarket(input, context) },
+  { prepare: (input, context) => prepareResolveCommerceMarket(input, context), load: handleResolveCommerceMarket },
   marketResolutionPersistenceForScope,
 );

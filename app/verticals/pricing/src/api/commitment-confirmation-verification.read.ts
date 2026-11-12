@@ -108,6 +108,7 @@ export const commitmentConfirmationVerificationRead = defineRead(
     schemaVersion: '1',
   },
   {
+    load: readConfirmation,
     finish: Effect.fn('CommitmentConfirmationVerificationRead.finish')(function* finishVerification(
       input: CommitmentConfirmationVerificationRequest,
       context: ReadFinishContext<undefined, typeof PricingCommitmentConfirmationIssuedSchema.Type>,
@@ -142,7 +143,6 @@ export const commitmentConfirmationVerificationRead = defineRead(
       });
       return { evidence: { resultCount: 1 }, result };
     }),
-    load: readConfirmation,
   },
   commitmentConfirmationPersistenceForScope,
 );
