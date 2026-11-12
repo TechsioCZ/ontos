@@ -1,0 +1,150 @@
+import { describe, expect, it } from 'effect-rstest';
+
+import { internalWorkloadPrincipalId } from '../../src/auth/module-credentials.ts';
+import {
+  companyBindingIdsOf,
+  planTenantInternalWorkloads,
+  workloadBindingIdsOf,
+} from '../../src/install/internal-workload-plan.ts';
+import type {
+  InternalWorkloadDeclaration,
+  PlatformRegistration,
+  TenantWorkloadState,
+} from '../../src/install/internal-workload-plan.ts';
+
+const TENANT = '70000000-0000-4000-8000-000000000001';
+const OTHER_TENANT = '70000000-0000-4000-8000-000000000002';
+const COMPANY_A = '70000000-0000-4000-8000-0000000000a1';
+const COMPANY_B = '70000000-0000-4000-8000-0000000000b1';
+const WORKLOAD = 'demo.crm.party-intake';
+const INTAKE: InternalWorkloadDeclaration = { appId: 'crm', moduleKey: 'demo.crm', workloadKey: WORKLOAD };
+
+const stateOf = (overrides: Partial<TenantWorkloadState> = {}): TenantWorkloadState => ({
+  activeCompanies: new Set([COMPANY_A, COMPANY_B]),
+  activeModuleKeys: new Set(['demo.crm']),
+  registrations: [],
+  tenantId: TENANT,
+  ...overrides,
+});
+
+/** A registration the platform made and that is whole: active principal, binding and company binding. */
+const whole = (legalEntityId: string, tenantId = TENANT): PlatformRegistration => {
+  const principalId = internalWorkloadPrincipalId({ legalEntityId, tenantId, workloadKey: WORKLOAD });
+  const binding = workloadBindingIdsOf(principalId, 0);
+  return {
+    activeCompanyBindingId: companyBindingIdsOf(binding.bindingId, legalEntityId, 0).companyBindingId,
+    activeWorkloadBindingId: binding.bindingId,
+    companyBindingCount: 1,
+    legalEntityId,
+    principalId,
+    principalStatus: 'active',
+    workloadBindingCount: 1,
+    workloadKey: WORKLOAD,
+  };
+};
+
+const kinds = (plan: ReturnType<typeof planTenantInternalWorkloads>) => plan.steps.map(({ kind }) => kind);
+
+describe('planTenantInternalWorkloads', () => {
+  it('registers an installed module workload once per active company: principal, binding, company binding', () => {
+    const plan = planTenantInternalWorkloads(stateOf(), [INTAKE]);
+    expect(plan.registered).toBe(2);
+    expect(kinds(plan)).toEqual([
+      'create-principal',
+      'bind-workload',
+      'bind-company',
+      'create-principal',
+      'bind-workload',
+      'bind-company',
+    ]);
+    const principals = plan.steps.flatMap((step) => (step.kind === 'create-principal' ? [step] : []));
+    expect(principals.map(({ legalEntityId }) => legalEntityId)).toEqual([COMPANY_A, COMPANY_B]);
+    expect(principals.map(({ principalId }) => principalId)).toEqual([
+      internalWorkloadPrincipalId({ legalEntityId: COMPANY_A, tenantId: TENANT, workloadKey: WORKLOAD }),
+      internalWorkloadPrincipalId({ legalEntityId: COMPANY_B, tenantId: TENANT, workloadKey: WORKLOAD }),
+    ]);
+    // Each company binding names exactly its own company and its own principal's binding.
+    const bindings = plan.steps.flatMap((step) => (step.kind === 'bind-workload' ? [step] : []));
+    const companies = plan.steps.flatMap((step) => (step.kind === 'bind-company' ? [step] : []));
+    expect(companies.map(({ legalEntityId, workloadBindingId }) => [legalEntityId, workloadBindingId])).toEqual(
+      bindings.map(({ bindingId }, index) => [principals[index]?.legalEntityId, bindingId]),
+    );
+  });
+
+  it('changes nothing when every wanted registration is whole', () => {
+    const plan = planTenantInternalWorkloads(stateOf({ registrations: [whole(COMPANY_A), whole(COMPANY_B)] }), [
+      INTAKE,
+    ]);
+    expect(plan).toEqual({ held: [], registered: 0, retired: 0, steps: [], unchanged: 2 });
+  });
+
+  it('registers nothing where the module is not installed, and retires what it made when the module is uninstalled', () => {
+    expect(planTenantInternalWorkloads(stateOf({ activeModuleKeys: new Set() }), [INTAKE]).steps).toEqual([]);
+    const uninstalled = planTenantInternalWorkloads(
+      stateOf({ activeModuleKeys: new Set(), registrations: [whole(COMPANY_A), whole(COMPANY_B)] }),
+      [INTAKE],
+    );
+    expect(uninstalled.retired).toBe(2);
+    expect(kinds(uninstalled)).toEqual([
+      'revoke-company',
+      'revoke-workload',
+      'disable-principal',
+      'revoke-company',
+      'revoke-workload',
+      'disable-principal',
+    ]);
+  });
+
+  it('retires the registrations of a workload the catalogue no longer declares', () => {
+    const plan = planTenantInternalWorkloads(stateOf({ registrations: [whole(COMPANY_A)] }), []);
+    expect(plan.retired).toBe(1);
+    expect(kinds(plan)).toEqual(['revoke-company', 'revoke-workload', 'disable-principal']);
+  });
+
+  it('registers a company added later and retires the registration of a company no longer active', () => {
+    const added = planTenantInternalWorkloads(stateOf({ registrations: [whole(COMPANY_A)] }), [INTAKE]);
+    expect(added).toMatchObject({ registered: 1, retired: 0, unchanged: 1 });
+    expect(added.steps.find((step) => step.kind === 'create-principal')).toMatchObject({ legalEntityId: COMPANY_B });
+    const deactivated = planTenantInternalWorkloads(
+      stateOf({ activeCompanies: new Set([COMPANY_A]), registrations: [whole(COMPANY_A), whole(COMPANY_B)] }),
+      [INTAKE],
+    );
+    expect(deactivated).toMatchObject({ registered: 0, retired: 1, unchanged: 1 });
+    expect(deactivated.steps).toContainEqual({ kind: 'disable-principal', principalId: whole(COMPANY_B).principalId });
+  });
+
+  it('takes a retired company back with the same principal and a fresh binding', () => {
+    const retired: PlatformRegistration = {
+      ...whole(COMPANY_B),
+      activeCompanyBindingId: null,
+      activeWorkloadBindingId: null,
+      principalStatus: 'disabled',
+    };
+    const plan = planTenantInternalWorkloads(stateOf({ registrations: [whole(COMPANY_A), retired] }), [INTAKE]);
+    expect(kinds(plan)).toEqual(['reactivate-principal', 'bind-workload', 'bind-company']);
+    const binding = plan.steps.find((step) => step.kind === 'bind-workload');
+    expect(binding).toMatchObject({ bindingId: workloadBindingIdsOf(retired.principalId, 1).bindingId });
+  });
+
+  it('holds a registration whose principal an administrator disabled or archived instead of reviving it', () => {
+    const disabled: PlatformRegistration = { ...whole(COMPANY_A), principalStatus: 'disabled' };
+    const archived: PlatformRegistration = { ...whole(COMPANY_B), principalStatus: 'archived' };
+    const plan = planTenantInternalWorkloads(stateOf({ registrations: [disabled, archived] }), [INTAKE]);
+    expect(plan.steps).toEqual([]);
+    expect(plan.held).toEqual([disabled, archived]);
+  });
+
+  it('never mixes two tenants: the same company and workload give each tenant its own principal', () => {
+    const one = planTenantInternalWorkloads(stateOf({ activeCompanies: new Set([COMPANY_A]) }), [INTAKE]);
+    const other = planTenantInternalWorkloads(
+      stateOf({ activeCompanies: new Set([COMPANY_A]), tenantId: OTHER_TENANT }),
+      [INTAKE],
+    );
+    const principalOf = (plan: typeof one) =>
+      plan.steps.find((step) => step.kind === 'create-principal')?.principalId ?? '';
+    expect(principalOf(one)).not.toBe(principalOf(other));
+    // Every id the plan writes is derived from its own tenant, so no step of one tenant names another's rows.
+    const idsOf = (plan: typeof one) => plan.steps.map((step) => JSON.stringify(step));
+    expect(idsOf(one).some((step) => idsOf(other).includes(step))).toBe(false);
+  });
+});

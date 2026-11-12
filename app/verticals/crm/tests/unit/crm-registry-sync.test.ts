@@ -31,6 +31,8 @@ const at = '2026-10-27T09:00:00.000Z';
 const shellGateway = 'https://shell.fixture.invalid/shell-super-app-api';
 const registeredTenant = '70000000-0000-4000-8000-000000000001';
 const unregisteredTenant = '70000000-0000-4000-8000-000000000009';
+/** The company the intake workload is registered for; its key is that company's alone. */
+const registeredCompany = '70000000-0000-4000-8000-000000000022';
 const INTAKE_KEY = 'platform-issued-intake-key';
 /** This test process as an owners process: the host hands CRM its intake workload key for one tenant only. */
 const handOverIntakeKey: Effect.Effect<void> = Effect.gen(function* handOver() {
@@ -38,7 +40,7 @@ const handOverIntakeKey: Effect.Effect<void> = Effect.gen(function* handOver() {
   yield* receiver.accept({
     credentials: {},
     schemaVersion: 1,
-    workloads: { [`crm/demo.crm.party-intake/${registeredTenant}`]: Redacted.make(INTAKE_KEY) },
+    workloads: { [`crm/demo.crm.party-intake/${registeredTenant}/${registeredCompany}`]: Redacted.make(INTAKE_KEY) },
   });
 });
 it('never reports a parked command as a committed CRM write or completed Party link', () => {

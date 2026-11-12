@@ -14,6 +14,7 @@ import {
   providerKeyIdsOf,
   ProvisioningOutputJsonSchema,
 } from '../zerops/module-credentials.mts';
+import { internalWorkloadDeclarations, moduleKeyOfWorkload } from '../demo/release-internal-workloads.mts';
 
 const workspace = path.resolve(import.meta.dirname, '../..');
 const DELEGATED_CLIENT = /\bacquireDelegatedGatewayContext\b/u;
@@ -112,7 +113,8 @@ describe('module credential handover', () => {
           },
           schemaVersion: 1,
           workloadCredentials: {
-            'crm/demo.crm.party-intake/70000000-0000-4000-8000-000000000001': 'crm-intake-workload-key',
+            'crm/demo.crm.party-intake/70000000-0000-4000-8000-000000000001/70000000-0000-4000-8000-000000000021':
+              'crm-intake-workload-key',
           },
         });
         const decoded = yield* Schema.decodeEffect(ProvisioningOutputJsonSchema)(encoded);
@@ -141,5 +143,18 @@ describe('module credential handover', () => {
     expect(none.failedAppIds).toEqual([ORDER, 'pricing']);
     expect(providerKeyIdsOf(none)).toEqual([]);
     expect(earliestExpiryOf(none)).toBeUndefined();
+  });
+});
+
+const INTAKE_WORKLOAD = 'demo.crm.party-intake';
+
+describe('internal workload declarations', () => {
+  it('registers a module internal workload only while the reviewed catalogue declares it, under its own module', () => {
+    const internal = new Map([['crm', [INTAKE_WORKLOAD, 'demo.crm.retired-sync']]]);
+    expect(internalWorkloadDeclarations(internal, new Set([INTAKE_WORKLOAD, 'commerce.storefront-client']))).toEqual([
+      { appId: 'crm', moduleKey: 'demo.crm', workloadKey: INTAKE_WORKLOAD },
+    ]);
+    expect(internalWorkloadDeclarations(internal, new Set())).toEqual([]);
+    expect(moduleKeyOfWorkload(INTAKE_WORKLOAD)).toBe('demo.crm');
   });
 });

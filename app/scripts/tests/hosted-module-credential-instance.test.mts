@@ -77,6 +77,7 @@ it.live(
             'HostedModuleCredentialsSealedError',
             'ModuleAppIdSchema',
             'WorkloadCredentialsSchema',
+            'internalWorkloadEntryId',
             'workloadEntryAppId',
           ],
           required: 'pricing-module-key-0000',
