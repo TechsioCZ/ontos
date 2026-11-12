@@ -94,8 +94,15 @@ const SHELL_GATEWAY_BASE_URL = `${SHELL_ORIGIN}${shellGatewayContextContract.api
 const DELEGATION_PATH = `${shellGatewayContextContract.apiPrefix}/auth/delegated/gateway-context`;
 const TAX_PREFIX = '/tax-api';
 const MODULE_KEY = 'merchandise-module-key-for-tests';
+/** Core's own publication lock, taken around each write of the authority row as Core takes it. */
 const AUTHORITY_LOCK = "hashtextextended('ontos.application-composition-authority', 0)";
-const SCENARIO_LOCK = "hashtextextended('ontos.merchandise-tax-roots-authority', 0)";
+/**
+ * The session lock every suite that replaces the active authority row holds for as long as its row is in place
+ * (Core's native suites, Payment's fixture, Tax's historical-access fixture, the baseline seed test): without it a
+ * suite running alongside could publish its own release mid-scenario, and the owner would then rightly refuse this
+ * scenario's writes as no longer admitted by the approved composition.
+ */
+const FIXTURE_LOCK = "hashtextextended('ontos.search-test-authority', 0)";
 const EFFECTIVE_FROM = '2024-01-01T00:00:00.000Z';
 
 const uuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
@@ -124,13 +131,15 @@ const compositionSnapshot = Effect.gen(function* compositionSnapshot() {
   });
 });
 
-const adminClient = Effect.gen(function* adminClient() {
-  const connections = yield* loadDatabaseConnectionPair();
-  const services = yield* Layer.build(
-    PgClient.layer({ maxConnections: 2, url: Redacted.make(connections.admin.connectionString) }),
-  );
-  return Context.get(services, PgClient.PgClient);
-});
+const adminClientOf = (maxConnections: number) =>
+  Effect.gen(function* adminClient() {
+    const connections = yield* loadDatabaseConnectionPair();
+    const services = yield* Layer.build(
+      PgClient.layer({ maxConnections, url: Redacted.make(connections.admin.connectionString) }),
+    );
+    return Context.get(services, PgClient.PgClient);
+  });
+const adminClient = adminClientOf(2);
 
 const ClockRowSchema = Schema.Struct({ now: Schema.DateTimeUtcFromString });
 const databaseNow = (admin: PgClient.PgClient) =>
@@ -157,7 +166,9 @@ const installCompositionAuthority = Effect.fn('MerchandiseTaxRoots.authority')(f
   admin: PgClient.PgClient,
   revision: string,
 ) {
-  yield* admin.unsafe(`select pg_advisory_lock(${SCENARIO_LOCK})`);
+  // A session lock is held by one connection: a client of its own takes it and releases it.
+  const lockSession = yield* adminClientOf(1);
+  yield* lockSession.unsafe(`select pg_advisory_lock(${FIXTURE_LOCK})`);
   const [previous] = yield* admin.unsafe<AuthorityRow>(
     "select revision, phase, durable_work_admission, valid_until::text as valid_until, subscriptions_json::text as subscriptions_json, updated_at::text as updated_at from core.application_composition_authority where authority_key = 'active'",
   );
@@ -178,7 +189,7 @@ const installCompositionAuthority = Effect.fn('MerchandiseTaxRoots.authority')(f
           previous.subscriptions_json,
           previous.updated_at,
         ])
-    ).pipe(Effect.andThen(admin.unsafe(`select pg_advisory_unlock(${SCENARIO_LOCK})`)), Effect.orDie),
+    ).pipe(Effect.andThen(lockSession.unsafe(`select pg_advisory_unlock(${FIXTURE_LOCK})`)), Effect.orDie),
   );
   const now = yield* databaseNow(admin);
   yield* write(UPSERT_AUTHORITY, [
