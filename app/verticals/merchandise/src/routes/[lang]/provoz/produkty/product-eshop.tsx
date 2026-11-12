@@ -25,13 +25,9 @@ import { useCommandFailure } from './product-form-labels.ts';
 import { useCommandInputGuard } from './command-input-guard.tsx';
 import { ProductTabSaveBar, useProductTabSave } from './product-tab-save.tsx';
 import type { ProductVariantDestination } from './product-variant-destination.ts';
-import {
-  DEFAULT_TAX_CLASSIFICATION,
-  classificationChoice,
-  rateAt,
-  useTaxLabels,
-} from './product-tax-classification.ts';
+import { DEFAULT_TAX_CLASSIFICATION, classificationChoice, useTaxLabels } from './product-tax-classification.ts';
 import type { CompanyVat } from './product-tax-classification.ts';
+import { priceHistoryRows } from './product-price-history.ts';
 
 const availabilityPresentation = {
   IN_STOCK: { label: 'Skladem', variant: 'success' },
@@ -244,42 +240,9 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
   );
 };
 
-/** Gross price at the rate Tax gave the product's classification at `at`; none when that period is not published. */
-const grossAt = (netMinor: number, product: ProductRecord, vat: CompanyVat, at: DateTime.Utc): number | undefined => {
-  const rate = rateAt(vat, product.taxClassificationCode, at);
-  return rate === undefined ? undefined : grossUnitPriceMinor(netMinor, rate.ratePercent);
-};
-
-export const VariantPriceHistory = ({
-  product,
-  vat,
-}: {
-  readonly product: ProductRecord;
-  readonly vat: CompanyVat;
-}) => {
+export const VariantPriceHistory = ({ product }: { readonly product: ProductRecord }) => {
   const { t } = useModernI18n();
-  const variantRows = (product.variantRecords ?? []).flatMap((variant) =>
-    variant.priceHistory.map((entry, index) => ({
-      at: entry.effectiveFrom,
-      gross: grossAt(entry.priceMinor, product, vat, entry.effectiveFrom),
-      key: `${variant.id}-${index}`,
-      name: `${variant.name} · ${variant.sku}`,
-      net: entry.priceMinor,
-      previous: entry.previousPriceMinor ?? (index === 0 ? undefined : variant.priceHistory[index - 1]?.priceMinor),
-    })),
-  );
-  const rows = [
-    ...variantRows,
-    ...product.priceHistory.map((entry, index) => ({
-      at: entry.effectiveFrom,
-      gross: grossAt(entry.priceMinor, product, vat, entry.effectiveFrom),
-      key: `product-${index}`,
-      name: `Základní cena produktu · ${product.sku}`,
-      net: entry.priceMinor,
-      previous: entry.previousPriceMinor ?? product.priceHistory[index - 1]?.priceMinor,
-    })),
-  ];
-  const sorted = rows.toSorted((left, right) => DateTime.toEpochMillis(right.at) - DateTime.toEpochMillis(left.at));
+  const sorted = priceHistoryRows(product);
   return (
     <SectionCard flush title={t('merchandise.ui.variantPriceHistory')}>
       <ScrollRegion label={t('merchandise.ui.variantPriceHistory')}>
@@ -748,7 +711,7 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
           revision={revision}
         />
       )}
-      {(product.variantRecords ?? []).length > 0 && <VariantPriceHistory product={product} vat={props.vat} />}
+      {(product.variantRecords ?? []).length > 0 && <VariantPriceHistory product={product} />}
     </div>
   );
 };

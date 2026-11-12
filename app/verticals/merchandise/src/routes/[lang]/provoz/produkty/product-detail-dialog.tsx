@@ -101,10 +101,10 @@ export interface ProductMarketsAccess {
 const NO_MARKETS: ProductMarketsAccess = { canManage: false, entries: [] };
 const REQUIRED_MESSAGE_KEY = 'validation.required';
 
-const PriceHistory = ({ product, vat }: { readonly product: ProductRecord; readonly vat: CompanyVat }) => {
+const PriceHistory = ({ product }: { readonly product: ProductRecord }) => {
   const k = useProductLabel();
   if ((product.variantRecords ?? []).length > 0) {
-    return <VariantPriceHistory product={product} vat={vat} />;
+    return <VariantPriceHistory product={product} />;
   }
   const rows = product.priceHistory.toSorted(
     (left, right) => DateTime.toEpochMillis(right.effectiveFrom) - DateTime.toEpochMillis(left.effectiveFrom),
@@ -605,7 +605,7 @@ export const ProductDetailView = ({
             />
           </Tabs.Content>
           <Tabs.Content className="py-200" value="prices">
-            <PriceHistory product={product} vat={vat} />
+            <PriceHistory product={product} />
           </Tabs.Content>
           <Tabs.Content className="flex flex-col gap-200 py-200" value="movements">
             <MovementsTable movements={movements} variants={product.variantRecords} />
