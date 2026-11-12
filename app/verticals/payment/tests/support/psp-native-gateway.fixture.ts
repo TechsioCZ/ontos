@@ -10,13 +10,14 @@
  * Action (its stored row is inserted the way it writes it), and the two remote hops of the governed A8 submission
  * (Shell gateway and A8 client; the RegisteredWorkload issuance itself is the Shell native suite).
  */
+import type { ScopedRoutineInvoker } from '@app/core-runtime';
 import { OutboxWorkerLegalEntityScopeError, OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
 import type { OutboxWorkerHandlerContext, OutboxWorkerLegalEntityScope } from '@app/core-runtime/outbox/worker';
 import type { OutboxPayload } from '@app/payment/outbox/payment-core-operation-requested-v1';
 import { GatewayContextResponseSchema } from '@app/shared-contracts';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import type { PgClient } from '@effect/sql-pg';
-import { Crypto, DateTime, Effect, Layer, Option, Ref, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Layer, Match, Option, Ref, Schema } from 'effect';
 import { SqlError } from 'effect/sql/SqlError';
 
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
@@ -28,7 +29,11 @@ import type { PaymentGatewayProviderFamilySchema } from '../../shared/domain/pay
 import { PaymentSourceStatementResultSchema } from '../../shared/domain/source-statement.ts';
 import { GatewayProviderAccountRefSchema } from '../../shared/domain/psp-configuration.ts';
 import type { GatewayEnvironment } from '../../shared/domain/psp-vocabulary.ts';
-import { operationRequestedPayloadOf, refundMaterialRequest } from '../../src/domain/refund-admission.ts';
+import {
+  cancellationMaterialRequest,
+  operationRequestedPayloadOf,
+  refundMaterialRequest,
+} from '../../src/domain/refund-admission.ts';
 import { GatewayBindingResolverLive } from '../../src/integrations/psp/binding-resolver-live.ts';
 import { ProviderDispatchLedgerLive } from '../../src/integrations/psp/dispatch-ledger-live.ts';
 import { ProviderEvidenceStoreLive } from '../../src/integrations/psp/evidence-store-live.ts';
@@ -48,6 +53,8 @@ import { GatewayProviderAdapters } from '../../src/integrations/psp/psp-adapter.
 import type { GatewayProviderAdaptersContract } from '../../src/integrations/psp/psp-adapter.ts';
 import { ProviderObjectRefSchema } from '../../src/integrations/psp/psp-request.ts';
 import type { ProviderObjectRef } from '../../src/integrations/psp/psp-request.ts';
+import { pspPrepareDispatch, pspReadDispatch } from '../../src/persistence/psp-worker-routines.ts';
+import type { PspDispatchRecord } from '../../src/persistence/psp-worker-routines.ts';
 import { paymentEvidencePersistenceForTransaction } from '../../src/persistence/payment-evidence-persistence.ts';
 import { paymentSourcePersistenceForTransaction } from '../../src/persistence/payment-source-persistence.ts';
 import { pspEnablementPersistenceForTransaction } from '../../src/persistence/psp-enablement-persistence.ts';
@@ -237,6 +244,31 @@ export const nativeCollectionFor = Effect.fn('PspNativeGateway.collection')(func
   return yield* payloadFor(harness, paymentId, collected.record.operationId);
 });
 
+/** One CANCEL_OR_VOID of `collection` on its original binding, stored and with the payload A6 builds. */
+export const nativeCancellationFor = Effect.fn('PspNativeGateway.cancellation')(function* nativeCancellationFor(
+  harness: NativeHarness,
+  binding: NativeBinding,
+  collection: OutboxPayload,
+) {
+  const provenance = yield* provenanceFor(harness.scope);
+  const { operationId: targetOperationId, paymentId } = collection;
+  const cancelled = yield* withPersistence(harness.database, harness.scope, (persistence) =>
+    persistence.insertOperation({
+      amount: collection.amount,
+      binding: binding.executionBinding,
+      initialOutcome: 'PENDING',
+      kind: 'CANCEL_OR_VOID',
+      materialRequest: cancellationMaterialRequest({ reason: 'Customer cancelled', targetOperationId }),
+      operationKey: 'cancel-1',
+      paymentId,
+      provenance,
+      targetOperationId,
+    }),
+  );
+  const payload = yield* payloadFor(harness, paymentId, cancelled.record.operationId);
+  return { ...payload, targetOperationId } satisfies OutboxPayload;
+});
+
 /**
  * Stands in for Payment's A8 transition of a proven collection, then admits one REFUND of `amountMinor` on the
  * original binding with a single-item basis, with the payload A7 builds.
@@ -395,6 +427,73 @@ export const deliverExecution = (
 // -------------------------------------------------------------------------------------------------
 // Native reads
 // -------------------------------------------------------------------------------------------------
+
+const withRoutines = <Value, Failure>(
+  harness: NativeHarness,
+  operation: (invoker: ScopedRoutineInvoker) => Effect.Effect<Value, Failure>,
+) =>
+  harness.database.transaction((transaction: PaymentTestTransaction) =>
+    installOperationalScope(transaction, operationalScopeOf(harness.scope)).pipe(Effect.flatMap(operation)),
+  );
+
+/** The stored dispatch row of `operationId`, read through the ledger's own read routine. */
+export const dispatchRecordOf = (harness: NativeHarness, operationId: string) =>
+  withRoutines(harness, (invoker) => pspReadDispatch(invoker, operationId));
+
+/**
+ * Prepares the stored request of `record` again through `psp.prepare-dispatch` (another executor with the same or a
+ * changed request); `requestHash` replaces the stored one. Returns the routine's outcome tag and conflict reason.
+ */
+export const reprepareDispatch = Effect.fn('PspNativeGateway.reprepare')(function* reprepareDispatch(
+  harness: NativeHarness,
+  record: PspDispatchRecord,
+  requestHash: string,
+) {
+  const [deliveryId, originActionInvocationId] = yield* Effect.all([randomUuid, randomUuid], { concurrency: 1 });
+  // Only a prepared row has a request to prepare again.
+  const { credentialRevision, endpointRef } = yield* Effect.fromOption(
+    Option.all({
+      credentialRevision: Option.fromUndefinedOr(record.credentialRevision),
+      endpointRef: Option.fromUndefinedOr(record.endpointRef),
+    }),
+  );
+  const replayRequest = Option.all({
+    body: Option.fromUndefinedOr(record.requestBody),
+    expiresAt: Option.fromUndefinedOr(record.replayExpiresAt),
+    headers: Option.fromUndefinedOr(record.requestHeaders),
+    startsAt: Option.fromUndefinedOr(record.replayStartsAt),
+  }).pipe(
+    Option.map(({ body, expiresAt, headers, startsAt }) => ({
+      body,
+      headers,
+      windowMs: DateTime.toEpochMillis(expiresAt) - DateTime.toEpochMillis(startsAt),
+    })),
+  );
+  const outcome = yield* withRoutines(harness, (invoker) =>
+    pspPrepareDispatch(invoker, {
+      bindingId: record.bindingId,
+      credentialRevision,
+      endpointRef,
+      idempotencyKeyHash: Option.fromUndefinedOr(record.idempotencyKeyHash),
+      materialHash: record.materialHash,
+      operationId: record.operationId,
+      origin: {
+        compositionRevision: COMPOSITION_REVISION,
+        deliveryId,
+        originActionInvocationId,
+        workerKey: record.workerKey,
+      },
+      providerPaymentRef: Option.fromUndefinedOr(record.providerPaymentRef),
+      replayRequest,
+      requestHash,
+      returnToken: Option.fromUndefinedOr(record.returnToken),
+    }),
+  );
+  return Match.value(outcome).pipe(
+    Match.tag('CONFLICT', ({ reason }) => `CONFLICT ${reason}`),
+    Match.orElse(({ _tag }) => _tag),
+  );
+});
 
 interface DispatchRow extends Record<string, unknown> {
   readonly not_sent_reason: string | null;

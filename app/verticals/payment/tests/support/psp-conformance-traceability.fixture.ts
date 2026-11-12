@@ -150,10 +150,30 @@ const T = {
     title:
       '#1154 #1158 #1159 L3-11 boundary executor+ledger routines+live credential store: a broken GoPay credential leaves Stripe and a non-gateway Payment working',
   },
+  chainComgateCancel: {
+    file: CHAIN,
+    title:
+      '#1156 #1158 #1159 boundary executor+ledger routines+production Comgate adapter: a transaction-id DELETE cancel is prepared, sent once and confirmed by the status lookup',
+  },
+  chainGopayCancel: {
+    file: CHAIN,
+    title:
+      '#1156 #1159 L3-14 boundary executor+ledger routines+production GoPay adapter: a GoPay cancel ends UNSUPPORTED with CANCEL_NOT_EFFECTED and reaches no provider',
+  },
+  chainGopayComgateRefund: {
+    file: CHAIN,
+    title:
+      '#1156 #1158 #1159 boundary executor+ledger routines+production GoPay and Comgate adapters: a refund is prepared, sent once and recorded as pending',
+  },
   chainLostCreate: {
     file: CHAIN,
     title:
       '#1157 #1158 #1159 L3-8 boundary executor+processor+ledger routines: lost Stripe create, then a notification, then a refund on the notified PaymentIntent',
+  },
+  chainStripeCancel: {
+    file: CHAIN,
+    title:
+      '#1156 #1158 #1159 boundary executor+ledger routines+production Stripe adapter: a body-less Checkout Session expire is prepared with its replay record, sent once and confirmed',
   },
   codCommitmentBeforeHandoverIssues: i(
     AUTHORIZATION_NATIVE_RUNTIME,
@@ -427,7 +447,13 @@ const rows: readonly RowInput[] = [
     requirement: 'pending cancellation / void path as supported',
     rule: 'CANCEL_OR_VOID is distinct from refund; unsupported is explicit, never a fallback',
     sandbox: SANDBOX_NOT_RUN,
-    tests: [T.l2Cancel, T.unsupportedProviderOperationYieldsTyped],
+    tests: [
+      T.l2Cancel,
+      T.unsupportedProviderOperationYieldsTyped,
+      T.chainStripeCancel,
+      T.chainComgateCancel,
+      T.chainGopayCancel,
+    ],
   },
   {
     capability: 'GoPay refund + refund history; Stripe Refunds API; Comgate refund (no completion API, N10)',
@@ -438,7 +464,13 @@ const rows: readonly RowInput[] = [
     requirement: 'amount-based refund',
     rule: 'A REFUND sends exactly the Payment-authorized amount on the original binding',
     sandbox: SANDBOX_NOT_RUN,
-    tests: [T.l2Refund, T.chainLostCreate, T.anAcceptedGopayRefundIs, T.comgateRefundIsPendingOnly],
+    tests: [
+      T.l2Refund,
+      T.chainLostCreate,
+      T.anAcceptedGopayRefundIs,
+      T.comgateRefundIsPendingOnly,
+      T.chainGopayComgateRefund,
+    ],
   },
   {
     capability: 'Stripe webhook v1 signature; GoPay unsigned callback + inquiry; Comgate push shared secret',
@@ -1362,7 +1394,7 @@ const rows: readonly RowInput[] = [
     requirement: 'GoPay cancel UNSUPPORTED reaches Payment as CANCEL_NOT_EFFECTED pending evidence',
     rule: 'Unsupported is explicit',
     sandbox: SANDBOX_NOT_RUN,
-    tests: [T.unsupportedProviderOperationYieldsTyped, T.l2Cancel],
+    tests: [T.unsupportedProviderOperationYieldsTyped, T.l2Cancel, T.chainGopayCancel],
   },
 ];
 

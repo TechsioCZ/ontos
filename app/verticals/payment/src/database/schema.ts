@@ -1255,7 +1255,10 @@ export const pspProviderDispatches = paymentSchema.table.withRLS(
     providerRefundRef: text('provider_refund_ref'),
     replayExpiresAt: timestamp('replay_expires_at', { withTimezone: true }),
     replayStartsAt: timestamp('replay_starts_at', { withTimezone: true }),
-    /** Opaque request bytes for an exact Stripe replay; never contains a secret. */
+    /**
+     * Opaque request bytes for an exact Stripe replay; never contains a secret. Empty for a body-less POST (the
+     * Checkout Session `/expire`): `request_hash` still binds the endpoint, the headers and the idempotency key.
+     */
     requestBody: bytea('request_body'),
     requestHash: text('request_hash'),
     /** Non-secret request headers covered by `request_hash`, persisted with the replay body. */
@@ -1361,7 +1364,7 @@ export const pspProviderDispatches = paymentSchema.table.withRLS(
         and (${table.state} not in ('PREPARED', 'ACKNOWLEDGED', 'REJECTED_BEFORE_EFFECT', 'OUTCOME_UNKNOWN') or ${table.preparedAt} is not null)
         and (${table.state} not in ('AWAITING_TARGET', 'NOT_SENT', 'UNSUPPORTED', 'TARGET_UNRESOLVED') or ${table.preparedAt} is null)
         and (${table.idempotencyKeyHash} is null or ${table.preparedAt} is not null)
-        and (${table.requestBody} is null or (${table.preparedAt} is not null and octet_length(${table.requestBody}) between 1 and ${MAXIMUM_OPAQUE_BYTES}))
+        and (${table.requestBody} is null or (${table.preparedAt} is not null and octet_length(${table.requestBody}) <= ${MAXIMUM_OPAQUE_BYTES}))
         and (${table.requestBody} is null) = (${table.requestHeaders} is null)
         and (${table.requestHeaders} is null or jsonb_typeof(${table.requestHeaders}) = 'array')`,
     ),
