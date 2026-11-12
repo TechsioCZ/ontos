@@ -106,6 +106,7 @@ const makePricingPort = (input: {
           .acquire(
             {
               audience: 'pricing',
+              callingAppId: 'commerce-customer-context',
               legalEntityScope: 'tenant',
               requestCorrelation: input.requestContext.requestCorrelation,
               subject: input.requestContext.subject,

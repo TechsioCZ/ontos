@@ -47,6 +47,7 @@ import { SupportAuthProviderService } from './support-auth-provider-service.ts';
 import { SupportImpersonationCorrelationId } from './support-impersonation-correlation-id.ts';
 import { SupportImpersonationStoreService } from './support-impersonation-store-service.ts';
 import type { SupportImpersonationStore, SupportRecoveryRecord } from './support-impersonation-store-service.ts';
+import { isPlatformKeyOwner } from './platform-key-owner.ts';
 
 export { SupportAuthProviderService } from './support-auth-provider-service.ts';
 export { SupportImpersonationCorrelationId } from './support-impersonation-correlation-id.ts';
@@ -715,6 +716,10 @@ export const makeSupportImpersonationService = (context: Context.Context<Support
           tenantId: shell.principal.tenantId,
         })
         .pipe(Effect.mapError(mapResolverError));
+      // The platform's module-credential owner is never a session, impersonated or not.
+      if (isPlatformKeyOwner(targetUserId)) {
+        return yield* denied();
+      }
       yield* checkpoint({
         idempotencyKey: `${input.idempotencyKey}:requested`,
         payload: {

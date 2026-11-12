@@ -1,3 +1,4 @@
+import { MODULE_CREDENTIAL_CALLERS, receiveModuleCredentialHandover } from './module-credentials.mts';
 import { startProcessObservability } from './process-observability.mts';
 import { Effect } from 'effect';
 import { startEmailDispatchTrigger } from '../email-dispatch-trigger.mts';
@@ -7,7 +8,8 @@ import { startAccessFenceSweep } from './access-fence-sweep.mts';
 
 export const startZeropsOutboxHost = () =>
   Effect.andThen(
-    startProcessObservability('outbox'),
+    // Before any worker runs: each hosted owner reads only its own module credential from the host's handover.
+    Effect.andThen(startProcessObservability('outbox'), receiveModuleCredentialHandover(MODULE_CREDENTIAL_CALLERS)),
     Effect.andThen(
       startProcessDatabasePools,
       Effect.andThen(
@@ -16,3 +18,6 @@ export const startZeropsOutboxHost = () =>
       ),
     ),
   );
+
+/** Fails once this process's module credential channel can no longer be read; the Outbox Worker host then stops. */
+export { moduleCredentialChannelLost as watchZeropsOutboxHost } from './module-credentials.mts';

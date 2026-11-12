@@ -8,12 +8,16 @@ import type { OperationalScope } from '@app/core-runtime';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { NodeCrypto } from '@effect/platform-node';
-import { ConfigProvider, Effect, Layer, Result } from 'effect';
+import { Effect, Layer, Result } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { ApiKeyService } from '../../api/auth/api-key-service.ts';
 import { agentPlatformKeyCaller } from '../../api/index.ts';
+import {
+  enrolledModuleCredentials,
+  unreadableModuleCredentialEnrolment,
+} from '../support/module-credential-enrolment.ts';
 import { makeShellTestAccessGate } from '../support/access-decision-double.ts';
 import { makeApiKeyServiceDouble, makePrincipalResolverDouble } from '../support/identity-service-doubles.ts';
 
@@ -35,8 +39,8 @@ const resolutionUnavailable = new OperationContextUnavailable({
 
 const run = Effect.fn('test.agentKeyCaller')(function* run(
   options: {
-    /** `ONTOS_GATEWAY_MODULE_BINDINGS`; a deployment without module credentials enrolls none (`[]`). */
-    readonly enrolment?: string;
+    /** The platform's module credential enrolment; by default it holds no credential. */
+    readonly enrolment?: 'module-key-1' | 'unreadable';
     readonly providerKeyId?: string;
     readonly resolutionUnavailable?: boolean;
     readonly selectable?: boolean;
@@ -108,9 +112,14 @@ const run = Effect.fn('test.agentKeyCaller')(function* run(
         ),
       ),
     ),
-    Effect.provideService(
-      ConfigProvider.ConfigProvider,
-      ConfigProvider.fromUnknown({ ONTOS_GATEWAY_MODULE_BINDINGS: options.enrolment ?? '[]' }),
+    Effect.provide(
+      options.enrolment === 'unreadable'
+        ? unreadableModuleCredentialEnrolment
+        : enrolledModuleCredentials(
+            options.enrolment === undefined
+              ? []
+              : [{ appId: 'commerce-customer-context', providerKeyId: options.enrolment }],
+          ),
     ),
     Effect.result,
   );
@@ -169,18 +178,9 @@ it.effect('does not ask company authority before the API-key scope has been reva
   }),
 );
 
-const moduleEnrolment = JSON.stringify([
-  {
-    compositionRevision: 'a'.repeat(64),
-    providerKeyId: 'module-key-1',
-    sourceAppId: 'commerce-customer-context',
-    sourceBuildMarker: 'commerce-build',
-  },
-]);
-
 it.effect('refuses an enrolled module credential before acting as its principal', () =>
   Effect.gen(function* moduleCredentialRefused() {
-    const { events, gate, result } = yield* run({ enrolment: moduleEnrolment, providerKeyId: 'module-key-1' });
+    const { events, gate, result } = yield* run({ enrolment: 'module-key-1', providerKeyId: 'module-key-1' });
     expect(events).toEqual(['verify-key']);
     expect(gate.selectableAsks).toEqual([]);
     expect(Result.isFailure(result)).toBe(true);
@@ -193,7 +193,7 @@ it.effect('refuses an enrolled module credential before acting as its principal'
 
 it.effect('admits an agent key that is not an enrolled module credential', () =>
   Effect.gen(function* agentKeyAdmitted() {
-    const { events, result } = yield* run({ enrolment: moduleEnrolment });
+    const { events, result } = yield* run({ enrolment: 'module-key-1' });
     expect(events).toEqual(['verify-key', 'resolve-principal', 'resolve-scope', 'validate-company']);
     expect(Result.isSuccess(result)).toBe(true);
   }),
@@ -201,7 +201,7 @@ it.effect('admits an agent key that is not an enrolled module credential', () =>
 
 it.effect('answers an unreadable module enrolment as unavailable instead of admitting the key', () =>
   Effect.gen(function* enrolmentUnavailable() {
-    const { events, result } = yield* run({ enrolment: '{not json' });
+    const { events, result } = yield* run({ enrolment: 'unreadable' });
     expect(events).toEqual(['verify-key']);
     expect(Result.isFailure(result)).toBe(true);
     if (Result.isFailure(result)) {

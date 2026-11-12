@@ -114,7 +114,13 @@ describe('Purchase Currency Pricing production adapter', () => {
         },
       ]);
       expect(acquisitions).toEqual([
-        { audience: 'pricing', legalEntityScope: 'tenant', requestCorrelation: 'pricing-test', subject },
+        {
+          audience: 'pricing',
+          callingAppId: 'commerce-customer-context',
+          legalEntityScope: 'tenant',
+          requestCorrelation: 'pricing-test',
+          subject,
+        },
       ]);
       expect(result).toEqual(currentSupportEvidence);
       expect(result.currentnessEvidence.evaluatedAt).not.toBe(result.effectiveAt);

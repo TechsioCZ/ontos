@@ -2097,22 +2097,14 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       }
       return owner;
     };
-    // One deployment credential per calling module (service principal, bound to its release). The Shell alone
-    // holds the bindings that attest each credential to exactly one module source.
+    // One platform-provisioned credential per calling module. The Shell derives the binding that attests each one to
+    // exactly one module from the platform's enrolment and the installed release; nothing configures it.
     const moduleCredentials = [
       { appId: contextAudience, identity: identities.cccReader },
       { appId: pricingAudience, identity: identities.pricingIssuer },
       { appId: marketAudience, identity: identities.marketRelay },
       { appId: catalogAudience, identity: identities.catalog },
     ] as const;
-    const gatewayModuleBindings = JSON.stringify(
-      moduleCredentials.map(({ appId, identity }) => ({
-        compositionRevision,
-        providerKeyId: identity.providerKeyId,
-        sourceAppId: appId,
-        sourceBuildMarker: ownerFor(appId).marker.buildMarker,
-      })),
-    );
     const environment = {
       ...baseEnvironment,
       ...permissionEnvironment,
@@ -2124,18 +2116,12 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET: randomBytes(32).toString('hex'),
       ONTOS_SHELL_GATEWAY_BASE_URL: `${shell.origin}/shell-super-app-api`,
     };
-    // Each module process receives only its own credential; the Shell receives the binding table.
+    // Each dedicated module process receives only its own credential.
     const environmentFor = (appId: string) => {
-      const moduleEnvironment: typeof environment & {
-        ONTOS_GATEWAY_MODULE_API_KEY?: string;
-        ONTOS_GATEWAY_MODULE_BINDINGS?: string;
-      } = { ...environment };
+      const moduleEnvironment: typeof environment & { ONTOS_GATEWAY_MODULE_API_KEY?: string } = { ...environment };
       const credential = moduleCredentials.find((candidate) => candidate.appId === appId);
       if (credential !== undefined) {
         moduleEnvironment.ONTOS_GATEWAY_MODULE_API_KEY = Redacted.value(credential.identity.secret);
-      }
-      if (appId === shellAudience) {
-        moduleEnvironment.ONTOS_GATEWAY_MODULE_BINDINGS = gatewayModuleBindings;
       }
       return moduleEnvironment;
     };

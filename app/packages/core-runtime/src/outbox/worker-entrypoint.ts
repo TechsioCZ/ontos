@@ -102,12 +102,7 @@ export {
   isVerifiedOutboxWorkerHandlerContext,
 } from './definition.ts';
 export { defineOutboxWorkerCompletion, OutboxWorkerCompletionPublicationError } from './completion-publication.ts';
-export {
-  defineOutboxWorkerEntry,
-  hostedOutboxWorkerEntry,
-  OutboxWorkerInfrastructureLive,
-  startOutboxWorkerHost,
-} from './process.ts';
+export { defineOutboxWorkerEntry, OutboxWorkerInfrastructureLive, startOutboxWorkerHost } from './process.ts';
 export { OutboxRepositoryLive } from './repository.ts';
 export {
   makeOutboxWorkerLegalEntityScopeFanout,

@@ -276,6 +276,7 @@ it.effect('admits every production catalog call through the delegated Shell cont
     expect(admissions).toEqual([
       {
         audience: 'payment-term-catalog',
+        callingAppId: 'commerce-customer-context',
         legalEntityScope: 'subject',
         requestCorrelation: 'payment-correlation',
         subject: paymentTermSubject,

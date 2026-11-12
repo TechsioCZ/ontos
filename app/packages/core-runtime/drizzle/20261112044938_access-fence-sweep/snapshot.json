@@ -1,9 +1,9 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "7895a78c-0da2-4d99-846c-b90670a9abad",
+  "id": "76d36ab2-bb59-4873-b6ad-fbe80a89ad21",
   "prevIds": [
-    "97e8d704-600c-4be6-9641-ede8619355d2"
+    "061bd6f0-6ae1-4ca1-9ca8-14898e88e59a"
   ],
   "ddl": [
     {
@@ -3296,6 +3296,19 @@
       "generated": null,
       "identity": null,
       "name": "updated_at",
+      "entityType": "columns",
+      "schema": "core",
+      "table": "application_composition_authority"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "revision_activated_at",
       "entityType": "columns",
       "schema": "core",
       "table": "application_composition_authority"

@@ -49,6 +49,7 @@ export const finalCartCandidateOwnersService = Effect.fn('FinalCartCandidateOwne
       acquireDelegatedGatewayContext(
         {
           audience,
+          callingAppId: 'commerce-cart',
           legalEntityScope: 'subject',
           requestCorrelation: correlation,
           subject: { _tag: 'Assertion', scope },
