@@ -4,7 +4,7 @@ import type { Redacted } from 'effect';
 import { HostedModuleCredentialsSealedError } from './hosted-module-credentials-sealed-error.ts';
 import type {
   HostedModuleCredentialAcceptance,
-  HostedModuleCredentialReceiver,
+  HostedModuleCredentialCopy,
   HostedModuleCredentials,
 } from './hosted-module-credentials.ts';
 import { workloadEntryAppId } from './hosted-module-credentials.ts';
@@ -30,6 +30,16 @@ interface HostedSlots {
 }
 
 const hostedClaim = Deferred.makeUnsafe<HostedSlots>();
+
+/** The owner's own module credential in this copy: none when the host has not claimed it or handed no key over. */
+export const hostedSlot = Effect.fn('HostedModuleCredentials.hostedSlot')(function* readHostedSlot(appId: string) {
+  const claim = yield* Deferred.poll(hostedClaim);
+  if (Option.isNone(claim)) {
+    return Option.none<Redacted.Redacted>();
+  }
+  const slot = (yield* claim.value).owners.get(appId);
+  return slot === undefined ? Option.none<Redacted.Redacted>() : yield* Ref.get(slot);
+});
 
 /**
  * Claims this copy for the `owners` it serves, before any of them serves. Each slot starts empty and only the returned
@@ -85,17 +95,11 @@ export const claimHostedModuleCredentials = Effect.fn('HostedModuleCredentials.c
       ],
     } satisfies HostedModuleCredentialAcceptance;
   });
-  return { accept, owners: [...slots.keys()] } satisfies HostedModuleCredentialReceiver;
-});
-
-/** The owner's own module credential in this copy: none when the host has not claimed it or handed no key over. */
-export const hostedSlot = Effect.fn('HostedModuleCredentials.hostedSlot')(function* readHostedSlot(appId: string) {
-  const claim = yield* Deferred.poll(hostedClaim);
-  if (Option.isNone(claim)) {
-    return Option.none<Redacted.Redacted>();
-  }
-  const slot = (yield* claim.value).owners.get(appId);
-  return slot === undefined ? Option.none<Redacted.Redacted>() : yield* Ref.get(slot);
+  return {
+    accept,
+    owners: [...slots.keys()],
+    read: (appId: string) => hostedSlot(appId),
+  } satisfies HostedModuleCredentialCopy;
 });
 
 /** An owner's internal workload credential in one tenant, if the host handed one over; none in an unclaimed copy. */

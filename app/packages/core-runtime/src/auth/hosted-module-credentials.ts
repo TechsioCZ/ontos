@@ -1,5 +1,5 @@
 import { Schema } from 'effect';
-import type { Effect } from 'effect';
+import type { Effect, Option, Redacted } from 'effect';
 
 export { HostedModuleCredentialsSealedError } from './hosted-module-credentials-sealed-error.ts';
 
@@ -60,4 +60,12 @@ export interface HostedModuleCredentialAcceptance {
 export interface HostedModuleCredentialReceiver {
   readonly accept: (handover: HostedModuleCredentials) => Effect.Effect<HostedModuleCredentialAcceptance>;
   readonly owners: readonly string[];
+}
+
+/**
+ * A claimed store copy, as only its one-time claimer holds it: the receiver, and the copy's own reader (the very read
+ * an owner's delegated client makes), so the host and the build can prove a handed key reaches that module and only it.
+ */
+export interface HostedModuleCredentialCopy extends HostedModuleCredentialReceiver {
+  readonly read: (appId: string) => Effect.Effect<Option.Option<Redacted.Redacted>>;
 }

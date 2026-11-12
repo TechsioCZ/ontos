@@ -61,6 +61,16 @@ const exposureOf = (name: string, init: string | undefined, format: BundleFormat
     : `${EXPOSURE_MARKER}\nexport const ${BUNDLE_CLAIM_EXPORT} = ${claim};`;
 };
 
+/** A bundle's form in words, for a build failure: its module system and whether its store copy is lazy. */
+export const bundleFormOf = (source: string): string => {
+  const format = formatOf(source);
+  const lazy = [...source.matchAll(LAZY_STORE)].length > 0 ? ', store initialised lazily' : '';
+  if (format === undefined) {
+    return `unknown module system${lazy}`;
+  }
+  return `${format === 'module' ? 'ES module' : 'CommonJS'}${lazy}`;
+};
+
 /** How many store copies a built JavaScript file carries. */
 export const storeCopiesIn = (source: string): number => [...source.matchAll(CLAIM_SPAN)].length;
 

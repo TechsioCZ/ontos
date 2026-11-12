@@ -74,17 +74,20 @@ it('lets only the delegated gateway client read an owner slot, and only the host
 });
 
 it('lets only the host programs reach a built bundle claim, and no host load an unclaimable bundle', () => {
-  // The claim export: defined by the build step, generated into each unit's entry, called by the host programs.
+  // The claim export: defined by the build step, generated into each unit's entry, called by the host programs and,
+  // once per unit at build time, by the claim proof (a throwaway key, in a child process of its own).
   const claimNames =
     /\b(?:ontosClaimHostedModuleCredentials|claimModuleCredentials|BUNDLE_CLAIM_EXPORT|ENTRY_CLAIM_EXPORT)\b/u;
   expect(production.filter((file) => claimNames.test(read(file))).toSorted()).toEqual([
     'scripts/demo/serve-module.mts',
+    'scripts/zerops/hosted-credential-claim-proof.mts',
     'scripts/zerops/hosted-credential-claim.mts',
     'scripts/zerops/serve-units.mts',
   ]);
   expect(importersOf(/hosted-credential-claim(?:\.mts)?$/u).toSorted()).toEqual([
     'scripts/demo/serve-module.mts',
     'scripts/zerops/hosted-credential-claim-cli.mts',
+    'scripts/zerops/hosted-credential-claim-proof.mts',
     'scripts/zerops/owner-entry.mts',
     'scripts/zerops/serve-units.mts',
   ]);
