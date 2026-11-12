@@ -34,6 +34,7 @@ import {
   planReviewedPeople,
   PRINCIPAL_IDS,
   previewIssue,
+  reviewedExclusions,
   stepWithinAllowList,
   TENANT_ID,
   TENANT_SCOPE,
@@ -288,6 +289,19 @@ it.effect('pins the reviewed roles, their dangerous cells and the six assignment
       ['warehouse', 33, 23, roleId('warehouse'), COMPANY_SCOPE],
       [ROUTING, 1, 0, roleId(ROUTING), TENANT_SCOPE],
     ]);
+    // Capabilities the release declared after the review stay with full access: no reviewed role holds one.
+    const excluded = new Set<string>(Object.values(reviewedExclusions).flat());
+    expect([reviewedExclusions.sales.length, reviewedExclusions.accounting.length, excluded.size]).toEqual([
+      16, 10, 16,
+    ]);
+    expect([...excluded].filter((key) => !state.entries.has(key))).toEqual([]);
+    expect(
+      state.roles.flatMap(({ cells, key }) =>
+        cells
+          .filter(({ capabilityKey }) => excluded.has(capabilityKey))
+          .map(({ capabilityKey }) => [key, capabilityKey]),
+      ),
+    ).toEqual([]);
     const [obchodnik, ucetni, sklad] = PRINCIPAL_IDS;
     expect(state.assignments.map(({ principalId, roleKey, scope }) => [principalId, roleKey, scope])).toEqual([
       [obchodnik, 'sales', COMPANY_SCOPE],

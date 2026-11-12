@@ -910,9 +910,9 @@ it.effect(
     }),
 );
 
-it.effect('records delegated finite Privacy refusals for current source-claim and governance permission denials', () =>
-  Effect.gen(function* privacyDispatchRefusalEvidence() {
-    const governance = LegalEntityIdSchema.make(uid(71));
+/** A finite Privacy dispatch: the Symmy retention Action a human's governance company delegates to Privacy. */
+const privacyDispatchGate = (governance: LegalEntityId) =>
+  Effect.gen(function* privacyDispatchInput() {
     const principal = privacyDispatchPrincipal(scopeFor(person, governance), 'SymmyRetention', 'c'.repeat(64));
     const scope = preserveSystemPrincipalContextTrust(principal, {
       ...principal,
@@ -934,19 +934,27 @@ it.effect('records delegated finite Privacy refusals for current source-claim an
       },
       { access: 'write', authorization: { kind: 'protected' }, moduleKey: 'integration.symmy', role: 'action' },
     );
+    const input: GateInput = {
+      carrier: {
+        accessActor,
+        accessDeclaration: declaration,
+        entrypoint: { entrypointKey: 'integration.symmy.execute-symmy-retention' },
+        schemaVersion: '1',
+      },
+      legalEntityScope: 'optional',
+      now,
+      scope,
+    };
+    return input;
+  });
+
+it.effect('records delegated finite Privacy refusals for current source-claim and governance permission denials', () =>
+  Effect.gen(function* privacyDispatchRefusalEvidence() {
+    const governance = LegalEntityIdSchema.make(uid(71));
+    const input = yield* privacyDispatchGate(governance);
     for (const privacyDispatchLive of [false, true]) {
       const { gate, state } = harness({ privacyDispatchLive });
-      const decision = yield* gate.decide({
-        carrier: {
-          accessActor,
-          accessDeclaration: declaration,
-          entrypoint: { entrypointKey: 'integration.symmy.execute-symmy-retention' },
-          schemaVersion: '1',
-        },
-        legalEntityScope: 'optional',
-        now,
-        scope,
-      });
+      const decision = yield* gate.decide(input);
       expect(decision.outcome).toBe('DENIED');
       expect(state.entries).toHaveLength(1);
       expect(state.entries[0]?.delegation?.appId).toBe('symmy-integration');
@@ -957,9 +965,9 @@ it.effect('records delegated finite Privacy refusals for current source-claim an
   }),
 );
 
-it.effect('requires the original human Organization facts Read grant despite an identity-only module carrier', () =>
-  Effect.gen(function* organizationGovernanceUsesHumanRights() {
-    const governance = LegalEntityIdSchema.make(uid(72));
+/** A finite gateway read: Privacy reads Organization facts for the human it acts for, in the governance company. */
+const organizationGovernanceGate = (governance: LegalEntityId) =>
+  Effect.gen(function* organizationGovernanceInput() {
     const nativeHuman = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
       ...scopeFor(person, governance),
       authenticationNamespaceId: 'core-identity',
@@ -993,6 +1001,13 @@ it.effect('requires the original human Organization facts Read grant despite an 
       now,
       scope,
     };
+    return { declaration, input };
+  });
+
+it.effect('requires the original human Organization facts Read grant despite an identity-only module carrier', () =>
+  Effect.gen(function* organizationGovernanceUsesHumanRights() {
+    const governance = LegalEntityIdSchema.make(uid(72));
+    const { declaration, input } = yield* organizationGovernanceGate(governance);
     for (const granted of [false, true]) {
       const { gate, state } = harness({
         authority: {
@@ -1157,6 +1172,44 @@ it.effect("reads one subject's kind and scope once for a page of LISTs, never on
     expect(yield* together.gate.listMany(page)).toEqual(one);
     expect({ kinds: aloneKinds, scopes: alone.scopes.length }).toEqual({ kinds: 5, scopes: 10 });
     expect({ kinds: kindReads.count, scopes: together.scopes.length }).toEqual({ kinds: 1, scopes: 1 });
+  }),
+);
+
+it.effect('answers a page holding a finite gateway read or Privacy dispatch LIST by LIST, exactly as list alone', () =>
+  Effect.gen(function* finiteReadsListedAlone() {
+    const governance = LegalEntityIdSchema.make(uid(73));
+    const { declaration, input: organizationRead } = yield* organizationGovernanceGate(governance);
+    const privacyDispatch = yield* privacyDispatchGate(governance);
+    const [ordinary] = listPage;
+    const allowed: string[] = [];
+    for (const granted of [false, true]) {
+      for (const privacyDispatchLive of [false, true]) {
+        const options: RunOptions = {
+          authority: {
+            cells: [cell({ capability: 'finance.invoice.void' }), cell({ capability: declaration.key })].slice(
+              0,
+              granted ? 2 : 1,
+            ),
+            legalEntityScope: { _tag: 'LegalEntity', legalEntityId: governance, tenantId: tenant },
+          },
+          privacyDispatchLive,
+        };
+        for (const page of [
+          [organizationRead],
+          [privacyDispatch],
+          [ordinary, organizationRead, privacyDispatch, organizationRead].filter((one) => one !== undefined),
+        ]) {
+          const alone = harness(options);
+          const one = yield* Effect.forEach(page, (input) => alone.gate.list(input), { concurrency: 1 });
+          const together = harness(options);
+          expect(yield* together.gate.listMany(page)).toEqual(one);
+          expect(together.state.entries).toEqual(alone.state.entries);
+          allowed.push(...one.flatMap(({ decision }) => (decision.outcome === 'ALLOWED' ? [decision.outcome] : [])));
+        }
+      }
+    }
+    // The comparison is not vacuous: a granted human's governance read is allowed, the rest refused.
+    expect(allowed.length).toBeGreaterThan(0);
   }),
 );
 
