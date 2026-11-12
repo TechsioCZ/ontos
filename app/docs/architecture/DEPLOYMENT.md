@@ -263,13 +263,14 @@ The platform provisions module credentials itself, on every environment and with
 
 What happens to the owners process or the Outbox Worker host on its key channel:
 
-| Channel state                                                 | What the process does                                                                    |
-| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `ONTOS_MODULE_CREDENTIAL_HANDOVER` unset                      | Opens no socket; no owner holds a key and none falls back to the environment (as before) |
-| End of the channel after a hand-over (the launcher closed it) | Keeps running with the keys it holds                                                     |
-| Malformed or partial line                                     | Refuses that line, keeps reading                                                         |
-| Socket error or a premature close while reading               | Stops (`HANDOVER CHANNEL LOST`); the app host stops and the container restarts           |
-| File descriptor 3 is not a pipe                               | Stops, as for a socket error                                                             |
+| Channel state                                                                                                                              | What the process does                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `ONTOS_MODULE_CREDENTIAL_HANDOVER` unset                                                                                                   | Opens no socket; no owner holds a key and none falls back to the environment (as before) |
+| End of the channel, local demo (`fd3`: the launcher may close its side after a hand-over)                                                  | Keeps running with the keys it holds                                                     |
+| End of the channel, app host (`fd3-lifetime`: the host keeps it open while it lives; the kernel closes it when the host dies, even killed) | Stops, so it never serves as an orphan with keys nobody rotates                          |
+| Malformed or partial line                                                                                                                  | Refuses that line, keeps reading                                                         |
+| Socket error or a premature close while reading                                                                                            | Stops (`HANDOVER CHANNEL LOST`); the app host stops and the container restarts           |
+| File descriptor 3 is not a pipe                                                                                                            | Stops, as for a socket error                                                             |
 
 How long delegated calls can be without a key around a deploy:
 

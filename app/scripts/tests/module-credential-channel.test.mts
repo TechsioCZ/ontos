@@ -172,6 +172,12 @@ describe('a process watching its channel', () => {
       );
       expect(lost).toEqual(['the handover channel could not be read']);
       expect(accepted).toEqual([ORDER, ORDER]);
+      // Launched by the app host, whose channel lives as long as it does: its end means the host is gone.
+      yield* watchModuleCredentialChannel(receiver, Stream.make(line), leave, 'lives-with-launcher');
+      expect(lost).toEqual([
+        'the handover channel could not be read',
+        'the host closed the handover channel; it has ended',
+      ]);
     }),
   );
 });

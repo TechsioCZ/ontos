@@ -38,8 +38,14 @@ export const MODULE_CREDENTIAL_CALLERS: readonly string[] = Object.freeze([
 ]);
 
 /**
- * Set to `fd3` by whoever starts a multi-owner process with its private handover channel open as file descriptor 3.
- * The switch is not secret; the keys travel only on that channel, never in an environment variable or argument.
+ * Set by whoever starts a multi-owner process with its private handover channel open as file descriptor 3. The switch
+ * is not secret; the keys travel only on that channel, never in an environment variable or argument.
+ *
+ * - `fd3`: a launcher that may hand over and then close its side (the local demo); the end of the channel is not a
+ *   failure.
+ * - `fd3-lifetime`: the app host, which keeps the channel open for as long as it lives. The end of the channel means
+ *   the host is gone (the kernel closes its side even when it is killed), so the process stops instead of serving on
+ *   as an orphan with keys nobody rotates any more.
  */
 export const MODULE_CREDENTIAL_HANDOVER_VARIABLE = 'ONTOS_MODULE_CREDENTIAL_HANDOVER';
 
@@ -110,10 +116,17 @@ export const watchModuleCredentialChannel = <E, R>(
   receiver: HostedModuleCredentialReceiver,
   channel: Stream.Stream<Uint8Array, E>,
   lost: (reason: string) => Effect.Effect<void, never, R>,
+  ends: 'may-end' | 'lives-with-launcher' = 'may-end',
 ) =>
   applyModuleCredentialHandovers(receiver, channel).pipe(
     Effect.exit,
-    Effect.flatMap((read) => (Exit.isSuccess(read) ? Effect.void : lost('the handover channel could not be read'))),
+    Effect.flatMap((read) => {
+      if (Exit.isFailure(read)) {
+        return lost('the handover channel could not be read');
+      }
+      // A channel that lives with its launcher ends only when the launcher (the app host) is gone.
+      return ends === 'lives-with-launcher' ? lost('the host closed the handover channel; it has ended') : Effect.void;
+    }),
   );
 
 /**
@@ -141,9 +154,14 @@ const leaveProcess = (reason: string) =>
 export const receiveModuleCredentialHandover = Effect.fn('ModuleCredentials.receiveHandover')(function* receive(
   owners: readonly string[],
 ) {
-  const mode = yield* Config.option(Config.schema(Schema.Literal('fd3'), MODULE_CREDENTIAL_HANDOVER_VARIABLE)).pipe(
+  const mode = yield* Config.option(
+    Config.schema(Schema.Literals(['fd3', 'fd3-lifetime']), MODULE_CREDENTIAL_HANDOVER_VARIABLE),
+  ).pipe(
     Effect.mapError(
-      () => new ModuleCredentialHandoverError({ reason: `${MODULE_CREDENTIAL_HANDOVER_VARIABLE} must be fd3` }),
+      () =>
+        new ModuleCredentialHandoverError({
+          reason: `${MODULE_CREDENTIAL_HANDOVER_VARIABLE} must be fd3 or fd3-lifetime`,
+        }),
     ),
   );
   const receiver = yield* claimHostedModuleCredentials(owners);
@@ -155,7 +173,12 @@ export const receiveModuleCredentialHandover = Effect.fn('ModuleCredentials.rece
     evaluate: () => new Socket({ fd: MODULE_CREDENTIAL_CHANNEL_FD, readable: true, writable: false }),
     onError: () => new ModuleCredentialHandoverError({ reason: 'The handover channel could not be read' }),
   });
-  yield* watchModuleCredentialChannel(receiver, channel, leaveProcess).pipe(Effect.forkScoped);
+  yield* watchModuleCredentialChannel(
+    receiver,
+    channel,
+    leaveProcess,
+    mode.value === 'fd3-lifetime' ? 'lives-with-launcher' : 'may-end',
+  ).pipe(Effect.forkScoped);
   return yield* Effect.void;
 });
 
