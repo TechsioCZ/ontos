@@ -63,18 +63,45 @@ const resolve = (from: string, specifier: string): string | undefined => {
   return resolved !== undefined && isSourceFile(resolved) ? resolved : undefined;
 };
 
-const parsed = (file: string) =>
-  parseSync(file, read(file), { astType: 'ts', lang: file.endsWith('.tsx') ? 'tsx' : 'ts' }).program;
+const parsedSource = (file: string, source: string) =>
+  parseSync(file, source, { astType: 'ts', lang: file.endsWith('.tsx') ? 'tsx' : 'ts' }).program;
 
 interface Imported {
   readonly names: readonly string[];
   readonly specifier: string;
 }
 
-/** The runtime imports of a source file (type-only imports load nothing). */
-const importsOf = (file: string): Imported[] => {
+/**
+ * The runtime imports of a source: static and dynamic imports, re-exports, and calls of `require` or of a function a
+ * `createRequire(...)` returned, with a literal module name (type-only imports load nothing).
+ */
+const importsOfSource = (file: string, text: string): Imported[] => {
   const imported: Imported[] = [];
+  const program = parsedSource(file, text);
+  const requires = new Set(['require']);
   new Visitor({
+    VariableDeclarator: ({ id, init }) => {
+      if (
+        id.type === 'Identifier' &&
+        init?.type === 'CallExpression' &&
+        init.callee.type === 'Identifier' &&
+        init.callee.name === 'createRequire'
+      ) {
+        requires.add(id.name);
+      }
+    },
+  }).visit(program);
+  new Visitor({
+    CallExpression: ({ arguments: [first], callee }) => {
+      if (
+        callee.type === 'Identifier' &&
+        requires.has(callee.name) &&
+        first?.type === 'Literal' &&
+        Predicate.isString(first.value)
+      ) {
+        imported.push({ names: [], specifier: first.value });
+      }
+    },
     ExportAllDeclaration: ({ exportKind, source }) => {
       if (exportKind !== 'type') {
         imported.push({ names: [], specifier: source.value });
@@ -102,9 +129,10 @@ const importsOf = (file: string): Imported[] => {
         imported.push({ names: [], specifier: source.value });
       }
     },
-  }).visit(parsed(file));
+  }).visit(program);
   return imported;
 };
+const importsOf = (file: string) => importsOfSource(file, read(file));
 
 const sourcesUnder = (directory: string): string[] =>
   existsSync(path.join(workspace, directory))
@@ -138,6 +166,20 @@ const loaded = () => {
   }
   return seen;
 };
+
+it('sees a subprocess module loaded by require or a createRequire function, not only by import', () => {
+  const probe = [
+    "import { createRequire } from 'node:module';",
+    'const load = createRequire(import.meta.url);',
+    "const spawning = load('node:child_process');",
+    "const cluster = require('cluster');",
+  ].join('\n');
+  expect(
+    importsOfSource('probe.mts', probe)
+      .map(({ specifier }) => specifier)
+      .toSorted(),
+  ).toEqual(['cluster', 'node:child_process', 'node:module']);
+});
 
 it('loads no code that can start a subprocess into a process holding a module credential channel', () => {
   const files = loaded();
