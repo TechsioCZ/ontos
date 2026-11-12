@@ -832,4 +832,38 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
       }),
     ),
   );
+
+  suite.effect('a take-over that finds the intent moved projects the fresh intent before the fence opens', () =>
+    Effect.gen(function* movedUnderTakeOver() {
+      const afterRead = yield* Ref.make(Option.none<Effect.Effect<void>>());
+      yield* withProjectionTenant(
+        { activeModules: [MODULE], wrapIntentLoader: interleavedLoader(afterRead) },
+        (tenantId, admin) =>
+          Effect.gen(function* freshIntentUnderHeldFence() {
+            const scope = yield* bootstrapTenant(tenantId);
+            yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+            yield* lapseLease(admin, tenantId);
+            yield* Ref.set(
+              afterRead,
+              Option.some(
+                admin
+                  .unsafe(
+                    `update core.tenant_module_states set state = 'suspended'
+                      where tenant_id = '${tenantId}' and module_key = '${MODULE}'`,
+                  )
+                  .pipe(Effect.orDie, Effect.asVoid),
+              ),
+            );
+            const writer = yield* AccessProjectionWriter;
+            const written = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+            expect(written.deletions).toBeGreaterThan(0);
+            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+            // The first take-over ended its journal when the intent moved; the second took the fence from it at once.
+            expect((yield* journalPhases(admin, tenantId)).slice(-2)).toEqual(['failed', 'committed']);
+            const again = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+            expect({ deletions: again.deletions, touches: again.touches }).toEqual({ deletions: 0, touches: 0 });
+          }),
+      );
+    }),
+  );
 });

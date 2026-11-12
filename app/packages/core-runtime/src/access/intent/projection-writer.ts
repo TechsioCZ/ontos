@@ -745,17 +745,12 @@ const intentStillPlanned = Effect.fn('AccessProjectionWriter.intentStillPlanned'
     return yield* Effect.void;
   }
   yield* abandonOpenedJournal(input, 'intent_moved');
-  const reason = `Tenant ${input.tenantId}'s access intent changed between this reconcile's read and its fence (plan ${input.digest.slice(0, 12)} became ${fresh.digest.slice(0, 12)}), so the plan it read was not projected`;
-  // A fence taken over from a dead holder may cover a half-written graph: it stays closed, its lease lapsing to the
-  // next taker, which reads the intent afresh.
-  return yield* Option.isSome(input.previousHolder)
-    ? Effect.fail(
-        projectionWriteRefusal(
-          'access_projection_write_fence_refused',
-          `${reason}; the tenant stays closed until the next reconcile takes it over`,
-        ),
-      )
-    : Effect.fail(new ProjectionIntentMoved({ reason }));
+  // The reconcile starts again under a new operation. A fence taken over from a dead holder stays closed meanwhile:
+  // this operation's journal has failed, so the next attempt takes the fence over from it at once and projects the
+  // fresh intent before the fence opens.
+  return yield* new ProjectionIntentMoved({
+    reason: `Tenant ${input.tenantId}'s access intent changed between this reconcile's read and its fence (plan ${input.digest.slice(0, 12)} became ${fresh.digest.slice(0, 12)}), so the plan it read was not projected`,
+  });
 });
 
 /** The write path under the tenant's fence: project, commit, and report what the engine did. */

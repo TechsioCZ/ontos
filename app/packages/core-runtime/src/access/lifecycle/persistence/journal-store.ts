@@ -525,6 +525,10 @@ const renewFenceLease = Effect.fn('accessLifecycle.persistence.renewFenceLease')
  * margin. A writer of the previous release moves its journal only between phases, never while it writes the
  * engine, so that idle time is longer than any real projection; the journal's timestamp comes from the writer's
  * clock, hence the margin.
+ *
+ * A hold whose operation's journal already ended as `failed` is lapsed at once, whatever its lease: a failed
+ * operation never writes or commits again (its writer marks the journal only after it stopped), so the fence it
+ * kept closed only waits for the next writer to take it over and finish a whole projection.
  */
 const PRE_LEASE_LAPSE_SECONDS =
   Duration.toSeconds(ACCESS_FENCE_PRE_LEASE_IDLE) + Duration.toSeconds(ACCESS_FENCE_CLOCK_SKEW_MARGIN);
@@ -533,7 +537,11 @@ const holdLapsed = (previousOperationId: string) => sql`coalesce(
   (select j.updated_at + pg_catalog.make_interval(secs => ${PRE_LEASE_LAPSE_SECONDS})
      from core.access_operation_journals j
     where j.tenant_id = ${accessScopeFences.tenantId} and j.operation_id = ${previousOperationId}::uuid)
-) < pg_catalog.now()`;
+) < pg_catalog.now() or exists (
+  select 1 from core.access_operation_journals j
+   where j.tenant_id = ${accessScopeFences.tenantId} and j.operation_id = ${previousOperationId}::uuid
+     and j.phase = 'failed'
+)`;
 
 /**
  * D15 for a dead holder: one transaction takes a fence whose holder's lease lapsed (compare-and-set on the

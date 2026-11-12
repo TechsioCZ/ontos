@@ -1,7 +1,8 @@
 CREATE INDEX "access_scope_fences_held_ix" ON "core"."access_scope_fences" ("lease_expires_at") WHERE "state" = 'Changing';--> statement-breakpoint
 -- The access fence sweeper runs as ontos_runtime without a tenant until it knows which tenants need it. This is its
 -- only cross-tenant read: the ids of tenants whose access fence is held by an operation whose hold has lapsed (its
--- lease expired, or, for a hold taken before leases existed, its journal idle for longer than p_pre_lease_idle),
+-- lease expired, or, for a hold taken before leases existed, its journal idle for longer than p_pre_lease_idle; or
+-- its operation already failed, which never writes again),
 -- never any intent. Oldest lapse first, without the tenants the sweeper is still backing off from (p_skip), so a
 -- tenant that keeps failing can never hide the others behind the page limit. The sweeper then reconciles each of
 -- them under that tenant's own scope.
@@ -31,11 +32,15 @@ BEGIN
                  (SELECT j.updated_at + p_pre_lease_idle
                     FROM core.access_operation_journals AS j
                    WHERE j.tenant_id = f.tenant_id AND j.operation_id = f.owning_operation_id)
-               ) AS lapsed_at
+               ) AS lapsed_at,
+               EXISTS (
+                 SELECT 1 FROM core.access_operation_journals AS j
+                  WHERE j.tenant_id = f.tenant_id AND j.operation_id = f.owning_operation_id AND j.phase = 'failed'
+               ) AS holder_failed
           FROM core.access_scope_fences AS f
          WHERE f.state = 'Changing'
       ) AS held
-     WHERE held.lapsed_at < pg_catalog.now()
+     WHERE (held.lapsed_at < pg_catalog.now() OR held.holder_failed)
        AND NOT (held.tenant_id = ANY (coalesce(p_skip, '{}'::uuid[])))
      GROUP BY held.tenant_id
      ORDER BY min(held.lapsed_at), held.tenant_id
