@@ -12,6 +12,7 @@ import type {
   AgentProposalReservation,
   ContextAccess,
   ReadRuntime,
+  TenantModuleStateService,
 } from '@app/core-runtime';
 import type { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
 import { Option, Schema } from 'effect';
@@ -195,6 +196,7 @@ it('keeps lifecycle withdrawal requirements concrete instead of leaking an unkno
     | ContextAccess
     | AgentProposalQueueModuleReview
     | AgentProposalCommandPreparation
+    | TenantModuleStateService
   >;
   expect(withdraw).toBe(withdrawAllPendingOfAgent);
 });

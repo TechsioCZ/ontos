@@ -1,7 +1,7 @@
 import { administrationProjectionLayer } from './oauth-connections-admin/administration-runtime.fixture.ts';
 import { AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
 import { Effect, Layer, Option, Schema } from 'effect' with { rstest: 'importActual' };
-import { ActionRuntime, configureAgentAction, ContextAccess } from '@app/core-runtime';
+import { ActionRuntime, configureAgentAction, ContextAccess, TenantModuleStateService } from '@app/core-runtime';
 import type { ActionRuntimeService, withPostgresSessionAdvisoryLock } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { ManageAgentEntityRequestSchema } from '@app/shared-contracts/agent-access';
@@ -13,6 +13,7 @@ import {
   bindActionTestServices,
   makeActionTestHarness,
 } from '../../../../packages/core-runtime/src/testing/actions.ts';
+import { unusedModuleState } from '../support/unused-module-state.ts';
 import { installOperationalScopeAt } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import { SHARED_RUNTIME_IDENTITY } from '../../../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import { DatabaseIdentityEnrollmentContext } from '../../../../packages/core-runtime/src/db/database-identities.ts';
@@ -213,6 +214,7 @@ const fixture = (selected: DemoAccountCaller, principalId: string) =>
       Effect.provide(StaffAuthenticationNamespaceRegistryLive),
       Effect.provideService(ActionRuntime, runtime),
       Effect.provideService(ContextAccess, makeContextAccessDouble('allowed')),
+      Effect.provideService(TenantModuleStateService, unusedModuleState),
       Effect.provideService(AuthDatabase, {
         get adapter(): AuthDatabase['Service']['adapter'] {
           throw new Error('Unexpected authentication adapter IO');
