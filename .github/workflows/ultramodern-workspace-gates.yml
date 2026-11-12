@@ -492,7 +492,8 @@ jobs:
     needs: [ci-plan, node-artifact-build]
     if: ${{ !cancelled() && needs.ci-plan.result == 'success' && needs.node-artifact-build.result == 'success' && fromJSON(needs.ci-plan.outputs.expected)['service-integration'] == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The root lane runs Shell and Core serially; its expanded suites exceed 30 minutes.
+    timeout-minutes: ${{ matrix.root-suite == true && 45 || 30 }}
     strategy:
       fail-fast: false
       matrix:

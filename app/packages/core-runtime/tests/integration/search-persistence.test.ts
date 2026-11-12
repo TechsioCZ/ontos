@@ -560,7 +560,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('search persistence', 
            title, body_text, deleted, facets_json, projection_version)
         select $1, 'party.registry', 'party.registry.party', gen_random_uuid()::text,
           'AAA invisible needle', 'visible needle', false,
-          '{"schemaVersion":"1","archived":false,"facets":[],"metadata":[]}'::jsonb, 1
+          '{"schemaVersion":"2","archived":false,"facets":[],"metadata":[],"searchableText":["visible needle"]}'::jsonb, 1
         from generate_series(1, 10001)
       `,
         [tenantId],

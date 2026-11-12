@@ -178,7 +178,7 @@ it.layer(NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)), { exclud
     );
 
     suite.effect(
-      'holds native Read authority through policies and commits denial evidence under active authority',
+      'revalidates authority after policies, fences owner loading and commits denial evidence under active authority',
       () =>
         Effect.gen(function* readCompositionFence() {
           const isolated = yield* makeIsolatedNativeDatabaseFixture({
@@ -216,22 +216,18 @@ it.layer(NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)), { exclud
           const policyStarted = yield* Deferred.make<null>();
           const policyRelease = yield* Deferred.make<null>();
           const ownerBackend = yield* Deferred.make<number>();
-          const drainStarted = yield* Deferred.make<null>();
+          const ownerRelease = yield* Deferred.make<null>();
+          const publicationStarted = yield* Deferred.make<null>();
           let factoryCalls = 0;
           let handlerCalls = 0;
           let policyCalls = 0;
-          let currentOwnerBackend: number | undefined;
           let policyDenial = false;
+          let pauseOwnerLoad = false;
           let ownerAuthorizationDecision: 'allowed' | 'denied' = 'allowed';
           const policy = defineGlobalPolicy<Readonly<Record<string, never>>>({
             evaluate: () =>
               Effect.gen(function* heldReadPolicy() {
                 policyCalls += 1;
-                const [backend] = yield* database
-                  .execute<{ readonly pid: number }>(sql`select pg_backend_pid() as pid`, 'objects')
-                  .pipe(Effect.orDie);
-                currentOwnerBackend = Option.getOrThrow(Option.fromNullishOr(backend)).pid;
-                yield* Deferred.succeed(ownerBackend, currentOwnerBackend);
                 yield* Deferred.succeed(policyStarted, null);
                 yield* Deferred.await(policyRelease);
                 if (policyDenial) {
@@ -274,7 +270,10 @@ it.layer(NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)), { exclud
                   .select({ pid: sql<number>`pg_backend_pid()` })
                   .from(applicationCompositionAuthority)
                   .pipe(Effect.mapError(fixtureReadConnectionFailure));
-                expect(Option.getOrThrow(Option.fromNullishOr(backend)).pid).toBe(currentOwnerBackend);
+                if (pauseOwnerLoad) {
+                  yield* Deferred.succeed(ownerBackend, Option.getOrThrow(Option.fromNullishOr(backend)).pid);
+                  yield* Deferred.await(ownerRelease);
+                }
                 return {};
               }),
             () => ({ kind: 'module', moduleId: 'core.shell' }),
@@ -328,19 +327,54 @@ it.layer(NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)), { exclud
               ),
             );
           yield* Effect.scoped(
-            Effect.gen(function* verifyReadCompositionFence() {
+            Effect.gen(function* verifyPublicationDuringPolicy() {
               const read = yield* run(revision).pipe(Effect.forkScoped);
               yield* Deferred.await(policyStarted);
+              // Policies run before owner SQL: publication must not wait for a remote Policy.
+              yield* publisher.transaction(
+                Effect.fn(function* replaceAuthorityDuringPolicy(transaction) {
+                  yield* lockApplicationCompositionPublication(transaction);
+                  yield* transaction
+                    .update(applicationCompositionAuthority)
+                    .set({ revision: nextRevision })
+                    .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+                }),
+              );
+              expect(read.pollUnsafe()).toBeUndefined();
+              expect(factoryCalls).toBe(0);
+              expect(handlerCalls).toBe(0);
+              yield* Deferred.succeed(policyRelease, null);
+              expect(Schema.is(ReadHandlerUnavailable)(yield* Fiber.join(read).pipe(Effect.flip))).toBe(true);
+              expect(factoryCalls).toBe(0);
+              expect(handlerCalls).toBe(0);
+              expect(
+                yield* admin.unsafe('select 1 from core.data_access_events where tenant_id = $1', [tenantId]),
+              ).toEqual([]);
+            }).pipe(Effect.ensuring(Deferred.succeed(policyRelease, null))),
+          );
+          yield* publisher.transaction(
+            Effect.fn(function* restoreReadAuthorityFixture(transaction) {
+              yield* lockApplicationCompositionPublication(transaction);
+              yield* transaction
+                .update(applicationCompositionAuthority)
+                .set({ revision })
+                .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+            }),
+          );
+          pauseOwnerLoad = true;
+          yield* Effect.scoped(
+            Effect.gen(function* verifyOwnerLoadCompositionFence() {
+              const read = yield* run(revision).pipe(Effect.forkScoped);
               const ownerPid = yield* Deferred.await(ownerBackend);
-              const drain = yield* publisher
+              const publication = yield* publisher
                 .transaction(
-                  Effect.fn(function* drainWithNativeReadInFlight(transaction) {
-                    yield* Deferred.succeed(drainStarted, null);
-                    yield* drainApplicationCompositionAuthority(transaction, revision);
+                  Effect.fn(function* publicationWithNativeLoadInFlight(transaction) {
+                    yield* Deferred.succeed(publicationStarted, null);
+                    yield* lockApplicationCompositionPublication(transaction);
                   }),
                 )
                 .pipe(Effect.forkScoped);
-              yield* Deferred.await(drainStarted);
+              yield* Deferred.await(publicationStarted);
               let blocked = false;
               for (let observation = 0; observation < 1000 && !blocked; observation += 1) {
                 const [status] = yield* publisher.execute<{ readonly blocked: boolean }>(
@@ -353,14 +387,16 @@ it.layer(NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)), { exclud
                 blocked = status?.blocked === true;
               }
               expect(blocked).toBe(true);
-              expect(drain.pollUnsafe()).toBeUndefined();
-              expect(factoryCalls).toBe(0);
+              expect(publication.pollUnsafe()).toBeUndefined();
+              expect(factoryCalls).toBe(1);
               expect(handlerCalls).toBe(0);
-              yield* Deferred.succeed(policyRelease, null);
+              yield* Deferred.succeed(ownerRelease, null);
               expect(yield* Fiber.join(read)).toEqual(['visible']);
-              yield* Fiber.join(drain);
-            }).pipe(Effect.ensuring(Deferred.succeed(policyRelease, null))),
+              yield* Fiber.join(publication);
+            }).pipe(Effect.ensuring(Deferred.succeed(ownerRelease, null))),
           );
+          pauseOwnerLoad = false;
+          yield* publisher.transaction((transaction) => drainApplicationCompositionAuthority(transaction, revision));
           expect(Schema.is(ReadHandlerUnavailable)(yield* Effect.flip(run(revision)))).toBe(true);
           const authorityCases = [
             { phase: 'sealed' as const, revision, validUntil },
@@ -386,7 +422,7 @@ it.layer(NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)), { exclud
           }
           expect(factoryCalls).toBe(1);
           expect(handlerCalls).toBe(1);
-          expect(policyCalls).toBe(1);
+          expect(policyCalls).toBe(2);
           yield* publisher.transaction(
             Effect.fn(function* admitNextReadFixture(transaction) {
               yield* lockApplicationCompositionPublication(transaction);
@@ -400,7 +436,7 @@ it.layer(NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)), { exclud
           expect(yield* run(nextRevision)).toEqual(['visible']);
           expect(factoryCalls).toBe(2);
           expect(handlerCalls).toBe(2);
-          expect(policyCalls).toBe(2);
+          expect(policyCalls).toBe(3);
           policyDenial = true;
           expect(Schema.is(ReadPolicyDenied)(yield* Effect.flip(run(nextRevision)))).toBe(true);
           policyDenial = false;
@@ -408,7 +444,7 @@ it.layer(NodeCrypto.layer.pipe(Layer.provideMerge(NodeServices.layer)), { exclud
           expect(Schema.is(ReadPermissionDenied)(yield* Effect.flip(run(nextRevision)))).toBe(true);
           expect(factoryCalls).toBe(2);
           expect(handlerCalls).toBe(2);
-          expect(policyCalls).toBe(4);
+          expect(policyCalls).toBe(5);
           const evidence = yield* admin.unsafe<{ readonly outcome: string; readonly outcome_code: string }>(
             'select outcome, outcome_code from core.data_access_events where tenant_id = $1 order by occurred_at, data_access_event_id',
             [tenantId],
