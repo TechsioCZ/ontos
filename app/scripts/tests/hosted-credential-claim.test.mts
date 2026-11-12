@@ -26,7 +26,7 @@ describe('exposing a bundle copy claim', () => {
       const bundle = `${copy('claimHostedModuleCredentials3')}export {\n  index_default as default\n};\n`;
       const exposed = yield* exposeBundleClaim(bundle);
       expect(exposed.endsWith(`export { claimHostedModuleCredentials3 as ${BUNDLE_CLAIM_EXPORT} };\n`)).toBe(true);
-      expect(exposesBundleClaim(exposed)).toBe(true);
+      expect(yield* exposesBundleClaim(exposed)).toBe(true);
       expect(yield* exposeBundleClaim(exposed)).toBe(exposed);
       expect(yield* exposeBundleClaim('export { api as default };\n')).toBe('export { api as default };\n');
     }),
@@ -71,59 +71,77 @@ const second = await Effect.runPromiseExit(owner.${BUNDLE_CLAIM_EXPORT}(['crm'])
 console.log(JSON.stringify({ afterHandover: await read(), answer, beforeHandover, fromEnvironment, secondClaim: second._tag, throughHostCopy }));
 `;
 
-it.live(
-  'fills a built bundle copy only through its own exposed claim, never from the host copy or the environment',
-  () =>
-    Effect.scoped(
-      Effect.gen(function* builtBundle() {
-        const fs = yield* FileSystem.FileSystem;
-        // Inside the workspace, so the bundle resolves its external `effect` as a built unit does.
-        const directory = yield* fs.makeTempDirectoryScoped({
-          directory: path.join(workspace, 'node_modules', '.cache'),
-          prefix: 'hosted-credential-claim-',
-        });
-        const entry = path.join(directory, 'entry.ts');
-        const bundlePath = path.join(directory, 'index.js');
-        yield* fs.writeFileString(
-          entry,
-          `export { ownModuleCredential as read } from '${workspace}/packages/core-runtime/src/auth/owner-module-credential.ts';\n`,
-        );
-        yield* Effect.promise(() =>
-          build({
-            absWorkingDir: workspace,
-            bundle: true,
-            entryPoints: [entry],
-            external: ['effect', 'effect/*'],
-            format: 'esm',
-            logLevel: 'silent',
-            outfile: bundlePath,
-            platform: 'node',
-          }),
-        );
-        const bundled = yield* fs.readFileString(bundlePath);
-        expect(storeCopiesIn(bundled)).toBe(1);
-        yield* fs.writeFileString(bundlePath, yield* exposeBundleClaim(bundled));
-        const handle = yield* ChildProcess.make(
-          process.execPath,
-          ['--input-type=module', '--eval', HOST, workspace, bundlePath],
-          { cwd: workspace, extendEnv: true, stderr: 'inherit', stdin: 'ignore', stdout: 'pipe' },
-        );
-        const [output, code] = yield* Effect.all(
-          [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
-          { concurrency: 2 },
-        );
-        expect(code).toBe(0);
-        expect(Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json))(output.trim())).toEqual({
-          afterHandover: 'crm-module-key-000000',
-          answer: { accepted: ['crm'], refused: ['pricing'] },
-          beforeHandover: null,
-          fromEnvironment: null,
-          secondClaim: 'Failure',
-          throughHostCopy: null,
-        });
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
-);
+const READER = `${workspace}/packages/core-runtime/src/auth/owner-module-credential.ts`;
+
+/** The two shapes the API bundler emits: an ES module, and CommonJS with the store wrapped in a lazy initialiser. */
+const API_BUNDLE_OUTPUTS = [
+  {
+    entry: `export { ownModuleCredential as read } from '${READER}';\n`,
+    file: 'index.js',
+    format: 'esm',
+    lazy: false,
+  },
+  {
+    entry: `module.exports.read = (appId) => require('${READER}').ownModuleCredential(appId);\n`,
+    file: 'index.cjs',
+    format: 'cjs',
+    lazy: true,
+  },
+] as const;
+
+for (const bundling of API_BUNDLE_OUTPUTS) {
+  it.live(
+    `fills a built ${bundling.format} bundle copy only through its own exposed claim, never from the host copy or the environment`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* builtBundle() {
+          const fs = yield* FileSystem.FileSystem;
+          // Inside the workspace, so the bundle resolves its external `effect` as a built unit does.
+          const directory = yield* fs.makeTempDirectoryScoped({
+            directory: path.join(workspace, 'node_modules', '.cache'),
+            prefix: 'hosted-credential-claim-',
+          });
+          const entry = path.join(directory, bundling.format === 'esm' ? 'entry.ts' : 'entry.cts');
+          const bundlePath = path.join(directory, bundling.file);
+          yield* fs.writeFileString(entry, bundling.entry);
+          yield* Effect.promise(() =>
+            build({
+              absWorkingDir: workspace,
+              bundle: true,
+              entryPoints: [entry],
+              external: ['effect', 'effect/*'],
+              format: bundling.format,
+              logLevel: 'silent',
+              outfile: bundlePath,
+              platform: 'node',
+            }),
+          );
+          const bundled = yield* fs.readFileString(bundlePath);
+          expect(storeCopiesIn(bundled)).toBe(1);
+          expect(bundled.includes('__esm(')).toBe(bundling.lazy);
+          yield* fs.writeFileString(bundlePath, yield* exposeBundleClaim(bundled));
+          const handle = yield* ChildProcess.make(
+            process.execPath,
+            ['--input-type=module', '--eval', HOST, workspace, bundlePath],
+            { cwd: workspace, extendEnv: true, stderr: 'inherit', stdin: 'ignore', stdout: 'pipe' },
+          );
+          const [output, code] = yield* Effect.all(
+            [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
+            { concurrency: 2 },
+          );
+          expect(code).toBe(0);
+          expect(Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json))(output.trim())).toEqual({
+            afterHandover: 'crm-module-key-000000',
+            answer: { accepted: ['crm'], refused: ['pricing'] },
+            beforeHandover: null,
+            fromEnvironment: null,
+            secondClaim: 'Failure',
+            throughHostCopy: null,
+          });
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
 
 const TopologySchema = Schema.Struct({
   verticals: Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String })),

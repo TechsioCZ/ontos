@@ -17,7 +17,13 @@ import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Console, Effect, FileSystem, Layer, Schema } from 'effect';
 import { Argument, Command } from 'effect/cli';
 
-import { checkUnitClaims, entryClaimExport, exposeUnitClaims } from './hosted-credential-claim.mts';
+import {
+  checkUnitClaims,
+  commonJsClaimShim,
+  commonJsEntryExports,
+  entryClaimExport,
+  exposeUnitClaims,
+} from './hosted-credential-claim.mts';
 
 export class OwnerEntryError extends Schema.TaggedError<OwnerEntryError>()('OwnerEntryError', {
   reason: Schema.String,
@@ -117,13 +123,11 @@ const writeOwnerEntry = Effect.fn('OwnerEntry.write')(function* writeOwnerEntry(
   const entry = path.join(dist, 'zerops-entry.mjs');
   const [carriesStore] = yield* exposeUnitClaims([unit]);
   if (isCommonJsEntry(generated)) {
-    if (carriesStore) {
-      return yield* new OwnerEntryError({
-        reason: `${unitDirectory} is CommonJS; its credential claim cannot be exported`,
-      });
-    }
-    yield* fs.writeFileString(path.join(dist, 'zerops-entry.cjs'), source);
-    yield* fs.writeFileString(entry, COMMONJS_SHIM);
+    yield* fs.writeFileString(
+      path.join(dist, 'zerops-entry.cjs'),
+      carriesStore ? source.replace('module.exports = { start };', commonJsEntryExports) : source,
+    );
+    yield* fs.writeFileString(entry, carriesStore ? commonJsClaimShim : COMMONJS_SHIM);
   } else {
     yield* fs.writeFileString(entry, carriesStore ? `${source.trimEnd()}\n${entryClaimExport}\n` : source);
   }

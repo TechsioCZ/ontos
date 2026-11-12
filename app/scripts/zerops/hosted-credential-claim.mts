@@ -32,50 +32,96 @@ export const UNSERVED_ARTEFACTS: ReadonlySet<string> = new Set([path.join('dist'
 
 /** Each copy names its claim's span; the span survives bundling whatever the bundler renames. */
 const CLAIM_SPAN = /["']HostedModuleCredentials\.claim["']/gu;
+/** `var claim = Effect.fn(...)` (an ES module bundle) or `claim = import_effect.Effect.fn(...)` (a lazy module). */
 const CLAIM_DEFINITION =
-  /\bvar (?<name>[A-Za-z_$][\w$]*) = [A-Za-z_$][\w$]*\.fn\(["']HostedModuleCredentials\.claim["']\)/gu;
-const EXPOSED = new RegExp(`\\nexport \\{ (?<name>[A-Za-z_$][\\w$]*) as ${BUNDLE_CLAIM_EXPORT} \\};\\n`, 'gu');
+  /\b(?<name>[A-Za-z_$][\w$]*) = [A-Za-z_$][\w$.]*\.fn\(["']HostedModuleCredentials\.claim["']\)/gu;
+/** esbuild wraps a module it may load lazily in an initialiser that must run before its bindings exist. */
+const LAZY_STORE = /\bvar (?<init>[A-Za-z_$][\w$]*) = __esm\(\{\s*"[^"]*hosted-module-credential-store\.ts"/gu;
+const EXPOSURE_MARKER =
+  "// The host's claim of this bundle's own credential store copy (scripts/zerops/hosted-credential-claim.mts).";
+
+const BundleFormatSchema = Schema.Literals(['commonjs', 'module']);
+type BundleFormat = typeof BundleFormatSchema.Type;
+
+const formatOf = (source: string): BundleFormat | undefined => {
+  if (/^export \{/mu.test(source)) {
+    return 'module';
+  }
+  return /^(?:exports\.|module\.exports)/mu.test(source) ? 'commonjs' : undefined;
+};
+
+/** How the bundle exposes its copy's claim: the claim itself, after running the copy's initialiser when it is lazy. */
+const exposureOf = (name: string, init: string | undefined, format: BundleFormat) => {
+  const claim = init === undefined ? name : `(owners) => (${init}(), ${name}(owners))`;
+  if (format === 'commonjs') {
+    return `${EXPOSURE_MARKER}\nexports.${BUNDLE_CLAIM_EXPORT} = ${claim};`;
+  }
+  return init === undefined
+    ? `${EXPOSURE_MARKER}\nexport { ${name} as ${BUNDLE_CLAIM_EXPORT} };`
+    : `${EXPOSURE_MARKER}\nexport const ${BUNDLE_CLAIM_EXPORT} = ${claim};`;
+};
 
 /** How many store copies a built JavaScript file carries. */
 export const storeCopiesIn = (source: string): number => [...source.matchAll(CLAIM_SPAN)].length;
+
+const unclaimable = (reason: string) => new HostedCredentialClaimError({ reason });
+
+/** The exposure a bundle with exactly one copy needs; refused for any other shape. */
+const requiredExposure = (source: string): Effect.Effect<string, HostedCredentialClaimError> => {
+  const copies = storeCopiesIn(source);
+  const definitions = [...source.matchAll(CLAIM_DEFINITION)].map((match) => match.groups?.name);
+  const inits = [...source.matchAll(LAZY_STORE)].map((match) => match.groups?.init);
+  const [name] = definitions;
+  const format = formatOf(source);
+  if (copies !== 1 || definitions.length !== 1 || name === undefined || inits.length > 1) {
+    return Effect.fail(
+      unclaimable(
+        `the bundle carries ${String(copies)} credential store copies with ${String(definitions.length)} locatable claims; exactly one of each can be claimed`,
+      ),
+    );
+  }
+  if (format === undefined) {
+    return Effect.fail(unclaimable('the bundle is neither an ES module nor a CommonJS module'));
+  }
+  return Effect.succeed(exposureOf(name, inits[0], format));
+};
 
 /**
  * The API bundle with its own copy's claim exposed, unchanged when it carries no copy or already exposes it. More than
  * one copy, or a copy whose claim cannot be located, is refused: such a bundle cannot be claimed as a whole.
  */
-export const exposeBundleClaim = (source: string): Effect.Effect<string, HostedCredentialClaimError> => {
-  const copies = storeCopiesIn(source);
-  if (copies === 0) {
-    return Effect.succeed(source);
-  }
-  const definitions = [...source.matchAll(CLAIM_DEFINITION)].map((match) => match.groups?.name);
-  const [name] = definitions;
-  if (copies !== 1 || definitions.length !== 1 || name === undefined) {
-    return Effect.fail(
-      new HostedCredentialClaimError({
-        reason: `the bundle carries ${String(copies)} credential store copies with ${String(definitions.length)} locatable claims; exactly one of each can be claimed`,
-      }),
-    );
-  }
-  const exposed = [...source.matchAll(EXPOSED)].map((match) => match.groups?.name);
-  if (exposed.length === 1 && exposed[0] === name) {
-    return Effect.succeed(source);
-  }
-  if (exposed.length > 0) {
-    return Effect.fail(new HostedCredentialClaimError({ reason: 'the bundle exposes a claim that is not its own' }));
-  }
-  return Effect.succeed(`${source.trimEnd()}\nexport { ${name} as ${BUNDLE_CLAIM_EXPORT} };\n`);
-};
+export const exposeBundleClaim = (source: string): Effect.Effect<string, HostedCredentialClaimError> =>
+  storeCopiesIn(source) === 0
+    ? Effect.succeed(source)
+    : requiredExposure(source).pipe(
+        Effect.flatMap((exposure) => {
+          if (source.includes(`\n${exposure}\n`)) {
+            return Effect.succeed(source);
+          }
+          return source.includes(BUNDLE_CLAIM_EXPORT)
+            ? Effect.fail(unclaimable('the bundle exposes a claim that is not its own'))
+            : Effect.succeed(`${source.trimEnd()}\n${exposure}\n`);
+        }),
+      );
 
-/** Whether a bundle exposes its own copy's claim. */
-export const exposesBundleClaim = (source: string): boolean => {
-  const definitions = [...source.matchAll(CLAIM_DEFINITION)].map((match) => match.groups?.name);
-  const exposed = [...source.matchAll(EXPOSED)].map((match) => match.groups?.name);
-  return definitions.length === 1 && exposed.length === 1 && exposed[0] === definitions[0];
-};
+/** Whether a bundle exposes its own copy's claim, exactly once. */
+export const exposesBundleClaim = (source: string): Effect.Effect<boolean> =>
+  requiredExposure(source).pipe(
+    Effect.map((exposure) => source.split(`\n${exposure}\n`).length === 2),
+    Effect.orElseSucceed(() => false),
+  );
 
-/** The generated entry's line that re-exports the API bundle's claim for the host. */
+/** The generated ES module entry's line that re-exports the API bundle's claim for the host. */
 export const entryClaimExport = `export { ${BUNDLE_CLAIM_EXPORT} as ${ENTRY_CLAIM_EXPORT} } from './api/index.js';`;
+/** The generated CommonJS entry's exports: its start and the API bundle's claim for the host. */
+export const commonJsEntryExports = `module.exports = { start, ${ENTRY_CLAIM_EXPORT}: require('./api/index.js').${BUNDLE_CLAIM_EXPORT} };`;
+/** The ES module shim over a CommonJS entry that carries the claim. */
+export const commonJsClaimShim = [
+  "import { createRequire } from 'node:module';",
+  '',
+  `export const { start, ${ENTRY_CLAIM_EXPORT} } = createRequire(import.meta.url)('./zerops-entry.cjs');`,
+  '',
+].join('\n');
 
 const builtScripts = (fs: FileSystem.FileSystem, directory: string): Effect.Effect<readonly string[]> =>
   fs.readDirectory(directory, { recursive: true }).pipe(
@@ -98,14 +144,18 @@ const problemsOf = Effect.fn('HostedCredentialClaim.problemsOf')(function* probl
   if (file !== API_BUNDLE) {
     return [`${file} carries ${String(copies)} credential store copies no host can claim`];
   }
-  if (!exposesBundleClaim(source)) {
+  if (!(yield* exposesBundleClaim(source))) {
     return [`${file} carries a credential store copy whose claim it does not expose`];
   }
   const fs = yield* FileSystem.FileSystem;
   const entry = yield* fs.readFileString(path.join(dist, 'zerops-entry.mjs')).pipe(Effect.option);
-  return Option.isSome(entry) && !entry.value.includes(entryClaimExport)
-    ? ['dist/zerops-entry.mjs does not hand the host its API bundle claim']
-    : [];
+  const commonJsEntry = yield* fs.readFileString(path.join(dist, 'zerops-entry.cjs')).pipe(Effect.option);
+  const handsOver = Option.isSome(commonJsEntry)
+    ? commonJsEntry.value.includes(commonJsEntryExports) &&
+      Option.isSome(entry) &&
+      entry.value.includes(`export const { start, ${ENTRY_CLAIM_EXPORT} }`)
+    : Option.isNone(entry) || entry.value.includes(entryClaimExport);
+  return handsOver ? [] : ['dist/zerops-entry does not hand the host its API bundle claim'];
 });
 
 /** One served unit's findings: every file under `dist/` that carries a copy no host can claim. */
