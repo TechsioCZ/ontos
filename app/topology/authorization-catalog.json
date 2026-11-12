@@ -13418,6 +13418,15 @@
             "moduleKey": "commerce.tax",
             "role": "api",
             "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "merchandise"
+            ],
+            "subject": "identity",
+            "subjectWorkloads": [
+              "demo.storefront-client"
+            ]
           }
         },
         {
@@ -13632,6 +13641,15 @@
             "moduleKey": "commerce.tax",
             "role": "api",
             "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "merchandise"
+            ],
+            "subject": "identity",
+            "subjectWorkloads": [
+              "demo.storefront-client"
+            ]
           }
         },
         {
@@ -13686,6 +13704,12 @@
             "moduleKey": "commerce.tax",
             "role": "api",
             "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "merchandise"
+            ],
+            "subject": "identity"
           }
         }
       ],
