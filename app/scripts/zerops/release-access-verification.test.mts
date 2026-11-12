@@ -4,6 +4,8 @@ import { NodeServices } from '@effect/platform-node';
 import { ConfigProvider, DateTime, Effect, Exit, FileSystem, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { PLATFORM_TENANT } from '../../packages/core-runtime/src/auth/module-credentials.ts';
+
 import {
   RELEASE_ACCESS_BOOTSTRAP_REMEDIATION,
   RELEASE_ACCESS_VERIFICATION_STATUS_FILE,
@@ -86,6 +88,27 @@ it.effect('verifies every active Tenant and skips suspended ones', () =>
     });
     expect(asked.toSorted()).toEqual([ACTIVE_TENANT, OTHER_TENANT]);
     expect(result).toEqual({ tenants: 2, tuples: 6, verified: 2 });
+  }),
+);
+
+it.effect('never asks the platform tenant for people, scopes or an owner', () =>
+  Effect.gen(function* skipsPlatformTenant() {
+    const asked: string[] = [];
+    const result = yield* verifyReleaseAccessWith({
+      inventory: {
+        tenants: [
+          { status: 'active', tenantId: PLATFORM_TENANT.tenantId },
+          { status: 'active', tenantId: ACTIVE_TENANT },
+        ],
+      },
+      verifyTenant: (tenantId) =>
+        Effect.sync(() => {
+          asked.push(tenantId);
+          return { tuples: 1 };
+        }),
+    });
+    expect(asked).toEqual([ACTIVE_TENANT]);
+    expect(result).toEqual({ tenants: 1, tuples: 1, verified: 1 });
   }),
 );
 

@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { ActionPermissionCheckError } from '@app/core-runtime';
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import { GatewayContextApi } from '@app/shared-contracts';
+import type { GatewayDelegationRequest } from '@app/shared-contracts/gateway-context-server';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { ConfigProvider, Context, DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
+import { Context, Crypto, DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
@@ -25,7 +26,12 @@ import {
   ensureRetailCustomerProfileAction,
   prepareRetailProfileServices,
 } from '../../src/actions/ensure-retail-customer-profile.action.ts';
-import { RetailPartyDetailExecutor } from '../../src/integrations/retail-party-detail-executor.ts';
+import {
+  makeRetailPartyDetailExecutor,
+  RetailPartyDetailExecutor,
+} from '../../src/integrations/retail-party-detail-executor.ts';
+import { issuedDelegatedContext } from '../support/delegated-gateway-acquisition.fixture.ts';
+import type { DelegatedAcquire } from '../support/delegated-gateway-acquisition.fixture.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const otherTenantId = '20000000-0000-4000-8000-000000000002';
@@ -164,51 +170,15 @@ interface OwnerHttpRequest {
   readonly path: string;
 }
 
-/** Native HttpApi server/clients over the supported in-memory transport; no DOM or socket server. */
+/**
+ * Native Party HttpApi server over the supported in-memory transport; no DOM or socket server. The Party
+ * transport is the production executor; only the Shell's delegated issuance is recorded by a double.
+ */
 const serveNativePartyContract = (compositionRevision: string) =>
   Effect.gen(function* nativePartyContract() {
     const requests: OwnerHttpRequest[] = [];
-    const api = GatewayContextApi.addHttpApi(PartyDetailApi.prefix('/party-owner'));
-    const issue = Effect.sync(() => ({
-      apiBaseUrl: '/party-owner',
-      compositionRevision,
-      expiresAt: 1_800_000_300,
-      token: [
-        Buffer.from(JSON.stringify({ alg: 'EdDSA', kid: 'contract-test', typ: 'JWT' })).toString('base64url'),
-        Buffer.from(
-          JSON.stringify({
-            aud: 'party-registry',
-            compositionRevision,
-            exp: 1_800_000_300,
-            iat: 1_800_000_000,
-            iss: 'contract-test-shell',
-            jti: randomUUID(),
-            principal: {
-              authBindingId: '70000000-0000-4000-8000-000000000007',
-              authContextRef: 'api-key:contract-test-commerce',
-              authMethod: 'api_key',
-              legalEntityId: scope.legalEntityId,
-              principalId: scope.principalId,
-              tenantId,
-            },
-            sub: scope.principalId,
-            targetBuildMarker: 'contract-test-party',
-            ver: 1,
-          }),
-        ).toString('base64url'),
-        'contract-test-signature',
-      ].join('.'),
-    }));
-    const gatewayHandlers = HttpApiBuilder.group(api, 'gatewayContext', (handlers) =>
-      handlers
-        .handle('issueGatewayContext', () => issue)
-        .handle('issueDelegatedGatewayContext', () => Effect.die('This direct gateway fixture must not delegate'))
-        .handle('readWithApiKeyGatewayContext', () => Effect.succeed(new TextEncoder().encode('null')))
-        .handle('issueApiKeyGatewayContext', ({ payload, request: incoming }) => {
-          requests.push({ body: JSON.stringify(payload), headers: new Headers(incoming.headers), path: incoming.url });
-          return issue;
-        }),
-    );
+    const delegations: GatewayDelegationRequest[] = [];
+    const api = PartyDetailApi.prefix('/party-owner');
     const partyHandlers = HttpApiBuilder.group(api, 'partyDetail', (handlers) =>
       handlers.handle('execute', ({ payload, request: incoming }) => {
         requests.push({ body: JSON.stringify(payload), headers: new Headers(incoming.headers), path: incoming.url });
@@ -218,34 +188,40 @@ const serveNativePartyContract = (compositionRevision: string) =>
     const server = yield* Effect.acquireRelease(
       Effect.sync(() =>
         HttpRouter.toWebHandler(
-          HttpApiBuilder.layer(api).pipe(
-            Layer.provide(Layer.mergeAll(gatewayHandlers, partyHandlers)),
-            Layer.provide(HttpServer.layerServices),
-          ),
+          HttpApiBuilder.layer(api).pipe(Layer.provide(partyHandlers), Layer.provide(HttpServer.layerServices)),
           { disableLogger: true },
         ),
       ),
       (webHandler) => Effect.promise(() => webHandler.dispose()),
     );
     const nativeFetch: typeof fetch = (input, init) => server.handler(new Request(input, init), Context.empty());
+    const acquire: DelegatedAcquire = (delegation) => {
+      delegations.push(delegation);
+      return Effect.succeed(
+        issuedDelegatedContext({
+          apiBaseUrl: 'https://native-party-contract.test/party-owner',
+          compositionRevision,
+          token: randomUUID(),
+        }),
+      );
+    };
+    const executor = makeRetailPartyDetailExecutor(acquire, yield* Crypto.Crypto.pipe(Effect.provide(nodeCryptoLayer)));
     return {
-      layer: Layer.mergeAll(
-        ConfigProvider.layer(
-          ConfigProvider.fromUnknown({
-            COMMERCE_TENANT_CREDENTIALS: JSON.stringify({
-              [tenantId]: {
-                coreIdentityApiKey: 'contract-test-core-identity-key',
-                gatewayApiKey: 'contract-test-commerce-key',
-              },
-            }),
-            ONTOS_SHELL_GATEWAY_BASE_URL: 'https://native-party-contract.test',
-          }),
-        ),
-        Layer.succeed(FetchHttpClient.Fetch, nativeFetch),
-      ),
+      delegations,
+      executor,
+      layer: Layer.succeed(FetchHttpClient.Fetch, nativeFetch),
       requests,
     };
   });
+
+const prepareResolution = (
+  snapshot: Effect.Success<ReturnType<typeof makeApplicationCompositionSnapshotFixture>>,
+  executor: typeof RetailPartyDetailExecutor.Service,
+) =>
+  preparedRetailPartyResolution.pipe(
+    Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+    Effect.provideService(RetailPartyDetailExecutor, executor),
+  );
 
 const nativePreflight = {
   actionInvocationId: request.actionInvocationId,
@@ -284,24 +260,26 @@ const nativePreflight = {
   },
 };
 
-it.effect('prepares real server Party HTTP in Node, then consumes once without HTTP inside the Action', () =>
+it.effect('prepares real server Party HTTP for the Action actor in Node, then consumes once without HTTP', () =>
   Effect.gen(function* nativeServerPreflight() {
     expect(globalThis).not.toHaveProperty('document');
     const snapshot = yield* makeApplicationCompositionSnapshotFixture();
     const server = yield* serveNativePartyContract(snapshot.composition.revision);
-    const execution = yield* preparedRetailPartyResolution.pipe(
-      Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
-    );
+    const execution = yield* prepareResolution(snapshot, server.executor);
     const ready = yield* execution.preflight.prepare(nativePreflight).pipe(Effect.provide(server.layer));
     expect(ready).toEqual({ outcome: 'not_applicable' });
-    expect(server.requests).toHaveLength(2);
-    const [issuance, owner] = server.requests;
-    expect(issuance?.path).toBe('/auth/api-key/gateway-context');
-    expect(JSON.parse(issuance?.body ?? '{}')).toEqual({
-      audience: 'party-registry',
-      compositionRevision: snapshot.composition.revision,
-      legalEntityId: scope.legalEntityId,
-    });
+    // Commerce's module credential asks the Shell to act for the Action's own verified actor.
+    expect(server.delegations).toEqual([
+      {
+        audience: 'party-registry',
+        callingAppId: 'commerce-customer-context',
+        legalEntityScope: 'subject',
+        requestCorrelation: scope.requestCorrelation,
+        subject: { _tag: 'Assertion', scope: nativePreflight.scope },
+      },
+    ]);
+    expect(server.requests).toHaveLength(1);
+    const [owner] = server.requests;
     expect(owner?.path).toBe('/party-owner/reads/party-detail');
     expect(owner?.headers.get('x-ontos-composition-revision')).toBe(snapshot.composition.revision);
     expect(owner?.headers.get('x-correlation-id')).toBe(scope.requestCorrelation);
@@ -316,7 +294,7 @@ it.effect('prepares real server Party HTTP in Node, then consumes once without H
       partyResourceRevision: '7',
     });
     expect(Schema.is(ProfilePersistenceDependencyFailure)(yield* Effect.flip(resolve(exactRequest)))).toBe(true);
-    expect(server.requests).toHaveLength(2);
+    expect(server.requests).toHaveLength(1);
   }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
 );
 
@@ -334,9 +312,7 @@ it.effect('binds prepared owner evidence to invocation, revision, Party, Tenant,
       { request: exactRequest, scope: { ...scope, principalId: randomUUID() } },
       { request: exactRequest, scope: { ...scope, requestCorrelation: 'another-request' } },
     ]) {
-      const execution = yield* preparedRetailPartyResolution.pipe(
-        Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
-      );
+      const execution = yield* prepareResolution(snapshot, server.executor);
       yield* execution.preflight.prepare(nativePreflight).pipe(Effect.provide(server.layer));
       expect(
         Schema.is(ProfilePersistenceDependencyFailure)(
@@ -357,9 +333,7 @@ it.effect('does no owner I/O for unrelated, malformed or forged preflight input'
   Effect.gen(function* failClosedBeforeOwnerIo() {
     const snapshot = yield* makeApplicationCompositionSnapshotFixture();
     const server = yield* serveNativePartyContract(snapshot.composition.revision);
-    const execution = yield* preparedRetailPartyResolution.pipe(
-      Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
-    );
+    const execution = yield* prepareResolution(snapshot, server.executor);
     expect(
       yield* execution.preflight.prepare({ ...nativePreflight, actionKey: 'commerce.customer-context.other-action' }),
     ).toEqual({ outcome: 'not_applicable' });
@@ -373,7 +347,20 @@ it.effect('does no owner I/O for unrelated, malformed or forged preflight input'
     }
     const malformed = yield* Effect.flip(execution.preflight.prepare({ ...nativePreflight, payload: {} }));
     expect(Schema.is(ActionPermissionCheckError)(malformed)).toBe(true);
+    expect(server.delegations).toHaveLength(0);
     expect(server.requests).toHaveLength(0);
+  }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+);
+
+it.effect('fails closed without an actor-bound Party transport instead of reading as a workload', () =>
+  Effect.gen(function* failClosedWithoutTransport() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture();
+    const execution = yield* preparedRetailPartyResolution.pipe(
+      Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+    );
+    const failure = yield* Effect.flip(execution.preflight.prepare(nativePreflight));
+    expect(Schema.is(ActionPermissionCheckError)(failure)).toBe(true);
+    expect(failure.reason).toBe('The current Retail Party owner evidence is unavailable');
   }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
 );
 
@@ -383,9 +370,7 @@ it.effect('clears unconsumed prepared evidence when the owning invocation scope 
     const server = yield* serveNativePartyContract(snapshot.composition.revision);
     const execution = yield* Effect.scoped(
       Effect.gen(function* completedInvocation() {
-        const prepared = yield* preparedRetailPartyResolution.pipe(
-          Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
-        );
+        const prepared = yield* prepareResolution(snapshot, server.executor);
         yield* prepared.preflight.prepare(nativePreflight).pipe(Effect.provide(server.layer));
         return prepared;
       }),
@@ -394,7 +379,7 @@ it.effect('clears unconsumed prepared evidence when the owning invocation scope 
       execution.factory.make(scope)({ ...request, compositionRevision: snapshot.composition.revision }),
     );
     expect(Schema.is(ProfilePersistenceDependencyFailure)(failure)).toBe(true);
-    expect(server.requests).toHaveLength(2);
+    expect(server.requests).toHaveLength(1);
   }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
 );
 
@@ -441,21 +426,47 @@ it.effect('prepares the exact Retail Party before SQL and rejects a changed sele
         return Effect.die('Unexpected SQL snapshot');
       },
     };
+    // The owner preflight prepared this Party for the actor; the Action consumes that evidence and reads nothing.
+    const factory: typeof PartyRegistryRetailPartyResolverFactory.Service = {
+      make: (preparedScope) => (preparedRequest) => {
+        expect(preparedScope).toEqual(scope);
+        expect(preparedRequest).toEqual(request);
+        calls += 1;
+        return Effect.succeed({
+          outcome: 'CURRENT_PARTY_RESOLVED' as const,
+          partyResourceId: partyId,
+          partyResourceRevision: '7',
+        });
+      },
+    };
+    yield* prepareRetailProfileServices(payload, context).pipe(
+      Effect.provideService(PartyRegistryRetailPartyResolverFactory, factory),
+    );
+    // Without prepared evidence it reads Party once itself, for the same actor, through the delegated transport.
+    let reads = 0;
     const executor: typeof RetailPartyDetailExecutor.Service = {
       execute: (selector, correlation, authority) => {
         expect(selector).toEqual({ partyRef: partyRef(partyId) });
         expect(correlation).toBe(scope.requestCorrelation);
         expect(authority.scope).toBe(context.scope);
-        expect(authority.actionInvocationId).toBe(context.actionInvocationId);
-        expect(authority.compositionRevision).toBe(context.compositionRevision);
-        calls += 1;
+        reads += 1;
         return Effect.succeed(response());
       },
     };
     yield* prepareRetailProfileServices(payload, context).pipe(
       Effect.provideService(RetailPartyDetailExecutor, executor),
     );
-    expect(calls).toBe(1);
+    expect(reads).toBe(1);
+    // With prepared evidence and a transport it still reads nothing more.
+    yield* prepareRetailProfileServices(payload, context).pipe(
+      Effect.provideService(PartyRegistryRetailPartyResolverFactory, factory),
+      Effect.provideService(RetailPartyDetailExecutor, executor),
+    );
+    expect(reads).toBe(1);
+    // Neither prepared evidence nor a transport: it fails closed.
+    const unprepared = yield* Effect.flip(prepareRetailProfileServices(payload, context));
+    expect(unprepared.code).toBe('DEPENDENCY_UNAVAILABLE');
+    expect(calls).toBe(2);
     expect(transactions).toBe(0);
     const prepared = bindPreparedRetailParty(request, {
       outcome: 'CURRENT_PARTY_RESOLVED',
@@ -471,6 +482,6 @@ it.effect('prepares the exact Retail Party before SQL and rejects a changed sele
     ]) {
       expect(yield* Effect.flip(prepared(changed))).toBeInstanceOf(ProfilePersistenceDependencyFailure);
     }
-    expect(calls).toBe(1);
+    expect(calls).toBe(2);
   }),
 );

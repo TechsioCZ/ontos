@@ -199,7 +199,13 @@ const authorizedExecutor =
   ): PriceGroupCompatibilityExecutor =>
   (payload, correlation) =>
     acquire(
-      { audience: 'price-group-catalog', legalEntityScope: 'tenant', requestCorrelation: correlation, subject },
+      {
+        audience: 'price-group-catalog',
+        callingAppId: 'commerce-customer-context',
+        legalEntityScope: 'tenant',
+        requestCorrelation: correlation,
+        subject,
+      },
       crypto,
     ).pipe(
       Effect.mapError(unavailable),

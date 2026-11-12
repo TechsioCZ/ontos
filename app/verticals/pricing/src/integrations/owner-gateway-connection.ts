@@ -55,6 +55,7 @@ export const acquireOwnerGatewayConnection = (
   acquireDelegatedGatewayContext(
     {
       audience: input.audience,
+      callingAppId: 'pricing',
       legalEntityScope: input.legalEntityScope,
       requestCorrelation: input.requestCorrelation,
       subject: { _tag: 'Assertion', scope: input.scope },

@@ -480,6 +480,7 @@ const makePartyIntake = (scope: PartyIntakeRequest) => {
       const issued = yield* acquireDelegatedGatewayContext(
         {
           audience,
+          callingAppId: 'crm',
           legalEntityScope: 'subject',
           requestCorrelation: correlationId,
           subject: { _tag: 'Assertion', scope: scope.delegatedScope },

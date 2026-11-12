@@ -48,13 +48,6 @@ export const localPublicClientValues = (lines: readonly string[], topology: Loca
   };
 };
 
-/**
- * The Shell's module bindings. Local module-to-module calls stay unprovisioned, so a missing value defaults to
- * an empty list, which the Shell accepts and admits no module credential against. An existing value is kept.
- */
-export const localModuleValues = (lines: readonly string[]): Readonly<Record<string, string>> =>
-  existingValues(lines).ONTOS_GATEWAY_MODULE_BINDINGS === undefined ? { ONTOS_GATEWAY_MODULE_BINDINGS: '[]' } : {};
-
 export const localSpiceDbValues = (
   lines: readonly string[],
   overrides: LocalEnvironmentOverrides,

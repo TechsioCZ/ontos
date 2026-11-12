@@ -103,6 +103,19 @@ export interface ApiKeyServiceContract {
       readonly tenantId: string;
     },
   ) => Effect.Effect<IssuedApiKey, ApiKeyProviderError>;
+  /**
+   * Server-side issuance with no request session: the key belongs to `ownerUserId`. Only the platform's module
+   * credential provisioning calls it; no HTTP endpoint reaches it.
+   */
+  readonly issueServerOwned: (input: {
+    /** The key's lifetime; it fails verification once it ends. */
+    readonly expiresInSeconds: number;
+    readonly issuerPrincipalId: string;
+    readonly lifecycleOperationId: string;
+    readonly name: string;
+    readonly ownerUserId: string;
+    readonly tenantId: string;
+  }) => Effect.Effect<IssuedApiKey, ApiKeyProviderError>;
   readonly metadata: (keyId: string) => Effect.Effect<ProviderApiKeyMetadata, ApiKeyProviderError>;
   readonly pendingCleanup: (input: {
     readonly issuerPrincipalId: string;
@@ -326,6 +339,29 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
                 },
               ),
               headers: requestHeaders,
+            }),
+          }),
+        ),
+        apiKeyExternalTimeout,
+        Effect.map((created) => ({
+          ...toSafe(created),
+          secret: Redacted.make(created.key),
+        })),
+      ),
+    // No headers and no request: Better Auth then takes the owner from `userId`, which it refuses on any client call.
+    issueServerOwned: (input) =>
+      Effect.try({ catch: mapProviderError, try: getProvider }).pipe(
+        Effect.flatMap(({ api }) =>
+          Effect.tryPromise({
+            catch: mapProviderError,
+            try: api.createApiKey.bind(api, {
+              body: {
+                expiresIn: input.expiresInSeconds,
+                metadata: pendingBindingMarker(input),
+                name: input.name,
+                remaining: null,
+                userId: input.ownerUserId,
+              },
             }),
           }),
         ),

@@ -20,6 +20,9 @@ import {
   actionInvocations,
   auditEvents,
   dataAccessEvents,
+  domainEvents,
+  evidenceReferences,
+  outboxMessages,
   principalAuthBindings,
   principals,
   tenantModuleStateChanges,
@@ -137,6 +140,11 @@ const cleanup = withDatabase((database) =>
       auditEvents,
       tenantModuleStateChanges,
       tenantModuleStates,
+      // A state change's domain event references its Action invocation (core_domain_events_tenant_invocation_fk), and
+      // its Outbox message and any evidence reference that event; Outbox deliveries go with their messages.
+      evidenceReferences,
+      outboxMessages,
+      domainEvents,
       actionInvocations,
       principalAuthBindings,
       principals,

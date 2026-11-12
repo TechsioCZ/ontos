@@ -144,6 +144,7 @@ it.effect('authenticates with the module credential and sends the Originator sub
     const issued = yield* acquireDelegatedGatewayContext(
       {
         audience: 'party-registry',
+        callingAppId: 'catalog',
         legalEntityScope: 'tenant',
         requestCorrelation: 'delegation-wire-correlation',
         subject: {
@@ -192,6 +193,7 @@ it.effect('sends the verified incoming assertion and the requested legal entity 
     const issued = yield* acquireDelegatedGatewayContext(
       {
         audience: 'party-registry',
+        callingAppId: 'catalog',
         legalEntityScope: 'subject',
         requestCorrelation: 'delegation-assertion-correlation',
         subject: { _tag: 'Assertion', scope },
@@ -215,6 +217,7 @@ it.effect('fails typed without requests when an Assertion subject has no verifie
     const failure = yield* acquireDelegatedGatewayContext(
       {
         audience: 'party-registry',
+        callingAppId: 'catalog',
         legalEntityScope: 'subject',
         requestCorrelation: 'delegation-missing-scope',
         subject: { _tag: 'Assertion', scope: principal },
@@ -236,6 +239,7 @@ it.effect('refuses a response for a different admitted release', () =>
     const failure = yield* acquireDelegatedGatewayContext(
       {
         audience: 'party-registry',
+        callingAppId: 'catalog',
         legalEntityScope: 'subject',
         requestCorrelation: 'delegation-revision-change',
         subject: {

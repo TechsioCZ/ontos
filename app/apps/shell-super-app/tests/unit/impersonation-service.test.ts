@@ -22,6 +22,7 @@ import { TestClock } from 'effect/testing';
 import { PrincipalManagementRepository } from '../../../../packages/core-runtime/src/auth/principal-management.ts';
 import type { PrincipalManagementRepositoryService } from '../../../../packages/core-runtime/src/auth/principal-management.ts';
 import { AuthConfig } from '../../api/auth/config.ts';
+import { PLATFORM_KEY_OWNER } from '../../api/auth/platform-key-owner.ts';
 import type {
   SupportAuthProvider,
   SupportImpersonationStore,
@@ -327,6 +328,64 @@ it.effect('removes the provider session and recovery when started evidence canno
     expect(failure).toBe(startedFailure);
     expect(actionRuntime.invocationCount()).toBe(2);
     expect(deletedTables).toHaveLength(2);
+  }),
+);
+
+it.effect('refuses to impersonate the platform module-credential owner before any checkpoint or provider call', () =>
+  Effect.gen(function* refusesPlatformKeyOwner() {
+    let impersonations = 0;
+    const actionRuntime = makeActionRuntimeDouble([actionSuccess({ checkpoint: 'requested', recorded: true })]);
+    const service = makeService({
+      actionRuntime: actionRuntime.runtime,
+      authentication: makeAuthenticationServiceDouble({
+        resolveTenantContext: () =>
+          Effect.succeed({
+            identity: {
+              displayName: 'Original administrator',
+              email: 'original@example.test',
+              principalId: originalPrincipalId,
+              tenantId,
+            },
+            principal: Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+              authBindingId: originalAuthBindingId,
+              authContextRef: `better-auth-session:${restoredSessionId}`,
+              authenticationNamespaceId: staffAuthenticationNamespaceId,
+              authMethod: 'session',
+              principalId: originalPrincipalId,
+              tenantId,
+            }),
+            setCookieHeaders: [],
+            state: 'authenticated',
+          }),
+      }),
+      configuration,
+      provider: makeSupportAuthProviderDouble({
+        impersonateUser: () =>
+          Effect.sync(() => {
+            impersonations += 1;
+            return { headers: new Headers(), response: { session: { id: impersonationSessionId } } };
+          }),
+      }),
+      // A principal that (wrongly) resolves to the platform key owner's provider user.
+      resolver: makePrincipalResolverDouble({
+        resolveBetterAuthUserForPrincipal: () => Effect.succeed(PLATFORM_KEY_OWNER.id),
+      }),
+      store: makeSupportImpersonationStoreDouble({}),
+      supportRecoveryPrincipal,
+    });
+    const failure = yield* Effect.flip(
+      service
+        .start({
+          idempotencyKey: 'platform-key-owner',
+          reason: 'Investigate a support incident',
+          requestHeaders: new Headers(),
+          targetPrincipalId,
+        })
+        .pipe(Effect.provideService(SupportImpersonationCorrelationId, 'correlation-platform-key-owner')),
+    );
+    expect(failure).toMatchObject({ code: 'support_impersonation_denied' });
+    expect(impersonations).toBe(0);
+    expect(actionRuntime.invocationCount()).toBe(0);
   }),
 );
 

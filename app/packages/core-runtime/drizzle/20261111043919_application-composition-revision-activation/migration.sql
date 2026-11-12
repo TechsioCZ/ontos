@@ -1,0 +1,1 @@
+ALTER TABLE "core"."application_composition_authority" ADD COLUMN "revision_activated_at" timestamp with time zone DEFAULT now() NOT NULL;

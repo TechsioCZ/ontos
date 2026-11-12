@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Turns one unit's generated Node deploy entry (`<unit>/.output/index.js`, emitted by `modern deploy --deploy-target
- * node`) into `<unit>/dist/zerops-entry.mjs`, which exports `start(port)` instead of listening on `PORT` at import.
+ * node`) into `<unit>/dist/zerops-entry.mjs`, which exports `start(port, configureServer)` instead of listening on
+ * `PORT` at import; `configureServer` receives the unit's Node server before it listens.
  * The app host imports every owner's entry into one process; all of them resolve their packages through the one
  * installed workspace, so shared dependencies load once.
  *
@@ -33,6 +34,8 @@ const COMMONJS_SHIM = [
 
 export const isCommonJsEntry = (generated: string): boolean => generated.includes(COMMONJS_SERVER);
 const PORT = 'const port = process.env.PORT || 8080;';
+/** The unit's Node server; the host configures it (keep-alive) through `start(port, configureServer)` before it listens. */
+const CREATE_SERVER = 'const app = await createProdServer(prodServerOptions);';
 const RUN = '\nmain();';
 
 const relativeImport = (distDirectory: string, absolute: string) => {
@@ -50,7 +53,12 @@ export const ownerEntrySource = (
   distDirectory: string,
   resolvePackage: (specifier: string) => string,
 ): string | undefined => {
-  if (!generated.includes(MAIN) || !generated.includes(PORT) || !generated.trimEnd().endsWith('main();')) {
+  if (
+    !generated.includes(MAIN) ||
+    !generated.includes(PORT) ||
+    !generated.includes(CREATE_SERVER) ||
+    !generated.trimEnd().endsWith('main();')
+  ) {
     return undefined;
   }
   const relocated = generated
@@ -66,8 +74,14 @@ export const ownerEntrySource = (
   const commonJs = isCommonJsEntry(generated);
   return (
     relocated
-      .replace(MAIN, commonJs ? 'async function start(port) {' : 'export async function start(port) {')
+      .replace(
+        MAIN,
+        commonJs
+          ? 'async function start(port, configureServer) {'
+          : 'export async function start(port, configureServer) {',
+      )
       .replace(PORT, '')
+      .replace(CREATE_SERVER, `${CREATE_SERVER}\n    configureServer(app);`)
       // Owners answer only the host's loopback relay, never the container's private network.
       .replace('app.listen({', "app.listen({ host: '127.0.0.1',")
       .replace(/\nmain\(\);\s*$/u, commonJs ? '\nmodule.exports = { start };\n' : '\n')
