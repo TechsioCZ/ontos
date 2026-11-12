@@ -177,6 +177,14 @@ const renewalsFail = (admin: PgClient.PgClient, failing: boolean) =>
     )
     .pipe(Effect.orDie, Effect.asVoid);
 
+const refusedJournals = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  admin
+    .unsafe(
+      `select count(*)::int as refused from core.access_operation_journals
+        where tenant_id = '${tenantId}' and phase = 'failed' and failure_code = 'fence_refused'`,
+    )
+    .pipe(Effect.orDie);
+
 /** The finalizer that gives the runtime role its fence writes back. */
 const renewalsRestored = (admin: PgClient.PgClient) => () => renewalsFail(admin, false);
 
@@ -394,8 +402,10 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
           expect(yield* tenantFence(admin, tenantId)).toEqual([
             { owning_operation_id: DEAD_HOLDER, state: 'Changing' },
           ]);
-          // Each refused attempt ended its own journal: none is left `validated` with nobody to finish it.
+          // Each refused attempt ended its own journal as `fence_refused`: none is left `validated` with nobody to
+          // finish it.
           expect(yield* journalPhases(admin, tenantId)).not.toContain('validated');
+          expect(yield* refusedJournals(admin, tenantId)).toEqual([{ refused: 2 }]);
 
           yield* lapseLease(admin, tenantId);
           const recovered = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
@@ -865,5 +875,21 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
           }),
       );
     }),
+  );
+
+  suite.effect('the sweep finds a hold taken before leases only after 35 idle minutes', () =>
+    withProjectionTenant({ activeModules: [MODULE] }, (tenantId, admin) =>
+      Effect.gen(function* preLeaseSweep() {
+        yield* bootstrapTenant(tenantId);
+        yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: null });
+        const backoffs = yield* makeAccessFenceSweepBackoffs;
+        const idle = { busy: [], deferred: 0, failed: [], healed: [] };
+        yield* idleJournal(admin, '34 minutes');
+        expect(yield* sweepLapsedAccessFences(backoffs, 'tick-1')).toEqual(idle);
+        yield* idleJournal(admin, '36 minutes');
+        expect(yield* sweepLapsedAccessFences(backoffs, 'tick-2')).toEqual({ ...idle, healed: [tenantId] });
+        expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+      }),
+    ),
   );
 });
