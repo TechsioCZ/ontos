@@ -1,5 +1,5 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { makeEntityId } from '../../../../../shared/domain/common.ts';
+import { EntityIdSchema } from '../../../../../shared/domain/common.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { Effect } from 'effect';
 // AREA: imports — owned by the crm-imports lane. CSV import: choose / drop / paste a file or take a sample, see a
@@ -69,10 +69,10 @@ const previewImport = (draft: ImportDraft | undefined, records: RecordsResponse)
   }
   const parsed = parseOrdersCsv(draft.csv);
   const result = importOrders(records.state.imports, records.state.clients, parsed, {
-    batchId: makeEntityId('preview'),
+    batchId: EntityIdSchema.make('preview'),
     by: records.viewer.principalId,
     fileName: draft.fileName,
-    newId: (suffix) => makeEntityId(`preview-${suffix}`),
+    newId: (suffix) => EntityIdSchema.make(`preview-${suffix}`),
     now: records.now,
   });
   return { batch: result.batch, parsed };

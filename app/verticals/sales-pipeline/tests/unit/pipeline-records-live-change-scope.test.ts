@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rste
 import { allRecordsInput, pipelineRecords } from '../../src/routes/[lang]/prodej/prilezitosti/pipeline-records.ts';
 
 const mocks = rstest.hoisted(() => ({ records: rstest.fn() }));
-rstest.mock('../../src/api/records-consumer.ts', () => ({ executeRecords: mocks.records }));
+rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
 
 const events = new EventTarget();
 const globals = {

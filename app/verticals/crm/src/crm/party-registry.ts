@@ -13,16 +13,16 @@ import type { Client } from '../../shared/domain/clients.ts';
 export const RegistryFailureSchema = Schema.Literals(['ambiguous', 'forbidden', 'unavailable']);
 export type RegistryFailure = typeof RegistryFailureSchema.Type;
 
-const ErrorStatusSchema = Schema.Struct({ status: Schema.Finite });
-const statusOf = (error: unknown): number | undefined => {
-  const decoded = Schema.decodeUnknownOption(ErrorStatusSchema)(error);
-  return Option.isSome(decoded) ? decoded.value.status : undefined;
-};
-
 type RegistryRequestFailure =
   | Effect.Error<ReturnType<typeof createCustomer>>
   | Effect.Error<ReturnType<typeof listCustomers>>
   | Schema.SchemaError;
+
+const ErrorStatusSchema = Schema.Struct({ status: Schema.Finite });
+const statusOf = (error: RegistryRequestFailure): number | undefined => {
+  const decoded = Schema.decodeUnknownOption(ErrorStatusSchema)(error);
+  return Option.isSome(decoded) ? decoded.value.status : undefined;
+};
 
 const failureOf = (error: RegistryRequestFailure): RegistryFailure => {
   if (Predicate.isTagged(error, 'CustomerCreateAmbiguous')) {

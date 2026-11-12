@@ -8,7 +8,7 @@ import { executeRecords as executeMerchandiseRecords } from '@app/merchandise/cl
 import { aiLogActionLabel, aiRiskLabel, aiStatusLabel } from '@app/shared-contracts/ai-approvals';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
-import { listEmployees } from '@app/workforce/clients/records';
+import { executeRecords as executeEmployeeRecords } from '@app/workforce/clients/records';
 import type { AiBatch, AiChange, AiLogEntry } from '@app/shared-contracts/ai-approvals';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Helmet } from '@modern-js/runtime/head';
@@ -29,6 +29,13 @@ import { usePipelineReferences } from '../prilezitosti/pipeline-references.ts';
 import { allRecordsInput, pipelineRecords, usePipelineRecordsSnapshot } from '../prilezitosti/pipeline-records.ts';
 import type { RecordsLoadError } from '../prilezitosti/pipeline-records.ts';
 import './review.css';
+
+/** Workforce employees for this view, read under its own correlation. */
+const listEmployees = () =>
+  Random.nextInt.pipe(
+    Effect.flatMap((nonce) => executeEmployeeRecords({}, `workforce:list:${nonce}`)),
+    Effect.map((response) => response.items),
+  );
 
 const i18nResources = {
   cs: { 'sales-pipeline': csResource },

@@ -6,7 +6,7 @@
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/sales-pipeline-client.ts",
     "./clients/apply-command": "./src/api/apply-command-action-client.ts",
-    "./clients/records": "./src/api/records-consumer.ts",
+    "./clients/records": "./src/api/records-client.ts",
     "./contracts/apply-command": "./shared/actions/apply-command.ts",
     "./contracts/records": "./shared/apis/records.ts",
     "./outbox/demo-sales-pipeline-search-rebuild-requested-v1": "./shared/outbox/demo-sales-pipeline-search-rebuild-requested-v1.ts",

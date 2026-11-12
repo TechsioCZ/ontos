@@ -1,7 +1,7 @@
 import { listOrders, listProducts } from '@app/merchandise/clients/records';
 import { listCustomers } from '@app/party-registry/api/client';
-import { listOpportunities } from '@app/sales-pipeline/clients/records';
-import { listEmployees } from '@app/workforce/clients/records';
+import { executeRecords as executeOpportunityRecords } from '@app/sales-pipeline/clients/records';
+import { executeRecords as executeEmployeeRecords } from '@app/workforce/clients/records';
 import { Effect, Match, Random } from 'effect';
 import type { SubjectId, SubjectKind } from '../../shared/apis/records.ts';
 
@@ -61,10 +61,11 @@ const readNames = (kind: SubjectKind, ids: readonly SubjectId[]) =>
       ),
     ),
     Match.when('employee', () =>
-      listEmployees().pipe(
-        Effect.map((items) =>
+      correlation('employee').pipe(
+        Effect.flatMap((id) => executeEmployeeRecords({}, id)),
+        Effect.map((response) =>
           toNames(
-            items,
+            response.items,
             (item) => item.id,
             (item) => item.fullName,
           ),
@@ -103,7 +104,7 @@ const readNames = (kind: SubjectKind, ids: readonly SubjectId[]) =>
     ),
     Match.when('opportunity', () =>
       correlation('opportunity').pipe(
-        Effect.flatMap((id) => listOpportunities({}, id)),
+        Effect.flatMap((id) => executeOpportunityRecords({}, id)),
         Effect.map((response) =>
           toNames(
             response.items,
