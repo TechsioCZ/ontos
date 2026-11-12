@@ -10,7 +10,7 @@
 # 2. The deploy sequence: migrations, the storefront without Tax, the release install, the seed, the first sync and
 #    Finance (`vat-deploy-sequence.test.mts`, which applies the migrations itself); then the release's BUILT Merchandise
 #    under the owners process, its module key handed over only on fd 3, reading Tax through the Shell.
-# 3. Through the REAL Shell (`apps/shell-super-app/tests/integration/vat-real-shell-native.test.ts`): the export's
+# 3. Through the REAL Shell (`vat-real-shell.test.mts`): the export's
 #    packaged Shell and its built Tax, Finance and Merchandise under the owners process, every key from the platform's
 #    provisioning on fd 3; each persona (owner, Skladník, e-shop administrator, Účetní, Obchodník) and the registered
 #    storefront client, on a migrated clone.
@@ -88,5 +88,5 @@ on_clone "$sequence_clone" ONTOS_VAT_DEPLOY_REHEARSAL=1 ONTOS_VAT_BUILT_APP="$bu
 # 3. Through the real Shell.
 psql_admin "create database ${shell_clone} template ${deployed}"
 migrate_clone "$shell_clone"
-(cd apps/shell-super-app && on_clone "$shell_clone" ONTOS_VAT_BUILT_APP="$built_app" \
-  pnpm exec rstest run --project integration --reporter=default tests/integration/vat-real-shell-native.test.ts)
+on_clone "$shell_clone" ONTOS_VAT_BUILT_APP="$built_app" \
+  pnpm exec rstest run --project integration --reporter=default scripts/integration/vat-real-shell.test.mts

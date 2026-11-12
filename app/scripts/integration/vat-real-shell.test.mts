@@ -12,7 +12,7 @@
  * administrator, who hold no Tax read, still get rates Tax confirmed; the same person asking Tax directly (the DPH page)
  * is decided on their own rights.
  *
- * Runs only inside the VAT deploy rehearsal: `ONTOS_VAT_BUILT_APP` names the app folder of the built export, and the
+ * Runs only inside the VAT deploy rehearsal (part 3 of `vat-deploy-rehearsal.sh`): `ONTOS_VAT_BUILT_APP` names the app folder of the built export, and the
  * integration environment names a fresh, migrated clone of the deployed database. `ONTOS_VAT_REAL_SHELL_REPORT`, when
  * set, receives the per-persona table.
  */
@@ -74,55 +74,46 @@ import {
   accessWorkloadBindings,
   accessWorkloadCompanyBindings,
   principals,
-} from '../../../../packages/core-runtime/src/db/schema.ts';
-import { makeTestTenantRoleAccess } from '../../../../packages/core-runtime/src/testing/tenant-access-roles.ts';
+} from '../../packages/core-runtime/src/db/schema.ts';
+import { makeTestTenantRoleAccess } from '../../packages/core-runtime/src/testing/tenant-access-roles.ts';
 import {
   deriveActiveApplicationCompositionSnapshot,
   encodeActiveApplicationCompositionSnapshot,
-} from '../../../../scripts/active-application-composition.mts';
-import { policyRoleKeys } from '../../../../scripts/demo/access-policy.mts';
-import { demoRoles, eshopDemoRoles } from '../../../../scripts/demo/permissions.mts';
-import {
-  runTaxBaseline,
-  toDeclareAnswer,
-  toRegimeObservation,
-  toRuleObservation,
-} from '../../../../scripts/demo/seed-tax-baseline.mts';
-import type { TaxBaselineCompanyPort, TaxBaselineTenantPort } from '../../../../scripts/demo/seed-tax-baseline.mts';
-import { taxModuleKey } from '../../../../scripts/demo/stage-tenant-modules.mts';
-import { encodeModuleCredentialHandover } from '../../../../scripts/zerops/module-credentials.mts';
-import {
-  LegalEntityIdSchema,
-  PrincipalIdSchema,
-  TenantIdSchema,
-} from '../../../../packages/core-runtime/src/access/ids.ts';
-import { lineVatOf } from '../../../../verticals/finance-billing/shared/domain/line-vat.ts';
-import { PlaceStorefrontOrderPayloadSchema } from '../../../../verticals/merchandise/shared/actions/apply-command.ts';
-import { ApplyCommandPayloadSchema } from '../../../../verticals/finance-billing/shared/actions/apply-command.ts';
-import { executeApplyCommandWithAuthorization } from '../../../../verticals/finance-billing/src/api/apply-command-action-client.ts';
-import { executeVatChoicesWithAuthorization } from '../../../../verticals/finance-billing/src/api/vat-choices-client.ts';
-import { executePlaceStorefrontOrderWithAuthorization } from '../../../../verticals/merchandise/src/api/place-storefront-order-action-client.ts';
-import { executeRecordsWithAuthorization } from '../../../../verticals/merchandise/src/api/records-client.ts';
-import { executeApplicableTaxRuleSetWithAuthorization } from '../../../../verticals/tax/src/api/applicable-tax-rule-set-client.ts';
-import { executeCreateTaxRuleWithAuthorization } from '../../../../verticals/tax/src/api/create-tax-rule-action-client.ts';
-import { executeDeclareSellerVatRegimeWithAuthorization } from '../../../../verticals/tax/src/api/declare-seller-vat-regime-action-client.ts';
-import { executeSellerVatRegimeAtInstantWithAuthorization } from '../../../../verticals/tax/src/api/seller-vat-regime-at-instant-client.ts';
-import { executeSellerVatRegimeHistoryWithAuthorization } from '../../../../verticals/tax/src/api/seller-vat-regime-history-client.ts';
-import { ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
-import { AuthConfig, parseAuthConfig } from '../../api/auth/config.ts';
-import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
-import { account, user } from '../../api/auth/db/schema.ts';
-import { moduleCredentialReleaseOf } from '../../api/auth/module-credential-attestation.ts';
-import { provisionModuleCredentials } from '../../api/auth/module-credential-provisioning.service.ts';
-import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
-import { startNativeHttpServer } from '../support/native-http-server.ts';
+} from '../active-application-composition.mts';
+import { policyRoleKeys } from '../demo/access-policy.mts';
+import { demoRoles, eshopDemoRoles } from '../demo/permissions.mts';
+import { runTaxBaseline, toDeclareAnswer, toRegimeObservation, toRuleObservation } from '../demo/seed-tax-baseline.mts';
+import type { TaxBaselineCompanyPort, TaxBaselineTenantPort } from '../demo/seed-tax-baseline.mts';
+import { taxModuleKey } from '../demo/stage-tenant-modules.mts';
+import { encodeModuleCredentialHandover } from '../zerops/module-credentials.mts';
+import { LegalEntityIdSchema, PrincipalIdSchema, TenantIdSchema } from '../../packages/core-runtime/src/access/ids.ts';
+import { lineVatOf } from '../../verticals/finance-billing/shared/domain/line-vat.ts';
+import { PlaceStorefrontOrderPayloadSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
+import { ApplyCommandPayloadSchema } from '../../verticals/finance-billing/shared/actions/apply-command.ts';
+import { executeApplyCommandWithAuthorization } from '../../verticals/finance-billing/src/api/apply-command-action-client.ts';
+import { executeVatChoicesWithAuthorization } from '../../verticals/finance-billing/src/api/vat-choices-client.ts';
+import { executePlaceStorefrontOrderWithAuthorization } from '../../verticals/merchandise/src/api/place-storefront-order-action-client.ts';
+import { executeRecordsWithAuthorization } from '../../verticals/merchandise/src/api/records-client.ts';
+import { executeApplicableTaxRuleSetWithAuthorization } from '../../verticals/tax/src/api/applicable-tax-rule-set-client.ts';
+import { executeCreateTaxRuleWithAuthorization } from '../../verticals/tax/src/api/create-tax-rule-action-client.ts';
+import { executeDeclareSellerVatRegimeWithAuthorization } from '../../verticals/tax/src/api/declare-seller-vat-regime-action-client.ts';
+import { executeSellerVatRegimeAtInstantWithAuthorization } from '../../verticals/tax/src/api/seller-vat-regime-at-instant-client.ts';
+import { executeSellerVatRegimeHistoryWithAuthorization } from '../../verticals/tax/src/api/seller-vat-regime-history-client.ts';
+import { ApiKeyService, makeApiKeyService } from '../../apps/shell-super-app/api/auth/api-key-service.ts';
+import { AuthConfig, parseAuthConfig } from '../../apps/shell-super-app/api/auth/config.ts';
+import { AuthDatabase, makeAuthDatabase } from '../../apps/shell-super-app/api/auth/db/client.ts';
+import { account, user } from '../../apps/shell-super-app/api/auth/db/schema.ts';
+import { moduleCredentialReleaseOf } from '../../apps/shell-super-app/api/auth/module-credential-attestation.ts';
+import { provisionModuleCredentials } from '../../apps/shell-super-app/api/auth/module-credential-provisioning.service.ts';
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../apps/shell-super-app/api/database-identity-enrollment.ts';
+import { startNativeHttpServer } from '../../apps/shell-super-app/tests/support/native-http-server.ts';
 import {
   allocateLoopbackPort,
   PackagedOwnerStartupError,
   startHostedOwnerWithHandover,
   startPackagedApplication,
-} from '../support/server-owner-relay-native-fixture.ts';
-import { makeShellTestAuthentication } from '../support/shell-authentication.ts';
+} from '../../apps/shell-super-app/tests/support/server-owner-relay-native-fixture.ts';
+import { makeShellTestAuthentication } from '../../apps/shell-super-app/tests/support/shell-authentication.ts';
 
 const SHELL_API = '/shell-super-app-api';
 const MERCHANDISE_API = '/merchandise-api';
@@ -130,6 +121,10 @@ const TAX_API = '/tax-api';
 const FINANCE_API = '/finance-billing-api';
 /** The registered storefront client that may stand as the subject of Merchandise's Tax reads. */
 const STOREFRONT_WORKLOAD = 'demo.storefront-client';
+/** Merchandise's topology app id. */
+const MERCHANDISE_APP = 'merchandise';
+const FINANCE_APP = 'finance-billing';
+const TAX_APP = 'tax';
 const STANDARD = 'cz.vat.standard';
 const MERCHANDISE_MODULE = 'demo.merchandise';
 const FINANCE_MODULE = 'finance.billing';
@@ -140,9 +135,9 @@ const TAX_RATE_READS = [
   'commerce.tax.seller-vat-regime.read-at-instant',
 ] as const;
 
-const authorizationCatalogUrl = new URL('../../../../topology/authorization-catalog.json', import.meta.url);
+const authorizationCatalogUrl = new URL('../../topology/authorization-catalog.json', import.meta.url);
 const transitionFixtureUrl = new URL(
-  '../../../../verticals/merchandise/tests/fixtures/vat-transition-pre-migration.json',
+  '../../verticals/merchandise/tests/fixtures/vat-transition-pre-migration.json',
   import.meta.url,
 );
 const MERCHANDISE_TABLES = [
@@ -340,7 +335,7 @@ type ShellFixture = Effect.Success<ReturnType<typeof makeShellFixture>>;
 /** A hosted owner as `startHostedOwnerWithHandover` returns it. */
 type HostedOwner = Effect.Success<ReturnType<typeof startHostedOwnerWithHandover>>;
 /** The owners this release serves through the owners process. */
-const HostedAppIdSchema = Schema.Literals(['finance-billing', 'merchandise', 'tax']);
+const HostedAppIdSchema = Schema.Literals([FINANCE_APP, MERCHANDISE_APP, TAX_APP]);
 type HostedAppId = typeof HostedAppIdSchema.Type;
 
 /**
@@ -421,8 +416,8 @@ const setUpScenario = Effect.fn('VatRealShell.setUp')(function* setUpScenario(
       shellGatewayBaseUrl: `${fixture.origin}${SHELL_API}`,
       workspaceDirectory: exportApp,
     });
-  const tax = yield* hosted('tax');
-  const finance = yield* hosted('finance-billing');
+  const tax = yield* hosted(TAX_APP);
+  const finance = yield* hosted(FINANCE_APP);
   children.push(tax.child, finance.child);
   const observe = Effect.fn('VatRealShell.observe')(function* observe(url: string) {
     const response = yield* client.get(url, { headers: { 'cache-control': 'no-cache' } });
@@ -436,19 +431,15 @@ const setUpScenario = Effect.fn('VatRealShell.setUp')(function* setUpScenario(
       contract: yield* observe(`${origin}${ONTOS_MODULE_CONTRACT_PATH}`),
     };
     // Tax is API-only: it serves no federation manifest, so the release records none for it.
-    return appId === 'tax' ? module : { ...module, federationManifest: yield* observe(`${origin}/mf-manifest.json`) };
+    return appId === TAX_APP ? module : { ...module, federationManifest: yield* observe(`${origin}/mf-manifest.json`) };
   });
   // Merchandise's first process only serves what the release records of it; every persona gets a fresh one.
   const merchandiseModule = yield* Effect.scoped(
-    hosted('merchandise').pipe(Effect.flatMap((merchandise) => moduleOf('merchandise', merchandise.origin))),
+    hosted(MERCHANDISE_APP).pipe(Effect.flatMap((merchandise) => moduleOf(MERCHANDISE_APP, merchandise.origin))),
   );
   const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
     environment: 'development',
-    modules: [
-      merchandiseModule,
-      yield* moduleOf('tax', tax.origin),
-      yield* moduleOf('finance-billing', finance.origin),
-    ],
+    modules: [merchandiseModule, yield* moduleOf(TAX_APP, tax.origin), yield* moduleOf(FINANCE_APP, finance.origin)],
     observedAt: yield* DateTime.now,
     shell: {
       federationManifest: yield* observe(`${shell.origin}/mf-manifest.json`),
@@ -521,12 +512,12 @@ const setUpScenario = Effect.fn('VatRealShell.setUp')(function* setUpScenario(
     Effect.provideService(AuthDatabase, fixture.persistence),
   );
   const provisioned = yield* provisionModuleCredentials({
-    appIds: ['merchandise', 'finance-billing'],
+    appIds: [MERCHANDISE_APP, FINANCE_APP],
     bootId: yield* uuid,
     hostId: 'vat-real-shell-native',
     operationId: yield* uuid,
     release: moduleCredentialReleaseOf({ composition: approved.composition, contracts: approved.composition.modules }),
-    workloads: new Map([['merchandise', [STOREFRONT_WORKLOAD]]]),
+    workloads: new Map([[MERCHANDISE_APP, [STOREFRONT_WORKLOAD]]]),
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -555,7 +546,7 @@ const setUpScenario = Effect.fn('VatRealShell.setUp')(function* setUpScenario(
     );
     expect(taken).toBe(appId);
   });
-  yield* handOver(finance, 'finance-billing');
+  yield* handOver(finance, FINANCE_APP);
 
   /** A person signed in to the Shell: the session cookie the browser holds. */
   const signIn = Effect.fn('VatRealShell.signIn')(function* signIn(email: string) {
@@ -627,7 +618,7 @@ const seedTax = Effect.fn('VatRealShell.seedTax')(function* seedTax(
       options: { readonly baseUrl: string; readonly compositionRevision: string },
     ) => Effect.Effect<A, E>,
   ) =>
-    scenario.sessionContext(ownerCookie, 'tax').pipe(
+    scenario.sessionContext(ownerCookie, TAX_APP).pipe(
       Effect.flatMap((authorization) =>
         run(authorization, { baseUrl: `${scenario.tax.origin}${TAX_API}`, compositionRevision: scenario.revision }),
       ),
@@ -735,8 +726,8 @@ const freshMerchandise = (
 ): Effect.Effect<HostedOwner, unknown, Scope.Scope | Effect.Services<ReturnType<Scenario['hosted']>>> =>
   Effect.acquireRelease(Scope.make(), Scope.close).pipe(
     Effect.flatMap((attempt) =>
-      scenario.hosted('merchandise').pipe(
-        Effect.tap((merchandise) => scenario.handOver(merchandise, 'merchandise')),
+      scenario.hosted(MERCHANDISE_APP).pipe(
+        Effect.tap((merchandise) => scenario.handOver(merchandise, MERCHANDISE_APP)),
         Scope.provide(attempt),
         // A failed attempt is stopped before the next one starts, so it never keeps the port.
         Effect.tapError(() => Scope.close(attempt, Exit.void)),
@@ -760,7 +751,7 @@ const staffRead = Effect.fn('VatRealShell.staffRead')(function* staffRead(
   const merchandise = yield* freshMerchandise(scenario);
   const before = yield* syncedAtOf(scenario);
   const since = yield* databaseNow(scenario);
-  const read = Effect.all([scenario.sessionContext(cookie, 'merchandise'), scenario.uuid]).pipe(
+  const read = Effect.all([scenario.sessionContext(cookie, MERCHANDISE_APP), scenario.uuid]).pipe(
     Effect.flatMap(([authorization, correlation]) =>
       executeRecordsWithAuthorization(
         { view: { limit: 0, ordersLimit: 0, summary: true } },
@@ -806,7 +797,7 @@ const storefrontOrder = Effect.fn('VatRealShell.storefrontOrder')(function* stor
   const before = yield* syncedAtOf(scenario);
   const since = yield* databaseNow(scenario);
   const issued = yield* issueApiKeyGatewayContext(
-    { audience: 'merchandise', compositionRevision: scenario.revision, legalEntityId: scenario.companyId },
+    { audience: MERCHANDISE_APP, compositionRevision: scenario.revision, legalEntityId: scenario.companyId },
     {
       apiKey: scenario.storefrontKey,
       baseUrl: `${scenario.fixture.origin}${SHELL_API}`,
@@ -880,19 +871,19 @@ const financePersona = Effect.fn('VatRealShell.financePersona')(function* financ
   const taxOptions = { baseUrl: `${scenario.tax.origin}${TAX_API}`, compositionRevision: scenario.revision };
   const history = yield* executeSellerVatRegimeHistoryWithAuthorization(
     {},
-    yield* scenario.sessionContext(cookie, 'tax'),
+    yield* scenario.sessionContext(cookie, TAX_APP),
     yield* scenario.uuid,
     taxOptions,
   ).pipe(Effect.result);
   const rules = yield* executeApplicableTaxRuleSetWithAuthorization(
     { jurisdiction: 'CZ_DOMESTIC', taxClassificationCode: STANDARD, taxRelevantTime: yield* DateTime.now },
-    yield* scenario.sessionContext(cookie, 'tax'),
+    yield* scenario.sessionContext(cookie, TAX_APP),
     yield* scenario.uuid,
     taxOptions,
   ).pipe(Effect.result);
   const choices = yield* executeVatChoicesWithAuthorization(
     { on: DateTime.formatIsoDateUtc(yield* DateTime.now) },
-    yield* scenario.sessionContext(cookie, 'finance-billing'),
+    yield* scenario.sessionContext(cookie, FINANCE_APP),
     yield* scenario.uuid,
     { baseUrl: `${scenario.finance.origin}${FINANCE_API}`, compositionRevision: scenario.revision },
   ).pipe(Effect.result);
@@ -919,7 +910,7 @@ const financePersona = Effect.fn('VatRealShell.financePersona')(function* financ
           expectedRevision: 0,
         }).pipe(
           Effect.flatMap((payload) =>
-            Effect.all([scenario.sessionContext(cookie, 'finance-billing'), scenario.uuid, scenario.uuid]).pipe(
+            Effect.all([scenario.sessionContext(cookie, FINANCE_APP), scenario.uuid, scenario.uuid]).pipe(
               Effect.flatMap(([authorization, correlation, idempotencyKey]) =>
                 executeApplyCommandWithAuthorization(payload, authorization, correlation, {
                   baseUrl: `${scenario.finance.origin}${FINANCE_API}`,
