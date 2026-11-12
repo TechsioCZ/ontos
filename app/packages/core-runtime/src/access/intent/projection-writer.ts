@@ -839,8 +839,9 @@ const reconcileUnderFence = Effect.fn('AccessProjectionWriter.reconcileUnderFenc
  * protects: writes. Every protected Action locks the fence and runs only on a `Ready` one, so no Action commits a
  * change, and no other projection writes, against a graph that may be half-written. What it does not protect: reads.
  * Read and inspection gates do not check the fence (`bindLiveActionAccessGate` adds currentness for Actions only), so
- * reads keep answering from the graph as it is until a reconcile completes; the compiler sends revocations before
- * grants, so a half-written graph can only lack a grant being added, never keep a revoked one beside it. The fence
+ * reads keep answering from the graph as it is until a reconcile completes. The compiler orders a projection so that
+ * revocations land before grants (new suspensions first, lifted suspensions last: `projectionWriteBatches`), so a
+ * half-written graph can only lack a grant being added, never keep a revoked one beside it. The fence
  * stays closed until the next reconcile (the fence sweeper, a deploy's activation, any intent write) takes it over
  * once this operation's lease lapsed (an engine write it sent may still be under way until its deadline passes), and
  * opens it only on a completed projection. A committed

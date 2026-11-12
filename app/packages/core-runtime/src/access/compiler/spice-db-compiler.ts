@@ -85,6 +85,63 @@ export const makeAccessProjectionTransport = (
   return Object.freeze(transport);
 };
 
+/**
+ * The relations whose tuple takes access away: each is the right-hand side of an exclusion in the v2 schema
+ * (`permission access = member - suspended`). Adding such a tuple revokes and deleting it grants, the opposite of every
+ * other managed relation. A schema test fails when an exclusion appears that is not listed here.
+ */
+export const SUBTRACTIVE_RELATIONS: readonly { readonly relation: string; readonly resourceType: string }[] = [
+  { relation: 'suspended', resourceType: 'access_tenant' },
+  { relation: 'suspended', resourceType: 'access_legal_entity' },
+];
+
+const isSubtractive = (relationship: AccessRelationship): boolean =>
+  SUBTRACTIVE_RELATIONS.some(
+    ({ relation, resourceType }) => relationship.relation === relation && relationship.resourceType === resourceType,
+  );
+
+const updatesOf = (
+  relationships: readonly AccessRelationship[],
+  operation: v1.RelationshipUpdate_Operation,
+): readonly v1.RelationshipUpdate[] =>
+  relationships.map((relationship) =>
+    v1.RelationshipUpdate.create({ operation, relationship: toSpiceDbRelationship(relationship) }),
+  );
+
+/**
+ * A projection's updates in the order that never shows a reader more access than the old or the new intent gives,
+ * cut into batches the engine accepts. Revocations first, grants last:
+ *
+ * 1. new suspensions (a TOUCH of a subtractive relation revokes),
+ * 2. every other deletion (revokes),
+ * 3. every other touch (grants),
+ * 4. lifted suspensions (a DELETE of a subtractive relation grants).
+ *
+ * A reader between two batches may be denied a right that is being granted, never keep a revoked one beside a new one.
+ */
+export const projectionWriteBatches = (diff: ProjectionDiff): readonly (readonly v1.RelationshipUpdate[])[] => {
+  const { DELETE, TOUCH } = v1.RelationshipUpdate_Operation;
+  const deletions = diff.units.flatMap((unitDiff) => unitDiff.deletions);
+  const touches = diff.units.flatMap((unitDiff) => unitDiff.touches);
+  const updates = [
+    ...updatesOf(touches.filter(isSubtractive), TOUCH),
+    ...updatesOf(
+      deletions.filter((relationship) => !isSubtractive(relationship)),
+      DELETE,
+    ),
+    ...updatesOf(
+      touches.filter((relationship) => !isSubtractive(relationship)),
+      TOUCH,
+    ),
+    ...updatesOf(deletions.filter(isSubtractive), DELETE),
+  ];
+  const batches: (readonly v1.RelationshipUpdate[])[] = [];
+  for (let index = 0; index < updates.length; index += ACCESS_PROJECTION_MAX_UPDATES_PER_WRITE) {
+    batches.push(updates.slice(index, index + ACCESS_PROJECTION_MAX_UPDATES_PER_WRITE));
+  }
+  return batches;
+};
+
 export interface ProjectionQueryOptions {
   /** Units whose intent is gone; their tuples are deleted by the same write. */
   readonly removedUnits?: readonly ProjectionUnitKey[];
@@ -244,38 +301,16 @@ export const makeAccessProjectionCompiler = (transport: AccessProjectionTranspor
   });
 
   /**
-   * The whole difference, revocations first. Reads never wait on the tenant's fence, so they can observe a projection
-   * half-written: every DELETE is therefore sent before any TOUCH, and a reader meanwhile may be denied a right that is
-   * being granted, but never sees a revoked right still standing beside a new one. One request is atomic in the
-   * engine, so a difference that fits in one request (most do) is written at once; a larger one is sent in batches
-   * the engine accepts, deletions filling the first. A `TOUCH` replaces content, never deletes.
+   * The whole difference, in the order that never widens access, sent in batches the engine accepts. One request is
+   * atomic in the engine, so a difference that fits in one request (most do) is written at once; a larger one is sent
+   * batch by batch, and reads (which never wait on the tenant's fence) can observe it half-written. See
+   * `projectionWriteBatches` for the order. A `TOUCH` replaces content, never deletes.
    */
   const writeDiff = (
     diff: ProjectionDiff,
     beforeWrite: Effect.Effect<void, readonly AccessProjectionError[]>,
   ): Effect.Effect<Option.Option<string>, readonly AccessProjectionError[]> => {
-    const updates = [
-      ...diff.units.flatMap((unitDiff) =>
-        unitDiff.deletions.map((relationship) =>
-          v1.RelationshipUpdate.create({
-            operation: v1.RelationshipUpdate_Operation.DELETE,
-            relationship: toSpiceDbRelationship(relationship),
-          }),
-        ),
-      ),
-      ...diff.units.flatMap((unitDiff) =>
-        unitDiff.touches.map((relationship) =>
-          v1.RelationshipUpdate.create({
-            operation: v1.RelationshipUpdate_Operation.TOUCH,
-            relationship: toSpiceDbRelationship(relationship),
-          }),
-        ),
-      ),
-    ];
-    const batches: (readonly v1.RelationshipUpdate[])[] = [];
-    for (let index = 0; index < updates.length; index += ACCESS_PROJECTION_MAX_UPDATES_PER_WRITE) {
-      batches.push(updates.slice(index, index + ACCESS_PROJECTION_MAX_UPDATES_PER_WRITE));
-    }
+    const batches = projectionWriteBatches(diff);
     return Effect.forEach(
       batches,
       (batch) =>
