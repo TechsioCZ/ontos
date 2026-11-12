@@ -37,7 +37,9 @@ const fixture = Effect.fn('CurrentActionFixture.make')(function* fixture(
 ) {
   const database = yield* makeTestDatabase((sql, parameters) => {
     if (sql.includes('current_setting')) {
-      return Effect.succeed([{ legal_entity_id: scope.legalEntityId, tenant_id: scope.tenantId }]);
+      return Effect.succeed([
+        { legal_entity_id: scope.legalEntityId, role: 'ontos_runtime', tenant_id: scope.tenantId },
+      ]);
     }
     if (sql.includes('"core"."action_invocations"')) {
       return readRows(sql, parameters);

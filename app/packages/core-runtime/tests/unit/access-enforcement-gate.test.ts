@@ -1033,7 +1033,12 @@ it.effect(
           correlationId: 'processing-marker-gate',
           legalEntityId: uid(2),
         });
-        const { gate } = harness({ kinds: kindSource('system'), workloadKeys: [workloadKey] });
+        // The merged gate pins a standalone workload to the companies its binding declares (D6).
+        const { gate } = harness({
+          declaredCompanies: [uid(2)],
+          kinds: kindSource('system'),
+          workloadKeys: [workloadKey],
+        });
         const decision = yield* gate.decide({
           carrier: {
             accessDeclaration: declaration,

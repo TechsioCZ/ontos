@@ -129,14 +129,17 @@ for (const [audience, role, gatewayGrant] of [
         audience,
       });
       const statements: { readonly params: readonly unknown[]; readonly sql: string }[] = [];
-      const executor = yield* makeTestDatabase((statement, params) => {
-        statements.push({ params, sql: statement });
-        return Effect.succeed(
-          statement.includes('from "core"."tenants"')
-            ? []
-            : [{ legal_entity_id: '', role, tenant_id: principal.tenantId }],
-        );
-      });
+      const executor = yield* makeTestDatabase(
+        (statement, params) => {
+          statements.push({ params, sql: statement });
+          return Effect.succeed(
+            statement.includes('from "core"."tenants"')
+              ? []
+              : [{ legal_entity_id: '', role, tenant_id: principal.tenantId }],
+          );
+        },
+        { currentRole: role },
+      );
 
       yield* makeOperationalScopeRepository({ executor }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).load(principal);
 
@@ -158,8 +161,12 @@ for (const [audience, role, gatewayGrant] of [
     }),
   );
 
+  // Main's design: the shared runtime login installs a genuine gateway context with its own session authority
+  // (scoped-transaction.test.ts), so only a foreign gateway login is a wrong authority role.
   for (const [refusal, installedRole, installedTenant, installedCompany] of [
-    ['wrong authority role', gatewayGrant ? 'ontos_runtime' : 'party_registry_runtime', scopedPrincipal.tenantId, ''],
+    ...(gatewayGrant
+      ? []
+      : [['wrong authority role', 'party_registry_runtime', scopedPrincipal.tenantId, ''] as const]),
     ['unknown role', 'unknown_runtime', scopedPrincipal.tenantId, ''],
     ['foreign tenant', role, '20000000-0000-4000-8000-000000000002', ''],
     ['unexpected company', role, scopedPrincipal.tenantId, '30000000-0000-4000-8000-000000000002'],
@@ -171,21 +178,28 @@ for (const [audience, role, gatewayGrant] of [
           audience,
         });
         const statements: string[] = [];
-        const executor = yield* makeTestDatabase((statement) => {
-          statements.push(statement);
-          return Effect.succeed([
-            { legal_entity_id: installedCompany, role: installedRole, tenant_id: installedTenant },
-          ]);
-        });
+        const executor = yield* makeTestDatabase(
+          (statement) => {
+            statements.push(statement);
+            return Effect.succeed([
+              { legal_entity_id: installedCompany, role: installedRole, tenant_id: installedTenant },
+            ]);
+          },
+          { currentRole: installedRole },
+        );
         const failure = yield* makeOperationalScopeRepository({ executor }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT)
           .load(principal)
           .pipe(Effect.flip);
         expect(Predicate.isTagged(failure, 'OperationContextUnavailable')).toBe(true);
-        expect(statements).toHaveLength(4);
+        // The connected role is probed first: a login with another authority is refused before any install.
+        const refusedAtRole = installedRole !== role;
+        expect(statements).toHaveLength(refusedAtRole ? 2 : 4);
         expect(statements[0]).toBe('BEGIN');
-        expect(statements[1]).toContain(gatewayGrant ? 'trust.establish_gateway_scope' : 'set_config');
-        expect(statements[2]).toContain('current_user::text as role');
-        expect(statements[3]).toBe('ROLLBACK');
+        if (!refusedAtRole) {
+          expect(statements[1]).toContain(gatewayGrant ? 'trust.establish_gateway_scope' : 'set_config');
+          expect(statements[2]).toContain('current_user::text as role');
+        }
+        expect(statements.at(-1)).toBe('ROLLBACK');
         expect(statements.some((statement) => statement.includes('from "core"."tenants"'))).toBe(false);
       }),
     );

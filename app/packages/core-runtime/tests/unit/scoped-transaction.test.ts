@@ -306,17 +306,20 @@ for (const installer of ['scope', 'timestamp'] as const) {
         const enrollment = defineDatabaseIdentityEnrollment([FIXTURE_DESCRIPTOR, ledgerDescriptor]);
         const statements: string[] = [];
         const scope = gatewayScope(audience);
-        const database = yield* makeTestDatabase((statement) => {
-          statements.push(statement);
-          return Effect.succeed([
-            {
-              legal_entity_id: '',
-              operation_at: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
-              role: connectedRole,
-              tenant_id: tenantId,
-            },
-          ]);
-        });
+        const database = yield* makeTestDatabase(
+          (statement) => {
+            statements.push(statement);
+            return Effect.succeed([
+              {
+                legal_entity_id: '',
+                operation_at: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
+                role: connectedRole,
+                tenant_id: tenantId,
+              },
+            ]);
+          },
+          { currentRole: connectedRole },
+        );
         const result = yield* Effect.exit(
           database.transaction((transaction) =>
             installer === 'scope'
@@ -325,7 +328,11 @@ for (const installer of ['scope', 'timestamp'] as const) {
           ),
         );
         expectOperationContextUnavailable(result);
-        expect(statements.some((statement) => statement.includes('trust.establish_gateway_scope'))).toBe(true);
+        // Main's installer checks the connected role before any grant; the publication-locked timestamp installer
+        // attempts the grant and refuses at verification. Either way a foreign owner's login never gets the scope.
+        expect(statements.some((statement) => statement.includes('trust.establish_gateway_scope'))).toBe(
+          installer === 'timestamp',
+        );
         expect(statements.some((statement) => statement.includes('set_config'))).toBe(false);
         expect(statements.at(-1)).toBe('ROLLBACK');
       }),

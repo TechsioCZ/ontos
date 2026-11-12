@@ -346,6 +346,10 @@ const makeHarness = Effect.fn(function* makeHarness(
     });
   };
   const executeSql = (text: string, values: readonly unknown[]) => {
+    // Main's scope authority probes the connected role first; this script connects as the row's role.
+    if (text === 'select current_user::text as role') {
+      return Effect.succeed([{ role: databaseScopeRow().role }]);
+    }
     if (text === 'COMMIT' && options.transactionSettlementFailure !== undefined) {
       options.sqlEvents?.push(text);
       return Effect.fail(options.transactionSettlementFailure);
