@@ -242,6 +242,8 @@ type A8Answer = typeof A8AnswerSchema.Type;
 
 interface Setup {
   readonly a8?: A8Answer;
+  /** Evidence already stored before the notification, e.g. a dispatch response the executor left pending. */
+  readonly evidence?: readonly StoredProviderEvidence[];
   readonly findings: (request: GatewayLookupRequest) => readonly ProviderFindingResult[];
   readonly notifications: readonly StoredProviderNotification[];
   /** The executor already pinned on every evidence row, as a committed earlier attempt left it. */
@@ -426,7 +428,12 @@ const layerFor = (setup: Setup, world: World) => {
         yield* Ref.set(world.evidence, [...rows, stored]);
         return stored;
       }),
-    listPending: unexpected('listPending'),
+    listPending: ({ operationId }) =>
+      Ref.get(world.evidence).pipe(
+        Effect.map((rows) =>
+          rows.filter((row) => row.operationId === operationId && row.submissionState === 'PENDING_SUBMISSION'),
+        ),
+      ),
     markSubmission: ({ evidenceId, outcome }) =>
       Effect.gen(function* mark() {
         const rows = yield* Ref.get(world.evidence);
@@ -495,7 +502,7 @@ const run = (setup: Setup, notificationId: string) =>
     const world: World = {
       acquired: yield* Ref.make<readonly GatewayDelegationRequest[]>([]),
       correlated: yield* Ref.make<readonly string[]>([]),
-      evidence: yield* Ref.make<readonly StoredProviderEvidence[]>([]),
+      evidence: yield* Ref.make<readonly StoredProviderEvidence[]>(setup.evidence ?? []),
       lookups: yield* Ref.make<readonly GatewayLookupRequest[]>([]),
       notifications: yield* Ref.make(setup.notifications),
       records: yield* Ref.make(setup.records),
@@ -902,6 +909,44 @@ describe('process-provider-notification', () => {
       expect((yield* Ref.get(world.evidence)).map((row) => row.submissionState)).toEqual(['PENDING_SUBMISSION']);
       const [notification] = yield* Ref.get(world.notifications);
       expect(notification?.state).toBe('SUBMISSION_HELD');
+    }),
+  );
+  it.effect('#1157 a refund notification also submits the dispatch response the executor left pending', () =>
+    Effect.gen(function* drainsDispatchEvidence() {
+      const confirmed = findingOf({ factKind: 'REFUND_CONFIRMED', kind: 'REFUND', refs: [REFUND] });
+      // The executor's own statement of the same refund: another occurrence than the notification lookup's.
+      const stored = Schema.decodeUnknownSync(StoredProviderEvidenceSchema)({
+        bindingId: bindingA,
+        evidence: {
+          ...Option.getOrThrow(confirmed.evidence),
+          sourceOccurrenceId: `stripe:dispatch:re_test_notification:${refundId}`,
+        },
+        evidenceId: 'ffffffff-0000-4000-8000-000000000000',
+        notificationId: Option.none(),
+        operationId: refundId,
+        origin: 'DISPATCH_RESPONSE',
+        paymentId,
+        receivedAt: DateTime.makeUnsafe(RECEIVED_AT),
+        recordedAt: DateTime.makeUnsafe(RECEIVED_AT),
+        submissionState: 'PENDING_SUBMISSION',
+        verifiedAt: DateTime.makeUnsafe(RECEIVED_AT),
+      });
+      const { result, world } = yield* run(
+        {
+          evidence: [stored],
+          findings: () => [confirmed],
+          notifications: [notificationOf({ id: N1, refs: [REFUND] })],
+          records: [recordOf({ kind: 'REFUND', payment: PI, refund: REFUND })],
+        },
+        N1,
+      );
+      expect(result).toBe(`SETTLED ${refundId} SUBMITTED [ACCEPTED]`);
+      // A10 refuses recovery of the now definitive refund, so this delivery is the dispatch evidence's only path.
+      expect((yield* Ref.get(world.evidence)).map((row) => [row.origin, row.submissionState])).toEqual([
+        ['DISPATCH_RESPONSE', 'ACCEPTED'],
+        ['NOTIFICATION_LOOKUP', 'ACCEPTED'],
+      ]);
+      expect(yield* Ref.get(world.statements)).toHaveLength(2);
     }),
   );
 });

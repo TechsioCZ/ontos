@@ -111,7 +111,11 @@ export const GatewayReconciliationDebtRowSchema = Schema.Struct({
   operationKind: PaymentOperationKindSchema,
   paymentId: PaymentIdSchema,
   pendingEvidenceCount: countSchema,
-  recommendedTrigger: GatewayReconciliationTriggerSchema,
+  /**
+   * Absent once the Payment outcome is definitive: recovery refuses a resolved operation, so the evidence still
+   * pending there (refused by the governed path, or pinned to another executor) needs a person.
+   */
+  recommendedTrigger: Schema.optionalKey(GatewayReconciliationTriggerSchema),
 });
 export type GatewayReconciliationDebtRow = typeof GatewayReconciliationDebtRowSchema.Type;
 

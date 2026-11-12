@@ -56,7 +56,7 @@ interface GopayAccessToken {
   readonly lifetime: Duration.Duration;
 }
 
-/** Cache key, compared structurally. Environment and secret ref are fixed by the binding revision. */
+/** Cache key: Effect 4's default Equal/Hash compare plain objects structurally. Environment and secret ref are fixed by the binding revision. */
 interface GopayTokenKey {
   readonly bindingId: string;
   readonly credentialRevision: number;

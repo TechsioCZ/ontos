@@ -403,6 +403,53 @@ const submitOne = Effect.fn('ProviderNotificationProcessor.submitOne')(function*
   return marked.submissionState === 'PENDING_SUBMISSION' ? decided.outcome : marked.submissionState;
 });
 
+/**
+ * Offers the operation's other pending evidence, never offered before (no pinned executor), to A8 after this
+ * notification's own rows, oldest first: e.g. a Stripe refund's dispatch response stays pending while the
+ * refund notification's lookup makes the operation definitive, after which A10 refuses any recovery. A denial
+ * or a refusal stops it and leaves the rest pending; it never changes this notification's own state.
+ */
+const submitOtherPending = Effect.fn('ProviderNotificationProcessor.submitOtherPending')(function* submitOtherPending(
+  context: CorrelationContext,
+  correlation: Correlation,
+  own: readonly StoredProviderEvidence[],
+  ownOutcomes: readonly ProviderEvidenceSubmissionOutcome[],
+) {
+  if (ownOutcomes.includes('DENIED')) {
+    return;
+  }
+  const evidenceStore = yield* ProviderEvidenceStore;
+  const { scope } = context.input;
+  const offered = new Set(own.map((row) => row.evidenceId));
+  const operationIds = [...new Set([correlation.record.operationId, ...own.map((row) => row.operationId)])];
+  const pending = yield* Effect.forEach(
+    operationIds,
+    (operationId) => evidenceStore.listPending({ operationId, scope }),
+    {
+      concurrency: 1,
+    },
+  );
+  const others = pending
+    .flat()
+    .filter((row) => !offered.has(row.evidenceId) && row.submissionExecutorPrincipalId === undefined);
+  yield* Effect.reduce(
+    others,
+    () => false,
+    (stopped, row) =>
+      stopped
+        ? Effect.succeed(true)
+        : submitOne(context, row).pipe(
+            Effect.map((outcome) => outcome === 'DENIED'),
+            Effect.catchTag('NotificationProcessingStopped', ({ reason }) =>
+              Effect.logInfo('The governed path refused earlier pending evidence; it stays pending').pipe(
+                Effect.annotateLogs({ evidenceId: row.evidenceId, reason }),
+                Effect.as(true),
+              ),
+            ),
+          ),
+  );
+});
+
 /** Processes one captured notification inside the worker's legal-entity scope. Idempotent per redelivery. */
 export const processProviderNotification = Effect.fn('ProviderNotificationProcessor.process')(function* process(
   input: ProcessProviderNotificationInput,
@@ -453,6 +500,7 @@ export const processProviderNotification = Effect.fn('ProviderNotificationProces
       appendEvidence(context, correlation).pipe(
         Effect.flatMap(({ evidenceConflict, stored }) =>
           Effect.forEach(stored, (row) => submitOne(context, row), { concurrency: 1 }).pipe(
+            Effect.tap((outcomes) => submitOtherPending(context, correlation, stored, outcomes)),
             Effect.flatMap((outcomes) => {
               const state = settledStateOf(outcomes, evidenceConflict);
               return transition(state, Option.some(correlation.record.operationId)).pipe(
