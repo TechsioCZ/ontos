@@ -203,6 +203,7 @@ const operationRow = (world: World, spec: OperationSpec & { cancelOperationExist
       (row) => row.operationKind === 'CANCEL_OR_VOID' && Option.contains(row.targetOperationId, spec.operationId),
     ),
     cancelOperationExists: spec.cancelOperationExists ?? false,
+    createdAt: '2020-01-01T00:00:00.000Z',
     currency: 'CZK',
     customerConfigurationId: 'customer-configuration-1',
     kind: spec.kind,
@@ -210,6 +211,11 @@ const operationRow = (world: World, spec: OperationSpec & { cancelOperationExist
     operationId: spec.operationId,
     outcome: spec.outcome ?? 'PENDING',
     paymentId: PAYMENT_ID,
+    provenance: {
+      actionInvocationId: '77777777-7777-4777-8777-777777777777',
+      actorPrincipalId: '77777777-7777-4777-8777-777777777777',
+      compositionRevision: 'd'.repeat(64),
+    },
   };
   return {
     result: spec.targetOperationId === undefined ? result : { ...result, targetOperationId: spec.targetOperationId },

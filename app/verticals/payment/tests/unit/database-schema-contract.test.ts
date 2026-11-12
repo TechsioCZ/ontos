@@ -3,6 +3,7 @@ import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Array as EffectArray, Order } from 'effect';
 
 import { PAYMENT_SCHEMA_NAME, PAYMENT_TABLE_INVENTORY, PAYMENT_TABLES } from '../../src/database/schema.ts';
+import { PSP_WORKER_ROUTINES } from '../../src/persistence/psp-worker-routines.ts';
 
 const configs = PAYMENT_TABLES.map((table) => getTableConfig(table));
 const byName = new Map(configs.map((config) => [config.name, config]));
@@ -144,5 +145,32 @@ describe('#1155/#1157/#1158 Gateway adapter database schema contract', () => {
         ?.uniqueConstraints.find((constraint) => constraint.getName() === 'payment_psp_notifications_delivery_uk')
         ?.columns.map((column) => column.name),
     ).toEqual(['tenant_id', 'legal_entity_id', 'binding_id', 'delivery_identity']);
+  });
+
+  it('#1158 evidence can pin one optional submission executor next to its submission columns', () => {
+    const columns = byName.get('psp_provider_evidence')?.columns ?? [];
+    const executor = columns.find((column) => column.name === 'submission_executor_principal_id');
+
+    expect(executor?.getSQLType()).toBe('uuid');
+    expect(executor?.notNull).toBe(false);
+    expect(columns.map((column) => column.name)).toEqual(
+      expect.arrayContaining(['submission_state', 'submitted_at', 'submitted_delivery_id', 'observation_id']),
+    );
+  });
+
+  it('#1158 workers reach the ledger only through scoped routines, each named once', () => {
+    const names = PSP_WORKER_ROUTINES.map((routine) => routine.name);
+
+    expect(new Set(names).size).toBe(names.length);
+    expect(names).toEqual(
+      expect.arrayContaining(['psp_read_operation_for_execution', 'psp_pin_evidence_submission_executor']),
+    );
+    for (const routine of PSP_WORKER_ROUTINES) {
+      expect(routine.schema).toBe(PAYMENT_SCHEMA_NAME);
+      expect(routine.parameters.slice(0, 2).map((parameter) => parameter.source)).toEqual([
+        'tenantId',
+        'legalEntityId',
+      ]);
+    }
   });
 });

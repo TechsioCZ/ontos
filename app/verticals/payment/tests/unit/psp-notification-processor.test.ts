@@ -472,7 +472,7 @@ const run = (setup: Setup, notificationId: string) =>
             setup.a8 === 'DELEGATION_REFUSED'
               ? Effect.fail(
                   new GatewayDelegationSourceError({
-                    reason: 'A current verified tenant-only worker delivery is required',
+                    reason: 'A current verified worker delivery in its declared company scope is required',
                   }),
                 )
               : Effect.void,

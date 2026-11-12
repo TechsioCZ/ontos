@@ -1529,6 +1529,11 @@ export const pspProviderEvidence = paymentSchema.table.withRLS(
     receivedAt: timestamp('received_at', { withTimezone: true }).notNull(),
     sourceOccurrenceId: text('source_occurrence_id').notNull(),
     sourceRevision: bigint('source_revision', { mode: 'number' }).notNull(),
+    /**
+     * The system principal Shell chose for the first governed submission attempt; write-once while pending,
+     * so every retry pins the same executor (`expectedPrincipalId`).
+     */
+    submissionExecutorPrincipalId: uuid('submission_executor_principal_id'),
     submissionState: text('submission_state').$type<ProviderEvidenceSubmissionState>().notNull(),
     submittedAt: timestamp('submitted_at', { withTimezone: true }),
     submittedDeliveryId: uuid('submitted_delivery_id'),

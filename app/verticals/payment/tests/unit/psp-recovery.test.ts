@@ -137,6 +137,7 @@ const operationRow = (overrides: OperationOverrides = {}) => {
     binding: bindingOf(overrides.family ?? 'STRIPE'),
     cancelDispatchExists: false,
     cancelOperationExists: false,
+    createdAt: '2020-01-01T00:00:00.000Z',
     currency: 'CZK',
     customerConfigurationId: 'customer-configuration-1',
     kind: overrides.kind ?? 'COLLECT',
@@ -144,6 +145,7 @@ const operationRow = (overrides: OperationOverrides = {}) => {
     operationId: overrides.operationId ?? operationId,
     outcome: overrides.outcome ?? 'INDETERMINATE',
     paymentId,
+    provenance: { actionInvocationId: invocationId, actorPrincipalId: invocationId, compositionRevision: revision },
   };
   return overrides.targetOperationId === undefined
     ? row

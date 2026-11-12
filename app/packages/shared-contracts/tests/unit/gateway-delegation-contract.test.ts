@@ -28,7 +28,7 @@ const crypto = Crypto.make({
   randomBytes: (size) => new Uint8Array(size).fill(1),
 });
 
-const makeWorkerContext = () =>
+const makeWorkerContext = (legalEntityScope: 'forbidden' | 'required' = 'forbidden') =>
   attestOutboxWorkerHandlerContext({
     attemptNumber: 1,
     claimId: 'worker-native-claim',
@@ -36,7 +36,7 @@ const makeWorkerContext = () =>
     consumerModuleKey: 'integration.source',
     deliveryId: '70000000-0000-4000-8000-000000000001',
     domainEventId: '70000000-0000-4000-8000-000000000002',
-    legalEntityScope: 'forbidden',
+    legalEntityScope,
     messageId: '70000000-0000-4000-8000-000000000003',
     producerModuleKey: 'integration.source',
     tenantId: principal.tenantId,
@@ -324,6 +324,53 @@ it.effect('preserves the recorded executor pin on the actual worker and admissio
         Match.orElse(() => Effect.void),
       );
     }
+  }),
+);
+
+it.effect('sends a company-scoped worker delivery only with its company for Shell to bind to the admission', () =>
+  Effect.gen(function* companyScopedWorkerWire() {
+    const legalEntityId = '50000000-0000-4000-8000-000000000001';
+    const requests: Request[] = [];
+    const acquire = (subject: Parameters<typeof acquireDelegatedGatewayContext>[0]['subject']) =>
+      acquireDelegatedGatewayContext(
+        { audience: 'party-registry', legalEntityScope: 'subject', requestCorrelation: 'company-worker-wire', subject },
+        crypto,
+      ).pipe(
+        Effect.provideService(ConfigProvider.ConfigProvider, configuration),
+        Effect.provideService(FetchHttpClient.Fetch, recordingFetch(compositionRevision, requests)),
+      );
+    const worker = { _tag: 'RegisteredWorkload' as const, declarationKey: 'party.registry.party.create' };
+
+    const unnamed = yield* Effect.flip(acquire({ ...worker, context: makeWorkerContext('required') }));
+    expect(Schema.is(GatewayDelegationSourceError)(unnamed)).toBe(true);
+    const copied = yield* Effect.flip(
+      acquire({ ...worker, context: { ...makeWorkerContext('required') }, legalEntityId }),
+    );
+    expect(Schema.is(GatewayDelegationSourceError)(copied)).toBe(true);
+    expect(requests).toHaveLength(0);
+
+    yield* acquire({ ...worker, context: makeWorkerContext('required'), legalEntityId });
+    expect(requests).toHaveLength(1);
+    const wire = yield* requestBodyOf(requests[0]);
+    expect(wire.legalEntityScope).toBe('subject');
+    expect(
+      Match.value(wire.subject).pipe(
+        Match.tag('RegisteredWorkload', (subject) => ({
+          claimId: subject.claimId,
+          deliveryId: subject.deliveryId,
+          legalEntityId: subject.legalEntityId,
+          tenantId: subject.tenantId,
+          workerKey: subject.workerKey,
+        })),
+        Match.orElse(() => null),
+      ),
+    ).toEqual({
+      claimId: 'worker-native-claim',
+      deliveryId: '70000000-0000-4000-8000-000000000001',
+      legalEntityId,
+      tenantId: principal.tenantId,
+      workerKey: 'integration.source.execute-job',
+    });
   }),
 );
 

@@ -207,8 +207,8 @@ CREATE TRIGGER payment_psp_notifications_transition BEFORE UPDATE ON payment.psp
 CREATE FUNCTION payment.guard_psp_evidence_insert() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, payment, pg_temp AS $$
 BEGIN
-  IF NEW.submission_state <> 'PENDING_SUBMISSION' THEN
-    RAISE EXCEPTION USING ERRCODE = '23514', CONSTRAINT = 'payment_psp_evidence_transition_ck', MESSAGE = 'Provider evidence starts pending submission';
+  IF NEW.submission_state <> 'PENDING_SUBMISSION' OR NEW.submission_executor_principal_id IS NOT NULL THEN
+    RAISE EXCEPTION USING ERRCODE = '23514', CONSTRAINT = 'payment_psp_evidence_transition_ck', MESSAGE = 'Provider evidence starts pending submission without an executor';
   END IF;
   RETURN NEW;
 END;
@@ -216,14 +216,26 @@ $$;
 --> statement-breakpoint
 CREATE TRIGGER payment_psp_evidence_insert BEFORE INSERT ON payment.psp_provider_evidence FOR EACH ROW EXECUTE FUNCTION payment.guard_psp_evidence_insert();
 --> statement-breakpoint
--- Evidence is append-only except its one PENDING_SUBMISSION -> terminal submission step.
+-- Evidence is append-only except two steps while it is PENDING_SUBMISSION: pinning the submission executor once
+-- (nothing else changes), and the one terminal submission step (the pinned executor never changes).
 CREATE FUNCTION payment.guard_psp_evidence_update() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, payment, pg_temp AS $$
 DECLARE
   submission_columns constant text[] := ARRAY['submission_state', 'observation_id', 'submitted_delivery_id', 'submitted_at'];
+  executor_column constant text := 'submission_executor_principal_id';
 BEGIN
-  IF OLD.submission_state <> 'PENDING_SUBMISSION' OR NEW.submission_state = 'PENDING_SUBMISSION'
-    OR (to_jsonb(NEW) - submission_columns) IS DISTINCT FROM (to_jsonb(OLD) - submission_columns)
+  IF OLD.submission_state <> 'PENDING_SUBMISSION'
+    OR NOT (
+      (
+        NEW.submission_state = 'PENDING_SUBMISSION' AND OLD.submission_executor_principal_id IS NULL
+        AND NEW.submission_executor_principal_id IS NOT NULL
+        AND (to_jsonb(NEW) - executor_column) IS NOT DISTINCT FROM (to_jsonb(OLD) - executor_column)
+      )
+      OR (
+        NEW.submission_state <> 'PENDING_SUBMISSION'
+        AND (to_jsonb(NEW) - submission_columns) IS NOT DISTINCT FROM (to_jsonb(OLD) - submission_columns)
+      )
+    )
   THEN
     RAISE EXCEPTION USING ERRCODE = '23514', CONSTRAINT = 'payment_psp_evidence_transition_ck', MESSAGE = 'Provider evidence is append-only';
   END IF;
@@ -319,6 +331,7 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, payment, pg_temp AS $$
     'recordedAt', payment.psp_utc_text(p_evidence.recorded_at),
     'sourceOccurrenceId', p_evidence.source_occurrence_id,
     'sourceRevision', p_evidence.source_revision,
+    'submissionExecutorPrincipalId', p_evidence.submission_executor_principal_id,
     'submissionState', p_evidence.submission_state,
     'submittedAt', payment.psp_utc_text(p_evidence.submitted_at),
     'submittedDeliveryId', p_evidence.submitted_delivery_id,
@@ -449,7 +462,8 @@ BEGIN
 END;
 $$;
 --> statement-breakpoint
--- Routine: the C16 operation and Payment facts the executor needs, and whether a CANCEL targets it.
+-- Routine: the C16 operation and Payment facts the executor needs, and whether a CANCEL targets it. The
+-- operation's creation time and original provenance let recovery check C16 lineage against the stored row.
 CREATE FUNCTION payment.psp_read_operation_for_execution(p_tenant_id uuid, p_legal_entity_id uuid, p_operation_id uuid)
 RETURNS TABLE(result jsonb)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
@@ -458,6 +472,7 @@ BEGIN
   RETURN QUERY
   SELECT jsonb_strip_nulls(jsonb_build_object(
     'amountMinor', operation.amount_minor,
+    'createdAt', payment.psp_utc_text(operation.created_at),
     'cancelDispatchExists', EXISTS (
       SELECT 1 FROM payment.psp_provider_dispatches AS cancel
       WHERE cancel.tenant_id = operation.tenant_id AND cancel.legal_entity_id = operation.legal_entity_id
@@ -476,7 +491,14 @@ BEGIN
     'outcome', operation.outcome,
     'paymentId', operation.payment_id,
     'targetOperationId', operation.target_operation_id
-  )) || jsonb_build_object('binding', operation.binding)
+  )) || jsonb_build_object(
+    'binding', operation.binding,
+    'provenance', jsonb_build_object(
+      'actionInvocationId', operation.action_invocation_id,
+      'actorPrincipalId', operation.actor_principal_id,
+      'compositionRevision', operation.composition_revision
+    )
+  )
   FROM payment.payment_operations AS operation
   JOIN payment.payments AS payment_row
     ON payment_row.tenant_id = operation.tenant_id AND payment_row.legal_entity_id = operation.legal_entity_id
@@ -1266,6 +1288,42 @@ BEGIN
 END;
 $$;
 --> statement-breakpoint
+-- Routine: pins the system principal Shell chose for the first submission attempt of a pending evidence row, so
+-- every retry asks Shell for exactly that executor. Write-once; another principal is CONFLICT executor_mismatch.
+CREATE FUNCTION payment.psp_pin_evidence_submission_executor(
+  p_tenant_id uuid,
+  p_legal_entity_id uuid,
+  p_evidence_id uuid,
+  p_principal_id uuid
+) RETURNS TABLE(result jsonb)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_evidence payment.psp_provider_evidence%ROWTYPE;
+BEGIN
+  PERFORM payment.psp_assert_worker_scope(p_tenant_id, p_legal_entity_id);
+  SELECT evidence.* INTO v_evidence FROM payment.psp_provider_evidence AS evidence
+  WHERE evidence.tenant_id = p_tenant_id AND evidence.legal_entity_id = p_legal_entity_id
+    AND evidence.evidence_id = p_evidence_id
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    result := jsonb_build_object('_tag', 'NOT_FOUND');
+  ELSIF v_evidence.submission_executor_principal_id = p_principal_id THEN
+    result := jsonb_build_object('_tag', 'UNCHANGED', 'record', payment.psp_evidence_json(v_evidence));
+  ELSIF v_evidence.submission_executor_principal_id IS NOT NULL THEN
+    result := jsonb_build_object('_tag', 'CONFLICT', 'reason', 'executor_mismatch', 'record', payment.psp_evidence_json(v_evidence));
+  ELSIF v_evidence.submission_state <> 'PENDING_SUBMISSION' OR p_principal_id IS NULL THEN
+    result := jsonb_build_object('_tag', 'CONFLICT', 'reason', 'illegal_transition', 'record', payment.psp_evidence_json(v_evidence));
+  ELSE
+    UPDATE payment.psp_provider_evidence AS evidence
+    SET submission_executor_principal_id = p_principal_id
+    WHERE evidence.evidence_id = v_evidence.evidence_id
+    RETURNING * INTO v_evidence;
+    result := jsonb_build_object('_tag', 'PINNED', 'record', payment.psp_evidence_json(v_evidence));
+  END IF;
+  RETURN NEXT;
+END;
+$$;
+--> statement-breakpoint
 CREATE FUNCTION payment.psp_read_notification(p_tenant_id uuid, p_legal_entity_id uuid, p_notification_id uuid)
 RETURNS TABLE(result jsonb)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
@@ -1373,6 +1431,7 @@ REVOKE ALL ON FUNCTION
   payment.psp_append_evidence(uuid, uuid, uuid, uuid, text, text, text, jsonb, bigint, text, text, bigint, timestamptz, timestamptz, text, jsonb, text, uuid, uuid, text, text, uuid),
   payment.psp_list_pending_evidence(uuid, uuid, uuid),
   payment.psp_mark_evidence_submission(uuid, uuid, uuid, text, uuid, uuid),
+  payment.psp_pin_evidence_submission_executor(uuid, uuid, uuid, uuid),
   payment.psp_read_notification(uuid, uuid, uuid),
   payment.psp_transition_notification(uuid, uuid, uuid, text, uuid, uuid)
 FROM PUBLIC;
@@ -1394,6 +1453,7 @@ GRANT EXECUTE ON FUNCTION
   payment.psp_append_evidence(uuid, uuid, uuid, uuid, text, text, text, jsonb, bigint, text, text, bigint, timestamptz, timestamptz, text, jsonb, text, uuid, uuid, text, text, uuid),
   payment.psp_list_pending_evidence(uuid, uuid, uuid),
   payment.psp_mark_evidence_submission(uuid, uuid, uuid, text, uuid, uuid),
+  payment.psp_pin_evidence_submission_executor(uuid, uuid, uuid, uuid),
   payment.psp_read_notification(uuid, uuid, uuid),
   payment.psp_transition_notification(uuid, uuid, uuid, text, uuid, uuid)
 TO ontos_runtime;
