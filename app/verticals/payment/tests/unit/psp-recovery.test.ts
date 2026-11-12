@@ -1,6 +1,6 @@
 import type { ScopedRoutineInvoker } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext, OutboxWorkerLegalEntityScope } from '@app/core-runtime/outbox/worker';
-import { DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
+import { DateTime, Effect, Exit, Layer, Option, Predicate, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -316,7 +316,9 @@ interface Script {
   readonly resolve?: (
     query: GatewayExecutionTargetQuery,
   ) => Effect.Effect<ReturnType<typeof executionTarget>, GatewayProviderUnavailableError>;
-  readonly submit?: (evidence: StoredProviderEvidence) => ProviderEvidenceSubmissionOutcome;
+  readonly submit?: (
+    evidence: StoredProviderEvidence,
+  ) => ProviderEvidenceSubmissionOutcome | GatewayProviderUnavailableError;
 }
 
 interface Calls {
@@ -438,9 +440,12 @@ const recoverWith = (script: Script, message: RecoveryRequested) => {
   });
   const submitter = Layer.succeed(ProviderEvidenceSubmitter, {
     submit: (submission) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         calls.submitted.push(submission.evidence.evidenceId);
-        return { observationId: Option.none(), outcome: script.submit?.(submission.evidence) ?? 'ACCEPTED' };
+        const answer = script.submit?.(submission.evidence) ?? 'ACCEPTED';
+        return Predicate.isTagged(answer, 'GatewayProviderUnavailable')
+          ? Effect.fail(answer)
+          : Effect.succeed({ observationId: Option.none(), outcome: answer });
       }),
   });
   const resolver = Layer.succeed(GatewayBindingResolver, {
@@ -696,6 +701,39 @@ describe('#1158 gateway operation recovery', () => {
       expect(calls.submitted).toEqual([earlier.evidenceId]);
       expect(calls.marked).toEqual([]);
       expect(rows.map(({ submissionState }) => submissionState)).toEqual(['PENDING_SUBMISSION', 'PENDING_SUBMISSION']);
+    }),
+  );
+
+  it.effect('#1158 A refused governed submission keeps the evidence pending; an outage is retried', () =>
+    Effect.gen(function* refusedSubmission() {
+      yield* at(25 * HOUR_MS);
+      const earlier = storedPending('cccccccc-cccc-4ccc-8ccc-cccccccccccc', 'stripe:local:refused');
+      const later = storedPending('dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'stripe:local:refused-later');
+      const attempt = (reason: string) =>
+        recoverWith(
+          {
+            lookup: () => Effect.succeed([]),
+            operations: [operationRow()],
+            pending: [earlier, later],
+            record: Option.some(dispatchRecord()),
+            submit: () => unavailable('STRIPE', reason),
+          },
+          recoveryMessage('AUTHORITATIVE_LOOKUP'),
+        );
+      // Shell refuses the delegation of a human-admitted recovery: the live submitter fails permanently.
+      const refused = yield* attempt('submission_delegation_forbidden');
+      const report = reportOf(refused.exit);
+      expect([report.submissionDenied, report.submissions]).toEqual([true, []]);
+      expect([refused.calls.submitted, refused.calls.marked]).toEqual([[earlier.evidenceId], []]);
+      expect(refused.rows.map(({ submissionState }) => submissionState)).toEqual([
+        'PENDING_SUBMISSION',
+        'PENDING_SUBMISSION',
+      ]);
+      // A transient submission outage still fails the delivery so it is retried.
+      const outage = yield* attempt('submission_delegation_unavailable:GatewayDelegationTransportError');
+      expect(failureOf(outage.exit)).toBe(
+        'GatewayProviderUnavailable:submission_delegation_unavailable:GatewayDelegationTransportError',
+      );
     }),
   );
 

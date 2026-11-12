@@ -37,6 +37,8 @@ import { recoverGatewayOperationInScope } from '../../src/integrations/psp/gatew
 import type { GatewayRecoveryReport } from '../../src/integrations/psp/gateway-operation-recovery.ts';
 import { GatewayProviderAdapters } from '../../src/integrations/psp/psp-adapter.ts';
 import { deriveProviderCorrelation } from '../../src/integrations/psp/psp-correlation.ts';
+import { GatewayProviderUnavailable } from '../../src/integrations/psp/psp-errors.ts';
+import type { GatewayProviderUnavailableError } from '../../src/integrations/psp/psp-errors.ts';
 import { GatewayExecutionTargetSchema, ProviderObjectRefSchema } from '../../src/integrations/psp/psp-request.ts';
 import type {
   GatewayExecutionTarget,
@@ -332,7 +334,8 @@ const recoveryRequested = Effect.fn('PspRecoveryFixture.message')(function* reco
 
 interface ProviderScript {
   readonly lookup: (target: GatewayExecutionTarget, request: GatewayLookupRequest) => readonly ProviderFindingResult[];
-  readonly submit: ProviderEvidenceSubmissionOutcome;
+  /** A8's decision, or the failure the live submitter raises when the governed path refuses the delivery. */
+  readonly submit: ProviderEvidenceSubmissionOutcome | GatewayProviderUnavailableError;
 }
 
 interface ProviderCalls {
@@ -370,9 +373,12 @@ const recover = (
   });
   const submitter = Layer.succeed(ProviderEvidenceSubmitter, {
     submit: (submission) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         calls.submitted.push(submission.evidence.evidenceId);
-        return { observationId: Option.none(), outcome: script.submit };
+        const answer = script.submit;
+        return Predicate.isTagged(answer, 'GatewayProviderUnavailable')
+          ? Effect.fail(answer)
+          : Effect.succeed({ observationId: Option.none(), outcome: answer });
       }),
   });
   return TestClock.setTime(atMs).pipe(
@@ -622,8 +628,16 @@ it.live('#1157 Human-admitted recovery records evidence but does not submit', ()
         runtime,
         fixture,
         message,
-        // The Shell gateway refuses a human-origin A10 delivery, so the submitter answers DENIED.
-        { lookup: gopayConfirmed(fixture, DateTime.makeUnsafe(now)), submit: 'DENIED' },
+        // Shell refuses the RegisteredWorkload delegation of a human-origin A10 delivery; the live submitter
+        // fails with this permanent refusal (evidence-submission-live.ts).
+        {
+          lookup: gopayConfirmed(fixture, DateTime.makeUnsafe(now)),
+          submit: new GatewayProviderUnavailable({
+            code: 'gateway_provider_unavailable',
+            family: fixture.family,
+            reason: 'submission_delegation_forbidden',
+          }),
+        },
         now,
       );
       expect([first.report.appended.length, first.report.submissionDenied, first.report.submissions]).toEqual([
