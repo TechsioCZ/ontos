@@ -63,6 +63,7 @@ import {
   accessAdminConflictProblem,
   accessAdminForbiddenProblem,
   accessAdminInternalProblem,
+  accessAdminSavedPendingProblem,
   accessAdminUnavailableProblem,
   accessAdminUnprocessableProblem,
 } from './session.ts';
@@ -208,10 +209,14 @@ export const accessPeopleFailureProblem = (failure: PeopleCommandFailure): Acces
   if (CONFLICT_CODES.has(failure.code)) {
     return conflict(text);
   }
+  // Every projection runs after the people change was recorded: the change is saved, its permissions are not yet.
+  if (failure.code.startsWith('access_projection_write_') && failure.code !== 'access_projection_write_plan_refused') {
+    return accessAdminSavedPendingProblem();
+  }
   if (
     failure.code === 'access_intent_unavailable' ||
     failure.code === 'people_tenant_scope_missing' ||
-    failure.code.startsWith('access_projection_write_')
+    failure.code === 'access_projection_write_plan_refused'
   ) {
     return accessAdminUnavailableProblem();
   }

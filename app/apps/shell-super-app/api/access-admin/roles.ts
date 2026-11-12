@@ -70,6 +70,7 @@ import {
   accessAdminConflictProblem,
   accessAdminForbiddenProblem,
   accessAdminInternalProblem,
+  accessAdminSavedPendingProblem,
   accessAdminUnavailableProblem,
   accessAdminUnprocessableProblem,
 } from './session.ts';
@@ -233,12 +234,17 @@ export const accessRolesFailureProblem = (failure: {
     return conflict(text);
   }
   if (
-    failure.code === 'access_changes_store_unavailable' ||
-    failure.code === 'access_intent_unavailable' ||
     failure.code === 'access_projection_write_unavailable' ||
     failure.code === 'access_projection_write_intent_unavailable' ||
     failure.code === 'access_projection_write_fence_refused' ||
-    failure.code === 'access_projection_write_scope_missing' ||
+    failure.code === 'access_projection_write_scope_missing'
+  ) {
+    // Every projection runs after the role revision was recorded: the change is saved, its permissions are not yet.
+    return accessAdminSavedPendingProblem();
+  }
+  if (
+    failure.code === 'access_changes_store_unavailable' ||
+    failure.code === 'access_intent_unavailable' ||
     failure.code === 'access_projection_write_plan_refused'
   ) {
     return unavailable();
