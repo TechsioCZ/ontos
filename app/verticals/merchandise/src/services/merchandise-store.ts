@@ -18,6 +18,7 @@ import {
   ProductIdReferenceSchema,
   ProductVariantSchema,
   StockMovementSchema,
+  grossUnitPriceMinor,
 } from '../../shared/domain/merchandise-model.ts';
 import type { CatalogCategory, Order, Product, StockMovement } from '../../shared/domain/merchandise-model.ts';
 import { ORDER_NUMBER_PREFIX } from '../../shared/domain/order-totals.ts';
@@ -30,7 +31,7 @@ import {
   products,
   stockMovements,
 } from '../database/schema.ts';
-import { grossPriceOf, productRateOf, stockLevelsOf, toProductRecord } from './stock-levels.ts';
+import { grossPriceOf, productRateOf, realVariantsOf, stockLevelsOf, toProductRecord } from './stock-levels.ts';
 import type { StockLevels } from './stock-levels.ts';
 import { CompanyTaxRatesSchema, heldRatesOf, sellableRatesOf } from './tax-rates.ts';
 import type { CompanyTaxRates, HeldProductRates, SellableVatRates } from './tax-rates.ts';
@@ -166,18 +167,50 @@ const tierRowsOf = (
     variantPosition,
   }));
 
+/** The rates the release before classifications may read for a classification: the migration's own mapping. */
+const ROLLBACK_RATES = { [CZ_VAT_REDUCED]: [10, 12], [CZ_VAT_STANDARD]: [21] } as const;
+
+/**
+ * The prices the release before classifications recomputes from the document's `vatRate` (it ignores a stored gross):
+ * each real variant without a tier, or the product itself when it has neither real variants nor a tier. With each, the
+ * gross this release charges for it. A tiered price is the first tier's in both releases, whatever the rate.
+ */
+const recomputedPricesOf = (product: Product, rate: number | undefined) => {
+  const variants = realVariantsOf(product);
+  const entries =
+    variants.length > 0
+      ? variants.map((variant) => ({ net: variant.priceMinor, priced: variant }))
+      : [{ net: product.currentPriceMinor, priced: product }];
+  return entries.flatMap(({ net, priced }) => {
+    const charged = grossPriceOf(priced, net, rate);
+    return priced.priceTiers?.[0] === undefined && charged !== undefined ? [{ charged, net }] : [];
+  });
+};
+
 /**
  * The rate the release before classifications reads in a product document, until the contract step strips it: that
- * release requires a `vatRate`, so a product this release writes must still decode there after a rollback. One
- * mapping, the migration's inverse: a held product its held rate, a reduced product 12 %, a standard one 21 %. It
- * maps back to the same classification in the migration's own function, so the window's triggers keep it as it is.
- * This release never reads it: it reads the classification column.
+ * release requires a `vatRate` and recomputes untiered prices from it, so after a rollback it must charge what this
+ * release charges now. Of the rates the migration maps to the product's classification (reduced: 10 or 12 %, standard:
+ * 21 %), the one that reproduces this release's gross for the most recomputed prices. On a tie the lower one, so no
+ * customer pays more after a rollback than now; with nothing recomputed (every price tiered) the rate this release
+ * sells at, so the VAT split stays right. It maps back to the same classification in the migration's own function, so
+ * the window's triggers keep it as it is. This release never reads it: it reads the classification column.
  */
-const MIGRATED_CLASSIFICATION_RATES = { [CZ_VAT_REDUCED]: 12, [CZ_VAT_STANDARD]: 21 } as const;
-export const rollbackVatRateOf = (product: Pick<Product, 'id' | 'taxClassificationCode'>, held: HeldRates) =>
-  product.taxClassificationCode === CZ_VAT_REDUCED
-    ? (held[product.id] ?? MIGRATED_CLASSIFICATION_RATES[CZ_VAT_REDUCED])
-    : MIGRATED_CLASSIFICATION_RATES[product.taxClassificationCode];
+export const rollbackVatRateOf = (product: Product, rates: SellableVatRates, held: HeldRates): number => {
+  const candidates: readonly number[] = ROLLBACK_RATES[product.taxClassificationCode];
+  const selling = productRateOf(product, rates, held);
+  const prices = recomputedPricesOf(product, selling);
+  const reproduced = (rate: number) =>
+    prices.filter(({ charged, net }) => grossUnitPriceMinor(net, rate) === charged).length;
+  const fallback = selling !== undefined && candidates.includes(selling) ? selling : (candidates[0] ?? 21);
+  if (prices.length === 0) {
+    return fallback;
+  }
+  // Candidates run from the lowest rate up, so a tie keeps the lower one.
+  const counted = candidates.map((rate) => ({ count: reproduced(rate), rate }));
+  const most = Math.max(...counted.map(({ count }) => count));
+  return counted.find(({ count }) => count === most)?.rate ?? fallback;
+};
 
 /** Product row, its variant rows and its price-tier rows. Documents never repeat variants or tiers. */
 export const productRowsOf = Effect.fn('MerchandiseStore.productRowsOf')(function* encodeProductRows(
@@ -201,7 +234,7 @@ export const productRowsOf = Effect.fn('MerchandiseStore.productRowsOf')(functio
     categoryPathIds: [...(product.categoryPathIds ?? [])],
     createdAt: date(product.createdAt),
     currentPriceMinor: product.currentPriceMinor,
-    document: { ...document, vatRate: rollbackVatRateOf(product, held) },
+    document: { ...document, vatRate: rollbackVatRateOf(product, rates, held) },
     featuredPosition: product.featuredPosition === undefined ? null : Option.getOrNull(product.featuredPosition),
     hasPhoto: hasPhoto(product),
     id: product.id,
