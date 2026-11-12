@@ -7,12 +7,7 @@ import {
   OperationContextUnavailable,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
-import type {
-  ActionServiceFactory,
-  ActionHandlerContext,
-  OperationalScope,
-  ScopedTransactionExecutor,
-} from '@app/core-runtime';
+import type { ActionHandlerContext, ActionServiceFactory } from '@app/core-runtime';
 import type { IntakeClientPartyPayload, IntakeClientPartyResult } from '../../shared/actions/client-party-intake.ts';
 import type { CrmErrorSchema } from '../../shared/actions/apply-command.ts';
 import { DateTime, Effect, Option, Schema } from 'effect';
@@ -130,39 +125,38 @@ export const intakeClientPartyAction = defineAction(
               .identify(client, taken, `crm-intake:${context.actionInvocationId}`, snapshot.state.clients.items)
           : Option.none();
       const preparedAt = yield* DateTime.now;
-      return Effect.fn('Crm.revalidateClientIntake')(function* revalidateClientIntake(
-        transaction: ScopedTransactionExecutor,
-        scope: OperationalScope,
-        revision: string,
-      ) {
-        const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
-        if (
-          age < 0 ||
-          age >= 30_000 ||
-          !samePrincipal(scope, context.scope) ||
-          scope.correlationId !== context.scope.correlationId ||
-          revision !== context.compositionRevision
-        ) {
-          return yield* new OperationContextUnavailable({
-            code: 'operation_context_unavailable',
-            reason: 'Client intake proof expired or belongs to another operation',
-          });
-        }
-        const repository = yield* clientIntakeRepository(transaction, scope);
-        return {
-          link: (input: typeof IntakeClientPartyPayloadSchema.Type, invocationId: string) =>
-            input.clientId === payload.clientId &&
-            input.expectedRevision === payload.expectedRevision &&
-            invocationId === context.actionInvocationId
-              ? repository.link(input, party, invocationId)
-              : Effect.fail(
-                  new CrmReferenceUnavailable({
-                    code: 'crm_reference_unavailable',
-                    reason: 'Client intake proof belongs to another target or invocation',
-                  }),
-                ),
-        };
-      });
+      const factory: ActionServiceFactory<IntakeClientPartyServices> = Effect.fn('Crm.revalidateClientIntake')(
+        function* revalidateClientIntake(transaction, scope, revision) {
+          const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
+          if (
+            age < 0 ||
+            age >= 30_000 ||
+            !samePrincipal(scope, context.scope) ||
+            scope.correlationId !== context.scope.correlationId ||
+            revision !== context.compositionRevision
+          ) {
+            return yield* new OperationContextUnavailable({
+              code: 'operation_context_unavailable',
+              reason: 'Client intake proof expired or belongs to another operation',
+            });
+          }
+          const repository = yield* clientIntakeRepository(transaction, scope);
+          return {
+            link: (input: typeof IntakeClientPartyPayloadSchema.Type, invocationId: string) =>
+              input.clientId === payload.clientId &&
+              input.expectedRevision === payload.expectedRevision &&
+              invocationId === context.actionInvocationId
+                ? repository.link(input, party, invocationId)
+                : Effect.fail(
+                    new CrmReferenceUnavailable({
+                      code: 'crm_reference_unavailable',
+                      reason: 'Client intake proof belongs to another target or invocation',
+                    }),
+                  ),
+          };
+        },
+      );
+      return factory;
     }),
   },
 );

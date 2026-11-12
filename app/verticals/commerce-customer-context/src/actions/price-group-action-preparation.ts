@@ -376,13 +376,13 @@ const migratePrepared = Effect.fn('PriceGroupAction.migratePrepared')(function* 
 const preparedServicesForTransaction = Effect.fn('PriceGroupAction.finalOwnerServices')(function* finalOwnerServices(
   prepared: PreparedPriceGroupMutation,
   transaction: ScopedTransactionExecutor,
-  actualScope: OperationalScope,
+  scope: OperationalScope,
   revision: string,
 ) {
-  if (!preparedPriceGroupScopeMatches(prepared.scope, actualScope, prepared.compositionRevision, revision)) {
+  if (!preparedPriceGroupScopeMatches(prepared.scope, scope, prepared.compositionRevision, revision)) {
     return yield* contextUnavailable();
   }
-  const services = yield* priceGroupActionServicesForTransaction(transaction, actualScope);
+  const services = yield* priceGroupActionServicesForTransaction(transaction, scope);
   const current = yield* inspectMutationProfiles(prepared.intent, services.profileValidation).pipe(
     Effect.mapError(profileContextUnavailable),
   );

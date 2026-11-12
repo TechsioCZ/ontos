@@ -11,10 +11,9 @@ import {
 } from '@app/core-runtime';
 import type {
   ActionHandlerContext,
-  ActionServicePreparationContext,
+  ActionServiceFactory,
   ActionServicePreflight,
-  OperationalScope,
-  ScopedTransactionExecutor,
+  ActionServicePreparationContext,
 } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 import {
@@ -84,31 +83,33 @@ export const prepareApplyCommandServices = withCommandGuard(
   ) {
     const preparedAt = yield* DateTime.now;
     yield* prepareSalesPipelineCommand(payload.command, context.scope);
-    return Effect.fn('SalesPipeline.revalidatePreparedCommand')(function* revalidatePreparedCommand(
-      transaction: ScopedTransactionExecutor,
-      scope: OperationalScope,
-      compositionRevision: string,
-    ) {
-      const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
-      if (
-        age < 0 ||
-        age >= 30_000 ||
-        !samePrincipal(scope, context.scope) ||
-        scope.tenantId !== context.scope.tenantId ||
-        scope.legalEntityId !== context.scope.legalEntityId ||
-        scope.correlationId !== context.scope.correlationId ||
-        compositionRevision !== context.compositionRevision
-      ) {
-        return yield* new OperationContextUnavailable({
-          code: 'operation_context_unavailable',
-          reason: 'Prepared Sales Pipeline permissions expired or belong to another operation',
+    const factory: ActionServiceFactory<
+      Services,
+      Effect.Services<ReturnType<typeof prepareSalesPipelineCommand>>
+    > = Effect.fn('SalesPipeline.revalidatePreparedCommand')(
+      function* revalidatePreparedCommand(transaction, scope, compositionRevision) {
+        const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
+        if (
+          age < 0 ||
+          age >= 30_000 ||
+          !samePrincipal(scope, context.scope) ||
+          scope.tenantId !== context.scope.tenantId ||
+          scope.legalEntityId !== context.scope.legalEntityId ||
+          scope.correlationId !== context.scope.correlationId ||
+          compositionRevision !== context.compositionRevision
+        ) {
+          return yield* new OperationContextUnavailable({
+            code: 'operation_context_unavailable',
+            reason: 'Prepared Sales Pipeline permissions expired or belong to another operation',
+          });
+        }
+        return yield* persistenceService(transaction, {
+          prepared: { actionInvocationId: context.actionInvocationId, payload },
+          scope,
         });
-      }
-      return yield* persistenceService(transaction, {
-        prepared: { actionInvocationId: context.actionInvocationId, payload },
-        scope,
-      });
-    });
+      },
+    );
+    return factory;
   }),
 ) satisfies ActionServicePreflight<
   ApplyCommandPayload,

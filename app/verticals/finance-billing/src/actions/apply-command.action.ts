@@ -14,8 +14,6 @@ import type {
   ActionServiceFactory,
   ActionServicePreflight,
   ActionServicePreparationContext,
-  OperationalScope,
-  ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import {
   ApplyCommandPayloadSchema,
@@ -150,11 +148,9 @@ export const prepareApplyCommandServices = Effect.fn('Finance.prepareApplyComman
   );
 
   const transition = result;
-  return Effect.fn('Finance.revalidatePreparedCommand')(function* revalidatePreparedCommand(
-    transaction: ScopedTransactionExecutor,
-    scope: OperationalScope,
-    compositionRevision: string,
-  ) {
+  const factory: ActionServiceFactory<Services, Crypto.Crypto | FinanceValidatorRequirements> = Effect.fn(
+    'Finance.revalidatePreparedCommand',
+  )(function* revalidatePreparedCommand(transaction, scope, compositionRevision) {
     const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
     if (
       age < 0 ||
@@ -173,6 +169,7 @@ export const prepareApplyCommandServices = Effect.fn('Finance.prepareApplyComman
     const persistence = yield* persistenceService(transaction, scope);
     return { ...persistence, prepared: { payload, transition } };
   });
+  return factory;
 }) satisfies ActionServicePreflight<
   ApplyCommandPayload,
   Services,

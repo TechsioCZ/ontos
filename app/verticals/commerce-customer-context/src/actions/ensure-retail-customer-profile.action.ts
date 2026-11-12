@@ -3,10 +3,9 @@
 // @ontos-action-slug ensure-retail-customer-profile
 import type {
   ActionHandlerContext,
-  ActionServicePreparationContext,
+  ActionServiceFactory,
   ActionServicePreflight,
-  OperationalScope,
-  ScopedTransactionExecutor,
+  ActionServicePreparationContext,
 } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint, OperationContextUnavailable } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
@@ -190,7 +189,7 @@ export const prepareRetailProfileServices: ActionServicePreflight<
     ),
   );
   const resolveRetailParty = bindPreparedRetailParty(request, outcome);
-  return (transaction: ScopedTransactionExecutor, current: OperationalScope, revision: string) => {
+  const factory: ActionServiceFactory<EnsureRetailCustomerProfileServices> = (transaction, current, revision) => {
     if (
       current.tenantId !== scope.tenantId ||
       current.legalEntityId !== legalEntityId ||
@@ -235,6 +234,7 @@ export const prepareRetailProfileServices: ActionServicePreflight<
             ),
     } satisfies EnsureRetailCustomerProfileServices);
   };
+  return factory;
 });
 
 export const ensureRetailCustomerProfileAction = defineAction(

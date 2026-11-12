@@ -1,5 +1,10 @@
 import { OperationContextUnavailable, TrustedPrincipalContextSchema } from '@app/core-runtime';
-import type { ActionServicePreparationContext, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import type {
+  ActionServiceFactory,
+  ActionServicePreparationContext,
+  OperationalScope,
+  ScopedTransactionExecutor,
+} from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
 import { AddSavedAddressPayloadSchema, UpdateSavedAddressPayloadSchema } from '../../shared/domain/address-actions.ts';
@@ -82,11 +87,9 @@ export const prepareAddressPartyServices = Effect.fn('AddressAction.prepareServi
       matches(candidate) && evidence !== null
         ? assertPreparedPartyAddressCurrent(evidence)
         : Effect.fail(unavailableSource());
-    return Effect.fn('AddressAction.bindPreparedServices')(function* bindPreparedAddressServices(
-      transaction: ScopedTransactionExecutor,
-      verifiedScope: OperationalScope,
-      revision: string,
-    ) {
+    const factory: ActionServiceFactory<ReturnType<typeof addressActionPersistenceForTransaction>> = Effect.fn(
+      'AddressAction.bindPreparedServices',
+    )(function* bindPreparedAddressServices(transaction, verifiedScope, revision) {
       if (!sameScope(scope, verifiedScope) || revision !== context.compositionRevision) {
         return yield* unavailable();
       }
@@ -113,5 +116,6 @@ export const prepareAddressPartyServices = Effect.fn('AddressAction.prepareServi
             : Effect.fail(unavailableSource()),
       };
     });
+    return factory;
   },
 );

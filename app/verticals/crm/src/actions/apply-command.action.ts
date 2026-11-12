@@ -7,12 +7,7 @@ import {
   defineAction,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type {
-  ActionHandlerContext,
-  ActionServicePreflight,
-  OperationalScope,
-  ScopedTransactionExecutor,
-} from '@app/core-runtime';
+import type { ActionHandlerContext, ActionServiceFactory, ActionServicePreflight } from '@app/core-runtime';
 
 import { DateTime, Effect, Schema } from 'effect';
 import {
@@ -67,31 +62,33 @@ export const prepareApplyCommandServices = Effect.fn('Crm.prepareApplyCommandSer
   const preparedAt = yield* DateTime.now;
   yield* context.evaluatePolicy(assignmentPolicy, evaluateAssignmentPolicy);
   const facts = yield* prepareCrmCommand(payload, context);
-  return Effect.fn('Crm.revalidatePreparedCommand')(function* revalidatePreparedCommand(
-    transaction: ScopedTransactionExecutor,
-    scope: OperationalScope,
-    compositionRevision: string,
-  ) {
-    const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
-    if (
-      age < 0 ||
-      age >= 30_000 ||
-      !samePrincipal(scope, context.scope) ||
-      scope.tenantId !== context.scope.tenantId ||
-      scope.legalEntityId !== context.scope.legalEntityId ||
-      scope.correlationId !== context.scope.correlationId ||
-      compositionRevision !== context.compositionRevision
-    ) {
-      return yield* new OperationContextUnavailable({
-        code: 'operation_context_unavailable',
-        reason: 'Prepared CRM permissions expired or belong to another operation',
+  const factory: ActionServiceFactory<
+    Services,
+    Effect.Services<ReturnType<typeof evaluateAssignmentPolicy>> | Effect.Services<ReturnType<typeof prepareCrmCommand>>
+  > = Effect.fn('Crm.revalidatePreparedCommand')(
+    function* revalidatePreparedCommand(transaction, scope, compositionRevision) {
+      const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
+      if (
+        age < 0 ||
+        age >= 30_000 ||
+        !samePrincipal(scope, context.scope) ||
+        scope.tenantId !== context.scope.tenantId ||
+        scope.legalEntityId !== context.scope.legalEntityId ||
+        scope.correlationId !== context.scope.correlationId ||
+        compositionRevision !== context.compositionRevision
+      ) {
+        return yield* new OperationContextUnavailable({
+          code: 'operation_context_unavailable',
+          reason: 'Prepared CRM permissions expired or belong to another operation',
+        });
+      }
+      return yield* persistenceService(transaction, {
+        prepared: { ...facts, actionInvocationId: context.actionInvocationId, payload },
+        scope,
       });
-    }
-    return yield* persistenceService(transaction, {
-      prepared: { ...facts, actionInvocationId: context.actionInvocationId, payload },
-      scope,
-    });
-  });
+    },
+  );
+  return factory;
 }) satisfies ActionServicePreflight<
   ApplyCommandPayload,
   Services,

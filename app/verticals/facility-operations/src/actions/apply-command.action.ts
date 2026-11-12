@@ -11,10 +11,8 @@ import type {
   ActionCollectorError,
   ActionHandlerContext,
   ActionServiceFactory,
-  ActionServicePreparationContext,
   ActionServicePreflight,
-  OperationalScope,
-  ScopedTransactionExecutor,
+  ActionServicePreparationContext,
 } from '@app/core-runtime';
 import type { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { DateTime, Effect, Schema } from 'effect';
@@ -86,11 +84,9 @@ export const prepareApplyCommandServices = Effect.fn('FacilityOperations.prepare
   > {
     const grants = yield* facilityOperationsGrants(context.scope);
     const preparedAt = yield* DateTime.now;
-    return Effect.fn('FacilityOperations.revalidatePreparedGrants')(function* revalidatePreparedGrants(
-      transaction: ScopedTransactionExecutor,
-      scope: OperationalScope,
-      compositionRevision: string,
-    ) {
+    const factory: ActionServiceFactory<FacilityActionServices> = Effect.fn(
+      'FacilityOperations.revalidatePreparedGrants',
+    )(function* revalidatePreparedGrants(transaction, scope, compositionRevision) {
       const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
       if (
         age < 0 ||
@@ -108,6 +104,7 @@ export const prepareApplyCommandServices = Effect.fn('FacilityOperations.prepare
       }
       return yield* persistenceService(transaction, { preparedGrants: grants, scope });
     });
+    return factory;
   },
 ) satisfies ActionServicePreflight<
   ApplyCommandPayload,

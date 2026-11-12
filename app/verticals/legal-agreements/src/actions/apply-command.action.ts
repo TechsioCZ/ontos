@@ -15,8 +15,6 @@ import type {
   ActionServiceFactory,
   ActionServicePreflight,
   ActionServicePreparationContext,
-  OperationalScope,
-  ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import {
   ApplyCommandErrorSchema,
@@ -108,40 +106,42 @@ export const prepareApplyCommandServices = Effect.fn('Agreements.prepareApplyCom
       { legalEntityId: context.scope.legalEntityId, tenantId: context.scope.tenantId },
       validators,
     );
-    return Effect.fn('Agreements.revalidatePreparedCommand')(function* revalidatePreparedCommand(
-      transaction: ScopedTransactionExecutor,
-      scope: OperationalScope,
-      compositionRevision: string,
-    ) {
-      const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
-      if (
-        age < 0 ||
-        age >= 30_000 ||
-        !samePrincipal(scope, context.scope) ||
-        scope.tenantId !== context.scope.tenantId ||
-        scope.legalEntityId !== context.scope.legalEntityId ||
-        scope.correlationId !== context.scope.correlationId ||
-        compositionRevision !== context.compositionRevision
-      ) {
-        return yield* new OperationContextUnavailable({
-          code: 'operation_context_unavailable',
-          reason: 'Prepared references expired or belong to another operation',
-        });
-      }
-      const persistence = yield* persistenceService(transaction, scope).pipe(
-        Effect.mapError((cause) =>
-          Object.defineProperty(
-            new OperationContextUnavailable({
-              code: 'operation_context_unavailable',
-              reason: 'Owner services are temporarily unavailable',
-            }),
-            'cause',
-            { configurable: false, enumerable: false, value: cause, writable: false },
+    const factory: ActionServiceFactory<
+      ApplyCommandServices,
+      Crypto.Crypto | Effect.Services<ReturnType<typeof makeReferenceGatewayCredentialSource>>
+    > = Effect.fn('Agreements.revalidatePreparedCommand')(
+      function* revalidatePreparedCommand(transaction, scope, compositionRevision) {
+        const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
+        if (
+          age < 0 ||
+          age >= 30_000 ||
+          !samePrincipal(scope, context.scope) ||
+          scope.tenantId !== context.scope.tenantId ||
+          scope.legalEntityId !== context.scope.legalEntityId ||
+          scope.correlationId !== context.scope.correlationId ||
+          compositionRevision !== context.compositionRevision
+        ) {
+          return yield* new OperationContextUnavailable({
+            code: 'operation_context_unavailable',
+            reason: 'Prepared references expired or belong to another operation',
+          });
+        }
+        const persistence = yield* persistenceService(transaction, scope).pipe(
+          Effect.mapError((cause) =>
+            Object.defineProperty(
+              new OperationContextUnavailable({
+                code: 'operation_context_unavailable',
+                reason: 'Owner services are temporarily unavailable',
+              }),
+              'cause',
+              { configurable: false, enumerable: false, value: cause, writable: false },
+            ),
           ),
-        ),
-      );
-      return { ...persistence, prepared: { payload, transition } };
-    });
+        );
+        return { ...persistence, prepared: { payload, transition } };
+      },
+    );
+    return factory;
   },
 ) satisfies ActionServicePreflight<
   ApplyCommandPayload,

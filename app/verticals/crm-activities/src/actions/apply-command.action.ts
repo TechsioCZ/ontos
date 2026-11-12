@@ -10,10 +10,9 @@ import {
 } from '@app/core-runtime';
 import type {
   ActionHandlerContext,
-  ActionServicePreparationContext,
+  ActionServiceFactory,
   ActionServicePreflight,
-  OperationalScope,
-  ScopedTransactionExecutor,
+  ActionServicePreparationContext,
 } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 import {
@@ -40,11 +39,9 @@ export const prepareApplyCommandServices = Effect.fn('Activity.prepareApplyComma
 ) {
   const preparedAt = yield* DateTime.now;
   const canonical = yield* prepareActivityCommand(payload.command, context.scope);
-  return Effect.fn('Activity.revalidatePreparedCommand')(function* revalidatePreparedCommand(
-    transaction: ScopedTransactionExecutor,
-    scope: OperationalScope,
-    compositionRevision: string,
-  ) {
+  const factory: ActionServiceFactory<Services, Effect.Services<ReturnType<typeof prepareActivityCommand>>> = Effect.fn(
+    'Activity.revalidatePreparedCommand',
+  )(function* revalidatePreparedCommand(transaction, scope, compositionRevision) {
     const age = DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(preparedAt);
     if (
       age < 0 ||
@@ -65,6 +62,7 @@ export const prepareApplyCommandServices = Effect.fn('Activity.prepareApplyComma
       scope,
     });
   });
+  return factory;
 }) satisfies ActionServicePreflight<
   ApplyCommandPayload,
   Services,
