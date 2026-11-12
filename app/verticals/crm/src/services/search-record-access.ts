@@ -1,5 +1,5 @@
 import { ReadPermissionDenied, ReadHandlerUnavailable } from '@app/core-runtime';
-import type { OperationalScope, ReadServiceFactory, ScopedTransactionExecutor } from '@app/core-runtime';
+import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { ListAccessConditionSchema, evaluateListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
 import type { ListAccessCondition, ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
@@ -152,5 +152,3 @@ export const loadCrmSearchRecords = Effect.fn('Crm.search.load')(function* load(
 export interface CrmSearchServices {
   readonly load: (predicate: ListAccessPredicate) => Effect.Effect<CrmState, ReturnType<typeof searchUnavailable>>;
 }
-export const makeCrmSearchServices: ReadServiceFactory<CrmSearchServices> = (transaction, scope) =>
-  Effect.succeed({ load: (predicate) => loadCrmSearchRecords(transaction, scope, predicate) });

@@ -8,12 +8,18 @@ import {
 } from '@app/core-runtime';
 import { matchesCoreSearchValues, parseCoreSearchQuery } from '@app/core-runtime/search-contract';
 import { coreSearchRelevance } from '@app/core-runtime/search-ranking';
-import type { OperationalScope, ReadFinishContext, ReadLoadContext, ReadPrepareContext } from '@app/core-runtime';
+import type {
+  OperationalScope,
+  ReadFinishContext,
+  ReadLoadContext,
+  ReadPrepareContext,
+  ReadServiceFactory,
+} from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { ClientsProviderRequestSchema, ClientsProviderResponseSchema } from '../../shared/apis/clients-search.ts';
 import type { ClientsProviderRequest } from '../../shared/apis/clients-search.ts';
 import { crmSearchQuery } from '../../shared/domain/search-contact-classification.ts';
-import { prepareCrmSearch, makeCrmSearchServices } from '../services/search-record-access.ts';
+import { loadCrmSearchRecords, prepareCrmSearch } from '../services/search-record-access.ts';
 import type { CrmSearchServices } from '../services/search-record-access.ts';
 import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
 
@@ -119,6 +125,9 @@ export const loadCrmSearch = Effect.fn('Crm.loadSearch')(function* loadSearch(
 });
 
 type Services = CrmSearchServices;
+
+const makeSearchServices: ReadServiceFactory<CrmSearchServices> = (transaction, scope) =>
+  Effect.succeed({ load: (predicate) => loadCrmSearchRecords(transaction, scope, predicate) });
 type Grants = ListAccessPredicate;
 const prepare = Effect.fn('Crm.clients.prepare')((_input: ClientsProviderRequest, context: ReadPrepareContext) =>
   prepareCrmSearch(context.scope),
@@ -171,5 +180,5 @@ export const clientsRead = defineRead(
     schemaVersion: '1',
   },
   { finish, load, prepare },
-  makeCrmSearchServices,
+  makeSearchServices,
 );
