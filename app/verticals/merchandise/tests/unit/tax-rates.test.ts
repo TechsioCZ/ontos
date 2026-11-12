@@ -20,6 +20,7 @@ import {
   decideTaxRates,
   knownTaxRateBook,
   pricesCompany,
+  refreshedTaxRateBook,
   resolveVatRate,
   sellableRatesAt,
   shownTaxRates,
@@ -585,4 +586,29 @@ it.effect(
       yield* write;
       expect(yield* Ref.get(calls)).toBe(2);
     }),
+);
+
+it.effect('an explicit sync that fails during an outage leaves the automatic wait as it was', () =>
+  Effect.gen(function* explicitSync() {
+    const calls = yield* Ref.make(0);
+    const source = {
+      read: () =>
+        Ref.update(calls, (count) => count + 1).pipe(
+          Effect.andThen(Effect.fail(new TaxRatesFailure({ kind: 'UNAVAILABLE' }))),
+        ),
+    };
+    const company = scopeOf(randomUUID());
+    const read = knownTaxRateBook(company).pipe(
+      Effect.provideService(TaxRateSource, source),
+      Effect.andThen(Effect.yieldNow),
+    );
+    yield* read;
+    // The automatic attempt failed: the next one is due a minute later.
+    yield* TestClock.adjust('30 seconds');
+    yield* refreshedTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source), Effect.result);
+    expect(yield* Ref.get(calls)).toBe(2);
+    yield* TestClock.adjust('30 seconds');
+    yield* read;
+    expect(yield* Ref.get(calls)).toBe(3);
+  }),
 );

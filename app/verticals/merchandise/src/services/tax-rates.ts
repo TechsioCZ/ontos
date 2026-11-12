@@ -568,6 +568,8 @@ const answerAfter = (
   kept: CompanyTaxAnswer,
   result: Result.Result<FetchedTaxRates, TaxRatesFailure>,
   at: DateTime.Utc,
+  /** A sync a person asked for: its outage leaves the automatic wait as it was. */
+  explicit = false,
 ): CompanyTaxAnswer => {
   if (Result.isSuccess(result)) {
     return { fetched: result.success, refused: false };
@@ -575,6 +577,9 @@ const answerAfter = (
   if (result.failure.kind === 'REFUSED') {
     // Tax is not installed for the company (or does not admit Merchandise): asked again once per freshness window.
     return { refused: true, retry: { after: TAX_RATE_FRESHNESS, attemptedAt: at } };
+  }
+  if (explicit) {
+    return kept;
   }
   const after =
     kept.retry === undefined ? TAX_RETRY_FIRST : Duration.min(Duration.times(kept.retry.after, 2), TAX_RATE_FRESHNESS);
@@ -593,6 +598,7 @@ const settleRefresh = Effect.fn('Merchandise.settleTaxRatesRefresh')(function* s
   key: string,
   done: Deferred.Deferred<FetchedTaxRates, TaxRatesFailure>,
   recorded: boolean,
+  explicit: boolean,
 ) {
   const at = yield* DateTime.now;
   const lost = new TaxRatesFailure({ kind: 'UNAVAILABLE' });
@@ -606,7 +612,7 @@ const settleRefresh = Effect.fn('Merchandise.settleTaxRatesRefresh')(function* s
     }
     const { inflight: _ended, ...rest } = entry;
     void _ended;
-    return new Map([...answers, [key, recorded ? rest : answerAfter(rest, Result.fail(lost), at)]]);
+    return new Map([...answers, [key, recorded ? rest : answerAfter(rest, Result.fail(lost), at, explicit)]]);
   });
   yield* Deferred.fail(done, lost);
 });
@@ -627,6 +633,7 @@ const logFailedRefresh = (failure: TaxRatesFailure) => {
 const runRefresh = Effect.fn('Merchandise.runTaxRatesRefresh')(function* runRefresh(
   scope: OperationalScope,
   done: Deferred.Deferred<FetchedTaxRates, TaxRatesFailure>,
+  explicit: boolean,
 ) {
   const source = yield* TaxRateSource;
   const read = yield* Effect.result(source.read(scope));
@@ -638,7 +645,7 @@ const runRefresh = Effect.fn('Merchandise.runTaxRatesRefresh')(function* runRefr
   const key = companyKey(scope);
   yield* Ref.update(
     companyAnswers,
-    (answers) => new Map([...answers, [key, answerAfter(entryOf(answers, key), result, at)]]),
+    (answers) => new Map([...answers, [key, answerAfter(entryOf(answers, key), result, at, explicit)]]),
   );
   yield* Result.isSuccess(result) ? Deferred.succeed(done, result.success) : Deferred.fail(done, result.failure);
 });
@@ -649,7 +656,7 @@ const runRefresh = Effect.fn('Merchandise.runTaxRatesRefresh')(function* runRefr
  * detached from the caller (owned by the process): it finishes, is recorded and clears its entry even when every
  * caller stopped waiting for it.
  */
-const refreshOf = (scope: OperationalScope) =>
+const refreshOf = (scope: OperationalScope, explicit = false) =>
   Effect.uninterruptible(
     Effect.gen(function* registerRefresh() {
       const key = companyKey(scope);
@@ -664,8 +671,8 @@ const refreshOf = (scope: OperationalScope) =>
         return joined;
       }
       yield* Effect.forkDetach(
-        Effect.interruptible(runRefresh(scope, created)).pipe(
-          Effect.onExit((exit) => settleRefresh(key, created, Exit.isSuccess(exit))),
+        Effect.interruptible(runRefresh(scope, created, explicit)).pipe(
+          Effect.onExit((exit) => settleRefresh(key, created, Exit.isSuccess(exit), explicit)),
         ),
       );
       return created;
@@ -709,8 +716,8 @@ export const knownTaxRateBook = Effect.fn('Merchandise.knownTaxRateBook')(functi
   return answer;
 });
 
-const awaitRefresh = (scope: OperationalScope) =>
-  refreshOf(scope).pipe(
+const awaitRefresh = (scope: OperationalScope, explicit = false) =>
+  refreshOf(scope, explicit).pipe(
     Effect.flatMap((pending) => Deferred.await(pending).pipe(Effect.timeoutOption(TAX_REFRESH_TIMEOUT))),
     Effect.flatMap(
       Option.match({
@@ -742,5 +749,5 @@ export const currentTaxRateBook = Effect.fn('Merchandise.currentTaxRateBook')(fu
 export const refreshedTaxRateBook = Effect.fn('Merchandise.refreshedTaxRateBook')(function* refreshedTaxRateBook(
   scope: OperationalScope,
 ) {
-  return yield* awaitRefresh(scope);
+  return yield* awaitRefresh(scope, true);
 });
