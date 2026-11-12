@@ -223,6 +223,7 @@ export {
   AgentProposalCommandPreparation,
   AgentProposalCommandPreparationLive,
   AgentProposalCommandAuthorizationPreflightLive,
+  proposalLifecycleAdministrator,
 } from './auth/agent-proposal-command-preparation.ts';
 export { agentProposalQueueRead } from './auth/agent-proposal-queue-read.ts';
 export {

@@ -1,3 +1,4 @@
+import { proposalLifecycleAdministrator } from '@app/core-runtime';
 import { mayFindPeople } from '@app/core-runtime/people/search';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { Effect } from 'effect';
@@ -73,6 +74,15 @@ const tenantReleaseHint = Effect.fn('LegacyRows.tenantReleaseHint')(function* te
   return decision.outcome;
 });
 
+const withdrawsAgentProposals = Effect.fn('LegacyRows.withdrawsAgentProposals')(function* withdrawsAgentProposals(
+  accessCase: AccessAdminCase,
+  persona: Persona,
+  company: string | undefined,
+) {
+  const scope = yield* companyPrincipal(accessCase, persona, company);
+  return yield* proposalLifecycleAdministrator(scope).pipe(Effect.provideService(AccessDecisionGate, accessCase.gate));
+});
+
 const findsPeople = Effect.fn('LegacyRows.findsPeople')(function* findsPeople(
   accessCase: AccessAdminCase,
   persona: Persona,
@@ -114,6 +124,19 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '120 se
           expect(yield* tenantReleaseHint(accessCase, 'owner')).toBe('ALLOWED');
           expect(yield* tenantReleaseHint(accessCase, 'member')).toBe('DENIED');
           expect(yield* tenantReleaseHint(accessCase, 'foreignOwner')).toBe('DENIED');
+        }),
+      ),
+    );
+
+    suite.effect("row 4: an agent's pending proposals are withdrawn by those who may disable the agent", () =>
+      withAccessAdminCase((accessCase) =>
+        Effect.gen(function* proposalWithdrawalRows() {
+          const [companyA, companyB] = accessCase.companies;
+          expect(yield* withdrawsAgentProposals(accessCase, 'owner', companyA)).toBe(true);
+          expect(yield* withdrawsAgentProposals(accessCase, 'companyAdmin', companyA)).toBe(true);
+          expect(yield* withdrawsAgentProposals(accessCase, 'member', companyA)).toBe(false);
+          expect(yield* withdrawsAgentProposals(accessCase, 'companyAdmin', companyB)).toBe(false);
+          expect(yield* withdrawsAgentProposals(accessCase, 'foreignOwner', companyA)).toBe(false);
         }),
       ),
     );
