@@ -520,6 +520,56 @@ export const profileServicesForVerifiedScope = (transaction: ProfileScopedRoutin
   profileServicesFor(transaction, scope);
 
 /**
+ * Profile Reads need only the verified scope and the Counterparty role resolver. They never build the
+ * write-side Party, guest, reactivation or source-carrier dependencies of the Action factory above.
+ */
+const profileReadServicesFor = (
+  transaction: ProfileScopedRoutineInvoker,
+  scope: OperationalScope,
+): Effect.Effect<
+  ProfilePersistenceServices,
+  OperationContextUnavailable,
+  ProfileCounterpartyRoleEligibilityResolverFactory
+> => {
+  if (scope.legalEntityId === undefined) {
+    return Effect.fail(
+      new OperationContextUnavailable({
+        code: 'operation_context_unavailable',
+        reason: 'Customer Profile persistence requires a trusted Legal Entity scope',
+      }),
+    );
+  }
+  const baseScope = {
+    legalEntityId: scope.legalEntityId,
+    principalId: scope.principalId,
+    tenantId: scope.tenantId,
+  };
+  let verifiedScope: ProfilePersistenceScope = baseScope;
+  if (scope.authBindingId !== undefined) {
+    verifiedScope = { ...verifiedScope, authBindingId: scope.authBindingId };
+  }
+  if (readVerifiedGatewayActor(scope)?.appId === ENROLLMENT_CONTINUATION_APP_ID) {
+    verifiedScope = { ...verifiedScope, enrollmentContinuation: true };
+  }
+  return Effect.gen(function* profileReadServices() {
+    const roleResolverFactory = yield* ProfileCounterpartyRoleEligibilityResolverFactory;
+    const resolveCounterpartyRole = roleResolverFactory.make({
+      legalEntityId: verifiedScope.legalEntityId,
+      operationalScope: scope,
+      requestCorrelation: scope.correlationId,
+      tenantId: verifiedScope.tenantId,
+    });
+    const dependencies: ProfilePersistenceDependencies = { resolveCounterpartyRole };
+    return profilePersistenceServicesForTransaction(transaction, verifiedScope, dependencies);
+  });
+};
+
+export const profileReadServicesForVerifiedScope = (
+  transaction: ProfileScopedRoutineInvoker,
+  scope: OperationalScope,
+) => profileReadServicesFor(transaction, scope);
+
+/**
  * The profile services of a Retail Portal binding Action: a binding and the bound person's portal access
  * commit in the Action's one transaction, so the binding services carry Core's portal writes over it.
  */
