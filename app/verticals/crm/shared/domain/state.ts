@@ -1,6 +1,6 @@
 // The whole CRM aggregate: one JSONB document per (tenant, legal entity). Owned by crm-scaffold.
 // Each area owns its slice schema in ./<area>.ts; this file only composes them.
-import { Option, Schema } from 'effect';
+import { flow, Option, Schema } from 'effect';
 import type { CrmViewer } from './access.ts';
 import { canSeeEverything } from './access.ts';
 import { AiChangesSliceSchema, projectAiChangesSlice } from './ai-changes.ts';
@@ -48,12 +48,7 @@ const DefaultedSlicesSchema = Schema.Struct({
 });
 type DefaultedSlices = typeof DefaultedSlicesSchema.Type;
 
-/** Fill slices missing from older persisted documents before decoding. */
-export const withDefaultSlices = (raw: unknown): DefaultedSlices => {
-  const value = Option.getOrElse(
-    Schema.decodeUnknownOption(StoredSlicesSchema)(raw),
-    (): typeof StoredSlicesSchema.Type => ({}),
-  );
+const fillDefaultSlices = (value: typeof StoredSlicesSchema.Type): DefaultedSlices => {
   const result: DefaultedSlices = {
     clients: value.clients ?? initialClientsSlice,
     imports: value.imports ?? initialImportsSlice,
@@ -68,6 +63,13 @@ export const withDefaultSlices = (raw: unknown): DefaultedSlices => {
   }
   return result;
 };
+
+/** Fill slices missing from older persisted documents before decoding; the stored-document schema parses the row. */
+export const withDefaultSlices = flow(
+  Schema.decodeUnknownOption(StoredSlicesSchema),
+  Option.getOrElse((): typeof StoredSlicesSchema.Type => ({})),
+  fillDefaultSlices,
+);
 
 /** What one viewer may read. The read server returns only this. */
 export const projectCrmState = (state: CrmState, viewer: CrmViewer): CrmState => {

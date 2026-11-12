@@ -4,7 +4,7 @@ import { GatewayAssertionReplayError } from '@app/core-runtime/auth/gateway-asse
 import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import { GATEWAY_ASSERTION_VERSION, GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
-import { ConfigProvider, Effect, Layer, Redacted, Schema } from 'effect';
+import { ConfigProvider, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { expect } from 'effect-rstest';
@@ -70,10 +70,9 @@ export const clientIntakeOwnerFixture = Effect.fn('ClientIntakeTest.ownerFixture
       expect(wire.headers.get('x-api-key')).toBe('intake-unit-module-credential');
       const request = Schema.decodeUnknownSync(GatewayDelegatedContextRequestSchema)(await wire.json());
       expect(request.compositionRevision).toBe(revision);
-      expect(Schema.encodeSync(GatewayDelegatedContextRequestSchema)(request).subject).toEqual({
-        _tag: 'Assertion',
-        sourceAssertion: token,
-      });
+      const { subject } = Schema.encodeSync(GatewayDelegatedContextRequestSchema)(request);
+      expect(Predicate.isTagged(subject, 'Assertion')).toBe(true);
+      expect(subject).toMatchObject({ sourceAssertion: token });
       expect(request.audience).toBe('party-registry');
       return Response.json({
         apiBaseUrl: '/party-registry-api',

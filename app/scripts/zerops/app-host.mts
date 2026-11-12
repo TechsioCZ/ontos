@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
-import { makeDatabaseIdentityEnrollmentLive } from '../../packages/core-runtime/src/db/database-identities.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../packages/core-runtime/src/db/database-identities.ts';
 import { DatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 import {
   TenantIntentLoader,
@@ -1575,7 +1575,7 @@ if (import.meta.main) {
     Effect.provide(
       Layer.merge(ApplicationCompositionAuthorityAdminDatabaseLive, ApplicationCompositionLegacyOwnersLive),
     ),
-    Effect.provide(makeDatabaseIdentityEnrollmentLive(APP_DATABASE_IDENTITY_ENROLLMENT)),
+    Effect.provide(Layer.succeed(DatabaseIdentityEnrollmentContext, APP_DATABASE_IDENTITY_ENROLLMENT)),
     Effect.provide(FetchHttpClient.layer),
     Effect.provide(NodeServices.layer),
     Effect.provide(ProcessDatabasePoolsLive),
