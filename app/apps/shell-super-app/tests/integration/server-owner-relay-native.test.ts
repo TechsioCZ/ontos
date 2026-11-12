@@ -47,6 +47,7 @@ import {
   GatewayContextV3ClaimsSchema,
   GatewayTrustedPrincipalContextSchema,
 } from '@app/shared-contracts';
+import type { GatewayDelegatedContextRequest } from '@app/shared-contracts';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import {
@@ -710,6 +711,113 @@ const diagnoseExplicitPartyLegalEntity = Effect.fn('ServerOwnerRelayNative.diagn
           }),
       }),
     );
+  },
+);
+
+const DelegatedProblemSchema = Schema.Struct({ reason: Schema.optionalKey(Schema.String), status: Schema.Number });
+const DELEGATED_REFUSAL_LOG = 'gateway delegation refused';
+
+/** A delegated request as a caller sends it on the wire; any string fits its audience, so an oversized one too. */
+type DelegatedRequestBody = GatewayDelegatedContextRequest;
+
+/** One raw POST to the Shell's delegated endpoint, with or without a key; the refusal code, if the body names one. */
+const postDelegated = Effect.fn('ServerOwnerRelayNative.postDelegated')(function* postDelegated(
+  origin: string,
+  body: DelegatedRequestBody,
+  apiKey: Redacted.Redacted | null,
+) {
+  const client = yield* HttpClient.HttpClient;
+  const response = yield* client.post(`${origin}/shell-super-app-api/auth/delegated/gateway-context`, {
+    body: yield* HttpBody.json(body),
+    headers: apiKey === null ? {} : { 'x-api-key': Redacted.value(apiKey) },
+  });
+  const raw = yield* response.json;
+  const reason = Option.flatMap(Schema.decodeUnknownOption(DelegatedProblemSchema)(raw), (problem) =>
+    Option.fromUndefinedOr(problem.reason),
+  );
+  return { hasReason: Predicate.hasProperty(raw, 'reason'), reason, status: response.status };
+});
+
+/**
+ * The Shell's refusal warnings written after `from`, each with its annotations: the logger writes the message line and
+ * then one line per annotation up to a closing brace. The response is sent after its warning is written.
+ */
+const refusalWarningsSince = (lines: readonly Redacted.Redacted[], from: number): readonly string[] => {
+  const written = lines.slice(from).map((line) => Redacted.value(line));
+  return written.flatMap((line, index) => {
+    if (!line.includes(DELEGATED_REFUSAL_LOG)) {
+      return [];
+    }
+    const rest = written.slice(index + 1);
+    const end = rest.findIndex((next) => next.trim() === '}');
+    return [[line, ...(end === -1 ? rest : rest.slice(0, end + 1))].join('\n')];
+  });
+};
+
+/**
+ * The delegated endpoint's refusals over HTTP, while no key binds for the release the Shell serves: what a caller with
+ * no key gets, that an unauthenticated body cannot put its own tenant into the Shell's warning, that an oversized
+ * audience is refused, and that a key that binds nothing is refused as unbound with that reason in the problem body.
+ */
+const assertDelegatedRefusalsBeforeBinding = Effect.fn('ServerOwnerRelayNative.assertDelegatedRefusalsBeforeBinding')(
+  function* assertDelegatedRefusalsBeforeBinding(input: {
+    readonly composition: Parameters<typeof provisionSourceModuleCredential>[0]['composition'];
+    readonly database: NativeCoreDatabase;
+    readonly fixture: NativeShellUserFixture;
+  }) {
+    const crypto = yield* Crypto.Crypto;
+    const { origin } = input.fixture;
+    const lines = input.fixture.application.diagnostics;
+    const chosenTenant = yield* crypto.randomUUIDv4();
+    const request: DelegatedRequestBody = {
+      audience: 'party-registry',
+      compositionRevision: input.composition.composition.revision,
+      exchangeId: yield* crypto.randomUUIDv4(),
+      legalEntityScope: 'subject',
+      subject: { _tag: 'Originator', actionInvocationId: yield* crypto.randomUUIDv4(), tenantId: chosenTenant },
+    };
+
+    // No key: 401, and no refusal code that could depend on the body.
+    const keyless = yield* postDelegated(origin, request, null);
+    expect(keyless.status).toBe(401);
+    expect(keyless.hasReason).toBe(false);
+
+    // No key, a release that is not the current one, a tenant of the caller's choosing: 409 `release_changed`, and the
+    // warning names neither a calling module nor that tenant.
+    const beforeStale = lines.length;
+    const stale = yield* postDelegated(origin, { ...request, compositionRevision: '0'.repeat(64) }, null);
+    expect(stale.status).toBe(409);
+    expect(stale.reason).toEqual(Option.some('release_changed'));
+    const [warning = ''] = refusalWarningsSince(lines, beforeStale);
+    expect(warning).toContain('release_changed');
+    expect(warning).not.toContain(chosenTenant);
+    expect(warning).toMatch(/subjectTenant\W+unknown/u);
+    expect(warning).toMatch(/callerAppId\W+unknown/u);
+
+    // An audience longer than any app id is refused before anything else runs.
+    const beforeLong = lines.length;
+    const long = yield* postDelegated(origin, { ...request, audience: 'a'.repeat(201) }, null);
+    expect(long.status).toBe(400);
+    expect(refusalWarningsSince(lines, beforeLong)).toEqual([]);
+
+    // A platform module key attested for another release: it verifies, but no key binds under the installed release,
+    // so the Shell registers no namespace audience and refuses the key as unbound (403), naming that reason.
+    const stray = yield* provisionSourceModuleCredential({
+      appId: 'party-registry',
+      composition: {
+        composition: { ...input.composition.composition, revision: 'f'.repeat(64) },
+      },
+      configuration: input.fixture.configuration,
+      database: input.database,
+      persistence: input.fixture.persistence,
+    });
+    const unbound = yield* postDelegated(
+      origin,
+      { ...request, subject: { _tag: 'Assertion', sourceAssertion: 'not-a-jwt' } },
+      stray.secret,
+    );
+    expect(unbound.status).toBe(403);
+    expect(unbound.reason).toEqual(Option.some('module_credential_unbound'));
   },
 );
 
@@ -3299,6 +3407,7 @@ it.live(
             }
             const realAuthContextRef = `better-auth-session:${realSession.id}`;
             expect(realAuthContextRef === fixture.core.manager.authContextRef).toBe(false);
+            yield* assertDelegatedRefusalsBeforeBinding({ composition: current, database, fixture });
             // The module credential, provisioned by the platform exactly as on every boot; no person issues it.
             const issued = yield* provisionSourceModuleCredential({
               appId: 'catalog',
