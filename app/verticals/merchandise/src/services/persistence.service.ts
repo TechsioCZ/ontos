@@ -2437,6 +2437,21 @@ export const prepareStaffTaxRates = Effect.fn('Merchandise.prepareStaffTaxRates'
   return { fetched: known.fetched, refused: known.refused } satisfies PreparedTax;
 });
 
+/**
+ * What a records read prepares outside its transaction: the caller's rights and, for a staff read (not the storefront's,
+ * not agent history), the company's rates as this process knows them from Tax. Storefront reads stay local.
+ */
+export const merchandiseRecordsPreparation = Effect.fn('Merchandise.recordsPreparation')(function* recordsPreparation(
+  scope: OperationalScope,
+  request: RecordsRequest,
+) {
+  const grants = yield* merchandiseRecordsGrants(scope, request);
+  if (request.view?.storefront === true || request.agentHistory !== undefined) {
+    return { grants } satisfies RecordsPrepared;
+  }
+  return { grants, tax: yield* prepareStaffTaxRates(scope) } satisfies RecordsPrepared;
+});
+
 /** Cross-owner reference verification happens after Core admission but before the owner transaction opens. */
 export const prepareMerchandiseCommand = Effect.fn('Merchandise.prepareCommandReferences')(function* prepareCommand(
   command: MerchandiseCommand,

@@ -10,15 +10,16 @@ import {
 import { Effect, Match } from 'effect';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import type { RecordsRequest } from '../../shared/apis/records.ts';
-import { merchandiseRecordsGrants, persistenceService, prepareStaffTaxRates } from '../services/persistence.service.ts';
-import type { RecordsPrepared } from '../services/persistence.service.ts';
+import { merchandiseRecordsPreparation, persistenceService } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { isAkrosCompany, storefrontReadRequest } from '../../shared/actions/command-guard.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
 const readFailure = (
-  failure: Effect.Error<ReturnType<Services['records']>> | Effect.Error<ReturnType<typeof merchandiseRecordsGrants>>,
+  failure:
+    | Effect.Error<ReturnType<Services['records']>>
+    | Effect.Error<ReturnType<typeof merchandiseRecordsPreparation>>,
 ) =>
   Match.value(failure).pipe(
     Match.tag(
@@ -53,24 +54,6 @@ const akrosServiceKeyGuard = (input: RecordsRequest, scope: OperationalScope) =>
         }),
       )
     : Effect.void;
-/** Rights for the read and, for staff, the company's rates from Tax; storefront reads stay local to Merchandise. */
-const prepareRecords = Effect.fn('Merchandise.prepareRecords')(function* prepareRecords(
-  input: RecordsRequest,
-  scope: OperationalScope,
-) {
-  yield* akrosServiceKeyGuard(input, scope);
-  const grants = yield* merchandiseRecordsGrants(
-    scope,
-    storefrontReadRequest(scope.authMethod, scope.legalEntityId, input),
-  ).pipe(Effect.mapError(readFailure));
-  const staff = input.view?.storefront !== true && input.agentHistory === undefined;
-  if (!staff) {
-    return { grants } satisfies RecordsPrepared;
-  }
-  const tax = yield* prepareStaffTaxRates(scope);
-  return { grants, tax } satisfies RecordsPrepared;
-});
-
 const recordsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'protected' },
@@ -112,7 +95,15 @@ export const recordsRead = defineRead(
     schemaVersion: '1',
   },
   {
-    prepare: (input: RecordsRequest, context) => prepareRecords(input, context.scope),
+    prepare: (input: RecordsRequest, context) =>
+      akrosServiceKeyGuard(input, context.scope).pipe(
+        Effect.andThen(
+          merchandiseRecordsPreparation(
+            context.scope,
+            storefrontReadRequest(context.scope.authMethod, context.scope.legalEntityId, input),
+          ).pipe(Effect.mapError(readFailure)),
+        ),
+      ),
     load: (input: RecordsRequest, context) =>
       context.services
         .records(storefrontReadRequest(context.scope.authMethod, context.scope.legalEntityId, input), context.prepared)
