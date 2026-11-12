@@ -975,3 +975,28 @@ for (const options of [
     }),
   );
 }
+
+it.effect("reads one subject's kind and scope once for a page of LISTs, never once per LIST", () =>
+  Effect.gen(function* sharedPreamble() {
+    const kindReads = { count: 0 };
+    const human = kindSource('human');
+    const counting: AccessPrincipalKinds = {
+      ...human,
+      readKind: (query, transaction) =>
+        Effect.suspend(() => {
+          kindReads.count += 1;
+          return human.readKind(query, transaction);
+        }),
+    };
+    const page = Array.from({ length: 5 }, () => listPage[0]).filter((one) => one !== undefined);
+    const shared = { authority: { cells: [cell({ capability: 'finance.invoice.void' })] }, kinds: counting };
+    const alone = harness(shared);
+    const one = yield* Effect.forEach(page, (input) => alone.gate.list(input), { concurrency: 1 });
+    const aloneKinds = kindReads.count;
+    kindReads.count = 0;
+    const together = harness(shared);
+    expect(yield* together.gate.listMany(page)).toEqual(one);
+    expect({ kinds: aloneKinds, scopes: alone.scopes.length }).toEqual({ kinds: 5, scopes: 10 });
+    expect({ kinds: kindReads.count, scopes: together.scopes.length }).toEqual({ kinds: 1, scopes: 1 });
+  }),
+);

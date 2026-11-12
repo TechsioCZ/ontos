@@ -19,6 +19,7 @@ import type { ListAccessResolution } from '../decision/engine.ts';
 import type { ListAccessPredicate } from '../decision/list-access.ts';
 import { accessDecisionUnavailable } from '../decision/errors.ts';
 import { withOptional } from '../decision/optional.ts';
+import { holderIdOf } from '../decision/selector.ts';
 import {
   AccessScopeIdSchema,
   CapabilityKeySchema,
@@ -672,7 +673,70 @@ const engineListsSettled = (
  * One instance per process, built once from its ports: every call carries its own trusted
  * `OperationalScope` (O66), and no method asks the caller for a collaborator.
  */
-export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDecisionService => {
+/** One read answered once per distinct key; the first caller's answer (or failure) is every later caller's. */
+const sharedPerKey = <Key, A, E>(keyOf: (key: Key) => string, read: (key: Key) => Effect.Effect<A, E>) => {
+  const answered = new Map<string, Effect.Effect<A, E>>();
+  return (key: Key): Effect.Effect<A, E> =>
+    Effect.suspend(() => {
+      const id = keyOf(key);
+      const known = answered.get(id);
+      if (known !== undefined) {
+        return known;
+      }
+      return Effect.cached(read(key)).pipe(
+        Effect.flatMap((once) => {
+          answered.set(id, once);
+          return once;
+        }),
+      );
+    });
+};
+
+/**
+ * The same ports, reading each acting principal's kind and each gate scope once: what the LISTs of one `listMany` call
+ * ask about one subject in one request scope at one instant. Built per call and dropped with it, never shared.
+ */
+const sharedPreambleReads = (ports: AccessDecisionPorts): AccessDecisionPorts => {
+  const readKind = sharedPerKey(
+    (query: Parameters<AccessDecisionPorts['principalKinds']['readKind']>[0]) =>
+      [query.tenantId, query.principalId, scopeKeyOf(query.scope)].join('\u0000'),
+    (query) => ports.principalKinds.readKind(query),
+  );
+  const authorities = new Map<string, ReturnType<AccessDecisionPorts['authorityFor']>>();
+  return {
+    ...ports,
+    authorityFor: (scope) => {
+      const key = scopeKeyOf(scope);
+      const known = authorities.get(key);
+      if (known !== undefined) {
+        return known;
+      }
+      const port = ports.authorityFor(scope);
+      const shared = {
+        ...port,
+        readScope: sharedPerKey(
+          (query: Parameters<typeof port.readScope>[0]) =>
+            [query.tenantId, query.legalEntityId ?? '', ...query.holders.map(holderIdOf)].join('\u0000'),
+          (query) => port.readScope(query),
+        ),
+      };
+      authorities.set(key, shared);
+      return shared;
+    },
+    principalKinds: {
+      ...ports.principalKinds,
+      // A read through a caller's transaction is that caller's own, never shared.
+      readKind: (query, transaction) =>
+        transaction === undefined ? readKind(query) : ports.principalKinds.readKind(query, transaction),
+    },
+  };
+};
+
+export const makeAccessDecisionService = (
+  ports: AccessDecisionPorts,
+  /** The ports of one `listMany` call already share its preamble reads. */
+  preambleReadsShared = false,
+): AccessDecisionService => {
   const resolveGateScope = Effect.fn('AccessDecisionGate.resolveScope')(function* resolveGateScopeEffect(
     scope: OperationalScope,
     legalEntityId: LegalEntityId | undefined,
@@ -1386,7 +1450,7 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
    * identity admissions unchanged), then every LIST that reaches the engine answered with the others of its request
    * scope from one cell read and one engine snapshot, and every evidence row written by request scope.
    */
-  const listMany = Effect.fn('AccessDecisionGate.listMany')(function* listManyGate(input: readonly ListGateInput[]) {
+  const listManyOwn = Effect.fn('AccessDecisionGate.listMany')(function* listManyGate(input: readonly ListGateInput[]) {
     const preambles: readonly GatePreamble[] = yield* Effect.forEach(input, (one) => preambleOf(one), {
       concurrency: 1,
     });
@@ -1483,6 +1547,12 @@ export const makeAccessDecisionService = (ports: AccessDecisionPorts): AccessDec
       return one === undefined ? { decision } : one.keep(decision);
     });
   });
+
+  // Every LIST of one call asks the same subject's kind and scope at one instant: those reads are taken once per call.
+  const listMany = (input: readonly ListGateInput[]): Effect.Effect<readonly ListAccessResolution[]> =>
+    preambleReadsShared
+      ? listManyOwn(input)
+      : Effect.suspend(() => makeAccessDecisionService(sharedPreambleReads(ports), true).listMany(input));
 
   return {
     decide,
