@@ -8,7 +8,10 @@ import {
 import { privacyBackendRegistration as privacyRegistration } from '../vertical.runtime-declaration.ts';
 import { PrivacySubjectPartyCredentialsLive } from '../src/persistence/privacy-subject-party-credentials.ts';
 import { PrivacySubjectPartyOwnerLive } from '../src/persistence/privacy-subject-party-owner.ts';
-import { GatewayAssertionRedemptionDatabaseLive } from '../src/auth/gateway-assertion-redemption-runtime.ts';
+import {
+  GatewayAssertionRedemptionDatabaseLive,
+  gatewayAssertionRedemptionPgClient,
+} from '../src/auth/gateway-assertion-redemption-runtime.ts';
 import {
   ActionAuthorizationPreflightDatabaseLive,
   ContextAccessLive,
@@ -36,6 +39,8 @@ import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-erro
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { FetchHttpClient } from 'effect/http';
+import { PgClient } from '@effect/sql-pg';
+import { Reactivity } from 'effect/reactivity';
 import { ultramodernDeliveryUnit, ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { Effect, HttpApiBuilder, Layer, Schema } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
@@ -133,10 +138,6 @@ import { privacyNoticeInformationStepLive } from '../src/services/privacy-notice
 import { privacyConsentAwareActionRuntimeLive } from './consent-aware-action-runtime.ts';
 
 const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
-const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
-  Layer.provide(GatewayAssertionRedemptionDatabaseLive),
-  Layer.provide(DatabaseConfigLive),
-);
 
 const operationAttributes = (operationContext: OperationContext) => {
   const attributes = {
@@ -312,12 +313,20 @@ const productionActionRuntimeLive = privacyConsentAwareActionRuntimeLive.pipe(
   Layer.provideMerge(privacyActionAuthorityUnavailableLive),
 );
 
+const redemptionDatabaseLive = GatewayAssertionRedemptionDatabaseLive.pipe(
+  Layer.provide(PgClient.layerFrom(gatewayAssertionRedemptionPgClient)),
+  Layer.provide(Reactivity.layer),
+  Layer.provide(DatabaseConfigLive),
+);
+const configuredGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
+  Layer.provide(redemptionDatabaseLive),
+);
 type PrivacyApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
   actionRuntime: Layer.Layer<ActionRuntime | OwnerActionApprovals, Layer.Error<typeof productionActionRuntimeLive>>,
   gatewayAssertionRedemption: Layer.Layer<
     GatewayAssertionRedemptionService,
-    Layer.Error<typeof productionGatewayAssertionRedemptionLive>
+    Layer.Error<typeof configuredGatewayAssertionRedemptionLive>
   >,
 ];
 
@@ -412,7 +421,7 @@ export const makePrivacyApiRuntime = (
 const apiRuntime = makePrivacyApiRuntime(
   productionReadRuntimeLive,
   productionActionRuntimeLive,
-  productionGatewayAssertionRedemptionLive,
+  configuredGatewayAssertionRedemptionLive,
 );
 
 export default apiRuntime;
