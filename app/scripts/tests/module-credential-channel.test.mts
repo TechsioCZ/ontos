@@ -388,4 +388,25 @@ describe('retirement after a handover', () => {
       expect(runs).toEqual([['retire', [BOOT_ORDER_KEY, 'filled-party-key']]]);
     }),
   );
+
+  it.effect('still retires the superseded keys when the boot pass issued nothing', () =>
+    Effect.gen(function* nothingIssued() {
+      const runs: (readonly [string, readonly string[]])[] = [];
+      const run = (pass: 'retire' | 'retire-own', retiring: { readonly providerKeyIds: readonly string[] }) =>
+        Effect.sync(() => runs.push([pass, retiring.providerKeyIds]));
+      const retirement = yield* Effect.forkChild(
+        retireAfterHandoverWith(run)({
+          compositionRevision: 'a'.repeat(64),
+          current: Effect.succeed([]),
+          earlierBoots: [],
+          replaced: [],
+          shellEnvironment: {},
+          superseded: true,
+        }),
+      );
+      yield* TestClock.adjust('2 minutes');
+      yield* Fiber.join(retirement);
+      expect(runs).toEqual([['retire', []]]);
+    }),
+  );
 });

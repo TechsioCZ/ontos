@@ -10,8 +10,9 @@
  *     Nothing is written to a file.
  *   node scripts/zerops/provision-module-credentials.mts issue-installed --operation <id> --host <host> --boot <id>
  *     The same, for every calling module of the release the Shell serves now (the local demo serves them all).
- *   node scripts/zerops/provision-module-credentials.mts retire --operation <id> --host <host> --boot <id> --revision <rev> <provider-key-id> ...
- *     When <revision> holds the authority, revokes every module credential bound before it took the authority.
+ *   node scripts/zerops/provision-module-credentials.mts retire --operation <id> --host <host> --boot <id> --revision <rev> [<provider-key-id> ...]
+ *     When <revision> holds the authority, revokes every module credential bound before it took the authority, except
+ *     the named ones the host holds (none, when its boot pass issued nothing).
  *   node scripts/zerops/provision-module-credentials.mts retire-own --operation <id> --host <host> --boot <id> --revision <rev> --earlier-boots <id,...> [<replaced-provider-key-id> ...]
  *     Revokes the host's own module credentials it no longer holds: the named keys this boot replaced (attested for
  *     <host> and this boot), and every key attested for <host> and one of the ended earlier boots its container
@@ -165,7 +166,7 @@ const retire = Command.make(
     bootId: BOOT_ID,
     hostId: HOST_ID,
     operationId: OPERATION_ID,
-    providerKeyIds: Argument.String('provider-key-id').pipe(Argument.atLeast(1)),
+    providerKeyIds: Argument.String('provider-key-id').pipe(Argument.variadic()),
     revision: REVISION,
   },
   ({ bootId, hostId, operationId, providerKeyIds, revision }) =>

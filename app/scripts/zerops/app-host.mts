@@ -678,10 +678,9 @@ export const retireAfterHandoverWith =
       if (!input.superseded) {
         return;
       }
-      const current = yield* input.current;
-      if (current.length > 0) {
-        yield* run('retire', { ...input, providerKeyIds: current });
-      }
+      // Even when the boot pass issued nothing: the superseded release's keys are retired all the same, and any key a
+      // later fill issues is bound after this release took the authority, so the cutoff never reaches it.
+      yield* run('retire', { ...input, providerKeyIds: yield* input.current });
     }).pipe(Effect.delay(MODULE_CREDENTIAL_HANDOVER_GRACE));
 
 export const retireAfterHandover = retireAfterHandoverWith(runRetirement);
