@@ -29,6 +29,14 @@ export const PLATFORM_TENANT = Object.freeze({
   tenantId: stableUuid('ontos.platform/tenant'),
 });
 
+/**
+ * Whether a tenant serves people and so holds access: every tenant but the platform's own. The platform tenant holds
+ * only the module credential principals the platform provisions (no person, membership, Role, access scope or
+ * relationship), so access release activation and release access verification both pass it by, through this one
+ * predicate. A customer tenant lacking its access scope is never passed by: that is damage, and it fails loudly.
+ */
+export const tenantServesPeople = (tenantId: string): boolean => tenantId !== PLATFORM_TENANT.tenantId;
+
 const MODULE_PRINCIPAL_PREFIX = 'module:';
 
 /** The display name that marks a platform tenant service principal as one module's credential holder. */
