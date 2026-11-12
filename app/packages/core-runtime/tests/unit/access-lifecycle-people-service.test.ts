@@ -14,7 +14,7 @@ import type { AccessTeamWithMembers } from '../../src/access/intent/teams.ts';
 import { administrationOf, makeAccessPeopleCommands } from '../../src/access/lifecycle/people-service.ts';
 import { isSoleAdministrator } from '../../src/access/lifecycle/owners.ts';
 import type { AssignRoleCommand, GrantDelegationCommand } from '../../src/access/lifecycle/people-service.ts';
-import { peopleRefusal } from '../../src/access/lifecycle/people-commands.ts';
+import { PeopleIntentWriteSchema, peopleRefusal } from '../../src/access/lifecycle/people-commands.ts';
 import type { PeopleCommandError, PeopleIntentWrite } from '../../src/access/lifecycle/people-commands.ts';
 import { CatalogSnapshotSchema } from '../../src/access/model.ts';
 import type { Assignment, Cell, Delegation } from '../../src/access/model.ts';
@@ -552,6 +552,9 @@ const peopleRows: readonly AccessMembership[] = [
   row(LEAVER, scopeA, 66),
   row(LEAVER, scopeB, 67),
 ];
+const [RecordMembership, EndMembership, RequireDirectoryMember, , EndAssignment, , EndDelegation] =
+  PeopleIntentWriteSchema.members;
+
 const leaverRow = (scopeId: AccessScopeId) =>
   peopleRows.find(
     (candidate) =>
@@ -610,12 +613,9 @@ it.effect('admits through permanent authority over the company only, with the di
     }).admitMember(adminAScope, admitInto(companyA));
     expect(admitted.membership).toEqual({ principalId: NEWCOMER, scopeId: scopeA, status: 'active' });
     // A company administrator's admission writes the person's tenant row too, after the precondition.
-    expect(written.map((write) => write._tag)).toEqual([
-      'RequireDirectoryMember',
-      'RecordMembership',
-      'RecordMembership',
-    ]);
-    expect(written[0]).toEqual({ _tag: 'RequireDirectoryMember', legalEntityId: companyA, principalId: NEWCOMER });
+    expect(written).toHaveLength(3);
+    expect(written[0]).toEqual(RequireDirectoryMember.make({ legalEntityId: companyA, principalId: NEWCOMER }));
+    expect(written.slice(1).every(Schema.is(RecordMembership))).toBe(true);
 
     // The administrator of company B does not reach A; a delegated manager never admits anybody.
     const elsewhere = yield* Effect.flip(
@@ -686,6 +686,12 @@ it.effect('ends exactly the closed scopes: one company, or the tenant and every 
     const teams = [teamIn(scopeA, 1), teamIn(scopeB, 2)];
     const fixture = { delegations: [managesA, managesB], memberships: peopleRows, teams };
     const reason = 'Moved to another employer';
+    const revokedMembership = (membershipId: AccessMembership['id'] | undefined) =>
+      EndMembership.make({
+        membershipId: Option.getOrThrow(Option.fromNullishOr(membershipId)),
+        reason,
+        status: 'revoked',
+      });
 
     const companyWrites: PeopleIntentWrite[] = [];
     const revisions: (string | undefined)[] = [];
@@ -719,14 +725,14 @@ it.effect('ends exactly the closed scopes: one company, or the tenant and every 
     expect(tenantWrites).toHaveLength(10);
     expect(tenantWrites).toEqual(
       expect.arrayContaining([
-        { _tag: 'EndMembership', membershipId: leaverRow(tenantScope)?.id, reason, status: 'revoked' },
-        { _tag: 'EndMembership', membershipId: leaverRow(scopeA)?.id, reason, status: 'revoked' },
-        { _tag: 'EndMembership', membershipId: leaverRow(scopeB)?.id, reason, status: 'revoked' },
-        { _tag: 'EndDelegation', delegationId: managesA.id },
-        { _tag: 'EndDelegation', delegationId: managesB.id },
-        { _tag: 'EndAssignment', incarnationId: ids.incarnation(31) },
-        { _tag: 'EndAssignment', incarnationId: ids.incarnation(32) },
-        { _tag: 'EndAssignment', incarnationId: ids.incarnation(33) },
+        revokedMembership(leaverRow(tenantScope)?.id),
+        revokedMembership(leaverRow(scopeA)?.id),
+        revokedMembership(leaverRow(scopeB)?.id),
+        EndDelegation.make({ delegationId: managesA.id }),
+        EndDelegation.make({ delegationId: managesB.id }),
+        EndAssignment.make({ incarnationId: ids.incarnation(31) }),
+        EndAssignment.make({ incarnationId: ids.incarnation(32) }),
+        EndAssignment.make({ incarnationId: ids.incarnation(33) }),
       ]),
     );
   }),
