@@ -1020,11 +1020,12 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
             expect(traced.carriers).toBeLessThanOrEqual(carriers.length);
             expect(traced.inspectionCalls).toBeLessThanOrEqual(3);
             expect(batch.counters.compositionLoads).toBeLessThanOrEqual(9);
-            expect(batch.counters.checkBulk).toBeLessThanOrEqual(2 + listCarriers);
-            expect(batch.transactions - batch.cellReads).toBeLessThanOrEqual(24);
-            // Every cell set of a capability batch is read in ONE transaction; only a LIST question reads its own.
-            expect(batch.cellBatches).toBeLessThanOrEqual(2);
-            expect(batch.cellReads).toBeLessThanOrEqual(listCarriers);
+            // One engine snapshot per capability batch and one for its LISTs together, however many LISTs it asks.
+            expect(batch.counters.checkBulk).toBeLessThanOrEqual(4);
+            expect(batch.transactions).toBeLessThanOrEqual(24);
+            // Every cell set of a capability batch is read in ONE transaction, and its LISTs' in one more.
+            expect(batch.cellBatches).toBeLessThanOrEqual(4);
+            expect(batch.cellReads).toBe(0);
             expect(capabilityKeys.size).toBeGreaterThan(100);
 
             // The same questions one at a time, as the Shell asked them before: identical modules, identical
@@ -1110,13 +1111,14 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               expect(owned.value.offered.length).toBe(owned.value.live.read.size);
               expect((yield* Ref.get(trace)).inspectionCalls).toBeLessThanOrEqual(3);
               const { reference } = yield* expectSameHints({ authorityCase, principalId: owner, snapshot });
-              expect(owned.counters.checkBulk).toBeLessThanOrEqual(2 + listCarriers);
-              // The work does not grow with the rights the catalog declares (hundreds): one batched cell read, one
-              // read per LIST question, a fixed number of identity, scope and evidence transactions. Before the batch,
-              // this owner cost one transaction per capability and mode: 463 transactions, 3 252 statements.
-              expect(owned.cellBatches).toBeLessThanOrEqual(2);
-              expect(owned.cellReads).toBeLessThanOrEqual(listCarriers);
-              expect(owned.transactions - owned.cellReads).toBeLessThanOrEqual(24);
+              expect(owned.counters.checkBulk).toBeLessThanOrEqual(4);
+              // The work does not grow with the rights the catalog declares (hundreds): one batched cell read per
+              // capability batch and one for its LISTs, a fixed number of identity, scope and evidence transactions.
+              // Before the batch, this owner cost one transaction per capability and mode: 463 transactions, 3 252
+              // statements.
+              expect(owned.cellBatches).toBeLessThanOrEqual(4);
+              expect(owned.cellReads).toBe(0);
+              expect(owned.transactions).toBeLessThanOrEqual(24);
               expect(owned.statements).toBeLessThanOrEqual(300);
 
               const path = yield* ownerReportPath;
@@ -1205,9 +1207,10 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
                   }),
                 );
               }
-              // Before the shared stages this description made about 200 sequential round trips; now under 100. The
-              // bound leaves room for timing noise, never for a stage or a per-context resolution that waits again.
-              expect(sequentialRoundTrips).toBeLessThanOrEqual(120);
+              // Before the shared stages this description made about 200 sequential round trips, then about 105; with
+              // every LIST of a batch answered together, 85. The bound leaves room for timing noise, never for a stage,
+              // a per-context resolution or a per-LIST read that waits again.
+              expect(sequentialRoundTrips).toBeLessThanOrEqual(100);
               expect(at5.transactions).toBeLessThanOrEqual(14);
             }).pipe(Effect.provide(NodeServices.layer)),
           3,
