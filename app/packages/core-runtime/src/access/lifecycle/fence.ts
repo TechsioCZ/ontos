@@ -425,9 +425,10 @@ export interface AccessWriteRequest {
   readonly change: AccessChangeReceipt;
   readonly commandDigest: CommandDigest;
   /**
-   * Keep the fence when the projection fails instead of releasing it. A writer that took the fence over from a dead
-   * holder sets it: the graph may be half-written by that holder, so the fence opens only on a committed reconcile,
-   * and a failed one leaves the fence to lapse to the next taker.
+   * Keep the fence when the projection fails instead of releasing it, for a writer that decides itself. The
+   * projection writer sets it: once the engine was written, or when it took the fence over from a dead holder, the
+   * graph may be half-written, so the fence opens only on a committed reconcile and a failed one leaves it to lapse
+   * to the next taker; before any engine write the writer gives the fence back itself.
    */
   readonly keepFenceOnFailure?: boolean;
   readonly operationId: AccessOperationId;

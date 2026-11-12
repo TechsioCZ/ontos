@@ -187,6 +187,30 @@ const failingEngine =
       ),
   });
 
+/** The connection lost in the middle of an engine write. */
+const midWriteLoss = [new AccessProjectionError({ code: 'access_projection_unavailable', reason: 'connection lost' })];
+
+/**
+ * An engine whose next `failures` reconciles send their first relationship write (the compiler's `beforeWrite` runs)
+ * and then lose the connection: from then on the graph may be half-written.
+ */
+const failingMidWrite =
+  (failures: Ref.Ref<number>) =>
+  (engine: AccessProjectionCompilerEngine): AccessProjectionCompilerEngine => ({
+    ...engine,
+    reconcile: (intent, options) =>
+      Ref.modify(failures, (left) => [left, Math.max(0, left - 1)] as const).pipe(
+        Effect.flatMap((left) =>
+          left > 0
+            ? (options.beforeWrite ?? Effect.void).pipe(Effect.andThen(Effect.fail(midWriteLoss)))
+            : engine.reconcile(intent, options),
+        ),
+      ),
+  });
+
+const lastJournal = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  journals(admin, tenantId).pipe(Effect.map((rows) => rows.at(-1)));
+
 /** An engine whose write waits, once armed, until the suite lets it go: the holder is inside its engine write. */
 const holdingEngine =
   (gate: {
@@ -374,6 +398,72 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
             const again = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
             expect({ deletions: again.deletions, touches: again.touches }).toEqual({ deletions: 0, touches: 0 });
             expect((yield* journalPhases(admin, tenantId)).slice(-3)).toEqual(['failed', 'committed', 'committed']);
+            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+          }),
+      );
+    }),
+  );
+
+  suite.effect('a projection that failed after it wrote to the engine keeps the tenant closed for the next taker', () =>
+    Effect.gen(function* failedAfterEngineWrite() {
+      const failures = yield* Ref.make(0);
+      yield* withProjectionTenant(
+        { activeModules: [MODULE], wrapCompiler: failingMidWrite(failures) },
+        (tenantId, admin) =>
+          Effect.gen(function* keptClosed() {
+            const scope = yield* bootstrapTenant(tenantId);
+            yield* Ref.set(failures, 99);
+            const writer = yield* AccessProjectionWriter;
+            yield* refusalOf(writer.reconcileTenant({ scope }));
+            // Tried once and twice more under the same fence, then given up without opening the tenant.
+            expect(yield* Ref.get(failures)).toBe(96);
+            const [held] = yield* tenantFence(admin, tenantId);
+            const failed = yield* lastJournal(admin, tenantId);
+            expect(held).toEqual({ owning_operation_id: failed?.operation_id, state: 'Changing' });
+            expect(yield* journalOf(admin, failed?.operation_id ?? '')).toEqual([
+              { failure_code: 'projection_failed', phase: 'failed' },
+            ]);
+            // Once the lease lapsed the next reconcile takes the fence over and opens it on a full projection.
+            yield* Ref.set(failures, 0);
+            yield* lapseLease(admin, tenantId);
+            yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+          }),
+      );
+    }),
+  );
+
+  suite.effect('a projection that failed before any engine write gives the fence back', () =>
+    Effect.gen(function* failedBeforeEngineWrite() {
+      const failing = yield* Ref.make(false);
+      yield* withProjectionTenant(
+        { activeModules: [MODULE], wrapCompiler: failingEngine(failing) },
+        (tenantId, admin) =>
+          Effect.gen(function* releasedUntouched() {
+            const scope = yield* bootstrapTenant(tenantId);
+            yield* Ref.set(failing, true);
+            const writer = yield* AccessProjectionWriter;
+            yield* refusalOf(writer.reconcileTenant({ scope }));
+            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+            expect((yield* lastJournal(admin, tenantId))?.phase).toBe('failed');
+          }),
+      );
+    }),
+  );
+
+  suite.effect('a projection that lost the engine mid-write is tried again under the same fence and opens it', () =>
+    Effect.gen(function* retriedUnderFence() {
+      const failures = yield* Ref.make(0);
+      yield* withProjectionTenant(
+        { activeModules: [MODULE], wrapCompiler: failingMidWrite(failures) },
+        (tenantId, admin) =>
+          Effect.gen(function* recoveredInProcess() {
+            const scope = yield* bootstrapTenant(tenantId);
+            yield* Ref.set(failures, 1);
+            const writer = yield* AccessProjectionWriter;
+            const written = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+            expect(written.verified).toBe(true);
+            expect(yield* journalOf(admin, written.operationId)).toEqual([{ failure_code: null, phase: 'committed' }]);
             expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
           }),
       );

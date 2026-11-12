@@ -1,6 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Clock, Context, Crypto, DateTime, Effect, Layer, Match, Option, Ref, Result } from 'effect';
+import { Clock, Context, Crypto, DateTime, Duration, Effect, Layer, Match, Option, Ref, Result } from 'effect';
 import { Hex } from 'effect/encoding';
 
 import type { OperationalScope } from '../../operations/context.ts';
@@ -18,6 +18,7 @@ import type { AccessOperationId, AccessScopeId, CommandDigest, TenantId } from '
 import type { AccessLifecycleError } from '../lifecycle/errors.ts';
 import { lifecycleRefusal } from '../lifecycle/errors.ts';
 import {
+  ACCESS_FENCE_LEASE,
   ACCESS_FENCE_LEASE_RENEWAL,
   AccessWriteJournalPort,
   acquireScopeFence,
@@ -484,6 +485,34 @@ const releaseHeldFence = Effect.fn('AccessProjectionWriter.releaseHeldFence')(fu
   );
 });
 
+/** How often a projection that failed after it began writing the engine is tried again under the same fence. */
+export const ACCESS_PROJECTION_ENGINE_RETRIES = 2;
+export const ACCESS_PROJECTION_ENGINE_RETRY_SPACING = Duration.seconds(1);
+
+/**
+ * Project, and once the engine was touched, try again a few times under the same fence before giving up: the
+ * compiler diffs against the engine, so a second run writes exactly what the first did not, and the tenant opens
+ * now instead of after its lease lapsed. A refusal the engine will repeat (an invalid plan) is not tried again.
+ */
+const projectWithRetries = Effect.fn('AccessProjectionWriter.projectWithRetries')(function* projectWithRetriesEffect(
+  project: Effect.Effect<ReconcileReport, readonly AccessProjectionError[]>,
+  engineTouched: Ref.Ref<boolean>,
+  retriesLeft: number,
+): Effect.fn.Return<Result.Result<ReconcileReport, readonly AccessProjectionError[]>> {
+  const projected = yield* Effect.result(project);
+  if (Result.isSuccess(projected) || retriesLeft === 0 || !(yield* Ref.get(engineTouched))) {
+    return projected;
+  }
+  if (projected.failure.some(({ code }) => code === 'access_projection_engine_rejected')) {
+    return projected;
+  }
+  yield* Effect.logWarning(
+    `The access projection failed after it began writing the engine (${projected.failure.map(violationText).join('; ')}); trying again under the same fence`,
+  );
+  yield* Effect.sleep(ACCESS_PROJECTION_ENGINE_RETRY_SPACING);
+  return yield* projectWithRetries(project, engineTouched, retriesLeft - 1);
+});
+
 /**
  * The projection step of one reconcile, stated once so the write path stays readable: prove the fence is
  * still the one this reconcile took at its pinned revision (R5a-1), project the plan, and remember what the
@@ -493,6 +522,8 @@ const releaseHeldFence = Effect.fn('AccessProjectionWriter.releaseHeldFence')(fu
 const projectionStep = Effect.fn('AccessProjectionWriter.projectionStep')(function* projectionStepEffect(input: {
   readonly compiler: AccessProjectionCompilerEngine;
   readonly digest: CommandDigest;
+  /** Set once the compiler sent its first relationship write: from then on the graph may be half-written. */
+  readonly engineTouched: Ref.Ref<boolean>;
   readonly fence: ProjectionFenceAssertion;
   readonly intent: TenantProjectionIntent;
   /** The tenant fence as this operation reads it, so the step states no collaborator of its own (A6/B4). */
@@ -513,7 +544,14 @@ const projectionStep = Effect.fn('AccessProjectionWriter.projectionStep')(functi
   if (Option.isSome(moved)) {
     return yield* violated(fenceFailure(moved.value));
   }
-  const projected = yield* Effect.result(input.compiler.reconcile({ tenants: [input.intent] }, { fence: input.fence }));
+  const projected = yield* projectWithRetries(
+    input.compiler.reconcile(
+      { tenants: [input.intent] },
+      { beforeWrite: Ref.set(input.engineTouched, true), fence: input.fence },
+    ),
+    input.engineTouched,
+    ACCESS_PROJECTION_ENGINE_RETRIES,
+  );
   if (Result.isFailure(projected)) {
     return yield* violated(projected.failure);
   }
@@ -603,6 +641,7 @@ const intentStillPlanned = Effect.fn('AccessProjectionWriter.intentStillPlanned'
 const reconcileUnderFence = Effect.fn('AccessProjectionWriter.reconcileUnderFence')(function* reconcileUnderFenceEffect(
   input: FencedReconcileInput,
   taken: TakenFence,
+  engineTouched: Ref.Ref<boolean>,
 ) {
   const port = yield* AccessWriteJournalPort;
   const { digest, operationId, tenantId, tenantScopeId } = input;
@@ -623,12 +662,14 @@ const reconcileUnderFence = Effect.fn('AccessProjectionWriter.reconcileUnderFenc
     runAccessWrite({
       change: input.change,
       commandDigest: digest,
-      keepFenceOnFailure: Option.isSome(input.previousHolder),
+      // The fence is this writer's to give back: only while the engine is untouched (see `fencedReconcile`).
+      keepFenceOnFailure: true,
       operationId,
       project: () =>
         projectionStep({
           compiler: input.compiler,
           digest,
+          engineTouched,
           fence,
           intent: input.intent,
           readFence: port.readFence({ scopeId: tenantScopeId, tenantId }),
@@ -674,18 +715,44 @@ const reconcileUnderFence = Effect.fn('AccessProjectionWriter.reconcileUnderFenc
   } satisfies TenantProjectionWrite;
 });
 
-/** A release that fails leaves the fence to its owner; the refusal already being reported is the one that counts. */
-const releaseAfterReconcile = (taken: TakenFence) =>
-  releaseHeldFence(taken).pipe(
-    Effect.catchTag('AccessLifecycleError', ({ code, reason }) =>
-      Effect.logWarning(`The tenant scope fence could not be released after a refused reconcile (${code}: ${reason})`),
+/**
+ * After a reconcile that did not commit, the fence opens only if the engine was never written: a graph the engine
+ * holds half-written must not serve reads, nor let Actions commit against it. Such a fence stays closed; its lease
+ * lapses once this operation stops renewing it, and the next reconcile (the fence sweeper, a deploy's activation,
+ * any intent write) takes it over and opens it only on a completed projection. A committed reconcile already
+ * released the fence, and releasing an operation's released fence is a no-op.
+ */
+const releaseAfterReconcile = Effect.fn('AccessProjectionWriter.releaseAfterReconcile')(
+  function* releaseAfterReconcileEffect(taken: TakenFence, engineTouched: Ref.Ref<boolean>) {
+    if (!(yield* Ref.get(engineTouched))) {
+      return yield* releaseHeldFence(taken);
+    }
+    const port = yield* AccessWriteJournalPort;
+    const current = yield* port.readFence({ scopeId: taken.scopeId, tenantId: taken.tenantId });
+    if (
+      Option.exists(current, (fence) => fence.state === 'Changing' && fence.owningOperationId === taken.operationId)
+    ) {
+      yield* Effect.logError(
+        `ACCESS FENCE KEPT CLOSED: tenant ${taken.tenantId}'s projection failed after operation ${taken.operationId} began writing the engine. The tenant stays closed to every Action until a reconcile completes; its lease lapses within ${Duration.format(ACCESS_FENCE_LEASE)} and the fence sweeper takes it over`,
+      );
+    }
+    return yield* Effect.void;
+  },
+  (effect) =>
+    effect.pipe(
+      // A release that fails leaves the fence to its owner; the refusal already being reported is the one that counts.
+      Effect.catchTag('AccessLifecycleError', ({ code, reason }) =>
+        Effect.logWarning(
+          `The tenant scope fence could not be released after a refused reconcile (${code}: ${reason})`,
+        ),
+      ),
     ),
-  );
+);
 
 /**
  * Take the tenant's fence at the pinned revision, reconcile under it, and give it back. A reconcile that stops before
- * the write path committed releases the fence itself; a committed one already did, and releasing an operation's
- * released fence is a `Ready` no-op (D15).
+ * the write path committed releases the fence itself, but only while it has not written to the engine; a committed
+ * one already did, and releasing an operation's released fence is a `Ready` no-op (D15).
  */
 const fencedReconcile = Effect.fn('AccessProjectionWriter.fencedReconcile')(function* fencedReconcileEffect(
   input: FencedReconcileInput,
@@ -705,12 +772,13 @@ const fencedReconcile = Effect.fn('AccessProjectionWriter.fencedReconcile')(func
   };
   // The renewal runs beside the write and stops with it; it is interruptible although the write is not.
   yield* renewHeldLease(taken).pipe(Effect.interruptible, Effect.forkScoped);
-  const reconciled = intentStillPlanned(input).pipe(Effect.andThen(reconcileUnderFence(input, taken)));
+  const engineTouched = yield* Ref.make(false);
+  const reconciled = intentStillPlanned(input).pipe(Effect.andThen(reconcileUnderFence(input, taken, engineTouched)));
   // A fence taken over from a dead holder opens only on a committed reconcile (the write path releases it then);
   // anything short of that leaves it held, its lease lapsing to the next taker.
   return yield* Option.isSome(input.previousHolder)
     ? reconciled
-    : reconciled.pipe(Effect.ensuring(releaseAfterReconcile(taken)));
+    : reconciled.pipe(Effect.ensuring(releaseAfterReconcile(taken, engineTouched)));
 }, Effect.scoped);
 
 /** One attempt of a reconcile, under one operation: pin, read, plan, journal, then the fenced write. */

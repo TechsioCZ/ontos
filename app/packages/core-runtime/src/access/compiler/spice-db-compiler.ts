@@ -93,6 +93,11 @@ export type ProjectionFenceAssertion = (
 ) => Effect.Effect<void, readonly AccessProjectionError[]>;
 
 export interface ProjectionOptions extends ProjectionQueryOptions {
+  /**
+   * Runs before every relationship write the reconcile sends, so the writer knows the engine was touched (the graph
+   * may be half-written from then on) and can stop a write it may no longer make.
+   */
+  readonly beforeWrite?: Effect.Effect<void, readonly AccessProjectionError[]>;
   readonly fence: ProjectionFenceAssertion;
 }
 
@@ -233,6 +238,7 @@ export const makeAccessProjectionCompiler = (transport: AccessProjectionTranspor
   /** One unit per request, in batches the engine accepts; a `TOUCH` replaces content, never deletes. */
   const writeUnit = (
     unitDiff: ProjectionUnitDiff,
+    beforeWrite: Effect.Effect<void, readonly AccessProjectionError[]>,
   ): Effect.Effect<Option.Option<string>, readonly AccessProjectionError[]> => {
     const updates = [
       ...unitDiff.touches.map((relationship) =>
@@ -255,8 +261,12 @@ export const makeAccessProjectionCompiler = (transport: AccessProjectionTranspor
     return Effect.forEach(
       batches,
       (batch) =>
-        transport.writeRelationships(v1.WriteRelationshipsRequest.create({ updates: [...batch] })).pipe(
-          Effect.mapError(asFailures),
+        beforeWrite.pipe(
+          Effect.andThen(
+            transport
+              .writeRelationships(v1.WriteRelationshipsRequest.create({ updates: [...batch] }))
+              .pipe(Effect.mapError(asFailures)),
+          ),
           Effect.map((written) => {
             const token = written.writtenAt?.token;
             return token === undefined || token.length === 0 ? Option.none<string>() : Option.some(token);
@@ -280,7 +290,10 @@ export const makeAccessProjectionCompiler = (transport: AccessProjectionTranspor
         return { deletions: 0, drift: [], touches: 0, units, verified: true };
       }
       // One unit at a time: two writes to one scope never overlap.
-      const tokens = yield* Effect.forEach(diff.units, writeUnit, { concurrency: 1 });
+      const beforeWrite = options.beforeWrite ?? Effect.void;
+      const tokens = yield* Effect.forEach(diff.units, (unitDiff) => writeUnit(unitDiff, beforeWrite), {
+        concurrency: 1,
+      });
       const after = yield* readProjection(tenantIds);
       const verification = verifyProjection(desired, after, removedUnits);
       if (!verification.ok) {
