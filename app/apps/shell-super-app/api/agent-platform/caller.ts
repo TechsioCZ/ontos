@@ -146,7 +146,7 @@ export interface CallerAccessTrace {
   /** Scope-wide module carriers asked about in the one carrier batch. */
   readonly carriers: number;
   readonly durations: Partial<Record<CallerAccessPhase, number>>;
-  /** Gate calls made: one carrier batch, one LIST per record-scoped carrier, one Action batch. */
+  /** Gate calls made: one carrier batch, one call for every record-scoped carrier's LIST, one Action batch. */
   readonly gateCalls: number;
   /** Record-scoped read carriers, each a LIST question. */
   readonly lists: number;
@@ -160,9 +160,6 @@ export const emptyCallerAccessTrace: CallerAccessTrace = Object.freeze({
   gateCalls: 0,
   lists: 0,
 });
-
-/** LIST questions in flight at once: the same bound the subject inspection batch uses on the shared pool. */
-const LIST_CONCURRENCY = 2;
 
 const callerPhase = Effect.fn('AgentPlatform.callerAccessPhase')(function* callerPhase<Value, Failure, Requirements>(
   trace: Ref.Ref<CallerAccessTrace>,
@@ -238,7 +235,7 @@ export const callerModuleAccess = Effect.fn('AgentPlatform.callerModuleAccess')(
   yield* Ref.update(progress, (current) => ({
     ...current,
     carriers: scopeWide.length,
-    gateCalls: current.gateCalls + 1 + recordScoped.length,
+    gateCalls: current.gateCalls + 1 + (recordScoped.length === 0 ? 0 : 1),
     lists: recordScoped.length,
   }));
   const batched = yield* callerPhase(
@@ -251,14 +248,13 @@ export const callerModuleAccess = Effect.fn('AgentPlatform.callerModuleAccess')(
   }
   // Visibility for a selector-bearing read is a LIST question, not a targetless record decision.
   // The owner still applies the returned predicate when the actual read is dispatched.
+  // Every LIST in one gate call: one engine snapshot and one evidence write for all of them.
   const listed = yield* callerPhase(
     progress,
     'lists',
-    Effect.forEach(
-      recordScoped,
-      ({ carrier }) => gate.list(questionFor(carrier)).pipe(Effect.map(({ decision }) => decision)),
-      { concurrency: LIST_CONCURRENCY },
-    ),
+    gate
+      .listMany(recordScoped.map(({ carrier }) => questionFor(carrier)))
+      .pipe(Effect.map((listings) => listings.map(({ decision }) => decision))),
   );
   const decisions = new Map<number, (typeof batched)[number]>();
   for (const [position, { index }] of scopeWide.entries()) {
