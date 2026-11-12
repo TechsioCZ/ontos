@@ -4,7 +4,9 @@
  * Obchodní firma ledger with 21 % lines and documents mixing 10 % and 21 % lines, a Nájempark ledger with 21 % rent
  * lines and one 21 % price-list item, and no recurring templates. Ledgers nobody could read are covered by a row
  * with every odd stored value the migration might meet. The only change allowed is naming the classification of a
- * numeric 21 % or 12 % rate; every rate, amount, total and VAT recap stays exactly as stored.
+ * numeric 21 % or 12 % rate; every rate, amount, total and VAT recap stays exactly as stored. Its functions and trigger
+ * are created in the session's own schema, so nothing outlives the test. The release still serving rewrites a whole
+ * ledger without the classifications it does not know: the trigger classifies that write exactly as the backfill did.
  */
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { NodeServices } from '@effect/platform-node';
@@ -97,6 +99,7 @@ const ComparisonSchema = Schema.Array(
   Schema.Struct({
     name: Schema.String,
     revision: Schema.Number,
+    rewritten_wanted: Schema.Boolean,
     unchanged_after_rerun: Schema.Boolean,
     wanted: Schema.Boolean,
   }),
@@ -119,14 +122,32 @@ const migrateProbe = Effect.fn('VatClassificationMigration.probe')(function* mig
           [ledger.name, ledger.before, ledger.after],
         );
       }
-      yield* admin.unsafe(probe);
+      // One statement per query, as the migrator sends them.
+      for (const statement of probe.split('--> statement-breakpoint')) {
+        yield* admin.unsafe(statement);
+      }
       yield* admin.unsafe(
         `create temp table finance_states_vat_once on commit drop as select name, state from ${PROBE_TABLE}`,
       );
-      // A second run finds nothing left to name and changes no row.
-      yield* admin.unsafe(probe);
+      // A second backfill through the same function finds nothing left to name and changes no row.
+      yield* admin.unsafe(`update ${PROBE_TABLE} set state = pg_temp.vat_classified_state(state)`);
+      yield* admin.unsafe(
+        `create temp table finance_states_vat_twice on commit drop as select name, state from ${PROBE_TABLE}`,
+      );
+      // The old release rewrites each ledger as it knew it, without any classification: the trigger classifies it.
+      for (const ledger of ledgers) {
+        yield* admin.unsafe(`update ${PROBE_TABLE} set state = $2::jsonb where name = $1`, [
+          ledger.name,
+          ledger.before,
+        ]);
+      }
       return yield* admin.unsafe(
-        `select probe.name, probe.revision, probe.state = probe.wanted as wanted, probe.state = once.state as unchanged_after_rerun from ${PROBE_TABLE} as probe join pg_temp.finance_states_vat_once as once using (name) order by probe.name`,
+        `select probe.name, probe.revision, once.state = probe.wanted as wanted,
+                twice.state = once.state as unchanged_after_rerun, probe.state = probe.wanted as rewritten_wanted
+           from ${PROBE_TABLE} as probe
+           join pg_temp.finance_states_vat_once as once using (name)
+           join pg_temp.finance_states_vat_twice as twice using (name)
+          order by probe.name`,
       );
     }),
   );
@@ -142,12 +163,20 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('VAT classification 
           const path = yield* Path.Path;
           const migration = yield* fs.readFileString(path.join(import.meta.dirname, '..', '..', MIGRATION));
           expect(migration).toContain('"finance_billing"."finance_states"');
-          const rows = yield* Schema.decodeUnknownEffect(ComparisonSchema)(
-            yield* migrateProbe(migration.replaceAll('"finance_billing"."finance_states"', PROBE_TABLE)),
-          );
+          // The table becomes the probe; the functions and the trigger live in this session's own schema.
+          const probe = migration
+            .replaceAll('"finance_billing"."finance_states"', PROBE_TABLE)
+            .replaceAll('"finance_billing".', 'pg_temp.');
+          expect(probe).not.toContain('finance_billing');
+          const rows = yield* Schema.decodeUnknownEffect(ComparisonSchema)(yield* migrateProbe(probe));
           expect(rows.map((row) => row.name).toSorted()).toEqual(ledgers.map((ledger) => ledger.name).toSorted());
           for (const row of rows) {
-            expect([row.name, row.wanted, row.unchanged_after_rerun]).toEqual([row.name, true, true]);
+            expect([row.name, row.wanted, row.unchanged_after_rerun, row.rewritten_wanted]).toEqual([
+              row.name,
+              true,
+              true,
+              true,
+            ]);
             // The Finance revision the next command names is untouched.
             expect(row.revision).toBe(7);
           }

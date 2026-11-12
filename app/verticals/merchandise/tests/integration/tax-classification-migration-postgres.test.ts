@@ -48,6 +48,12 @@ const SORTED_PRODUCTS = Arr.sort(
   PRODUCTS,
   Order.mapInput(Order.String, (product: ProductFixture) => product.id),
 );
+/** PostgreSQL's own message of a refused statement, two causes down from the SQL failure. */
+const DatabaseRefusalSchema = Schema.Struct({
+  cause: Schema.Struct({ cause: Schema.Struct({ message: Schema.String }) }),
+});
+const refusalMessage = Schema.decodeUnknownSync(DatabaseRefusalSchema);
+
 const classificationOf = (product: ProductFixture) => (product.vatRate === 21 ? 'cz.vat.standard' : 'cz.vat.reduced');
 
 it.layer(nativeServices, { excludeTestServices: true })('tax classification migration', (suite) => {
@@ -159,11 +165,13 @@ it.layer(nativeServices, { excludeTestServices: true })('tax classification migr
           net: product.net,
         }));
         expect(migrated.map(({ document: _document, ...row }) => row)).toEqual(expected);
+        // The document gains its classification and keeps its rate for the release still serving.
         expect(migrated.map((row) => row.document)).toEqual(
           SORTED_PRODUCTS.map((product) => ({
             currentPriceMinor: product.net,
             name: product.id,
             taxClassificationCode: classificationOf(product),
+            vatRate: product.vatRate,
           })),
         );
 
@@ -215,6 +223,114 @@ it.layer(nativeServices, { excludeTestServices: true })('tax classification migr
         );
         // It decodes as the state a sync writes.
         expect(Schema.decodeUnknownSync(CompanyTaxRatesSchema)(stored[0]?.taxRates).source).toBe('MIGRATION');
+
+        // Until the new release publishes, the old one keeps serving and writes in its own shape. Each row it writes is
+        // complete for the new release exactly as a migrated row is, and no stored amount moves.
+        const heldOf = Effect.gen(function* heldProductRates() {
+          const [head] = yield* client.unsafe<{ readonly held: unknown }>(
+            `select tax_rates -> 'heldProductRates' as held from demo_merchandise.catalog_heads where tenant_id = $1`,
+            [tenantId],
+          );
+          return head?.held;
+        });
+        const productRow = (id: string) =>
+          client
+            .unsafe<{
+              readonly classification: string;
+              readonly document: unknown;
+              readonly gross: number | null;
+              readonly net: number;
+            }>(
+              `select tax_classification_code as classification, document, current_price_minor::integer as net,
+                      gross_price_minor::integer as gross
+                 from demo_merchandise.products where tenant_id = $1 and id = $2`,
+              [tenantId, id],
+            )
+            .pipe(Effect.map(([row]) => row));
+        // A product it creates at 10 %: reduced in its column and document, and held at 10 % like BOOK-IT.
+        yield* insertProduct({ gross: 33_000, id: 'old-release-book', net: 30_000, vatRate: 10 });
+        expect(yield* productRow('old-release-book')).toEqual({
+          classification: 'cz.vat.reduced',
+          document: {
+            currentPriceMinor: 30_000,
+            name: 'old-release-book',
+            taxClassificationCode: 'cz.vat.reduced',
+            vatRate: 10,
+          },
+          gross: 33_000,
+          net: 30_000,
+        });
+        expect(yield* heldOf).toEqual({ 'book-it': 10, 'old-release-book': 10 });
+        // It rewrites BOOK-IT at 21 % with a document that names no classification: standard, and no longer held.
+        yield* client.unsafe(
+          `update demo_merchandise.products set document = $3::jsonb where tenant_id = $1 and id = $2`,
+          [tenantId, 'book-it', JSON.stringify({ currentPriceMinor: 49_000, name: 'book-it', vatRate: 21 })],
+        );
+        expect(yield* productRow('book-it')).toEqual({
+          classification: 'cz.vat.standard',
+          document: {
+            currentPriceMinor: 49_000,
+            name: 'book-it',
+            taxClassificationCode: 'cz.vat.standard',
+            vatRate: 21,
+          },
+          gross: 53_900,
+          net: 49_000,
+        });
+        expect(yield* heldOf).toEqual({ 'old-release-book': 10 });
+        // A rate nothing maps is refused by name, never stored without a classification.
+        const zero = yield* insertProduct({ gross: 500, id: 'old-release-zero', net: 500, vatRate: 0 }).pipe(
+          Effect.flip,
+        );
+        expect(refusalMessage(zero).cause.cause.message).toContain(
+          'old-release-zero has VAT rate 0 %, which names no VAT classification',
+        );
+        // It rewrites the order with lines that name no classification (and adds one): classified as migrated.
+        yield* client.unsafe(
+          `update demo_merchandise.orders set document = $3::jsonb where tenant_id = $1 and id = $2`,
+          [
+            tenantId,
+            'OBJ-2026-0006',
+            JSON.stringify({
+              id: 'OBJ-2026-0006',
+              lines: [...lines, { ...lines[0], quantity: 9 }],
+              totalMinor: 107_800,
+            }),
+          ],
+        );
+        const [rewritten] = yield* client.unsafe<{ readonly document: unknown; readonly total: number }>(
+          `select document, total_minor::integer as total from demo_merchandise.orders where tenant_id = $1 and id = $2`,
+          [tenantId, 'OBJ-2026-0006'],
+        );
+        expect(rewritten).toEqual({
+          document: {
+            id: 'OBJ-2026-0006',
+            lines: [
+              { ...lines[0], taxClassificationCode: 'cz.vat.standard' },
+              { ...lines[1], taxClassificationCode: 'cz.vat.reduced' },
+              lines[2],
+              lines[3],
+              { ...lines[0], quantity: 9, taxClassificationCode: 'cz.vat.standard' },
+            ],
+            totalMinor: 107_800,
+          },
+          total: 107_800,
+        });
+        // A row the new release writes (no rate in the document, its own classification) is left exactly as written.
+        yield* client.unsafe(
+          `update demo_merchandise.products set document = $3::jsonb, tax_classification_code = 'cz.vat.reduced'
+            where tenant_id = $1 and id = $2`,
+          [
+            tenantId,
+            'kava',
+            JSON.stringify({ currentPriceMinor: 25_804, name: 'kava', taxClassificationCode: 'cz.vat.reduced' }),
+          ],
+        );
+        expect((yield* productRow('kava'))?.document).toEqual({
+          currentPriceMinor: 25_804,
+          name: 'kava',
+          taxClassificationCode: 'cz.vat.reduced',
+        });
       }),
     180_000,
   );
