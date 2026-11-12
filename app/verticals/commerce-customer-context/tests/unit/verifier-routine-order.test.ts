@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 
-import { Array as EffectArray, Order, Schema } from 'effect';
+import { Array as EffectArray, Option, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parseSync } from 'oxc-parser';
 
@@ -63,13 +63,13 @@ const shippedRuntimeRoutines = () => {
           name: Schema.String,
           operation: Schema.String,
           parameters: Schema.String,
-          role: Schema.UndefinedOr(Schema.String),
+          role: Schema.OptionFromUndefinedOr(Schema.String),
         }),
       )(match.groups);
       const signature = `${name}(${parameters.toLowerCase().replaceAll(/\s+/gu, '')})`;
       if (operation.startsWith('DROP')) {
         signatures.delete(signature);
-      } else if (role === 'ontos_runtime') {
+      } else if (Option.getOrUndefined(role) === 'ontos_runtime') {
         signatures.set(signature, name);
       }
     }
