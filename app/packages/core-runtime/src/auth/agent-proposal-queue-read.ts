@@ -9,6 +9,7 @@ import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
 import { ActionAuthority } from '../permissions/action-authority-contract.ts';
 import { ContextAccess } from '../permissions/context-access.ts';
 import type { ReadPrepareContext, ReadLoadContext, ReadFinishContext } from '../reads/context.ts';
+import type { ReadHandlerUnavailable } from '../reads/errors.ts';
 import { defineRead } from '../reads/definition.ts';
 import { proposalLifecycleAdministrator } from './agent-proposal-command-preparation.ts';
 import { decodeTrustedPrincipalContext } from './system-principal-context-provenance.ts';
@@ -51,6 +52,50 @@ const executableActions = Effect.fn('AgentProposalQueueRead.executableActions')(
   );
   return actions.filter((action) => executable.has(action.actionKey));
 });
+
+/** The rounds a "may run at least one Action" question is asked in: small first, so a person with rights stops early. */
+const ANY_ACTION_ROUNDS = [8, 32] as const;
+
+/**
+ * Whether the acting person may run at least one of `actions`: asked in rounds of growing size and stopped at the first
+ * round that admits one. Every Action's answer is its own whatever else is asked with it, so this is exactly whether one
+ * question over all of them admits any; a person with no right at all is asked about every Action, whatever they read.
+ */
+/** The rounds of `actions`: the sizes of `ANY_ACTION_ROUNDS`, then everything left. */
+const roundsOf = (actions: readonly AgentProposalQueueAction[]): readonly (readonly AgentProposalQueueAction[])[] => {
+  const rounds: (readonly AgentProposalQueueAction[])[] = [];
+  let from = 0;
+  for (const size of ANY_ACTION_ROUNDS) {
+    rounds.push(actions.slice(from, from + size));
+    from += size;
+  }
+  rounds.push(actions.slice(from));
+  return rounds.filter((round) => round.length > 0);
+};
+
+/** Whether a round from `index` on admits one Action, asking the next only while none did. */
+const anyRoundAdmits = (
+  rounds: readonly (readonly AgentProposalQueueAction[])[],
+  index: number,
+  scope: ReadPrepareContext['scope'],
+): Effect.Effect<boolean, ReadHandlerUnavailable, ActionAuthority> => {
+  const round = rounds[index];
+  return round === undefined
+    ? Effect.succeed(false)
+    : executableActions(round, scope).pipe(
+        Effect.flatMap((admitted) =>
+          admitted.length > 0 ? Effect.succeed(true) : anyRoundAdmits(rounds, index + 1, scope),
+        ),
+      );
+};
+
+/**
+ * Whether the acting person may run at least one of `actions`: asked in rounds of growing size and stopped at the first
+ * round that admits one. Every Action's answer is its own whatever else is asked with it, so this is exactly whether one
+ * question over all of them admits any; a person with no right at all is asked about every Action, whatever they read.
+ */
+const holdsAnyExecutableAction = (actions: readonly AgentProposalQueueAction[], scope: ReadPrepareContext['scope']) =>
+  anyRoundAdmits(roundsOf(actions), 0, scope).pipe(Effect.withSpan('AgentProposalQueueRead.holdsAnyExecutableAction'));
 
 const prepare = Effect.fn('AgentProposalQueueRead.prepare')(function* prepare(
   input: AgentProposalQueueInput,
@@ -113,8 +158,12 @@ const prepare = Effect.fn('AgentProposalQueueRead.prepare')(function* prepare(
       declared.filter((other) => other.appId === action.appId && other.actionSlug === action.actionSlug).length === 1,
   );
   if (isExactBatchRead(input)) {
-    // An exact batch read selects its rows by batch alone and authorizes every row's Action in `finish`: only the
-    // Actions its rows name are asked there, never every Action of the release.
+    // A person who may run no Action at all is refused here, before any row is loaded or locked, whatever the batch
+    // (an existing or a missing one costs the same). Every row's own Action is authorized in `finish`: only the Actions
+    // its rows name are asked there, never every Action of the release.
+    if (!(yield* holdsAnyExecutableAction(unique, context.scope))) {
+      return yield* agentProposalQueueDenied();
+    }
     return { actions: unique, revision };
   }
   const actions = yield* executableActions(unique, context.scope);
@@ -209,17 +258,12 @@ const finish = Effect.fn('AgentProposalQueueRead.finish')(function* finish(
   }
   const batchState = input.mode === 'batch-state';
   const exactBatch = isExactBatchRead(input);
-  // An exact batch asks exactly the Actions its rows name (every declared one when it has no row, so a person who may
-  // run no Action at all is still refused), after commit and never inside the scoped SQL transaction.
+  // An exact batch asks exactly the Actions its rows name, after commit and never inside the scoped SQL transaction;
+  // `prepare` already refused a person who may run no Action at all.
   const named = [
     ...new Set(loaded.proposals.map((row) => actionOf(row, prepared.actions)).filter((action) => action !== undefined)),
   ];
-  const actions = exactBatch
-    ? yield* executableActions(loaded.proposals.length === 0 ? prepared.actions : named, context.scope)
-    : prepared.actions;
-  if (exactBatch && actions.length === 0) {
-    return yield* agentProposalQueueDenied();
-  }
+  const actions = exactBatch ? yield* executableActions(named, context.scope) : prepared.actions;
   if (exactBatch && loaded.proposals.some((row) => actionOf(row, actions) === undefined)) {
     return yield* agentProposalQueueDenied();
   }

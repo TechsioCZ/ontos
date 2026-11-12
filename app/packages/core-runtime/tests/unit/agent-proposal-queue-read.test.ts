@@ -14,6 +14,7 @@ import type {
   AgentProposalCommandPayload,
   AgentProposalCommandResult,
 } from '../../src/auth/agent-proposal-command-contract.ts';
+import type { AgentProposalQueueInput } from '../../src/auth/agent-proposal-queue-contract.ts';
 import {
   AgentProposalQueueInputSchema,
   AgentProposalQueueModuleReview,
@@ -93,12 +94,43 @@ const driverRow = (row: typeof agentProposals.$inferSelect = rawProposal) => {
   );
 };
 
+/** One protected v2 Action of `moduleId`, by slug. */
+const ownAction = (moduleId: string, slug: string) => ({
+  accessDeclaration: {
+    key: `${moduleId}.task.${slug}`,
+    kind: 'action' as const,
+    modes: ['run' as const],
+    placement: { group: 'tasks', level: 'basic' as const },
+    risk: 'routine' as const,
+    selectors: [],
+  },
+  actionKey: `${moduleId}.${slug}`,
+  auditProfile: 'standard' as const,
+  entrypoint: {
+    access: 'write' as const,
+    authorization: { kind: 'protected' as const },
+    entrypointKey: `${moduleId}.${slug}`,
+    moduleKey: moduleId,
+    role: 'action' as const,
+    scope: 'tenant' as const,
+  },
+  idempotency: 'required' as const,
+  legalEntityScope: 'required' as const,
+  owningModuleId: moduleId,
+  schemaVersion: '1' as const,
+});
+
 const executableComposition = Effect.fn('AgentProposalQueueReadTest.composition')(function* executableComposition(
   privateRecords: boolean | 'no-review' = 'no-review',
   /** More Actions of the same module, by slug, besides `update`. */
   additionalSlugs: readonly string[] = [],
+  /** A second module with one `update` Action of its own and no approval review. */
+  second?: { readonly appId: string; readonly moduleId: string },
 ) {
-  const base = makeOutboxWorkerComposition([{ appId: 'task-service', moduleId: 'work.tasks' }]);
+  const base = makeOutboxWorkerComposition([
+    { appId: 'task-service', moduleId: 'work.tasks' },
+    ...(second === undefined ? [] : [second]),
+  ]);
   const module = base.modules.at(0);
   if (module === undefined) {
     throw new TypeError('Expected fixture module');
@@ -134,30 +166,7 @@ const executableComposition = Effect.fn('AgentProposalQueueReadTest.composition'
         owningModuleId: 'work.tasks',
         schemaVersion: '1',
       },
-      ...additionalSlugs.map((slug) => ({
-        accessDeclaration: {
-          key: `work.tasks.task.${slug}`,
-          kind: 'action' as const,
-          modes: ['run' as const],
-          placement: { group: 'tasks', level: 'basic' as const },
-          risk: 'routine' as const,
-          selectors: [],
-        },
-        actionKey: `work.tasks.${slug}`,
-        auditProfile: 'standard' as const,
-        entrypoint: {
-          access: 'write' as const,
-          authorization: { kind: 'protected' as const },
-          entrypointKey: `work.tasks.${slug}`,
-          moduleKey: 'work.tasks',
-          role: 'action' as const,
-          scope: 'tenant' as const,
-        },
-        idempotency: 'required' as const,
-        legalEntityScope: 'required' as const,
-        owningModuleId: 'work.tasks',
-        schemaVersion: '1' as const,
-      })),
+      ...additionalSlugs.map((slug) => ownAction('work.tasks', slug)),
     ],
   };
   if (privateRecords !== 'no-review') {
@@ -170,22 +179,33 @@ const executableComposition = Effect.fn('AgentProposalQueueReadTest.composition'
       toolCatalog: { path: '/.well-known/ontos-module-mcp-tools.json', sha256: 'a'.repeat(64), toolCount: 0 },
     };
   }
-  const contractDocument = yield* Schema.encodeEffect(codec)(
-    yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)({
-      ...contract,
-      manifest: { ...contract.manifest, publicSurface },
-    }),
-  );
-  const sha256 = Hex.encode(sha256Hash(utf8ToBytes(contractDocument)));
+  const withSurface = Effect.fn('AgentProposalQueueReadTest.withSurface')(function* withSurface(
+    target: (typeof base.modules)[number],
+    surface: typeof publicSurface | { readonly actions: readonly ReturnType<typeof ownAction>[] },
+  ) {
+    const own = yield* Schema.decodeEffect(codec)(target.contractDocument);
+    const contractDocument = yield* Schema.encodeEffect(codec)(
+      yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)({
+        ...own,
+        manifest: { ...own.manifest, publicSurface: { ...own.manifest.publicSurface, ...surface } },
+      }),
+    );
+    const sha256 = Hex.encode(sha256Hash(utf8ToBytes(contractDocument)));
+    return {
+      ...target,
+      contract: { ...target.contract, sha256 },
+      contractDocument,
+      publicContract: { ...target.publicContract, sha256 },
+    };
+  });
+  const secondModule = base.modules.at(1);
   const next = {
     ...base,
     modules: [
-      {
-        ...module,
-        contract: { ...module.contract, sha256 },
-        contractDocument,
-        publicContract: { ...module.publicContract, sha256 },
-      },
+      yield* withSurface(module, publicSurface),
+      ...(second === undefined || secondModule === undefined
+        ? []
+        : [yield* withSurface(secondModule, { actions: [ownAction(second.moduleId, 'update')] })]),
     ],
   };
   return {
@@ -239,11 +259,11 @@ const authority = (execute: 'allowed' | 'denied' = 'allowed'): ActionAuthoritySe
   checkActionProposalPermission: () => Effect.die('Proposal permission never authorizes queue reads'),
 });
 
-/** Execution rights for exactly `executable`, recording every Action key asked in `asked`. */
-const recordingAuthority = (executable: ReadonlySet<string>, asked: string[]): ActionAuthorityService => ({
+/** Execution rights for exactly `executable`, recording the Action keys of every question in `calls`. */
+const recordingAuthority = (executable: ReadonlySet<string>, calls: string[][]): ActionAuthorityService => ({
   checkActionAuthorities: (query) =>
     Effect.sync(() => {
-      asked.push(...query.actionKeys);
+      calls.push([...query.actionKeys]);
       return query.actionKeys.map((actionKey) => ({
         actionKey,
         execute: executable.has(actionKey) ? ('allowed' as const) : ('denied' as const),
@@ -252,6 +272,37 @@ const recordingAuthority = (executable: ReadonlySet<string>, asked: string[]): A
     }),
   checkActionProposalPermission: () => Effect.die('Proposal permission never authorizes queue reads'),
 });
+
+/** The `index`-th row of the table's batch, naming the work-tasks Action `slug`. */
+const tableRow = (slug: string, index: number) =>
+  driverRow({
+    ...rawProposal,
+    actionSlug: slug,
+    position: index,
+    proposalId: `60000000-0000-4000-8000-00000000000${index + 1}`,
+  });
+
+/** Owner SQL of an exact read over `rows`: the admitted person, no retained command (not started), then the rows. */
+const tableQueries = (rows: readonly ReturnType<typeof driverRow>[]) => (query: { readonly sql: string }) => {
+  if (query.sql.includes('from "core"."principals"')) {
+    return Effect.succeed([{ principalId }]);
+  }
+  return Effect.succeed(query.sql.includes('from "core"."action_invocations"') ? [] : rows);
+};
+
+/** An exact read of the table's batch in `mode`. */
+const tableInput = (mode: 'batch' | 'batch-state' | 'command-recovery'): AgentProposalQueueInput =>
+  mode === 'command-recovery'
+    ? { idempotencyKey: 'table-subcommand', mode, payload: recoveryPayload }
+    : { batchId, mode };
+
+/** How a read ended: refused, unavailable, or another failure. */
+const outcomeOfFailure = (failure: { readonly _tag: string }) => {
+  if (failure._tag === 'ReadPermissionDenied') {
+    return 'denied';
+  }
+  return failure._tag === 'ReadHandlerUnavailable' ? 'unavailable' : 'failed';
+};
 
 /** A person who exists only in the v2 model holds no `module_access` tuple: that retired relation denies. */
 const retiredModuleRelation = (asked: string[]) => (target: { readonly moduleIds: readonly string[] }) =>
@@ -630,9 +681,11 @@ it.layer(
   }
 
   /*
-   * An exact batch read asks the Action authority about exactly the Actions its rows name (every declared one when
-   * it has no row), never about every Action of the release; its answer is the one asking every Action gave: the
-   * person must be able to run every row's Action, and at least one Action at all.
+   * An exact batch read refuses a person who may run no Action at all in `prepare`, before any row is loaded or
+   * locked, and then authorizes exactly the Actions its rows name. Its answer is the one the read gave when `prepare`
+   * asked every Action of the release: refused unless the person may run at least one Action and every row's declared
+   * Action. That rule is written out below as the reference; running this table against the read as it was before
+   * these changes gave exactly these outcomes (only the Actions it asked differed).
    */
   for (const scenario of [
     { executable: ['update', 'archive'], rows: ['update'] },
@@ -644,61 +697,54 @@ it.layer(
     { executable: ['update', 'archive'], rows: ['other'] },
   ] as const) {
     for (const mode of ['batch', 'batch-state'] as const) {
-      suite.effect(
-        `answers a ${mode} read exactly as asking every Action, asking only its rows' (${JSON.stringify(scenario)})`,
-        () =>
-          Effect.gen(function* exactBatchAuthority() {
-            const rows = scenario.rows.map((slug, index) =>
-              driverRow({
-                ...rawProposal,
-                actionSlug: slug,
-                position: index,
-                proposalId: `60000000-0000-4000-8000-00000000000${index + 1}`,
-              }),
-            );
-            const harness = yield* makeReadTestHarness({
-              executeOwnerQuery: (query) =>
-                Effect.succeed(query.sql.includes('from "core"."principals"') ? [{ principalId }] : rows),
-              operationTime,
-              ownerAuthorizationDecision: 'allowed',
-              permissionDecision: 'allowed',
-              scope,
-            });
-            const services = yield* Layer.build(
-              Layer.mergeAll(
-                harness.layer,
-                outboxWorkerCompositionLayer(yield* executableComposition('no-review', ['archive'])),
+      suite.effect(`answers a ${mode} read exactly as asking every Action (${JSON.stringify(scenario)})`, () =>
+        Effect.gen(function* exactBatchAuthority() {
+          const rows = scenario.rows.map((slug, index) => tableRow(slug, index));
+          const harness = yield* makeReadTestHarness({
+            executeOwnerQuery: tableQueries(rows),
+            operationTime,
+            ownerAuthorizationDecision: 'allowed',
+            permissionDecision: 'allowed',
+            scope,
+          });
+          const services = yield* Layer.build(
+            Layer.mergeAll(
+              harness.layer,
+              outboxWorkerCompositionLayer(yield* executableComposition('no-review', ['archive'])),
+            ),
+          );
+          const calls: string[][] = [];
+          const outcome = yield* harness.runtime
+            .runRead({ input: tableInput(mode), principal: scope, registration: agentProposalQueueRead, transport })
+            .pipe(
+              Effect.provideService(
+                ActionAuthority,
+                recordingAuthority(new Set(scenario.executable.map((slug) => `work.tasks.${slug}`)), calls),
               ),
+              Effect.provide(services),
+              Effect.match({ onFailure: outcomeOfFailure, onSuccess: (read) => `rows ${read.proposals.length}` }),
             );
-            const asked: string[] = [];
-            const executable = new Set<string>(scenario.executable.map((slug) => `work.tasks.${slug}`));
-            const outcome = yield* harness.runtime
-              .runRead({ input: { batchId, mode }, principal: scope, registration: agentProposalQueueRead, transport })
-              .pipe(
-                Effect.provideService(ActionAuthority, recordingAuthority(executable, asked)),
-                Effect.provide(services),
-                Effect.match({
-                  onFailure: (failure) => (Schema.is(ReadPermissionDenied)(failure) ? 'denied' : 'failed'),
-                  onSuccess: (read) => `rows ${read.proposals.length}`,
-                }),
-              );
-            // The answer asking every Action gave: refused unless the person can run every row's declared Action
-            // and at least one Action at all.
-            const declared = new Set(['update', 'archive']);
-            const runnable = new Set<string>(scenario.executable);
-            const everyRowRunnable = scenario.rows.every((slug) => declared.has(slug) && runnable.has(slug));
-            const expected =
-              scenario.executable.length > 0 && everyRowRunnable
-                ? `rows ${mode === 'batch-state' ? 0 : scenario.rows.length}`
-                : 'denied';
-            expect(outcome).toBe(expected);
-            const rowActions = new Set(
-              scenario.rows.filter((slug) => declared.has(slug)).map((slug) => `work.tasks.${slug}`),
-            );
-            expect(new Set(asked)).toEqual(
-              scenario.rows.length === 0 ? new Set(['work.tasks.update', 'work.tasks.archive']) : rowActions,
-            );
-          }),
+          const declared = new Set(['update', 'archive']);
+          const runnable = new Set<string>(scenario.executable);
+          const everyRowRunnable = scenario.rows.every((slug) => declared.has(slug) && runnable.has(slug));
+          const allowed = runnable.size > 0 && everyRowRunnable;
+          expect(outcome).toBe(allowed ? `rows ${mode === 'batch-state' ? 0 : scenario.rows.length}` : 'denied');
+          // `prepare` asks whether any Action at all may run (both declared ones fit its first round).
+          expect(calls[0]).toEqual(['work.tasks.update', 'work.tasks.archive']);
+          const loadedProposals = harness.snapshot().ownerQueries.some(({ sql }) => sql.includes('"agent_proposals"'));
+          if (runnable.size === 0) {
+            // Refused before any row is loaded or locked: an existing and a missing batch cost the same.
+            expect(calls).toHaveLength(1);
+            expect(loadedProposals).toBe(false);
+            return;
+          }
+          expect(loadedProposals).toBe(true);
+          // `finish` asks exactly the Actions the rows name, and nothing when they name no declared Action.
+          const named = [...new Set(scenario.rows.filter((slug) => declared.has(slug)))].map(
+            (slug) => `work.tasks.${slug}`,
+          );
+          expect(calls.slice(1)).toEqual(named.length === 0 ? [] : [named]);
+        }),
       );
     }
   }
