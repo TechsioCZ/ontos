@@ -185,9 +185,30 @@ const leaveProcess = (reason: string) =>
  * latest keys stay here too, so a copy registered after a line arrived (a unit loaded later) gets them at once.
  */
 export interface HostedCredentialHolders {
-  /** Registers one claimed copy and hands it the current keys of the modules it serves. */
-  readonly hold: (copy: HostedModuleCredentialReceiver) => Effect.Effect<void>;
+  /**
+   * Registers one claimed copy for exactly the modules the host loaded it for, and hands it their current keys. A copy
+   * whose claim names any other set of modules is refused: the host does not serve it.
+   */
+  readonly hold: (
+    copy: HostedModuleCredentialReceiver,
+    modules: readonly string[],
+  ) => Effect.Effect<void, ModuleCredentialHandoverError>;
 }
+
+/**
+ * Only the given modules' entries of a handover: their keys and their workload keys. The host filters before a copy
+ * sees anything; the copy's own refusal of strangers stays as the second lock.
+ */
+const handoverFor = (handover: HostedModuleCredentials, modules: ReadonlySet<string>): HostedModuleCredentials => ({
+  credentials: Object.fromEntries(Object.entries(handover.credentials).filter(([owner]) => modules.has(owner))),
+  schemaVersion: 1,
+  workloads: Object.fromEntries(
+    Object.entries(handover.workloads ?? {}).filter(([entry]) => modules.has(workloadEntryAppId(entry))),
+  ),
+});
+
+const holdsAnything = (handover: HostedModuleCredentials) =>
+  Object.keys(handover.credentials).length > 0 || Object.keys(handover.workloads ?? {}).length > 0;
 
 /** A handover's keys merged over what was held: each owner it names gets exactly its new key and workload keys. */
 const mergeHandover = (held: HostedModuleCredentials, handover: HostedModuleCredentials): HostedModuleCredentials => {
@@ -215,7 +236,9 @@ export const makeHostedCredentialHolders = Effect.fn('ModuleCredentials.makeHold
   owners: readonly string[],
 ) {
   const lock = yield* Semaphore.make(1);
-  const copies = yield* Ref.make<readonly HostedModuleCredentialReceiver[]>([]);
+  const copies = yield* Ref.make<
+    readonly { readonly copy: HostedModuleCredentialReceiver; readonly modules: ReadonlySet<string> }[]
+  >([]);
   const held = yield* Ref.make<HostedModuleCredentials>({ credentials: {}, schemaVersion: 1, workloads: {} });
   const served = new Set(owners);
   const servedHere = (entry: string) => served.has(entry) || served.has(workloadEntryAppId(entry));
@@ -226,32 +249,42 @@ export const makeHostedCredentialHolders = Effect.fn('ModuleCredentials.makeHold
     )(
       Effect.gen(function* acceptLine() {
         const entries = [...Object.keys(handover.credentials), ...Object.keys(handover.workloads ?? {})];
-        const own: HostedModuleCredentials = {
-          credentials: Object.fromEntries(Object.entries(handover.credentials).filter(([owner]) => served.has(owner))),
-          schemaVersion: 1,
-          workloads: Object.fromEntries(
-            Object.entries(handover.workloads ?? {}).filter(([entry]) => servedHere(entry)),
-          ),
-        };
+        const own = handoverFor(handover, served);
         yield* Ref.update(held, (current) => mergeHandover(current, own));
-        yield* Effect.forEach(yield* Ref.get(copies), (copy) => copy.accept(own), { discard: true });
+        // Each copy is handed only its own modules' entries; a copy whose modules the line does not name gets nothing.
+        yield* Effect.forEach(
+          yield* Ref.get(copies),
+          ({ copy, modules }) => {
+            const its = handoverFor(own, modules);
+            return holdsAnything(its) ? copy.accept(its) : Effect.void;
+          },
+          { discard: true },
+        );
         return {
           accepted: entries.filter((entry) => servedHere(entry)),
           refused: entries.filter((entry) => !servedHere(entry)),
         };
       }),
     );
-  const hold = (copy: HostedModuleCredentialReceiver) =>
+  const hold = (copy: HostedModuleCredentialReceiver, modules: readonly string[]) =>
     Semaphore.withPermits(
       lock,
       1,
     )(
       Effect.gen(function* holdCopy() {
-        const current = yield* Ref.get(held);
-        if (Object.keys(current.credentials).length > 0 || Object.keys(current.workloads ?? {}).length > 0) {
-          yield* copy.accept(current);
+        const expected = new Set(modules);
+        const claimed = new Set(copy.owners);
+        if (claimed.size !== expected.size || [...claimed].some((owner) => !expected.has(owner))) {
+          return yield* new ModuleCredentialHandoverError({
+            reason: `a credential store copy claimed for ${[...claimed].join(', ') || 'no module'} was loaded for ${modules.join(', ')}; it is not served`,
+          });
         }
-        yield* Ref.update(copies, (registered) => [...registered, copy]);
+        const its = handoverFor(yield* Ref.get(held), expected);
+        if (holdsAnything(its)) {
+          yield* copy.accept(its);
+        }
+        yield* Ref.update(copies, (registered) => [...registered, { copy, modules: expected }]);
+        return yield* Effect.void;
       }),
     );
   return {
@@ -307,7 +340,7 @@ export const holdOwnStoreCopy = Effect.fn('ModuleCredentials.holdOwnCopy')(funct
   holders: HostedCredentialHolders,
   owners: readonly string[],
 ) {
-  yield* holders.hold(yield* claimHostedModuleCredentials(owners));
+  yield* holders.hold(yield* claimHostedModuleCredentials(owners), owners);
 });
 
 /** A loaded unit's claim: the generated entry's re-export of its own bundle's store copy claim. */
@@ -333,7 +366,7 @@ export const holdUnitStoreCopy = Effect.fn('ModuleCredentials.holdUnitCopy')(fun
       () => new ModuleCredentialHandoverError({ reason: `${unit}'s credential store copy was already claimed` }),
     ),
   );
-  yield* holders.hold(copy);
+  yield* holders.hold(copy, [unit]);
 });
 
 /** One issued key, not secret: its provider id (which decides what is superseded) and when it stops verifying. */

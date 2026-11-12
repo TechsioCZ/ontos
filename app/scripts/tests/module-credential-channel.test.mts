@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Fiber, Option, Queue, Redacted, Ref, Schema, Stream } from 'effect';
+import { Effect, Exit, Fiber, Option, Queue, Redacted, Ref, Schema, Stream } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -201,14 +201,19 @@ describe('a process receiving handovers on its channel', () => {
   );
 });
 
-/** A store copy as one built bundle carries it: it serves its own modules and refuses any other. */
+/**
+ * A store copy as one built bundle carries it. It records exactly what the host hands it, and keeps its own second
+ * lock: it takes only its own modules' keys.
+ */
 const bundleCopy = (owners: readonly string[]) => {
   const held = new Map<string, string>();
   const workloads = new Map<string, string>();
+  const handed: (readonly string[])[] = [];
   return {
     copy: {
       accept: (handover: typeof HostedModuleCredentialsSchema.Type) =>
         Effect.sync(() => {
+          handed.push([...Object.keys(handover.credentials), ...Object.keys(handover.workloads ?? {})].toSorted());
           const named = Object.keys(handover.credentials).filter((owner) => owners.includes(owner));
           for (const owner of named) {
             const key = handover.credentials[owner];
@@ -228,61 +233,70 @@ const bundleCopy = (owners: readonly string[]) => {
         }),
       owners,
     },
+    handed,
     held,
     workloads,
   };
 };
 
+const handoverLine = (
+  credentials: Readonly<Record<string, string>>,
+  workloads: Readonly<Record<string, string>> = {},
+) => Schema.decodeUnknownSync(HostedModuleCredentialsSchema)({ credentials, schemaVersion: 1, workloads });
+
 describe('a process holding one store copy per loaded bundle', () => {
-  it.effect(
-    'hands every line to every claimed copy, each its own keys, and replays the current keys to a late copy',
-    () =>
-      Effect.gen(function* everyCopy() {
-        const { holders, receiver } = yield* makeHostedCredentialHolders([ORDER, PARTY]);
-        const order = bundleCopy([ORDER]);
-        yield* holders.hold(order.copy);
-        const first = yield* receiver.accept(
-          Schema.decodeUnknownSync(HostedModuleCredentialsSchema)({
-            credentials: { [ORDER]: ORDER_KEY_ONE, [PARTY]: PARTY_KEY_ONE, pricing: 'pricing-module-key-00000' },
-            schemaVersion: 1,
-            workloads: { [ORDER_WORKLOAD_ENTRY]: WORKLOAD_KEY_ONE },
-          }),
-        );
-        // Keys of modules this process serves are taken, a stranger's refused; nothing reaches a copy not its own.
-        expect(first.accepted.toSorted()).toEqual([ORDER, ORDER_WORKLOAD_ENTRY, PARTY].toSorted());
-        expect(first.refused).toEqual(['pricing']);
-        expect([...order.held]).toEqual([[ORDER, ORDER_KEY_ONE]]);
-        expect([...order.workloads]).toEqual([[ORDER_WORKLOAD_ENTRY, WORKLOAD_KEY_ONE]]);
-        // A bundle loaded after the line arrived gets its module's current key at once.
-        const party = bundleCopy([PARTY]);
-        yield* holders.hold(party.copy);
-        expect([...party.held]).toEqual([[PARTY, PARTY_KEY_ONE]]);
-        // A rotation reaches every copy in place.
-        yield* receiver.accept(
-          Schema.decodeUnknownSync(HostedModuleCredentialsSchema)({
-            credentials: { [ORDER]: ORDER_KEY_TWO, [PARTY]: PARTY_KEY_TWO },
-            schemaVersion: 1,
-            workloads: {},
-          }),
-        );
-        expect(order.held.get(ORDER)).toBe(ORDER_KEY_TWO);
-        expect(party.held.get(PARTY)).toBe(PARTY_KEY_TWO);
-        expect(party.held.has(ORDER)).toBe(false);
-        // A copy loaded after the rotation gets the rotated key, and no longer the workload its module was not handed.
-        const lateOrder = bundleCopy([ORDER]);
-        yield* holders.hold(lateOrder.copy);
-        expect(lateOrder.held.get(ORDER)).toBe(ORDER_KEY_TWO);
-        expect([...lateOrder.workloads]).toEqual([]);
-      }),
+  it.effect('hands each copy only its own module entries, on boot issue, rotation and late fill', () =>
+    Effect.gen(function* everyCopy() {
+      const { holders, receiver } = yield* makeHostedCredentialHolders([ORDER, PARTY]);
+      const order = bundleCopy([ORDER]);
+      yield* holders.hold(order.copy, [ORDER]);
+      // Boot issue: every caller's key, a workload key of the order module, and a stranger's key.
+      const first = yield* receiver.accept(
+        handoverLine(
+          { [ORDER]: ORDER_KEY_ONE, [PARTY]: PARTY_KEY_ONE, pricing: 'pricing-module-key-00000' },
+          { [ORDER_WORKLOAD_ENTRY]: WORKLOAD_KEY_ONE },
+        ),
+      );
+      expect(first.accepted.toSorted()).toEqual([ORDER, ORDER_WORKLOAD_ENTRY, PARTY].toSorted());
+      expect(first.refused).toEqual(['pricing']);
+      // The order copy was handed its own key and workload key, nothing of the party module or the stranger.
+      expect(order.handed).toEqual([[ORDER, ORDER_WORKLOAD_ENTRY].toSorted()]);
+      expect([...order.workloads]).toEqual([[ORDER_WORKLOAD_ENTRY, WORKLOAD_KEY_ONE]]);
+      // Late fill: a bundle loaded after the line arrived gets only its module's current key.
+      const party = bundleCopy([PARTY]);
+      yield* holders.hold(party.copy, [PARTY]);
+      expect(party.handed).toEqual([[PARTY]]);
+      // Rotation: each copy in place, each only its own entries; a line naming only one module reaches only its copy.
+      yield* receiver.accept(handoverLine({ [ORDER]: ORDER_KEY_TWO, [PARTY]: PARTY_KEY_TWO }));
+      yield* receiver.accept(handoverLine({ [PARTY]: 'party-registry-module-key-3' }));
+      expect(order.handed.slice(1)).toEqual([[ORDER]]);
+      expect(party.handed.slice(1)).toEqual([[PARTY], [PARTY]]);
+      expect(order.held.get(ORDER)).toBe(ORDER_KEY_TWO);
+      expect(party.held.get(PARTY)).toBe('party-registry-module-key-3');
+      // A copy loaded after the rotation gets the rotated key, and no longer the workload its module was not handed.
+      const lateOrder = bundleCopy([ORDER]);
+      yield* holders.hold(lateOrder.copy, [ORDER]);
+      expect(lateOrder.held.get(ORDER)).toBe(ORDER_KEY_TWO);
+      expect([...lateOrder.workloads]).toEqual([]);
+    }),
   );
 
-  it.effect('gives a copy nothing while no line arrived', () =>
-    Effect.gen(function* nothingYet() {
-      const { holders } = yield* makeHostedCredentialHolders([ORDER]);
-      const order = bundleCopy([ORDER]);
-      yield* holders.hold(order.copy);
-      expect([...order.held]).toEqual([]);
-    }),
+  it.effect(
+    'refuses a copy whose claim names other modules than the one it was loaded for, and gives nothing early',
+    () =>
+      Effect.gen(function* refusedCopy() {
+        const { holders, receiver } = yield* makeHostedCredentialHolders([ORDER, PARTY]);
+        yield* receiver.accept(handoverLine({ [ORDER]: ORDER_KEY_ONE, [PARTY]: PARTY_KEY_ONE }));
+        const greedy = bundleCopy([ORDER, PARTY]);
+        expect(Exit.isFailure(yield* Effect.exit(holders.hold(greedy.copy, [ORDER])))).toBe(true);
+        const other = bundleCopy([PARTY]);
+        expect(Exit.isFailure(yield* Effect.exit(holders.hold(other.copy, [ORDER])))).toBe(true);
+        expect([...greedy.handed, ...other.handed]).toEqual([]);
+        const { holders: quiet } = yield* makeHostedCredentialHolders([ORDER]);
+        const order = bundleCopy([ORDER]);
+        yield* quiet.hold(order.copy, [ORDER]);
+        expect(order.handed).toEqual([]);
+      }),
   );
 });
 
