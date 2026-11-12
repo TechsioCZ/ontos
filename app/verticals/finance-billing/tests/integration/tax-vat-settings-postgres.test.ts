@@ -17,10 +17,7 @@ import {
 } from '@app/core-runtime';
 import { LegalEntityIdSchema, TenantIdSchema } from '@app/core-runtime/access/ids';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
-import {
-  makeApplicationCompositionSnapshotFixture,
-  makeOwnerApplicationCompositionFixture,
-} from '@app/core-runtime/testing/module-contract';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { environmentTestAccessTarget, grantTestTenantRoleAccess } from '@app/core-runtime/testing/tenant-access';
 import {
   DELEGATED_GATEWAY_ASSERTION_VERSION,
@@ -51,7 +48,7 @@ import { governedReadApiHandlersLive } from '../../../tax/api/index.ts';
 import { taxApi } from '../../../tax/shared/api.ts';
 import { ultramodernApiMarker } from '../../../tax/shared/ultramodern-build.ts';
 import { applicableTaxRuleSetRead } from '../../../tax/src/api/applicable-tax-rule-set.read.ts';
-import { taxRegistration } from '../../../tax/vertical.registration.ts';
+import { publishedTaxComposition } from '../../../tax/tests/support/published-tax-composition.ts';
 import { bootstrapScopesOf } from '../../../../packages/core-runtime/src/access/bootstrap/persistence.ts';
 import { pragueDayStart } from '../../shared/domain/line-vat.ts';
 import { classificationView, planRateChange } from '../../src/routes/[lang]/finance/dph/vat-settings-model.ts';
@@ -72,11 +69,8 @@ const uuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 
 /** Tax's real registration plus the two calling apps the Shell knows, all in one validated release. */
 const compositionSnapshot = Effect.gen(function* compositionSnapshot() {
-  const { snapshot } = yield* makeOwnerApplicationCompositionFixture({
-    appId: TAX_APP,
-    buildMarker: ultramodernApiMarker.buildMarker,
-    ownerRegistration: taxRegistration,
-  });
+  // Tax is another deployment: its part of the release is the composition Tax publishes for tests, not its registration.
+  const { snapshot } = yield* publishedTaxComposition;
   const callers = yield* makeApplicationCompositionSnapshotFixture(
     [FINANCE_APP, UNDECLARED_APP],
     ultramodernApiMarker.buildMarker,

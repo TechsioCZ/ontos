@@ -79,10 +79,10 @@ import {
 } from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
 import { governedReadApiHandlersLive as taxHandlersLive } from '../../../tax/api/index.ts';
 import { taxApi } from '../../../tax/shared/api.ts';
+import { publishedTaxComposition } from '../../../tax/tests/support/published-tax-composition.ts';
 import { ultramodernApiMarker as taxMarker } from '../../../tax/shared/ultramodern-build.ts';
 import { executeCreateTaxRuleWithAuthorization } from '../../../tax/src/api/create-tax-rule-action-client.ts';
 import { executeDeclareSellerVatRegimeWithAuthorization } from '../../../tax/src/api/declare-seller-vat-regime-action-client.ts';
-import { taxRegistration } from '../../../tax/vertical.registration.ts';
 
 const COMPOSITION_URL = 'https://composition.merchandise-tax.test/active';
 const MERCHANDISE_ORIGIN = 'http://merchandise.test';
@@ -100,18 +100,18 @@ const EFFECTIVE_FROM = '2024-01-01T00:00:00.000Z';
 const uuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const digest = (document: string) => bytesToHex(sha256(utf8ToBytes(document)));
 
-/** Merchandise and Tax, each at its own build marker, in one validated release. */
+/**
+ * Merchandise and Tax, each at its own build marker, in one validated release. Tax is another deployment: its part of
+ * the release is the composition Tax itself publishes for tests (its operation contracts as data), never its private
+ * registration.
+ */
 const compositionSnapshot = Effect.gen(function* compositionSnapshot() {
   const merchandise = yield* makeOwnerApplicationCompositionFixture({
     appId: merchandiseMarker.appId,
     buildMarker: merchandiseMarker.buildMarker,
     ownerRegistration: merchandiseRegistration,
   });
-  const tax = yield* makeOwnerApplicationCompositionFixture({
-    appId: taxMarker.appId,
-    buildMarker: taxMarker.buildMarker,
-    ownerRegistration: taxRegistration,
-  });
+  const tax = yield* publishedTaxComposition;
   const composition = {
     ...merchandise.snapshot.composition,
     modules: [...merchandise.snapshot.composition.modules, ...tax.snapshot.composition.modules],
