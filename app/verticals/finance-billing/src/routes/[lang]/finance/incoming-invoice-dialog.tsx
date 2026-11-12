@@ -7,6 +7,7 @@ import { FormInput } from '@app/admin-ui/form-controls';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useRef, useState } from 'react';
 import { draftTotals, lineIssue, lineValueIssue, newDraftLine } from '../../../../shared/domain/invoice-draft.ts';
+import { defaultLineVatChoice } from '../../../../shared/domain/line-vat.ts';
 import type { DraftLine } from '../../../../shared/domain/invoice-draft.ts';
 import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { FinanceSaveActions, useFinanceFormSave } from './finance-form-save.tsx';
@@ -15,6 +16,7 @@ import { BUDGET_CATEGORIES, emptyIncomingDraft, incomingCommandOf, incomingProbl
 import type { IncomingDraft } from './incoming-invoice-draft.ts';
 import { IncomingFileField } from './incoming-invoice-file.tsx';
 import { InvoiceLineEditor } from './invoice-line-editor.tsx';
+import { useVatChoices } from './use-vat-choices.ts';
 import { ObjectFields } from './object-fields.tsx';
 import type { CommandOutcome } from './use-finance-records.ts';
 
@@ -42,7 +44,9 @@ const IncomingInvoiceForm = ({ onOpenChange, vm }: Omit<IncomingInvoiceDialogPro
   const [draft, setDraft] = useState<IncomingDraft>(initial);
   const set = (patch: Partial<IncomingDraft>) => setDraft((current) => ({ ...current, ...patch }));
   const lineSequence = useRef(1);
-  const totals = draftTotals(draft.lines);
+  const vat = useVatChoices(vm.scope, draft.issueDate);
+  const choices = vat.state === 'ready' ? vat.choices : undefined;
+  const totals = draftTotals(draft.lines, choices, 'INCOMING');
   const priceList = (vm.snapshot?.state.priceList ?? []).filter((item) => item.active);
   const setLines = (next: (lines: readonly DraftLine[]) => readonly DraftLine[]) =>
     setDraft((current) => ({ ...current, lines: next(current.lines) }));
@@ -52,11 +56,11 @@ const IncomingInvoiceForm = ({ onOpenChange, vm }: Omit<IncomingInvoiceDialogPro
   const addLine = () => {
     lineSequence.current += 1;
     const key = `incoming-line-${lineSequence.current}`;
-    setLines((lines) => [...lines, newDraftLine(key, 'free')]);
+    setLines((lines) => [...lines, newDraftLine(key, 'free', defaultLineVatChoice('INCOMING', choices?.regime))]);
   };
   const form = useFinanceFormSave<IncomingDraft, CommandOutcome>({
     initial,
-    isValid: (value) => incomingCommandOf(value, vm) !== undefined,
+    isValid: (value) => incomingCommandOf(value, vm, choices) !== undefined,
     onClose: () => onOpenChange(false),
     onSent: (outcome) => {
       if (outcome.ok && outcome.invoice !== undefined) {
@@ -65,14 +69,14 @@ const IncomingInvoiceForm = ({ onOpenChange, vm }: Omit<IncomingInvoiceDialogPro
     },
     reset: setDraft,
     send: (value) => {
-      const command = incomingCommandOf(value, vm);
+      const command = incomingCommandOf(value, vm, choices);
       return command === undefined ? undefined : vm.execute(command, 'Přijatá faktura zaevidována');
     },
     value: draft,
     vm,
   });
   const showIssues = form.record.status === 'invalid';
-  const problem = showIssues ? incomingProblem(draft) : undefined;
+  const problem = showIssues ? incomingProblem(draft, choices) : undefined;
   return (
     <>
       <SidePanel
@@ -146,7 +150,8 @@ const IncomingInvoiceForm = ({ onOpenChange, vm }: Omit<IncomingInvoiceDialogPro
             {draft.lines.map((line, index) => (
               <InvoiceLineEditor
                 canRemove={draft.lines.length > 1}
-                issue={showIssues ? lineIssue(line) : lineValueIssue(line)}
+                direction="INCOMING"
+                issue={showIssues ? lineIssue(line, choices, 'INCOMING') : lineValueIssue(line)}
                 key={line.key}
                 line={line}
                 onChange={(next) => updateLine(line.key, next)}
@@ -155,6 +160,7 @@ const IncomingInvoiceForm = ({ onOpenChange, vm }: Omit<IncomingInvoiceDialogPro
                 priceList={priceList}
                 products={[]}
                 productsReadable={false}
+                vat={vat}
               />
             ))}
             <div>

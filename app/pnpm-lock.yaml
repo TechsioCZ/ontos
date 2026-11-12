@@ -2568,6 +2568,9 @@ importers:
       '@app/shared-design-tokens':
         specifier: workspace:*
         version: link:../../packages/shared-design-tokens
+      '@app/tax':
+        specifier: workspace:*
+        version: link:../tax
       '@app/work-tasks':
         specifier: workspace:*
         version: link:../work-tasks

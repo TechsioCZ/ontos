@@ -13,6 +13,7 @@ export const financeBillingRegistration = defineVerticalRuntimeRegistration({
       'lease-invoices': () => import('./src/api/lease-invoices-client.ts'),
       'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       records: () => import('./src/api/records-client.ts'),
+      'vat-choices': () => import('./src/api/vat-choices-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {

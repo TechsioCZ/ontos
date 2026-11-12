@@ -12,12 +12,14 @@ import {
 import type { VerticalRuntimeRegistrationInput } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
-import { LeaseInvoicesApi } from './shared/apis/lease-invoices.ts';
-import { RecordsApi } from './shared/apis/records.ts';
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
-import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
+import { LeaseInvoicesApi } from './shared/apis/lease-invoices.ts';
 import { leaseInvoicesRead } from './src/api/lease-invoices.read.ts';
+import { RecordsApi } from './shared/apis/records.ts';
 import { recordsRead } from './src/api/records.read.ts';
+import { requestSearchRebuildAction } from './src/actions/request-search-rebuild.action.ts';
+import { VatChoicesApi } from './shared/apis/vat-choices.ts';
+import { vatChoicesRead } from './src/api/vat-choices.read.ts';
 // </generated-module-manifest-imports>
 // <generated-module-registration-imports>
 import { draftInvoiceFromWonOpportunityWorker } from './src/workers/draft-invoice-from-won-opportunity.worker.ts';
@@ -80,6 +82,7 @@ export const financeBillingRuntimeManifest: VerticalRuntimeRegistrationInput['ma
       'lease-invoices': LeaseInvoicesApi,
       'owner-action-approvals': OwnerActionApprovalApi,
       records: RecordsApi,
+      'vat-choices': VatChoicesApi,
       // </generated-module-manifest-apis>
     },
     operationContracts: [
@@ -94,6 +97,7 @@ export const financeBillingRuntimeManifest: VerticalRuntimeRegistrationInput['ma
         operationKey: 'records.execute',
         registration: recordsRead,
       },
+      { apiKey: 'vat-choices', operationKey: 'vatChoices.execute', registration: vatChoicesRead },
       // </generated-module-manifest-operation-contracts>
     ],
     shellContributions: {
@@ -253,6 +257,7 @@ export const financeBillingRuntimeDeclaration: VerticalRuntimeRegistrationInput 
     // <generated-module-registration-reads>
     leaseInvoicesRead,
     recordsRead,
+    vatChoicesRead,
     // </generated-module-registration-reads>
   ],
 };

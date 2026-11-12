@@ -1,8 +1,10 @@
 // A received invoice as its form holds it until Uložit, with its attached document.
 import type { Invoice } from '../../../../shared/apis/records.ts';
+import type { VatChoices } from '../../../../shared/apis/vat-choices.ts';
 import { addCalendarDaysTo } from '../../../../shared/domain/finance-planning.ts';
-import { draftTotals, lineIssue, newDraftLine, toInvoiceLine } from '../../../../shared/domain/invoice-draft.ts';
+import { draftTotals, lineIssue, newDraftLine, storedLinesOf } from '../../../../shared/domain/invoice-draft.ts';
 import type { DraftLine } from '../../../../shared/domain/invoice-draft.ts';
+import { defaultLineVatChoice } from '../../../../shared/domain/line-vat.ts';
 import type { FinanceCommandDraft, FinanceViewModel, PreparedUpload } from './finance-ui.tsx';
 import { emptyObjectSelection, objectAnchors } from './object-fields.tsx';
 import type { ObjectSelection } from './object-fields.tsx';
@@ -44,7 +46,7 @@ export const emptyIncomingDraft = (today: string): IncomingDraft => ({
   dueDate: addCalendarDaysTo(today, 14),
   file: null,
   issueDate: today,
-  lines: [newDraftLine('incoming-line-1', 'free')],
+  lines: [newDraftLine('incoming-line-1', 'free', defaultLineVatChoice('INCOMING'))],
   note: '',
   object: emptyObjectSelection,
   supplierCompanyId: '',
@@ -52,12 +54,12 @@ export const emptyIncomingDraft = (today: string): IncomingDraft => ({
 });
 
 /** Why the draft cannot be saved yet, or undefined when it can. */
-export const incomingProblem = (draft: IncomingDraft): string | undefined => {
-  const totals = draftTotals(draft.lines);
+export const incomingProblem = (draft: IncomingDraft, choices: VatChoices | undefined): string | undefined => {
+  const totals = draftTotals(draft.lines, choices, 'INCOMING');
   if (draft.supplierName.trim() === '' || draft.documentNumber.trim() === '') {
     return 'Vyplňte dodavatele a číslo dokladu.';
   }
-  if (draft.lines.some((line) => lineIssue(line) !== undefined)) {
+  if (draft.lines.some((line) => lineIssue(line, choices, 'INCOMING') !== undefined)) {
     return 'Doplňte u každé položky popis, množství, cenu bez DPH a sazbu DPH.';
   }
   if (totals === undefined || totals.totalMinor === 0) {
@@ -70,9 +72,11 @@ export const incomingProblem = (draft: IncomingDraft): string | undefined => {
 export const incomingCommandOf = (
   draft: IncomingDraft,
   vm: Pick<FinanceViewModel, 'actorLabel' | 'objects'>,
+  choices: VatChoices | undefined,
 ): FinanceCommandDraft<'RecordIncomingInvoice'> | undefined => {
-  const totals = draftTotals(draft.lines);
-  if (incomingProblem(draft) !== undefined || totals === undefined) {
+  const totals = draftTotals(draft.lines, choices, 'INCOMING');
+  const lines = storedLinesOf(draft.lines, choices);
+  if (incomingProblem(draft, choices) !== undefined || totals === undefined || lines === undefined) {
     return undefined;
   }
   const command: FinanceCommandDraft<'RecordIncomingInvoice'> = {
@@ -82,7 +86,7 @@ export const incomingCommandOf = (
     documentNumber: draft.documentNumber.trim(),
     dueDate: draft.dueDate,
     issueDate: draft.issueDate,
-    lines: draft.lines.map(toInvoiceLine),
+    lines,
     supplierName: draft.supplierName.trim(),
     totalMinor: totals.totalMinor,
   };

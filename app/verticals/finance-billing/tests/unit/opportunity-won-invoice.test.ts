@@ -3,7 +3,7 @@ import { OutboxPayloadSchema } from '@app/sales-pipeline/outbox/opportunity-stag
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Option, Schema } from 'effect';
 import { FinanceCommandSchema } from '../../shared/actions/apply-command.ts';
-import { narrowVatRate, opportunityWonInvoiceCommand } from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
+import { opportunityWonInvoiceCommand } from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
 
 const opportunityId = 'c0000000-0000-4000-8000-000000000001';
 const partyId = 'a0000000-0000-4000-8000-000000000012';
@@ -35,8 +35,23 @@ describe('opportunityWonInvoiceCommand', () => {
       expect(command.partyId).toBe(partyId);
       expect(command.issueDate).toBe('2026-10-07');
       expect(command.lines).toEqual([
-        { description: 'Roční servis', productId, quantity: 2, unitPriceMinor: 100_000, vatRate: 21 },
-        { description: 'Školení', productId: otherProductId, quantity: 1, unitPriceMinor: 50_000, vatRate: 21 },
+        {
+          description: 'Roční servis',
+          productId,
+          quantity: 2,
+          unitPriceMinor: 100_000,
+          vatClassification: 'cz.vat.standard',
+          vatRate: 21,
+        },
+        {
+          description: 'Školení',
+          productId: otherProductId,
+          quantity: 1,
+          unitPriceMinor: 50_000,
+          // A rate Tax does not classify stays as the opportunity was won with; the draft gets a classification
+          // when someone edits it.
+          vatRate: 15,
+        },
       ]);
     }),
   );
@@ -66,7 +81,18 @@ describe('opportunityWonInvoiceCommand', () => {
     }),
   );
 
-  it('narrows VAT rates to the Czech set with a 21 % fallback', () => {
-    expect([0, 10, 12, 21, 15, 100].map(narrowVatRate)).toEqual([0, 10, 12, 21, 21, 21]);
-  });
+  it.effect('keeps the won rate and names the classification of 21 % and 12 %', () =>
+    Effect.gen(function* wonRates() {
+      const payload = yield* stageChanged('WON');
+      const first = yield* Effect.fromOption(Option.fromUndefinedOr(payload.lines[0]));
+      const lines = [21, 12, 10, 0].map((vatRate) => ({ ...first, vatRate }));
+      const command = Option.getOrThrow(opportunityWonInvoiceCommand({ ...payload, lines }));
+      expect(command.lines.map((line) => [line.vatRate, line.vatClassification])).toEqual([
+        [21, 'cz.vat.standard'],
+        [12, 'cz.vat.reduced'],
+        [10, undefined],
+        [0, undefined],
+      ]);
+    }),
+  );
 });

@@ -15,6 +15,7 @@ import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
 import { requestSearchRebuildAction } from '../../src/actions/request-search-rebuild.action.ts';
 import { leaseInvoicesRead } from '../../src/api/lease-invoices.read.ts';
 import { recordsRead } from '../../src/api/records.read.ts';
+import { vatChoicesRead } from '../../src/api/vat-choices.read.ts';
 import { documentResourceDescriptor } from '../../shared/resources/document.ts';
 import { financialPlanEntryResourceDescriptor } from '../../shared/resources/financial-plan-entry.ts';
 import { invoiceResourceDescriptor } from '../../shared/resources/invoice.ts';
@@ -32,7 +33,7 @@ describe('finance.billing backend and full publication boundary', () => {
       expect(action).toBe(getVerticalRuntimeActions(registration)[index]);
       expect(action).toBe(manifest.publicSurface.actions[index]);
     }
-    const expectedReads = [leaseInvoicesRead, recordsRead];
+    const expectedReads = [leaseInvoicesRead, recordsRead, vatChoicesRead];
     expect(declaration.reads).toEqual(expectedReads);
     for (const [index, read] of expectedReads.entries()) {
       expect(declaration.reads?.[index]).toBe(read);
