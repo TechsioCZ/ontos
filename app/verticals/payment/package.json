@@ -6,17 +6,18 @@
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/payment-client.ts",
-    "./owner-evidence/commitment-attempt": "./shared/domain/commitment-attempt-evidence.ts",
     "./outbox/payment-core-authorization-issued-v1": "./shared/outbox/payment-core-authorization-issued-v1.ts",
     "./outbox/payment-core-operation-outcome-changed-v1": "./shared/outbox/payment-core-operation-outcome-changed-v1.ts",
     "./outbox/payment-core-operation-recovery-requested-v1": "./shared/outbox/payment-core-operation-recovery-requested-v1.ts",
     "./outbox/payment-core-operation-requested-v1": "./shared/outbox/payment-core-operation-requested-v1.ts",
     "./outbox/payment-core-payment-created-v1": "./shared/outbox/payment-core-payment-created-v1.ts",
+    "./outbox/payment-core-provider-notification-captured-v1": "./shared/outbox/payment-core-provider-notification-captured-v1.ts",
+    "./owner-evidence/commitment-attempt": "./shared/domain/commitment-attempt-evidence.ts",
     "./resources/payment": "./shared/resources/payment.ts",
-    "./resources/payment-root": "./shared/resources/payment-root.ts"
+    "./resources/payment-root": "./shared/resources/payment-root.ts",
+    "./outbox-worker-host": "./src/worker-host/entry.ts"
   },
   "scripts": {
-    "dev": "node ../../scripts/prepare-dev-module-contract.mts payment && modern dev",
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical payment --target dist && ultramodern-create ultramodern public-surface --app payment --target dist && modern deploy --skip-build --deploy-target node",
     "cloudflare:build": "modern build --deploy-target cloudflare && node ../../scripts/generate-ontos-module-contract.mts --vertical payment --target cloudflare-dist && ultramodern-create ultramodern public-surface --app payment --target cloudflare-dist && modern deploy --skip-build --deploy-target cloudflare",
     "cloudflare:deploy": "node ../../scripts/immutable-application-release.mts deploy --app-directory .",
@@ -27,10 +28,12 @@
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
     "db:test": "rstest run tests/unit/database-schema-contract.test.ts --config rstest.config.ts",
     "db:verify": "node scripts/verify-db-schema.mts",
+    "dev": "node ../../scripts/prepare-dev-module-contract.mts payment && modern dev",
     "serve": "modern serve",
     "test:integration": "rstest --project integration",
     "test:unit": "rstest --project unit",
-    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
+    "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
   "dependencies": {
     "@app/commerce-customer-context": "workspace:*",

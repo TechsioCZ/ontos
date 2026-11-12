@@ -15,6 +15,10 @@ import { getVerticalRuntimeReads } from '../../../../packages/core-runtime/src/m
 import { TENANT_MODULE_STATES } from '../../../../packages/core-runtime/src/modules/tenant-module-state-service.ts';
 import type { TenantModuleState } from '../../../../packages/core-runtime/src/modules/tenant-module-state-service.ts';
 import { currentPaymentRead } from '../../src/api/current-payment.read.ts';
+import { gatewayConfigurationRead } from '../../src/api/gateway-configuration.read.ts';
+import { gatewayCustomerActionRead } from '../../src/api/gateway-customer-action.read.ts';
+import { gatewayReconciliationDebtRead } from '../../src/api/gateway-reconciliation-debt.read.ts';
+import { gatewayReturnStatusRead } from '../../src/api/gateway-return-status.read.ts';
 import { paymentAuthorizationValidationRead } from '../../src/api/payment-authorization-validation.read.ts';
 import { paymentHistoryRead } from '../../src/api/payment-history.read.ts';
 import { paymentMethodApplicabilityRead } from '../../src/api/payment-method-applicability.read.ts';
@@ -32,12 +36,13 @@ import { paymentRegistration } from '../../vertical.registration.ts';
 type AccessClass = Exclude<ModuleEntrypointAccess, 'background'>;
 interface ExpectedEntrypoint {
   readonly access: AccessClass;
-  readonly accessKey: string;
+  /** Undefined only for the workload-only provider notification capture (#1157). */
+  readonly accessKey: string | undefined;
   readonly entrypointKey: string;
   readonly role: 'action' | 'api';
 }
 
-const action = (slug: string, accessKey: string): ExpectedEntrypoint => ({
+const action = (slug: string, accessKey?: string): ExpectedEntrypoint => ({
   access: 'write',
   accessKey,
   entrypointKey: `payment.core.${slug}`,
@@ -50,7 +55,7 @@ const read = (slug: string, accessKey: string, access: AccessClass = 'read'): Ex
   role: 'api',
 });
 
-/** DESIGN §2 entrypoint inventory (A1–A11, R1–R5). */
+/** DESIGN §2 entrypoint inventory (A1–A11, R1–R5) plus the C17 gateway entrypoints (#1155, #1157). */
 const DESIGN_INVENTORY: readonly ExpectedEntrypoint[] = [
   action('configure-payment-method-enablement', 'payment.core.method-enablement.configure'),
   action('configure-payment-source-authority', 'payment.core.source-authority.configure'),
@@ -68,6 +73,14 @@ const DESIGN_INVENTORY: readonly ExpectedEntrypoint[] = [
   read('payment-authorization-validation', 'payment.core.authorization.validate'),
   read('payment-reconciliation-debt', 'payment.core.reconciliation.read'),
   read('payment-history', 'payment.core.history.read', 'historical_read'),
+  action('configure-provider-account-binding', 'payment.core.provider-account-binding.configure'),
+  action('rotate-provider-credential', 'payment.core.provider-credential.rotate'),
+  action('configure-gateway-enablement', 'payment.core.gateway-enablement.configure'),
+  action('capture-provider-notification'),
+  read('gateway-configuration', 'payment.core.gateway-configuration.read'),
+  read('gateway-customer-action', 'payment.core.gateway-customer-action.read'),
+  read('gateway-return-status', 'payment.core.gateway-return-status.read'),
+  read('gateway-reconciliation-debt', 'payment.core.gateway-reconciliation-debt.read'),
 ];
 
 type MatrixState = TenantModuleState | 'missing';
@@ -97,6 +110,10 @@ const registeredEntrypoints = (): readonly ModuleEntrypointDescriptor[] => [
  */
 const ownerReads = [
   currentPaymentRead,
+  gatewayConfigurationRead,
+  gatewayCustomerActionRead,
+  gatewayReconciliationDebtRead,
+  gatewayReturnStatusRead,
   paymentAuthorizationValidationRead,
   paymentHistoryRead,
   paymentMethodApplicabilityRead,
@@ -165,8 +182,36 @@ describe('#1153 TECH-02 Payment entrypoint classification', () => {
     }
   });
 
-  it('#1153 Payment declares no background entrypoint: no worker, no background access, no consumed event', () => {
-    expect(getVerticalRuntimeOutboxWorkers(paymentRegistration)).toEqual([]);
+  it('#1146 Payment background entrypoints are exactly the three owner-local C17 gateway workers', () => {
+    const workers = getVerticalRuntimeOutboxWorkers(paymentRegistration);
+    expect(workers).toHaveLength(3);
+    expect(new Set(workers.map((worker) => worker.descriptor.workerKey))).toEqual(
+      new Set([
+        'payment.core.execute-gateway-operation',
+        'payment.core.process-provider-notification',
+        'payment.core.recover-gateway-operation',
+      ]),
+    );
+    for (const worker of workers) {
+      expect({
+        access: worker.descriptor.entrypoint.access,
+        authorization: worker.descriptor.entrypoint.authorization,
+        entrypointKey: worker.descriptor.entrypoint.entrypointKey,
+        legalEntityScope: worker.descriptor.legalEntityScope,
+        moduleKey: worker.descriptor.entrypoint.moduleKey,
+        role: worker.descriptor.entrypoint.role,
+      }).toEqual({
+        access: 'background',
+        authorization: { kind: 'owner_local_background' },
+        entrypointKey: worker.descriptor.workerKey,
+        legalEntityScope: 'required',
+        moduleKey: 'payment.core',
+        role: 'worker',
+      });
+    }
+  });
+
+  it('#1153 no Action or Read is a background entrypoint and Payment consumes no public event', () => {
     expect(registeredEntrypoints().filter((entrypoint) => entrypoint.role === 'worker')).toEqual([]);
     expect(registeredEntrypoints().filter((entrypoint) => entrypoint.access === 'background')).toEqual([]);
     expect(paymentManifest.publicSurface.events).toEqual([]);
