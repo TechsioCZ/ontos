@@ -44,6 +44,7 @@ import {
   makeTestDatabaseFromClient,
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { liveModuleKeyIds } from '../../../../scripts/zerops/module-credential-liveness.mts';
 import { ProvisioningOutputJsonSchema } from '../../../../scripts/zerops/module-credentials.mts';
 
 /** The calling modules this release installs, and one it does not (a credential of it must bind nothing). */
@@ -639,6 +640,19 @@ it.live(
         for (const providerKeyId of otherContainer.providerKeyIds) {
           expect(recorded.includes(providerKeyId)).toBe(false);
         }
+        // A key disabled in the key store while its binding stays active is not live for the host that holds it:
+        // healing notices it within a minute, not at its next rotation.
+        const [disabledKey, ...stillLive] = [...rotated.providerKeyIds];
+        if (disabledKey !== undefined) {
+          yield* keys.setEnabled(disabledKey, false);
+          const bound = (yield* loadModuleCredentialEnrolment(coreDatabase)).map(({ providerKeyId }) => providerKeyId);
+          expect(bound).toContain(disabledKey);
+          const liveForHolder = yield* liveModuleKeyIds(coreDatabase, [...rotated.providerKeyIds]);
+          expect(liveForHolder.has(disabledKey)).toBe(false);
+          expect(stillLive.every((providerKeyId) => liveForHolder.has(providerKeyId))).toBe(true);
+          yield* keys.setEnabled(disabledKey, true);
+        }
+
         // The Auth store keeps each retired key, disabled.
         const disabled = yield* authDatabase.executor
           .select({ enabled: apikey.enabled, id: apikey.id })

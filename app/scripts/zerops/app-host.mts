@@ -2,7 +2,6 @@
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
 import { makeDatabaseIdentityEnrollmentLive } from '../../packages/core-runtime/src/db/database-identities.ts';
 import { DatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
-import { loadModuleCredentialEnrolment } from '../../packages/core-runtime/src/auth/module-credentials.ts';
 import {
   TenantIntentLoader,
   TenantIntentLoaderLive,
@@ -23,6 +22,7 @@ import {
   ProvisioningOutputJsonSchema,
 } from './module-credentials.mts';
 import type { ProvisioningOutput } from './module-credentials.mts';
+import { liveModuleKeyIds } from './module-credential-liveness.mts';
 import { authenticationQueryRedactions, credentialSubmissionRedirect } from '@app/shared-contracts/credential-url';
 /**
  * One stateless Zerops container that serves the whole OntOS application: the Shell, every MicroVertical owner
@@ -1236,8 +1236,9 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     });
   const healCredentials = (release: HostRelease, serving: Effect.Effect<boolean>) =>
     healModuleCredentials({
-      activeProviderKeyIds: loadModuleCredentialEnrolment(database.executor).pipe(
-        Effect.map((enrolment) => new Set(enrolment.map(({ providerKeyId }) => providerKeyId))),
+      // Bound and, for the keys this host holds, still verifying (enabled, not ended) in the key store.
+      activeProviderKeyIds: Ref.get(heldCredentials).pipe(
+        Effect.flatMap((held) => liveModuleKeyIds(database.executor, providerKeyIdsOf(held))),
       ),
       callers,
       held: heldCredentials,
