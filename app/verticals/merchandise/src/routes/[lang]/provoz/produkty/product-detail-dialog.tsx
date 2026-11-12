@@ -183,8 +183,9 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: De
     rateAt(vat, taxClassificationCode, DateTime.nowUnsafe())?.ratePercent,
   );
   const grossText = gross.minor === null ? taxLabels.notSet : formatMoney(gross.minor);
+  // Only a stored gross stays the same on a classification change; with none ("not set") there is no share to keep.
   const grossNote =
-    gross.kind === 'stored' && taxClassificationCode !== product.taxClassificationCode
+    gross.kind === 'stored' && gross.minor !== null && taxClassificationCode !== product.taxClassificationCode
       ? k('detail.vatShareOnly')
       : undefined;
 

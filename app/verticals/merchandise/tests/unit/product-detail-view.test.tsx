@@ -422,6 +422,18 @@ describe('the price including VAT on the product editor', () => {
       }),
   );
 
+  it.effect('without a stored gross a classification change says nothing about the VAT share', () =>
+    Effect.gen(function* noStoredGross() {
+      const { grossPriceMinor: _none, ...withoutGross } = productInput;
+      void _none;
+      shown = Schema.decodeSync(ProductRecordSchema)({ ...withoutGross, taxClassificationCode: CZ_VAT_STANDARD });
+      yield* Effect.promise(mount);
+      expect(fieldById('detail-price-gross').value).toBe('není nastaveno');
+      yield* Effect.promise(() => pickVat(CZ_VAT_REDUCED));
+      expect(text()).not.toContain('změní se jen podíl DPH');
+    }),
+  );
+
   it.effect('an edited net price shows a preview of the gross saving will store, labelled as such', () =>
     Effect.gen(function* preview() {
       shown = { ...product, currentPriceMinor: 1000, grossPriceMinor: 1211, taxClassificationCode: CZ_VAT_STANDARD };
