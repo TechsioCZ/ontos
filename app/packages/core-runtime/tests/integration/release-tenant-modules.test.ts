@@ -10,9 +10,10 @@ import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
 import type { TenantId } from '../../src/access/ids.ts';
 import { AccessProjectionWriter } from '../../src/access/intent/projection-writer.ts';
 import { activateCatalogRelease, releaseActorId } from '../../src/access/release/activation.ts';
+import { CoreDatabase } from '../../src/db/client.ts';
 import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
 import type { AccessCatalogModule, AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
-import { installReleaseTenantModules } from '../../src/install/release-tenant-modules.ts';
+import { installReleaseTenantModules, installUnderLock } from '../../src/install/release-tenant-modules.ts';
 import type { ReleaseTenantModule } from '../../src/install/release-tenant-modules.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
@@ -298,6 +299,28 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
           .pipe(Effect.orDie);
         expect(state).toEqual([{ state: 'inactive' }]);
         expect(yield* decide(tenantId)).toBe('DENIED deny.insufficient_grant');
+      }),
+    ),
+  );
+
+  suite.effect('decides selling under the Tenant lock, so a selling module ended since the first read is seen', () =>
+    withProjectionTenant({ activeModules: [SELLING] }, (tenantId, admin) =>
+      Effect.gen(function* sellingUnderLock() {
+        yield* bootstrapOwner(tenantId);
+        // Between the step's first read and its lock, a person ended the selling module.
+        yield* admin
+          .unsafe(
+            `update core.tenant_module_states set state = 'inactive' where tenant_id = '${tenantId}' and module_key = '${SELLING}'`,
+          )
+          .pipe(Effect.orDie);
+        const { executor } = yield* CoreDatabase;
+        const locked = yield* executor
+          .transaction((transaction) =>
+            installUnderLock(transaction, { moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }, []),
+          )
+          .pipe(Effect.orDie);
+        expect(locked).toEqual({ _tag: 'NotSelling' });
+        expect(yield* historyOf(admin, tenantId)).toEqual([]);
       }),
     ),
   );

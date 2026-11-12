@@ -1,5 +1,5 @@
 import { and, eq, inArray } from 'drizzle-orm';
-import { DateTime, Duration, Effect, Schedule, Schema } from 'effect';
+import { DateTime, Duration, Effect, Match, Schedule, Schema } from 'effect';
 
 import { AccessReleaseStore } from '../access/changes/persistence/release-store.ts';
 import { AccessProjectionWriter } from '../access/intent/projection-writer.ts';
@@ -119,7 +119,15 @@ const moduleStatesOf = (
  * change: dependency states re-read under the lock, then the history row and the state row that points at it.
  * `false` when another writer installed the module first.
  */
-const installUnderLock = Effect.fn('ReleaseTenantModules.installUnderLock')(function* installModuleUnderLock(
+/** What the install under the Tenant's row lock found: it installed, the module was already there, or no selling. */
+export const LockedInstallSchema = Schema.Union([
+  Schema.TaggedStruct('Installed', {}),
+  Schema.TaggedStruct('AlreadyPresent', { state: Schema.String }),
+  Schema.TaggedStruct('NotSelling', {}),
+]);
+export type LockedInstall = typeof LockedInstallSchema.Type;
+
+export const installUnderLock = Effect.fn('ReleaseTenantModules.installUnderLock')(function* installModuleUnderLock(
   transaction: CoreTransaction,
   entry: ReleaseTenantModule,
   dependencies: readonly string[],
@@ -139,9 +147,16 @@ const installUnderLock = Effect.fn('ReleaseTenantModules.installUnderLock')(func
       Effect.mapError((cause) => refusal(`a module it needs is not active (${cause.reason})`, cause)),
     );
   }
-  const current = yield* moduleStatesOf(transaction, entry.tenantId, [entry.moduleKey]);
-  if (current.length > 0) {
-    return false;
+  // Decided under the lock, so a selling module ended between the first read and here is seen.
+  if (entry.sellingModuleKeys.length > 0) {
+    const selling = yield* moduleStatesOf(transaction, entry.tenantId, entry.sellingModuleKeys);
+    if (!selling.some(({ state }) => state === 'active')) {
+      return LockedInstallSchema.members[2].make({});
+    }
+  }
+  const [current] = yield* moduleStatesOf(transaction, entry.tenantId, [entry.moduleKey]);
+  if (current !== undefined) {
+    return LockedInstallSchema.members[1].make({ state: current.state });
   }
   const changedAt = yield* DateTime.nowAsDate;
   const history = yield* transaction
@@ -197,7 +212,7 @@ const installUnderLock = Effect.fn('ReleaseTenantModules.installUnderLock')(func
     .insert(outboxMessages)
     .values({ ...wakeUp, domainEventId: event.domainEventId, tenantId: entry.tenantId })
     .pipe(Effect.mapError((cause) => refusal('the installation wake-up could not be written', cause)));
-  return true;
+  return LockedInstallSchema.members[0].make({});
 });
 
 /** Decide and, when the module is missing, install one module of one Tenant. Never fails: the outcome says why. */
@@ -232,12 +247,6 @@ const installOne = Effect.fn('ReleaseTenantModules.installOne')(
         ? report(entry, 'already_active', 'active')
         : report(entry, 'left_as_set', `a person set it ${current.state}; a release never changes that`);
     }
-    if (entry.sellingModuleKeys.length > 0) {
-      const selling = yield* moduleStatesOf(executor, entry.tenantId, entry.sellingModuleKeys);
-      if (!selling.some(({ state }) => state === 'active')) {
-        return report(entry, 'selling_module_missing', `none of ${entry.sellingModuleKeys.join(', ')} is active`);
-      }
-    }
     yield* validateTenantModuleStateTransition(catalog, moduleId, 'active').pipe(
       Effect.mapError((cause) => refusal(cause.reason, cause)),
     );
@@ -251,9 +260,12 @@ const installOne = Effect.fn('ReleaseTenantModules.installOne')(
           Schema.is(ReleaseTenantModuleError)(cause) ? cause : refusal('the transaction failed', cause),
         ),
       );
-    return installed
-      ? report(entry, 'installed', 'installed active by the release')
-      : report(entry, 'already_active', 'installed concurrently');
+    return Match.valueTags(installed, {
+      AlreadyPresent: () => report(entry, 'already_active', 'installed concurrently'),
+      Installed: () => report(entry, 'installed', 'installed active by the release'),
+      NotSelling: () =>
+        report(entry, 'selling_module_missing', `none of ${entry.sellingModuleKeys.join(', ')} is active`),
+    });
   },
   (effect, _executor, _catalog, entry) =>
     effect.pipe(
