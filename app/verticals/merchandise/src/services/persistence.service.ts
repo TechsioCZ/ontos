@@ -1575,6 +1575,48 @@ const validateEditedStorefrontQuantity = Effect.fn('Merchandise.validateEditedSt
   },
 );
 
+/** A line an order edit adds, priced as a new line of this order (and checked against the price the editor offered). */
+const addedOrderLine = Effect.fn('Merchandise.addedOrderLine')(function* addedOrderLine(
+  state: MerchandiseState,
+  existing: Order,
+  request: EditLineRequest,
+  input: MerchandiseCommandInput,
+) {
+  const product = yield* findProduct(state.products, request.productId);
+  const variant = request.variantId === undefined ? undefined : yield* findVariant(product, request.variantId);
+  if (variant === undefined && realVariantsOf(product).length > 0) {
+    return yield* conflict(`Choose a variant of ${product.sku}`);
+  }
+  const tax = yield* lineTaxOf(input, product);
+  const netPrice = variant?.priceMinor ?? product.currentPriceMinor;
+  // A gross-priced order takes the stored gross price (as the storefront sells it), never one recomputed from net.
+  const czkPrice =
+    existing.pricesIncludeVat === true
+      ? (storedGrossOf(variant ?? product) ?? grossUnitPriceMinor(netPrice, tax.vatRate))
+      : netPrice;
+  // A market order keeps its own price list (snapshot on the order) for lines added later.
+  const currentPrice = existing.market === undefined ? czkPrice : convertGrossMinor(czkPrice, existing.market);
+  // The price the editor showed must still be the price: the line is never stored at another one unseen.
+  if (
+    request.unitPriceMinor === undefined &&
+    request.offeredUnitPriceMinor !== undefined &&
+    request.offeredUnitPriceMinor !== currentPrice
+  ) {
+    return yield* conflict(
+      `Cena produktu ${variant?.sku ?? product.sku} se mezitím změnila; načtěte objednávku znovu a přidejte řádek s aktuální cenou.`,
+    );
+  }
+  return {
+    productId: product.id,
+    productName: product.name,
+    quantity: request.quantity,
+    sku: variant?.sku ?? product.sku,
+    unitPriceMinor: request.unitPriceMinor ?? currentPrice,
+    ...variantFields(variant?.id, variant?.name),
+    ...tax,
+  } satisfies OrderLine;
+});
+
 const editedOrderLines = Effect.fn('Merchandise.editedOrderLines')(function* editedOrderLines(
   state: MerchandiseState,
   existing: Order,
@@ -1591,8 +1633,9 @@ const editedOrderLines = Effect.fn('Merchandise.editedOrderLines')(function* edi
         return yield* conflict('Each product variant may appear only once in an order');
       }
       seen.add(key);
-      const kept = previous.get(key);
-      yield* validateEditedStorefrontQuantity(state, existing, request, kept, input);
+      const before = previous.get(key);
+      yield* validateEditedStorefrontQuantity(state, existing, request, before, input);
+      const kept = before;
       if (kept !== undefined) {
         return {
           ...kept,
@@ -1600,29 +1643,7 @@ const editedOrderLines = Effect.fn('Merchandise.editedOrderLines')(function* edi
           unitPriceMinor: request.unitPriceMinor ?? kept.unitPriceMinor,
         };
       }
-      const product = yield* findProduct(state.products, request.productId);
-      const variant = request.variantId === undefined ? undefined : yield* findVariant(product, request.variantId);
-      if (variant === undefined && realVariantsOf(product).length > 0) {
-        return yield* conflict(`Choose a variant of ${product.sku}`);
-      }
-      const tax = yield* lineTaxOf(input, product);
-      const netPrice = variant?.priceMinor ?? product.currentPriceMinor;
-      // A gross-priced order takes the stored gross price (as the storefront sells it), never one recomputed from net.
-      const czkPrice =
-        existing.pricesIncludeVat === true
-          ? (storedGrossOf(variant ?? product) ?? grossUnitPriceMinor(netPrice, tax.vatRate))
-          : netPrice;
-      // A market order keeps its own price list (snapshot on the order) for lines added later.
-      const currentPrice = existing.market === undefined ? czkPrice : convertGrossMinor(czkPrice, existing.market);
-      return {
-        productId: product.id,
-        productName: product.name,
-        quantity: request.quantity,
-        sku: variant?.sku ?? product.sku,
-        unitPriceMinor: request.unitPriceMinor ?? currentPrice,
-        ...variantFields(variant?.id, variant?.name),
-        ...tax,
-      };
+      return yield* addedOrderLine(state, existing, request, input);
     }),
     { concurrency: 1 },
   );
@@ -2293,6 +2314,9 @@ const editAddsOrderLines = Effect.fn('Merchandise.editAddsOrderLines')(function*
     return false;
   }
   const store: StoreScope = { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId };
+  if (command.lines.some((line) => line.offeredUnitPriceMinor !== undefined)) {
+    return true;
+  }
   const existing = new Set((yield* loadOrderLines(transaction, store, command.id)).map(lineKey));
   return command.lines.some((line) => !existing.has(lineKey(line)));
 });

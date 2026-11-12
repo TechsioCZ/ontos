@@ -392,7 +392,7 @@ describe('VAT of the order lines', () => {
 });
 
 describe('a line added to a storefront order (prices include VAT)', () => {
-  it.effect('takes the stored price including VAT and lets the server price it unless staff change the price', () =>
+  it.effect('takes the stored price including VAT and sends it as the offered price unless staff change it', () =>
     Effect.gen(function* storedGross() {
       shownOrder = { ...orderOf({ updatedAt: opened }), pricesIncludeVat: true };
       // Stored gross 10 Kč, not 8 Kč net plus 12 % (8,96 Kč).
@@ -403,7 +403,12 @@ describe('a line added to a storefront order (prices include VAT)', () => {
       expect(text()).not.toContain('8,96 Kč');
       expect(text()).toContain('10 Kč');
       yield* Effect.promise(() => click(button('Uložit')));
-      expect(sentLines().find((line) => line.productId === beans.id)).toEqual({ productId: beans.id, quantity: 1 });
+      // The offered price travels with the line: the server stores that price or refuses when it changed meanwhile.
+      expect(sentLines().find((line) => line.productId === beans.id)).toEqual({
+        offeredUnitPriceMinor: 1000,
+        productId: beans.id,
+        quantity: 1,
+      });
     }),
   );
 });

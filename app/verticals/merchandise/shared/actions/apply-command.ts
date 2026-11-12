@@ -129,6 +129,12 @@ export const StorefrontOrderLineRequestSchema = Schema.Struct({
  * order's price mode (gross for storefront orders, net for staff orders).
  */
 export const EditOrderLineSchema = Schema.Struct({
+  /**
+   * Marks a line this edit adds (also one removed and added again in the same edit): the unit price the editor offered
+   * it at. The server prices the line as a new one and refuses the edit when that price is no longer the offered one;
+   * `unitPriceMinor`, when sent, is the price staff typed instead.
+   */
+  offeredUnitPriceMinor: Schema.optionalKey(MinorAmountSchema),
   productId: ProductIdSchema,
   quantity: QuantitySchema,
   unitPriceMinor: Schema.optionalKey(MinorAmountSchema),

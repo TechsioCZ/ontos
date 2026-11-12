@@ -134,9 +134,13 @@ const editLineOf = (line: DraftLine): EditLine => {
     productId: line.productId,
     quantity: parseQuantity(line.quantityText) ?? 1,
   };
-  const offered = line.offeredPriceText === undefined ? undefined : parseAmount(line.offeredPriceText);
+  const offered = line.offeredPriceText === undefined ? null : parseAmount(line.offeredPriceText);
   const price = parseAmount(line.priceText) ?? 0;
-  if (offered === undefined || offered !== price) {
+  if (offered !== null) {
+    // An added line: the server prices it as new and refuses when the offered price is no longer the price.
+    edit.offeredUnitPriceMinor = offered;
+  }
+  if (offered === null || offered !== price) {
     edit.unitPriceMinor = price;
   }
   if (line.variantId !== undefined) {
