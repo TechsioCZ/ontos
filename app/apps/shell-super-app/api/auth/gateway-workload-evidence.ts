@@ -151,13 +151,13 @@ export const admitRegisteredGatewayWorkload = Effect.fn('GatewayDelegation.admit
       binding.compositionRevision !== installed.composition.revision ||
       binding.sourceBuildMarker !== source.deployment.buildMarker
     ) {
-      return yield* delegationForbidden();
+      return yield* delegationForbidden('registered_workload_unmatched')();
     }
     if (
       subject.operationRequirementKey === undefined &&
       !gatewayRegisteredOperationContractAllows(source, destination, rule, subject.legalEntityId)
     ) {
-      return yield* delegationForbidden();
+      return yield* delegationForbidden('registered_operation_refused')();
     }
     const database = yield* CoreDatabase;
     return yield* database.executor
@@ -168,7 +168,7 @@ export const admitRegisteredGatewayWorkload = Effect.fn('GatewayDelegation.admit
               sql`select set_config('ontos.tenant_id', ${subject.tenantId}, true), set_config('ontos.legal_entity_id', '', true)`,
               'objects',
             )
-            .pipe(recoverSqlTransactionError, Effect.mapError(delegationUnavailable));
+            .pipe(recoverSqlTransactionError, Effect.mapError(delegationUnavailable('source_evidence_unavailable')));
           const runReference = runReferenceOf(subject);
           const actionInvocationId = yield* Match.value(subject).pipe(
             Match.tag('RegisteredAdmission', (admission) => Effect.succeed(admission.actionInvocationId)),
@@ -192,14 +192,16 @@ export const admitRegisteredGatewayWorkload = Effect.fn('GatewayDelegation.admit
                   )
                   .pipe(
                     recoverSqlTransactionError,
-                    Effect.mapError(delegationUnavailable),
+                    Effect.mapError(delegationUnavailable('source_evidence_unavailable')),
                     Effect.flatMap((rows) =>
-                      Schema.decodeUnknownEffect(claimRowsSchema)(rows).pipe(Effect.mapError(delegationUnavailable)),
+                      Schema.decodeUnknownEffect(claimRowsSchema)(rows).pipe(
+                        Effect.mapError(delegationUnavailable('source_evidence_unavailable')),
+                      ),
                     ),
                   );
                 const [claim] = claims;
                 if (claims.length !== 1 || claim === undefined) {
-                  return yield* delegationForbidden();
+                  return yield* delegationForbidden('workload_source_not_admitted')();
                 }
                 if (
                   worker.operationRequirementKey !== undefined &&
@@ -208,7 +210,7 @@ export const admitRegisteredGatewayWorkload = Effect.fn('GatewayDelegation.admit
                     requirementKey: worker.operationRequirementKey,
                   })
                 ) {
-                  return yield* delegationForbidden();
+                  return yield* delegationForbidden('conditional_requirement_refused')();
                 }
                 return claim.actionInvocationId;
               }),
@@ -229,9 +231,11 @@ export const admitRegisteredGatewayWorkload = Effect.fn('GatewayDelegation.admit
             )
             .pipe(
               recoverSqlTransactionError,
-              Effect.mapError(delegationUnavailable),
+              Effect.mapError(delegationUnavailable('source_evidence_unavailable')),
               Effect.flatMap((rows) =>
-                Schema.decodeUnknownEffect(Schema.Array(RowSchema))(rows).pipe(Effect.mapError(delegationUnavailable)),
+                Schema.decodeUnknownEffect(Schema.Array(RowSchema))(rows).pipe(
+                  Effect.mapError(delegationUnavailable('source_evidence_unavailable')),
+                ),
               ),
             );
           const [row] = systems;
@@ -240,7 +244,7 @@ export const admitRegisteredGatewayWorkload = Effect.fn('GatewayDelegation.admit
             row === undefined ||
             (subject.expectedPrincipalId !== undefined && row.principalId !== subject.expectedPrincipalId)
           ) {
-            return yield* delegationForbidden();
+            return yield* delegationForbidden('workload_binding_not_active')();
           }
           // The admitted integration identity outlives ingress credential rotation. Only its current
           // registered source workload and active Principal govern fresh effects.
@@ -260,10 +264,10 @@ export const admitRegisteredGatewayWorkload = Effect.fn('GatewayDelegation.admit
             )
             .pipe(
               recoverSqlTransactionError,
-              Effect.mapError(delegationUnavailable),
+              Effect.mapError(delegationUnavailable('source_evidence_unavailable')),
               Effect.flatMap((result) =>
                 Schema.decodeUnknownEffect(Schema.Array(originalRowSchema))(result).pipe(
-                  Effect.mapError(delegationUnavailable),
+                  Effect.mapError(delegationUnavailable('source_evidence_unavailable')),
                 ),
               ),
             );
@@ -276,7 +280,7 @@ export const admitRegisteredGatewayWorkload = Effect.fn('GatewayDelegation.admit
             (subject.legalEntityId !== undefined &&
               Option.getOrUndefined(original.legalEntityId) !== subject.legalEntityId)
           ) {
-            return yield* delegationForbidden();
+            return yield* delegationForbidden('workload_source_not_admitted')();
           }
           const admissionContractAllows = Match.value(subject).pipe(
             Match.tag('RegisteredWorkload', () => true),
@@ -292,7 +296,7 @@ export const admitRegisteredGatewayWorkload = Effect.fn('GatewayDelegation.admit
             Match.exhaustive,
           );
           if (!admissionContractAllows) {
-            return yield* delegationForbidden();
+            return yield* delegationForbidden('conditional_requirement_refused')();
           }
           if (subject.legalEntityId !== undefined) {
             const companies = yield* transaction
@@ -300,9 +304,9 @@ export const admitRegisteredGatewayWorkload = Effect.fn('GatewayDelegation.admit
                 sql`select legal_entity_id from core.legal_entities where tenant_id = ${subject.tenantId}::uuid and legal_entity_id = ${subject.legalEntityId}::uuid and status = 'active'`,
                 'objects',
               )
-              .pipe(recoverSqlTransactionError, Effect.mapError(delegationUnavailable));
+              .pipe(recoverSqlTransactionError, Effect.mapError(delegationUnavailable('source_evidence_unavailable')));
             if (companies.length !== 1) {
-              return yield* delegationForbidden();
+              return yield* delegationForbidden('legal_entity_not_active')();
             }
           }
           const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
@@ -310,9 +314,9 @@ export const admitRegisteredGatewayWorkload = Effect.fn('GatewayDelegation.admit
             authMethod: 'system',
             principalId: row.principalId,
             tenantId: subject.tenantId,
-          }).pipe(Effect.mapError(delegationForbidden));
+          }).pipe(Effect.mapError(delegationForbidden('source_evidence_malformed')));
           if (!admissionAuthContextMatches(subject, principal.authContextRef)) {
-            return yield* delegationForbidden();
+            return yield* delegationForbidden('workload_source_not_admitted')();
           }
           const workload: RegisteredGatewayWorkload = {
             admissionInvocationId: actionInvocationId,
@@ -345,7 +349,11 @@ export const admitRegisteredGatewayWorkload = Effect.fn('GatewayDelegation.admit
       )
       .pipe(
         recoverSqlTransactionError,
-        Effect.mapError((cause) => (Schema.is(GatewayDelegationError)(cause) ? cause : delegationUnavailable(cause))),
+        Effect.mapError((cause) =>
+          Schema.is(GatewayDelegationError)(cause)
+            ? cause
+            : delegationUnavailable('source_evidence_unavailable')(cause),
+        ),
       );
   },
 );

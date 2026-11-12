@@ -1,4 +1,8 @@
-import type { GatewayContextV2ClaimsSchema, GatewayTrustedPrincipalContextSchema } from '@app/shared-contracts';
+import type {
+  GatewayContextV2ClaimsSchema,
+  GatewayRefusalReason,
+  GatewayTrustedPrincipalContextSchema,
+} from '@app/shared-contracts';
 import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
 import {
   OperationContextDenied,
@@ -21,7 +25,7 @@ import { makeEffectDrizzleAuthAdapter } from '@app/better-auth-effect-drizzle/se
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { ModuleAppIdSchema } from '@app/core-runtime/auth/hosted-module-credentials';
-import { Cause, ConfigProvider, DateTime, Effect, Exit, Layer, Option, Predicate, Schema } from 'effect';
+import { Cause, DateTime, Effect, Exit, Layer, Logger, Match, Option, Predicate, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { Reactivity } from 'effect/reactivity';
 import { SqlClient } from 'effect/sql';
@@ -38,7 +42,7 @@ import {
 } from '../../api/auth/gateway-delegation-errors.ts';
 import { issueDelegatedGatewayContextAssertion } from '../../api/auth/gateway-delegation-issuer.ts';
 import { ModuleCredentialEnrolmentSource } from '../../api/auth/gateway-delegation-policy.ts';
-import { GatewayDelegationVerificationLive } from '../../api/auth/gateway-delegation-verification.ts';
+import { makeGatewayDelegationVerificationLayer } from '../../api/auth/gateway-delegation-verification.ts';
 import {
   ModuleCredentialBootIdSchema,
   ModuleCredentialHostIdSchema,
@@ -100,6 +104,11 @@ interface DelegationCase {
   readonly originatorLegalEntityId?: string;
   readonly principal?: Partial<typeof GatewayTrustedPrincipalContextSchema.Type>;
   readonly providerKeyId?: string;
+  /**
+   * A subject of main's registered and finite delegation instead of `Assertion`/`Originator`: a registered workload
+   * assertion, an admission, a Privacy dispatch or an Organization governance Read.
+   */
+  readonly registered?: 'assertion' | 'admission' | 'privacy-dispatch' | 'governance-read';
   readonly signerUnavailable?: boolean;
   readonly source?: Omit<Partial<typeof GatewayContextV2ClaimsSchema.Encoded>, 'ver'> & {
     readonly act?: unknown;
@@ -115,10 +124,10 @@ interface DelegationCase {
 const originatorEvidenceDouble = (decision: NonNullable<DelegationCase['originator']>) => ({
   load: () => {
     if (decision === 'denied') {
-      return Effect.fail(delegationForbidden());
+      return Effect.fail(delegationForbidden('originator_not_admitted')());
     }
     if (decision === 'unavailable') {
-      return Effect.fail(delegationUnavailable());
+      return Effect.fail(delegationUnavailable('originator_evidence_unavailable')());
     }
     if (decision === 'caller') {
       return Effect.succeed({
@@ -132,7 +141,7 @@ const originatorEvidenceDouble = (decision: NonNullable<DelegationCase['originat
     }
     return Effect.succeed({ principal: delegationUnitPrincipal, workload: false });
   },
-  loadPrivacyDispatchHuman: () => Effect.fail(delegationForbidden()),
+  loadPrivacyDispatchHuman: () => Effect.fail(delegationForbidden('originator_not_admitted')()),
 });
 
 /** What the scope resolver was asked: the principal it resolved, its company rule and its calling module. */
@@ -187,7 +196,42 @@ const moduleStatesFor = (
   );
 
 /** The subject of a case: the requester's own live assertion, or the recorded requester of asynchronous work. */
+const registeredSubjectFor = (token: string, registered: NonNullable<DelegationCase['registered']>) =>
+  Match.value(registered).pipe(
+    Match.when('assertion', () => ({
+      _tag: 'RegisteredAssertion',
+      declarationKey: 'party.registry.read',
+      sourceAssertion: token,
+    })),
+    Match.when('admission', () => ({
+      _tag: 'RegisteredAdmission',
+      actionInvocationId: subjectInvocationId,
+      declarationKey: 'party.registry.read',
+      sourceActionKey: 'commerce.catalog.create-product',
+      tenantId: delegationUnitPrincipal.tenantId,
+    })),
+    Match.when('privacy-dispatch', () => ({
+      _tag: 'PrivacyDispatch',
+      operation: { _tag: 'SymmyRetention' },
+      source: {
+        _tag: 'Dispatch',
+        dispatchInvocationId: subjectInvocationId,
+        legalEntityId: delegationUnitPrincipal.legalEntityId,
+        tenantId: delegationUnitPrincipal.tenantId,
+      },
+    })),
+    Match.when('governance-read', () => ({
+      _tag: 'OrganizationGovernanceRead',
+      requestHash: 'c'.repeat(64),
+      sourceAssertion: token,
+    })),
+    Match.exhaustive,
+  );
+
 const subjectFor = (token: string, input: DelegationCase) => {
+  if (input.registered !== undefined) {
+    return registeredSubjectFor(token, input.registered);
+  }
   if (input.originator === undefined) {
     return { _tag: 'Assertion', sourceAssertion: token };
   }
@@ -238,8 +282,6 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
     generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }),
   );
   const privateJwk = yield* Effect.promise(() => exportJWK(privateKey));
-  const publicJwk = yield* Effect.promise(() => exportJWK(publicKey));
-  const publicJwks = JSON.stringify({ keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'delegation-unit', use: 'sig' }] });
   const source = {
     aud: 'catalog',
     compositionRevision: revision,
@@ -339,10 +381,6 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
     loadConfig: input.signerUnavailable === true ? parseGatewayIssuerConfig({}) : Effect.succeed(configuration),
   }).pipe(Layer.provide(scopeGrantRegistrarLayer(registrar.registrar)));
   const moduleStates = moduleStatesFor(snapshot.composition.modules, input.moduleState);
-  const provider = ConfigProvider.fromUnknown({
-    ONTOS_GATEWAY_ISSUER: issuer,
-    ONTOS_GATEWAY_PUBLIC_JWKS: input.verificationUnavailable === true ? '{"keys":[]}' : publicJwks,
-  });
   const callerKeyId = input.providerKeyId ?? sourceKeyId;
   const callerKind = input.callerKind ?? 'service';
   const result = yield* Effect.exit(
@@ -358,8 +396,12 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
           decide: () => Effect.die('Legacy delegation unexpectedly requested Privacy dispatch authority'),
         }),
       ),
-      Effect.provide(GatewayDelegationVerificationLive),
-      Effect.provideService(ConfigProvider.ConfigProvider, provider),
+      // The Shell verifies its own assertion with its own signing configuration; it holds no separate public key set.
+      Effect.provide(
+        makeGatewayDelegationVerificationLayer(
+          input.verificationUnavailable === true ? parseGatewayIssuerConfig({}) : Effect.succeed(configuration),
+        ),
+      ),
       // The platform enrolled the catalog module's credential; its binding is derived from the installed release.
       Effect.provideService(ModuleCredentialEnrolmentSource, {
         load: Effect.succeed([catalogEnrolment]),
@@ -793,6 +835,75 @@ const cryptoNegatives: readonly (readonly [string, DelegationCase, GatewayDelega
   ['originator-unavailable', { originator: 'unavailable' }, 'unavailable'],
   ['originator-is-the-calling-module', { originator: 'caller' }, 'forbidden'],
 ];
+// Every refusal names the step that refused it with a stable code; the caller logs it, an operator searches for it.
+const refusalReasons: readonly (readonly [string, DelegationCase, GatewayRefusalReason])[] = [
+  // The stage failure: the Shell could not read the key it verifies its own source assertion with.
+  ['unavailable-verification', { verificationUnavailable: true }, 'verification_keys_unavailable'],
+  ['unbound-module-credential', { providerKeyId: 'unbound-key' }, 'module_credential_unbound'],
+  ['human-caller-credential', { callerKind: 'human' }, 'caller_not_service'],
+  ['wrong-signing-key', { wrongKey: true }, 'subject_assertion_unverified'],
+  ['wrong-header', { header: { typ: 'other' } }, 'subject_assertion_malformed'],
+  ['wrong-source-build', { source: { targetBuildMarker: 'old-build' } }, 'subject_assertion_not_attested'],
+  ['unavailable-auth-database', { authUnavailable: true }, 'subject_authentication_unavailable'],
+  ['missing-current-destination', { missingDeployment: 'party-registry' }, 'audience_not_installed'],
+  ['missing-current-source', { missingDeployment: 'catalog' }, 'module_credential_unbound'],
+  ['unavailable-current-catalog', { catalogUnavailable: true }, 'installed_release_unavailable'],
+  ['stale-current-composition', { catalogRevision: 'b'.repeat(64), originator: 'ok' }, 'release_changed'],
+  ['originator-is-the-calling-module', { originator: 'caller' }, 'subject_not_delegable'],
+  [
+    'subject-is-the-calling-module',
+    { principal: { principalId: callerIdentity.principalId } },
+    'subject_authentication_ended',
+  ],
+  ['denied-current-context', { contextFailure: 'denied' }, 'scope_refused'],
+  ['unavailable-current-context', { contextFailure: 'unavailable' }, 'scope_unavailable'],
+  ['unavailable-module-state', { moduleState: 'unavailable' }, 'module_states_unavailable'],
+  ['suspended-module', { moduleState: 'suspended' }, 'module_not_active'],
+  ['originator-denied', { originator: 'denied' }, 'originator_not_admitted'],
+  ['originator-unavailable', { originator: 'unavailable' }, 'originator_evidence_unavailable'],
+  ['late-ledger-replay', { ledgerFailure: 'replay' }, 'exchange_replayed'],
+  ['late-ledger-unavailable', { ledgerFailure: 'unavailable' }, 'exchange_ledger_unavailable'],
+  // Main's registered and finite delegation names its own steps in the same scheme.
+  ['person-assertion-as-registered-workload', { registered: 'assertion' }, 'subject_assertion_kind_mismatch'],
+  [
+    'registered-assertion-in-stale-release',
+    { catalogRevision: 'b'.repeat(64), registered: 'assertion' },
+    'release_changed',
+  ],
+  ['admission-without-registered-workload', { registered: 'admission' }, 'registered_workload_unmatched'],
+  ['privacy-dispatch-to-another-module', { registered: 'privacy-dispatch' }, 'finite_target_mismatch'],
+  ['governance-read-not-from-privacy', { registered: 'governance-read' }, 'finite_target_mismatch'],
+];
+for (const [label, input, reason] of refusalReasons) {
+  it.effect(`names ${reason} when it refuses ${label}`, () =>
+    Effect.gen(function* refusalReason() {
+      const { result } = yield* delegationCase(input);
+      const failure = Exit.isFailure(result) ? Cause.squash(result.cause) : null;
+      expect(Schema.is(GatewayDelegationError)(failure) ? failure.reason : null).toBe(reason);
+    }),
+  );
+}
+
+it.effect('writes one warning per refusal with its reason, the calling module and the tenant, and no secret', () =>
+  Effect.gen(function* refusalWarning() {
+    const entries: string[] = [];
+    const logger = Logger.layer([
+      Logger.make((options) => {
+        entries.push(JSON.stringify(Logger.formatStructured.log(options)));
+      }),
+    ]);
+    const { result } = yield* delegationCase({ contextFailure: 'unavailable' }).pipe(Effect.provide(logger));
+    expect(Exit.isFailure(result)).toBe(true);
+    const warnings = entries.filter((entry) => entry.includes('gateway delegation refused'));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('scope_unavailable');
+    expect(warnings[0]).toContain('"callerAppId":"catalog"');
+    expect(warnings[0]).toContain(`"subjectTenant":"${delegationUnitPrincipal.tenantId}"`);
+    expect(warnings[0]).toContain('"audience":"party-registry"');
+    expect(warnings[0]).not.toMatch(/eyJ|Bearer|sourceAssertion/u);
+  }),
+);
+
 for (const [label, input, code] of cryptoNegatives) {
   it.effect(`rejects ${label} before ledger claim or signing through the actual delegation`, () =>
     Effect.gen(function* deniedDelegation() {

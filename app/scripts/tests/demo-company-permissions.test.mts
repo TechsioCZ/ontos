@@ -29,8 +29,6 @@ import {
   demoShellRoutingRoleKey,
   eshopDemoRoles,
   facilityPersonalAgendaCapability,
-  kavarnaMarketAuthorityPrincipal,
-  marketRetirementPrincipal,
   pipelineReadCapability,
   pipelineEntrustCapability,
   pipelineSearchCapability,
@@ -101,12 +99,10 @@ it('keeps the CRM narrowing explicit instead of granting the whole module to a r
 
 it('pins each service principal to its own company and gives it no Role of its own', () => {
   expect(privacyConsentPrincipal.legalEntityId).toBeDefined();
-  expect(marketRetirementPrincipal.legalEntityId).not.toBe(kavarnaMarketAuthorityPrincipal.legalEntityId);
   expect(commerceEnrollmentOperatorActionKeys.every((key) => key.startsWith('commerce.customer-context.'))).toBe(true);
   // Every reviewed Role belongs to a person profile; a service principal is never a Role holder.
   const roleLabels = everyRole().map(([, role]) => role.label);
   expect(roleLabels).not.toContain('Commerce portal (service)');
-  expect(roleLabels).not.toContain('Market retirement authority');
   expect(roleLabels).not.toContain('CRM Party intake');
   expect(roleLabels).not.toContain('Storefront (API)');
 });

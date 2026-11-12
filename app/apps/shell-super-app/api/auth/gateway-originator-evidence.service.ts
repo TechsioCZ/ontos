@@ -6,7 +6,7 @@ import { Clock, Effect, Layer, Option } from 'effect';
 import { AuthDatabase } from './db/client.ts';
 import { user } from './db/schema.ts';
 import { userBanHoldsAt } from './gateway-delegation-authentication.service.ts';
-import { delegationUnavailable } from './gateway-delegation-errors.ts';
+import { delegationUnavailable as unavailableBecause } from './gateway-delegation-errors.ts';
 import {
   GatewayOriginatorEvidence,
   admitInvocationEvidence,
@@ -14,6 +14,8 @@ import {
   decodeOriginatorEvidenceRows,
 } from './gateway-originator-evidence.ts';
 import type { GatewayOriginatorEvidenceService, OriginatorEvidenceRow } from './gateway-originator-evidence.ts';
+
+const delegationUnavailable = unavailableBecause('originator_evidence_unavailable');
 
 type CoreExecutor = (typeof CoreDatabase)['Service']['executor'];
 type AuthExecutor = (typeof AuthDatabase)['Service']['executor'];

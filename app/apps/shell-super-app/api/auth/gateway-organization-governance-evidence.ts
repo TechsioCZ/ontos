@@ -85,7 +85,7 @@ const verifySource = Effect.fn('OrganizationGovernanceEvidence.verifySource')(fu
   const configuration = yield* (yield* GatewayDelegationVerification).load;
   const now = yield* DateTime.now;
   const verified = yield* Effect.tryPromise({
-    catch: (cause) => delegationForbidden(cause),
+    catch: (cause) => delegationForbidden('subject_assertion_unverified')(cause),
     try: jwtVerify.bind(undefined, Redacted.value(input.assertion), configuration.keys, {
       algorithms: ['EdDSA'],
       audience: privacyApp,
@@ -93,10 +93,17 @@ const verifySource = Effect.fn('OrganizationGovernanceEvidence.verifySource')(fu
       currentDate: DateTime.toDateUtc(now),
       issuer: configuration.issuer,
     }),
-  }).pipe(Effect.timeoutOrElse({ duration: '5 seconds', orElse: () => Effect.fail(delegationUnavailable()) }));
-  yield* decodeGatewayContextProtectedHeader(verified.protectedHeader).pipe(Effect.mapError(delegationForbidden));
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: '5 seconds',
+      orElse: () => Effect.fail(delegationUnavailable('subject_verification_timeout')()),
+    }),
+  );
+  yield* decodeGatewayContextProtectedHeader(verified.protectedHeader).pipe(
+    Effect.mapError(delegationForbidden('subject_assertion_malformed')),
+  );
   const claims = yield* decodeSupportedGatewayContextClaims(verified.payload).pipe(
-    Effect.mapError(delegationForbidden),
+    Effect.mapError(delegationForbidden('subject_assertion_malformed')),
   );
   const nowSeconds = Math.floor(DateTime.toEpochMillis(now) / 1000);
   if (
@@ -105,7 +112,7 @@ const verifySource = Effect.fn('OrganizationGovernanceEvidence.verifySource')(fu
     claims.exp <= nowSeconds ||
     !bindingAttestsSource(input.binding, claims, input.installed.composition.revision)
   ) {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('subject_assertion_not_attested')();
   }
   const { principal } = claims;
   if (
@@ -115,7 +122,7 @@ const verifySource = Effect.fn('OrganizationGovernanceEvidence.verifySource')(fu
     principal.authBindingId === undefined ||
     principal.authenticationNamespaceId === undefined
   ) {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('organization_governance_not_admitted')();
   }
   yield* validateDelegationAuthentication(principal, nowSeconds);
   return claims;
@@ -152,14 +159,16 @@ const validateCurrentHuman = Effect.fn('OrganizationGovernanceEvidence.currentHu
           'objects',
         );
         if (rows.length !== 1) {
-          return yield* delegationForbidden();
+          return yield* delegationForbidden('organization_governance_not_admitted')();
         }
         return yield* Effect.void;
       }),
     )
     .pipe(
       recoverSqlTransactionError,
-      Effect.mapError((cause) => (Schema.is(GatewayDelegationError)(cause) ? cause : delegationUnavailable(cause))),
+      Effect.mapError((cause) =>
+        Schema.is(GatewayDelegationError)(cause) ? cause : delegationUnavailable('source_evidence_unavailable')(cause),
+      ),
     );
 });
 const requireReadRights = Effect.fn('OrganizationGovernanceEvidence.readRights')(function* rights(
@@ -177,8 +186,8 @@ const requireReadRights = Effect.fn('OrganizationGovernanceEvidence.readRights')
     .pipe(
       Effect.mapError((cause) =>
         Predicate.isTagged(cause, 'OperationContextUnavailable')
-          ? delegationUnavailable(cause)
-          : delegationForbidden(cause),
+          ? delegationUnavailable('scope_unavailable')(cause)
+          : delegationForbidden('scope_refused')(cause),
       ),
     );
   if (
@@ -186,11 +195,11 @@ const requireReadRights = Effect.fn('OrganizationGovernanceEvidence.readRights')
     scope.tenantId !== principal.tenantId ||
     scope.legalEntityId !== principal.legalEntityId
   ) {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('scope_refused')();
   }
   const declaration = yield* Schema.decodeUnknownEffect(AccessDeclarationSchema)(
     symmySourceOrganizationFactsAccessDeclaration,
-  ).pipe(Effect.mapError(delegationUnavailable));
+  ).pipe(Effect.mapError(delegationUnavailable('access_decision_unavailable')));
   const decision = yield* (yield* AccessDecisionGate).decide({
     // Ask about the human's rights directly; a previous module's identity-only actor carrier supplies no grant.
     carrier: {
@@ -203,10 +212,10 @@ const requireReadRights = Effect.fn('OrganizationGovernanceEvidence.readRights')
     scope,
   });
   if (decision.outcome === 'UNAVAILABLE') {
-    return yield* delegationUnavailable();
+    return yield* delegationUnavailable('access_decision_unavailable')();
   }
   if (decision.outcome !== 'ALLOWED') {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('access_decision_refused')();
   }
   return yield* Effect.void;
 });
@@ -236,15 +245,15 @@ export const admitOrganizationGovernanceRead = Effect.fn('GatewayDelegation.admi
         (action) => action.entrypoint.entrypointKey === approvedTarget.entrypointKey,
       )
     ) {
-      return yield* delegationForbidden();
+      return yield* delegationForbidden('finite_target_mismatch')();
     }
     const resolved = resolvePublishedFiniteGatewayTarget(destination, approvedTarget);
     if (Option.isNone(resolved)) {
-      return yield* delegationForbidden();
+      return yield* delegationForbidden('finite_target_mismatch')();
     }
     const target = resolved.value;
     if (target.schemaVersion !== approvedTarget.schemaVersion && !sourcePinsGovernanceVersion(source, target)) {
-      return yield* delegationForbidden();
+      return yield* delegationForbidden('finite_target_mismatch')();
     }
     const sourceProof = yield* verifySource({ assertion: subject.sourceAssertion, binding, installed });
     yield* validateCurrentHuman(sourceProof.principal);
@@ -260,7 +269,7 @@ export const admitOrganizationGovernanceRead = Effect.fn('GatewayDelegation.admi
     }
     const organizationGovernanceRead = yield* Schema.decodeUnknownEffect(
       RegisteredGatewayOrganizationGovernanceReadSchema,
-    )(metadata).pipe(Effect.mapError(delegationForbidden));
+    )(metadata).pipe(Effect.mapError(delegationForbidden('source_evidence_malformed')));
     if (organizationGovernanceRead.target !== undefined) {
       Object.freeze(organizationGovernanceRead.target);
     }

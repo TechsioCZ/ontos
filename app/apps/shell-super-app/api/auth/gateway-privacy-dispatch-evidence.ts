@@ -144,17 +144,19 @@ const loadRow = Effect.fn('PrivacyDispatchEvidence.loadNative')(function* load(i
         );
         const parsed = yield* Schema.decodeUnknownEffect(Schema.Array(rowSchema), { onExcessProperty: 'error' })(
           rows,
-        ).pipe(Effect.mapError(delegationUnavailable));
+        ).pipe(Effect.mapError(delegationUnavailable('source_evidence_unavailable')));
         const [row] = parsed;
         if (parsed.length !== 1 || row === undefined || !isSupportedHandoff(row.messagePayload.handoff, row)) {
-          return yield* delegationForbidden();
+          return yield* delegationForbidden('privacy_dispatch_not_admitted')();
         }
         return row;
       }),
     )
     .pipe(
       recoverSqlTransactionError,
-      Effect.mapError((cause) => (Schema.is(GatewayDelegationError)(cause) ? cause : delegationUnavailable(cause))),
+      Effect.mapError((cause) =>
+        Schema.is(GatewayDelegationError)(cause) ? cause : delegationUnavailable('source_evidence_unavailable')(cause),
+      ),
     );
 });
 const assertWorkerCatalog = (contract: Contract): boolean =>
@@ -222,7 +224,7 @@ const requestHash = Effect.fn('PrivacyDispatchEvidence.requestHash')(function* h
       ),
     ),
     Match.exhaustive,
-    Effect.mapError(delegationForbidden),
+    Effect.mapError(delegationForbidden('source_evidence_malformed')),
   );
 });
 const currentHuman = Effect.fn('PrivacyDispatchEvidence.currentHuman')(function* human(
@@ -239,12 +241,12 @@ const currentHuman = Effect.fn('PrivacyDispatchEvidence.currentHuman')(function*
     admitted.principal.principalId !== row.principalId ||
     admitted.principal.legalEntityId !== row.governanceLegalEntityId
   ) {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('privacy_dispatch_not_admitted')();
   }
   const privacy = installed.contracts.find((contract) => contract.manifest.module.id === privacyModule);
   const descriptor = privacy?.manifest.publicSurface.actions.find((action) => action.actionKey === dispatchActionKey);
   if (descriptor?.accessDeclaration === undefined || descriptor.legalEntityScope !== 'required') {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('finite_target_mismatch')();
   }
   const scope = yield* (yield* OperationalScopeResolver)
     .resolve({
@@ -256,8 +258,8 @@ const currentHuman = Effect.fn('PrivacyDispatchEvidence.currentHuman')(function*
     .pipe(
       Effect.mapError((cause) =>
         Predicate.isTagged(cause, 'OperationContextUnavailable')
-          ? delegationUnavailable(cause)
-          : delegationForbidden(cause),
+          ? delegationUnavailable('scope_unavailable')(cause)
+          : delegationForbidden('scope_refused')(cause),
       ),
     );
   const now = DateTime.toDateUtc(yield* DateTime.now);
@@ -272,10 +274,10 @@ const currentHuman = Effect.fn('PrivacyDispatchEvidence.currentHuman')(function*
     scope,
   });
   if (decision.outcome === 'UNAVAILABLE') {
-    return yield* delegationUnavailable();
+    return yield* delegationUnavailable('access_decision_unavailable')();
   }
   if (decision.outcome !== 'ALLOWED') {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('access_decision_refused')();
   }
   return admitted.principal;
 });
@@ -287,7 +289,7 @@ const verifySource = Effect.fn('PrivacyDispatchEvidence.verifySource')(function*
   const configuration = yield* (yield* GatewayDelegationVerification).load;
   const now = yield* DateTime.now;
   const verified = yield* Effect.tryPromise({
-    catch: (cause) => delegationForbidden(cause),
+    catch: (cause) => delegationForbidden('subject_assertion_unverified')(cause),
     try: jwtVerify.bind(undefined, Redacted.value(input.assertion), configuration.keys, {
       algorithms: ['EdDSA'],
       audience: input.binding.sourceAppId,
@@ -295,17 +297,24 @@ const verifySource = Effect.fn('PrivacyDispatchEvidence.verifySource')(function*
       currentDate: DateTime.toDateUtc(now),
       issuer: configuration.issuer,
     }),
-  }).pipe(Effect.timeoutOrElse({ duration: '5 seconds', orElse: () => Effect.fail(delegationUnavailable()) }));
-  yield* decodeGatewayContextProtectedHeader(verified.protectedHeader).pipe(Effect.mapError(delegationForbidden));
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: '5 seconds',
+      orElse: () => Effect.fail(delegationUnavailable('subject_verification_timeout')()),
+    }),
+  );
+  yield* decodeGatewayContextProtectedHeader(verified.protectedHeader).pipe(
+    Effect.mapError(delegationForbidden('subject_assertion_malformed')),
+  );
   const claims = yield* decodeSupportedGatewayContextClaims(verified.payload).pipe(
-    Effect.mapError(delegationForbidden),
+    Effect.mapError(delegationForbidden('subject_assertion_malformed')),
   );
   if (
     !('privacyDispatch' in claims) ||
     claims.iat > Math.floor(DateTime.toEpochMillis(now) / 1000) ||
     !bindingAttestsSource(input.binding, claims, input.installed.composition.revision)
   ) {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('subject_assertion_not_attested')();
   }
   return claims;
 });
@@ -369,11 +378,11 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
     binding.compositionRevision !== installed.composition.revision ||
     binding.sourceBuildMarker !== source.deployment.buildMarker
   ) {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('finite_target_mismatch')();
   }
   const resolved = resolvePublishedFiniteGatewayTarget(destination, approvedTarget);
   if (Option.isNone(resolved)) {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('finite_target_mismatch')();
   }
   const target = resolved.value;
   const admittedSource = yield* Match.value(subject.source).pipe(
@@ -387,14 +396,14 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
           !assertWorkerCatalog(source) ||
           !workerOperationAllows(subject.operation)
         ) {
-          return yield* delegationForbidden();
+          return yield* delegationForbidden('privacy_dispatch_not_admitted')();
         }
         const row = yield* loadRow({ deliveryId: proof.deliveryId, tenantId: proof.tenantId });
         if (
           !workerClaimMatches(row, proof.claimId) ||
           !conditionalAllows(source, workerKey, destination, target, subject.operationRequirementKey)
         ) {
-          return yield* delegationForbidden();
+          return yield* delegationForbidden('privacy_dispatch_not_admitted')();
         }
         return { claimId: proof.claimId, row, sourceAccess: 'background' as const, sourceMode: 'worker' as const };
       }),
@@ -417,11 +426,11 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
             subject.operationRequirementKey,
           )
         ) {
-          return yield* delegationForbidden();
+          return yield* delegationForbidden('privacy_dispatch_not_admitted')();
         }
         const row = yield* loadRow({ dispatchInvocationId: proof.dispatchInvocationId, tenantId: proof.tenantId });
         if (row.governanceLegalEntityId !== proof.legalEntityId) {
-          return yield* delegationForbidden();
+          return yield* delegationForbidden('privacy_dispatch_not_admitted')();
         }
         return { row, sourceAccess: 'read' as const, sourceMode: 'dispatch' as const };
       }),
@@ -450,7 +459,7 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
             subject.operationRequirementKey,
           )
         ) {
-          return yield* delegationForbidden();
+          return yield* delegationForbidden('privacy_dispatch_not_admitted')();
         }
         const row = yield* loadRow({ deliveryId: previous.deliveryId, tenantId: previous.tenantId });
         if (
@@ -460,10 +469,10 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
           claims.principal.principalId !== row.principalId ||
           claims.principal.legalEntityId !== row.governanceLegalEntityId
         ) {
-          return yield* delegationForbidden();
+          return yield* delegationForbidden('privacy_dispatch_not_admitted')();
         }
         if ((yield* requestHash(originalOperation.value, row.messagePayload.handoff)) !== previous.requestHash) {
-          return yield* delegationForbidden();
+          return yield* delegationForbidden('privacy_dispatch_not_admitted')();
         }
         return { claimId: previous.claimId, row, sourceAccess: previousContract.access, sourceMode: 'worker' as const };
       }),
@@ -495,7 +504,7 @@ export const admitPrivacyDispatch = Effect.fn('GatewayDelegation.admitPrivacyDis
       ? { ...base, claimId: admittedSource.claimId, workerKey, workerModuleKey: symmyModule }
       : base;
   const privacyDispatch = yield* Schema.decodeUnknownEffect(RegisteredGatewayPrivacyDispatchSchema)(metadata).pipe(
-    Effect.mapError(delegationForbidden),
+    Effect.mapError(delegationForbidden('source_evidence_malformed')),
   );
   if (privacyDispatch.target !== undefined) {
     Object.freeze(privacyDispatch.target);

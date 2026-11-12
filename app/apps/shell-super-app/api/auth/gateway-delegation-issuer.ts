@@ -28,11 +28,11 @@ import {
   organizationGovernanceReadOperationContract,
   privacyDispatchOperationContract,
 } from '@app/shared-contracts';
-import { DateTime, Effect, Match, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Match, Predicate, Ref, Schema } from 'effect';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 
-import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
+import type { InstalledModuleCatalogError, ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import {
   GatewayIssuer,
@@ -46,12 +46,30 @@ import {
 } from './gateway-organization-governance-evidence.ts';
 import { admitPrivacyDispatch, readAdmittedPrivacyDispatch } from './gateway-privacy-dispatch-evidence.ts';
 import { GatewayDelegationExchangeLedger } from './gateway-delegation-exchanges.service.ts';
-import { gatewayPublishedOperationAccess, loadGatewayModuleBindings } from './gateway-delegation-policy.ts';
+import {
+  GatewayDelegationPolicyUnavailable,
+  gatewayPublishedOperationAccess,
+  loadGatewayModuleBindings,
+} from './gateway-delegation-policy.ts';
 import type { GatewayModuleBinding } from './gateway-delegation-policy.ts';
 import { GatewayOriginatorEvidence } from './gateway-originator-evidence.ts';
-import { GatewayDelegationError, delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
+import {
+  GatewayDelegationError,
+  delegationForbidden,
+  delegationUnavailable,
+  logDelegationRefusal,
+  refusalTenant,
+} from './gateway-delegation-errors.ts';
+import type { RefusalContext } from './gateway-delegation-errors.ts';
 
 export type GatewayDelegationRequestPayload = Schema.Schema.Type<typeof GatewayDelegatedContextRequestSchema>;
+
+/** One delegated issuance request: the payload, the request's correlation and the verified key's provider id. */
+interface GatewayDelegationIssueInput {
+  readonly payload: GatewayDelegationRequestPayload;
+  readonly requestCorrelation: string;
+  readonly verifiedProviderKeyId: string;
+}
 
 const RegisteredSubjectSchema = Schema.Union([
   GatewayRegisteredAssertionSubjectSchema,
@@ -103,11 +121,60 @@ const moduleCallSubject = (
     { appId: actor.appId, buildMarker: actor.buildMarker, principalId: actor.principalId },
   );
 
+/** The bindings could not be derived: the enrolment or the installed release could not be read. */
+export const bindingsUnavailable = (cause: GatewayDelegationPolicyUnavailable | InstalledModuleCatalogError) =>
+  Schema.is(GatewayDelegationPolicyUnavailable)(cause)
+    ? delegationUnavailable('module_enrolment_unavailable')(cause)
+    : delegationUnavailable('installed_release_unavailable')(cause);
+
 const scopeFailure = (cause: unknown) =>
-  new GatewayDelegationError({
-    cause,
-    code: Predicate.isTagged(cause, 'OperationContextUnavailable') ? 'unavailable' : 'forbidden',
-  });
+  Predicate.isTagged(cause, 'OperationContextUnavailable')
+    ? delegationUnavailable('scope_unavailable')(cause)
+    : delegationForbidden('scope_refused')(cause);
+
+/** The one-use exchange is reserved for this exact request; a second use of the exchange is a replay. */
+const reserveExchange = (reservation: {
+  readonly exchangeId: string;
+  readonly expiresAtEpochSeconds: number;
+  readonly requestFingerprint: string;
+  readonly sourceJti: string;
+}) =>
+  GatewayDelegationExchangeLedger.pipe(
+    Effect.flatMap((ledger) => ledger.reserve(reservation)),
+    Effect.mapError((cause) =>
+      Predicate.isTagged(cause, 'GatewayDelegationExchangeReplay')
+        ? delegationForbidden('exchange_replayed')(cause)
+        : delegationUnavailable('exchange_ledger_unavailable')(cause),
+    ),
+  );
+
+/** The fingerprint the exchange ledger binds: the canonical JSON of what was admitted, hashed. */
+const fingerprintOf = <Fields extends Schema.Struct.Fields>(fields: Fields, value: Schema.Struct<Fields>['Type']) =>
+  Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Struct(fields)))(value).pipe(
+    Effect.map((json) => bytesToHex(sha256(utf8ToBytes(json)))),
+    Effect.mapError(delegationUnavailable('exchange_ledger_unavailable')),
+  );
+
+type ModuleAccess = Parameters<typeof tenantStatesAllowingAccess>[0];
+
+/** The tenant's current states of the source and destination modules. */
+const loadModuleStates = (tenantId: string, moduleKeys: readonly string[]) =>
+  TenantModuleStateService.pipe(
+    Effect.flatMap((moduleStates) => moduleStates.getTenantModuleStates(tenantId, [...moduleKeys])),
+    Effect.mapError(delegationUnavailable('module_states_unavailable')),
+  );
+
+/** The source and destination modules must both hold a state that admits the access each side performs. */
+const requireModuleStates = (
+  states: readonly { readonly moduleKey: string; readonly state: string }[],
+  sides: readonly { readonly access: ModuleAccess; readonly moduleKey: string }[],
+) =>
+  sides.every((side) => {
+    const allowed: ReadonlySet<string> = new Set(tenantStatesAllowingAccess(side.access));
+    return states.some((state) => state.moduleKey === side.moduleKey && allowed.has(state.state));
+  })
+    ? Effect.void
+    : Effect.fail(delegationForbidden('module_not_active')());
 
 /**
  * Admits the requester recorded on a succeeded invocation of one of the Actions the calling module declares it may
@@ -137,7 +204,7 @@ const admitOriginatorSubject = Effect.fn('GatewayDelegation.admitOriginator')(fu
     input.legalEntityId !== undefined &&
     (recordedCompany === undefined ? !recorded.workload : recordedCompany !== input.legalEntityId)
   ) {
-    return yield* delegationForbidden();
+    return yield* delegationForbidden('originator_not_admitted')();
   }
   const principal: TrustedPrincipalContext =
     input.legalEntityId === undefined
@@ -151,188 +218,269 @@ const admitOriginatorSubject = Effect.fn('GatewayDelegation.admitOriginator')(fu
   };
 });
 
-const exchangeFingerprint = (input: {
-  readonly actor: GatewayActorClaim;
-  readonly audience: string;
-  readonly compositionRevision: string;
-  readonly principal: TrustedPrincipalContext;
-  readonly requestCorrelation: string;
-}) =>
-  Schema.encodeUnknownEffect(
-    Schema.fromJsonString(
-      Schema.Struct({
-        actor: GatewayActorClaimSchema,
-        audience: Schema.String,
-        compositionRevision: Schema.String,
-        principal: GatewayTrustedPrincipalContextSchema,
-        requestCorrelation: Schema.String,
-      }),
-    ),
-  )(input).pipe(Effect.map((json) => bytesToHex(sha256(utf8ToBytes(json)))));
+/** The steps after the subject is admitted: scope, module states, replay ledger and issuance. */
+const issueForSubject = Effect.fn('GatewayDelegation.issueForSubject')(function* issueForSubject(
+  input: {
+    readonly payload: GatewayDelegationRequestPayload;
+    readonly requestCorrelation: string;
+  },
+  admitted: {
+    readonly actor: GatewayActorClaim;
+    readonly caller: { readonly principalId: string };
+    readonly destination: { readonly manifest: { readonly module: { readonly id: string } } };
+    readonly sourceContract: { readonly manifest: { readonly module: { readonly id: string } } };
+    readonly subject: AdmittedSubject;
+  },
+) {
+  const { payload } = input;
+  const { actor, caller, destination, sourceContract, subject } = admitted;
+  // `tenant` names no Legal Entity, so the context and its scope are issued for the tenant alone.
+  const tenantOnly = payload.legalEntityScope === 'tenant';
+  const principal = tenantOnly ? tenantScopedPrincipal(subject.principal) : subject.principal;
+  const scopePrincipal = tenantOnly ? tenantScopedPrincipal(subject.scopePrincipal) : subject.scopePrincipal;
+  if (
+    // A delegated context names two parties, and the subject's authentication namespace must be explicit.
+    principal.principalId === caller.principalId ||
+    principal.authenticationNamespaceId === undefined
+  ) {
+    return yield* delegationForbidden('subject_not_delegable')();
+  }
 
-const issueRegisteredGatewayAssertion = Effect.fn('GatewayDelegation.issueRegistered')(
-  function* issueRegistered(input: {
+  const resolver = yield* OperationalScopeResolver;
+  yield* resolver
+    .resolve({
+      audience: actor.appId,
+      correlationId: input.requestCorrelation,
+      legalEntityScope: principal.legalEntityId === undefined ? 'forbidden' : 'required',
+      principal: moduleCallSubject(scopePrincipal, payload.compositionRevision, actor),
+    })
+    .pipe(Effect.mapError(scopeFailure));
+
+  const moduleKeys = [sourceContract.manifest.module.id, destination.manifest.module.id];
+  const states = yield* loadModuleStates(principal.tenantId, moduleKeys);
+  yield* requireModuleStates(
+    states,
+    moduleKeys.map((moduleKey) => ({ access: 'read', moduleKey })),
+  );
+
+  const requestFingerprint = yield* fingerprintOf(
+    {
+      actor: GatewayActorClaimSchema,
+      audience: Schema.String,
+      compositionRevision: Schema.String,
+      principal: GatewayTrustedPrincipalContextSchema,
+      requestCorrelation: Schema.String,
+    },
+    {
+      actor,
+      audience: payload.audience,
+      compositionRevision: payload.compositionRevision,
+      principal,
+      requestCorrelation: input.requestCorrelation,
+    },
+  );
+  yield* reserveExchange({
+    exchangeId: payload.exchangeId,
+    expiresAtEpochSeconds: subject.expiresAtEpochSeconds,
+    requestFingerprint,
+    sourceJti: subject.sourceKey,
+  });
+
+  const issuer = yield* GatewayIssuer;
+  return yield* issuer.issue({
+    actor,
+    audience: payload.audience,
+    compositionRevision: payload.compositionRevision,
+    principal,
+    sourceValidity: subject.sourceValidity,
+  });
+});
+
+/**
+ * A registered workload subject: a durable worker delivery, an admission invocation, a recovery of either, or a
+ * verified workload assertion. Its system principal, workload and lifetime come from the Shell's own evidence.
+ */
+const issueRegisteredGatewayAssertion = Effect.fn('GatewayDelegation.issueRegistered')(function* issueRegistered(
+  input: {
     readonly binding: GatewayModuleBinding;
     readonly currentDate: Date;
     readonly installed: ShellInstalledCatalog;
     readonly now: number;
     readonly payload: RegisteredPayload;
-  }) {
-    const { binding, currentDate, installed, now, payload } = input;
-    const sourceContract = installed.contracts.find((contract) => contract.deployment.appId === binding.sourceAppId);
-    if (installed.composition.revision !== payload.compositionRevision) {
-      return yield* delegationForbidden();
-    }
-    const admitted = yield* Match.value(payload.subject).pipe(
-      Match.tag('RegisteredRecovery', (subject) =>
-        admitRegisteredGatewayRecovery({ audience: payload.audience, binding, installed, subject }).pipe(
-          Effect.map((evidence) => ({
-            ...evidence,
-            organizationProcessingWitness: null,
-            sourceAccess: 'read' as const,
-          })),
-        ),
-      ),
-      Match.tag('RegisteredWorkload', (subject) =>
-        admitRegisteredGatewayWorkload({ audience: payload.audience, binding, installed, subject }).pipe(
-          Effect.map((evidence) => ({
-            ...evidence,
-            organizationProcessingWitness: null,
-            sourceAccess: 'background' as const,
-          })),
-        ),
-      ),
-      Match.tag('RegisteredAdmission', (subject) =>
-        admitRegisteredGatewayWorkload({ audience: payload.audience, binding, installed, subject }).pipe(
-          Effect.map((evidence) => ({
-            ...evidence,
-            organizationProcessingWitness: null,
-            sourceAccess: 'write' as const,
-          })),
-        ),
-      ),
-      Match.tag('RegisteredAssertion', (subject) =>
-        admitAssertionSubject({
-          assertion: subject.sourceAssertion,
-          binding,
-          currentDate,
-          now,
-          registeredWorkload: true,
-          requestedCompositionRevision: payload.compositionRevision,
-        }).pipe(
-          Effect.flatMap((source) =>
-            source.workload === undefined
-              ? Effect.fail(delegationForbidden())
-              : admitRegisteredAssertionWorkload({
-                  audience: payload.audience,
-                  binding,
-                  installed,
-                  source: source.verifiedAssertion,
-                  subject,
-                }),
-          ),
-        ),
-      ),
-      Match.exhaustive,
-    );
-    if (payload.legalEntityScope === 'tenant' && admitted.workload.legalEntityId !== undefined) {
-      return yield* delegationForbidden();
-    }
-    const destination = installed.contracts.find((contract) => contract.deployment.appId === payload.audience);
-    if (sourceContract === undefined || destination === undefined) {
-      return yield* delegationForbidden();
-    }
-    const states = yield* (yield* TenantModuleStateService)
-      .getTenantModuleStates(admitted.principal.tenantId, [
-        sourceContract.manifest.module.id,
-        destination.manifest.module.id,
-      ])
-      .pipe(Effect.mapError(delegationUnavailable));
-    const destinationAccess = gatewayPublishedOperationAccess(
-      destination,
-      admitted.workload.entrypointKey,
-      admitted.workload.schemaVersion,
-    );
-    if (destinationAccess === undefined) {
-      return yield* delegationForbidden();
-    }
-    const sourceStates = new Set(tenantStatesAllowingAccess(admitted.sourceAccess));
-    const destinationStates = new Set(tenantStatesAllowingAccess(destinationAccess));
-    const sourceEligible = states.some(
-      (state) => state.moduleKey === sourceContract.manifest.module.id && sourceStates.has(state.state),
-    );
-    const destinationEligible = states.some(
-      (state) => state.moduleKey === destination.manifest.module.id && destinationStates.has(state.state),
-    );
-    if (!sourceEligible || !destinationEligible) {
-      return yield* delegationForbidden();
-    }
-    const fingerprintJson = yield* Schema.encodeUnknownEffect(
-      Schema.fromJsonString(
-        Schema.Struct({
-          audience: Schema.String,
-          compositionRevision: Schema.String,
-          principal: GatewayTrustedPrincipalContextSchema,
-          workload: RegisteredGatewayWorkloadSchema,
-        }),
-      ),
-    )({
-      audience: payload.audience,
-      compositionRevision: payload.compositionRevision,
-      principal: admitted.principal,
-      workload: admitted.workload,
-    }).pipe(Effect.mapError(delegationUnavailable));
-    const fingerprint = bytesToHex(sha256(utf8ToBytes(fingerprintJson)));
-    yield* (yield* GatewayDelegationExchangeLedger)
-      .reserve({
-        exchangeId: payload.exchangeId,
-        expiresAtEpochSeconds: now + GATEWAY_ASSERTION_TTL_SECONDS,
-        requestFingerprint: fingerprint,
-        sourceJti: admitted.sourceKey,
-      })
-      .pipe(
-        Effect.mapError((cause) =>
-          Predicate.isTagged(cause, 'GatewayDelegationExchangeReplay')
-            ? delegationForbidden(cause)
-            : delegationUnavailable(cause),
-        ),
-      );
-    if (admitted.organizationProcessingWitness !== null) {
-      return yield* issueOrganizationProcessingReadGatewayContextAssertion(admitted.organizationProcessingWitness);
-    }
-    return yield* (yield* GatewayIssuer).issue({
-      audience: payload.audience,
-      compositionRevision: payload.compositionRevision,
-      principal: admitted.principal,
-      workload: admitted.workload,
-    });
   },
-);
+  learned: Ref.Ref<RefusalContext>,
+) {
+  const { binding, currentDate, installed, now, payload } = input;
+  const sourceContract = installed.contracts.find((contract) => contract.deployment.appId === binding.sourceAppId);
+  if (installed.composition.revision !== payload.compositionRevision) {
+    return yield* delegationForbidden('release_changed')();
+  }
+  const admitted = yield* Match.value(payload.subject).pipe(
+    Match.tag('RegisteredRecovery', (subject) =>
+      admitRegisteredGatewayRecovery({ audience: payload.audience, binding, installed, subject }).pipe(
+        Effect.map((evidence) => ({
+          ...evidence,
+          organizationProcessingWitness: null,
+          sourceAccess: 'read' as const,
+        })),
+      ),
+    ),
+    Match.tag('RegisteredWorkload', (subject) =>
+      admitRegisteredGatewayWorkload({ audience: payload.audience, binding, installed, subject }).pipe(
+        Effect.map((evidence) => ({
+          ...evidence,
+          organizationProcessingWitness: null,
+          sourceAccess: 'background' as const,
+        })),
+      ),
+    ),
+    Match.tag('RegisteredAdmission', (subject) =>
+      admitRegisteredGatewayWorkload({ audience: payload.audience, binding, installed, subject }).pipe(
+        Effect.map((evidence) => ({
+          ...evidence,
+          organizationProcessingWitness: null,
+          sourceAccess: 'write' as const,
+        })),
+      ),
+    ),
+    Match.tag('RegisteredAssertion', (subject) =>
+      admitAssertionSubject({
+        assertion: subject.sourceAssertion,
+        binding,
+        currentDate,
+        now,
+        registeredWorkload: true,
+        requestedCompositionRevision: payload.compositionRevision,
+      }).pipe(
+        Effect.flatMap((source) =>
+          source.workload === undefined
+            ? Effect.fail(delegationForbidden('subject_assertion_kind_mismatch')())
+            : admitRegisteredAssertionWorkload({
+                audience: payload.audience,
+                binding,
+                installed,
+                source: source.verifiedAssertion,
+                subject,
+              }),
+        ),
+      ),
+    ),
+    Match.exhaustive,
+  );
+  yield* Ref.update(learned, (context) => ({ ...context, ...refusalTenant(admitted.principal.tenantId) }));
+  if (payload.legalEntityScope === 'tenant' && admitted.workload.legalEntityId !== undefined) {
+    return yield* delegationForbidden('legal_entity_scope_mismatch')();
+  }
+  const destination = installed.contracts.find((contract) => contract.deployment.appId === payload.audience);
+  if (sourceContract === undefined) {
+    return yield* delegationForbidden('caller_build_not_installed')();
+  }
+  if (destination === undefined) {
+    return yield* delegationForbidden('audience_not_installed')();
+  }
+  const states = yield* loadModuleStates(admitted.principal.tenantId, [
+    sourceContract.manifest.module.id,
+    destination.manifest.module.id,
+  ]);
+  const destinationAccess = gatewayPublishedOperationAccess(
+    destination,
+    admitted.workload.entrypointKey,
+    admitted.workload.schemaVersion,
+  );
+  if (destinationAccess === undefined) {
+    return yield* delegationForbidden('registered_operation_refused')();
+  }
+  yield* requireModuleStates(states, [
+    { access: admitted.sourceAccess, moduleKey: sourceContract.manifest.module.id },
+    { access: destinationAccess, moduleKey: destination.manifest.module.id },
+  ]);
+  const requestFingerprint = yield* fingerprintOf(
+    {
+      audience: Schema.String,
+      compositionRevision: Schema.String,
+      principal: GatewayTrustedPrincipalContextSchema,
+      workload: RegisteredGatewayWorkloadSchema,
+    },
+    {
+      audience: payload.audience,
+      compositionRevision: payload.compositionRevision,
+      principal: admitted.principal,
+      workload: admitted.workload,
+    },
+  );
+  yield* reserveExchange({
+    exchangeId: payload.exchangeId,
+    expiresAtEpochSeconds: now + GATEWAY_ASSERTION_TTL_SECONDS,
+    requestFingerprint,
+    sourceJti: admitted.sourceKey,
+  });
+  if (admitted.organizationProcessingWitness !== null) {
+    return yield* issueOrganizationProcessingReadGatewayContextAssertion(admitted.organizationProcessingWitness);
+  }
+  return yield* (yield* GatewayIssuer).issue({
+    audience: payload.audience,
+    compositionRevision: payload.compositionRevision,
+    principal: admitted.principal,
+    workload: admitted.workload,
+  });
+});
 
+/** The fixed finite target a Privacy dispatch or governance Read names, in the release the calling module runs. */
+const requireFiniteTarget = Effect.fn('GatewayDelegation.requireFiniteTarget')(function* requireFiniteTarget(input: {
+  readonly binding: GatewayModuleBinding;
+  readonly installed: ShellInstalledCatalog;
+  readonly payload: GatewayDelegationRequestPayload;
+  readonly targetAppId: string;
+  readonly targetModuleId: string;
+  readonly targetSource?: string;
+}) {
+  const { binding, installed, payload } = input;
+  const source = installed.contracts.find((contract) => contract.deployment.appId === binding.sourceAppId);
+  const destination = installed.contracts.find((contract) => contract.deployment.appId === payload.audience);
+  if (installed.composition.revision !== payload.compositionRevision) {
+    return yield* delegationForbidden('release_changed')();
+  }
+  if (
+    source === undefined ||
+    binding.compositionRevision !== installed.composition.revision ||
+    source.deployment.buildMarker !== binding.sourceBuildMarker
+  ) {
+    return yield* delegationForbidden('caller_build_not_installed')();
+  }
+  if (
+    payload.legalEntityScope !== 'subject' ||
+    (input.targetSource !== undefined && binding.sourceAppId !== input.targetSource) ||
+    payload.audience !== input.targetAppId ||
+    destination?.manifest.module.id !== input.targetModuleId
+  ) {
+    return yield* delegationForbidden('finite_target_mismatch')();
+  }
+  return { destination, source };
+});
+
+/** The fixed Privacy→Symmy dispatch graph, admitted only from the Shell's durable native evidence. */
 const issueFinitePrivacyDispatch = Effect.fn('GatewayDelegation.issueFinitePrivacyDispatch')(
-  function* issueFinitePrivacyDispatch(input: {
-    readonly actor: GatewayActorClaim;
-    readonly binding: GatewayModuleBinding;
-    readonly installed: ShellInstalledCatalog;
-    readonly now: number;
-    readonly payload: GatewayDelegationRequestPayload & {
-      readonly subject: typeof GatewayPrivacyDispatchSubjectSchema.Type;
-    };
-  }) {
+  function* issueFinitePrivacyDispatch(
+    input: {
+      readonly actor: GatewayActorClaim;
+      readonly binding: GatewayModuleBinding;
+      readonly installed: ShellInstalledCatalog;
+      readonly now: number;
+      readonly payload: GatewayDelegationRequestPayload & {
+        readonly subject: typeof GatewayPrivacyDispatchSubjectSchema.Type;
+      };
+    },
+    learned: Ref.Ref<RefusalContext>,
+  ) {
     const { actor, binding, installed, now, payload } = input;
-    const source = installed.contracts.find((contract) => contract.deployment.appId === binding.sourceAppId);
     const approvedTarget = privacyDispatchOperationContract(payload.subject.operation._tag);
-    const destination = installed.contracts.find((contract) => contract.deployment.appId === payload.audience);
-    if (
-      payload.legalEntityScope !== 'subject' ||
-      payload.audience !== approvedTarget.appId ||
-      installed.composition.revision !== payload.compositionRevision ||
-      binding.compositionRevision !== installed.composition.revision ||
-      source?.deployment.buildMarker !== binding.sourceBuildMarker ||
-      destination?.manifest.module.id !== approvedTarget.moduleId
-    ) {
-      return yield* delegationForbidden();
-    }
+    const { destination, source } = yield* requireFiniteTarget({
+      binding,
+      installed,
+      payload,
+      targetAppId: approvedTarget.appId,
+      targetModuleId: approvedTarget.moduleId,
+    });
     const witness = yield* admitPrivacyDispatch({
       audience: payload.audience,
       binding,
@@ -341,61 +489,46 @@ const issueFinitePrivacyDispatch = Effect.fn('GatewayDelegation.issueFinitePriva
     });
     const admitted = readAdmittedPrivacyDispatch(witness);
     if (admitted === undefined) {
-      return yield* delegationForbidden();
+      return yield* delegationForbidden('privacy_dispatch_not_admitted')();
     }
+    yield* Ref.update(learned, (context) => ({ ...context, ...refusalTenant(admitted.principal.tenantId) }));
     const target = privacyDispatchOperationContract(
       admitted.privacyDispatch.operation,
       admitted.privacyDispatch.target,
     );
     if (gatewayPublishedOperationAccess(destination, target.entrypointKey, target.schemaVersion) !== target.access) {
-      return yield* delegationForbidden();
+      return yield* delegationForbidden('finite_target_mismatch')();
     }
-    const moduleKeys = [source.manifest.module.id, destination.manifest.module.id];
-    const states = yield* (yield* TenantModuleStateService)
-      .getTenantModuleStates(admitted.principal.tenantId, moduleKeys)
-      .pipe(Effect.mapError(delegationUnavailable));
-    const sourceStates = new Set(tenantStatesAllowingAccess(admitted.sourceAccess));
-    const targetStates = new Set(tenantStatesAllowingAccess(target.access));
-    if (
-      !states.some((state) => state.moduleKey === source.manifest.module.id && sourceStates.has(state.state)) ||
-      !states.some((state) => state.moduleKey === destination.manifest.module.id && targetStates.has(state.state))
-    ) {
-      return yield* delegationForbidden();
-    }
-    const fingerprint = yield* Schema.encodeUnknownEffect(
-      Schema.fromJsonString(
-        Schema.Struct({
-          actor: GatewayActorClaimSchema,
-          audience: Schema.String,
-          compositionRevision: Schema.String,
-          principal: GatewayTrustedPrincipalContextSchema,
-          privacyDispatch: RegisteredGatewayPrivacyDispatchSchema,
-        }),
-      ),
-    )({
-      actor,
-      audience: payload.audience,
-      compositionRevision: payload.compositionRevision,
-      principal: admitted.principal,
-      privacyDispatch: admitted.privacyDispatch,
-    }).pipe(
-      Effect.map((json) => bytesToHex(sha256(utf8ToBytes(json)))),
-      Effect.mapError(delegationUnavailable),
+    const states = yield* loadModuleStates(admitted.principal.tenantId, [
+      source.manifest.module.id,
+      destination.manifest.module.id,
+    ]);
+    yield* requireModuleStates(states, [
+      { access: admitted.sourceAccess, moduleKey: source.manifest.module.id },
+      { access: target.access, moduleKey: destination.manifest.module.id },
+    ]);
+    const requestFingerprint = yield* fingerprintOf(
+      {
+        actor: GatewayActorClaimSchema,
+        audience: Schema.String,
+        compositionRevision: Schema.String,
+        principal: GatewayTrustedPrincipalContextSchema,
+        privacyDispatch: RegisteredGatewayPrivacyDispatchSchema,
+      },
+      {
+        actor,
+        audience: payload.audience,
+        compositionRevision: payload.compositionRevision,
+        principal: admitted.principal,
+        privacyDispatch: admitted.privacyDispatch,
+      },
     );
-    yield* (yield* GatewayDelegationExchangeLedger)
-      .reserve({
-        exchangeId: payload.exchangeId,
-        expiresAtEpochSeconds: now + GATEWAY_ASSERTION_TTL_SECONDS,
-        requestFingerprint: fingerprint,
-        sourceJti: admitted.sourceKey,
-      })
-      .pipe(
-        Effect.mapError((cause) =>
-          Predicate.isTagged(cause, 'GatewayDelegationExchangeReplay')
-            ? delegationForbidden(cause)
-            : delegationUnavailable(cause),
-        ),
-      );
+    yield* reserveExchange({
+      exchangeId: payload.exchangeId,
+      expiresAtEpochSeconds: now + GATEWAY_ASSERTION_TTL_SECONDS,
+      requestFingerprint,
+      sourceJti: admitted.sourceKey,
+    });
     return yield* issuePrivacyDispatchGatewayContextAssertion(witness, {
       actor,
       audience: payload.audience,
@@ -404,35 +537,29 @@ const issueFinitePrivacyDispatch = Effect.fn('GatewayDelegation.issueFinitePriva
   },
 );
 
-/**
- * Module-to-module capability issuance. The calling module is the actor: its module credential's bound
- * service principal goes in `act`, and only this binding can set the app and build of `act`. The subject
- * is the requester of a live request (`Assertion`) or of the invocation asynchronous work runs for (`Originator`).
- */
+/** One fixed Organization governance Read for Privacy, bounded by the original human source assertion. */
 const issueFiniteOrganizationGovernanceRead = Effect.fn('GatewayDelegation.issueOrganizationGovernanceRead')(
-  function* issueFiniteOrganizationGovernanceRead(input: {
-    readonly actor: GatewayActorClaim;
-    readonly binding: GatewayModuleBinding;
-    readonly installed: ShellInstalledCatalog;
-    readonly payload: GatewayDelegationRequestPayload & {
-      readonly subject: typeof GatewayOrganizationGovernanceReadSubjectSchema.Type;
-    };
-  }) {
+  function* issueFiniteOrganizationGovernanceRead(
+    input: {
+      readonly actor: GatewayActorClaim;
+      readonly binding: GatewayModuleBinding;
+      readonly installed: ShellInstalledCatalog;
+      readonly payload: GatewayDelegationRequestPayload & {
+        readonly subject: typeof GatewayOrganizationGovernanceReadSubjectSchema.Type;
+      };
+    },
+    learned: Ref.Ref<RefusalContext>,
+  ) {
     const { actor, binding, installed, payload } = input;
     const target = organizationGovernanceReadOperationContract();
-    const source = installed.contracts.find((contract) => contract.deployment.appId === binding.sourceAppId);
-    const destination = installed.contracts.find((contract) => contract.deployment.appId === payload.audience);
-    if (
-      payload.legalEntityScope !== 'subject' ||
-      actor.appId !== 'privacy' ||
-      payload.audience !== target.appId ||
-      installed.composition.revision !== payload.compositionRevision ||
-      binding.compositionRevision !== installed.composition.revision ||
-      source?.deployment.buildMarker !== binding.sourceBuildMarker ||
-      destination?.manifest.module.id !== target.moduleId
-    ) {
-      return yield* delegationForbidden();
-    }
+    const { destination, source } = yield* requireFiniteTarget({
+      binding,
+      installed,
+      payload,
+      targetAppId: target.appId,
+      targetModuleId: target.moduleId,
+      targetSource: 'privacy',
+    });
     const witness = yield* admitOrganizationGovernanceRead({
       audience: payload.audience,
       binding,
@@ -441,53 +568,39 @@ const issueFiniteOrganizationGovernanceRead = Effect.fn('GatewayDelegation.issue
     });
     const admitted = readAdmittedOrganizationGovernanceRead(witness);
     if (admitted === undefined) {
-      return yield* delegationForbidden();
+      return yield* delegationForbidden('organization_governance_not_admitted')();
     }
-    const states = yield* (yield* TenantModuleStateService)
-      .getTenantModuleStates(admitted.principal.tenantId, [source.manifest.module.id, destination.manifest.module.id])
-      .pipe(Effect.mapError(delegationUnavailable));
-    const readable = new Set(tenantStatesAllowingAccess('read'));
-    if (
-      ![source.manifest.module.id, destination.manifest.module.id].every((moduleKey) =>
-        states.some((state) => state.moduleKey === moduleKey && readable.has(state.state)),
-      )
-    ) {
-      return yield* delegationForbidden();
-    }
-    const fingerprint = yield* Schema.encodeUnknownEffect(
-      Schema.fromJsonString(
-        Schema.Struct({
-          actor: GatewayActorClaimSchema,
-          audience: Schema.String,
-          compositionRevision: Schema.String,
-          organizationGovernanceRead: RegisteredGatewayOrganizationGovernanceReadSchema,
-          principal: GatewayTrustedPrincipalContextSchema,
-        }),
-      ),
-    )({
-      actor,
-      audience: payload.audience,
-      compositionRevision: payload.compositionRevision,
-      organizationGovernanceRead: admitted.organizationGovernanceRead,
-      principal: admitted.principal,
-    }).pipe(
-      Effect.map((json) => bytesToHex(sha256(utf8ToBytes(json)))),
-      Effect.mapError(delegationUnavailable),
+    yield* Ref.update(learned, (context) => ({ ...context, ...refusalTenant(admitted.principal.tenantId) }));
+    const states = yield* loadModuleStates(admitted.principal.tenantId, [
+      source.manifest.module.id,
+      destination.manifest.module.id,
+    ]);
+    yield* requireModuleStates(states, [
+      { access: 'read', moduleKey: source.manifest.module.id },
+      { access: 'read', moduleKey: destination.manifest.module.id },
+    ]);
+    const requestFingerprint = yield* fingerprintOf(
+      {
+        actor: GatewayActorClaimSchema,
+        audience: Schema.String,
+        compositionRevision: Schema.String,
+        organizationGovernanceRead: RegisteredGatewayOrganizationGovernanceReadSchema,
+        principal: GatewayTrustedPrincipalContextSchema,
+      },
+      {
+        actor,
+        audience: payload.audience,
+        compositionRevision: payload.compositionRevision,
+        organizationGovernanceRead: admitted.organizationGovernanceRead,
+        principal: admitted.principal,
+      },
     );
-    yield* (yield* GatewayDelegationExchangeLedger)
-      .reserve({
-        exchangeId: payload.exchangeId,
-        expiresAtEpochSeconds: admitted.sourceValidity.expiresAt,
-        requestFingerprint: fingerprint,
-        sourceJti: admitted.sourceKey,
-      })
-      .pipe(
-        Effect.mapError((cause) =>
-          Predicate.isTagged(cause, 'GatewayDelegationExchangeReplay')
-            ? delegationForbidden(cause)
-            : delegationUnavailable(cause),
-        ),
-      );
+    yield* reserveExchange({
+      exchangeId: payload.exchangeId,
+      expiresAtEpochSeconds: admitted.sourceValidity.expiresAt,
+      requestFingerprint,
+      sourceJti: admitted.sourceKey,
+    });
     return yield* issueOrganizationGovernanceReadGatewayContextAssertion(witness, {
       actor,
       audience: payload.audience,
@@ -496,160 +609,133 @@ const issueFiniteOrganizationGovernanceRead = Effect.fn('GatewayDelegation.issue
   },
 );
 
-export const issueDelegatedGatewayContextAssertion = Effect.fn('GatewayDelegation.issue')(
-  function* issueDelegatedGatewayContext(input: {
-    readonly payload: GatewayDelegationRequestPayload;
-    readonly requestCorrelation: string;
-    readonly verifiedProviderKeyId: string;
-  }) {
-    const { payload } = input;
-    const bindings = yield* loadGatewayModuleBindings.pipe(Effect.mapError(delegationUnavailable));
-    const binding = bindings.find((candidate) => candidate.providerKeyId === input.verifiedProviderKeyId);
-    if (binding === undefined) {
-      return yield* delegationForbidden();
-    }
-    const principalResolver = yield* PrincipalResolver;
-    const caller = yield* principalResolver
-      .resolveBetterAuthApiKey(input.verifiedProviderKeyId)
-      .pipe(Effect.mapError(delegationForbidden));
-    if (caller.principalKind !== 'service') {
-      return yield* delegationForbidden();
-    }
-    const actor = yield* Schema.decodeUnknownEffect(GatewayActorClaimSchema)({
-      appId: binding.sourceAppId,
-      buildMarker: binding.sourceBuildMarker,
-      principalId: caller.principalId,
-    }).pipe(Effect.mapError(delegationUnavailable));
+/** The steps after the calling module's binding is known; every refusal they make names that module. */
+const issueForBinding = Effect.fn('GatewayDelegation.issueForBinding')(function* issueForBinding(
+  input: GatewayDelegationIssueInput,
+  binding: GatewayModuleBinding,
+  learned: Ref.Ref<RefusalContext>,
+) {
+  const { payload } = input;
+  const principalResolver = yield* PrincipalResolver;
+  const caller = yield* principalResolver
+    .resolveBetterAuthApiKey(input.verifiedProviderKeyId)
+    .pipe(Effect.mapError(delegationForbidden('caller_principal_unresolved')));
+  if (caller.principalKind !== 'service') {
+    return yield* delegationForbidden('caller_not_service')();
+  }
+  const actor = yield* Schema.decodeUnknownEffect(GatewayActorClaimSchema)({
+    appId: binding.sourceAppId,
+    buildMarker: binding.sourceBuildMarker,
+    principalId: caller.principalId,
+  }).pipe(Effect.mapError(delegationUnavailable('caller_principal_unavailable')));
 
-    const currentDate = DateTime.toDateUtc(yield* DateTime.now);
-    const now = Math.floor(currentDate.getTime() / 1000);
-    const catalog = yield* ShellInstalledModuleCatalog;
-    const installed = yield* catalog.load.pipe(Effect.mapError(delegationUnavailable));
-    const sourceContract = installed.contracts.find((contract) => contract.deployment.appId === binding.sourceAppId);
-    if (Schema.is(GatewayOrganizationGovernanceReadSubjectSchema)(payload.subject)) {
-      return yield* issueFiniteOrganizationGovernanceRead({
-        actor,
-        binding,
-        installed,
-        payload: { ...payload, subject: payload.subject },
-      });
-    }
-    if (Schema.is(GatewayPrivacyDispatchSubjectSchema)(payload.subject)) {
-      return yield* issueFinitePrivacyDispatch({
-        actor,
-        binding,
-        installed,
-        now,
-        payload: { ...payload, subject: payload.subject },
-      });
-    }
-    if (Schema.is(RegisteredSubjectSchema)(payload.subject)) {
-      return yield* issueRegisteredGatewayAssertion({
+  const currentDate = DateTime.toDateUtc(yield* DateTime.now);
+  const now = Math.floor(currentDate.getTime() / 1000);
+  const catalog = yield* ShellInstalledModuleCatalog;
+  const installed = yield* catalog.load.pipe(Effect.mapError(delegationUnavailable('installed_release_unavailable')));
+  const sourceContract = installed.contracts.find((contract) => contract.deployment.appId === binding.sourceAppId);
+  if (Schema.is(GatewayOrganizationGovernanceReadSubjectSchema)(payload.subject)) {
+    return yield* issueFiniteOrganizationGovernanceRead(
+      { actor, binding, installed, payload: { ...payload, subject: payload.subject } },
+      learned,
+    );
+  }
+  if (Schema.is(GatewayPrivacyDispatchSubjectSchema)(payload.subject)) {
+    return yield* issueFinitePrivacyDispatch(
+      { actor, binding, installed, now, payload: { ...payload, subject: payload.subject } },
+      learned,
+    );
+  }
+  if (Schema.is(RegisteredSubjectSchema)(payload.subject)) {
+    return yield* issueRegisteredGatewayAssertion(
+      { binding, currentDate, installed, now, payload: { ...payload, subject: payload.subject } },
+      learned,
+    );
+  }
+  const subject: AdmittedSubject = yield* Match.value(payload.subject).pipe(
+    Match.tag('Assertion', (assertion) =>
+      admitAssertionSubject({
+        assertion: assertion.sourceAssertion,
         binding,
         currentDate,
-        installed,
         now,
-        payload: { ...payload, subject: payload.subject },
-      });
-    }
-    const subject: AdmittedSubject = yield* Match.value(payload.subject).pipe(
-      Match.tag('Assertion', (assertion) =>
-        admitAssertionSubject({
-          assertion: assertion.sourceAssertion,
-          binding,
-          currentDate,
-          now,
-          requestedCompositionRevision: payload.compositionRevision,
-        }),
-      ),
-      Match.tag('Originator', (originator) =>
-        // A tenant-only context names no company, so it never accepts one either.
-        payload.legalEntityScope === 'tenant' && originator.legalEntityId !== undefined
-          ? Effect.fail(delegationForbidden())
-          : admitOriginatorSubject({
-              actionInvocationId: originator.actionInvocationId,
-              legalEntityId: originator.legalEntityId,
-              now,
-              originatorActions: sourceContract?.manifest.originatorActions ?? [],
-              tenantId: originator.tenantId,
-            }),
-      ),
-      Match.exhaustive,
-    );
+        requestedCompositionRevision: payload.compositionRevision,
+      }),
+    ),
+    Match.tag('Originator', (originator) =>
+      // A tenant-only context names no company, so it never accepts one either.
+      payload.legalEntityScope === 'tenant' && originator.legalEntityId !== undefined
+        ? Effect.fail(delegationForbidden('originator_not_admitted')())
+        : admitOriginatorSubject({
+            actionInvocationId: originator.actionInvocationId,
+            legalEntityId: originator.legalEntityId,
+            now,
+            originatorActions: sourceContract?.manifest.originatorActions ?? [],
+            tenantId: originator.tenantId,
+          }),
+    ),
+    Match.exhaustive,
+  );
+  yield* Ref.update(learned, (context) => ({ ...context, ...refusalTenant(subject.principal.tenantId) }));
 
-    if (installed.composition.revision !== payload.compositionRevision) {
-      return yield* new GatewayDelegationError({ code: 'reload_required' });
-    }
-    const destination = installed.contracts.find((contract) => contract.deployment.appId === payload.audience);
-    if (
-      sourceContract?.deployment.buildMarker !== binding.sourceBuildMarker ||
-      binding.compositionRevision !== installed.composition.revision ||
-      destination === undefined
-    ) {
-      return yield* delegationForbidden();
-    }
-    // `tenant` names no Legal Entity, so the context and its scope are issued for the tenant alone.
-    const tenantOnly = payload.legalEntityScope === 'tenant';
-    const principal = tenantOnly ? tenantScopedPrincipal(subject.principal) : subject.principal;
-    const scopePrincipal = tenantOnly ? tenantScopedPrincipal(subject.scopePrincipal) : subject.scopePrincipal;
-    if (
-      // A delegated context names two parties, and the subject's authentication namespace must be explicit.
-      principal.principalId === caller.principalId ||
-      principal.authenticationNamespaceId === undefined
-    ) {
-      return yield* delegationForbidden();
-    }
+  if (installed.composition.revision !== payload.compositionRevision) {
+    return yield* new GatewayDelegationError({ code: 'reload_required', reason: 'release_changed' });
+  }
+  const destination = installed.contracts.find((contract) => contract.deployment.appId === payload.audience);
+  if (
+    sourceContract?.deployment.buildMarker !== binding.sourceBuildMarker ||
+    binding.compositionRevision !== installed.composition.revision
+  ) {
+    return yield* delegationForbidden('caller_build_not_installed')();
+  }
+  if (destination === undefined) {
+    return yield* delegationForbidden('audience_not_installed')();
+  }
+  return yield* issueForSubject(input, { actor, caller, destination, sourceContract, subject });
+});
 
-    const resolver = yield* OperationalScopeResolver;
-    yield* resolver
-      .resolve({
-        audience: binding.sourceAppId,
-        correlationId: input.requestCorrelation,
-        legalEntityScope: principal.legalEntityId === undefined ? 'forbidden' : 'required',
-        principal: moduleCallSubject(scopePrincipal, payload.compositionRevision, actor),
-      })
-      .pipe(Effect.mapError(scopeFailure));
+/**
+ * The calling module is the actor: its module credential's bound service principal goes in `act`, and only this
+ * binding can set the app and build of `act`. The subject is the requester of a live request (`Assertion`), of the
+ * invocation asynchronous work runs for (`Originator`), a registered workload, or a finite Privacy dispatch or
+ * Organization governance Read.
+ */
+const issueWithin = Effect.fn('GatewayDelegation.issueWithin')(function* issueWithin(
+  input: GatewayDelegationIssueInput,
+  learned: Ref.Ref<RefusalContext>,
+) {
+  const bindings = yield* loadGatewayModuleBindings.pipe(Effect.mapError(bindingsUnavailable));
+  const binding = bindings.find((candidate) => candidate.providerKeyId === input.verifiedProviderKeyId);
+  if (binding === undefined) {
+    return yield* delegationForbidden('module_credential_unbound')();
+  }
+  yield* Ref.set(learned, { callerAppId: binding.sourceAppId });
+  return yield* issueForBinding(input, binding, learned);
+});
 
-    const moduleStates = yield* TenantModuleStateService;
-    const moduleKeys = [sourceContract.manifest.module.id, destination.manifest.module.id];
-    const states = yield* moduleStates
-      .getTenantModuleStates(principal.tenantId, moduleKeys)
-      .pipe(Effect.mapError(delegationUnavailable));
-    const readableStates = new Set(tenantStatesAllowingAccess('read'));
-    if (moduleKeys.some((key) => !states.some((state) => state.moduleKey === key && readableStates.has(state.state)))) {
-      return yield* delegationForbidden();
-    }
-
-    const ledger = yield* GatewayDelegationExchangeLedger;
-    const requestFingerprint = yield* exchangeFingerprint({
-      actor,
-      audience: payload.audience,
-      compositionRevision: payload.compositionRevision,
-      principal,
-      requestCorrelation: input.requestCorrelation,
-    }).pipe(Effect.mapError(delegationUnavailable));
-    yield* ledger
-      .reserve({
-        exchangeId: payload.exchangeId,
-        expiresAtEpochSeconds: subject.expiresAtEpochSeconds,
-        requestFingerprint,
-        sourceJti: subject.sourceKey,
-      })
-      .pipe(
-        Effect.mapError((cause) =>
-          Predicate.isTagged(cause, 'GatewayDelegationExchangeReplay')
-            ? delegationForbidden(cause)
-            : delegationUnavailable(cause),
+/**
+ * Module-to-module capability issuance. Every refusal writes one warning with the step that refused it and what the
+ * issuer knew by then: the calling module once its key bound one, the subject's tenant once the subject was admitted.
+ */
+export const issueDelegatedGatewayContextAssertion = Effect.fn('GatewayDelegation.issue')(
+  function* issueDelegatedGatewayContext(input: GatewayDelegationIssueInput) {
+    const learned = yield* Ref.make<RefusalContext>({});
+    const { audience } = input.payload;
+    return yield* issueWithin(input, learned).pipe(
+      Effect.tapErrorTag('GatewayDelegationError', (refusal) =>
+        Ref.get(learned).pipe(
+          Effect.flatMap((context) =>
+            logDelegationRefusal({ audience, context, reason: refusal.reason, status: refusal.code }),
+          ),
         ),
-      );
-
-    const issuer = yield* GatewayIssuer;
-    return yield* issuer.issue({
-      actor,
-      audience: payload.audience,
-      compositionRevision: payload.compositionRevision,
-      principal,
-      sourceValidity: subject.sourceValidity,
-    });
+      ),
+      Effect.tapErrorTag('GatewayIssuerError', (failure) =>
+        Ref.get(learned).pipe(
+          Effect.flatMap((context) =>
+            logDelegationRefusal({ audience, context, reason: 'issuer_unavailable', status: failure.code }),
+          ),
+        ),
+      ),
+    );
   },
 );

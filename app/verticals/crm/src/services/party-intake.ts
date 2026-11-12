@@ -21,7 +21,7 @@ import {
   executeCrmClientIntakeReviewWithAuthorization,
   resolveDuplicateCandidateCreateWithAuthorization,
 } from '@app/party-registry/api/client';
-import { Crypto, Context, DateTime, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
+import { Crypto, Context, DateTime, Effect, Layer, Option, Predicate, Redacted, Result, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import {
   acquireDelegatedGatewayContext,
@@ -350,11 +350,24 @@ export const observeClientPartySync = Effect.fn('Crm.partyIntake.observe')(funct
   reconcile: Effect.Effect<ClientPartySync, E, R>,
 ) {
   return yield* reconcile.pipe(
+    // The step that failed already wrote its own warning (a gateway context names the Shell's refusal reason); this
+    // one says which completion it stopped and why, in the words the client would see.
     Effect.catch((error) =>
-      Effect.logWarning(
-        'CRM registry link completion unavailable',
-        Schema.is(CrmReferenceUnavailable)(error) ? error.code : 'intake_context_unavailable',
-      ).pipe(Effect.as({ status: 'unavailable' as const })),
+      Effect.logWarning('CRM registry link completion unavailable').pipe(
+        Effect.annotateLogs(
+          Schema.is(CrmReferenceUnavailable)(error)
+            ? { code: error.code, reason: error.reason }
+            : {
+                code: 'intake_context_unavailable',
+                // Not the CRM's own error: named by its tag only, never its message, which may carry data.
+                reason:
+                  Predicate.hasProperty(error, '_tag') && Predicate.isString(error._tag)
+                    ? error._tag
+                    : 'unexpected failure',
+              },
+        ),
+        Effect.as({ status: 'unavailable' as const }),
+      ),
     ),
   );
 });
