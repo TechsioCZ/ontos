@@ -979,12 +979,14 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       ),
       Effect.forkChild,
     );
-    // The release step writes no authorization relationship. Authorization v2 (ADR-0030) projects every tuple from
-    // PostgreSQL intent through the one Core writer, so the retired `scoped_role`/`action`/`context_permission`
-    // reconciliation would only fail here. Live intent is seeded by the operator-gated stage bootstrap
-    // (`apps/shell-super-app/scripts/bootstrap-stage-accounts.mts`); the engine's canonical schema arrives with the
+    // No relationship is written by hand here. Authorization v2 (ADR-0030) projects every tuple from PostgreSQL
+    // intent through the one Core writer, so the retired `scoped_role`/`action`/`context_permission` reconciliation
+    // would only fail here. Two release steps change intent and then project it through that writer: the migrator's
+    // access catalog activation, and the release module step above, which reconciles each Tenant it installed a module
+    // in. Everything else in a live Tenant is seeded by the operator-gated stage bootstrap
+    // (`apps/shell-super-app/scripts/bootstrap-stage-accounts.mts`). The engine's canonical schema arrives with the
     // deployment's SpiceDB bootstrap file, and a live schema or tuple retirement is its own approved operation. The
-    // release proves the projected access before it publishes (`verifyReleaseAccessIntent` above) and never mutates it.
+    // release proves the projected access before it publishes (`verifyReleaseAccessIntent` above).
     yield* Console.log(
       `[app-host] ${OUTBOX_HOST_ID} heap limit: ${String(heapLimitMiB('outbox', memoryBytes))} MiB (container ${mebibytes(memoryBytes)} MiB)`,
     );
