@@ -110,13 +110,14 @@ it.effect('a 25-hour outage keeps the confirmation at the last answer and refuse
   }),
 );
 
-it('a new price without usable rates is refused with the reason that fits, never stored without its gross', () => {
+it('a new price is refused while Tax does not answer and no usable rates exist, with the reason that fits', () => {
   const now = DateTime.makeUnsafe('2026-11-12T10:00:00.000Z');
   const reasonOf = (stored: CompanyTaxRates | undefined, refused: boolean) =>
     Option.getOrUndefined(priceRefusalOf(decideTaxRates(stored, { refused }, now), refused));
   // Nothing stored and Tax does not answer: refused (before, the price was stored without a gross).
   expect(reasonOf(undefined, false)).toContain('firma zatím nemá žádné sazby DPH');
-  expect(reasonOf(undefined, true)).toContain('modul Daně není pro firmu aktivní');
+  // Tax not installed for the company: the price saves without a gross; nothing of it sells.
+  expect(reasonOf(undefined, true)).toBeUndefined();
   const confirmed = (hoursAgo: number): CompanyTaxRates => ({
     book: TEST_TAX_BOOK,
     source: 'TAX',
