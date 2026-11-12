@@ -637,6 +637,8 @@ const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
   Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive, accessEnforcementLive)),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
+/** The plain fetch client the remote owner proofs and eligibility adapters call. */
+const ownerFetchHttpClientLive = FetchHttpClient.layer;
 const compositionHttpClientLive = FetchHttpClient.layer.pipe(
   Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
 );
@@ -1053,31 +1055,31 @@ const commerceCustomerContextActionRuntime = actionRuntimeAwaitingOwnerPreparati
   Layer.provideMerge(
     commerceSourceProfileOwnerProofLive.pipe(
       Layer.provide(commercePortalAuthPlatformCryptoLive),
-      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(ownerFetchHttpClientLive),
     ),
   ),
   Layer.provideMerge(
     commerceLegacyIcoInventoryLive.pipe(
       Layer.provide(commercePortalAuthPlatformCryptoLive),
-      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(ownerFetchHttpClientLive),
     ),
   ),
   Layer.provideMerge(
     commerceOrganizationBusinessEligibilityLive.pipe(
       Layer.provide(commercePortalAuthPlatformCryptoLive),
-      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(ownerFetchHttpClientLive),
     ),
   ),
   Layer.provideMerge(
     commerceOrganizationProfileIcoEligibilityLive.pipe(
       Layer.provide(commercePortalAuthPlatformCryptoLive),
-      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(ownerFetchHttpClientLive),
     ),
   ),
   Layer.provideMerge(
     commerceSourceProcessingEligibilityLive.pipe(
       Layer.provide(commercePortalAuthPlatformCryptoLive),
-      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(ownerFetchHttpClientLive),
     ),
   ),
   Layer.provide(deploymentEnrollmentOwnerPreparationLive.pipe(Layer.provide(DatabaseConfigLive))),
@@ -1087,31 +1089,31 @@ const commerceCustomerContextReadRuntime = readRuntimeCoreLive.pipe(
   Layer.provideMerge(
     commerceSourceProfileOwnerProofLive.pipe(
       Layer.provide(commercePortalAuthPlatformCryptoLive),
-      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(ownerFetchHttpClientLive),
     ),
   ),
   Layer.provideMerge(
     commerceLegacyIcoInventoryLive.pipe(
       Layer.provide(commercePortalAuthPlatformCryptoLive),
-      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(ownerFetchHttpClientLive),
     ),
   ),
   Layer.provideMerge(
     commerceOrganizationBusinessEligibilityLive.pipe(
       Layer.provide(commercePortalAuthPlatformCryptoLive),
-      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(ownerFetchHttpClientLive),
     ),
   ),
   Layer.provideMerge(
     commerceOrganizationProfileIcoEligibilityLive.pipe(
       Layer.provide(commercePortalAuthPlatformCryptoLive),
-      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(ownerFetchHttpClientLive),
     ),
   ),
   Layer.provideMerge(
     commerceSourceProcessingEligibilityLive.pipe(
       Layer.provide(commercePortalAuthPlatformCryptoLive),
-      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(ownerFetchHttpClientLive),
     ),
   ),
   Layer.provideMerge(activeApplicationCompositionLive),
@@ -1474,12 +1476,15 @@ export const makeCommerceCustomerContextApiRuntime = (
   });
 };
 
+/** Production verifies Bearer assertions against the process gateway configuration. */
+const processGatewayPrincipalVerificationLive: Layer.Layer<never> = Layer.empty;
+
 const apiRuntime = makeCommerceCustomerContextApiRuntime(
   productionReadRuntimeLive,
   productionActionRuntimeLive,
   configuredGatewayAssertionRedemptionLive,
   deploymentPortalAuthRuntimeLive,
-  Layer.empty,
+  processGatewayPrincipalVerificationLive,
   DatabaseConfigLive,
   ContextAccessLive,
 );
