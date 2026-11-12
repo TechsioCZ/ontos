@@ -266,6 +266,9 @@ importers:
       '@app/party-registry':
         specifier: workspace:*
         version: link:verticals/party-registry
+      '@app/payment':
+        specifier: workspace:*
+        version: link:verticals/payment
       '@app/price-group-catalog':
         specifier: workspace:*
         version: link:verticals/price-group-catalog

@@ -180,7 +180,12 @@ it.effect('accepts only the workloads a carrier declares, and refuses module-to-
       ...validFile,
       tenants: [{ ...first, workloads: [{ principalId, workloadKey }] }, second],
     });
-    for (const workloadKey of ['commerce.storefront-client', 'core.identity-provider']) {
+    for (const workloadKey of [
+      'commerce.storefront-client',
+      'core.identity-provider',
+      'payment.provider-notification-ingress',
+      'payment.provider-reconciliation',
+    ]) {
       expect((yield* parse(withWorkload(workloadKey))).tenants[0]?.workloads).toStrictEqual([
         { principalId, workloadKey },
       ]);

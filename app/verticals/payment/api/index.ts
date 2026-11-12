@@ -47,10 +47,17 @@ import {
 
 // <generated-governed-http-handler-imports>
 import { acceptPaymentObservationActionApiLive } from './accept-payment-observation-action-server.ts';
+import { captureProviderNotificationActionApiLive } from './capture-provider-notification-action-server.ts';
+import { configureGatewayEnablementActionApiLive } from './configure-gateway-enablement-action-server.ts';
 import { configurePaymentMethodEnablementActionApiLive } from './configure-payment-method-enablement-action-server.ts';
 import { configurePaymentSourceAuthorityActionApiLive } from './configure-payment-source-authority-action-server.ts';
+import { configureProviderAccountBindingActionApiLive } from './configure-provider-account-binding-action-server.ts';
 import { createPaymentActionApiLive } from './create-payment-action-server.ts';
 import { currentPaymentReadApiLive } from './current-payment-read-server.ts';
+import { gatewayConfigurationReadApiLive } from './gateway-configuration-read-server.ts';
+import { gatewayCustomerActionReadApiLive } from './gateway-customer-action-read-server.ts';
+import { gatewayReconciliationDebtReadApiLive } from './gateway-reconciliation-debt-read-server.ts';
+import { gatewayReturnStatusReadApiLive } from './gateway-return-status-read-server.ts';
 import { issuePaymentAuthorizationActionApiLive } from './issue-payment-authorization-action-server.ts';
 import { paymentAuthorizationValidationReadApiLive } from './payment-authorization-validation-read-server.ts';
 import { paymentHistoryReadApiLive } from './payment-history-read-server.ts';
@@ -61,6 +68,7 @@ import { recordPaymentReconciliationDecisionActionApiLive } from './record-payme
 import { requestPaymentCancellationActionApiLive } from './request-payment-cancellation-action-server.ts';
 import { requestPaymentOperationRecoveryActionApiLive } from './request-payment-operation-recovery-action-server.ts';
 import { requestPaymentRefundActionApiLive } from './request-payment-refund-action-server.ts';
+import { rotateProviderCredentialActionApiLive } from './rotate-provider-credential-action-server.ts';
 import { startPaymentCollectionActionApiLive } from './start-payment-collection-action-server.ts';
 // </generated-governed-http-handler-imports>
 
@@ -190,10 +198,17 @@ export const makePaymentApiRuntime = (
     paymentReadinessLayer,
     // <generated-governed-http-handler-layers>
     acceptPaymentObservationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    captureProviderNotificationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    configureGatewayEnablementActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     configurePaymentMethodEnablementActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     configurePaymentSourceAuthorityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    configureProviderAccountBindingActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     createPaymentActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     currentPaymentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    gatewayConfigurationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    gatewayCustomerActionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    gatewayReconciliationDebtReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    gatewayReturnStatusReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     issuePaymentAuthorizationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     paymentAuthorizationValidationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     paymentHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -204,6 +219,7 @@ export const makePaymentApiRuntime = (
     requestPaymentCancellationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     requestPaymentOperationRecoveryActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     requestPaymentRefundActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    rotateProviderCredentialActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     startPaymentCollectionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     // </generated-governed-http-handler-layers>
   ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));

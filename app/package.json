@@ -132,6 +132,7 @@
     "@app/core-runtime": "workspace:*",
     "@app/inventory": "workspace:*",
     "@app/party-registry": "workspace:*",
+    "@app/payment": "workspace:*",
     "@app/price-group-catalog": "workspace:*",
     "@app/privacy": "workspace:*",
     "@app/symmy-integration": "workspace:*",

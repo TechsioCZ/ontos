@@ -3,15 +3,28 @@
 // @ontos-module-id payment.core
 import { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY, defineOntosModuleManifest } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
+import { paymentTermRequirements } from './src/integrations/payment-term-evidence.ts';
+import { processProviderNotificationWorker } from './src/workers/process-provider-notification.worker.ts';
+import { recoverGatewayOperationWorker } from './src/workers/recover-gateway-operation.worker.ts';
 // <generated-module-manifest-imports>
 import { acceptPaymentObservationAction } from './src/actions/accept-payment-observation.action.ts';
+import { captureProviderNotificationAction } from './src/actions/capture-provider-notification.action.ts';
+import { configureGatewayEnablementAction } from './src/actions/configure-gateway-enablement.action.ts';
 import { configurePaymentMethodEnablementAction } from './src/actions/configure-payment-method-enablement.action.ts';
 import { configurePaymentSourceAuthorityAction } from './src/actions/configure-payment-source-authority.action.ts';
+import { configureProviderAccountBindingAction } from './src/actions/configure-provider-account-binding.action.ts';
 import { createPaymentAction } from './src/actions/create-payment.action.ts';
 import { CurrentPaymentApi } from './shared/apis/current-payment.ts';
 import { currentPaymentRead } from './src/api/current-payment.read.ts';
+import { GatewayConfigurationApi } from './shared/apis/gateway-configuration.ts';
+import { gatewayConfigurationRead } from './src/api/gateway-configuration.read.ts';
+import { GatewayCustomerActionApi } from './shared/apis/gateway-customer-action.ts';
+import { gatewayCustomerActionRead } from './src/api/gateway-customer-action.read.ts';
+import { GatewayReconciliationDebtApi } from './shared/apis/gateway-reconciliation-debt.ts';
+import { gatewayReconciliationDebtRead } from './src/api/gateway-reconciliation-debt.read.ts';
+import { GatewayReturnStatusApi } from './shared/apis/gateway-return-status.ts';
+import { gatewayReturnStatusRead } from './src/api/gateway-return-status.read.ts';
 import { issuePaymentAuthorizationAction } from './src/actions/issue-payment-authorization.action.ts';
-import { paymentTermRequirements } from './src/integrations/payment-term-evidence.ts';
 import { PaymentAuthorizationValidationApi } from './shared/apis/payment-authorization-validation.ts';
 import { paymentAuthorizationValidationRead } from './src/api/payment-authorization-validation.read.ts';
 import { PaymentHistoryApi } from './shared/apis/payment-history.ts';
@@ -27,6 +40,7 @@ import { recordPaymentReconciliationDecisionAction } from './src/actions/record-
 import { requestPaymentCancellationAction } from './src/actions/request-payment-cancellation.action.ts';
 import { requestPaymentOperationRecoveryAction } from './src/actions/request-payment-operation-recovery.action.ts';
 import { requestPaymentRefundAction } from './src/actions/request-payment-refund.action.ts';
+import { rotateProviderCredentialAction } from './src/actions/rotate-provider-credential.action.ts';
 import { startPaymentCollectionAction } from './src/actions/start-payment-collection.action.ts';
 // </generated-module-manifest-imports>
 
@@ -40,6 +54,15 @@ const profilePaymentTermProvider = {
 const guestPaymentTermProvider = {
   ...profilePaymentTermProvider,
   entrypointKey: 'commerce.customer-context.api.guest-payment-terms-resolution',
+} as const;
+/**
+ * C17 workers submit provider evidence through the public A8 Action of this same module, only for
+ * deliveries whose original admission is a workload-admitted originator Action (#1157, #1158).
+ */
+const gatewayEvidenceProvider = {
+  entrypointKey: acceptPaymentObservationAction.descriptor.entrypoint.entrypointKey,
+  moduleId: 'payment.core',
+  schemaVersion: '1',
 } as const;
 
 export const paymentManifest: OntosModuleManifestInput = defineOntosModuleManifest({
@@ -56,12 +79,19 @@ export const paymentManifest: OntosModuleManifestInput = defineOntosModuleManife
     implementedAs: 'ultramodern_microvertical',
     kind: 'business_module',
   },
+  originatorActions: [
+    captureProviderNotificationAction.descriptor.actionKey,
+    requestPaymentOperationRecoveryAction.descriptor.actionKey,
+  ],
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
       acceptPaymentObservationAction,
+      captureProviderNotificationAction,
+      configureGatewayEnablementAction,
       configurePaymentMethodEnablementAction,
       configurePaymentSourceAuthorityAction,
+      configureProviderAccountBindingAction,
       createPaymentAction,
       issuePaymentAuthorizationAction,
       recordPaymentLocalEvidenceAction,
@@ -69,12 +99,17 @@ export const paymentManifest: OntosModuleManifestInput = defineOntosModuleManife
       requestPaymentCancellationAction,
       requestPaymentOperationRecoveryAction,
       requestPaymentRefundAction,
+      rotateProviderCredentialAction,
       startPaymentCollectionAction,
       // </generated-module-manifest-actions>
     ],
     api: {
       // <generated-module-manifest-apis>
       'current-payment': CurrentPaymentApi,
+      'gateway-configuration': GatewayConfigurationApi,
+      'gateway-customer-action': GatewayCustomerActionApi,
+      'gateway-reconciliation-debt': GatewayReconciliationDebtApi,
+      'gateway-return-status': GatewayReturnStatusApi,
       'payment-authorization-validation': PaymentAuthorizationValidationApi,
       'payment-history': PaymentHistoryApi,
       'payment-method-applicability': PaymentMethodApplicabilityApi,
@@ -89,6 +124,26 @@ export const paymentManifest: OntosModuleManifestInput = defineOntosModuleManife
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
       { apiKey: 'current-payment', operationKey: 'currentPayment.execute', registration: currentPaymentRead },
+      {
+        apiKey: 'gateway-configuration',
+        operationKey: 'gatewayConfiguration.execute',
+        registration: gatewayConfigurationRead,
+      },
+      {
+        apiKey: 'gateway-customer-action',
+        operationKey: 'gatewayCustomerAction.execute',
+        registration: gatewayCustomerActionRead,
+      },
+      {
+        apiKey: 'gateway-reconciliation-debt',
+        operationKey: 'gatewayReconciliationDebt.execute',
+        registration: gatewayReconciliationDebtRead,
+      },
+      {
+        apiKey: 'gateway-return-status',
+        operationKey: 'gatewayReturnStatus.execute',
+        registration: gatewayReturnStatusRead,
+      },
       {
         apiKey: 'payment-authorization-validation',
         operationKey: 'paymentAuthorizationValidation.execute',
@@ -192,6 +247,20 @@ export const paymentManifest: OntosModuleManifestInput = defineOntosModuleManife
         evidence: profilePaymentTermEvidence,
         key: paymentTermRequirements.VALIDATE.PROFILE,
         provider: profilePaymentTermProvider,
+      },
+      {
+        condition: 'payment.core.condition.gateway-evidence-notification',
+        entrypointKey: processProviderNotificationWorker.descriptor.entrypoint.entrypointKey,
+        evidence: ['payment.core.evidence.gateway-provider-notification'],
+        key: 'payment.core.requirement.gateway-evidence-notification',
+        provider: gatewayEvidenceProvider,
+      },
+      {
+        condition: 'payment.core.condition.gateway-evidence-recovery',
+        entrypointKey: recoverGatewayOperationWorker.descriptor.entrypoint.entrypointKey,
+        evidence: ['payment.core.evidence.gateway-provider-recovery'],
+        key: 'payment.core.requirement.gateway-evidence-recovery',
+        provider: gatewayEvidenceProvider,
       },
     ],
     schemaVersion: '1',

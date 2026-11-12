@@ -52,6 +52,8 @@ export const STAGE_DECLARED_WORKLOAD_KEYS: ReadonlySet<string> = new Set([
   'commerce.storefront-client',
   'core.identity-provider',
   'payment.source-ingress',
+  'payment.provider-notification-ingress',
+  'payment.provider-reconciliation',
   'integration.symmy-admit',
   'integration.symmy-poll',
   'commerce.catalog.symmy-product-import',

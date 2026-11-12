@@ -259,6 +259,11 @@ export const requestPaymentOperationRecoveryAction = defineAction(
       captureMode: 'metadata_only',
       policyKey: 'payment.core.request-payment-operation-recovery.access.v1',
     },
+    accessWorkload: {
+      reason:
+        'The provider reconciliation driver requests recovery of gateway operations listed as reconciliation debt without a human session',
+      workloads: ['payment.provider-reconciliation'],
+    },
     actionKey: 'payment.core.request-payment-operation-recovery',
     auditProfile: 'standard',
     domainErrorSchema: RequestPaymentOperationRecoveryErrorSchema,
