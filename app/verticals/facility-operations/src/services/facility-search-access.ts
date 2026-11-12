@@ -1,5 +1,5 @@
 import { ReadHandlerUnavailable, ReadPermissionDenied } from '@app/core-runtime';
-import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import type { OperationalScope, ReadServiceFactory, ScopedTransactionExecutor } from '@app/core-runtime';
 import { ListAccessConditionSchema, evaluateListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
 import type { ListAccessCondition, ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
 import { RecordKeySchema } from '@app/core-runtime/access/ids';
@@ -166,3 +166,10 @@ export interface FacilitySearchServices {
     includeArchived: boolean,
   ) => Effect.Effect<FacilitySearchRecords, ReadHandlerUnavailable>;
 }
+export const makeFacilitySearchServices =
+  (resource: FacilitySearchResource): ReadServiceFactory<FacilitySearchServices> =>
+  (transaction, scope) =>
+    Effect.succeed({
+      load: (prepared, includeArchived) =>
+        loadFacilitySearchRecords(transaction, scope, resource, prepared, includeArchived),
+    });
