@@ -187,8 +187,9 @@ const submitWith = (crypto: Crypto.Crypto) =>
     const payload = yield* statementOf(submission);
     const requestCorrelation = requestCorrelationOf(workerContext);
     // Shell chooses the receiving system principal from the tenant's single `payment.source-ingress`
-    // enrollment. It is not pinned with `expectedPrincipalId`: the evidence row has no executor column, so a
-    // retry relies on the stable idempotency key and A8's source-occurrence identity (handoff L-NOTIFY).
+    // enrollment. It is not yet pinned with `expectedPrincipalId`: pinning needs the evidence row's executor pin
+    // committed before A8, so until then a retry relies on the stable idempotency key and A8's source-occurrence
+    // identity.
     const issued = yield* transport
       .acquire(
         {

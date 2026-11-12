@@ -178,11 +178,8 @@ export const retainedReplayGuaranteeOf = (
     : Option.none();
 
 /**
- * The C16 dispatch decision for the operation as it is now. The worker routine exposes neither the
- * operation's creation time nor its original provenance, so both come from the A10 message, which checked
- * them under the Payment row lock: the original invocation and revision are the message's `original*`
- * fields, and the creation-time bound only matters for a replay, whose retained window must equal the
- * queued one exactly (so the queued guarantee's `startsAt` is a sound lower bound).
+ * The C16 dispatch decision for the operation as it is now, from the stored operation's creation time and
+ * original provenance as the worker routine reads them.
  */
 export const recoveryModeAtDispatch = (
   message: RecoveryRequested,
@@ -195,17 +192,13 @@ export const recoveryModeAtDispatch = (
     message,
     {
       binding: operation.binding,
-      createdAt: DateTime.makeUnsafe(message.providerReplayGuarantee?.startsAtEpochMs ?? 0),
+      createdAt: operation.createdAt,
       kind: operation.kind,
       materialHash: operation.materialHash,
       operationId: operation.operationId,
       outcome: operation.outcome,
       paymentId: operation.paymentId,
-      provenance: {
-        actionInvocationId: message.originalActionInvocationId,
-        actorPrincipalId: message.provenance.actorPrincipalId,
-        compositionRevision: message.originalCompositionRevision,
-      },
+      provenance: operation.provenance,
     },
     scope,
     now,

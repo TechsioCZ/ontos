@@ -1,6 +1,7 @@
 import { Effect, Layer, Match, Option, Schema } from 'effect';
 
 import {
+  PspEvidenceIdSchema,
   PspNotificationIdSchema,
   pspAppendEvidence,
   pspListPendingEvidence,
@@ -25,9 +26,6 @@ import { ProviderObjectRefSchema } from './psp-request.ts';
  * stored instants: `receivedAt` from the linked notification of the same binding (else `observedAt`) and
  * `verifiedAt` from `observedAt`.
  */
-
-/** The routine's evidence identity, with the same brand as the frozen wrapper's `PspEvidenceId`. */
-const PspEvidenceIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PspEvidenceId'));
 
 const ProviderRefsSchema = Schema.Array(ProviderObjectRefSchema);
 

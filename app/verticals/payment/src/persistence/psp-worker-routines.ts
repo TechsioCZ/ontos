@@ -12,9 +12,11 @@ import {
   PaymentMaterialHashSchema,
   PaymentObservationIdSchema,
   PaymentOperationIdSchema,
+  PaymentPrincipalIdSchema,
   PaymentSourceOccurrenceIdSchema,
 } from '../../shared/domain/payment-identifiers.ts';
 import { PAYMENT_LAUNCH_CURRENCY } from '../../shared/domain/payment-money.ts';
+import { PaymentExecutionProvenanceSchema } from '../../shared/domain/payment-provenance.ts';
 import {
   PaymentGatewayProviderFamilySchema,
   PaymentOperationKindSchema,
@@ -77,7 +79,7 @@ const boundedText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLengt
 /** Identity of one provider dispatch ledger row. */
 const PspDispatchIdSchema = uuidText.pipe(Schema.brand('PspDispatchId'));
 /** Identity of one provider evidence row. */
-const PspEvidenceIdSchema = uuidText.pipe(Schema.brand('PspEvidenceId'));
+export const PspEvidenceIdSchema = uuidText.pipe(Schema.brand('PspEvidenceId'));
 export type PspEvidenceId = typeof PspEvidenceIdSchema.Type;
 /** Identity of one captured provider notification. */
 export const PspNotificationIdSchema = uuidText.pipe(Schema.brand('PspNotificationId'));
@@ -115,6 +117,7 @@ const PSP_ROUTINE_CONFLICT_REASONS = [
   'correlation_mismatch',
   'occurrence_mismatch',
   'notification_unknown',
+  'executor_mismatch',
 ] as const;
 const PspRoutineConflictReasonSchema = Schema.Literals(PSP_ROUTINE_CONFLICT_REASONS);
 
@@ -126,6 +129,8 @@ const PspOperationForExecutionSchema = Schema.Struct({
   cancelDispatchExists: Schema.Boolean,
   /** A C16 CANCEL_OR_VOID operation targets this operation. */
   cancelOperationExists: Schema.Boolean,
+  /** When C16 admitted the operation. */
+  createdAt: Schema.DateTimeUtcFromString,
   currency: PspCurrencySchema,
   customerConfigurationId: PaymentCustomerConfigurationIdSchema,
   kind: PaymentOperationKindSchema,
@@ -133,6 +138,8 @@ const PspOperationForExecutionSchema = Schema.Struct({
   operationId: PaymentOperationIdSchema,
   outcome: PaymentOperationOutcomeSchema,
   paymentId: PaymentIdSchema,
+  /** The original governed write that admitted the operation; never rewritten by a later execution. */
+  provenance: PaymentExecutionProvenanceSchema,
   targetOperationId: Schema.optionalKey(PaymentOperationIdSchema),
 });
 export type PspOperationForExecution = typeof PspOperationForExecutionSchema.Type;
@@ -218,6 +225,8 @@ const PspEvidenceRecordSchema = Schema.Struct({
   recordedAt: Schema.DateTimeUtcFromString,
   sourceOccurrenceId: PaymentSourceOccurrenceIdSchema,
   sourceRevision: nonNegativeIntSchema,
+  /** The system principal pinned for every governed submission attempt of this row, once Shell chose it. */
+  submissionExecutorPrincipalId: Schema.optionalKey(PaymentPrincipalIdSchema),
   submissionState: ProviderEvidenceSubmissionStateSchema,
   submittedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   submittedDeliveryId: Schema.optionalKey(PspOutboxDeliveryIdSchema),
@@ -314,6 +323,14 @@ const PspMarkEvidenceResultSchema = Schema.Union([
   conflict(PspEvidenceRecordSchema),
 ]);
 export type PspMarkEvidenceResult = typeof PspMarkEvidenceResultSchema.Type;
+
+const PspPinEvidenceExecutorResultSchema = Schema.Union([
+  Schema.TaggedStruct('PINNED', { record: PspEvidenceRecordSchema }),
+  Schema.TaggedStruct('UNCHANGED', { record: PspEvidenceRecordSchema }),
+  Schema.TaggedStruct('NOT_FOUND', {}),
+  conflict(PspEvidenceRecordSchema),
+]);
+export type PspPinEvidenceExecutorResult = typeof PspPinEvidenceExecutorResultSchema.Type;
 
 const PspTransitionNotificationResultSchema = Schema.Union([
   Schema.TaggedStruct('TRANSITIONED', { record: PspNotificationRecordSchema }),
@@ -567,6 +584,14 @@ const markEvidenceSubmissionRoutine = defineScopedRoutine({
   routineKey: 'psp.mark-evidence-submission',
   schema: ROUTINE_SCHEMA,
 });
+const pinEvidenceSubmissionExecutorRoutine = defineScopedRoutine({
+  name: 'psp_pin_evidence_submission_executor',
+  ownerModuleKey: OWNER_MODULE_KEY,
+  parameters: [...scope, { source: 'input', type: 'uuid' }, { source: 'input', type: 'uuid' }] as const,
+  resultSchema: resultRow(PspPinEvidenceExecutorResultSchema),
+  routineKey: 'psp.pin-evidence-submission-executor',
+  schema: ROUTINE_SCHEMA,
+});
 const readNotificationRoutine = defineScopedRoutine({
   name: 'psp_read_notification',
   ownerModuleKey: OWNER_MODULE_KEY,
@@ -608,6 +633,7 @@ export const PSP_WORKER_ROUTINES = [
   appendEvidenceRoutine,
   listPendingEvidenceRoutine,
   markEvidenceSubmissionRoutine,
+  pinEvidenceSubmissionExecutorRoutine,
   readNotificationRoutine,
   transitionNotificationRoutine,
 ] as const;
@@ -953,6 +979,20 @@ export const pspMarkEvidenceSubmission = (
       input.deliveryId,
     ])
     .pipe(Effect.flatMap(decodeOne(markEvidenceSubmissionRoutine.routineKey, PspMarkEvidenceResultSchema)));
+
+/**
+ * Pins the system principal Shell chose for a pending evidence row's first submission attempt; every retry
+ * then asks Shell for exactly that executor. Write-once: another principal is CONFLICT `executor_mismatch`.
+ */
+export const pspPinEvidenceSubmissionExecutor = (
+  invoker: ScopedRoutineInvoker,
+  input: { readonly evidenceId: PspEvidenceId; readonly principalId: string },
+) =>
+  invoker
+    .invoke(pinEvidenceSubmissionExecutorRoutine, [input.evidenceId, input.principalId])
+    .pipe(
+      Effect.flatMap(decodeOne(pinEvidenceSubmissionExecutorRoutine.routineKey, PspPinEvidenceExecutorResultSchema)),
+    );
 
 export const pspReadNotification = (invoker: ScopedRoutineInvoker, notificationId: PspNotificationId) =>
   invoker

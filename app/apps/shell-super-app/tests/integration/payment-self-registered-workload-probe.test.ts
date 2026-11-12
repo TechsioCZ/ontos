@@ -298,6 +298,8 @@ it.live('admits payment-to-payment RegisteredWorkload calls into A8 only for wor
 
       const tenantId = yield* crypto.randomUUIDv4();
       const legalEntityId = yield* crypto.randomUUIDv4();
+      const siblingLegalEntityId = yield* crypto.randomUUIDv4();
+      const suspendedLegalEntityId = yield* crypto.randomUUIDv4();
       const notificationPrincipal = yield* crypto.randomUUIDv4();
       const reconciliationPrincipal = yield* crypto.randomUUIDv4();
       const humanPrincipal = yield* crypto.randomUUIDv4();
@@ -322,7 +324,7 @@ it.live('admits payment-to-payment RegisteredWorkload calls into A8 only for wor
         sql`insert into core.tenants(tenant_id,slug,name,status,default_locale) values(${tenantId}::uuid,${tenantId},'Payment probe','active','en')`,
       );
       yield* insert(
-        sql`insert into core.legal_entities(legal_entity_id,tenant_id,legal_name,registration_country,registration_number,status) values(${legalEntityId}::uuid,${tenantId}::uuid,'Probe company','CZ','1','active')`,
+        sql`insert into core.legal_entities(legal_entity_id,tenant_id,legal_name,registration_country,registration_number,status) values(${legalEntityId}::uuid,${tenantId}::uuid,'Probe company','CZ','1','active'),(${siblingLegalEntityId}::uuid,${tenantId}::uuid,'Sibling company','CZ','2','active'),(${suspendedLegalEntityId}::uuid,${tenantId}::uuid,'Suspended company','CZ','3','active')`,
       );
       yield* insert(
         sql`insert into core.principals(principal_id,tenant_id,kind,display_name,status) values
@@ -354,6 +356,8 @@ it.live('admits payment-to-payment RegisteredWorkload calls into A8 only for wor
       const deliver = (input: {
         readonly actionKey: string;
         readonly authMethod: 'api_key' | 'session';
+        /** The company the original Action ran in; `null` is an invocation in the tenant context. */
+        readonly company?: string | null;
         readonly principalId: string;
         readonly topic: string;
         readonly workerKey: string;
@@ -365,11 +369,12 @@ it.live('admits payment-to-payment RegisteredWorkload calls into A8 only for wor
           const deliveryId = yield* crypto.randomUUIDv4();
           const claimId = `claim-${deliveryId}`;
           const resourceId = yield* crypto.randomUUIDv4();
+          const company = input.company === undefined ? legalEntityId : input.company;
           yield* insert(
-            sql`insert into core.action_invocations(action_invocation_id,tenant_id,legal_entity_id,principal_id,auth_method,action_key,status,request_hash,started_at,completed_at) values(${invocationId}::uuid,${tenantId}::uuid,${legalEntityId}::uuid,${input.principalId}::uuid,${input.authMethod},${input.actionKey},'succeeded',${'a'.repeat(64)},now(),now())`,
+            sql`insert into core.action_invocations(action_invocation_id,tenant_id,legal_entity_id,principal_id,auth_method,action_key,status,request_hash,started_at,completed_at) values(${invocationId}::uuid,${tenantId}::uuid,${company}::uuid,${input.principalId}::uuid,${input.authMethod},${input.actionKey},'succeeded',${'a'.repeat(64)},now(),now())`,
           );
           yield* insert(
-            sql`insert into core.domain_events(domain_event_id,tenant_id,legal_entity_id,action_invocation_id,producer_module_key,event_type,subject_module_key,subject_resource_type,subject_resource_id,payload_json) values(${eventId}::uuid,${tenantId}::uuid,${legalEntityId}::uuid,${invocationId}::uuid,${paymentModule},${input.topic},${paymentModule},'payment.core.payment',${resourceId},'{}'::jsonb)`,
+            sql`insert into core.domain_events(domain_event_id,tenant_id,legal_entity_id,action_invocation_id,producer_module_key,event_type,subject_module_key,subject_resource_type,subject_resource_id,payload_json) values(${eventId}::uuid,${tenantId}::uuid,${company}::uuid,${invocationId}::uuid,${paymentModule},${input.topic},${paymentModule},'payment.core.payment',${resourceId},'{}'::jsonb)`,
           );
           yield* insert(
             sql`insert into core.outbox_messages(outbox_message_id,tenant_id,domain_event_id,producer_module_key,topic,payload_json) values(${messageId}::uuid,${tenantId}::uuid,${eventId}::uuid,${paymentModule},${input.topic},'{}'::jsonb)`,
@@ -549,6 +554,55 @@ it.live('admits payment-to-payment RegisteredWorkload calls into A8 only for wor
       expect(yield* deniedIssue(workerSubject(captured, notifyWorker, notifyRequirement))).toBe(true);
       yield* bind(notificationPrincipal, sourceIngress);
       yield* issue(workerSubject(captured, notifyWorker, notifyRequirement));
+
+      // A company-scoped worker gets authority only for the Tenant and company of its own delivery's original
+      // workload admission. Every value it could choose itself is checked against that admission.
+      const { legalEntityId: _company, ...unscoped } = workerSubject(captured, notifyWorker, notifyRequirement);
+      // Another active company of the same Tenant.
+      expect(yield* deniedIssue({ ...unscoped, legalEntityId: siblingLegalEntityId })).toBe(true);
+      // No company although the A8 rule requires one.
+      expect(yield* deniedIssue(unscoped)).toBe(true);
+      // Another Tenant, or another claim of the same delivery.
+      expect(yield* deniedIssue({ ...unscoped, legalEntityId, tenantId: yield* crypto.randomUUIDv4() })).toBe(true);
+      expect(yield* deniedIssue({ ...unscoped, claimId: `${captured.claimId}-other`, legalEntityId })).toBe(true);
+      // An original that ran in the tenant context cannot be given a company afterwards.
+      const tenantContextCapture = yield* deliver({
+        actionKey: captureKey,
+        authMethod: 'api_key',
+        company: null,
+        principalId: notificationPrincipal,
+        topic: notifyTopic,
+        workerKey: notifyWorker,
+      });
+      expect(yield* deniedIssue(workerSubject(tenantContextCapture, notifyWorker, notifyRequirement))).toBe(true);
+      // An original whose Action is not one of Payment's originatorActions (A8 itself), although its integration
+      // Principal holds the A8 workload.
+      const directA8 = yield* deliver({
+        actionKey: a8Key,
+        authMethod: 'api_key',
+        principalId: notificationPrincipal,
+        topic: notifyTopic,
+        workerKey: notifyWorker,
+      });
+      expect(yield* deniedIssue(workerSubject(directA8, notifyWorker, notifyRequirement))).toBe(true);
+      // The admission's own company once it is no longer active.
+      const suspendedCapture = yield* deliver({
+        actionKey: captureKey,
+        authMethod: 'api_key',
+        company: suspendedLegalEntityId,
+        principalId: notificationPrincipal,
+        topic: notifyTopic,
+        workerKey: notifyWorker,
+      });
+      const suspendedSubject = {
+        ...workerSubject(suspendedCapture, notifyWorker, notifyRequirement),
+        legalEntityId: suspendedLegalEntityId,
+      };
+      yield* issue(suspendedSubject);
+      yield* insert(
+        sql`update core.legal_entities set status='suspended' where legal_entity_id=${suspendedLegalEntityId}::uuid`,
+      );
+      expect(yield* deniedIssue(suspendedSubject)).toBe(true);
 
       // (b) A10 workload origin (reconciliation driver) -> recover-gateway-operation -> A8: admitted.
       const workloadRecovery = yield* deliver({

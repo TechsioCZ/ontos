@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "c2566ae6-2e70-467a-9fb9-d0674522c5ab",
+  "id": "9146a61e-c855-420b-895a-c51aa2787037",
   "prevIds": [
     "85a988b8-fa62-4492-b667-176d1be56d6b"
   ],
@@ -3412,19 +3412,6 @@
       "table": "psp_provider_dispatches"
     },
     {
-      "type": "jsonb",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "request_headers",
-      "entityType": "columns",
-      "schema": "payment",
-      "table": "psp_provider_dispatches"
-    },
-    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -3433,6 +3420,19 @@
       "generated": null,
       "identity": null,
       "name": "request_hash",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "psp_provider_dispatches"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "request_headers",
       "entityType": "columns",
       "schema": "payment",
       "table": "psp_provider_dispatches"
@@ -3888,6 +3888,19 @@
       "generated": null,
       "identity": null,
       "name": "source_revision",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "psp_provider_evidence"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "submission_executor_principal_id",
       "entityType": "columns",
       "schema": "payment",
       "table": "psp_provider_evidence"
