@@ -41,6 +41,7 @@ import type {
   ProviderReplayRequest,
   ProviderRequestHeader,
 } from '../psp/psp-result.ts';
+import { cancelTargetFindingOf } from '../psp/psp-result.ts';
 import {
   COMGATE_CAPABILITIES,
   COMGATE_UNSUPPORTED_REASONS,
@@ -458,27 +459,30 @@ const cancelUnresolvedReason = (answer: ComgateCancelAnswer): string =>
  * - after an accepted DELETE (`code 0`), any other finding is ACKNOWLEDGED with that finding; recovery
  *   lookups resolve it;
  * - after 1400, another code or an unreadable answer, anything but a proven state is OUTCOME_UNKNOWN.
+ * The lookup's finding about the cancel's collection target (e.g. PAID: COLLECTION_CONFIRMED) is kept with it.
  */
 const cancelDispatchResponse = (
   answer: ComgateCancelAnswer,
-  operationId: OperationId,
+  expected: GatewayExpectedEffect,
   findings: readonly ProviderFindingResult[],
 ): Effect.Effect<ProviderDispatchResponse, GatewayProviderOutcomeUnknownError> => {
+  const { operationId } = expected;
   const own = findings.find((finding) => finding.target.operationId === operationId);
   if (own === undefined) {
     return Effect.fail(outcomeUnknown(operationId, 'comgate_cancel_confirmation_missing'));
   }
+  const targetFinding = cancelTargetFindingOf(findings, expected);
+  const acknowledged = () =>
+    Effect.succeed<ProviderDispatchResponse>({ _tag: 'ACKNOWLEDGED', finding: own, targetFinding });
   const unresolved = (): Effect.Effect<ProviderDispatchResponse, GatewayProviderOutcomeUnknownError> =>
     Match.value(answer).pipe(
-      Match.tag('ACCEPTED', () => Effect.succeed<ProviderDispatchResponse>({ _tag: 'ACKNOWLEDGED', finding: own })),
+      Match.tag('ACCEPTED', acknowledged),
       Match.orElse(() => Effect.fail(outcomeUnknown(operationId, cancelUnresolvedReason(answer)))),
     );
   return Match.value(own.finding).pipe(
-    Match.when('EFFECT_CONFIRMED', () =>
-      Effect.succeed<ProviderDispatchResponse>({ _tag: 'ACKNOWLEDGED', finding: own }),
-    ),
+    Match.when('EFFECT_CONFIRMED', acknowledged),
     Match.when('NOT_EFFECTED', () =>
-      Effect.succeed<ProviderDispatchResponse>({ _tag: 'REJECTED_BEFORE_EFFECT', finding: own }),
+      Effect.succeed<ProviderDispatchResponse>({ _tag: 'REJECTED_BEFORE_EFFECT', finding: own, targetFinding }),
     ),
     Match.orElse(unresolved),
   );
@@ -614,7 +618,7 @@ const makeComgatePaymentService = Effect.gen(function* buildComgatePaymentServic
         GatewayProviderUnavailable: () =>
           Effect.fail(outcomeUnknown(expected.operationId, 'comgate_cancel_confirmation_unavailable')),
       }),
-      Effect.flatMap((findings) => cancelDispatchResponse(answer, expected.operationId, findings)),
+      Effect.flatMap((findings) => cancelDispatchResponse(answer, expected, findings)),
     );
 
   const classify = (

@@ -262,7 +262,7 @@ const rejectedBeforeEffect = (
     providerRefs,
     target: { operationId: expected.operationId, operationKind: refund ? 'REFUND' : 'COLLECT' },
   };
-  return { _tag: 'REJECTED_BEFORE_EFFECT', finding };
+  return { _tag: 'REJECTED_BEFORE_EFFECT', finding, targetFinding: Option.none() };
 };
 
 const expectedEffectMismatch = () => Effect.fail(unavailable('expected_effect_mismatch'));
@@ -505,7 +505,7 @@ const makeGopayPaymentService = Effect.gen(function* buildGopayPaymentService() 
     const confirmed = yield* confirmRefund(target, context, paymentRef, expected, sentAt);
     return Option.match(confirmed, {
       onNone: () => dispatched,
-      onSome: (finding): ProviderDispatchResponse => ({ _tag: 'ACKNOWLEDGED', finding }),
+      onSome: (finding): ProviderDispatchResponse => ({ _tag: 'ACKNOWLEDGED', finding, targetFinding: Option.none() }),
     });
   });
 

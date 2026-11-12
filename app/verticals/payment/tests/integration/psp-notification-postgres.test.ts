@@ -24,6 +24,7 @@ import { ProviderDispatchLedgerLive } from '../../src/integrations/psp/dispatch-
 import { ProviderDispatchLedger } from '../../src/integrations/psp/dispatch-ledger.ts';
 import type { ProviderDispatchIdentity } from '../../src/integrations/psp/dispatch-ledger.ts';
 import { ProviderEvidenceStoreLive } from '../../src/integrations/psp/evidence-store-live.ts';
+import { ProviderEvidenceStore } from '../../src/integrations/psp/evidence-store.ts';
 import {
   ProviderEvidenceSubmissionTransport,
   ProviderEvidenceSubmitterLive,
@@ -699,6 +700,78 @@ it.live('#1157 Browser-independent: notification alone drives the outcome', () =
       expect(redelivered.result).toBe('ALREADY_PROCESSED SUBMITTED');
       expect(redelivered.lookups).toEqual([]);
       expect(redelivered.statements).toEqual([]);
+    }),
+  ),
+);
+
+it.live('#1157 #1158 A notification submits the same lookup fact a recovery left pending, once', () =>
+  Effect.scoped(
+    Effect.gen(function* recoveryThenNotification() {
+      const { runtime: runtimeClient } = yield* testDatabaseClients;
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, paymentTestRelations);
+      const scope = yield* makeTestScope;
+      const binding = yield* stripeBinding(runtimeClient, scope, 'SANDBOX');
+      const collect = yield* preparedCollect(runtime, scope, binding);
+      const intent = Schema.decodeUnknownSync(ProviderObjectRefSchema)({
+        _tag: 'STRIPE_PAYMENT_INTENT',
+        id: 'pi_native_notification',
+      });
+      yield* inWorker(runtime, scope, ({ scope: worker, workerContext }) =>
+        Effect.service(ProviderDispatchLedger).pipe(
+          Effect.flatMap((ledger) =>
+            ledger.recordAcknowledged({
+              customerRedirectUrl: Option.none(),
+              operationId: collect.operationId,
+              providerPaymentRef: Option.some(intent),
+              providerRefundRef: Option.none(),
+              respondedAt: DateTime.makeUnsafe(OBSERVED_AT),
+              scope: worker,
+              workerContext,
+            }),
+          ),
+        ),
+      ).pipe(Effect.provide(storesLayer));
+      // A recovery lookup proved the collection and left its evidence pending submission.
+      const proven = yield* confirmedFinding(collect.operationId, intent);
+      const recovered = yield* inWorker(runtime, scope, ({ scope: worker, workerContext }) =>
+        Effect.service(ProviderEvidenceStore).pipe(
+          Effect.flatMap((store) =>
+            Effect.fromOption(proven.evidence).pipe(
+              Effect.flatMap((evidence) =>
+                store.append({
+                  bindingId: binding.bindingId,
+                  evidence,
+                  notificationId: Option.none(),
+                  operationId: collect.operationId,
+                  origin: 'RECOVERY_LOOKUP',
+                  paymentId: collect.paymentId,
+                  scope: worker,
+                  workerContext,
+                }),
+              ),
+            ),
+          ),
+        ),
+      ).pipe(Effect.provide(storesLayer));
+      const notificationId = yield* captureNotification(runtimeClient, scope, binding, {
+        body: signedPaymentIntentBody('evt_native_after_recovery', 'pi_native_notification', 'f'.repeat(32)),
+        eventId: 'evt_native_after_recovery',
+        refs: [intent],
+      });
+
+      // The notification's lookup proves the same fact again: it is the pending row, not a conflict.
+      const processed = yield* processNative(runtime, scope, {
+        a8: 'ACCEPT',
+        findings: () => Effect.succeed([proven]),
+        notificationId,
+      });
+
+      expect(processed.result).toBe(`SETTLED ${collect.operationId} SUBMITTED [ACCEPTED]`);
+      expect(processed.statements.map(({ sourceOccurrenceId }) => sourceOccurrenceId)).toEqual([
+        recovered.evidence.sourceOccurrenceId,
+      ]);
+      const rows = yield* evidenceRows(runtimeClient, scope, binding.bindingId);
+      expect(rows.map((row) => [row.notification_id, row.submission_state])).toEqual([[null, 'ACCEPTED']]);
     }),
   ),
 );

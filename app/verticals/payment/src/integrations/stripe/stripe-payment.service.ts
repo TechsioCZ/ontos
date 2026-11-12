@@ -42,7 +42,7 @@ import type {
   GatewayRefundRequest,
   ProviderObjectRef,
 } from '../psp/psp-request.ts';
-import { PreparedProviderRequestSchema, ProviderEvidenceSchema } from '../psp/psp-result.ts';
+import { cancelTargetFindingOf, PreparedProviderRequestSchema, ProviderEvidenceSchema } from '../psp/psp-result.ts';
 import type {
   PreparedProviderRequest,
   ProviderDispatchResponse,
@@ -538,6 +538,7 @@ const rejectedBeforeEffect = Effect.fn('StripePayment.rejectedBeforeEffect')(fun
       providerRefs: [],
       target: { operationId: expected.operationId, operationKind: expected._tag },
     },
+    targetFinding: Option.none(),
   };
   return response;
 });
@@ -615,7 +616,11 @@ const acknowledgedResponse = Effect.fn('StripePayment.acknowledgedResponse')(fun
   if (Option.isNone(finding)) {
     return yield* Effect.fail(outcomeUnknown(expected, 'stripe_response_without_finding'));
   }
-  const acknowledged: ProviderDispatchResponse = { _tag: 'ACKNOWLEDGED', finding: finding.value };
+  const acknowledged: ProviderDispatchResponse = {
+    _tag: 'ACKNOWLEDGED',
+    finding: finding.value,
+    targetFinding: cancelTargetFindingOf(findings, expected),
+  };
   return acknowledged;
 });
 
@@ -901,12 +906,13 @@ const makeStripePaymentService = Effect.gen(function* buildStripePaymentService(
       return yield* Effect.fail(outcomeUnknown(expected, 'stripe_cancel_unresolved'));
     }
     const decided = finding.value;
+    const targetFinding = cancelTargetFindingOf(findings, expected);
     return yield* Match.value(decided.finding).pipe(
       Match.when('NOT_EFFECTED', () =>
-        Effect.succeed<ProviderDispatchResponse>({ _tag: 'REJECTED_BEFORE_EFFECT', finding: decided }),
+        Effect.succeed<ProviderDispatchResponse>({ _tag: 'REJECTED_BEFORE_EFFECT', finding: decided, targetFinding }),
       ),
       Match.when('EFFECT_CONFIRMED', () =>
-        Effect.succeed<ProviderDispatchResponse>({ _tag: 'ACKNOWLEDGED', finding: decided }),
+        Effect.succeed<ProviderDispatchResponse>({ _tag: 'ACKNOWLEDGED', finding: decided, targetFinding }),
       ),
       Match.orElse(() => Effect.fail(outcomeUnknown(expected, 'stripe_cancel_unresolved'))),
     );

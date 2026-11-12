@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Match, Option, Schema } from 'effect';
 
 import {
   PaymentEconomicEffectKeySchema,
@@ -17,6 +17,7 @@ import { ProviderEvidenceFactKindSchema, ProviderFindingSchema } from '../../../
 import { GatewayIdempotencyKeySchema, GatewayOrderReferenceSchema } from './psp-correlation.ts';
 import { ProviderAmountDiscrepancySchema, ProviderReportedAmountSchema } from './psp-money.ts';
 import { ProviderObjectRefSchema } from './psp-request.ts';
+import type { GatewayExpectedEffect } from './psp-request.ts';
 
 /**
  * Provider-neutral results of the C17 adapters (#1156-#1158). Evidence is C17-owned until a
@@ -133,9 +134,29 @@ export const ProviderReplayRequestSchema = Schema.Struct({
 });
 export type ProviderReplayRequest = typeof ProviderReplayRequestSchema.Type;
 
-/** Result of one provider send or replay that produced a classifiable response. */
+/**
+ * Result of one provider send or replay that produced a classifiable response. `finding` is about the sent
+ * operation; `targetFinding` is what the same answer proved about a CANCEL_OR_VOID's collection target (for
+ * example a collection already paid when the cancel was refused), so that proof is kept as well.
+ */
+const dispatchResponseFields = {
+  finding: ProviderFindingResultSchema,
+  targetFinding: Schema.Option(ProviderFindingResultSchema),
+};
 export const ProviderDispatchResponseSchema = Schema.Union([
-  Schema.TaggedStruct('ACKNOWLEDGED', { finding: ProviderFindingResultSchema }),
-  Schema.TaggedStruct('REJECTED_BEFORE_EFFECT', { finding: ProviderFindingResultSchema }),
+  Schema.TaggedStruct('ACKNOWLEDGED', dispatchResponseFields),
+  Schema.TaggedStruct('REJECTED_BEFORE_EFFECT', dispatchResponseFields),
 ]);
 export type ProviderDispatchResponse = typeof ProviderDispatchResponseSchema.Type;
+
+/** The finding about a CANCEL_OR_VOID's collection target among one answer's findings; none for other kinds. */
+export const cancelTargetFindingOf = (
+  findings: readonly ProviderFindingResult[],
+  expected: GatewayExpectedEffect,
+): Option.Option<ProviderFindingResult> =>
+  Match.valueTags(expected, {
+    CANCEL_OR_VOID: ({ target }) =>
+      Option.fromUndefinedOr(findings.find((finding) => finding.target.operationId === target.operationId)),
+    COLLECT: () => Option.none<ProviderFindingResult>(),
+    REFUND: () => Option.none<ProviderFindingResult>(),
+  });

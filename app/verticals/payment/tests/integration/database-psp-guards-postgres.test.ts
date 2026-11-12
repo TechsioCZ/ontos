@@ -636,6 +636,9 @@ it.live('#1158 Provider evidence is append-only except its one submission step',
       // The same fact proven again later is the same occurrence; the first receipt is kept.
       const repeated = yield* append({ ...evidence, observedAt: DateTime.makeUnsafe('2026-11-12T11:00:00.000Z') });
       expect((yield* expectTagged(repeated, 'EXISTING')).record.receivedAt).toEqual(evidence.observedAt);
+      // The same statement read by the other lookup path is that occurrence too, not a conflict.
+      const otherOrigin = yield* append({ ...evidence, evidenceOrigin: 'RECOVERY_LOOKUP' });
+      expect((yield* expectTagged(otherOrigin, 'EXISTING')).record.evidenceId).toBe(appendedRow.record.evidenceId);
       const rewritten = yield* append({ ...evidence, factKind: 'COLLECTION_NOT_EFFECTED' });
       expect(conflictReason(rewritten)).toEqual(Option.some('occurrence_mismatch'));
       const otherCurrency = yield* append({

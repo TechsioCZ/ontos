@@ -389,6 +389,13 @@ describe('#1156 Comgate refund and cancel', () => {
       expect(response.finding.target.operationId).toBe(cancelOperationId);
       expect(response.finding.finding).toBe('NOT_EFFECTED');
       expect(factKindOf(response.finding)).toEqual(Option.some('CANCEL_NOT_EFFECTED'));
+      // The confirming lookup proved the collection paid: that proof travels with the refused cancel.
+      const proven = Option.getOrUndefined(response.targetFinding);
+      expect([proven?.target.operationId, proven?.finding, factKindOf(proven)]).toEqual([
+        collectOperationId,
+        'EFFECT_CONFIRMED',
+        Option.some('COLLECTION_CONFIRMED'),
+      ]);
 
       const findings = yield* adapter.lookup(target, {
         dispatchedAt: Option.none(),

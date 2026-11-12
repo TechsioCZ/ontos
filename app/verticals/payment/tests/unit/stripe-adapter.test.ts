@@ -657,6 +657,16 @@ describe('#1156 Stripe refund and cancel', () => {
         finding: 'EFFECT_CONFIRMED',
         target: { operationId: CANCEL_OPERATION_ID, operationKind: 'CANCEL_OR_VOID' },
       });
+      // No PaymentIntent was ever created: the expired session also proves the collection not effected.
+      expect(
+        response.targetFinding.pipe(
+          Option.map((found) => [
+            found.target.operationId,
+            found.finding,
+            found.evidence.pipe(Option.map((evidence) => evidence.factKind)),
+          ]),
+        ),
+      ).toEqual(Option.some([COLLECT_OPERATION_ID, 'NOT_EFFECTED', Option.some('COLLECTION_NOT_EFFECTED')]));
       expect(sent[0]?.request.headers['idempotency-key']).toBe(
         deriveProviderCorrelation(operationIdOf(CANCEL_OPERATION_ID)).idempotencyKey,
       );
@@ -686,6 +696,16 @@ describe('#1156 Stripe refund and cancel', () => {
       expect(response.finding.evidence.pipe(Option.map((evidence) => evidence.factKind))).toEqual(
         Option.some('CANCEL_NOT_EFFECTED'),
       );
+      // The same lookup proved the collection paid: that proof travels with the refused cancel.
+      expect(
+        response.targetFinding.pipe(
+          Option.map((found) => [
+            found.target.operationId,
+            found.finding,
+            found.evidence.pipe(Option.map((evidence) => evidence.factKind)),
+          ]),
+        ),
+      ).toEqual(Option.some([COLLECT_OPERATION_ID, 'EFFECT_CONFIRMED', Option.some('COLLECTION_CONFIRMED')]));
       expect(sent.map((recorded) => recorded.kind)).toEqual(['mutate', 'read']);
     }),
   );

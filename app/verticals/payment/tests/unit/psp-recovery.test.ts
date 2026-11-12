@@ -553,6 +553,7 @@ describe('#1158 gateway operation recovery', () => {
             Effect.succeed({
               _tag: 'ACKNOWLEDGED' as const,
               finding: findingOf({ finding: 'EFFECT_CONFIRMED' }),
+              targetFinding: Option.none(),
             }),
         },
         recoveryMessage('PROVIDER_IDEMPOTENT_REPLAY', { record }),
