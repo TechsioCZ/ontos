@@ -381,6 +381,8 @@ const renewOnce = Effect.fn('AccessProjectionWriter.renewOnce')(function* renewO
   taken: TakenFence,
   watch: HoldWatch,
 ) {
+  // The hold is proved from the moment the renewal was sent, never from its answer: the lease it sets is younger.
+  const sentAt = yield* Clock.currentTimeMillis;
   const renewed = yield* renew(fenceCommand(taken)).pipe(
     Effect.map(Option.some),
     Effect.catchTag('AccessLifecycleError', ({ code, reason }) =>
@@ -393,7 +395,7 @@ const renewOnce = Effect.fn('AccessProjectionWriter.renewOnce')(function* renewO
     return true;
   }
   if (renewed.value) {
-    yield* Ref.set(watch.provedAt, yield* Clock.currentTimeMillis);
+    yield* Ref.set(watch.provedAt, sentAt);
     return true;
   }
   yield* Ref.set(
@@ -871,6 +873,9 @@ const fencedReconcile = Effect.fn('AccessProjectionWriter.fencedReconcile')(func
   input: FencedReconcileInput,
 ) {
   const { operationId, tenantId, tenantScopeId } = input;
+  // The hold counts as proved from before the take was sent: the take may wait behind Actions' locks, and the lease
+  // the database sets is measured from when it was written, so this side's limit never outlasts the lease.
+  const takeSentAt = yield* Clock.currentTimeMillis;
   const taken: TakenFence = {
     fence: yield* takeTenantFence({
       expectedRevision: input.pinnedRevision,
@@ -889,7 +894,7 @@ const fencedReconcile = Effect.fn('AccessProjectionWriter.fencedReconcile')(func
   };
   const watch: HoldWatch = {
     lost: yield* Ref.make(Option.none<string>()),
-    provedAt: yield* Ref.make(yield* Clock.currentTimeMillis),
+    provedAt: yield* Ref.make(takeSentAt),
   };
   // The renewal runs beside the write and stops with it; it is interruptible although the write is not.
   yield* renewHeldLease(taken, watch).pipe(

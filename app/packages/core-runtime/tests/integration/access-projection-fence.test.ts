@@ -141,6 +141,44 @@ const sweepOnClock =
 const retriesOf = (report: AccessFenceSweepReport) =>
   report.failed.map(({ retryInMillis, tenantId }) => [tenantId, retryInMillis] as const);
 
+/** An Action in flight: a transaction holding the tenant fence's shared lock until `release` completes. */
+const actionHoldingFence = (
+  admin: PgClient.PgClient,
+  tenantId: TenantId,
+  lock: { readonly held: Deferred.Deferred<boolean>; readonly release: Deferred.Deferred<boolean> },
+) =>
+  admin
+    .withTransaction(
+      admin
+        .unsafe(`select 1 from core.access_scope_fences where tenant_id = '${tenantId}' for share`)
+        .pipe(Effect.andThen(Deferred.succeed(lock.held, true)), Effect.andThen(Deferred.await(lock.release))),
+    )
+    .pipe(Effect.orDie);
+
+const LeaseLeftSchema = Schema.Array(Schema.Struct({ seconds: Schema.Number }));
+
+/** How much of the held fence's lease is left now, on the database clock. */
+const leaseLeft = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  admin
+    .unsafe(
+      `select extract(epoch from lease_expires_at - clock_timestamp())::float8 as seconds
+         from core.access_scope_fences where tenant_id = '${tenantId}' and state = 'Changing'`,
+    )
+    .pipe(Effect.orDie, Effect.flatMap(Schema.decodeUnknownEffect(LeaseLeftSchema)), Effect.orDie);
+
+/** The runtime role can no longer write the fence: every lease renewal fails, and none is refused. */
+const renewalsFail = (admin: PgClient.PgClient, failing: boolean) =>
+  admin
+    .unsafe(
+      failing
+        ? 'revoke update on core.access_scope_fences from ontos_runtime'
+        : 'grant update on core.access_scope_fences to ontos_runtime',
+    )
+    .pipe(Effect.orDie, Effect.asVoid);
+
+/** The finalizer that gives the runtime role its fence writes back. */
+const renewalsRestored = (admin: PgClient.PgClient) => () => renewalsFail(admin, false);
+
 /** The dead holder's journal last moved `age` ago. */
 const idleJournal = (admin: PgClient.PgClient, age: string) =>
   admin
@@ -618,5 +656,54 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
           }),
       );
     }),
+  );
+
+  suite.effect(
+    'the 90-second limit counts from before a take that waited behind an Action, and alone stops writes',
+    () =>
+      Effect.gen(function* unprovedHold() {
+        const gate = {
+          armed: yield* Ref.make(false),
+          entered: yield* Deferred.make<boolean>(),
+          letGo: yield* Deferred.make<boolean>(),
+          wroteAfterLoss: yield* Ref.make(false),
+        };
+        const lock = { held: yield* Deferred.make<boolean>(), release: yield* Deferred.make<boolean>() };
+        yield* withProjectionTenant(
+          { activeModules: [MODULE], wrapCompiler: writingAcrossLoss(gate) },
+          (tenantId, admin) =>
+            Effect.gen(function* takeBehindAction() {
+              const scope = yield* bootstrapTenant(tenantId);
+              yield* Ref.set(gate.armed, true);
+              yield* Effect.addFinalizer(letGoOf(gate.letGo));
+              yield* Effect.addFinalizer(letGoOf(lock.release));
+              yield* Effect.addFinalizer(renewalsRestored(admin));
+              const clock = yield* Layer.build(TestClock.layer());
+              yield* TestClock.setTime(yield* Clock.currentTimeMillis).pipe(Effect.provide(clock));
+              const action = yield* actionHoldingFence(admin, tenantId, lock).pipe(Effect.forkChild);
+              yield* Deferred.await(lock.held);
+              const writer = yield* AccessProjectionWriter;
+              const holder = yield* writer.reconcileTenant({ scope }).pipe(Effect.provide(clock), Effect.forkChild);
+              // The take waits behind the Action: two real seconds, and a minute on the holder's clock.
+              yield* Effect.sleep('2 seconds');
+              yield* TestClock.adjust('60 seconds').pipe(Effect.provide(clock));
+              yield* Deferred.succeed(lock.release, true);
+              yield* Fiber.join(action);
+              yield* Deferred.await(gate.entered);
+              // The lease is counted from when the take wrote it, not from its transaction's start two seconds before.
+              const [left] = yield* leaseLeft(admin, tenantId);
+              expect(left?.seconds).toBeGreaterThan(119);
+              // From now on no renewal succeeds, and none is refused: only the 90-second limit can stop the holder.
+              yield* renewalsFail(admin, true);
+              yield* TestClock.adjust('35 seconds').pipe(Effect.provide(clock));
+              yield* Deferred.succeed(gate.letGo, true);
+              expect(yield* refusalOf(Fiber.join(holder))).toContain('no lease renewal succeeded');
+              expect(yield* Ref.get(gate.wroteAfterLoss)).toBe(false);
+              yield* renewalsFail(admin, false);
+              const [held] = yield* tenantFence(admin, tenantId);
+              expect(held?.state).toBe('Changing');
+            }),
+        );
+      }),
   );
 });

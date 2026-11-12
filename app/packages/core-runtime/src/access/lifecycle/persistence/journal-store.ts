@@ -67,8 +67,13 @@ type StoreFailure = AccessLifecycleError | DriverFailure;
 /** A refusal of the store in the vocabulary of its port. */
 type Refusal = (reason: string) => AccessLifecycleError;
 
-/** The lapse of a hold, from the database's own clock, so hosts with skewed clocks agree on it. */
-const leaseUntil = sql`pg_catalog.now() + pg_catalog.make_interval(secs => ${Duration.toSeconds(ACCESS_FENCE_LEASE)})`;
+/**
+ * The lapse of a hold, from the database's own clock, so hosts with skewed clocks agree on it. It is measured from
+ * the moment the statement writes it (`clock_timestamp()`), not from the transaction's start: a take can wait behind
+ * the shared locks of Actions in flight, and a lease counted from before that wait would lapse early. The holder
+ * counts its own 90-second limit from before it sent the statement, so its limit always ends first.
+ */
+const leaseUntil = sql`pg_catalog.clock_timestamp() + pg_catalog.make_interval(secs => ${Duration.toSeconds(ACCESS_FENCE_LEASE)})`;
 
 const fenceColumns = {
   owningOperationId: accessScopeFences.owningOperationId,
@@ -337,11 +342,24 @@ interface FenceAcquireTransactionRequest {
   readonly transaction: CoreTransaction;
 }
 
+/**
+ * Wait for the fence row's lock before writing it. A take can wait behind the shared locks of Actions in flight, and
+ * PostgreSQL computes an UPDATE's new values before such a wait: locking first makes the lease the take writes count
+ * from the moment the take actually holds the row.
+ */
+const lockFenceRow = (transaction: CoreTransaction, command: { readonly scopeId: string; readonly tenantId: string }) =>
+  transaction
+    .select({ scopeId: accessScopeFences.scopeId })
+    .from(accessScopeFences)
+    .where(and(eq(accessScopeFences.scopeId, command.scopeId), eq(accessScopeFences.tenantId, command.tenantId)))
+    .for('update');
+
 const acquireFenceTransaction = Effect.fn('accessLifecycle.persistence.acquireFenceTransaction')(
   function* acquireFenceTransactionEffect(
     request: FenceAcquireTransactionRequest,
   ): Effect.fn.Return<FenceAcquireOutcome, StoreFailure> {
     const { command, transaction } = request;
+    yield* lockFenceRow(transaction, command);
     const acquired = yield* transaction
       .update(accessScopeFences)
       .set({
@@ -528,6 +546,7 @@ const takeOverExpiredFenceTransaction = Effect.fn('accessLifecycle.persistence.t
     readonly transaction: CoreTransaction;
   }): Effect.fn.Return<FenceAcquireOutcome, StoreFailure> {
     const { command, transaction } = request;
+    yield* lockFenceRow(transaction, command);
     const taken = yield* transaction
       .update(accessScopeFences)
       .set({
