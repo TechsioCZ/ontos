@@ -1,5 +1,5 @@
 import { expect, it } from 'effect-rstest';
-import { subjectIdQueries } from '../../src/api/records-consumer.ts';
+import { subjectIdQueries } from '../../src/routes/[lang]/prodej/prilezitosti/opportunity-tags.ts';
 
 it('keeps an empty subject list empty', () => {
   expect(subjectIdQueries([])).toEqual([]);

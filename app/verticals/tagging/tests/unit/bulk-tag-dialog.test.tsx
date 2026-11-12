@@ -32,13 +32,12 @@ const { catalog, writes } = rstest.hoisted(() => {
   return { catalog: { tags }, writes: written };
 });
 
-rstest.mock('../../src/api/records-consumer.ts', () => ({
+rstest.mock('../../src/tags/tag-records.ts', () => ({
   get listTags() {
     return Effect.sync(() => catalog.tags);
   },
-  recordsOfKind: rstest.fn(),
 }));
-rstest.mock('../../src/api/records-commands.ts', () => ({
+rstest.mock('../../src/tags/records-commands.ts', () => ({
   assignTag: (tagId: TagId, subjects: readonly Subject[]) =>
     Effect.sync(() => {
       writes.push({ mode: 'add', subjects, tagId });

@@ -3,7 +3,9 @@ import { listMovements, listOrders, listProducts } from '@app/merchandise/client
 import { executeRecords as executeOpportunityRecords } from '@app/sales-pipeline/clients/records';
 import { listInvoices } from '@app/finance-billing/clients/records';
 import { executeRecords as executeTaskRecords } from '@app/work-tasks/clients/records';
-import { assignmentsForSubjects, listTags } from '@app/tagging/clients/records';
+import { executeRecords as executeTagRecords } from '@app/tagging/clients/records';
+import { SubjectIdsQuerySchema } from '@app/tagging/contracts/records';
+import type { RecordsRequest as TagRecordsRequest, SubjectKind } from '@app/tagging/contracts/records';
 import { executeRecords as executeEmployeeRecords } from '@app/workforce/clients/records';
 import { definePageData } from '@app/shared-contracts/page-data';
 import type { PageData, PageDataSnapshot } from '@app/shared-contracts/page-data';
@@ -34,6 +36,58 @@ const listEmployees = () =>
     Effect.flatMap((nonce) => executeEmployeeRecords({}, `workforce:list:${nonce}`)),
     Effect.map((response) => response.items),
   );
+
+/** Tagging records for this view, each read under its own correlation. */
+const readTagRecords = (payload: TagRecordsRequest) =>
+  Random.nextInt.pipe(Effect.flatMap((id) => executeTagRecords(payload, `tagging:records:${id}`)));
+
+/** All tags with their tag-wide assignment counts per subject kind. */
+const listTags = readTagRecords({}).pipe(Effect.map((records) => records.tags));
+
+/** `SubjectIdsQuerySchema` caps one records query at this many characters. */
+const subjectIdsQueryLimit = 8000;
+
+/** Comma-joined id lists, each within the records query limit. The caller's ids are never mutated. */
+const subjectIdQueries = (ids: readonly string[]): string[] => {
+  const queries: string[] = [];
+  for (const id of ids) {
+    const last = queries.at(-1);
+    if (last !== undefined && last.length + 1 + id.length <= subjectIdsQueryLimit) {
+      queries.splice(-1, 1, `${last},${id}`);
+    } else {
+      queries.push(id);
+    }
+  }
+  return queries;
+};
+
+/**
+ * Assignments of subjects of several kinds, across all tags. One records read covers every kind; a list longer than
+ * the query limit takes one more read per extra chunk. Only assignments of the requested (kind, id) pairs are
+ * returned, so an id shared by two kinds never leaks the other kind's tags.
+ */
+const assignmentsForSubjects = (subjects: readonly { readonly id: string; readonly kind: SubjectKind }[]) => {
+  const wanted = new Set(subjects.map((subject) => `${subject.kind}:${subject.id}`));
+  const ids = [...new Set(subjects.map((subject) => subject.id))];
+  return ids.length === 0
+    ? Effect.succeed([])
+    : Effect.forEach(
+        subjectIdQueries(ids),
+        (query) =>
+          Schema.decodeEffect(SubjectIdsQuerySchema)(query).pipe(
+            Effect.flatMap((subjectIds) => readTagRecords({ subjectIds })),
+          ),
+        { concurrency: 1 },
+      ).pipe(
+        Effect.map((pages) =>
+          pages.flatMap((records) =>
+            records.assignments.filter((assignment) =>
+              wanted.has(`${assignment.subject.kind}:${assignment.subject.id}`),
+            ),
+          ),
+        ),
+      );
+};
 
 export const StatisticsSourceSchema = Schema.Literals([
   'customers',

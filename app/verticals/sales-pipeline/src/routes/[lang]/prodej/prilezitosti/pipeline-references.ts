@@ -3,7 +3,6 @@ import { listProducts } from '@app/merchandise/clients/records';
 import type { ProductRecord } from '@app/merchandise/contracts/records';
 import { listCustomers } from '@app/party-registry/api/client';
 import type { CustomerListItem } from '@app/party-registry/api/client';
-import { subjectsWithTag } from '@app/tagging/clients/records';
 import { SubjectIdSchema } from '@app/tagging/contracts/records';
 import type { SubjectId, SubjectKind, TagId } from '@app/tagging/contracts/records';
 import { executeRecords as executeEmployeeRecords } from '@app/workforce/clients/records';
@@ -18,6 +17,7 @@ import {
   ProductIdSchema,
 } from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { subjectsWithTag } from './opportunity-tags.ts';
 import { loadPipeline } from './pipeline-api.ts';
 
 /** Workforce employees for this view, read under its own correlation. */

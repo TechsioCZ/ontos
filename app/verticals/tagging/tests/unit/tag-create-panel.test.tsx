@@ -8,11 +8,11 @@ import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rste
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { TagIdSchema } from '../../shared/apis/records.ts';
-import { applyTaggingCommand } from '../../src/api/records-commands.ts';
+import { applyTaggingCommand } from '../../src/tags/records-commands.ts';
 import { TagCreatePanel } from '../../src/routes/[lang]/nastaveni/stitky/tag-create-panel.tsx';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 
-rstest.mock('../../src/api/records-commands.ts');
+rstest.mock('../../src/tags/records-commands.ts');
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
 }));
