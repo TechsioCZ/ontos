@@ -33,6 +33,7 @@ const ownerMigrations = [
   'assortment',
   'tax',
   'privacy',
+  'symmy-integration',
   'promotion',
 ];
 const generatedOwnerMigrations = [
