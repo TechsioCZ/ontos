@@ -14,14 +14,14 @@ import { executeManageCatalog } from '../../src/api/manage-catalog-action-client
 import { ProductDetailView } from '../../src/routes/[lang]/provoz/produkty/product-detail-dialog.tsx';
 import type { CompanyVat } from '../../src/routes/[lang]/provoz/produkty/product-tax-classification.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
-import { translateIn, translateTaxCs } from './merchandise-translate.ts';
+import { translateCs, translateIn } from './merchandise-translate.ts';
 
 rstest.mock('../../src/api/records-consumer.ts');
 rstest.mock('../../src/api/manage-catalog-action-client.ts');
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({
     language: 'cs',
-    t: (key: string, values?: Record<string, number | string>) => translateTaxCs(key, values),
+    t: (key: string, values?: Record<string, number | string>) => translateCs(key, values),
   }),
 }));
 
@@ -418,7 +418,7 @@ describe('the price including VAT on the product editor', () => {
         yield* Effect.promise(() => pickVat(CZ_VAT_REDUCED));
         // The server keeps the stored gross on a classification change: the field says the same and why.
         expect(fieldById('detail-price-gross').value.replaceAll('\u00A0', ' ')).toBe('12,11 Kč');
-        expect(text()).toContain('merchandise.pages.products.detail.vatShareOnly');
+        expect(text()).toContain('Cena s DPH zůstává stejná, změní se jen podíl DPH v ní.');
       }),
   );
 
@@ -428,7 +428,7 @@ describe('the price including VAT on the product editor', () => {
       yield* Effect.promise(mount);
       yield* Effect.promise(() => typeInto('detail-price', '20'));
       expect(fieldById('detail-price-gross').value.replaceAll('\u00A0', ' ')).toBe('24,20 Kč');
-      expect(text()).toContain('merchandise.pages.products.fields.priceGrossPreview');
+      expect(text()).toContain('Cena s DPH po uložení (náhled, Kč)');
     }),
   );
 });
@@ -438,8 +438,8 @@ describe('the variants tab', () => {
     Effect.gen(function* variantsIntro() {
       shownTab = 'variants';
       yield* Effect.promise(mount);
-      expect(text()).toContain('merchandise.ui.variantsIntro');
-      expect(text()).not.toContain('Varianta má vlastní SKU');
+      expect(text()).toContain('Varianta má vlastní SKU, cenu, sklad a stav.');
+      expect(text()).toContain('se uloží při uložení ceny podle sazby Snížená (12');
       const english = translateIn('en')('merchandise.ui.variantsIntro', { vat: 'Reduced (12 %)' });
       expect(english).toContain('at the rate Reduced (12 %).');
       expect(english).not.toMatch(/[áčďéěíňóřšťúůýž]/u);
