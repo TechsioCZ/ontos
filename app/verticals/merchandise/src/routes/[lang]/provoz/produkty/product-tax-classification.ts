@@ -190,8 +190,12 @@ export const taxLabelsOf = (t: Translate, language = 'cs') => {
     noRates: t(`${KEY_PREFIX}.noRates`),
     /** Under the VAT select of a company that is not a VAT payer. */
     nonPayerHint: t(`${KEY_PREFIX}.nonPayerHint`),
+    /** Why a new product cannot be created: the company has no VAT rate in force for any classification. */
+    noRateToCreate: t(`${KEY_PREFIX}.noRateToCreate`),
+    /** Why a new product cannot take this classification: it has no rate in force for the company yet. */
     notSet,
     rateMissing,
+    rateNotInForce: (code: CzVatClassificationCode) => t(`${KEY_PREFIX}.rateNotInForce`, { name: name(code) }),
     scheduled,
   };
 };

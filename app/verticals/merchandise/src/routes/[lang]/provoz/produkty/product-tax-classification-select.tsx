@@ -1,4 +1,5 @@
 import { SelectTemplate } from '@app/admin-ui/select-template';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import { DateTime } from 'effect';
 import { selectItem } from '../../../../ui/select-item.ts';
@@ -8,6 +9,8 @@ import type { CompanyVat } from './product-tax-classification.ts';
 
 interface TaxClassificationSelectProps {
   readonly disabled?: boolean;
+  /** Why the chosen classification cannot be used, shown under the select. */
+  readonly error?: string | undefined;
   readonly onChange: (code: CzVatClassificationCode) => void;
   readonly value: CzVatClassificationCode;
   /** The selected company's rates from the staff records read (current and scheduled periods). */
@@ -19,7 +22,13 @@ interface TaxClassificationSelectProps {
  * company has no rule for is offered disabled and says so; a scheduled change shows under the select. A company Tax
  * gives no rate at all keeps the select closed and says that no VAT is set.
  */
-export const TaxClassificationSelect = ({ disabled = false, onChange, value, vat }: TaxClassificationSelectProps) => {
+export const TaxClassificationSelect = ({
+  disabled = false,
+  error,
+  onChange,
+  value,
+  vat,
+}: TaxClassificationSelectProps) => {
   const k = useProductLabel();
   const labels = useTaxLabels();
   const choices = classificationChoices(vat, DateTime.nowUnsafe());
@@ -31,24 +40,31 @@ export const TaxClassificationSelect = ({ disabled = false, onChange, value, vat
   const shown = none ? labels.noRates : regimeHint;
   const hint = [shown, confirmation].filter((part) => part !== undefined).join(' ') || undefined;
   return (
-    <SelectTemplate
-      disabled={disabled || none}
-      {...(hint === undefined ? {} : { helpText: hint })}
-      items={choices.map((choice) => ({
-        ...selectItem(choice.code, labels.choice(choice)),
-        disabled: !choiceAvailable(choice),
-      }))}
-      label={k('fields.vat')}
-      name="taxClassification"
-      onValueChange={(details) => {
-        const [next] = details.value;
-        const picked = choices.find((choice) => choice.code === next && choiceAvailable(choice));
-        if (picked !== undefined) {
-          onChange(picked.code);
-        }
-      }}
-      placeholder={k('selectPlaceholder')}
-      value={[value]}
-    />
+    <div className="flex min-w-0 flex-col gap-50">
+      <SelectTemplate
+        disabled={disabled || none}
+        {...(hint === undefined ? {} : { helpText: hint })}
+        items={choices.map((choice) => ({
+          ...selectItem(choice.code, labels.choice(choice)),
+          disabled: !choiceAvailable(choice),
+        }))}
+        label={k('fields.vat')}
+        name="taxClassification"
+        onValueChange={(details) => {
+          const [next] = details.value;
+          const picked = choices.find((choice) => choice.code === next && choiceAvailable(choice));
+          if (picked !== undefined) {
+            onChange(picked.code);
+          }
+        }}
+        placeholder={k('selectPlaceholder')}
+        value={[value]}
+      />
+      {error !== undefined && (
+        <StatusText showIcon size="sm" status="error">
+          {error}
+        </StatusText>
+      )}
+    </div>
   );
 };

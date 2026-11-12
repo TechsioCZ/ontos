@@ -1,6 +1,6 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { Effect } from 'effect';
+import { DateTime, Effect } from 'effect';
 import { constVoid } from 'effect/Function';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
@@ -38,7 +38,7 @@ import {
   priceErrorKey,
   tooLongMessage,
 } from './product-form-validation.ts';
-import { DEFAULT_TAX_CLASSIFICATION } from './product-tax-classification.ts';
+import { DEFAULT_TAX_CLASSIFICATION, classificationChoices, useTaxLabels } from './product-tax-classification.ts';
 import type { CompanyVat } from './product-tax-classification.ts';
 import { TaxClassificationSelect } from './product-tax-classification-select.tsx';
 
@@ -99,7 +99,8 @@ interface ProductDraft {
   readonly priceCzk: number;
   readonly priceText: string;
   readonly sku: string;
-  readonly taxClassificationCode: CzVatClassificationCode;
+  /** Picked by staff; until then the form uses the first classification with a rate in force. */
+  readonly taxClassificationCode?: CzVatClassificationCode;
   readonly unit: ProductUnit;
 }
 
@@ -111,7 +112,6 @@ const blankProduct: ProductDraft = {
   priceCzk: Number.NaN,
   priceText: '',
   sku: '',
-  taxClassificationCode: DEFAULT_TAX_CLASSIFICATION,
   unit: 'ks',
 };
 
@@ -256,6 +256,21 @@ export const CreateProductDialog = ({
   // The SKU the server refused as a duplicate. Only that exact value shows the message, so editing it clears it.
   const [takenSku, setTakenSku] = useState<string | null>(null);
 
+  const taxLabels = useTaxLabels();
+  const choices = classificationChoices(vat, DateTime.nowUnsafe());
+  // A new product starts on the first classification the company has a rate for (standard first).
+  const firstPriced = choices.find((choice) => choice.current !== undefined)?.code;
+  const classificationOf = (value: ProductDraft) =>
+    value.taxClassificationCode ?? firstPriced ?? DEFAULT_TAX_CLASSIFICATION;
+  const classificationError = (value: ProductDraft) => {
+    if (firstPriced === undefined) {
+      return taxLabels.noRateToCreate;
+    }
+    const code = classificationOf(value);
+    return choices.find((choice) => choice.code === code)?.current === undefined
+      ? taxLabels.rateNotInForce(code)
+      : undefined;
+  };
   const errorsOf = (value: ProductDraft) => {
     const skuTakenError = takenSku !== null && sameSku(takenSku, value.sku) ? k('validation.skuTaken') : undefined;
     const priceKey = priceErrorKey(value.priceCzk);
@@ -268,6 +283,7 @@ export const CreateProductDialog = ({
       price: priceKey === undefined ? undefined : k(priceKey),
       sku:
         value.sku.trim() === '' ? k(REQUIRED_KEY) : (skuTakenError ?? tooLongMessage(k, value.sku, PRODUCT_LIMITS.sku)),
+      taxClassification: classificationError(value),
     };
   };
   const form = useFormSave<ProductDraft>({
@@ -279,7 +295,7 @@ export const CreateProductDialog = ({
       name: value.name.trim(),
       priceMinor: Math.round(value.priceCzk * 100),
       sku: value.sku.trim(),
-      taxClassificationCode: value.taxClassificationCode,
+      taxClassificationCode: classificationOf(value),
       unit: value.unit,
     }),
     equals: sameProduct,
@@ -370,8 +386,9 @@ export const CreateProductDialog = ({
               value={[draft.unit]}
             />
             <TaxClassificationSelect
+              error={errors.taxClassification}
               onChange={(taxClassificationCode) => update({ taxClassificationCode })}
-              value={draft.taxClassificationCode}
+              value={classificationOf(draft)}
               vat={vat}
             />
           </div>
