@@ -34,7 +34,7 @@ import {
 import { CoreDatabase, makeCoreDatabase } from '@app/core-runtime/db/client';
 import { loadSpiceDbConfig } from '@app/core-runtime/access/spicedb-config';
 import type { PgClient } from '@effect/sql-pg';
-import { Config, Crypto, DateTime, Effect, FileSystem, Layer, Option, Path, Ref, Schema, Tracer } from 'effect';
+import { Config, Crypto, DateTime, Effect, FileSystem, Layer, Match, Option, Path, Ref, Schema, Tracer } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { withOptional } from '../../../../packages/core-runtime/src/access/decision/optional.ts';
@@ -110,19 +110,14 @@ interface SpanRecord {
 }
 
 /** The named ancestors of a span, nearest first, at most eight. */
-const ancestorsOf = (parent: Option.Option<Tracer.AnySpan>): readonly string[] => {
-  const names: string[] = [];
-  let current = parent;
-  while (Option.isSome(current) && names.length < 8) {
-    const span = current.value;
-    if (span._tag !== 'Span') {
-      break;
-    }
-    names.push(span.name);
-    current = span.parent;
-  }
-  return names;
-};
+const ancestorsOf = (parent: Option.Option<Tracer.AnySpan>, names: readonly string[] = []): readonly string[] =>
+  Option.isNone(parent) || names.length >= 8
+    ? names
+    : Match.value(parent.value).pipe(
+        Match.tag('Span', (span) => ancestorsOf(span.parent, [...names, span.name])),
+        Match.tag('ExternalSpan', () => names),
+        Match.exhaustive,
+      );
 
 /** A tracer that keeps every finished span's name and duration; database and engine calls are spans of their own. */
 const recordingTracer = (records: SpanRecord[]) =>

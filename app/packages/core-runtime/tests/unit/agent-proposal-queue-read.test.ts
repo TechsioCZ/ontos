@@ -302,10 +302,10 @@ const tableInput = (mode: 'batch' | 'batch-state' | 'command-recovery'): AgentPr
 
 /** How a read ended: refused, unavailable, or another failure. */
 const outcomeOfFailure = (failure: { readonly _tag: string }) => {
-  if (failure._tag === 'ReadPermissionDenied') {
+  if (Schema.is(ReadPermissionDenied)(failure)) {
     return 'denied';
   }
-  return failure._tag === 'ReadHandlerUnavailable' ? 'unavailable' : 'failed';
+  return Schema.is(ReadHandlerUnavailable)(failure) ? 'unavailable' : 'failed';
 };
 
 /**

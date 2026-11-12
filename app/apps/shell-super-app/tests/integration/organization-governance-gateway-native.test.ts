@@ -97,6 +97,8 @@ import {
   ShellInstalledModuleCatalog,
 } from '../../api/modules/installed-module-catalog.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { enrolledModuleCredentials } from '../support/module-credential-enrolment.ts';
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
 
@@ -457,20 +459,6 @@ it.live(
         const installed = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
         const config = ConfigProvider.fromUnknown({
           ONTOS_GATEWAY_ISSUER: issuer,
-          ONTOS_GATEWAY_MODULE_BINDINGS: JSON.stringify([
-            {
-              compositionRevision: snapshot.composition.revision,
-              providerKeyId: privacyKey,
-              sourceAppId: 'privacy',
-              sourceBuildMarker: 'privacy-build',
-            },
-            {
-              compositionRevision: snapshot.composition.revision,
-              providerKeyId: symmyKey,
-              sourceAppId: 'symmy-integration',
-              sourceBuildMarker: 'symmy-integration-build',
-            },
-          ]),
           ONTOS_GATEWAY_PUBLIC_JWKS: publicKeys,
         });
         const services = Layer.mergeAll(
@@ -483,6 +471,19 @@ it.live(
           Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
           Layer.succeed(OperationalScopeResolver, scopes),
           Layer.succeed(AccessDecisionGate, gate),
+          // Both module keys were issued by a host of exactly this release; the Shell derives their bindings from that.
+          enrolledModuleCredentials([
+            {
+              appId: 'privacy',
+              providerKeyId: privacyKey,
+              release: { buildMarker: 'privacy-build', compositionRevision: snapshot.composition.revision },
+            },
+            {
+              appId: 'symmy-integration',
+              providerKeyId: symmyKey,
+              release: { buildMarker: 'symmy-integration-build', compositionRevision: snapshot.composition.revision },
+            },
+          ]),
         );
         const receive = (token: string, audience: 'privacy' | 'symmy-integration') =>
           bindGatewayPrincipalVerifier(audience, { appId: audience, buildMarker: `${audience}-build` })
@@ -660,13 +661,15 @@ it.live(
             );
           };
           const wireConfiguration = ConfigProvider.fromUnknown({
-            ONTOS_GATEWAY_MODULE_API_KEY: privacyKey,
             ONTOS_SHELL_GATEWAY_BASE_URL: 'https://native-organization-shell.example/shell-super-app-api',
           });
+          // Privacy's own module key, handed over the way the host does.
+          yield* holdTestModuleCredentials({ privacy: privacyKey });
           const acquireRead = (scope: typeof sourceScope) =>
             acquireDelegatedGatewayContext(
               {
                 audience: 'symmy-integration',
+                callingAppId: 'privacy',
                 legalEntityScope: 'subject',
                 requestCorrelation: 'native-v6-shared',
                 subject: { _tag: 'OrganizationGovernanceRead', requestHash, scope },

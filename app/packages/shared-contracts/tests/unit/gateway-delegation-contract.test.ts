@@ -286,6 +286,7 @@ it.effect('refuses a response for a different admitted release', () =>
 
 it.effect('preserves the recorded executor pin on the actual worker and admission HTTP requests', () =>
   Effect.gen(function* registeredPinWire() {
+    yield* holdCallerKey;
     const expectedPrincipalId = '90000000-0000-4000-8000-000000000001';
     const context = makeWorkerContext();
     const requests: Request[] = [];
@@ -308,7 +309,13 @@ it.effect('preserves the recorded executor pin on the actual worker and admissio
       },
     ]) {
       yield* acquireDelegatedGatewayContext(
-        { audience: 'party-registry', legalEntityScope: 'tenant', requestCorrelation: 'executor-pin-wire', subject },
+        {
+          audience: 'party-registry',
+          callingAppId: 'catalog',
+          legalEntityScope: 'tenant',
+          requestCorrelation: 'executor-pin-wire',
+          subject,
+        },
         crypto,
       ).pipe(
         Effect.provideService(ConfigProvider.ConfigProvider, configuration),
@@ -339,11 +346,13 @@ it.effect('preserves the recorded executor pin on the actual worker and admissio
 
 it.effect('sends an explicit historical delivery recovery witness without a claim or admission substitution', () =>
   Effect.gen(function* historicalRecoveryWire() {
+    yield* holdCallerKey;
     const requests: Request[] = [];
     const deliveryId = '70000000-0000-4000-8000-000000000001';
     yield* acquireDelegatedGatewayContext(
       {
         audience: 'party-registry',
+        callingAppId: 'catalog',
         legalEntityScope: 'tenant',
         requestCorrelation: 'historical-delivery-wire',
         subject: {
@@ -401,6 +410,7 @@ it.effect('sends an explicit historical delivery recovery witness without a clai
 
 it.effect('refuses conditional delegation outside the actual Core operation lease before HTTP', () =>
   Effect.gen(function* conditionalLeaseRequired() {
+    yield* holdCallerKey;
     const requests: Request[] = [];
     const scope = trustVerifiedGatewayPrincipalContext(principal, compositionRevision, {
       assertion: Redacted.make('fixture-source-assertion'),
@@ -409,6 +419,7 @@ it.effect('refuses conditional delegation outside the actual Core operation leas
     const failure = yield* acquireDelegatedGatewayContext(
       {
         audience: 'privacy',
+        callingAppId: 'catalog',
         legalEntityScope: 'subject',
         requestCorrelation: 'conditional-outside-lease',
         subject: {
@@ -431,10 +442,12 @@ it.effect('refuses conditional delegation outside the actual Core operation leas
 
 it.effect('refuses conditional worker delegation outside its actual Core worker lease before HTTP', () =>
   Effect.gen(function* conditionalWorkerLeaseRequired() {
+    yield* holdCallerKey;
     const requests: Request[] = [];
     const failure = yield* acquireDelegatedGatewayContext(
       {
         audience: 'party-registry',
+        callingAppId: 'catalog',
         legalEntityScope: 'tenant',
         requestCorrelation: 'conditional-worker-outside-lease',
         subject: {
@@ -485,10 +498,12 @@ it.effect('round trips only the conditional worker requirement key without a cal
 
 it.effect('refuses conditional current-worker recovery without its actual live handler lease before HTTP', () =>
   Effect.gen(function* currentWorkerRecoveryRequiresLiveLease() {
+    yield* holdCallerKey;
     const requests: Request[] = [];
     const failure = yield* acquireDelegatedGatewayContext(
       {
         audience: 'party-registry',
+        callingAppId: 'catalog',
         legalEntityScope: 'tenant',
         requestCorrelation: 'closed-worker-recovery',
         subject: {
@@ -516,10 +531,12 @@ it.effect('refuses conditional current-worker recovery without its actual live h
 
 it.effect('preserves post-commit admission recovery conditional keys for independent native Shell evidence', () =>
   Effect.gen(function* admissionRecoveryConditionalWire() {
+    yield* holdCallerKey;
     const requests: Request[] = [];
     yield* acquireDelegatedGatewayContext(
       {
         audience: 'party-registry',
+        callingAppId: 'catalog',
         legalEntityScope: 'tenant',
         requestCorrelation: 'admission-recovery-key',
         subject: {

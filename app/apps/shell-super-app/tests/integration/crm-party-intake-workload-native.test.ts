@@ -54,6 +54,7 @@ import {
   Effect,
   Exit,
   FileSystem,
+  flow,
   Layer,
   Option,
   Path,
@@ -90,7 +91,7 @@ import {
   retireOwnModuleCredentials,
 } from '../../api/auth/module-credential-provisioning.service.ts';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
-import { ApiKeyIssueResponseSchema, AuthenticatedSessionSchema } from '../../shared/api.ts';
+import { ApiKeyIssueResponseSchema, AuthenticatedSessionSchema } from '../../shared/browser-api.ts';
 import { startNativeHttpServer } from '../support/native-http-server.ts';
 import {
   allocateLoopbackPort,
@@ -98,7 +99,7 @@ import {
   startHostedOwnerWithHandover,
   startPackagedApplication,
 } from '../support/server-owner-relay-native-fixture.ts';
-import { makeShellTestAuthentication } from '../support/shell-authentication.ts';
+import { shellTestAuthentication } from '../support/shell-authentication.ts';
 
 /** CRM's own internal workload (O73), registered by the operator per tenant. */
 const INTAKE_WORKLOAD = 'demo.crm.party-intake';
@@ -108,8 +109,8 @@ const SHELL_API = '/shell-super-app-api';
 const CRM_API = '/crm-api';
 
 type PartySubjectKey = NonNullable<
-  Parameters<typeof createPartyWithAuthorization>[0]['candidate']['subjectEvidence']
->[number]['subjectKey'];
+  NonNullable<Parameters<typeof createPartyWithAuthorization>[0]['candidate']['subjectEvidence']>[number]['subjectKey']
+>;
 const partySubjectKey = Brand.nominal<PartySubjectKey>()('workload-intake-subject');
 
 const authorizationCatalogUrl = new URL('../../../../topology/authorization-catalog.json', import.meta.url);
@@ -120,11 +121,10 @@ const CrmEntityIdSchema = Schema.String.pipe(Schema.brand('CrmEntityId'));
 
 /** The status a refused owner or Shell answer names; a refusal that names none fails the decode. */
 const RefusalStatusSchema = Schema.Struct({ status: Schema.Number });
-const refusalStatus = (failure: unknown) =>
-  Option.match(Schema.decodeUnknownOption(RefusalStatusSchema)(failure), {
-    onNone: () => -1,
-    onSome: ({ status }) => status,
-  });
+const refusalStatus = flow(
+  Schema.decodeUnknownOption(RefusalStatusSchema),
+  Option.match({ onNone: () => -1, onSome: ({ status }) => status }),
+);
 
 const CrmRecordsSchema = Schema.Struct({
   revision: Schema.Int,
@@ -158,7 +158,7 @@ const PendingIntakeSchema = Schema.Struct({
   items: Schema.Array(Schema.Struct({ id: CrmEntityIdSchema, linked: Schema.Boolean })),
   revision: Schema.Int,
 });
-const PartyRowSchema = Schema.Array(Schema.Struct({ displayName: Schema.NullOr(Schema.String) }));
+const PartyRowSchema = Schema.Array(Schema.Struct({ displayName: Schema.OptionFromNullOr(Schema.String) }));
 const CounterpartyRowSchema = Schema.Array(Schema.Struct({ acceptedBy: Schema.String, partyId: PartyIdSchema }));
 
 /** Only the shape of a child's warning or error line, never its content: a line may carry a token. */
@@ -261,7 +261,7 @@ const makeCrmShellFixture = Effect.fn('CrmIntakeWorkloadNative.makeShellFixture'
     { executor: database },
     { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
   );
-  const authentication = yield* makeShellTestAuthentication({ allowFixtureSignUp: true }).pipe(
+  const authentication = yield* shellTestAuthentication({ allowFixtureSignUp: true }).pipe(
     Effect.provideService(AuthConfig, configuration),
     Effect.provideService(AuthDatabase, persistence),
     Effect.provideService(CoreDatabase, { executor: database }),
@@ -826,7 +826,7 @@ it.live(
                 const parties = yield* Schema.decodeUnknownEffect(PartyRowSchema)(
                   yield* fixture.admin`select current_display_name as "displayName" from party.parties where tenant_id = ${core.tenantId}::uuid and party_id = ${partyId}::uuid`,
                 );
-                expect(parties).toEqual([{ displayName: name }]);
+                expect(parties).toEqual([{ displayName: Option.some(name) }]);
                 const counterparties = yield* Schema.decodeUnknownEffect(CounterpartyRowSchema)(
                   yield* fixture.admin`select party_id::text as "partyId", accepted_by_principal_id::text as "acceptedBy" from party.counterparties where tenant_id = ${core.tenantId}::uuid and counterparty_id = ${counterpartyId}::uuid and legal_entity_id = ${core.legalEntityId}::uuid`,
                 );
