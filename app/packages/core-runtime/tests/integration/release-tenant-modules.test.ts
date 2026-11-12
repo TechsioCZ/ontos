@@ -275,10 +275,11 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
           },
         ]);
 
-        // The next release finds it active: nothing installed, nothing reconciled, no new history or wake-up.
+        // The next release finds it active: nothing installed, no new history or wake-up, and its reconcile of the
+        // Tenant writes nothing because the projection is current.
         const second = yield* install(declared(tenantId));
         expect(second.modules[0]).toMatchObject({ moduleKey: TAX, outcome: 'already_active' });
-        expect(second.reconciles).toEqual([]);
+        expect(second.reconciles).toEqual([{ deletions: 0, tenantId, touches: 0 }]);
         expect(yield* historyOf(admin, tenantId)).toHaveLength(1);
         expect(yield* wakeUpsOf(admin, tenantId)).toEqual([]);
       }),
@@ -314,6 +315,31 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
           expect(failed.reconciles[0]?.failure).toContain('the projection could not be reconciled');
           expect(yield* wakeUpsOf(admin, tenantId)).toEqual([]);
           yield* Ref.set(left, 0);
+        }),
+      );
+    }),
+  );
+
+  suite.effect('repairs on its next run a module it installed whose reconcile failed, and makes it effective', () =>
+    Effect.gen(function* repairedNextRun() {
+      const left = yield* Ref.make(0);
+      yield* withProjectionTenant({ activeModules: [SELLING], wrapCompiler: failingFirst(left) }, (tenantId) =>
+        Effect.gen(function* failedThenRepaired() {
+          yield* bootstrapOwner(tenantId);
+          yield* activateCatalogRelease({ modules: deployment }).pipe(Effect.orDie);
+          // The engine refuses the first projection and every retry: the module is installed, its rights are not.
+          yield* Ref.set(left, 100);
+          const first = yield* install([{ moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }]);
+          expect(first.modules[0]).toMatchObject({ outcome: 'installed' });
+          expect(first.reconciles[0]?.failure).toContain('the projection could not be reconciled');
+          expect(yield* decide(tenantId)).toBe('DENIED deny.insufficient_grant');
+          // The next run (the next deploy) finds the module active and reconciles the Tenant anyway.
+          yield* Ref.set(left, 0);
+          const next = yield* install([{ moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }]);
+          expect(next.modules[0]).toMatchObject({ outcome: 'already_active' });
+          expect(next.reconciles[0]).not.toHaveProperty('failure');
+          expect(next.reconciles[0]?.touches).toBeGreaterThan(0);
+          expect(yield* decide(tenantId)).toBe('ALLOWED allow.granted');
         }),
       );
     }),
