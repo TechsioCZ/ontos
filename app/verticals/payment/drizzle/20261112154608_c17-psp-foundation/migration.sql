@@ -184,7 +184,7 @@ CREATE TABLE "payment"."psp_provider_dispatches" (
         and ("state" not in ('PREPARED', 'ACKNOWLEDGED', 'REJECTED_BEFORE_EFFECT', 'OUTCOME_UNKNOWN') or "prepared_at" is not null)
         and ("state" not in ('AWAITING_TARGET', 'NOT_SENT', 'UNSUPPORTED', 'TARGET_UNRESOLVED') or "prepared_at" is null)
         and ("idempotency_key_hash" is null or "prepared_at" is not null)
-        and ("request_body" is null or ("prepared_at" is not null and octet_length("request_body") between 1 and 65536))
+        and ("request_body" is null or ("prepared_at" is not null and octet_length("request_body") <= 65536))
         and ("request_body" is null) = ("request_headers" is null)
         and ("request_headers" is null or jsonb_typeof("request_headers") = 'array')),
 	CONSTRAINT "payment_psp_dispatches_replay_ck" CHECK (("replay_starts_at" is null) = ("replay_expires_at" is null)

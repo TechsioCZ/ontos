@@ -1,9 +1,11 @@
+import { readFileSync } from 'node:fs';
+
 import type { OutboxPayload } from '@app/payment/outbox/payment-core-operation-requested-v1';
-import { Effect, Exit, Option, Schema } from 'effect';
+import { DateTime, Effect, Exit, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { deriveProviderCorrelation } from '../../src/integrations/psp/psp-correlation.ts';
-import { ProviderObjectRefSchema } from '../../src/integrations/psp/psp-request.ts';
+import { GatewayPayerContactSchema, ProviderObjectRefSchema } from '../../src/integrations/psp/psp-request.ts';
 import {
   makeTestDatabaseFromClient,
   testDatabaseClients,
@@ -18,7 +20,14 @@ import {
 } from './database-fixture.ts';
 import { stripeEventEnvelope } from '../fixtures/stripe/stripe-events.ts';
 import {
+  GOPAY_FIXTURE_PAYMENT_ID,
+  gopayCreateResponseBody,
+  gopayInquiryResponseBody,
+} from '../fixtures/gopay/payment-responses.ts';
+import { gopayRefundResponseBody, gopayTimestampedRefundHistoryBody } from '../fixtures/gopay/refund-responses.ts';
+import {
   STRIPE_FIXTURE_PAYMENT_INTENT_ID,
+  STRIPE_FIXTURE_SESSION_ID,
   stripeCheckoutSessionObject,
   stripePaymentIntentObject,
   stripeRefundObject,
@@ -30,20 +39,24 @@ import {
   respond,
 } from '../support/psp-conformance-provider.fixture.ts';
 import type { CredentialDocument, RouteScript } from '../support/psp-conformance-provider.fixture.ts';
+import type { GatewayProviderAdaptersContract } from '../../src/integrations/psp/psp-adapter.ts';
 import {
   capturedStripeNotification,
   deliverExecution,
+  dispatchRecordOf,
   dispatchStateOf,
   evidenceOf,
   NATIVE_RETURN_URL,
   nativeAccountFor,
   nativeBindingFor,
+  nativeCancellationFor,
   nativeConfigureEnablement,
   nativeCollectionFor,
   nativeHarnessOf,
   nativeRefundFor,
   nativeRetireBinding,
   processNotification,
+  reprepareDispatch,
 } from '../support/psp-native-gateway.fixture.ts';
 import type { NativeBinding, NativeHarness } from '../support/psp-native-gateway.fixture.ts';
 
@@ -63,8 +76,25 @@ const STRIPE_API = 'https://api.stripe.com';
 const STRIPE_CREATE = `POST ${STRIPE_API}/v1/checkout/sessions`;
 const STRIPE_REFUNDS = `POST ${STRIPE_API}/v1/refunds`;
 const STRIPE_INTENT = `GET ${STRIPE_API}/v1/payment_intents/${STRIPE_FIXTURE_PAYMENT_INTENT_ID}`;
+const STRIPE_EXPIRE = `POST ${STRIPE_API}/v1/checkout/sessions/${STRIPE_FIXTURE_SESSION_ID}/expire`;
 const STRIPE_SECRET_REF = 'stripe.native.conformance';
 const GOPAY_SECRET_REF = 'gopay.native.conformance';
+const GOPAY_API = 'https://gw.sandbox.gopay.com/api';
+const GOPAY_TOKEN = `POST ${GOPAY_API}/oauth2/token`;
+const GOPAY_CREATE = `POST ${GOPAY_API}/payments/payment`;
+const GOPAY_PAYMENT = `GET ${GOPAY_API}/payments/payment/${GOPAY_FIXTURE_PAYMENT_ID}`;
+const GOPAY_REFUND = `POST ${GOPAY_API}/payments/payment/${GOPAY_FIXTURE_PAYMENT_ID}/refund`;
+const GOPAY_REFUND_HISTORY = `GET ${GOPAY_API}/payments/payment/${GOPAY_FIXTURE_PAYMENT_ID}/refunds`;
+const GOPAY_AMOUNT = 10_000;
+const COMGATE_SECRET_REF = 'comgate.native.conformance';
+const COMGATE_SECRET = 'comgate-shop-secret-c17-native';
+const COMGATE_API = 'https://payments.comgate.cz';
+const COMGATE_TRANS_ID = 'AB12-CD34-EF56';
+const COMGATE_CREATE = `POST ${COMGATE_API}/v2.0/payment.json`;
+const COMGATE_STATUS = `GET ${COMGATE_API}/v2.0/payment/transId/${COMGATE_TRANS_ID}.json`;
+const COMGATE_CANCEL = `DELETE ${COMGATE_API}/v2.0/payment/transId/${COMGATE_TRANS_ID}.json`;
+const COMGATE_REFUND = `POST ${COMGATE_API}/v2.0/refund.json`;
+const COMGATE_AMOUNT = 10_000;
 const STRIPE_AMOUNT = 159_950;
 const RECEIVED_AT = '2026-11-12T09:00:00.000Z';
 
@@ -74,6 +104,46 @@ const stripeEntry = {
   secretKey: ['sk', 'test', 'c17', 'native', 'not', 'a', 'key'].join('_'),
   webhookSigningSecret: 'whsec_c17_native_not_a_secret',
 };
+
+const gopayEntry = { clientId: 'gopay-client-native', clientSecret: 'gopay-secret-native-c17', family: 'GOPAY' };
+const comgateEntry = { family: 'COMGATE', secret: COMGATE_SECRET };
+const gopayToken = respond(200, '{"token_type":"bearer","access_token":"gopay-access-token-native","expires_in":1800}');
+
+const comgateFixture = (name: string) => readFileSync(new URL(`../fixtures/comgate/${name}`, import.meta.url), 'utf-8');
+/** The documented Comgate status answer for the collection with order reference `refId`. */
+const comgateStatus = (refId: string, status: string) =>
+  respond(
+    200,
+    JSON.stringify({
+      ...Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)))(
+        comgateFixture('status-paid.json'),
+      ),
+      refId,
+      status,
+      test: 'true',
+    }),
+  );
+
+/**
+ * C16 has no payer-contact owner yet (plan N9), so the executor prepares a Comgate COLLECT without one and Comgate
+ * refuses it. Only for the COLLECT that sets up a Comgate cancel or refund, this stands in for that missing owner by
+ * handing the production adapter a payer contact; every other call is the production adapter unchanged.
+ */
+const NATIVE_PAYER = Schema.decodeUnknownSync(GatewayPayerContactSchema)({
+  email: Option.some('payer@example.test'),
+  fullName: Option.some('Test Payer'),
+  phone: Option.none(),
+});
+const withPayerContact = (adapters: GatewayProviderAdaptersContract): GatewayProviderAdaptersContract => ({
+  forFamily: (family) =>
+    adapters.forFamily(family).pipe(
+      Effect.map((adapter) => ({
+        ...adapter,
+        prepareCollect: (target, request) =>
+          adapter.prepareCollect(target, { ...request, payerContact: Option.some(NATIVE_PAYER) }),
+      })),
+    ),
+});
 
 const intentRef = Schema.decodeUnknownSync(ProviderObjectRefSchema)({
   _tag: 'STRIPE_PAYMENT_INTENT',
@@ -355,6 +425,285 @@ it.live(
         expect(replaced.routes).toEqual([STRIPE_CREATE]);
         expect(replaced.returnUrls).toEqual([NATIVE_RETURN_URL, NATIVE_RETURN_URL]);
         expect(replaced.dispatch).toEqual([[original.bindingId, 'ACKNOWLEDGED']]);
+      }),
+    ),
+);
+
+/** The ledger's evidence rows of `operationId` as [fact kind, submission state]. */
+const evidenceFor = (harness: NativeHarness, paymentId: string, operationId: string) =>
+  evidenceOf(harness, paymentId).pipe(
+    Effect.map((rows) => rows.filter(([id]) => id === operationId).map(([, factKind, state]) => [factKind, state])),
+  );
+
+/** One scripted COLLECT delivery through the production executor; returns the provider calls it made. */
+const collectThrough = Effect.fn('PspGatewayChainTest.collectThrough')(function* collectThrough(
+  harness: NativeHarness,
+  collect: OutboxPayload,
+  routes: RouteScript,
+  credentials: CredentialDocument,
+  adapt: (adapters: GatewayProviderAdaptersContract) => GatewayProviderAdaptersContract = (adapters) => adapters,
+) {
+  const step = yield* adaptersOver(routes, credentials);
+  const exit = yield* deliverExecution(harness, collect, adapt(step.adapters)).pipe(
+    Effect.provide(credentialConfig(credentials)),
+  );
+  expect(Exit.isSuccess(exit)).toBe(true);
+  return step;
+});
+
+it.live(
+  '#1156 #1158 #1159 boundary executor+ledger routines+production Stripe adapter: a body-less Checkout Session expire is prepared with its replay record, sent once and confirmed',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* stripeCancel() {
+        const credentials = { [STRIPE_SECRET_REF]: stripeEntry };
+        const harness = yield* nativeHarness;
+        const binding = yield* nativeBindingFor(harness, 'STRIPE', STRIPE_SECRET_REF);
+        const collect = yield* nativeCollectionFor(harness, binding, STRIPE_AMOUNT);
+        const collected = yield* stripeCollection(harness, collect, credentials);
+        expect(collected.dispatch).toEqual([[binding.bindingId, 'ACKNOWLEDGED']]);
+
+        const cancel = yield* nativeCancellationFor(harness, binding, collect);
+        const cancelStep = yield* adaptersOver(
+          {
+            [STRIPE_EXPIRE]: [
+              respond(
+                200,
+                JSON.stringify(
+                  stripeCheckoutSessionObject({
+                    orderReference: deriveProviderCorrelation(collect.operationId).orderReference,
+                    paymentIntent: null,
+                    paymentStatus: 'unpaid',
+                    status: 'expired',
+                  }),
+                ),
+              ),
+            ],
+          },
+          credentials,
+        );
+        const cancelled = yield* deliverExecution(harness, cancel, cancelStep.adapters).pipe(
+          Effect.provide(credentialConfig(credentials)),
+        );
+        expect(Exit.isSuccess(cancelled)).toBe(true);
+
+        // The expire request has no body; it carries the cancel's own idempotency key.
+        expect(cancelStep.sent.map(({ route }) => route)).toEqual([STRIPE_EXPIRE]);
+        expect(cancelStep.sent[0]?.body).toBe('');
+        expect(cancelStep.sent[0]?.headers['idempotency-key']).toBe(
+          deriveProviderCorrelation(cancel.operationId).idempotencyKey,
+        );
+        expect((yield* dispatchStateOf(harness, cancel.operationId)).pipe(Option.map(([state]) => state))).toEqual(
+          Option.some('ACKNOWLEDGED'),
+        );
+        expect(yield* evidenceFor(harness, cancel.paymentId, cancel.operationId)).toEqual([
+          ['CANCEL_CONFIRMED', 'PENDING_SUBMISSION'],
+        ]);
+        // The same expire answer proved that the collection was never effected (#1156 target finding).
+        expect(yield* evidenceFor(harness, cancel.paymentId, collect.operationId)).toEqual([
+          ['COLLECTION_NOT_EFFECTED', 'PENDING_SUBMISSION'],
+        ]);
+
+        // The exact replay record: the empty body, the non-secret headers, the key hash and the 24 h window.
+        const record = yield* dispatchRecordOf(harness, cancel.operationId).pipe(Effect.flatMap(Effect.fromOption));
+        expect(record.requestBody).toEqual(new Uint8Array());
+        expect(record.requestHeaders).toEqual([{ name: 'content-type', value: 'application/x-www-form-urlencoded' }]);
+        expect(record.idempotencyKeyHash).toMatch(/^[a-f0-9]{64}$/u);
+        expect(
+          Option.all([
+            Option.fromUndefinedOr(record.replayStartsAt),
+            Option.fromUndefinedOr(record.replayExpiresAt),
+          ]).pipe(Option.map(([starts, expires]) => DateTime.toEpochMillis(expires) - DateTime.toEpochMillis(starts))),
+        ).toEqual(Option.some(86_400_000));
+
+        // The same request again is the existing row; a changed request under the same operation is a conflict.
+        const storedHash = yield* Effect.fromOption(Option.fromUndefinedOr(record.requestHash));
+        expect(yield* reprepareDispatch(harness, record, storedHash)).toBe('EXISTING');
+        expect(yield* reprepareDispatch(harness, record, 'f'.repeat(64))).toBe('CONFLICT request_mismatch');
+
+        // A redelivery of the answered cancel sends nothing.
+        const again = yield* adaptersOver({}, credentials);
+        const redelivered = yield* deliverExecution(harness, cancel, again.adapters).pipe(
+          Effect.provide(credentialConfig(credentials)),
+        );
+        expect(Exit.isSuccess(redelivered)).toBe(true);
+        expect(again.sent).toEqual([]);
+      }),
+    ),
+);
+
+it.live(
+  '#1156 #1158 #1159 boundary executor+ledger routines+production Comgate adapter: a transaction-id DELETE cancel is prepared, sent once and confirmed by the status lookup',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* comgateCancel() {
+        const credentials = { [COMGATE_SECRET_REF]: comgateEntry };
+        const harness = yield* nativeHarness;
+        const binding = yield* nativeBindingFor(harness, 'COMGATE', COMGATE_SECRET_REF);
+        const collect = yield* nativeCollectionFor(harness, binding, COMGATE_AMOUNT);
+        yield* collectThrough(
+          harness,
+          collect,
+          { [COMGATE_CREATE]: [respond(200, comgateFixture('create-success.json'))] },
+          credentials,
+          withPayerContact,
+        );
+        expect(yield* dispatchStateOf(harness, collect.operationId)).toEqual(
+          Option.some(['ACKNOWLEDGED', null, `COMGATE_TRANSACTION:${COMGATE_TRANS_ID}`]),
+        );
+
+        const cancel = yield* nativeCancellationFor(harness, binding, collect);
+        const cancelStep = yield* adaptersOver(
+          {
+            [COMGATE_CANCEL]: [respond(200, comgateFixture('result-ok.json'))],
+            [COMGATE_STATUS]: [
+              comgateStatus(deriveProviderCorrelation(collect.operationId).orderReference, 'CANCELLED'),
+            ],
+          },
+          credentials,
+        );
+        const cancelled = yield* deliverExecution(harness, cancel, cancelStep.adapters).pipe(
+          Effect.provide(credentialConfig(credentials)),
+        );
+        expect(Exit.isSuccess(cancelled)).toBe(true);
+        expect(cancelStep.sent.map(({ route }) => route)).toEqual([COMGATE_CANCEL, COMGATE_STATUS]);
+        expect((yield* dispatchStateOf(harness, cancel.operationId)).pipe(Option.map(([state]) => state))).toEqual(
+          Option.some('ACKNOWLEDGED'),
+        );
+        expect(yield* evidenceFor(harness, cancel.paymentId, cancel.operationId)).toEqual([
+          ['CANCEL_CONFIRMED', 'PENDING_SUBMISSION'],
+        ]);
+        // Comgate never replays: no stored request bytes and no replay window.
+        const record = yield* dispatchRecordOf(harness, cancel.operationId).pipe(Effect.flatMap(Effect.fromOption));
+        expect([record.requestBody, record.replayStartsAt, record.idempotencyKeyHash]).toEqual([
+          undefined,
+          undefined,
+          undefined,
+        ]);
+        expect(yield* reprepareDispatch(harness, record, 'f'.repeat(64))).toBe('CONFLICT request_mismatch');
+      }),
+    ),
+);
+
+it.live(
+  '#1156 #1159 L3-14 boundary executor+ledger routines+production GoPay adapter: a GoPay cancel ends UNSUPPORTED with CANCEL_NOT_EFFECTED and reaches no provider',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* gopayCancel() {
+        const credentials = { [GOPAY_SECRET_REF]: gopayEntry };
+        const harness = yield* nativeHarness;
+        const binding = yield* nativeBindingFor(harness, 'GOPAY', GOPAY_SECRET_REF);
+        const collect = yield* nativeCollectionFor(harness, binding, GOPAY_AMOUNT);
+        const { orderReference } = deriveProviderCorrelation(collect.operationId);
+        yield* collectThrough(
+          harness,
+          collect,
+          { [GOPAY_CREATE]: [respond(200, gopayCreateResponseBody(orderReference))], [GOPAY_TOKEN]: [gopayToken] },
+          credentials,
+        );
+        expect((yield* dispatchStateOf(harness, collect.operationId)).pipe(Option.map(([state]) => state))).toEqual(
+          Option.some('ACKNOWLEDGED'),
+        );
+
+        const cancel = yield* nativeCancellationFor(harness, binding, collect);
+        const cancelStep = yield* adaptersOver({}, credentials);
+        const cancelled = yield* deliverExecution(harness, cancel, cancelStep.adapters).pipe(
+          Effect.provide(credentialConfig(credentials)),
+        );
+        expect(Exit.isSuccess(cancelled)).toBe(true);
+        expect(cancelStep.sent).toEqual([]);
+        expect(yield* dispatchStateOf(harness, cancel.operationId)).toEqual(Option.some(['UNSUPPORTED', null, null]));
+        expect(yield* evidenceFor(harness, cancel.paymentId, cancel.operationId)).toEqual([
+          ['CANCEL_NOT_EFFECTED', 'PENDING_SUBMISSION'],
+        ]);
+        // No fallback: the collection is untouched and no refund was created or sent.
+        expect((yield* dispatchStateOf(harness, collect.operationId)).pipe(Option.map(([state]) => state))).toEqual(
+          Option.some('ACKNOWLEDGED'),
+        );
+      }),
+    ),
+);
+
+it.live(
+  '#1156 #1158 #1159 boundary executor+ledger routines+production GoPay and Comgate adapters: a refund is prepared, sent once and recorded as pending',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* gopayComgateRefund() {
+        const credentials = { [COMGATE_SECRET_REF]: comgateEntry, [GOPAY_SECRET_REF]: gopayEntry };
+        const harness = yield* nativeHarness;
+
+        // GoPay: refund of 40 CZK on the acknowledged payment, then the refund-history read.
+        const gopayBinding = yield* nativeBindingFor(harness, 'GOPAY', GOPAY_SECRET_REF);
+        const gopayCollect = yield* nativeCollectionFor(harness, gopayBinding, GOPAY_AMOUNT);
+        const gopayOrder = deriveProviderCorrelation(gopayCollect.operationId).orderReference;
+        yield* collectThrough(
+          harness,
+          gopayCollect,
+          { [GOPAY_CREATE]: [respond(200, gopayCreateResponseBody(gopayOrder))], [GOPAY_TOKEN]: [gopayToken] },
+          credentials,
+        );
+        const gopayRefund = yield* nativeRefundFor(harness, gopayBinding, gopayCollect, 4000);
+        const gopayStep = yield* collectThrough(
+          harness,
+          gopayRefund,
+          {
+            [GOPAY_PAYMENT]: [
+              respond(
+                200,
+                gopayInquiryResponseBody({
+                  amount: GOPAY_AMOUNT,
+                  goid: '8123456789',
+                  orderNumber: gopayOrder,
+                  state: 'PARTIALLY_REFUNDED',
+                }),
+              ),
+            ],
+            [GOPAY_REFUND]: [respond(200, gopayRefundResponseBody('ACCEPTED'))],
+            [GOPAY_REFUND_HISTORY]: [
+              respond(
+                200,
+                gopayTimestampedRefundHistoryBody([
+                  { amount: 4000, dateRequested: '2026-11-12T11:00:00.000+0100', state: 'REQUESTED' },
+                ]),
+              ),
+            ],
+            [GOPAY_TOKEN]: [gopayToken],
+          },
+          credentials,
+        );
+        expect(gopayStep.callsTo(GOPAY_REFUND)).toHaveLength(1);
+        expect(gopayStep.callsTo(GOPAY_REFUND)[0]?.body).toContain('amount=4000');
+        expect((yield* dispatchStateOf(harness, gopayRefund.operationId)).pipe(Option.map(([state]) => state))).toEqual(
+          Option.some('ACKNOWLEDGED'),
+        );
+        expect(yield* evidenceFor(harness, gopayRefund.paymentId, gopayRefund.operationId)).toEqual([
+          ['REFUND_PENDING', 'PENDING_SUBMISSION'],
+        ]);
+
+        // Comgate: refund of 40 CZK on the acknowledged transaction; Comgate documents no completion (N10).
+        const comgateBinding = yield* nativeBindingFor(harness, 'COMGATE', COMGATE_SECRET_REF);
+        const comgateCollect = yield* nativeCollectionFor(harness, comgateBinding, COMGATE_AMOUNT);
+        yield* collectThrough(
+          harness,
+          comgateCollect,
+          { [COMGATE_CREATE]: [respond(200, comgateFixture('create-success.json'))] },
+          credentials,
+          withPayerContact,
+        );
+        const comgateRefund = yield* nativeRefundFor(harness, comgateBinding, comgateCollect, 4000);
+        const comgateStep = yield* collectThrough(
+          harness,
+          comgateRefund,
+          { [COMGATE_REFUND]: [respond(200, comgateFixture('result-ok.json'))] },
+          credentials,
+        );
+        expect(comgateStep.sent.map(({ route }) => route)).toEqual([COMGATE_REFUND]);
+        expect(
+          (yield* dispatchStateOf(harness, comgateRefund.operationId)).pipe(Option.map(([state]) => state)),
+        ).toEqual(Option.some('ACKNOWLEDGED'));
+        expect(yield* evidenceFor(harness, comgateRefund.paymentId, comgateRefund.operationId)).toEqual([
+          ['REFUND_PENDING', 'PENDING_SUBMISSION'],
+        ]);
       }),
     ),
 );
