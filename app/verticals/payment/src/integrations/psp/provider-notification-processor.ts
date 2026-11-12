@@ -33,13 +33,16 @@ import type { ProviderFindingResult } from './psp-result.ts';
  *
  * Correlation:
  * 1. the dispatch that recorded one of the notification's provider refs (same binding);
- * 2. else the COLLECT dispatch with the candidate order reference of a signed provider object (Stripe metadata),
- *    accepted only when the binding's own lookup proves that order reference for that operation. An
- *    OUTCOME_UNKNOWN dispatch then becomes ACKNOWLEDGED with the provider ref (`correlateUnknown`), so a later
- *    refund or cancel has its provider target;
- * 3. else HELD_UNCORRELATED. GoPay and Comgate notifications carry no order reference before a lookup, and
- *    their lookup needs the expected operation, so a lost GoPay/Comgate create response stays
- *    HELD_UNCORRELATED here and is resolved by reconciliation (handoff L-NOTIFY).
+ * 2. else the dispatch with the candidate order reference of the notification's object: the one a signed
+ *    provider object states (Stripe metadata), otherwise the one the binding's own read of that object states
+ *    (GoPay `order_number`, Comgate `refId`; `readOrderReference`). That is the REFUND dispatch for a
+ *    notification about a refund object, otherwise the COLLECT dispatch. It is accepted only when the binding's
+ *    own lookup of the notification's object, with the expected effect read from Payment, proves that order
+ *    reference for that operation. A PREPARED or OUTCOME_UNKNOWN dispatch (response never recorded) then becomes
+ *    ACKNOWLEDGED with the provider ref (`correlateUnknown`), so a later refund or cancel has its provider target.
+ *    A refund notification whose refund is not recorded tries this before falling back to its payment's
+ *    dispatch;
+ * 3. else HELD_UNCORRELATED.
  *
  * Failures: binding resolution, ledger and provider unavailability fail the delivery (retried). A permanent
  * refusal of the governed submission path settles the notification as SUBMISSION_HELD and leaves the evidence
@@ -155,15 +158,37 @@ const lookupRefOf = (record: ProviderDispatchRecord, notificationRef: ProviderOb
 
 const isStripeRefund = Schema.is(ProviderObjectRefSchema.members[3]);
 
-/** The first collection-object ref of the notification (never a refund object) for order-reference correlation. */
-const collectionRefOf = (notification: StoredProviderNotification) =>
-  Arr.findFirst(notification.trigger.providerRefs, (ref) => !isStripeRefund(ref));
+/** The notification's refund object: a refund notification is about that refund, not its payment. */
+const refundRefOf = (notification: StoredProviderNotification) =>
+  Arr.findFirst(notification.trigger.providerRefs, isStripeRefund);
+
+/**
+ * The object order-reference correlation is about: the refund object of a refund notification (REFUND
+ * dispatch), else the first collection object (COLLECT dispatch).
+ */
+const orderReferenceSubjectOf = (
+  notification: StoredProviderNotification,
+): Option.Option<{ readonly kind: 'COLLECT' | 'REFUND'; readonly ref: ProviderObjectRef }> =>
+  Option.match(refundRefOf(notification), {
+    onNone: () =>
+      Arr.findFirst(notification.trigger.providerRefs, (ref) => !isStripeRefund(ref)).pipe(
+        Option.map((ref) => ({ kind: 'COLLECT' as const, ref })),
+      ),
+    onSome: (ref) => Option.some({ kind: 'REFUND' as const, ref }),
+  });
 
 /** The order reference a signed provider object states; only a candidate until the lookup proves it. */
-const orderReferenceCandidateOf = (notification: StoredProviderNotification): Option.Option<GatewayOrderReference> =>
+const signedOrderReferenceOf = (notification: StoredProviderNotification): Option.Option<GatewayOrderReference> =>
   notification.trigger.family === 'STRIPE'
     ? notification.trigger.signedObject.pipe(Option.flatMap((signed) => stripeSignedObjectOrderReference(signed)))
     : Option.none();
+
+/** The signed candidate, else the one the binding's own read of the object states; still only a candidate. */
+const orderReferenceCandidateOf = (context: CorrelationContext, ref: ProviderObjectRef) =>
+  Option.match(signedOrderReferenceOf(context.notification), {
+    onNone: () => context.adapter.readOrderReference(context.target, ref),
+    onSome: (signed) => Effect.succeed(Option.some(signed)),
+  });
 
 interface Correlation {
   readonly findings: readonly ProviderFindingResult[];
@@ -222,25 +247,36 @@ const byProviderRef = Effect.fn('ProviderNotificationProcessor.byProviderRef')(f
   return Arr.getSomes(found).at(0);
 });
 
-/** Step 2: lookup-verified order reference; an OUTCOME_UNKNOWN dispatch is acknowledged with the provider ref. */
+/**
+ * Step 2: lookup-verified order reference. A dispatch whose response was never recorded (PREPARED after an
+ * executor crash, or OUTCOME_UNKNOWN) is acknowledged with the notification's provider ref.
+ */
 const byOrderReference = Effect.fn('ProviderNotificationProcessor.byOrderReference')(function* byOrderReference(
   context: CorrelationContext,
 ) {
   const { notification } = context;
   const { bindingId } = notification;
   const { scope, workerContext } = context.input;
-  const candidate = orderReferenceCandidateOf(notification);
-  const notificationRef = collectionRefOf(notification);
-  if (Option.isNone(candidate) || Option.isNone(notificationRef)) {
+  const subject = orderReferenceSubjectOf(notification);
+  if (Option.isNone(subject)) {
+    return yield* uncorrelated('no_verifiable_order_reference');
+  }
+  const candidate = yield* orderReferenceCandidateOf(context, subject.value.ref);
+  if (Option.isNone(candidate)) {
     return yield* uncorrelated('no_verifiable_order_reference');
   }
   const ledger = yield* ProviderDispatchLedger;
   const found = yield* ledger.readByOrderReference({ bindingId, orderReference: candidate.value, scope });
-  if (Option.isNone(found) || found.value.bindingId !== bindingId || found.value.operationKind !== 'COLLECT') {
+  if (Option.isNone(found) || found.value.bindingId !== bindingId || found.value.operationKind !== subject.value.kind) {
     return yield* uncorrelated('order_reference_unknown');
   }
   const record = found.value;
-  const looked = yield* lookupFor(context, { record, ref: lookupRefOf(record, notificationRef.value) });
+  // The dispatch's own recorded object of the subject's kind, else the notification's object.
+  const ref = Option.getOrElse(
+    subject.value.kind === 'REFUND' ? record.providerRefundRef : record.providerPaymentRef,
+    () => subject.value.ref,
+  );
+  const looked = yield* lookupFor(context, { record, ref });
   const verified = looked.findings.some(
     (finding) =>
       finding.target.operationId === record.operationId &&
@@ -249,14 +285,14 @@ const byOrderReference = Effect.fn('ProviderNotificationProcessor.byOrderReferen
   if (!verified) {
     return yield* uncorrelated('order_reference_unverified');
   }
-  if (record.state !== 'OUTCOME_UNKNOWN') {
+  if (record.state !== 'PREPARED' && record.state !== 'OUTCOME_UNKNOWN') {
     return looked;
   }
   const acknowledged = yield* ledger
     .correlateUnknown({
       bindingId,
       orderReference: record.orderReference,
-      providerRef: notificationRef.value,
+      providerRef: subject.value.ref,
       scope,
       workerContext,
     })
@@ -268,7 +304,21 @@ const correlate = Effect.fn('ProviderNotificationProcessor.correlate')(function*
   context: CorrelationContext,
 ) {
   const direct = yield* byProviderRef(context);
-  return yield* direct === undefined ? byOrderReference(context) : lookupFor(context, direct);
+  if (direct === undefined) {
+    return yield* byOrderReference(context);
+  }
+  // A refund object no dispatch recorded (lost refund response) matched only its payment's dispatch.
+  if (Option.isNone(refundRefOf(context.notification)) || direct.record.operationKind === 'REFUND') {
+    return yield* lookupFor(context, direct);
+  }
+  // A contradicted provider reference never falls back: it is held.
+  return yield* byOrderReference(context).pipe(
+    Effect.catchIf(
+      (stopped) =>
+        Predicate.isTagged(stopped, 'NotificationProcessingStopped') && stopped.reason !== 'correlation_conflict',
+      () => lookupFor(context, direct),
+    ),
+  );
 });
 
 /** Folds the A8 decisions into the notification's processing state. */

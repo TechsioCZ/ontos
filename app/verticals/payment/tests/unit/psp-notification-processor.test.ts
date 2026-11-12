@@ -3,7 +3,7 @@ import { GatewayContextResponseSchema } from '@app/shared-contracts';
 import { GatewayDelegationSourceError } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationRequest } from '@app/shared-contracts/gateway-context-server';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
-import { DateTime, Effect, Layer, Option, Ref, Schema } from 'effect';
+import { DateTime, Effect, Layer, Match, Option, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { AcceptPaymentObservationActionForbiddenProblemSchema } from '../../shared/apis/accept-payment-observation-action.ts';
@@ -32,6 +32,7 @@ import {
 import type { ProviderNotificationProcessing } from '../../src/integrations/psp/provider-notification-processor.ts';
 import { GatewayProviderAdapters } from '../../src/integrations/psp/psp-adapter.ts';
 import { deriveProviderCorrelation } from '../../src/integrations/psp/psp-correlation.ts';
+import type { GatewayOrderReference } from '../../src/integrations/psp/psp-correlation.ts';
 import {
   GatewayEvidenceConflict,
   GatewayLedgerUnavailable,
@@ -125,7 +126,7 @@ interface RecordInput {
   readonly kind?: 'COLLECT' | 'REFUND';
   readonly payment?: ProviderObjectRef;
   readonly refund?: ProviderObjectRef;
-  readonly state?: 'ACKNOWLEDGED' | 'OUTCOME_UNKNOWN';
+  readonly state?: 'ACKNOWLEDGED' | 'OUTCOME_UNKNOWN' | 'PREPARED';
 }
 
 const recordOf = (input: RecordInput): ProviderDispatchRecord => {
@@ -245,9 +246,14 @@ interface Setup {
   readonly notifications: readonly StoredProviderNotification[];
   /** The executor already pinned on every evidence row, as a committed earlier attempt left it. */
   readonly pinnedExecutor?: string;
+  /** What the binding's own read of a provider object states as its order reference; default `None`. */
+  readonly readOrderReference?: (ref: ProviderObjectRef) => Option.Option<GatewayOrderReference>;
   readonly records: readonly ProviderDispatchRecord[];
   readonly resolvedBinding?: string;
 }
+
+const isRefundObject = Schema.is(ProviderObjectRefSchema.members[3]);
+const isRefundExpectation = Schema.is(GatewayExpectedEffectSchema.members[1]);
 
 const sameRef = (left: ProviderObjectRef, right: ProviderObjectRef) =>
   Schema.toEquivalence(ProviderObjectRefSchema)(left, right);
@@ -354,9 +360,17 @@ const layerFor = (setup: Setup, world: World) => {
       Effect.gen(function* correlate() {
         yield* Ref.update(world.correlated, (all) => [...all, orderReference]);
         const records = yield* Ref.get(world.records);
+        // Like the routine: a dispatch whose response was never recorded takes the ref of its object's kind.
+        const refund = isRefundObject(correlatedRef);
         const updated = records.map((record) =>
-          record.orderReference === orderReference && record.state === 'OUTCOME_UNKNOWN'
-            ? { ...record, providerPaymentRef: Option.some(correlatedRef), state: 'ACKNOWLEDGED' as const }
+          record.orderReference === orderReference &&
+          (record.state === 'OUTCOME_UNKNOWN' || record.state === 'PREPARED')
+            ? {
+                ...record,
+                providerPaymentRef: refund ? record.providerPaymentRef : Option.some(correlatedRef),
+                providerRefundRef: refund ? Option.some(correlatedRef) : record.providerRefundRef,
+                state: 'ACKNOWLEDGED' as const,
+              }
             : record,
         );
         yield* Ref.set(world.records, updated);
@@ -464,6 +478,7 @@ const layerFor = (setup: Setup, world: World) => {
         prepareCancel: unexpected('prepareCancel'),
         prepareCollect: unexpected('prepareCollect'),
         prepareRefund: unexpected('prepareRefund'),
+        readOrderReference: (_target, ref) => Effect.succeed(setup.readOrderReference?.(ref) ?? Option.none()),
         replay: unexpected('replay'),
         send: unexpected('send'),
         verifyNotification: unexpected('verifyNotification'),
@@ -670,6 +685,109 @@ describe('process-provider-notification', () => {
       const [record] = yield* Ref.get(world.records);
       expect(record?.state).toBe('ACKNOWLEDGED');
       expect(record?.providerPaymentRef).toEqual(Option.some(PI));
+    }),
+  );
+
+  it.effect('#1157 Executor crash after send: a PREPARED collection is acknowledged by its notification', () =>
+    Effect.gen(function* preparedCollection() {
+      const { orderReference } = deriveProviderCorrelation(collectId);
+      const { result, world } = yield* run(
+        {
+          findings: () => [
+            findingOf({ factKind: 'COLLECTION_CONFIRMED', kind: 'COLLECT', orderReference: true, refs: [PI] }),
+          ],
+          notifications: [
+            notificationOf({
+              id: N1,
+              refs: [PI],
+              signedObject: { metadata: { ontos_order_reference: orderReference } },
+            }),
+          ],
+          records: [recordOf({ state: 'PREPARED' })],
+        },
+        N1,
+      );
+      expect(result).toBe(`SETTLED ${collectId} SUBMITTED [ACCEPTED]`);
+      expect(yield* Ref.get(world.correlated)).toEqual([orderReference]);
+      const [record] = yield* Ref.get(world.records);
+      expect(record?.state).toBe('ACKNOWLEDGED');
+      expect(record?.providerPaymentRef).toEqual(Option.some(PI));
+    }),
+  );
+
+  it.effect('#1157 Refund response lost then refund notification arrives correlates the refund', () =>
+    Effect.gen(function* lostRefundResponse() {
+      const { orderReference } = deriveProviderCorrelation(refundId);
+      const { result, world } = yield* run(
+        {
+          findings: (request) =>
+            Match.valueTags(request.expected, {
+              CANCEL_OR_VOID: () => [],
+              COLLECT: () => [findingOf({ factKind: 'COLLECTION_CONFIRMED', kind: 'COLLECT', refs: [PI] })],
+              REFUND: () => [
+                findingOf({ factKind: 'REFUND_CONFIRMED', kind: 'REFUND', orderReference: true, refs: [REFUND, PI] }),
+              ],
+            }),
+          notifications: [
+            notificationOf({
+              id: N1,
+              refs: [REFUND, PI],
+              signedObject: { metadata: { ontos_order_reference: orderReference } },
+            }),
+          ],
+          records: [recordOf({ payment: PI }), recordOf({ kind: 'REFUND', payment: PI, state: 'OUTCOME_UNKNOWN' })],
+        },
+        N1,
+      );
+      expect(result).toBe(`SETTLED ${refundId} SUBMITTED [ACCEPTED]`);
+      expect(yield* Ref.get(world.correlated)).toEqual([orderReference]);
+      // The refund's own object was looked up with the refund expectation, never the payment.
+      const lookups = yield* Ref.get(world.lookups);
+      expect(lookups.map(({ expected }) => isRefundExpectation(expected))).toEqual([true]);
+      expect(lookups.every(({ target }) => sameLookupTarget(target, refundTarget))).toBe(true);
+      const refund = (yield* Ref.get(world.records)).find((record) => record.operationKind === 'REFUND');
+      expect(refund?.state).toBe('ACKNOWLEDGED');
+      expect(refund?.providerRefundRef).toEqual(Option.some(REFUND));
+      expect(yield* Ref.get(world.statements)).toEqual([
+        expect.objectContaining({ factKind: 'REFUND_CONFIRMED', operationId: refundId }),
+      ]);
+    }),
+  );
+
+  it.effect('#1157 Create response lost without a signed object: the binding read of the object correlates it', () =>
+    Effect.gen(function* unsignedLostResponse() {
+      const { orderReference } = deriveProviderCorrelation(collectId);
+      const readOrderReference = (ref: ProviderObjectRef) =>
+        sameRef(ref, PI) ? Option.some(orderReference) : Option.none();
+      const { result, world } = yield* run(
+        {
+          findings: () => [
+            findingOf({ factKind: 'COLLECTION_CONFIRMED', kind: 'COLLECT', orderReference: true, refs: [PI] }),
+          ],
+          // GoPay and Comgate notifications carry ids only; the order reference comes from the binding's own read.
+          notifications: [notificationOf({ id: N1, refs: [PI] })],
+          readOrderReference,
+          records: [recordOf({ state: 'OUTCOME_UNKNOWN' })],
+        },
+        N1,
+      );
+      expect(result).toBe(`SETTLED ${collectId} SUBMITTED [ACCEPTED]`);
+      expect(yield* Ref.get(world.correlated)).toEqual([orderReference]);
+      const [record] = yield* Ref.get(world.records);
+      expect([record?.state, record?.providerPaymentRef]).toEqual(['ACKNOWLEDGED', Option.some(PI)]);
+      // The read is only a candidate: a lookup that does not prove it leaves the notification held.
+      const unproven = yield* run(
+        {
+          findings: () => [findingOf({ factKind: 'COLLECTION_CONFIRMED', kind: 'COLLECT', refs: [PI] })],
+          notifications: [notificationOf({ id: N2, refs: [PI] })],
+          readOrderReference,
+          records: [recordOf({ state: 'OUTCOME_UNKNOWN' })],
+        },
+        N2,
+      );
+      expect(unproven.result).toBe('HELD_UNCORRELATED order_reference_unverified');
+      expect(yield* Ref.get(unproven.world.correlated)).toEqual([]);
+      expect(yield* Ref.get(unproven.world.statements)).toEqual([]);
     }),
   );
 

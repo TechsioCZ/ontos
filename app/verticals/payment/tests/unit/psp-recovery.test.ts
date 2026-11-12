@@ -465,6 +465,7 @@ const recoverWith = (script: Script, message: RecoveryRequested) => {
         prepareCancel: unused,
         prepareCollect: unused,
         prepareRefund: unused,
+        readOrderReference: unused,
         replay: (_target, request, expected) =>
           Effect.suspend(() => {
             calls.replays.push(request);
@@ -597,6 +598,31 @@ describe('#1158 gateway operation recovery', () => {
         recoveryMessage('AUTHORITATIVE_LOOKUP', { family: 'GOPAY' }),
       );
       const report = reportOf(exit);
+      expect([report.providerCall, Option.getOrNull(report.indeterminate)]).toEqual([
+        'NONE',
+        'lookup_not_possible_without_provider_ref',
+      ]);
+      expect([calls.lookups, calls.appended, calls.ledger]).toEqual([[], [], []]);
+    }),
+  );
+
+  it.effect('#1157 #1158 A Stripe refund without its refund ref is not looked up through the PaymentIntent', () =>
+    Effect.gen(function* stripeRefundWithoutRefundRef() {
+      yield* at(25 * HOUR_MS);
+      const { calls, exit } = yield* recoverWith(
+        {
+          operations: [operationRow({ kind: 'REFUND' })],
+          record: Option.some(
+            dispatchRecord({
+              kind: 'REFUND',
+              paymentRef: Option.some({ _tag: 'STRIPE_PAYMENT_INTENT', id: 'pi_test_recovered' }),
+            }),
+          ),
+        },
+        { ...recoveryMessage('AUTHORITATIVE_LOOKUP'), operationKind: 'REFUND' },
+      );
+      const report = reportOf(exit);
+      // The refund notification records the refund ref; a PaymentIntent read with a refund expectation proves nothing.
       expect([report.providerCall, Option.getOrNull(report.indeterminate)]).toEqual([
         'NONE',
         'lookup_not_possible_without_provider_ref',

@@ -18,6 +18,7 @@ import {
   GatewayProviderUnavailable,
   GatewayProviderUnsupported,
 } from '../../src/integrations/psp/psp-errors.ts';
+import { ProviderObjectRefSchema } from '../../src/integrations/psp/psp-request.ts';
 import type {
   GatewayCollectRequest,
   GatewayExecutionTarget,
@@ -534,6 +535,37 @@ describe('#1156 GoPay refund and unsupported capabilities', () => {
       expect(Schema.is(GatewayProviderUnsupported)(byOrder)).toBe(true);
       expect(byOrder).toMatchObject({ reason: 'order_reference_lookup_unsupported' });
       expect(gopay.sent).toHaveLength(0);
+    }),
+  );
+
+  it.effect('#1157 GoPay states the order number of a notified payment only for the binding GoID', () =>
+    Effect.gen(function* readOrderReference() {
+      const ref = refundRequest.providerTarget;
+      const own = yield* recordedGopay({
+        [PAYMENT_ROUTE]: [respond(200, inquiryBody('PAID'))],
+        [TOKEN_ROUTE]: [tokenResponse()],
+      });
+      expect(yield* own.adapter.readOrderReference(target, ref)).toEqual(
+        Option.some(collectCorrelation.orderReference),
+      );
+      const foreign = yield* recordedGopay({
+        [PAYMENT_ROUTE]: [respond(200, inquiryBody('PAID', '8123456780'))],
+        [TOKEN_ROUTE]: [tokenResponse()],
+      });
+      expect(yield* foreign.adapter.readOrderReference(target, ref)).toEqual(Option.none());
+      const missing = yield* recordedGopay({
+        [PAYMENT_ROUTE]: [respond(404, gopayPaymentNotFoundBody)],
+        [TOKEN_ROUTE]: [tokenResponse()],
+      });
+      expect(yield* missing.adapter.readOrderReference(target, ref)).toEqual(Option.none());
+      // Another family's object is never read through this binding.
+      const other = yield* recordedGopay({});
+      const comgateRef = Schema.decodeUnknownSync(ProviderObjectRefSchema)({
+        _tag: 'COMGATE_TRANSACTION',
+        transId: 'AB12-CD34-EF56',
+      });
+      expect(yield* other.adapter.readOrderReference(target, comgateRef)).toEqual(Option.none());
+      expect(other.sent).toHaveLength(0);
     }),
   );
 });

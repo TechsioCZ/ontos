@@ -486,4 +486,28 @@ describe('#1158 Comgate lookup', () => {
       expect(calls.every((call) => call.request.headers.authorization === expectedAuthorization)).toBe(true);
     }),
   );
+
+  it.effect('#1157 Comgate states the refId of a notified transaction only for the binding merchant and mode', () =>
+    Effect.gen(function* readOrderReference() {
+      const { adapter, calls } = yield* recordedAdapter({
+        read: [
+          respond(200, paidStatusBody()),
+          respond(200, paidStatusBody({ test: 'false' })),
+          respond(200, paidStatusBody({ merchant: '999999' })),
+          respond(404, 'Not Found'),
+        ],
+      });
+      expect(yield* adapter.readOrderReference(target, transactionRef)).toEqual(
+        Option.some(collectCorrelation.orderReference),
+      );
+      // Another mode, another merchant and a miss state nothing.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        expect(yield* adapter.readOrderReference(target, transactionRef)).toEqual(Option.none());
+      }
+      const gopayRef = Schema.decodeUnknownSync(ProviderObjectRefSchema)({ _tag: 'GOPAY_PAYMENT', id: '3000006529' });
+      expect(yield* adapter.readOrderReference(target, gopayRef)).toEqual(Option.none());
+      expect(calls).toHaveLength(4);
+      expect(calls.every((call) => call.request.headers.authorization === expectedAuthorization)).toBe(true);
+    }),
+  );
 });

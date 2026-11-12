@@ -16,6 +16,7 @@ const gatewayDown = () =>
 
 export const unavailableGatewayBinding: PaymentGatewayBindingEvidence = Object.freeze({
   listEnabledBindings: gatewayDown,
+  resolveOriginalBinding: gatewayDown,
   verifySelectedBinding: gatewayDown,
 });
 

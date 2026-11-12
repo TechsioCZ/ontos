@@ -1,6 +1,6 @@
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { Context, Schema } from 'effect';
-import type { Effect } from 'effect';
+import type { Effect, Option } from 'effect';
 
 import { PaymentGatewayAccountBindingSchema } from '../../shared/domain/payment-execution-binding.ts';
 import type { PaymentGatewayAccountBinding } from '../../shared/domain/payment-execution-binding.ts';
@@ -23,6 +23,16 @@ export interface PaymentGatewayBindingEvidence {
     readonly customerConfigurationId: string;
     readonly scope: PaymentOwnerScope;
   }) => Effect.Effect<readonly PaymentGatewayAccountBinding[], PaymentOwnerEvidenceUnavailable>;
+  /**
+   * The original binding of an already-created Payment, resolved by its stable ref in this scope: `Some` when
+   * that exact family, ref and environment exists here, Current or retired, whatever the Current Gateway
+   * Enablement says (disable/replace affects new Payment intents only). `None` never selects another binding.
+   */
+  readonly resolveOriginalBinding: (input: {
+    readonly binding: PaymentGatewayAccountBinding;
+    readonly scope: PaymentOwnerScope;
+  }) => Effect.Effect<Option.Option<PaymentGatewayAccountBinding>, PaymentOwnerEvidenceUnavailable>;
+  /** New Payment intent selection: the selected binding is Currently enabled and Current. */
   readonly verifySelectedBinding: (input: {
     readonly binding: PaymentGatewayAccountBinding;
     readonly customerConfigurationId: string;

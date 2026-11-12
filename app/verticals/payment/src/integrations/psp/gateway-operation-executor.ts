@@ -14,7 +14,7 @@ import type {
 } from '../../../shared/domain/payment-vocabulary.ts';
 import { GatewayProviderAccountRefSchema, GatewayReturnTokenSchema } from '../../../shared/domain/psp-configuration.ts';
 import type { GatewayReturnToken } from '../../../shared/domain/psp-configuration.ts';
-import { GatewayEnvironmentSchema } from '../../../shared/domain/psp-vocabulary.ts';
+import { GATEWAY_WAIT_BUDGET_MS, GatewayEnvironmentSchema } from '../../../shared/domain/psp-vocabulary.ts';
 import type { ProviderEvidenceFactKind, ProviderNotSentReason } from '../../../shared/domain/psp-vocabulary.ts';
 import { pspReadOperationForExecution } from '../../persistence/psp-worker-routines.ts';
 import type { PspOperationForExecution } from '../../persistence/psp-worker-routines.ts';
@@ -74,8 +74,6 @@ type Family = typeof PaymentGatewayProviderFamilySchema.Type;
 const MAX_DEFERRAL_DELAY_MS = 86_400_000;
 /** First wake of every wait; later wakes double the time already waited. */
 const MIN_DEFERRAL_DELAY_MS = 60_000;
-/** Every wait (cancel target, prior refund, unavailable provider) ends 24 hours after the operation request. */
-const GATEWAY_WAIT_BUDGET_MS = 86_400_000;
 /** The last Stripe replay attempt starts at least this long before its window closes. */
 const REPLAY_WINDOW_MARGIN_MS = 30_000;
 /** A wait with less time left than this is exhausted (a wake must lie in the future of Core's settlement). */

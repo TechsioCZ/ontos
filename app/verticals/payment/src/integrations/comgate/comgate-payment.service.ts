@@ -52,6 +52,7 @@ import {
   comgateBindingOf,
   comgateTransIdOfLookup,
   comgateTransIdOfRef,
+  comgateVerifiedOrderReference,
   mapComgateCreateResponse,
   mapComgateRefundResponse,
   mapComgateStatus,
@@ -81,6 +82,7 @@ import type { ComgateCreatePaymentRequest, ComgateRefundRequest, ComgateStatusAn
  *   answer alone never yields a cancel finding.
  * - Refund: `code 0` is REFUND_PENDING only (completion is unprovable, plan N10).
  * - Lookup: by transId only; ORDER_REFERENCE is Unsupported. Replay: Unsupported (no idempotency key).
+ * - Order reference of a notified transaction: the same status read, `refId` only for the binding merchant.
  *
  * Every request goes through `ProviderHttp` (reads retried, mutations sent once). Prepared requests
  * hold no secret: `Authorization` is added at send time. Nothing logs a body, header or secret. There
@@ -545,10 +547,10 @@ const makeComgatePaymentService = Effect.gen(function* buildComgatePaymentServic
     };
   });
 
-  const lookupTransaction = Effect.fn('ComgatePayment.lookupTransaction')(function* lookupTransaction(
+  /** One status read of `transId` through the binding's merchant authorization. */
+  const readStatus = Effect.fn('ComgatePayment.readStatus')(function* readStatus(
     target: GatewayExecutionTarget,
     transId: ProviderObjectId,
-    expected: GatewayExpectedEffect,
   ) {
     const { authorize, binding } = yield* authorizationOf(target);
     const response = yield* http.read({
@@ -557,9 +559,35 @@ const makeComgatePaymentService = Effect.gen(function* buildComgatePaymentServic
         HttpClientRequest.setHeader(HttpClientRequest.get(statusUrlOf(transId)), ACCEPT_JSON.name, ACCEPT_JSON.value),
       ),
     });
-    const observedAt = yield* DateTime.now;
     const answer = yield* statusAnswerOf(response);
+    return { answer, binding };
+  });
+
+  const lookupTransaction = Effect.fn('ComgatePayment.lookupTransaction')(function* lookupTransaction(
+    target: GatewayExecutionTarget,
+    transId: ProviderObjectId,
+    expected: GatewayExpectedEffect,
+  ) {
+    const { answer, binding } = yield* readStatus(target, transId);
+    const observedAt = yield* DateTime.now;
     return yield* mapComgateStatus({ answer, binding, expected, observedAt, transId });
+  });
+
+  /** The `refId` of a transaction of the binding's merchant and mode; another object or a miss is `None`. */
+  const readOrderReference = Effect.fn('ComgatePayment.readOrderReference')(function* readComgateOrderReference(
+    target: GatewayExecutionTarget,
+    ref: ProviderObjectRef,
+  ) {
+    const notified = Match.value(ref).pipe(
+      Match.tag('COMGATE_TRANSACTION', ({ transId }) => Option.some(transId)),
+      Match.orElse(() => Option.none<ProviderObjectId>()),
+    );
+    if (Option.isNone(notified)) {
+      return Option.none<GatewayOrderReference>();
+    }
+    const transId = yield* pathTransIdOf(notified.value, 'RETRIEVE');
+    const { answer, binding } = yield* readStatus(target, transId);
+    return comgateVerifiedOrderReference({ answer, binding, transId });
   });
 
   const lookup = Effect.fn('ComgatePayment.lookup')(function* lookupComgate(
@@ -647,6 +675,7 @@ const makeComgatePaymentService = Effect.gen(function* buildComgatePaymentServic
     prepareCancel,
     prepareCollect,
     prepareRefund,
+    readOrderReference,
     replay,
     send,
     verifyNotification,

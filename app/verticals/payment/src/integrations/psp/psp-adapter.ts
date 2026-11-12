@@ -1,9 +1,10 @@
 import { Context } from 'effect';
-import type { Effect } from 'effect';
+import type { Effect, Option } from 'effect';
 
 import type { PaymentGatewayProviderFamilySchema } from '../../../shared/domain/payment-vocabulary.ts';
 import type { GatewayCapabilityRow } from './capability-matrix.ts';
 import type { RawProviderNotification, VerifiedNotificationTrigger } from './notification-envelope.ts';
+import type { GatewayOrderReference } from './psp-correlation.ts';
 import type {
   GatewayNotificationRejectedError,
   GatewayProviderOutcomeUnknownError,
@@ -18,6 +19,7 @@ import type {
   GatewayExpectedEffect,
   GatewayLookupRequest,
   GatewayRefundRequest,
+  ProviderObjectRef,
 } from './psp-request.ts';
 import type {
   PreparedProviderRequest,
@@ -66,6 +68,20 @@ export interface GatewayProviderAdapter {
     target: GatewayExecutionTarget,
     request: GatewayRefundRequest,
   ) => Effect.Effect<PreparedProviderRequest, PrepareFailure>;
+  /**
+   * Retrieves one provider object through the target's binding and returns the OntOS order reference it
+   * states, only when the object belongs to that binding's merchant and environment (GoPay `order_number` of
+   * the binding GoID; Comgate `refId` of the binding merchant's status answer; Stripe
+   * `metadata.ontos_order_reference` read with the binding's key in its mode). A candidate for correlation,
+   * never evidence: the caller still proves it with `lookup`. A miss or a foreign object is `None`.
+   */
+  readonly readOrderReference: (
+    target: GatewayExecutionTarget,
+    ref: ProviderObjectRef,
+  ) => Effect.Effect<
+    Option.Option<GatewayOrderReference>,
+    GatewayProviderResponseInvalidError | GatewayProviderUnavailableError | GatewayProviderUnsupportedError
+  >;
   /**
    * Re-sends the exact persisted bytes, headers and key of `ProviderReplayRequest` (built by
    * `replayRequestOf` from the ledger record). Stripe only; other families are Unsupported. Reading the

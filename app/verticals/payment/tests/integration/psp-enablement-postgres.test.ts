@@ -115,6 +115,10 @@ const nativeGatewayPort = (database: PaymentTestDatabase, scope: PaymentTestScop
     inTransaction(database, scope, (transaction) =>
       gatewayBindingServiceForTransaction(transaction).listEnabledBindings(input),
     ).pipe(Effect.orDie),
+  resolveOriginalBinding: (input) =>
+    inTransaction(database, scope, (transaction) =>
+      gatewayBindingServiceForTransaction(transaction).resolveOriginalBinding(input),
+    ).pipe(Effect.orDie),
   verifySelectedBinding: (input) =>
     inTransaction(database, scope, (transaction) =>
       gatewayBindingServiceForTransaction(transaction).verifySelectedBinding(input),
@@ -489,6 +493,47 @@ describe('#1155/#1156 live GatewayBindingPort over Current Gateway Enablement', 
         expect(yield* verify({ ...exact, environment: 'LIVE' })).toBe(false);
         expect(yield* verify({ ...exact, providerAccountRef: live.providerAccountRef })).toBe(false);
         expect(yield* verify({ ...exact, providerFamily: 'STRIPE' })).toBe(false);
+      }),
+    ),
+  );
+
+  it.live('#1155 An existing Payment keeps its original binding after disablement and replacement', () =>
+    Effect.scoped(
+      Effect.gen(function* originalBindingKept() {
+        const { runtime, runtimeClient } = yield* nativeDatabase;
+        const scope = yield* makeTestScope;
+        const other = yield* makeTestScope;
+        const original = yield* insertBinding(runtimeClient, scope, 'GOPAY');
+        const foreign = yield* insertBinding(runtimeClient, other, 'GOPAY');
+        yield* configureAuthorities(runtime, scope, original, ['GATEWAY_OUTCOME', 'REFUND_EXECUTION']);
+        const harness = yield* harnessFor(runtime, scope, 'allowed');
+        const port = nativeGatewayPort(runtime, scope);
+        const resolve = (binding: PaymentGatewayAccountBinding) => port.resolveOriginalBinding({ binding, scope });
+        const exact = executionBindingOf(original);
+
+        yield* runEnablement(harness, scope, payloadFor(original));
+        expect(yield* resolve(exact)).toEqual(Option.some(exact));
+        // Disabled for new intents, then retired and replaced by another Current account: still the original.
+        yield* runEnablement(harness, scope, payloadFor(original, { enabled: false, expectedRevision: 1 }));
+        yield* retireBinding(runtimeClient, scope, original);
+        const replacement = yield* insertBinding(runtimeClient, scope, 'GOPAY');
+        yield* configureAuthorities(runtime, scope, replacement, ['GATEWAY_OUTCOME', 'REFUND_EXECUTION']);
+        yield* runEnablement(harness, scope, payloadFor(replacement, { expectedRevision: 2 }));
+        expect(yield* port.listEnabledBindings({ customerConfigurationId: 'cc-gateway', scope })).toEqual([
+          executionBindingOf(replacement),
+        ]);
+        expect(
+          isEnabled(
+            yield* port.verifySelectedBinding({ binding: exact, customerConfigurationId: 'cc-gateway', scope }),
+          ),
+        ).toBe(false);
+        expect(yield* resolve(exact)).toEqual(Option.some(exact));
+        // Never another environment, family, scope or an unknown ref; nothing is substituted.
+        expect(yield* resolve({ ...exact, environment: 'LIVE' })).toEqual(Option.none());
+        expect(yield* resolve({ ...exact, providerFamily: 'STRIPE' })).toEqual(Option.none());
+        expect(yield* resolve(executionBindingOf(foreign))).toEqual(Option.none());
+        expect(yield* resolve({ ...exact, environment: 'production' })).toEqual(Option.none());
+        expect(yield* resolve({ ...exact, providerAccountRef: 'gopay-account-primary' })).toEqual(Option.none());
       }),
     ),
   );

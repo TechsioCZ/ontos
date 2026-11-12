@@ -81,6 +81,7 @@ import {
   decodeStripePaymentIntentSearch,
   decodeStripeRefund,
   STRIPE_ORDER_REFERENCE_METADATA_KEY,
+  stripeOrderReferenceOf,
   StripeCheckoutSessionIdSchema,
   StripePaymentIntentIdSchema,
   StripeRefundIdSchema,
@@ -769,6 +770,75 @@ const searchByOrderReference = Effect.fn('StripePayment.searchByOrderReference')
   );
 });
 
+/**
+ * The order reference one retrieved object states in its metadata. The binding's key only reads its own
+ * account, and an object of the other mode is `None`, as is a missing object.
+ */
+const readStatedOrderReference = Effect.fn('StripePayment.readStatedOrderReference')(function* readStatedOrderReference<
+  A extends { readonly metadata: Option.Option<Readonly<Record<string, string>>> },
+>(
+  context: ReadContext,
+  path: string,
+  decode: (bodyText: string) => Effect.Effect<A, GatewayProviderResponseInvalidError>,
+  livemodeOf: (value: A) => Option.Option<boolean>,
+) {
+  const response = yield* readStripe(context, path, []);
+  if (isSuccess(response)) {
+    const value = yield* decode(response.bodyText);
+    const sameMode = Option.match(livemodeOf(value), {
+      onNone: () => true,
+      onSome: (livemode) => livemode === (context.environment === 'LIVE'),
+    });
+    return sameMode ? stripeOrderReferenceOf(value.metadata) : Option.none<GatewayOrderReference>();
+  }
+  if (isAuthenticationFailure(response)) {
+    return yield* Effect.fail(unavailable('provider_authentication_failed'));
+  }
+  if (isResourceMissing(response)) {
+    return Option.none<GatewayOrderReference>();
+  }
+  return yield* Effect.fail(unavailable('stripe_lookup_status_unexpected'));
+});
+
+const readOrderReferenceOf = (
+  context: ReadContext,
+  ref: ProviderObjectRef,
+): Effect.Effect<Option.Option<GatewayOrderReference>, LookupFailure> =>
+  Match.value(ref).pipe(
+    Match.tag('STRIPE_CHECKOUT_SESSION', ({ id }) =>
+      Effect.flatMap(decodedRef(StripeCheckoutSessionIdSchema, id), (sessionId) =>
+        readStatedOrderReference(
+          context,
+          `${CHECKOUT_SESSIONS_PATH}/${sessionId}`,
+          decodeStripeCheckoutSession,
+          (session) => Option.some(session.livemode),
+        ),
+      ),
+    ),
+    Match.tag('STRIPE_PAYMENT_INTENT', ({ id }) =>
+      Effect.flatMap(decodedRef(StripePaymentIntentIdSchema, id), (paymentIntentId) =>
+        readStatedOrderReference(
+          context,
+          `${PAYMENT_INTENTS_PATH}/${paymentIntentId}`,
+          decodeStripePaymentIntent,
+          (paymentIntent) => Option.some(paymentIntent.livemode),
+        ),
+      ),
+    ),
+    Match.tag('STRIPE_REFUND', ({ id }) =>
+      Effect.flatMap(decodedRef(StripeRefundIdSchema, id), (refundId) =>
+        readStatedOrderReference(
+          context,
+          `${REFUNDS_PATH}/${refundId}`,
+          decodeStripeRefund,
+          (refund) => refund.livemode,
+        ),
+      ),
+    ),
+    Match.tag('GOPAY_PAYMENT', 'COMGATE_TRANSACTION', () => Effect.succeed(Option.none<GatewayOrderReference>())),
+    Match.exhaustive,
+  );
+
 // ---------------------------------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------------------------------
@@ -927,6 +997,14 @@ const makeStripePaymentService = Effect.gen(function* buildStripePaymentService(
     );
   });
 
+  const readOrderReference = Effect.fn('StripePayment.readOrderReference')(function* readOrderReference(
+    target: GatewayExecutionTarget,
+    ref: ProviderObjectRef,
+  ) {
+    const context = yield* readContextOf(target);
+    return yield* readOrderReferenceOf(context, ref);
+  });
+
   const verifyNotification = Effect.fn('StripePayment.verifyNotification')(function* verifyNotification(
     target: GatewayExecutionTarget,
     notification: RawProviderNotification,
@@ -963,6 +1041,7 @@ const makeStripePaymentService = Effect.gen(function* buildStripePaymentService(
     prepareCancel,
     prepareCollect,
     prepareRefund,
+    readOrderReference,
     replay,
     send,
     verifyNotification,

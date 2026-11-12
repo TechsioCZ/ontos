@@ -362,6 +362,7 @@ const recover = (
         prepareCancel: () => Effect.die('recovery never prepares'),
         prepareCollect: () => Effect.die('recovery never prepares'),
         prepareRefund: () => Effect.die('recovery never prepares'),
+        readOrderReference: () => Effect.die('recovery never reads order references'),
         replay: () => Effect.die('no replay in these cases'),
         send: () => Effect.die('recovery never sends'),
         verifyNotification: () => Effect.die('recovery never verifies notifications'),
