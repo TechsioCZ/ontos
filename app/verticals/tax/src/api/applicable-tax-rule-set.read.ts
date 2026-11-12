@@ -45,6 +45,13 @@ export const readApplicableTaxRuleSet = (
 
 export const applicableTaxRuleSetRead = defineRead(
   {
+    accessActor: {
+      callers: ['merchandise'],
+      reason:
+        'Merchandise reads the applicable Tax rates of the selling company for the staff member or registered Storefront it already admitted, to price its products and orders.',
+      subject: 'identity',
+      subjectWorkloads: ['demo.storefront-client'],
+    },
     accessDeclaration: {
       key: 'commerce.tax.tax-rule-set.read',
       kind: 'read',
