@@ -18,10 +18,10 @@ import { HttpClient } from 'effect/http';
 import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';
 import { ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { AuthConfig } from '../../api/auth/config.ts';
+import { HostedModuleCredentialsSchema } from '@app/core-runtime/auth/hosted-module-credentials';
 import { AuthDatabase } from '../../api/auth/db/client.ts';
 import { moduleCredentialReleaseOf } from '../../api/auth/module-credential-attestation.ts';
 import { provisionModuleCredentials } from '../../api/auth/module-credential-provisioning.service.ts';
-import { encodeModuleCredentialHandover } from '../../../../scripts/zerops/module-credentials.mts';
 
 const SHELL_APP_ID = 'shell-super-app';
 const CUSTOMER_CONTEXT_APP_ID = 'commerce-customer-context';
@@ -344,7 +344,13 @@ const startHostedCaller = Effect.fn('ServerOwnerRelayNative.startHostedCaller')(
     workspaceDirectory: path.resolve(input.relativeDirectory, '../..'),
   });
   if (input.relaySource !== undefined) {
-    yield* hosted.handOver(yield* encodeModuleCredentialHandover({ [appId]: input.relaySource.apiKey }, [appId]));
+    // One handover line, in the shape `encodeModuleCredentialHandover` writes (scripts/zerops/module-credentials.mts).
+    const line = yield* Schema.encodeEffect(Schema.fromJsonString(HostedModuleCredentialsSchema))({
+      credentials: { [appId]: input.relaySource.apiKey },
+      schemaVersion: 1,
+      workloads: {},
+    });
+    yield* hosted.handOver(new TextEncoder().encode(`${line}\n`));
     const accepted = yield* hosted.received;
     if (!accepted.split(', ').includes(appId)) {
       return yield* new PackagedOwnerStartupError({ reason: 'The hosted caller did not take its module credential' });
