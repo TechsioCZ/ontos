@@ -514,10 +514,10 @@ export const bootstrapCopyCatalog = (snapshot: CopySnapshot) =>
           name: source.name,
           priceHistory: [{ effectiveFrom: snapshot.capturedAt, priceMinor: source.currentPriceMinor }],
           sku: source.sku,
+          taxClassificationCode: source.taxClassificationCode,
           unit: source.unit,
           updatedAt: snapshot.capturedAt,
           variants: source.variants?.map(({ priceHistory: _history, ...variant }) => variant),
-          vatRate: source.vatRate,
         };
         const product = yield* Schema.decodeUnknownEffect(Schema.toEncoded(ProductSchema))(
           Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)),
