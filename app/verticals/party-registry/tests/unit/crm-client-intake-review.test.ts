@@ -1,4 +1,4 @@
-import { crmClientEvidenceReference } from '../../shared/domain/crm-client-evidence.ts';
+import { crmClientEvidenceReference } from '../../src/services/crm-client-evidence.ts';
 import { ActionAlreadyCommitted, ActionCommitIndeterminate, ActionRuntime } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';

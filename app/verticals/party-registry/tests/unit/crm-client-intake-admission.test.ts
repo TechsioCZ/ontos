@@ -1,4 +1,4 @@
-import { crmClientEvidenceReference } from '../../shared/domain/crm-client-evidence.ts';
+import { crmClientEvidenceReference } from '../../src/services/crm-client-evidence.ts';
 import { ActionRuntime, ReadPermissionDenied, collectAccessCatalog } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
 import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
@@ -118,6 +118,28 @@ it('client evidence is bounded, company-qualified and unambiguous for Unicode or
   ).not.toBe(reference);
   expect(crmClientEvidenceReference(scope, '\uD800')).not.toBe(crmClientEvidenceReference(scope, '\uFFFD'));
   expect(crmClientEvidenceReference(scope, 'a:b')).not.toBe(crmClientEvidenceReference(scope, 'a'));
+});
+
+it('client evidence keeps its published wire value (SHA-256 of the length-prefixed identity)', () => {
+  const scope = {
+    legalEntityId: '20000000-0000-4000-8000-000000000002',
+    tenantId: '10000000-0000-4000-8000-000000000001',
+  };
+  expect(crmClientEvidenceReference(scope, 'client-1')).toBe(
+    'crm-client:9e9d4e97b6d8eea9ed6f17c9dcd980139968d0027cc56540ae1a73b3fc8164f3',
+  );
+  expect(crmClientEvidenceReference(scope, '')).toBe(
+    'crm-client:1418954ede073509d70cf5d0ef4771d720a2fe3540fcf8b1e8411e92ea304709',
+  );
+  expect(crmClientEvidenceReference(scope, '\uD800')).toBe(
+    'crm-client:98deea69df7f27fa95395376856dd219f1104a421389392249ea51946e5c1f99',
+  );
+  expect(crmClientEvidenceReference(scope, 'Pekárna Novák 🍞')).toBe(
+    'crm-client:214525b5d8f3f0b8a6adc930331b72ac9c698643322d270fa62a5dac4638272b',
+  );
+  expect(crmClientEvidenceReference(scope, 'x'.repeat(300))).toBe(
+    'crm-client:a43944894e886636fdad94be331d9bb5a14c6719341a7518d628f02c348eb5cb',
+  );
 });
 
 it.layer(NodeCrypto.layer)('CRM intake workload admission', (suite) => {
