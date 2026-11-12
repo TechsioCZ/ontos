@@ -558,9 +558,9 @@ it.layer(services, { excludeTestServices: true })('tax baseline seed on the loca
             .map(({ name, regime }) => `${name}: ${regime.detail}`)
             .toSorted((left, right) => left.localeCompare(right)),
         ).toEqual([
-          'Daňová firma A: plátce DPH od 2024-01-01',
-          'Daňová firma B: plátce DPH od 2024-01-01',
-          'Daňová firma C: plátce DPH od 2024-01-01',
+          'Daňová firma A: plátce DPH od 1. 1. 2024',
+          'Daňová firma B: plátce DPH od 1. 1. 2024',
+          'Daňová firma C: plátce DPH od 1. 1. 2024',
         ]);
         expect(
           verified.reports.flatMap(({ rules }) =>
@@ -568,8 +568,8 @@ it.layer(services, { excludeTestServices: true })('tax baseline seed on the loca
           ),
         ).toEqual(
           Array.from({ length: 3 }, () => [
-            'cz.vat.standard 21 % od 2024-01-01',
-            'cz.vat.reduced 12 % od 2024-01-01',
+            'cz.vat.standard 21 % od 1. 1. 2024',
+            'cz.vat.reduced 12 % od 1. 1. 2024',
           ]).flat(),
         );
       }),

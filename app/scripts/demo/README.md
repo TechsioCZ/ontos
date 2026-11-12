@@ -499,8 +499,10 @@ composition, and any explicit lifecycle state other than inactive/active. A refu
 
 `seed-tax-baseline.mts` gives every company of a selling stage Tenant its VAT baseline through tax's real Actions,
 from a company-scoped session of the operator, over the Shell's own endpoints: the seller is a VAT payer from
-2024-01-01 (no company fixture says otherwise), and `cz.vat.standard` 21 % and `cz.vat.reduced` 12 % apply from
-2024-01-01. It first reads the state through tax's governed reads and plans only what is missing; a regime or
+1 January 2024 (no company fixture says otherwise), and `cz.vat.standard` 21 % and `cz.vat.reduced` 12 % apply from
+1 January 2024. VAT dates are Czech calendar dates, so both start at Prague midnight, the instant
+`2023-12-31T23:00:00Z`, as finance writes and looks up its rules; tables print the Czech date (`od 1. 1. 2024`),
+`--json` the instant. It first reads the state through tax's governed reads and plans only what is missing; a regime or
 rule that somebody set differently is never overwritten and stops the plan by name. Before a write it asks the
 Shell's "Proč?" explain endpoint whether the operator holds `commerce.tax.tax-rule.create` and
 `commerce.tax.seller-vat-regime-declaration.declare` (and reads `…tax-rule-set.read`,

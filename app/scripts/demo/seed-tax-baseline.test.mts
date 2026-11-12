@@ -19,6 +19,7 @@ import {
   runTaxBaseline,
   sameRate,
   TAX_BASELINE_EFFECTIVE_FROM,
+  czechCalendarDate,
   TaxBaselineFailure,
   taxBaselineRights,
   validateSeedOrigin,
@@ -213,6 +214,17 @@ it('names exactly the rights commerce.tax declares for the four calls it makes',
   expect([CZ_VAT_STANDARD, CZ_VAT_REDUCED]).toEqual(['cz.vat.standard', 'cz.vat.reduced']);
 });
 
+it('starts the baseline at Prague midnight of 1 January 2024, the Czech calendar day, not at UTC midnight', () => {
+  const prague = DateTime.toParts(DateTime.setZone(baseline, DateTime.zoneMakeNamedUnsafe('Europe/Prague')));
+  expect([prague.year, prague.month, prague.day, prague.hour, prague.minute, prague.second]).toEqual([
+    2024, 1, 1, 0, 0, 0,
+  ]);
+  expect(DateTime.formatIso(baseline)).toBe('2023-12-31T23:00:00.000Z');
+  expect(czechCalendarDate(baseline)).toBe('1. 1. 2024');
+  // One millisecond earlier is still the last day of 2023 in Prague.
+  expect(czechCalendarDate(DateTime.subtract(baseline, { milliseconds: 1 }))).toBe('31. 12. 2023');
+});
+
 it.effect('plans the regime and both rules for an empty company, with fixed keys and a stable fingerprint', () =>
   Effect.gen(function* emptyPlan() {
     const { sent, tenant } = makeFakeTax();
@@ -242,6 +254,10 @@ it.effect('plans the regime and both rules for an empty company, with fixed keys
       expectedCurrentRevision: 0,
       regime: 'VAT_PAYER',
     });
+    // Every write starts on the Prague day start of 1 January 2024, and the fingerprint covers that instant.
+    expect(first.plan.writes.map(({ effectiveFrom }) => DateTime.formatIso(effectiveFrom))).toEqual(
+      Array.from({ length: 6 }, () => '2023-12-31T23:00:00.000Z'),
+    );
     expect((yield* dryRun(tenant)).fingerprint).toBe(first.fingerprint);
     // A dry run sends nothing.
     expect(sent).toEqual([]);
@@ -318,8 +334,8 @@ it.effect('never overwrites a regime or rule set differently, and names it', () 
     of(shopId).regimes.push({ effectiveFrom: baseline, regime: 'NON_PAYER' });
     const planned = yield* dryRun(tenant);
     expect(planned.problems).toEqual([
-      'Obchodní firma: cz.vat.standard differs from the baseline (SELECTED: 20 % od 2024-01-01); change it in the product',
-      'Šroubárna Vysočina s.r.o.: VAT regime differs from the baseline (nyní NON_PAYER od 2024-01-01, revize 1); change it in the product',
+      'Obchodní firma: cz.vat.standard differs from the baseline (SELECTED: 20 % od 1. 1. 2024); change it in the product',
+      'Šroubárna Vysočina s.r.o.: VAT regime differs from the baseline (nyní NON_PAYER od 1. 1. 2024, revize 1); change it in the product',
     ]);
     const reason = yield* failureReason(runTaxBaseline('apply', tenant, Option.some(planned.fingerprint)));
     expect(reason).toContain('cz.vat.standard differs');
@@ -388,9 +404,9 @@ it.effect('the human table names companies only; ids appear in the JSON plan alo
     const table = renderTaxBaseline(tenantId, applied.reports);
     expect(table).toContain('Tenant: Prodejní demo');
     expect(table).toContain('Obchodní firma');
-    expect(table).toContain('režim DPH: plátce DPH od 2024-01-01 [ok]');
-    expect(table).toContain('cz.vat.standard: 21 % od 2024-01-01 [ok]');
-    expect(table).toContain('cz.vat.reduced: 12 % od 2024-01-01 [ok]');
+    expect(table).toContain('režim DPH: plátce DPH od 1. 1. 2024 [ok]');
+    expect(table).toContain('cz.vat.standard: 21 % od 1. 1. 2024 [ok]');
+    expect(table).toContain('cz.vat.reduced: 12 % od 1. 1. 2024 [ok]');
     expect(table).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/u);
   }),
 );

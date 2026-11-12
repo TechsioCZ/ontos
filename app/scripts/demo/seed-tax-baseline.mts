@@ -7,8 +7,8 @@
  *   node scripts/demo/seed-tax-baseline.mts --mode verify [--json]
  *
  * Per company (each one the operator can select in the Tenant), from a company-scoped session: the seller is a VAT
- * payer from 2024-01-01, and the two Czech domestic VAT rules exist (`cz.vat.standard` 21 %, `cz.vat.reduced` 12 %,
- * both from 2024-01-01). Nothing in the repository's company fixtures marks a company as a non-payer.
+ * payer from 1 January 2024, and the two Czech domestic VAT rules exist (`cz.vat.standard` 21 %, `cz.vat.reduced` 12 %,
+ * both from 1 January 2024). The day starts at Prague midnight. Nothing in the repository's company fixtures marks a company as a non-payer.
  *
  * The run first reads the current state through tax's governed reads and plans only what is missing. A regime or
  * rule somebody already set differently is never overwritten: the plan stops and names it. A re-run plans no write,
@@ -67,9 +67,21 @@ type TenantId = typeof TenantIdSchema.Type;
 /** The two Czech VAT classifications, as the shared contract names them (re-exported for the tests). */
 export { CZ_VAT_REDUCED, CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
 
-/** The day both rates and the payer regime start: 1 January 2024 (UTC midnight, the tax module's convention). */
-export const TAX_BASELINE_EFFECTIVE_FROM = '2024-01-01T00:00:00.000Z';
+/**
+ * The day both rates and the payer regime start: 1 January 2024. VAT effective dates are Czech calendar dates, so
+ * the day starts at Prague midnight, the instant 2023-12-31T23:00:00Z (CET, UTC+1). Finance writes and looks up its
+ * rules with Prague day starts: under a UTC-midnight start an invoice dated 1 January 2024 would find no rate. No
+ * Prague day helper exists outside the verticals, so the instant is a constant; a test pins it to Prague midnight.
+ */
+export const TAX_BASELINE_EFFECTIVE_FROM = '2023-12-31T23:00:00.000Z';
 const baselineEffectiveFrom = DateTime.makeUnsafe(TAX_BASELINE_EFFECTIVE_FROM);
+const PRAGUE = DateTime.zoneMakeNamedUnsafe('Europe/Prague');
+
+/** The Czech calendar date an instant falls on in Prague, written the Czech way: `1. 1. 2024`. */
+export const czechCalendarDate = (instant: DateTime.DateTime): string => {
+  const { day, month, year } = DateTime.toParts(DateTime.setZone(instant, PRAGUE));
+  return `${String(day)}. ${String(month)}. ${String(year)}`;
+};
 
 export interface BaselineRule {
   readonly classificationCode: string;
@@ -283,7 +295,7 @@ const normalizedRate = (value: string) => (value.includes('.') ? value.replace(/
 export const sameRate = (left: string, right: string): boolean => normalizedRate(left) === normalizedRate(right);
 const isBaselineStart = (instant: DateTime.Utc) =>
   DateTime.toEpochMillis(instant) === DateTime.toEpochMillis(baselineEffectiveFrom);
-const day = (instant: DateTime.Utc) => DateTime.formatIsoDate(instant);
+const day = (instant: DateTime.Utc) => czechCalendarDate(instant);
 
 export const regimeVerdict = (regime: RegimeObservation): ItemVerdict =>
   regime.headRevision === 0
