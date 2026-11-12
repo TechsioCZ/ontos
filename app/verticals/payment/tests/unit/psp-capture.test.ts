@@ -144,6 +144,7 @@ const fakeServices = (
     prepareCancel: unused,
     prepareCollect: unused,
     prepareRefund: unused,
+    readOrderReference: unused,
     replay: unused,
     send: unused,
     verifyNotification: (_target, notification) => {

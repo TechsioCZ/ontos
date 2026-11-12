@@ -1605,26 +1605,28 @@ it.live("#1148 foreign Tenant or Selling Legal Entity cannot collect, read or re
   ),
 );
 
-it.live('#1148 a disabled or foreign gateway account/environment refuses a new COLLECT without failover', () =>
+it.live('#1148 #1155 a COLLECT after gateway disablement or account replacement keeps the original binding', () =>
   runNative(
     Effect.gen(function* noFailover() {
       const scenario = yield* lifecycleScenario();
       const { paymentId, request } = yield* paymentWithCollection(scenario);
-      // C17 now enables only a different account/environment; the Payment keeps its original binding.
-      yield* scenario.owners.update((state) => ({
-        ...state,
-        enabledBindings: [
-          { ...LIFECYCLE_GATEWAY_BINDING, environment: 'sandbox', providerAccountRef: 'gopay-account-other' },
-        ],
-      }));
-      expect(yield* failureCodeOf(scenario.collect(request('collect-after-disable')))).toBe(
-        'payment_binding_not_enabled',
-      );
+      // A C17 outage fails closed; nothing is started.
       yield* scenario.owners.update((state) => ({ ...state, gatewayAvailable: false }));
       expect(yield* failureCodeOf(scenario.collect(request('collect-during-outage')))).toBe(
         'payment_owner_evidence_unavailable',
       );
       expect(yield* collectRows(scenario, paymentId)).toHaveLength(0);
+      // C17 now offers only a different account/environment to new intents; this existing Payment keeps its own.
+      yield* scenario.owners.update((state) => ({
+        ...state,
+        enabledBindings: [
+          { ...LIFECYCLE_GATEWAY_BINDING, environment: 'sandbox', providerAccountRef: 'gopay-account-other' },
+        ],
+        gatewayAvailable: true,
+      }));
+      const started = yield* scenario.collect(request('collect-after-replacement'));
+      expect(started.operation.binding).toStrictEqual(LIFECYCLE_GATEWAY_BINDING);
+      expect(yield* collectRows(scenario, paymentId)).toHaveLength(1);
       const current = yield* scenario.read(paymentId);
       expect(current.payment.executionBinding).toStrictEqual(LIFECYCLE_GATEWAY_BINDING);
     }),

@@ -204,6 +204,7 @@ const adapterOf = (provider: Provider, family: Family): GatewayProviderAdapter =
       run(call('PREPARE_REFUND', request.operationId, request.providerTarget), () =>
         preparedOf(family, request.operationId, 'REFUND'),
       ).pipe(Effect.catchTag('GatewayProviderOutcomeUnknown', (failure) => Effect.die(failure))),
+    readOrderReference: () => Effect.die('The executor never reads order references'),
     replay: (_target, _request, expected) =>
       run(call('REPLAY', expected.operationId), () => acknowledgement(family, expected)),
     send: (_target, _prepared, expected) =>

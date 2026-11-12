@@ -69,9 +69,10 @@ const domainEvents = { [OPERATION_REQUESTED]: OperationRequestedPayloadSchema } 
 const isGatewayAccountBinding = Schema.is(PaymentGatewayAccountBindingSchema);
 
 /**
- * A new COLLECT executes under the Payment's original binding only. For a gateway binding the C17
- * owner must still Currently enable that exact account; disablement refuses the new operation and never
- * selects another provider, account or environment.
+ * A new COLLECT executes under the Payment's original binding only. The binding was chosen when the Payment
+ * intent was created, so Gateway Enablement changes since then (disablement, account replacement) do not
+ * apply (#1155); the C17 owner must still know that exact account and environment in this scope. An unknown
+ * binding refuses the new operation and never selects another provider, account or environment.
  */
 const verifyGatewayBinding = Effect.fn('StartPaymentCollectionAction.verifyGatewayBinding')(
   function* verifyGatewayBinding(
@@ -79,20 +80,19 @@ const verifyGatewayBinding = Effect.fn('StartPaymentCollectionAction.verifyGatew
     binding: PaymentGatewayAccountBinding,
     gateways: PaymentGatewayBindingEvidence,
   ) {
-    const verification = yield* gateways.verifySelectedBinding({
+    const original = yield* gateways.resolveOriginalBinding({
       binding,
-      customerConfigurationId: payment.customerConfigurationId,
       scope: { legalEntityId: payment.legalEntityId, tenantId: payment.tenantId },
     });
-    return yield* Match.valueTags(verification, {
-      ENABLED: () => Effect.void,
-      NOT_ENABLED: () =>
+    return yield* Option.match(original, {
+      onNone: () =>
         Effect.fail(
           paymentCollectionRefused(
             'payment_binding_not_enabled',
-            'The original gateway binding is not Currently enabled; no other binding is selected',
+            'The original gateway binding is unknown in this scope; no other binding is selected',
           ),
         ),
+      onSome: () => Effect.void,
     });
   },
 );

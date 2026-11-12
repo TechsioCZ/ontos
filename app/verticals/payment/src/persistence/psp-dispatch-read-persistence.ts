@@ -1,7 +1,7 @@
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
-import { and, asc, eq, gt, inArray, notInArray, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, lte, notInArray, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
-import { Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 
 import { paymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import type { PaymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
@@ -17,6 +17,7 @@ import type {
   GatewayReturnStatusView,
   GatewayReturnToken,
 } from '../../shared/domain/psp-configuration.ts';
+import { GATEWAY_WAIT_BUDGET_MS } from '../../shared/domain/psp-vocabulary.ts';
 import type { ProviderDispatchState, ProviderNotSentReason } from '../../shared/domain/psp-vocabulary.ts';
 import { paymentOperations, pspProviderDispatches, pspProviderEvidence } from '../database/schema.ts';
 
@@ -56,8 +57,10 @@ export interface PspDispatchReadPersistence {
   ) => Effect.Effect<Option.Option<GatewayCustomerActionView>, PaymentUnavailable>;
   /**
    * Gateway reconciliation debt, ordered by operation id: operations whose ledger state is OUTCOME_UNKNOWN,
-   * TARGET_UNRESOLVED, UNSUPPORTED or NOT_SENT while the Payment outcome is not definitive, and every
-   * operation with PENDING_SUBMISSION evidence. `recommendedTrigger` is EXECUTION_OUTCOME_UNKNOWN for
+   * TARGET_UNRESOLVED, UNSUPPORTED or NOT_SENT while the Payment outcome is not definitive, ACKNOWLEDGED
+   * operations still not definitive once the gateway wait budget after their request has passed (a lost
+   * callback or an accepted pending observation leaves them without queued evidence), and every operation
+   * with PENDING_SUBMISSION evidence. `recommendedTrigger` is EXECUTION_OUTCOME_UNKNOWN for
    * OUTCOME_UNKNOWN and TARGET_UNRESOLVED, otherwise OUTCOME_OVERDUE (plan §2.2).
    */
   readonly selectReconciliationDebt: (
@@ -238,6 +241,9 @@ export const pspDispatchReadPersistenceForTransaction = (
     function* selectReconciliationDebt(query: PspReconciliationDebtPageQuery) {
       const scope = yield* requireLegalEntity();
       const limit = Math.min(Math.max(Math.trunc(query.limit), 1), PSP_RECONCILIATION_DEBT_MAX_PAGE_SIZE);
+      const overdueRequestedBefore = DateTime.toDateUtc(
+        DateTime.subtract(yield* DateTime.now, { milliseconds: GATEWAY_WAIT_BUDGET_MS }),
+      );
       const rows = yield* transaction
         .select({
           ledgerState: pspProviderDispatches.state,
@@ -268,8 +274,14 @@ export const pspDispatchReadPersistenceForTransaction = (
             or(
               sql`${pendingEvidenceCount} > 0`,
               and(
-                inArray(pspProviderDispatches.state, [...DEBT_LEDGER_STATES]),
                 notInArray(paymentOperations.outcome, [...DEFINITIVE_OUTCOMES]),
+                or(
+                  inArray(pspProviderDispatches.state, [...DEBT_LEDGER_STATES]),
+                  and(
+                    eq(pspProviderDispatches.state, 'ACKNOWLEDGED'),
+                    lte(paymentOperations.createdAt, overdueRequestedBefore),
+                  ),
+                ),
               ),
             ),
           ),

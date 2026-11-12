@@ -393,6 +393,7 @@ const adapterOf = (world: World, family: Family): GatewayProviderAdapter => {
         { family, kind: 'PREPARE_REFUND', operationId: request.operationId, providerTarget: request.providerTarget },
         () => preparedOf(family, request.operationId, 'REFUND'),
       ).pipe(Effect.catchTag('GatewayProviderOutcomeUnknown', (failure) => Effect.die(failure))),
+    readOrderReference: () => Effect.die('The executor never reads order references'),
     replay: (_target, request, expected) =>
       run({ family, kind: 'REPLAY', operationId: expected.operationId }, () => request).pipe(
         Effect.andThen(respond({ family, kind: 'REPLAY', operationId: expected.operationId })),

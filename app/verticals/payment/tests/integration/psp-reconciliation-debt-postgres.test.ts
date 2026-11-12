@@ -2,6 +2,7 @@ import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import type { OutboxWorkerHandlerContext, OutboxWorkerLegalEntityScope } from '@app/core-runtime/outbox/worker';
 import type { PgClient } from '@effect/sql-pg';
 import { DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
@@ -164,6 +165,8 @@ interface DebtFixture {
   readonly collect: ProviderDispatchIdentity;
   readonly family: Family;
   readonly paymentId: string;
+  /** When Payment recorded the COLLECT request. */
+  readonly requestedAt: DateTime.Utc;
   readonly scope: PaymentTestScope;
 }
 
@@ -252,7 +255,15 @@ const debtFixture = Effect.fn('PspDebtFixture.gateway')(function* debtFixture(
     target,
     targetOperationId: Option.none(),
   };
-  return { accountRef, bindingId, collect, family, paymentId, scope } satisfies DebtFixture;
+  return {
+    accountRef,
+    bindingId,
+    collect,
+    family,
+    paymentId,
+    requestedAt: collected.record.createdAt,
+    scope,
+  } satisfies DebtFixture;
 });
 
 const preparedFor = (identity: ProviderDispatchIdentity, family: Family) => {
@@ -459,6 +470,46 @@ it.live('#1158 Pending NOT_EFFECTED evidence appears as debt', () =>
       // Acknowledged dispatches are not unknown: the evidence is overdue reconciliation, not an unknown outcome.
       expect(row?.recommendedTrigger).toBe('OUTCOME_OVERDUE');
       expect(row !== undefined && DateTime.isDateTime(row.oldestPendingAt)).toBe(true);
+    }),
+  ),
+);
+
+it.live('#1158 An acknowledged collection without a provider outcome becomes overdue debt', () =>
+  Effect.scoped(
+    Effect.gen(function* acknowledgedOverdueIsDebt() {
+      const { runtime: runtimeClient } = yield* testDatabaseClients;
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, paymentTestRelations);
+      const scope = yield* makeTestScope;
+      const fixture = yield* debtFixture(runtime, runtimeClient, scope, 'GOPAY');
+      yield* prepareThroughLedger(runtime, fixture);
+      yield* acknowledge(runtime, fixture, { _tag: 'GOPAY_PAYMENT', id: 'gp_callback_lost' });
+
+      // The customer may still pay: inside the gateway wait budget the collection is no debt.
+      expect((yield* readDebt(runtime, scope, { limit: 50 })).rows).toEqual([]);
+
+      // The callback never arrives and no evidence is queued; after the budget the driver must look it up.
+      const overdueAt = DateTime.toEpochMillis(fixture.requestedAt) + 86_400_000 + 1000;
+      const page = yield* TestClock.setTime(overdueAt).pipe(
+        Effect.andThen(readDebt(runtime, scope, { limit: 50 })),
+        Effect.provide(TestClock.layer()),
+      );
+      expect(
+        page.rows.map((row) => ({
+          hasPendingEvidence: Object.hasOwn(row, 'oldestPendingAt'),
+          ledgerState: row.ledgerState,
+          operationId: row.operationId,
+          pendingEvidenceCount: row.pendingEvidenceCount,
+          recommendedTrigger: row.recommendedTrigger,
+        })),
+      ).toEqual([
+        {
+          hasPendingEvidence: false,
+          ledgerState: 'ACKNOWLEDGED',
+          operationId: fixture.collect.operationId,
+          pendingEvidenceCount: 0,
+          recommendedTrigger: 'OUTCOME_OVERDUE',
+        },
+      ]);
     }),
   ),
 );

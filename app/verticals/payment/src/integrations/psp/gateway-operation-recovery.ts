@@ -196,16 +196,26 @@ export const recoveryModeAtDispatch = (
     Option.getOrUndefined(retained),
   );
 
-/** The provider object a lookup by reference reads: the refund object when known, else the collection object. */
-export const recordedLookupRefOf = (record: ProviderDispatchRecord): Option.Option<ProviderObjectRef> =>
-  record.operationKind === 'REFUND'
-    ? Option.orElse(record.providerRefundRef, () => record.providerPaymentRef)
-    : record.providerPaymentRef;
+/**
+ * The provider object a lookup by reference reads: the refund object when known, else the collection object.
+ * A Stripe refund is a separate provider object, so only its refund ref addresses it; GoPay and Comgate read a
+ * refund through its payment.
+ */
+export const recordedLookupRefOf = (record: ProviderDispatchRecord): Option.Option<ProviderObjectRef> => {
+  if (record.operationKind !== 'REFUND') {
+    return record.providerPaymentRef;
+  }
+  return record.providerFamily === 'STRIPE'
+    ? record.providerRefundRef
+    : Option.orElse(record.providerRefundRef, () => record.providerPaymentRef);
+};
 
 /**
- * How a lookup can address the operation, or `None` when it cannot: by the recorded provider object; for
- * Stripe without a ref only after the replay window (PaymentIntent search on the order reference; within the
- * window the exact replay is the only safe path); GoPay and Comgate have no order-reference lookup.
+ * How a lookup can address the operation, or `None` when it cannot: by the recorded provider object; for a
+ * Stripe collection or cancel without a ref only after the replay window (PaymentIntent search on the order
+ * reference; within the window the exact replay is the only safe path). GoPay and Comgate have no
+ * order-reference lookup, and a Stripe refund without its refund ref waits for its notification, which
+ * records that ref.
  */
 export const lookupTargetOf = (record: ProviderDispatchRecord, now: DateTime.Utc): Option.Option<GatewayLookupTarget> =>
   Option.match(recordedLookupRefOf(record), {
@@ -214,7 +224,7 @@ export const lookupTargetOf = (record: ProviderDispatchRecord, now: DateTime.Utc
         onNone: () => true,
         onSome: (expiresAt) => DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(expiresAt),
       });
-      return record.providerFamily === 'STRIPE' && windowClosed
+      return record.providerFamily === 'STRIPE' && record.operationKind !== 'REFUND' && windowClosed
         ? Option.some<GatewayLookupTarget>({ _tag: 'ORDER_REFERENCE', orderReference: record.orderReference })
         : Option.none();
     },

@@ -26,6 +26,7 @@ import {
   GatewayLookupRequestSchema,
   GatewayLookupTargetSchema,
   GatewayRefundRequestSchema,
+  ProviderObjectRefSchema,
 } from '../../src/integrations/psp/psp-request.ts';
 import type {
   GatewayExecutionTarget,
@@ -560,6 +561,38 @@ describe('#1158 Stripe lookup', () => {
       expect(findings.map((finding) => finding.finding)).toEqual(['EFFECT_CONFIRMED']);
       expect(mismatch).toMatchObject({ code: 'gateway_provider_unsupported', reason: 'stripe_lookup_target_mismatch' });
       expect(sent).toHaveLength(1);
+    }),
+  );
+
+  it.effect('#1157 Stripe states the metadata order reference of an object read in the binding mode only', () =>
+    Effect.gen(function* readOrderReference() {
+      const refund = stripeRefundObject({ orderReference: REFUND_CORRELATION.orderReference, status: 'succeeded' });
+      const live = stripePaymentIntentObject({
+        livemode: true,
+        orderReference: COLLECT_CORRELATION.orderReference,
+        status: 'succeeded',
+      });
+      const { adapter, sent } = yield* harness([
+        respond(200, JSON.stringify(refund)),
+        respond(200, JSON.stringify(live)),
+        respond(404, JSON.stringify(stripeResourceMissingError)),
+      ]);
+      const refOf = Schema.decodeUnknownSync(ProviderObjectRefSchema);
+      const refundRef = refOf({ _tag: 'STRIPE_REFUND', id: STRIPE_FIXTURE_REFUND_ID });
+      const intentRef = refOf({ _tag: 'STRIPE_PAYMENT_INTENT', id: STRIPE_FIXTURE_PAYMENT_INTENT_ID });
+      expect(yield* adapter.readOrderReference(SANDBOX_TARGET, refundRef)).toEqual(
+        Option.some(REFUND_CORRELATION.orderReference),
+      );
+      // A LIVE object read for a SANDBOX binding and a missing object state nothing.
+      expect(yield* adapter.readOrderReference(SANDBOX_TARGET, intentRef)).toEqual(Option.none());
+      expect(yield* adapter.readOrderReference(SANDBOX_TARGET, intentRef)).toEqual(Option.none());
+      const gopayRef = refOf({ _tag: 'GOPAY_PAYMENT', id: '3000006529' });
+      expect(yield* adapter.readOrderReference(SANDBOX_TARGET, gopayRef)).toEqual(Option.none());
+      expect(sent.map((call) => call.request.url)).toEqual([
+        `https://api.stripe.com/v1/refunds/${STRIPE_FIXTURE_REFUND_ID}`,
+        `https://api.stripe.com/v1/payment_intents/${STRIPE_FIXTURE_PAYMENT_INTENT_ID}`,
+        `https://api.stripe.com/v1/payment_intents/${STRIPE_FIXTURE_PAYMENT_INTENT_ID}`,
+      ]);
     }),
   );
 });

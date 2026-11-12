@@ -93,6 +93,7 @@ const stripeAdapter: GatewayProviderAdapter = {
   prepareCancel: unused,
   prepareCollect: unused,
   prepareRefund: unused,
+  readOrderReference: unused,
   replay: unused,
   send: unused,
   verifyNotification: (target, notification) =>

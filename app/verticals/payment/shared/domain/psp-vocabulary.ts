@@ -22,6 +22,13 @@ export const GATEWAY_CREDENTIAL_STATUSES = ['ACTIVE', 'RETIRED'] as const;
 export const GatewayCredentialStatusSchema = Schema.Literals(GATEWAY_CREDENTIAL_STATUSES);
 export type GatewayCredentialStatus = typeof GatewayCredentialStatusSchema.Type;
 
+/**
+ * The gateway wait budget: every executor wait (cancel target, prior refund, unavailable provider) ends this
+ * long after the operation request, and an ACKNOWLEDGED operation still not definitive after it is overdue
+ * reconciliation debt (#1158).
+ */
+export const GATEWAY_WAIT_BUDGET_MS = 86_400_000;
+
 /** Worker-side dispatch ledger state of one provider-executed Payment Operation (#1156, #1158). */
 export const PROVIDER_DISPATCH_STATES = [
   'AWAITING_TARGET',

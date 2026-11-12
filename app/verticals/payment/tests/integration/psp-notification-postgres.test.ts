@@ -449,6 +449,7 @@ const processNative = (
           prepareCancel: unexpected('prepareCancel'),
           prepareCollect: unexpected('prepareCollect'),
           prepareRefund: unexpected('prepareRefund'),
+          readOrderReference: unexpected('readOrderReference'),
           replay: unexpected('replay'),
           send: unexpected('send'),
           verifyNotification: unexpected('verifyNotification'),
@@ -602,6 +603,49 @@ it.live('#1157 Create response lost then notification arrives correlates and ena
         correlated_operation_id: collect.operationId,
         state: 'SUBMITTED',
       });
+    }),
+  ),
+);
+
+it.live('#1157 Executor crash after send: the notification acknowledges the PREPARED collection', () =>
+  Effect.scoped(
+    Effect.gen(function* preparedCollection() {
+      const { runtime: runtimeClient } = yield* testDatabaseClients;
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, paymentTestRelations);
+      const scope = yield* makeTestScope;
+      const binding = yield* stripeBinding(runtimeClient, scope, 'SANDBOX');
+      // Sent, then the executor crashed before recording anything: the dispatch stays PREPARED.
+      const collect = yield* preparedCollect(runtime, scope, binding);
+      const intent = Schema.decodeUnknownSync(ProviderObjectRefSchema)({
+        _tag: 'STRIPE_PAYMENT_INTENT',
+        id: 'pi_native_notification',
+      });
+      const { orderReference } = deriveProviderCorrelation(collect.operationId);
+      const notificationId = yield* captureNotification(runtimeClient, scope, binding, {
+        body: signedPaymentIntentBody('evt_native_prepared', 'pi_native_notification', orderReference),
+        eventId: 'evt_native_prepared',
+        refs: [intent],
+      });
+
+      const processed = yield* processNative(runtime, scope, {
+        a8: 'ACCEPT',
+        findings: () => Effect.all([confirmedFinding(collect.operationId, intent)]),
+        notificationId,
+      });
+
+      expect(processed.result).toBe(`SETTLED ${collect.operationId} SUBMITTED [ACCEPTED]`);
+      const byOperation = yield* inWorker(runtime, scope, ({ scope: worker }) =>
+        Effect.service(ProviderDispatchLedger).pipe(
+          Effect.flatMap((ledger) => ledger.readByOperation({ operationId: collect.operationId, scope: worker })),
+        ),
+      ).pipe(Effect.provide(storesLayer));
+      expect(byOperation.pipe(Option.map(({ state }) => state))).toEqual(Option.some('ACKNOWLEDGED'));
+      expect(
+        byOperation.pipe(
+          Option.flatMap(({ providerPaymentRef }) => providerPaymentRef),
+          Option.exists((ref) => sameRef(ref, intent)),
+        ),
+      ).toBe(true);
     }),
   ),
 );

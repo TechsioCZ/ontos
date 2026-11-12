@@ -1,7 +1,7 @@
 import { PaymentTermDefinitionSnapshotSchema } from '@app/payment-term-catalog-contracts/payment-term';
 import type { PaymentTermDefinitionSnapshot } from '@app/payment-term-catalog-contracts/payment-term';
 import type { PaymentTermRef } from '@app/payment-term-catalog-contracts/resources/payment-term';
-import { Effect, Layer, Ref, Schema } from 'effect';
+import { Effect, Layer, Option, Ref, Schema } from 'effect';
 
 import type { PaymentGatewayAccountBinding } from '../../shared/domain/payment-execution-binding.ts';
 import { CommitmentOutcomePort, unavailableCommitmentOutcome } from '../../src/ports/commitment-outcome-port.ts';
@@ -20,7 +20,10 @@ import { RefundableItemsPort, unavailableRefundableItems } from '../../src/ports
  * mutable so a test can change owner configuration after a Payment exists and prove history is kept.
  */
 export interface LifecycleOwnerContractState {
-  /** Gateway bindings C17 Currently enables; anything else is NOT_ENABLED. */
+  /**
+   * Gateway bindings C17 Currently enables for new intents; anything else is NOT_ENABLED. Every binding in the
+   * initial or the current state stays resolvable as an existing Payment's original binding.
+   */
   readonly enabledBindings: readonly PaymentGatewayAccountBinding[];
   /** False simulates a C17 outage: verification fails as owner evidence unavailable. */
   readonly gatewayAvailable: boolean;
@@ -59,6 +62,8 @@ const sameBinding = (left: PaymentGatewayAccountBinding, right: PaymentGatewayAc
   left.providerAccountRef === right.providerAccountRef &&
   left.providerFamily === right.providerFamily;
 
+const gatewayDown = () => ownerEvidenceUnavailable('GATEWAY_BINDING', 'Fixture: C17 route is down');
+
 /** Builds the owner-port layer over one mutable public-contract fixture state. */
 export const makeLifecycleOwnerContractFixture = Effect.fn('LifecycleOwnerContractFixture.make')(
   function* makeLifecycleOwnerContractFixture(initial: LifecycleOwnerContractState) {
@@ -67,16 +72,29 @@ export const makeLifecycleOwnerContractFixture = Effect.fn('LifecycleOwnerContra
       listEnabledBindings: () =>
         Ref.get(state).pipe(
           Effect.flatMap(({ enabledBindings, gatewayAvailable }) =>
+            gatewayAvailable ? Effect.succeed(enabledBindings) : Effect.fail(gatewayDown()),
+          ),
+        ),
+      // A binding once enabled stays addressable for existing Payments after disablement or replacement (#1155).
+      resolveOriginalBinding: ({ binding }) =>
+        Ref.get(state).pipe(
+          Effect.flatMap(({ enabledBindings, gatewayAvailable }) =>
             gatewayAvailable
-              ? Effect.succeed(enabledBindings)
-              : Effect.fail(ownerEvidenceUnavailable('GATEWAY_BINDING', 'Fixture: C17 route is down')),
+              ? Effect.succeed(
+                  Option.fromUndefinedOr(
+                    [...initial.enabledBindings, ...enabledBindings].find((candidate) =>
+                      sameBinding(candidate, binding),
+                    ),
+                  ),
+                )
+              : Effect.fail(gatewayDown()),
           ),
         ),
       verifySelectedBinding: ({ binding }) =>
         Ref.get(state).pipe(
           Effect.flatMap(({ enabledBindings, gatewayAvailable }) => {
             if (!gatewayAvailable) {
-              return Effect.fail(ownerEvidenceUnavailable('GATEWAY_BINDING', 'Fixture: C17 route is down'));
+              return Effect.fail(gatewayDown());
             }
             const enabled = enabledBindings.some((candidate) => sameBinding(candidate, binding));
             return Effect.succeed(

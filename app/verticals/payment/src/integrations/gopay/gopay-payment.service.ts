@@ -12,7 +12,7 @@ import { ProviderHttp } from '../psp/provider-http.ts';
 import type { ProviderHttpResponse } from '../psp/provider-http.ts';
 import type { GatewayProviderAdapter } from '../psp/psp-adapter.ts';
 import { deriveProviderCorrelation } from '../psp/psp-correlation.ts';
-import type { ProviderCorrelation } from '../psp/psp-correlation.ts';
+import type { GatewayOrderReference, ProviderCorrelation } from '../psp/psp-correlation.ts';
 import {
   GatewayProviderOutcomeUnknown,
   GatewayProviderResponseInvalid,
@@ -45,6 +45,7 @@ import type {
 import { GOPAY_CAPABILITIES, gopayCancelUnsupported } from './gopay-capabilities.ts';
 import {
   gopayRefundEffectKey,
+  gopayVerifiedOrderReference,
   mapGopayCreateResponse,
   mapGopayLookup,
   mapGopayRefundResponse,
@@ -76,6 +77,7 @@ import type { GopayCreatePaymentRequest, GopayGoid } from './gopay-wire.ts';
  *   ACCEPTED/FINISHED is REFUND_PENDING, followed by one refund-history read that may confirm it.
  * - Cancel: UNSUPPORTED (`provider_cancel_unsupported`); replay: UNSUPPORTED (no idempotent resend).
  * - Lookup: by GoPay payment id only; an order-reference lookup is UNSUPPORTED (not documented).
+ * - Order reference of a notified payment: the same payment read, `order_number` only for the binding GoID.
  * - 401/403 drops the cached token and is UNAVAILABLE: GoPay refused the request before any effect.
  *
  * Nothing here logs or puts a body, URL, token or credential into an error.
@@ -559,6 +561,24 @@ const makeGopayPaymentService = Effect.gen(function* buildGopayPaymentService() 
       Match.exhaustive,
     );
 
+  /** The `order_number` of a payment of the binding's GoID; another object, GoID or a miss is `None`. */
+  const readOrderReference = Effect.fn('GopayPayment.readOrderReference')(function* readOrderReferenceEffect(
+    target: GatewayExecutionTarget,
+    ref: ProviderObjectRef,
+  ) {
+    const paymentRef = gopayPaymentRefOf(ref);
+    if (Option.isNone(paymentRef)) {
+      return Option.none<GatewayOrderReference>();
+    }
+    const context = yield* gopayTargetContext(target);
+    const result = yield* readLookupResult(target, context, paymentRef.value, false);
+    return Match.value(result).pipe(
+      Match.tag('FOUND', ({ payment }) => gopayVerifiedOrderReference(target, payment)),
+      Match.tag('NOT_FOUND', () => Option.none<GatewayOrderReference>()),
+      Match.exhaustive,
+    );
+  });
+
   return {
     capabilities: GOPAY_CAPABILITIES,
     family: 'GOPAY',
@@ -566,6 +586,7 @@ const makeGopayPaymentService = Effect.gen(function* buildGopayPaymentService() 
     prepareCancel: () => Effect.fail(gopayCancelUnsupported()),
     prepareCollect,
     prepareRefund,
+    readOrderReference,
     replay: (_target, _request, expected) =>
       Effect.fail(unsupported(capabilityOf(expected), 'provider_replay_unsupported')),
     send,

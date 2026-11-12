@@ -185,6 +185,9 @@ export const applicabilityOwnerEvidenceFixture = (script: ApplicabilityOwnerEvid
         ? Effect.fail(ownerEvidenceUnavailable('GATEWAY_BINDING', 'Fixture: C17 unavailable'))
         : Effect.succeed(enabled);
     },
+    // Applicability decides new Payment intents only; it never asks for an existing Payment's binding.
+    resolveOriginalBinding: () =>
+      Effect.fail(ownerEvidenceUnavailable('GATEWAY_BINDING', 'Fixture: not a new-intent question')),
     verifySelectedBinding: ({ binding }) => {
       calls.gatewayBindings.push(binding);
       const enabled = script.enabledGatewayBindings;
