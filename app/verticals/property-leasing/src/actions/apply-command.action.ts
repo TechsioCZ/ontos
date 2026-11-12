@@ -2,7 +2,7 @@
 // @ontos-action-owner property.leasing
 // @ontos-action-slug apply-command
 import type { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
-import { Context, DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import {
   defineAction,
   defineTenantModuleEntrypoint,
@@ -22,8 +22,11 @@ import {
   OccupancyConflict,
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload, OccupancyError } from '../../shared/actions/apply-command.ts';
-import { persistenceService, transitionOccupancy, makeOccupancyValidators } from '../services/persistence.service.ts';
-import type { OccupancyValidators } from '../services/persistence.service.ts';
+import {
+  OccupancyReferenceValidators,
+  persistenceService,
+  transitionOccupancy,
+} from '../services/persistence.service.ts';
 
 import { OutboxPayloadSchema } from '../../shared/outbox/property-leasing-search-refresh-requested-v1.ts';
 import { createApplyCommandPropertyLeasingSearchRefreshRequestedV1OutboxMessage } from './apply-command-property-leasing-search-refresh-requested-v1.outbox-message.ts';
@@ -31,9 +34,6 @@ import { createApplyCommandPropertyLeasingSearchRefreshRequestedV1OutboxMessage 
 const domainEvents = { 'property.leasing.search-refresh-requested.v1': OutboxPayloadSchema } as const;
 const OWNER_MODULE_KEY = 'property.leasing';
 type Persistence = Effect.Success<ReturnType<typeof persistenceService>>;
-export class CommandReferenceValidators extends Context.Service<CommandReferenceValidators, OccupancyValidators>()(
-  '@app/property-leasing/actions/apply-command.action/CommandReferenceValidators',
-) {}
 export type ApplyCommandServices = Persistence & {
   readonly prepared: {
     readonly payload: ApplyCommandPayload;
@@ -98,11 +98,8 @@ export const prepareApplyCommandServices = Effect.fn('Occupancy.prepareApplyComm
   if (current.revision !== payload.expectedRevision) {
     return yield* new OccupancyConflict({ code: 'occupancy_conflict', reason: 'stale_revision' });
   }
-  const injected = yield* Effect.serviceOption(CommandReferenceValidators);
-  const validators = yield* Option.match(injected, {
-    onNone: () => makeOccupancyValidators(context.scope),
-    onSome: Effect.succeed,
-  });
+  const referenceValidators = yield* OccupancyReferenceValidators;
+  const validators = yield* referenceValidators.forScope(context.scope);
   const transition = yield* transitionOccupancy(
     current.snapshot,
     payload.command,
@@ -153,7 +150,7 @@ export const prepareApplyCommandServices = Effect.fn('Occupancy.prepareApplyComm
   ApplyCommandPayload,
   ApplyCommandServices,
   OccupancyError,
-  Effect.Services<ReturnType<typeof makeReferenceGatewayCredentialSource>>
+  OccupancyReferenceValidators | Effect.Services<ReturnType<typeof makeReferenceGatewayCredentialSource>>
 >;
 
 export const applyCommandAction = defineAction(

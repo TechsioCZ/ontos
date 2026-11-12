@@ -18,9 +18,13 @@ import { Reactivity } from 'effect/reactivity';
 import { HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import { ApplyCommandPayloadSchema, AgreementsConflict } from '../../shared/actions/apply-command.ts';
-import { CommandReferenceValidators, prepareApplyCommandServices } from '../../src/actions/apply-command.action.ts';
+import { prepareApplyCommandServices } from '../../src/actions/apply-command.action.ts';
 import { agreementsState } from '../../src/database/schema.ts';
-import { unavailableAgreementsValidators } from '../../src/services/persistence.service.ts';
+import {
+  AgreementsReferenceValidators,
+  unavailableAgreementsValidators,
+} from '../../src/services/persistence.service.ts';
+import type { AgreementsValidators } from '../../src/services/persistence.service.ts';
 
 const unused = () => Effect.die('Unexpected production reference transport');
 const nativeBoundary = Layer.mergeAll(
@@ -134,7 +138,7 @@ const nativePreparation = Effect.scoped(
       expect(snapshotCount).toBe(1);
       referenceChecks += 1;
     };
-    const validators: CommandReferenceValidators['Service'] = {
+    const validators: AgreementsValidators = {
       ...unavailableAgreementsValidators,
       counterparty: (ref) =>
         Effect.sync(() => {
@@ -169,8 +173,15 @@ const nativePreparation = Effect.scoped(
           };
         }),
     };
+    const referenceValidators: AgreementsReferenceValidators['Service'] = {
+      forScope: (requested) =>
+        Effect.sync(() => {
+          expect(requested).toBe(context.scope);
+          return validators;
+        }),
+    };
     const factory = yield* prepareApplyCommandServices(payload, context).pipe(
-      Effect.provideService(CommandReferenceValidators, validators),
+      Effect.provideService(AgreementsReferenceValidators, referenceValidators),
     );
     const preparedChecks = referenceChecks;
     expect(preparedChecks).toBeGreaterThan(0);
@@ -210,7 +221,7 @@ const nativePreparation = Effect.scoped(
           return yield* Effect.fail('fixture-rollback' as const);
         }),
       )
-      .pipe(Effect.flip);
+      .pipe(Effect.provideService(AgreementsReferenceValidators, referenceValidators), Effect.flip);
     expect(result).toBe('fixture-rollback');
     return yield* Effect.void;
   }),

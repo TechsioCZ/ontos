@@ -53,6 +53,7 @@ import {
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
+import { AgreementsReferenceValidatorsLive } from '../src/services/persistence.service.ts';
 import { applyCommandActionApiLive } from './apply-command-action-server.ts';
 import { contractsReadApiLive } from './contracts-search-server.ts';
 import { documentsReadApiLive } from './documents-search-server.ts';
@@ -161,6 +162,8 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
     ),
   ),
   // </generated-governed-http-handler-support-layers>
+  // apply-command builds its party, unit and property reference validators per request from that request's scope.
+  GovernedReadLayer.provide(AgreementsReferenceValidatorsLive),
   GovernedReadLayer.provide(GatewayAssertionRedemptionDatabaseLive),
   GovernedReadLayer.provide(GatewayAssertionPgClientLive),
   GovernedReadLayer.provide(Reactivity.layer),
