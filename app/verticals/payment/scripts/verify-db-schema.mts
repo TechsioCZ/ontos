@@ -23,9 +23,13 @@ const sortedTableInventory = EffectArray.sort(PAYMENT_TABLE_INVENTORY, Order.Str
 const redemptionTable = 'gateway_assertion_redemptions';
 /** Worker-owned C17 rows: readable by the runtime role, written only through the scoped routines. */
 const routineWrittenTables = ['psp_provider_dispatches', 'psp_provider_evidence'] as const;
+/** Transient payer contacts: the runtime role may only insert; the scoped routines read and delete them. */
+const insertOnlyTables = ['psp_operation_payer_contacts'] as const;
+/** Cross-Tenant maintenance routines of the reconciliation driver; they refuse inside an operational scope. */
+const crossTenantRoutines = ['list_due_gateway_reconciliation', 'purge_expired_payer_contacts'] as const;
 /** The only Payment routines the runtime role may execute: SECURITY DEFINER with a pinned search_path. */
 const executableRoutines = EffectArray.sort(
-  PSP_WORKER_ROUTINES.map((routine) => routine.name),
+  [...PSP_WORKER_ROUTINES.map((routine) => routine.name), ...crossTenantRoutines],
   Order.String,
 );
 const expectedTriggers = EffectArray.sort(
@@ -46,6 +50,7 @@ const expectedTriggers = EffectArray.sort(
     'payment_psp_binding_revisions_append_only',
     'payment_psp_bindings_credential',
     'payment_psp_bindings_no_delete',
+    'payment_psp_binding_routes_append_only',
     'payment_psp_bindings_transition',
     'payment_psp_credentials_binding',
     'payment_psp_credentials_no_delete',
@@ -160,6 +165,12 @@ const verify = Effect.gen(function* verifyPaymentSchema() {
           and not has_table_privilege('ontos_runtime', c.oid, 'UPDATE')
           and not has_table_privilege('ontos_runtime', c.oid, 'DELETE')
           and (select count(*) from pg_catalog.pg_policy p where p.polrelid = c.oid) = 4
+        when c.relname = any($4::text[]) then
+          c.relrowsecurity and c.relforcerowsecurity
+          and not has_table_privilege('ontos_runtime', c.oid, 'SELECT') and has_table_privilege('ontos_runtime', c.oid, 'INSERT')
+          and not has_table_privilege('ontos_runtime', c.oid, 'UPDATE')
+          and not has_table_privilege('ontos_runtime', c.oid, 'DELETE')
+          and (select count(*) from pg_catalog.pg_policy p where p.polrelid = c.oid) = 4
         else
           c.relrowsecurity and c.relforcerowsecurity
           and has_table_privilege('ontos_runtime', c.oid, 'SELECT') and has_table_privilege('ontos_runtime', c.oid, 'INSERT')
@@ -175,7 +186,7 @@ const verify = Effect.gen(function* verifyPaymentSchema() {
       ) as safe
     from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid = c.relnamespace
     where n.nspname = $1 and c.relkind in ('r', 'p') order by c.relname`,
-      [PAYMENT_SCHEMA_NAME, redemptionTable, `{${routineWrittenTables.join(',')}}`],
+      [PAYMENT_SCHEMA_NAME, redemptionTable, `{${routineWrittenTables.join(',')}}`, `{${insertOnlyTables.join(',')}}`],
     )
     .pipe(Effect.mapError((cause) => failure('Unable to read the Payment table catalog', cause)));
   if (

@@ -336,7 +336,7 @@ for (const conformance of CONFORMANCE_FAMILIES) {
               const adapter = yield* adapterOf(conformance, harness);
               const prepared = yield* outcomeOf(adapter.prepareCancel(conformance.target, conformance.cancelRequest));
               if (GATEWAY_LAUNCH_CAPABILITIES[family].CANCEL_OR_VOID === 'UNSUPPORTED') {
-                // GoPay (plan N8): no cancel API, no fallback to a refund or another provider.
+                // A family without a cancel path is typed Unsupported, never a fallback to a refund or another provider.
                 expect(prepared).toMatchObject({
                   error: { _tag: 'GatewayProviderUnsupported', capability: 'CANCEL_OR_VOID', family },
                   ok: false,
@@ -356,9 +356,13 @@ for (const conformance of CONFORMANCE_FAMILIES) {
               expect(findingFor([response.finding], conformance.cancelRequest.operationId)?.target.operationId).toBe(
                 conformance.cancelRequest.operationId,
               );
-              // Exactly the family's one cancel path (Comgate: the transaction-id DELETE, then the confirming lookup).
-              expect(harness.sent.map(({ route }) => route)).toEqual(
-                Object.keys(Option.getOrElse(conformance.scripts.cancel, () => ({}))),
+              // Exactly the family's one cancel path, each route once (Comgate and GoPay: one DELETE, then the
+              // confirming lookup; the per-family adapter suites pin the order).
+              expect(new Set(harness.sent.map(({ route }) => route))).toEqual(
+                new Set(Object.keys(Option.getOrElse(conformance.scripts.cancel, () => ({})))),
+              );
+              expect(harness.sent).toHaveLength(
+                Object.keys(Option.getOrElse(conformance.scripts.cancel, () => ({}))).length,
               );
             }),
         ),

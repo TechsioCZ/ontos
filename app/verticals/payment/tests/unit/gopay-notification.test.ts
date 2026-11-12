@@ -4,14 +4,15 @@ import { TestClock } from 'effect/testing';
 
 import { mapGopayLookup } from '../../src/integrations/gopay/gopay-evidence.ts';
 import { verifyGopayNotification } from '../../src/integrations/gopay/gopay-notification.ts';
-import { GopayPaymentFromJsonSchema, gopayProviderObjectId } from '../../src/integrations/gopay/gopay-wire.ts';
+import { GopayPaymentFromJsonSchema, parseGopayId } from '../../src/integrations/gopay/gopay-wire.ts';
 import type { RawProviderNotification } from '../../src/integrations/psp/notification-envelope.ts';
 import { deriveProviderCorrelation } from '../../src/integrations/psp/psp-correlation.ts';
 import { GOPAY_FIXTURE_ACCOUNT_REF, gopayExecutionTarget } from '../fixtures/gopay/execution-target.ts';
-import { GOPAY_FIXTURE_PAYMENT_ID, gopayInquiryResponseBody } from '../fixtures/gopay/payment-responses.ts';
+import { GOPAY_FIXTURE_PAYMENT_ID, gopayPaymentBody } from '../fixtures/gopay/payment-responses.ts';
 
 /**
- * GoPay sends an unsigned HTTP GET with `?id=<payment id>` (https://doc.gopay.com/#receiving-the-http-notification).
+ * GoPay sends an unsigned HTTP GET with an empty body and `?id=<payment id>` to `notification_url` (Payments API v4,
+ * https://api-docs.gopay.com/llms-full.txt "Return URL and notification URL").
  */
 
 const operationId = '0f8b5c1e-3a2d-4c7b-9e1f-5a6b7c8d9e0f';
@@ -47,7 +48,7 @@ describe('#1157 GoPay notification', () => {
   it.effect('#1157 GoPay notification triggers lookup only', () =>
     Effect.gen(function* lookupOnlyTrigger() {
       const trigger = yield* verifyAt(notification());
-      const paymentRef = gopayProviderObjectId(Number(GOPAY_FIXTURE_PAYMENT_ID));
+      const paymentRef = Option.getOrThrow(parseGopayId(GOPAY_FIXTURE_PAYMENT_ID));
       expect(trigger).toEqual({
         actionable: true,
         authenticity: 'LOOKUP_REQUIRED',
@@ -73,8 +74,8 @@ describe('#1157 GoPay notification', () => {
         rejectionOf(query(Option.some('abc'))),
         rejectionOf(query(Option.some('0123'))),
         rejectionOf(query(Option.some('-5'))),
-        rejectionOf(query(Option.some('3123456789 '))),
-        rejectionOf(query(Option.some('99999999999999999'))),
+        rejectionOf(query(Option.some('300000001 '))),
+        rejectionOf(query(Option.some('300000001/refunds'))),
         rejectionOf(query(Option.some(GOPAY_FIXTURE_PAYMENT_ID), Option.some('x1'))),
         rejectionOf(notification({ rawBody: new TextEncoder().encode('state=PAID') })),
         // The delivery identity would exceed the stored 200-character bound.
@@ -99,7 +100,7 @@ describe('#1157 GoPay notification', () => {
     Effect.gen(function* recurringNotification() {
       const trigger = yield* verifyAt(
         notification({
-          query: { parentPaymentRef: Option.some('3123456700'), paymentRef: Option.some(GOPAY_FIXTURE_PAYMENT_ID) },
+          query: { parentPaymentRef: Option.some('300000000'), paymentRef: Option.some(GOPAY_FIXTURE_PAYMENT_ID) },
         }),
       );
       expect(trigger.actionable).toBe(false);
@@ -111,24 +112,32 @@ describe('#1157 GoPay notification', () => {
     Effect.gen(function* foreignMerchant() {
       const trigger = yield* verifyAt(notification());
       expect(trigger.providerRefs).toEqual([{ _tag: 'GOPAY_PAYMENT', id: GOPAY_FIXTURE_PAYMENT_ID }]);
+      // v4 payments carry no GoID: a payment of another eshop shows up as an order this operation never sent.
       const foreignPayment = Schema.decodeUnknownSync(GopayPaymentFromJsonSchema)(
-        gopayInquiryResponseBody({ amount: 10_000, goid: '8123456780', orderNumber: orderReference, state: 'PAID' }),
+        gopayPaymentBody({ orderNumber: '2025010199', state: 'PAID' }),
       );
       const findings = mapGopayLookup({
+        dispatchedAt: Option.none(),
+        expected: { _tag: 'COLLECT', amount: { amountMinor: 10_000, currency: 'CZK' }, operationId },
         observedAt: trigger.verifiedAt,
         origin: 'NOTIFICATION_LOOKUP',
-        paymentRef: gopayProviderObjectId(foreignPayment.id),
-        request: {
-          dispatchedAt: Option.none(),
-          expected: { _tag: 'COLLECT', amount: { amountMinor: 10_000, currency: 'CZK' }, operationId },
-          target: {
-            _tag: 'PROVIDER_OBJECT',
-            ref: { _tag: 'GOPAY_PAYMENT', id: gopayProviderObjectId(foreignPayment.id) },
-          },
-        },
-        result: { _tag: 'FOUND', payment: foreignPayment, refunds: Option.none() },
-        target,
+        paymentRef: foreignPayment.id,
+        result: { _tag: 'PAYMENT', payment: foreignPayment },
       });
+      const own = mapGopayLookup({
+        dispatchedAt: Option.none(),
+        expected: { _tag: 'COLLECT', amount: { amountMinor: 10_000, currency: 'CZK' }, operationId },
+        observedAt: trigger.verifiedAt,
+        origin: 'NOTIFICATION_LOOKUP',
+        paymentRef: foreignPayment.id,
+        result: {
+          _tag: 'PAYMENT',
+          payment: Schema.decodeUnknownSync(GopayPaymentFromJsonSchema)(
+            gopayPaymentBody({ orderNumber: orderReference, state: 'PAID' }),
+          ),
+        },
+      });
+      expect(own.map(({ finding }) => finding)).toEqual(['EFFECT_CONFIRMED']);
       expect(findings.map((finding) => [finding.finding, finding.evidence, finding.orderReference])).toEqual([
         ['VERIFICATION_CONFLICT', Option.none(), Option.none()],
       ]);

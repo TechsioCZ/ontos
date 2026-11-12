@@ -10,35 +10,32 @@ import type { GatewayProviderUnavailableError } from '../psp/psp-errors.ts';
 import type { GatewayExecutionTarget } from '../psp/psp-request.ts';
 
 /**
- * GoPay OAuth2 access tokens (#1154, #1158; https://doc.gopay.com/#obtaining-the-access-token). A
- * client-credentials token with scope `payment-all` is obtained through `ProviderHttp.read` (the token
- * POST creates no payment effect, so it is retried like a read) and cached per (binding, credential
- * revision) for `expires_in - 60 s`. A rotation produces a new revision and therefore a new token; a
- * token is never shared between bindings. Failures are never cached.
+ * GoPay Payments API v4 OAuth2 access tokens (#1154, #1158; https://api-docs.gopay.com/llms-full.txt "Security and
+ * credentials" > "Obtaining an access token"). A `client_credentials` token with the scopes `payment:read` and
+ * `payment:write` is obtained with `POST {base}/oauth2/token` (HTTP Basic `client_id:client_secret`, form body)
+ * through `ProviderHttp.read` (the token POST creates no payment effect, so it is retried like a read) and cached
+ * per (binding, credential revision) for `expires_in - 60 s`. A rotation produces a new revision and therefore a
+ * new token; a token is never shared between bindings. Failures are never cached.
  *
  * Nothing here logs; a failure carries only a fixed reason code, never the credential or a body.
  */
 
-/** GoPay REST API roots per binding environment (doc.gopay.com "Environments"). */
+/** GoPay Payments API v4 roots per binding environment (llms-full.txt "Actors": production and sandbox). */
 const GOPAY_API_BASE_URLS = {
-  LIVE: 'https://gate.gopay.cz/api',
-  SANDBOX: 'https://gw.sandbox.gopay.com/api',
+  LIVE: 'https://gate.gopay.com/gp-gw/api/4.0',
+  SANDBOX: 'https://gw.sandbox.gopay.com/gp-gw/api/4.0',
 } as const;
 
 const GopayEnvironmentSchema = Schema.Literals(['LIVE', 'SANDBOX']);
 
-/**
- * Token path below the API root. doc.gopay.com documents `POST /api/oauth2/token`; that the live
- * gateway serves it under the same `/api` root as the payment endpoints is UNVERIFIED until the
- * W5-SANDBOX run.
- */
+/** Token path below the API root and the documented form body (`scope=payment:read%20payment:write`). */
 const GOPAY_TOKEN_PATH = '/oauth2/token';
-const GOPAY_TOKEN_REQUEST_BODY = 'grant_type=client_credentials&scope=payment-all';
+const GOPAY_TOKEN_REQUEST_BODY = 'grant_type=client_credentials&scope=payment:read%20payment:write';
 /** A token is dropped this long before GoPay expires it, so no request is sent with a token about to lapse. */
 const GOPAY_TOKEN_EXPIRY_MARGIN_SECONDS = 60;
 const GOPAY_TOKEN_CACHE_CAPACITY = 256;
 
-/** The GoPay API root of a binding environment; None for an environment GoPay does not have. */
+/** The GoPay v4 API root of a binding environment; None for an environment GoPay does not have. */
 export const gopayApiBaseUrl = (environment: string): Option.Option<string> =>
   Schema.decodeUnknownOption(GopayEnvironmentSchema)(environment).pipe(
     Option.map((known) => GOPAY_API_BASE_URLS[known]),

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'effect-rstest';
 import { Context, DateTime, Effect, Layer, Match, Option, Redacted, Result, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import type { HttpClientRequest } from 'effect/http';
 
 import {
@@ -12,7 +13,7 @@ import { ProviderCredentialStore } from '../../src/integrations/psp/credentials.
 import { ProviderHttp } from '../../src/integrations/psp/provider-http.ts';
 import type { ProviderHttpResponse } from '../../src/integrations/psp/provider-http.ts';
 import { deriveProviderCorrelation } from '../../src/integrations/psp/psp-correlation.ts';
-import { GatewayProviderOutcomeUnknown } from '../../src/integrations/psp/psp-errors.ts';
+import { GatewayProviderOutcomeUnknown, GatewayProviderUnavailable } from '../../src/integrations/psp/psp-errors.ts';
 import type {
   GatewayProviderOutcomeUnknownError,
   GatewayProviderUnavailableError,
@@ -338,10 +339,7 @@ describe('#1154 Comgate collect', () => {
 describe('#1156 Comgate refund and cancel', () => {
   it.effect('#1156 Comgate refund is pending only', () =>
     Effect.gen(function* refundPending() {
-      const { adapter, calls } = yield* recordedAdapter({
-        mutate: [respond(200, fixtureText('result-ok.json'))],
-        read: [respond(200, paidStatusBody())],
-      });
+      const { adapter, calls } = yield* recordedAdapter({ mutate: [respond(200, fixtureText('result-ok.json'))] });
       const prepared = yield* adapter.prepareRefund(target, refundRequest);
       expect(bodyJson(prepared.body)).toEqual({
         amount: 10_000,
@@ -359,8 +357,9 @@ describe('#1156 Comgate refund and cancel', () => {
         Option.some(`comgate-refund:${TRANS_ID}:${refundOperationId}`),
       );
 
+      // A SANDBOX refund never appears in a statement (production only): nothing is called.
       const looked = yield* adapter.lookup(target, {
-        dispatchedAt: Option.none(),
+        dispatchedAt: Option.some(DateTime.makeUnsafe('2026-04-01T10:00:00.000Z')),
         expected: refund,
         target: { _tag: 'PROVIDER_OBJECT', ref: transactionRef },
       });
@@ -369,7 +368,6 @@ describe('#1156 Comgate refund and cancel', () => {
       ]);
       expect(calls.map((call) => `${call.kind}:${call.request.method}:${call.request.url}`)).toEqual([
         'mutate:POST:https://payments.comgate.cz/v2.0/refund.json',
-        `read:GET:https://payments.comgate.cz/v2.0/payment/transId/${TRANS_ID}.json`,
       ]);
     }),
   );
@@ -515,6 +513,272 @@ describe('#1158 Comgate lookup', () => {
       expect(yield* adapter.readOrderReference(target, gopayRef)).toEqual(Option.none());
       expect(calls).toHaveLength(4);
       expect(calls.every((call) => call.request.headers.authorization === expectedAuthorization)).toBe(true);
+    }),
+  );
+});
+
+/* ------------------------------------------------------------------------------------------------ */
+/* Refund proof from the production settlement statement (plan D-P2)                                */
+/* ------------------------------------------------------------------------------------------------ */
+
+const liveTarget = Schema.decodeUnknownSync(GatewayExecutionTargetSchema)({
+  ...Schema.encodeSync(GatewayExecutionTargetSchema)(target),
+  binding: {
+    _tag: 'GATEWAY_ACCOUNT',
+    environment: 'LIVE',
+    providerAccountRef: `pab_${'1'.repeat(32)}`,
+    providerFamily: 'COMGATE',
+  },
+  credentialSecretRef: 'comgate.live',
+});
+
+const secondRefundOperationId = '6c5b4a39-2817-4f06-8e5d-4c3b2a190807';
+const refundReference = deriveProviderCorrelation(refundOperationId).orderReference;
+const secondRefundReference = deriveProviderCorrelation(secondRefundOperationId).orderReference;
+const secondRefund: GatewayExpectedEffect = { _tag: 'REFUND', amount, operationId: secondRefundOperationId };
+
+/** Documented transferList / singleTransfer examples and the official monthly sample's refund row (fixtures README). */
+const decodeJsonArray = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Array(Schema.Record(Schema.String, Schema.Json))),
+);
+const firstOf = (name: string): JsonObject => decodeJsonArray(fixtureText(name))[0] ?? {};
+const documentedPaymentRow = (): JsonObject => firstOf('single-transfer.json');
+const refundRow = (overrides: JsonObject = {}) => ({
+  ...decodeJsonObject(fixtureText('statement-refund-row.json')),
+  'ID od klienta': refundReference,
+  'Potvrzená částka': '-100,00',
+  ...overrides,
+});
+const transfersBody = (...ids: readonly number[]) =>
+  JSON.stringify(ids.map((transferId) => ({ ...firstOf('transfer-list.json'), transferId })));
+const rowsBody = (...rows: readonly JsonObject[]) => JSON.stringify(rows);
+const noContent = respond(204, '');
+
+const DISPATCHED_AT = DateTime.makeUnsafe('2026-04-09T12:48:30.000Z');
+/** 2026-04-11 10:00 Prague: the statements of 04-09 and 04-10 are readable. */
+const NOW_MS = Date.UTC(2026, 3, 11, 8, 0, 0);
+
+const statementLookup = (expected: GatewayExpectedEffect, dispatchedAt = Option.some(DISPATCHED_AT)) => ({
+  dispatchedAt,
+  expected,
+  target: { _tag: 'PROVIDER_OBJECT' as const, ref: transactionRef },
+});
+
+const transferListUrl = (date: string) => `https://payments.comgate.cz/v2.0/transferList/date/${date}.json`;
+const singleTransferUrl = (id: number) => `https://payments.comgate.cz/v2.0/singleTransfer/transferId/${id}.json`;
+
+const evidenceOf = (findings: readonly ProviderFindingResult[]) =>
+  Option.getOrUndefined(Option.fromUndefinedOr(findings[0]).pipe(Option.flatMap((finding) => finding.evidence)));
+
+/** One lookup's reads: an empty first day, then one transfer with `rows`. */
+const statementScenario = (...rows: readonly JsonObject[]) => [
+  noContent,
+  respond(200, transfersBody(1_234_567)),
+  respond(200, rowsBody(...rows)),
+];
+
+describe('#1156 Comgate refund proof from the settlement statement', () => {
+  it.effect('#1156 A statement row with the refund refId, amount and merchant is REFUND_CONFIRMED', () =>
+    Effect.gen(function* confirmedFromStatement() {
+      yield* TestClock.setTime(NOW_MS);
+      const { adapter, calls } = yield* recordedAdapter({
+        read: [
+          noContent,
+          respond(200, transfersBody(1_234_567)),
+          respond(
+            200,
+            rowsBody(
+              documentedPaymentRow(),
+              refundRow({ Merchant: '999999', 'Potvrzená částka': '-55,00' }),
+              refundRow(),
+            ),
+          ),
+        ],
+      });
+      const findings = yield* adapter.lookup(liveTarget, statementLookup(refund));
+
+      expect(findings.map((finding) => [finding.target.operationId, finding.finding])).toEqual([
+        [refundOperationId, 'EFFECT_CONFIRMED'],
+      ]);
+      const evidence = evidenceOf(findings);
+      expect(evidence?.factKind).toBe('REFUND_CONFIRMED');
+      expect(evidence?.factFamily).toBe('REFUND_EXECUTION');
+      expect(evidence?.sourceOccurrenceId).toBe(
+        `comgate:statement:1234567:${refundOperationId}:REFUND_CONFIRMED:10000`,
+      );
+      expect(evidence?.economicEffectKey).toEqual(Option.some(`comgate-refund:${TRANS_ID}:${refundOperationId}`));
+      expect(evidence?.observedAmount).toEqual(Option.some(amount));
+      expect(evidence?.discrepancy).toEqual(Option.none());
+      // `Datum založení` 2026-04-09 14:48:30 Prague (CEST) is 12:48:30 UTC.
+      expect(evidence?.providerOccurredAt).toEqual(Option.some(DateTime.makeUnsafe('2026-04-09T12:48:30.000Z')));
+      expect(evidence?.observedAt).toEqual(DateTime.makeUnsafe(NOW_MS));
+
+      expect(calls.map((call) => `${call.kind}:${call.request.method}:${call.request.url}`)).toEqual([
+        `read:GET:${transferListUrl('2026-04-09')}`,
+        `read:GET:${transferListUrl('2026-04-10')}`,
+        `read:GET:${singleTransferUrl(1_234_567)}`,
+      ]);
+      // #1157: every statement read goes through the original binding's merchant authorization.
+      expect(calls.every((call) => call.request.headers.authorization === expectedAuthorization)).toBe(true);
+    }),
+  );
+
+  it.effect('#1159 Two refunds of the same amount on one payment are told apart by their refId', () =>
+    Effect.gen(function* twoEqualRefunds() {
+      yield* TestClock.setTime(NOW_MS);
+      const statement = [
+        noContent,
+        respond(200, transfersBody(1_234_567)),
+        respond(200, rowsBody(refundRow(), refundRow({ 'ID od klienta': secondRefundReference }))),
+      ];
+      const { adapter } = yield* recordedAdapter({ read: [...statement, ...statement] });
+
+      const first = evidenceOf(yield* adapter.lookup(liveTarget, statementLookup(refund)));
+      const second = evidenceOf(yield* adapter.lookup(liveTarget, statementLookup(secondRefund)));
+
+      expect([first?.factKind, second?.factKind]).toEqual(['REFUND_CONFIRMED', 'REFUND_CONFIRMED']);
+      expect(first?.sourceOccurrenceId).toBe(`comgate:statement:1234567:${refundOperationId}:REFUND_CONFIRMED:10000`);
+      expect(second?.sourceOccurrenceId).toBe(
+        `comgate:statement:1234567:${secondRefundOperationId}:REFUND_CONFIRMED:10000`,
+      );
+      expect(first?.economicEffectKey).not.toEqual(second?.economicEffectKey);
+    }),
+  );
+
+  it.effect('#1158 A refund missing from the statement is INDETERMINATE, never NOT_EFFECTED', () =>
+    Effect.gen(function* notInStatement() {
+      yield* TestClock.setTime(NOW_MS);
+      // A row with a random or local refund id, or with the payment's own refId, proves nothing.
+      const { adapter } = yield* recordedAdapter({
+        read: [
+          noContent,
+          respond(200, transfersBody(1_234_567)),
+          respond(
+            200,
+            rowsBody(
+              documentedPaymentRow(),
+              refundRow({ 'ID od klienta': 'f'.repeat(32) }),
+              refundRow({ 'ID od klienta': collectCorrelation.orderReference }),
+              refundRow({ 'ID od klienta': refundOperationId }),
+            ),
+          ),
+        ],
+      });
+      const findings = yield* adapter.lookup(liveTarget, statementLookup(refund));
+      expect(findings.map((finding) => [finding.finding, Option.isNone(finding.evidence)])).toEqual([
+        ['INDETERMINATE', true],
+      ]);
+    }),
+  );
+
+  it.effect('#1156 Another amount, currency, a credit row or two rows are a verification conflict', () =>
+    Effect.gen(function* conflicts() {
+      yield* TestClock.setTime(NOW_MS);
+      const { adapter } = yield* recordedAdapter({
+        read: [
+          ...statementScenario(refundRow({ 'Potvrzená částka': '-50,00' })),
+          ...statementScenario(refundRow({ Měna: 'EUR' })),
+          ...statementScenario(refundRow({ 'Potvrzená částka': '100,00' })),
+          ...statementScenario(refundRow(), refundRow()),
+        ],
+      });
+
+      const lowerAmount = yield* adapter.lookup(liveTarget, statementLookup(refund));
+      expect(lowerAmount[0]?.finding).toBe('VERIFICATION_CONFLICT');
+      expect(evidenceOf(lowerAmount)?.discrepancy).toEqual(
+        Option.some({ expected: amount, observed: { amountMinor: 5000, currency: 'CZK' } }),
+      );
+
+      const otherCurrency = yield* adapter.lookup(liveTarget, statementLookup(refund));
+      expect(otherCurrency[0]?.finding).toBe('VERIFICATION_CONFLICT');
+      expect(evidenceOf(otherCurrency)?.observedAmount).toEqual(Option.some({ amountMinor: 10_000, currency: 'EUR' }));
+
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const findings = yield* adapter.lookup(liveTarget, statementLookup(refund));
+        expect(findings.map((finding) => [finding.finding, Option.isNone(finding.evidence)])).toEqual([
+          ['VERIFICATION_CONFLICT', true],
+        ]);
+      }
+    }),
+  );
+
+  it.effect('#1156 SANDBOX, an unknown dispatch time and an unreadable day make no statement call', () =>
+    Effect.gen(function* noCall() {
+      // 2026-04-09 23:59:59 Prague: the dispatch day's statement is not readable before the next morning.
+      yield* TestClock.setTime(Date.UTC(2026, 3, 9, 21, 59, 59));
+      const { adapter, calls } = yield* recordedAdapter({});
+      for (const [bindingTarget, dispatchedAt] of [
+        [target, Option.some(DISPATCHED_AT)],
+        [liveTarget, Option.none()],
+        [liveTarget, Option.some(DISPATCHED_AT)],
+      ] as const) {
+        const findings = yield* adapter.lookup(bindingTarget, statementLookup(refund, dispatchedAt));
+        expect(findings.map((finding) => [finding.finding, Option.isNone(finding.evidence)])).toEqual([
+          ['INDETERMINATE', true],
+        ]);
+      }
+      expect(calls).toHaveLength(0);
+    }),
+  );
+
+  it.effect('#1156 Statement dates are Europe/Prague dates and bounded to 24 per lookup', () =>
+    Effect.gen(function* pragueDates() {
+      // Dispatched 2026-04-09 22:30 UTC = 04-10 00:30 Prague; now 04-11 00:30 Prague: only 04-10 is read.
+      yield* TestClock.setTime(Date.UTC(2026, 3, 10, 22, 30, 0));
+      const boundary = yield* recordedAdapter({ read: [noContent] });
+      yield* boundary.adapter.lookup(
+        liveTarget,
+        statementLookup(refund, Option.some(DateTime.makeUnsafe('2026-04-09T22:30:00.000Z'))),
+      );
+      expect(boundary.calls.map((call) => call.request.url)).toEqual([transferListUrl('2026-04-10')]);
+
+      // Months later: dispatch date + 23 days at most, then nothing.
+      yield* TestClock.setTime(Date.UTC(2026, 10, 12, 8, 0, 0));
+      const bounded = yield* recordedAdapter({ read: Array.from({ length: 30 }, () => noContent) });
+      const findings = yield* bounded.adapter.lookup(
+        liveTarget,
+        statementLookup(refund, Option.some(DateTime.makeUnsafe('2026-01-01T10:00:00.000Z'))),
+      );
+      expect(findings[0]?.finding).toBe('INDETERMINATE');
+      expect(bounded.calls).toHaveLength(24);
+      expect(bounded.calls[0]?.request.url).toBe(transferListUrl('2026-01-01'));
+      expect(bounded.calls[23]?.request.url).toBe(transferListUrl('2026-01-24'));
+    }),
+  );
+
+  it.effect('#1158 A transport or credential failure of a statement read is UNAVAILABLE', () =>
+    Effect.gen(function* statementUnavailable() {
+      yield* TestClock.setTime(NOW_MS);
+      const dropped = Effect.fail(
+        new GatewayProviderUnavailable({
+          code: 'gateway_provider_unavailable',
+          family: 'COMGATE',
+          reason: 'provider_transport_failed',
+        }),
+      );
+      const { adapter, calls } = yield* recordedAdapter({
+        read: [
+          dropped,
+          noContent,
+          respond(200, transfersBody(1_234_567)),
+          dropped,
+          respond(401, ''),
+          respond(404, 'Not Found'),
+          respond(200, 'not json'),
+        ],
+      });
+      const results: unknown[] = [];
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        results.push(yield* outcome(adapter.lookup(liveTarget, statementLookup(refund))));
+      }
+      expect(results).toMatchObject([
+        { error: { _tag: 'GatewayProviderUnavailable', reason: 'provider_transport_failed' }, ok: false },
+        { error: { _tag: 'GatewayProviderUnavailable', reason: 'provider_transport_failed' }, ok: false },
+        { error: { _tag: 'GatewayProviderUnavailable', reason: 'comgate_authentication_rejected' }, ok: false },
+        { error: { _tag: 'GatewayProviderUnavailable', reason: 'comgate_statement_status_unexpected' }, ok: false },
+        { error: { _tag: 'GatewayProviderResponseInvalid', reason: 'comgate_transfer_list_invalid' }, ok: false },
+      ]);
+      expect(calls.every((call) => call.kind === 'read' && call.request.method === 'GET')).toBe(true);
     }),
   );
 });

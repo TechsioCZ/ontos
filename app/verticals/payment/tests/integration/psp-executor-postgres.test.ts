@@ -185,7 +185,7 @@ const adapterOf = (provider: Provider, family: Family): GatewayProviderAdapter =
   });
   return {
     capabilities: {
-      CANCEL_OR_VOID: family === 'GOPAY' ? 'UNSUPPORTED' : 'SUPPORTED',
+      CANCEL_OR_VOID: 'SUPPORTED',
       COLLECT: 'SUPPORTED',
       NOTIFICATION: 'SUPPORTED',
       REFUND: 'SUPPORTED',
@@ -749,6 +749,8 @@ it.live('#1156 Unsupported provider operation yields typed unsupported, no fallb
       yield* collectionFor(harness, 'STRIPE');
       expect(Exit.isSuccess(yield* deliver(harness, collection.payload))).toBe(true);
       const cancel = yield* cancellationFor(harness, collection);
+      // Every Launch family declares a cancel path (GoPay: v4 DELETE); this stub adapter refuses one anyway, so the
+      // executor's generic typed-Unsupported path is proven without any fallback.
       harness.provider.failures.set('GOPAY:PREPARE_CANCEL', () =>
         Effect.fail(
           new GatewayProviderUnsupported({

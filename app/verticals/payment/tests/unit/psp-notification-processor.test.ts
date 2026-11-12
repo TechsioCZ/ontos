@@ -103,19 +103,23 @@ const refundTarget = Schema.decodeUnknownSync(GatewayLookupTargetSchema)({
   ref: { _tag: 'STRIPE_REFUND', id: 're_test_notification' },
 });
 
-const targetFor = (bindingId: string, accountRef: string) =>
+const FamilySchema = Schema.Literals(['GOPAY', 'STRIPE']);
+type Family = typeof FamilySchema.Type;
+
+const targetFor = (bindingId: string, accountRef: string, family: Family = 'STRIPE') =>
   Schema.decodeUnknownSync(GatewayExecutionTargetSchema)({
     binding: {
       _tag: 'GATEWAY_ACCOUNT',
       environment: 'SANDBOX',
       providerAccountRef: accountRef,
-      providerFamily: 'STRIPE',
+      providerFamily: family,
     },
     bindingId,
     credentialRevision: 1,
-    credentialSecretRef: 'stripe-sandbox-1',
+    credentialSecretRef: `${family.toLowerCase()}-sandbox-1`,
     legalEntityId,
-    merchantIdentity: { _tag: 'STRIPE', accountId: 'acct_1TestAccount' },
+    merchantIdentity:
+      family === 'STRIPE' ? { _tag: 'STRIPE', accountId: 'acct_1TestAccount' } : { _tag: 'GOPAY', goid: '8123456789' },
     notificationUrl: 'https://hooks.example.test/psp',
     returnUrl: Option.none(),
     tenantId,
@@ -123,6 +127,7 @@ const targetFor = (bindingId: string, accountRef: string) =>
 
 interface RecordInput {
   readonly bindingId?: string;
+  readonly family?: Family;
   readonly kind?: 'COLLECT' | 'REFUND';
   readonly payment?: ProviderObjectRef;
   readonly refund?: ProviderObjectRef;
@@ -136,7 +141,9 @@ const recordOf = (input: RecordInput): ProviderDispatchRecord => {
     bindingId: input.bindingId ?? bindingA,
     credentialRevision: 1,
     customerRedirectUrl: Option.none(),
-    endpointRef: Option.some('stripe:POST:/v1/checkout/sessions'),
+    endpointRef: Option.some(
+      input.family === 'GOPAY' ? 'gopay:POST:/eshops/8123456789/payments' : 'stripe:POST:/v1/checkout/sessions',
+    ),
     environment: 'SANDBOX',
     idempotencyKeyHash: Option.none(),
     materialHash: 'f'.repeat(64),
@@ -147,7 +154,7 @@ const recordOf = (input: RecordInput): ProviderDispatchRecord => {
     paymentId,
     preparedAt: Option.some(DateTime.makeUnsafe('2026-11-12T08:00:00.000Z')),
     providerAccountRef: input.bindingId === bindingB ? accountB : accountA,
-    providerFamily: 'STRIPE',
+    providerFamily: input.family ?? 'STRIPE',
     providerPaymentRef: Option.fromUndefinedOr(input.payment),
     providerRefundRef: Option.fromUndefinedOr(input.refund),
     replayExpiresAt: Option.none(),
@@ -164,6 +171,7 @@ const recordOf = (input: RecordInput): ProviderDispatchRecord => {
 
 interface NotificationInput {
   readonly bindingId?: string;
+  readonly family?: Family;
   readonly id: string;
   readonly refs: readonly ProviderObjectRef[];
   readonly signedObject?: Schema.Json;
@@ -180,10 +188,11 @@ const notificationOf = (input: NotificationInput): StoredProviderNotification =>
     state: 'CAPTURED',
     trigger: {
       actionable: true,
-      authenticity: 'SIGNATURE_VERIFIED',
+      // A GoPay callback is unsigned: only the id is carried and a lookup decides (LOOKUP_REQUIRED).
+      authenticity: input.family === 'GOPAY' ? 'LOOKUP_REQUIRED' : 'SIGNATURE_VERIFIED',
       claimedStatus: Option.none(),
-      deliveryIdentity: `stripe:evt:${input.id}`,
-      family: 'STRIPE',
+      deliveryIdentity: input.family === 'GOPAY' ? `gopay:3000006529:${input.id}` : `stripe:evt:${input.id}`,
+      family: input.family ?? 'STRIPE',
       providerEventAt: Option.none(),
       providerOccurrenceId: Option.none(),
       providerRefs: input.refs,
@@ -244,6 +253,8 @@ interface Setup {
   readonly a8?: A8Answer;
   /** Evidence already stored before the notification, e.g. a dispatch response the executor left pending. */
   readonly evidence?: readonly StoredProviderEvidence[];
+  /** The family of the binding the notification resolves to; default STRIPE. */
+  readonly family?: Family;
   readonly findings: (request: GatewayLookupRequest) => readonly ProviderFindingResult[];
   readonly notifications: readonly StoredProviderNotification[];
   /** The executor already pinned on every evidence row, as a committed earlier attempt left it. */
@@ -256,6 +267,7 @@ interface Setup {
 
 const isRefundObject = Schema.is(ProviderObjectRefSchema.members[3]);
 const isRefundExpectation = Schema.is(GatewayExpectedEffectSchema.members[1]);
+const isCollectExpectation = Schema.is(GatewayExpectedEffectSchema.members[0]);
 
 const sameRef = (left: ProviderObjectRef, right: ProviderObjectRef) =>
   Schema.toEquivalence(ProviderObjectRefSchema)(left, right);
@@ -465,8 +477,8 @@ const layerFor = (setup: Setup, world: World) => {
     resolveForNotification: ({ providerAccountRef }) =>
       Effect.succeed(
         setup.resolvedBinding === undefined
-          ? targetFor(providerAccountRef === accountB ? bindingB : bindingA, providerAccountRef)
-          : targetFor(setup.resolvedBinding, providerAccountRef),
+          ? targetFor(providerAccountRef === accountB ? bindingB : bindingA, providerAccountRef, setup.family)
+          : targetFor(setup.resolvedBinding, providerAccountRef, setup.family),
       ),
   });
   const adapters = Layer.succeed(GatewayProviderAdapters, {
@@ -479,7 +491,7 @@ const layerFor = (setup: Setup, world: World) => {
           REFUND: 'SUPPORTED',
           RETRIEVE: 'SUPPORTED',
         },
-        family: 'STRIPE',
+        family: setup.family ?? 'STRIPE',
         lookup: (_target, request) =>
           Ref.update(world.lookups, (all) => [...all, request]).pipe(Effect.as(setup.findings(request))),
         prepareCancel: unexpected('prepareCancel'),
@@ -795,6 +807,37 @@ describe('process-provider-notification', () => {
       expect(unproven.result).toBe('HELD_UNCORRELATED order_reference_unverified');
       expect(yield* Ref.get(unproven.world.correlated)).toEqual([]);
       expect(yield* Ref.get(unproven.world.statements)).toEqual([]);
+    }),
+  );
+
+  it.effect('#1157 GoPay callback followed by lookup through the original binding', () =>
+    Effect.gen(function* gopayCallback() {
+      const GOPAY_PAYMENT = providerRef({ _tag: 'GOPAY_PAYMENT', id: '3000006529' });
+      const { result, world } = yield* run(
+        {
+          family: 'GOPAY',
+          findings: () => [
+            findingOf({
+              factKind: 'COLLECTION_CONFIRMED',
+              kind: 'COLLECT',
+              orderReference: true,
+              refs: [GOPAY_PAYMENT],
+            }),
+          ],
+          notifications: [notificationOf({ family: 'GOPAY', id: N1, refs: [GOPAY_PAYMENT] })],
+          records: [recordOf({ family: 'GOPAY', payment: GOPAY_PAYMENT })],
+        },
+        N1,
+      );
+      expect(result).toBe(`SETTLED ${collectId} SUBMITTED [ACCEPTED]`);
+      // The callback carries no state: exactly one lookup of the notified payment, expecting its own collection.
+      const lookups = yield* Ref.get(world.lookups);
+      expect(
+        lookups.map(({ expected, target }) => [isCollectExpectation(expected), expected.operationId, target]),
+      ).toEqual([[true, collectId, { _tag: 'PROVIDER_OBJECT', ref: GOPAY_PAYMENT }]]);
+      expect(yield* Ref.get(world.statements)).toEqual([
+        expect.objectContaining({ factKind: 'COLLECTION_CONFIRMED', operationId: collectId }),
+      ]);
     }),
   );
 

@@ -1306,9 +1306,25 @@ const contextService = (proof: IssuerProof, symbol: SymbolValue, owner: string):
     proof.native(symbol.model, factory.callee, 'Context', 'Service')
   );
 };
-const mountedSymmyTransports = (
+/** True when the Shell API contract adds a group whose base is `HttpApiGroup.make(name)`. */
+const contractAddsGroup = (proof: IssuerProof, root: IssuerRoot, name: string): boolean => {
+  const { model } = root.contract;
+  const initializer = root.contract.binding.init;
+  return (
+    initializer !== undefined &&
+    model.calls.some(
+      (call) =>
+        inside(call, initializer) &&
+        call.arguments.some(
+          (argument) => argument.type !== 'SpreadElement' && baseGroup(proof, model, argument) === name,
+        ),
+    )
+  );
+};
+const mountedTransports = (
   proof: IssuerProof,
   root: IssuerRoot,
+  name: string,
 ): readonly { readonly groupBody: FunctionNode; readonly target: SymbolValue }[] =>
   root.model.bindings.flatMap((binding) => {
     if (binding.origin === undefined) {
@@ -1318,7 +1334,7 @@ const mountedSymmyTransports = (
     if (target === undefined) {
       return [];
     }
-    const group = groupCall(proof, target.model, target.binding, root.contract, 'symmy');
+    const group = groupCall(proof, target.model, target.binding, root.contract, name);
     const groupBody = group?.arguments.at(2);
     return group !== undefined &&
       (groupBody?.type === 'ArrowFunctionExpression' || groupBody?.type === 'FunctionExpression') &&
@@ -1326,7 +1342,7 @@ const mountedSymmyTransports = (
       ? [{ groupBody, target }]
       : [];
   });
-const invokesYieldedAdmit = (model: Model, yielded: YieldExpression): boolean => {
+const invokesYieldedMethod = (model: Model, yielded: YieldExpression, method: string): boolean => {
   const declaration = model.variables.find((node) => node.init === yielded);
   if (declaration?.id.type !== 'Identifier') {
     return false;
@@ -1337,7 +1353,7 @@ const invokesYieldedAdmit = (model: Model, yielded: YieldExpression): boolean =>
     immutable(model, binding) &&
     bindingReferences(model, binding).some((reference) => {
       const member = model.members.find(
-        (node) => node.object === reference && !node.computed && !node.optional && propertyName(node) === 'admit',
+        (node) => node.object === reference && !node.computed && !node.optional && propertyName(node) === method,
       );
       return member !== undefined && callOf(model, member) !== undefined;
     })
@@ -1348,6 +1364,7 @@ const transportServices = (
   root: IssuerRoot,
   target: SymbolValue,
   groupBody: FunctionNode,
+  method: string,
 ): readonly SymbolValue[] => {
   const seen = new Set<Binding>();
   const services: SymbolValue[] = [];
@@ -1357,7 +1374,7 @@ const transportServices = (
         yielded.delegate &&
         yielded.argument !== null &&
         inside(yielded, entry.span) &&
-        invokesYieldedAdmit(entry.model, yielded)
+        invokesYieldedMethod(entry.model, yielded, method)
           ? proof.symbol(entry.model, yielded.argument)
           : undefined;
       if (
@@ -1409,11 +1426,12 @@ const configuredServiceProgram = (
   const symbol = provider?.id.type === 'Identifier' ? proof.symbol(root.model, provider.id) : undefined;
   return symbol !== undefined && layerProvides(proof, root.model, root.handlers, transport, symbol) ? fn : undefined;
 };
-const configuredAdmitSpans = (
+const configuredMethodSpans = (
   proof: IssuerProof,
   root: IssuerRoot,
   service: SymbolValue,
   transport: SymbolValue,
+  method: string,
 ): readonly RoleSpan[] =>
   root.model.calls.flatMap((call) => {
     const fn = configuredServiceProgram(proof, root, service, transport, call);
@@ -1423,21 +1441,25 @@ const configuredAdmitSpans = (
     const returned = soleDirectReturn(root.model, fn);
     const fields =
       returned?.argument === null || returned?.argument === undefined ? undefined : unwrap(returned.argument);
-    const admit = fields?.type === 'ObjectExpression' ? objectField(fields, 'admit') : undefined;
-    return admit?.type === 'ArrowFunctionExpression' || admit?.type === 'FunctionExpression'
-      ? [{ model: root.model, span: admit }]
+    const configured = fields?.type === 'ObjectExpression' ? objectField(fields, method) : undefined;
+    return configured?.type === 'ArrowFunctionExpression' || configured?.type === 'FunctionExpression'
+      ? [{ model: root.model, span: configured }]
       : [];
   });
-const symmyIngressSpans = (proof: IssuerProof, root: IssuerRoot): readonly RoleSpan[] => {
-  if (!symmyContract(proof, root)) {
-    return [];
-  }
-  return mountedSymmyTransports(proof, root).flatMap(({ groupBody, target }) =>
-    transportServices(proof, root, target, groupBody).flatMap((service) =>
-      configuredAdmitSpans(proof, root, service, target),
+/** Spans of the configured `method` of every context service a mounted transport of group `name` invokes. */
+const ingressSpans = (proof: IssuerProof, root: IssuerRoot, name: string, method: string): readonly RoleSpan[] =>
+  mountedTransports(proof, root, name).flatMap(({ groupBody, target }) =>
+    transportServices(proof, root, target, groupBody, method).flatMap((service) =>
+      configuredMethodSpans(proof, root, service, target, method),
     ),
   );
-};
+const symmyIngressSpans = (proof: IssuerProof, root: IssuerRoot): readonly RoleSpan[] =>
+  symmyContract(proof, root) ? ingressSpans(proof, root, 'symmy', 'admit') : [];
+/** Payment gateway relay (#1157): the notification and reconciliation transports authorize one binding route. */
+const paymentRelayIngressSpans = (proof: IssuerProof, root: IssuerRoot): readonly RoleSpan[] =>
+  ['paymentNotifications', 'paymentReconciliation'].flatMap((name) =>
+    contractAddsGroup(proof, root, name) ? ingressSpans(proof, root, name, 'authorize') : [],
+  );
 
 /** Prove issuer bootstrap ownership without exempting an API directory or clearing database taint. */
 export const provedShellGatewayDatabaseSources = (
@@ -1451,7 +1473,11 @@ export const provedShellGatewayDatabaseSources = (
   if (issuer === undefined) {
     return new Set();
   }
-  const spans = callClosure(proof, issuer, [...issuer.spans, ...symmyIngressSpans(proof, issuer)]);
+  const spans = callClosure(proof, issuer, [
+    ...issuer.spans,
+    ...symmyIngressSpans(proof, issuer),
+    ...paymentRelayIngressSpans(proof, issuer),
+  ]);
   const result = new Set<string>();
   for (const entry of spans) {
     if (result.has(entry.model.file) || !entry.model.source.includes(coreDatabaseExport)) {

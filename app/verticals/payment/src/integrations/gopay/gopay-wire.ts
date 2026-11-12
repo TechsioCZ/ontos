@@ -8,30 +8,29 @@ import { ProviderObjectIdSchema } from '../psp/psp-request.ts';
 import type { ProviderObjectId } from '../psp/psp-request.ts';
 
 /**
- * GoPay REST wire shapes (https://doc.gopay.com/, sections "Payment creation", "Payment inquiry",
- * "Payment refund", "History of refunds", "Error"). Every response is decoded through these schemas;
- * nothing is cast. Unknown response fields (payer, payment_instrument, additional_params, ...) are
- * ignored on decode and never interpreted.
+ * GoPay Payments API v4 wire shapes (https://api-docs.gopay.com/llms-full.txt and the OpenAPI document
+ * https://api-docs.gopay.com/spec/en/payments.yaml: `Payment-Create-Request`, `Payment-Details`, `Customer`,
+ * `Refund-Create-Request`, `Refund-Details`). Every response is decoded through these schemas; nothing is cast.
+ * Unknown response fields are ignored on decode and never interpreted. `Payment-Details.payment_secret` ("Do not
+ * embed in URLs, log or store!") is deliberately absent from the payment schema, so a decoded payment never holds
+ * it; `customer` and `charge` are absent as well.
  */
 
-/** A GoPay integer identifier (payment id, GoID). Only exact safe integers are accepted. */
-const GopayIntegerIdSchema = Schema.Finite.check(
-  Schema.isInt(),
-  Schema.isBetween({ maximum: Number.MAX_SAFE_INTEGER, minimum: 1 }),
-);
+/**
+ * A v4 identifier as text (`Payment-Details.id`, `Refund-Details.id`: `type: string`, every documented example is
+ * digits, e.g. `"300000001"`, `"3050123456"`). Only an unsigned base-10 integer without a leading zero is accepted
+ * (fail closed: an id of another shape makes the response undecodable instead of guessed); it is placed into
+ * request paths and into the ledger reference text, so no separator can ever reach either.
+ */
+const GopayIdSchema = ProviderObjectIdSchema.check(Schema.isPattern(/^[1-9][0-9]{0,19}$/u));
 
-/** GoPay payment id as returned in JSON (`"id": 3123456789`). */
-export const GopayPaymentIdSchema = GopayIntegerIdSchema;
-export type GopayPaymentId = typeof GopayPaymentIdSchema.Type;
-
-/** GoID of the merchant account (`target.goid`). */
-export const GopayGoidSchema = GopayIntegerIdSchema;
-export type GopayGoid = typeof GopayGoidSchema.Type;
+/** GoID of the eshop (`/eshops/{goid}/...`): an unsigned base-10 integer without a leading zero. */
+const GOPAY_GOID_PATTERN = /^[1-9][0-9]{0,15}$/u;
 
 /** An upper-case ISO 4217 code as GoPay reports it. Any currency decodes; Launch money is checked later. */
 const GopayCurrencyCodeSchema = Schema.String.check(Schema.isPattern(/^[A-Z]{3}$/u));
 
-/** GoPay payment `state` enum ("Payment states and expiration"). */
+/** v4 `Payment-State` enum. */
 export const GOPAY_PAYMENT_STATES = [
   'CREATED',
   'PAYMENT_METHOD_CHOSEN',
@@ -43,40 +42,33 @@ export const GOPAY_PAYMENT_STATES = [
   'PARTIALLY_REFUNDED',
 ] as const;
 export const GopayPaymentStateSchema = Schema.Literals(GOPAY_PAYMENT_STATES);
-
-/** `target` of a payment: always a GoPay account identified by its GoID. */
-export const GopayPaymentTargetSchema = Schema.Struct({
-  goid: GopayGoidSchema,
-  type: Schema.Literal('ACCOUNT'),
-});
+export type GopayPaymentState = typeof GopayPaymentStateSchema.Type;
 
 /**
- * The payment object returned by `POST /payments/payment` (state CREATED) and by
- * `GET /payments/payment/{id}`. `order_number` is kept as provider text: it is compared with the
- * OntOS order reference after decoding, never trusted as one.
+ * The kept part of `Payment-Details`, returned by `POST /eshops/{goid}/payments` (201, state CREATED) and by
+ * `GET /payments/{payment_id}`. v4 carries no GoID: the payment is bound to OntOS by its `order_number`, which is
+ * kept as provider text and compared with the operation's order reference after decoding, never trusted as one.
  */
 export const GopayPaymentSchema = Schema.Struct({
   amount: PaymentAmountMinorSchema,
   currency: GopayCurrencyCodeSchema,
   gw_url: Schema.optionalKey(Schema.String),
-  id: GopayPaymentIdSchema,
+  id: GopayIdSchema,
   order_number: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)),
   state: GopayPaymentStateSchema,
-  sub_state: Schema.optionalKey(Schema.String),
-  target: GopayPaymentTargetSchema,
 });
 export type GopayPayment = typeof GopayPaymentSchema.Type;
 
 /** JSON text codec of a payment response body. */
 export const GopayPaymentFromJsonSchema = Schema.fromJsonString(GopayPaymentSchema);
 
-const contactText = (maximumLength: number) =>
-  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(maximumLength));
+/** `Customer.email` (required, `maxLength: 128`); no other customer field is ever sent. */
+export const GopayCustomerEmailSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128));
 
 /**
- * Body of `POST /payments/payment` for a one-time standard payment. The shape has no
- * `preauthorization`, `recurrence`, `order_description` or `items` field, so a direct-capture
- * standard payment is the only request it can express (#1154).
+ * Body of `POST /eshops/{goid}/payments`. The shape has no `order_description`, `additional_params`, customer name,
+ * phone or address field, and v4 has no preauthorization or recurrence on this request, so a direct one-shot
+ * payment with the payer's email is the only request it can express (#1154).
  */
 export const GopayCreatePaymentRequestSchema = Schema.Struct({
   amount: PaymentPositiveAmountMinorSchema,
@@ -85,96 +77,57 @@ export const GopayCreatePaymentRequestSchema = Schema.Struct({
     return_url: GatewayHttpsUrlSchema,
   }),
   currency: Schema.Literal('CZK'),
-  lang: Schema.Literal('CS'),
+  customer: Schema.Struct({ email: GopayCustomerEmailSchema }),
   order_number: GatewayOrderReferenceSchema,
-  payer: Schema.optionalKey(
-    Schema.Struct({
-      contact: Schema.Struct({
-        email: Schema.optionalKey(contactText(254)),
-        first_name: Schema.optionalKey(contactText(200)),
-        last_name: Schema.optionalKey(contactText(200)),
-        phone_number: Schema.optionalKey(contactText(40)),
-      }),
-    }),
-  ),
-  target: GopayPaymentTargetSchema,
 });
 export type GopayCreatePaymentRequest = typeof GopayCreatePaymentRequestSchema.Type;
 
 /** JSON text codec of the create body (the client encodes with it to get the exact request bytes). */
 export const GopayCreatePaymentRequestJsonSchema = Schema.fromJsonString(GopayCreatePaymentRequestSchema);
 
-/** `result` of `POST /payments/payment/{id}/refund`. */
-export const GOPAY_REFUND_RESULTS = ['ACCEPTED', 'FINISHED', 'FAILED'] as const;
-export const GopayRefundResultSchema = Schema.Literals(GOPAY_REFUND_RESULTS);
+/** `Refund-Create-Request` of `POST /payments/{payment_id}/refunds`. */
+const GopayRefundCreateRequestSchema = Schema.Struct({ amount: PaymentPositiveAmountMinorSchema });
+export const GopayRefundCreateRequestJsonSchema = Schema.fromJsonString(GopayRefundCreateRequestSchema);
 
-/** Refund response `{id, result}`. `id` is the payment id: GoPay returns no refund identifier. */
-export const GopayRefundResponseSchema = Schema.Struct({
-  id: GopayPaymentIdSchema,
-  result: GopayRefundResultSchema,
-});
-export type GopayRefundResponse = typeof GopayRefundResponseSchema.Type;
-export const GopayRefundResponseFromJsonSchema = Schema.fromJsonString(GopayRefundResponseSchema);
-
-/** Refund history `state` enum ("Refund state"). */
-export const GOPAY_REFUND_STATES = ['SUCCESS', 'FAILED', 'REQUESTED'] as const;
+/** v4 `Refund-State` enum. */
+export const GOPAY_REFUND_STATES = ['REQUESTED', 'SUCCESS', 'FAILED'] as const;
 export const GopayRefundStateSchema = Schema.Literals(GOPAY_REFUND_STATES);
 
 /**
- * A refund history date as provider text. The documentation types it as a date (`2024-04-04`); an
- * instant with a UTC offset may also appear. It is deliberately not decoded to an instant here: a
- * day-only value has no zone, so gopay-evidence.ts places it relative to the dispatch explicitly.
+ * A refund instant as provider text (`created_at`, `updated_at`: `format: date-time`, e.g.
+ * `2025-12-10T10:30:00Z`). It is not decoded to an instant here: gopay-evidence.ts accepts only a full instant with
+ * an offset and treats anything else as uncertain.
  */
-const GopayRefundDateTextSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64));
-
-/** One entry of `GET /payments/payment/{id}/refunds`. Entries carry no refund identifier. */
-export const GopayRefundHistoryEntrySchema = Schema.Struct({
-  amount: PaymentAmountMinorSchema,
-  currency: GopayCurrencyCodeSchema,
-  date_last_change: Schema.optionalKey(GopayRefundDateTextSchema),
-  date_requested: GopayRefundDateTextSchema,
-  id: GopayPaymentIdSchema,
-  state: GopayRefundStateSchema,
-});
-export type GopayRefundHistoryEntry = typeof GopayRefundHistoryEntrySchema.Type;
-
-export const GopayRefundHistorySchema = Schema.Array(GopayRefundHistoryEntrySchema);
-export type GopayRefundHistory = typeof GopayRefundHistorySchema.Type;
-export const GopayRefundHistoryFromJsonSchema = Schema.fromJsonString(GopayRefundHistorySchema);
-
-/** One error of a GoPay error body. `error_code` is documented as integer but shown as a string in examples. */
-export const GopayErrorSchema = Schema.Struct({
-  error_code: Schema.Union([Schema.Finite, Schema.String]),
-  error_name: Schema.optionalKey(Schema.String),
-  scope: Schema.optionalKey(Schema.String),
-});
+const GopayInstantTextSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64));
 
 /**
- * Error body, e.g. `{"result":"FAILED","errors":[{"error_code":"PAYMENT_NOT_FOUND"}]}` for an archived
- * payment (doc "Payment data archivation"). Classification of an error body is the client's job; an
- * error body is never evidence that an effect did not happen.
+ * `Refund-Details`, returned by `POST /payments/{payment_id}/refunds` (201), `GET /refunds/{refund_id}` and, as an
+ * array, by `GET /payments/{payment_id}/refunds`. It names no payment: a refund is bound to its payment by the
+ * request path that produced or listed it.
  */
-export const GopayErrorResponseSchema = Schema.Struct({
-  errors: Schema.Array(GopayErrorSchema).check(Schema.isMinLength(1)),
+export const GopayRefundSchema = Schema.Struct({
+  amount: PaymentAmountMinorSchema,
+  created_at: GopayInstantTextSchema,
+  currency: GopayCurrencyCodeSchema,
+  id: GopayIdSchema,
+  state: GopayRefundStateSchema,
+  /** `type: [string, 'null']`, null until the state first changes; absent and null are both None. */
+  updated_at: Schema.OptionFromOptionalNullOr(GopayInstantTextSchema),
 });
-export const GopayErrorResponseFromJsonSchema = Schema.fromJsonString(GopayErrorResponseSchema);
+export type GopayRefund = typeof GopayRefundSchema.Type;
+export const GopayRefundFromJsonSchema = Schema.fromJsonString(GopayRefundSchema);
 
-/** The OntOS provider object id of a GoPay payment id. */
-export const gopayProviderObjectId = (paymentId: GopayPaymentId): ProviderObjectId =>
-  ProviderObjectIdSchema.make(`${paymentId}`);
-
-/** Strictly an unsigned base-10 integer without a leading zero, as GoPay ids are rendered. */
-const GopayIdTextSchema = Schema.String.check(Schema.isPattern(/^[1-9][0-9]{0,15}$/u)).pipe(
-  Schema.decodeTo(Schema.FiniteFromString.pipe(Schema.decodeTo(GopayIntegerIdSchema))),
-);
+export const GopayRefundListSchema = Schema.Array(GopayRefundSchema);
+export type GopayRefundList = typeof GopayRefundListSchema.Type;
+export const GopayRefundListFromJsonSchema = Schema.fromJsonString(GopayRefundListSchema);
 
 /** Parses a GoPay id from text (notification `?id=`, a stored provider object id); anything else is None. */
-export const parseGopayId = (text: string): Option.Option<number> =>
-  Schema.decodeUnknownOption(GopayIdTextSchema)(text);
+export const parseGopayId = (text: string): Option.Option<ProviderObjectId> =>
+  Schema.decodeUnknownOption(GopayIdSchema)(text);
 
-/** The GoID of a GOPAY merchant identity as GoPay renders it; None for another family or a non-canonical GoID. */
-export const gopayGoidOf = (identity: GatewayMerchantIdentity): Option.Option<GopayGoid> =>
+/** The GoID of a GOPAY merchant identity; None for another family or a non-canonical GoID. */
+export const gopayGoidOf = (identity: GatewayMerchantIdentity): Option.Option<string> =>
   Match.value(identity).pipe(
-    Match.tag('GOPAY', ({ goid }) => parseGopayId(goid)),
-    Match.orElse(() => Option.none()),
+    Match.tag('GOPAY', ({ goid }) => (GOPAY_GOID_PATTERN.test(goid) ? Option.some(goid) : Option.none<string>())),
+    Match.orElse(() => Option.none<string>()),
   );
