@@ -175,7 +175,7 @@ export const OWNER_RUNTIME_CONFIGURATIONS: readonly OwnerRuntimeConfiguration[] 
   },
   {
     apiDependencies: [shellGateway],
-    credentialVariables: [],
+    credentialVariables: ['ONTOS_PAYMENT_PROVIDER_CREDENTIALS'],
     moduleCredentialHolders: SERVICE_AND_WORKER,
     moduleCredentialVariable: moduleCredentialVariable(PAYMENT_UNIT),
     operatorValues: [],

@@ -29,7 +29,7 @@ import {
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { makePaymentApiRuntime } from '../../api/index.ts';
-import { paymentUnavailableOwnerPortsLive } from '../../api/payment-production-layers.ts';
+import { paymentUnavailableOwnerPortsLive } from '../support/unavailable-owner-ports.fixture.ts';
 import type { AcceptPaymentObservationPayloadSchema } from '../../shared/actions/accept-payment-observation.ts';
 import type { RequestPaymentRefundPayloadSchema } from '../../shared/actions/request-payment-refund.ts';
 import type { StartPaymentCollectionPayloadSchema } from '../../shared/actions/start-payment-collection.ts';

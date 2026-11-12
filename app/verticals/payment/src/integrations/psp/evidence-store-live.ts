@@ -6,6 +6,7 @@ import {
   pspAppendEvidence,
   pspListPendingEvidence,
   pspMarkEvidenceSubmission,
+  pspPinEvidenceSubmissionExecutor,
 } from '../../persistence/psp-worker-routines.ts';
 import type { PspEvidenceRecord } from '../../persistence/psp-worker-routines.ts';
 import { ledgerUnavailable, routineUnavailable, workerOriginOf } from './dispatch-ledger-live.ts';
@@ -14,6 +15,7 @@ import type {
   AppendProviderEvidenceInput,
   ListPendingProviderEvidenceInput,
   MarkProviderEvidenceSubmissionInput,
+  PinProviderEvidenceSubmissionExecutorInput,
   ProviderEvidenceStoreContract,
 } from './evidence-store.ts';
 import { GatewayEvidenceConflict } from './psp-errors.ts';
@@ -89,6 +91,7 @@ const storedEvidenceOf = Effect.fn('ProviderEvidenceStore.storedOf')(function* s
     paymentId: row.paymentId,
     receivedAt: row.receivedAt,
     recordedAt: row.recordedAt,
+    submissionExecutorPrincipalId: row.submissionExecutorPrincipalId,
     submissionState: row.submissionState,
     verifiedAt: row.verifiedAt,
   }).pipe(Effect.mapError((failure) => ledgerUnavailable(`evidence_record_invalid: ${failure._tag}`)));
@@ -145,7 +148,7 @@ const listPending = Effect.fn('ProviderEvidenceStore.listPending')(function* lis
   return yield* Effect.forEach(rows, storedEvidenceOf, { concurrency: 1 });
 });
 
-const evidenceIdOf = (input: MarkProviderEvidenceSubmissionInput) =>
+const evidenceIdOf = (input: { readonly evidenceId: MarkProviderEvidenceSubmissionInput['evidenceId'] }) =>
   Schema.decodeUnknownEffect(PspEvidenceIdSchema)(input.evidenceId).pipe(
     Effect.mapError((failure) => ledgerUnavailable(`evidence_id_invalid: ${failure._tag}`)),
   );
@@ -169,7 +172,30 @@ const markSubmission = Effect.fn('ProviderEvidenceStore.markSubmission')(functio
   return yield* storedEvidenceOf(row);
 });
 
-const providerEvidenceStore: ProviderEvidenceStoreContract = Object.freeze({ append, listPending, markSubmission });
+/** Write-once: another principal, or a settled row that was never pinned, is a conflict and pins nothing. */
+const pinSubmissionExecutor = Effect.fn('ProviderEvidenceStore.pinSubmissionExecutor')(function* pinSubmissionExecutor(
+  input: PinProviderEvidenceSubmissionExecutorInput,
+) {
+  const evidenceId = yield* evidenceIdOf(input);
+  const result = yield* pspPinEvidenceSubmissionExecutor(input.scope.routineInvoker, {
+    evidenceId,
+    principalId: input.principalId,
+  }).pipe(Effect.mapError(routineUnavailable));
+  const row = yield* Match.valueTags(result, {
+    CONFLICT: ({ reason }) => Effect.fail(evidenceConflict(`submission_executor_${reason}`)),
+    NOT_FOUND: () => Effect.fail(ledgerUnavailable('evidence_executor_pin_refused: evidence_unknown')),
+    PINNED: ({ record }) => Effect.succeed(record),
+    UNCHANGED: ({ record }) => Effect.succeed(record),
+  });
+  return yield* storedEvidenceOf(row);
+});
+
+const providerEvidenceStore: ProviderEvidenceStoreContract = Object.freeze({
+  append,
+  listPending,
+  markSubmission,
+  pinSubmissionExecutor,
+});
 
 /** The store needs no service of its own: each call carries the verified worker scope. */
 export const ProviderEvidenceStoreLive = Layer.succeed(ProviderEvidenceStore, providerEvidenceStore);

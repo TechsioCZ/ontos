@@ -565,6 +565,7 @@ const evidenceStoreOf = (world: World) =>
       }),
     listPending: () => Effect.die('unused'),
     markSubmission: () => Effect.die('unused'),
+    pinSubmissionExecutor: () => Effect.die('unused'),
   });
 
 const testCrypto = Layer.succeed(

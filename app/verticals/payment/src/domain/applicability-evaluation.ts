@@ -19,8 +19,10 @@ import type { PaymentMonetaryAmount } from '../../shared/domain/payment-money.ts
 import type { PaymentMethod } from '../../shared/domain/payment-vocabulary.ts';
 import { DeliveryCapabilityPort } from '../ports/delivery-capability-port.ts';
 import type { PaymentCodCapability } from '../ports/delivery-capability-port.ts';
-import { GatewayBindingPort } from '../ports/gateway-binding-port.ts';
-import type { PaymentGatewayBindingVerification } from '../ports/gateway-binding-port.ts';
+import type {
+  PaymentGatewayBindingEvidence,
+  PaymentGatewayBindingVerification,
+} from '../ports/gateway-binding-port.ts';
 import type { PaymentOwnerScope } from '../ports/owner-evidence-unavailable.ts';
 import { PaymentTermEvidencePort } from '../ports/payment-term-evidence-port.ts';
 import type {
@@ -50,6 +52,8 @@ export interface PaymentMethodApplicabilityInput {
   readonly customerConfigurationId: string;
   /** Current enablement rows of this Customer Configuration in the Selling Legal Entity (A1). */
   readonly enablements: readonly PaymentMethodEnablementState[];
+  /** Gateway binding evidence bound to the caller's own Core-scoped transaction. */
+  readonly gateways: PaymentGatewayBindingEvidence;
   readonly ownerCall?: PaymentTermOwnerCall;
   /** The resolved term; it is returned unchanged on AVAILABLE and never replaced by method choice. */
   readonly paymentTermRef: PaymentTermRef;
@@ -63,7 +67,6 @@ export interface PaymentMethodApplicabilityInput {
 
 export type PaymentMethodApplicabilityRequirements =
   | DeliveryCapabilityPort
-  | GatewayBindingPort
   | PaymentTermEvidencePort
   | PickupCapabilityPort;
 
@@ -304,8 +307,7 @@ const verifyGateway = Effect.fn('PaymentApplicability.verifyGateway')(function* 
   input: PaymentMethodApplicabilityInput,
   selectedBinding: PaymentGatewayAccountBinding,
 ) {
-  const gateways = yield* GatewayBindingPort;
-  return yield* gateways
+  return yield* input.gateways
     .verifySelectedBinding({
       binding: selectedBinding,
       customerConfigurationId: input.customerConfigurationId,

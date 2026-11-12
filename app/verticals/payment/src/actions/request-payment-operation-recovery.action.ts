@@ -33,7 +33,7 @@ import type { PaymentEvidenceActionServices } from '../persistence/payment-evide
 import type { PaymentOperationRecord } from '../persistence/payment-aggregate-persistence.ts';
 import type { PaymentOwnerScope } from '../ports/owner-evidence-unavailable.ts';
 import { PaymentProviderReplayEvidencePort } from '../ports/provider-replay-evidence-port.ts';
-import type { PaymentProviderReplayEvidenceService } from '../ports/provider-replay-evidence-port.ts';
+import type { PaymentProviderReplayEvidenceReader } from '../ports/provider-replay-evidence-port.ts';
 import { recordPaymentAggregateReads } from './payment-data-access.ts';
 import { createRequestPaymentOperationRecoveryPaymentCoreOperationRecoveryRequestedV1OutboxMessage } from './request-payment-operation-recovery-payment-core-operation-recovery-requested-v1.outbox-message.ts';
 
@@ -50,7 +50,7 @@ const RequestPaymentOperationRecoveryErrorSchema = Schema.Union([
 ]);
 
 interface RecoveryServices extends PaymentEvidenceActionServices {
-  readonly replayEvidence: Option.Option<PaymentProviderReplayEvidenceService>;
+  readonly replayEvidence: PaymentProviderReplayEvidenceReader;
   readonly scope: PaymentOwnerScope;
 }
 
@@ -77,7 +77,7 @@ const paymentEvidenceServices = Effect.fn('RequestPaymentOperationRecoveryAction
   return {
     aggregate: paymentAggregatePersistenceForTransaction(transaction),
     evidence: paymentEvidencePersistenceForTransaction(transaction),
-    replayEvidence: yield* Effect.serviceOption(PaymentProviderReplayEvidencePort),
+    replayEvidence: (yield* PaymentProviderReplayEvidencePort)(transaction),
     scope: { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId },
   } satisfies RecoveryServices;
 });
@@ -90,7 +90,6 @@ const readProviderGuarantee = (
   services: RecoveryServices,
 ) => {
   if (
-    Option.isNone(services.replayEvidence) ||
     !Schema.is(PaymentGatewayAccountBindingSchema)(operation.binding) ||
     isDefinitiveOutcome(operation.outcome) ||
     operation.outcome === 'CONFLICT' ||
@@ -99,7 +98,7 @@ const readProviderGuarantee = (
   ) {
     return Effect.succeedNone;
   }
-  return services.replayEvidence.value
+  return services.replayEvidence
     .readGuarantee({
       binding: operation.binding,
       materialHash: operation.materialHash,

@@ -8,6 +8,7 @@ import { processProviderNotificationWorker } from './src/workers/process-provide
 import { recoverGatewayOperationWorker } from './src/workers/recover-gateway-operation.worker.ts';
 // <generated-module-manifest-imports>
 import { acceptPaymentObservationAction } from './src/actions/accept-payment-observation.action.ts';
+import { AcceptPaymentObservationActionApi } from './shared/apis/accept-payment-observation-action.ts';
 import { captureProviderNotificationAction } from './src/actions/capture-provider-notification.action.ts';
 import { configureGatewayEnablementAction } from './src/actions/configure-gateway-enablement.action.ts';
 import { configurePaymentMethodEnablementAction } from './src/actions/configure-payment-method-enablement.action.ts';
@@ -105,6 +106,7 @@ export const paymentManifest: OntosModuleManifestInput = defineOntosModuleManife
     ],
     api: {
       // <generated-module-manifest-apis>
+      'accept-payment-observation-action': AcceptPaymentObservationActionApi,
       'current-payment': CurrentPaymentApi,
       'gateway-configuration': GatewayConfigurationApi,
       'gateway-customer-action': GatewayCustomerActionApi,
@@ -123,6 +125,11 @@ export const paymentManifest: OntosModuleManifestInput = defineOntosModuleManife
     events: [],
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
+      {
+        apiKey: 'accept-payment-observation-action',
+        operationKey: 'acceptPaymentObservationAction.execute',
+        registration: acceptPaymentObservationAction,
+      },
       { apiKey: 'current-payment', operationKey: 'currentPayment.execute', registration: currentPaymentRead },
       {
         apiKey: 'gateway-configuration',

@@ -27,6 +27,7 @@ const OUTBOX_WORKERS = [
   'inventoryworker',
   'privacyworker',
   'commerceorderworker',
+  'paymentworker',
   'symmyintegrationworker',
 ];
 const KEPT_ON_ZEROPS = new Set(['cloudflared', 'db18', 'migrator', 'outboxworkerhost', 'spicedb', ...OUTBOX_WORKERS]);

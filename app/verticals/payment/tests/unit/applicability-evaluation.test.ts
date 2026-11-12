@@ -68,6 +68,7 @@ const evaluate = (
     amount: { amountMinor: 125_000, currency: 'CZK' },
     customerConfigurationId: 'customer-configuration-1',
     enablements,
+    gateways: fixture.gateway,
     paymentTermRef,
     purchase: { _tag: 'PURCHASING_CONTEXT', purchasingContext },
     scope,
@@ -535,6 +536,7 @@ describe('#1147 applicability term currentness and purchase scope', () => {
         amount: { amountMinor: 125_000, currency: 'CZK' },
         customerConfigurationId: 'customer-configuration-1',
         enablements: allEnabled,
+        gateways: fixture.gateway,
         paymentTermRef: termRef,
         purchase: {
           _tag: 'PURCHASING_CONTEXT',

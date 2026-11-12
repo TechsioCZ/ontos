@@ -11,8 +11,6 @@ import { GatewayBindingResolverLive } from '../integrations/psp/binding-resolver
 import type { GatewayBindingResolver } from '../integrations/psp/binding-resolver.ts';
 import { ProviderDispatchLedgerLive } from '../integrations/psp/dispatch-ledger-live.ts';
 import type { ProviderDispatchLedger } from '../integrations/psp/dispatch-ledger.ts';
-import { ProviderEvidenceStoreLive } from '../integrations/psp/evidence-store-live.ts';
-import type { ProviderEvidenceStore } from '../integrations/psp/evidence-store.ts';
 import { ProviderEvidenceSubmitterLive } from '../integrations/psp/evidence-submission-live.ts';
 import type { ProviderEvidenceSubmitter } from '../integrations/psp/evidence-submission.ts';
 import { GatewayProviderAdaptersLive } from '../integrations/psp/gateway-adapters-live.ts';
@@ -30,14 +28,14 @@ type PaymentOutboxWorkerServices =
   | Layer.Success<typeof OutboxWorkerInfrastructureLive>
   | OutboxWorkerLegalEntityScopeFanout
   | ProviderDispatchLedger
-  | ProviderEvidenceStore
   | ProviderEvidenceSubmitter
   | ProviderNotificationStore;
 
 /**
  * Gateway executor, notification and recovery handlers run on the scoped C17 stores, the binding
- * resolver, the provider adapters and the governed A8 submitter. The entry provides the provider
- * services, the database and Crypto, which it also exposes because the executor draws return tokens from it.
+ * resolver, the provider adapters and the governed A8 submitter. The entry provides the evidence store (the
+ * submitter pins each row's executor there), the provider services, the database and Crypto, which it also
+ * exposes because the executor draws return tokens from it.
  */
 export const outboxWorkerLayer: Layer.Layer<
   PaymentOutboxWorkerServices,
@@ -52,7 +50,6 @@ export const outboxWorkerLayer: Layer.Layer<
   GatewayBindingResolverLive,
   GatewayProviderAdaptersLive,
   ProviderDispatchLedgerLive,
-  ProviderEvidenceStoreLive,
   ProviderEvidenceSubmitterLive,
   ProviderNotificationStoreLive,
 );

@@ -41,14 +41,90 @@ Adoption means reading these ranges as reference for OntOS-owned code. Source is
 
 ## Modifications and donor gap log
 
-Resolutions are filled in by W5-DOCS. Each entry gives the gap id, the donor behaviour and the OntOS resolution.
+Each gap is listed with the OntOS resolution and the file that carries it. Paths are relative to `app/verticals/payment/src/integrations/`. The donor code itself is not in OntOS.
 
-- G-1 to G-7 (shared core): _pending W5-DOCS_
-- S-1 to S-15 (Stripe): _pending W5-DOCS_
-- G-P1 to G-P11 (GoPay, map 4.2): _pending W5-DOCS_
-- C-1 to C-12 (Comgate): _pending W5-DOCS_
-- Conversion functions and webhook verification summary (map 4.4): _pending W5-DOCS_
+### Shared core (G-1 to G-7)
+
+| Gap                                                     | OntOS resolution                                                                                                                                                        | Resolved in                                                                           |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| G-1 Mutations retried blindly                           | Reads retry within a small bound; mutations are sent once; an ambiguous outcome is OUTCOME_UNKNOWN                                                                      | `psp/provider-http-live.ts`, `psp/provider-http.ts`                                   |
+| G-2 Unparseable 2xx hidden as error                     | A non-parseable 2xx on a mutation is OUTCOME_UNKNOWN                                                                                                                    | `psp/provider-http-live.ts`                                                           |
+| G-3 Status lost in string errors                        | Any status is returned for classification; failures carry fixed reason codes only                                                                                       | `psp/provider-http.ts`, `psp/psp-errors.ts`                                           |
+| G-4 Telemetry                                           | Not adopted. No telemetry, no body logging, no `process.env` in integrations                                                                                            | Not adopted; rule in `docs/integrations/payment-gateways.md`                          |
+| G-5 One credential set per instance, debug logging      | One binding per adapter; credentials per binding revision; no body or metadata logging                                                                                  | `psp/gateway-binding-live.ts`, `psp/credentials-live.ts`                              |
+| G-6 DTOs lack fact kind, target, status and environment | Provider-neutral result and evidence types with explicit fact kinds, target operation and environment                                                                   | `psp/psp-result.ts`, `psp/psp-adapter.ts`, `psp/evidence-submission.ts`               |
+| G-7 Webhook identity is a content hash                  | Identity comes from the provider's delivery and object ids, with received and verified instants stored; the adopted `hashWebhookPayload` range is not used for identity | `psp/notification-envelope.ts`, `persistence/psp-notification-capture-persistence.ts` |
+
+### Stripe (S-1 to S-15)
+
+| Gap                                             | OntOS resolution                                                                                     | Resolved in                                                     |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| S-1 Capture method chosen by caller             | Always `automatic`; no manual capture path                                                           | `stripe/stripe-payment.service.ts`                              |
+| S-2 `setup_future_usage: off_session`           | Never sent                                                                                           | `stripe/stripe-payment.service.ts`                              |
+| S-3 Saved-card reuse and off-session charge     | Removed. No customer lookup, no `off_session`, no `payment_method`                                   | `stripe/stripe-payment.service.ts`                              |
+| S-4 No idempotency key                          | `Idempotency-Key` derived from the operation, 24 h replay window                                     | `stripe/stripe-payment.service.ts`, `psp/psp-correlation.ts`    |
+| S-5 Raw amounts                                 | Exact minor-unit parsing and checks; no float, no rounding                                           | `stripe/stripe-money.ts`, `psp/psp-money.ts`                    |
+| S-6 Returned amount not checked                 | `amount_received` and currency checked against the operation                                         | `stripe/stripe-wire.ts`, `stripe/stripe-evidence.ts`            |
+| S-7 Transport errors read as "not found"        | 404 is INDETERMINATE; network and auth errors are UNAVAILABLE                                        | `stripe/stripe-payment.service.ts`                              |
+| S-8 Expire and cancel mapping                   | Cancel is session expire; CANCEL_CONFIRMED only after a confirming lookup                            | `stripe/stripe-payment.service.ts`, `stripe/stripe-evidence.ts` |
+| S-9 Refund status dropped                       | Refund status kept; `refund.created`, `refund.updated`, `refund.failed` and `charge.refunded` mapped | `stripe/stripe-wire.ts`, `stripe/stripe-event.ts`               |
+| S-10 Signature and livemode                     | Own `v1` HMAC check with 300 s tolerance; `livemode` must match                                      | `stripe/stripe-webhook-signature.ts`                            |
+| S-11 Checkout session to payment intent         | Resolved by read-only lookup with expansion                                                          | `stripe/stripe-payment.service.ts`                              |
+| S-12 Invoice and customer events become Billing | Never mapped; ignored and acknowledged                                                               | `stripe/stripe-event.ts`                                        |
+| S-13 Coarse event mapping                       | Qualified mapping of session and payment intent events                                               | `stripe/stripe-event.ts`                                        |
+| S-14 Unsafe casts                               | Every response decoded with a schema; no casts                                                       | `stripe/stripe-wire.ts`                                         |
+| S-15 Environment sniffed from key               | Environment from the binding; key prefix must match, else UNAVAILABLE                                | `stripe/stripe-payment.service.ts`                              |
+
+### GoPay (G-P1 to G-P11)
+
+| Gap                                                    | OntOS resolution                                                                             | Resolved in                                                     |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| G-P1 Direct capture                                    | Kept as direct capture; no capture call                                                      | `gopay/gopay-payment.service.ts`                                |
+| G-P2 Random `order_number`                             | `order_number` is the operation's order reference                                            | `gopay/gopay-payment.service.ts`, `psp/psp-correlation.ts`      |
+| G-P3 Local refund id as proof                          | Refund result mapped to pending, confirmed or not effected; history read decides             | `gopay/gopay-payment.service.ts`, `gopay/gopay-evidence.ts`     |
+| G-P4 Raw amount and currency                           | Exact minor units; response amount and currency checked                                      | `gopay/gopay-money.ts`, `gopay/gopay-wire.ts`                   |
+| G-P5 Hardcoded CZK fallback                            | Currency always sent as `CZK`; no fallback; reported currency kept as reported               | `gopay/gopay-money.ts`                                          |
+| G-P6 Callback trusted as state                         | Callback is a trigger only; state read again by payment id; goid and order reference checked | `gopay/gopay-notification.ts`, `gopay/gopay-evidence.ts`        |
+| G-P7 Refunded treated as canceled                      | Collection proven when refunded; refund evidence kept separately                             | `gopay/gopay-evidence.ts`                                       |
+| G-P8 Void on a non-preauthorized payment               | Cancel is UNSUPPORTED (N8)                                                                   | `gopay/gopay-capabilities.ts`, `gopay/gopay-payment.service.ts` |
+| G-P9 Mutation retries                                  | Mutations sent once; OAuth token POST is a read                                              | `psp/provider-http-live.ts`, `gopay/gopay-oauth-token.ts`       |
+| G-P10 Unsafe casts                                     | Schema decoding of every response                                                            | `gopay/gopay-wire.ts`                                           |
+| G-P11 Misc (PII in description, lang default, id hash) | No email in `order_description`; no lang default; identity from the provider id              | `gopay/gopay-payment.service.ts`, `gopay/gopay-notification.ts` |
+
+### Comgate (C-1 to C-12)
+
+| Gap                                                 | OntOS resolution                                                                                                | Resolved in                                                     |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| C-1 Preauth and capture path                        | Standard create only; no preauth, no confirm call                                                               | `comgate/comgate-payment.service.ts`                            |
+| C-2 Hardcoded CZK and echoed request values         | Response currency and amount checked against the operation                                                      | `comgate/comgate-money.ts`, `comgate/comgate-evidence.ts`       |
+| C-3 Random refund id                                | Refund mapped to REFUND_PENDING only (N10)                                                                      | `comgate/comgate-payment.service.ts`                            |
+| C-4 Retrieve always fails validation, cast response | Lookup decoded with schemas; `code` must be 0                                                                   | `comgate/comgate-wire.ts`                                       |
+| C-5 Non-zero codes treated as success               | Only code 0 is success                                                                                          | `comgate/comgate-wire.ts`                                       |
+| C-6 Push rejected on status mismatch                | Push verified by secret, merchant and environment; lookup wins; mismatch recorded, not rejected                 | `comgate/comgate-push.ts`                                       |
+| C-7 Form-encoded status response (unverified)       | Decoder chosen by content type; fixture check pending in conformance                                            | `comgate/comgate-push.ts`, `comgate/comgate-wire.ts`            |
+| C-8 JSON inside `refId`                             | `refId` is the plain operation order reference                                                                  | `comgate/comgate-payment.service.ts`, `psp/psp-correlation.ts`  |
+| C-9 Raw amounts                                     | Exact minor units, range 100 to 100 000 000 checked                                                             | `comgate/comgate-money.ts`                                      |
+| C-10 Mutation retries                               | Mutations sent once; the status read may retry within a bound                                                   | `psp/provider-http-live.ts`                                     |
+| C-11 Two cancel paths                               | Cancel uses the transaction-id path only; result confirmed by lookup (path verification pending in conformance) | `comgate/comgate-payment.service.ts`                            |
+| C-12 Environment from `isSandbox`                   | `test` flag matches the binding environment                                                                     | `comgate/comgate-payment.service.ts`, `comgate/comgate-push.ts` |
+
+### Conversion and webhook verification (map 4.4)
+
+- **Amount conversion:** one exact function per provider, all built on the shared parser. Payment holds CZK minor units. Nothing rounds, scales, converts currency or accepts a float. See `psp/psp-money.ts`, `stripe/stripe-money.ts`, `gopay/gopay-money.ts`, `comgate/comgate-money.ts`.
+- **Stripe:** signed `v1` check in `stripe/stripe-webhook-signature.ts`, then re-read of the object.
+- **GoPay:** no signature. The callback is a trigger, and the state is read again through the original binding (`gopay/gopay-notification.ts`).
+- **Comgate:** shared secret, merchant and environment check, then status lookup (`comgate/comgate-push.ts`).
+
+### Applied OntOS modifications
+
+- Donor error classes are replaced by OntOS typed failures (UNSUPPORTED, UNAVAILABLE, INDETERMINATE, CONFLICT).
+- The donor HTTP client and its retry wrapper are replaced by the Effect `HttpClient` seam in `psp/provider-http-live.ts`.
+- The donor zod schemas are rewritten as Effect Schema. No zod dependency is added.
+- The GoPay OAuth token cache is kept per binding and credential revision, never shared across bindings.
+- The Stripe SDK is not added. The Stripe signature check is written from the documented scheme.
+- No telemetry, no `__paykit` metadata key, no facade class and no webhook dispatcher are adopted.
+- No upstream runtime or package dependency on `@paykit-sdk/*` is added.
 
 ## Rule
 
-Every later manual upstream source import requires a full C17 conformance rerun (#1159:161).
+Every later manual upstream source import requires a full C17 conformance rerun (#1159:161). Any import must cite the line ranges in this record, and the record must be updated with the new commit and gap entries before the import is merged.

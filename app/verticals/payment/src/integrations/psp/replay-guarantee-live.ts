@@ -9,7 +9,7 @@ import { paymentUnavailable } from '../../../shared/domain/payment-unavailable.t
 import { pspProviderDispatches } from '../../database/schema.ts';
 import type {
   PaymentProviderReplayEvidenceRequest,
-  PaymentProviderReplayEvidenceService,
+  PaymentProviderReplayEvidenceReader,
 } from '../../ports/provider-replay-evidence-port.ts';
 import { idempotencyKeyHashOf } from './dispatch-ledger.ts';
 import { deriveProviderCorrelation } from './psp-correlation.ts';
@@ -122,7 +122,7 @@ export const providerReplayGuaranteeReaderForTransaction = (
 /** `PaymentProviderReplayEvidencePort` backed by the C17 reader of the same Action transaction. */
 export const providerReplayEvidenceForTransaction = (
   transaction: ScopedTransactionExecutor,
-): PaymentProviderReplayEvidenceService => {
+): PaymentProviderReplayEvidenceReader => {
   const reader = providerReplayGuaranteeReaderForTransaction(transaction);
   return Object.freeze({ readGuarantee: reader.read });
 };

@@ -1,8 +1,9 @@
-import { Context, Effect, Schema } from 'effect';
+import type { ScopedTransactionExecutor } from '@app/core-runtime';
+import { Context, Schema } from 'effect';
+import type { Effect } from 'effect';
 
 import { PaymentGatewayAccountBindingSchema } from '../../shared/domain/payment-execution-binding.ts';
 import type { PaymentGatewayAccountBinding } from '../../shared/domain/payment-execution-binding.ts';
-import { ownerEvidenceUnavailable } from './owner-evidence-unavailable.ts';
 import type { PaymentOwnerEvidenceUnavailable, PaymentOwnerScope } from './owner-evidence-unavailable.ts';
 
 /**
@@ -16,7 +17,7 @@ export const PaymentGatewayBindingVerificationSchema = Schema.Union([
 ]);
 export type PaymentGatewayBindingVerification = typeof PaymentGatewayBindingVerificationSchema.Type;
 
-export interface PaymentGatewayBindingService {
+export interface PaymentGatewayBindingEvidence {
   /** Enabled bindings offered for a new Payment intent; an outage fails, it is never an empty list. */
   readonly listEnabledBindings: (input: {
     readonly customerConfigurationId: string;
@@ -29,15 +30,16 @@ export interface PaymentGatewayBindingService {
   }) => Effect.Effect<PaymentGatewayBindingVerification, PaymentOwnerEvidenceUnavailable>;
 }
 
-/** C17 gateway enablement/binding evidence (L1, L2). */
-export class GatewayBindingPort extends Context.Service<GatewayBindingPort, PaymentGatewayBindingService>()(
-  '@app/payment/ports/gateway-binding-port/GatewayBindingPort',
-) {}
+/** Binds the gateway binding evidence to one Core-scoped transaction; Payment reads its own tables there. */
+export type PaymentGatewayBindingEvidenceForTransaction = (
+  transaction: ScopedTransactionExecutor,
+) => PaymentGatewayBindingEvidence;
 
-const unavailable = () =>
-  Effect.fail(ownerEvidenceUnavailable('GATEWAY_BINDING', 'No C17 Gateway Enablement evidence route is configured'));
-
-export const unavailableGatewayBinding: PaymentGatewayBindingService = Object.freeze({
-  listEnabledBindings: unavailable,
-  verifySelectedBinding: unavailable,
-});
+/**
+ * C17 gateway enablement/binding evidence (L1, L2), supplied by the composition root. Action and Read service
+ * factories bind it to their own transaction and hand the bound evidence to the handler as an owner service.
+ */
+export class GatewayBindingPort extends Context.Service<
+  GatewayBindingPort,
+  PaymentGatewayBindingEvidenceForTransaction
+>()('@app/payment/ports/gateway-binding-port/GatewayBindingPort') {}

@@ -10,13 +10,17 @@ import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { makePaymentApiRuntime } from '../../api/index.ts';
-import { paymentUnavailableOwnerPortsLive } from '../../api/payment-production-layers.ts';
+import {
+  paymentUnavailableOwnerPortsLive,
+  unavailableGatewayBinding,
+  unavailableGatewayBindingForTransaction,
+} from '../support/unavailable-owner-ports.fixture.ts';
 import type { ConfigurePaymentMethodEnablementPayloadSchema } from '../../shared/actions/configure-payment-method-enablement.ts';
 import type { PaymentMethodApplicabilityRequestSchema } from '../../shared/apis/payment-method-applicability.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { CommitmentOutcomePort, unavailableCommitmentOutcome } from '../../src/ports/commitment-outcome-port.ts';
 import { DeliveryCapabilityPort, unavailableDeliveryCapability } from '../../src/ports/delivery-capability-port.ts';
-import { GatewayBindingPort, unavailableGatewayBinding } from '../../src/ports/gateway-binding-port.ts';
+import { GatewayBindingPort } from '../../src/ports/gateway-binding-port.ts';
 import { PaymentTermEvidencePort, unavailablePaymentTermEvidence } from '../../src/ports/payment-term-evidence-port.ts';
 import { PickupCapabilityPort, unavailablePickupCapability } from '../../src/ports/pickup-capability-port.ts';
 import { RefundableItemsPort, unavailableRefundableItems } from '../../src/ports/refundable-items-port.ts';
@@ -25,7 +29,7 @@ import { RefundableItemsPort, unavailableRefundableItems } from '../../src/ports
  * Handler requirements reach the HTTP layer only as `HttpRouter.Request<'Requires', _>`, which the BFF
  * assembly accepts without proof, and governed Read requirements are not typed at the transport at all.
  * These tests prove at run time, through the real `makePaymentApiRuntime`, that owner evidence ports
- * merged into the Core runtimes (as api/index.ts merges `paymentUnavailableOwnerPortsLive`) are present
+ * merged into the Core runtimes (as api/index.ts merges `paymentProductionOwnerPortsLive`) are present
  * where Action and Read handlers run.
  *
  * The request bodies must decode against the route's public payload; they are typed by the encoded
@@ -85,11 +89,14 @@ type ObservedOwnerPorts = ReturnType<typeof ownerPortsIn>;
 const unavailableOwnerPorts = {
   commitment: unavailableCommitmentOutcome,
   delivery: unavailableDeliveryCapability,
-  gateway: unavailableGatewayBinding,
+  gateway: unavailableGatewayBindingForTransaction,
   pickup: unavailablePickupCapability,
   refundableItems: unavailableRefundableItems,
   term: unavailablePaymentTermEvidence,
 };
+
+/** A fixture source of its own identity, so the test sees that the runtimes received exactly it. */
+const gatewayFixture = () => unavailableGatewayBinding;
 
 const captureRuntimes = () => {
   const actionSeen: ObservedOwnerPorts[] = [];
@@ -210,7 +217,6 @@ it.live('#1145 production composition gives Action and Read handlers the fail-cl
 
 it.live('#1145 owner evidence fixtures supplied to the runtimes replace the fail-closed defaults', () =>
   Effect.gen(function* verifyFixtureOwnerPortComposition() {
-    const gatewayFixture = { ...unavailableGatewayBinding };
     const ownerPorts: PaymentOwnerPortsLayer = Layer.mergeAll(
       Layer.succeed(PaymentTermEvidencePort, unavailablePaymentTermEvidence),
       Layer.succeed(GatewayBindingPort, gatewayFixture),

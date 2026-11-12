@@ -7,7 +7,12 @@ import { AcceptPaymentObservationPayloadSchema } from '../../../shared/actions/a
 import type { AcceptPaymentObservationPayload } from '../../../shared/actions/accept-payment-observation.ts';
 import type { PaymentSourceStatementResult } from '../../../shared/domain/source-statement.ts';
 import { executeAcceptPaymentObservationWithAuthorization } from '../../api/accept-payment-observation-action-client.ts';
-import type { ProviderEvidenceSubmissionOutcome, StoredProviderEvidence } from './evidence-store.ts';
+import { ProviderEvidenceStore } from './evidence-store.ts';
+import type {
+  ProviderEvidenceStoreContract,
+  ProviderEvidenceSubmissionOutcome,
+  StoredProviderEvidence,
+} from './evidence-store.ts';
 import { ProviderEvidenceSubmitter } from './evidence-submission.ts';
 import type {
   ProviderEvidenceSubmission,
@@ -176,7 +181,39 @@ export const ProviderEvidenceSubmissionTransport = Context.Reference<typeof a8Tr
 
 const requestCorrelationOf = (context: OutboxWorkerHandlerContext) => context.correlationId ?? context.deliveryId;
 
-const submitWith = (crypto: Crypto.Crypto) =>
+/**
+ * The attested executor must be the row's pinned one. An unpinned row pins the executor Shell attested now; a
+ * conflict (another principal pinned meanwhile, or the row is settled) refuses this attempt before A8, and the
+ * retry asks Shell for the pinned executor.
+ */
+const requirePinnedExecutor = (
+  store: ProviderEvidenceStoreContract,
+  submission: ProviderEvidenceSubmission,
+  attestedPrincipalId: string,
+) => {
+  const pinned = submission.evidence.submissionExecutorPrincipalId;
+  if (pinned !== undefined) {
+    return pinned === attestedPrincipalId
+      ? Effect.void
+      : Effect.fail(unavailable(submission, 'submission_executor_mismatch'));
+  }
+  return store
+    .pinSubmissionExecutor({
+      evidenceId: submission.evidence.evidenceId,
+      principalId: attestedPrincipalId,
+      scope: submission.scope,
+    })
+    .pipe(
+      Effect.catchTags({
+        GatewayEvidenceConflict: () => Effect.fail(unavailable(submission, 'submission_executor_mismatch')),
+        GatewayLedgerUnavailable: ({ reason }) =>
+          Effect.fail(unavailable(submission, `submission_executor_pin_unavailable:${reason}`)),
+      }),
+      Effect.asVoid,
+    );
+};
+
+const submitWith = (crypto: Crypto.Crypto, store: ProviderEvidenceStoreContract) =>
   Effect.fn('ProviderEvidenceSubmitter.submit')(function* submit(submission: ProviderEvidenceSubmission) {
     const { scope, workerContext } = submission;
     const transport = yield* ProviderEvidenceSubmissionTransport;
@@ -187,22 +224,22 @@ const submitWith = (crypto: Crypto.Crypto) =>
     const payload = yield* statementOf(submission);
     const requestCorrelation = requestCorrelationOf(workerContext);
     // Shell chooses the receiving system principal from the tenant's single `payment.source-ingress`
-    // enrollment. It is not yet pinned with `expectedPrincipalId`: pinning needs the evidence row's executor pin
-    // committed before A8, so until then a retry relies on the stable idempotency key and A8's source-occurrence
-    // identity.
+    // enrollment. Once the row has a pinned executor, every attempt asks for exactly that principal.
+    const pinnedExecutor = submission.evidence.submissionExecutorPrincipalId;
+    const workload = {
+      _tag: 'RegisteredWorkload' as const,
+      context: workerContext,
+      declarationKey: A8_DECLARATION_KEY,
+      legalEntityId: scope.legalEntityId,
+      operationRequirementKey: operationRequirementKey.value,
+    };
     const issued = yield* transport
       .acquire(
         {
           audience: A8_AUDIENCE,
           legalEntityScope: 'subject',
           requestCorrelation,
-          subject: {
-            _tag: 'RegisteredWorkload',
-            context: workerContext,
-            declarationKey: A8_DECLARATION_KEY,
-            legalEntityId: scope.legalEntityId,
-            operationRequirementKey: operationRequirementKey.value,
-          },
+          subject: pinnedExecutor === undefined ? workload : { ...workload, expectedPrincipalId: pinnedExecutor },
         },
         crypto,
       )
@@ -221,6 +258,7 @@ const submitWith = (crypto: Crypto.Crypto) =>
     if (issued.machineContext === undefined) {
       return yield* Effect.fail(unavailable(submission, 'submission_executor_unattested'));
     }
+    yield* requirePinnedExecutor(store, submission, issued.machineContext.principalId);
     return yield* transport
       .execute(payload, {
         authorization: Redacted.make(issued.authorization),
@@ -257,7 +295,8 @@ const submitWith = (crypto: Crypto.Crypto) =>
 
 const makeProviderEvidenceSubmitter = Effect.fn('ProviderEvidenceSubmitter.make')(function* makeSubmitter() {
   const crypto = yield* Crypto.Crypto;
-  return { submit: submitWith(crypto) } satisfies ProviderEvidenceSubmitterContract;
+  const store = yield* ProviderEvidenceStore;
+  return { submit: submitWith(crypto, store) } satisfies ProviderEvidenceSubmitterContract;
 });
 
 export const ProviderEvidenceSubmitterLive = Layer.effect(ProviderEvidenceSubmitter, makeProviderEvidenceSubmitter());
