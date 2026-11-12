@@ -1,8 +1,8 @@
 import { DateTime, Schema } from 'effect';
 
 /**
- * The Czech VAT classifications a selling company's goods carry. Tax (`commerce.tax`) holds the rate of each one
- * as a dated Tax Rule of that company; a product names only its classification, never a rate.
+ * The Czech VAT classifications a selling company's goods carry. The tax module holds the rate of each one as a
+ * dated tax rule of that company; a product names only its classification, never a rate.
  */
 export const CZ_VAT_STANDARD = 'cz.vat.standard';
 export const CZ_VAT_REDUCED = 'cz.vat.reduced';
