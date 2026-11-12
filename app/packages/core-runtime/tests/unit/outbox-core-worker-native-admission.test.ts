@@ -9,6 +9,7 @@ import { CoreDatabase } from '../../src/db/client.ts';
 import { refuseInsideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
 import { ActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
 import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/active-application-composition-errors.ts';
+import { ApplicationCompositionAuthorityError } from '../../src/modules/application-composition-authority.ts';
 import { buildApplicationCompositionCatalog } from '../../src/modules/application-composition-catalog.ts';
 import type { OntosDeploymentIdentitySchema } from '../../src/modules/manifest.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -470,7 +471,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
       Effect.gen(function* rejectChangedClaimAuthority() {
         const fixture = yield* runEntry({ authority });
         expect(fixture.outcome).toBe('failed');
-        expect(fixture.failures[0]?._tag).toBe('ApplicationCompositionAuthorityError');
+        expect(Schema.is(ApplicationCompositionAuthorityError)(fixture.failures[0])).toBe(true);
         expect(fixture.statements).toEqual([]);
         expect(fixture.reconciled).toEqual([]);
         expect(fixture.observed).toEqual([]);
@@ -483,7 +484,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
       Effect.gen(function* rejectSqlAuthority() {
         const fixture = yield* runEntry({ selected: coreSystemOutboxWorkers[0], sqlAuthority });
         expect(fixture.outcome).toBe('failed');
-        expect(fixture.failures[0]?._tag).toBe('ApplicationCompositionAuthorityError');
+        expect(Schema.is(ApplicationCompositionAuthorityError)(fixture.failures[0])).toBe(true);
         expect(fixture.statements.some(({ sql }) => /rollback/iu.test(sql))).toBe(true);
         expect(fixture.statements.some(({ sql }) => sql.includes('skip locked'))).toBe(false);
         expect(fixture.claimed).toBe(false);
@@ -517,7 +518,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
         registrations: [replacement, ...workers.filter((worker) => worker !== coreSystemOutboxWorkers[0])],
       });
       expect(fixture.outcome).toBe('failed');
-      expect(fixture.failures[0]?._tag).toBe('ApplicationCompositionAuthorityError');
+      expect(Schema.is(ApplicationCompositionAuthorityError)(fixture.failures[0])).toBe(true);
       expect(fixture.statements).toEqual([]);
       expect(fixture.reconciled).toEqual([]);
       expect(fixture.observed).toEqual([]);

@@ -25,7 +25,7 @@ import {
 import { CoreDatabase } from '@app/core-runtime/db/client';
 import { SHARED_RUNTIME_IDENTITY } from '@app/core-runtime/db/database-identity-manifest';
 import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../api/database-identity-enrollment.ts';
-import { makeShellTestAuthentication } from '../support/shell-authentication.ts';
+import { shellTestAuthentication } from '../support/shell-authentication.ts';
 import {
   GatewayContextV2ClaimsSchema,
   GatewayContextV3ClaimsSchema,
@@ -294,7 +294,7 @@ const makePackagedShellUserFixture = Effect.fn('ServerOwnerRelayNative.makePacka
       { executor: database },
       { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
     );
-    const authentication = yield* makeShellTestAuthentication({ allowFixtureSignUp: true }).pipe(
+    const authentication = yield* shellTestAuthentication({ allowFixtureSignUp: true }).pipe(
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, persistence),
       Effect.provideService(CoreDatabase, { executor: database }),

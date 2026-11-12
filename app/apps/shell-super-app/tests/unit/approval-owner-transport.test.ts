@@ -12,6 +12,10 @@ import { expect, it } from 'effect-rstest';
 import { ApprovalOwnerIdentity, requireApprovalOwnerIdentity } from '../../api/access-admin/approval-owner-identity.ts';
 import { ApprovalOwnerModuleTransport } from '../../api/access-admin/approval-owner-module-transport.ts';
 import { makeApprovalOwnerTransport } from '../../api/access-admin/approval-owner-transport.ts';
+import {
+  ApprovalCommandRefusedSchema,
+  ApprovalPortUnavailableSchema,
+} from '../../api/access-admin/approvals-contract.ts';
 import type { ApprovalCommandFailure } from '../../api/access-admin/approvals-contract.ts';
 import type { IssueGatewayAssertionInput } from '../../api/auth/gateway-issuer.ts';
 import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';
@@ -185,7 +189,7 @@ for (const body of [
     Effect.gen(function* invalidInspection() {
       const test = yield* fixture({ body });
       const result = yield* Effect.result(test.transport.inspect(approvalOwnerTenantScope, request));
-      expect(Result.isFailure(result) && result.failure._tag).toBe('ApprovalPortUnavailable');
+      expect(Result.isFailure(result) && Schema.is(ApprovalPortUnavailableSchema)(result.failure)).toBe(true);
     }),
   );
 }
@@ -229,7 +233,7 @@ it.effect('refuses an unpublished owner API before identity, assertion issuance 
   Effect.gen(function* refusesUnpublishedTransport() {
     const test = yield* fixture({ published: false });
     const result = yield* Effect.result(test.transport.approve(approvalOwnerTenantScope, request));
-    expect(Result.isFailure(result) && result.failure._tag).toBe('ApprovalPortUnavailable');
+    expect(Result.isFailure(result) && Schema.is(ApprovalPortUnavailableSchema)(result.failure)).toBe(true);
     expect(test.observations.identities).toBe(0);
     expect(test.issued).toHaveLength(0);
     expect(test.sent).toHaveLength(0);
@@ -240,7 +244,7 @@ it.effect('refuses a different actual selected company without issuing or sendin
   Effect.gen(function* refusesCompanySubstitution() {
     const test = yield* fixture({ selectedCompany: '00000000-0000-4000-8000-000000000099' });
     const result = yield* Effect.result(test.transport.approve(approvalOwnerTenantScope, request));
-    expect(Result.isFailure(result) && result.failure._tag).toBe('ApprovalCommandRefused');
+    expect(Result.isFailure(result) && Schema.is(ApprovalCommandRefusedSchema)(result.failure)).toBe(true);
     expect(test.issued).toHaveLength(0);
     expect(test.sent).toHaveLength(0);
   }),
@@ -268,18 +272,18 @@ it.effect('refuses corrupted frozen data and mismatched proposal digests before 
   }),
 );
 
-for (const [status, tag] of [
-  [401, 'ApprovalCommandRefused'],
-  [403, 'ApprovalCommandRefused'],
-  [409, 'ApprovalCommandRefused'],
-  [503, 'ApprovalPortUnavailable'],
-  [500, 'ApprovalPortUnavailable'],
+for (const [status, tag, failureSchema] of [
+  [401, 'ApprovalCommandRefused', ApprovalCommandRefusedSchema],
+  [403, 'ApprovalCommandRefused', ApprovalCommandRefusedSchema],
+  [409, 'ApprovalCommandRefused', ApprovalCommandRefusedSchema],
+  [503, 'ApprovalPortUnavailable', ApprovalPortUnavailableSchema],
+  [500, 'ApprovalPortUnavailable', ApprovalPortUnavailableSchema],
 ] as const) {
   it.effect(`preserves owner ${status} as ${tag} without returning its private problem body`, () =>
     Effect.gen(function* preservesOwnerFailureKind() {
       const test = yield* fixture({ body: 'private owner detail', status });
       const result = yield* Effect.result(test.transport.approve(approvalOwnerTenantScope, request));
-      expect(Result.isFailure(result) && result.failure._tag).toBe(tag);
+      expect(Result.isFailure(result) && Schema.is(failureSchema)(result.failure)).toBe(true);
       expect(JSON.stringify(result)).not.toContain('private owner detail');
       if (status === 409 && Result.isFailure(result) && Predicate.isTagged(result.failure, 'ApprovalCommandRefused')) {
         expect(result.failure.code).toBe('revision_stale');
@@ -298,7 +302,7 @@ for (const body of [
     Effect.gen(function* refusesUnverifiedAcknowledgement() {
       const test = yield* fixture({ body });
       const result = yield* Effect.result(test.transport.approve(approvalOwnerTenantScope, request));
-      expect(Result.isFailure(result) && result.failure._tag).toBe('ApprovalPortUnavailable');
+      expect(Result.isFailure(result) && Schema.is(ApprovalPortUnavailableSchema)(result.failure)).toBe(true);
     }),
   );
 }

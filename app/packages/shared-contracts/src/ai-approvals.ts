@@ -388,10 +388,12 @@ const invalidIdentity = (cause: Schema.SchemaError) => {
   return invalid(message, new AiAdapterFailure({ cause, message }));
 };
 
+/** One log entry before its identity: `index` is its position in the invocation's log. */
+type AiLogDraft = Omit<AiLogEntry, 'actorPrincipalId' | 'at' | 'id' | 'invocationId'> & { readonly index: number };
+
 const logEntry = Effect.fn('AiApprovals.logEntry')(function* createLogEntry(
   context: AiContext,
-  index: number,
-  entry: Omit<AiLogEntry, 'actorPrincipalId' | 'at' | 'id' | 'invocationId'>,
+  { index, ...entry }: AiLogDraft,
 ): Effect.fn.Return<AiLogEntry, AiFailure> {
   const id = yield* Schema.decodeEffect(AiLogIdSchema)(`${context.invocationId}:ai-log-${index}`).pipe(
     Effect.mapError(invalidIdentity),
@@ -506,11 +508,12 @@ const prepareProposal = Effect.fn('AiApprovals.prepareProposal')(function* prepa
     changes: [...progress.changes, change],
     log: [
       ...progress.log,
-      yield* logEntry(context, progress.log.length, {
+      yield* logEntry(context, {
         action: 'proposed',
         actorKind: 'agent',
         batchId: batch.id,
         changeId: change.id,
+        index: progress.log.length,
         message: `${batch.agentLabel} navrhl: ${change.summary} — ${change.target.label}. Důvod: ${entry.reason}`,
       }),
     ],
@@ -650,11 +653,12 @@ const decideChange = Effect.fn('AiApprovals.decideChange')(function* decideOne<
     return {
       log: [
         ...progress.log,
-        yield* logEntry(step.context, progress.log.length, {
+        yield* logEntry(step.context, {
           action: 'rejected',
           actorKind: 'human',
           batchId: change.batchId,
           changeId: change.id,
+          index: progress.log.length,
           message: `Zamítnuto: ${change.summary} — ${targetLabel}${step.noteText}`,
         }),
       ],
@@ -680,11 +684,12 @@ const decideChange = Effect.fn('AiApprovals.decideChange')(function* decideOne<
     return {
       log: [
         ...progress.log,
-        yield* logEntry(step.context, progress.log.length, {
+        yield* logEntry(step.context, {
           action: 'apply_failed',
           actorKind: 'human',
           batchId: change.batchId,
           changeId: change.id,
+          index: progress.log.length,
           message: `Schválení nešlo provést: ${change.summary} — ${targetLabel}: ${applied.failure.message}`,
         }),
       ],
@@ -715,11 +720,12 @@ const decideChange = Effect.fn('AiApprovals.decideChange')(function* decideOne<
   return {
     log: [
       ...progress.log,
-      yield* logEntry(step.context, progress.log.length, {
+      yield* logEntry(step.context, {
         action: 'approved',
         actorKind: 'human',
         batchId: change.batchId,
         changeId: change.id,
+        index: progress.log.length,
         message: `Schváleno a provedeno: ${change.summary} — ${targetLabel}${step.noteText}`,
       }),
     ],
@@ -839,11 +845,12 @@ const revertChange = Effect.fn('AiApprovals.revertChange')(function* revertOne<
     }),
     log: [
       ...progress.log,
-      yield* logEntry(step.context, progress.log.length, {
+      yield* logEntry(step.context, {
         action: 'reverted',
         actorKind: 'human',
         batchId: step.batchId,
         changeId: change.id,
+        index: progress.log.length,
         message: `${change.summary} (${targetLabel}) vráceno do stavu před změnou.`,
       }),
     ],
@@ -867,11 +874,12 @@ const rejectPendingChange = Effect.fn('AiApprovals.rejectPendingChange')(functio
     decisionNote: 'Zamítnuto při vrácení celé dávky',
     status: 'rejected',
   });
-  const entry = yield* logEntry(step.context, progress.log.length, {
+  const entry = yield* logEntry(step.context, {
     action: 'rejected',
     actorKind: 'human',
     batchId: step.batchId,
     changeId: change.id,
+    index: progress.log.length,
     message: `Zamítnuto při vrácení dávky: ${change.summary} — ${change.target.label}`,
   });
   return { changes, log: [...progress.log, entry] };
@@ -924,10 +932,11 @@ export const revertAiBatch = Effect.fn('AiApprovals.revertAiBatch')(function* re
   const pending = yield* rejectPendingForBatch(reverted, slice.changes, step);
   const log = [
     ...pending.log,
-    yield* logEntry(context, pending.log.length, {
+    yield* logEntry(context, {
       action: 'batch_reverted',
       actorKind: 'human',
       batchId: batch.id,
+      index: pending.log.length,
       message: `Vrátit vše: ${revertedCount(applied.length)} do původního stavu.`,
     }),
   ];

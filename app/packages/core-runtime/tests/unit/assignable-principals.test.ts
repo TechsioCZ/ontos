@@ -1,6 +1,7 @@
 import { Effect, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
+import { ActorContextSchema } from '../../src/access/model.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
@@ -33,6 +34,7 @@ import { cell, connect, makeAuthority, makeCheck, tenant, scopeId } from './acce
 import type { AuthoritySpec } from './access-decision-support.ts';
 
 const tenantId = tenant;
+const [PrincipalActor] = ActorContextSchema.members;
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const readDeclaration = (risk: 'routine' | 'sensitive' = 'sensitive') =>
   decodeAccessDeclarationOrThrow(
@@ -247,7 +249,9 @@ it.effect('readonly external target is eligible from its entrusted LIST authorit
       ),
     ).toBe(true);
     expect(f.entries[0]?.scope).toEqual(operationalScope());
-    expect(f.entries[0]?.actor).toEqual({ _tag: 'Principal', principalId: member(2).principalRef.principalId });
+    expect(f.entries[0]?.actor).toEqual(
+      PrincipalActor.make({ principalId: PrincipalIdSchema.make(member(2).principalRef.principalId) }),
+    );
     expect(f.entries[0]?.onBehalfOfPrincipalId).toBe(member(1).principalRef.principalId);
     expect(f.entries[0]?.capability.capabilityKey).toBe(carrier.accessDeclaration.key);
   }),

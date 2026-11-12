@@ -17,10 +17,10 @@ import {
   RoleRevisionIdSchema,
 } from '@app/core-runtime/access/ids';
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Layer, Option, Predicate } from 'effect';
 
 import type { AccessDecisionUnavailable } from '../../../../../packages/core-runtime/src/access/decision/errors.ts';
-import { makeModuleContractFixture } from '../../../../../packages/core-runtime/src/testing/module-contract.ts';
 import { makeInstalledModuleCatalogLoader } from '../../../api/modules/installed-module-catalog.ts';
 import { makeCompositionSnapshot } from '../../fixtures/application-composition.ts';
 

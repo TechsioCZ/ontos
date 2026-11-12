@@ -1,6 +1,7 @@
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { ActionAlreadyCommitted } from '../../src/actions/errors.ts';
 import { LegalEntityIdSchema, RecordKeySchema, TenantIdSchema } from '../../src/access/ids.ts';
 import { defineDatabaseIdentityEnrollment } from '../../src/db/database-identities.ts';
 import { refuseInsideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
@@ -126,7 +127,7 @@ for (const state of ['Ready', 'Changing', 'missing'] as const) {
           expect(remoteChecks).toBeGreaterThan(0);
           expect(harness.snapshot().committed).toHaveLength(1);
           const calls = remoteChecks;
-          expect((yield* Effect.flip(harness.runtime.runAction(request)))._tag).toBe('ActionAlreadyCommitted');
+          expect(Schema.is(ActionAlreadyCommitted)(yield* Effect.flip(harness.runtime.runAction(request)))).toBe(true);
           expect(remoteChecks).toBe(calls);
         } else {
           expect(result).toMatchObject({ failure: { _tag: 'ActionPermissionCheckError' } });

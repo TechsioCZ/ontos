@@ -1,6 +1,7 @@
 import { Cause, Effect, Exit, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { ActionProposalAcceptedSchema } from '../../src/actions/proposal-accepted.ts';
 import type {
   ActionMandateDispatch,
   ActionProposalParkInput,
@@ -878,7 +879,7 @@ it.effect('preserves the scalar proposal contract for an exact singleton target 
       successContract: 'result-or-proposal',
       transport: { correlationId: 'single-set-proposal', idempotencyKey: 'single-set-proposal', intent: 'propose' },
     });
-    expect(result).toHaveProperty('_tag', 'ActionProposalAccepted');
+    expect(Schema.is(ActionProposalAcceptedSchema)(result)).toBe(true);
     expect(parks).toHaveLength(1);
     expect(parks[0]?.target).toBe(firstId);
     expect(parks[0]?.payload).toEqual({ employeeIds: [firstId] });

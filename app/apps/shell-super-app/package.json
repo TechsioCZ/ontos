@@ -13,7 +13,7 @@
   },
   "scripts": {
     "dev": "modern dev",
-    "build": "node ../../scripts/generate-shell-ui-candidates.mts --check --all && modern build --deploy-target node && node ../../scripts/generate-ontos-shell-runtime-contract.mts --shell-directory . --target dist && ultramodern-create ultramodern public-surface --app shell-super-app --target dist && modern deploy --skip-build --deploy-target node && node ../../scripts/materialize-packaged-workspace-packages.mts . && node ../../scripts/complete-packaged-node-dependencies.mts .",
+    "build": "modern build --deploy-target node && node ../../scripts/generate-shell-ui-candidates.mts --check --all && node ../../scripts/generate-ontos-shell-runtime-contract.mts --shell-directory . --target dist && ultramodern-create ultramodern public-surface --app shell-super-app --target dist && modern deploy --skip-build --deploy-target node && node ../../scripts/materialize-packaged-workspace-packages.mts . && node ../../scripts/complete-packaged-node-dependencies.mts .",
     "serve": "modern serve",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
     "db:generate": "drizzle-kit generate --config drizzle.auth.config.ts",
