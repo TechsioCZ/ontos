@@ -1,7 +1,7 @@
-import { Effect, Tracer } from 'effect';
+import { Effect, Exit, Logger, Tracer } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { timedDescription } from '../../../api/mcp/describe-timing.ts';
+import { timedDescription, withRoundTripLog } from '../../../api/mcp/describe-timing.ts';
 
 const span = (name: string) => Effect.void.pipe(Effect.withSpan(name));
 
@@ -89,5 +89,41 @@ it.effect("calls the request tracer's context hook on that tracer itself", () =>
     const stateful = new StatefulTracer(yield* Effect.tracer);
     yield* timedDescription(span('postgres')).pipe(Effect.withTracer(stateful));
     expect(stateful.hooked).toBeGreaterThan(0);
+  }),
+);
+
+/** A logger keeping each structured entry, as JSON text. */
+const capturedLogs = (entries: string[]) =>
+  Logger.layer([
+    Logger.make((options) => {
+      entries.push(JSON.stringify(Logger.formatStructured.log(options)));
+    }),
+  ]);
+
+it.effect('logs one request line with its round trips, when the request succeeds and when it fails', () =>
+  Effect.gen(function* roundTripLog() {
+    const entries: string[] = [];
+    const work = Effect.all([span('sql.transaction'), span('postgres'), span('AccessDecision.spicedbCheckBulk')], {
+      concurrency: 1,
+    });
+    expect(
+      yield* withRoundTripLog('queue', work.pipe(Effect.as('queued'))).pipe(Effect.provide(capturedLogs(entries))),
+    ).toBe('queued');
+    const failed = yield* withRoundTripLog('decide', work.pipe(Effect.andThen(Effect.fail('refused')))).pipe(
+      Effect.provide(capturedLogs(entries)),
+      Effect.exit,
+    );
+    expect(Exit.isFailure(failed)).toBe(true);
+    expect(entries).toHaveLength(2);
+    for (const [index, route] of ['queue', 'decide'].entries()) {
+      const entry = entries[index] ?? '';
+      expect(entry).toContain('agent-platform.request');
+      expect(entry).toContain(`"route":"${route}"`);
+      expect(entry).toContain('"statements":1');
+      expect(entry).toContain('"transactions":1');
+      expect(entry).toContain('"spicedbCalls":1');
+    }
+    expect(entries[0]).toContain('"outcome":"ok"');
+    expect(entries[1]).toContain('"outcome":"failed"');
   }),
 );
