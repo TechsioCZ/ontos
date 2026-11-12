@@ -1,6 +1,20 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Clock, Context, Crypto, DateTime, Duration, Effect, Layer, Match, Option, Ref, Result } from 'effect';
+import {
+  Cause,
+  Clock,
+  Context,
+  Crypto,
+  DateTime,
+  Duration,
+  Effect,
+  Exit,
+  Layer,
+  Match,
+  Option,
+  Ref,
+  Result,
+} from 'effect';
 import { Hex } from 'effect/encoding';
 
 import type { OperationalScope } from '../../operations/context.ts';
@@ -344,9 +358,58 @@ const takeOverLapsedFence = Effect.fn('AccessProjectionWriter.takeOverLapsedFenc
   );
 });
 
-/** Keep this operation's hold live while it works; a failed renewal is logged, the next one tries again. */
+/**
+ * How long a holder may go without a successful lease renewal before it stops writing: well inside the lease, so a
+ * holder cut off from the database stops before anybody may judge its hold lapsed and take the fence over.
+ */
+export const ACCESS_FENCE_HOLD_UNPROVED_LIMIT = Duration.seconds(90);
+
+/** What this operation knows about its own hold while it writes. */
+interface HoldWatch {
+  /** Why this operation no longer holds its fence, once it knows. */
+  readonly lost: Ref.Ref<Option.Option<string>>;
+  /** When the hold was last proved live (taken or renewed), on this process's clock. */
+  readonly provedAt: Ref.Ref<number>;
+}
+
+const holdLostReason = (taken: TakenFence, why: string) =>
+  `Operation ${taken.operationId} no longer holds tenant ${taken.tenantId}'s access fence: ${why}, so it writes nothing more`;
+
+/** One renewal; answers whether to keep renewing. A refused renewal means another operation holds the fence. */
+const renewOnce = Effect.fn('AccessProjectionWriter.renewOnce')(function* renewOnceEffect(
+  renew: NonNullable<AccessWriteJournalPortService['renewFenceLease']>,
+  taken: TakenFence,
+  watch: HoldWatch,
+) {
+  const renewed = yield* renew(fenceCommand(taken)).pipe(
+    Effect.map(Option.some),
+    Effect.catchTag('AccessLifecycleError', ({ code, reason }) =>
+      Effect.logWarning(`The tenant scope fence lease could not be renewed (${code}: ${reason})`).pipe(
+        Effect.as(Option.none<boolean>()),
+      ),
+    ),
+  );
+  if (Option.isNone(renewed)) {
+    return true;
+  }
+  if (renewed.value) {
+    yield* Ref.set(watch.provedAt, yield* Clock.currentTimeMillis);
+    return true;
+  }
+  yield* Ref.set(
+    watch.lost,
+    Option.some(holdLostReason(taken, 'its lease renewal found the fence held by another operation')),
+  );
+  return false;
+});
+
+/**
+ * Keep this operation's hold live while it works. A renewal that fails is logged and the next one tries again; one
+ * the store refuses means the fence has another holder, and is recorded so the writer stops before its next write.
+ */
 const renewHeldLease = Effect.fn('AccessProjectionWriter.renewHeldLease')(function* renewHeldLeaseEffect(
   taken: TakenFence,
+  watch: HoldWatch,
 ) {
   const port = yield* AccessWriteJournalPort;
   const { renewFenceLease } = port;
@@ -354,12 +417,47 @@ const renewHeldLease = Effect.fn('AccessProjectionWriter.renewHeldLease')(functi
     return yield* Effect.void;
   }
   return yield* Effect.sleep(ACCESS_FENCE_LEASE_RENEWAL).pipe(
-    Effect.andThen(renewFenceLease(fenceCommand(taken))),
-    Effect.catchTag('AccessLifecycleError', ({ code, reason }) =>
-      Effect.logWarning(`The tenant scope fence lease could not be renewed (${code}: ${reason})`).pipe(Effect.as(true)),
-    ),
-    Effect.forever,
+    Effect.andThen(renewOnce(renewFenceLease, taken, watch)),
+    Effect.repeat({ while: (keepRenewing) => keepRenewing }),
+    Effect.asVoid,
   );
+});
+
+/**
+ * A renewal fiber that died of anything but its own interruption leaves the hold unrenewed: say so loudly, and
+ * count the hold as lost so the writer stops instead of writing on under a lease nobody renews.
+ */
+const renewalEnded = (taken: TakenFence, watch: HoldWatch) => (exit: Exit.Exit<void, AccessLifecycleError>) =>
+  Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)
+    ? Effect.logError(
+        `ACCESS FENCE LEASE RENEWAL DIED for tenant ${taken.tenantId}, operation ${taken.operationId}: ${Cause.pretty(exit.cause)}`,
+      ).pipe(Effect.andThen(Ref.set(watch.lost, Option.some(holdLostReason(taken, 'its lease renewal stopped')))))
+    : Effect.void;
+
+/**
+ * Run before every engine write: refuse once the hold is known lost, or when no renewal has proved it for longer
+ * than `ACCESS_FENCE_HOLD_UNPROVED_LIMIT` (a holder that cannot reach its database may already have been taken
+ * over). A store without leases has no renewals to prove the hold with, and only the first rule applies.
+ */
+const holdStillProved = Effect.fn('AccessProjectionWriter.holdStillProved')(function* holdStillProvedEffect(
+  taken: TakenFence,
+  watch: HoldWatch,
+  leased: boolean,
+) {
+  const lost = yield* Ref.get(watch.lost);
+  if (Option.isSome(lost)) {
+    return yield* Effect.fail(fenceFailure(lost.value));
+  }
+  const unproved = (yield* Clock.currentTimeMillis) - (yield* Ref.get(watch.provedAt));
+  if (leased && unproved > Duration.toMillis(ACCESS_FENCE_HOLD_UNPROVED_LIMIT)) {
+    const reason = holdLostReason(
+      taken,
+      `no lease renewal succeeded for ${Duration.format(Duration.millis(unproved))}, so another operation may hold it`,
+    );
+    yield* Ref.set(watch.lost, Option.some(reason));
+    return yield* Effect.fail(fenceFailure(reason));
+  }
+  return yield* Effect.void;
 });
 
 /**
@@ -497,10 +595,15 @@ export const ACCESS_PROJECTION_ENGINE_RETRY_SPACING = Duration.seconds(1);
 const projectWithRetries = Effect.fn('AccessProjectionWriter.projectWithRetries')(function* projectWithRetriesEffect(
   project: Effect.Effect<ReconcileReport, readonly AccessProjectionError[]>,
   engineTouched: Ref.Ref<boolean>,
+  lost: Ref.Ref<Option.Option<string>>,
   retriesLeft: number,
 ): Effect.fn.Return<Result.Result<ReconcileReport, readonly AccessProjectionError[]>> {
   const projected = yield* Effect.result(project);
   if (Result.isSuccess(projected) || retriesLeft === 0 || !(yield* Ref.get(engineTouched))) {
+    return projected;
+  }
+  // A hold that is lost is never written under again.
+  if (Option.isSome(yield* Ref.get(lost))) {
     return projected;
   }
   if (projected.failure.some(({ code }) => code === 'access_projection_engine_rejected')) {
@@ -510,7 +613,7 @@ const projectWithRetries = Effect.fn('AccessProjectionWriter.projectWithRetries'
     `The access projection failed after it began writing the engine (${projected.failure.map(violationText).join('; ')}); trying again under the same fence`,
   );
   yield* Effect.sleep(ACCESS_PROJECTION_ENGINE_RETRY_SPACING);
-  return yield* projectWithRetries(project, engineTouched, retriesLeft - 1);
+  return yield* projectWithRetries(project, engineTouched, lost, retriesLeft - 1);
 });
 
 /**
@@ -525,7 +628,10 @@ const projectionStep = Effect.fn('AccessProjectionWriter.projectionStep')(functi
   /** Set once the compiler sent its first relationship write: from then on the graph may be half-written. */
   readonly engineTouched: Ref.Ref<boolean>;
   readonly fence: ProjectionFenceAssertion;
+  /** Refuses an engine write this operation may no longer make: its hold is lost or unproved. */
+  readonly holdStillProved: Effect.Effect<void, readonly AccessProjectionError[]>;
   readonly intent: TenantProjectionIntent;
+  readonly lost: Ref.Ref<Option.Option<string>>;
   /** The tenant fence as this operation reads it, so the step states no collaborator of its own (A6/B4). */
   readonly readFence: Effect.Effect<Option.Option<ScopeFence>, AccessLifecycleError>;
   readonly refused: Ref.Ref<Option.Option<readonly AccessProjectionError[]>>;
@@ -547,9 +653,13 @@ const projectionStep = Effect.fn('AccessProjectionWriter.projectionStep')(functi
   const projected = yield* projectWithRetries(
     input.compiler.reconcile(
       { tenants: [input.intent] },
-      { beforeWrite: Ref.set(input.engineTouched, true), fence: input.fence },
+      {
+        beforeWrite: input.holdStillProved.pipe(Effect.andThen(Ref.set(input.engineTouched, true))),
+        fence: input.fence,
+      },
     ),
     input.engineTouched,
+    input.lost,
     ACCESS_PROJECTION_ENGINE_RETRIES,
   );
   if (Result.isFailure(projected)) {
@@ -642,6 +752,7 @@ const reconcileUnderFence = Effect.fn('AccessProjectionWriter.reconcileUnderFenc
   input: FencedReconcileInput,
   taken: TakenFence,
   engineTouched: Ref.Ref<boolean>,
+  watch: HoldWatch,
 ) {
   const port = yield* AccessWriteJournalPort;
   const { digest, operationId, tenantId, tenantScopeId } = input;
@@ -671,7 +782,9 @@ const reconcileUnderFence = Effect.fn('AccessProjectionWriter.reconcileUnderFenc
           digest,
           engineTouched,
           fence,
+          holdStillProved: holdStillProved(taken, watch, port.renewFenceLease !== undefined),
           intent: input.intent,
+          lost: watch.lost,
           readFence: port.readFence({ scopeId: tenantScopeId, tenantId }),
           refused,
           report,
@@ -770,10 +883,20 @@ const fencedReconcile = Effect.fn('AccessProjectionWriter.fencedReconcile')(func
     scopeId: tenantScopeId,
     tenantId,
   };
+  const watch: HoldWatch = {
+    lost: yield* Ref.make(Option.none<string>()),
+    provedAt: yield* Ref.make(yield* Clock.currentTimeMillis),
+  };
   // The renewal runs beside the write and stops with it; it is interruptible although the write is not.
-  yield* renewHeldLease(taken).pipe(Effect.interruptible, Effect.forkScoped);
+  yield* renewHeldLease(taken, watch).pipe(
+    Effect.onExit(renewalEnded(taken, watch)),
+    Effect.interruptible,
+    Effect.forkScoped,
+  );
   const engineTouched = yield* Ref.make(false);
-  const reconciled = intentStillPlanned(input).pipe(Effect.andThen(reconcileUnderFence(input, taken, engineTouched)));
+  const reconciled = intentStillPlanned(input).pipe(
+    Effect.andThen(reconcileUnderFence(input, taken, engineTouched, watch)),
+  );
   // A fence taken over from a dead holder opens only on a committed reconcile (the write path releases it then);
   // anything short of that leaves it held, its lease lapsing to the next taker.
   return yield* Option.isSome(input.previousHolder)

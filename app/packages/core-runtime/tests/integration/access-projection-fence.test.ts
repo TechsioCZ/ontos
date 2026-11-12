@@ -1,6 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Deferred, Effect, Fiber, Option, Ref, Schema } from 'effect';
+import { Clock, Deferred, Effect, Fiber, Layer, Option, Ref, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
 import { TenantAccessBootstrap } from '../../src/access/bootstrap/index.ts';
@@ -210,6 +211,33 @@ const failingMidWrite =
 
 const lastJournal = (admin: PgClient.PgClient, tenantId: TenantId) =>
   journals(admin, tenantId).pipe(Effect.map((rows) => rows.at(-1)));
+
+/**
+ * An engine that, once armed, sends its first relationship write and waits inside it until the suite lets it go, then
+ * sends the next one: `wroteAfterLoss` records a write that went out after the hold was lost.
+ */
+const writingAcrossLoss =
+  (gate: {
+    readonly armed: Ref.Ref<boolean>;
+    readonly entered: Deferred.Deferred<boolean>;
+    readonly letGo: Deferred.Deferred<boolean>;
+    readonly wroteAfterLoss: Ref.Ref<boolean>;
+  }) =>
+  (engine: AccessProjectionCompilerEngine): AccessProjectionCompilerEngine => ({
+    ...engine,
+    reconcile: (intent, options) =>
+      Effect.gen(function* writeAcrossLoss() {
+        if (yield* Ref.get(gate.armed)) {
+          const beforeWrite = options.beforeWrite ?? Effect.void;
+          yield* beforeWrite;
+          yield* Deferred.succeed(gate.entered, true);
+          yield* Deferred.await(gate.letGo);
+          yield* beforeWrite;
+          yield* Ref.set(gate.wroteAfterLoss, true);
+        }
+        return yield* engine.reconcile(intent, options);
+      }),
+  });
 
 /** An engine whose write waits, once armed, until the suite lets it go: the holder is inside its engine write. */
 const holdingEngine =
@@ -465,6 +493,42 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
             expect(written.verified).toBe(true);
             expect(yield* journalOf(admin, written.operationId)).toEqual([{ failure_code: null, phase: 'committed' }]);
             expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+          }),
+      );
+    }),
+  );
+
+  suite.effect('a holder whose hold was lost stops before its next engine write and leaves the fence alone', () =>
+    Effect.gen(function* lostHold() {
+      const gate = {
+        armed: yield* Ref.make(false),
+        entered: yield* Deferred.make<boolean>(),
+        letGo: yield* Deferred.make<boolean>(),
+        wroteAfterLoss: yield* Ref.make(false),
+      };
+      yield* withProjectionTenant(
+        { activeModules: [MODULE], wrapCompiler: writingAcrossLoss(gate) },
+        (tenantId, admin) =>
+          Effect.gen(function* holdTakenMidWrite() {
+            const scope = yield* bootstrapTenant(tenantId);
+            yield* Ref.set(gate.armed, true);
+            yield* Effect.addFinalizer(letGoOf(gate.letGo));
+            // The holder runs on a test clock, so its renewals and its own sense of time move only when told.
+            const clock = yield* Layer.build(TestClock.layer());
+            yield* TestClock.setTime(yield* Clock.currentTimeMillis).pipe(Effect.provide(clock));
+            const writer = yield* AccessProjectionWriter;
+            const holder = yield* writer.reconcileTenant({ scope }).pipe(Effect.provide(clock), Effect.forkChild);
+            yield* Deferred.await(gate.entered);
+            // Another operation now holds the fence (a taker that judged this hold lapsed), and the holder's renewals
+            // fail to prove its hold for longer than it may go unproved.
+            yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+            yield* TestClock.adjust('95 seconds').pipe(Effect.provide(clock));
+            yield* Deferred.succeed(gate.letGo, true);
+            expect(yield* refusalOf(Fiber.join(holder))).toContain('no longer holds');
+            expect(yield* Ref.get(gate.wroteAfterLoss)).toBe(false);
+            expect(yield* tenantFence(admin, tenantId)).toEqual([
+              { owning_operation_id: DEAD_HOLDER, state: 'Changing' },
+            ]);
           }),
       );
     }),
