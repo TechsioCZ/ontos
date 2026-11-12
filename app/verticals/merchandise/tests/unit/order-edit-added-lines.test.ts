@@ -1,14 +1,14 @@
 // A line an order edit adds, priced by the server exactly as the editor offered it: the edit carries the offered price,
 // the server prices the line as new and stores that price, and it refuses the edit when the price changed between
 // picking the product and saving. Covered for a variant, a tiered (first-tier) price, a market order's own currency,
-// and a price staff typed over and then restored.
+// a price staff typed over and then restored, and a line removed and added again in the same edit.
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { MerchandiseCommandSchema, MerchandiseLifecycleConflict } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { OrderMarketSchema, convertGrossMinor } from '../../shared/domain/market-offers.ts';
-import { ProductIdSchema } from '../../shared/domain/merchandise-model.ts';
+import { ProductIdSchema, VariantIdSchema } from '../../shared/domain/merchandise-model.ts';
 import { draftOf, editCommandOf } from '../../src/routes/[lang]/prodej/objednavky/order-edit-draft.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
 import { TEST_TAX } from '../support/tax-fixtures.ts';
@@ -242,5 +242,39 @@ it.effect('a price typed over and restored to the offered one is sent and stored
       tax: TEST_TAX,
     });
     expect(linesOf(edited.state)?.[1]).toEqual(['MUG', 15_000, 21]);
+  }),
+);
+
+it.effect('a line removed and added again in one edit is priced as a new line, as the editor shows it', () =>
+  Effect.gen(function* readded() {
+    const seededState = yield* seeded;
+    // Staff once lowered the 250 g line to 270 Kč by hand.
+    const lowered = yield* editOf(seededState, [{ ...existingLine, unitPriceMinor: 27_000 }], 'edit-lowered');
+    const order = Option.getOrThrow(Option.fromUndefinedOr(lowered.state.orders[0]));
+    const base = draftOf(order);
+    // The line is removed and the same variant picked again: the editor shows today's 289 Kč.
+    const picked = {
+      key: 'new-1',
+      name: 'Etiopie',
+      offeredPriceText: '289,00',
+      priceText: '289,00',
+      productId: Schema.decodeSync(ProductIdSchema)('p1'),
+      quantityText: '2',
+      sku: 'ETH-250',
+      taxClassificationCode: 'cz.vat.reduced',
+      variantId: Schema.decodeSync(VariantIdSchema)('u1-v1'),
+      variantName: '250 g',
+      vatRate: 12,
+    } as const;
+    const command = Option.getOrThrow(
+      Option.fromNullOr(editCommandOf(order, order.updatedAt, { ...base, lines: [picked] }, base)),
+    );
+    const edited = yield* evolveMerchandiseState(lowered.state, command, {
+      actor,
+      now: t0,
+      resourceId: 'edit-readded',
+      tax: TEST_TAX,
+    });
+    expect(linesOf(edited.state)).toEqual([['ETH-250', 28_900, 12]]);
   }),
 );

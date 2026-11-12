@@ -1635,7 +1635,8 @@ const editedOrderLines = Effect.fn('Merchandise.editedOrderLines')(function* edi
       seen.add(key);
       const before = previous.get(key);
       yield* validateEditedStorefrontQuantity(state, existing, request, before, input);
-      const kept = before;
+      // A line the editor added (also one it removed and added again) is priced as a new line, never kept.
+      const kept = request.offeredUnitPriceMinor === undefined ? before : undefined;
       if (kept !== undefined) {
         return {
           ...kept,
