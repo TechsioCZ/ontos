@@ -706,4 +706,34 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
         );
       }),
   );
+
+  suite.effect(
+    'the lapsed-fence query skips the tenants the sweep waits out, and only the runtime role may run it',
+    () =>
+      withProjectionTenant({ activeModules: [MODULE] }, (tenantId, admin) =>
+        Effect.gen(function* lapsedQuery() {
+          yield* bootstrapTenant(tenantId);
+          yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+          yield* lapseLease(admin, tenantId);
+          const lapsedWithout = (skip: string) =>
+            admin
+              .unsafe(
+                `select tenant_id::text as tenant_id
+                 from core.lapsed_access_fence_tenants(50, interval '35 minutes', ${skip})`,
+              )
+              .pipe(Effect.orDie);
+          expect(yield* lapsedWithout('null')).toEqual([{ tenant_id: tenantId }]);
+          expect(yield* lapsedWithout(`array['${tenantId}']::uuid[]`)).toEqual([]);
+          const grantees = yield* admin
+            .unsafe(
+              `select coalesce(nullif(a.grantee::regrole::text, '-'), 'PUBLIC') as grantee
+               from pg_proc p, aclexplode(p.proacl) a
+              where p.proname = 'lapsed_access_fence_tenants' and a.privilege_type = 'EXECUTE'`,
+            )
+            .pipe(Effect.orDie);
+          expect(grantees).toContainEqual({ grantee: 'ontos_runtime' });
+          expect(grantees).not.toContainEqual({ grantee: 'PUBLIC' });
+        }),
+      ),
+  );
 });

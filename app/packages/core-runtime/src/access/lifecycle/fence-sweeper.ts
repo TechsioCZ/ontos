@@ -101,12 +101,17 @@ export const accessFenceSweepBackoffsAfter = (
   return new Map(current).set(attempt.tenantId, { failures, retryAt });
 };
 
-/** The ids of tenants whose fence has a lapsed hold: one statement over the held-fence index, ids only. */
-const readLapsedTenants = Effect.fn('AccessFenceSweeper.readLapsedTenants')(function* readLapsedTenantsEffect() {
+/**
+ * The ids of tenants whose fence has a lapsed hold, oldest lapse first, without those the sweep is still waiting
+ * out: one statement over the held-fence index, ids only.
+ */
+const readLapsedTenants = Effect.fn('AccessFenceSweeper.readLapsedTenants')(function* readLapsedTenantsEffect(
+  waiting: readonly string[],
+) {
   const { executor } = yield* CoreDatabase;
   const rows = yield* executor
     .execute(
-      sql`select tenant_id::text as tenant_id from core.lapsed_access_fence_tenants(${LAPSED_PAGE}, pg_catalog.make_interval(secs => ${PRE_LEASE_LAPSE_SECONDS}))`,
+      sql`select tenant_id::text as tenant_id from core.lapsed_access_fence_tenants(${LAPSED_PAGE}, pg_catalog.make_interval(secs => ${PRE_LEASE_LAPSE_SECONDS}), pg_catalog.string_to_array(${waiting.join(',')}, ',')::uuid[])`,
       'objects',
     )
     .pipe(
@@ -181,25 +186,23 @@ export const sweepLapsedAccessFences = Effect.fn('AccessFenceSweeper.sweep')(fun
   backoffs: AccessFenceSweepBackoffs,
   runReference: string,
 ) {
-  const lapsed = yield* readLapsedTenants();
-  if (lapsed.length === 0) {
+  const now = yield* Clock.currentTimeMillis;
+  const backedOff = yield* Ref.get(backoffs);
+  const waiting = [...backedOff].flatMap(([tenantId, { retryAt }]) => (retryAt > now ? [tenantId] : []));
+  const lapsed = yield* readLapsedTenants(waiting);
+  if (lapsed.length === 0 && waiting.length === 0) {
     // Nothing is held past its lease: forget every backoff, so a tenant that lapses again starts afresh.
-    if ((yield* Ref.get(backoffs)).size > 0) {
+    if (backedOff.size > 0) {
       yield* Ref.set(backoffs, new Map());
     }
     return NOTHING_LAPSED;
   }
-  const now = yield* Clock.currentTimeMillis;
-  const waiting = yield* Ref.get(backoffs);
-  const due = lapsed.flatMap(({ tenant_id: tenantId }) =>
-    (waiting.get(tenantId)?.retryAt ?? 0) <= now ? [tenantId] : [],
-  );
-  const chosen = due.slice(0, ACCESS_FENCE_SWEEP_TENANTS_PER_TICK);
+  const chosen = lapsed.slice(0, ACCESS_FENCE_SWEEP_TENANTS_PER_TICK).map(({ tenant_id: tenantId }) => tenantId);
   const outcomes = yield* Effect.forEach(chosen, (tenantId) => attemptTenant(backoffs, tenantId, runReference), {
     concurrency: 1,
   });
   return {
-    deferred: lapsed.length - chosen.length,
+    deferred: waiting.length + lapsed.length - chosen.length,
     failed: outcomes.flatMap((outcome) => (Result.isFailure(outcome) ? [outcome.failure] : [])),
     healed: outcomes.flatMap((outcome) => (Result.isSuccess(outcome) ? [outcome.success] : [])),
   } satisfies AccessFenceSweepReport;
