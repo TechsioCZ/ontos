@@ -1,12 +1,12 @@
 // How Merchandise reads a company's VAT from its book of Tax rules (and from the migrated state until Tax takes over): the rate of a classification at an instant, the
 // non-payer and undeclared regimes, the failures that make goods unsellable, the staff view of the rates, the
-// 60-second reuse of Tax's answer, and the shared rule other modules apply to the staff records response.
+// 12-minute reuse of Tax's answer with a growing wait while Tax does not answer, and the shared rule other modules apply to the staff records response.
 import { randomUUID } from 'node:crypto';
 
 import type { OperationalScope } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { vatRateAt } from '@app/shared-contracts/cz-vat-classifications';
-import { DateTime, Deferred, Effect, Fiber, Option, Ref, Result, Scheduler, Schema } from 'effect';
+import { DateTime, Deferred, Duration, Effect, Fiber, Option, Ref, Result, Scheduler, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -193,6 +193,7 @@ it.effect('asks Tax once per company however many reads and writes want its answ
     expect(yield* knownTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source))).toEqual({
       fresh: false,
       refused: false,
+      waiting: false,
     });
     yield* Effect.yieldNow;
     expect(yield* Ref.get(calls)).toBe(1);
@@ -217,6 +218,7 @@ it.effect('a write waits for Tax at most 3 seconds; the refresh still lands for 
       book: TEST_TAX_BOOK,
       fresh: true,
       refused: false,
+      waiting: false,
     });
     expect(yield* Ref.get(calls)).toBe(1);
   }),
@@ -262,8 +264,54 @@ it.effect('keeps the last answer through an outage and drops it when Tax refuses
     yield* write;
     expect(yield* read).toMatchObject({ book: TEST_TAX_BOOK, refused: false });
     yield* Ref.set(outcome, Effect.fail(new TaxRatesFailure({ kind: 'REFUSED' })));
+    yield* TestClock.adjust('1 minute');
     yield* write;
-    expect(yield* read).toEqual({ fresh: false, refused: true });
+    expect(yield* read).toEqual({ fresh: false, refused: true, waiting: true });
+  }),
+);
+
+it.effect('while Tax does not answer, reads and writes ask it at most once per wait, which grows to 12 minutes', () =>
+  Effect.gen(function* backoff() {
+    const calls = yield* Ref.make(0);
+    const outcome = yield* Ref.make<TaxRatesFailure['kind']>('UNAVAILABLE');
+    const source = {
+      read: () =>
+        Ref.update(calls, (count) => count + 1).pipe(
+          Effect.andThen(Ref.get(outcome)),
+          Effect.flatMap((kind) => Effect.fail(new TaxRatesFailure({ kind }))),
+        ),
+    };
+    const company = scopeOf(randomUUID());
+    const burst = Effect.all(
+      [
+        Effect.replicateEffect(knownTaxRateBook(company), 10),
+        Effect.replicateEffect(currentTaxRateBook(company).pipe(Effect.result), 10),
+      ],
+      { concurrency: 1 },
+    ).pipe(Effect.provideService(TaxRateSource, source), Effect.andThen(Effect.yieldNow));
+    const callsAfter = (wait: Duration.Duration) =>
+      TestClock.adjust(wait).pipe(Effect.andThen(burst), Effect.andThen(Ref.get(calls)));
+    yield* burst;
+    expect(yield* Ref.get(calls)).toBe(1);
+    // Waits of 1, 2, 4, 8 and then 12 minutes: a burst just before each ends asks nothing, one right after asks once.
+    const asked = [];
+    for (const minutes of [1, 2, 4, 8, 12, 12]) {
+      asked.push(yield* callsAfter(Duration.seconds(minutes * 60 - 1)), yield* callsAfter(Duration.seconds(1)));
+    }
+    expect(asked).toEqual([1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7]);
+    // A company Tax is not installed for: asked again only after the whole freshness window, writes refused at once.
+    yield* Ref.set(outcome, 'REFUSED');
+    const other = scopeOf(randomUUID());
+    const write = currentTaxRateBook(other).pipe(Effect.provideService(TaxRateSource, source), Effect.flip);
+    yield* Ref.set(calls, 0);
+    expect((yield* write).kind).toBe('REFUSED');
+    expect([(yield* write).kind, yield* Ref.get(calls)]).toEqual(['REFUSED', 1]);
+    yield* TestClock.adjust('11 minutes');
+    yield* write;
+    expect(yield* Ref.get(calls)).toBe(1);
+    yield* TestClock.adjust('1 minute');
+    yield* write;
+    expect(yield* Ref.get(calls)).toBe(2);
   }),
 );
 

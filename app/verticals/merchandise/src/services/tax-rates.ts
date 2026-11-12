@@ -44,6 +44,8 @@ export const TAX_RATE_FRESHNESS = Duration.minutes(12);
 export const TAX_REFRESH_TIMEOUT = Duration.seconds(3);
 /** While Tax is unreachable, rates it confirmed at most this long ago still price new lines and prices. */
 export const CONFIRMED_RATES_MAX_AGE = Duration.hours(24);
+/** After a refresh that got no answer, the wait before the next one: doubling from this up to {@link TAX_RATE_FRESHNESS}. */
+export const TAX_RETRY_FIRST = Duration.minutes(1);
 /** Both classifications and the regime are read side by side; nothing else fans out. */
 const TAX_READ_CONCURRENCY = 3;
 
@@ -498,6 +500,8 @@ interface CompanyTaxAnswer {
   readonly inflight?: Deferred.Deferred<TaxRateBook, TaxRatesFailure>;
   /** Tax refused the company at the last refresh (not installed for it, or no longer admits Merchandise). */
   readonly refused: boolean;
+  /** The last refresh that got no answer (an outage or a refusal), and how long to wait before the next one. */
+  readonly retry?: { readonly after: Duration.Duration; readonly attemptedAt: DateTime.Utc };
 }
 
 /** Per process: one entry per company. Immutable maps, so readers never see a torn entry. */
@@ -516,11 +520,15 @@ const answerAfter = (
     return { book: result.success, fetchedAt: at, refused: false };
   }
   if (result.failure.kind === 'REFUSED') {
-    return { refused: true };
+    // Tax is not installed for the company (or does not admit Merchandise): asked again once per freshness window.
+    return { refused: true, retry: { after: TAX_RATE_FRESHNESS, attemptedAt: at } };
   }
+  const after =
+    kept.retry === undefined ? TAX_RETRY_FIRST : Duration.min(Duration.times(kept.retry.after, 2), TAX_RATE_FRESHNESS);
+  const retry = { after, attemptedAt: at };
   return kept.book === undefined || kept.fetchedAt === undefined
-    ? { refused: kept.refused }
-    : { book: kept.book, fetchedAt: kept.fetchedAt, refused: false };
+    ? { refused: kept.refused, retry }
+    : { book: kept.book, fetchedAt: kept.fetchedAt, refused: false, retry };
 };
 
 /** Forgets a refresh that ended without an answer (a defect), so the next caller starts a new one. */
@@ -588,6 +596,8 @@ export interface KnownTaxRates {
   /** Whether the answer is younger than {@link TAX_RATE_FRESHNESS}. */
   readonly fresh: boolean;
   readonly refused: boolean;
+  /** The last refresh got no answer and its wait before the next one has not passed yet. */
+  readonly waiting: boolean;
 }
 
 const known = Effect.fn('Merchandise.knownTaxRates')(function* known(scope: OperationalScope) {
@@ -597,21 +607,28 @@ const known = Effect.fn('Merchandise.knownTaxRates')(function* known(scope: Oper
     entry.fetchedAt !== undefined &&
     !DateTime.isGreaterThan(entry.fetchedAt, now) &&
     Duration.isLessThan(ageOf(entry.fetchedAt, now), TAX_RATE_FRESHNESS);
+  const waiting =
+    entry.retry !== undefined &&
+    !DateTime.isGreaterThan(entry.retry.attemptedAt, now) &&
+    Duration.isLessThan(ageOf(entry.retry.attemptedAt, now), entry.retry.after);
   const answer: KnownTaxRates =
-    entry.book === undefined ? { fresh, refused: entry.refused } : { book: entry.book, fresh, refused: false };
+    entry.book === undefined
+      ? { fresh, refused: entry.refused, waiting }
+      : { book: entry.book, fresh, refused: false, waiting };
   return answer;
 });
 
 /**
  * Tax's answer as far as this process knows it, never waiting for Tax (staff reads and writes that price nothing
- * new): when the answer is missing or older than the freshness window a single refresh starts in the background, and
- * the caller works with the company's materialised rates meanwhile.
+ * new): when the answer is missing or older than the freshness window a single refresh starts in the background
+ * (unless the last one got no answer and its wait has not passed), and the caller works with the company's
+ * materialised rates meanwhile.
  */
 export const knownTaxRateBook = Effect.fn('Merchandise.knownTaxRateBook')(function* knownTaxRateBook(
   scope: OperationalScope,
 ) {
   const answer = yield* known(scope);
-  if (!answer.fresh) {
+  if (!(answer.fresh || answer.waiting)) {
     yield* refreshOf(scope);
   }
   return answer;
@@ -630,16 +647,23 @@ const awaitRefresh = (scope: OperationalScope) =>
 
 /**
  * Tax's answer for a write that prices something new (a new order line, a new product price): the known answer while
- * fresh, else the company's single refresh, waited for at most {@link TAX_REFRESH_TIMEOUT}.
+ * fresh, else the company's single refresh, waited for at most {@link TAX_REFRESH_TIMEOUT}. While the wait after a
+ * refresh without an answer runs, it fails at once as that refresh did, without asking Tax.
  */
 export const currentTaxRateBook = Effect.fn('Merchandise.currentTaxRateBook')(function* currentTaxRateBook(
   scope: OperationalScope,
 ) {
   const answer = yield* known(scope);
-  return answer.fresh && answer.book !== undefined ? answer.book : yield* awaitRefresh(scope);
+  if (answer.fresh && answer.book !== undefined) {
+    return answer.book;
+  }
+  if (answer.waiting) {
+    return yield* new TaxRatesFailure({ kind: answer.refused ? 'REFUSED' : 'UNAVAILABLE' });
+  }
+  return yield* awaitRefresh(scope);
 });
 
-/** Tax's answer now, for an explicit sync: always the single refresh, waited for at most the timeout. */
+/** Tax's answer now, for an explicit sync a person asked for: always the single refresh, waited for at most the timeout. */
 export const refreshedTaxRateBook = Effect.fn('Merchandise.refreshedTaxRateBook')(function* refreshedTaxRateBook(
   scope: OperationalScope,
 ) {
