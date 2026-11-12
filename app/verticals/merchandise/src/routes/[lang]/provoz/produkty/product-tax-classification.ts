@@ -4,7 +4,7 @@ import { formatDate, formatNumber } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { CZ_VAT_STANDARD, czVatClassificationCodes } from '@app/shared-contracts/cz-vat-classifications';
 import type { CzVatClassificationCode, TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
-import { DateTime, Duration } from 'effect';
+import { DateTime, Duration, Schema } from 'effect';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 
 const KEY_PREFIX = 'merchandise.tax';
@@ -57,12 +57,38 @@ const covers = (rate: TaxRateView, at: DateTime.Utc): boolean => {
  * The rate of `code` in force at `at`: the period from `effectiveFrom` up to, not including, `effectiveTo`; 0 % for a
  * company that is not a VAT payer. Without a classification (an order line from before classifications) there is none.
  */
+/** Why a classification has no usable rate, by the rules Merchandise sells by (the same the server applies). */
+export const RateProblemSchema = Schema.Literals(['NOT_INTEGER', 'NO_RULE', 'RULE_CONFLICT']);
+export type RateProblem = typeof RateProblemSchema.Type;
+
+/**
+ * Whether the classification has a usable rate at `at`: exactly one period in force, at a whole percent (the server
+ * refuses a fractional rate and overlapping periods). A company that is not a VAT payer always has one (0 %).
+ */
+export const rateProblemAt = (
+  vat: CompanyVat,
+  code: CzVatClassificationCode,
+  at: DateTime.Utc,
+): RateProblem | undefined => {
+  if (vat.regime === 'NON_PAYER') {
+    return undefined;
+  }
+  const inForce = vat.rates.filter((rate) => rate.code === code && covers(rate, at));
+  if (inForce.length === 0) {
+    return 'NO_RULE';
+  }
+  if (inForce.length > 1) {
+    return 'RULE_CONFLICT';
+  }
+  return inForce.every((rate) => Number.isInteger(rate.ratePercent)) ? undefined : 'NOT_INTEGER';
+};
+
 export const rateAt = (
   vat: CompanyVat,
   code: CzVatClassificationCode | undefined,
   at: DateTime.Utc,
 ): TaxRateView | undefined => {
-  if (code === undefined) {
+  if (code === undefined || rateProblemAt(vat, code, at) !== undefined) {
     return undefined;
   }
   return vat.regime === 'NON_PAYER'
@@ -88,6 +114,8 @@ export interface ClassificationChoice {
   readonly current: TaxRateView | undefined;
   /** The company is not a VAT payer: every classification sells without VAT. */
   readonly nonPayer: boolean;
+  /** Why there is no usable rate now, when there is none. */
+  readonly problem: RateProblem | undefined;
   /** The next rate Tax has scheduled, if any. */
   readonly scheduled: TaxRateView | undefined;
 }
@@ -101,6 +129,7 @@ export const classificationChoice = (
   code,
   current: rateAt(vat, code, now),
   nonPayer: vat.regime === 'NON_PAYER',
+  problem: rateProblemAt(vat, code, now),
   scheduled: vat.regime === 'NON_PAYER' ? undefined : scheduledRateAfter(vat, code, now),
 });
 
@@ -167,8 +196,13 @@ export const taxLabelsOf = (t: Translate, language = 'cs') => {
       ? ratePercentText(ratePercent)
       : t(`${KEY_PREFIX}.option`, { name: name(code), rate: ratePercentText(ratePercent) });
   /** Why a product cannot go on an order line: its classification has no rate in force for the company. */
-  const rateMissing = (code: CzVatClassificationCode | undefined) =>
-    t(`${KEY_PREFIX}.rateMissing`, { name: code === undefined ? notSet : name(code) });
+  const rateMissing = (code: CzVatClassificationCode | undefined, problem: RateProblem | undefined = 'NO_RULE') => {
+    const values = { name: code === undefined ? notSet : name(code) };
+    if (problem === 'RULE_CONFLICT') {
+      return t(`${KEY_PREFIX}.rateConflict`, values);
+    }
+    return problem === 'NOT_INTEGER' ? t(`${KEY_PREFIX}.rateNotWhole`, values) : t(`${KEY_PREFIX}.rateMissing`, values);
+  };
   /**
    * When the company's rates are not current: not yet confirmed by Tax (taken over from the stored prices), or last
    * confirmed long enough ago to say when. Nothing while they are recent or unknown.

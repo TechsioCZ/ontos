@@ -121,6 +121,11 @@ export const OrderLineEditor = ({
           {t(key('create.productFailed'))}
         </StatusText>
       )}
+      {product !== null && classification !== null && classification.current === undefined && (
+        <StatusText showIcon size="sm" status="error">
+          {taxLabels.rateMissing(classification.code, classification.problem)}
+        </StatusText>
+      )}
       {product !== null && classification !== null && (
         <p className="text-fg-secondary text-xs">
           {t(key('create.productMeta'), {

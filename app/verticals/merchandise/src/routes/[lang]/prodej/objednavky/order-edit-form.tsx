@@ -205,7 +205,7 @@ const useOrderEditForm = ({
   const ratesConfirmation = taxLabels.confirmation(vat, DateTime.nowUnsafe());
   const pickedRateMissing =
     pickedClassification !== null && pickedClassification.current === undefined
-      ? taxLabels.rateMissing(pickedClassification.code)
+      ? taxLabels.rateMissing(pickedClassification.code, pickedClassification.problem)
       : undefined;
   const unit =
     pickedProduct === null

@@ -146,3 +146,24 @@ describe('how current the company rates are', () => {
     );
   });
 });
+
+describe('rates the server would refuse', () => {
+  it('two periods in force at once, or a fractional rate, give no rate and name the reason', () => {
+    const overlapping = rate({ code: CZ_VAT_STANDARD, effectiveFrom: '2026-01-01T00:00:00Z', ratePercent: 20 });
+    const conflicting = payerVat([standardNow, overlapping]);
+    expect(rateAt(conflicting, CZ_VAT_STANDARD, now)).toBeUndefined();
+    expect(classificationChoice(conflicting, CZ_VAT_STANDARD, now).problem).toBe('RULE_CONFLICT');
+    expect(cs.rateMissing(CZ_VAT_STANDARD, 'RULE_CONFLICT')).toBe(
+      'Pro sazbu DPH „Základní“ platí v modulu Daně více pravidel zároveň, produkt nelze přidat.',
+    );
+    const fractional = payerVat([
+      rate({ code: CZ_VAT_REDUCED, effectiveFrom: '2024-01-01T00:00:00Z', ratePercent: 10.5 }),
+    ]);
+    expect(rateAt(fractional, CZ_VAT_REDUCED, now)).toBeUndefined();
+    expect(classificationChoice(fractional, CZ_VAT_REDUCED, now).problem).toBe('NOT_INTEGER');
+    expect(cs.rateMissing(CZ_VAT_REDUCED, 'NOT_INTEGER')).toBe(
+      'Sazba DPH „Snížená“ není v modulu Daně celé procento, produkt nelze přidat.',
+    );
+    expect(classificationChoice(payerVat([standardNow]), CZ_VAT_STANDARD, now).problem).toBeUndefined();
+  });
+});

@@ -281,3 +281,22 @@ it.effect('rates the tax module has not confirmed yet are named as such above th
     expect(text()).toContain('Sazby DPH zatím nepotvrdil modul Daně');
   }),
 );
+
+it.effect('two rules in force at once for the classification: the line says why and nothing is sent', () =>
+  Effect.promise(async () => {
+    vat = {
+      ...payer,
+      rates: [
+        standardRate,
+        rate({ code: CZ_VAT_STANDARD, effectiveFrom: '2024-01-01T00:00:00Z', ratePercent: 20 }),
+        reducedRate,
+      ],
+    };
+    await fillOneLine(product);
+    expect(text()).toContain(
+      'Pro sazbu DPH „Základní“ platí v modulu Daně více pravidel zároveň, produkt nelze přidat.',
+    );
+    expect(buttonNamed(labels.save).disabled).toBe(true);
+    expect(sent()).toEqual([]);
+  }),
+);

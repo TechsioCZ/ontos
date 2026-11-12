@@ -24,6 +24,7 @@ import type { CustomerDirectory, CustomerEntry } from './customers-directory.ts'
 import { lineAmounts, sumAmounts } from './orders-model.ts';
 import type { ProductId } from '../../../../../shared/domain/merchandise-model.ts';
 import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts';
+import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { NewOrderLine } from './orders-records.ts';
 import { createOrder, isRevisionConflict } from './orders-records.ts';
 import { OrderLineEditor } from './order-line-editor.tsx';
@@ -138,6 +139,13 @@ export const OrderCreateDialog = ({
     setDraft((current) => ({ ...current, lines: current.lines.filter((line) => line.key !== lineKey) }));
 
   const partyErrorOf = (value: Draft) => (value.partyId.trim() === '' ? t(key('create.errorCustomer')) : undefined);
+  // The server snapshots the rate Tax gives the classification; without a usable one the line cannot be ordered.
+  const rateErrorOf = (product: ProductRecord) => {
+    const classification = lineClassification(product, vat, now);
+    return classification?.current === undefined
+      ? taxLabels.rateMissing(product.taxClassificationCode, classification?.problem)
+      : undefined;
+  };
   const lineErrorsOf = (value: Draft) =>
     value.lines.map((line) => {
       if (line.picked === null) {
@@ -150,11 +158,7 @@ export const OrderCreateDialog = ({
       if (activeVariants(product).length > 0 && line.variantId === null) {
         return t(key('create.errorVariant'));
       }
-      // The server snapshots the rate Tax gives the classification; without one in force the line cannot be ordered.
-      if (lineClassification(product, vat, now)?.current === undefined) {
-        return taxLabels.rateMissing(product.taxClassificationCode);
-      }
-      return isValidQuantity(line.quantity) ? undefined : t(key('create.errorQuantity'));
+      return rateErrorOf(product) ?? (isValidQuantity(line.quantity) ? undefined : t(key('create.errorQuantity')));
     });
   const partyError = partyErrorOf(draft);
   const lineErrors = lineErrorsOf(draft);
