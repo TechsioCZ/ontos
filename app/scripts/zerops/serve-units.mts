@@ -9,6 +9,7 @@ import { startProcessCompositionValidation } from './process-composition-validat
  *
  *   node scripts/zerops/serve-units.mts <appId> [...]
  */
+import type { Server } from 'node:http';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -18,14 +19,20 @@ import { Argument, Command } from 'effect/cli';
 
 import { UNIT_ENTRY, readHostedUnits, workspaceRoot } from './hosted-units.mts';
 import type { HostedUnit } from './hosted-units.mts';
+import { keepConnectionsAlive } from './http-keep-alive.mts';
 import { ownerWarmState } from './owner-warm-state.mts';
 
 export class ServeUnitsError extends Schema.TaggedError<ServeUnitsError>()('ServeUnitsError', {
   reason: Schema.String,
 }) {}
 
-/** The generated entry's contract: `start(port)` resolves once the unit's server listens on that port. */
-const isUnitStart = (cause: unknown): cause is (port: number) => Promise<void> => Predicate.isFunction(cause);
+/**
+ * The generated entry's contract (owner-entry.mts): `start(port, configureServer)` hands the unit's Node server to
+ * `configureServer` before it listens, and resolves once the server listens on that port.
+ */
+const isUnitStart = (
+  cause: unknown,
+): cause is (port: number, configureServer: (server: Server) => Server) => Promise<void> => Predicate.isFunction(cause);
 
 const UnitModuleSchema = Schema.Struct({ start: Schema.declare(isUnitStart) });
 
@@ -48,7 +55,7 @@ const startUnitServer = (unit: HostedUnit, start: (typeof UnitModuleSchema.Type)
   Effect.tryPromise({
     catch: () => new ServeUnitsError({ reason: `${unit.id} server failed to start` }),
     try: async () => {
-      await start(unit.port);
+      await start(unit.port, keepConnectionsAlive);
     },
   });
 
