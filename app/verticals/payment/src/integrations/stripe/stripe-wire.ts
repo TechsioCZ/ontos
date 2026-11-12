@@ -122,7 +122,6 @@ export const StripeChargeSchema = Schema.Struct({
   refunded: Schema.Boolean,
   status: Schema.Literals(['succeeded', 'pending', 'failed']),
 });
-export type StripeCharge = typeof StripeChargeSchema.Type;
 
 /** `GET /v1/payment_intents/search`. Eventually consistent: a miss proves nothing. */
 export const StripePaymentIntentSearchResultSchema = Schema.Struct({

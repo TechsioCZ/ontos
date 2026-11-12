@@ -1,4 +1,4 @@
-import type { ScopedTransactionExecutor } from '@app/core-runtime';
+import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { Context } from 'effect';
 import type { Effect, Option } from 'effect';
 
@@ -28,6 +28,7 @@ export interface PaymentProviderReplayEvidenceReader {
 /** Binds the replay evidence to one Core-scoped Action transaction. */
 export type PaymentProviderReplayEvidenceForTransaction = (
   transaction: ScopedTransactionExecutor,
+  scope: OperationalScope,
 ) => PaymentProviderReplayEvidenceReader;
 
 /**

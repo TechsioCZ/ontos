@@ -4,10 +4,10 @@ import { Effect, Option } from 'effect';
 import { pspBindingPersistenceForTransaction } from '../../persistence/psp-binding-persistence.ts';
 import type { ProviderAccountBindingTargetRecord } from '../../persistence/psp-binding-persistence.ts';
 import { executionTargetOf, gatewayBindingUnavailable } from './binding-resolver-live.ts';
-import type { GatewayCaptureBindingResolverContract, GatewayCaptureTargetQuery } from './capture-binding-resolver.ts';
+import type { GatewayCaptureBindingReader, GatewayCaptureTargetQuery } from './capture-binding-resolver.ts';
 
 /**
- * Action-side `GatewayCaptureBindingResolver` (#1155, #1157) for `capture-provider-notification`, over that
+ * Action-side `GatewayCaptureBindingReader` (#1155, #1157) for `capture-provider-notification`, over that
  * Action's own Core-scoped transaction. Same rules as the worker's `resolveForNotification`: the exact binding
  * with this ref in this environment, Current or retired, with its current credential revision; no Current
  * substitute. None when no binding of the route's family has this ref in this scope and environment
@@ -38,9 +38,9 @@ const targetOf = (record: ProviderAccountBindingTargetRecord, query: GatewayCapt
  */
 export const gatewayCaptureBindingResolverForTransaction = (
   transaction: ScopedTransactionExecutor,
-): GatewayCaptureBindingResolverContract => {
+): GatewayCaptureBindingReader => {
   const persistence = pspBindingPersistenceForTransaction(transaction);
-  const resolveForCapture = Effect.fn('GatewayCaptureBindingResolver.resolveForCapture')(function* resolveForCapture(
+  const resolveForCapture = Effect.fn('GatewayCaptureBindingReader.resolveForCapture')(function* resolveForCapture(
     query: GatewayCaptureTargetQuery,
   ) {
     if (

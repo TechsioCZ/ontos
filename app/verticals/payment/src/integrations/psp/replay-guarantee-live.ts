@@ -13,7 +13,6 @@ import type {
 } from '../../ports/provider-replay-evidence-port.ts';
 import { idempotencyKeyHashOf } from './dispatch-ledger.ts';
 import { deriveProviderCorrelation } from './psp-correlation.ts';
-import type { ProviderReplayGuaranteeReaderContract } from './replay-guarantee.ts';
 
 /**
  * Action-side reader of C17's retained original dispatch (#1158), over the Action's own Core-scoped
@@ -84,10 +83,10 @@ const guaranteeOf = (
   );
 };
 
-/** The C17 replay guarantee reader bound to one Action transaction. */
-export const providerReplayGuaranteeReaderForTransaction = (
+/** `PaymentProviderReplayEvidencePort`: the C17 replay guarantee reader bound to one Action transaction. */
+export const providerReplayEvidenceForTransaction = (
   transaction: ScopedTransactionExecutor,
-): ProviderReplayGuaranteeReaderContract => {
+): PaymentProviderReplayEvidenceReader => {
   const read = Effect.fn('ProviderReplayGuaranteeReader.read')(function* read(
     request: PaymentProviderReplayEvidenceRequest,
   ) {
@@ -116,13 +115,5 @@ export const providerReplayGuaranteeReaderForTransaction = (
       Option.flatMap((row) => guaranteeOf(row, request, DateTime.toEpochMillis(now))),
     );
   });
-  return Object.freeze({ read });
-};
-
-/** `PaymentProviderReplayEvidencePort` backed by the C17 reader of the same Action transaction. */
-export const providerReplayEvidenceForTransaction = (
-  transaction: ScopedTransactionExecutor,
-): PaymentProviderReplayEvidenceReader => {
-  const reader = providerReplayGuaranteeReaderForTransaction(transaction);
-  return Object.freeze({ readGuarantee: reader.read });
+  return Object.freeze({ readGuarantee: read });
 };

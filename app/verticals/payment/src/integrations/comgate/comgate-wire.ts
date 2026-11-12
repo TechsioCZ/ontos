@@ -135,7 +135,6 @@ export const ComgateCreatePaymentResponseSchema = Schema.Struct({
   redirect: Schema.optionalKey(Schema.String),
   transId: Schema.optionalKey(ComgateTransIdSchema),
 });
-export type ComgateCreatePaymentResponse = typeof ComgateCreatePaymentResponseSchema.Type;
 export const ComgateCreatePaymentResponseFromJsonSchema = Schema.fromJsonString(ComgateCreatePaymentResponseSchema);
 
 /** `{code, message}` of cancel (`DELETE /v2.0/payment/transId/{id}.json`) and refund (`POST /v2.0/refund.json`). */
@@ -143,7 +142,6 @@ export const ComgateResultResponseSchema = Schema.Struct({
   code: ComgateCodeSchema,
   message: ComgateMessageSchema,
 });
-export type ComgateResultResponse = typeof ComgateResultResponseSchema.Type;
 export const ComgateResultResponseFromJsonSchema = Schema.fromJsonString(ComgateResultResponseSchema);
 
 /** Body of `POST /v2.0/refund.json`. `amount` is integer minor units; no refund id exists. */

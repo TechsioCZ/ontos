@@ -72,11 +72,6 @@ export const PROVIDER_NOTIFICATION_AUTHENTICITY = [
 export const ProviderNotificationAuthenticitySchema = Schema.Literals(PROVIDER_NOTIFICATION_AUTHENTICITY);
 export type ProviderNotificationAuthenticity = typeof ProviderNotificationAuthenticitySchema.Type;
 
-/** Result of capturing one verified notification into the notification store. */
-export const PROVIDER_CAPTURE_RESULTS = ['CAPTURED', 'DUPLICATE', 'IGNORED', 'REJECTED'] as const;
-export const ProviderCaptureResultSchema = Schema.Literals(PROVIDER_CAPTURE_RESULTS);
-export type ProviderCaptureResult = typeof ProviderCaptureResultSchema.Type;
-
 /** Where a provider evidence item came from. */
 export const PROVIDER_EVIDENCE_ORIGINS = [
   'NOTIFICATION_LOOKUP',

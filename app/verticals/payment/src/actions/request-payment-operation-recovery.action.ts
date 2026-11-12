@@ -77,7 +77,7 @@ const paymentEvidenceServices = Effect.fn('RequestPaymentOperationRecoveryAction
   return {
     aggregate: paymentAggregatePersistenceForTransaction(transaction),
     evidence: paymentEvidencePersistenceForTransaction(transaction),
-    replayEvidence: (yield* PaymentProviderReplayEvidencePort)(transaction),
+    replayEvidence: (yield* PaymentProviderReplayEvidencePort)(transaction, scope),
     scope: { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId },
   } satisfies RecoveryServices;
 });

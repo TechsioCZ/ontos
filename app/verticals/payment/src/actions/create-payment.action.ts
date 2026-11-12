@@ -269,7 +269,7 @@ const lifecycleServices: ActionServiceFactory<
         Effect.map((gatewayBindingFor): CreatePaymentServices => ({
           aggregate: paymentAggregatePersistenceForTransaction(transaction),
           applicability: paymentApplicabilityPersistenceForTransaction(transaction),
-          gateways: gatewayBindingFor(transaction),
+          gateways: gatewayBindingFor(transaction, scope),
           lifecycle: paymentLifecyclePersistenceForTransaction(transaction),
           refunds: paymentRefundPersistenceForTransaction(transaction),
         })),

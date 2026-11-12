@@ -43,14 +43,12 @@ export const GOPAY_PAYMENT_STATES = [
   'PARTIALLY_REFUNDED',
 ] as const;
 export const GopayPaymentStateSchema = Schema.Literals(GOPAY_PAYMENT_STATES);
-export type GopayPaymentState = typeof GopayPaymentStateSchema.Type;
 
 /** `target` of a payment: always a GoPay account identified by its GoID. */
 export const GopayPaymentTargetSchema = Schema.Struct({
   goid: GopayGoidSchema,
   type: Schema.Literal('ACCOUNT'),
 });
-export type GopayPaymentTarget = typeof GopayPaymentTargetSchema.Type;
 
 /**
  * The payment object returned by `POST /payments/payment` (state CREATED) and by
@@ -109,7 +107,6 @@ export const GopayCreatePaymentRequestJsonSchema = Schema.fromJsonString(GopayCr
 /** `result` of `POST /payments/payment/{id}/refund`. */
 export const GOPAY_REFUND_RESULTS = ['ACCEPTED', 'FINISHED', 'FAILED'] as const;
 export const GopayRefundResultSchema = Schema.Literals(GOPAY_REFUND_RESULTS);
-export type GopayRefundResult = typeof GopayRefundResultSchema.Type;
 
 /** Refund response `{id, result}`. `id` is the payment id: GoPay returns no refund identifier. */
 export const GopayRefundResponseSchema = Schema.Struct({
@@ -122,7 +119,6 @@ export const GopayRefundResponseFromJsonSchema = Schema.fromJsonString(GopayRefu
 /** Refund history `state` enum ("Refund state"). */
 export const GOPAY_REFUND_STATES = ['SUCCESS', 'FAILED', 'REQUESTED'] as const;
 export const GopayRefundStateSchema = Schema.Literals(GOPAY_REFUND_STATES);
-export type GopayRefundState = typeof GopayRefundStateSchema.Type;
 
 /**
  * A refund history date as provider text. The documentation types it as a date (`2024-04-04`); an
@@ -152,7 +148,6 @@ export const GopayErrorSchema = Schema.Struct({
   error_name: Schema.optionalKey(Schema.String),
   scope: Schema.optionalKey(Schema.String),
 });
-export type GopayError = typeof GopayErrorSchema.Type;
 
 /**
  * Error body, e.g. `{"result":"FAILED","errors":[{"error_code":"PAYMENT_NOT_FOUND"}]}` for an archived
@@ -162,7 +157,6 @@ export type GopayError = typeof GopayErrorSchema.Type;
 export const GopayErrorResponseSchema = Schema.Struct({
   errors: Schema.Array(GopayErrorSchema).check(Schema.isMinLength(1)),
 });
-export type GopayErrorResponse = typeof GopayErrorResponseSchema.Type;
 export const GopayErrorResponseFromJsonSchema = Schema.fromJsonString(GopayErrorResponseSchema);
 
 /** The OntOS provider object id of a GoPay payment id. */

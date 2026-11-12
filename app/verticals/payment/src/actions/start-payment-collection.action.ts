@@ -307,7 +307,7 @@ const lifecycleServices = (transaction: ScopedTransactionExecutor, scope: Operat
         Effect.map((gatewayBindingFor): StartCollectionServices => ({
           aggregate: paymentAggregatePersistenceForTransaction(transaction),
           applicability: paymentApplicabilityPersistenceForTransaction(transaction),
-          gateways: gatewayBindingFor(transaction),
+          gateways: gatewayBindingFor(transaction, scope),
           lifecycle: paymentLifecyclePersistenceForTransaction(transaction),
           refunds: paymentRefundPersistenceForTransaction(transaction),
           selectReceiptAuthorities: (method) => selectBankReceiptAuthorities(transaction, method),

@@ -533,10 +533,11 @@ export const orderReferenceLookup = (
 // Results
 // ---------------------------------------------------------------------------------------------------
 
+// Member schemas by position; no sandbox scenario selects a STRIPE_PAYMENT_INTENT ref by its member schema.
 export const [
   GopayPaymentRefSchema,
   StripeCheckoutSessionRefSchema,
-  StripePaymentIntentRefSchema,
+  ,
   StripeRefundRefSchema,
   ComgateTransactionRefSchema,
 ] = ProviderObjectRefSchema.members;

@@ -69,10 +69,8 @@ export const ProviderFindingTargetSchema = Schema.Struct({
   operationId: PaymentOperationIdSchema,
   operationKind: PaymentOperationKindSchema,
 });
-export type ProviderFindingTarget = typeof ProviderFindingTargetSchema.Type;
 
 export const ProviderCustomerActionSchema = Schema.Struct({ redirectUrl: GatewayHttpsUrlSchema });
-export type ProviderCustomerAction = typeof ProviderCustomerActionSchema.Type;
 
 /**
  * What an adapter concluded about one operation. Named `...Result` because `ProviderFinding` is the
@@ -127,7 +125,6 @@ export const ProviderReplayWindowSchema = Schema.Struct({
   expiresAt: Schema.DateTimeUtc,
   startsAt: Schema.DateTimeUtc,
 });
-export type ProviderReplayWindow = typeof ProviderReplayWindowSchema.Type;
 
 /** The exact persisted request of one dispatch and the window it may be replayed in (Stripe only). */
 export const ProviderReplayRequestSchema = Schema.Struct({
