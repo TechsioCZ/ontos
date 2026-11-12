@@ -234,7 +234,7 @@ describe('module credential healing', () => {
     issued: ProvisioningOutput,
     start: ProvisioningOutput = held,
     nowMillis = 0,
-    streaks: Ref.Ref<ModuleCredentialHealingStreaks> = Ref.makeUnsafe({ unreadable: 0 }),
+    streaks: Ref.Ref<ModuleCredentialHealingStreaks> = Ref.makeUnsafe({ revocations: 0, unreadable: 0 }),
   ) =>
     Effect.gen(function* healOnce() {
       yield* TestClock.setTime(nowMillis);
@@ -271,7 +271,13 @@ describe('module credential healing', () => {
       expect(result.messages.every((message) => message.includes(PARTY_KEY_TWO))).toBe(true);
       // Exactly the key it replaced; the caller that held none replaced nothing.
       expect(result.retirements).toEqual([[ORDER_PROVIDER_KEY]]);
-      expect(result.healthy).toBe(true);
+      // A revocation renewal backs off like a failure, so a store that keeps saying "not live" is not hit every minute.
+      expect(result.healthy).toBe(false);
+      expect(result.streaks.revocations).toBe(1);
+      const streaks = Ref.makeUnsafe<ModuleCredentialHealingStreaks>({ revocations: 2, unreadable: 0 });
+      const again = yield* healing(Effect.succeed(new Set()), fresh, held, 0, streaks);
+      expect(again.healthy).toBe(false);
+      expect(again.streaks.revocations).toBe(3);
     }),
   );
 
@@ -341,7 +347,7 @@ describe('module credential healing', () => {
     Effect.gen(function* rotationWithoutRead() {
       const current = output({ [ORDER]: ORDER_KEY_ONE, [PARTY]: PARTY_KEY_ONE });
       const rotated = output({ [ORDER]: ORDER_KEY_TWO, [PARTY]: PARTY_KEY_TWO }, [], GENERATION_TWO, 40 * HOUR);
-      const streaks = Ref.makeUnsafe<ModuleCredentialHealingStreaks>({ unreadable: 3 });
+      const streaks = Ref.makeUnsafe<ModuleCredentialHealingStreaks>({ revocations: 0, unreadable: 3 });
       const result = yield* healing(Effect.fail('unreadable'), rotated, current, 17 * HOUR, streaks);
       expect(result.issues).toEqual([[ORDER, PARTY]]);
       expect(result.held).toEqual(rotated);

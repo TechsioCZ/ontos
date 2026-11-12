@@ -755,8 +755,9 @@ export const planModuleCredentialHealing = (
     : { appIds: held.failedAppIds, kind: 'fill' };
 };
 
-/** How many healing steps in a row could not read liveness. */
+/** How many healing steps in a row could not read liveness, and renewed because keys looked revoked. */
 export interface ModuleCredentialHealingStreaks {
+  readonly revocations: number;
   readonly unreadable: number;
 }
 
@@ -804,12 +805,18 @@ export const healModuleCredentialsOnce = Effect.fn('AppHost.healModuleCredential
   const held = yield* Ref.get(input.held);
   const plan = planModuleCredentialHealing(held, active, yield* Clock.currentTimeMillis);
   const revoked = plan.kind === 'renew' && plan.reason === 'revoked';
+  const { revocations } = yield* Ref.updateAndGet(streaks, (counted) => ({
+    ...counted,
+    revocations: revoked ? counted.revocations + 1 : 0,
+  }));
   if (plan.kind === 'none') {
     return true;
   }
   if (plan.kind === 'renew') {
     yield* revoked
-      ? Console.error('[app-host] MODULE CREDENTIALS OF THIS HOST WERE REVOKED; issuing and handing over fresh ones')
+      ? Console.error(
+          `[app-host] MODULE CREDENTIALS OF THIS HOST WERE REVOKED (${String(revocations)} renewal(s) in a row); issuing and handing over fresh ones`,
+        )
       : Console.log('[app-host] module credentials near their end; rotating them');
   }
   const appIds = plan.kind === 'fill' ? plan.appIds : input.callers;
@@ -827,7 +834,9 @@ export const healModuleCredentialsOnce = Effect.fn('AppHost.healModuleCredential
     // Exactly the keys this renewal replaced, which only this boot ever held: never a key it was not told about.
     yield* input.retireOwn(replacedKeyIdsOf(held, fresh));
   }
-  return fresh.failedAppIds.length === 0;
+  // A renewal because keys looked revoked backs off like a failure: if the store keeps saying "not live" (wrongly or
+  // not), the host reissues after 2, 4, 8 and then every 15 minutes, never every minute.
+  return fresh.failedAppIds.length === 0 && !revoked;
 });
 
 /**
@@ -837,7 +846,7 @@ export const healModuleCredentialsOnce = Effect.fn('AppHost.healModuleCredential
 export const healModuleCredentials = <Requirements,>(input: ModuleCredentialHealingInput<Requirements>) =>
   Effect.gen(function* healCredentials() {
     let backoff = HEALING_INTERVAL;
-    const streaks = yield* Ref.make<ModuleCredentialHealingStreaks>({ unreadable: 0 });
+    const streaks = yield* Ref.make<ModuleCredentialHealingStreaks>({ revocations: 0, unreadable: 0 });
     while (yield* input.serving.pipe(Effect.delay(backoff))) {
       const healthy = yield* healModuleCredentialsOnce(input, streaks);
       backoff = healthy ? HEALING_INTERVAL : Duration.min(Duration.times(backoff, 2), HEALING_BACKOFF_CAP);
