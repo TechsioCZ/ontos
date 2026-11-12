@@ -184,7 +184,13 @@ const DemoOrderCleanup = ({
 }) => {
   const { t } = useModernI18n();
   const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState(() => t('merchandise.pages.orders.detail.cleanup.reasonDefault'));
+  // Same split as the server: DEMO wording only for a DEMO order from the e-shop.
+  const demo = order.demo === true && isStorefrontOrder(order);
+  const [reason, setReason] = useState(() =>
+    demo
+      ? t('merchandise.pages.orders.detail.cleanup.reasonDefault')
+      : t('merchandise.pages.orders.detail.cleanup.cancelled.reasonDefault'),
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Effect.Error<ReturnType<typeof removeDemoOrder>> | null>(null);
   const remove = () => {
@@ -213,7 +219,9 @@ const DemoOrderCleanup = ({
     <>
       <div>
         <Button onClick={() => setOpen(true)} size="sm" theme="outlined" variant="danger">
-          {t('merchandise.pages.orders.detail.cleanup.open')}
+          {demo
+            ? t('merchandise.pages.orders.detail.cleanup.open')
+            : t('merchandise.pages.orders.detail.cleanup.cancelled.open')}
         </Button>
       </div>
       <Dialog
@@ -230,20 +238,30 @@ const DemoOrderCleanup = ({
               size="sm"
               variant="danger"
             >
-              {t('merchandise.pages.orders.detail.cleanup.confirm')}
+              {demo
+                ? t('merchandise.pages.orders.detail.cleanup.confirm')
+                : t('merchandise.pages.orders.detail.cleanup.cancelled.confirm')}
             </Button>
           </div>
         }
         closeLabel={t('merchandise.pages.orders.detail.close')}
         customTrigger
-        description={t('merchandise.pages.orders.detail.cleanup.description')}
+        description={
+          demo
+            ? t('merchandise.pages.orders.detail.cleanup.description')
+            : t('merchandise.pages.orders.detail.cleanup.cancelled.description')
+        }
         onOpenChange={({ open: next }) => {
           if (!busy) {
             setOpen(next);
           }
         }}
         open={open}
-        title={t('merchandise.pages.orders.detail.cleanup.title', { number: order.number })}
+        title={
+          demo
+            ? t('merchandise.pages.orders.detail.cleanup.title', { number: order.number })
+            : t('merchandise.pages.orders.detail.cleanup.cancelled.title', { number: order.number })
+        }
       >
         <FormInput
           id="demo-cleanup-reason"
@@ -281,7 +299,7 @@ const orderDetailAffordances = (
   return {
     cancel,
     forward,
-    showCleanup: canCleanupDemo && order.demo === true && storefront,
+    showCleanup: canCleanupDemo && ((order.demo === true && storefront) || order.status === 'CANCELLED'),
     showCustomerConversion:
       canEditOrders &&
       storefront &&
@@ -672,7 +690,11 @@ export const OrderDetailContent = ({
         <DemoOrderCleanup
           onRemoved={() => {
             onClose();
-            onEdited(t('merchandise.pages.orders.detail.cleanup.removed'));
+            onEdited(
+              order.demo === true && storefront
+                ? t('merchandise.pages.orders.detail.cleanup.removed')
+                : t('merchandise.pages.orders.detail.cleanup.cancelled.removed'),
+            );
           }}
           order={order}
           revision={revision}

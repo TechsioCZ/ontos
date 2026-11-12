@@ -209,6 +209,80 @@ for (const status of ['SHIPPED', 'DELIVERED'] as const) {
   }
 }
 
+it.effect('removing a cancelled storefront order without the DEMO marker does not return stock twice', () =>
+  Effect.gen(function* merchandiseScenario14() {
+    const placed = yield* run(state, order(100, 'cancelled-real-order'), 'real-order');
+    const orderId = requireFixture(requireFixture(placed.storefrontOrder).orderId);
+    const cancelled = yield* run(
+      placed.state,
+      { _tag: 'ChangeOrderStatus', id: orderId, status: 'CANCELLED' },
+      'cancel',
+    );
+    const removed = yield* run(
+      cancelled.state,
+      { _tag: 'RemoveDemoOrder', id: orderId, reason: 'Úklid stornované objednávky' },
+      'remove-cancelled',
+    );
+    expect(stockOf(removed.state)).toBe(500);
+    expect(removed.state.orders[0]?.demoCleanup?.actor).toEqual(actor);
+    expect(removed.state.orders[0]?.demo).toBeUndefined();
+    expect(removed.state.movements.filter((m) => m.reason === 'ORDER').reduce((sum, m) => sum + m.delta, 0)).toBe(0);
+  }),
+);
+
+it.effect('a cancelled staff order can be removed, with neutral non-DEMO audit wording', () =>
+  Effect.gen(function* merchandiseScenario15() {
+    const created = yield* run(
+      state,
+      {
+        _tag: 'CreateOrder',
+        id: 'staff-order-1',
+        lines: [{ productId: 'product-1', quantity: 100, variantId: 'item-1' }],
+        partyId: 'test-customer-party',
+      },
+      'staff-order',
+    );
+    expect(stockOf(created.state)).toBe(400);
+    const cancelled = yield* run(
+      created.state,
+      { _tag: 'ChangeOrderStatus', id: 'staff-order-1', status: 'CANCELLED' },
+      'cancel-staff',
+    );
+    const removed = yield* run(
+      cancelled.state,
+      { _tag: 'RemoveDemoOrder', id: 'staff-order-1', reason: 'Úklid stornované objednávky' },
+      'remove-staff',
+    );
+    expect(stockOf(removed.state)).toBe(500);
+    expect(removed.state.orders[0]?.demoCleanup?.actor).toEqual(actor);
+    expect(removed.state.orders[0]?.status).toBe('CANCELLED');
+    const notes = JSON.stringify(removed.state.orders[0]?.history ?? []);
+    expect(notes).not.toContain('DEMO');
+  }),
+);
+
+it.effect('a non-cancelled, non-DEMO order is still refused with a conflict', () =>
+  Effect.gen(function* merchandiseScenario16() {
+    const created = yield* run(
+      state,
+      {
+        _tag: 'CreateOrder',
+        id: 'staff-open-order',
+        lines: [{ productId: 'product-1', quantity: 100, variantId: 'item-1' }],
+        partyId: 'test-customer-party',
+      },
+      'staff-open',
+    );
+    const failure = yield* run(
+      created.state,
+      { _tag: 'RemoveDemoOrder', id: 'staff-open-order', reason: 'Úklid stornované objednávky' },
+      'remove-open',
+    ).pipe(Effect.flip);
+    expect(Schema.is(MerchandiseLifecycleConflict)(failure)).toBe(true);
+    expect(stockOf(created.state)).toBe(400);
+  }),
+);
+
 it.effect('staff image changes synchronize imageSrc, including empty galleries', () =>
   Effect.gen(function* merchandiseScenario8() {
     const changed = yield* run(

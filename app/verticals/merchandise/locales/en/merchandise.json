@@ -174,11 +174,19 @@
             "keep": "Keep order",
             "confirm": "Confirm DEMO removal",
             "busy": "Removing…",
-            "description": "Administrators only. The order disappears from the presentation list in any status. Its history and the identity of the original submission stay in the audit log. Real orders cannot be removed.",
+            "description": "Administrators only. The order disappears from the presentation list in any status. Its history and the identity of the original submission stay in the audit log. A real order can be removed only after it is cancelled.",
             "title": "Remove DEMO order {{number}}?",
             "reasonDefault": "Clean-up of a presentation DEMO order",
             "failed": "The order could not be removed. Reload the data and try again.",
-            "removed": "DEMO order removed; the audit log was kept"
+            "removed": "DEMO order removed; the audit log was kept",
+            "cancelled": {
+              "open": "Remove cancelled order",
+              "confirm": "Confirm removal",
+              "description": "Administrators only. The order disappears from the list. Its history and the identity of the original submission stay in the audit log.",
+              "title": "Remove cancelled order {{number}}?",
+              "reasonDefault": "Clean-up of a cancelled order",
+              "removed": "Order removed; the audit log was kept"
+            }
           },
           "conversion": {
             "converted": "The contact was converted to a customer"

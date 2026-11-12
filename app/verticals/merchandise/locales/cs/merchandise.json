@@ -174,11 +174,19 @@
             "keep": "Zachovat objednávku",
             "confirm": "Potvrdit odstranění DEMO",
             "busy": "Odstraňuji…",
-            "description": "Pouze pro správce. Objednávka zmizí z prezentačního seznamu v libovolném stavu. Historie i identita původního podání zůstanou v auditu. Skutečné objednávky nelze odstranit.",
+            "description": "Pouze pro správce. Objednávka zmizí z prezentačního seznamu v libovolném stavu. Historie i identita původního podání zůstanou v auditu. Skutečnou objednávku lze odstranit až po stornu.",
             "title": "Odstranit DEMO objednávku {{number}}?",
             "reasonDefault": "Úklid prezentační DEMO objednávky",
             "failed": "Objednávku se nepodařilo odstranit. Obnovte data a zkuste to znovu.",
-            "removed": "DEMO objednávka odstraněna; audit zůstal zachován"
+            "removed": "DEMO objednávka odstraněna; audit zůstal zachován",
+            "cancelled": {
+              "open": "Odstranit stornovanou objednávku",
+              "confirm": "Potvrdit odstranění",
+              "description": "Pouze pro správce. Objednávka zmizí ze seznamu. Historie i identita původního podání zůstanou v auditu.",
+              "title": "Odstranit stornovanou objednávku {{number}}?",
+              "reasonDefault": "Úklid stornované objednávky",
+              "removed": "Objednávka odstraněna; audit zůstal zachován"
+            }
           },
           "conversion": {
             "converted": "Kontakt byl převeden na zákazníka"
