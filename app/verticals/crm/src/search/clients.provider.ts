@@ -13,11 +13,11 @@ import { Effect, Schema } from 'effect';
 import { ClientsProviderRequestSchema, ClientsProviderResponseSchema } from '../../shared/apis/clients-search.ts';
 import type { ClientsProviderRequest } from '../../shared/apis/clients-search.ts';
 import { crmSearchQuery } from '../../shared/domain/search-contact-classification.ts';
-import { prepareCrmSearch, makeCrmSearchServices } from './record-access.ts';
-import type { CrmSearchServices } from './record-access.ts';
+import { prepareCrmSearch, makeCrmSearchServices } from '../services/search-record-access.ts';
+import type { CrmSearchServices } from '../services/search-record-access.ts';
 import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
 
-import { searchUnavailable } from './search-unavailable.ts';
+import { searchUnavailable } from '../services/search-unavailable.ts';
 import type { CrmState } from '../../shared/domain/state.ts';
 import { crmClientSearchTerms, crmContactRecordSearchTerms } from '../services/search-source.service.ts';
 

@@ -6,11 +6,11 @@ import type { ReadFinishContext, ReadLoadContext, ReadPrepareContext } from '@ap
 import { Effect, Schema } from 'effect';
 import { ContactsProviderRequestSchema, ContactsProviderResponseSchema } from '../../shared/apis/contacts-search.ts';
 import type { ContactsProviderRequest } from '../../shared/apis/contacts-search.ts';
-import { prepareCrmSearch, makeCrmSearchServices } from './record-access.ts';
-import type { CrmSearchServices } from './record-access.ts';
+import { prepareCrmSearch, makeCrmSearchServices } from '../services/search-record-access.ts';
+import type { CrmSearchServices } from '../services/search-record-access.ts';
 import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
 
-import { searchUnavailable } from './search-unavailable.ts';
+import { searchUnavailable } from '../services/search-unavailable.ts';
 import { loadCrmSearch } from './clients.provider.ts';
 
 type Services = CrmSearchServices;

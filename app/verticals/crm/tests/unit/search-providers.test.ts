@@ -1,5 +1,5 @@
 import type { ListAccessPredicate } from '@app/core-runtime/access/decision/list-access';
-import { parseCrmSearchPredicate } from '../../src/search/record-access.ts';
+import { parseCrmSearchPredicate } from '../../src/services/search-record-access.ts';
 import { crmRegistration } from '../../vertical.registration.ts';
 import {
   ContextAccess,
