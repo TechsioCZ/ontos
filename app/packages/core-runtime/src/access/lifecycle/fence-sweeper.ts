@@ -30,7 +30,8 @@ export const ACCESS_FENCE_SWEEP_TENANTS_PER_TICK = 5;
 /** How many lapsed tenants one statement reads at most (the function caps it at 100). */
 const LAPSED_PAGE = 50;
 export const ACCESS_FENCE_SWEEP_FIRST_BACKOFF = Duration.minutes(1);
-export const ACCESS_FENCE_SWEEP_MAX_BACKOFF = Duration.minutes(30);
+/** Short enough that a tenant failing while the engine was down is tried again soon after the engine is back. */
+export const ACCESS_FENCE_SWEEP_MAX_BACKOFF = Duration.minutes(5);
 
 const PRE_LEASE_LAPSE_SECONDS =
   Duration.toSeconds(ACCESS_FENCE_PRE_LEASE_IDLE) + Duration.toSeconds(ACCESS_FENCE_CLOCK_SKEW_MARGIN);
@@ -62,7 +63,7 @@ export interface AccessFenceSweepReport {
 const NOTHING_LAPSED: AccessFenceSweepReport = Object.freeze({ deferred: 0, failed: [], healed: [] });
 
 /** A tenant's failed attempts so far and when it is due again, on the host's clock. */
-interface Backoff {
+export interface Backoff {
   readonly failures: number;
   readonly retryAt: number;
 }
@@ -82,6 +83,23 @@ export const accessFenceSweepBackoff = (failures: number): Duration.Duration =>
     Duration.times(ACCESS_FENCE_SWEEP_FIRST_BACKOFF, 2 ** Math.min(Math.max(failures - 1, 0), 10)),
     ACCESS_FENCE_SWEEP_MAX_BACKOFF,
   );
+
+/**
+ * The backoff record after one attempt. A heal clears every tenant's wait, not only its own: most failures are an
+ * engine or database that was away, and one heal shows it is back, so every waiting tenant is due again at once. A
+ * failure doubles this tenant's wait.
+ */
+export const accessFenceSweepBackoffsAfter = (
+  current: ReadonlyMap<string, Backoff>,
+  attempt: { readonly healed: boolean; readonly now: number; readonly tenantId: string },
+): ReadonlyMap<string, Backoff> => {
+  if (attempt.healed) {
+    return current.size === 0 ? current : new Map();
+  }
+  const failures = (current.get(attempt.tenantId)?.failures ?? 0) + 1;
+  const retryAt = attempt.now + Duration.toMillis(accessFenceSweepBackoff(failures));
+  return new Map(current).set(attempt.tenantId, { failures, retryAt });
+};
 
 /** The ids of tenants whose fence has a lapsed hold: one statement over the held-fence index, ids only. */
 const readLapsedTenants = Effect.fn('AccessFenceSweeper.readLapsedTenants')(function* readLapsedTenantsEffect() {
@@ -133,7 +151,7 @@ const healTenant = Effect.fn('AccessFenceSweeper.healTenant')(function* healTena
   return yield* Effect.void;
 });
 
-/** One tenant: healed (its backoff forgotten), or failed (its wait doubled). */
+/** One tenant: healed (every backoff forgotten), or failed (its wait doubled). */
 const attemptTenant = Effect.fn('AccessFenceSweeper.attempt')(function* attemptTenantEffect(
   backoffs: AccessFenceSweepBackoffs,
   tenantId: string,
@@ -144,19 +162,15 @@ const attemptTenant = Effect.fn('AccessFenceSweeper.attempt')(function* attemptT
   AccessProjectionWriter | AccessReleaseStore | CoreDatabase
 > {
   const healed = yield* Effect.result(healTenant(tenantId, runReference));
+  const now = yield* Clock.currentTimeMillis;
+  const after = yield* Ref.updateAndGet(backoffs, (current) =>
+    accessFenceSweepBackoffsAfter(current, { healed: Result.isSuccess(healed), now, tenantId }),
+  );
   if (Result.isSuccess(healed)) {
-    yield* Ref.update(backoffs, (current) => {
-      const next = new Map(current);
-      next.delete(tenantId);
-      return next;
-    });
     return Result.succeed(tenantId);
   }
-  const now = yield* Clock.currentTimeMillis;
-  const failures = ((yield* Ref.get(backoffs)).get(tenantId)?.failures ?? 0) + 1;
-  const wait = Duration.toMillis(accessFenceSweepBackoff(failures));
-  yield* Ref.update(backoffs, (current) => new Map(current).set(tenantId, { failures, retryAt: now + wait }));
-  return Result.fail({ reason: healed.failure.reason, retryInMillis: wait, tenantId });
+  const retryInMillis = (after.get(tenantId)?.retryAt ?? now) - now;
+  return Result.fail({ reason: healed.failure.reason, retryInMillis, tenantId });
 });
 
 /**
