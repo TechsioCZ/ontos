@@ -16,7 +16,7 @@ import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 import { usePageData } from '../../src/runtime/use-page-data.ts';
 
 const mocks = rstest.hoisted(() => ({ records: rstest.fn() }));
-rstest.mock('../../src/api/records-consumer.ts', () => ({ executeRecords: mocks.records }));
+rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
 
 const company = '20000000-0000-4000-8000-000000000001';
 const tenantId = '10000000-0000-4000-8000-000000000001';

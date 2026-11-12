@@ -1,4 +1,4 @@
-import { listOpportunities } from '@app/sales-pipeline/clients/records';
+import { executeRecords as executeOpportunityRecords } from '@app/sales-pipeline/clients/records';
 import { listInvoices } from '@app/finance-billing/clients/records';
 import { executeRecords as executeTaskRecords } from '@app/work-tasks/clients/records';
 import { definePageData } from '@app/shared-contracts/page-data';
@@ -18,7 +18,7 @@ export interface DashboardSourceResult<A> {
   readonly state: DashboardSourceState;
 }
 // All three records clients currently expose the same failure union; every call below is checked against it.
-type DashboardReadFailure = Effect.Error<ReturnType<typeof listOpportunities>>;
+type DashboardReadFailure = Effect.Error<ReturnType<typeof executeOpportunityRecords>>;
 const dashboardFailureState = Match.type<DashboardReadFailure>().pipe(
   Match.tag('RecordsForbiddenProblem', 'GatewayForbiddenProblem', () => 'forbidden' as const),
   Match.tag(
@@ -65,7 +65,7 @@ export const loadDashboard = Effect.gen(function* loadDashboardEffect() {
       invoices: settleDashboardSource(correlation.pipe(Effect.flatMap((id) => listInvoices({}, id)))),
       opportunities: settleDashboardSource(
         correlation.pipe(
-          Effect.flatMap((id) => listOpportunities({}, id)),
+          Effect.flatMap((id) => executeOpportunityRecords({}, id)),
           Effect.map((response) => response.items),
         ),
       ),

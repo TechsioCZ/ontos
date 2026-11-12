@@ -1,10 +1,10 @@
 import { listCustomers } from '@app/party-registry/api/client';
 import { listMovements, listOrders, listProducts } from '@app/merchandise/clients/records';
-import { listOpportunities } from '@app/sales-pipeline/clients/records';
+import { executeRecords as executeOpportunityRecords } from '@app/sales-pipeline/clients/records';
 import { listInvoices } from '@app/finance-billing/clients/records';
 import { executeRecords as executeTaskRecords } from '@app/work-tasks/clients/records';
 import { assignmentsForSubjects, listTags } from '@app/tagging/clients/records';
-import { listEmployees } from '@app/workforce/clients/records';
+import { executeRecords as executeEmployeeRecords } from '@app/workforce/clients/records';
 import { definePageData } from '@app/shared-contracts/page-data';
 import type { PageData, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { Effect, Random, Ref, Schema } from 'effect';
@@ -27,6 +27,13 @@ import { unreadableSources } from './readable-sources.ts';
 /** Work Tasks records for this view, each read under its own correlation. */
 const listTasks = (filters: Parameters<typeof executeTaskRecords>[0] = {}) =>
   Random.nextInt.pipe(Effect.flatMap((id) => executeTaskRecords(filters, `work-tasks:list:${id}`)));
+
+/** Workforce employees for this view, read under its own correlation. */
+const listEmployees = () =>
+  Random.nextInt.pipe(
+    Effect.flatMap((nonce) => executeEmployeeRecords({}, `workforce:list:${nonce}`)),
+    Effect.map((response) => response.items),
+  );
 
 export const StatisticsSourceSchema = Schema.Literals([
   'customers',
@@ -274,7 +281,7 @@ const entityData = {
   opportunities: sourceData(
     'opportunities',
     requestId('opportunities').pipe(
-      Effect.flatMap((id) => listOpportunities({}, id)),
+      Effect.flatMap((id) => executeOpportunityRecords({}, id)),
       Effect.map((response) => response.items.map(toOpportunity)),
     ),
   ),

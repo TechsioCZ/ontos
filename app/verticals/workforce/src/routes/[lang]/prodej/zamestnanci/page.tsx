@@ -40,7 +40,7 @@ import { createContext, use, useEffect, useRef, useState } from 'react';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeUpdateEmployee } from '../../../../api/update-employee-action-client.ts';
 import { committedResult, pendingProposalMessage } from '../../../../api/action-result.ts';
-import { executeFreshRecords } from '../../../../api/records-consumer.ts';
+import { executeFreshRecords } from './employee-records.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { legalEntityOf, usePageData } from '../../../../runtime/use-page-data.ts';
 import type { WorkforceCommand } from '../../../../../shared/actions/apply-command.ts';
