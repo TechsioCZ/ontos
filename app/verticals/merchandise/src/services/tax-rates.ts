@@ -382,6 +382,7 @@ const callTax = <A, E>(scope: OperationalScope, read: TaxRead<A, E>): Effect.Eff
       acquireDelegatedGatewayContext(
         {
           audience: TAX_AUDIENCE,
+          callingAppId: 'merchandise',
           legalEntityScope: 'subject',
           requestCorrelation: scope.correlationId,
           subject: { _tag: 'Assertion', scope },

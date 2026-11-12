@@ -57,6 +57,7 @@ export const FinanceTaxRatesLive = Layer.effect(
       acquireDelegatedGatewayContext(
         {
           audience: TAX_AUDIENCE,
+          callingAppId: 'finance-billing',
           legalEntityScope: 'subject',
           requestCorrelation: scope.correlationId,
           subject: { _tag: 'Assertion', scope },
