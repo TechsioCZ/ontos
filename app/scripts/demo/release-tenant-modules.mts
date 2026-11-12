@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * Release step: install the modules each stage Tenant is approved to have and still lacks
- * (`stage-tenant-modules.mts`), through `packages/core-runtime/src/install/release-tenant-modules.ts`.
+ * Release step: install the modules stage's release rules require and a Tenant still lacks (`stage-tenant-modules.mts`:
+ * Tax wherever Merchandise or Finance Billing is active), through
+ * `packages/core-runtime/src/install/release-tenant-modules.ts`. The Tenants are derived from Core's module states.
  *
  * The app host runs it once per release, right after it publishes the composition, so the module is checked against
  * the composition that now serves. It acts as the platform: the state and history rows are written as `system`, and
@@ -29,7 +30,10 @@ import { AccessWriteJournalStoreLive } from '../../packages/core-runtime/src/acc
 import { CoreDatabaseLive } from '../../packages/core-runtime/src/db/client.ts';
 import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 import { makeDatabaseIdentityEnrollmentLive } from '../../packages/core-runtime/src/db/database-identities.ts';
-import { installReleaseTenantModules } from '../../packages/core-runtime/src/install/release-tenant-modules.ts';
+import {
+  deriveReleaseTenantModules,
+  installReleaseTenantModules,
+} from '../../packages/core-runtime/src/install/release-tenant-modules.ts';
 import type { ReleaseTenantModulesReport } from '../../packages/core-runtime/src/install/release-tenant-modules.ts';
 import {
   ActiveApplicationCompositionConfigLive,
@@ -38,7 +42,7 @@ import {
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { buildApplicationCompositionCatalog } from '../../packages/core-runtime/src/modules/application-composition-catalog.ts';
 import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
-import { stageReleaseTenantModules } from './stage-tenant-modules.mts';
+import { stageReleaseModuleRules } from './stage-tenant-modules.mts';
 
 const LOG_PREFIX = '[release-modules]';
 /**
@@ -113,10 +117,14 @@ export const installDeclaredModules = Effect.gen(function* installDeclaredModule
   const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition).pipe(
     Effect.mapError(() => failure('the active composition does not form a module catalog')),
   );
+  const deadline = DateTime.addDuration(yield* DateTime.now, RELEASE_MODULES_BUDGET);
+  const modules = yield* deriveReleaseTenantModules(stageReleaseModuleRules).pipe(
+    Effect.mapError(() => failure('the Tenant module states could not be read')),
+  );
   const report = yield* installReleaseTenantModules({
     catalog,
-    deadline: DateTime.addDuration(yield* DateTime.now, RELEASE_MODULES_BUDGET),
-    modules: stageReleaseTenantModules,
+    deadline,
+    modules,
     runReference: snapshot.composition.revision,
   });
   for (const line of reportLines(report)) {

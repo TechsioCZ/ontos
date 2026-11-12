@@ -16,11 +16,16 @@ import { CoreDatabase } from '../../src/db/client.ts';
 import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
 import type { AccessCatalogModule, AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
 import { makeAccessFenceSweepBackoffs, sweepLapsedAccessFences } from '../../src/access/lifecycle/fence-sweeper.ts';
-import { installReleaseTenantModules, installUnderLock } from '../../src/install/release-tenant-modules.ts';
+import {
+  deriveReleaseTenantModules,
+  installReleaseTenantModules,
+  installUnderLock,
+} from '../../src/install/release-tenant-modules.ts';
 import type { ReleaseTenantModule } from '../../src/install/release-tenant-modules.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { makeInstalledCatalogFixture } from '../support/installed-catalog.ts';
+import { insertTenantStatement } from '../support/access-scenarios/database.ts';
 import {
   ownerScope,
   SCENARIO_COMPANY,
@@ -36,6 +41,7 @@ import {
  * a person set is never touched.
  */
 const SELLING = 'billing.invoices';
+const MERCHANDISE = 'shop.goods';
 const TAX = 'tax.rates';
 const OTHER = 'crm.notes';
 const TAX_READ = 'tax.rates.rule-set.read';
@@ -104,6 +110,10 @@ const declared = (tenantId: TenantId): readonly ReleaseTenantModule[] => [
   { moduleKey: OTHER, sellingModuleKeys: [], tenantId },
   { moduleKey: TAX, sellingModuleKeys: [], tenantId: scenarioUid(99) },
 ];
+
+const stateRow = (index: number, tenantId: string, moduleKey: string, state = 'active') =>
+  `insert into core.tenant_module_states (tenant_module_state_id, tenant_id, module_key, state) values
+     ('${scenarioUid(700 + index)}', '${tenantId}', '${moduleKey}', '${state}')`;
 
 const install = (modules: readonly ReleaseTenantModule[]) =>
   installReleaseTenantModules({ catalog, modules, reconcileRetrySpacing: Duration.zero, runReference: RUN });
@@ -510,6 +520,117 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
         expect(refused.reconciles).toEqual([]);
         expect(yield* historyOf(admin, tenantId)).toEqual([]);
         expect(yield* wakeUpsOf(admin, tenantId)).toEqual([]);
+      }),
+    ),
+  );
+
+  suite.effect('derives Tax for every Tenant that sells or invoices, from the module states, and for no other', () =>
+    withProjectionTenant({ activeModules: [SELLING] }, (invoicing, admin) =>
+      Effect.gen(function* derivesFromStates() {
+        const selling = scenarioUid(81);
+        const both = scenarioUid(82);
+        const neither = scenarioUid(83);
+        const suspended = scenarioUid(84);
+        const ended = scenarioUid(85);
+        const platform = PLATFORM_TENANT.tenantId;
+        yield* Effect.forEach(
+          [
+            ...[selling, both, neither, suspended, ended].map(insertTenantStatement),
+            `insert into core.tenants (tenant_id, slug, name, status, default_locale)
+               values ('${platform}', 'platform-test', 'Platform', 'active', 'cs') on conflict do nothing`,
+            `update core.tenants set status = 'suspended' where tenant_id = '${suspended}'`,
+            stateRow(1, selling, MERCHANDISE),
+            stateRow(2, both, MERCHANDISE),
+            stateRow(3, both, SELLING),
+            stateRow(4, both, TAX),
+            stateRow(5, neither, OTHER),
+            stateRow(6, suspended, SELLING),
+            stateRow(7, ended, SELLING, 'inactive'),
+            stateRow(8, platform, SELLING),
+          ],
+          (statement) => admin.unsafe(statement).pipe(Effect.orDie),
+          { concurrency: 1, discard: true },
+        );
+        const derived = yield* deriveReleaseTenantModules([
+          { moduleKey: TAX, whereActive: [MERCHANDISE, SELLING] },
+        ]).pipe(Effect.orDie);
+        // Finance only, Merchandise only, and both (Tax already active, kept so its install is a no-op); never the
+        // platform tenant, a Tenant with neither, a suspended Tenant, or one whose selling module was ended.
+        expect(derived).toEqual(
+          [invoicing, selling, both]
+            .toSorted()
+            .map((tenantId) => ({ moduleKey: TAX, sellingModuleKeys: [MERCHANDISE, SELLING], tenantId })),
+        );
+      }),
+    ),
+  );
+
+  suite.effect('a derived Tenant that already has Tax active is a no-op: no state, history or audit written', () =>
+    withProjectionTenant({ activeModules: [SELLING, TAX] }, (tenantId, admin) =>
+      Effect.gen(function* alreadyActiveNoOp() {
+        yield* bootstrapOwner(tenantId);
+        const derived = yield* deriveReleaseTenantModules([{ moduleKey: TAX, whereActive: [SELLING] }]).pipe(
+          Effect.orDie,
+        );
+        expect(derived).toEqual([{ moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }]);
+        const run = yield* install(derived);
+        expect(run.modules.map(({ outcome }) => outcome)).toEqual(['already_active']);
+        expect(yield* historyOf(admin, tenantId)).toEqual([]);
+        const audit = yield* admin
+          .unsafe(
+            `select 1 from core.audit_events
+              where tenant_id = '${tenantId}' and event_type = 'core.modules.tenant-module-installed-by-release'`,
+          )
+          .pipe(Effect.orDie);
+        expect(audit).toEqual([]);
+      }),
+    ),
+  );
+
+  suite.effect('installs the modules the manifest installs with it in the same transaction, never a set state', () =>
+    withProjectionTenant({ activeModules: [SELLING] }, (tenantId, admin) =>
+      Effect.gen(function* installsCompanions() {
+        yield* bootstrapOwner(tenantId);
+        const base = makeModuleContractFixture({ appId: 'tax', moduleId: TAX });
+        const withNotes = makeInstalledCatalogFixture(
+          makeModuleContractFixture({ appId: 'billing', moduleId: SELLING }),
+          makeModuleContractFixture({ appId: 'notes', moduleId: OTHER }),
+          {
+            ...base,
+            manifest: { ...base.manifest, activation: { ...base.manifest.activation, installsWith: [OTHER] } },
+          },
+        );
+        const run = yield* installReleaseTenantModules({
+          catalog: withNotes,
+          modules: [{ moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }],
+          reconcileRetrySpacing: Duration.zero,
+          runReference: RUN,
+        });
+        expect(run.modules).toEqual([
+          {
+            detail: `installed active by the release, with ${OTHER}`,
+            moduleKey: TAX,
+            outcome: 'installed',
+            tenantId,
+          },
+        ]);
+        expect(run.reconciles).toHaveLength(1);
+        expect((yield* historyOf(admin, tenantId)).map(({ module_key: moduleKey }) => moduleKey).toSorted()).toEqual([
+          OTHER,
+          TAX,
+        ]);
+        const audit = yield* admin
+          .unsafe(
+            `select target_module_key, evidence_json->>'installedWith' as installed_with from core.audit_events
+              where tenant_id = '${tenantId}' and event_type = 'core.modules.tenant-module-installed-by-release'
+              order by target_module_key`,
+          )
+          .pipe(Effect.orDie);
+        // `crm.notes` sorts before `tax.rates`.
+        expect(audit).toEqual([
+          { installed_with: TAX, target_module_key: OTHER },
+          { installed_with: null, target_module_key: TAX },
+        ]);
       }),
     ),
   );

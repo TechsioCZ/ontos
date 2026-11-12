@@ -1,18 +1,22 @@
 /**
- * The per-Tenant modules approved for stage, in two explicit lists:
+ * The per-Tenant modules approved for stage:
  *
  * - `stageActivationScopes`: what `activate-market-stage.mts`, the reviewed manual path, may activate;
- * - `stageReleaseTenantModules`: the pairs a release installs by itself when a Tenant still lacks them
- *   (`release-tenant-modules.mts`, run by the app host after it publishes the composition; additive only, it never
- *   changes a state a person set). Every pair is reviewed into it one by one and must also be a manual pair; adding a
- *   module to the manual list never makes a release install it.
+ * - `stageReleaseModuleRules`: what a release installs by itself (`release-tenant-modules.mts`, run by the app host
+ *   after it publishes the composition; additive only, it never changes a state a person set). A rule names a module
+ *   and the modules that require it; the Tenants are derived from Core's module states at every release, never
+ *   listed here.
  *
- * `commerce.tax` is the one source of VAT rates and seller VAT regime, so every stage Tenant that sells or
- * invoices gets it, and only where one of `sellingModuleKeys` is already active. The local development (`…0010`)
- * and verification (`…0090`) Tenants are not listed: neither sells nor invoices (the verification Tenant runs Tasks
- * only), and the selling-module check would refuse them anyway.
+ * `commerce.tax` is the one source of VAT rates and seller VAT regime, and Finance creates no line without it, so
+ * every Tenant where one of `sellingModuleKeys` is active gets it: whoever sells (Merchandise) or invoices (Finance
+ * Billing). By the repo's own seeds that is the demo tenant (both modules), N1 and the AKROS playground
+ * (Merchandise); the local development (`…0010`, party, market catalogue and customer context only) and verification
+ * (`…0090`, Tasks only) Tenants have neither, so the derivation leaves them alone. Any other stage Tenant that has
+ * either module active gets Tax at the next release.
  */
 import { Result } from 'effect';
+
+import type { ReleaseModuleRule } from '../../packages/core-runtime/src/install/release-tenant-modules.ts';
 
 import { demoTenantId } from './fixture-ids.mts';
 import { N1_TENANT_ID } from './n1-stage-grants.mts';
@@ -70,16 +74,7 @@ export const activationSellingEvidence = (
       );
 };
 
-/** One module a release installs where a Tenant still lacks it, with the selling modules it needs. */
-export interface StageReleaseTenantModule {
-  readonly moduleKey: StageMarketModuleKey;
-  readonly sellingModuleKeys: readonly (typeof sellingModuleKeys)[number][];
-  readonly tenantId: string;
-}
-
-/** The release's own list, today exactly `commerce.tax` for the three selling Tenants. */
-export const stageReleaseTenantModules: readonly StageReleaseTenantModule[] = [
-  { moduleKey: taxModuleKey, sellingModuleKeys, tenantId: demoTenantId },
-  { moduleKey: taxModuleKey, sellingModuleKeys, tenantId: N1_TENANT_ID },
-  { moduleKey: taxModuleKey, sellingModuleKeys, tenantId: AKROS_PLAYGROUND_TENANT_ID },
+/** The release's own rules: `commerce.tax` wherever a Tenant sells or invoices. */
+export const stageReleaseModuleRules: readonly ReleaseModuleRule[] = [
+  { moduleKey: taxModuleKey, whereActive: sellingModuleKeys },
 ];

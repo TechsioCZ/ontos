@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import { DateTime, Duration, Effect, Match, Result, Schema } from 'effect';
 
 import { AccessReleaseStore } from '../access/changes/persistence/release-store.ts';
@@ -15,6 +15,7 @@ import type { OperationalScope } from '../operations/context.ts';
 import { auditEvents, tenantModuleStateChanges, tenantModuleStates, tenants } from '../db/schema.ts';
 import type { InstalledModuleCatalog } from '../modules/catalog.ts';
 import { OntosModuleIdSchema } from '../modules/manifest.ts';
+import { tenantModuleInstallsWithClosure } from '../modules/module-dependency-contracts.ts';
 import {
   tenantModuleIntrinsicDependencyClosure,
   validateTenantModuleIntrinsicDependencyStates,
@@ -25,7 +26,10 @@ import {
  * Release-time installation of the modules a deployment declares per Tenant ("Tenant → modules that must be
  * active"). It is the platform's own step, so routine module installation never needs a person or a host shell:
  *
- * - Additive only. A module with no state row is installed `active`; an `active` module is left alone; a module a
+ * - Which Tenant gets which module is derived from Core's module states (`deriveReleaseTenantModules`): a deployment
+ *   declares rules ("module X wherever module Y is active"), never a list of Tenants.
+ * - Additive only. A module with no state row is installed `active`, together with the modules its manifest
+ *   installs with it (`activation.installsWith`) that the Tenant has no state for; an `active` module is left alone; a module a
  *   person has set to any other state (inactive, suspended, …) is left exactly as set and reported. It never
  *   deactivates anything.
  * - The module must be published by the active composition, and its intrinsic dependencies must be active; a module
@@ -58,6 +62,15 @@ export interface ReleaseTenantModule {
   /** When not empty, the Tenant must already have one of these modules active (it sells or invoices). */
   readonly sellingModuleKeys: readonly string[];
   readonly tenantId: string;
+}
+
+/**
+ * A module the deployment requires wherever another module is active: the release installs `moduleKey` in every
+ * Tenant that has one of `whereActive` active. The Tenants come from Core's module states, never from a list.
+ */
+export interface ReleaseModuleRule {
+  readonly moduleKey: string;
+  readonly whereActive: readonly string[];
 }
 
 export const ReleaseModuleOutcomeSchema = Schema.Literals([
@@ -121,25 +134,96 @@ const moduleStatesOf = (
     .where(and(eq(tenantModuleStates.tenantId, tenantId), inArray(tenantModuleStates.moduleKey, [...moduleKeys])))
     .pipe(Effect.mapError((cause) => refusal('the module states could not be read', cause)));
 
-/**
- * The install itself, in one transaction under the Tenant's row lock, exactly as the module-state Action persists a
- * change: dependency states re-read under the lock, then the history row and the state row that points at it.
- * `false` when another writer installed the module first.
- */
 /** What the install under the Tenant's row lock found: it installed, the module was already there, or no selling. */
 export const LockedInstallSchema = Schema.Union([
-  Schema.TaggedStruct('Installed', {}),
+  Schema.TaggedStruct('Installed', { installedWith: Schema.Array(Schema.String) }),
   Schema.TaggedStruct('AlreadyPresent', { state: Schema.String }),
   Schema.TaggedStruct('NotSelling', {}),
 ]);
 export type LockedInstall = typeof LockedInstallSchema.Type;
 
+/** One `active` install as the module-state Action persists it, audited as the Tenant's release actor's. */
+const writeInstall = Effect.fn('ReleaseTenantModules.writeInstall')(function* writeReleaseInstall(
+  transaction: CoreTransaction,
+  install: {
+    readonly changedAt: Date;
+    readonly installedWith?: string;
+    readonly moduleKey: string;
+    readonly runReference: string;
+    readonly tenantId: string;
+  },
+) {
+  const { changedAt, moduleKey, runReference, tenantId } = install;
+  const history = yield* transaction
+    .insert(tenantModuleStateChanges)
+    .values({
+      changeSource: 'system',
+      moduleKey,
+      newState: 'active',
+      occurredAt: changedAt,
+      previousState: null,
+      reason:
+        install.installedWith === undefined
+          ? INSTALLATION_REASON
+          : `${INSTALLATION_REASON}, installed with ${install.installedWith}`,
+      tenantId,
+    })
+    .returning({ moduleStateChangeId: tenantModuleStateChanges.moduleStateChangeId })
+    .pipe(Effect.mapError((cause) => refusal('the installation history could not be written', cause)));
+  const [change] = history;
+  if (change === undefined) {
+    return yield* refusal('the installation history was not written');
+  }
+  yield* transaction
+    .insert(tenantModuleStates)
+    .values({ lastChangeId: change.moduleStateChangeId, moduleKey, state: 'active', tenantId, updatedAt: changedAt })
+    .pipe(Effect.mapError((cause) => refusal('the module state could not be written', cause)));
+  // The Action rates this change critical and audits it as sensitive; the platform's install is audited the same
+  // way, by the Tenant's release actor (a system principal), with the release that made it. No secret is recorded.
+  const evidence = {
+    compositionRevision: runReference,
+    moduleKey,
+    newState: 'active',
+    previousState: null,
+    risk: 'critical',
+  };
+  return yield* transaction
+    .insert(auditEvents)
+    .values({
+      auditProfile: 'sensitive',
+      authContextRef: `job:${RELEASE_MODULE_INSTALLATION_JOB.jobKey}:run:${runReference}`,
+      authMethod: 'system',
+      eventType: 'core.modules.tenant-module-installed-by-release',
+      evidenceJson:
+        install.installedWith === undefined ? evidence : { ...evidence, installedWith: install.installedWith },
+      outcome: 'succeeded',
+      outcomeCode: 'module_installed',
+      outcomeStage: 'execution',
+      principalId: releaseActorId(tenantId),
+      targetModuleKey: moduleKey,
+      targetResourceId: moduleKey,
+      targetResourceType: 'tenant-module-state',
+      tenantId,
+    })
+    .pipe(
+      Effect.mapError((cause) => refusal('the installation audit record could not be written', cause)),
+      Effect.asVoid,
+    );
+});
+
+/**
+ * The install itself, in one transaction under the Tenant's row lock, exactly as the module-state Action persists a
+ * change: dependency states re-read under the lock, then the history row and the state row that points at it. The
+ * modules the manifest installs with it (`companions`, each with its own intrinsic dependencies) that the Tenant has
+ * no state for are installed in the same transaction; a state somebody set is left as set.
+ */
 export const installUnderLock = Effect.fn('ReleaseTenantModules.installUnderLock')(function* installModuleUnderLock(
   transaction: CoreTransaction,
   entry: ReleaseTenantModule,
   dependencies: readonly string[],
   /** Names the release in the audit record: the composition revision the step ran against. */
   runReference: string,
+  companions: ReadonlyMap<string, readonly string[]> = new Map(),
 ) {
   const locked = yield* transaction
     .select({ tenantId: tenants.tenantId })
@@ -150,9 +234,19 @@ export const installUnderLock = Effect.fn('ReleaseTenantModules.installUnderLock
   if (locked.length !== 1) {
     return yield* refusal('the Tenant disappeared before its module could be installed');
   }
-  if (dependencies.length > 0) {
-    const rows = yield* moduleStatesOf(transaction, entry.tenantId, dependencies);
-    yield* validateTenantModuleIntrinsicDependencyStates(dependencies, rows).pipe(
+  const presentCompanions =
+    companions.size === 0 ? [] : yield* moduleStatesOf(transaction, entry.tenantId, [...companions.keys()]);
+  const present = new Set(presentCompanions.map(({ moduleKey }) => moduleKey));
+  const installedWith = [...companions.keys()].filter((moduleKey) => !present.has(moduleKey)).toSorted();
+  // A module installed in this same transaction satisfies a dependency on it.
+  const required = [
+    ...new Set([...dependencies, ...installedWith.flatMap((moduleKey) => companions.get(moduleKey) ?? [])]),
+  ]
+    .filter((moduleKey) => moduleKey !== entry.moduleKey && !installedWith.includes(moduleKey))
+    .toSorted();
+  if (required.length > 0) {
+    const rows = yield* moduleStatesOf(transaction, entry.tenantId, required);
+    yield* validateTenantModuleIntrinsicDependencyStates(required, rows).pipe(
       Effect.mapError((cause) => refusal(`a module it needs is not active (${cause.reason})`, cause)),
     );
   }
@@ -168,60 +262,14 @@ export const installUnderLock = Effect.fn('ReleaseTenantModules.installUnderLock
     return LockedInstallSchema.members[1].make({ state: current.state });
   }
   const changedAt = yield* DateTime.nowAsDate;
-  const history = yield* transaction
-    .insert(tenantModuleStateChanges)
-    .values({
-      changeSource: 'system',
-      moduleKey: entry.moduleKey,
-      newState: 'active',
-      occurredAt: changedAt,
-      previousState: null,
-      reason: INSTALLATION_REASON,
-      tenantId: entry.tenantId,
-    })
-    .returning({ moduleStateChangeId: tenantModuleStateChanges.moduleStateChangeId })
-    .pipe(Effect.mapError((cause) => refusal('the installation history could not be written', cause)));
-  const [change] = history;
-  if (change === undefined) {
-    return yield* refusal('the installation history was not written');
-  }
-  yield* transaction
-    .insert(tenantModuleStates)
-    .values({
-      lastChangeId: change.moduleStateChangeId,
-      moduleKey: entry.moduleKey,
-      state: 'active',
-      tenantId: entry.tenantId,
-      updatedAt: changedAt,
-    })
-    .pipe(Effect.mapError((cause) => refusal('the module state could not be written', cause)));
-  // The Action rates this change critical and audits it as sensitive; the platform's install is audited the same
-  // way, by the Tenant's release actor (a system principal), with the release that made it. No secret is recorded.
-  yield* transaction
-    .insert(auditEvents)
-    .values({
-      auditProfile: 'sensitive',
-      authContextRef: `job:${RELEASE_MODULE_INSTALLATION_JOB.jobKey}:run:${runReference}`,
-      authMethod: 'system',
-      eventType: 'core.modules.tenant-module-installed-by-release',
-      evidenceJson: {
-        compositionRevision: runReference,
-        moduleKey: entry.moduleKey,
-        newState: 'active',
-        previousState: null,
-        risk: 'critical',
-      },
-      outcome: 'succeeded',
-      outcomeCode: 'module_installed',
-      outcomeStage: 'execution',
-      principalId: releaseActorId(entry.tenantId),
-      targetModuleKey: entry.moduleKey,
-      targetResourceId: entry.moduleKey,
-      targetResourceType: 'tenant-module-state',
-      tenantId: entry.tenantId,
-    })
-    .pipe(Effect.mapError((cause) => refusal('the installation audit record could not be written', cause)));
-  return LockedInstallSchema.members[0].make({});
+  const install = { changedAt, runReference, tenantId: entry.tenantId };
+  yield* writeInstall(transaction, { ...install, moduleKey: entry.moduleKey });
+  yield* Effect.forEach(
+    installedWith,
+    (moduleKey) => writeInstall(transaction, { ...install, installedWith: entry.moduleKey, moduleKey }),
+    { concurrency: 1, discard: true },
+  );
+  return LockedInstallSchema.members[0].make({ installedWith });
 });
 
 /**
@@ -239,10 +287,20 @@ export const lockedInstallReport = (entry: ReleaseTenantModule, locked: LockedIn
             'left_as_set',
             `set ${state} by someone else while this release decided; a release never changes that`,
           ),
-    Installed: () => report(entry, 'installed', 'installed active by the release'),
+    Installed: ({ installedWith }) =>
+      report(
+        entry,
+        'installed',
+        installedWith.length === 0
+          ? 'installed active by the release'
+          : `installed active by the release, with ${installedWith.join(', ')}`,
+      ),
     NotSelling: () =>
       report(entry, 'selling_module_missing', `none of ${entry.sellingModuleKeys.join(', ')} is active`),
   });
+
+const unresolvedDependencies = (cause: { readonly reason: string }) =>
+  refusal(`its dependencies could not be resolved (${cause.reason})`, cause);
 
 /** Decide and, when the module is missing, install one module of one Tenant. Never fails: the outcome says why. */
 const installOne = Effect.fn('ReleaseTenantModules.installOne')(
@@ -253,7 +311,7 @@ const installOne = Effect.fn('ReleaseTenantModules.installOne')(
     runReference: string,
   ) {
     // The one shared rule: the platform's own tenant serves no people and holds no access, so no module is ever
-    // installed into it and it never gets a release actor. The deployment's list never names it; this keeps it so.
+    // installed into it and it never gets a release actor. The derivation never yields it; this keeps it so.
     if (!tenantServesPeople(entry.tenantId)) {
       return report(entry, 'tenant_absent', 'the platform tenant serves no people; nothing is installed into it');
     }
@@ -285,8 +343,24 @@ const installOne = Effect.fn('ReleaseTenantModules.installOne')(
     yield* validateTenantModuleStateTransition(catalog, moduleId, 'active').pipe(
       Effect.mapError((cause) => refusal(cause.reason, cause)),
     );
-    const dependencies = yield* tenantModuleIntrinsicDependencyClosure(catalog, entry.moduleKey).pipe(
-      Effect.mapError((cause) => refusal(`its dependencies could not be resolved (${cause.reason})`, cause)),
+    // Both closures read the in-memory catalog only.
+    const [dependencies, companionKeys] = yield* Effect.all(
+      [
+        tenantModuleIntrinsicDependencyClosure(catalog, entry.moduleKey),
+        tenantModuleInstallsWithClosure(catalog, entry.moduleKey),
+      ],
+      { concurrency: 1 },
+    ).pipe(Effect.mapError(unresolvedDependencies));
+    const companions = new Map(
+      yield* Effect.forEach(
+        companionKeys,
+        (moduleKey) =>
+          tenantModuleIntrinsicDependencyClosure(catalog, moduleKey).pipe(
+            Effect.map((needs) => [moduleKey, needs] as const),
+            Effect.mapError(unresolvedDependencies),
+          ),
+        { concurrency: 1 },
+      ),
     );
     // The release actor is the audited author of the install, so it exists before the install transaction starts.
     const releases = yield* AccessReleaseStore;
@@ -298,7 +372,7 @@ const installOne = Effect.fn('ReleaseTenantModules.installOne')(
       })
       .pipe(Effect.mapError((cause) => refusal(`${cause.code}: ${cause.reason}`, cause)));
     const installed = yield* executor
-      .transaction((transaction) => installUnderLock(transaction, entry, dependencies, runReference))
+      .transaction((transaction) => installUnderLock(transaction, entry, dependencies, runReference, companions))
       .pipe(
         Effect.mapError((cause) =>
           Schema.is(ReleaseTenantModuleError)(cause) ? cause : refusal('the transaction failed', cause),
@@ -403,6 +477,48 @@ const reconcileInstalledTenant = Effect.fn('ReleaseTenantModules.reconcileTenant
       ),
     ),
 );
+
+/**
+ * The modules each rule requires, one per Tenant it applies to: every active Tenant that serves people (never the
+ * platform's own tenant) and has one of the rule's modules active, in Tenant order. A Tenant that already has the
+ * module active is kept: its install is a no-op reported `already_active`, and its reconcile repairs an earlier one
+ * that failed. Whether a Tenant still sells is decided again under its row lock when the module is installed.
+ */
+export const deriveReleaseTenantModules = Effect.fn('ReleaseTenantModules.derive')(function* deriveReleaseModules(
+  rules: readonly ReleaseModuleRule[],
+) {
+  const { executor } = yield* CoreDatabase;
+  const derived = yield* Effect.forEach(
+    rules,
+    (rule) =>
+      rule.whereActive.length === 0
+        ? Effect.succeed([])
+        : executor
+            .selectDistinct({ tenantId: tenantModuleStates.tenantId })
+            .from(tenantModuleStates)
+            .innerJoin(tenants, eq(tenants.tenantId, tenantModuleStates.tenantId))
+            .where(
+              and(
+                inArray(tenantModuleStates.moduleKey, [...rule.whereActive]),
+                eq(tenantModuleStates.state, 'active'),
+                eq(tenants.status, 'active'),
+              ),
+            )
+            .orderBy(asc(tenantModuleStates.tenantId))
+            .pipe(
+              Effect.mapError((cause) => refusal('the Tenant module states could not be read', cause)),
+              Effect.map((rows) =>
+                rows.flatMap(({ tenantId }): readonly ReleaseTenantModule[] =>
+                  tenantServesPeople(tenantId)
+                    ? [{ moduleKey: rule.moduleKey, sellingModuleKeys: rule.whereActive, tenantId }]
+                    : [],
+                ),
+              ),
+            ),
+    { concurrency: 1 },
+  );
+  return derived.flat();
+});
 
 /**
  * Installs every declared module that a Tenant still lacks, then reconciles each Tenant whose declared module is

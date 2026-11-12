@@ -7,7 +7,10 @@ import { tenantModuleStateChanges, tenantModuleStates, tenants } from '../db/sch
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
 import type { InstalledModuleCatalog } from './catalog.ts';
-import { tenantModuleIntrinsicDependencyClosure } from './module-dependency-contracts.ts';
+import {
+  tenantModuleInstallsWithClosure,
+  tenantModuleIntrinsicDependencyClosure,
+} from './module-dependency-contracts.ts';
 
 import { unsatisfiedTenantModuleDependency as unsatisfiedDependency } from './tenant-module-state-unsatisfied-dependency-error.ts';
 import type { OntosModuleId } from './manifest.ts';
@@ -254,6 +257,8 @@ export interface PersistTenantModuleStateChangeInput {
 }
 
 export interface PersistTenantModuleStateChangeResult {
+  /** The modules installed `active` with this one in the same transaction (its `installsWith` the Tenant lacked). */
+  readonly installedWith: readonly string[];
   readonly moduleKey: string;
   readonly newState: TenantModuleState;
   readonly previousState: TenantModuleState | null;
@@ -302,8 +307,32 @@ export const persistTenantModuleStateChange = Effect.fn('TenantModuleStateServic
     // The tenant row lock serializes every state mutation, including provider deactivation.
     // Resolve the trusted revision's closure and read its states inside this same transaction.
     yield* validateTenantModuleStateTransition(input.catalog, input.moduleKey, input.newState);
+    // Activation installs the modules the manifest names in `installsWith` that the Tenant has no state for yet; a
+    // state somebody set is left exactly as set.
+    const companions =
+      input.newState === 'active' ? yield* tenantModuleInstallsWithClosure(input.catalog, input.moduleKey) : [];
+    const presentCompanions =
+      companions.length === 0
+        ? []
+        : yield* transaction
+            .select({ moduleKey: tenantModuleStates.moduleKey })
+            .from(tenantModuleStates)
+            .where(
+              and(eq(tenantModuleStates.tenantId, input.tenantId), inArray(tenantModuleStates.moduleKey, companions)),
+            )
+            .pipe(Effect.mapError(persistenceUnavailable));
+    const present = new Set(presentCompanions.map(({ moduleKey }) => moduleKey));
+    const installedWith = companions.filter((moduleKey) => !present.has(moduleKey));
     if (input.newState === 'active' || input.newState === 'read_only') {
-      const dependencies = yield* tenantModuleIntrinsicDependencyClosure(input.catalog, input.moduleKey);
+      const closures = yield* Effect.forEach(
+        [input.moduleKey, ...installedWith],
+        (moduleKey) => tenantModuleIntrinsicDependencyClosure(input.catalog, moduleKey),
+        { concurrency: 1 },
+      );
+      // A module installed in this same transaction satisfies a dependency on it.
+      const dependencies = [...new Set(closures.flat())]
+        .filter((moduleKey) => moduleKey !== input.moduleKey && !installedWith.includes(moduleKey))
+        .toSorted();
       if (dependencies.length > 0) {
         const dependencyRows = yield* transaction
           .select({ moduleKey: tenantModuleStates.moduleKey, state: tenantModuleStates.state })
@@ -408,7 +437,43 @@ export const persistTenantModuleStateChange = Effect.fn('TenantModuleStateServic
       }
     }
 
+    yield* Effect.forEach(
+      installedWith,
+      Effect.fnUntraced(function* installCompanion(moduleKey) {
+        const [companionHistory] = yield* transaction
+          .insert(tenantModuleStateChanges)
+          .values({
+            actionInvocationId: input.actionInvocationId,
+            changedByPrincipalId: input.principalId,
+            changeSource,
+            moduleKey,
+            newState: 'active',
+            occurredAt: changedAt,
+            previousState: null,
+            reason: `Installed with ${input.moduleKey}`,
+            tenantId: input.tenantId,
+          })
+          .returning({ moduleStateChangeId: tenantModuleStateChanges.moduleStateChangeId })
+          .pipe(Effect.mapError(persistenceUnavailable));
+        if (companionHistory === undefined) {
+          return yield* persistenceUnavailable();
+        }
+        return yield* transaction
+          .insert(tenantModuleStates)
+          .values({
+            lastChangeId: companionHistory.moduleStateChangeId,
+            moduleKey,
+            state: 'active',
+            tenantId: input.tenantId,
+            updatedAt: changedAt,
+          })
+          .pipe(Effect.mapError(persistenceUnavailable), Effect.asVoid);
+      }),
+      { concurrency: 1, discard: true },
+    );
+
     return {
+      installedWith,
       moduleKey: input.moduleKey,
       newState: input.newState,
       previousState,

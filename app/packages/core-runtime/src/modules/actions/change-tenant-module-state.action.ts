@@ -87,7 +87,7 @@ const handleChangeTenantModuleState = Effect.fn('ChangeTenantModuleStateAction.h
     const installedCatalog = yield* InstalledModuleCatalogService;
     const catalog = yield* installedCatalog.loadForRevision(context.compositionRevision);
     yield* validateTenantModuleStateTransition(catalog, payload.moduleKey, payload.newState);
-    const result = yield* context.services.persist(
+    const { installedWith, ...result } = yield* context.services.persist(
       withOptionalProperty(
         withOptionalProperty(
           {
@@ -131,6 +131,20 @@ const handleChangeTenantModuleState = Effect.fn('ChangeTenantModuleStateAction.h
       subjectResourceId: payload.moduleKey,
       subjectResourceType: 'tenant-module-state',
     });
+    // Each module installed with it is its own state change; the one Outbox wake-up reconciles the whole Tenant.
+    yield* Effect.forEach(
+      installedWith,
+      (moduleKey) =>
+        context.addDomainEvent({
+          eventType: 'core.modules.tenant-module-state-changed.v1',
+          payloadJson: { moduleKey, newState: 'active', previousState: null },
+          producerModuleKey: 'core.modules',
+          subjectModuleKey: moduleKey,
+          subjectResourceId: moduleKey,
+          subjectResourceType: 'tenant-module-state',
+        }),
+      { concurrency: 1, discard: true },
+    );
     yield* context.addOutboxMessage(
       event,
       createChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxMessage({

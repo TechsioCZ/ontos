@@ -15,7 +15,15 @@ it('reports the state a concurrent writer left, never "installed concurrently" f
     detail: 'installed concurrently',
     outcome: 'already_active',
   });
-  expect(lockedInstallReport(entry, { _tag: 'Installed' })).toMatchObject({ outcome: 'installed' });
+  expect(lockedInstallReport(entry, { _tag: 'Installed', installedWith: [] })).toMatchObject({
+    detail: 'installed active by the release',
+    outcome: 'installed',
+  });
+  // The modules the manifest installs with it are named in the same line.
+  expect(lockedInstallReport(entry, { _tag: 'Installed', installedWith: ['crm.notes', 'work.tasks'] })).toMatchObject({
+    detail: 'installed active by the release, with crm.notes, work.tasks',
+    outcome: 'installed',
+  });
   expect(lockedInstallReport(entry, { _tag: 'NotSelling' })).toMatchObject({
     detail: 'none of demo.merchandise is active',
     outcome: 'selling_module_missing',

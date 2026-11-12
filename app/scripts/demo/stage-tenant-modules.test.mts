@@ -8,11 +8,14 @@ import { marketActivationScopeAllowed } from './activate-market-stage.mts';
 import { demoTenantId } from './fixture-ids.mts';
 import { N1_TENANT_ID } from './n1-stage-grants.mts';
 import { reportLines, reportProblems } from './release-tenant-modules.mts';
+import { financeBillingManifest } from '../../verticals/finance-billing/vertical.manifest.ts';
+import { merchandiseManifest } from '../../verticals/merchandise/vertical.manifest.ts';
 import {
   AKROS_PLAYGROUND_TENANT_ID,
   sellingModuleKeys,
   stageActivationScopes,
-  stageReleaseTenantModules,
+  stageReleaseModuleRules,
+  taxModuleKey,
 } from './stage-tenant-modules.mts';
 
 const tax = 'commerce.tax';
@@ -21,39 +24,39 @@ const appHostSource = () => readFileSync(new URL('../zerops/app-host.mts', impor
 /** Where the app host starts the release module step. */
 const RELEASE_STEP_MARKER = "'release-modules',";
 
-it('the release installs only its own reviewed pairs, each of them also a manual pair', () => {
-  const released = stageReleaseTenantModules.map(({ moduleKey, tenantId }) => `${tenantId} ${moduleKey}`);
-  // Exactly commerce.tax for the three selling Tenants: market catalogue, storefront registry, Projekty and Tasks
-  // stay manual, and whatever is added to the manual list later is never installed by a release on its own.
-  expect(released).toEqual([
+it('the release derives its Tenants from a rule, never from a list: Tax wherever a Tenant sells or invoices', () => {
+  expect(stageReleaseModuleRules).toEqual([{ moduleKey: tax, whereActive: selling }]);
+  expect([...sellingModuleKeys]).toEqual(selling);
+  expect(stageReleaseModuleRules.map(({ moduleKey }) => moduleKey)).toEqual([taxModuleKey]);
+});
+
+it('Finance Billing and Merchandise install Tax with them, exactly the modules the release rule names', () => {
+  const owners: readonly {
+    readonly activation: { readonly installsWith?: readonly string[] };
+    readonly module: { readonly id: string };
+  }[] = [financeBillingManifest, merchandiseManifest];
+  const installingTax = owners
+    .filter(({ activation }) => activation.installsWith?.includes(tax) === true)
+    .map(({ module }) => module.id)
+    .toSorted();
+  expect(installingTax).toEqual(selling);
+  expect(financeBillingManifest.activation.installsWith).toEqual([tax]);
+  expect(merchandiseManifest.activation.installsWith).toEqual([tax]);
+});
+
+it('the manual activation list still names Tax only beside the selling Tenants it was reviewed for', () => {
+  const manual = stageActivationScopes.flatMap(({ moduleKeys, tenantId }) =>
+    moduleKeys.map((key) => `${tenantId} ${key}`),
+  );
+  expect(manual.filter((pair) => pair.endsWith(` ${tax}`))).toEqual([
     `${demoTenantId} ${tax}`,
     `${N1_TENANT_ID} ${tax}`,
     `${AKROS_PLAYGROUND_TENANT_ID} ${tax}`,
   ]);
-  for (const { moduleKey, tenantId } of stageReleaseTenantModules) {
-    expect(marketActivationScopeAllowed(tenantId, moduleKey, 'session')).toBe(true);
-    // Never the platform's own tenant, which serves no people (the installer refuses it as well).
+  for (const tenantId of [demoTenantId, N1_TENANT_ID, AKROS_PLAYGROUND_TENANT_ID]) {
+    expect(marketActivationScopeAllowed(tenantId, tax, 'session')).toBe(true);
     expect(tenantServesPeople(tenantId)).toBe(true);
   }
-  const manual = stageActivationScopes.flatMap(({ moduleKeys, tenantId }) =>
-    moduleKeys.map((key) => `${tenantId} ${key}`),
-  );
-  expect(manual.filter((pair) => !released.includes(pair))).toEqual([
-    `${demoTenantId} commerce.market-catalog`,
-    `${demoTenantId} commerce.storefront-registry`,
-    `${demoTenantId} projects.core`,
-    `${N1_TENANT_ID} work.tasks`,
-  ]);
-});
-
-it('declares commerce.tax for the three selling Tenants, only where they already sell or invoice', () => {
-  expect(
-    stageReleaseTenantModules.filter(({ moduleKey }) => moduleKey === tax).map(({ tenantId }) => tenantId),
-  ).toEqual([demoTenantId, N1_TENANT_ID, AKROS_PLAYGROUND_TENANT_ID]);
-  for (const entry of stageReleaseTenantModules) {
-    expect(entry.sellingModuleKeys).toEqual(entry.moduleKey === tax ? selling : []);
-  }
-  expect([...sellingModuleKeys]).toEqual(selling);
 });
 
 it('reports every decision in one line and fails only on a module it could not install or project', () => {
@@ -129,7 +132,9 @@ it('the release step turns SIGTERM into an interrupt and keeps its own time limi
   const step = readFileSync(new URL('release-tenant-modules.mts', import.meta.url), 'utf-8');
   expect(step).toContain('NodeRuntime.runMain(');
   expect(step).not.toContain('Effect.runPromiseExit');
-  expect(step).toContain('deadline: DateTime.addDuration(yield* DateTime.now, RELEASE_MODULES_BUDGET)');
+  expect(step).toContain('const deadline = DateTime.addDuration(yield* DateTime.now, RELEASE_MODULES_BUDGET);');
+  // The Tenants come from Core's module states at every release, never from a list.
+  expect(step).toContain('deriveReleaseTenantModules(stageReleaseModuleRules)');
 });
 
 it('starts the release step with only the settings it reads, never the supervisor secrets', () => {
