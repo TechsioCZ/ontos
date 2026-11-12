@@ -5,7 +5,7 @@ import { RecordKeySchema } from '@app/core-runtime/access/ids';
 import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import type { PropertyState } from '../../shared/apis/records.ts';
-import { loadOwnerSearch } from '../../src/search/search-read.ts';
+import { loadOwnerSearch } from '../../src/services/search-read.ts';
 import { searchCompanyId, searchRecordIds, searchState, searchTenantId } from '../support/search-state.ts';
 
 const scope = {

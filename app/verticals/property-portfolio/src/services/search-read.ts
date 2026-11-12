@@ -7,7 +7,7 @@ import { RecordKeySchema } from '@app/core-runtime/access/ids';
 import { matchesCoreSearchValues, parseCoreSearchQuery } from '@app/core-runtime/search-contract';
 import { compareCoreSearchHits, coreSearchRelevance } from '@app/core-runtime/search-ranking';
 import type { PropertyState } from '../../shared/apis/records.ts';
-import { buildCurrentSearchDocuments } from './projection.ts';
+import { buildCurrentSearchDocuments } from './search-projection.ts';
 
 const predicateSchema = Schema.Struct({
   groups: Schema.Array(

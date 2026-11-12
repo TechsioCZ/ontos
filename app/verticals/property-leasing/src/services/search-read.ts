@@ -7,8 +7,8 @@ import { RecordKeySchema } from '@app/core-runtime/access/ids';
 import { matchesCoreSearchValues, parseCoreSearchQuery } from '@app/core-runtime/search-contract';
 import { compareCoreSearchHits, coreSearchRelevance } from '@app/core-runtime/search-ranking';
 import { OccupancyStateSchema } from '../../shared/apis/records.ts';
-import type { OccupancyPersistence } from '../services/persistence.service.ts';
-import { buildCurrentSearchDocuments } from './projection.ts';
+import type { OccupancyPersistence } from './persistence.service.ts';
+import { buildCurrentSearchDocuments } from './search-projection.ts';
 
 const predicateSchema = Schema.Struct({
   groups: Schema.Array(

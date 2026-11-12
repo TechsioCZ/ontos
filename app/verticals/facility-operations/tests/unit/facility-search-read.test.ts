@@ -13,7 +13,7 @@ import { AssetRefSchema } from '../../shared/resources/asset.ts';
 import { assetsRead } from '../../src/search/assets.provider.ts';
 import { devicesRead } from '../../src/search/devices.provider.ts';
 import { documentsRead } from '../../src/search/documents.provider.ts';
-import { loadFacilitySearch } from '../../src/search/search-read.ts';
+import { loadFacilitySearch } from '../../src/services/facility-search-read.ts';
 import { buildFacilitySearchDocuments } from '../../src/services/facility-search-projection.ts';
 import { company, otherCompany, scope, snapshot, tenantId } from './facility-search-fixtures.ts';
 
