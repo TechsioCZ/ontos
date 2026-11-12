@@ -6,7 +6,7 @@
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/work-tasks-client.ts",
     "./clients/apply-command": "./src/api/apply-command-action-client.ts",
-    "./clients/records": "./src/api/records-consumer.ts",
+    "./clients/records": "./src/api/records-client.ts",
     "./clients/submit-storefront-inquiry": "./src/api/submit-storefront-inquiry-action-client.ts",
     "./contracts/apply-command": "./shared/actions/apply-command.ts",
     "./contracts/records": "./shared/apis/records.ts",

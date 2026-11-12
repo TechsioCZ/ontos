@@ -2,7 +2,7 @@
 import { documentNavigationModules } from '@app/shared-contracts';
 import { listOrders } from '@app/merchandise/clients/records';
 import { executeRecords as executeAgreementsRecords } from '@app/legal-agreements/clients/records';
-import { listTasks } from '@app/work-tasks/clients/records';
+import { executeRecords as executeTaskRecords } from '@app/work-tasks/clients/records';
 import { useHeldSnapshot } from '@app/admin-ui';
 import { Data, Effect, Random, Result, Schema } from 'effect';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
@@ -11,6 +11,10 @@ import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react
 import type { TanstackTable } from '@techsio/ui-kit/organisms/data-table';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+
+/** Work Tasks records for this view, each read under its own correlation. */
+const listTasks = (filters: Parameters<typeof executeTaskRecords>[0] = {}) =>
+  Random.nextInt.pipe(Effect.flatMap((id) => executeTaskRecords(filters, `work-tasks:list:${id}`)));
 
 /** One related list: hidden when the module is not part of this company, `unavailable` when its read failed. */
 export type RelatedSection<Item> =

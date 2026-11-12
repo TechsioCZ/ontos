@@ -17,7 +17,7 @@ import { RecordsPage, taskRecords } from '../../src/routes/[lang]/ukoly/page.tsx
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 
 const mocks = rstest.hoisted(() => ({ apply: rstest.fn(), records: rstest.fn() }));
-rstest.mock('../../src/api/records-consumer.ts', () => ({ executeRecords: mocks.records }));
+rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
 rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: mocks.apply }));
 rstest.mock('@app/party-registry/api/client', () => ({ listCustomers: () => Effect.never }));
 rstest.mock('@app/sales-pipeline/clients/records', () => ({ listOpportunities: () => Effect.never }));

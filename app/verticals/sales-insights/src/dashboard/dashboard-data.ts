@@ -1,6 +1,6 @@
 import { listOpportunities } from '@app/sales-pipeline/clients/records';
 import { listInvoices } from '@app/finance-billing/clients/records';
-import { listTasks } from '@app/work-tasks/clients/records';
+import { executeRecords as executeTaskRecords } from '@app/work-tasks/clients/records';
 import { definePageData } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { DateTime, Effect, Match, Random } from 'effect';
@@ -8,6 +8,10 @@ import type { MetricInputs } from '../../shared/metrics.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { dashboardValues } from './dashboard-model.ts';
 import type { DashboardSourceState } from './dashboard-model.ts';
+
+/** Work Tasks records for this view, each read under its own correlation. */
+const listTasks = (filters: Parameters<typeof executeTaskRecords>[0] = {}) =>
+  Random.nextInt.pipe(Effect.flatMap((id) => executeTaskRecords(filters, `work-tasks:list:${id}`)));
 
 export interface DashboardSourceResult<A> {
   readonly items: readonly A[];

@@ -2,7 +2,7 @@ import { listCustomers } from '@app/party-registry/api/client';
 import { listMovements, listOrders, listProducts } from '@app/merchandise/clients/records';
 import { listOpportunities } from '@app/sales-pipeline/clients/records';
 import { listInvoices } from '@app/finance-billing/clients/records';
-import { listTasks } from '@app/work-tasks/clients/records';
+import { executeRecords as executeTaskRecords } from '@app/work-tasks/clients/records';
 import { assignmentsForSubjects, listTags } from '@app/tagging/clients/records';
 import { listEmployees } from '@app/workforce/clients/records';
 import { definePageData } from '@app/shared-contracts/page-data';
@@ -23,6 +23,10 @@ import type {
 } from '../../shared/metrics.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { unreadableSources } from './readable-sources.ts';
+
+/** Work Tasks records for this view, each read under its own correlation. */
+const listTasks = (filters: Parameters<typeof executeTaskRecords>[0] = {}) =>
+  Random.nextInt.pipe(Effect.flatMap((id) => executeTaskRecords(filters, `work-tasks:list:${id}`)));
 
 export const StatisticsSourceSchema = Schema.Literals([
   'customers',

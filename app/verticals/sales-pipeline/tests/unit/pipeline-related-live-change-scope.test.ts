@@ -16,7 +16,7 @@ rstest.mock('@app/shared-contracts', () => ({
 }));
 rstest.mock('@app/merchandise/clients/records', () => ({ listOrders: mocks.orders }));
 rstest.mock('@app/legal-agreements/clients/records', () => ({ executeRecords: mocks.contracts }));
-rstest.mock('@app/work-tasks/clients/records', () => ({ listTasks: mocks.tasks }));
+rstest.mock('@app/work-tasks/clients/records', () => ({ executeRecords: mocks.tasks }));
 
 const events = new EventTarget();
 const globals = {
