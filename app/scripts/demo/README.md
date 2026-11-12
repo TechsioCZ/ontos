@@ -516,8 +516,8 @@ the same right. A second `apply` plans nothing and adds no revision.
 export ONTOS_DEMO_SEED_URL=https://ontos-stage.web-revolution.cz ONTOS_DEMO_SEED_TENANT_ID=<tenant>
 export ONTOS_DEMO_SEED_EMAIL=<operator> ONTOS_DEMO_SEED_PASSWORD=<from a secret prompt>
 node scripts/demo/seed-tax-baseline.mts --mode dry-run --wait-seconds 600   # table per company + plan fingerprint
-node scripts/demo/seed-tax-baseline.mts --mode apply --reviewed-plan-sha256 <fingerprint>
-node scripts/demo/seed-tax-baseline.mts --mode verify           # exits 1 unless every company has the baseline
+node scripts/demo/seed-tax-baseline.mts --mode apply --companies-expected <n> --reviewed-plan-sha256 <fingerprint>
+node scripts/demo/seed-tax-baseline.mts --mode verify --companies-expected <n>  # exits 1 unless every company has it
 ```
 
 The human table names companies only; `--json` adds ids, the plan and per-write `created`. Only the demo, N1 and
@@ -525,6 +525,9 @@ AKROS playground Tenants are accepted. It needs only the Shell origin and a pers
 `--wait-seconds N` (any mode) re-observes every 10 s until each governed read answers and "Proč?" finds no missing
 right, at most N seconds, so a run started right after a deploy waits for the release step instead of failing; a right
 that never arrives is still reported by name.
+`--companies-expected N` (apply and verify) is the Tenant's company count. The session lists only the companies the
+operator can select and nothing it can read proves there are no others, so a run that selects a different number
+refuses and says how many companies the operator cannot act for; it never passes with a company left out.
 
 ## Pseudonymous demo catalog (lane P/b)
 

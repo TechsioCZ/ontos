@@ -804,7 +804,9 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
   };
   const allowed = new Map([[tenantId, 'Deploy rehearsal']]);
   const seed = (mode: 'apply' | 'dry-run' | 'verify', reviewed: Option.Option<string> = Option.none()) =>
-    Effect.scoped(runTaxBaseline(mode, tenant, reviewed, { allowedTenants: allowed }));
+    Effect.scoped(
+      runTaxBaseline(mode, tenant, reviewed, { allowedTenants: allowed, companiesExpected: tenant.companies.length }),
+    );
 
   // Finance reads Tax for the owner's invoice lines.
   const financeScope = yield* scopeIn(financeModule, 'vat-deploy-finance');

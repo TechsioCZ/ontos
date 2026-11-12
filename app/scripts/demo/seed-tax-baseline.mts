@@ -3,8 +3,12 @@
  * The VAT baseline of every company in a selling stage Tenant, created only through `commerce.tax`'s own Actions.
  *
  *   node scripts/demo/seed-tax-baseline.mts --mode dry-run [--json]
- *   node scripts/demo/seed-tax-baseline.mts --mode apply --reviewed-plan-sha256 <sha> [--json]
- *   node scripts/demo/seed-tax-baseline.mts --mode verify [--json]
+ *   node scripts/demo/seed-tax-baseline.mts --mode apply --companies-expected <n> --reviewed-plan-sha256 <sha> [--json]
+ *   node scripts/demo/seed-tax-baseline.mts --mode verify --companies-expected <n> [--json]
+ *
+ * The operator's session lists only the companies it can select, and no product endpoint proves the Tenant has no
+ * others, so apply and verify need the Tenant's company count (`--companies-expected`) and refuse, naming how many
+ * companies the operator cannot act for, when the session selects a different number; nothing is skipped silently.
  *
  * Per company (each one the operator can select in the Tenant), from a company-scoped session: the seller is a VAT
  * payer from 1 January 2024, and the two Czech domestic VAT rules exist (`cz.vat.standard` 21 %, `cz.vat.reduced` 12 %,
@@ -605,12 +609,34 @@ export interface TaxBaselineRunOptions {
   /** The Tenants this run may write to; only the integration test names its private Tenant here. */
   readonly allowedTenants?: ReadonlyMap<string, string>;
   /**
+   * apply and verify: how many companies the Tenant has, as the operator knows it. The session lists only the
+   * companies it can select, so a run that selects a different number refuses instead of passing with a gap.
+   */
+  readonly companiesExpected?: number | undefined;
+  /**
    * Right after a deploy the module and the operator's tax rights may not be effective yet. Re-observe until every
    * read answers and the explain check finds no missing right, at most `attempts` more times `spacing` apart; then
    * the run goes on with what it last saw, so a right that never arrives is still reported by name.
    */
   readonly waitForRights?: { readonly attempts: number; readonly spacing: Duration.Duration };
 }
+
+/** Why apply or verify cannot vouch for every company of the Tenant, or nothing when the counts agree. */
+export const companyCoverageIssue = (
+  mode: Exclude<TaxBaselineMode, 'dry-run'>,
+  selectable: number,
+  expected: number | undefined,
+): string | undefined => {
+  if (expected === undefined) {
+    return `${mode} needs --companies-expected <n>: the operator can select ${selectable} companies, and nothing the session can read proves the Tenant has no others`;
+  }
+  if (expected > selectable) {
+    return `The operator can act for ${selectable} of the Tenant's ${expected} companies and cannot act for ${expected - selectable}; run it from a session that can select every company`;
+  }
+  return expected < selectable
+    ? `The operator can select ${selectable} companies, more than the ${expected} expected; check --companies-expected`
+    : undefined;
+};
 
 /** Observed and planned, but not yet effective: a read refused, or a right explain still denies. */
 const RightsPendingSchema = Schema.TaggedStruct('RightsPending', { reason: Schema.String });
@@ -661,6 +687,10 @@ export const runTaxBaseline = Effect.fn('TaxBaseline.run')(function* runTaxBasel
   const run: TaxBaselineRun = { ...planning, fingerprint, mode, outcomes: [] };
   if (mode === 'dry-run') {
     return run;
+  }
+  const coverage = companyCoverageIssue(mode, tenant.companies.length, options.companiesExpected);
+  if (coverage !== undefined) {
+    return yield* fail(coverage);
   }
   if (planning.problems.length > 0) {
     return yield* fail(planning.problems.join('\n'));
@@ -992,7 +1022,9 @@ const summaryLines = (run: TaxBaselineRun): readonly string[] =>
     Match.when('apply', () => [
       `Odesláno: ${run.outcomes.length}, nově vytvořeno ${run.outcomes.filter(({ created }) => created).length}, již existovalo ${run.outcomes.filter(({ created }) => !created).length}`,
     ]),
-    Match.when('verify', () => ['Ověřeno: výchozí stav DPH je na místě.']),
+    Match.when('verify', () => [
+      `Ověřeno: výchozí stav DPH je na místě ve všech ${run.reports.length} firmách Tenantu (tolik jich operátor vybere i očekává).`,
+    ]),
     Match.exhaustive,
   );
 
@@ -1048,12 +1080,13 @@ const reportFailure = (failure: { readonly _tag: string }) =>
 const command = Command.make(
   'seed-tax-baseline',
   {
+    companiesExpected: Flag.Int('companies-expected').pipe(Flag.optional),
     json: Flag.Boolean('json').pipe(Flag.withDefault(false)),
     mode: Flag.Literals('mode', TaxBaselineModeSchema.literals).pipe(Flag.withDefault('dry-run')),
     reviewed: Flag.String('reviewed-plan-sha256').pipe(Flag.optional),
     waitSeconds: Flag.Int('wait-seconds').pipe(Flag.withDefault(0)),
   },
-  ({ json, mode, reviewed, waitSeconds }) =>
+  ({ companiesExpected, json, mode, reviewed, waitSeconds }) =>
     Effect.gen(function* seedTaxBaseline() {
       const target = yield* validateSeedOrigin(
         yield* Config.String('ONTOS_DEMO_SEED_URL'),
@@ -1066,6 +1099,7 @@ const command = Command.make(
         yield* Config.Redacted('ONTOS_DEMO_SEED_PASSWORD'),
       );
       const run = yield* runTaxBaseline(mode, tenant, reviewed, {
+        companiesExpected: Option.getOrUndefined(companiesExpected),
         waitForRights: waitForRightsOf(waitSeconds),
       });
       yield* printTaxBaselineRun(run, json);

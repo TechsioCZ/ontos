@@ -195,9 +195,15 @@ const makeFakeTax = () => {
   return { checks, of, sent, tenant };
 };
 
+/** The operator selects every company of the Tenant: the count apply and verify are told to expect. */
+const everyCompany = (tenant: TaxBaselineTenantPort) => ({ companiesExpected: tenant.companies.length });
 const dryRun = (tenant: TaxBaselineTenantPort) => runTaxBaseline('dry-run', tenant, Option.none());
 const applyReviewed = (tenant: TaxBaselineTenantPort) =>
-  dryRun(tenant).pipe(Effect.flatMap(({ fingerprint }) => runTaxBaseline('apply', tenant, Option.some(fingerprint))));
+  dryRun(tenant).pipe(
+    Effect.flatMap(({ fingerprint }) =>
+      runTaxBaseline('apply', tenant, Option.some(fingerprint), everyCompany(tenant)),
+    ),
+  );
 const failureReason = <A extends object>(effect: Effect.Effect<A, { readonly _tag: string }>) =>
   effect.pipe(
     Effect.flip,
@@ -285,8 +291,35 @@ it.effect('apply writes once; a second apply plans nothing, sends nothing and ad
     expect(sent).toHaveLength(6);
     expect(of(tradingId).regimes).toHaveLength(1);
     expect(of(shopId).rules).toHaveLength(2);
-    const verified = yield* runTaxBaseline('verify', tenant, Option.none());
+    const verified = yield* runTaxBaseline('verify', tenant, Option.none(), everyCompany(tenant));
     expect(verified.problems).toEqual([]);
+  }),
+);
+
+it.effect('apply and verify refuse, naming the gap, unless the operator selects every company expected', () =>
+  Effect.gen(function* companyCoverage() {
+    const { tenant } = makeFakeTax();
+    yield* applyReviewed(tenant);
+    const selectable = tenant.companies.length;
+    // Nothing proves the Tenant has no other company: without the expected count neither mode vouches for it.
+    expect(yield* failureReason(runTaxBaseline('verify', tenant, Option.none()))).toContain(
+      `verify needs --companies-expected <n>: the operator can select ${selectable} companies`,
+    );
+    const planned = yield* runTaxBaseline('dry-run', tenant, Option.none());
+    expect(yield* failureReason(runTaxBaseline('apply', tenant, Option.some(planned.fingerprint)))).toContain(
+      'apply needs --companies-expected',
+    );
+    // The Tenant has one company more than the operator can select: refused, never passed with the gap.
+    expect(
+      yield* failureReason(runTaxBaseline('verify', tenant, Option.none(), { companiesExpected: selectable + 1 })),
+    ).toBe(
+      `The operator can act for ${selectable} of the Tenant's ${selectable + 1} companies and cannot act for 1; run it from a session that can select every company`,
+    );
+    expect(
+      yield* failureReason(runTaxBaseline('verify', tenant, Option.none(), { companiesExpected: selectable - 1 })),
+    ).toContain('more than the');
+    const verified = yield* runTaxBaseline('verify', tenant, Option.none(), everyCompany(tenant));
+    expect(verified.reports).toHaveLength(selectable);
   }),
 );
 
@@ -314,10 +347,12 @@ it.effect('an Action that answers "committed" while the read still shows nothing
 it.effect('refuses apply without the reviewed fingerprint, or with a stale one', () =>
   Effect.gen(function* fingerprintGate() {
     const { sent, tenant } = makeFakeTax();
-    expect(yield* failureReason(runTaxBaseline('apply', tenant, Option.none()))).toContain('--reviewed-plan-sha256');
-    expect(yield* failureReason(runTaxBaseline('apply', tenant, Option.some('0'.repeat(64))))).toContain(
+    expect(yield* failureReason(runTaxBaseline('apply', tenant, Option.none(), everyCompany(tenant)))).toContain(
       '--reviewed-plan-sha256',
     );
+    expect(
+      yield* failureReason(runTaxBaseline('apply', tenant, Option.some('0'.repeat(64)), everyCompany(tenant))),
+    ).toContain('--reviewed-plan-sha256');
     expect(sent).toEqual([]);
   }),
 );
@@ -337,10 +372,14 @@ it.effect('never overwrites a regime or rule set differently, and names it', () 
       'Obchodní firma: cz.vat.standard differs from the baseline (SELECTED: 20 % od 1. 1. 2024); change it in the product',
       'Šroubárna Vysočina s.r.o.: VAT regime differs from the baseline (nyní NON_PAYER od 1. 1. 2024, revize 1); change it in the product',
     ]);
-    const reason = yield* failureReason(runTaxBaseline('apply', tenant, Option.some(planned.fingerprint)));
+    const reason = yield* failureReason(
+      runTaxBaseline('apply', tenant, Option.some(planned.fingerprint), everyCompany(tenant)),
+    );
     expect(reason).toContain('cz.vat.standard differs');
     expect(sent).toEqual([]);
-    expect(yield* failureReason(runTaxBaseline('verify', tenant, Option.none()))).toContain('differs');
+    expect(yield* failureReason(runTaxBaseline('verify', tenant, Option.none(), everyCompany(tenant)))).toContain(
+      'differs',
+    );
   }),
 );
 
@@ -353,7 +392,9 @@ it.effect('stops before any write when explain shows the operator lacks a needed
       `Šroubárna Vysočina s.r.o.: the operator lacks the right ${declareRight} (DENIED, deny.insufficient_grant)`,
     ]);
     expect(renderTaxBaseline(tenantId, planned.reports)).toContain(`chybí právo: ${declareRight}`);
-    const reason = yield* failureReason(runTaxBaseline('apply', tenant, Option.some(planned.fingerprint)));
+    const reason = yield* failureReason(
+      runTaxBaseline('apply', tenant, Option.some(planned.fingerprint), everyCompany(tenant)),
+    );
     expect(reason).toContain(declareRight);
     expect(sent).toEqual([]);
   }),
@@ -367,7 +408,9 @@ it.effect('a right explain could not check is decided by the Action, and its ref
     const planned = yield* dryRun(tenant);
     expect(planned.problems).toEqual([]);
     expect(renderTaxBaseline(tenantId, planned.reports)).toContain('práva nešlo předem ověřit');
-    const reason = yield* failureReason(runTaxBaseline('apply', tenant, Option.some(planned.fingerprint)));
+    const reason = yield* failureReason(
+      runTaxBaseline('apply', tenant, Option.some(planned.fingerprint), everyCompany(tenant)),
+    );
     expect(reason).toBe(`Obchodní firma: the operator lacks the right ${createRight} (action_permission_denied)`);
   }),
 );

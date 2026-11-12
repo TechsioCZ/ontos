@@ -472,7 +472,10 @@ it.layer(services, { excludeTestServices: true })('tax baseline seed on the loca
         const test = yield* fixture();
         const { allowed, tenant } = test;
         const run = (mode: 'apply' | 'dry-run' | 'verify', reviewed = Option.none<string>()) =>
-          runTaxBaseline(mode, tenant, reviewed, { allowedTenants: allowed });
+          runTaxBaseline(mode, tenant, reviewed, {
+            allowedTenants: allowed,
+            companiesExpected: tenant.companies.length,
+          });
 
         // Before installation tax refuses every governed read: the module is not active in the Tenant.
         expect(yield* test.moduleState).toBe('none');
