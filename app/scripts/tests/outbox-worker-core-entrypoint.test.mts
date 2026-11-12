@@ -21,7 +21,7 @@ it('reads live value re-exports from Core, ignoring comments, strings, and type-
     "export { ContextAccessLive as outboxWorkerContextAccessLive } from '@app/core-runtime';",
     "export { type OutboxRuntime, BusinessPermissionRelationshipMutationLive } from '@app/core-runtime';",
     "export type { AnyOutboxWorkerRegistration } from '@app/core-runtime';",
-    'export { defineOutboxWorkerCompletion as completion } from WORKER_ENTRY_SPECIFIER;',
+    "export { defineOutboxWorkerCompletion as completion } from '@app/core-runtime/outbox/worker';",
     "// export { RemovedBinding } from '@app/core-runtime';",
     "/* export { AlsoRemoved } from '@app/core-runtime'; */",
     "console.log(`export { FromString } from '@app/core-runtime'`);",

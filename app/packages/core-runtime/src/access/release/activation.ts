@@ -2,7 +2,10 @@ import { eq } from 'drizzle-orm';
 import { Clock, DateTime, Effect, Match, Option, Result, Schema } from 'effect';
 
 import { TrustedPrincipalContextSchema } from '../../actions/principal-context.ts';
-import { makeSystemPrincipalContextResolver, registerSystemWorkload } from '../../auth/system-principal-context.ts';
+import {
+  SystemPrincipalContextResolverFromCoreDatabase,
+  registerSystemWorkload,
+} from '../../auth/system-principal-context.ts';
 import { preserveSystemPrincipalContextTrust } from '../../auth/system-principal-context-provenance.ts';
 import type { AccessCatalogModule } from '../../authorization/access-declaration.ts';
 import { CoreDatabase } from '../../db/client.ts';
@@ -356,8 +359,8 @@ const releaseScopeOf = Effect.fn('AccessReleaseActivation.scope')(function* rele
   tenantId: string,
   catalogSnapshotId: string,
 ) {
-  const { executor } = yield* CoreDatabase;
-  const resolved = yield* makeSystemPrincipalContextResolver({ executor })
+  const resolver = yield* SystemPrincipalContextResolverFromCoreDatabase;
+  const resolved = yield* resolver
     .resolve({
       principalId: releaseActorId(tenantId),
       registration: RELEASE_ACTIVATION_JOB,

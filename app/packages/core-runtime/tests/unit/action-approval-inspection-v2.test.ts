@@ -9,7 +9,7 @@ import {
   makeActionApprovalLifecycleV2,
 } from '../../src/access/approvals/action-lifecycle-v2.ts';
 import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
-import { freezeActionCommandV2, makeActionCommandV2 } from '../../src/access/approvals/action-command-v2.ts';
+import { freezeActionCommandV2, resolveActionCommandV2 } from '../../src/access/approvals/action-command-v2.ts';
 import { proposeActionV2 } from '../../src/access/approvals/action-proposal-v2.ts';
 import type { FrozenCommandRecord } from '../../src/access/approvals/frozen-command.ts';
 import type { LiveApprovalServices } from '../../src/access/approvals/live-composition.ts';
@@ -69,7 +69,7 @@ const fixture = (missing?: MissingAuthority) =>
     const action = actionFor(read);
     const owner = makeTestOperationOwner({ actions: [action], moduleId: ownerKey, reads: [read] });
     const { revision } = owner.composition;
-    const command = yield* makeActionCommandV2({
+    const command = yield* resolveActionCommandV2({
       payload: { ids: [first, second], salary: 25 },
       registration: action,
       scope: requesterScope,

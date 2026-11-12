@@ -6,7 +6,7 @@ import type {
   ActionMandateDispatch,
   ActionProposalParkInput,
 } from '../../src/access/approvals/action-mandate-dispatch.ts';
-import { freezeActionCommandV2, makeActionCommandV2 } from '../../src/access/approvals/action-command-v2.ts';
+import { freezeActionCommandV2, resolveActionCommandV2 } from '../../src/access/approvals/action-command-v2.ts';
 import { defineActionGoverningRead } from '../../src/actions/governing-read.ts';
 import type { AccessIntentSource } from '../../src/access/decision/authority.ts';
 import type { GateInput } from '../../src/access/enforcement/contract.ts';
@@ -792,7 +792,7 @@ it.effect('preserves forward mandate execution for an exact singleton with APPRO
       },
     });
     const { calls, dispatch: recording } = scalarDispatch({ employeeIds: [firstId] });
-    const command = yield* makeActionCommandV2({
+    const command = yield* resolveActionCommandV2({
       payload: { employeeIds: [firstId] },
       registration: action,
       scope: { ...principal, correlationId: 'single-approved' },

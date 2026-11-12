@@ -36,7 +36,7 @@ import { actionExecutionDeadlineV2 } from '../access/approvals/action-lifecycle-
 import { resolveGovernedAmount } from '../access/approvals/governed-amount.ts';
 import {
   decodeActionCommandV2,
-  makeActionCommandV2,
+  resolveActionCommandV2,
   rebindRegisteredActionCommandV2,
 } from '../access/approvals/action-command-v2.ts';
 import type { ActionCommandV2 } from '../access/approvals/action-command-v2.ts';
@@ -2534,7 +2534,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           ? yield* mandateDispatch
               .prepareProposal({
                 actionInvocationId: invocation.actionInvocationId,
-                command: yield* makeActionCommandV2({ payload, registration: input.registration, scope }),
+                command: yield* resolveActionCommandV2({ payload, registration: input.registration, scope }),
                 registration: input.registration,
                 scope,
               })

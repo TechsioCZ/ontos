@@ -3,7 +3,7 @@ import { expect, it } from 'effect-rstest';
 
 import { readOwnerActionApprovalRouting } from '@app/core-runtime/access/approvals/owner-runtime';
 import { OwnerActionApprovalRoutingSchema } from '@app/core-runtime/access/approvals/owner-api';
-import { makeActionCommandV2, freezeActionCommandV2 } from '../../src/access/approvals/action-command-v2.ts';
+import { resolveActionCommandV2, freezeActionCommandV2 } from '../../src/access/approvals/action-command-v2.ts';
 import { freezeCommand } from '../../src/access/approvals/command.ts';
 import { ActionKeySchema } from '../../src/access/approvals/frozen-command.ts';
 import type { FrozenCommandRecord } from '../../src/access/approvals/frozen-command.ts';
@@ -19,7 +19,7 @@ import { actionFor, ownerKey, principal } from '../support/action-command-v2.ts'
 
 const fixture = Effect.gen(function* routingFixture() {
   const action = actionFor();
-  const command = yield* makeActionCommandV2({
+  const command = yield* resolveActionCommandV2({
     payload: { ids: [RecordKeySchema.make('one'), RecordKeySchema.make('two')], salary: 50 },
     registration: action,
     scope: { ...principal, correlationId: 'routing' },

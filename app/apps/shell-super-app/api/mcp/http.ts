@@ -10,6 +10,9 @@ import { HttpServerResponse } from 'effect/http';
 
 import type { ToolSpec } from './types.ts';
 
+/** Bounds the one-time local load of the MCP SDK and server factory, as Core bounds its lazy health module. */
+const MCP_RUNTIME_LOAD_TIMEOUT = '30 seconds';
+
 export const OAUTH_SCOPE = 'ontos';
 
 export interface McpEndpointConfig {
@@ -200,7 +203,7 @@ export const serveMcp = <Failure, Requirements>(deps: McpEndpointDeps<Failure, R
     // This is local module loading, not external I/O; its Promise stays at the Effect adapter boundary.
     const [sdk, { buildMcpServer }] = yield* Effect.promise(
       Fn.constant(Promise.all([import('@modelcontextprotocol/server'), import('./server-factory.ts')])),
-    );
+    ).pipe(Effect.timeout(MCP_RUNTIME_LOAD_TIMEOUT), Effect.orDie);
     // The SDK calls back with Promises; tools and logs run with the services of this request.
     const services = yield* Effect.context();
     const run = Effect.runPromiseWith(services);

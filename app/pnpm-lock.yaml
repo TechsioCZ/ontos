@@ -254,7 +254,6 @@ overrides:
   '@techsio/ui-kit': 0.59.3
 
 patchedDependencies:
-  '@authzed/authzed-node@1.6.1': e09ba889807720f24431c2f4e1666486dcb20a184b8b5ee3445c5e4deaeb5396
   '@bleedingdev/modern-js-code-tools@3.9.3-ultramodern.19': be97a32dec92a3c781917822f8fc761b011340e1e047e5b84a39e8a800e8e03f
   '@bleedingdev/modern-js-server-core@3.9.3-ultramodern.19': 16cf3beba8051ff331fe8016537d8a03ff3f641e44322b9a7d5cfbd9ddf3b190
   '@bleedingdev/modern-js-server-runtime-extensions@3.9.3-ultramodern.19': c21a06b77bb3ec97720fbef01e07df6dc110af287f29f381b576143a5ed51148
@@ -345,7 +344,7 @@ importers:
         version: link:verticals/workforce
       '@authzed/authzed-node':
         specifier: 1.6.1
-        version: 1.6.1(patch_hash=e09ba889807720f24431c2f4e1666486dcb20a184b8b5ee3445c5e4deaeb5396)
+        version: 1.6.1
       '@effect/sql-pg':
         specifier: 4.0.7
         version: 4.0.7(patch_hash=99c2ebd3d6f3b2a6e2a8bf52021ed1c734f96dd8195ad3f08939a887fbad13a0)(effect@4.0.7)
@@ -629,7 +628,7 @@ importers:
         version: link:../../verticals/symmy-integration
       '@authzed/authzed-node':
         specifier: 1.6.1
-        version: 1.6.1(patch_hash=e09ba889807720f24431c2f4e1666486dcb20a184b8b5ee3445c5e4deaeb5396)
+        version: 1.6.1
       '@better-auth/api-key':
         specifier: 1.7.12
         version: 1.7.12(b3a1f4826694b17f9eb98b1025b658f1)
@@ -1000,7 +999,7 @@ importers:
     dependencies:
       '@authzed/authzed-node':
         specifier: 1.6.1
-        version: 1.6.1(patch_hash=e09ba889807720f24431c2f4e1666486dcb20a184b8b5ee3445c5e4deaeb5396)
+        version: 1.6.1
       '@effect/platform-node':
         specifier: 4.0.7
         version: 4.0.7(effect@4.0.7)(redis@6.3.0(@opentelemetry/api@1.9.1))
@@ -15482,7 +15481,7 @@ snapshots:
       '@ast-grep/napi-win32-ia32-msvc': 0.45.3
       '@ast-grep/napi-win32-x64-msvc': 0.45.3
 
-  '@authzed/authzed-node@1.6.1(patch_hash=e09ba889807720f24431c2f4e1666486dcb20a184b8b5ee3445c5e4deaeb5396)':
+  '@authzed/authzed-node@1.6.1':
     dependencies:
       '@grpc/grpc-js': 1.14.5
       '@protobuf-ts/runtime': 2.11.1
