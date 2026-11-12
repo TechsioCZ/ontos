@@ -16,6 +16,15 @@ import {
 } from './heap-limits.mts';
 import { withKeepAlive } from './http-keep-alive.mts';
 import { compositionSnapshotResponse } from './composition-source-response.mts';
+import {
+  HOST_REFUSAL_LOG_WINDOW,
+  RelayFailure,
+  decodeRelayCause,
+  makeHostRefusalLog,
+  relayFailureCode,
+  requestPathOnly,
+} from './host-refusal-log.mts';
+import type { HostRefusalLog } from './host-refusal-log.mts';
 import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
 import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
 import {
@@ -363,10 +372,24 @@ const startChild = Effect.fn('AppHost.startChild')(function* startChild(
     stdin: 'ignore',
     stdout: 'inherit',
   }).pipe(Effect.mapError(() => failure(`${name} failed to start`)));
+  const started = yield* Clock.currentTimeMillis;
+  // The supervisor restarts nothing itself: any exit stops the host, and Zerops restarts the container.
+  const exited = (outcome: string) =>
+    Clock.currentTimeMillis.pipe(
+      Effect.flatMap((now) =>
+        Console.error(
+          `[app-host] ${name} ${outcome} after ${String(Math.round((now - started) / 1000))}s up; the host stops so Zerops restarts the container`,
+        ),
+      ),
+    );
   return handle.exitCode.pipe(
     Effect.matchEffect({
-      onFailure: () => Effect.fail(failure(`${name} failed while running`)),
-      onSuccess: (code) => Effect.fail(failure(`${name} exited with code ${String(code)}`)),
+      onFailure: () =>
+        exited('could no longer be watched').pipe(Effect.andThen(Effect.fail(failure(`${name} failed while running`)))),
+      onSuccess: (code) =>
+        exited(`exited with code ${String(code)}`).pipe(
+          Effect.andThen(Effect.fail(failure(`${name} exited with code ${String(code)}`))),
+        ),
     }),
   );
 });
@@ -950,6 +973,16 @@ const waitForOwner = (owner: HostedUnit) => {
   );
 };
 
+const unitAddress = ({ id, port }: HostedUnit) => `${id} 127.0.0.1:${String(port)}`;
+
+/** Waits until every unit serves its contract, then names each unit and its port in one line. */
+const waitForUnits = (units: readonly HostedUnit[]) =>
+  Effect.forEach(units, waitForOwner, { concurrency: 'unbounded', discard: true }).pipe(
+    Effect.andThen(
+      Console.log(`[app-host] all ${String(units.length)} units serving: ${units.map(unitAddress).join(', ')}`),
+    ),
+  );
+
 const HOP_BY_HOP: ReadonlySet<string> = new Set([
   'connection',
   'keep-alive',
@@ -986,6 +1019,7 @@ const relay = Effect.fn('AppHost.relay')(function* relay(
   request: HttpServerRequest.HttpServerRequest,
   port: number,
   pathname: string,
+  reportCut: (problem: RelayFailure) => Effect.Effect<void>,
 ) {
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(request.headers)) {
@@ -1000,7 +1034,7 @@ const relay = Effect.fn('AppHost.relay')(function* relay(
     ? yield* toReadable(request.stream.pipe(Stream.mapError(() => failure('relay request body'))))
     : null;
   const response = yield* Effect.tryPromise({
-    catch: () => failure('relay owner unavailable'),
+    catch: (cause) => new RelayFailure({ code: relayFailureCode(decodeRelayCause(cause)), stage: 'request' }),
     try: (signal): PromiseLike<Awaited<ReturnType<typeof requestLoopback>>> =>
       requestLoopback(`${loopbackOrigin(port)}${pathname}`, {
         body,
@@ -1017,11 +1051,12 @@ const relay = Effect.fn('AppHost.relay')(function* relay(
     response.body.resume();
     return HttpServerResponse.empty({ headers: responseHeaders, status: response.statusCode });
   }
+  // The status and headers are sent by then: a unit that fails its body cuts the response, and that is logged.
   return HttpServerResponse.stream(
-    fromReadable<Uint8Array, AppHostError>({
+    fromReadable<Uint8Array, RelayFailure>({
       evaluate: () => response.body,
-      onError: () => failure('relay owner response body'),
-    }),
+      onError: (cause) => new RelayFailure({ code: relayFailureCode(decodeRelayCause(cause)), stage: 'response body' }),
+    }).pipe(Stream.tapError(reportCut)),
     { headers: responseHeaders, status: response.statusCode },
   );
 });
@@ -1029,19 +1064,49 @@ const relay = Effect.fn('AppHost.relay')(function* relay(
 const isLoopbackPeer = (request: HttpServerRequest.HttpServerRequest) =>
   Option.exists(request.remoteAddress, isLoopbackHostname);
 
-/** Only processes inside this container read the composition; public peers get 404. */
+/** Fields of a refusal the host answered itself: the method and the path, never the query, headers or body. */
+const refusedRequest = (request: HttpServerRequest.HttpServerRequest, status: number) => ({
+  method: request.method,
+  path: requestPathOnly(request.url),
+  status,
+});
+
+/**
+ * Only processes inside this container read the composition; public peers get 404 without a log line (a public probe
+ * of an internal path is expected noise). A process inside the container that is refused is logged: a reader with a
+ * wrong method, or a published host that has no snapshot it may serve (before publication, 503 is the expected
+ * answer while the host starts).
+ */
 const compositionSourceResponse = <Failure, Requirements>(
   request: HttpServerRequest.HttpServerRequest,
+  published: Ref.Ref<boolean>,
   load: Effect.Effect<Option.Option<string>, Failure, Requirements>,
+  refusals: HostRefusalLog,
 ) =>
   Effect.gen(function* serveApprovedSnapshot() {
-    if (request.method !== 'GET' || !isLoopbackPeer(request)) {
+    if (!isLoopbackPeer(request)) {
+      return HttpServerResponse.empty({ status: 404 });
+    }
+    if (request.method !== 'GET') {
+      yield* refusals.record({
+        fields: refusedRequest(request, 404),
+        key: 'composition',
+        what: 'composition source refused',
+      });
       return HttpServerResponse.empty({ status: 404 });
     }
     const current = yield* load.pipe(Effect.option, Effect.map(Option.flatten));
-    return Option.isSome(current)
-      ? compositionSnapshotResponse(current.value, request.headers['if-none-match'])
-      : HttpServerResponse.empty({ status: 503 });
+    if (Option.isSome(current)) {
+      return compositionSnapshotResponse(current.value, request.headers['if-none-match']);
+    }
+    if (yield* Ref.get(published)) {
+      yield* refusals.record({
+        fields: { ...refusedRequest(request, 503), reason: 'no snapshot the authority admits' },
+        key: 'composition',
+        what: 'composition source unavailable',
+      });
+    }
+    return HttpServerResponse.empty({ status: 503 });
   });
 
 /** Liveness, readiness and the loopback composition source; none for every application path. */
@@ -1049,15 +1114,17 @@ const hostControlResponse = <Failure, Requirements>(
   request: HttpServerRequest.HttpServerRequest,
   published: Ref.Ref<boolean>,
   loadComposition: Effect.Effect<Option.Option<string>, Failure, Requirements>,
+  refusals: HostRefusalLog,
 ) =>
   Effect.gen(function* answerHostControl() {
     if (request.url === COMPOSITION_PATH) {
-      return Option.some(yield* compositionSourceResponse(request, loadComposition));
+      return Option.some(yield* compositionSourceResponse(request, published, loadComposition, refusals));
     }
     if (request.url === LIVE_PATH) {
       return Option.some(HttpServerResponse.text('live\n', { headers: { 'cache-control': 'no-store' } }));
     }
     if (request.url === READY_PATH) {
+      // A readiness probe before publication is expected to answer 503; the boot lines say why.
       const ready = yield* Ref.get(published);
       return Option.some(
         HttpServerResponse.text(ready ? 'ready\n' : 'starting\n', {
@@ -1069,21 +1136,40 @@ const hostControlResponse = <Failure, Requirements>(
     return Option.none<HttpServerResponse.HttpServerResponse>();
   });
 
-/** The loopback control port: Zerops probes and the composition source, never application traffic. */
+/**
+ * The loopback control port: Zerops probes and the composition source, never application traffic. Only processes
+ * of this container reach it, so any other path is a misconfigured caller and is logged.
+ */
 export const hostControlApplication = <Failure, Requirements>(
   published: Ref.Ref<boolean>,
   loadComposition: Effect.Effect<Option.Option<string>, Failure, Requirements>,
+  refusals: HostRefusalLog = makeHostRefusalLog(),
 ) =>
   Effect.gen(function* routeControlRequest() {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const control = yield* hostControlResponse(request, published, loadComposition);
-    return Option.getOrElse(control, () => HttpServerResponse.empty({ status: 404 }));
+    const control = yield* hostControlResponse(request, published, loadComposition, refusals);
+    if (Option.isSome(control)) {
+      return control.value;
+    }
+    yield* refusals.record({ fields: refusedRequest(request, 404), key: 'control', what: 'control port refused' });
+    return HttpServerResponse.empty({ status: 404 });
   });
+
+/** The unit a public path is relayed to: `/_m/<appId>/…` names an owner, everything else is the Shell's. */
+const routedUnit = (url: string) => {
+  if (!url.startsWith(MODULE_ASSET_PREFIX)) {
+    return SHELL_ID;
+  }
+  const rest = requestPathOnly(url).slice(MODULE_ASSET_PREFIX.length);
+  const separator = rest.indexOf('/');
+  return separator === -1 ? rest : rest.slice(0, separator);
+};
 
 export const hostApplication = <Failure, Requirements>(
   ports: ReadonlyMap<string, number>,
   published: Ref.Ref<boolean>,
   loadComposition: Effect.Effect<Option.Option<string>, Failure, Requirements>,
+  refusals: HostRefusalLog = makeHostRefusalLog(),
 ) =>
   Effect.gen(function* routeHostRequest() {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -1095,19 +1181,55 @@ export const hostApplication = <Failure, Requirements>(
       });
     }
     if (new URL(request.url, 'https://host.invalid').pathname === STAGE_CIMD_FIXTURE_PATH) {
-      return yield* stageCimdFixtureResponse;
+      const fixture = yield* stageCimdFixtureResponse;
+      // It exists only on stage under the stage origin; a refusal there breaks MCP client sign-in, so it is logged.
+      if (fixture.status >= 400) {
+        yield* refusals.record({
+          fields: refusedRequest(request, fixture.status),
+          key: 'cimd-fixture',
+          what: 'stage client metadata refused',
+        });
+      }
+      return fixture;
     }
-    const control = yield* hostControlResponse(request, published, loadComposition);
+    const control = yield* hostControlResponse(request, published, loadComposition, refusals);
     if (Option.isSome(control)) {
       return control.value;
     }
     const route = routeRequest(request.url, ports);
+    const unit = routedUnit(request.url);
     if (Option.isNone(route)) {
+      yield* refusals.record({
+        fields: { ...refusedRequest(request, 404), unit },
+        key: 'unrouted',
+        what: 'no unit serves this path',
+      });
       return HttpServerResponse.empty({ status: 404 });
     }
-    return yield* relay(request, route.value.port, route.value.path).pipe(
-      Effect.catchTag('AppHostError', () =>
-        Effect.succeed(HttpServerResponse.text('Upstream unavailable\n', { status: 502 })),
+    const { path: upstreamPath, port } = route.value;
+    const started = yield* Clock.currentTimeMillis;
+    const report = (problem: RelayFailure, status: number | 'cut') =>
+      Clock.currentTimeMillis.pipe(
+        Effect.flatMap((now) =>
+          refusals.record({
+            fields: {
+              cause: problem.code,
+              elapsedMs: now - started,
+              method: request.method,
+              path: requestPathOnly(request.url),
+              stage: problem.stage,
+              status,
+              unit,
+              upstream: `loopback:${String(port)}`,
+            },
+            key: unit,
+            what: status === 'cut' ? 'relayed response cut by its unit' : 'relay refused',
+          }),
+        ),
+      );
+    return yield* relay(request, port, upstreamPath, (problem) => report(problem, 'cut')).pipe(
+      Effect.catchTag('RelayFailure', (problem) =>
+        report(problem, 502).pipe(Effect.as(HttpServerResponse.text('Upstream unavailable\n', { status: 502 }))),
       ),
     );
   });
@@ -1280,12 +1402,15 @@ export const runAppHost = Effect.gen(function* runAppHost() {
 
   // The provided server is the loopback control port. The public port opens below, once this host can serve, and
   // closes when a newer release takes the authority: from then on this host refuses every governed request.
-  yield* HttpServer.serveEffect(hostControlApplication(published, pointer.load));
+  // One refusal log for the control and the public port; it writes the counts it held back every 10 seconds.
+  const refusals = makeHostRefusalLog();
+  yield* refusals.flush.pipe(Effect.repeat(Schedule.spaced(HOST_REFUSAL_LOG_WINDOW)), Effect.forkScoped);
+  yield* HttpServer.serveEffect(hostControlApplication(published, pointer.load, refusals));
   const publicScope = yield* Scope.make();
   yield* Effect.addFinalizer(() => Scope.close(publicScope, Exit.void));
   const openPublicPort = NodeHttpServer.make(withKeepAlive(createServer), { host: '0.0.0.0', port: publicPort }).pipe(
     Effect.mapError(() => failure(`public port ${String(publicPort)} could not be opened`)),
-    Effect.flatMap((server) => server.serve(hostApplication(ports, published, pointer.load))),
+    Effect.flatMap((server) => server.serve(hostApplication(ports, published, pointer.load, refusals))),
     Scope.provide(publicScope),
     Effect.andThen(Console.log(`[app-host] accepting application traffic on port ${String(publicPort)}`)),
   );
@@ -1430,7 +1555,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   // environment can be checked beside the one that still holds it.
   const takesAuthority = yield* Config.Boolean('ONTOS_APP_HOST_PUBLISH').pipe(Config.withDefault(true));
   const observeOnly = Effect.gen(function* observeWithoutAuthority() {
-    yield* Effect.forEach(units, waitForOwner, { concurrency: 'unbounded', discard: true });
+    yield* waitForUnits(units);
     const snapshot = yield* observeOwners(units, publicOrigin);
     const release = hostReleaseOf(snapshot);
     yield* provisionForRelease(release);
@@ -1464,7 +1589,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     yield* Effect.all(
       [
         runChild('migrator', node, ['scripts/run-zerops-migrator.mjs'], workspaceRoot, { MIGRATOR_ONCE: 'true' }),
-        Effect.forEach(units, waitForOwner, { concurrency: 'unbounded', discard: true }),
+        waitForUnits(units),
       ],
       { concurrency: 'unbounded' },
     );
