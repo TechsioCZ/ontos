@@ -756,10 +756,11 @@ it.layer(
 
   /*
    * An exact batch read refuses a person who may run no Action at all in `prepare`, before any row is loaded or
-   * locked, and then authorizes exactly the Actions its rows name. Its answer is the one the read gave when `prepare`
-   * asked every Action of the release: refused unless the person may run at least one Action and every row's declared
-   * Action. That rule is written out below as the reference; running this table against the read as it was before
-   * these changes gave exactly these outcomes (only the Actions it asked differed).
+   * locked, and then authorizes exactly the Actions its rows name. It gives the same allow/deny answer the read gave
+   * when `prepare` asked every Action of the release: refused unless the person may run at least one Action and every
+   * row's declared Action. That rule is written out below as the reference; running this table against the read as it
+   * was before these changes gave the same allow/deny outcomes (only the Actions it asked differed). The one known
+   * difference is an authority outage confined to a round that is never asked; see `holdsAnyExecutableAction`.
    */
   for (const scenario of [
     { executable: ['update', 'archive'], rows: ['update'] },
@@ -771,52 +772,56 @@ it.layer(
     { executable: ['update', 'archive'], rows: ['other'] },
   ] as const) {
     for (const mode of ['batch', 'batch-state', 'command-recovery'] as const) {
-      suite.effect(`answers a ${mode} read exactly as asking every Action (${JSON.stringify(scenario)})`, () =>
-        Effect.gen(function* exactBatchAuthority() {
-          const rows = scenario.rows.map((slug, index) => tableRow(slug, index));
-          const harness = yield* makeReadTestHarness({
-            executeOwnerQuery: tableQueries(rows),
-            operationTime,
-            ownerAuthorizationDecision: 'allowed',
-            permissionDecision: 'allowed',
-            scope,
-          });
-          const services = yield* Layer.build(
-            Layer.mergeAll(
-              harness.layer,
-              outboxWorkerCompositionLayer(yield* executableComposition('no-review', ['archive'])),
-            ),
-          );
-          const calls: string[][] = [];
-          const outcome = yield* harness.runtime
-            .runRead({ input: tableInput(mode), principal: scope, registration: agentProposalQueueRead, transport })
-            .pipe(
-              Effect.provideService(
-                ActionAuthority,
-                recordingAuthority(new Set(scenario.executable.map((slug) => `work.tasks.${slug}`)), calls),
+      suite.effect(
+        `gives a ${mode} read the same allow/deny answer as asking every Action (${JSON.stringify(scenario)})`,
+        () =>
+          Effect.gen(function* exactBatchAuthority() {
+            const rows = scenario.rows.map((slug, index) => tableRow(slug, index));
+            const harness = yield* makeReadTestHarness({
+              executeOwnerQuery: tableQueries(rows),
+              operationTime,
+              ownerAuthorizationDecision: 'allowed',
+              permissionDecision: 'allowed',
+              scope,
+            });
+            const services = yield* Layer.build(
+              Layer.mergeAll(
+                harness.layer,
+                outboxWorkerCompositionLayer(yield* executableComposition('no-review', ['archive'])),
               ),
-              Effect.provide(services),
-              Effect.match({ onFailure: outcomeOfFailure, onSuccess: (read) => `rows ${read.proposals.length}` }),
             );
-          const declared = new Set(['update', 'archive']);
-          const runnable = new Set<string>(scenario.executable);
-          const everyRowRunnable = scenario.rows.every((slug) => declared.has(slug) && runnable.has(slug));
-          const allowed = runnable.size > 0 && everyRowRunnable;
-          expect(outcome).toBe(allowed ? `rows ${mode === 'batch-state' ? 0 : scenario.rows.length}` : 'denied');
-          // `prepare` asks whether any Action at all may run (both declared ones fit its first round).
-          expect(calls[0]).toEqual(['work.tasks.update', 'work.tasks.archive']);
-          const loadedProposals = harness.snapshot().ownerQueries.some(({ sql }) => sql.includes('"agent_proposals"'));
-          if (runnable.size === 0) {
-            // Refused before any row is loaded or locked: an existing and a missing batch cost the same.
-            expect(calls).toHaveLength(1);
-            expect(loadedProposals).toBe(false);
-            return;
-          }
-          expect(loadedProposals).toBe(true);
-          // Both declared Actions were answered in `prepare`'s first round: `finish` applies those answers to the rows,
-          // as the read always applied `prepare`'s, and asks nothing more.
-          expect(calls.slice(1)).toEqual([]);
-        }),
+            const calls: string[][] = [];
+            const outcome = yield* harness.runtime
+              .runRead({ input: tableInput(mode), principal: scope, registration: agentProposalQueueRead, transport })
+              .pipe(
+                Effect.provideService(
+                  ActionAuthority,
+                  recordingAuthority(new Set(scenario.executable.map((slug) => `work.tasks.${slug}`)), calls),
+                ),
+                Effect.provide(services),
+                Effect.match({ onFailure: outcomeOfFailure, onSuccess: (read) => `rows ${read.proposals.length}` }),
+              );
+            const declared = new Set(['update', 'archive']);
+            const runnable = new Set<string>(scenario.executable);
+            const everyRowRunnable = scenario.rows.every((slug) => declared.has(slug) && runnable.has(slug));
+            const allowed = runnable.size > 0 && everyRowRunnable;
+            expect(outcome).toBe(allowed ? `rows ${mode === 'batch-state' ? 0 : scenario.rows.length}` : 'denied');
+            // `prepare` asks whether any Action at all may run (both declared ones fit its first round).
+            expect(calls[0]).toEqual(['work.tasks.update', 'work.tasks.archive']);
+            const loadedProposals = harness
+              .snapshot()
+              .ownerQueries.some(({ sql }) => sql.includes('"agent_proposals"'));
+            if (runnable.size === 0) {
+              // Refused before any row is loaded or locked: an existing and a missing batch cost the same.
+              expect(calls).toHaveLength(1);
+              expect(loadedProposals).toBe(false);
+              return;
+            }
+            expect(loadedProposals).toBe(true);
+            // Both declared Actions were answered in `prepare`'s first round: `finish` applies those answers to the rows,
+            // as the read always applied `prepare`'s, and asks nothing more.
+            expect(calls.slice(1)).toEqual([]);
+          }),
       );
     }
   }
@@ -1027,6 +1032,18 @@ it.layer(
         }),
     );
   }
+
+  suite.effect(
+    'reads a missing batch as no rows when the authority is down only for a round that is never asked (accepted)',
+    () =>
+      Effect.gen(function* unaskedRoundOutage() {
+        const calls: string[][] = [];
+        const [read] = yield* manyActionReads([], [failingAuthority(new Set(['work.tasks.update']), calls, 2)]);
+        // Round 1 admits `update`, so round 2 (whose question would fail) is never asked: 0 rows, not "unavailable".
+        expect(read).toEqual({ loaded: true, outcome: 'rows 0' });
+        expect(calls.map((call) => call.length)).toEqual([8]);
+      }),
+  );
 
   suite.effect('batch access refuses a partial owning-Action view instead of weakening revert-all', () =>
     Effect.gen(function* partialBatch() {

@@ -98,6 +98,7 @@ const anyRoundAdmits = (
             ...answered,
             ...round.map(({ actionKey }) => [actionKey, runnable.has(actionKey)] as const),
           ]);
+          // The early stop: later rounds are never asked, so they can neither admit nor be unavailable.
           return admitted.length > 0
             ? Effect.succeed({ answered: next, found: true })
             : anyRoundAdmits(rounds, index + 1, scope, next);
@@ -107,9 +108,14 @@ const anyRoundAdmits = (
 
 /**
  * Whether the acting person may run at least one of `actions`: asked in rounds of growing size and stopped at the first
- * round that admits one. Every Action's answer is its own whatever else is asked with it, so this is exactly whether one
- * question over all of them admits any; a person with no right at all is asked about every Action, whatever they read.
- * The asked Actions' answers come back too, for the read to apply to its rows as it always applied `prepare`'s.
+ * round that admits one. Every Action's allow/deny answer is its own whatever else is asked with it, so this gives the
+ * same allow/deny answer as one question over all of them; a person with no right at all is asked about every Action,
+ * whatever they read. The asked Actions' answers come back too, for the read to apply to its rows as it always applied
+ * `prepare`'s.
+ *
+ * The one known difference, accepted: an Action in a round that is never asked can no longer make the read
+ * unavailable. When the authority cannot answer only for Actions of an unasked round, a missing or empty batch now
+ * reads as 0 rows instead of "unavailable"; an outage in any round that is asked still makes the read unavailable.
  */
 const holdsAnyExecutableAction = (actions: readonly AgentProposalQueueAction[], scope: ReadPrepareContext['scope']) =>
   anyRoundAdmits(roundsOf(actions), 0, scope, new Map()).pipe(

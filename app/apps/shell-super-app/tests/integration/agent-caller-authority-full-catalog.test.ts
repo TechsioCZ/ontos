@@ -791,7 +791,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '900 secon
     );
 
     suite.effect(
-      'answers every Action through the real gate batch as when asked alone, with the same rows',
+      'gives every Action the same allow/deny answer through the real gate batch as when asked alone, with the same rows',
       () =>
         withAuthorityCase('work.tasks', (authorityCase) =>
           Effect.gen(function* independentAnswers() {
