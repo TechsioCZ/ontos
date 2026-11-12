@@ -10,7 +10,9 @@ import { AccessProjectionError } from '../../src/access/compiler/projection-erro
 import type { AccessProjectionCompiler as AccessProjectionCompilerEngine } from '../../src/access/compiler/spice-db-compiler.ts';
 import type { TenantId } from '../../src/access/ids.ts';
 import { AccessProjectionWriter } from '../../src/access/intent/projection-writer.ts';
-import { activateCatalogRelease } from '../../src/access/release/activation.ts';
+import { activateCatalogRelease, releaseActorId } from '../../src/access/release/activation.ts';
+import { ensurePlatformTenant, PLATFORM_TENANT } from '../../src/auth/module-credentials.ts';
+import { CoreDatabase } from '../../src/db/client.ts';
 import { makeAccessFenceSweepBackoffs, sweepLapsedAccessFences } from '../../src/access/lifecycle/fence-sweeper.ts';
 import type { AccessFenceSweepBackoffs, AccessFenceSweepReport } from '../../src/access/lifecycle/fence-sweeper.ts';
 import type { TenantIntentLoaderService } from '../../src/access/intent/tenant-intent-loader.ts';
@@ -247,6 +249,12 @@ const holderReleases = (admin: PgClient.PgClient, tenantId: TenantId) =>
           set state = 'Ready', owning_operation_id = null, lease_expires_at = null, revision = revision + 1
         where tenant_id = '${tenantId}' and state = 'Changing'`,
     )
+    .pipe(Effect.orDie);
+
+/** Whether the tenant has its platform release actor: 0 or 1. */
+const releaseActorsOf = (admin: PgClient.PgClient, tenantId: string) =>
+  admin
+    .unsafe(`select count(*)::int as actors from core.principals where principal_id = '${releaseActorId(tenantId)}'`)
     .pipe(Effect.orDie);
 
 /** The dead holder's journal last moved `age` ago. */
@@ -968,7 +976,10 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
       withProjectionTenant({ activeModules: [MODULE] }, (tenantId, admin) =>
         Effect.gen(function* budgetSpent() {
           const scope = yield* bootstrapTenant(tenantId);
-          // Another writer holds the fence for longer than the whole activation may wait.
+          // The platform tenant lives in the same database, and another writer holds this tenant's fence for longer
+          // than the whole activation may wait.
+          const { executor } = yield* CoreDatabase;
+          yield* executor.transaction((transaction) => ensurePlatformTenant(transaction)).pipe(Effect.orDie);
           yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
           const activated = yield* activateCatalogRelease({
             busyFenceBudget: Duration.seconds(3),
@@ -977,6 +988,11 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
           const tenant = activated.tenants.find((entry) => entry.tenantId === tenantId);
           expect(tenant?.outcome).toBe('deferred');
           expect(tenant?.reason).toContain('not followed this deploy');
+          // The platform tenant is passed by before any waiting, and given no release actor.
+          expect(activated.tenants.find((entry) => entry.tenantId === PLATFORM_TENANT.tenantId)).toMatchObject({
+            outcome: 'skipped',
+          });
+          expect(yield* releaseActorsOf(admin, PLATFORM_TENANT.tenantId)).toEqual([{ actors: 0 }]);
           // Nothing was recorded: once the other writer is done, the graph is still exactly the tenant's intent.
           yield* holderReleases(admin, tenantId);
           const writer = yield* AccessProjectionWriter;
