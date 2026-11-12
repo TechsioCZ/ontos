@@ -269,7 +269,12 @@ export const decideTaxRates = (
       : keptStored(stored, at);
   }
   const { book, fetchedAt } = fetched;
-  const storedIsNewer = stored?.source === 'TAX' && !DateTime.isGreaterThan(fetchedAt, stored.syncedAt);
+  // A stored confirmation time ahead of the clock (another process's skewed clock) is no later answer: it never keeps
+  // Tax's current answer out for as long as the skew lasts.
+  const storedIsNewer =
+    stored?.source === 'TAX' &&
+    !DateTime.isGreaterThan(stored.syncedAt, at) &&
+    !DateTime.isGreaterThan(fetchedAt, stored.syncedAt);
   if (storedIsNewer || !(stored === undefined || stored.source === 'TAX' || pricesCompany(book, at))) {
     return keptStored(stored, at);
   }

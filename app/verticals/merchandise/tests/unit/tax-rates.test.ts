@@ -612,3 +612,13 @@ it.effect('an explicit sync that fails during an outage leaves the automatic wai
     expect(yield* Ref.get(calls)).toBe(3);
   }),
 );
+
+it('a stored confirmation time ahead of the clock never keeps a newer answer of Tax out', () => {
+  const ahead: CompanyTaxRates = { ...CONFIRMED, syncedAt: DateTime.add(NOW, { hours: 2 }) };
+  const newer = testTaxBook({ reduced: '12', standard: '23' });
+  expect(decideTaxRates(ahead, answered(newer), NOW)).toMatchObject({
+    book: newer,
+    changed: true,
+    materialise: { book: newer, source: 'TAX', syncedAt: NOW },
+  });
+});
