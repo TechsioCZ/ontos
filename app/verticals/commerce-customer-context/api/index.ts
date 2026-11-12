@@ -88,7 +88,17 @@ import { loadSpiceDbConfig } from '@app/core-runtime/access/spicedb-config';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
-import { Context, Layer as GovernedReadLayer, Logger, Option, Redacted, References, Schema, Tracer } from 'effect';
+import {
+  Context,
+  Crypto,
+  Layer as GovernedReadLayer,
+  Logger,
+  Option,
+  Redacted,
+  References,
+  Schema,
+  Tracer,
+} from 'effect';
 import {
   PartyRegistryRetailPartyResolverFactory,
   preparedRetailPartyResolution,
@@ -358,16 +368,26 @@ import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramo
 
 const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
-const commercePortalAuthPlatformEmailDeliveryLive = CommercePortalAuthPlatformEmailDeliveryLive(
-  Effect.fn('CommercePortalAuth.submitPlatformEmail')(function* submitPortalEmail(
-    transport: Parameters<CommercePortalAuthPlatformEmailSubmit>[0],
-    from: Parameters<CommercePortalAuthPlatformEmailSubmit>[1],
-    message: Parameters<CommercePortalAuthPlatformEmailSubmit>[2],
-  ) {
-    const delivery = yield* Layer.build(transport.deliveryLayer(from, message.to));
-    const service = Context.get(delivery, EmailDeliveryService);
-    return yield* service.send(message);
-  }, Effect.scoped),
+/** The root closes each platform email submission over the portal's platform Crypto. */
+const commercePortalAuthPlatformEmailDeliveryLive = Layer.unwrap(
+  Effect.gen(function* platformEmailSubmission() {
+    const crypto = yield* Crypto.Crypto;
+    return CommercePortalAuthPlatformEmailDeliveryLive(
+      Effect.fn('CommercePortalAuth.submitPlatformEmail')(
+        function* submitPortalEmail(
+          transport: Parameters<CommercePortalAuthPlatformEmailSubmit>[0],
+          from: Parameters<CommercePortalAuthPlatformEmailSubmit>[1],
+          message: Parameters<CommercePortalAuthPlatformEmailSubmit>[2],
+        ) {
+          const delivery = yield* Layer.build(transport.deliveryLayer(from, message.to));
+          const service = Context.get(delivery, EmailDeliveryService);
+          return yield* service.send(message);
+        },
+        Effect.scoped,
+        Effect.provideService(Crypto.Crypto, crypto),
+      ),
+    );
+  }),
 ).pipe(Layer.provide(commercePortalAuthPlatformCryptoLive));
 
 const workloadRejectedProblem = () => Effect.fail(commercePortalAuthVerificationForbiddenProblem);
