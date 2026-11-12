@@ -22,10 +22,6 @@ import {
   SalesPipelineErrorSchema,
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
-import {
-  salesPipelineApplyCommandDeclaration,
-  salesPipelineEntrustGroup,
-} from '../../shared/model/access-declarations.ts';
 import { withCommandGuard } from '../../shared/actions/command-guard.ts';
 import { persistenceService, prepareSalesPipelineCommand } from '../services/persistence.service.ts';
 import {
@@ -120,12 +116,30 @@ export const prepareApplyCommandServices = withCommandGuard(
 
 export const applyCommandAction = defineAction(
   {
-    accessDeclaration: salesPipelineApplyCommandDeclaration,
+    accessDeclaration: {
+      key: 'demo.sales-pipeline.apply-command.write',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'sales-pipeline', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'demo.sales-pipeline.apply-command.access.v1',
     },
-    accessFieldGroups: [salesPipelineEntrustGroup],
+    accessFieldGroups: [
+      {
+        fieldClass: 'authority_metadata',
+        fields: ['command.entrustedPrincipalRef', 'command.patch.entrustedPrincipalRef'],
+        key: 'demo.sales-pipeline.opportunity-entrust.assign',
+        kind: 'field_write',
+        modes: ['run', 'propose', 'approve'],
+        placement: { group: 'sales-pipeline', level: 'manage' },
+        risk: 'sensitive',
+        selectors: [],
+      },
+    ],
     actionKey: 'demo.sales-pipeline.apply-command',
     auditProfile: 'standard',
     domainErrorSchema: SalesPipelineErrorSchema,

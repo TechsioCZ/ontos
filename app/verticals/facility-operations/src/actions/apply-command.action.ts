@@ -23,7 +23,6 @@ import {
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
 import { withCommandGuard } from '../../shared/actions/command-guard.ts';
-import { facilityOperationsApplyCommandDeclaration } from '../../shared/domain/access-declarations.ts';
 import { facilityOperationsGrants, persistenceService } from '../services/persistence.service.ts';
 
 import {
@@ -120,7 +119,14 @@ const guardedApplyCommand: typeof handleApplyCommand = withCommandGuard(handleAp
 
 export const applyCommandAction = defineAction(
   {
-    accessDeclaration: facilityOperationsApplyCommandDeclaration,
+    accessDeclaration: {
+      key: 'facility.operations.apply-command.write',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'facility-operations', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'facility.operations.apply-command.access.v1',

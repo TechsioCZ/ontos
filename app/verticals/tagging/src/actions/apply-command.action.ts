@@ -2,7 +2,6 @@
 // @ontos-action-owner demo.tagging
 // @ontos-action-slug apply-command
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { applyCommandDeclaration } from '../../shared/access-declarations.ts';
 import {
   ApplyCommandPayloadSchema,
   ApplyCommandResultSchema,
@@ -16,7 +15,14 @@ export { prepareApplyCommandServices } from './command-execution.ts';
 
 export const applyCommandAction = defineAction(
   {
-    accessDeclaration: applyCommandDeclaration,
+    accessDeclaration: {
+      key: 'demo.tagging.apply-command.write',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'tagging', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'demo.tagging.apply-command.access.v1',

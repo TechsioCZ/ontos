@@ -18,7 +18,6 @@ import {
   RecordsResponseSchema,
 } from '../../shared/apis/records.ts';
 import type { RecordsRequest } from '../../shared/apis/records.ts';
-import { crmRecordsReadDeclaration } from '../../shared/domain/access-declarations.ts';
 import { crmRecordsGrants, finishCrmRecords, persistenceService } from '../services/persistence.service.ts';
 
 import { clientReadEvidence } from './agent-review.ts';
@@ -68,7 +67,14 @@ export const recordsRead = defineRead(
   {
     // The declared selectors are the reviewed CRM reach: all (Správce, Vedoucí), assigned (Obchodník),
     // entrusted (externí partner). The gate resolves the caller's cell to a row predicate.
-    accessDeclaration: crmRecordsReadDeclaration,
+    accessDeclaration: {
+      key: 'demo.crm.api-records.read',
+      kind: 'read',
+      modes: ['run'],
+      placement: { group: 'crm', level: 'basic' },
+      risk: 'sensitive',
+      selectors: ['all', 'assigned', 'entrusted'],
+    },
     accessKind: 'list',
     entrypoint: recordsEntrypoint,
     evidencePolicy: {

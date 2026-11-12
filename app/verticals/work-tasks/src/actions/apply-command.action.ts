@@ -26,8 +26,6 @@ import { withCommandGuard } from '../../shared/actions/command-guard.ts';
 import { persistenceService, prepareWorkCommand } from '../services/persistence.service.ts';
 import { assignmentPolicy } from '../services/assignment-policy.ts';
 
-import { workApplyCommandDeclaration } from '../../shared/access-declarations.ts';
-
 const moduleId = 'work.tasks';
 const searchTopic = 'work.tasks.search-refresh-requested.v1';
 const domainEvents = { [searchTopic]: SearchRefreshPayloadSchema } as const;
@@ -92,7 +90,14 @@ export const prepareApplyCommandServices = Effect.fn('Work.prepareApplyCommandSe
 
 export const applyCommandAction = defineAction(
   {
-    accessDeclaration: workApplyCommandDeclaration,
+    accessDeclaration: {
+      key: 'work.tasks.apply-command.write',
+      kind: 'action',
+      modes: ['run', 'propose', 'approve'],
+      placement: { group: 'work-tasks', level: 'manage' },
+      risk: 'sensitive',
+      selectors: [],
+    },
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'work.tasks.apply-command.access.v1',

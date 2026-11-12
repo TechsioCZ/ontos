@@ -28,7 +28,9 @@ import { salesPipelineRegistration } from '../../vertical.registration.ts';
 import {
   salesPipelineApplyCommandDeclaration,
   salesPipelineEntrustGroup,
+  salesPipelineRecordsReadDeclaration,
 } from '../../shared/model/access-declarations.ts';
+import { recordsRead } from '../../src/api/records.read.ts';
 
 type CommandInput = typeof SalesPipelineCommandSchema.Encoded;
 
@@ -187,6 +189,13 @@ const runCommand = Effect.fn('runCommand')(function* runCommand(state: SalesPipe
           outboxMessages: allEvidence.outboxMessages.filter((entry) => entry.message.topic === outboxTopic),
         };
   return { evidence, result };
+});
+
+it('asks the gate exactly what the registered descriptors declare', () => {
+  // The descriptors carry closed inline literals for the catalog; these owner copies must not drift.
+  expect(recordsRead.descriptor.accessDeclaration).toMatchObject(salesPipelineRecordsReadDeclaration);
+  expect(applyCommandAction.descriptor.accessDeclaration).toMatchObject(salesPipelineApplyCommandDeclaration);
+  expect(applyCommandAction.descriptor.accessFieldGroups).toMatchObject([salesPipelineEntrustGroup]);
 });
 
 it.effect('ChangeOpportunityStage to WON commits exactly one stage-changed message with the line snapshot', () =>
