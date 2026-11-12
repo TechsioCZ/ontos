@@ -430,13 +430,14 @@ export {
   allowOwnerAuthorizationOverlay,
   failClosedOwnerAuthorizationDecision,
   failClosedOwnerAuthorizationOverlay,
-  ownerAuthorizationDecisionOf,
+  decodeOwnerAuthorizationOutcome,
+  ownerAuthorizationFromExit,
   ownerAuthorizationDenial,
-  ownerAuthorizationDenialReasons,
 } from './access/enforcement/owner-overlay.ts';
 export type {
   OwnerAccessFacts,
   OwnerAuthorizationDecision,
+  DecodedOwnerAuthorization,
   OwnerAuthorizationDenial,
   OwnerAuthorizationOutcome,
   OwnerAuthorizationInput,

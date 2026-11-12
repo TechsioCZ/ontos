@@ -205,6 +205,36 @@ it.effect('refuses a workload principal on a declaration with 403 and records th
   }),
 );
 
+it.effect('a person the central gate refuses gets the gate codes, never an owner code (R2)', () =>
+  Effect.gen(function* gateCodesOnly() {
+    let ownerQuestions = 0;
+    const harness = yield* makeActionTestHarness({
+      accessDecision: boundGate({ authority: { cells: [] } }),
+      onOwnerAuthorization: () => {
+        ownerQuestions += 1;
+        return 'denied';
+      },
+      ownerRegistration: shellOwner,
+    });
+    const exit = yield* Effect.exit(
+      harness.runtime.runAction({
+        payload: { amount: 3 },
+        principal,
+        registration: declaredAction,
+        transport: { correlationId: 'access-gate-codes', idempotencyKey: 'access-gate-codes-1' },
+      }),
+    );
+    const failure = denialOf(exit);
+
+    // The gate's own closed codes describe only the caller's own grants, as "Proč?" tells a person.
+    expect(failure.code).toBe('action_permission_denied');
+    expect(failure.reasons).toEqual(['deny.insufficient_grant']);
+    expect((failure.reasons ?? []).some((code) => code.startsWith('deny.owner'))).toBe(false);
+    expect(ownerQuestions).toBe(0);
+    expect(harness.snapshot().stages).not.toContain('handler_executed');
+  }),
+);
+
 it.effect('refuses an agent on a declaration with deny.agent_forbidden (O67-Q5)', () =>
   Effect.gen(function* refusesAgent() {
     const accessDecision = boundGate({ kind: 'agent' });

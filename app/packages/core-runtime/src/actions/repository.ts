@@ -28,6 +28,7 @@ import {
   getActionInvocationPersistenceErrorCause,
 } from './errors.ts';
 import type { ActionEvidenceSnapshot } from './events.ts';
+import { ReportableReasonCodesSchema, reportableReasonCodes } from '../access/enforcement/reason-codes.ts';
 import { OperationContextUnavailable } from '../operations/operation-context-unavailable.ts';
 import { ReadEvidencePersistenceError } from '../reads/read-evidence-persistence-error.ts';
 import {
@@ -227,8 +228,20 @@ export interface ActionInvocationRecord {
 
 /** The recorded reason a terminal `rejected` invocation was refused. */
 export type ActionRecordedRejection =
-  | { readonly stage: 'authz' }
+  /** `reasons`: the refusal's reportable codes, so a same-key retry answers exactly as the first request did. */
+  | { readonly reasons?: readonly string[]; readonly stage: 'authz' }
   | { readonly policyReasonCode: string; readonly stage: 'policy' };
+
+const RecordedReasonCodesSchema = Schema.Struct({ reasonCodes: ReportableReasonCodesSchema });
+/** The codes a recorded refusal kept, or none when the row predates them or holds anything else. */
+const decodeRecordedReasonCodes = Schema.decodeUnknownOption(RecordedReasonCodesSchema);
+
+/** A refusal's evidence: the denied-audit fields, the Action key and, when it has any, its reportable codes. */
+const rejectionEvidence = (input: RejectPermissionDeniedInput) => {
+  const base = { ...input.deniedAuditEvidence, actionKey: input.actionKey };
+  const reasonCodes = Option.getOrElse(reportableReasonCodes(input.reasonCodes ?? []), () => []);
+  return reasonCodes.length === 0 ? base : { ...base, reasonCodes: [...reasonCodes] };
+};
 
 export interface ActionPolicyEvidence {
   readonly owningModuleKey?: string;
@@ -266,6 +279,8 @@ export interface RejectPermissionDeniedInput {
   readonly auditProfile: ActionAuditProfile;
   readonly deniedAuditEvidence?: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>;
   readonly principal: TrustedPrincipalContext;
+  /** The refusal's reason codes; only codes Core may report are recorded (never request data). */
+  readonly reasonCodes?: readonly string[] | undefined;
   readonly transport: ActionTransportMetadata;
 }
 
@@ -652,14 +667,22 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
     'makeActionRepository.loadRecordedRejection',
   )(function* loadRecordedRejectionEffect(executor: Pick<CoreDatabaseExecutor, 'select'>, invocationId: string) {
     const rows = yield* executor
-      .select({ outcomeCode: auditEvents.outcomeCode, outcomeStage: auditEvents.outcomeStage })
+      .select({
+        evidence: auditEvents.evidenceJson,
+        outcomeCode: auditEvents.outcomeCode,
+        outcomeStage: auditEvents.outcomeStage,
+      })
       .from(auditEvents)
       .where(and(eq(auditEvents.actionInvocationId, invocationId), eq(auditEvents.eventType, 'action.rejected')))
       .limit(1)
       .pipe(Effect.mapError((cause) => persistenceFailure('Unable to load the recorded Action rejection', cause)));
     const [rejection] = rows;
     if (rejection?.outcomeStage === 'authz') {
-      return Option.some<ActionRecordedRejection>({ stage: 'authz' });
+      const reasons = Option.match(decodeRecordedReasonCodes(rejection.evidence), {
+        onNone: (): readonly string[] => [],
+        onSome: ({ reasonCodes }) => reasonCodes,
+      });
+      return Option.some<ActionRecordedRejection>({ reasons, stage: 'authz' });
     }
     if (rejection?.outcomeStage === 'policy') {
       return Option.some<ActionRecordedRejection>({ policyReasonCode: rejection.outcomeCode, stage: 'policy' });
@@ -762,7 +785,7 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
             authContextRef: input.principal.authContextRef,
             authMethod: input.principal.authMethod,
             eventType: 'action.rejected',
-            evidenceJson: { ...input.deniedAuditEvidence, actionKey: input.actionKey },
+            evidenceJson: rejectionEvidence(input),
             impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
             legalEntityId: input.principal.legalEntityId,
             outcome: 'denied',

@@ -1,10 +1,11 @@
-import { Context, Effect, Layer, Match, Schema } from 'effect';
+import { Cause, Context, Effect, Exit, Layer, Match, Option, Schema } from 'effect';
 import type { DateTime } from 'effect';
 
 import { isOwnerPermissionAccessTargetValid } from '../../permissions/context-access.ts';
 import type { OwnerPermissionAccessTarget, ResourceAccessTarget } from '../../permissions/context-access.ts';
 import type { LegalEntityPermissionKey, TenantPermissionKey } from '../../permissions/context-permissions.ts';
 import type { AccessRecordTarget } from '../decision/contract.ts';
+import { reportableReasonCodes } from './reason-codes.ts';
 import type { ScopedTransactionExecutor } from '../../db/scoped-transaction.ts';
 import type { OperationalScope } from '../../operations/context.ts';
 
@@ -98,17 +99,67 @@ export interface OwnerAuthorizationDenial {
 /** What an owner overlay answers: a bare decision, or a refusal that names its reasons. */
 export type OwnerAuthorizationOutcome = OwnerAuthorizationDecision | OwnerAuthorizationDenial;
 
-/** The reason Core reports when an owner overlay refuses without naming one. */
+/** The reason Core reports when an owner overlay refuses without naming one, or names one it cannot report. */
 export const OWNER_RULE_DENIED_REASON = 'deny.owner_rule';
 
-const isBareOwnerDecision = Schema.is(OwnerAuthorizationDecisionSchema);
+/**
+ * The one closed contract of an owner overlay's answer, decoded by Core before it acts on it: a bare
+ * decision, or a refusal naming non-empty string reasons. Nothing else is an answer (O48).
+ */
+const OwnerAuthorizationAnswerSchema = Schema.Union([
+  OwnerAuthorizationDecisionSchema,
+  Schema.Struct({
+    decision: Schema.Literal('denied'),
+    reasons: Schema.NonEmptyArray(Schema.String),
+  }),
+]);
+const decodeOwnerAnswer = Schema.decodeUnknownOption(OwnerAuthorizationAnswerSchema, { onExcessProperty: 'error' });
 
-export const ownerAuthorizationDecisionOf = (outcome: OwnerAuthorizationOutcome): OwnerAuthorizationDecision =>
-  isBareOwnerDecision(outcome) ? outcome : outcome.decision;
+/** An owner answer as Core acts on it: one decision, and for a refusal the reason codes Core may report. */
+export type DecodedOwnerAuthorization =
+  | { readonly decision: 'allowed' | 'unavailable' }
+  | { readonly decision: 'denied'; readonly reasons: readonly [string, ...string[]] };
 
-/** The reason codes of a refusal; a bare `denied` reports the generic owner-rule code. */
-export const ownerAuthorizationDenialReasons = (outcome: OwnerAuthorizationOutcome): readonly string[] =>
-  isBareOwnerDecision(outcome) ? [OWNER_RULE_DENIED_REASON] : outcome.reasons;
+/** The refusal's own codes when Core may report every one of them; otherwise the generic owner-rule code (R3). */
+const reportableReasons = (reasons: readonly string[]): readonly [string, ...string[]] => {
+  const [first, ...rest] = Option.getOrElse(reportableReasonCodes(reasons), () => []);
+  return first === undefined ? [OWNER_RULE_DENIED_REASON] : [first, ...rest];
+};
+
+/**
+ * Decodes whatever an owner overlay answered. Any value outside the closed contract — an unknown
+ * string, a missing or extra field, `null`, `undefined` — is `unavailable`: Core fails closed and never
+ * reads an odd answer as an allow (a type escape or a separately built owner unit can send anything). A
+ * refusal whose reasons Core cannot report keeps its refusal and reports `deny.owner_rule` instead.
+ */
+export const decodeOwnerAuthorizationOutcome = (answer: OwnerAuthorizationOutcome): DecodedOwnerAuthorization =>
+  Option.match(decodeOwnerAnswer(answer), {
+    onNone: (): DecodedOwnerAuthorization => ({ decision: 'unavailable' }),
+    onSome: (value): DecodedOwnerAuthorization => {
+      if (Schema.is(OwnerAuthorizationDecisionSchema)(value)) {
+        return value === 'denied' ? { decision: 'denied', reasons: [OWNER_RULE_DENIED_REASON] } : { decision: value };
+      }
+      return { decision: 'denied', reasons: reportableReasons(value.reasons) };
+    },
+  });
+
+/**
+ * One owner answer as Core acts on it, from the exit of the overlay's own effect: a decoded answer, or
+ * `unavailable` for a defect or failure the overlay raised (never an allow, never a crashed request).
+ * Interruption stays interruption.
+ */
+export const ownerAuthorizationFromExit = (
+  exit: Exit.Exit<OwnerAuthorizationOutcome>,
+): Effect.Effect<DecodedOwnerAuthorization> => {
+  if (Exit.isSuccess(exit)) {
+    return Effect.succeed(decodeOwnerAuthorizationOutcome(exit.value));
+  }
+  return Cause.hasInterruptsOnly(exit.cause)
+    ? Effect.failCause(exit.cause)
+    : Effect.logWarning('Owner authorization overlay failed; answered unavailable').pipe(
+        Effect.as<DecodedOwnerAuthorization>({ decision: 'unavailable' }),
+      );
+};
 
 export const ownerAuthorizationDenial = (reason: string, ...more: readonly string[]): OwnerAuthorizationDenial => ({
   decision: 'denied',

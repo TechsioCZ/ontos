@@ -58,8 +58,7 @@ import { LEGAL_ENTITY_PERMISSION_KEYS } from '../permissions/context-permissions
 import {
   OwnerAuthorizationOverlay,
   failClosedOwnerAuthorizationOverlay,
-  ownerAuthorizationDecisionOf,
-  ownerAuthorizationDenialReasons,
+  ownerAuthorizationFromExit,
 } from '../access/enforcement/owner-overlay.ts';
 import type { OwnerAccessFacts, OwnerAuthorizationTarget } from '../access/enforcement/owner-overlay.ts';
 import { validateReadEvidenceMetadata } from './context.ts';
@@ -1805,39 +1804,42 @@ const readRuntimeFromDependencies = <
           const scoped = yield* installOperationalScope(transaction, scope, options.databaseIdentities);
           stage('scope_installed');
           const operationAt = yield* trustedTransactionTime(transaction);
-          const ownerAuthorizationOutcome = yield* ownerAuthorizationOverlay.authorize(
-            scoped,
-            Object.freeze(
-              withOptionalProperty(
+          // Decoded through the closed owner contract: an answer outside it is unavailable (fail closed).
+          const ownerAuthorizationExit = yield* Effect.exit(
+            ownerAuthorizationOverlay.authorize(
+              scoped,
+              Object.freeze(
                 withOptionalProperty(
-                  {
-                    capabilityKey: descriptor.accessDeclaration?.key ?? descriptor.readKey,
-                    operation: 'read' as const,
-                    operationAt,
-                    operationKey: input.registration.descriptor.readKey,
-                    owningModuleKey: input.registration.descriptor.owningModuleKey,
-                    scope,
-                    targets: ownerAuthorizationTargets,
-                  },
-                  Option.isSome(accessTarget),
-                  'target',
-                  Option.getOrUndefined(accessTarget),
+                  withOptionalProperty(
+                    {
+                      capabilityKey: descriptor.accessDeclaration?.key ?? descriptor.readKey,
+                      operation: 'read' as const,
+                      operationAt,
+                      operationKey: input.registration.descriptor.readKey,
+                      owningModuleKey: input.registration.descriptor.owningModuleKey,
+                      scope,
+                      targets: ownerAuthorizationTargets,
+                    },
+                    Option.isSome(accessTarget),
+                    'target',
+                    Option.getOrUndefined(accessTarget),
+                    {},
+                  ),
+                  Option.isSome(accessOwnerFacts),
+                  'ownerFacts',
+                  Option.getOrUndefined(accessOwnerFacts),
                   {},
                 ),
-                Option.isSome(accessOwnerFacts),
-                'ownerFacts',
-                Option.getOrUndefined(accessOwnerFacts),
-                {},
               ),
             ),
           );
-          const ownerAuthorizationDecision = ownerAuthorizationDecisionOf(ownerAuthorizationOutcome);
-          if (ownerAuthorizationDecision === 'denied') {
+          const ownerAuthorization = yield* ownerAuthorizationFromExit(ownerAuthorizationExit);
+          if (ownerAuthorization.decision === 'denied') {
             // The gate and "Proč?" cannot see an owner rule, so the refusal names the owner's reason codes.
             yield* Effect.logWarning('Read refused').pipe(
               Effect.annotateLogs({
                 reason: 'The owner-local authorization state denies this Read',
-                reasons: ownerAuthorizationDenialReasons(ownerAuthorizationOutcome).join(','),
+                reasons: ownerAuthorization.reasons.join(','),
                 refusalCompany: scope.legalEntityId ?? 'none',
                 refusalTenant: scope.tenantId,
                 refusedCapability: descriptor.accessDeclaration?.key ?? descriptor.readKey,
@@ -1849,7 +1851,8 @@ const readRuntimeFromDependencies = <
               reason: 'The owner-local authorization state denies this Read',
             });
           }
-          if (ownerAuthorizationDecision === 'unavailable') {
+          // Only exactly `allowed` admits; everything else is unavailable (pre-existing fail-open closed).
+          if (ownerAuthorization.decision !== 'allowed') {
             return yield* new ReadPermissionUnavailable({
               code: 'read_permission_unavailable',
               reason: 'Owner-local Read authorization is temporarily unavailable',

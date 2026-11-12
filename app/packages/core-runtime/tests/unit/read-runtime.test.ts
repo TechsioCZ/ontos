@@ -46,6 +46,7 @@ import type { OperationalScope } from '../../src/operations/context.ts';
 import type { OwnerPermissionAccessTarget } from '../../src/permissions/context-access.ts';
 import type {
   OwnerAuthorizationInput,
+  OwnerAuthorizationOutcome,
   OwnerAuthorizationOverlayService,
 } from '../../src/access/enforcement/owner-overlay.ts';
 import { allowOwnerAuthorizationOverlay } from '../../src/access/enforcement/owner-overlay.ts';
@@ -1162,6 +1163,55 @@ it.effect('runs the owner authorization overlay inside the transaction before th
     expect(harness.evidence()).toBe(1);
   }),
 );
+
+/**
+ * Answers outside the owner contract. Before this the Read path let an unknown answer through to the
+ * handler (pre-existing fail-open); each is now unavailable and the handler never runs.
+ */
+/** Untyped values the compiler cannot vet, as a type escape or a separately built owner unit could send. */
+const outOfContract = Schema.decodeUnknownEffect(Schema.Any);
+const OUT_OF_CONTRACT_OWNER_ANSWERS: readonly (readonly [string, () => Effect.Effect<OwnerAuthorizationOutcome>])[] = [
+  ['ALLOWED', () => outOfContract('ALLOWED').pipe(Effect.orDie)],
+  ['{}', () => outOfContract({}).pipe(Effect.orDie)],
+  ['{decision: allowed}', () => outOfContract({ decision: 'allowed' }).pipe(Effect.orDie)],
+  ['null', () => outOfContract(null).pipe(Effect.orDie)],
+  ['undefined', () => outOfContract(globalThis.undefined).pipe(Effect.orDie)],
+  ['a thrown defect', () => Effect.die(new Error('owner rule defect'))],
+];
+
+for (const [label, answer] of OUT_OF_CONTRACT_OWNER_ANSWERS) {
+  it.effect(`answers an owner overlay's ${label} as unavailable on the Read path`, () =>
+    Effect.gen(function* outOfContractOwnerRead() {
+      let handlerCalls = 0;
+      const harness = yield* makeHarness({
+        contextPermissionDecision: 'allowed',
+        ownerAuthorizationOverlay: {
+          authorize: answer,
+        },
+        permissionDecision: 'allowed',
+      });
+      const testRegistration = defineRead(
+        registration().descriptor,
+        () => {
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+        },
+        () => Effect.succeed({}),
+        () => ({ kind: 'module', moduleId: 'core.shell' }),
+      );
+      const failure = yield* Effect.flip(
+        harness.runtime.runRead({
+          input: {},
+          principal: scope,
+          registration: testRegistration,
+          transport: { correlationId: scope.correlationId },
+        }),
+      );
+      expect(Predicate.isTagged(failure, 'ReadPermissionUnavailable')).toBe(true);
+      expect(handlerCalls).toBe(0);
+    }),
+  );
+}
 
 it.effect('fails closed before owner authorization when PostgreSQL cannot provide transaction time', () =>
   Effect.gen(function* transactionTimeUnavailable() {

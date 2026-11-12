@@ -165,14 +165,14 @@ it.live(
           reason: 'Stage owner address refusal',
         } as const;
         const principal = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
-        const add = () =>
+        const add = (idempotencyKey: string = randomUUID()) =>
           runAction({
             payload,
             principal,
             registration: addSavedAddressAction,
             transport: {
               correlationId: randomUUID(),
-              idempotencyKey: randomUUID(),
+              idempotencyKey,
               targetModuleKey: 'commerce.customer-context',
             },
           }).pipe(Effect.provideContext(context), Effect.result);
@@ -187,7 +187,8 @@ it.live(
 
         // No owner-local Counterparty grant: the owner rule refuses, and names the rule and the right.
         expect(yield* grantsOfOwner()).toEqual([]);
-        const refused = yield* add();
+        const refusedKey = randomUUID();
+        const refused = yield* add(refusedKey);
         if (Result.isSuccess(refused)) {
           return yield* Effect.die('The owner rule admitted an owner without a Counterparty grant');
         }
@@ -199,6 +200,13 @@ it.live(
           reasons: ownerRuleReasons,
           status: 403,
         });
+
+        // A same-key retry answers from the recorded rejection, with the same codes (no second decision).
+        const retried = yield* add(refusedKey);
+        if (Result.isSuccess(retried)) {
+          return yield* Effect.die('A same-key retry of a refused invocation succeeded');
+        }
+        expect(retried.failure).toMatchObject({ code: 'action_permission_denied', reasons: ownerRuleReasons });
 
         // The owner rule's own right, written through its own grant routine, is exactly what admits.
         const [grant] = yield* fixture

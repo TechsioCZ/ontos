@@ -98,12 +98,11 @@ import type { ActionAuthorizationPreflightService } from './owner-proof-prefligh
 import {
   OwnerAuthorizationOverlay,
   failClosedOwnerAuthorizationOverlay,
-  ownerAuthorizationDecisionOf,
-  ownerAuthorizationDenialReasons,
+  ownerAuthorizationFromExit,
 } from '../access/enforcement/owner-overlay.ts';
 import type {
+  DecodedOwnerAuthorization,
   OwnerAccessFacts,
-  OwnerAuthorizationOutcome,
   OwnerAuthorizationTarget,
 } from '../access/enforcement/owner-overlay.ts';
 import type { ActionPermissionService } from '../permissions/service.ts';
@@ -550,11 +549,23 @@ const alreadyCommitted = (invocationId: string) =>
     reason: 'This idempotency key already committed successfully',
   });
 
+const NOT_PERMITTED_REASON = 'The principal is not permitted to execute this Action';
+
 const permissionDeniedFailure = () =>
   new ActionPermissionDenied({
     code: 'action_permission_denied',
-    reason: 'The principal is not permitted to execute this Action',
+    reason: NOT_PERMITTED_REASON,
   });
+
+/** A same-key retry of a refused invocation answers with the codes its first refusal recorded. */
+const recordedPermissionDenial = (reasons: readonly string[]) =>
+  reasons.length === 0
+    ? permissionDeniedFailure()
+    : new ActionPermissionDenied({
+        code: 'action_permission_denied',
+        reason: NOT_PERMITTED_REASON,
+        reasons,
+      });
 
 const requestHashConflict = () =>
   new ActionRequestHashConflict({
@@ -591,7 +602,7 @@ const toActionProposalAccepted = (parked: ActionProposalParked): ActionProposalA
 const accessDeniedFailure = (decision: AccessDecision) =>
   new ActionPermissionDenied({
     code: 'action_permission_denied',
-    reason: 'The principal is not permitted to execute this Action',
+    reason: NOT_PERMITTED_REASON,
     reasons: decision.reasons.map(({ code }) => code),
   });
 
@@ -692,22 +703,23 @@ const NO_OWNER_PERMISSION_TARGETS: readonly ActionOwnerPermissionTarget[] = Obje
 const NO_OWNER_AUTHORIZATION_TARGETS: readonly OwnerAuthorizationTarget[] = Object.freeze([]);
 
 /**
- * The owner overlay's answers for every owner target, as one: any unavailable answer is unavailable
- * (never a denial, never an allow), otherwise the first refusal, with the owner's own reason codes so
- * the 403 and the refusal warning say which owner rule refused (the gate and "Proč?" cannot see it).
+ * The owner overlay's decoded answers for every owner target, as one. Only an answer of exactly
+ * `allowed` for every target admits; any unavailable answer (including any answer outside the closed
+ * contract) is unavailable, never a denial and never an allow; otherwise the first refusal, with the
+ * owner's own reason codes so the 403 and the refusal warning say which owner rule refused.
  */
-const ownerAuthorizationFailure = (outcomes: readonly OwnerAuthorizationOutcome[]) => {
-  if (outcomes.some((outcome) => ownerAuthorizationDecisionOf(outcome) === 'unavailable')) {
-    return Effect.fail(permissionUnavailable());
+const ownerAuthorizationFailure = (outcomes: readonly DecodedOwnerAuthorization[]) => {
+  if (outcomes.every(({ decision }) => decision === 'allowed')) {
+    return Effect.void;
   }
-  const refusal = outcomes.find((outcome) => ownerAuthorizationDecisionOf(outcome) === 'denied');
-  return refusal === undefined
-    ? Effect.void
+  const refusal = outcomes.find((outcome) => outcome.decision === 'denied');
+  return outcomes.some(({ decision }) => decision === 'unavailable') || refusal?.decision !== 'denied'
+    ? Effect.fail(permissionUnavailable())
     : Effect.fail(
         new ActionPermissionDenied({
           code: 'action_permission_denied',
           reason: 'The owner-local authorization state denies this Action',
-          reasons: ownerAuthorizationDenialReasons(refusal),
+          reasons: refusal.reasons,
         }),
       );
 };
@@ -718,6 +730,10 @@ const RefusalScopeSchema = Schema.Struct({
   tenantId: TenantIdSchema,
 });
 type RefusalScope = typeof RefusalScopeSchema.Type;
+/** The refusal context of one run: its validated tenant and company, once the principal is validated. */
+interface RefusalContext {
+  scope: Option.Option<RefusalScope>;
+}
 const isActionPermissionDenied = Schema.is(ActionPermissionDenied);
 
 /**
@@ -866,7 +882,7 @@ const recordedRejectionFailure = (rejection: Option.Option<ActionRecordedRejecti
     return terminalInvocation();
   }
   return rejection.value.stage === 'authz'
-    ? permissionDeniedFailure()
+    ? recordedPermissionDenial(rejection.value.reasons ?? [])
     : new ActionPolicyDenied({
         code: 'action_policy_denied',
         policyReasonCode: rejection.value.policyReasonCode,
@@ -1341,6 +1357,8 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       original: undefined,
       revision: undefined,
     };
+    /** Filled once the principal is validated; a refusal before that names no tenant and no company. */
+    const refusalContext: RefusalContext = { scope: Option.none() };
     const executeAttempt = Effect.fn('ActionRuntime.executeAttempt')(function* executeAttemptEffect() {
       const prepareTrustedInputAndContext = Effect.fn('ActionRuntime.prepareTrustedInputAndContext')(
         function* prepareTrustedInputAndContextEffect() {
@@ -1370,6 +1388,8 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               ? yield* decodeActionPayload(input.registration.descriptor.payloadSchema, input.payload)
               : undefined;
           const principal = yield* validatePrincipal(input.principal, input.registration, initialPayload);
+          // A refusal names a tenant and company only once the principal carrying them is validated.
+          refusalContext.scope = Schema.decodeUnknownOption(RefusalScopeSchema)(principal);
           const scope = yield* operationalScopeResolver.resolve(
             withOptionalProperty(
               withOptionalProperty(
@@ -1864,6 +1884,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                 actionKey: input.registration.descriptor.actionKey,
                 auditProfile: input.registration.descriptor.auditProfile,
                 principal,
+                reasonCodes: failure.reasons,
                 transport: governedTransport,
               },
               deniedAuditEvidence !== undefined,
@@ -2881,33 +2902,35 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             const ownerAuthorizationDecisions = yield* Effect.forEach(
               ownerTargets,
               (ownerTarget) =>
-                ownerAuthorizationOverlay.authorize(
-                  scopedTransaction,
-                  Object.freeze(
-                    withOptionalProperty(
+                Effect.exit(
+                  ownerAuthorizationOverlay.authorize(
+                    scopedTransaction,
+                    Object.freeze(
                       withOptionalProperty(
-                        {
-                          capabilityKey:
-                            declaredCarrier.accessDeclaration?.key ?? input.registration.descriptor.actionKey,
-                          operation: 'action' as const,
-                          operationAt,
-                          operationKey: input.registration.descriptor.actionKey,
-                          owningModuleKey: input.registration.descriptor.owningModuleKey,
-                          scope,
-                          targets: frozenOwnerAuthorizationTargets,
-                        },
-                        ownerTarget !== undefined,
-                        'target',
-                        ownerTarget,
+                        withOptionalProperty(
+                          {
+                            capabilityKey:
+                              declaredCarrier.accessDeclaration?.key ?? input.registration.descriptor.actionKey,
+                            operation: 'action' as const,
+                            operationAt,
+                            operationKey: input.registration.descriptor.actionKey,
+                            owningModuleKey: input.registration.descriptor.owningModuleKey,
+                            scope,
+                            targets: frozenOwnerAuthorizationTargets,
+                          },
+                          ownerTarget !== undefined,
+                          'target',
+                          ownerTarget,
+                          {},
+                        ),
+                        Option.isSome(accessOwnerFacts),
+                        'ownerFacts',
+                        Option.getOrUndefined(accessOwnerFacts),
                         {},
                       ),
-                      Option.isSome(accessOwnerFacts),
-                      'ownerFacts',
-                      Option.getOrUndefined(accessOwnerFacts),
-                      {},
                     ),
                   ),
-                ),
+                ).pipe(Effect.flatMap(ownerAuthorizationFromExit)),
               { concurrency: 1 },
             );
             yield* ownerAuthorizationFailure(ownerAuthorizationDecisions);
@@ -3273,11 +3296,12 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         return result;
       },
     );
-    const refusalScope = Schema.decodeUnknownOption(RefusalScopeSchema)(input.principal);
     const warnedAttempt = () =>
       executeAttempt().pipe(
         Effect.tapError((failure) =>
-          isActionPermissionDenied(failure) ? logActionRefusal(declaredCarrier, refusalScope, failure) : Effect.void,
+          isActionPermissionDenied(failure)
+            ? logActionRefusal(declaredCarrier, refusalContext.scope, failure)
+            : Effect.void,
         ),
       );
     if (postAttemptHook === undefined) {
