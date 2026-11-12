@@ -3,6 +3,7 @@ import { defineRelations, sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
+  bytea,
   check,
   foreignKey,
   index,
@@ -21,6 +22,7 @@ import type { Schema } from 'effect';
 import {
   PAYMENT_AUTHORIZATION_PROOF_KINDS,
   PAYMENT_CORRECTION_EFFECTS,
+  PAYMENT_GATEWAY_PROVIDER_FAMILIES,
   PAYMENT_METHODS,
   PAYMENT_OBSERVATION_ACCEPTANCE_OUTCOMES,
   PAYMENT_OBSERVATION_FACT_KINDS,
@@ -39,6 +41,7 @@ import {
 import type {
   PaymentAuthorizationProofKind,
   PaymentCorrectionEffectKind,
+  PaymentGatewayProviderFamilySchema,
   PaymentMethod,
   PaymentObservationAcceptanceOutcome,
   PaymentObservationFactKind,
@@ -55,6 +58,30 @@ import type {
   PaymentSourceKind,
 } from '../../shared/domain/payment-vocabulary.ts';
 import { PAYMENT_LAUNCH_CURRENCY } from '../../shared/domain/payment-money.ts';
+import {
+  GATEWAY_BINDING_STATUSES,
+  GATEWAY_CREDENTIAL_STATUSES,
+  GATEWAY_ENVIRONMENTS,
+  PROVIDER_DISPATCH_STATES,
+  PROVIDER_EVIDENCE_ORIGINS,
+  PROVIDER_EVIDENCE_SUBMISSION_STATES,
+  PROVIDER_NOT_SENT_REASONS,
+  PROVIDER_NOTIFICATION_AUTHENTICITY,
+  PROVIDER_NOTIFICATION_STATES,
+} from '../../shared/domain/psp-vocabulary.ts';
+import type {
+  GatewayBindingStatus,
+  GatewayCredentialStatus,
+  GatewayEnvironment,
+  ProviderDispatchState,
+  ProviderEvidenceOrigin,
+  ProviderEvidenceSubmissionState,
+  ProviderNotificationAuthenticity,
+  ProviderNotificationState,
+  ProviderNotSentReason,
+} from '../../shared/domain/psp-vocabulary.ts';
+
+type PaymentGatewayProviderFamily = typeof PaymentGatewayProviderFamilySchema.Type;
 
 export const PAYMENT_SCHEMA_NAME = 'payment';
 export const paymentSchema = pgSchema(PAYMENT_SCHEMA_NAME);
@@ -910,6 +937,680 @@ export const reconciliationDecisions = paymentSchema.table.withRLS(
   ],
 );
 
+/*
+ * C17 provider gateway tables (#1155-#1158). Action-written rows carry `provenanceColumns()`. Worker-written
+ * rows (dispatches, evidence, notification processing) are written only by SECURITY DEFINER scoped routines
+ * and carry origin columns instead: a reference to the admitting invocation, never a human actor.
+ */
+const gatewayFamilyCheck = (name: string, column: AnyPgColumn) =>
+  check(name, sql`${column} in (${literalList(PAYMENT_GATEWAY_PROVIDER_FAMILIES)})`);
+const gatewayEnvironmentCheck = (name: string, column: AnyPgColumn) =>
+  check(name, sql`${column} in (${literalList(GATEWAY_ENVIRONMENTS)})`);
+const httpsUrlCheck = (name: string, column: AnyPgColumn) =>
+  check(
+    name,
+    sql`${column} is null or (${column} ~ '^https://[^[:space:]/?#]+[^[:space:]]*$' and length(${column}) <= 2000)`,
+  );
+const accountRefCheck = (name: string, column: AnyPgColumn) => check(name, sql`${column} ~ '^pab_[0-9a-f]{32}$'`);
+const providerRefCheck = (name: string, column: AnyPgColumn) =>
+  check(name, sql`${column} is null or (${column} = btrim(${column}) and length(${column}) between 1 and 200)`);
+/** Opaque request bytes and raw notification bodies are bounded at 64 KiB. */
+const MAXIMUM_OPAQUE_BYTES = sql.raw(String(64 * 1024));
+
+/** Origin of a worker-written row: the admitting invocation (a reference, not an actor) and the delivery. */
+const workerOriginColumns = () => ({
+  deliveryId: uuid('delivery_id').notNull(),
+  originActionInvocationId: uuid('origin_action_invocation_id').notNull(),
+  originCompositionRevision: text('origin_composition_revision').notNull(),
+  recordedAt: timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull(),
+  workerKey: text('worker_key').notNull(),
+});
+
+/** Current Provider Account Binding (#1155). Identity columns are insert-once; status only retires. */
+export const pspProviderAccountBindings = paymentSchema.table.withRLS(
+  'psp_provider_account_bindings',
+  {
+    ...scopeColumns(),
+    ...provenanceColumns(),
+    bindingId: uuid('binding_id').defaultRandom().primaryKey(),
+    configuredAt: timestamp('configured_at', { withTimezone: true }).notNull(),
+    currentCredentialRevision: integer('current_credential_revision').notNull(),
+    environment: text('environment').$type<GatewayEnvironment>().notNull(),
+    merchantIdentity: jsonb('merchant_identity').$type<Schema.Json>().notNull(),
+    notificationUrl: text('notification_url').notNull(),
+    providerAccountRef: text('provider_account_ref').notNull(),
+    providerFamily: text('provider_family').$type<PaymentGatewayProviderFamily>().notNull(),
+    reason: text('reason').notNull(),
+    revision: integer('revision').notNull(),
+    status: text('status').$type<GatewayBindingStatus>().notNull(),
+  },
+  (table) => [
+    unique('payment_psp_bindings_scope_id_uk').on(table.tenantId, table.legalEntityId, table.bindingId),
+    unique('payment_psp_bindings_family_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.bindingId,
+      table.providerFamily,
+      table.environment,
+    ),
+    unique('payment_psp_bindings_account_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.bindingId,
+      table.providerFamily,
+      table.environment,
+      table.providerAccountRef,
+    ),
+    unique('payment_psp_bindings_ref_uk').on(table.tenantId, table.providerAccountRef),
+    uniqueIndex('payment_psp_bindings_current_uk')
+      .on(table.tenantId, table.legalEntityId, table.providerFamily, table.environment)
+      .where(sql`${table.status} = 'CURRENT'`),
+    gatewayFamilyCheck('payment_psp_bindings_family_ck', table.providerFamily),
+    gatewayEnvironmentCheck('payment_psp_bindings_environment_ck', table.environment),
+    check('payment_psp_bindings_status_ck', sql`${table.status} in (${literalList(GATEWAY_BINDING_STATUSES)})`),
+    check(
+      'payment_psp_bindings_merchant_ck',
+      sql`jsonb_typeof(${table.merchantIdentity}) = 'object' and ${table.merchantIdentity}->>'_tag' = ${table.providerFamily}`,
+    ),
+    check('payment_psp_bindings_revisions_ck', sql`${table.revision} > 0 and ${table.currentCredentialRevision} > 0`),
+    accountRefCheck('payment_psp_bindings_ref_ck', table.providerAccountRef),
+    httpsUrlCheck('payment_psp_bindings_notification_url_ck', table.notificationUrl),
+    reasonCheck('payment_psp_bindings_reason_ck', table.reason),
+    compositionRevisionCheck('payment_psp_bindings_composition_ck', table.compositionRevision),
+    ...tenantLegalEntityRlsPolicies('payment_psp_provider_account_bindings', table.tenantId, table.legalEntityId),
+  ],
+);
+
+/** Append-only history of every Provider Account Binding revision. */
+export const pspProviderAccountBindingRevisions = paymentSchema.table.withRLS(
+  'psp_provider_account_binding_revisions',
+  {
+    ...scopeColumns(),
+    ...provenanceColumns(),
+    bindingId: uuid('binding_id').notNull(),
+    bindingRevisionId: uuid('binding_revision_id').defaultRandom().primaryKey(),
+    currentCredentialRevision: integer('current_credential_revision').notNull(),
+    notificationUrl: text('notification_url').notNull(),
+    reason: text('reason').notNull(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
+    revision: integer('revision').notNull(),
+    status: text('status').$type<GatewayBindingStatus>().notNull(),
+  },
+  (table) => [
+    unique('payment_psp_binding_revisions_number_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.bindingId,
+      table.revision,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.bindingId],
+      foreignColumns: [
+        pspProviderAccountBindings.tenantId,
+        pspProviderAccountBindings.legalEntityId,
+        pspProviderAccountBindings.bindingId,
+      ],
+      name: 'payment_psp_binding_revisions_binding_fk',
+    }).onDelete('restrict'),
+    check(
+      'payment_psp_binding_revisions_status_ck',
+      sql`${table.status} in (${literalList(GATEWAY_BINDING_STATUSES)})`,
+    ),
+    check(
+      'payment_psp_binding_revisions_revisions_ck',
+      sql`${table.revision} > 0 and ${table.currentCredentialRevision} > 0`,
+    ),
+    httpsUrlCheck('payment_psp_binding_revisions_notification_url_ck', table.notificationUrl),
+    reasonCheck('payment_psp_binding_revisions_reason_ck', table.reason),
+    compositionRevisionCheck('payment_psp_binding_revisions_composition_ck', table.compositionRevision),
+    ...tenantLegalEntityRlsPolicies(
+      'payment_psp_provider_account_binding_revisions',
+      table.tenantId,
+      table.legalEntityId,
+    ),
+  ],
+);
+
+/**
+ * Credential revisions of one binding (#1155). Only an opaque `secret_ref` names the material; it is never
+ * selected into a business projection. A revision only moves ACTIVE -> RETIRED.
+ */
+export const pspCredentialRevisions = paymentSchema.table.withRLS(
+  'psp_credential_revisions',
+  {
+    ...scopeColumns(),
+    ...provenanceColumns(),
+    bindingId: uuid('binding_id').notNull(),
+    credentialRevisionId: uuid('credential_revision_id').defaultRandom().primaryKey(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
+    retiredAt: timestamp('retired_at', { withTimezone: true }),
+    retiredByActionInvocationId: uuid('retired_by_action_invocation_id'),
+    revision: integer('revision').notNull(),
+    secretRef: text('secret_ref').notNull(),
+    status: text('status').$type<GatewayCredentialStatus>().notNull(),
+  },
+  (table) => [
+    unique('payment_psp_credentials_number_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.bindingId,
+      table.revision,
+    ),
+    uniqueIndex('payment_psp_credentials_active_uk')
+      .on(table.tenantId, table.legalEntityId, table.bindingId)
+      .where(sql`${table.status} = 'ACTIVE'`),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.bindingId],
+      foreignColumns: [
+        pspProviderAccountBindings.tenantId,
+        pspProviderAccountBindings.legalEntityId,
+        pspProviderAccountBindings.bindingId,
+      ],
+      name: 'payment_psp_credentials_binding_fk',
+    }).onDelete('restrict'),
+    check('payment_psp_credentials_status_ck', sql`${table.status} in (${literalList(GATEWAY_CREDENTIAL_STATUSES)})`),
+    check('payment_psp_credentials_revision_ck', sql`${table.revision} > 0`),
+    check('payment_psp_credentials_secret_ref_ck', sql`${table.secretRef} ~ '^[A-Za-z0-9._-]{1,120}$'`),
+    check(
+      'payment_psp_credentials_retirement_ck',
+      sql`(${table.status} = 'RETIRED') = (${table.retiredAt} is not null) and (${table.retiredAt} is null) = (${table.retiredByActionInvocationId} is null)`,
+    ),
+    compositionRevisionCheck('payment_psp_credentials_composition_ck', table.compositionRevision),
+    ...tenantLegalEntityRlsPolicies('payment_psp_credential_revisions', table.tenantId, table.legalEntityId),
+  ],
+);
+
+/** Current Gateway Enablement per Customer Configuration, Selling Legal Entity and family (#1155). */
+export const pspGatewayEnablements = paymentSchema.table.withRLS(
+  'psp_gateway_enablements',
+  {
+    ...scopeColumns(),
+    ...provenanceColumns(),
+    bindingId: uuid('binding_id').notNull(),
+    configuredAt: timestamp('configured_at', { withTimezone: true }).notNull(),
+    customerConfigurationId: text('customer_configuration_id').notNull(),
+    enabled: boolean('enabled').notNull(),
+    enablementId: uuid('enablement_id').defaultRandom().primaryKey(),
+    environment: text('environment').$type<GatewayEnvironment>().notNull(),
+    providerFamily: text('provider_family').$type<PaymentGatewayProviderFamily>().notNull(),
+    reason: text('reason').notNull(),
+    returnUrl: text('return_url').notNull(),
+    revision: integer('revision').notNull(),
+  },
+  (table) => [
+    unique('payment_psp_enablements_scope_id_uk').on(table.tenantId, table.legalEntityId, table.enablementId),
+    unique('payment_psp_enablements_identity_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.customerConfigurationId,
+      table.providerFamily,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.bindingId, table.providerFamily, table.environment],
+      foreignColumns: [
+        pspProviderAccountBindings.tenantId,
+        pspProviderAccountBindings.legalEntityId,
+        pspProviderAccountBindings.bindingId,
+        pspProviderAccountBindings.providerFamily,
+        pspProviderAccountBindings.environment,
+      ],
+      name: 'payment_psp_enablements_binding_fk',
+    }).onDelete('restrict'),
+    gatewayFamilyCheck('payment_psp_enablements_family_ck', table.providerFamily),
+    gatewayEnvironmentCheck('payment_psp_enablements_environment_ck', table.environment),
+    check('payment_psp_enablements_revision_ck', sql`${table.revision} > 0`),
+    httpsUrlCheck('payment_psp_enablements_return_url_ck', table.returnUrl),
+    opaqueCheck('payment_psp_enablements_configuration_ck', table.customerConfigurationId),
+    reasonCheck('payment_psp_enablements_reason_ck', table.reason),
+    compositionRevisionCheck('payment_psp_enablements_composition_ck', table.compositionRevision),
+    ...tenantLegalEntityRlsPolicies('payment_psp_gateway_enablements', table.tenantId, table.legalEntityId),
+  ],
+);
+
+/** Append-only history of every Gateway Enablement revision. */
+export const pspGatewayEnablementRevisions = paymentSchema.table.withRLS(
+  'psp_gateway_enablement_revisions',
+  {
+    ...scopeColumns(),
+    ...provenanceColumns(),
+    bindingId: uuid('binding_id').notNull(),
+    customerConfigurationId: text('customer_configuration_id').notNull(),
+    enabled: boolean('enabled').notNull(),
+    enablementId: uuid('enablement_id').notNull(),
+    enablementRevisionId: uuid('enablement_revision_id').defaultRandom().primaryKey(),
+    environment: text('environment').$type<GatewayEnvironment>().notNull(),
+    providerFamily: text('provider_family').$type<PaymentGatewayProviderFamily>().notNull(),
+    reason: text('reason').notNull(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
+    returnUrl: text('return_url').notNull(),
+    revision: integer('revision').notNull(),
+  },
+  (table) => [
+    unique('payment_psp_enablement_revisions_number_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.enablementId,
+      table.revision,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.enablementId],
+      foreignColumns: [
+        pspGatewayEnablements.tenantId,
+        pspGatewayEnablements.legalEntityId,
+        pspGatewayEnablements.enablementId,
+      ],
+      name: 'payment_psp_enablement_revisions_current_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.bindingId, table.providerFamily, table.environment],
+      foreignColumns: [
+        pspProviderAccountBindings.tenantId,
+        pspProviderAccountBindings.legalEntityId,
+        pspProviderAccountBindings.bindingId,
+        pspProviderAccountBindings.providerFamily,
+        pspProviderAccountBindings.environment,
+      ],
+      name: 'payment_psp_enablement_revisions_binding_fk',
+    }).onDelete('restrict'),
+    gatewayFamilyCheck('payment_psp_enablement_revisions_family_ck', table.providerFamily),
+    gatewayEnvironmentCheck('payment_psp_enablement_revisions_environment_ck', table.environment),
+    check('payment_psp_enablement_revisions_revision_ck', sql`${table.revision} > 0`),
+    httpsUrlCheck('payment_psp_enablement_revisions_return_url_ck', table.returnUrl),
+    opaqueCheck('payment_psp_enablement_revisions_configuration_ck', table.customerConfigurationId),
+    reasonCheck('payment_psp_enablement_revisions_reason_ck', table.reason),
+    compositionRevisionCheck('payment_psp_enablement_revisions_composition_ck', table.compositionRevision),
+    ...tenantLegalEntityRlsPolicies('payment_psp_gateway_enablement_revisions', table.tenantId, table.legalEntityId),
+  ],
+);
+
+/**
+ * Provider dispatch ledger (#1156/#1158): one row per Payment Operation, persisted before the first send.
+ * Identity and material columns are immutable; `state` follows the guarded transition graph.
+ */
+export const pspProviderDispatches = paymentSchema.table.withRLS(
+  'psp_provider_dispatches',
+  {
+    ...scopeColumns(),
+    ...workerOriginColumns(),
+    bindingId: uuid('binding_id').notNull(),
+    credentialRevision: integer('credential_revision'),
+    customerRedirectUrl: text('customer_redirect_url'),
+    dispatchId: uuid('dispatch_id').defaultRandom().primaryKey(),
+    endpointRef: text('endpoint_ref'),
+    environment: text('environment').$type<GatewayEnvironment>().notNull(),
+    idempotencyKeyHash: text('idempotency_key_hash'),
+    /** The C16 operation-requested materialHash (plan D13). */
+    materialHash: text('material_hash').notNull(),
+    notSentReason: text('not_sent_reason').$type<ProviderNotSentReason>(),
+    operationId: uuid('operation_id').notNull(),
+    operationKind: text('operation_kind').$type<PaymentOperationKind>().notNull(),
+    orderReference: text('order_reference').notNull(),
+    paymentId: uuid('payment_id').notNull(),
+    preparedAt: timestamp('prepared_at', { withTimezone: true }),
+    providerAccountRef: text('provider_account_ref').notNull(),
+    providerFamily: text('provider_family').$type<PaymentGatewayProviderFamily>().notNull(),
+    providerPaymentRef: text('provider_payment_ref'),
+    providerRefundRef: text('provider_refund_ref'),
+    replayExpiresAt: timestamp('replay_expires_at', { withTimezone: true }),
+    replayStartsAt: timestamp('replay_starts_at', { withTimezone: true }),
+    /** Opaque request bytes for an exact Stripe replay; never contains a secret. */
+    requestBody: bytea('request_body'),
+    requestHash: text('request_hash'),
+    respondedAt: timestamp('responded_at', { withTimezone: true }),
+    returnToken: text('return_token'),
+    state: text('state').$type<ProviderDispatchState>().notNull(),
+    targetOperationId: uuid('target_operation_id'),
+    transitionDeliveryId: uuid('transition_delivery_id'),
+    transitionedAt: timestamp('transitioned_at', { withTimezone: true }),
+  },
+  (table) => [
+    unique('payment_psp_dispatches_operation_uk').on(table.tenantId, table.legalEntityId, table.operationId),
+    unique('payment_psp_dispatches_order_reference_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.bindingId,
+      table.orderReference,
+    ),
+    uniqueIndex('payment_psp_dispatches_return_token_uk')
+      .on(table.tenantId, table.legalEntityId, table.returnToken)
+      .where(sql`${table.returnToken} is not null`),
+    index('payment_psp_dispatches_target_idx').on(table.tenantId, table.legalEntityId, table.targetOperationId),
+    index('payment_psp_dispatches_provider_payment_idx').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.bindingId,
+      table.providerPaymentRef,
+    ),
+    index('payment_psp_dispatches_state_idx').on(table.tenantId, table.legalEntityId, table.state),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.paymentId, table.operationId],
+      foreignColumns: [
+        paymentOperations.tenantId,
+        paymentOperations.legalEntityId,
+        paymentOperations.paymentId,
+        paymentOperations.operationId,
+      ],
+      name: 'payment_psp_dispatches_operation_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.paymentId, table.targetOperationId],
+      foreignColumns: [
+        paymentOperations.tenantId,
+        paymentOperations.legalEntityId,
+        paymentOperations.paymentId,
+        paymentOperations.operationId,
+      ],
+      name: 'payment_psp_dispatches_target_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [
+        table.tenantId,
+        table.legalEntityId,
+        table.bindingId,
+        table.providerFamily,
+        table.environment,
+        table.providerAccountRef,
+      ],
+      foreignColumns: [
+        pspProviderAccountBindings.tenantId,
+        pspProviderAccountBindings.legalEntityId,
+        pspProviderAccountBindings.bindingId,
+        pspProviderAccountBindings.providerFamily,
+        pspProviderAccountBindings.environment,
+        pspProviderAccountBindings.providerAccountRef,
+      ],
+      name: 'payment_psp_dispatches_binding_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.bindingId, table.credentialRevision],
+      foreignColumns: [
+        pspCredentialRevisions.tenantId,
+        pspCredentialRevisions.legalEntityId,
+        pspCredentialRevisions.bindingId,
+        pspCredentialRevisions.revision,
+      ],
+      name: 'payment_psp_dispatches_credential_fk',
+    }).onDelete('restrict'),
+    check(
+      'payment_psp_dispatches_vocabulary_ck',
+      sql`${table.state} in (${literalList(PROVIDER_DISPATCH_STATES)}) and ${table.operationKind} in (${literalList(PAYMENT_OPERATION_KINDS)}) and (${table.notSentReason} is null or ${table.notSentReason} in (${literalList(PROVIDER_NOT_SENT_REASONS)}))`,
+    ),
+    gatewayFamilyCheck('payment_psp_dispatches_family_ck', table.providerFamily),
+    gatewayEnvironmentCheck('payment_psp_dispatches_environment_ck', table.environment),
+    check(
+      'payment_psp_dispatches_target_ck',
+      sql`(${table.operationKind} = 'COLLECT') = (${table.targetOperationId} is null) and (${table.targetOperationId} is null or ${table.targetOperationId} <> ${table.operationId})`,
+    ),
+    check(
+      'payment_psp_dispatches_order_reference_ck',
+      sql`${table.orderReference} = replace(${table.operationId}::text, '-', '')`,
+    ),
+    check(
+      'payment_psp_dispatches_not_sent_ck',
+      sql`(${table.state} = 'NOT_SENT') = (${table.notSentReason} is not null)`,
+    ),
+    check(
+      'payment_psp_dispatches_request_ck',
+      sql`(${table.preparedAt} is null) = (${table.requestHash} is null)
+        and (${table.preparedAt} is null) = (${table.endpointRef} is null)
+        and (${table.preparedAt} is null) = (${table.credentialRevision} is null)
+        and (${table.state} not in ('PREPARED', 'ACKNOWLEDGED', 'REJECTED_BEFORE_EFFECT', 'OUTCOME_UNKNOWN') or ${table.preparedAt} is not null)
+        and (${table.state} not in ('AWAITING_TARGET', 'NOT_SENT', 'UNSUPPORTED', 'TARGET_UNRESOLVED') or ${table.preparedAt} is null)
+        and (${table.idempotencyKeyHash} is null or ${table.preparedAt} is not null)
+        and (${table.requestBody} is null or (${table.preparedAt} is not null and octet_length(${table.requestBody}) between 1 and ${MAXIMUM_OPAQUE_BYTES}))`,
+    ),
+    check(
+      'payment_psp_dispatches_replay_ck',
+      sql`(${table.replayStartsAt} is null) = (${table.replayExpiresAt} is null)
+        and (${table.replayStartsAt} is null or (${table.replayExpiresAt} > ${table.replayStartsAt}
+          and ${table.idempotencyKeyHash} is not null and ${table.requestBody} is not null))`,
+    ),
+    check(
+      'payment_psp_dispatches_return_token_ck',
+      sql`${table.returnToken} is null or (${table.operationKind} = 'COLLECT' and ${table.returnToken} ~ '^[A-Za-z0-9_-]{22}$')`,
+    ),
+    check(
+      'payment_psp_dispatches_credential_revision_ck',
+      sql`${table.credentialRevision} is null or ${table.credentialRevision} > 0`,
+    ),
+    check(
+      'payment_psp_dispatches_response_ck',
+      sql`(${table.respondedAt} is not null) = (${table.state} in ('ACKNOWLEDGED', 'REJECTED_BEFORE_EFFECT', 'OUTCOME_UNKNOWN'))
+        and (${table.customerRedirectUrl} is null or ${table.state} = 'ACKNOWLEDGED')
+        and (${table.transitionedAt} is null) = (${table.transitionDeliveryId} is null)`,
+    ),
+    check(
+      'payment_psp_dispatches_hashes_ck',
+      sql`${table.materialHash} ~ '^[a-f0-9]{64}$' and (${table.requestHash} is null or ${table.requestHash} ~ '^[a-f0-9]{64}$') and (${table.idempotencyKeyHash} is null or ${table.idempotencyKeyHash} ~ '^[a-f0-9]{64}$')`,
+    ),
+    httpsUrlCheck('payment_psp_dispatches_redirect_ck', table.customerRedirectUrl),
+    accountRefCheck('payment_psp_dispatches_ref_ck', table.providerAccountRef),
+    providerRefCheck('payment_psp_dispatches_endpoint_ck', table.endpointRef),
+    providerRefCheck('payment_psp_dispatches_payment_ref_ck', table.providerPaymentRef),
+    providerRefCheck('payment_psp_dispatches_refund_ref_ck', table.providerRefundRef),
+    opaqueCheck('payment_psp_dispatches_worker_ck', table.workerKey),
+    compositionRevisionCheck('payment_psp_dispatches_composition_ck', table.originCompositionRevision),
+    ...tenantLegalEntityRlsPolicies('payment_psp_provider_dispatches', table.tenantId, table.legalEntityId),
+  ],
+);
+
+/**
+ * Captured provider notifications (#1157). The capture Action appends the row with its provenance;
+ * only the processing columns change afterwards, and only through a scoped routine.
+ */
+export const pspProviderNotifications = paymentSchema.table.withRLS(
+  'psp_provider_notifications',
+  {
+    ...scopeColumns(),
+    ...provenanceColumns(),
+    authenticity: text('authenticity').$type<ProviderNotificationAuthenticity>().notNull(),
+    bindingId: uuid('binding_id').notNull(),
+    claimedStatus: text('claimed_status'),
+    correlatedOperationId: uuid('correlated_operation_id'),
+    deliveryIdentity: text('delivery_identity').notNull(),
+    environment: text('environment').$type<GatewayEnvironment>().notNull(),
+    headers: jsonb('headers').$type<Schema.Json>().notNull(),
+    notificationId: uuid('notification_id').defaultRandom().primaryKey(),
+    processedAt: timestamp('processed_at', { withTimezone: true }),
+    processedDeliveryId: uuid('processed_delivery_id'),
+    providerAccountRef: text('provider_account_ref').notNull(),
+    providerEventAt: timestamp('provider_event_at', { withTimezone: true }),
+    providerFamily: text('provider_family').$type<PaymentGatewayProviderFamily>().notNull(),
+    providerOccurrenceId: text('provider_occurrence_id'),
+    providerRefs: jsonb('provider_refs').$type<Schema.Json>().notNull(),
+    query: jsonb('query').$type<Schema.Json>().notNull(),
+    rawBody: bytea('raw_body').notNull(),
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull(),
+    state: text('state').$type<ProviderNotificationState>().notNull(),
+    transportDeliveryRef: text('transport_delivery_ref').notNull(),
+    verifiedAt: timestamp('verified_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    unique('payment_psp_notifications_scope_id_uk').on(table.tenantId, table.legalEntityId, table.notificationId),
+    unique('payment_psp_notifications_delivery_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.bindingId,
+      table.deliveryIdentity,
+    ),
+    foreignKey({
+      columns: [
+        table.tenantId,
+        table.legalEntityId,
+        table.bindingId,
+        table.providerFamily,
+        table.environment,
+        table.providerAccountRef,
+      ],
+      foreignColumns: [
+        pspProviderAccountBindings.tenantId,
+        pspProviderAccountBindings.legalEntityId,
+        pspProviderAccountBindings.bindingId,
+        pspProviderAccountBindings.providerFamily,
+        pspProviderAccountBindings.environment,
+        pspProviderAccountBindings.providerAccountRef,
+      ],
+      name: 'payment_psp_notifications_binding_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.correlatedOperationId],
+      foreignColumns: [paymentOperations.tenantId, paymentOperations.legalEntityId, paymentOperations.operationId],
+      name: 'payment_psp_notifications_operation_fk',
+    }).onDelete('restrict'),
+    check(
+      'payment_psp_notifications_vocabulary_ck',
+      sql`${table.state} in (${literalList(PROVIDER_NOTIFICATION_STATES)}) and ${table.authenticity} in (${literalList(PROVIDER_NOTIFICATION_AUTHENTICITY)})`,
+    ),
+    gatewayFamilyCheck('payment_psp_notifications_family_ck', table.providerFamily),
+    gatewayEnvironmentCheck('payment_psp_notifications_environment_ck', table.environment),
+    check(
+      'payment_psp_notifications_processing_ck',
+      sql`(${table.processedAt} is null) = (${table.state} in ('CAPTURED', 'IGNORED'))
+        and (${table.processedAt} is null) = (${table.processedDeliveryId} is null)
+        and (${table.correlatedOperationId} is null or ${table.state} in ('SUBMITTED', 'SUBMISSION_HELD', 'SUBMISSION_DENIED'))`,
+    ),
+    check(
+      'payment_psp_notifications_document_ck',
+      sql`jsonb_typeof(${table.headers}) = 'object' and jsonb_typeof(${table.query}) = 'object' and jsonb_typeof(${table.providerRefs}) = 'array'
+        and octet_length(${table.rawBody}) <= ${MAXIMUM_OPAQUE_BYTES}`,
+    ),
+    check('payment_psp_notifications_times_ck', sql`${table.verifiedAt} >= ${table.receivedAt}`),
+    accountRefCheck('payment_psp_notifications_ref_ck', table.providerAccountRef),
+    opaqueCheck('payment_psp_notifications_delivery_ck', table.deliveryIdentity),
+    opaqueCheck('payment_psp_notifications_transport_ck', table.transportDeliveryRef),
+    providerRefCheck('payment_psp_notifications_occurrence_ck', table.providerOccurrenceId),
+    providerRefCheck('payment_psp_notifications_claimed_status_ck', table.claimedStatus),
+    compositionRevisionCheck('payment_psp_notifications_composition_ck', table.compositionRevision),
+    ...tenantLegalEntityRlsPolicies('payment_psp_provider_notifications', table.tenantId, table.legalEntityId),
+  ],
+);
+
+/**
+ * Provider evidence awaiting or after governed submission through A8 (#1157/#1158). Append-only except
+ * one PENDING_SUBMISSION -> terminal submission step.
+ */
+export const pspProviderEvidence = paymentSchema.table.withRLS(
+  'psp_provider_evidence',
+  {
+    ...scopeColumns(),
+    ...workerOriginColumns(),
+    bindingId: uuid('binding_id').notNull(),
+    discrepancy: jsonb('discrepancy').$type<Schema.Json>(),
+    economicEffectKey: text('economic_effect_key'),
+    environment: text('environment').$type<GatewayEnvironment>().notNull(),
+    evidenceId: uuid('evidence_id').defaultRandom().primaryKey(),
+    evidenceOrigin: text('evidence_origin').$type<ProviderEvidenceOrigin>().notNull(),
+    factFamily: text('fact_family').$type<PaymentSourceFactFamily>().notNull(),
+    factKind: text('fact_kind').$type<PaymentObservationFactKind>().notNull(),
+    notificationId: uuid('notification_id'),
+    observationId: uuid('observation_id'),
+    observedAmountMinor: bigint('observed_amount_minor', { mode: 'number' }),
+    observedCurrency: text('observed_currency'),
+    operationId: uuid('operation_id').notNull(),
+    paymentId: uuid('payment_id').notNull(),
+    providerAccountRef: text('provider_account_ref').notNull(),
+    providerFamily: text('provider_family').$type<PaymentGatewayProviderFamily>().notNull(),
+    providerOccurredAt: timestamp('provider_occurred_at', { withTimezone: true }),
+    providerRefs: jsonb('provider_refs').$type<Schema.Json>().notNull(),
+    reason: text('reason'),
+    sourceOccurrenceId: text('source_occurrence_id').notNull(),
+    sourceRevision: bigint('source_revision', { mode: 'number' }).notNull(),
+    submissionState: text('submission_state').$type<ProviderEvidenceSubmissionState>().notNull(),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }),
+    submittedDeliveryId: uuid('submitted_delivery_id'),
+  },
+  (table) => [
+    unique('payment_psp_evidence_scope_id_uk').on(table.tenantId, table.legalEntityId, table.evidenceId),
+    unique('payment_psp_evidence_occurrence_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.bindingId,
+      table.sourceOccurrenceId,
+      table.sourceRevision,
+    ),
+    index('payment_psp_evidence_pending_idx').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.operationId,
+      table.submissionState,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.paymentId, table.operationId],
+      foreignColumns: [
+        paymentOperations.tenantId,
+        paymentOperations.legalEntityId,
+        paymentOperations.paymentId,
+        paymentOperations.operationId,
+      ],
+      name: 'payment_psp_evidence_operation_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [
+        table.tenantId,
+        table.legalEntityId,
+        table.bindingId,
+        table.providerFamily,
+        table.environment,
+        table.providerAccountRef,
+      ],
+      foreignColumns: [
+        pspProviderAccountBindings.tenantId,
+        pspProviderAccountBindings.legalEntityId,
+        pspProviderAccountBindings.bindingId,
+        pspProviderAccountBindings.providerFamily,
+        pspProviderAccountBindings.environment,
+        pspProviderAccountBindings.providerAccountRef,
+      ],
+      name: 'payment_psp_evidence_binding_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.notificationId],
+      foreignColumns: [
+        pspProviderNotifications.tenantId,
+        pspProviderNotifications.legalEntityId,
+        pspProviderNotifications.notificationId,
+      ],
+      name: 'payment_psp_evidence_notification_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.observationId],
+      foreignColumns: [observations.tenantId, observations.legalEntityId, observations.observationId],
+      name: 'payment_psp_evidence_observation_fk',
+    }).onDelete('restrict'),
+    check(
+      'payment_psp_evidence_vocabulary_ck',
+      sql`${table.evidenceOrigin} in (${literalList(PROVIDER_EVIDENCE_ORIGINS)})
+        and ${table.submissionState} in (${literalList(PROVIDER_EVIDENCE_SUBMISSION_STATES)})
+        and ${table.factKind} in (${literalList(PAYMENT_OBSERVATION_FACT_KINDS)}) and ${table.factKind} <> 'UNRECOGNIZED'
+        and ${table.factFamily} in ('GATEWAY_OUTCOME', 'REFUND_EXECUTION')`,
+    ),
+    gatewayFamilyCheck('payment_psp_evidence_family_ck', table.providerFamily),
+    gatewayEnvironmentCheck('payment_psp_evidence_environment_ck', table.environment),
+    check(
+      'payment_psp_evidence_money_ck',
+      sql`(${table.observedAmountMinor} is null) = (${table.observedCurrency} is null) and (${table.observedAmountMinor} is null or (${table.observedAmountMinor} between 0 and ${maximumAmountMinor} and ${table.observedCurrency} = ${launchCurrency}))`,
+    ),
+    check(
+      'payment_psp_evidence_submission_ck',
+      sql`(${table.submissionState} = 'PENDING_SUBMISSION') = (${table.submittedAt} is null)
+        and (${table.submittedAt} is null) = (${table.submittedDeliveryId} is null)
+        and (${table.observationId} is null or ${table.submissionState} in ('ACCEPTED', 'DUPLICATE', 'HELD', 'CONFLICT'))`,
+    ),
+    check(
+      'payment_psp_evidence_document_ck',
+      sql`jsonb_typeof(${table.providerRefs}) = 'array' and (${table.discrepancy} is null or jsonb_typeof(${table.discrepancy}) = 'object')`,
+    ),
+    check('payment_psp_evidence_revision_ck', sql`${table.sourceRevision} between 0 and ${maximumAmountMinor}`),
+    accountRefCheck('payment_psp_evidence_ref_ck', table.providerAccountRef),
+    opaqueCheck('payment_psp_evidence_occurrence_ck', table.sourceOccurrenceId),
+    providerRefCheck('payment_psp_evidence_effect_ck', table.economicEffectKey),
+    providerRefCheck('payment_psp_evidence_reason_ck', table.reason),
+    opaqueCheck('payment_psp_evidence_worker_ck', table.workerKey),
+    compositionRevisionCheck('payment_psp_evidence_composition_ck', table.originCompositionRevision),
+    ...tenantLegalEntityRlsPolicies('payment_psp_provider_evidence', table.tenantId, table.legalEntityId),
+  ],
+);
+
 export const PAYMENT_TABLES = [
   gatewayAssertionRedemptions,
   methodEnablements,
@@ -926,6 +1627,14 @@ export const PAYMENT_TABLES = [
   recoveryRequests,
   reconciliationCases,
   reconciliationDecisions,
+  pspProviderAccountBindings,
+  pspProviderAccountBindingRevisions,
+  pspCredentialRevisions,
+  pspGatewayEnablements,
+  pspGatewayEnablementRevisions,
+  pspProviderDispatches,
+  pspProviderNotifications,
+  pspProviderEvidence,
 ] as const;
 
 export const PAYMENT_TABLE_INVENTORY = [
@@ -938,6 +1647,14 @@ export const PAYMENT_TABLE_INVENTORY = [
   'payment_authorizations',
   'payment_operations',
   'payments',
+  'psp_credential_revisions',
+  'psp_gateway_enablement_revisions',
+  'psp_gateway_enablements',
+  'psp_provider_account_binding_revisions',
+  'psp_provider_account_bindings',
+  'psp_provider_dispatches',
+  'psp_provider_evidence',
+  'psp_provider_notifications',
   'reconciliation_cases',
   'reconciliation_decisions',
   'recovery_requests',
@@ -957,6 +1674,14 @@ export const paymentRelations = defineRelations({
   paymentAuthorizations,
   paymentOperations,
   payments,
+  pspCredentialRevisions,
+  pspGatewayEnablementRevisions,
+  pspGatewayEnablements,
+  pspProviderAccountBindingRevisions,
+  pspProviderAccountBindings,
+  pspProviderDispatches,
+  pspProviderEvidence,
+  pspProviderNotifications,
   reconciliationCases,
   reconciliationDecisions,
   recoveryRequests,
