@@ -694,7 +694,8 @@ const sharedPerKey = <Key, A, E>(keyOf: (key: Key) => string, read: (key: Key) =
 
 /**
  * The same ports, reading each acting principal's kind and each gate scope once: what the LISTs of one `listMany` call
- * ask about one subject in one request scope at one instant. Built per call and dropped with it, never shared.
+ * ask about one subject in one request scope at one instant. Built per call and dropped with it, never shared. A read
+ * through a caller's transaction (a joined port, or a kind read naming the transaction) is never shared at all.
  */
 const sharedPreambleReads = (ports: AccessDecisionPorts): AccessDecisionPorts => {
   const readKind = sharedPerKey(
@@ -712,6 +713,11 @@ const sharedPreambleReads = (ports: AccessDecisionPorts): AccessDecisionPorts =>
         return known;
       }
       const port = ports.authorityFor(scope);
+      if (port.readsThroughCallerTransaction === true) {
+        // A read through a caller's transaction is that caller's own, never shared.
+        authorities.set(key, port);
+        return port;
+      }
       const shared = {
         ...port,
         readScope: sharedPerKey(

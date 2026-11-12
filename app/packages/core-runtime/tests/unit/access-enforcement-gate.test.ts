@@ -1000,3 +1000,33 @@ it.effect("reads one subject's kind and scope once for a page of LISTs, never on
     expect({ kinds: kindReads.count, scopes: together.scopes.length }).toEqual({ kinds: 1, scopes: 1 });
   }),
 );
+
+it.effect("never shares a scope read through a caller's transaction across a page of LISTs", () =>
+  Effect.gen(function* joinedScopeNotShared() {
+    const spec = { cells: [cell({ capability: 'finance.invoice.void' })] };
+    const authority = makeAuthority(spec);
+    const scopeReads = { count: 0 };
+    // A port that reads through a caller's transaction: every read is that caller's own.
+    const joined: DecisionAuthorityPort = {
+      ...authority.port,
+      readScope: (query) =>
+        Effect.suspend(() => {
+          scopeReads.count += 1;
+          return authority.port.readScope(query);
+        }),
+      readsThroughCallerTransaction: true,
+    };
+    const { log } = logWriter();
+    const gate = makeAccessDecisionService({
+      authorityFor: () => joined,
+      check: makeCheck({ authority: spec }).port,
+      decisionLog: log,
+      legalEntities: legalEntityCandidates([]),
+      principalKinds: kindSource('human'),
+    });
+    const page = Array.from({ length: 3 }, () => listPage[0]).filter((one) => one !== undefined);
+    yield* gate.listMany(page);
+    // Each LIST reads its scope itself (the gate's check and the engine's resolution), as `list` would.
+    expect(scopeReads.count).toBe(6);
+  }),
+);
