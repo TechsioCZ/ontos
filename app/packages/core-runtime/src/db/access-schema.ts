@@ -3,6 +3,7 @@ import {
   boolean,
   check,
   foreignKey,
+  index,
   integer,
   jsonb,
   pgPolicy,
@@ -909,6 +910,10 @@ export const defineAccessTables = ({ legalEntities, principals, requestRoles, te
       ),
       check('access_scope_fences_revision_ck', sql`${t.revision} > 0`),
       check('access_scope_fences_lease_ck', sql`${t.state} <> 'Ready' or ${t.leaseExpiresAt} is null`),
+      // The fence sweeper's one statement a minute reads only held fences, which are few and short-lived.
+      index('access_scope_fences_held_ix')
+        .on(t.leaseExpiresAt)
+        .where(sql`${t.state} = 'Changing'`),
       ...tenantRlsPolicies('access_scope_fences', t.tenantId),
       ...gatewayRequestReadPolicies('access_scope_fences', t.tenantId),
     ],

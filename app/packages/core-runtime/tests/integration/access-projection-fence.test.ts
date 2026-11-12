@@ -1,6 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { Clock, Deferred, Effect, Fiber, Layer, Option, Ref, Schema } from 'effect';
+import type { Context } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -9,6 +10,8 @@ import { AccessProjectionError } from '../../src/access/compiler/projection-erro
 import type { AccessProjectionCompiler as AccessProjectionCompilerEngine } from '../../src/access/compiler/spice-db-compiler.ts';
 import type { TenantId } from '../../src/access/ids.ts';
 import { AccessProjectionWriter } from '../../src/access/intent/projection-writer.ts';
+import { makeAccessFenceSweepBackoffs, sweepLapsedAccessFences } from '../../src/access/lifecycle/fence-sweeper.ts';
+import type { AccessFenceSweepBackoffs, AccessFenceSweepReport } from '../../src/access/lifecycle/fence-sweeper.ts';
 import type { TenantIntentLoaderService } from '../../src/access/intent/tenant-intent-loader.ts';
 import type { AccessCatalogModule } from '../../src/authorization/access-declaration.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -128,6 +131,15 @@ const plantDeadHolder = (
       .pipe(Effect.orDie);
     return yield* Effect.void;
   });
+
+/** A sweep tick on the given test clock. */
+const sweepOnClock =
+  (backoffs: AccessFenceSweepBackoffs, clock: Context.Context<TestClock.TestClock>) => (tick: string) =>
+    sweepLapsedAccessFences(backoffs, tick).pipe(Effect.provide(clock));
+
+/** Each failed tenant of a tick with the wait before its next try. */
+const retriesOf = (report: AccessFenceSweepReport) =>
+  report.failed.map(({ retryInMillis, tenantId }) => [tenantId, retryInMillis] as const);
 
 /** The dead holder's journal last moved `age` ago. */
 const idleJournal = (admin: PgClient.PgClient, age: string) =>
@@ -542,6 +554,64 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
             expect(yield* tenantFence(admin, tenantId)).toEqual([
               { owning_operation_id: DEAD_HOLDER, state: 'Changing' },
             ]);
+          }),
+      );
+    }),
+  );
+
+  suite.effect('the sweeper reopens a tenant whose hold lapsed, never a live hold, and does nothing when idle', () =>
+    withProjectionTenant({ activeModules: [MODULE] }, (tenantId, admin) =>
+      Effect.gen(function* sweptOpen() {
+        yield* bootstrapTenant(tenantId);
+        const backoffs = yield* makeAccessFenceSweepBackoffs;
+        const idle = { deferred: 0, failed: [], healed: [] };
+        expect(yield* sweepLapsedAccessFences(backoffs, 'tick-1')).toEqual(idle);
+        const before = yield* journals(admin, tenantId);
+        yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+        // A live lease is not the sweeper's: nothing is reconciled, no journal is opened.
+        expect(yield* sweepLapsedAccessFences(backoffs, 'tick-2')).toEqual(idle);
+        expect(yield* journals(admin, tenantId)).toHaveLength(before.length + 1);
+        yield* lapseLease(admin, tenantId);
+        expect(yield* sweepLapsedAccessFences(backoffs, 'tick-3')).toEqual({ ...idle, healed: [tenantId] });
+        expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+        expect(yield* journalOf(admin, DEAD_HOLDER)).toEqual([{ failure_code: 'lease_expired', phase: 'failed' }]);
+        expect(yield* sweepLapsedAccessFences(backoffs, 'tick-4')).toEqual(idle);
+      }),
+    ),
+  );
+
+  suite.effect('a tenant the sweeper cannot heal waits out a doubling backoff, then is healed', () =>
+    Effect.gen(function* sweptWithBackoff() {
+      const failing = yield* Ref.make(false);
+      yield* withProjectionTenant(
+        { activeModules: [MODULE], wrapCompiler: failingEngine(failing) },
+        (tenantId, admin) =>
+          Effect.gen(function* backedOff() {
+            yield* bootstrapTenant(tenantId);
+            const clock = yield* Layer.build(TestClock.layer());
+            yield* TestClock.setTime(yield* Clock.currentTimeMillis).pipe(Effect.provide(clock));
+            const backoffs = yield* makeAccessFenceSweepBackoffs;
+            const sweep = sweepOnClock(backoffs, clock);
+            yield* plantDeadHolder(admin, tenantId, { journalAge: '1 second', lease: '5 minutes' });
+            yield* lapseLease(admin, tenantId);
+            yield* Ref.set(failing, true);
+            const first = yield* sweep('tick-1');
+            expect(first.healed).toEqual([]);
+            expect(retriesOf(first)).toEqual([[tenantId, 60_000]]);
+            // The failed take-over keeps the tenant closed; once that lease lapses too the tenant is due again, but
+            // only after its backoff.
+            yield* lapseLease(admin, tenantId);
+            const journaled = (yield* journals(admin, tenantId)).length;
+            expect(yield* sweep('tick-2')).toEqual({ deferred: 1, failed: [], healed: [] });
+            expect(yield* journals(admin, tenantId)).toHaveLength(journaled);
+            yield* TestClock.adjust('61 seconds').pipe(Effect.provide(clock));
+            const second = yield* sweep('tick-3');
+            expect(retriesOf(second)).toEqual([[tenantId, 120_000]]);
+            yield* lapseLease(admin, tenantId);
+            yield* Ref.set(failing, false);
+            yield* TestClock.adjust('121 seconds').pipe(Effect.provide(clock));
+            expect(yield* sweep('tick-4')).toEqual({ deferred: 0, failed: [], healed: [tenantId] });
+            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
           }),
       );
     }),
