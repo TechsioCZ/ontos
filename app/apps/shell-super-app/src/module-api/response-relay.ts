@@ -9,9 +9,10 @@
 
 const MAX_OWNER_PHASES = 64;
 const MAX_OWNER_HEADER_LENGTH = 4096;
-// Mirror Core's fixed ReadPhase names without importing another deployment's private implementation.
+// Mirror Core's fixed ReadPhase names and its owner request phases (`owner-…`, `owner-…-count`) without importing
+// another deployment's private implementation.
 const ownerPhase =
-  /^(?<phase>read-authentication|read-admission|read-scope|read-module|read-permission|read-prepare|read-transaction|read-authority|read-rls|read-owner|read-validation|read-audit|read-encode)\s*;\s*dur=(?<duration>\d+(?:\.\d+)?)$/u;
+  /^(?<phase>read-authentication|read-admission|read-scope|read-module|read-permission|read-prepare|read-transaction|read-authority|read-rls|read-owner|read-validation|read-audit|read-encode|owner-total|owner-(?:gate|spicedb|evidence|sql|transaction|remote)(?:-count)?)\s*;\s*dur=(?<duration>\d+(?:\.\d+)?)$/u;
 
 // Commas inside quoted descriptions are data, never metric separators (including escaped quotes).
 const timingMetrics = (header: string): readonly string[] => {

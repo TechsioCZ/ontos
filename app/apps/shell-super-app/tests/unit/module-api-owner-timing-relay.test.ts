@@ -1,7 +1,8 @@
 // @rstest-environment node
 import { expect, it } from 'effect-rstest';
 
-import { relayModuleResponse } from '../../src/module-api/response-relay.ts';
+import { OWNER_TIMING_METRICS } from '../../../../packages/core-runtime/src/http/owner-server-timing.ts';
+import { ownerServerTimings, relayModuleResponse } from '../../src/module-api/response-relay.ts';
 
 const timingHeader = (value: string) =>
   relayModuleResponse(new Response(null, { headers: { 'server-timing': value } })).headers.get('server-timing');
@@ -65,4 +66,9 @@ it('does not change the separately admitted realm cookie policy', () => {
   );
   expect(response.headers.get('server-timing')).toBe('read-owner;dur=1');
   expect(response.headers.getSetCookie()).toEqual([approved]);
+});
+
+it('keeps every phase a Core owner reports of its request, and still no other name like them', () => {
+  const reported = OWNER_TIMING_METRICS.map((name, index) => `${name};dur=${index}`);
+  expect(ownerServerTimings([...reported, 'owner-secret;dur=1', 'owner-sql-total;dur=2'].join(', '))).toEqual(reported);
 });
