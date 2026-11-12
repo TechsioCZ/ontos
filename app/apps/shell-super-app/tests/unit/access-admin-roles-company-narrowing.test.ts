@@ -335,6 +335,7 @@ const gateOf = (script: Script) => {
     },
     decideMany: () => Effect.die(new FixtureInvalid({ reason: 'this suite asks one declaration at a time' })),
     list: () => Effect.die(new FixtureInvalid({ reason: 'the Role editor reads no list predicate' })),
+    listMany: () => Effect.die(new FixtureInvalid({ reason: 'the Role editor reads no list predicate' })),
     selectableLegalEntities: () => Effect.succeed([]),
   };
   return { asked, service };
