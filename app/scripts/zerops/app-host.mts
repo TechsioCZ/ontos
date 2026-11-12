@@ -396,13 +396,21 @@ export const finiteProcessEnvironment = (environment: ChildEnvironment): ChildEn
 export const FINITE_CHILD_FORCE_KILL_AFTER = Duration.minutes(2);
 
 /** Runs one finite child to a successful exit. */
-const runChild = (name: string, command: string, args: readonly string[], cwd: string, env: ChildEnvironment) =>
+const runChild = (
+  name: string,
+  command: string,
+  args: readonly string[],
+  cwd: string,
+  env: ChildEnvironment,
+  /** `false`: the child sees exactly `env` and nothing of the supervisor's own environment. */
+  extendEnv = true,
+) =>
   Effect.scoped(
     Effect.gen(function* runFiniteChild() {
       const handle = yield* ChildProcess.make(command, [...args], {
         cwd,
         env: finiteProcessEnvironment(env),
-        extendEnv: true,
+        extendEnv,
         forceKillAfter: FINITE_CHILD_FORCE_KILL_AFTER,
         stderr: 'inherit',
         stdout: 'inherit',
@@ -430,6 +438,32 @@ const fetchLoopback = (url: string) =>
 
 /** The release step that installs the modules each stage Tenant is approved to have and still lacks. */
 export const RELEASE_MODULES_SCRIPT = 'scripts/demo/release-tenant-modules.mts';
+/**
+ * The container settings the release step reads, by name; it is started with these and the host-derived composition
+ * URL only, so the supervisor's own secrets (the admin database URL, the owner secrets bundle, database passwords)
+ * never reach it.
+ */
+export const RELEASE_MODULES_SETTINGS = [
+  'DATABASE_URL',
+  'PATH',
+  'SPICEDB_CA_CERT',
+  'SPICEDB_ENDPOINT',
+  'SPICEDB_PRESHARED_KEY',
+  'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
+] as const;
+
+/** The release step's whole environment: the named settings that are set, and the active composition's URL. */
+export const releaseModulesEnvironment = (
+  settings: ReadonlyMap<string, string>,
+  derived: ChildEnvironment,
+): ChildEnvironment => ({
+  ...Object.fromEntries(
+    RELEASE_MODULES_SETTINGS.flatMap((key) =>
+      Option.toArray(Option.fromUndefinedOr(settings.get(key))).map((value) => [key, value]),
+    ),
+  ),
+  ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: derived.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL,
+});
 
 const waitForOwner = (owner: HostedUnit) => {
   const probe = owner.id === SHELL_ID ? ONTOS_SHELL_RUNTIME_CONTRACT_PATH : ONTOS_MODULE_CONTRACT_PATH;
@@ -923,7 +957,21 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     // step itself, so routine module installs need neither a person nor a host shell. It is additive only, keeps its
     // own time limit (it is never killed for time while it holds a Tenant's fence), runs beside the Outbox host and
     // never holds or fails the boot: a failure is one loud line.
-    yield* runChild('release-modules', node, [RELEASE_MODULES_SCRIPT], workspaceRoot, derived).pipe(
+    const releaseSettings = new Map<string, string>();
+    for (const key of RELEASE_MODULES_SETTINGS) {
+      const value = yield* Config.option(Config.String(key));
+      if (Option.isSome(value)) {
+        releaseSettings.set(key, value.value);
+      }
+    }
+    yield* runChild(
+      'release-modules',
+      node,
+      [RELEASE_MODULES_SCRIPT],
+      workspaceRoot,
+      releaseModulesEnvironment(releaseSettings, derived),
+      false,
+    ).pipe(
       Effect.catchTag('AppHostError', ({ reason }) =>
         Console.error(
           `[app-host] RELEASE MODULE INSTALLATION FAILED (${reason}); the modules stay as they were until the next release`,

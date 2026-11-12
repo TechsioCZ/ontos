@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import { expect, it } from 'effect-rstest';
 
-import { RELEASE_MODULES_SCRIPT } from '../zerops/app-host.mts';
+import { RELEASE_MODULES_SCRIPT, releaseModulesEnvironment } from '../zerops/app-host.mts';
 import { marketActivationScopeAllowed } from './activate-market-stage.mts';
 import { demoTenantId } from './fixture-ids.mts';
 import { N1_TENANT_ID } from './n1-stage-grants.mts';
@@ -87,7 +87,7 @@ it('the app host runs the release step after it publishes the composition, witho
   const host = readFileSync(new URL('../zerops/app-host.mts', import.meta.url), 'utf-8');
   expect(RELEASE_MODULES_SCRIPT).toBe('scripts/demo/release-tenant-modules.mts');
   const published = host.indexOf('yield* openPublicPort;');
-  const step = host.indexOf("yield* runChild('release-modules'");
+  const step = host.indexOf("'release-modules',");
   const outbox = host.indexOf('const outbox = yield* startChild(');
   expect(published).toBeGreaterThan(0);
   expect(step).toBeGreaterThan(published);
@@ -106,4 +106,34 @@ it('the release step turns SIGTERM into an interrupt and keeps its own time limi
   expect(step).toContain('NodeRuntime.runMain(');
   expect(step).not.toContain('Effect.runPromiseExit');
   expect(step).toContain('deadline: DateTime.addDuration(yield* DateTime.now, RELEASE_MODULES_BUDGET)');
+});
+
+it('starts the release step with only the settings it reads, never the supervisor secrets', () => {
+  const container = new Map([
+    ['COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL', 'postgresql://portal-admin'],
+    ['DATABASE_ADMIN_URL', 'postgresql://admin'],
+    ['DATABASE_URL', 'postgresql://runtime'],
+    ['ONTOS_OWNER_SECRETS_JSON', '{"secret":"x"}'],
+    ['PATH', '/usr/bin'],
+    ['SPICEDB_DATABASE_PASSWORD', 'p'],
+    ['SPICEDB_ENDPOINT', 'spicedb:50051'],
+    ['SPICEDB_PRESHARED_KEY', 'k'],
+    ['ULTRAMODERN_DEPLOYMENT_ENVIRONMENT', 'stage'],
+  ]);
+  const environment = releaseModulesEnvironment(container, {
+    BETTER_AUTH_URL: 'https://ontos',
+    ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: 'http://127.0.0.1:3000/_host/composition',
+  });
+  expect(environment).toEqual({
+    DATABASE_URL: 'postgresql://runtime',
+    ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: 'http://127.0.0.1:3000/_host/composition',
+    PATH: '/usr/bin',
+    SPICEDB_ENDPOINT: 'spicedb:50051',
+    SPICEDB_PRESHARED_KEY: 'k',
+    ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
+  });
+  const host = readFileSync(new URL('../zerops/app-host.mts', import.meta.url), 'utf-8');
+  const step = host.slice(host.indexOf("'release-modules',"), host.indexOf('const outbox = yield* startChild('));
+  // `false`: the child does not inherit the supervisor's environment on top.
+  expect(step).toMatch(/releaseModulesEnvironment\(releaseSettings, derived\),\s+false,/u);
 });
