@@ -107,7 +107,9 @@ import {
   advanceHeadRevision,
   loadOrderLines,
   materialiseTaxRatesIfIdle,
+  missingGrossPricesExist,
   storeMissingGrossPrices,
+  storeMissingGrossPricesIfIdle,
   writeTaxRates,
 } from './merchandise-store.ts';
 import type { CatalogHead, StoreScope, WorkingSet, WorkingSetRequest } from './merchandise-store.ts';
@@ -2279,14 +2281,42 @@ const NO_RATES_REASON =
 /**
  * Why a command entering a price cannot store the price including VAT now: Tax does not answer and the company has no
  * rates at all, or only rates confirmed more than 24 hours ago. Such a price is refused rather than stored without its
- * gross while the rates are only temporarily missing. A company Tax refuses (not installed for it) still saves prices
- * without a gross: nothing of it sells, and the staff read says Tax is not available.
+ * gross while the rates are only temporarily missing. A company Tax refuses although it was never in charge (Tax not
+ * installed for it) still saves prices without a gross: nothing of it sells, and the staff read says Tax is not
+ * available; the gross is filled in as soon as a rate is usable. A company Tax was in charge of and now refuses
+ * follows the outage rule on the rates Tax confirmed (`refused` is false for it).
  */
 export const priceRefusalOf = (decision: TaxRatesDecision, refused: boolean): Option.Option<string> => {
   if (refused || (decision.usable && decision.book !== undefined)) {
     return Option.none();
   }
   return Option.some(decision.book === undefined ? NO_RATES_REASON : STALE_RATES_REASON);
+};
+
+/** The rates a command prices with, and why it may not enter a price now (none: it may). */
+interface CommandPricing {
+  readonly pricing: TaxRatesDecision;
+  readonly refusal: Option.Option<string>;
+}
+
+/**
+ * The rates a command prices with, and why it may not enter a price now. Tax refusing a company it was in charge of:
+ * a new price follows the outage rule on the rates Tax confirmed (priced while that confirmation is recent, refused
+ * after), never saved without its gross.
+ */
+const commandPricing = (
+  stored: CompanyTaxRates | undefined,
+  decision: TaxRatesDecision,
+  refused: boolean,
+  command: MerchandiseCommand,
+  now: DateTime.Utc,
+): CommandPricing => {
+  if (!entersPrices(command)) {
+    return { pricing: decision, refusal: Option.none() };
+  }
+  const refusedInCharge = refused && stored?.source === 'TAX';
+  const pricing = refusedInCharge ? decideTaxRates(stored, { refused: false }, now) : decision;
+  return { pricing, refusal: priceRefusalOf(pricing, refused && !refusedInCharge) };
 };
 
 const TAX_REFUSED_REASON =
@@ -2476,24 +2506,29 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       if (Predicate.isTagged(command, 'SyncTaxRates') && fetched === undefined) {
         return yield* refused ? conflict(TAX_REFUSED_REASON) : taxUnavailable();
       }
-      const usable = decision.usable ? decision.book : undefined;
+      const { pricing, refusal } = commandPricing(head.taxRates, decision, refused, command, now);
+      if (Option.isSome(refusal)) {
+        return yield* conflict(refusal.value);
+      }
+      const usable = pricing.usable ? pricing.book : undefined;
       const rates = usable === undefined ? NO_SELLABLE_RATES : sellableRatesAt(usable, now);
       const unreachable = usable === undefined && !refused && decision.book !== undefined;
-      const priceRefusal = entersPrices(command) ? priceRefusalOf(decision, refused) : Option.none<string>();
-      if (Option.isSome(priceRefusal)) {
-        return yield* conflict(priceRefusal.value);
-      }
-      const tax = { book: usable, held: decision.held, rates, refused, unreachable } satisfies CommandTax;
-      if (decision.materialise === undefined) {
-        return { head, synced: false, tax };
-      }
+      const tax = { book: usable, held: pricing.held, rates, refused, unreachable } satisfies CommandTax;
       const taxRates = decision.materialise;
-      yield* writeTaxRates(transaction, store, taxRates).pipe(Effect.mapError(unavailable));
-      if (decision.changed) {
-        // What was priced while its classification had no rate gets its first gross now; stored prices stay.
-        yield* storeMissingGrossPrices(transaction, store, rates).pipe(Effect.mapError(unavailable));
+      if (taxRates !== undefined) {
+        yield* writeTaxRates(transaction, store, taxRates).pipe(Effect.mapError(unavailable));
       }
-      return { head: { ...head, taxRates }, synced: decision.changed, tax };
+      // A price stored without its gross (its classification had no usable rate then) gets it as soon as one is
+      // usable, whether or not the rates changed now; a stored gross is never touched.
+      const held = Object.keys(pricing.held);
+      const missing = yield* missingGrossPricesExist(transaction, store, rates, held).pipe(
+        Effect.mapError(unavailable),
+      );
+      const filled = missing
+        ? yield* storeMissingGrossPrices(transaction, store, rates, held).pipe(Effect.mapError(unavailable))
+        : 0;
+      const synced = decision.changed || filled > 0;
+      return { head: taxRates === undefined ? head : { ...head, taxRates }, synced, tax };
     });
     const persist = Effect.fn('Merchandise.persist')(function* persist(
       working: WorkingSet,
@@ -2875,6 +2910,37 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       return metadata;
     });
     /**
+     * A staff read's backfill of prices stored without their gross, at the rates the read shows when they are usable
+     * now: under the head lock this read already holds (it stored the rates), else only when no writer holds the
+     * head. Advances the revision when it filled anything; returns the new revision, or undefined when nothing ran.
+     */
+    const fillMissingGrossPrices = Effect.fn('Merchandise.fillMissingGrossPrices')(function* fillMissingGrossPrices(
+      head: CatalogHead,
+      shown: CompanyTaxRates | undefined,
+      decision: TaxRatesDecision,
+      locked: boolean,
+      now: DateTime.Utc,
+    ) {
+      if (shown === undefined || !decision.usable || decision.book !== shown.book) {
+        return Option.getOrUndefined(Option.none<number>());
+      }
+      const rates = sellableRatesAt(shown.book, now);
+      const held = Object.keys(decision.held);
+      if (!(yield* missingGrossPricesExist(transaction, store, rates, held).pipe(Effect.mapError(unavailable)))) {
+        return Option.getOrUndefined(Option.none<number>());
+      }
+      if (!locked) {
+        return yield* storeMissingGrossPricesIfIdle(transaction, store, head.revision, rates, held, now).pipe(
+          Effect.mapError(unavailable),
+        );
+      }
+      const filled = yield* storeMissingGrossPrices(transaction, store, rates, held).pipe(Effect.mapError(unavailable));
+      // A read that stored changed rates already advanced the revision.
+      return filled === 0 || decision.changed
+        ? Option.getOrUndefined(Option.none<number>())
+        : yield* advanceHeadRevision(transaction, store, head.revision, now).pipe(Effect.mapError(unavailable));
+    });
+    /**
      * A staff read's sync with Tax: when Tax's answer takes over or confirms the rates again, its materialisation on
      * the head row (rates, a new revision when they changed, first gross prices of what had none), and the rates the
      * read shows ({@link shownTaxRates}: one whole state with its source). Storefront reads never call it: they read
@@ -2888,27 +2954,23 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       const answer =
         tax.fetched === undefined ? { refused: tax.refused } : { fetched: tax.fetched, refused: tax.refused };
       const decision = decideTaxRates(loaded?.taxRates, answer, now);
-      if (loaded === undefined || decision.materialise === undefined) {
-        return { head: loaded, shown: shownTaxRates(loaded?.taxRates, decision, false) };
-      }
       const value = decision.materialise;
-      const revision = yield* materialiseTaxRatesIfIdle(
-        transaction,
-        store,
-        loaded.revision,
-        value,
-        now,
-        decision.changed,
-      ).pipe(Effect.mapError(unavailable));
-      if (revision === undefined) {
-        return { head: loaded, shown: shownTaxRates(loaded.taxRates, decision, false) };
-      }
-      if (decision.changed) {
-        yield* storeMissingGrossPrices(transaction, store, sellableRatesAt(value.book, now)).pipe(
-          Effect.mapError(unavailable),
-        );
-      }
-      return { head: { ...loaded, revision, taxRates: value }, shown: shownTaxRates(loaded.taxRates, decision, true) };
+      const materialised =
+        loaded === undefined || value === undefined
+          ? undefined
+          : yield* materialiseTaxRatesIfIdle(transaction, store, loaded.revision, value, now, decision.changed).pipe(
+              Effect.mapError(unavailable),
+            );
+      const head =
+        loaded === undefined || materialised === undefined
+          ? loaded
+          : { ...loaded, revision: materialised, taxRates: value };
+      const shown = shownTaxRates(loaded?.taxRates, decision, materialised !== undefined);
+      const filled =
+        head === undefined
+          ? undefined
+          : yield* fillMissingGrossPrices(head, shown, decision, materialised !== undefined, now);
+      return { head: filled === undefined || head === undefined ? head : { ...head, revision: filled }, shown };
     });
     /** The head a records read answers from: synced with Tax first for a staff read that prepared Tax's answer. */
     const readHead = Effect.fn('Merchandise.readHead')(function* readHead(

@@ -719,27 +719,47 @@ const grossOfNet = (net: AnyPgColumn, rate: number) => sql<number>`${net} + (${n
  * net plus VAT at the rate the classification has now. A stored gross is never touched; a product with real variants
  * takes the lowest gross of its active variants (of all of them when none is active), as its projection does.
  */
-export const storeMissingGrossPrices = Effect.fn('MerchandiseStore.storeMissingGrossPrices')(
-  function* storeMissingGrossPrices(db: MerchandiseDb, scope: StoreScope, rates: SellableVatRates) {
-    const priced = czVatClassificationCodes.flatMap((code) => {
-      const rate = rates[code];
-      return rate === undefined ? [] : [{ code, rate }];
-    });
-    yield* Effect.forEach(
-      priced,
-      ({ code, rate }) => {
-        const classified = db
-          .select({ id: products.id })
-          .from(products)
-          .where(and(whereScope(products, scope), eq(products.taxClassificationCode, code)));
-        const realVariants = db
-          .select({ productId: productVariants.productId })
-          .from(productVariants)
-          .where(and(whereScope(productVariants, scope), isNotNull(productVariants.variantId)));
-        return query(
+/**
+ * Whether any price of the given classifications is stored without its gross (outside `except`): one indexed probe,
+ * so callers run {@link storeMissingGrossPrices} only when there is something to fill.
+ */
+export const missingGrossPricesExist = Effect.fn('MerchandiseStore.missingGrossPricesExist')(
+  function* missingGrossPricesExist(
+    db: MerchandiseDb,
+    scope: StoreScope,
+    rates: SellableVatRates,
+    except: readonly string[] = [],
+  ) {
+    const codes = czVatClassificationCodes.filter((code) => rates[code] !== undefined);
+    if (codes.length === 0) {
+      return false;
+    }
+    const kept = except.length === 0 ? sql`true` : notInArray(products.id, [...except]);
+    const classified = db
+      .select({ id: products.id })
+      .from(products)
+      .where(and(whereScope(products, scope), inArray(products.taxClassificationCode, codes), kept));
+    const [product, variant] = yield* Effect.all(
+      [
+        query(
           db
-            .update(productVariants)
-            .set({ grossPriceMinor: grossOfNet(productVariants.priceMinor, rate) })
+            .select({ id: products.id })
+            .from(products)
+            .where(
+              and(
+                whereScope(products, scope),
+                inArray(products.taxClassificationCode, codes),
+                isNull(products.grossPriceMinor),
+                kept,
+              ),
+            )
+            .limit(1),
+          'Missing gross prices could not be read',
+        ),
+        query(
+          db
+            .select({ id: productVariants.productId })
+            .from(productVariants)
             .where(
               and(
                 whereScope(productVariants, scope),
@@ -747,10 +767,63 @@ export const storeMissingGrossPrices = Effect.fn('MerchandiseStore.storeMissingG
                 isNotNull(productVariants.priceMinor),
                 inArray(productVariants.productId, classified),
               ),
+            )
+            .limit(1),
+          'Missing gross prices could not be read',
+        ),
+      ],
+      { concurrency: 1 },
+    );
+    return product.length > 0 || variant.length > 0;
+  },
+);
+
+/**
+ * Stores the first gross of every price stored without one, at the rate its classification sells at now: product and
+ * variant prices with no stored gross, and a product with variants whose own gross is missing takes its variants'
+ * lowest. Never touches a price that HAS a stored gross, nor a product in `except` (one that keeps selling at its own
+ * held rate). Idempotent; returns how many rows it filled.
+ */
+export const storeMissingGrossPrices = Effect.fn('MerchandiseStore.storeMissingGrossPrices')(
+  function* storeMissingGrossPrices(
+    db: MerchandiseDb,
+    scope: StoreScope,
+    rates: SellableVatRates,
+    except: readonly string[] = [],
+  ) {
+    const priced = czVatClassificationCodes.flatMap((code) => {
+      const rate = rates[code];
+      return rate === undefined ? [] : [{ code, rate }];
+    });
+    const kept = except.length === 0 ? sql`true` : notInArray(products.id, [...except]);
+    const filled = yield* Effect.forEach(
+      priced,
+      ({ code, rate }) => {
+        const classified = db
+          .select({ id: products.id })
+          .from(products)
+          .where(and(whereScope(products, scope), eq(products.taxClassificationCode, code), kept));
+        const realVariants = db
+          .select({ productId: productVariants.productId })
+          .from(productVariants)
+          .where(and(whereScope(productVariants, scope), isNotNull(productVariants.variantId)));
+        return Effect.all(
+          [
+            query(
+              db
+                .update(productVariants)
+                .set({ grossPriceMinor: grossOfNet(productVariants.priceMinor, rate) })
+                .where(
+                  and(
+                    whereScope(productVariants, scope),
+                    isNull(productVariants.grossPriceMinor),
+                    isNotNull(productVariants.priceMinor),
+                    inArray(productVariants.productId, classified),
+                  ),
+                )
+                .returning({ id: productVariants.productId }),
+              'Variant gross prices could not be stored',
             ),
-          'Variant gross prices could not be stored',
-        ).pipe(
-          Effect.andThen(
             query(
               db
                 .update(products)
@@ -761,12 +834,12 @@ export const storeMissingGrossPrices = Effect.fn('MerchandiseStore.storeMissingG
                     eq(products.taxClassificationCode, code),
                     isNull(products.grossPriceMinor),
                     notInArray(products.id, realVariants),
+                    kept,
                   ),
-                ),
+                )
+                .returning({ id: products.id }),
               'Product gross prices could not be stored',
             ),
-          ),
-          Effect.andThen(
             query(
               db
                 .update(products)
@@ -779,15 +852,19 @@ export const storeMissingGrossPrices = Effect.fn('MerchandiseStore.storeMissingG
                     eq(products.taxClassificationCode, code),
                     isNull(products.grossPriceMinor),
                     inArray(products.id, realVariants),
+                    kept,
                   ),
-                ),
+                )
+                .returning({ id: products.id }),
               'Product gross prices could not be stored',
             ),
-          ),
-        );
+          ],
+          { concurrency: 1 },
+        ).pipe(Effect.map((rows) => rows.reduce((total, changed) => total + changed.length, 0)));
       },
-      { concurrency: 1, discard: true },
+      { concurrency: 1 },
     );
+    return filled.reduce((total, count) => total + count, 0);
   },
 );
 
@@ -808,6 +885,39 @@ export const advanceHeadRevision = Effect.fn('MerchandiseStore.advanceHeadRevisi
   );
   return heads.length === 1 ? revision + 1 : undefined;
 });
+
+/**
+ * A staff read's backfill of missing gross prices: runs {@link storeMissingGrossPrices} only when the head is still
+ * at `revision` and no writer holds it (a read never waits; the next read retries), advancing the revision when it
+ * filled anything. Returns the head's revision, or undefined when it did not run.
+ */
+export const storeMissingGrossPricesIfIdle = Effect.fn('MerchandiseStore.storeMissingGrossPricesIfIdle')(
+  function* storeMissingGrossPricesIfIdle(
+    db: MerchandiseDb,
+    scope: StoreScope,
+    revision: number,
+    rates: SellableVatRates,
+    except: readonly string[],
+    now: DateTime.Utc,
+  ) {
+    const locked = yield* query(
+      db
+        .select({ revision: catalogHeads.revision })
+        .from(catalogHeads)
+        .where(and(whereScope(catalogHeads, scope), eq(catalogHeads.revision, revision)))
+        .for('update', { skipLocked: true }),
+      'Merchandise head could not be read',
+    );
+    if (locked.length !== 1) {
+      return Option.getOrUndefined(Option.none<number>());
+    }
+    const filled = yield* storeMissingGrossPrices(db, scope, rates, except);
+    if (filled === 0) {
+      return revision;
+    }
+    return yield* advanceHeadRevision(db, scope, revision, now);
+  },
+);
 
 /**
  * A read's materialisation of Tax's answer: records the rates (advancing the revision when they changed, not when Tax
