@@ -8,13 +8,19 @@ import { Effect, Layer, Predicate } from 'effect';
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
 import { admitModuleApiRequest } from './admission.ts';
-import { relayModuleResponse } from './response-relay.ts';
+import { ownerServerTimings, relayModuleResponse } from './response-relay.ts';
 
 const dispatchApprovedModuleApiRequest = Effect.fn('ModuleApi.dispatchApprovedRequest')(
   function* dispatchApprovedRequest(request: Request, authority: ActiveApplicationCompositionServiceContract) {
     const snapshot = yield* authority.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
     const target = yield* admitModuleApiRequest(request, snapshot.composition);
     const response = yield* moduleReleaseFetch(target.forwardedRequest, target.module);
+    // The owner and the phases it reports itself (fixed names and numbers only), so a request that waits on owners
+    // can say which one took the time and on what.
+    yield* Effect.annotateCurrentSpan({
+      'ontos.owner_app': target.module.deployment.appId,
+      'ontos.owner_timing': ownerServerTimings(response.headers.get('server-timing') ?? '').join(', '),
+    });
     // Applied at the dispatcher rather than the route, so every caller — including the exported
     // `dispatchModuleApiRequest` — gets the same response policy.
     return relayModuleResponse(response, new URL(request.url).origin, target.responseCookieNames);

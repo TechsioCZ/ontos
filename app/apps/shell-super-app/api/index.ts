@@ -3031,7 +3031,7 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
           correlationId: correlationFromRequest(request),
           idempotencyKey: yield* requiredIdempotencyKey(headers),
         };
-        const response = yield* revertAgentBatch(caller, payload).pipe(
+        const response = yield* withRoundTripLog('revert', revertAgentBatch(caller, payload)).pipe(
           Effect.provideService(AgentReadRequestIdentity, transport),
           Effect.provideService(AgentActionRequestIdentity, transport),
           Effect.catch(agentPlatformFailure),
@@ -3045,7 +3045,7 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
         const caller = yield* agentPlatformSessionCaller(request);
         const transport = { correlationId: correlationFromRequest(request) };
         const services = yield* Layer.build(CompanyDirectoryLive({ principal: caller.principal, transport }));
-        const response = yield* loadAgentActivity(caller, payload).pipe(
+        const response = yield* withRoundTripLog('activity', loadAgentActivity(caller, payload)).pipe(
           Effect.provideService(AgentReadRequestIdentity, transport),
           Effect.provide(services),
           Effect.catch(agentPlatformFailure),
