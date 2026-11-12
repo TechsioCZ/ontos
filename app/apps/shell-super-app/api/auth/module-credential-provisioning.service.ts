@@ -28,7 +28,12 @@ import { ModuleCredentialAttestationJson, ModuleCredentialAttestationSchema } fr
 import type { ModuleCredentialAttestation, ModuleCredentialRelease } from './module-credential-attestation.ts';
 import { loadAttestedModuleCredentials } from './module-credential-enrolment.service.ts';
 
-/** How long a module key lives. A host rotates its keys well before that, so a key nobody retired dies on its own. */
+/**
+ * How long a module key lives. A host rotates its keys well before that, so a key nobody retired dies on its own.
+ * Better Auth's API-key plugin refuses a lifetime under its `keyExpiration.minExpiresIn`, which the Shell leaves at
+ * the default of one day: 24 hours sits exactly on that minimum, so this cannot be shortened without configuring the
+ * plugin's minimum first (the provisioning integration test issues at this lifetime and is refused one second under).
+ */
 export const MODULE_CREDENTIAL_LIFETIME = Duration.hours(24);
 
 /** One issued module key, by its provider id (not secret) and the moment it stops verifying. */

@@ -558,6 +558,20 @@ it.live(
         const bootTwoId = crypto.randomUUID();
         const bootTwo = yield* issue('host-a', bootTwoId);
 
+        // The real key provider issues at this lifetime and refuses one second less: it sits on the plugin's minimum.
+        const principalId = (yield* loadModuleCredentialEnrolment(coreDatabase))[0]?.principalId ?? '';
+        const underMinimum = yield* Effect.exit(
+          keys.issueServerOwned({
+            expiresInSeconds: Duration.toSeconds(MODULE_CREDENTIAL_LIFETIME) - 1,
+            issuerPrincipalId: principalId,
+            lifecycleOperationId: crypto.randomUUID(),
+            name: 'module:under-minimum',
+            ownerUserId: 'ontos-platform-module-credentials',
+            tenantId: PLATFORM_TENANT.tenantId,
+          }),
+        );
+        expect(Exit.isFailure(underMinimum)).toBe(true);
+
         // Every key ends a day after it was issued, whatever happens to its host.
         for (const issued of bootOne.keys.values()) {
           const lifetime = DateTime.toEpochMillis(issued.expiresAt) - issuedAt;
