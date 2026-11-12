@@ -7,8 +7,23 @@ import type { OperationalScope } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { GATEWAY_MODULE_NOT_INSTALLED_TYPE } from '@app/shared-contracts';
 import { vatRateAt } from '@app/shared-contracts/cz-vat-classifications';
-import { DateTime, Deferred, Duration, Effect, Fiber, Option, Ref, Result, Scheduler, Schema } from 'effect';
+import { MISSING_MODULE_CREDENTIAL_REASON } from '@app/shared-contracts/gateway-context-server';
+import { NodeCrypto } from '@effect/platform-node';
+import {
+  ConfigProvider,
+  DateTime,
+  Deferred,
+  Duration,
+  Effect,
+  Fiber,
+  Option,
+  Ref,
+  Result,
+  Scheduler,
+  Schema,
+} from 'effect';
 import { expect, it } from 'effect-rstest';
+import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 
 import { TaxRuleRevisionIdSchema } from '../../shared/domain/merchandise-model.ts';
@@ -18,6 +33,7 @@ import {
   TaxRatesFailure,
   currentTaxRateBook,
   decideTaxRates,
+  fetchTaxRateBook,
   knownTaxRateBook,
   pricesCompany,
   refreshedTaxRateBook,
@@ -637,5 +653,24 @@ it.effect('the confirmation time is the instant Tax was asked, not when its slow
     yield* TestClock.adjust('2 seconds');
     yield* Deferred.succeed(release, TEST_TAX_BOOK);
     expect(yield* Fiber.join(sync)).toEqual({ book: TEST_TAX_BOOK, fetchedAt: asked });
+  }),
+);
+
+it.effect('a module that holds no module credential reads as an outage that names it, before any request', () =>
+  Effect.gen(function* noModuleKey() {
+    const failure = yield* fetchTaxRateBook(scopeOf(randomUUID())).pipe(
+      Effect.flip,
+      Effect.provide(NodeCrypto.layer),
+      // No ONTOS_GATEWAY_MODULE_API_KEY at all; the Shell's address is configured, but no request may be sent.
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromUnknown({ ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shell.test/api' }),
+      ),
+      Effect.provideService(FetchHttpClient.Fetch, () => Promise.reject(new Error('No request may be sent'))),
+    );
+    expect([failure.kind, failure.refusal]).toEqual([
+      'UNAVAILABLE',
+      `GatewayDelegationSourceError: ${MISSING_MODULE_CREDENTIAL_REASON}`,
+    ]);
   }),
 );

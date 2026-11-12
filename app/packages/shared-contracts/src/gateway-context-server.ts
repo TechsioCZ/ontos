@@ -101,6 +101,9 @@ const subjectWireOf = (
     Match.exhaustive,
   );
 
+/** Why a delegated call failed before any request: the calling module holds no module credential at all. */
+export const MISSING_MODULE_CREDENTIAL_REASON = 'The calling module holds no module credential';
+
 /** Requests a fresh module-to-module context authenticated by this deployment's own module credential. */
 export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acquire')(function* acquire(
   request: GatewayDelegationRequest,
@@ -109,10 +112,17 @@ export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acqui
   // Every delegated call reads its caller's own key through the per-owner view, whichever runtime, worker or
   // background fiber it runs in; nothing else in a process reads a module credential.
   const owner = moduleCredentialConfigProvider(yield* ConfigProvider.ConfigProvider, request.callingAppId);
-  const [configuration, source] = yield* Effect.all(
+  const [apiKey, configuration, source] = yield* Effect.all(
     [
+      // A module that holds no credential of its own fails here, before any request, and says so.
+      Config.Redacted(MODULE_CREDENTIAL_VARIABLE)
+        .parse(owner)
+        .pipe(
+          Effect.mapError(
+            (cause) => new GatewayDelegationSourceError({ cause, reason: MISSING_MODULE_CREDENTIAL_REASON }),
+          ),
+        ),
       Config.all({
-        apiKey: Config.Redacted(MODULE_CREDENTIAL_VARIABLE),
         baseUrl: Config.schema(
           Schema.URLFromString.check(
             Schema.makeFilter((url) =>
@@ -154,7 +164,7 @@ export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acqui
     subject: source.subject,
   };
   const response = yield* issueDelegatedGatewayContext(payload, {
-    apiKey: configuration.apiKey,
+    apiKey,
     baseUrl: configuration.baseUrl,
     requestCorrelation: request.requestCorrelation,
   });

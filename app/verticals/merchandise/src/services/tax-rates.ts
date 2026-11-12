@@ -373,11 +373,20 @@ const RefusalSchema = Schema.Struct({
   type: Schema.optionalKey(Schema.String),
 });
 
-/** The refusal a failed call names: its problem, status and type; undefined for a failure that is no refusal. */
-const refusalOf = (cause: unknown): string | undefined =>
-  Schema.is(RefusalSchema)(cause)
+const SourceFailureSchema = Schema.TaggedStruct('GatewayDelegationSourceError', { reason: Schema.String });
+
+/**
+ * The refusal a failed call names: its problem, status and type, or the calling side's own failure before any request
+ * (above all a module that holds no module credential); undefined for a failure that is no refusal.
+ */
+const refusalOf = (cause: unknown): string | undefined => {
+  if (Schema.is(SourceFailureSchema)(cause)) {
+    return `${cause._tag}: ${cause.reason}`;
+  }
+  return Schema.is(RefusalSchema)(cause)
     ? [cause._tag, String(cause.status), cause.type].filter((part) => part !== undefined).join(' ')
     : undefined;
+};
 
 /** Only the Shell's own "module not installed for the tenant" refusal is a refusal; every other failure is an outage. */
 export const taxCallFailureOf = (cause: unknown): TaxRatesFailure => {
@@ -630,7 +639,7 @@ const logFailedRefresh = (failure: TaxRatesFailure) => {
   return failure.refusal === undefined
     ? Effect.logWarning('Tax did not answer; Merchandise uses the stored VAT rates under the outage rule')
     : Effect.logError(
-        'The call to Tax was refused; Merchandise treats it as an outage and uses the stored VAT rates',
+        'The call to Tax failed (refused, or never sent); Merchandise treats it as an outage and uses the stored VAT rates',
       ).pipe(Effect.annotateLogs({ refusal: failure.refusal }));
 };
 
