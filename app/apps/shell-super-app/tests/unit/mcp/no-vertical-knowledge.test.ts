@@ -45,6 +45,38 @@ const CORE_TEST_FIXTURES = 'packages/core-runtime/src/testing/';
 const EXCEPTIONS = ['apps/shell-super-app/src/demo-guide/guides/', CORE_TEST_FIXTURES];
 const SEED_DIRECTORY = `${path.sep}demo-seed${path.sep}`;
 
+/**
+ * Main's governed integration layer is deliberately vertical-aware (C14): Shell owns the Symmy ingress, its source-read
+ * projections and the gateway evidence that issues Symmy, Privacy-dispatch and organization-governance assertions, and
+ * the shared gateway context names their audiences. Main's architecture rule is the lean-Core dependency gate
+ * (`scripts/check-lean-core-dependencies.mts`), which forbids Core from depending on Commerce, Storefront or Better Auth,
+ * not vertical ids in the Shell. These files are main's; the MCP platform rule above still holds for everything else.
+ */
+const MAIN_INTEGRATION_FILES = [
+  'apps/shell-super-app/api/symmy/',
+  'apps/shell-super-app/api/auth/gateway-organization-governance-evidence.ts',
+  'apps/shell-super-app/api/auth/gateway-privacy-dispatch-evidence.ts',
+  'apps/shell-super-app/api/auth/gateway-recovery-evidence.ts',
+  'apps/shell-super-app/api/auth/gateway-registered-assertion.ts',
+  'apps/shell-super-app/api/auth/gateway-symmy-route-scope.ts',
+  'packages/shared-contracts/src/gateway-context.ts',
+  'packages/shared-contracts/src/gateway-context-server.ts',
+];
+/** Mixed files: only the audiences main's integration layer names there, never another vertical. */
+const MAIN_INTEGRATION_IDS: Readonly<Record<string, readonly string[]>> = {
+  'apps/shell-super-app/api/auth/gateway-delegation-issuer.ts': ['privacy'],
+  'apps/shell-super-app/api/auth/gateway-issuer.ts': ['privacy', 'symmy-integration'],
+  'apps/shell-super-app/api/auth/gateway-originator-evidence.ts': ['privacy.core'],
+  'apps/shell-super-app/api/index.ts': ['symmy-integration'],
+};
+const isMainIntegrationHit = (hit: string): boolean => {
+  const [, file = '', named = ''] = /^(.+?):\d+ names (.+)$/u.exec(hit) ?? [];
+  return (
+    MAIN_INTEGRATION_FILES.some((prefix) => file.startsWith(prefix)) ||
+    (MAIN_INTEGRATION_IDS[file]?.includes(named) ?? false)
+  );
+};
+
 const VerticalManifestSchema = Schema.fromJsonString(
   Schema.Struct({
     modernjs: Schema.optionalKey(
@@ -223,7 +255,7 @@ it('keeps Core and the whole Shell platform free of vertical ids', () => {
   const hits = GUARDED.flatMap(filesOf).flatMap((file) =>
     verticalKnowledgeIn(path.relative(appRoot, file), readFileSync(file, 'utf-8')),
   );
-  expect(hits).toEqual([]);
+  expect(hits.filter((hit) => !isMainIntegrationHit(hit))).toEqual([]);
 });
 
 it('keeps Core and the Shell platform off Core test fixtures', () => {

@@ -82,10 +82,6 @@ const loadCustomerContractSources = (): Promise<Map<string, string>> => {
 const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): ReadonlyMap<string, string> => {
   const manifestApiStart = '// <generated-module-manifest-apis>';
   const manifestApiEnd = '// </generated-module-manifest-apis>';
-  // The seam still proves the platform publication. The Core owner-approval mount shares the generated
-  // manifest and registration slots with the module APIs, so pruning its entry would fail the seam for a
-  // reason unrelated to the Customer-owned companion under test.
-  const retainedSlotEntries = ["'payment-term-affected-use-assessment'", "'owner-action-approvals'"];
   const focused = new Map(
     [...sources].filter(
       ([file]) => !file.startsWith(`${customerVerticalPath}/shared/apis/`) || file === customerOwnerContractFile,
@@ -121,7 +117,7 @@ const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): R
           if (!insideSlot) {
             return true;
           }
-          if (retainedSlotEntries.some((entry) => line.includes(entry))) {
+          if (line.includes("'payment-term-affected-use-assessment'")) {
             keepTargetEntry = !line.trimEnd().endsWith(',');
             return true;
           }

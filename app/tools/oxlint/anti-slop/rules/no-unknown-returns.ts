@@ -5,7 +5,6 @@ import type { ESTree } from "@oxlint/plugins";
 import { unshadowedAliasName } from "../shared/type-alias-reference.ts";
 
 import { lexicalTypeParameterNames } from "../shared/lexical-type-parameters.ts";
-import { genericJsonCanonicalizerProof } from "../../shared/generic-json-canonicalizer.ts";
 
 type FunctionWithReturnType =
   | ESTree.ArrowFunctionExpression
@@ -31,7 +30,7 @@ function nonGenericAliasType(
   return alias.typeAnnotation;
 }
 
-/** Ban unknown domain results; pure generic JSON normalization retains its input value boundary. */
+/** Ban function contracts that return unknown instead of a parsed domain type. */
 export const noUnknownReturnsRule = defineRule({
   meta: {
     type: "problem",
@@ -45,7 +44,6 @@ export const noUnknownReturnsRule = defineRule({
     },
   },
   createOnce(context) {
-    const canonicalJson = genericJsonCanonicalizerProof(context);
     const aliases = new Map<string, ESTree.TSTypeAliasDeclaration>();
 
     const resolvesToUnknown = (
@@ -74,7 +72,6 @@ export const noUnknownReturnsRule = defineRule({
     };
 
     const checkReturnType = (node: FunctionWithReturnType) => {
-      if (canonicalJson.isBoundary(node)) return;
       const annotation = node.returnType;
       if (annotation === null || annotation === undefined) return;
       if (

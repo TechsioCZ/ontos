@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createModuleGraph } from '@modern-js/code-tools/microvertical-api-boundary';
@@ -10,7 +10,6 @@ import { expect, it } from 'effect-rstest';
 
 import {
   checkModuleEntrypointBoundaries as checkModuleEntrypointBoundariesEffect,
-  isImmutablePublicContract,
   validateGatewayIssuerEntrypoints,
 } from '../check-module-entrypoint-boundaries.mts';
 import { gatewayContextAuthorizationEntrypoints } from '../../packages/shared-contracts/src/gateway-context.ts';
@@ -18,9 +17,10 @@ import {
   hasCompleteGeneratedModuleApiSeam,
   hasValidGovernedHttpCompositionRoot,
   hasGeneratedActionRegistrationBinding,
+  hasGeneratedActionHttpRunnerBinding,
   hasGeneratedActionClientPublication,
   hasOwnerLocalReadServiceFactory,
-  hasCompleteGeneratedModuleRead,
+  hasOwnerLocalReadServiceFactoryResult,
   hasNativeHttpActionMount,
   ownerActionClientPublication,
   hasPublishedGeneratedContractShim,
@@ -43,21 +43,15 @@ import {
 } from '../published-outbox-contracts.mts';
 
 const SHELL_TSCONFIG_PATH = 'apps/shell-super-app/tsconfig.json';
-const SHELL_SHARED_API_PATH = 'apps/shell-super-app/shared/api.ts';
-const PORTAL_PRIVATE_TABLE_IMPORT = "\nimport { privateTable } from '../src/database/private.ts';\n";
-const PORTAL_PRIVATE_HANDLER_FILE = 'verticals/commerce-customer-context/src/handlers/private-contract.ts';
-const PRIVATE_HANDLER_SOURCE = 'export const privateHandler = () => true;\n';
 const SHARED_CONTRACTS_LINK_PATH = 'node_modules/@app/shared-contracts';
 const TAX_VERTICAL_PATH = 'verticals/tax';
-const ORDER_VERTICAL_PATH = 'verticals/commerce-order';
-const ORDER_TAX_CONSUMER_PATH = `${ORDER_VERTICAL_PATH}/src/integrations/finalization-tax-payment-terms.ts`;
 const PRIVATE_COLOCATED_CALLABLE_CASE = 'private co-located callable';
 const PARTY_VERTICAL_PATH = 'verticals/party-registry';
 const MARKET_DEPLOYMENT_ID = 'commerce-market-catalog';
-const MARKET_VERTICAL_PATH = 'verticals/commerce-market-catalog';
 const PARTY_RESOURCE_SOURCE_PATH = './shared/resources/party.ts';
 const CUSTOMER_CONTEXT_VERTICAL_PATH = 'verticals/commerce-customer-context';
 const CUSTOMER_CONTEXT_DEPLOYMENT_ID = 'commerce-customer-context';
+const CUSTOMER_CONTEXT_PRIVATE_CONTRACT_PATH = 'verticals/commerce-customer-context/src/handlers/private-contract.ts';
 const PRIVACY_VERTICAL_PATH = 'verticals/privacy';
 const WORKSPACE_MANIFEST_PATH = 'pnpm-workspace.yaml';
 const WORKSPACE_DEPENDENCY_VERSION = 'workspace:*';
@@ -541,7 +535,7 @@ const moduleReadFixture = (
   camel: string,
 ): string => `${MODULE_API_HEADER}import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 export const ${camel}Entrypoint = defineTenantModuleEntrypoint({ access: 'read', authorization: { kind: 'protected' }, entrypointKey: 'inventory.stock.api.${name}', moduleKey: 'inventory.stock', role: 'api' });
-export const ${camel}Read = defineRead({ accessDeclaration: { key: 'inventory.stock.api.${name}.read', kind: 'read', modes: ['run'], placement: { group: 'stock', level: 'basic' }, risk: 'routine', selectors: [] }, accessKind: 'list', entrypoint: ${camel}Entrypoint, inputSchema: ${type}RequestSchema, resultSchema: ${type}ResponseSchema, legalEntityScope: 'optional', owningModuleKey: 'inventory.stock', policies: [], readKey: 'inventory.stock.api.${name}', schemaVersion: '1' }, () => Effect.succeed({}), () => Effect.succeed({}));`;
+export const ${camel}Read = defineRead({ accessDeclaration: { key: 'inventory.stock.api.${name}.read', kind: 'read', modes: ['run'], placement: { group: 'stock', level: 'basic' }, risk: 'routine', selectors: [] }, accessKind: 'list', entrypoint: ${camel}Entrypoint, inputSchema: ${type}RequestSchema, resultSchema: ${type}ResponseSchema, legalEntityScope: 'optional', owningModuleKey: 'inventory.stock', policies: [], readKey: 'inventory.stock.api.${name}', schemaVersion: '1' }, () => Effect.succeed({}), () => Layer.empty);`;
 
 it('governed servers bind the trusted handler, authentication, registration, and problem schemas', () => {
   const exportedName = 'stockListReadApiLive';
@@ -671,46 +665,18 @@ import { routeMeta as route1 } from './[lang]/$/route.meta';`,
   yield* write(root, CANONICAL_MODULE_CLIENT_LOADER, CANONICAL_LOADER_FIXTURE);
   yield* write(
     root,
-    SHELL_SHARED_API_PATH,
+    'apps/shell-super-app/shared/api.ts',
     `import { GatewayContextApiGroup } from '@app/shared-contracts';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
-import { DocumentGatewayApiGroup } from './document-gateway-api.ts';
-export const ShellDocumentContextApiGroup = HttpApiGroup.make('documentContext')
-  .add(HttpApiEndpoint.post('documentContext', '/shell/document-context', {}));
-export const ShellAuthenticationApi = HttpApi.make('shell')
-  .add(GatewayContextApiGroup)
-  .add(DocumentGatewayApiGroup)
-  .add(ShellDocumentContextApiGroup);`,
-  );
-  yield* write(
-    root,
-    'apps/shell-super-app/shared/document-gateway-api.ts',
-    `import { HttpApiEndpoint, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
-export const DocumentGatewayApiGroup = HttpApiGroup.make('documentGateway')
-  .add(HttpApiEndpoint.post('issueDocumentGatewayContexts', '/auth/gateway-contexts', {}));`,
+export const ShellAuthenticationApi = HttpApi.make('shell').add(GatewayContextApiGroup);
+export const paths = ['/shell-super-app-api/auth/gateway-context', '/shell-super-app-api/auth/api-key/gateway-context', '/shell-super-app-api/auth/delegated/gateway-context'];`,
   );
   yield* write(
     root,
     'apps/shell-super-app/api/index.ts',
-    `import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
-import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import { Effect } from 'effect';
-import { ShellAuthenticationApi } from '../shared/api.ts';
-export const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) => handlers
+    `export const gatewayContextLive = HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) => handlers
   .handle('issueGatewayContext', () => Effect.void)
   .handle('issueApiKeyGatewayContext', () => Effect.void)
-  .handle('readWithApiKeyGatewayContext', () => Effect.void)
-  .handle('issueDelegatedGatewayContext', () => Effect.void));
-export const documentGatewayGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'documentGateway', (handlers) => handlers
-  .handle('issueDocumentGatewayContexts', () => Effect.void));
-export const documentContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'documentContext', (handlers) => handlers
-  .handle('documentContext', () => Effect.void));
-export const makeShellAuthenticationApiRuntime = () => {
-  const apiHandlersLive = Layer.mergeAll(gatewayContextGroupLive, documentGatewayGroupLive, documentContextGroupLive);
-  return assembleEffectBffRuntime({ api: ShellAuthenticationApi, handlers: apiHandlersLive });
-};
-const apiRuntime = makeShellAuthenticationApiRuntime();
-export default apiRuntime;`,
+  .handle('issueDelegatedGatewayContext', () => Effect.void));`,
   );
   yield* write(
     root,
@@ -730,13 +696,11 @@ export const routeMeta = { moduleId: 'inventory.stock', ownerAppId: 'inventory-s
   yield* write(
     root,
     GATEWAY_CONTRACT_FILE,
-    `import { HttpApiEndpoint, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
-export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
+    `export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
   .add(HttpApiEndpoint.post('issueGatewayContext', '/auth/gateway-context', {}))
   .add(HttpApiEndpoint.post('issueApiKeyGatewayContext', '/auth/api-key/gateway-context', {}))
-  .add(HttpApiEndpoint.post('readWithApiKeyGatewayContext', '/auth/api-key/gateway-read', {}))
   .add(HttpApiEndpoint.post('issueDelegatedGatewayContext', '/auth/delegated/gateway-context', {}));
-export const shellGatewayContextContract = { issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context', issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context', issueDelegatedGatewayContextPath: '/shell-super-app-api/auth/delegated/gateway-context', readWithApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-read', issueDocumentGatewayContextsPath: '/shell-super-app-api/auth/gateway-contexts', documentContextPath: '/shell-super-app-api/shell/document-context' };`,
+export const shellGatewayContextContract = { issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context', issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context', issueDelegatedGatewayContextPath: '/shell-super-app-api/auth/delegated/gateway-context' };`,
   );
   yield* write(root, 'packages/core-runtime/src/index.ts', `export const core = true;`);
   return root;
@@ -900,7 +864,7 @@ it.live(
   () =>
     Effect.gen(function* importedMarketActionOwner() {
       const root = yield* makeFixture();
-      const owner = MARKET_VERTICAL_PATH;
+      const owner = 'verticals/commerce-market-catalog';
       const action = `${owner}/src/actions/manage-market-retirement-admission.action.ts`;
       const support = `${owner}/src/actions/market-action-support.ts`;
       const workspace = path.resolve(import.meta.dirname, '../..');
@@ -1144,7 +1108,9 @@ const writeGovernedModuleApi = Effect.fn(function* mergedScenario1(root: string)
   yield* write(
     root,
     `${vertical}/shared/api.ts`,
-    `// <generated-governed-http-api-imports>
+    `import { HttpApi, HttpApiEndpoint } from 'effect/http-api';
+import { identity } from 'effect';
+// <generated-governed-http-api-imports>
 import { StockListApi } from './apis/stock-list.ts';
 // </generated-governed-http-api-imports>
 export const endpoint = HttpApiEndpoint.post('listStock', '/stock/list');
@@ -1920,7 +1886,12 @@ ${validContract}`,
     yield* write(
       root,
       sharedRootPath,
-      sharedRoot.replace("export const endpoint = HttpApiEndpoint.post('listStock', '/stock/list');\n", ''),
+      sharedRoot
+        .replace("export const endpoint = HttpApiEndpoint.post('listStock', '/stock/list');\n", '')
+        .replace(
+          "import { HttpApi, HttpApiEndpoint } from 'effect/http-api';",
+          "import { HttpApi } from 'effect/http-api';",
+        ),
     );
     const providerHeader = `// @generated by OntOS Codesmith Governed Contribution v1
 // @ontos-contribution-kind search-provider
@@ -1943,8 +1914,7 @@ ${validContract}`,
     yield* write(
       root,
       'verticals/inventory-stock/src/search/inventory-items.provider.ts',
-      `${providerHeader}import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
-const inventoryItemsEntrypoint = defineTenantModuleEntrypoint({ access: 'read', authorization: { kind: 'protected' }, entrypointKey: 'inventory.stock.search.inventory-items', moduleKey: 'inventory.stock', role: 'search' });
+      `${providerHeader}export const inventoryItemsEntrypoint = defineTenantModuleEntrypoint({ access: 'read', authorization: { kind: 'protected' }, entrypointKey: 'inventory.stock.search.inventory-items', moduleKey: 'inventory.stock', role: 'search' });
 export const inventoryItemsRead = defineRead({ accessKind: 'search', entrypoint: inventoryItemsEntrypoint, legalEntityScope: 'required', owningModuleKey: 'inventory.stock', readKey: 'inventory.stock.search.inventory-items', schemaVersion: '1' });`,
     );
     yield* write(
@@ -2369,7 +2339,7 @@ const decoyGroup = HttpApiGroup.make('inventoryItemsSearch').add(HttpApiEndpoint
     yield* write(
       root,
       providerSourcePath,
-      validProviderSource.replaceAll('inventoryItemsEntrypoint', 'scopedInventoryItemsEntrypoint'),
+      validProviderSource.replace('export const inventoryItemsEntrypoint', 'const inventoryItemsEntrypoint'),
     );
     yield* checkModuleEntrypointBoundaries(root);
     yield* assertRejectedSources(
@@ -2483,8 +2453,7 @@ const decoyGroup = HttpApiGroup.make('inventoryItemsSearch').add(HttpApiEndpoint
     yield* write(
       root,
       'verticals/inventory-stock/src/reports/stock-levels.provider.ts',
-      `${reportHeader}import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
-const stockLevelsEntrypoint = defineTenantModuleEntrypoint({ access: 'read', authorization: { kind: 'authenticated_principal' }, entrypointKey: 'inventory.stock.report.stock-levels', moduleKey: 'inventory.stock', role: 'report' });
+      `${reportHeader}export const stockLevelsEntrypoint = defineTenantModuleEntrypoint({ access: 'read', authorization: { kind: 'authenticated_principal' }, entrypointKey: 'inventory.stock.report.stock-levels', moduleKey: 'inventory.stock', role: 'report' });
 export const stockLevelsRead = defineRead({ accessKind: 'report', entrypoint: stockLevelsEntrypoint, legalEntityScope: 'required', owningModuleKey: 'inventory.stock', readKey: 'inventory.stock.report.stock-levels', schemaVersion: '1' });`,
     );
     yield* write(
@@ -2608,22 +2577,6 @@ export const stockLevelsRead = defineRead({ accessKind: 'report', entrypoint: st
   }),
 );
 
-it.live('proves real registration entries without unused footer markers', () =>
-  Effect.gen(function* registrationWithoutObsoleteFooters() {
-    const root = yield* makeFixture();
-    yield* writeGovernedModuleApi(root);
-    const source = yield* Effect.promise(() => readFile(path.join(root, INVENTORY_REGISTRATION_PATH), 'utf-8'));
-    const registration = source.replaceAll(
-      /^\/\/ <\/?generated-(?:public-component|search|report)-registrations>\n?/gmu,
-      '',
-    );
-    expect(registration).not.toBe(source);
-    expect(registration).toContain("'stock-list': () => import('./src/api/stock-list-client.ts')");
-    yield* write(root, INVENTORY_REGISTRATION_PATH, registration);
-    yield* checkModuleEntrypointBoundaries(root);
-  }),
-);
-
 const violations = [
   {
     expected: /raw loadRemote.*approved Shell module-entrypoint loader/u,
@@ -2669,6 +2622,11 @@ const violations = [
     expected: /package exports must not publish private/u,
     file: 'verticals/inventory-stock/package.json',
     source: `{"exports":{"./private":"./src/db/schema.ts"}}`,
+  },
+  {
+    expected: /reserved generated-public-component-registrations slots/u,
+    file: INVENTORY_REGISTRATION_PATH,
+    source: `export const registration = {};`,
   },
   {
     expected: /Core may export only module-entrypoint descriptors/u,
@@ -3218,7 +3176,7 @@ it.live(
   'shared issuer paths require the mounted gateway group and exact endpoint bindings',
   Effect.fn(function* mergedScenario1() {
     const root = yield* makeFixture();
-    const contractFile = SHELL_SHARED_API_PATH;
+    const contractFile = 'apps/shell-super-app/shared/api.ts';
     const gatewayFile = GATEWAY_CONTRACT_FILE;
     const source = yield* Effect.promise(() => readFile(new URL(`../../${contractFile}`, import.meta.url), 'utf-8'));
     const gatewaySource = yield* Effect.promise(() =>
@@ -3244,11 +3202,9 @@ const UNRECOGNIZED_ISSUER_PATH = "'/auth/tampered'";
 for (const [before, after] of [
   [/post\(\s*'issueGatewayContext'/u, UNMOUNTED_ISSUER_ENDPOINT],
   [/post\(\s*'issueApiKeyGatewayContext'/u, UNMOUNTED_ISSUER_ENDPOINT],
-  [/post\(\s*'readWithApiKeyGatewayContext'/u, UNMOUNTED_ISSUER_ENDPOINT],
   [/post\(\s*'issueDelegatedGatewayContext'/u, UNMOUNTED_ISSUER_ENDPOINT],
   ["'/auth/gateway-context'", UNRECOGNIZED_ISSUER_PATH],
   ["'/auth/api-key/gateway-context'", UNRECOGNIZED_ISSUER_PATH],
-  ["'/auth/api-key/gateway-read'", UNRECOGNIZED_ISSUER_PATH],
   ["'/auth/delegated/gateway-context'", UNRECOGNIZED_ISSUER_PATH],
   ["make('gatewayContext')", "make('unrelated')"],
   ['export const GatewayContextApiGroup =', 'export const UnmountedApiGroup ='],
@@ -3273,104 +3229,51 @@ for (const [before, after] of [
   );
 }
 
-for (const [file, group, handler, endpointPath] of [
-  [SHELL_SHARED_API_PATH, 'ShellDocumentContextApiGroup', 'documentContext', '/shell/document-context'],
-  [
-    'apps/shell-super-app/shared/document-gateway-api.ts',
-    'DocumentGatewayApiGroup',
-    'issueDocumentGatewayContexts',
-    '/auth/gateway-contexts',
-  ],
-] as const) {
-  it.live(`rejects a disconnected or tampered document issuer contract: ${handler}`, () =>
-    Effect.gen(function* documentIssuerContractTampering() {
-      const root = yield* makeFixture();
-      yield* checkModuleEntrypointBoundaries(root);
-      const original = yield* Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
-      yield* assertRejectedSources(
-        root,
-        file,
-        [
-          original.replace(`post('${handler}'`, "post('unusedNeighbor'"),
-          original.replace(`'${endpointPath}'`, UNRECOGNIZED_ISSUER_PATH),
-          original.replace(`export const ${group} =`, 'export const UnmountedApiGroup ='),
-        ],
-        /mounted gateway contract/u,
+it.effect('accepts exactly the three issuer classifications regardless of declaration order', () =>
+  validateGatewayIssuerEntrypoints(EffectArray.reverse(gatewayContextAuthorizationEntrypoints)),
+);
+
+for (const mutation of ['duplicate', 'unknown', 'credential', 'path', 'kind', 'missing'] as const) {
+  it.effect(`rejects an invalid delegated issuer classification: ${mutation}`, () =>
+    Effect.gen(function* invalidDelegatedClassification() {
+      const sessionIssuer = gatewayContextAuthorizationEntrypoints.find(
+        (issuer) => issuer.entrypointKey === 'shell.gateway-context.issue.session',
       );
-      yield* write(root, file, original);
-      const shellFile = SHELL_SHARED_API_PATH;
-      const shell = yield* Effect.promise(() => readFile(path.join(root, shellFile), 'utf-8'));
-      const unmounted = shell.replace(`.add(${group})`, '');
-      expect(unmounted).not.toBe(shell);
-      yield* write(root, shellFile, unmounted);
-      expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root)))).toMatch(/mounted gateway contract/u);
+      if (sessionIssuer === undefined) {
+        throw new Error('The canonical session issuer is required by this fixture');
+      }
+      const issuers = gatewayContextAuthorizationEntrypoints.map((issuer) => {
+        if (issuer.entrypointKey !== 'shell.gateway-context.issue.delegated') {
+          return issuer;
+        }
+        return Match.value(mutation).pipe(
+          Match.when('duplicate', () => sessionIssuer),
+          Match.when('unknown', () => ({ ...issuer, entrypointKey: 'shell.gateway-context.issue.unknown' })),
+          Match.when('credential', () => ({
+            ...issuer,
+            authorization: { credential: 'session', kind: 'capability_issuance' } as const,
+          })),
+          Match.when('path', () => ({ ...issuer, path: '/shell-super-app-api/auth/unrecognized/gateway-context' })),
+          Match.when('kind', () => ({ ...issuer, authorization: { kind: 'public' } as const })),
+          Match.when('missing', () => issuer),
+          Match.exhaustive,
+        );
+      });
+      const actual =
+        mutation === 'missing'
+          ? issuers.filter((issuer) => issuer.entrypointKey !== 'shell.gateway-context.issue.delegated')
+          : issuers;
+      yield* Effect.matchCause(validateGatewayIssuerEntrypoints(actual), {
+        onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/must classify exactly/u),
+        onSuccess: () => {
+          throw new Error(EXPECTED_EFFECT_FAILURE);
+        },
+      });
     }),
   );
 }
 
-it.effect('accepts exactly the six issuer classifications regardless of declaration order', () =>
-  validateGatewayIssuerEntrypoints(EffectArray.reverse(gatewayContextAuthorizationEntrypoints)),
-);
-
-for (const entrypointKey of [
-  'shell.gateway-context.issue.session',
-  'shell.gateway-context.issue.api-key',
-  'shell.gateway-context.issue.delegated',
-  'shell.gateway-read.issue.api-key',
-  'shell.gateway-contexts.issue.session',
-  'shell.document-context.issue.session',
-] as const) {
-  for (const mutation of ['duplicate', 'unknown', 'credential', 'path', 'kind', 'missing'] as const) {
-    it.effect(`rejects an invalid issuer classification: ${entrypointKey} ${mutation}`, () =>
-      Effect.gen(function* invalidIssuerClassification() {
-        yield* validateGatewayIssuerEntrypoints(gatewayContextAuthorizationEntrypoints);
-        const neighbor = gatewayContextAuthorizationEntrypoints.find(
-          (issuer) => issuer.entrypointKey !== entrypointKey,
-        );
-        if (neighbor === undefined) {
-          throw new Error('A distinct canonical issuer is required by this fixture');
-        }
-        const issuers = gatewayContextAuthorizationEntrypoints.map((issuer) => {
-          if (issuer.entrypointKey !== entrypointKey) {
-            return issuer;
-          }
-          return Match.value(mutation).pipe(
-            Match.when('duplicate', () => neighbor),
-            Match.when('unknown', () => ({ ...issuer, entrypointKey: 'shell.gateway-context.issue.unknown' })),
-            Match.when('credential', () => ({
-              ...issuer,
-              authorization: {
-                credential: issuer.authorization.credential === 'session' ? 'api_key' : 'session',
-                kind: 'capability_issuance',
-              } as const,
-            })),
-            Match.when('path', () => ({ ...issuer, path: '/shell-super-app-api/auth/unrecognized/gateway-context' })),
-            Match.when('kind', () => ({ ...issuer, authorization: { kind: 'public' } as const })),
-            Match.when('missing', () => issuer),
-            Match.exhaustive,
-          );
-        });
-        const actual =
-          mutation === 'missing' ? issuers.filter((issuer) => issuer.entrypointKey !== entrypointKey) : issuers;
-        yield* Effect.matchCause(validateGatewayIssuerEntrypoints(actual), {
-          onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/must classify exactly/u),
-          onSuccess: () => {
-            throw new Error(EXPECTED_EFFECT_FAILURE);
-          },
-        });
-      }),
-    );
-  }
-}
-
-for (const handler of [
-  'issueGatewayContext',
-  'issueApiKeyGatewayContext',
-  'issueDelegatedGatewayContext',
-  'readWithApiKeyGatewayContext',
-  'issueDocumentGatewayContexts',
-  'documentContext',
-] as const) {
+for (const handler of ['issueGatewayContext', 'issueApiKeyGatewayContext', 'issueDelegatedGatewayContext'] as const) {
   it.live(`requires the mounted issuer handler rather than an identifier: ${handler}`, () =>
     Effect.gen(function* missingIssuerHandler() {
       const root = yield* makeFixture();
@@ -3384,7 +3287,7 @@ for (const handler of [
         `${modifiedRuntime}\nexport const ${handler} = true;\nexport const unusedText = ".handle('${handler}', unused)";\n// .handle('${handler}', unused)`,
       );
       yield* Effect.matchCause(checkModuleEntrypointBoundaries(root), {
-        onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/all six classified capability issuers/u),
+        onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/all three classified capability issuers/u),
         onSuccess: () => {
           throw new Error(EXPECTED_EFFECT_FAILURE);
         },
@@ -4094,13 +3997,7 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
         ].map((folder) => Effect.promise(() => readPricingSourceTree(root, folder))),
       ),
       Effect.all(
-        [
-          `${owner}/package.json`,
-          `${owner}/vertical.manifest.ts`,
-          `${owner}/vertical.registration.ts`,
-          SHARED_CONTRACTS_PACKAGE_JSON_PATH,
-          'packages/shared-contracts/src/external-identity-client.ts',
-        ].map((file) =>
+        [`${owner}/package.json`, `${owner}/vertical.manifest.ts`, `${owner}/vertical.registration.ts`].map((file) =>
           Effect.promise(() => readFile(path.join(root, file), 'utf-8')).pipe(
             Effect.map((source) => [file, source] as const),
           ),
@@ -4126,6 +4023,28 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
       true,
     );
 
+    const icoReadFile = `${owner}/src/api/organization-customer-profile-ico.read.ts`;
+    const icoRead = sources.get(icoReadFile) ?? '';
+    expect(
+      hasGeneratedModuleApiReadContract(icoRead, 'commerce.customer-context', 'organization-customer-profile-ico'),
+    ).toBe(true);
+    for (const invalid of [
+      icoRead.replace(
+        "const readKey = 'commerce.customer-context.api.organization-customer-profile-ico'",
+        "const readKey = 'commerce.customer-context.api.foreign-read'",
+      ),
+      icoRead.replace("const ownerModuleKey = 'commerce.customer-context'", "const ownerModuleKey = 'foreign.owner'"),
+      icoRead.replace('const readKey =', 'let readKey ='),
+      icoRead.replace('    readKey,', "    readKey, readKey: 'commerce.customer-context.api.foreign-read',"),
+    ]) {
+      expect(invalid).not.toBe(icoRead);
+      expect(
+        hasGeneratedModuleApiReadContract(invalid, 'commerce.customer-context', 'organization-customer-profile-ico'),
+      ).toBe(false);
+      expect(hasCompleteGeneratedModuleApiSeam(new Map([...sources, [icoReadFile, invalid]]), shared, deployment)).toBe(
+        false,
+      );
+    }
     const manifestFile = `${owner}/vertical.manifest.ts`;
     const manifest = sources.get(manifestFile) ?? '';
     const actionEntry = "'reserve-market-retirement-action': ReserveMarketRetirementActionApi,";
@@ -4200,6 +4119,134 @@ it.live('accepts actual CCC named recovery reexports and rejects provenance or e
   }),
 );
 
+for (const owner of [CATALOG_VERTICAL_PATH, CUSTOMER_CONTEXT_VERTICAL_PATH]) {
+  it.live(`proves the full native operationContracts array for ${owner}, independent of marker placement`, () =>
+    Effect.gen(function* nativeOwnerOperationInventory() {
+      const root = path.resolve(import.meta.dirname, '../..');
+      const trees = yield* Effect.all(
+        [`${owner}/api`, `${owner}/shared`, `${owner}/src`, 'packages'].map((folder) =>
+          Effect.promise(() => readPricingSourceTree(root, folder)),
+        ),
+      );
+      const metadata = yield* Effect.all(
+        [`${owner}/package.json`, `${owner}/vertical.manifest.ts`, `${owner}/vertical.registration.ts`].map((file) =>
+          Effect.promise(() => readFile(path.join(root, file), 'utf-8')).pipe(
+            Effect.map((source) => [file, source] as const),
+          ),
+        ),
+      );
+      const sources = new Map([...trees.flat(), ...metadata]);
+      const manifestFile = `${owner}/vertical.manifest.ts`;
+      const manifest = sources.get(manifestFile) ?? '';
+      const start = '// <generated-module-manifest-operation-contracts>';
+      const end = '// </generated-module-manifest-operation-contracts>';
+      const begin = manifest.indexOf(start);
+      const finish = manifest.indexOf(end);
+      expect(begin).toBeGreaterThan(0);
+      expect(finish).toBeGreaterThan(begin);
+      const claims = manifest.slice(begin + start.length, finish);
+      const outside = `${manifest.slice(0, begin)}${claims}${start}\n${manifest.slice(finish)}`;
+      const deployment = path.posix.basename(owner);
+      const accepts = (source: string) =>
+        hasCompleteGeneratedModuleApiSeam(
+          new Map([...sources, [manifestFile, source]]),
+          `${owner}/shared/api.ts`,
+          deployment,
+        );
+      expect(accepts(manifest)).toBe(true);
+      expect(accepts(outside)).toBe(true);
+      const detached = manifest.slice(0, begin + start.length) + manifest.slice(finish);
+      expect(accepts(`${detached}\nconst detachedContracts = [${claims}];`)).toBe(false);
+      expect(accepts(outside.replace('operationContracts: [', 'unboundContracts: ['))).toBe(false);
+      expect(accepts(outside.replace(/apiKey: '[^']+'/u, "apiKey: 'unpublished-operation'"))).toBe(false);
+      expect(accepts(outside.replace('operationContracts: [', 'operationContracts: [{ ...foreignClaim },'))).toBe(
+        false,
+      );
+      expect(accepts(manifest.replaceAll(CORE_RUNTIME_SOURCE_IMPORT, "from './counterfeit-core.ts'"))).toBe(false);
+      const duplicateRoot = `${manifest}\nexport const detachedManifest = defineOntosModuleManifest({ publicSurface: { operationContracts: [] } });`;
+      expect(accepts(duplicateRoot)).toBe(false);
+    }),
+  );
+}
+
+it.live('binds actual governed Action HTTP runners across formatting and an authenticated observer', () =>
+  Effect.gen(function* actualActionRunnerBinding() {
+    const root = path.resolve(import.meta.dirname, '../..');
+    for (const [slug, layer] of [
+      ['execute-symmy-retention', 'executeSymmyRetentionActionApiLive'],
+      ['admit-symmy-sync', 'admitSymmySyncActionApiLive'],
+    ] as const) {
+      const source = yield* Effect.promise(() =>
+        readFile(path.join(root, `verticals/symmy-integration/api/${slug}-action-server.ts`), 'utf-8'),
+      );
+      expect(hasGeneratedActionHttpRunnerBinding(source, layer), slug).toBe(true);
+      expect(
+        hasGeneratedActionHttpRunnerBinding(source.replace('bindActionHttpRunner(', 'bindActionHttpRunner(\n'), layer),
+      ).toBe(true);
+      for (const [name, invalid] of [
+        ['foreign runner', source.replace("from './action-http-runner.ts'", "from './foreign-runner.ts'")],
+        ['detached endpoint', source.replace('=> execute(payload, request)', '=> detached(payload, request)')],
+        ['foreign Effect', source.replace("from '@modern-js/bff-effect/effect-edge'", "from './foreign-edge.ts'")],
+        [
+          'dead native runner',
+          `${source.replace(
+            'const runActionHttp = bindActionHttpRunner(',
+            'const unusedActionRunner = bindActionHttpRunner(',
+          )}\nfunction decoy() { const runActionHttp = () => undefined; }`,
+        ],
+        ['duplicate runner binding', `${source}\nconst runActionHttp = bindActionHttpRunner({});`],
+        [
+          'unexported group with comment decoy',
+          `${source.replace('export const '.concat(layer), 'const '.concat(layer))}\n// export const ${layer} = HttpApiBuilder.group(`,
+        ],
+        ['optional output chain', source.replace(').pipe(Layer.provide(', ')?.pipe(Layer.provide(')],
+        ['escaped runner', `${source}\nconsume(runActionHttp);`],
+        ['mutated imported runner', `${source}\nbindActionHttpRunner = replacement;`],
+        [
+          'shadowed endpoint',
+          source.replace('({ payload, request }) => execute', '({ payload, request, execute }) => execute'),
+        ],
+      ] as const) {
+        expect(invalid, name).not.toBe(source);
+        expect(hasGeneratedActionHttpRunnerBinding(invalid, layer), name).toBe(false);
+      }
+    }
+  }),
+);
+
+it.live('recognizes the actual Core ReadServiceFactory operational-scope parameter without forged utility types', () =>
+  Effect.gen(function* actualCatalogScopedFactory() {
+    const root = path.resolve(import.meta.dirname, '../..');
+    const owner = CATALOG_VERTICAL_PATH;
+    const readFileName = `${owner}/src/api/catalog-source-products.read.ts`;
+    const factoryFile = `${owner}/src/persistence/catalog-source-correlation.ts`;
+    const read = yield* Effect.promise(() => readFile(path.join(root, readFileName), 'utf-8'));
+    const factory = yield* Effect.promise(() => readFile(path.join(root, factoryFile), 'utf-8'));
+    const accepts = (source: string) =>
+      hasOwnerLocalReadServiceFactory(
+        new Map([
+          [readFileName, read],
+          [factoryFile, source],
+        ]),
+        readFileName,
+        owner,
+        'catalogSourceProductsForScope',
+      );
+    expect(accepts(factory)).toBe(true);
+    const actual = 'scope: Parameters<ReadServiceFactory<void>>[1]';
+    for (const invalid of [
+      factory.replace(actual, 'scope: Parameters<ReadServiceFactory<void>>[0]'),
+      factory.replace(actual, 'scope: Parameters<ForeignFactory<void>>[1]'),
+      factory.replace(actual, 'scope: Parameters<ReadServiceFactory<void>>[2]'),
+      `${factory}\ntype Parameters<T> = [never, OperationalScope];`,
+      factory.replaceAll(CORE_RUNTIME_SOURCE_IMPORT, "from './foreign-core.ts'"),
+    ]) {
+      expect(invalid).not.toBe(factory);
+      expect(accepts(invalid)).toBe(false);
+    }
+  }),
+);
+
 it.live('rejects unbound Core Read layers in generated owner HTTP roots', () =>
   Effect.gen(function* unboundOwnerReadRuntime() {
     const root = path.resolve(import.meta.dirname, '../..');
@@ -4209,12 +4256,14 @@ it.live('rejects unbound Core Read layers in generated owner HTTP roots', () =>
       ),
     );
     expect(hasValidGovernedHttpCompositionRoot(shared, handler)).toBe(true);
-    const runtimeDeclarations = [...handler.matchAll(/^const readRuntimeLive = makeReadRuntimeLive\([\s\S]*?^\);/gmu)];
-    expect(runtimeDeclarations).toHaveLength(1);
-    const ownerRuntime = runtimeDeclarations[0]?.[0] ?? '';
-    expect(ownerRuntime).toContain('makeReadRuntimeLive(ultramodernDeliveryUnit, pricingRegistration)');
-    expect(ownerRuntime).toContain('Layer.provide(readRuntimeDependenciesLive)');
-    expect(ownerRuntime).toContain('Layer.provideMerge(nodeCryptoLayer)');
+    const ownerRuntime = `const readRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, pricingRegistration).pipe(
+  Layer.provide(readRuntimeDependenciesLive),
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(activeApplicationCompositionLive),
+  // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
+  Layer.provideMerge(nodeCryptoLayer),
+);`;
+    expect(handler).toContain(ownerRuntime);
     const direct = handler
       .replace('  makeReadRuntimeLive,', '  ReadRuntimeLive,')
       .replace(
@@ -4273,16 +4322,22 @@ it.live('counts the actual published Pricing read shim in exact owner inventory 
       rootSource.replace(headerAnnotation, `${headerAnnotation}.pipe(unknownOperator)`),
       rootSource.replace("import { identity } from 'effect'", "import { identity } from './fake-effect.ts'"),
     ]) {
+      expect(invalid).not.toBe(rootSource);
       expect(hasValidGovernedHttpCompositionRoot(invalid, handler)).toBe(false);
     }
     const diagnostics: string[] = [];
     expect(hasCompleteGeneratedModuleApiSeam(sources, shared, 'pricing', diagnostics), diagnostics.join('\n')).toBe(
       true,
     );
-    // The shipped original phased Read has no obsolete target or fourth resolver.
+    // The transitional v2 shape (O62, O68): the same protected read with no legacy permission target
+    // and no positional resolver still satisfies the seam, including the empty trailing slot the
+    // removal leaves behind (a trailing comma) and the explicit `undefined` placeholder that keeps a
+    // later executable-policy argument in position.
     const readPath = 'verticals/pricing/src/api/quotation-verification.read.ts';
     const read = sources.get(readPath) ?? '';
-    const withoutResolver = read;
+    const withoutResolver = read
+      .replace("    permissionTarget: 'module',\n", '')
+      .replace("  () => ({ kind: 'module', moduleId: MODULE_KEY }),\n", '');
     expect(withoutResolver).not.toContain('permissionTarget');
     expect(withoutResolver).toContain('  servicesForScope,\n);');
     const v2Diagnostics: string[] = [];
@@ -4341,43 +4396,39 @@ it.live('counts the actual published Pricing read shim in exact owner inventory 
     const requirementsFile = 'verticals/pricing/src/integrations/pricing-operation-requirements.ts';
     const pricingRead = sources.get(pricingReadFile) ?? '';
     const requirements = sources.get(requirementsFile) ?? '';
-    const requirementArgument = '          currentPricingDecisionRequirements,';
+    const option = '{ requirements: currentPricingDecisionRequirements }';
     const acceptsFactory = (changed: ReadonlyMap<string, string>) =>
-      hasCompleteGeneratedModuleRead(
+      hasOwnerLocalReadServiceFactoryResult(
         changed,
         pricingReadFile,
         'verticals/pricing',
-        'commerce.pricing',
-        'current-pricing-decision',
+        'currentPricingDecisionReadServiceFactory',
       );
     expect(acceptsFactory(sources)).toBe(true);
     const invalidOptions: readonly (readonly [string, string])[] = [
       [
         pricingReadFile,
-        pricingRead.replace(
-          requirementArgument,
-          '          { ...suppliedOptions, ...currentPricingDecisionRequirements },',
-        ),
+        pricingRead.replace(option, '{ ...suppliedOptions, requirements: currentPricingDecisionRequirements }'),
       ],
+      [pricingReadFile, pricingRead.replace(option, '{ [optionKey]: currentPricingDecisionRequirements }')],
       [
         pricingReadFile,
-        pricingRead.replace(requirementArgument, '          { [optionKey]: currentPricingDecisionRequirements },'),
+        pricingRead.replace(option, '{ requirements: currentPricingDecisionRequirements, extra: capability }'),
       ],
       [
         pricingReadFile,
         pricingRead.replace(
-          requirementArgument,
-          '          { requirements: currentPricingDecisionRequirements, extra: capability },',
+          option,
+          '{ pricingOwnerFinalFenceForScope: pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope }',
         ),
       ],
       [
         pricingReadFile,
         pricingRead.replace(
-          requirementArgument,
-          '          { pricingOwnerFinalFenceForScope: pricingCurrentDecisionPricingOwnerFinalFenceGatewayPerRead },',
+          'readonly requirements?: PricingWholeEvaluationRequirements',
+          'requirements: PricingWholeEvaluationRequirements',
         ),
       ],
-      [pricingReadFile, pricingRead.replace('finish: makeFinishCurrentPricingDecision()', 'finish: foreignFactory()')],
       [
         pricingReadFile,
         pricingRead.replace(
@@ -4552,24 +4603,6 @@ const makeResolvedOwnerFixture = Effect.fn(function* resolvedOwnerFixture() {
   return root;
 });
 
-it.live('reports every failing production source without publishing an inventory', () =>
-  Effect.gen(function* reportsIndependentBoundaryFailures() {
-    const root = yield* makeResolvedOwnerFixture();
-    const secondConsumer = 'verticals/inventory-stock/src/second-ownership-consumer.ts';
-    const source = "import { executePrivate } from '../../party-registry/src/handlers/private.ts';\n";
-    yield* write(root, RESOLVED_OWNER_CONSUMER, source);
-    yield* write(root, secondConsumer, source);
-    const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
-    expect(Exit.isFailure(result)).toBe(true);
-    if (Exit.isFailure(result)) {
-      const failure = Cause.pretty(result.cause);
-      expect(failure).toContain(RESOLVED_OWNER_CONSUMER);
-      expect(failure).toContain(secondConsumer);
-    }
-    expect(existsSync(path.join(root, BOUNDARY_FIXTURE_INVENTORY))).toBe(false);
-  }),
-);
-
 for (const [form, source, leaf] of [
   [
     'sibling relative handler',
@@ -4710,6 +4743,26 @@ for (const [name, source, contamination, allowed] of [
     false,
   ],
   [
+    'private dispatch with discarded native hash',
+    "import { dispatchWithDiscardedHash } from '@app/inventory/backend-configuration';\n",
+    `\nimport { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+export const dispatchWithDiscardedHash = (configuration: InventoryBackendConfiguration) => {
+  sha256(utf8ToBytes('discarded'));
+  return dispatchReservationAuthority(configuration);
+};\n`,
+    false,
+  ],
+  [
+    'private dispatch with discarded native codec',
+    "import { dispatchWithDiscardedCodec } from '@app/inventory/backend-configuration';\n",
+    `\nexport const dispatchWithDiscardedCodec = (configuration: InventoryBackendConfiguration) => {
+  Schema.decodeUnknownEffect(InventoryBackendConfigurationSchema)(configuration);
+  return dispatchReservationAuthority(configuration);
+};\n`,
+    false,
+  ],
+  [
     'private function type from same specifier',
     "import type { PrivateDispatch } from '@app/inventory/backend-configuration';\n",
     '\nexport type PrivateDispatch = typeof dispatchReservationAuthority;\n',
@@ -4742,8 +4795,6 @@ for (const [name, source, contamination, allowed] of [
 const PORTAL_PUBLIC_SCHEMA = 'verticals/commerce-customer-context/shared/portal-auth-contracts.ts';
 const PORTAL_PUBLIC_CLIENT = 'verticals/commerce-customer-context/src/api/portal-auth-verification/client.ts';
 const PORTAL_SHELL_CONSUMER = 'apps/shell-super-app/api/auth/commerce-external-identity.ts';
-const PORTAL_CLIENT_IMPORT =
-  "import { commercePortalAuthVerificationClientLive } from '@app/commerce-customer-context/portal-auth/verification/client';\n";
 const makePortalPublicRoleFixture = Effect.fn(function* portalPublicRoleFixture() {
   const root = yield* makeFixture();
   yield* write(root, WORKSPACE_MANIFEST_PATH, VERTICALS_WORKSPACE_DECLARATION);
@@ -4759,16 +4810,14 @@ const makePortalPublicRoleFixture = Effect.fn(function* portalPublicRoleFixture(
     }),
   );
   for (const file of [
+    SHELL_PACKAGE_JSON_PATH,
     SHELL_TSCONFIG_PATH,
     'packages/core-runtime/package.json',
     'packages/core-runtime/src/auth/external-identity-contracts.ts',
-    'packages/core-runtime/src/auth/external-identity-provider.ts',
     SHARED_CONTRACTS_PACKAGE_JSON_PATH,
     SHARED_PROBLEM_DETAILS_SOURCE_PATH,
     'verticals/commerce-customer-context/package.json',
     'verticals/commerce-customer-context/shared/deployment-paths.ts',
-    'verticals/commerce-customer-context/shared/enrollment-identifiers.ts',
-    'verticals/commerce-customer-context/shared/portal-auth-enrollment-reference.ts',
     PORTAL_PUBLIC_SCHEMA,
     'verticals/commerce-customer-context/shared/portal-auth-verification.ts',
     PORTAL_PUBLIC_CLIENT,
@@ -4782,20 +4831,6 @@ const makePortalPublicRoleFixture = Effect.fn(function* portalPublicRoleFixture(
       yield* Effect.promise(() => readFile(path.resolve(import.meta.dirname, '../..', file), 'utf-8')),
     );
   }
-  // Shell composition no longer depends on every vertical. This fixture is an
-  // explicit public-contract consumer, so declare its dependency independently.
-  yield* write(
-    root,
-    SHELL_PACKAGE_JSON_PATH,
-    JSON.stringify({
-      dependencies: {
-        '@app/commerce-customer-context': WORKSPACE_DEPENDENCY_VERSION,
-        '@app/core-runtime': WORKSPACE_DEPENDENCY_VERSION,
-        '@app/shared-contracts': WORKSPACE_DEPENDENCY_VERSION,
-      },
-      name: SHELL_PACKAGE_SPECIFIER,
-    }),
-  );
   yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
   for (const [name, target] of [
     ['core-runtime', 'packages/core-runtime'],
@@ -4809,155 +4844,17 @@ const makePortalPublicRoleFixture = Effect.fn(function* portalPublicRoleFixture(
   yield* write(
     root,
     PORTAL_SHELL_CONSUMER,
-    "import { COMMERCE_ADMISSION_DEADLINE_MS } from '@app/commerce-customer-context/portal-auth/contracts';\n",
+    "import { COMMERCE_ADMISSION_DEADLINE_MS } from '@app/commerce-customer-context/portal-auth/contracts';\nimport { commercePortalAuthVerificationClientLive } from '@app/commerce-customer-context/portal-auth/verification/client';\n",
   );
   return root;
 });
 
-it.live('preserves the actual public portal-auth schemas without granting a client composition seam', () =>
+it.live('preserves the actual public portal-auth schemas and approved typed verification client', () =>
   Effect.gen(function* actualPortalPublicRoles() {
     const root = yield* makePortalPublicRoleFixture();
     yield* checkModuleEntrypointBoundaries(root);
   }),
 );
-
-it.live('rejects an undeclared portal-auth verification client composition even when its package exports it', () =>
-  Effect.gen(function* undeclaredPortalClientComposition() {
-    const root = yield* makePortalPublicRoleFixture();
-    yield* checkModuleEntrypointBoundaries(root);
-    const consumer = yield* Effect.promise(() => readFile(path.join(root, PORTAL_SHELL_CONSUMER), 'utf-8'));
-    yield* assertRejectedSources(
-      root,
-      PORTAL_SHELL_CONSUMER,
-      [`${consumer}${PORTAL_CLIENT_IMPORT}`],
-      /foreign private/u,
-    );
-  }),
-);
-
-const classifyPortalPublicSchema = Effect.fn(function* classifyPortalPublicSchema(root: string) {
-  // Keep classifier evidence independent of the separately owned gateway and
-  // composition policies. This walks only the small disposable fixture.
-  const sources = yield* Effect.promise(() => readPricingSourceTree(root, CUSTOMER_CONTEXT_VERTICAL_PATH));
-  return isImmutablePublicContract(
-    {
-      businessPermissionEntries: [],
-      canonicalPaths: new Map(sources.map(([file]) => [file, file])),
-      completeModuleApiSeams: new Map(),
-      graph: createModuleGraph(),
-      inventoryEntries: [],
-      owners: new Map([[CUSTOMER_CONTEXT_VERTICAL_PATH, CUSTOMER_CONTEXT_DEPLOYMENT_ID]]),
-      ownershipPackages: new Map(),
-      root,
-      routeEntrypoints: [],
-      sourceMap: new Map(sources),
-    },
-    PORTAL_PUBLIC_SCHEMA,
-  );
-});
-
-it.live('preserves the actual public portal-auth enrollment filter dependency closure', () =>
-  Effect.gen(function* actualPortalSchemaClosure() {
-    const root = yield* makePortalPublicRoleFixture();
-    expect(yield* classifyPortalPublicSchema(root)).toBe(true);
-  }),
-);
-
-const PORTAL_ENROLLMENT_REFERENCE = 'verticals/commerce-customer-context/shared/portal-auth-enrollment-reference.ts';
-const PORTAL_ENROLLMENT_IDENTIFIERS = 'verticals/commerce-customer-context/shared/enrollment-identifiers.ts';
-
-it.live('preserves portal-auth native filter bindings after local aliases change', () =>
-  Effect.gen(function* aliasedPortalSchemaClosure() {
-    const root = yield* makePortalPublicRoleFixture();
-    const source = yield* Effect.promise(() => readFile(path.join(root, PORTAL_ENROLLMENT_REFERENCE), 'utf-8'));
-    yield* write(
-      root,
-      PORTAL_ENROLLMENT_REFERENCE,
-      source
-        .replace(
-          "import { Option, Schema } from 'effect';",
-          "import { Option as Maybe, Schema as Codec } from 'effect';",
-        )
-        .replaceAll('Schema.', 'Codec.')
-        .replaceAll('Option.isSome', 'Maybe.isSome')
-        .replaceAll('decodeCommerceEnrollmentAuthenticationReference', 'decodeReference'),
-    );
-    expect(yield* classifyPortalPublicSchema(root)).toBe(true);
-  }),
-);
-
-for (const [name, file, before, after] of [
-  ['opaque global export', PORTAL_PUBLIC_SCHEMA, '', '\nexport const privateGlobal = globalThis;\n'],
-  ['wrapped global export', PORTAL_PUBLIC_SCHEMA, '', '\nexport const privateGlobal = globalThis as unknown;\n'],
-  ['mutable export', PORTAL_PUBLIC_SCHEMA, '', '\nexport let mutableContract = true;\n'],
-  [
-    'private executable reexport',
-    PORTAL_PUBLIC_SCHEMA,
-    '',
-    '\nexport { privateHandler } from "../src/handlers/private-contract.ts";\n',
-  ],
-  ['private database import', PORTAL_PUBLIC_SCHEMA, '', PORTAL_PRIVATE_TABLE_IMPORT],
-  ['callback global', PORTAL_ENROLLMENT_REFERENCE, '? undefined', '? globalThis'],
-  [
-    'callback input escape',
-    PORTAL_ENROLLMENT_REFERENCE,
-    'decodeCommerceEnrollmentAuthenticationReference(value)',
-    'decodeCommerceEnrollmentAuthenticationReference({ value })',
-  ],
-  [
-    'callback executable result',
-    PORTAL_ENROLLMENT_REFERENCE,
-    '? undefined',
-    '? decodeCommerceEnrollmentAuthenticationReference',
-  ],
-  [
-    'callback mutation',
-    PORTAL_ENROLLMENT_REFERENCE,
-    'decodeCommerceEnrollmentAuthenticationReference(value)',
-    'decodeCommerceEnrollmentAuthenticationReference(value = "")',
-  ],
-  [
-    'predicate namespace escape',
-    PORTAL_ENROLLMENT_REFERENCE,
-    '',
-    '\nexport const leakedPredicateNamespace = Option;\n',
-  ],
-  [
-    'forged native predicate',
-    PORTAL_ENROLLMENT_REFERENCE,
-    "import { Option, Schema } from 'effect';",
-    "import { Schema } from 'effect';\nconst Option = { isSome: () => true };",
-  ],
-  ['forged native decoder', PORTAL_ENROLLMENT_REFERENCE, 'Schema.decodeUnknownOption(', '((...args) => () => args)('],
-  ['transitive opaque global', PORTAL_ENROLLMENT_IDENTIFIERS, '', '\nexport const transitiveAuthority = globalThis;\n'],
-  ['transitive mutation', PORTAL_ENROLLMENT_IDENTIFIERS, '', '\nEnrollmentAttemptIdSchema.privateAuthority = true;\n'],
-  ['transitive executable', PORTAL_ENROLLMENT_IDENTIFIERS, '', '\nexport const privateExecutable = () => true;\n'],
-  ['transitive private database import', PORTAL_ENROLLMENT_IDENTIFIERS, '', PORTAL_PRIVATE_TABLE_IMPORT],
-  [
-    'transitive foreign private source',
-    PORTAL_ENROLLMENT_IDENTIFIERS,
-    '',
-    "\nimport { privateHandler } from '../../inventory-stock/src/handlers/private-contract.ts';\n",
-  ],
-] as const) {
-  it.live(`rejects portal-auth closed schema ${name}`, () =>
-    Effect.gen(function* contaminatedClosedPortalSchema() {
-      const root = yield* makePortalPublicRoleFixture();
-      yield* write(
-        root,
-        'verticals/commerce-customer-context/src/database/private.ts',
-        'export const privateTable = {};\n',
-      );
-      yield* write(root, PORTAL_PRIVATE_HANDLER_FILE, PRIVATE_HANDLER_SOURCE);
-      yield* write(root, 'verticals/inventory-stock/src/handlers/private-contract.ts', PRIVATE_HANDLER_SOURCE);
-      const source = yield* Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
-      const contaminated = before === '' ? `${source}${after}` : source.replace(before, after);
-      expect(contaminated).not.toBe(source);
-      yield* write(root, file, contaminated);
-      expect(yield* classifyPortalPublicSchema(root), name).toBe(false);
-    }),
-  );
-}
 
 for (const [name, file, contamination, selection] of [
   [
@@ -4966,7 +4863,12 @@ for (const [name, file, contamination, selection] of [
     '\nexport { privateHandler } from "../src/handlers/private-contract.ts";\n',
     'privateHandler',
   ],
-  ['schema private database dependency', PORTAL_PUBLIC_SCHEMA, PORTAL_PRIVATE_TABLE_IMPORT, undefined],
+  [
+    'schema private database dependency',
+    PORTAL_PUBLIC_SCHEMA,
+    "\nimport { privateTable } from '../src/database/private.ts';\n",
+    undefined,
+  ],
   ['schema opaque global data', PORTAL_PUBLIC_SCHEMA, '\nexport const privateGlobal = globalThis;\n', 'privateGlobal'],
   [
     'schema wrapped runtime global',
@@ -4985,18 +4887,12 @@ for (const [name, file, contamination, selection] of [
   it.live(`rejects public portal-auth ${name} contamination`, () =>
     Effect.gen(function* contaminatedPortalPublicRole() {
       const root = yield* makePortalPublicRoleFixture();
-      yield* checkModuleEntrypointBoundaries(root);
-      if (file === PORTAL_PUBLIC_CLIENT) {
-        // Publishing a client is not permission to compose it from an undeclared receiving module.
-        const consumer = yield* Effect.promise(() => readFile(path.join(root, PORTAL_SHELL_CONSUMER), 'utf-8'));
-        yield* write(root, PORTAL_SHELL_CONSUMER, `${consumer}${PORTAL_CLIENT_IMPORT}`);
-      }
       yield* write(
         root,
         'verticals/commerce-customer-context/src/database/private.ts',
         'export const privateTable = {};\n',
       );
-      yield* write(root, PORTAL_PRIVATE_HANDLER_FILE, PRIVATE_HANDLER_SOURCE);
+      yield* write(root, CUSTOMER_CONTEXT_PRIVATE_CONTRACT_PATH, 'export const privateHandler = () => true;\n');
       const original = yield* Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
       yield* write(root, file, `${original}${contamination}`);
       if (selection !== undefined) {
@@ -5020,6 +4916,319 @@ for (const [name, file, contamination, selection] of [
   );
 }
 
+it.live('proves readonly native Schema field projections and omissions without getters or escaped descriptors', () =>
+  Effect.gen(function* nativeSchemaFieldProjections() {
+    const root = yield* makeFixture();
+    const workspace = path.resolve(import.meta.dirname, '../..');
+    const actual = yield* Effect.promise(() =>
+      readFile(path.join(workspace, 'verticals/privacy/shared/apis/organization-business-applicability.ts'), 'utf-8'),
+    );
+    const projection = actual.slice(
+      actual.indexOf('interface ProjectionFields'),
+      actual.indexOf('\nconst sourceIntent'),
+    );
+    expect(projection).toContain('const intentFields =');
+    const sourceFile = `${INVENTORY_VERTICAL_PATH}/shared/domain/projection-fields.ts`;
+    const markerFile = `${INVENTORY_VERTICAL_PATH}/shared/domain/projection-markers.ts`;
+    const markers = `import { Schema } from 'effect';
+export const MarkerSchema = Schema.Union([Schema.Struct({
+  allowedFields: Schema.Array(Schema.String), consumerModuleId: Schema.Literal('inventory.stock'),
+  operation: Schema.Literal('READ'), projectionVersion: Schema.Literal('v1'),
+})]);
+export const dormantMapper = (value: string) => { const local = { reason: '' }; local.reason = value; return local; };`;
+    const digestField = 'inputDigest: Digest,';
+    const source = `import { Schema, Struct } from 'effect';
+import { MarkerSchema } from './projection-markers.ts';
+const Digest = Schema.String;
+const [marker] = MarkerSchema.members;
+${projection}
+export const ProjectedSchema = Schema.Struct({ ...intentFields(marker) });
+export const OmittedSchema = Schema.Struct(Struct.omit(ProjectedSchema.fields, ['operation']));`;
+    yield* write(root, WORKSPACE_MANIFEST_PATH, VERTICALS_WORKSPACE_DECLARATION);
+    yield* write(
+      root,
+      `${INVENTORY_VERTICAL_PATH}/package.json`,
+      JSON.stringify({
+        exports: { './projection-fields': './shared/domain/projection-fields.ts' },
+        modernjs: { appId: INVENTORY_DEPLOYMENT_ID, ontosModule: { moduleId: INVENTORY_MODULE_ID } },
+        name: INVENTORY_PACKAGE_SPECIFIER,
+      }),
+    );
+    yield* write(
+      root,
+      SHELL_PACKAGE_JSON_PATH,
+      JSON.stringify({
+        dependencies: { [INVENTORY_PACKAGE_SPECIFIER]: WORKSPACE_DEPENDENCY_VERSION },
+        name: SHELL_PACKAGE_SPECIFIER,
+      }),
+    );
+    yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
+    yield* Effect.promise(() =>
+      symlink(
+        path.join(root, INVENTORY_VERTICAL_PATH),
+        path.join(root, APP_PACKAGE_LINK_DIRECTORY, INVENTORY_DEPLOYMENT_ID),
+        'dir',
+      ),
+    );
+    yield* write(
+      root,
+      'apps/shell-super-app/src/schema-fields-consumer.ts',
+      `import { ProjectedSchema, OmittedSchema } from '${INVENTORY_PACKAGE_SPECIFIER}/projection-fields';`,
+    );
+    const aliasSource = source
+      .replace('import { MarkerSchema }', 'import { MarkerSchema, DirectSchema as Alias }')
+      .replace('Struct.omit(ProjectedSchema.fields', 'Struct.omit(Alias.fields');
+    const aliasMarkers = `${markers}\nexport const DirectSchema = Schema.Struct({ operation: Schema.String });`;
+    for (const [name, current, descriptor, allowed] of [
+      ['native fields', source, markers, true],
+      [
+        'native nominal brand allocation',
+        `import { Brand } from 'effect';\n${source}\nconst nominal = Brand.nominal<string>();`,
+        markers,
+        true,
+      ],
+      [
+        'foreign nominal brand',
+        `import { Brand } from './foreign-effect.ts';\n${source}\nconst nominal = Brand.nominal<string>();`,
+        markers,
+        false,
+      ],
+      [
+        'nominal brand with eager argument',
+        `import { Brand } from 'effect';\n${source}\nconst nominal = Brand.nominal<string>(acquireAuthority());`,
+        markers,
+        false,
+      ],
+      [
+        'nominal brand executed eagerly',
+        `import { Brand } from 'effect';\n${source}\nconst nominal = Brand.nominal<string>()(acquireAuthority());`,
+        markers,
+        false,
+      ],
+
+      ['native imported schema alias', aliasSource, aliasMarkers, true],
+      [
+        'importer fields mutation',
+        `${aliasSource}\nconst { fields } = Alias; export const mutate = () => { fields.operation = foreign; };`,
+        aliasMarkers,
+        false,
+      ],
+      [
+        'importer fields escape',
+        `${aliasSource}\nconst { fields } = Alias; export const leak = () => consume(fields);`,
+        aliasMarkers,
+        false,
+      ],
+
+      [
+        'imported owner mutation',
+        aliasSource,
+        `${aliasMarkers}\nexport const mutate = () => { DirectSchema.fields.operation = foreign; };`,
+        false,
+      ],
+      [
+        'imported owner fields escape',
+        aliasSource,
+        `${aliasMarkers}\nconst { fields } = DirectSchema; export const leak = () => consume(fields);`,
+        false,
+      ],
+
+      [
+        'computed projection',
+        source.replace('marker.fields.consumerModuleId', "marker['fields'].consumerModuleId"),
+        markers,
+        false,
+      ],
+      ['executable projection', source.replace(digestField, 'inputDigest: acquireAuthority(),'), markers, false],
+      [
+        'getter projection',
+        source.replace(digestField, 'get inputDigest() { return acquireAuthority(); },'),
+        markers,
+        false,
+      ],
+      ['ambient capture', source.replace(digestField, 'inputDigest: process.env.DIGEST,'), markers, false],
+      ['foreign schema', source, markers.replace("from 'effect'", "from './foreign-effect.ts'"), false],
+      [
+        'descriptor getter',
+        source,
+        markers.replace("operation: Schema.Literal('READ')", 'get operation() { return acquireAuthority(); }'),
+        false,
+      ],
+      ['descriptor mutation', source, `${markers}\nexport const mutate = () => { MarkerSchema.members = []; };`, false],
+      [
+        'descriptor alias mutation',
+        source,
+        `${markers}\nconst alias = MarkerSchema; export const mutate = () => { alias.members = []; };`,
+        false,
+      ],
+      ['descriptor escape', source, `${markers}\nexport const leak = () => consume(MarkerSchema);`, false],
+      [
+        'destructured member mutation',
+        source,
+        `${markers}\nconst { members } = MarkerSchema; const [member] = members; export const mutate = () => { member.fields.allowedFields = foreign; };`,
+        false,
+      ],
+      [
+        'destructured fields escape',
+        source,
+        `${markers}\nconst { members } = MarkerSchema; const [member] = members; const { fields } = member; export const leak = () => consume(fields);`,
+        false,
+      ],
+
+      [
+        'shadowed projection',
+        `${source}\nexport class Shadow { static { const intentFields = () => acquireAuthority(); const x = Schema.Struct({ ...intentFields(marker) }); } }`,
+        markers,
+        false,
+      ],
+      [
+        'fake argument',
+        `${source.replace('intentFields(marker)', 'intentFields(fakeMarker)')}\nconst fakeMarker = { get fields() { return acquireAuthority(); } };`,
+        markers,
+        false,
+      ],
+      [
+        'foreign omit',
+        source.replace(
+          "import { Schema, Struct } from 'effect';",
+          "import { Schema } from 'effect'; import { Struct } from './foreign-effect.ts';",
+        ),
+        markers,
+        false,
+      ],
+      [
+        'dynamic omit keys',
+        source.replace(
+          "Struct.omit(ProjectedSchema.fields, ['operation'])",
+          'Struct.omit(ProjectedSchema.fields, omitFields)',
+        ),
+        markers,
+        false,
+      ],
+      [
+        'fake omit receiver',
+        `${source.replace('Struct.omit(ProjectedSchema.fields', 'Struct.omit(fakeFields.fields')}\nconst fakeFields = { get fields() { return acquireAuthority(); } };`,
+        markers,
+        false,
+      ],
+    ] as const) {
+      yield* write(root, sourceFile, current);
+      yield* write(root, markerFile, descriptor);
+      const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+      expect(Exit.isSuccess(result), Exit.isFailure(result) ? `${name}: ${Cause.pretty(result.cause)}` : name).toBe(
+        allowed,
+      );
+    }
+  }),
+);
+
+it.live('publishes actual source-selector schemas and proved wire codecs without unproved routines', () =>
+  Effect.gen(function* actualDormantEffectSchemaContract() {
+    const root = yield* makeFixture();
+    const workspace = path.resolve(import.meta.dirname, '../..');
+    const source = yield* Effect.promise(() =>
+      readFile(path.join(workspace, 'verticals/symmy-integration/shared/domain/symmy-source-selector.ts'), 'utf-8'),
+    );
+    const target = `${INVENTORY_VERTICAL_PATH}/shared/domain/source-selector.ts`;
+    const specifier = `${INVENTORY_PACKAGE_SPECIFIER}/source-selector`;
+    yield* write(root, WORKSPACE_MANIFEST_PATH, VERTICALS_WORKSPACE_DECLARATION);
+    yield* write(
+      root,
+      `${INVENTORY_VERTICAL_PATH}/package.json`,
+      JSON.stringify({
+        exports: { './source-selector': './shared/domain/source-selector.ts' },
+        modernjs: { appId: INVENTORY_DEPLOYMENT_ID, ontosModule: { moduleId: INVENTORY_MODULE_ID } },
+        name: INVENTORY_PACKAGE_SPECIFIER,
+      }),
+    );
+    yield* write(
+      root,
+      SHELL_PACKAGE_JSON_PATH,
+      JSON.stringify({
+        dependencies: { [INVENTORY_PACKAGE_SPECIFIER]: WORKSPACE_DEPENDENCY_VERSION },
+        name: SHELL_PACKAGE_SPECIFIER,
+      }),
+    );
+    yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
+    yield* Effect.promise(() =>
+      symlink(
+        path.join(root, INVENTORY_VERTICAL_PATH),
+        path.join(root, APP_PACKAGE_LINK_DIRECTORY, INVENTORY_DEPLOYMENT_ID),
+        'dir',
+      ),
+    );
+    for (const [name, value, binding, allowed] of [
+      ['native dormant callable', source, 'SymmyEncodedSourceCodeSchema, SymmySelectedSourceCodeSchema', true],
+      [
+        'erased codec error and result types',
+        source,
+        'type SymmySourceSelectorError, type SymmyDecodedSourceSelector',
+        true,
+      ],
+      ['unapproved runtime class', source, 'SymmySourceSelectorError', false],
+
+      ['published wire encoder', source, 'encodeSymmySourceSelector', true],
+      ['published wire decoder', source, 'decodeSymmySourceSelector', true],
+      ['published wire verifier', source, 'verifySymmySourceSelector', true],
+      [
+        'published wire codecs',
+        source,
+        'encodeSymmySourceSelector, decodeSymmySourceSelector, verifySymmySourceSelector',
+        true,
+      ],
+      [
+        'unproved business callable',
+        `${source}\nexport const dispatchPrivateBusinessOperation = () => globalThis;`,
+        'dispatchPrivateBusinessOperation',
+        false,
+      ],
+      [
+        'contextual ambient initializer',
+        `${source}\nconst capturedAmbient = process.env.VALUE;`,
+        'encodeSymmySourceSelector',
+        false,
+      ],
+      [
+        'contextual eager schema field getter',
+        `${source}\nconst UnusedSchema = Schema.Struct({ get field() { return fetch('remote'); } });`,
+        'encodeSymmySourceSelector',
+        false,
+      ],
+      [
+        'contextual native hash mutation',
+        `${source}\nconst capturedHash = sha256; export const mutateHash = () => { capturedHash.create = foreignHash; };`,
+        'encodeSymmySourceSelector',
+        false,
+      ],
+      ['executed callable', `${source}\ndecodeSymmySourceSelector('code');`, 'SymmySelectedSourceCodeSchema', false],
+      [
+        'dynamic trace',
+        source.replace("Effect.fn('SymmySourceSelector.decode')", 'Effect.fn(deriveTrace())'),
+        'SymmySelectedSourceCodeSchema',
+        false,
+      ],
+      [
+        'foreign factory',
+        `import { Effect as ForeignEffect } from './foreign-effect.ts';\n${source.replace("Effect.fn('SymmySourceSelector.decode')", "ForeignEffect.fn('SymmySourceSelector.decode')")}`,
+        'SymmySelectedSourceCodeSchema',
+        false,
+      ],
+      ['mutated native factory', `${source}\nEffect.fn = replacement;`, 'SymmySelectedSourceCodeSchema', false],
+    ] as const) {
+      yield* write(root, target, value);
+      yield* write(
+        root,
+        'apps/shell-super-app/src/source-selector-consumer.ts',
+        `import { ${binding} } from '${specifier}';\n`,
+      );
+      const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+      expect(Exit.isSuccess(result), Exit.isFailure(result) ? `${name}: ${Cause.pretty(result.cause)}` : name).toBe(
+        allowed,
+      );
+    }
+  }),
+);
+
 it.live('keeps genuine generated API publication distinct from a private callable in the same export', () =>
   Effect.gen(function* selectedGeneratedApiPublication() {
     const root = yield* makeFixture();
@@ -5029,7 +5238,12 @@ it.live('keeps genuine generated API publication distinct from a private callabl
       root,
       `${INVENTORY_VERTICAL_PATH}/package.json`,
       JSON.stringify({
-        exports: { './api/stock-list': './shared/apis/stock-list.ts' },
+        exports: {
+          './api': './shared/api.ts',
+          './api/stock-list': './shared/apis/stock-list.ts',
+          './facade-codec': './shared/domain/facade-codec.ts',
+          './schema-facade': './shared/domain/schema-facade.ts',
+        },
         modernjs: {
           appId: INVENTORY_DEPLOYMENT_ID,
           ontosModule: { manifest: './vertical.manifest.ts', moduleId: INVENTORY_MODULE_ID },
@@ -5079,9 +5293,290 @@ export const dormantPrivateHandler = () => true;
     );
     expect(hasGeneratedModuleApiContract(contract, 'StockListApi', 'stockList', 'stock-list')).toBe(true);
     yield* write(root, contractFile, contract);
+    // Same shape as the actual Symmy receiver: public immutable data reused by its enrolled defineRead.
+    const accessName = 'stockListAccessDeclaration';
+    const accessDeclaration = `export const ${accessName} = {
+      key: 'inventory.stock.stock-list.read', kind: 'read', modes: ['run'],
+      placement: { group: 'stock-list', level: 'basic' }, risk: 'sensitive', selectors: [],
+    } as const;`;
+    const partyMetadataSource = yield* Effect.promise(() =>
+      readFile(
+        path.resolve(import.meta.dirname, '../..', 'verticals/party-registry/shared/apis/organization-record-facts.ts'),
+        'utf-8',
+      ),
+    );
+    const versionMetadata = partyMetadataSource.slice(
+      partyMetadataSource.indexOf('export const OrganizationBusinessSourceProjectionVersion'),
+      partyMetadataSource.indexOf('export const OrganizationBusinessSourceStatement'),
+    );
+    const tupleMetadata = partyMetadataSource.slice(
+      partyMetadataSource.indexOf('const currentFields'),
+      partyMetadataSource.indexOf('export const OrganizationBusinessCorrectionFields'),
+    );
+    const currentFieldsSpread = '...currentFields';
+    expect(versionMetadata).toContain('as const');
+    expect(tupleMetadata).toContain(currentFieldsSpread);
+    const withDeclaration = `${contract}\n${versionMetadata}\n${tupleMetadata}\n${accessDeclaration}\nexport const detachedAccessDeclaration = {
+      key: 'inventory.stock.other.read', kind: 'read', modes: ['run'],
+      placement: { group: 'stock-list', level: 'basic' }, risk: 'sensitive', selectors: [],
+    } as const;\n`;
+    const readFileName = `${INVENTORY_VERTICAL_PATH}/src/api/stock-list.read.ts`;
+    const originalRead = yield* Effect.promise(() => readFile(path.join(root, readFileName), 'utf-8'));
+    const withReceiver = originalRead.replace(
+      /accessDeclaration: \{[^}]+placement: \{[^}]+\}[^}]+\}/u,
+      `accessDeclaration: ${accessName}`,
+    );
+    expect(withReceiver).not.toBe(originalRead);
+    const receiver = `import { ${accessName} } from '../../shared/apis/stock-list.ts';\n${withReceiver}`;
+    yield* write(root, contractFile, withDeclaration);
+    yield* write(root, readFileName, receiver);
     const consumer = 'apps/shell-super-app/src/generated-api-consumer.ts';
     yield* write(root, consumer, `import { StockListApi } from '${INVENTORY_PACKAGE_SPECIFIER}/api/stock-list';\n`);
     yield* checkModuleEntrypointBoundaries(root);
+    const facadeFile = `${INVENTORY_VERTICAL_PATH}/shared/api.ts`;
+    const originalFacade = yield* Effect.promise(() => readFile(path.join(root, facadeFile), 'utf-8'));
+    const facade = `import { createMicroVerticalOperationContext } from '@modern-js/bff-effect/microvertical-api';\n${originalFacade}\nexport { StockListRequestSchema } from './apis/stock-list.ts';
+export const operationContexts = { readiness: createMicroVerticalOperationContext({ method: 'GET', operationId: 'InventoryApi:inventory-stock:readiness', routePath: '/inventory-stock/readiness' }) };`;
+    yield* write(root, facadeFile, facade);
+    yield* write(
+      root,
+      `${INVENTORY_VERTICAL_PATH}/shared/domain/facade-codec.ts`,
+      `import { Effect, Schema } from 'effect';
+import { StockListRequestSchema } from '${INVENTORY_PACKAGE_SPECIFIER}/api';
+export const decodeFacadeRequest = (input: Schema.Json) => Schema.decodeUnknownEffect(StockListRequestSchema, { onExcessProperty: 'error' })(input).pipe(Effect.map((decoded) => ({ normalized: decoded })));`,
+    );
+    yield* write(
+      root,
+      consumer,
+      `import { decodeFacadeRequest } from '${INVENTORY_PACKAGE_SPECIFIER}/facade-codec';\n`,
+    );
+    yield* checkModuleEntrypointBoundaries(root);
+    for (const alteredFacade of [
+      facade.replace('@modern-js/bff-effect/microvertical-api', '@foreign/bff-effect/microvertical-api'),
+      facade.replace('.addHttpApi(StockListApi)', '.addHttpApi(UnclaimedApi)'),
+      `${facade}\napi.authority = acquireAuthority();`,
+    ]) {
+      yield* write(root, facadeFile, alteredFacade);
+      expect(Exit.isFailure(yield* Effect.exit(checkModuleEntrypointBoundaries(root))), alteredFacade).toBe(true);
+    }
+    yield* write(root, facadeFile, originalFacade);
+    const schemaFacadeFile = `${INVENTORY_VERTICAL_PATH}/shared/domain/schema-facade.ts`;
+    const schemaFacade = `import { makeProblemDetailsSchema } from '@app/shared-contracts/problem-details';
+export { FacadeRequestSchema as StockListRequestSchema } from './pure-schema-leaf.ts';
+export const FacadeProblemSchema = makeProblemDetailsSchema('FacadeProblem', 400, {});`;
+    yield* write(root, schemaFacadeFile, schemaFacade);
+    const pureLeafFile = `${INVENTORY_VERTICAL_PATH}/shared/domain/pure-schema-leaf.ts`;
+    const pureLeaf = `import { Schema } from 'effect';
+const supportedCurrencies = new Set(Intl.supportedValuesOf('currency'));
+export const FacadeRequestSchema = Schema.Struct({ code: Schema.String.check(Schema.makeFilter((code) => supportedCurrencies.has(code) ? undefined : 'Unknown currency')) });`;
+    yield* write(root, pureLeafFile, pureLeaf);
+    yield* write(
+      root,
+      `${INVENTORY_VERTICAL_PATH}/shared/domain/facade-codec.ts`,
+      `import { Effect, Schema } from 'effect';
+import { StockListRequestSchema } from '${INVENTORY_PACKAGE_SPECIFIER}/schema-facade';
+export const decodeFacadeRequest = (input: Schema.Json) => Schema.decodeUnknownEffect(StockListRequestSchema, { onExcessProperty: 'error' })(input).pipe(Effect.map((decoded) => ({ normalized: decoded })));`,
+    );
+    yield* checkModuleEntrypointBoundaries(root);
+    yield* write(root, pureLeafFile, `${pureLeaf}\nconst ambientLeaf = process.env.VALUE;`);
+    expect(Exit.isFailure(yield* Effect.exit(checkModuleEntrypointBoundaries(root)))).toBe(true);
+    yield* write(root, pureLeafFile, pureLeaf);
+    for (const alteredSchemaFacade of [
+      schemaFacade.replace('@app/shared-contracts/problem-details', '@foreign/problem-details'),
+      `${schemaFacade}\nacquireAuthority();`,
+    ]) {
+      yield* write(root, schemaFacadeFile, alteredSchemaFacade);
+      expect(Exit.isFailure(yield* Effect.exit(checkModuleEntrypointBoundaries(root))), alteredSchemaFacade).toBe(true);
+    }
+    yield* Effect.promise(() => rm(path.join(root, schemaFacadeFile)));
+    yield* Effect.promise(() => rm(path.join(root, pureLeafFile)));
+    yield* Effect.promise(() => rm(path.join(root, `${INVENTORY_VERTICAL_PATH}/shared/domain/facade-codec.ts`)));
+    yield* write(root, contractFile, withDeclaration);
+    const annotated = `${withDeclaration}\nexport const AnnotatedRequestSchema = StockListRequestSchema.annotate({ parseOptions: { onExcessProperty: 'error' } });`;
+    yield* write(root, contractFile, annotated);
+    yield* write(
+      root,
+      consumer,
+      `import { AnnotatedRequestSchema } from '${INVENTORY_PACKAGE_SPECIFIER}/api/stock-list';\n`,
+    );
+    yield* checkModuleEntrypointBoundaries(root);
+    const unsafeAnnotation = annotated.replace(
+      "parseOptions: { onExcessProperty: 'error' }",
+      'get parseOptions() { return acquireAuthority(); }',
+    );
+    yield* write(root, contractFile, unsafeAnnotation);
+    expect(Exit.isFailure(yield* Effect.exit(checkModuleEntrypointBoundaries(root)))).toBe(true);
+    yield* write(
+      root,
+      consumer,
+      `import { OrganizationBusinessUpdateFields } from '${INVENTORY_PACKAGE_SPECIFIER}/api/stock-list';\n`,
+    );
+    expect(Exit.isFailure(yield* Effect.exit(checkModuleEntrypointBoundaries(root)))).toBe(true);
+    for (const unsafe of [
+      `${withDeclaration}\nexport const AnnotatedRequestSchema = Schema.String['annotate']({ message: () => globalThis });`,
+      `${withDeclaration}\nconst annotateSchema = Schema.String.annotate; export const AnnotatedRequestSchema = annotateSchema({ message: () => globalThis });`,
+      `${withDeclaration}\nconst makeAnnotatedSchema = () => Schema.String.annotate({ message: () => globalThis }).annotate({ identifier: 'safe' }); export const AnnotatedRequestSchema = makeAnnotatedSchema();`,
+    ]) {
+      yield* write(root, contractFile, unsafe);
+      yield* write(
+        root,
+        consumer,
+        `import { AnnotatedRequestSchema } from '${INVENTORY_PACKAGE_SPECIFIER}/api/stock-list';\n`,
+      );
+      expect(Exit.isFailure(yield* Effect.exit(checkModuleEntrypointBoundaries(root)))).toBe(true);
+    }
+    yield* write(root, contractFile, withDeclaration);
+
+    yield* write(root, consumer, `import { ${accessName} } from '${INVENTORY_PACKAGE_SPECIFIER}/api/stock-list';\n`);
+    yield* checkModuleEntrypointBoundaries(root);
+    const updateFieldsName = 'OrganizationBusinessUpdateFields';
+    const metadataNames = 'OrganizationBusinessSourceProjectionVersion, OrganizationBusinessUpdateFields';
+    yield* write(root, consumer, `import { ${metadataNames} } from '${INVENTORY_PACKAGE_SPECIFIER}/api/stock-list';\n`);
+    yield* checkModuleEntrypointBoundaries(root);
+
+    const repeatedSpreads = Array.from({ length: 13 }, (_, index) =>
+      index === 0
+        ? "const repeated0 = ['field'] as const;"
+        : `const repeated${index} = [...repeated${index - 1}, ...repeated${index - 1}] as const;`,
+    ).join('\n');
+    const oversizedMetadata = `${withDeclaration}\n${repeatedSpreads}\nexport const repeatedMetadata = [...repeated12] as const;`;
+    for (const [name, source, readSource, imported] of [
+      ['detached metadata', withDeclaration, receiver, 'detachedAccessDeclaration'],
+      ['bounded tuple expansion', oversizedMetadata, receiver, 'repeatedMetadata'],
+      [
+        'tuple call',
+        withDeclaration.replace(currentFieldsSpread, '...makeForeignFields()'),
+        receiver,
+        updateFieldsName,
+      ],
+      [
+        'tuple object/getter',
+        withDeclaration.replace("'current.partyRef'", '({ get value() { return acquireAuthority(); } })'),
+        receiver,
+        updateFieldsName,
+      ],
+      [
+        'foreign tuple spread',
+        `import { foreignFields } from '@app/foreign-contract';\n${withDeclaration.replace(currentFieldsSpread, '...foreignFields')}`,
+        receiver,
+        updateFieldsName,
+      ],
+      [
+        'unknown tuple spread',
+        withDeclaration.replace(currentFieldsSpread, '...unknownFields'),
+        receiver,
+        updateFieldsName,
+      ],
+      [
+        'mutable tuple source',
+        withDeclaration.replace('const currentFields =', 'let currentFields ='),
+        receiver,
+        updateFieldsName,
+      ],
+      [
+        'tuple alias mutation',
+        `${withDeclaration}\nconst alias = OrganizationBusinessUpdateFields; export const mutate = () => alias.push('extra');`,
+        receiver,
+        updateFieldsName,
+      ],
+      [
+        'tuple wrapped alias mutation',
+        `${withDeclaration}\nconst alias = { fields: OrganizationBusinessUpdateFields } as const; export const mutate = () => alias.fields.push('extra');`,
+        receiver,
+        updateFieldsName,
+      ],
+      [
+        'tuple dependency mutation',
+        `${withDeclaration}\nexport const mutate = () => currentFields.push('extra');`,
+        receiver,
+        updateFieldsName,
+      ],
+      [
+        'tuple escape',
+        `${withDeclaration}\nexport const leak = () => consume(OrganizationBusinessUpdateFields);`,
+        receiver,
+        updateFieldsName,
+      ],
+      [
+        'tuple stored globally',
+        `${withDeclaration}\nexport const leak = () => { globalThis.fields = OrganizationBusinessUpdateFields; };`,
+        receiver,
+        updateFieldsName,
+      ],
+
+      [
+        'tuple stored in class',
+        `${withDeclaration}\nexport class TupleStore { static value = OrganizationBusinessUpdateFields; } export const mutate = () => Reflect.set(TupleStore.value, 0, 'forged');`,
+        receiver,
+        updateFieldsName,
+      ],
+      [
+        'tuple tagged template escape',
+        `${withDeclaration}\nfunction corrupt(_strings: TemplateStringsArray, value: unknown) { (value as unknown[])[0] = globalThis; } corrupt\`\${OrganizationBusinessUpdateFields}\`;`,
+        receiver,
+        updateFieldsName,
+      ],
+      [
+        'eager unknown tagged template',
+        `${withDeclaration}\nfunction corrupt(_strings: TemplateStringsArray) { return globalThis; } corrupt\`opaque\`;`,
+        receiver,
+        updateFieldsName,
+      ],
+      [
+        'tuple constructor escape',
+        `${withDeclaration}\nexport const leak = () => new ForeignBox(OrganizationBusinessUpdateFields);`,
+        receiver,
+        updateFieldsName,
+      ],
+      [
+        'unknown field',
+        withDeclaration.replace('selectors: [],', 'selectors: [], authority: true,'),
+        receiver,
+        accessName,
+      ],
+      ['nonliteral field', withDeclaration.replace("risk: 'sensitive'", 'risk: chooseRisk()'), receiver, accessName],
+      ['mutation', `${withDeclaration}\n${accessName}.risk = 'routine';`, receiver, accessName],
+      ['escaped metadata', `${withDeclaration}\nconsume(${accessName});`, receiver, accessName],
+      [
+        'foreign constructor',
+        withDeclaration,
+        receiver.replace(CORE_RUNTIME_SOURCE_IMPORT, FAKE_CORE_SOURCE_IMPORT),
+        accessName,
+      ],
+      [
+        'quoted duplicate receiver key',
+        withDeclaration,
+        receiver.replace(
+          `accessDeclaration: ${accessName}`,
+          `accessDeclaration: ${accessName}, 'accessDeclaration': detachedAccessDeclaration`,
+        ),
+        accessName,
+      ],
+      [
+        'spread overrides receiver key',
+        withDeclaration,
+        receiver.replace(`accessDeclaration: ${accessName}`, `accessDeclaration: ${accessName}, ...otherDescriptor`),
+        accessName,
+      ],
+      [
+        'computed receiver key',
+        withDeclaration,
+        receiver.replace(
+          `accessDeclaration: ${accessName}`,
+          `accessDeclaration: ${accessName}, [otherKey]: detachedAccessDeclaration`,
+        ),
+        accessName,
+      ],
+      ['disconnected read metadata', withDeclaration, originalRead, accessName],
+    ] as const) {
+      yield* write(root, contractFile, source);
+      yield* write(root, readFileName, readSource);
+      yield* write(root, consumer, `import { ${imported} } from '${INVENTORY_PACKAGE_SPECIFIER}/api/stock-list';\n`);
+      const invalid = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+      expect(Exit.isFailure(invalid), name).toBe(true);
+    }
+    yield* write(root, contractFile, withDeclaration);
+    yield* write(root, readFileName, receiver);
     yield* write(root, consumer, `import { privateCallable } from '${INVENTORY_PACKAGE_SPECIFIER}/api/stock-list';\n`);
     const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
     expect(Exit.isFailure(result)).toBe(true);
@@ -5220,21 +5715,8 @@ for (const [binding, subpath, allowed] of [
   );
 }
 
-const copyCoreIdentityManifestContract = Effect.fn(function* copyCoreIdentityManifestContract(root: string) {
-  const workspace = path.resolve(import.meta.dirname, '../..');
-  for (const file of [
-    'packages/core-runtime/package.json',
-    'packages/core-runtime/src/db/database-identity-manifest.ts',
-    'packages/core-runtime/src/resources/legal-entity.ts',
-    'packages/core-runtime/src/modules/manifest.ts',
-  ]) {
-    yield* write(root, file, yield* Effect.promise(() => readFile(path.join(workspace, file), 'utf-8')));
-  }
-});
-
 const makeActualPartyClientFixture = Effect.fn(function* actualPartyClientFixture() {
   const root = yield* makeFixture();
-  yield* copyCoreIdentityManifestContract(root);
   const workspace = path.resolve(import.meta.dirname, '../..');
   yield* write(root, WORKSPACE_MANIFEST_PATH, VERTICALS_WORKSPACE_DECLARATION);
   yield* write(
@@ -5270,9 +5752,6 @@ const makeActualPartyClientFixture = Effect.fn(function* actualPartyClientFixtur
   yield* write(root, SHELL_TSCONFIG_PATH, JSON.stringify({ references: [] }));
   yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
   yield* Effect.promise(() =>
-    symlink(path.join(root, 'packages/core-runtime'), path.join(root, 'node_modules/@app/core-runtime'), 'dir'),
-  );
-  yield* Effect.promise(() =>
     symlink(path.join(root, PARTY_VERTICAL_PATH), path.join(root, 'node_modules/@app/party-registry'), 'dir'),
   );
   yield* Effect.promise(() =>
@@ -5290,16 +5769,6 @@ for (const [name, source, allowed] of [
   [
     'enrollment exact operations and erased types',
     `import { createPartyWithAuthorization, executePartyMatchWithAuthorization, recoverPartyCreateWithAuthorization } from '${PARTY_API_CLIENT_SPECIFIER}';\nimport type { createParty, executePartyMatch, recoverPartyCreate } from '${PARTY_API_CLIENT_SPECIFIER}';\n`,
-    true,
-  ],
-  [
-    'public authored customer workflows',
-    `import { listCustomers, createCustomer } from '${PARTY_API_CLIENT_SPECIFIER}';\n`,
-    true,
-  ],
-  [
-    're-exported generated command options',
-    `import type { PartyCommandOptions } from '${PARTY_API_CLIENT_SPECIFIER}';\n`,
     true,
   ],
   [
@@ -5350,27 +5819,6 @@ for (const [name, imported, allowed] of [
   );
 }
 
-it.live('rejects a re-exported command client with a foreign generated owner', () =>
-  Effect.gen(function* foreignCommandReexport() {
-    const root = yield* makeActualPartyClientFixture();
-    const file = `${PARTY_VERTICAL_PATH}/src/api/party-command-client.ts`;
-    const source = yield* Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
-    expect(source).toContain('// @ontos-command-client-owner party-registry');
-    yield* write(
-      root,
-      file,
-      source.replace('// @ontos-command-client-owner party-registry', '// @ontos-command-client-owner foreign-owner'),
-    );
-    yield* write(
-      root,
-      'apps/shell-super-app/src/party-command-options.ts',
-      `import type { PartyCommandOptions } from '${PARTY_API_CLIENT_SPECIFIER}';\n`,
-    );
-    const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
-    expect(Exit.isFailure(result)).toBe(true);
-  }),
-);
-
 it.live('checks actual Party typed client foreign API contamination', () =>
   Effect.gen(function* foreignApiInPartyDelegate() {
     const root = yield* makeActualPartyClientFixture();
@@ -5406,7 +5854,9 @@ it.live('checks actual Party typed client foreign API contamination', () =>
     const binding = graph.resolve(graph.module(path.join(root, delegate)), 'partyRegistryApi', 'local');
     expect(binding?.kind).toBe('declaration');
     if (binding?.kind === 'declaration') {
-      expect(binding.module.path).toBe(path.join(root, 'verticals/privacy/shared/api.ts'));
+      expect(binding.module.path).toBe(
+        yield* Effect.promise(() => realpath(path.join(root, 'verticals/privacy/shared/api.ts'))),
+      );
     }
     const consumer = 'apps/shell-super-app/src/party-client-consumer.ts';
     yield* write(
@@ -5477,9 +5927,8 @@ for (const [name, operation, allowed] of [
 
 const makeActualMarketClientFixture = Effect.fn(function* actualMarketClientFixture() {
   const root = yield* makeFixture();
-  yield* copyCoreIdentityManifestContract(root);
   const workspace = path.resolve(import.meta.dirname, '../..');
-  const owner = MARKET_VERTICAL_PATH;
+  const owner = 'verticals/commerce-market-catalog';
   yield* write(root, WORKSPACE_MANIFEST_PATH, VERTICALS_WORKSPACE_DECLARATION);
   yield* write(
     root,
@@ -5522,31 +5971,6 @@ const makeActualMarketClientFixture = Effect.fn(function* actualMarketClientFixt
   return root;
 });
 
-for (const [connected, name, allowed] of [
-  [true, 'supporting-values.ts', true],
-  [false, 'supporting-values.ts', false],
-  [true, 'unregistered.provider.ts', false],
-] as const) {
-  it.live(`keeps owner-local search helpers private: ${name}, connected ${connected}`, () =>
-    Effect.gen(function* checksPrivateSearchHelper() {
-      const root = yield* makeActualMarketClientFixture();
-      const owner = MARKET_VERTICAL_PATH;
-      const provider = `${owner}/src/search/markets.provider.ts`;
-      const helper = `${owner}/src/search/${name}`;
-      yield* write(root, helper, 'export const supportingValue = true;\n');
-      if (connected) {
-        const original = yield* Effect.promise(() => readFile(path.join(root, provider), 'utf-8'));
-        yield* write(root, provider, `import { supportingValue } from './${name}';\n${original}`);
-      }
-      const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
-      expect(Exit.isSuccess(result), Exit.isFailure(result) ? Cause.pretty(result.cause) : '').toBe(allowed);
-      if (Exit.isFailure(result)) {
-        expect(Cause.pretty(result.cause)).toContain(helper);
-      }
-    }),
-  );
-}
-
 for (const [name, source, allowed] of [
   [
     'actual public owner types',
@@ -5580,7 +6004,6 @@ for (const [name, source, allowed] of [
 
 const makeActualPrivacyClientFixture = Effect.fn(function* actualPrivacyClientFixture() {
   const root = yield* makeFixture();
-  yield* copyCoreIdentityManifestContract(root);
   const workspace = path.resolve(import.meta.dirname, '../..');
   yield* write(root, WORKSPACE_MANIFEST_PATH, VERTICALS_WORKSPACE_DECLARATION);
   yield* write(
@@ -5644,6 +6067,80 @@ for (const [name, imported, allowed] of [
   );
 }
 
+it.live('binds actual published-package Read clients back to the enrolled owner aggregate', () =>
+  Effect.gen(function* actualPublishedPackageClient() {
+    const root = yield* makeFixture();
+    const workspace = path.resolve(import.meta.dirname, '../..');
+    const owner = 'verticals/price-group-catalog';
+    const contractPackage = 'packages/price-group-catalog-contracts';
+    const packageName = '@app/price-group-catalog';
+    yield* write(root, WORKSPACE_MANIFEST_PATH, VERTICALS_WORKSPACE_DECLARATION);
+    yield* write(
+      root,
+      BOUNDARY_FIXTURE_TOPOLOGY,
+      JSON.stringify({
+        shell: { id: BOUNDARY_FIXTURE_SHELL_ID, path: BOUNDARY_FIXTURE_SHELL_PATH },
+        verticals: [
+          { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
+          { id: 'price-group-catalog', path: owner },
+        ],
+      }),
+    );
+    for (const folder of [owner, contractPackage, SHARED_CONTRACTS_WORKSPACE_PATH]) {
+      const sources = yield* Effect.promise(() => readPricingSourceTree(workspace, folder));
+      for (const [file, source] of sources) {
+        yield* write(root, file, source);
+      }
+    }
+    yield* write(
+      root,
+      SHELL_PACKAGE_JSON_PATH,
+      JSON.stringify({
+        dependencies: { [packageName]: WORKSPACE_DEPENDENCY_VERSION },
+        name: SHELL_PACKAGE_SPECIFIER,
+      }),
+    );
+    yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
+    for (const [name, folder] of [
+      ['price-group-catalog', owner],
+      ['price-group-catalog-contracts', contractPackage],
+      [SHARED_CONTRACTS_WORKSPACE_NAME, SHARED_CONTRACTS_WORKSPACE_PATH],
+    ] as const) {
+      yield* Effect.promise(() =>
+        symlink(path.join(root, folder), path.join(root, APP_PACKAGE_LINK_DIRECTORY, name), 'dir'),
+      );
+    }
+    const aggregateFile = `${owner}/src/api/price-group-catalog-client.ts`;
+    const aggregate = yield* Effect.promise(() => readFile(path.join(root, aggregateFile), 'utf-8'));
+    yield* write(root, aggregateFile, `${aggregate}\nexport const unclaimedClientCallable = () => globalThis;`);
+    const consumer = 'apps/shell-super-app/src/published-package-client-consumer.ts';
+    for (const [binding, allowed] of [
+      ['executePriceGroupDefinitionWithAuthorization, executePriceGroupSourceAssociationsWithAuthorization', true],
+      ['unclaimedClientCallable', false],
+    ] as const) {
+      yield* write(root, consumer, `import { ${binding} } from '${packageName}/api/client';\n`);
+      const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+      expect(Exit.isSuccess(result), Exit.isFailure(result) ? Cause.pretty(result.cause) : binding).toBe(allowed);
+    }
+    yield* write(
+      root,
+      consumer,
+      `import { executePriceGroupDefinitionWithAuthorization } from '${packageName}/api/client';\n`,
+    );
+    const packageFile = `${contractPackage}/package.json`;
+    const metadata = yield* Effect.promise(() => readFile(path.join(root, packageFile), 'utf-8'));
+    yield* write(root, packageFile, metadata.replace('pricing.price-group-catalog', 'foreign.owner'));
+    expect(Exit.isFailure(yield* Effect.exit(checkModuleEntrypointBoundaries(root)))).toBe(true);
+    yield* write(root, packageFile, metadata);
+    const clientFile = `${contractPackage}/src/api/price-group-definition-client.ts`;
+    const client = yield* Effect.promise(() => readFile(path.join(root, clientFile), 'utf-8'));
+    const invalidClient = client.replace('operationGateway.invoke(', 'unownedGateway.invoke(');
+    expect(invalidClient).not.toBe(client);
+    yield* write(root, clientFile, invalidClient);
+    expect(Exit.isFailure(yield* Effect.exit(checkModuleEntrypointBoundaries(root)))).toBe(true);
+  }),
+);
+
 const makeActualTaxClientFixture = Effect.fn(function* actualTaxClientFixture() {
   const root = yield* makeFixture();
   const workspace = path.resolve(import.meta.dirname, '../..');
@@ -5656,7 +6153,6 @@ const makeActualTaxClientFixture = Effect.fn(function* actualTaxClientFixture() 
       verticals: [
         { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
         { id: 'tax', path: TAX_VERTICAL_PATH },
-        { id: 'commerce-order', path: ORDER_VERTICAL_PATH },
       ],
     }),
   );
@@ -5671,12 +6167,12 @@ const makeActualTaxClientFixture = Effect.fn(function* actualTaxClientFixture() 
   ]) {
     yield* write(root, file, yield* Effect.promise(() => readFile(path.join(workspace, file), 'utf-8')));
   }
-  // Exercise the existing Order integration and its declared dependency, not an
-  // invented Shell composition consumer of Tax's aggregate client.
-  for (const file of [`${ORDER_VERTICAL_PATH}/package.json`, ORDER_TAX_CONSUMER_PATH]) {
-    yield* write(root, file, yield* Effect.promise(() => readFile(path.join(workspace, file), 'utf-8')));
-  }
-  yield* write(root, `${ORDER_VERTICAL_PATH}/tsconfig.json`, JSON.stringify({ references: [] }));
+  yield* write(
+    root,
+    SHELL_PACKAGE_JSON_PATH,
+    JSON.stringify({ dependencies: { '@app/tax': WORKSPACE_DEPENDENCY_VERSION }, name: SHELL_PACKAGE_SPECIFIER }),
+  );
+  yield* write(root, SHELL_TSCONFIG_PATH, JSON.stringify({ references: [] }));
   yield* Effect.promise(() => mkdir(path.join(root, APP_PACKAGE_LINK_DIRECTORY), { recursive: true }));
   yield* Effect.promise(() =>
     symlink(path.join(root, TAX_VERTICAL_PATH), path.join(root, 'node_modules/@app/tax'), 'dir'),
@@ -5687,32 +6183,29 @@ const makeActualTaxClientFixture = Effect.fn(function* actualTaxClientFixture() 
   return root;
 });
 
-for (const privateSelection of [false, true]) {
-  const name = privateSelection ? PRIVATE_COLOCATED_CALLABLE_CASE : 'actual finalization selected operations';
+for (const [name, imported, allowed] of [
+  [
+    'actual finalization selected operations',
+    'executeFinalizeOrderTaxWithAuthorization, executeFinalOrderTaxWithAuthorization',
+    true,
+  ],
+  [PRIVATE_COLOCATED_CALLABLE_CASE, 'privateTaxClientCallable', false],
+] as const) {
   it.live(`checks actual Tax client ${name}`, () =>
     Effect.gen(function* actualTaxClientPublication() {
       const root = yield* makeActualTaxClientFixture();
-      // A private-selection refusal is meaningful only after the real owner
-      // integration's published operations have passed independently.
-      yield* checkModuleEntrypointBoundaries(root);
       const clientFile = 'verticals/tax/src/api/tax-client.ts';
       const original = yield* Effect.promise(() => readFile(path.join(root, clientFile), 'utf-8'));
       yield* write(root, clientFile, `${original}\nexport const privateTaxClientCallable=()=>globalThis;\n`);
-      if (privateSelection) {
-        const consumer = yield* Effect.promise(() => readFile(path.join(root, ORDER_TAX_CONSUMER_PATH), 'utf-8'));
-        yield* write(
-          root,
-          ORDER_TAX_CONSUMER_PATH,
-          `${consumer}\nimport { privateTaxClientCallable } from '@app/tax/api/client';\n`,
-        );
-      }
+      const consumer = 'apps/shell-super-app/src/tax-client-consumer.ts';
+      yield* write(root, consumer, `import { ${imported} } from '@app/tax/api/client';\n`);
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
       const diagnostic = Exit.isFailure(result) ? Cause.pretty(result.cause) : name;
       if (Exit.isFailure(result)) {
-        expect(diagnostic).toContain(ORDER_TAX_CONSUMER_PATH);
+        expect(diagnostic).toContain(consumer);
         expect(diagnostic).toContain(clientFile);
       }
-      expect(Exit.isSuccess(result), diagnostic).toBe(!privateSelection);
+      expect(Exit.isSuccess(result), diagnostic).toBe(allowed);
     }),
   );
 }
@@ -5789,12 +6282,6 @@ for (const [subpath, publicBinding] of [
 const makeActualCustomerContextAggregateFixture = Effect.fn(function* actualCustomerContextAggregateFixture() {
   const root = yield* makePortalPublicRoleFixture();
   const workspace = path.resolve(import.meta.dirname, '../..');
-  const identityClient = 'packages/shared-contracts/src/external-identity-client.ts';
-  yield* write(
-    root,
-    identityClient,
-    yield* Effect.promise(() => readFile(path.join(workspace, identityClient), 'utf-8')),
-  );
   for (const folder of [
     CUSTOMER_CONTEXT_VERTICAL_PATH,
     'packages/customer-market-retirement-contracts',
@@ -5807,30 +6294,14 @@ const makeActualCustomerContextAggregateFixture = Effect.fn(function* actualCust
       yield* write(root, file, source);
     }
   }
-  const sources = new Map(yield* Effect.promise(() => readPricingSourceTree(root, '')));
-  const diagnostics: string[] = [];
-  expect(
-    hasCompleteGeneratedModuleApiSeam(
-      sources,
-      `${CUSTOMER_CONTEXT_VERTICAL_PATH}/shared/api.ts`,
-      CUSTOMER_CONTEXT_DEPLOYMENT_ID,
-      diagnostics,
-    ),
-    diagnostics.join('\n'),
-  ).toBe(true);
   return root;
 });
-for (const [name, binding, allowed] of [
-  ['published Payment Terms schema', 'PaymentTermsResolutionResponseSchema', true],
-  ['published aggregate API root', 'commerceCustomerContextApi', true],
-  ['private handler reexport', 'privateAggregateHandler', false],
-] as const) {
-  it.live(`checks actual Customer Context aggregate ${name}`, () =>
+for (const privateSelection of [false, true]) {
+  it.live(`checks actual Customer Context public aggregate private=${privateSelection}`, () =>
     Effect.gen(function* actualCustomerContextAggregate() {
       const root = yield* makeActualCustomerContextAggregateFixture();
       const apiFile = 'verticals/commerce-customer-context/shared/api.ts';
-      const privateOrigin = PORTAL_PRIVATE_HANDLER_FILE;
-      const privateSelection = binding === 'privateAggregateHandler';
+      const privateOrigin = CUSTOMER_CONTEXT_PRIVATE_CONTRACT_PATH;
       yield* write(root, privateOrigin, 'export const privateAggregateHandler = () => true;\n');
       if (privateSelection) {
         const source = yield* Effect.promise(() => readFile(path.join(root, apiFile), 'utf-8'));
@@ -5840,16 +6311,57 @@ for (const [name, binding, allowed] of [
           `${source}\nexport { privateAggregateHandler } from '../src/handlers/private-contract.ts';\n`,
         );
       }
-      // Order's finalization evidence imports the published Payment Terms
-      // schema. The aggregate HttpApi root additionally requires the complete
-      // generated owner seam; package exports alone do not approve it.
-      const consumer = 'apps/shell-super-app/src/customer-context-aggregate-consumer.ts';
-      yield* write(root, consumer, `import { ${binding} } from '@app/commerce-customer-context/api';\n`);
+      const binding = privateSelection ? 'privateAggregateHandler' : 'commerceCustomerContextApi';
+      yield* write(
+        root,
+        'apps/shell-super-app/src/customer-context-aggregate-consumer.ts',
+        `import { ${binding} } from '@app/commerce-customer-context/api';\n`,
+      );
       const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
-      expect(Exit.isSuccess(result), Exit.isFailure(result) ? Cause.pretty(result.cause) : binding).toBe(allowed);
+      expect(Exit.isSuccess(result), Exit.isFailure(result) ? Cause.pretty(result.cause) : binding).toBe(
+        !privateSelection,
+      );
+      if (privateSelection && Exit.isFailure(result)) {
+        expect(Cause.pretty(result.cause)).toContain(privateOrigin);
+      }
+    }),
+  );
+}
+
+for (const [name, extraImport, tail] of [
+  [
+    'private child',
+    "import { privateAggregateApi } from '../src/handlers/private-contract.ts';\n",
+    '.addHttpApi(privateAggregateApi)',
+  ],
+  ['unknown method', '', '.unknownContractOperation()'],
+  ['unknown child', '', '.addHttpApi(missingAggregateApi)'],
+] as const) {
+  it.live(`rejects a ${name} after the actual Customer Context long public API chain`, () =>
+    Effect.gen(function* rejectLongApiChainTail() {
+      const root = yield* makeActualCustomerContextAggregateFixture();
+      const apiFile = 'verticals/commerce-customer-context/shared/api.ts';
+      const privateOrigin = CUSTOMER_CONTEXT_PRIVATE_CONTRACT_PATH;
+      yield* write(
+        root,
+        privateOrigin,
+        "import { HttpApi } from 'effect/http-api'; export const privateAggregateApi = HttpApi.make('PrivateApi');\n",
+      );
+      const source = yield* Effect.promise(() => readFile(path.join(root, apiFile), 'utf-8'));
+      expect(source.match(/\.addHttpApi\(/gu)?.length).toBeGreaterThan(64);
+      const changed = source.replace('.pipe(identity);', `${tail}.pipe(identity);`);
+      expect(changed).not.toBe(source);
+      yield* write(root, apiFile, extraImport + changed);
+      const consumer = 'apps/shell-super-app/src/customer-context-aggregate-consumer.ts';
+      yield* write(
+        root,
+        consumer,
+        "import { commerceCustomerContextApi } from '@app/commerce-customer-context/api';\n",
+      );
+      const result = yield* Effect.exit(checkModuleEntrypointBoundaries(root));
+      expect(Exit.isFailure(result)).toBe(true);
       if (Exit.isFailure(result)) {
         expect(Cause.pretty(result.cause)).toContain(consumer);
-        expect(Cause.pretty(result.cause)).toContain(privateSelection ? privateOrigin : apiFile);
       }
     }),
   );

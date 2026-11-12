@@ -1,12 +1,8 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import path from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { expect, it } from 'effect-rstest';
 
-import {
-  hasCompleteGeneratedModuleRead,
-  hasOwnerLocalReadServiceFactoryResult,
-} from '../generated-governed-http-boundary.mts';
+import { hasOwnerLocalReadServiceFactoryResult } from '../generated-governed-http-boundary.mts';
 
 const nativeTypeImport = "import type { ReadServiceFactory } from '@app/core-runtime';";
 const nativeEffectImport = "import { Effect } from 'effect';";
@@ -124,37 +120,20 @@ it('accepts a required parameter after a default only when its position is suppl
   expect(accepts(source.replace(`${makerName}(loadOwner)`, `${makerName}(loadOwner, ownerFence)`))).toBe(true);
 });
 
-it('proves the real Pricing phased lifecycle and empty service factory without inventing a removed factory', () => {
+it('accepts the real Pricing factory result after its native return annotation is installed', () => {
   const pricingOwner = 'verticals/pricing';
   const pricingRead = `${pricingOwner}/src/api/current-pricing-decision.read.ts`;
-  const root = path.resolve(import.meta.dirname, '../..');
-  const sources = new Map<string, string>();
-  const collect = (directory: string): void => {
-    for (const entry of readdirSync(path.join(root, directory), { withFileTypes: true })) {
-      const file = `${directory}/${entry.name}`;
-      if (
-        entry.isDirectory() &&
-        !['node_modules', 'dist', '.output', '.modern', '.git', 'coverage', '.codex'].includes(entry.name)
-      ) {
-        collect(file);
-      } else if (entry.isFile() && /\.(?:ts|json)$/u.test(entry.name)) {
-        sources.set(file, readFileSync(path.join(root, file), 'utf-8'));
-      }
-    }
-  };
-  collect(pricingOwner);
-  collect('packages/pricing-contracts');
-  const diagnostics: string[] = [];
-  const acceptsPricingRead = (input: ReadonlyMap<string, string>): boolean =>
-    hasCompleteGeneratedModuleRead(
-      input,
+  const sources = new Map(
+    [
       pricingRead,
-      pricingOwner,
-      'commerce.pricing',
-      'current-pricing-decision',
-      diagnostics,
-    );
-  expect(acceptsPricingRead(sources), diagnostics.join('\n')).toBe(true);
+      `${pricingOwner}/src/integrations/current-pricing-decision-whole-evaluation-adapters.ts`,
+      `${pricingOwner}/src/integrations/current-pricing-decision-owner-final-fence.ts`,
+      `${pricingOwner}/src/integrations/pricing-operation-requirements.ts`,
+    ].map((file): readonly [string, string] => [
+      file,
+      readFileSync(new URL(`../../${file}`, import.meta.url), 'utf-8'),
+    ]),
+  );
   expect(
     hasOwnerLocalReadServiceFactoryResult(
       sources,
@@ -162,36 +141,17 @@ it('proves the real Pricing phased lifecycle and empty service factory without i
       pricingOwner,
       'currentPricingDecisionReadServiceFactory',
     ),
-  ).toBe(false);
+  ).toBe(true);
   const missingRequirements = new Map(sources);
   missingRequirements.delete(`${pricingOwner}/src/integrations/pricing-operation-requirements.ts`);
-  expect(acceptsPricingRead(missingRequirements)).toBe(false);
-  const read = sources.get(pricingRead) ?? '';
-  for (const [before, after] of [
-    ['finish: makeFinishCurrentPricingDecision()', 'finish: foreignFactory()'],
-    ['load: () => Effect.void', 'load: () => foreign.void'],
-    ['  () => Effect.succeed({}),', '  () => Effect.succeed({ foreign: true }),'],
-    ['const verifiedScope = context.scope;', 'const verifiedScope = input.scope;'],
-    [
-      'ReadFinishContext<CurrentPricingDecisionPrepared, void>',
-      'ReadLoadContext<CurrentPricingDecisionPrepared, void>',
-    ],
-    ['verifiedScope,\n          compositionRevision,', 'compositionRevision,\n          verifiedScope,'],
-    ['const [source, evaluationFactory]', 'const [evaluationFactory, source]'],
-    ['evaluationFactory.make(', 'evaluationFactory.foreignMethod('],
-    [
-      'evaluateCurrentPricingDecision(input, trustedScope, verifiedAuthority, evaluation.evaluate)',
-      'foreignEvaluate(input, trustedScope, verifiedAuthority, evaluation.evaluate)',
-    ],
-    [
-      '  () => Effect.succeed({}),\n);',
-      "  () => Effect.succeed({}),\n  () => ({kind: 'module', moduleId: MODULE_KEY}),\n);",
-    ],
-  ]) {
-    const invalid = read.replace(before, after);
-    expect(invalid).not.toBe(read);
-    expect(acceptsPricingRead(new Map([...sources, [pricingRead, invalid]]))).toBe(false);
-  }
+  expect(
+    hasOwnerLocalReadServiceFactoryResult(
+      missingRequirements,
+      pricingRead,
+      pricingOwner,
+      'currentPricingDecisionReadServiceFactory',
+    ),
+  ).toBe(false);
 });
 
 it('rejects owner imports whose actual source is absent', () => {

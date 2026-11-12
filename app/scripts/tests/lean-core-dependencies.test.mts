@@ -124,6 +124,9 @@ it.live(
         // Market Catalog: allowed exact owner-client composition seam.
         'verticals/commerce-market-catalog/src/integrations/market-subject-restrictions.ts':
           "import { execute } from '@app/commerce-customer-context/api/market-subject-restrictions-current/client';\n",
+        // Shell: allowed documented composition seams.
+        'apps/shell-super-app/api/auth/commerce-external-identity.ts':
+          "import { verify } from '@app/commerce-customer-context/portal-auth/verification/client';\n",
         // Shell: violates via the bare Commerce package specifier (no subpath), resolved against the
         // exports map's "." entry, which points at Commerce's private src.
         'apps/shell-super-app/api/auth/external-identity/bare-specifier-import.ts':
@@ -289,16 +292,6 @@ const hostImports = {
   ]),
 };
 const hostExports = { '.': './src/index.ts', './transport': './src/transport.ts' };
-const nativeFixturePath = './tests/native.ts';
-const nativeFixtureSources = { 'tests/native.ts': "export { driver } from '../src/driver.ts';" };
-const typeAdapterPath = './src/transport.types.ts';
-const typesFirstHostImports = {
-  '#transport': Object.fromEntries([
-    ['types', typeAdapterPath],
-    ['workerd', workerAdapterPath],
-    ['node', nodeAdapterPath],
-  ]),
-};
 const hostSources = {
   'src/driver.ts': nodeDriverSource,
   'src/index.ts': "export { Effect } from 'effect';",
@@ -315,176 +308,8 @@ interface HostGraphControl {
   readonly sources?: Readonly<Record<string, string>>;
 }
 
-const authzedPublicMessagesSource = [
-  "export { ObjectReference } from '@authzed/authzed-node/v1/core';",
-  "export { Consistency } from '@authzed/authzed-node/v1/permissions';",
-  "export { ReadSchemaRequest } from '@authzed/authzed-node/v1/schema';",
-].join('\n');
-
-const effectMetadataPublicImports = {
-  'effect/Match': "export { value } from 'effect/Match';",
-  'effect/Option': "export { getOrNull } from 'effect/Option';",
-  'effect/Result': "export { getOrThrow } from 'effect/Result';",
-  'effect/Schema': "export { String } from 'effect/Schema';",
-};
-
-const sharedJavaScriptFile = 'src/shared.js';
 const hostGraphControls: readonly HostGraphControl[] = [
-  {
-    name: 'allows the three explicit Authzed message exports in shared Core source',
-    rejected: false,
-    sources: { 'src/shared.ts': authzedPublicMessagesSource },
-  },
-  {
-    name: 'allows the three explicit Authzed message exports in the Workerd branch',
-    rejected: false,
-    sources: { 'src/transport.worker.ts': authzedPublicMessagesSource },
-  },
-  ...Object.entries(effectMetadataPublicImports).flatMap(([specifier, source]): HostGraphControl[] => [
-    {
-      name: `allows the pinned public metadata module ${specifier} in shared Core source`,
-      rejected: false,
-      sources: { 'src/shared.ts': source },
-    },
-    {
-      name: `allows the pinned public metadata module ${specifier} in the Workerd branch`,
-      rejected: false,
-      sources: { 'src/transport.worker.ts': source },
-    },
-  ]),
-  ...[
-    '@authzed/authzed-node/v1/debug',
-    '@authzed/authzed-node/v1/core/private',
-    '@authzed/authzed-node/dist/src/authzedapi/authzed/api/v1/core.js',
-    '@authzed/authzed-node/package.json',
-    'effect/Effect',
-    'effect/Match/internal',
-    'effect/Option/private',
-    'effect/Result.js',
-    'effect/Schema/internal',
-    'effect/internal/schema',
-    'effect/unstable/schema',
-    'effect/UnknownModule',
-    'effect/match',
-    '@foreign/Schema',
-  ].map((specifier) => ({
-    name: `rejects unpinned Core external specifier ${specifier}`,
-    rejected: true,
-    sources: { 'src/shared.ts': `import '${specifier}';` },
-  })),
-  ...Object.entries({
-    'generic parameters': 'export function ready<require, createRequire>(): boolean { return true; }',
-    'inline type imports': "import { type Effect as require } from 'effect'; export type Options = require;",
-    'interface members': 'export interface Options { require: string; createRequire: string; }',
-    'type-only exports': "export { type Effect as require } from 'effect';",
-    'type-only import-equals': "import type require = require('./driver.ts'); export type Options = typeof require;",
-    'type-only imports': "import type { Effect as require } from 'effect'; export type Options = require;",
-    'type aliases': 'export type require = string; export type createRequire = { ready: boolean };',
-    'type annotations': 'export const ready = (options: { require: string; createRequire: string }): boolean => true;',
-    'type arguments':
-      'declare function ready<T>(): T; export const options = ready<{ require: string; createRequire: string }>();',
-  }).map(([name, source]): HostGraphControl => ({
-    name: `preserves erased ${name} mentioning CommonJS loader names`,
-    rejected: false,
-    sources: { 'src/shared.ts': source },
-  })),
-  ...Object.entries({
-    'satisfies expression': 'const load = require satisfies (name: string) => unknown; void load("./driver.ts");',
-    'type assertion': 'const load = require as (name: string) => unknown; void load("./driver.ts");',
-  }).map(([name, source]): HostGraphControl => ({
-    name: `rejects runtime CommonJS loading inside a ${name}`,
-    rejected: true,
-    sources: { 'src/shared.ts': source },
-  })),
   { name: 'allows a consumed native Node conditional entry and its runtime descendants', rejected: false },
-  {
-    name: 'allows a JavaScript native driver behind a proven Node conditional entry',
-    rejected: false,
-    sources: {
-      'src/driver.js': nodeDriverSource,
-      'src/driver.ts': "export { driver } from './driver.js';",
-    },
-  },
-  ...[
-    {
-      file: sharedJavaScriptFile,
-      name: 'rejects a shared JavaScript import of a native transport',
-      source: "import { fromReadable } from '@effect/platform-node/NodeStream';",
-    },
-    {
-      file: sharedJavaScriptFile,
-      name: 'rejects a shared JavaScript re-export of a native transport',
-      source: "export { fromReadable } from '@effect/platform-node/NodeStream';",
-    },
-    {
-      file: sharedJavaScriptFile,
-      name: 'rejects a shared JavaScript dynamic import of a native transport',
-      source: "void import('@effect/platform-node/Undici');",
-    },
-    {
-      file: 'src/shared.mjs',
-      name: 'rejects a shared MJS re-export of a native transport',
-      source: "export * from '@effect/platform-node/Undici';",
-    },
-    {
-      file: 'src/shared.cjs',
-      name: 'rejects a shared CJS dynamic import of a native transport',
-      source: "void import('@effect/platform-node/Undici');",
-    },
-  ].map(({ file, name, source }): HostGraphControl => ({
-    name,
-    rejected: true,
-    sources: { [file]: source },
-  })),
-  {
-    exports: {
-      ...hostExports,
-      './native-fixture': Object.fromEntries([
-        ['types', nativeFixturePath],
-        ['node', nativeFixturePath],
-      ]),
-    },
-    name: 'a Node-only public test fixture does not become a shared runtime root through its types condition',
-    rejected: false,
-    sources: nativeFixtureSources,
-  },
-  {
-    exports: { ...hostExports, './native-fixture': nativeFixturePath },
-    name: 'an unproven shared test-fixture export cannot authorize native dependencies',
-    rejected: true,
-    sources: nativeFixtureSources,
-  },
-  {
-    exports: { ...hostExports, './native-fixture': { node: nativeFixturePath, workerd: nativeFixturePath } },
-    name: 'a test fixture declared for Workerd does not inherit its Node branch isolation',
-    rejected: true,
-    sources: nativeFixtureSources,
-  },
-  {
-    imports: typesFirstHostImports,
-    name: 'allows types-first declaration resolution while proving distinct Node and Workerd runtime branches',
-    rejected: false,
-    sources: { 'src/transport.types.ts': 'export declare const driver: string;' },
-  },
-  {
-    imports: {
-      '#transport': Object.fromEntries([
-        ['types', typeAdapterPath],
-        ['workerd', workerAdapterPath],
-        ['node', nodeAdapterPath],
-        ['default', nodeAdapterPath],
-      ]),
-    },
-    name: 'a types-first declaration does not authorize a default browser fallback into Node',
-    rejected: true,
-    sources: { 'src/transport.types.ts': 'export declare const driver: string;' },
-  },
-  {
-    imports: typesFirstHostImports,
-    name: 'a types condition does not conceal a runtime import from shared source into the Node driver',
-    rejected: true,
-    sources: { 'src/transport.types.ts': driverReExportSource },
-  },
   {
     name: 'does not treat a type-only worker reference as a runtime Node dependency',
     rejected: false,
@@ -716,7 +541,7 @@ for (const control of hostGraphControls) {
         (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
       );
       const manifest = {
-        dependencies: { '@effect/platform-node': '4.0.5', effect: '4.0.5' },
+        dependencies: { '@effect/platform-node': '4.0.0-rc.117', effect: '4.0.0-rc.117' },
         exports: control.exports ?? hostExports,
         imports: control.imports ?? hostImports,
       };

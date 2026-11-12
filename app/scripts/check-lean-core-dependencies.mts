@@ -79,7 +79,6 @@ interface SourceImportAnalysis {
 }
 
 type ProgramStatement = ReturnType<typeof parseSync>['program']['body'][number];
-type SourceRange = Pick<ProgramStatement, 'end' | 'start'>;
 
 const occurrenceForStatement = (statement: ProgramStatement): ImportOccurrence | undefined => {
   if (statement.type === 'ImportDeclaration') {
@@ -138,16 +137,7 @@ const analyzeImports = (file: string, source: string): SourceImportAnalysis => {
   let unsupportedRuntimeImport = parsed.program.body.some(
     (statement) => statement.type === 'TSImportEqualsDeclaration' && statement.importKind !== 'type',
   );
-  const erasedRanges: SourceRange[] = [];
-  const recordErasedRange = (node: SourceRange): void => {
-    erasedRanges.push(node);
-  };
-  const isErased = (node: SourceRange): boolean =>
-    erasedRanges.some(({ end, start }) => node.start >= start && node.end <= end);
   const recordDynamicImportExpression = (node: ImportExpression): void => {
-    if (isErased(node)) {
-      return;
-    }
     if (node.source.type === 'Literal' && Predicate.isString(node.source.value)) {
       dynamicOccurrences.push({ index: node.start, isTypeOnly: false, specifier: node.source.value });
     } else if (node.source.type === 'TemplateLiteral' && node.source.expressions.length === 0) {
@@ -163,11 +153,7 @@ const analyzeImports = (file: string, source: string): SourceImportAnalysis => {
   };
   new Visitor({
     CallExpression: (node) => {
-      if (
-        node.callee.type !== 'MemberExpression' ||
-        staticMemberName(node.callee) !== 'getBuiltinModule' ||
-        isErased(node)
-      ) {
+      if (node.callee.type !== 'MemberExpression' || staticMemberName(node.callee) !== 'getBuiltinModule') {
         return;
       }
       const [target] = node.arguments;
@@ -176,53 +162,22 @@ const analyzeImports = (file: string, source: string): SourceImportAnalysis => {
         unsupportedRuntimeImport = true;
       }
     },
-    ExportNamedDeclaration: (node) => {
-      if (node.exportKind === 'type') {
-        recordErasedRange(node);
-      }
-    },
-    ExportSpecifier: (node) => {
-      if (node.exportKind === 'type') {
-        recordErasedRange(node);
-      }
-    },
     Identifier: (node) => {
-      if ((node.name === 'require' || node.name === 'createRequire') && !isErased(node)) {
+      if (node.name === 'require' || node.name === 'createRequire') {
         unsupportedRuntimeImport = true;
       }
     },
-    ImportDeclaration: (node) => {
-      if (node.importKind === 'type') {
-        recordErasedRange(node);
-      }
-    },
     ImportExpression: recordDynamicImportExpression,
-    ImportSpecifier: (node) => {
-      if (node.importKind === 'type') {
-        recordErasedRange(node);
-      }
-    },
     MemberExpression: (node) => {
       const name = staticMemberName(node);
       if (
-        (name === 'require' ||
-          name === 'createRequire' ||
-          (node.computed && node.object.type === 'Identifier' && node.object.name === 'module')) &&
-        !isErased(node)
+        name === 'require' ||
+        name === 'createRequire' ||
+        (node.computed && node.object.type === 'Identifier' && node.object.name === 'module')
       ) {
         unsupportedRuntimeImport = true;
       }
     },
-    TSImportEqualsDeclaration: (node) => {
-      if (node.importKind === 'type') {
-        recordErasedRange(node);
-      }
-    },
-    TSInterfaceDeclaration: recordErasedRange,
-    TSTypeAliasDeclaration: recordErasedRange,
-    TSTypeAnnotation: recordErasedRange,
-    TSTypeParameterDeclaration: recordErasedRange,
-    TSTypeParameterInstantiation: recordErasedRange,
   }).visit(parsed.program);
   unsupportedRuntimeImport ||= occurrences.some(
     ({ specifier }) => specifier === 'module' || specifier === 'node:module',
@@ -247,9 +202,6 @@ const commerceVocabulary = /commerce|storefront|better[-_]?auth/iu;
 
 const allowedCoreExternalSpecifiers = new Set([
   '@authzed/authzed-node',
-  '@authzed/authzed-node/v1/core',
-  '@authzed/authzed-node/v1/permissions',
-  '@authzed/authzed-node/v1/schema',
   '@effect/platform-node',
   // The one Node HTTP server module, so a bundle reaching the outbox health server leaves the rest of
   // the platform package (its Redis and websocket clients) out.
@@ -264,15 +216,10 @@ const allowedCoreExternalSpecifiers = new Set([
   'drizzle-orm/pg-core',
   'cloudflare:workers',
   'effect',
-  // Public metadata modules of the same pinned Effect dependency; descendants remain unapproved.
-  'effect/Match',
-  'effect/Option',
-  'effect/Result',
-  'effect/Schema',
   'pg',
 ]);
 
-// Effect 4 platform modules (formerly `effect/*`) are published as top-level subpaths.
+// Effect 4 platform modules (formerly `effect/unstable/*`) are published as top-level subpaths.
 const effectPlatformSubpath =
   /^effect\/(?:ai|cli|cluster|devtools|encoding|eventlog|http|http-api|net|observability|persistence|process|reactivity|rpc|schema|socket|sql|workers|workflow)(?:\/|$)/u;
 
@@ -358,14 +305,10 @@ type SourceHost = typeof SourceHostSchema.Type;
 const hasSupportedConditions = (target: PackageImportTarget): boolean =>
   Predicate.isString(target) ||
   Object.keys(target).every(
-    (condition) =>
-      Schema.is(SourceHostSchema)(condition) ||
-      condition === 'types' ||
-      condition === 'import' ||
-      condition === 'default',
+    (condition) => Schema.is(SourceHostSchema)(condition) || condition === 'import' || condition === 'default',
   );
 
-/** Native runtime maps skip TypeScript's types condition and select the first matching runtime property. */
+/** Native conditional maps select the first matching property; default is not a fallback reordered by this gate. */
 const selectHostTarget = (target: PackageImportTarget, host: SourceHost): string | undefined => {
   if (Predicate.isString(target)) {
     return target;
@@ -880,6 +823,18 @@ const allowedCompositionSeams: readonly AllowedCompositionSeam[] = [
     reason: 'Commerce publishes this as its sanctioned read-only API client for Shell composition.',
     specifier: `${commercePackageSpecifierPrefix}/api/client`,
   },
+  {
+    importer: 'apps/shell-super-app/api/auth/commerce-external-identity.ts',
+    reason:
+      'Shell composition seam for Commerce portal-auth verification during external-identity admission; scoped to the verification client only.',
+    specifier: `${commercePackageSpecifierPrefix}/portal-auth/verification/client`,
+  },
+  {
+    importer: 'apps/shell-super-app/api/auth/external-identity/commerce-admission-observation.ts',
+    reason:
+      'Shell composition seam for Commerce portal-auth verification during external-identity admission; scoped to the verification client only.',
+    specifier: `${commercePackageSpecifierPrefix}/portal-auth/verification/client`,
+  },
 ];
 
 export const isAllowedCompositionSeam = (importer: string, specifier: string): boolean =>
@@ -963,8 +918,7 @@ export const checkLeanCoreDependencies = (
       { concurrency: 32 },
     );
 
-    // Native JS/CJS participates in both graph proof and Core source policy; indexing runtime edges
-    // without checking their external specifiers would let shared JavaScript bypass Node isolation.
+    // Source policy retains its original TS inventory. Native JS/CJS is indexed only to prove graph edges.
     const coreRoot = path.join(root, coreSourceRoot);
     const coreRootExists = yield* fileSystem.exists(coreRoot);
     const coreGraphFiles = coreRootExists ? yield* collect(coreRoot, graphSourceExtensions) : [];
@@ -985,12 +939,9 @@ export const checkLeanCoreDependencies = (
     const nodeOnlyFiles = nodeOnlyCoreSources(coreSources, coreBoundary);
     const corePackageImports = new Set(coreBoundary.imports.keys());
 
-    for (const [file, source] of [...sourcePairs, ...additionalGraphSources]) {
-      const relative = path.relative(root, file).split(path.sep).join('/');
-      recordCoreSourceViolations(record, relative, source, corePackageImports, nodeOnlyFiles);
-    }
     for (const [file, source] of sourcePairs) {
       const relative = path.relative(root, file).split(path.sep).join('/');
+      recordCoreSourceViolations(record, relative, source, corePackageImports, nodeOnlyFiles);
       recordNonCommerceImportViolations(record, relative, source, commerceExports, nonCommerceOwnerRoots);
     }
 

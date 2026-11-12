@@ -231,12 +231,6 @@ const productionConfig = Schema.decodeUnknownSync(ProductionConfigModule)(
   await import(pathToFileURL(nodePath.join(appRoot, 'oxlint.config.ts')).href),
 );
 
-/** Available analysis rules need not be enabled as production policy. */
-export const isProductionRuleEnabled = (key: string): boolean => {
-  const setting = productionConfig.default.rules[key];
-  return (typeof setting === 'string' ? setting : setting?.[0]) === 'error';
-};
-
 /** Base options `app/oxlint.config.ts` assigns to a plugin rule. */
 export const productionOptions = (key: string): RuleOptions | undefined => {
   const setting = productionConfig.default.rules[key];

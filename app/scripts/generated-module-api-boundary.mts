@@ -47,9 +47,6 @@ const MANIFEST_SHELL_SEARCH_SLOT = [
 
 export { toPascalCase } from './boundary-source-structure.mts';
 
-/** The virtual filename for parsing an owner manifest; one label keeps every manifest parse the same identity. */
-const PROVIDER_MANIFEST_FILE = 'provider-manifest.ts';
-
 const escapeRegExp = (value: string): string => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
 
 export interface GovernedClientToken {
@@ -115,7 +112,7 @@ const scanTemplateDelimiter = (
   return kind;
 };
 
-const scanGovernedClient = (source: string): readonly GovernedClientToken[] => {
+export const tokenizeGovernedClient = (source: string): readonly GovernedClientToken[] => {
   const scanner = createScanner(true, LanguageVariant.Standard, source);
   const tokens: GovernedClientToken[] = [];
   const templateExpressionBraceDepths: number[] = [];
@@ -129,33 +126,9 @@ const scanGovernedClient = (source: string): readonly GovernedClientToken[] => {
       kind = scanner.reScanSlashToken();
     }
     kind = scanTemplateDelimiter(scanner, kind, templateExpressionBraceDepths);
-    tokens.push(Object.freeze({ kind, value: scanner.getTokenValue() }));
+    tokens.push({ kind, value: scanner.getTokenValue() });
     scannedKind = scanner.scan();
   }
-  return Object.freeze(tokens);
-};
-
-// Tokens are a pure, frozen function of the source, and boundary proofs tokenize the
-// same owner sources many times per run. Keep the most recently used results, bounded
-// so a process that validates many disposable trees does not retain all of them.
-const scannedGovernedClients = new Map<string, readonly GovernedClientToken[]>();
-const MAX_SCANNED_GOVERNED_CLIENTS = 256;
-
-export const tokenizeGovernedClient = (source: string): readonly GovernedClientToken[] => {
-  const cached = scannedGovernedClients.get(source);
-  if (cached !== undefined) {
-    scannedGovernedClients.delete(source);
-    scannedGovernedClients.set(source, cached);
-    return cached;
-  }
-  const tokens = scanGovernedClient(source);
-  if (scannedGovernedClients.size >= MAX_SCANNED_GOVERNED_CLIENTS) {
-    const [oldest] = scannedGovernedClients.keys();
-    if (oldest !== undefined) {
-      scannedGovernedClients.delete(oldest);
-    }
-  }
-  scannedGovernedClients.set(source, tokens);
   return tokens;
 };
 
@@ -2219,6 +2192,14 @@ const objectHasExactString = (
     [SyntaxKind.StringLiteral, value],
   ]);
 
+const objectHasExactStrings = (
+  tokens: readonly GovernedClientToken[],
+  open: number,
+  close: number,
+  expected: Readonly<Record<string, string>>,
+): boolean =>
+  Object.entries(expected).every(([property, value]) => objectHasExactString(tokens, open, close, property, value));
+
 const directShorthandPropertyPositions = (
   tokens: readonly GovernedClientToken[],
   open: number,
@@ -2353,29 +2334,64 @@ const matchesGeneratedReadAuthorization = (
   expected: GeneratedReadAuthorization | undefined,
 ): boolean => actual !== undefined && (expected === undefined || actual.kind === expected.kind);
 
-const nativeProviderProperty = (
-  object: ObjectExpression,
-  key: string,
-  allowOwnerSpread = false,
-): Expression | undefined => {
-  if (
-    object.properties.some((property) =>
-      property.type === 'SpreadElement'
-        ? !allowOwnerSpread
-        : property.computed || property.method || property.kind !== 'init',
-    )
-  ) {
-    return undefined;
+const hasGeneratedReadContract = (
+  source: string,
+  moduleId: string,
+  name: string,
+  role: 'api' | 'report' | 'search',
+  authorization?: GeneratedReadAuthorization,
+): boolean => {
+  const tokens = tokenizeGovernedClient(source);
+  const camel = toCamelCase(name);
+  const entrypointName = `${camel}Entrypoint`;
+  const entrypoint = topLevelCallObject(tokens, entrypointName, 'defineTenantModuleEntrypoint', false);
+  const read = topLevelCallObject(tokens, `${camel}Read`, 'defineRead');
+  if (entrypoint === undefined || read === undefined) {
+    return false;
   }
-  const properties = object.properties.filter(
-    (property) =>
-      property.type === 'Property' &&
-      ((property.key.type === 'Identifier' && property.key.name === key) ||
-        (property.key.type === 'Literal' && property.key.value === key)),
+  const [entrypointOpen, entrypointClose, entrypointEnd] = entrypoint;
+  const [readOpen, readClose] = read;
+  return (
+    directObjectHasNoSpread(tokens, entrypointOpen, entrypointClose) &&
+    directObjectHasNoSpread(tokens, readOpen, readClose) &&
+    matchesGeneratedReadAuthorization(
+      readGeneratedReadAuthorization(tokens, entrypointOpen, entrypointClose),
+      authorization,
+    ) &&
+    matchesSequence(tokens, entrypointClose + 1, [[SyntaxKind.CloseParenToken], [SyntaxKind.SemicolonToken]]) &&
+    entrypointClose + 2 === entrypointEnd &&
+    objectHasExactStrings(tokens, entrypointOpen, entrypointClose, {
+      access: 'read',
+      entrypointKey: `${moduleId}.${role}.${name}`,
+      moduleKey: moduleId,
+      role,
+    }) &&
+    objectReferencesEntrypoint(tokens, readOpen, readClose, entrypointName) &&
+    objectHasExactStrings(tokens, readOpen, readClose, {
+      owningModuleKey: moduleId,
+      readKey: `${moduleId}.${role}.${name}`,
+      schemaVersion: '1',
+    })
   );
-  const [property] = properties;
-  return properties.length === 1 && property?.type === 'Property' ? property.value : undefined;
 };
+
+export const hasGeneratedProviderReadContract = (
+  source: string,
+  moduleId: string,
+  name: string,
+  kind: 'report' | 'search',
+  authorization?: GeneratedReadAuthorization,
+): boolean =>
+  hasGeneratedReadContract(source, moduleId, name, kind, authorization) &&
+  (() => {
+    const tokens = tokenizeGovernedClient(source);
+    const read = topLevelCallObject(tokens, `${toCamelCase(name)}Read`, 'defineRead');
+    return (
+      read !== undefined &&
+      objectHasExactString(tokens, read[0], read[1], 'accessKind', kind) &&
+      directObjectPropertyOccurrences(tokens, read[0], read[1], 'legalEntityScope') === 1
+    );
+  })();
 
 const enclosingBraceRange = (
   tokens: readonly GovernedClientToken[],
@@ -2448,6 +2464,50 @@ export const hasMatchingProviderLegalEntityScope = (
   return descriptorScope === undefined || descriptorScope === declared;
 };
 
+export const hasMatchingGeneratedProviderAuthorization = (
+  providerSource: string,
+  manifest: string,
+  moduleId: string,
+  name: string,
+  kind: 'report' | 'search',
+): boolean => {
+  const providerTokens = tokenizeGovernedClient(providerSource);
+  const entrypoint = topLevelCallObject(
+    providerTokens,
+    `${toCamelCase(name)}Entrypoint`,
+    'defineTenantModuleEntrypoint',
+    false,
+  );
+  const shellSlot = generatedSlotSource(
+    manifest,
+    kind === 'report' ? MANIFEST_SHELL_REPORT_SLOT : MANIFEST_SHELL_SEARCH_SLOT,
+  );
+  if (entrypoint === undefined || shellSlot === undefined) {
+    return false;
+  }
+  const shellTokens = tokenizeGovernedClient(shellSlot);
+  const identity = findSequenceAtBraceDepth(
+    shellTokens,
+    [
+      [SyntaxKind.Identifier, 'contributionKey'],
+      [SyntaxKind.ColonToken],
+      [SyntaxKind.StringLiteral, `${moduleId}.${kind}.${name}`],
+    ],
+    0,
+    shellTokens.length,
+    1,
+  );
+  const contribution = identity === undefined ? undefined : enclosingBraceRange(shellTokens, identity);
+  const manifestEntrypoint =
+    contribution === undefined ? undefined : nestedObjectRange(shellTokens, ...contribution, 'entrypoint');
+  if (manifestEntrypoint === undefined) {
+    return false;
+  }
+  const providerAuthorization = readGeneratedReadAuthorization(providerTokens, entrypoint[0], entrypoint[1]);
+  const manifestAuthorization = readGeneratedReadAuthorization(shellTokens, ...manifestEntrypoint);
+  return matchesGeneratedReadAuthorization(providerAuthorization, manifestAuthorization);
+};
+
 const normalizedModuleApiReadContractSource = (source: string, moduleId: string): string => {
   const aliases = [
     ...source.matchAll(
@@ -2461,17 +2521,12 @@ const normalizedModuleApiReadContractSource = (source: string, moduleId: string)
   if (alias === undefined) {
     return source;
   }
-  return (
-    source
-      .replaceAll(
-        new RegExp(`(?<property>\\b(?:moduleKey|owningModuleKey))\\s*:\\s*${escapeRegExp(alias)}(?=\\s*[,}])`, 'gu'),
-        `$<property>: '${moduleId}'`,
-      )
-      // A shorthand `{ moduleKey }` declares the property named by the alias, so the rewrite has to keep the
-      // alias as the property name: a differently named alias (`{ MODULE_KEY }`) then never fabricates the
-      // `moduleKey` identity the descriptor is checked against.
-      .replaceAll(new RegExp(`\\b${escapeRegExp(alias)}(?=\\s*[,}])`, 'gu'), () => `${alias}: '${moduleId}'`)
-  );
+  return source
+    .replaceAll(
+      new RegExp(`(?<property>\\b(?:moduleKey|owningModuleKey))\\s*:\\s*${escapeRegExp(alias)}(?=\\s*[,}])`, 'gu'),
+      `$<property>: '${moduleId}'`,
+    )
+    .replaceAll(new RegExp(`\\b${escapeRegExp(alias)}(?=\\s*[,}])`, 'gu'), `moduleKey: '${moduleId}'`);
 };
 
 const hasGeneratedModuleApiEntrypointContract = (
@@ -2523,23 +2578,6 @@ const hasGeneratedModuleApiReadDefinition = (
     schemaVersion: '1',
   });
 
-/** A module-scope value declaration that would shadow an imported Core binding at its top-level call sites. */
-const moduleScopeShadowsBinding = (program: Program, name: string): boolean =>
-  program.body.some((statement) => {
-    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
-    if (declaration?.type === 'VariableDeclaration') {
-      return declaration.declarations.some((binding) => binding.id.type === 'Identifier' && binding.id.name === name);
-    }
-    if (
-      declaration?.type === 'FunctionDeclaration' ||
-      declaration?.type === 'ClassDeclaration' ||
-      declaration?.type === 'TSEnumDeclaration'
-    ) {
-      return declaration.id?.name === name;
-    }
-    return false;
-  });
-
 const hasDirectCoreReadImport = (program: Program, name: string): boolean => {
   const imports = program.body.flatMap((statement) =>
     statement.type === 'ImportDeclaration'
@@ -2554,8 +2592,7 @@ const hasDirectCoreReadImport = (program: Program, name: string): boolean => {
     binding.entry.type === 'ImportSpecifier' &&
     binding.entry.importKind !== 'type' &&
     binding.entry.imported.type === 'Identifier' &&
-    binding.entry.imported.name === name &&
-    !moduleScopeShadowsBinding(program, name)
+    binding.entry.imported.name === name
   );
 };
 
@@ -2675,230 +2712,6 @@ export const generatedModuleApiEntrypointReference = (
     ? { name, shorthand: property.shorthand }
     : undefined;
 };
-
-interface NativeProviderBindings {
-  readonly program: Program;
-  readonly runtimeModule?: { readonly localName: string; readonly moduleId: string };
-}
-
-const isNativeProviderMember = (expression: Expression, object: string, property: string): boolean =>
-  expression.type === 'MemberExpression' &&
-  !expression.computed &&
-  expression.object.type === 'Identifier' &&
-  expression.object.name === object &&
-  expression.property.type === 'Identifier' &&
-  expression.property.name === property;
-
-const nativeProviderValue = (expression: Expression | null | undefined): Expression | undefined => {
-  if (expression === undefined || expression === null) {
-    return undefined;
-  }
-  if (
-    expression.type === 'TSAsExpression' ||
-    expression.type === 'TSSatisfiesExpression' ||
-    expression.type === 'ParenthesizedExpression' ||
-    expression.type === 'TSNonNullExpression' ||
-    expression.type === 'TSTypeAssertion'
-  ) {
-    return nativeProviderValue(expression.expression);
-  }
-  return expression;
-};
-
-const nativeProviderInitializerIsStringLiteral = (initializer: Expression | null | undefined): boolean => {
-  const expression = nativeProviderValue(initializer);
-  return expression?.type === 'Literal' && Predicate.isString(expression.value);
-};
-
-const nativeProviderAliasInitializer = (program: Program, name: string): Expression | null | undefined => {
-  const binding = directReadBinding(program, name);
-  if (binding === undefined) {
-    return undefined;
-  }
-  const permitted: Span[] = [binding.id];
-  // A string constant cannot be mutated through a container, so listing it as an array element (for example
-  // `requiresModules: [moduleKey]`) is a plain read. Object aliases such as shared authorization objects stay
-  // confined to property and operand reads, because an array element could carry them to a mutating site.
-  const immutablePrimitive = nativeProviderInitializerIsStringLiteral(binding.expression);
-  new Visitor({
-    ArrayExpression: (expression) => {
-      if (!immutablePrimitive) {
-        return;
-      }
-      for (const element of expression.elements) {
-        if (element?.type === 'Identifier' && element.name === name) {
-          permitted.push(element);
-        }
-      }
-    },
-    BinaryExpression: (expression) => {
-      for (const operand of [expression.left, expression.right]) {
-        if (operand.type === 'Identifier' && operand.name === name) {
-          permitted.push(operand);
-        }
-      }
-    },
-    MemberExpression: (expression) => {
-      if (!expression.computed && expression.property.type === 'Identifier' && expression.property.name === name) {
-        permitted.push(expression.property);
-      }
-    },
-    Property: (property) => {
-      if (!property.computed && !property.method && property.kind === 'init') {
-        if (property.key.type === 'Identifier' && property.key.name === name) {
-          permitted.push(property.key);
-        }
-        if (property.value.type === 'Identifier' && property.value.name === name) {
-          permitted.push(property.value);
-        }
-      }
-    },
-    TemplateLiteral: (template) => {
-      for (const expression of template.expressions) {
-        if (expression.type === 'Identifier' && expression.name === name) {
-          permitted.push(expression);
-        }
-      }
-    },
-  }).visit(program);
-  return hasOnlyConnectedReadReferences(program, name, permitted) ? binding.expression : undefined;
-};
-
-/** Resolve immutable identity values without evaluating owner code. */
-const nativeProviderInitializerString = (
-  initializer: Expression | null | undefined,
-  bindings: NativeProviderBindings | undefined,
-): string | undefined => {
-  const expression = nativeProviderValue(initializer);
-  if (expression?.type === 'Literal' && Predicate.isString(expression.value)) {
-    return expression.value;
-  }
-  const runtime = bindings?.runtimeModule;
-  return runtime !== undefined &&
-    expression?.type === 'MemberExpression' &&
-    !expression.computed &&
-    expression.property.type === 'Identifier' &&
-    expression.property.name === 'id' &&
-    isNativeProviderMember(expression.object, runtime.localName, 'module')
-    ? runtime.moduleId
-    : undefined;
-};
-
-const nativeProviderString = (
-  expression: Expression | undefined,
-  bindings?: NativeProviderBindings,
-): string | undefined => {
-  if (expression?.type === 'Literal' && Predicate.isString(expression.value)) {
-    return expression.value;
-  }
-  if (expression?.type !== 'Identifier' || bindings === undefined) {
-    return undefined;
-  }
-  return nativeProviderInitializerString(nativeProviderAliasInitializer(bindings.program, expression.name), bindings);
-};
-
-/**
- * The same immutable-alias proof at the token level: a property value is either the exact string literal or a
- * single immutable alias bound to that literal. Anything else (a computed expression, a second binding) proves
- * nothing, so a generated identity can never be forged by text that merely resembles a constant.
- */
-const nativeProviderTokenString = (
-  tokens: readonly GovernedClientToken[],
-  start: number | undefined,
-  bindings: NativeProviderBindings | undefined,
-): string | undefined => {
-  if (start === undefined) {
-    return undefined;
-  }
-  if (hasExactObjectPropertyValue(tokens, start, [[SyntaxKind.StringLiteral]])) {
-    return tokenValue(tokens, start);
-  }
-  const alias = tokenValue(tokens, start);
-  if (
-    bindings === undefined ||
-    alias === undefined ||
-    tokenKind(tokens, start) !== SyntaxKind.Identifier ||
-    !hasExactObjectPropertyValue(tokens, start, [[SyntaxKind.Identifier, alias]])
-  ) {
-    return undefined;
-  }
-  return nativeProviderInitializerString(nativeProviderAliasInitializer(bindings.program, alias), bindings);
-};
-
-const nativeProviderObjectHasStrings = (
-  object: ObjectExpression,
-  bindings: NativeProviderBindings | undefined,
-  expected: Readonly<Record<string, string>>,
-): boolean =>
-  Object.entries(expected).every(
-    ([property, value]) => nativeProviderString(nativeProviderProperty(object, property), bindings) === value,
-  );
-
-const hasGeneratedReadContract = (
-  source: string,
-  moduleId: string,
-  name: string,
-  role: 'report' | 'search',
-  authorization?: GeneratedReadAuthorization,
-): boolean => {
-  const readName = `${toCamelCase(name)}Read`;
-  const connected = generatedModuleApiEntrypointReference(source, readName);
-  if (connected === undefined) {
-    return false;
-  }
-  const parsed = parseSync('provider-read.ts', source, { astType: 'ts', lang: 'ts', sourceType: 'module' });
-  const readCall = directReadBinding(parsed.program, readName)?.expression;
-  const read = readCall?.type === 'CallExpression' ? readCall.arguments[0] : undefined;
-  if (read?.type !== 'ObjectExpression') {
-    return false;
-  }
-  const reference = nativeProviderProperty(read, 'entrypoint');
-  const entrypointCall =
-    reference?.type === 'Identifier' ? directReadBinding(parsed.program, reference.name)?.expression : reference;
-  const entrypoint = entrypointCall?.type === 'CallExpression' ? entrypointCall.arguments[0] : undefined;
-  if (entrypoint?.type !== 'ObjectExpression') {
-    return false;
-  }
-  const tokens = tokenizeGovernedClient(source);
-  const entrypointTokens = tokenizeGovernedClient(source.slice(entrypoint.start, entrypoint.end));
-  const bindings = { program: parsed.program };
-  return (
-    topLevelCallObject(tokens, readName, 'defineRead') !== undefined &&
-    matchesGeneratedReadAuthorization(
-      readGeneratedReadAuthorization(entrypointTokens, 0, entrypointTokens.length - 1),
-      authorization,
-    ) &&
-    nativeProviderObjectHasStrings(entrypoint, bindings, {
-      access: 'read',
-      entrypointKey: `${moduleId}.${role}.${name}`,
-      moduleKey: moduleId,
-      role,
-    }) &&
-    nativeProviderObjectHasStrings(read, bindings, {
-      owningModuleKey: moduleId,
-      readKey: `${moduleId}.${role}.${name}`,
-      schemaVersion: '1',
-    })
-  );
-};
-
-export const hasGeneratedProviderReadContract = (
-  source: string,
-  moduleId: string,
-  name: string,
-  kind: 'report' | 'search',
-  authorization?: GeneratedReadAuthorization,
-): boolean =>
-  hasGeneratedReadContract(source, moduleId, name, kind, authorization) &&
-  (() => {
-    const tokens = tokenizeGovernedClient(source);
-    const read = topLevelCallObject(tokens, `${toCamelCase(name)}Read`, 'defineRead');
-    return (
-      read !== undefined &&
-      objectHasExactString(tokens, read[0], read[1], 'accessKind', kind) &&
-      directObjectPropertyOccurrences(tokens, read[0], read[1], 'legalEntityScope') === 1
-    );
-  })();
 
 export const hasGeneratedModuleApiReadContract = (
   source: string,
@@ -3119,374 +2932,14 @@ const directSlotPropertyNames = (source: string | undefined): readonly string[] 
   return names;
 };
 
-/** `property: value` at `index`, where the value is the exact literal or one immutable alias proven to it. */
-const identityPropertyMatches = (
+const hasRelatedSequenceInObject = (
   tokens: readonly GovernedClientToken[],
-  index: number,
-  property: string,
-  value: string,
-  bindings: NativeProviderBindings | undefined,
-): boolean =>
-  isNamedObjectProperty(tokens, index, property) && nativeProviderTokenString(tokens, index + 2, bindings) === value;
-
-const identityPropertyOccurrencesAtBraceDepth = (
-  tokens: readonly GovernedClientToken[],
-  property: string,
-  value: string,
-  expectedDepth: number,
-  bindings: NativeProviderBindings | undefined,
-): number => {
-  let count = 0;
-  let braceDepth = 0;
-  for (let index = 0; index < tokens.length; index += 1) {
-    if (braceDepth === expectedDepth && identityPropertyMatches(tokens, index, property, value, bindings)) {
-      count += 1;
-    }
-    braceDepth += tokenBraceDelta(tokenKind(tokens, index));
-  }
-  return count;
-};
-
-const identityPropertyValueOccurrencesAtBraceDepth = (
-  tokens: readonly GovernedClientToken[],
-  property: string,
-  expectedDepth: number,
-  bindings: NativeProviderBindings | undefined,
-): number => {
-  let count = 0;
-  let braceDepth = 0;
-  for (let index = 0; index < tokens.length; index += 1) {
-    if (
-      braceDepth === expectedDepth &&
-      tokenKind(tokens, index) === SyntaxKind.Identifier &&
-      tokenValue(tokens, index) === property &&
-      tokenKind(tokens, index + 1) === SyntaxKind.ColonToken &&
-      nativeProviderTokenString(tokens, index + 2, bindings) !== undefined
-    ) {
-      count += 1;
-    }
-    braceDepth += tokenBraceDelta(tokenKind(tokens, index));
-  }
-  return count;
-};
-
-const findIdentityPropertyAtBraceDepth = (
-  tokens: readonly GovernedClientToken[],
-  property: string,
-  value: string,
-  start: number,
-  end: number,
-  expectedDepth: number,
-  bindings: NativeProviderBindings | undefined,
-): number | undefined => {
-  let braceDepth = 0;
-  for (let index = start; index < end; index += 1) {
-    if (braceDepth === expectedDepth && identityPropertyMatches(tokens, index, property, value, bindings)) {
-      return index;
-    }
-    braceDepth += tokenBraceDelta(tokenKind(tokens, index));
-  }
-  return undefined;
-};
-
-const hasRelatedIdentityInObject = (
-  tokens: readonly GovernedClientToken[],
-  anchor: readonly [property: string, value: string],
-  related: readonly [property: string, value: string],
-  bindings: NativeProviderBindings | undefined,
+  anchor: readonly ExpectedToken[],
+  related: readonly ExpectedToken[],
 ): boolean => {
-  const anchorIndex = findIdentityPropertyAtBraceDepth(tokens, anchor[0], anchor[1], 0, tokens.length, 1, bindings);
+  const anchorIndex = findSequenceAtBraceDepth(tokens, anchor, 0, tokens.length, 1);
   const range = anchorIndex === undefined ? undefined : enclosingBraceRange(tokens, anchorIndex);
-  return (
-    range !== undefined &&
-    findIdentityPropertyAtBraceDepth(tokens, related[0], related[1], range[0], range[1], 1, bindings) !== undefined
-  );
-};
-
-const nativeProviderSlotObject = (
-  slot: string,
-  identityProperty: string,
-  identity: string,
-  bindings?: NativeProviderBindings,
-): ObjectExpression | undefined => {
-  const parsed = parseSync('provider-slot.ts', `const entries = [${slot}];`, {
-    astType: 'ts',
-    lang: 'ts',
-    sourceType: 'module',
-  });
-  const entries = directReadBinding(parsed.program, 'entries')?.expression;
-  if (parsed.errors.length > 0 || entries?.type !== 'ArrayExpression') {
-    return undefined;
-  }
-  const objects = entries.elements.flatMap((entry) => {
-    const object = entry?.type === 'CallExpression' && entry.arguments.length === 1 ? entry.arguments[0] : entry;
-    return object?.type === 'ObjectExpression' &&
-      nativeProviderString(nativeProviderProperty(object, identityProperty), bindings) === identity
-      ? [object]
-      : [];
-  });
-  return objects.length === 1 ? objects[0] : undefined;
-};
-
-const nativeProviderAuthorization = (
-  expression: Expression | undefined,
-  bindings: NativeProviderBindings | undefined,
-): GeneratedReadAuthorization | undefined => {
-  const value = nativeProviderValue(
-    expression?.type === 'Identifier' && bindings !== undefined
-      ? nativeProviderAliasInitializer(bindings.program, expression.name)
-      : expression,
-  );
-  if (value?.type !== 'ObjectExpression' || value.properties.length !== 1) {
-    return undefined;
-  }
-  const kind = nativeProviderString(nativeProviderProperty(value, 'kind'), bindings);
-  return kind === 'authenticated_principal' || kind === 'protected' || kind === 'public' ? { kind } : undefined;
-};
-
-export interface GeneratedProviderManifestSources {
-  readonly manifestSource: string;
-  readonly runtimeDeclarationSource: string;
-}
-
-const nativeProviderManifestRoot = (program: Program): ObjectExpression | undefined => {
-  if (!hasDirectCoreReadImport(program, 'defineOntosModuleManifest')) {
-    return undefined;
-  }
-  const roots = program.body.flatMap((statement) => {
-    if (statement.type !== 'ExportNamedDeclaration' || statement.declaration?.type !== 'VariableDeclaration') {
-      return [];
-    }
-    return statement.declaration.kind === 'const'
-      ? statement.declaration.declarations.flatMap(({ init }) =>
-          init?.type === 'CallExpression' &&
-          init.callee.type === 'Identifier' &&
-          init.callee.name === 'defineOntosModuleManifest' &&
-          init.arguments.length === 1 &&
-          init.arguments[0]?.type === 'ObjectExpression'
-            ? [init.arguments[0]]
-            : [],
-        )
-      : [];
-  });
-  return roots.length === 1 ? roots[0] : undefined;
-};
-
-const nativeProviderRuntimeImport = (program: Program, localName: string): string | undefined => {
-  const imports = program.body.flatMap((statement) =>
-    statement.type === 'ImportDeclaration' &&
-    statement.importKind !== 'type' &&
-    statement.source.value === './vertical.runtime-declaration.ts'
-      ? statement.specifiers.flatMap((specifier) =>
-          specifier.type === 'ImportSpecifier' &&
-          specifier.importKind !== 'type' &&
-          specifier.local.name === localName &&
-          specifier.imported.type === 'Identifier'
-            ? [specifier.imported.name]
-            : [],
-        )
-      : [],
-  );
-  return imports.length === 1 ? imports[0] : undefined;
-};
-
-interface NativeProviderManifestObjects {
-  readonly localName: string;
-  readonly runtime: ObjectExpression;
-  readonly surface: ObjectExpression;
-}
-
-const nativeProviderManifestObjects = (
-  manifest: Program,
-  declaration: Program,
-): NativeProviderManifestObjects | undefined => {
-  const root = nativeProviderManifestRoot(manifest);
-  const spreads = root?.properties.filter((property) => property.type === 'SpreadElement');
-  const spread = spreads?.length === 1 ? spreads[0] : undefined;
-  if (root === undefined || spread?.type !== 'SpreadElement' || spread.argument.type !== 'Identifier') {
-    return undefined;
-  }
-  const localName = spread.argument.name;
-  const imported = nativeProviderRuntimeImport(manifest, localName);
-  const runtime = imported === undefined ? undefined : directReadBinding(declaration, imported)?.expression;
-  const surface = nativeProviderProperty(root, 'publicSurface', true);
-  return runtime?.type === 'ObjectExpression' && surface?.type === 'ObjectExpression'
-    ? { localName, runtime, surface }
-    : undefined;
-};
-
-/**
- * Project a split owner's provider proof surface from its original owning objects: the manifest root's own
- * `publicSurface` and the imported runtime manifest's `shellContributions`. Displaced or unused marker pairs
- * are never consulted, and the projection is bound back to these same programs before any alias is followed.
- */
-export const generatedProviderOwnerProjection = (sources: GeneratedProviderManifestSources): string | undefined => {
-  const manifest = parseSync(PROVIDER_MANIFEST_FILE, sources.manifestSource, {
-    astType: 'ts',
-    lang: 'ts',
-    sourceType: 'module',
-  });
-  const declaration = parseSync('provider-runtime.ts', sources.runtimeDeclarationSource, {
-    astType: 'ts',
-    lang: 'ts',
-    sourceType: 'module',
-  });
-  const objects =
-    manifest.errors.length > 0 || declaration.errors.length > 0
-      ? undefined
-      : nativeProviderManifestObjects(manifest.program, declaration.program);
-  const runtimeSurface = objects === undefined ? undefined : nativeProviderProperty(objects.runtime, 'publicSurface');
-  const shell =
-    runtimeSurface?.type === 'ObjectExpression'
-      ? nativeProviderProperty(runtimeSurface, 'shellContributions')
-      : undefined;
-  return objects === undefined || shell?.type !== 'ObjectExpression'
-    ? undefined
-    : `${sources.manifestSource.slice(objects.surface.start, objects.surface.end)}\n${sources.runtimeDeclarationSource.slice(shell.start, shell.end)}`;
-};
-
-interface NativeProviderManifestBindings {
-  readonly descriptor: NativeProviderBindings;
-  readonly shell: NativeProviderBindings;
-}
-
-/** Bind projected slots back to the actual same-owner module objects before following their aliases. */
-const nativeProviderManifestBindings = (
-  projected: string,
-  sources: GeneratedProviderManifestSources,
-  moduleId: string,
-  descriptorMarkers: readonly (readonly [string, string])[],
-  shellMarkers: readonly (readonly [string, string])[],
-): NativeProviderManifestBindings | undefined => {
-  const manifest = parseSync(PROVIDER_MANIFEST_FILE, sources.manifestSource, {
-    astType: 'ts',
-    lang: 'ts',
-    sourceType: 'module',
-  });
-  const declaration = parseSync('provider-runtime.ts', sources.runtimeDeclarationSource, {
-    astType: 'ts',
-    lang: 'ts',
-    sourceType: 'module',
-  });
-  if (manifest.errors.length > 0 || declaration.errors.length > 0) {
-    return undefined;
-  }
-  const objects = nativeProviderManifestObjects(manifest.program, declaration.program);
-  if (objects === undefined) {
-    return undefined;
-  }
-  const { localName, runtime, surface } = objects;
-  const runtimeModule = nativeProviderProperty(runtime, 'module');
-  const runtimeSurface = nativeProviderProperty(runtime, 'publicSurface');
-  const shell =
-    runtimeSurface?.type === 'ObjectExpression'
-      ? nativeProviderProperty(runtimeSurface, 'shellContributions')
-      : undefined;
-  const surfaceSpreads = surface.properties.filter((property) => property.type === 'SpreadElement');
-  const surfaceSpread = surfaceSpreads.length === 1 ? surfaceSpreads[0] : undefined;
-  const shellBindings = { program: declaration.program };
-  if (
-    runtimeModule?.type !== 'ObjectExpression' ||
-    shell?.type !== 'ObjectExpression' ||
-    nativeProviderString(nativeProviderProperty(runtimeModule, 'id'), shellBindings) !== moduleId ||
-    surfaceSpread?.type !== 'SpreadElement' ||
-    !isNativeProviderMember(surfaceSpread.argument, localName, 'publicSurface') ||
-    descriptorMarkers.some(
-      (markers) =>
-        generatedSlotSource(sources.manifestSource.slice(surface.start, surface.end), markers) !==
-        generatedSlotSource(projected, markers),
-    ) ||
-    shellMarkers.some(
-      (markers) =>
-        generatedSlotSource(sources.runtimeDeclarationSource.slice(shell.start, shell.end), markers) !==
-        generatedSlotSource(projected, markers),
-    )
-  ) {
-    return undefined;
-  }
-  return {
-    descriptor: { program: manifest.program, runtimeModule: { localName, moduleId } },
-    shell: shellBindings,
-  };
-};
-
-const providerShellBindings = (
-  manifest: string,
-  moduleId: string,
-  sources: GeneratedProviderManifestSources | undefined,
-  shellMarkers: readonly (readonly [string, string])[],
-): NativeProviderBindings | undefined => {
-  if (sources !== undefined) {
-    return nativeProviderManifestBindings(manifest, sources, moduleId, [], shellMarkers)?.shell;
-  }
-  const parsed = parseSync(PROVIDER_MANIFEST_FILE, manifest, { astType: 'ts', lang: 'ts', sourceType: 'module' });
-  return parsed.errors.length === 0 ? { program: parsed.program } : undefined;
-};
-
-export const hasMatchingGeneratedProviderAuthorization = (
-  providerSource: string,
-  manifest: string,
-  moduleId: string,
-  name: string,
-  kind: 'report' | 'search',
-  sources?: GeneratedProviderManifestSources,
-): boolean => {
-  const connected = generatedModuleApiEntrypointReference(providerSource, `${toCamelCase(name)}Read`);
-  if (connected === undefined) {
-    return false;
-  }
-  const providerTokens = tokenizeGovernedClient(connected.initializer ?? providerSource);
-  const inlineClose = connected.initializer === undefined ? undefined : findClosingBrace(providerTokens, 2);
-  const entrypoint =
-    inlineClose === undefined
-      ? topLevelCallObject(providerTokens, connected.name, 'defineTenantModuleEntrypoint', false)
-      : ([2, inlineClose] as const);
-  const shellSlot = generatedSlotSource(
-    manifest,
-    kind === 'report' ? MANIFEST_SHELL_REPORT_SLOT : MANIFEST_SHELL_SEARCH_SLOT,
-  );
-  if (entrypoint === undefined || shellSlot === undefined) {
-    return false;
-  }
-  const shellTokens = tokenizeGovernedClient(shellSlot);
-  const manifestBindings = providerShellBindings(manifest, moduleId, sources, [
-    kind === 'report' ? MANIFEST_SHELL_REPORT_SLOT : MANIFEST_SHELL_SEARCH_SLOT,
-  ]);
-  if (sources !== undefined && manifestBindings === undefined) {
-    return false;
-  }
-  const identity = findIdentityPropertyAtBraceDepth(
-    shellTokens,
-    'contributionKey',
-    `${moduleId}.${kind}.${name}`,
-    0,
-    shellTokens.length,
-    1,
-    manifestBindings,
-  );
-  const contribution = identity === undefined ? undefined : enclosingBraceRange(shellTokens, identity);
-  const manifestEntrypoint =
-    contribution === undefined ? undefined : nestedObjectRange(shellTokens, ...contribution, 'entrypoint');
-  if (manifestEntrypoint === undefined) {
-    return false;
-  }
-  const providerAuthorization = readGeneratedReadAuthorization(providerTokens, entrypoint[0], entrypoint[1]);
-  const contributionObject = nativeProviderSlotObject(
-    shellSlot,
-    'contributionKey',
-    `${moduleId}.${kind}.${name}`,
-    manifestBindings,
-  );
-  const manifestEntry =
-    contributionObject === undefined ? undefined : nativeProviderProperty(contributionObject, 'entrypoint');
-  const manifestAuthorization = nativeProviderAuthorization(
-    manifestEntry?.type === 'ObjectExpression' ? nativeProviderProperty(manifestEntry, 'authorization') : undefined,
-    manifestBindings,
-  );
-  return (
-    manifestAuthorization !== undefined &&
-    matchesGeneratedReadAuthorization(providerAuthorization, manifestAuthorization)
-  );
+  return range !== undefined && findSequenceAtBraceDepth(tokens, related, range[0], range[1], 1) !== undefined;
 };
 
 const registrationIdentityIsExclusiveToSlot = (
@@ -3538,65 +2991,62 @@ export const hasGeneratedProviderRegistration = (
 };
 
 const hasProviderShellEntrypoint = (
-  contribution: ObjectExpression | undefined,
-  bindings: NativeProviderBindings | undefined,
+  tokens: readonly GovernedClientToken[],
+  contribution: readonly [number, number],
   identity: Readonly<Record<string, string>>,
 ): boolean => {
-  const entrypoint = contribution === undefined ? undefined : nativeProviderProperty(contribution, 'entrypoint');
-  return entrypoint?.type === 'ObjectExpression' && nativeProviderObjectHasStrings(entrypoint, bindings, identity);
+  const range = nestedObjectRange(tokens, ...contribution, 'entrypoint');
+  return (
+    range !== undefined &&
+    directObjectHasNoSpread(tokens, ...range) &&
+    objectHasExactStrings(tokens, ...range, identity)
+  );
 };
 
-const slotOmitsIdentity = (
-  source: string | undefined,
-  property: string,
-  value: string,
-  bindings: NativeProviderBindings | undefined,
-): boolean =>
-  source === undefined ||
-  identityPropertyOccurrencesAtBraceDepth(tokenizeGovernedClient(source), property, value, 1, bindings) === 0;
+const slotOmitsIdentity = (source: string | undefined, identity: readonly ExpectedToken[]): boolean =>
+  source === undefined || sequenceOccurrencesAtBraceDepth(tokenizeGovernedClient(source), identity, 1) === 0;
 
 const hasOwnedProviderDescriptor = (
   tokens: readonly GovernedClientToken[],
-  descriptorKey: string,
-  descriptor: ObjectExpression | undefined,
-  bindings: NativeProviderBindings | undefined,
+  identity: readonly ExpectedToken[],
   moduleId: string,
 ): boolean =>
-  identityPropertyOccurrencesAtBraceDepth(tokens, 'key', descriptorKey, 1, bindings) === 1 &&
-  descriptor !== undefined &&
-  nativeProviderObjectHasStrings(descriptor, bindings, { owningModuleId: moduleId });
+  sequenceOccurrencesAtBraceDepth(tokens, identity, 1) === 1 &&
+  hasRelatedSequenceInObject(tokens, identity, [
+    [SyntaxKind.Identifier, 'owningModuleId'],
+    [SyntaxKind.ColonToken],
+    [SyntaxKind.StringLiteral, moduleId],
+  ]);
 
 const hasOwnedProviderShellContribution = (
   shellTokens: readonly GovernedClientToken[],
-  shellContribution: ObjectExpression | undefined,
-  bindings: NativeProviderBindings | undefined,
+  shellIdentity: readonly ExpectedToken[],
+  shellContribution: readonly [number, number] | undefined,
   shellContributionKey: string,
   moduleId: string,
   kind: 'report' | 'search',
   descriptorKey: string,
 ): boolean =>
-  identityPropertyOccurrencesAtBraceDepth(shellTokens, 'contributionKey', shellContributionKey, 1, bindings) === 1 &&
+  sequenceOccurrencesAtBraceDepth(shellTokens, shellIdentity, 1) === 1 &&
   shellContribution !== undefined &&
-  hasProviderShellEntrypoint(shellContribution, bindings, {
+  hasProviderShellEntrypoint(shellTokens, shellContribution, {
     access: 'read',
     entrypointKey: shellContributionKey,
     moduleKey: moduleId,
     role: kind,
     scope: 'tenant',
   }) &&
-  hasRelatedIdentityInObject(
-    shellTokens,
-    ['contributionKey', shellContributionKey],
-    [kind === 'report' ? 'reportKey' : 'searchKey', descriptorKey],
-    bindings,
-  );
+  hasRelatedSequenceInObject(shellTokens, shellIdentity, [
+    [SyntaxKind.Identifier, kind === 'report' ? 'reportKey' : 'searchKey'],
+    [SyntaxKind.ColonToken],
+    [SyntaxKind.StringLiteral, descriptorKey],
+  ]);
 
 export const hasGeneratedProviderManifest = (
   manifest: string,
   moduleId: string,
   name: string,
   kind: 'report' | 'search',
-  sources?: GeneratedProviderManifestSources,
 ): boolean => {
   const [descriptorMarkers, shellMarkers, otherDescriptorMarkers, otherShellMarkers] =
     kind === 'report'
@@ -3611,34 +3061,34 @@ export const hasGeneratedProviderManifest = (
   const shellTokens = tokenizeGovernedClient(shellSlot);
   const descriptorKey = `${moduleId}.${name}`;
   const shellContributionKey = `${moduleId}.${kind}.${name}`;
+  const descriptorIdentity = [
+    [SyntaxKind.Identifier, 'key'],
+    [SyntaxKind.ColonToken],
+    [SyntaxKind.StringLiteral, descriptorKey],
+  ] satisfies readonly ExpectedToken[];
+  const shellIdentity = [
+    [SyntaxKind.Identifier, 'contributionKey'],
+    [SyntaxKind.ColonToken],
+    [SyntaxKind.StringLiteral, shellContributionKey],
+  ] satisfies readonly ExpectedToken[];
   const otherDescriptorSlot = generatedSlotSource(manifest, otherDescriptorMarkers);
   const otherShellSlot = generatedSlotSource(manifest, otherShellMarkers);
-  const bindings =
-    sources === undefined
-      ? undefined
-      : nativeProviderManifestBindings(manifest, sources, moduleId, [descriptorMarkers], [shellMarkers]);
-  if (sources !== undefined && bindings === undefined) {
-    return false;
-  }
-  const local = parseSync(PROVIDER_MANIFEST_FILE, manifest, { astType: 'ts', lang: 'ts', sourceType: 'module' });
-  const localBindings = local.errors.length === 0 ? { program: local.program } : undefined;
-  const descriptorBindings = bindings?.descriptor ?? localBindings;
-  const shellBindings = bindings?.shell ?? localBindings;
-  const descriptor = nativeProviderSlotObject(descriptorSlot, 'key', descriptorKey, descriptorBindings);
-  const shellContribution = nativeProviderSlotObject(shellSlot, 'contributionKey', shellContributionKey, shellBindings);
+  const shellIdentityIndex = findSequenceAtBraceDepth(shellTokens, shellIdentity, 0, shellTokens.length, 1);
+  const shellContribution =
+    shellIdentityIndex === undefined ? undefined : enclosingBraceRange(shellTokens, shellIdentityIndex);
   return (
-    hasOwnedProviderDescriptor(descriptorTokens, descriptorKey, descriptor, descriptorBindings, moduleId) &&
+    hasOwnedProviderDescriptor(descriptorTokens, descriptorIdentity, moduleId) &&
     hasOwnedProviderShellContribution(
       shellTokens,
+      shellIdentity,
       shellContribution,
-      shellBindings,
       shellContributionKey,
       moduleId,
       kind,
       descriptorKey,
     ) &&
-    slotOmitsIdentity(otherDescriptorSlot, 'key', descriptorKey, descriptorBindings) &&
-    slotOmitsIdentity(otherShellSlot, 'contributionKey', shellContributionKey, shellBindings)
+    slotOmitsIdentity(otherDescriptorSlot, descriptorIdentity) &&
+    slotOmitsIdentity(otherShellSlot, shellIdentity)
   );
 };
 
@@ -3653,7 +3103,6 @@ const slotProviderNames = (
   kind: GeneratedProviderIdentity['kind'],
   identityProperty: 'contributionKey' | 'key',
   depth: number,
-  bindings: NativeProviderBindings | undefined,
 ): readonly string[] => {
   if (source === undefined || moduleId.length === 0) {
     return [];
@@ -3662,15 +3111,17 @@ const slotProviderNames = (
   const tokens = tokenizeGovernedClient(source);
   const names: string[] = [];
   let braceDepth = 0;
-  for (let index = 0; index < tokens.length; index += 1) {
+  for (let index = 0; index < tokens.length - 2; index += 1) {
     if (
       braceDepth === depth &&
-      tokenKind(tokens, index) === SyntaxKind.Identifier &&
-      tokenValue(tokens, index) === identityProperty &&
-      tokenKind(tokens, index + 1) === SyntaxKind.ColonToken
+      matchesSequence(tokens, index, [
+        [SyntaxKind.Identifier, identityProperty],
+        [SyntaxKind.ColonToken],
+        [SyntaxKind.StringLiteral],
+      ])
     ) {
-      const value = nativeProviderTokenString(tokens, index + 2, bindings);
-      const name = value !== undefined && value.startsWith(prefix) ? value.slice(prefix.length) : '';
+      const value = tokenValue(tokens, index + 2) ?? '';
+      const name = value.startsWith(prefix) ? value.slice(prefix.length) : '';
       if (/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(name)) {
         names.push(name);
       }
@@ -3688,11 +3139,13 @@ const providerIdentitySlotIsExact = (
   names: readonly string[],
   identityProperty: 'contributionKey' | 'key',
   depth: number,
-  bindings: NativeProviderBindings | undefined,
 ): boolean =>
   source !== undefined &&
-  identityPropertyValueOccurrencesAtBraceDepth(tokenizeGovernedClient(source), identityProperty, depth, bindings) ===
-    names.length;
+  sequenceOccurrencesAtBraceDepth(
+    tokenizeGovernedClient(source),
+    [[SyntaxKind.Identifier, identityProperty], [SyntaxKind.ColonToken], [SyntaxKind.StringLiteral]],
+    depth,
+  ) === names.length;
 
 const sameUniqueNames = (...collections: readonly (readonly string[])[]): boolean => {
   const [first, ...remaining] = collections;
@@ -3708,32 +3161,10 @@ const sameUniqueNames = (...collections: readonly (readonly string[])[]): boolea
   );
 };
 
-const PROVIDER_DESCRIPTOR_SLOTS = [MANIFEST_REPORT_SLOT, MANIFEST_SEARCH_SLOT] as const;
-const PROVIDER_SHELL_SLOTS = [MANIFEST_SHELL_REPORT_SLOT, MANIFEST_SHELL_SEARCH_SLOT] as const;
-
-/**
- * Bindings for every provider slot of a (possibly projected) manifest. A projection over a split owner is bound
- * back to the same-owner manifest and runtime declaration programs, and fails closed when it is not the exact
- * text of those original owning objects; an unsplit manifest is its own binding program.
- */
-const providerTopologyBindings = (
-  manifest: string,
-  moduleId: string,
-  sources: GeneratedProviderManifestSources | undefined,
-): Partial<NativeProviderManifestBindings> | undefined => {
-  if (sources !== undefined) {
-    return nativeProviderManifestBindings(manifest, sources, moduleId, PROVIDER_DESCRIPTOR_SLOTS, PROVIDER_SHELL_SLOTS);
-  }
-  const parsed = parseSync('provider-topology.ts', manifest, { astType: 'ts', lang: 'ts', sourceType: 'module' });
-  const local = parsed.errors.length === 0 ? { program: parsed.program } : undefined;
-  return { descriptor: local, shell: local };
-};
-
 export const hasExactGeneratedProviderIdentityTopology = (
   manifest: string,
   registration: string,
   moduleId: string,
-  sources?: GeneratedProviderManifestSources,
 ): boolean => {
   const slotsPresent =
     [MANIFEST_REPORT_SLOT, MANIFEST_SEARCH_SLOT, MANIFEST_SHELL_REPORT_SLOT, MANIFEST_SHELL_SEARCH_SLOT].some(
@@ -3744,10 +3175,6 @@ export const hasExactGeneratedProviderIdentityTopology = (
     );
   if (!slotsPresent) {
     return true;
-  }
-  const bindings = providerTopologyBindings(manifest, moduleId, sources);
-  if (bindings === undefined) {
-    return false;
   }
   return (['report', 'search'] as const).every((kind) => {
     const descriptorSlot = generatedSlotSource(
@@ -3762,15 +3189,15 @@ export const hasExactGeneratedProviderIdentityTopology = (
       registration,
       kind === 'report' ? REGISTRATION_REPORT_SLOT : REGISTRATION_SEARCH_SLOT,
     );
-    const descriptorNames = slotProviderNames(descriptorSlot, moduleId, kind, 'key', 1, bindings.descriptor);
-    const shellNames = slotProviderNames(shellSlot, moduleId, kind, 'contributionKey', 1, bindings.shell);
+    const descriptorNames = slotProviderNames(descriptorSlot, moduleId, kind, 'key', 1);
+    const shellNames = slotProviderNames(shellSlot, moduleId, kind, 'contributionKey', 1);
     const directRegistrationNames = directSlotPropertyNames(registrationSlot);
     const registrationNames = registrationProviderNames(registrationSlot);
     return (
       directRegistrationNames !== undefined &&
       directRegistrationNames.length === registrationNames.length &&
-      providerIdentitySlotIsExact(descriptorSlot, descriptorNames, 'key', 1, bindings.descriptor) &&
-      providerIdentitySlotIsExact(shellSlot, shellNames, 'contributionKey', 1, bindings.shell) &&
+      providerIdentitySlotIsExact(descriptorSlot, descriptorNames, 'key', 1) &&
+      providerIdentitySlotIsExact(shellSlot, shellNames, 'contributionKey', 1) &&
       sameUniqueNames(descriptorNames, shellNames, registrationNames)
     );
   });
@@ -3780,10 +3207,8 @@ export const generatedProviderIdentities = (
   manifest: string,
   registration: string,
   moduleId: string,
-  sources?: GeneratedProviderManifestSources,
 ): readonly GeneratedProviderIdentity[] => {
   const identities = new Map<string, GeneratedProviderIdentity>();
-  const bindings = providerTopologyBindings(manifest, moduleId, sources);
   for (const kind of ['report', 'search'] as const) {
     const descriptorSlot = generatedSlotSource(
       manifest,
@@ -3798,8 +3223,8 @@ export const generatedProviderIdentities = (
       kind === 'report' ? REGISTRATION_REPORT_SLOT : REGISTRATION_SEARCH_SLOT,
     );
     const names = [
-      ...slotProviderNames(descriptorSlot, moduleId, kind, 'key', 1, bindings?.descriptor),
-      ...slotProviderNames(shellSlot, moduleId, kind, 'contributionKey', 1, bindings?.shell),
+      ...slotProviderNames(descriptorSlot, moduleId, kind, 'key', 1),
+      ...slotProviderNames(shellSlot, moduleId, kind, 'contributionKey', 1),
       ...registrationProviderNames(registrationSlot),
     ];
     for (const name of names) {

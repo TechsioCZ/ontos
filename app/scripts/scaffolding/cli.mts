@@ -13,7 +13,6 @@ import { actionHttpProposalGenerator } from './action-http/proposal.mts';
 import actionServiceGenerator from './action-service/scaffold.mts';
 import actionGenerator from './action/scaffold.mts';
 import externalHttpAdapterGenerator from './external-http-adapter/scaffold.mts';
-import labelHeadGenerator from './label-head/scaffold.mts';
 import actionBoundaryGenerator from './microvertical-action-boundary/scaffold.mts';
 import microverticalPageGenerator from './microvertical-page/scaffold.mts';
 import moduleApiGenerator from './module-api/scaffold.mts';
@@ -39,8 +38,6 @@ import type {
   ActionServiceScaffoldResult,
   ExternalHttpAdapterScaffoldConfig,
   ExternalHttpAdapterScaffoldResult,
-  LabelHeadScaffoldConfig,
-  LabelHeadScaffoldResult,
   ModuleContractScaffoldConfig,
   ModuleContractScaffoldResult,
   ActionBoundaryScaffoldConfig,
@@ -72,7 +69,6 @@ const scaffoldCommandValues = [
   ACTION_HTTP_COMMAND,
   'action-service',
   'external-http-adapter',
-  'label-head',
   'microvertical-action-boundary',
   'microvertical-page',
   'module-contract',
@@ -98,7 +94,6 @@ const ACCESS_SELECTORS_FLAG = 'access-selectors';
 const ACCESS_WORKLOAD_FLAG = 'access-workload';
 const ACCESS_WORKLOAD_KEYS_FLAG = 'access-workload-keys';
 const PROPOSAL_ONLY_FLAG = 'proposal-only';
-const SPLIT_RUNTIME_FLAG = 'split-runtime';
 
 export const ScaffoldCommandSchema = Schema.Literals(scaffoldCommandValues);
 export type ScaffoldCommand = typeof ScaffoldCommandSchema.Type;
@@ -114,7 +109,6 @@ type GeneratorResult =
   | ActionScaffoldResult
   | ActionServiceScaffoldResult
   | ExternalHttpAdapterScaffoldResult
-  | LabelHeadScaffoldResult
   | ModuleContractScaffoldResult
   | GovernedContributionScaffoldResult
   | OutboxScaffoldResult
@@ -131,7 +125,6 @@ type GeneratorConfig =
   | ActionScaffoldConfig
   | ActionServiceScaffoldConfig
   | ExternalHttpAdapterScaffoldConfig
-  | LabelHeadScaffoldConfig
   | ModuleContractScaffoldConfig
   | GovernedContributionScaffoldConfig
   | CoreReadScaffoldConfig
@@ -189,7 +182,6 @@ interface ParsedScaffoldFlags {
   readonly schemaModule: string | undefined;
   readonly scope: string | undefined;
   readonly service: string | undefined;
-  readonly splitRuntime: boolean;
   readonly topic: string | undefined;
   readonly url: string | undefined;
   readonly vertical: string | undefined;
@@ -233,7 +225,7 @@ export type RunScaffoldResult =
 const failScaffolding = (message: string, cause?: unknown): Effect.Effect<never, ScaffoldingError> =>
   Effect.fail(new ScaffoldingError(cause === undefined ? { message } : { cause, message }));
 
-export const runCodesmithGenerator = Effect.fn('runCodesmithGenerator')(function* runCodesmithGeneratorEffect<
+const runCodesmithGenerator = Effect.fn('runCodesmithGenerator')(function* runCodesmithGeneratorEffect<
   Config extends GeneratorConfig,
   Result extends GeneratorResult,
 >(
@@ -547,7 +539,6 @@ Required flags:
 Options:
   --proposal-only        Upgrade only the parked-proposal transport of an existing endpoint: the 202
                          success entry, the trusted handler's success contract and the client intent.
-                         Adds Core's exact action_approval_required code to an existing closed 403 schema.
                          Preserves owner error schemas, problem mappers, recovery text, custom server
                          header decoding, custom client composition and runtime argument positions.
                          Never rewrites problem mappers, barrels or package files, and leaves a
@@ -627,23 +618,6 @@ Example:
         provider: flags.provider ?? '',
         vertical: flags.vertical ?? '',
       }),
-  }),
-  'label-head': defineCommand({
-    flags: ['name', 'vertical'],
-    generator: labelHeadGenerator,
-    help: `Usage: pnpm scaffold:label-head -- --vertical <vertical> --name <name>
-
-Generate owner-local retained label publication contracts, available/withdrawn state, persistence, migration, service and verification.
-
-Required flags:
-  --vertical <vertical>  Existing generated vertical folder
-  --name <name>          Stable label head name (lower-kebab-case)
-
-Options:
-  --help                 Show this help without writing
-`,
-    requiredFlags: ['name', 'vertical'],
-    toConfig: (flags) => Effect.succeed({ name: flags.name ?? '', vertical: flags.vertical ?? '' }),
   }),
   'microvertical-action-boundary': defineCommand({
     flags: ['vertical'],
@@ -747,9 +721,9 @@ Options:
       }),
   }),
   'module-contract': defineCommand({
-    flags: ['module', 'vertical', SPLIT_RUNTIME_FLAG],
+    flags: ['module', 'vertical'],
     generator: moduleContractGenerator,
-    help: `Usage: pnpm scaffold:module-contract -- --vertical <vertical> --module <dotted.module-id> [--split-runtime]
+    help: `Usage: pnpm scaffold:module-contract -- --vertical <vertical> --module <dotted.module-id>
 
 Generate the mandatory typed OntOS Module Manifest and private owner-local runtime registration.
 
@@ -758,14 +732,12 @@ Required flags:
   --module <dotted.module-id> Stable dotted non-core OntOS business module ID
 
 Options:
-  --split-runtime             Migrate an existing owner to shared backend-only runtime declarations
   --help                      Show this help without writing
 `,
     requiredFlags: ['module', 'vertical'],
     toConfig: (flags) =>
       Effect.succeed({
         module: flags.module ?? '',
-        splitRuntime: flags.splitRuntime,
         vertical: flags.vertical ?? '',
       }),
   }),
@@ -1097,16 +1069,9 @@ const parseFlags = (
       return yield* failScaffolding(`flag --${PROPOSAL_ONLY_FLAG} may be supplied only once`);
     }
     const proposalOnly = command === ACTION_HTTP_COMMAND && proposalOnlyCount === 1;
-    const splitRuntimeCount = argumentsList.filter((argument) => argument === `--${SPLIT_RUNTIME_FLAG}`).length;
-    if (splitRuntimeCount > 1) {
-      return yield* failScaffolding(`flag --${SPLIT_RUNTIME_FLAG} may be supplied only once`);
-    }
-    const splitRuntime = command === 'module-contract' && splitRuntimeCount === 1;
-    const booleanArguments = [
-      core ? '--core' : undefined,
-      proposalOnly ? `--${PROPOSAL_ONLY_FLAG}` : undefined,
-      splitRuntime ? `--${SPLIT_RUNTIME_FLAG}` : undefined,
-    ].filter((argument) => argument !== undefined);
+    const booleanArguments = [core ? '--core' : undefined, proposalOnly ? `--${PROPOSAL_ONLY_FLAG}` : undefined].filter(
+      (argument) => argument !== undefined,
+    );
     const normalizedArguments =
       booleanArguments.length === 0
         ? argumentsList
@@ -1146,7 +1111,6 @@ const parseFlags = (
       schemaModule: parsed.get(SCHEMA_MODULE_FLAG),
       scope: parsed.get('scope'),
       service: parsed.get('service'),
-      splitRuntime,
       topic: parsed.get('topic'),
       url: parsed.get('url'),
       vertical: parsed.get('vertical'),

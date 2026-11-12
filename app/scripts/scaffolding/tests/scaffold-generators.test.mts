@@ -52,7 +52,6 @@ import {
   OntosModuleDeploymentContractSchema,
   OntosModuleIdSchema,
   OntosShellRuntimeContractSchema,
-  ShellNavigationContributionSchema,
 } from '../../../packages/core-runtime/src/index.ts';
 import { deriveActiveApplicationCompositionSnapshot } from '../../active-application-composition.mts';
 import { createSharedRuntimeConfig } from '../../../module-federation.shared.ts';
@@ -68,7 +67,10 @@ import type {
   OperationGatewayIssuer,
 } from '../../../packages/shared-contracts/src/operation-gateway.ts';
 import type { bindActionHttpRunner as ActionHttpRunnerBinding } from '../../../verticals/party-registry/api/action-http-runner.ts';
-import { hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
+import {
+  governedRedemptionRuntimeTarget,
+  hasValidGovernedHttpCompositionRoot,
+} from '../../generated-governed-http-boundary.mts';
 import {
   assertPublishedOutboxDependencyUsage,
   publishedOutboxContractExports,
@@ -98,13 +100,18 @@ const DEFAULT_RUNTIME_EXPORT = 'export default apiRuntime;';
 const UNRELATED_RUNTIME_EXPORT = 'export default unrelatedRuntime;';
 const PRIVACY_CONTRACT_PATH = 'verticals/privacy/shared/api.ts';
 const PRIVACY_HANDLER_PATH = 'verticals/privacy/api/index.ts';
-// Privacy binds its owner runtime through the backend runtime declaration, so the composition
-// proof must name that backend registration exactly as the owner handler imports it.
-const PRIVACY_BACKEND_REGISTRATION = 'privacyBackendRegistration';
+const SYMMY_CONTRACT_PATH = 'verticals/symmy-integration/shared/api.ts';
+const SYMMY_HANDLER_PATH = 'verticals/symmy-integration/api/index.ts';
+const LOCAL_GOVERNED_SUPPORT_DECLARATION = 'const governedReadApiHandlersLive =';
+const EXPORTED_GOVERNED_SUPPORT_DECLARATION = 'export const governedReadApiHandlersLive =';
 const CRYPTO_LAYER_IMPORT = "import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';";
 const PRIVACY_CRYPTO_READ_MERGE = 'const governedReadRuntimeLive = Layer.merge(nodeCryptoLayer, readRuntimeLive);';
 const INJECTED_READ_MERGE_SUFFIX = 'readRuntimeLive);';
 const ASSEMBLED_HANDLER_PROPERTY = 'handlers: apiHandlersLive,';
+const EMPTY_HANDLER_PROPERTY = 'handlers: Layer.empty,';
+const RESOLVED_HANDLER_PROPERTY = 'handlers: resolvedApiHandlersLive,';
+const ASSEMBLER_MODULE = "'@modern-js/bff-effect/assembly'";
+const COUNTERFEIT_ASSEMBLER_MODULE = "'./counterfeit-assembler.ts'";
 const ASSEMBLED_HANDLER_DECLARATION = 'const apiHandlersLive = Layer.mergeAll(';
 
 const MODULE_CONTRACT_COMMAND = 'module-contract';
@@ -413,20 +420,9 @@ const InventoryLocaleSchema = Schema.Struct({
   }),
 });
 
-// A declared conditional target must resolve for Node through `default` or `node`; the optional
-// `types` and `workerd` keys describe the other conditions. A Workerd-only (or otherwise
-// Node-unresolvable) declaration stays rejected.
 const NodeConditionalPackageTargetSchema = Schema.Union([
-  Schema.Struct({
-    default: Schema.String,
-    types: Schema.optionalKey(Schema.String),
-    workerd: Schema.optionalKey(Schema.String),
-  }),
-  Schema.Struct({
-    node: Schema.String,
-    types: Schema.optionalKey(Schema.String),
-    workerd: Schema.optionalKey(Schema.String),
-  }),
+  Schema.Struct({ default: Schema.String, workerd: Schema.String }),
+  Schema.Struct({ node: Schema.String, workerd: Schema.String }),
 ]);
 const CorePackageTargetSchema = Schema.Union([Schema.String, NodeConditionalPackageTargetSchema]);
 const CorePackageExportsSchema = Schema.Struct({
@@ -648,6 +644,24 @@ const json = (value: JsonValue): string => `${JSON.stringify(value, null, 2)}\n`
 const inventoryHandlerRootFile = 'verticals/inventory-stock/api/index.ts';
 
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
+const readPrivacyRootProof = Effect.fn('Fixture.privacyRootProof')(function* privacyRootProof() {
+  const ownerPath = 'verticals/privacy';
+  const facadeFile = `${ownerPath}/api/auth/gateway-assertion-redemption.ts`;
+  const facade = yield* Effect.promise(() => readFile(path.join(appRoot, facadeFile), 'utf-8'));
+  const target = governedRedemptionRuntimeTarget(facade, ownerPath);
+  expect(target).toBeDefined();
+  const sources = new Map([[facadeFile, facade]]);
+  if (target !== undefined) {
+    sources.set(target, yield* Effect.promise(() => readFile(path.join(appRoot, target), 'utf-8')));
+  }
+  const context = { ownerPath, sources };
+  return {
+    accepts: (sharedApi: string, handlerRoot: string) =>
+      hasValidGovernedHttpCompositionRoot(sharedApi, handlerRoot, context),
+    context,
+  };
+});
+
 const require = createRequire(import.meta.url);
 
 const observedPackageVersion = (packageName: string): string =>
@@ -1413,10 +1427,38 @@ it.live(
         const owner = path.join(appRoot, 'verticals/party-registry');
         const ownerFiles = yield* Effect.promise(() => readdir(path.join(owner, 'api')));
         const serverNames = ownerFiles.filter((name) => /-(?:read|search)-server\.ts$/u.test(name));
-        // Authored Party read/search transports. This guard was written against 20; the four
-        // Party transports added since (crm-client-intake-review, customer-list,
-        // duplicate-candidate-list, search-labels) are each compared below like the rest.
-        expect(serverNames.length).toBe(24);
+        expect(serverNames.toSorted()).toEqual([
+          'ares-lookup-read-server.ts',
+          'counterparties-search-server.ts',
+          'counterparty-migration-correlation-read-server.ts',
+          'counterparty-organization-ico-facts-read-server.ts',
+          'counterparty-read-read-server.ts',
+          'counterparty-role-history-read-server.ts',
+          'duplicate-candidate-detail-read-server.ts',
+          'guest-party-resolution-read-server.ts',
+          'legacy-ico-inventory-read-server.ts',
+          'organization-business-name-export-read-server.ts',
+          'organization-engagement-profile-read-server.ts',
+          'organization-ico-facts-read-server.ts',
+          'organization-record-facts-read-server.ts',
+          'parties-search-server.ts',
+          'party-contact-point-detail-read-server.ts',
+          'party-contact-points-read-server.ts',
+          'party-correction-read-server.ts',
+          'party-detail-read-server.ts',
+          'party-match-decision-read-server.ts',
+          'party-match-read-server.ts',
+          'party-merge-readiness-read-server.ts',
+          'party-official-identifier-detail-read-server.ts',
+          'party-official-identifier-history-read-server.ts',
+          'party-relationship-detail-read-server.ts',
+          'party-source-effect-receipt-read-server.ts',
+          'person-engagement-profile-read-server.ts',
+          'privacy-measure-execution-read-server.ts',
+          'source-counterparty-admission-read-server.ts',
+          'source-person-admission-read-server.ts',
+          'source-profile-export-read-server.ts',
+        ]);
         yield* Effect.all(
           serverNames.map(
             Effect.fn(function* compareLiveTransport(serverName) {
@@ -2756,13 +2798,10 @@ it.live(
       Effect.fn(function* rejectBoundaryWithoutStaffNamespaceFixture(fixture) {
         yield* run(fixture, scaffoldCommand.microverticalActionBoundary, [scaffoldFlag.vertical, inventorySlug]);
         const generated = yield* readFixtureFile(fixture.root, inventoryActionPrincipalFile);
-        // Drop only the staff namespace registration: the merge keeps the gateway verifier and the
-        // current-release composition the earlier contract requires, so the staff-namespace
-        // migration is the first unsatisfied contract and its own negative executes.
         const stale = generated
           .replace(/^import \{ staffAuthenticationNamespaceRegistryLayer \}.*\n/mu, '')
           .replaceAll(/\s*\| ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>/gu, '')
-          .replace(/\n\s*staffAuthenticationNamespaceRegistryLayer\(\[ACTION_GATEWAY_AUDIENCE\]\),/u, '');
+          .replace(/staffAuthenticationNamespaceRegistryLayer\(\[ACTION_GATEWAY_AUDIENCE\]\)/u, 'Layer.empty');
         expect(stale).not.toMatch(/AuthenticationNamespaceRegistry/u);
         yield* write(fixture.root, inventoryActionPrincipalFile, stale);
         const before = yield* snapshotTree(fixture.root);
@@ -3072,23 +3111,19 @@ export const makeHarness = (applicationComposition) => makeActionTestHarness({
             .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
         ).toEqual(principal);
         yield* expectFailure(
-          generatedModule
-            .verifyActionPrincipal(`Bearer ${billingAssertion.token}`, {
-              currentTimeSeconds: Effect.succeed(1_700_000_001),
-              environment,
-              redemption: testRedemption,
-            })
-            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
+          generatedModule.verifyActionPrincipal(`Bearer ${billingAssertion.token}`, {
+            currentTimeSeconds: Effect.succeed(1_700_000_001),
+            environment,
+            redemption: testRedemption,
+          }),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalScopeError')(error)).toBe(true),
         );
         yield* expectFailure(
-          billingGeneratedModule
-            .verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
-              currentTimeSeconds: Effect.succeed(1_700_000_001),
-              environment,
-              redemption: testRedemption,
-            })
-            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
+          billingGeneratedModule.verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
+            currentTimeSeconds: Effect.succeed(1_700_000_001),
+            environment,
+            redemption: testRedemption,
+          }),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalScopeError')(error)).toBe(true),
         );
         expect(yield* verify(retiringAssertion.token)).toEqual(principal);
@@ -3227,23 +3262,19 @@ export const makeHarness = (applicationComposition) => makeActionTestHarness({
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalMissingError')(error)).toBe(true),
         );
         yield* expectFailure(
-          generatedModule
-            .verifyActionPrincipal('bearer malformed', {
-              currentTimeSeconds: Effect.succeed(1_700_000_001),
-              environment,
-              redemption: testRedemption,
-            })
-            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
+          generatedModule.verifyActionPrincipal('bearer malformed', {
+            currentTimeSeconds: Effect.succeed(1_700_000_001),
+            environment,
+            redemption: testRedemption,
+          }),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalInvalidError')(error)).toBe(true),
         );
         yield* expectFailure(
-          generatedModule
-            .verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
-              currentTimeSeconds: Effect.succeed(1_700_000_001),
-              environment: {},
-              redemption: testRedemption,
-            })
-            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
+          generatedModule.verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
+            currentTimeSeconds: Effect.succeed(1_700_000_001),
+            environment: {},
+            redemption: testRedemption,
+          }),
           (error) => expect(isGeneratedPrincipalError('ActionPrincipalConfigurationError')(error)).toBe(true),
         );
         let acquisitions = 0;
@@ -4499,17 +4530,11 @@ export const outboxWorkers = Object.freeze([
           .toBe(`// @generated by scaffold:outbox-worker worker-host
 // @ontos-outbox-worker-host-owner billing.core
 import { Layer } from 'effect';
-import { makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
-import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 import { OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
 
 export { CorePersistenceLive as outboxWorkerCorePersistenceLive } from '@app/core-runtime/outbox/worker';
 export { DatabaseConfigLive as outboxWorkerDatabaseConfigLive } from '@app/core-runtime/outbox/worker';
 export { OutboxRepositoryLive as outboxWorkerRepositoryLive } from '@app/core-runtime/outbox/worker';
-
-export const outboxWorkerDatabaseIdentityEnrollmentLive = makeDatabaseIdentityEnrollmentLive(
-  defineDatabaseIdentityEnrollment([]),
-);
 
 /** Add owner-local repositories and services required by worker handlers here. */
 const outboxWorkerHandlerLayer = Layer.empty;
@@ -4534,7 +4559,6 @@ import { billingRegistration } from '../../vertical.registration.ts';
 import {
   outboxWorkerCorePersistenceLive,
   outboxWorkerDatabaseConfigLive,
-  outboxWorkerDatabaseIdentityEnrollmentLive,
   outboxWorkerLayer as outboxWorkerDefinitionLayer,
   outboxWorkerRepositoryLive,
 } from './layer.ts';
@@ -4561,7 +4585,6 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     Layer.provide(outboxWorkerRepositoryLive),
     Layer.provide(outboxWorkerCorePersistenceLive),
     Layer.provide(outboxWorkerDatabaseConfigLive),
-    Layer.provide(outboxWorkerDatabaseIdentityEnrollmentLive),
     Layer.provide(NodeCrypto.layer),
   ),
   registrations: outboxWorkers,
@@ -4933,17 +4956,6 @@ export default PurchaseOrdersPage;
         const manifest = yield* readFixtureFile(fixture.root, inventoryManifestFile);
         const registration = yield* readFixtureFile(fixture.root, inventoryRegistrationFile);
         const federation = yield* readFixtureFile(fixture.root, inventoryFederationConfigFile);
-        const contribution = yield* Schema.decodeUnknownEffect(Schema.String)(
-          /navigationContribution\((?<value>\{[\s\S]+?\})\),/u.exec(manifest)?.groups?.['value'],
-        );
-        const navigationModule = `export const navigation = ${contribution};`;
-        const navigationUrl = `data:text/javascript,${encodeURIComponent(navigationModule)}`;
-        const { navigation } = yield* Schema.decodeUnknownEffect(
-          Schema.Struct({ navigation: ShellNavigationContributionSchema }),
-        )(yield* Effect.promise(() => import(navigationUrl)));
-        expect(navigation.icon).toBe('icon-[mdi--file-document-outline]');
-        expect(navigation.label).toEqual({ cs: 'Purchase Orders', en: 'Purchase Orders' });
-        expect(navigation.accessDeclaration?.key).toBe('inventory.stock.purchase-orders.view');
         expect(manifest).toMatch(/inventory\.stock\.navigation\.purchase-orders/u);
         expect(manifest).toMatch(/inventory\.stock\.page\.purchase-orders/u);
         expect(manifest).toMatch(/routePath: '\/inventory-stock\/purchase-orders'/u);
@@ -6342,19 +6354,6 @@ it.live(
         );
         // Every generated-runtime dependency is linked from the real workspace so the fixture
         // typechecks and runs against the same modules the shipped verticals resolve.
-        // The fixture mirrors the whole Core source tree. A partial mirror resolves the same Core
-        // module twice - once through the fixture and once through @app/core-runtime - and then
-        // compares two structurally different copies of one type. The fixture still owns its own
-        // index, its policies and the generated core actions, so those stay out of the mirror.
-        const coreSourceRoot = path.join(appRoot, 'packages/core-runtime/src');
-        const mirroredCoreSourceLinks: readonly (readonly [string, string, 'dir' | 'file'])[] = (yield* Effect.promise(
-          () => readdir(coreSourceRoot, { withFileTypes: true }),
-        ))
-          .filter((entry) => !['index.ts', 'modules', 'policies'].includes(entry.name))
-          .map((entry) => {
-            const relativePath = `packages/core-runtime/src/${entry.name}`;
-            return [relativePath, relativePath, entry.isDirectory() ? 'dir' : 'file'] as const;
-          });
         yield* Effect.all(
           (
             [
@@ -6377,9 +6376,19 @@ it.live(
               ['apps/shell-super-app/node_modules/@types/react', 'node_modules/@types/react', 'dir'],
               ['packages/core-runtime/node_modules/@types/pg', 'node_modules/@types/pg', 'dir'],
               ['node_modules/@types/node', 'node_modules/@types/node', 'dir'],
-              ...mirroredCoreSourceLinks,
+              ['packages/core-runtime/src/access', 'packages/core-runtime/src/access', 'dir'],
+              ['packages/core-runtime/src/actions', 'packages/core-runtime/src/actions', 'dir'],
+              ['packages/core-runtime/src/db', 'packages/core-runtime/src/db', 'dir'],
+              ['packages/core-runtime/src/outbox', 'packages/core-runtime/src/outbox', 'dir'],
+              ['packages/core-runtime/src/operations', 'packages/core-runtime/src/operations', 'dir'],
+              ['packages/core-runtime/src/reads', 'packages/core-runtime/src/reads', 'dir'],
+              ['packages/core-runtime/src/database', 'packages/core-runtime/src/database', 'dir'],
+              ['packages/core-runtime/src/environment', 'packages/core-runtime/src/environment', 'dir'],
+              ['packages/core-runtime/src/permissions', 'packages/core-runtime/src/permissions', 'dir'],
+              ['packages/core-runtime/src/auth', 'packages/core-runtime/src/auth', 'dir'],
+              ['packages/core-runtime/src/authorization', 'packages/core-runtime/src/authorization', 'dir'],
               [coreRuntimeModuleEntrypointFile, coreRuntimeModuleEntrypointFile, 'file'],
-            ] satisfies readonly (readonly [string, string, 'dir' | 'file'])[]
+            ] as const
           ).map(([source, target, kind]) =>
             Effect.promise(() => symlink(path.join(appRoot, source), path.join(fixture.root, target), kind)),
           ),
@@ -6659,6 +6668,64 @@ it.live(
 );
 
 it.live(
+  'local immutable governed support layers stay bound to the actual Symmy owner runtime',
+  Effect.fn(function* localSymmyGovernedSupport() {
+    const shared = yield* Effect.promise(() => readFile(path.join(appRoot, SYMMY_CONTRACT_PATH), 'utf-8'));
+    const handler = yield* Effect.promise(() => readFile(path.join(appRoot, SYMMY_HANDLER_PATH), 'utf-8'));
+    expect(handler).toContain(LOCAL_GOVERNED_SUPPORT_DECLARATION);
+    expect(hasValidGovernedHttpCompositionRoot(shared, handler)).toBe(true);
+    const start = handler.indexOf(LOCAL_GOVERNED_SUPPORT_DECLARATION);
+    const end = handler.indexOf('\nconst symmyIntegrationReadinessLayer', start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const detached = `${handler.slice(0, start)}function detachedSupport() {\n${handler.slice(start, end)}\n}\n${handler.slice(end)}`;
+    const variants = [
+      handler.replace(LOCAL_GOVERNED_SUPPORT_DECLARATION, 'let governedReadApiHandlersLive ='),
+      `${handler}\nconst governedReadApiHandlersLive = Layer.empty;\n`,
+      handler.replace('handlers: apiHandlersLive', 'handlers: Layer.empty'),
+      handler.replace(
+        'symmyIntegrationReadinessLayer, governedReadApiHandlersLive',
+        'symmyIntegrationReadinessLayer, Layer.empty',
+      ),
+      detached,
+    ];
+    for (const variant of variants) {
+      expect(variant).not.toBe(handler);
+      expect(hasValidGovernedHttpCompositionRoot(shared, variant)).toBe(false);
+    }
+  }),
+);
+
+it.live(
+  'module API scaffolding accepts local generated support layer declarations',
+  Effect.fn(function* scaffoldLocalGovernedSupport() {
+    yield* withFixture(
+      Effect.fn(function* localGovernedSupportFixture(fixture) {
+        const file = path.join(fixture.root, inventoryHandlerRootFile);
+        const handler = yield* Effect.promise(() => readFile(file, 'utf-8'));
+        expect(handler).toContain(EXPORTED_GOVERNED_SUPPORT_DECLARATION);
+        const local = handler.replace(EXPORTED_GOVERNED_SUPPORT_DECLARATION, LOCAL_GOVERNED_SUPPORT_DECLARATION);
+        yield* Effect.promise(() => writeFile(file, local, 'utf-8'));
+        yield* run(fixture, scaffoldCommand.moduleApi, [
+          scaffoldFlag.vertical,
+          inventorySlug,
+          '--name',
+          fixtureName.resourceDetail,
+          '--authorization',
+          'protected',
+        ]);
+        const generated = yield* Effect.promise(() => readFile(file, 'utf-8'));
+        const shared = yield* readFixtureFile(fixture.root, inventorySharedApiFile);
+        expect(generated).toContain(LOCAL_GOVERNED_SUPPORT_DECLARATION);
+        expect(generated).not.toContain(EXPORTED_GOVERNED_SUPPORT_DECLARATION);
+        expect(generated).toContain('resourceDetailReadApiLive');
+        expect(hasValidGovernedHttpCompositionRoot(shared, generated)).toBe(true);
+      }),
+    );
+  }),
+);
+
+it.live(
   'typed injected governed runtime stays bound to the exported owner composition',
   Effect.fn(function* mergedScenario99() {
     const shared = yield* Effect.promise(() => readFile(path.join(appRoot, partyGovernedContractPath), 'utf-8'));
@@ -6671,7 +6738,7 @@ it.live(
     expect(typedShared).not.toBe(shared);
     expect(hasValidGovernedHttpCompositionRoot(typedShared, handler)).toBe(true);
     const typedHandler = handler.replace(
-      'const apiRuntime = makePartyRegistryApiRuntime(',
+      'const apiRuntime: PartyRegistryApiRuntime = makePartyRegistryApiRuntime(',
       'const apiRuntime: EffectBffDefinition<typeof partyRegistryApi> & EffectBffRuntime<typeof partyRegistryApi> = makePartyRegistryApiRuntime(',
     );
     expect(typedHandler).not.toBe(handler);
@@ -6706,28 +6773,141 @@ it.live(
 it.live(
   'canonical Crypto merge preserves the actual Privacy injected read capability',
   Effect.fn(function* cryptoMergedPrivacyRuntime() {
+    const { accepts: hasPrivacyRuntimeRoot } = yield* readPrivacyRootProof();
     const shared = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_CONTRACT_PATH), 'utf-8'));
     const handler = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_HANDLER_PATH), 'utf-8'));
     expect(handler).toContain(PRIVACY_CRYPTO_READ_MERGE);
-    expect(hasValidGovernedHttpCompositionRoot(shared, handler, PRIVACY_BACKEND_REGISTRATION)).toBe(true);
+    expect(hasPrivacyRuntimeRoot(shared, handler)).toBe(true);
     const quoted = handler.replace(
       PRIVACY_CRYPTO_READ_MERGE,
       `${PRIVACY_CRYPTO_READ_MERGE}\n  const displayLabel = 'Layer';`,
     );
     expect(quoted).not.toBe(handler);
-    expect(hasValidGovernedHttpCompositionRoot(shared, quoted, PRIVACY_BACKEND_REGISTRATION)).toBe(true);
+    expect(hasPrivacyRuntimeRoot(shared, quoted)).toBe(true);
     const renamed = handler.replaceAll(/\breadRuntimeLive\b/gu, 'injectedOwnerRead');
     expect(renamed).not.toBe(handler);
-    expect(hasValidGovernedHttpCompositionRoot(shared, renamed, PRIVACY_BACKEND_REGISTRATION)).toBe(true);
+    expect(hasPrivacyRuntimeRoot(shared, renamed)).toBe(true);
+  }),
+);
+
+it.live(
+  'configured owner redemption remains bound to the actual Privacy runtime',
+  Effect.fn(function* configuredPrivacyRedemptionRuntime() {
+    const { accepts: hasPrivacyRuntimeRoot } = yield* readPrivacyRootProof();
+    const shared = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_CONTRACT_PATH), 'utf-8'));
+    const handler = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_HANDLER_PATH), 'utf-8'));
+    expect(hasPrivacyRuntimeRoot(shared, handler)).toBe(true);
+    const variants = [
+      [
+        'GatewayAssertionRedemptionDatabaseLive,',
+        'CounterfeitRedemptionDatabaseLive as GatewayAssertionRedemptionDatabaseLive,',
+      ],
+      ['gatewayAssertionRedemptionPgClient', 'counterfeitPgClient as gatewayAssertionRedemptionPgClient'],
+      ["from '@effect/sql-pg'", "from './counterfeit-pg.ts'"],
+      ["from 'effect/reactivity'", "from './counterfeit-reactivity.ts'"],
+      [
+        'GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive',
+        'CounterfeitRedemptionLive as GovernedGatewayAssertionRedemptionLive',
+      ],
+      ['Layer.provide(redemptionDatabaseLive)', 'Layer.provide(Layer.empty)'],
+      ['PgClient.layerFrom(gatewayAssertionRedemptionPgClient)', 'PgClient.layerFrom(foreignPgClient)'],
+      ['Layer.provide(Reactivity.layer)', 'Layer.provide(foreignReactivity)'],
+      ['Layer.Error<typeof configuredGatewayAssertionRedemptionLive>', 'Layer.Error<typeof foreignRedemptionLive>'],
+      ['const configuredGatewayAssertionRedemptionLive =', 'let configuredGatewayAssertionRedemptionLive ='],
+      ['const redemptionDatabaseLive =', 'let redemptionDatabaseLive ='],
+    ] as const;
+    for (const [before, after] of variants) {
+      expect(handler).toContain(before);
+      expect(hasPrivacyRuntimeRoot(shared, handler.replace(before, after)), after).toBe(false);
+    }
+    for (const binding of [
+      'configuredGatewayAssertionRedemptionLive',
+      'redemptionDatabaseLive',
+      'GovernedGatewayAssertionRedemptionLive',
+      'GatewayAssertionRedemptionDatabaseLive',
+      'gatewayAssertionRedemptionPgClient',
+      'PgClient',
+      'Reactivity',
+      'DatabaseConfigLive',
+    ]) {
+      expect(hasPrivacyRuntimeRoot(shared, `${handler}\nmutate(${binding});`), binding).toBe(false);
+    }
+  }),
+);
+
+it.live(
+  'configured redemption rejects alternate imported authority aliases and forged owner delegation',
+  Effect.fn(function* configuredRedemptionImportCustody() {
+    const { accepts, context } = yield* readPrivacyRootProof();
+    const shared = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_CONTRACT_PATH), 'utf-8'));
+    const handler = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_HANDLER_PATH), 'utf-8'));
+    expect(accepts(shared, handler)).toBe(true);
+    for (const [modulePath, imported] of [
+      ['@effect/sql-pg', 'PgClient'],
+      ['effect/reactivity', 'Reactivity'],
+      ['@effect/sql-pg/PgClient', 'layerFrom'],
+      ['effect/reactivity/Reactivity', 'layer'],
+      ['@app/core-runtime', 'DatabaseConfigLive'],
+      ['./auth/gateway-assertion-redemption.ts', 'GatewayAssertionRedemptionDatabaseLive'],
+      ['./auth/gateway-assertion-redemption.ts', 'gatewayAssertionRedemptionPgClient'],
+      ['../src/auth/gateway-assertion-redemption-runtime.ts', 'GatewayAssertionRedemptionDatabaseLive'],
+      ['../src/auth/gateway-assertion-redemption-runtime.ts', 'gatewayAssertionRedemptionPgClient'],
+    ]) {
+      for (const extra of [
+        `import { ${imported} as AlternateAuthority } from '${modulePath}';\nmutate(AlternateAuthority);`,
+        `import * as AlternateAuthorityModule from '${modulePath}';\nmutate(AlternateAuthorityModule['${imported}']);`,
+      ]) {
+        expect(accepts(shared, `${handler}\n${extra}`), extra).toBe(false);
+      }
+    }
+    expect(
+      accepts(
+        shared,
+        `${handler}\nimport type { PgClient as ErasedClient } from '@effect/sql-pg';\ntype Client = typeof ErasedClient;`,
+      ),
+    ).toBe(true);
+    expect(hasValidGovernedHttpCompositionRoot(shared, handler)).toBe(false);
+    const facadeFile = `${context.ownerPath}/api/auth/gateway-assertion-redemption.ts`;
+    const facade = context.sources.get(facadeFile) ?? '';
+    const target = governedRedemptionRuntimeTarget(facade, context.ownerPath);
+    expect(target).toBeDefined();
+    for (const invalidFacade of [
+      `${facade}\nexport const extraRuntime = true;`,
+      facade.replace('GatewayAssertionRedemptionLive', 'CounterfeitRedemption as GatewayAssertionRedemptionLive'),
+      facade.replace('../../src/', '../../../foreign/src/'),
+    ]) {
+      expect(invalidFacade).not.toBe(facade);
+      expect(
+        hasValidGovernedHttpCompositionRoot(shared, handler, {
+          ...context,
+          sources: new Map([...context.sources, [facadeFile, invalidFacade]]),
+        }),
+      ).toBe(false);
+    }
+    if (target !== undefined) {
+      const implementation = context.sources.get(target) ?? '';
+      const mutable = implementation.replace(
+        'export const GatewayAssertionRedemptionDatabaseLive',
+        'export let GatewayAssertionRedemptionDatabaseLive',
+      );
+      expect(mutable).not.toBe(implementation);
+      expect(
+        hasValidGovernedHttpCompositionRoot(shared, handler, {
+          ...context,
+          sources: new Map([...context.sources, [target, mutable]]),
+        }),
+      ).toBe(false);
+    }
   }),
 );
 
 it.live(
   'canonical Crypto merge rejects counterfeit capability identities and escaped mutations',
   Effect.fn(function* cryptoMergedPrivacyIdentityGuards() {
+    const { accepts: hasPrivacyRuntimeRoot } = yield* readPrivacyRootProof();
     const shared = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_CONTRACT_PATH), 'utf-8'));
     const handler = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_HANDLER_PATH), 'utf-8'));
-    expect(hasValidGovernedHttpCompositionRoot(shared, handler, PRIVACY_BACKEND_REGISTRATION)).toBe(true);
+    expect(hasPrivacyRuntimeRoot(shared, handler)).toBe(true);
     const tuple = 'const [readRuntimeLive, actionRuntimeLive, gatewayAssertionRedemption] = args;';
     const merge = PRIVACY_CRYPTO_READ_MERGE;
     const mutations: readonly (readonly [string, string])[] = [
@@ -6810,7 +6990,7 @@ it.live(
       expect(handler).toContain(before);
       const changed = handler.replace(before, after);
       expect(changed).not.toBe(handler);
-      expect(hasValidGovernedHttpCompositionRoot(shared, changed, PRIVACY_BACKEND_REGISTRATION), after).toBe(false);
+      expect(hasPrivacyRuntimeRoot(shared, changed), after).toBe(false);
     }
   }),
 );
@@ -6818,9 +6998,10 @@ it.live(
 it.live(
   'canonical Crypto merge requires the executed factory and dominant mounted output',
   Effect.fn(function* cryptoMergedPrivacyRootGuards() {
+    const { accepts: hasPrivacyRuntimeRoot } = yield* readPrivacyRootProof();
     const shared = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_CONTRACT_PATH), 'utf-8'));
     const handler = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_HANDLER_PATH), 'utf-8'));
-    expect(hasValidGovernedHttpCompositionRoot(shared, handler, PRIVACY_BACKEND_REGISTRATION)).toBe(true);
+    expect(hasPrivacyRuntimeRoot(shared, handler)).toBe(true);
     const tuple = 'const [readRuntimeLive, actionRuntimeLive, gatewayAssertionRedemption] = args;';
     const merge = PRIVACY_CRYPTO_READ_MERGE;
     const mutations: readonly (readonly [string, string])[] = [
@@ -6841,10 +7022,10 @@ it.live(
       [merge, `if (condition) { ${merge} }`],
       [merge, `${merge}\n  const [governedReadRuntimeLive] = otherArgs;`],
       ['api: privacyApi,', 'api: unrelatedApi,'],
-      [ASSEMBLED_HANDLER_PROPERTY, 'handlers: Layer.empty,'],
+      [ASSEMBLED_HANDLER_PROPERTY, EMPTY_HANDLER_PROPERTY],
       [ASSEMBLED_HANDLER_PROPERTY, 'handlers: unrelatedHandlers,'],
       [ASSEMBLED_HANDLER_PROPERTY, 'handlers: privacyReadinessLayer.pipe(Layer.provide(apiHandlersLive)),'],
-      ["'@modern-js/bff-effect/assembly'", "'./counterfeit-assembler.ts'"],
+      [ASSEMBLER_MODULE, COUNTERFEIT_ASSEMBLER_MODULE],
       [
         '// <generated-governed-http-handler-layers>',
         '// <generated-governed-http-handler-layers>\n// <generated-governed-http-handler-layers>',
@@ -6856,7 +7037,7 @@ it.live(
       expect(handler).toContain(before);
       const changed = handler.replace(before, after);
       expect(changed).not.toBe(handler);
-      expect(hasValidGovernedHttpCompositionRoot(shared, changed, PRIVACY_BACKEND_REGISTRATION), after).toBe(false);
+      expect(hasPrivacyRuntimeRoot(shared, changed), after).toBe(false);
     }
     const legacyDecoy =
       '\nconst readRuntimeLive = ReadRuntimeLive.pipe(Layer.provide(readRuntimeDependenciesLive));\nconst governedReadRuntimeLive = readRuntimeLive;\n';
@@ -6864,9 +7045,7 @@ it.live(
       expect(handler).toContain(tuple);
       const changed = handler.replace(tuple, replacement) + legacyDecoy;
       expect(changed).not.toBe(handler);
-      expect(hasValidGovernedHttpCompositionRoot(shared, changed, PRIVACY_BACKEND_REGISTRATION), replacement).toBe(
-        false,
-      );
+      expect(hasPrivacyRuntimeRoot(shared, changed), replacement).toBe(false);
     }
     expect(shared).toContain('// <generated-governed-http-api-additions>');
     const decoyShared = shared.replace(
@@ -6874,7 +7053,38 @@ it.live(
       "// const decoy = '// <generated-governed-http-api-additions>';\n// <generated-governed-http-api-additions>",
     );
     expect(decoyShared).not.toBe(shared);
-    expect(hasValidGovernedHttpCompositionRoot(decoyShared, handler, PRIVACY_BACKEND_REGISTRATION)).toBe(false);
+    expect(hasPrivacyRuntimeRoot(decoyShared, handler)).toBe(false);
+  }),
+);
+
+it.live(
+  'typed governed runtime factory stays bound to the actual Party owner composition',
+  Effect.fn(function* typedGovernedRuntimeFactory() {
+    const shared = yield* Effect.promise(() => readFile(path.join(appRoot, partyGovernedContractPath), 'utf-8'));
+    const handler = yield* Effect.promise(() => readFile(path.join(appRoot, partyGovernedHandlerPath), 'utf-8'));
+    expect(handler).toContain('export const makePartyRegistryApiRuntime:');
+    expect(hasValidGovernedHttpCompositionRoot(shared, handler)).toBe(true);
+    const changes = [
+      ['export const makePartyRegistryApiRuntime:', 'const makePartyRegistryApiRuntime:'],
+      ['...args: PartyRegistryApiRuntimeArguments', '...args: UnrelatedArguments'],
+      ['  ...args\n) => {', '  ...foreignArgs\n) => {'],
+      [
+        'const apiRuntime: PartyRegistryApiRuntime = makePartyRegistryApiRuntime(',
+        'const apiRuntime: PartyRegistryApiRuntime = unrelatedFactory(',
+      ],
+      [RESOLVED_HANDLER_PROPERTY, EMPTY_HANDLER_PROPERTY],
+      [ASSEMBLER_MODULE, COUNTERFEIT_ASSEMBLER_MODULE],
+    ] as const;
+    for (const [before, after] of changes) {
+      expect(handler).toContain(before);
+      expect(hasValidGovernedHttpCompositionRoot(shared, handler.replace(before, after)), after).toBe(false);
+    }
+    const legacyDecoy =
+      '\nconst readRuntimeLive = ReadRuntimeLive.pipe(Layer.provide(readRuntimeDependenciesLive));\nconst governedReadRuntimeLive = readRuntimeLive;\n';
+    for (const [before, after] of changes.slice(1, 3)) {
+      const detached = handler.replace(before, after) + legacyDecoy;
+      expect(hasValidGovernedHttpCompositionRoot(shared, detached), after).toBe(false);
+    }
   }),
 );
 
@@ -6887,10 +7097,7 @@ it.live(
     expect(handler).toMatch(/makePricingApiRuntime\s*=\s*\(\)[\s\S]*=>\s*assembleEffectBffRuntime\(/u);
     expect(hasValidGovernedHttpCompositionRoot(shared, handler)).toBe(true);
     expect(
-      hasValidGovernedHttpCompositionRoot(
-        shared,
-        handler.replace('handlers: resolvedApiHandlersLive,', 'handlers: Layer.empty,'),
-      ),
+      hasValidGovernedHttpCompositionRoot(shared, handler.replace(RESOLVED_HANDLER_PROPERTY, EMPTY_HANDLER_PROPERTY)),
     ).toBe(false);
   }),
 );
@@ -6905,8 +7112,8 @@ it.live(
         'const resolvedApiHandlersLive = apiHandlersLive.pipe(',
         'const resolvedApiHandlersLive = unrelatedHandlers.pipe(',
       ],
-      ["'@modern-js/bff-effect/assembly'", "'./counterfeit-assembler.ts'"],
-      ['handlers: resolvedApiHandlersLive,', 'handlers: unrelatedHandlers,'],
+      [ASSEMBLER_MODULE, COUNTERFEIT_ASSEMBLER_MODULE],
+      [RESOLVED_HANDLER_PROPERTY, 'handlers: unrelatedHandlers,'],
     ] as const) {
       expect(handler.includes(before)).toBeTruthy();
       expect(hasValidGovernedHttpCompositionRoot(shared, handler.replace(before, after))).toBe(false);
