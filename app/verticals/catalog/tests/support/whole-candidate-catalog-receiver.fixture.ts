@@ -90,7 +90,7 @@ import { VariantRefSchema } from '../../shared/resources/variant.ts';
 import { catalogApi } from '../../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { ActionRepository, makeActionRuntime } from '@app/core-runtime/testing/actions';
-import { makeCatalogScriptedAccess } from './catalog-scripted-access-seam.ts';
+import { CatalogScriptedAccess, catalogScriptedAccessLayer } from './catalog-scripted-access-seam.ts';
 
 const readOnlyBootstrapType = 'bootstrap-read-only' as const;
 const configurationChoiceKey = 'fixture-finish';
@@ -257,12 +257,17 @@ const wholeCandidateCatalogRuntime = Effect.fn('WholeCandidateCatalog.runtime')(
   const gateway = ModuleEntrypointGatewayLive.pipe(Layer.provide(stateGate));
   // One scripted seam, bound once: the scope resolver reads it from context and the Action runner
   // receives that same gate already bound to the fixture's inert ports (see the seam's own note).
-  const { bound: boundAccessGate, services: accessServices } = yield* makeCatalogScriptedAccess({
-    deniedPrincipalIds: [bootstrap.deniedPrincipalId],
-    selectableLegalEntityIds: [bootstrap.legalEntityId],
-    spec: { defaultAnswer: { outcome: 'ALLOWED' } },
-    unavailable: bootstrap.accessOutcome === 'unavailable',
-  });
+  const { bound: boundAccessGate, services: accessServices } = Context.get(
+    yield* Layer.build(
+      catalogScriptedAccessLayer({
+        deniedPrincipalIds: [bootstrap.deniedPrincipalId],
+        selectableLegalEntityIds: [bootstrap.legalEntityId],
+        spec: { defaultAnswer: { outcome: 'ALLOWED' } },
+        unavailable: bootstrap.accessOutcome === 'unavailable',
+      }),
+    ),
+    CatalogScriptedAccess,
+  );
   const access = Layer.succeedContext(accessServices);
   const scopes = OperationalScopeResolverLive.pipe(
     Layer.provide(Layer.mergeAll(persistence, ContextAccessLive, access)),
