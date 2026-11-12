@@ -83,10 +83,12 @@ describe('finance.billing backend and full publication boundary', () => {
       invoiceResourceDescriptor,
     ]);
     expect(manifest.publicSurface.mcp).toEqual(financeBillingMcpContribution);
-    expect(Object.keys(manifest.publicSurface.components)).toEqual(['page-records']);
+    expect(Object.keys(manifest.publicSurface.components)).toEqual(['page-records', 'page-vat']);
     expect(manifest.publicSurface.components['page-records']).toBeTypeOf('function');
+    expect(manifest.publicSurface.components['page-vat']).toBeTypeOf('function');
     const fullEntrypoints = getVerticalRuntimeEntrypoints(registration);
     expect(fullEntrypoints.pages['page-records']).toBeTypeOf('function');
+    expect(fullEntrypoints.pages['page-vat']).toBeTypeOf('function');
     for (const key of Object.keys(manifest.publicSurface.api)) {
       expect(fullEntrypoints.api[key]).toBeTypeOf('function');
     }
