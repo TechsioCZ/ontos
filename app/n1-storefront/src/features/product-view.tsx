@@ -24,6 +24,8 @@ import { productShareHref, productShareOrigin } from "./product-share";
 
 type Parameter = ProductDetailModel["parameters"][number];
 const emptyCategories: CatalogModel["categories"] = [];
+/** Keep percentage-sized mobile columns within their actual container. */
+const fluidTable = { minWidth: "100%" };
 const galleryItems = (images: readonly string[], imageAlt: string) =>
   images.map((src, index) => ({
     alt: imageAlt,
@@ -336,7 +338,7 @@ export const ProductView = ({
                       enableSorting={false}
                       hideHeader
                       size="sm"
-                      slotProps={{ root: { "aria-label": d.productParameters } }}
+                      slotProps={{ root: { "aria-label": d.productParameters, style: fluidTable } }}
                       tableLayout="fixed"
                       variant="line"
                     />
