@@ -7,6 +7,8 @@
  *
  * The old release reads every product, order and ledger the new release wrote with its own decoders, rewrites each of
  * them through its own write paths (every product, the order, the ledger), and every amount stays exactly as written.
+ * It sells every product and variant at the price the new release sold it at, written after Tax priced the company
+ * included (N1's jacket at 10 623,80 per variant); only a variant priced at 12 % beside one stored at 10 % sells lower.
  */
 import { readFileSync } from 'node:fs';
 
@@ -40,6 +42,7 @@ import { MerchandiseCommandPayloadSchema } from '../../verticals/merchandise/sha
 import { merchandiseRelations } from '../../verticals/merchandise/src/database/schema.ts';
 import { readSnapshot } from '../../verticals/merchandise/src/services/merchandise-store.ts';
 import { persistenceService } from '../../verticals/merchandise/src/services/persistence.service.ts';
+import { computeProductRecords } from '../../verticals/merchandise/src/services/stock-levels.ts';
 
 const unused = () => Effect.die('Unexpected production reference transport');
 const financeBoundary = Layer.mergeAll(
@@ -85,6 +88,33 @@ it.live(
         ]);
       }
 
+      // What this release sells each product and variant at, with the vatRate the new release wrote: exactly what the
+      // new release sold it at, and never more where its variants disagree.
+      const records = computeProductRecords(state ?? { categories: [], movements: [], orders: [], products: [] });
+      const sellingNow = Object.fromEntries(
+        Object.keys(report.selling).map((id) => {
+          const record = records.find((entry) => String(entry.id) === id);
+          return [
+            id,
+            [
+              record?.grossPriceMinor ?? null,
+              ...(record?.variantRecords ?? []).map((entry) => entry.grossPriceMinor ?? null),
+            ],
+          ];
+        }),
+      );
+      const lower = new Set<string>(report.sellingLowerAfterRollback);
+      for (const [id, prices] of Object.entries<readonly (number | null)[]>(report.selling)) {
+        if (lower.has(id)) {
+          expect(sellingNow[id]?.length).toBe(prices.length);
+          expect(sellingNow[id]?.every((price, index) => price !== null && price <= (prices[index] ?? 0))).toBe(true);
+          expect(sellingNow[id]?.[0]).toBe(prices[0]);
+        } else {
+          expect([id, sellingNow[id]]).toEqual([id, prices]);
+        }
+      }
+      expect(sellingNow['spyder-jacket']).toEqual([1_062_380, 1_062_380, 1_062_380, 1_062_380, 1_062_380, 1_062_380]);
+
       const revisionNow = adminPg
         .unsafe<{ readonly revision: number }>(
           'select revision from demo_merchandise.catalog_heads where tenant_id = $1 and legal_entity_id = $2',
@@ -112,6 +142,23 @@ it.live(
         yield* apply({ _tag: 'UpdateProduct', id: product.id, patch: { name: product.name } });
       }
       yield* apply({ _tag: 'ChangeOrderStatus', id: report.orderId, status: 'CONFIRMED' });
+      // A customer orders a jacket variant from this release: 10 623,80, as the new release charged.
+      const jacketVariant = state?.products.find((entry) => String(entry.id) === 'spyder-jacket')?.variants?.[1]?.id;
+      const jacketOrder = yield* apply({
+        _tag: 'PlaceStorefrontOrder',
+        clientRequestId: 'vat-reverse-old-jacket',
+        contact: { email: 'tereza@example.cz', name: 'Tereza Ukázková' },
+        deliveryAddress: { city: 'Brno', postalCode: '602 00', street: 'Ukázková 12' },
+        lines: [
+          { expectedUnitPriceMinor: 1_062_380, productId: 'spyder-jacket', quantity: 1, variantId: jacketVariant },
+        ],
+        shippingMethod: 'ZASILKOVNA',
+      });
+      const placed =
+        jacketOrder !== null && typeof jacketOrder === 'object' && 'storefrontOrder' in jacketOrder
+          ? jacketOrder.storefrontOrder
+          : undefined;
+      expect([placed?.outcome, placed?.lines.map((line) => line.unitPriceMinor)]).toEqual(['PLACED', [1_062_380]]);
 
       // Every amount stays exactly as the new release wrote it.
       const products = yield* adminPg.unsafe<{
@@ -128,8 +175,8 @@ it.live(
       expect(products).toEqual(report.products);
       const orders = yield* adminPg.unsafe<{ readonly id: string; readonly total: number }>(
         `select id, total_minor::integer as total from demo_merchandise.orders
-        where tenant_id = $1 and legal_entity_id = $2 order by id`,
-        [tenantId, companyId],
+        where tenant_id = $1 and legal_entity_id = $2 and id <> $3 order by id`,
+        [tenantId, companyId, placed?.orderId ?? ''],
       );
       expect(orders).toEqual(report.orders);
 

@@ -16,6 +16,7 @@ import {
   loadDatabaseConnectionPair,
 } from '@app/core-runtime';
 import type { ActionServicePreparationContext, OperationalScope } from '@app/core-runtime';
+import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { makeTestBoundAccessGate } from '@app/core-runtime/testing/access-gate';
 import { installOperationalScope } from '@app/core-runtime/testing/actions';
 import { GatewayPrincipalVerifierConfiguration } from '../../packages/gateway-principal-verifier/src/server.ts';
@@ -24,7 +25,7 @@ import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { defineRelations } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Config, Crypto, Effect, Layer, Option, Predicate, Redacted, Schema, Scope } from 'effect';
+import { Config, Crypto, DateTime, Effect, Layer, Option, Predicate, Redacted, Ref, Schema, Scope } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
@@ -39,9 +40,13 @@ import {
 import { financeStates } from '../../verticals/finance-billing/src/database/schema.ts';
 import { FinanceTaxRates } from '../../verticals/finance-billing/src/integrations/tax-rates.ts';
 import { MerchandiseCommandPayloadSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
-import type { FetchedTaxRates } from '../../verticals/merchandise/src/services/tax-rates.ts';
+import { TaxRuleRevisionIdSchema } from '../../verticals/merchandise/shared/domain/merchandise-model.ts';
+import { recordsRead } from '../../verticals/merchandise/src/api/records.read.ts';
 import { merchandiseRelations } from '../../verticals/merchandise/src/database/schema.ts';
+import { TaxRateSource } from '../../verticals/merchandise/src/services/tax-rates.ts';
+import type { FetchedTaxRates, TaxRateBook } from '../../verticals/merchandise/src/services/tax-rates.ts';
 import { persistenceService } from '../../verticals/merchandise/src/services/persistence.service.ts';
+import type { PreparedTax } from '../../verticals/merchandise/src/services/persistence.service.ts';
 import { merchandiseRegistration } from '../../verticals/merchandise/vertical.registration.ts';
 
 const FixtureSchema = Schema.Struct({
@@ -74,7 +79,45 @@ const financeBoundary = Layer.mergeAll(
 const reverseReport = Config.option(Config.String('ONTOS_VAT_REVERSE_REPORT'));
 type FinanceCommandEncoded = (typeof ApplyCommandPayloadSchema.Encoded)['command'];
 /** Tax not asked: the migrated rates serve, as right after the deploy. */
-const NOT_ASKED = { fetched: Option.getOrUndefined(Option.none<FetchedTaxRates>()), refused: false };
+const NOT_ASKED: PreparedTax = { fetched: Option.getOrUndefined(Option.none<FetchedTaxRates>()), refused: false };
+/** Tax's Czech baseline for the company: a payer from 1 January 2024 (Prague), standard 21 %, reduced 12 %. */
+const PRAGUE_2024 = DateTime.makeUnsafe('2023-12-31T23:00:00.000Z');
+const STANDARD = 'cz.vat.standard';
+const REDUCED = 'cz.vat.reduced';
+const BASELINE: TaxRateBook = {
+  fingerprint: 'tax:baseline-2024',
+  periods: [
+    {
+      code: STANDARD,
+      effectiveFrom: PRAGUE_2024,
+      ratePercent: '21',
+      taxRuleRevisionId: TaxRuleRevisionIdSchema.make('rule-revision-standard-21'),
+    },
+    {
+      code: REDUCED,
+      effectiveFrom: PRAGUE_2024,
+      ratePercent: '12',
+      taxRuleRevisionId: TaxRuleRevisionIdSchema.make('rule-revision-reduced-12'),
+    },
+  ],
+  regime: 'VAT_PAYER',
+};
+const JACKET_ID = 'spyder-jacket';
+const JacketVariantSchema = Schema.StructWithRest(Schema.Struct({ name: Schema.String }), [
+  Schema.Record(Schema.String, Schema.Json),
+]);
+/** The prices a storefront detail shows for each product: its own, then each sellable variant's. */
+const StorefrontPricesSchema = Schema.Struct({
+  products: Schema.Array(
+    Schema.Struct({
+      grossPriceMinor: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+      id: Schema.String,
+      variantRecords: Schema.optionalKey(
+        Schema.Array(Schema.Struct({ grossPriceMinor: Schema.optionalKey(Schema.NullOr(Schema.Number)) })),
+      ),
+    }),
+  ),
+});
 const uuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 
 it.live('this release writes products, orders and invoices in its own shape for the rollback rehearsal', () =>
@@ -92,8 +135,9 @@ it.live('this release writes products, orders and invoices in its own shape for 
       yield* makeTestPgClient(connections.runtime.connectionString, { maxConnections: 1 }),
       merchandiseRelations,
     );
+    const gate = makeTestBoundAccessGate({ defaultAnswer: { outcome: 'ALLOWED' } });
     const native = yield* makeNativeReadTestContext({
-      accessDecision: makeTestBoundAccessGate({ defaultAnswer: { outcome: 'ALLOWED' } }).bound,
+      accessDecision: gate.bound,
       connections: {
         admin: { connectionString: Redacted.make(connections.admin.connectionString) },
         runtime: { connectionString: Redacted.make(connections.runtime.connectionString) },
@@ -133,7 +177,9 @@ it.live('this release writes products, orders and invoices in its own shape for 
         [tenantId, companyId],
       )
       .pipe(Effect.map(([head]) => head?.revision ?? 0));
-    /** One command through this release's owner write path, the migrated rates in use (Tax not asked). */
+    /** Tax's answer the writes get: none at first (the migrated rates serve), later Tax's baseline. */
+    const taxAnswer = yield* Ref.make(NOT_ASKED);
+    /** One command through this release's owner write path. */
     const apply = Effect.fn('VatReverse.apply')(function* apply(command: Schema.Json, id?: string) {
       const correlationId = id ?? (yield* uuid);
       const scope: OperationalScope = { ...native.principal, correlationId };
@@ -141,11 +187,12 @@ it.live('this release writes products, orders and invoices in its own shape for 
         command,
         expectedRevision: yield* revisionNow,
       });
+      const tax = yield* Ref.get(taxAnswer);
       return yield* runtimeDb.transaction((tx) =>
         installOperationalScope(tx, scope, defineDatabaseIdentityEnrollment([])).pipe(
           Effect.flatMap((scoped) =>
             persistenceService(scoped, {
-              prepared: { actionInvocationId: correlationId, payload, tax: NOT_ASKED },
+              prepared: { actionInvocationId: correlationId, payload, tax },
               scope,
             }),
           ),
@@ -180,7 +227,7 @@ it.live('this release writes products, orders and invoices in its own shape for 
         name: 'Nový výrobek',
         priceMinor: 4000,
         sku: 'NEW-RELEASE-1',
-        taxClassificationCode: 'cz.vat.reduced',
+        taxClassificationCode: REDUCED,
         unit: 'ks',
       },
       createdId,
@@ -199,6 +246,81 @@ it.live('this release writes products, orders and invoices in its own shape for 
       priceMinor: 12_345,
       variantId: variant?.id ?? '',
     });
+    // BOOK-IT gains two variants while it is still held at 10 %.
+    yield* apply({
+      _tag: 'UpdateProduct',
+      id: 'book-it',
+      patch: {
+        variants: [
+          { attributes: 'Licence: roční', id: 'yearly', name: 'Roční', priceMinor: 30_000, sku: 'BOOK-IT-Y' },
+          { attributes: 'Licence: měsíční', id: 'monthly', name: 'Měsíční', priceMinor: 40_000, sku: 'BOOK-IT-M' },
+        ],
+      },
+    });
+
+    // Tax prices the company (its baseline: standard 21 %, reduced 12 %), and the writes after it: a rename of BOOK-IT
+    // (its stored prices stay at 10 %), a price change at 12 %, a variant priced at 12 % beside one stored at 10 % (the
+    // variants now disagree), and an edit of the jacket's variants (N1's 38SA073510-BLK, mistyped product net).
+    yield* Ref.set(taxAnswer, { fetched: { book: BASELINE, fetchedAt: yield* DateTime.now }, refused: false });
+    yield* apply({ _tag: 'UpdateProduct', id: 'book-it', patch: { name: 'BOOK-IT po ocenění daní' } });
+    yield* apply({ _tag: 'ChangePrice', id: 'p-reduced', priceMinor: 30_000 });
+    yield* apply({ _tag: 'ChangePrice', id: 'book-it', priceMinor: 41_000, variantId: 'monthly' });
+    const jacketVariants = yield* adminPg.unsafe<{ readonly document: Schema.Json }>(
+      `select document from demo_merchandise.product_variants
+        where tenant_id = $1 and legal_entity_id = $2 and product_id = $3 order by position`,
+      [tenantId, companyId, JACKET_ID],
+    );
+    yield* apply({
+      _tag: 'UpdateProduct',
+      id: JACKET_ID,
+      patch: {
+        variants: jacketVariants.map(({ document }) => {
+          const written = Schema.decodeUnknownSync(JacketVariantSchema)(document);
+          return { ...written, name: `${written.name} (upraveno)` };
+        }),
+      },
+    });
+    const [head] = yield* adminPg.unsafe<{ readonly source: string }>(
+      `select tax_rates ->> 'source' as source from demo_merchandise.catalog_heads
+        where tenant_id = $1 and legal_entity_id = $2`,
+      [tenantId, companyId],
+    );
+    expect(head?.source).toBe('TAX');
+
+    // What the storefront sells each product and variant at now; the old release must sell at exactly these after the
+    // rollback, except BOOK-IT's variant priced at 12 %, which it sells at 10 % (lower, never higher).
+    const productIds = yield* adminPg.unsafe<{ readonly id: string }>(
+      'select id from demo_merchandise.products where tenant_id = $1 and legal_entity_id = $2 order by id',
+      [tenantId, companyId],
+    );
+    const storefront = yield* native.runtime
+      .runRead({
+        input: {
+          view: {
+            storefront: true,
+            storefrontCatalog: { fields: 'full', productIds: productIds.map(({ id }) => id) },
+          },
+        },
+        principal: native.principal,
+        registration: recordsRead,
+        transport: { correlationId: 'vat-reverse-storefront' },
+      })
+      .pipe(
+        Effect.provide(native.layer),
+        Effect.provideService(AccessDecisionGate, gate.accessDecision),
+        Effect.provideService(TaxRateSource, { read: () => Effect.succeed(BASELINE) }),
+      );
+    const selling = Object.fromEntries(
+      Schema.decodeUnknownSync(StorefrontPricesSchema)(storefront).products.map((product) => [
+        product.id,
+        [
+          product.grossPriceMinor ?? null,
+          ...(product.variantRecords ?? []).map((entry) => entry.grossPriceMinor ?? null),
+        ],
+      ]),
+    );
+    expect(selling[JACKET_ID]).toEqual([1_062_380, 1_062_380, 1_062_380, 1_062_380, 1_062_380, 1_062_380]);
+    expect(selling['book-it']).toEqual([33_000, 33_000, 45_920]);
 
     // Finance: a ledger in this release's shape.
     const reactivity = yield* Reactivity.make;
@@ -255,7 +377,7 @@ it.live('this release writes products, orders and invoices in its own shape for 
         quantity: 1,
         taxRuleRevisionRef: revisionRef('standard'),
         unitPriceMinor: 100_000,
-        vatClassification: 'cz.vat.standard',
+        vatClassification: STANDARD,
         vatRate: 21,
       },
       {
@@ -263,7 +385,7 @@ it.live('this release writes products, orders and invoices in its own shape for 
         quantity: 2,
         taxRuleRevisionRef: revisionRef('reduced'),
         unitPriceMinor: 25_000,
-        vatClassification: 'cz.vat.reduced',
+        vatClassification: REDUCED,
         vatRate: 12,
       },
       { description: 'Osvobozeno', quantity: 1, unitPriceMinor: 5000, vatRate: 0, vatTreatment: 'EXEMPT' },
@@ -294,7 +416,7 @@ it.live('this release writes products, orders and invoices in its own shape for 
         actorLabel: 'Nové vydání',
         name: 'Nájem',
         unitPriceMinor: 100_000,
-        vatClassification: 'cz.vat.standard',
+        vatClassification: STANDARD,
         vatRate: 21,
       },
       financeRevision,
@@ -326,6 +448,11 @@ it.live('this release writes products, orders and invoices in its own shape for 
     expect(products.every((product) => [21, 12, 10].includes(product.rate))).toBe(true);
     expect(products.find((product) => product.id === 'book-it')?.rate).toBe(10);
     expect(products.find((product) => product.id === createdId)?.rate).toBe(12);
+    // The rollback rates: the jacket's variants reproduce at 21 %; BOOK-IT's disagree, so the lower rate; 12 % for the
+    // product repriced after Tax.
+    expect(
+      ['book-it', 'p-reduced', JACKET_ID].map((id) => products.find((product) => product.id === id)?.rate),
+    ).toEqual([10, 12, 21]);
     const orders = yield* adminPg.unsafe<{ readonly id: string; readonly total: number }>(
       `select id, total_minor::integer as total from demo_merchandise.orders
         where tenant_id = $1 and legal_entity_id = $2 order by id`,
@@ -341,6 +468,8 @@ it.live('this release writes products, orders and invoices in its own shape for 
         orders,
         principal: native.principal,
         products,
+        selling,
+        sellingLowerAfterRollback: ['book-it'],
         tenantId,
         variant,
       }),
