@@ -30,6 +30,7 @@ import { rebuildSearchWorker } from './src/workers/rebuild-search.worker.ts';
 const moduleId = 'finance.billing';
 const placementGroup = 'finance-billing';
 const recordsPageKey = 'finance.billing.page.records';
+const vatPageKey = 'finance.billing.page.vat';
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -129,6 +130,30 @@ export const financeBillingRuntimeManifest: VerticalRuntimeRegistrationInput['ma
           order: 300,
           pageKey: recordsPageKey,
         }),
+        navigationContribution({
+          accessDeclaration: {
+            key: 'finance.billing.navigation-vat.read',
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: placementGroup, level: 'basic' },
+            risk: 'routine',
+            selectors: [],
+          },
+          contributionKey: 'finance.billing.navigation.vat',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'protected' },
+            entrypointKey: vatPageKey,
+            moduleKey: moduleId,
+            role: 'page',
+            scope: 'tenant',
+          },
+          groupKey: 'shell.navigation.finance',
+          icon: 'icon-[mdi--percent-outline]',
+          label: { cs: 'DPH', en: 'VAT' },
+          order: 310,
+          pageKey: vatPageKey,
+        }),
         // </generated-module-shell-navigation>
       ],
       pages: [
@@ -154,6 +179,28 @@ export const financeBillingRuntimeManifest: VerticalRuntimeRegistrationInput['ma
           },
           expose: './PageRecords',
           routePath: '/finance',
+        }),
+        pageContribution({
+          accessDeclaration: {
+            key: 'finance.billing.page-vat.read',
+            kind: 'read',
+            modes: ['run'],
+            placement: { group: placementGroup, level: 'basic' },
+            risk: 'routine',
+            selectors: [],
+          },
+          componentKey: 'finance.billing.page-vat',
+          contributionKey: vatPageKey,
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'protected' },
+            entrypointKey: vatPageKey,
+            moduleKey: moduleId,
+            role: 'page',
+            scope: 'tenant',
+          },
+          expose: './PageVat',
+          routePath: '/finance/dph',
         }),
         // </generated-module-shell-pages>
       ],

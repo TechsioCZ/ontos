@@ -27,6 +27,10 @@
       "records": {
         "title": "Faktury a finance",
         "description": "Faktury, úhrady, pohledávky a předání do účetnictví."
+      },
+      "vat": {
+        "title": "DPH",
+        "description": "Režim DPH firmy a sazby pro fakturaci."
       }
     },
     "faktury": {
@@ -535,6 +539,76 @@
         "vat_not_payer": "Firma není plátcem DPH, položky musí být bez daně.",
         "vat_rate_changed": "Sazba DPH se mezitím změnila. Zkontrolujte položky a uložte znovu.",
         "vat_treatment": "Zvolený režim DPH se k tomuto dokladu nehodí."
+      }
+    },
+    "vatSettings": {
+      "title": "DPH",
+      "description": "Režim DPH firmy a sazby, které Finance používá na fakturách, v ceníku a u opakovaných faktur. Změny se ukládají v modulu Daně.",
+      "loading": "Načítám nastavení DPH…",
+      "unavailable": "Nastavení DPH se teď nepodařilo načíst. Zkuste to prosím za chvíli.",
+      "forbidden": "Nemáte oprávnění k nastavení DPH",
+      "forbiddenDescription": "Režim a sazby DPH spravuje účetní s oprávněním k modulu Daně. Požádejte správce firmy o přístup.",
+      "notInstalled": "Modul Daně není pro tuto firmu zapnutý",
+      "notInstalledDescription": "Bez modulu Daně nemá firma žádné sazby DPH. Požádejte správce, aby modul zapnul.",
+      "regimeTitle": "Režim DPH",
+      "regimeChange": "Změnit režim",
+      "regimeHistoryHidden": "Historii režimu vidí jen lidé s oprávněním k daňové evidenci.",
+      "since": "od {{date}}",
+      "between": "{{from}} – {{to}}",
+      "rate": "{{rate}} %",
+      "currentRate": "Nyní {{rate}} % (od {{date}})",
+      "noCurrentRate": "Na dnešek není nastavená žádná sazba.",
+      "undecided": "Na dnešek nelze sazbu určit, protože se dvě sazby překrývají. Zrušte nadbytečný plán.",
+      "planned": "Naplánované změny",
+      "noPlans": "Žádná změna není naplánovaná.",
+      "past": "Dřívější sazby",
+      "noPast": "Dřívější sazby nejsou.",
+      "plan": "Naplánovat změnu",
+      "planTitle": "Naplánovat změnu: {{name}}",
+      "planDescription": "Nová sazba platí od zvoleného dne, dosavadní sazba platí do dne předtím.",
+      "planSave": "Naplánovat",
+      "planLabel": "od {{date}} {{rate}} %",
+      "withdraw": "Zrušit plán",
+      "withdrawTitle": "Zrušit naplánovanou sazbu",
+      "withdrawDescription": "Plán „{{plan}}“ se zruší a dosavadní sazba bude platit dál.",
+      "missing": "Sazba zatím není nastavená",
+      "missingDescription": "Dokud firma tuto sazbu nemá, nelze ji na fakturách vybrat.",
+      "firstRate": "Nastavit sazbu",
+      "firstRateTitle": "Nastavit sazbu: {{name}}",
+      "firstRateDescription": "Sazba platí od zvoleného dne.",
+      "firstRateSave": "Uložit sazbu",
+      "ratePercent": "Sazba (%)",
+      "rateInvalid": "Zadejte celé číslo od 1 do 100.",
+      "from": "Platí od",
+      "fromRequired": "Vyberte den, od kterého platí.",
+      "reason": "Důvod změny",
+      "reasonExample": "Např. změna zákona o DPH",
+      "reasonRequired": "Napište důvod, uloží se do historie.",
+      "regimeLabel": "Režim",
+      "regimeDescription": "Režim platí od zvoleného dne. U dne v minulosti napište důvod.",
+      "regimeReason": "Důvod (u zpětné změny povinný)",
+      "regimeSave": "Uložit režim",
+      "regimeConfirm": "Nahradit plán a uložit",
+      "cancel": "Zavřít",
+      "regime": {
+        "VAT_PAYER": "Plátce DPH",
+        "NON_PAYER": "Neplátce DPH",
+        "NOT_DECLARED": "Režim DPH zatím není nastavený"
+      },
+      "state": {
+        "current": "Platí",
+        "scheduled": "Naplánováno"
+      },
+      "outcome": {
+        "alreadyPlanned": "Od tohoto dne už je změna naplánovaná. Nejdřív ji zrušte.",
+        "approvalRequired": "Tuto změnu musí schválit oprávněná osoba.",
+        "confirmReplace": "Od pozdějšího dne je už naplánovaná jiná změna režimu. Uložením ji nahradíte.",
+        "conflict": "Mezitím někdo DPH změnil. Zobrazujeme aktuální stav, zkontrolujte ho a zkuste to znovu.",
+        "forbidden": "Nemáte oprávnění měnit DPH.",
+        "invalid": "Změnu nelze uložit. Zkontrolujte sazbu a datum.",
+        "notInFuture": "Změnu sazby lze naplánovat jen od budoucího dne.",
+        "reasonRequired": "U zpětné změny režimu napište důvod.",
+        "unavailable": "Změnu se teď nepodařilo uložit. Zkuste to prosím za chvíli."
       }
     }
   }

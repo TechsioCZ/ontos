@@ -23,6 +23,7 @@ export const financeBillingRegistration = defineVerticalRuntimeRegistration({
     pages: {
       // <generated-module-registration-pages>
       'page-records': () => import('./src/routes/[lang]/finance/page.tsx'),
+      'page-vat': () => import('./src/routes/[lang]/finance/dph/page.tsx'),
       // </generated-module-registration-pages>
     },
     reports: {
