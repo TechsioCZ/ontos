@@ -14,6 +14,7 @@ import {
   healModuleCredentialsOnce,
   makeCredentialHolder,
   planModuleCredentialHealing,
+  recordHostBoot,
 } from '../zerops/app-host.mts';
 import type { HandoverChannel } from '../zerops/app-host.mts';
 import {
@@ -289,5 +290,34 @@ describe('module credential healing', () => {
       expect(result.healthy).toBe(false);
       expect(result.messages).toEqual([]);
     }),
+  );
+});
+
+const boot = (index: number) => `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
+
+describe("a container's record of its host boots", () => {
+  it.live('names only the ended boots this container recorded, never another container’s', () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => mkdtempSync(path.join(tmpdir(), 'module-credential-boots-'))),
+      (directory) =>
+        Effect.gen(function* bootRecord() {
+          const file = path.join(directory, 'state', 'boots.json');
+          // A new container (every deploy) has no record: it names no earlier boot.
+          expect(yield* recordHostBoot(file, boot(1))).toEqual([]);
+          expect(yield* recordHostBoot(file, boot(2))).toEqual([boot(1)]);
+          expect(yield* recordHostBoot(file, boot(3))).toEqual([boot(1), boot(2)]);
+          // Another container's record is its own file: it never sees these boots.
+          expect(yield* recordHostBoot(path.join(directory, 'other', 'boots.json'), boot(9))).toEqual([]);
+          // The record stays bounded.
+          for (let index = 4; index <= 30; index += 1) {
+            yield* recordHostBoot(file, boot(index));
+          }
+          expect(yield* recordHostBoot(file, boot(31))).toHaveLength(20);
+          // A record that cannot be read names nothing, so nothing unproven is retired.
+          writeFileSync(file, 'not a record');
+          expect(yield* recordHostBoot(file, boot(32))).toEqual([]);
+        }),
+      (directory) => Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 });

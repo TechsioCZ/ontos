@@ -64,6 +64,7 @@ import {
   Duration,
   Effect,
   Exit,
+  FileSystem,
   Layer,
   Option,
   Order,
@@ -569,11 +570,51 @@ export const provisionModuleCredentialsForRelease = (input: {
       );
 };
 
+/**
+ * Where this container records the boots of its host process. A container runs one host process at a time, so every
+ * boot recorded here other than the current one is a host process of this container that has ended: its keys are
+ * provably this host's own and no longer held by anything running. A new container (every deploy) starts with no
+ * record, so it never names the boots of the container it replaces, which keeps serving until the switch, whatever
+ * host name either of them has.
+ */
+export const HOST_BOOT_RECORD = path.join(workspaceRoot, '.zerops/state/module-credential-boots.json');
+const HOST_BOOT_RECORD_LIMIT = 20;
+const HostBootRecordJson = Schema.fromJsonString(Schema.Array(Schema.String.check(Schema.isUUID())));
+
+/**
+ * Records this boot in the container's boot record and returns the earlier boots recorded there. A record that cannot
+ * be read names no earlier boot, and one that cannot be written is reported: either way nothing is retired that this
+ * host cannot prove is its own; those keys end within a day.
+ */
+export const recordHostBoot = Effect.fn('AppHost.recordHostBoot')(function* recordHostBoot(
+  file: string,
+  bootId: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const earlier = yield* fs.readFileString(file).pipe(
+    Effect.flatMap(Schema.decodeEffect(HostBootRecordJson)),
+    Effect.orElseSucceed((): readonly string[] => []),
+  );
+  const recorded = yield* Schema.encodeEffect(HostBootRecordJson)(
+    [...earlier, bootId].slice(-HOST_BOOT_RECORD_LIMIT),
+  ).pipe(
+    Effect.flatMap((json) =>
+      fs.makeDirectory(path.dirname(file), { recursive: true }).pipe(Effect.andThen(fs.writeFileString(file, json))),
+    ),
+    Effect.exit,
+  );
+  if (Exit.isFailure(recorded)) {
+    yield* Console.error('[app-host] this boot could not be recorded; its keys end within a day if never retired');
+  }
+  return earlier.filter((earlierBoot) => earlierBoot !== bootId);
+});
+
 /** One retirement pass of the provisioning program, reported and never failing the host. */
 const runRetirement = (
   pass: 'retire' | 'retire-own',
   input: {
     readonly compositionRevision: string;
+    readonly earlierBoots: readonly string[];
     readonly providerKeyIds: readonly string[];
     readonly shellEnvironment: ChildEnvironment;
   },
@@ -587,6 +628,7 @@ const runRetirement = (
       `--host=${HOST_ID}`,
       `--boot=${BOOT_ID}`,
       `--revision=${input.compositionRevision}`,
+      ...(pass === 'retire-own' ? [`--earlier-boots=${input.earlierBoots.join(',')}`] : []),
       ...input.providerKeyIds,
     ],
     input.shellEnvironment,
@@ -603,14 +645,16 @@ const runRetirement = (
 
 /**
  * Once the host handed its owners the keys it holds now (`keep`) and the grace period passed for delegated calls
- * already started with the keys they replace, retires the host's own other keys: those of its earlier boots and those
- * it rotated out (`retire-own`, by the host and boot each key is attested with). With `superseded`, the host's
+ * already started with the keys they replace, retires the host's own other keys: those its current boot replaced and
+ * those of the ended boots this container recorded (`earlierBoots`), by the host and boot each key is attested with
+ * (`retire-own`). It never names a boot of another container, even one with the same host name. With `superseded`, the host's
  * release took the authority, and it then also retires the credentials that release superseded: the provisioning
  * program decides from the authority row, only while this release holds it and only credentials bound before its
  * revision took it. A failure is reported; the next renewal or boot retries.
  */
 export const retireAfterHandover = (input: {
   readonly compositionRevision: string;
+  readonly earlierBoots: readonly string[];
   readonly keep: readonly string[];
   readonly shellEnvironment: ChildEnvironment;
   readonly superseded: boolean;
@@ -1124,6 +1168,8 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   // this host serves any traffic, and hands each hosted caller's key over the owners' private channel; the Shell gets
   // none. The channel stays open, so the host replaces keys there (renewed, rotated) without a restart.
   const callers = moduleCredentialCallersOf(ownerIds);
+  // Recorded before any key is issued, so even a boot that fails right after issuing is named by the next one.
+  const earlierBoots = yield* recordHostBoot(HOST_BOOT_RECORD, BOOT_ID);
   const owners = yield* makeCredentialHolder((channel) =>
     startUnitProcess(ownerIds, runtime, ownersEnvironment.environment, memoryBytes, channel),
   );
@@ -1152,6 +1198,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   const retireReplaced = (release: HostRelease, keep: readonly string[], superseded: boolean) =>
     retireAfterHandover({
       compositionRevision: release.compositionRevision,
+      earlierBoots,
       keep,
       shellEnvironment: shellEnvironment.environment,
       superseded,
