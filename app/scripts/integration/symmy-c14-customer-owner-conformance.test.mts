@@ -43,10 +43,7 @@ import { makeSymmyC14CustomerRevisionPlan } from './support/symmy-c14-customer-r
 import {
   customerFixtureWorkloads,
   customerIntakeContext,
-  customerOwnerRelaySources,
-  customerRecoveryRules,
   customerWorkerKey,
-  customerWorkerRules,
 } from './support/symmy-c14-customer-rules.mts';
 import {
   SymmyC14ProductFixtureUnavailable,
@@ -125,7 +122,8 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* actualCustomerConformance() {
-        const appIds = ['party-registry', 'commerce-customer-context', 'privacy', symmyAppId] as const;
+        const ownerAppIds = ['party-registry', 'commerce-customer-context', 'privacy'] as const;
+        const appIds = [...ownerAppIds, symmyAppId] as const;
         const ports = new Map<string, number>();
         for (const appId of appIds) {
           let port = yield* nativePort;
@@ -144,13 +142,10 @@ it.live(
         });
         const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
         const shell = yield* makeApiKeyGatewayNativeFixture({
-          additionalRelaySources: customerOwnerRelaySources,
+          additionalRelaySources: ownerAppIds.map((sourceAppId) => ({ sourceAppId })),
           ownedDatabase: isolated,
           productionGate: true,
-          relaySource: {
-            registeredWorkloads: [...customerWorkerRules, ...customerRecoveryRules],
-            sourceAppId: symmyAppId,
-          },
+          relaySource: { sourceAppId: symmyAppId },
           snapshotJson: yield* encodeProductComposition(snapshot),
         });
         const tenantId = yield* uuid;
@@ -161,8 +156,6 @@ it.live(
         yield* admin`insert into core.legal_entities(legal_entity_id,tenant_id,legal_name,registration_country,registration_number,status)
           values(${legalEntityId},${tenantId},'INTERNAL_C14 selling legal entity','CZ','INTERNAL_C14_ONLY','active')`;
         const integration = yield* seedPrincipal(admin, tenantId, 'integration', shell.providerUserId);
-        assert.isOk(shell.relaySourceProviderUserId);
-        const symmyPrincipal = yield* seedPrincipal(admin, tenantId, 'service', shell.relaySourceProviderUserId);
         const systemId = yield* uuid;
         const governancePrincipalId = yield* uuid;
         yield* admin`insert into core.principals(principal_id,tenant_id,kind,status,display_name)
@@ -188,19 +181,12 @@ it.live(
         const key = yield* shell.issueFixtureProviderKey(integration);
         yield* bindProviderKey(admin, integration, key.providerKeyId);
         yield* key.acknowledgeBinding;
-        const symmyKey = yield* shell.issueFixtureRelaySourceProviderKey(symmyPrincipal);
-        yield* bindProviderKey(admin, symmyPrincipal, symmyKey.providerKeyId);
-        yield* symmyKey.acknowledgeBinding;
-        const moduleKeys = new Map<string, string>([[symmyAppId, Redacted.value(symmyKey.secret)]]);
-        for (const provider of shell.additionalRelaySourceProviderUsers) {
-          const principal = yield* seedPrincipal(admin, tenantId, 'service', provider.providerUserId);
-          const moduleKey = yield* shell.issueFixtureModuleProviderKey({
-            ...principal,
-            sourceAppId: provider.sourceAppId,
-          });
-          yield* bindProviderKey(admin, principal, moduleKey.providerKeyId);
-          yield* moduleKey.acknowledgeBinding;
-          moduleKeys.set(provider.sourceAppId, Redacted.value(moduleKey.secret));
+        // Each owner's own module key, provisioned by the platform for its module principal as on every environment.
+        const moduleKeys = new Map<string, Redacted.Redacted>([
+          [symmyAppId, (yield* shell.provisionRelaySource()).secret],
+        ]);
+        for (const appId of ownerAppIds) {
+          moduleKeys.set(appId, (yield* shell.provisionModuleSource(appId)).secret);
         }
 
         const sourceRouteId = yield* uuid;
@@ -434,7 +420,7 @@ it.live(
           {
             artifacts: Effect.Success<ReturnType<typeof buildProductOwner>>;
             contract: (typeof contracts)[number];
-            moduleKey: string;
+            moduleKey: Redacted.Redacted;
             port: number;
             receiver: Effect.Success<ReturnType<typeof startProductOwner>>;
           }
@@ -455,7 +441,8 @@ it.live(
           const receiver = yield* startProductOwner({
             artifacts,
             contract,
-            environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: moduleKey },
+            environment,
+            moduleKey,
             port,
             prefix: prefixes[appId],
           });
@@ -490,11 +477,14 @@ it.live(
           return yield* unavailable('The actual independent module credential is missing');
         }
         const workerArtifact = yield* buildProductWorker(symmy);
-        const worker = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_NATIVE_WORKER',
-          ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
-        });
+        const worker = yield* startProductWorker(
+          workerArtifact,
+          {
+            ...environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_NATIVE_WORKER',
+          },
+          moduleKey,
+        );
         const ledger =
           admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state from symmy_integration.job_effects where job_id=${accepted.jobId}`.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),
@@ -609,7 +599,7 @@ it.live(
             deliveryId,
             expectedReadPrincipalId: systemId,
             legalEntityId,
-            moduleApiKey: Redacted.make(moduleKey),
+            moduleApiKey: moduleKey,
             nativeAction: nativeProfile,
             operationRequirementKey: profileRecoveryRequirement.key,
             request: {
@@ -801,11 +791,11 @@ it.live(
           contract: privacyRuntime.contract,
           environment: {
             ...environment,
-            ONTOS_GATEWAY_MODULE_API_KEY: privacyRuntime.moduleKey,
             ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: yield* Schema.encodeEffect(
               Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
             )([...privacy.contexts, ...dataPrivacy.contexts]),
           },
+          moduleKey: privacyRuntime.moduleKey,
           port: privacyRuntime.port,
           prefix: '/privacy-api',
         });
@@ -826,11 +816,14 @@ it.live(
           tenantId,
         });
         const revisionJob = yield* submitFor('INTERNAL_C14_CUSTOMER_REVISION_2', revisionPlan);
-        const revisionWorker = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_REVISION_2',
-          ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
-        });
+        const revisionWorker = yield* startProductWorker(
+          workerArtifact,
+          {
+            ...environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_REVISION_2',
+          },
+          moduleKey,
+        );
         const revisionEffects = yield* observeUntil(
           admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state from symmy_integration.job_effects where job_id=${revisionJob.jobId}`.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),
@@ -989,11 +982,14 @@ it.live(
           tenantId,
         });
         const roundTripJob = yield* submitFor('INTERNAL_C14_CUSTOMER_GET_POST', roundTripPlan);
-        const roundTripWorker = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_GET_POST',
-          ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
-        });
+        const roundTripWorker = yield* startProductWorker(
+          workerArtifact,
+          {
+            ...environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_GET_POST',
+          },
+          moduleKey,
+        );
         const roundTripEffects = yield* observeUntil(
           admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state from symmy_integration.job_effects where job_id=${roundTripJob.jobId}`.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),
@@ -1052,11 +1048,14 @@ it.live(
         const admittedBeforeDisable = yield* submitFor('INTERNAL_C14_CUSTOMER_BEFORE_DISABLE');
         expect(admittedBeforeDisable.jobId).not.toBe(accepted.jobId);
         yield* admin`update core.principals set status='disabled',disabled_at=current_timestamp where principal_id=${integration.principalId} and tenant_id=${tenantId}`;
-        const disabledWorker = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_DISABLED_ORIGIN',
-          ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
-        });
+        const disabledWorker = yield* startProductWorker(
+          workerArtifact,
+          {
+            ...environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_CUSTOMER_DISABLED_ORIGIN',
+          },
+          moduleKey,
+        );
         yield* observeUntil(
           admin`select effect_id,effect_key,owner_invocation_id,owner_receipt,state from symmy_integration.job_effects where job_id=${admittedBeforeDisable.jobId}`.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),

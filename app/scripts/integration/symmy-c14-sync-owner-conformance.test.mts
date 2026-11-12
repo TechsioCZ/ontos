@@ -145,8 +145,17 @@ it.live(
           purpose: fixturePurpose,
         });
         const authority = yield* prepareInternalSyncAuthority(isolated, snapshot);
-        const { admin, environment, ingressKey, integration, legalEntityId, shell, systemPrincipalId, tenantId } =
-          authority;
+        const {
+          admin,
+          environment,
+          ingressKey,
+          integration,
+          legalEntityId,
+          moduleKeys,
+          shell,
+          systemPrincipalId,
+          tenantId,
+        } = authority;
         const spiceEnvironment = yield* Config.all({
           SPICEDB_CA_CERT: Config.String('SPICEDB_CA_CERT'),
           SPICEDB_ENDPOINT: Config.String('SPICEDB_ENDPOINT'),
@@ -322,6 +331,7 @@ it.live(
             artifacts: yield* buildProductOwner(contract),
             contract,
             environment: { ...ownerEnvironment, ...faultByOwner.get(appId) },
+            moduleKey: moduleKeys.get(appId),
             port,
             prefix,
           });

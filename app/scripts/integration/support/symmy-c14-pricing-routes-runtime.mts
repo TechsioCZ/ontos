@@ -39,6 +39,7 @@ import {
 } from './symmy-c14-pricing-routes-plan.mts';
 
 const workerKey = 'integration.symmy.execute-symmy-job';
+const marketApp = 'commerce-market-catalog';
 const groupWrite = 'pricing.price-group-catalog.source-write';
 const groupRead = 'pricing.price-group-catalog.source-read';
 const priceWrite = 'commerce.pricing.source-write';
@@ -46,99 +47,15 @@ const priceRead = 'commerce.pricing.source-read';
 const catalogRead = 'commerce.catalog.symmy-product-read';
 const marketRead = 'commerce.market-catalog.source-read';
 const groupModuleId = 'pricing.price-group-catalog';
-const groupAudience = 'price-group-catalog';
-const groupCreateAction = 'pricing.price-group-catalog.create-price-group';
 const groupRevisionAction = 'pricing.price-group-catalog.create-price-group-definition-revision';
 const pricingModule = 'commerce.pricing';
 const definePriceOperation = 'commerce.pricing.define-price';
 const revisePriceOperation = 'commerce.pricing.revise-price';
-const rules = [
-  ...[groupCreateAction, groupRevisionAction].map((actionKey) => ({
-    audience: groupAudience,
-    declarationKey: 'pricing.price-group-catalog.price-group-result-lookup.read',
-    entrypointKey: 'pricing.price-group-catalog.api.price-group-result-lookup',
-    legalEntityScope: 'forbidden' as const,
-    recoveryOf: { actionKey, jobKey: workerKey },
-    schemaVersion: '1',
-    workloadKey: groupRead,
-  })),
-  ...[definePriceOperation, revisePriceOperation].map((actionKey) => {
-    const rule = {
-      audience: 'pricing',
-      declarationKey: 'commerce.pricing.price-source-result-lookup.read',
-      entrypointKey: 'commerce.pricing.api.price-source-result-lookup',
-      legalEntityScope: 'required' as const,
-      recoveryOf: { actionKey, jobKey: workerKey },
-      schemaVersion: '1',
-      workloadKey: priceRead,
-    };
-    return actionKey === definePriceOperation ? { ...rule, allowHistoricalDeliveryRecovery: true } : rule;
-  }),
-  {
-    audience: groupAudience,
-    declarationKey: 'pricing.price-group-catalog.price-group-source-associations.read',
-    entrypointKey: 'pricing.price-group-catalog.api.price-group-source-associations',
-    legalEntityScope: 'forbidden' as const,
-    schemaVersion: '1',
-    workloadKey: groupRead,
-  },
-  {
-    audience: groupAudience,
-    declarationKey: 'pricing.price-group-catalog.price-group.create',
-    entrypointKey: groupCreateAction,
-    legalEntityScope: 'forbidden' as const,
-    schemaVersion: '1',
-    workloadKey: groupWrite,
-  },
-  {
-    audience: groupAudience,
-    declarationKey: 'pricing.price-group-catalog.price-group-definition-revision.create',
-    entrypointKey: groupRevisionAction,
-    legalEntityScope: 'forbidden' as const,
-    schemaVersion: '1',
-    workloadKey: groupWrite,
-  },
-  {
-    audience: 'pricing',
-    declarationKey: 'commerce.pricing.price.define',
-    entrypointKey: definePriceOperation,
-    legalEntityScope: 'required' as const,
-    schemaVersion: '2',
-    workloadKey: priceWrite,
-  },
-  {
-    audience: 'pricing',
-    declarationKey: 'commerce.pricing.price.revise',
-    entrypointKey: revisePriceOperation,
-    legalEntityScope: 'required' as const,
-    schemaVersion: '2',
-    workloadKey: priceWrite,
-  },
-].map((rule) => ({ ...rule, jobKey: workerKey, workerKey }));
-// These exact nested Reads are independent from the upstream Symmy worker enrollment.
-const pricingDelegationRules = [
-  {
-    audience: 'catalog',
-    declarationKey: 'commerce.catalog.selection-evidence.read',
-    entrypointKey: 'commerce.catalog.api.selection-evidence',
-    legalEntityScope: 'forbidden' as const,
-    schemaVersion: '1',
-    workloadKey: catalogRead,
-  },
-  {
-    audience: 'commerce-market-catalog',
-    declarationKey: 'commerce.market-catalog.market-catalog.read',
-    entrypointKey: 'commerce.market-catalog.api.current-market-catalog',
-    legalEntityScope: 'required' as const,
-    schemaVersion: '1',
-    workloadKey: marketRead,
-  },
-].map((rule) => ({ ...rule, jobKey: workerKey, sourceWorkloadKey: priceWrite }));
 const encodeRoute = Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema));
 const encodePolicy = Schema.encodeEffect(Schema.fromJsonString(SymmyJobLifecyclePolicyRefSchema));
 const encodePolicies = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(SymmyJobRetentionPolicySchema)));
 
-/** Starts genuine owner HTTP runtimes and separate actual credentials; no owner business rows are seeded. */
+/** Starts genuine owner HTTP runtimes with platform-provisioned module keys; no owner business rows are seeded. */
 export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingRoutes.fixture')(
   function* makeFixture() {
     const symmyPort = yield* nativePort;
@@ -156,7 +73,7 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
     const marketPort = yield* nativePort;
     const { contracts, snapshot } = yield* productComposition({
       catalog: `http://127.0.0.1:${catalogPort}/`,
-      'commerce-market-catalog': `http://127.0.0.1:${marketPort}/`,
+      [marketApp]: `http://127.0.0.1:${marketPort}/`,
       'price-group-catalog': `http://127.0.0.1:${groupPort}/`,
       pricing: `http://127.0.0.1:${pricingTransportPort}/`,
       'symmy-integration': `http://127.0.0.1:${symmyPort}/`,
@@ -165,7 +82,7 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
     const group = contracts.find(({ deployment }) => deployment.appId === 'price-group-catalog');
     const catalog = contracts.find(({ deployment }) => deployment.appId === 'catalog');
     const pricing = contracts.find(({ deployment }) => deployment.appId === 'pricing');
-    const market = contracts.find(({ deployment }) => deployment.appId === 'commerce-market-catalog');
+    const market = contracts.find(({ deployment }) => deployment.appId === marketApp);
     assert.isOk(catalog);
     assert.isOk(pricing);
     assert.isOk(market);
@@ -197,13 +114,13 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
       schemaVersion: 1,
     });
     const shell = yield* makeApiKeyGatewayNativeFixture({
-      additionalRelaySources: [{ registeredWorkloads: pricingDelegationRules, sourceAppId: 'pricing' }],
+      additionalRelaySources: [{ sourceAppId: 'pricing' }, { sourceAppId: 'catalog' }, { sourceAppId: marketApp }],
       ownedDatabase: isolated,
       priceReadProjectionJson: yield* Schema.encodeEffect(
         Schema.fromJsonString(SymmyPriceReadProjectionConfigurationSchema),
       )(priceReadSources),
       productionGate: true,
-      relaySource: { registeredWorkloads: rules, sourceAppId: 'symmy-integration' },
+      relaySource: { sourceAppId: 'symmy-integration' },
       snapshotJson: yield* encodeProductComposition(snapshot),
     });
     const tenantSlug = `internal-c14-pricing-${tenantId}`;
@@ -216,13 +133,6 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
       tenantId,
       'integration',
       shell.providerUserId,
-    );
-    assert.isOk(shell.relaySourceProviderUserId);
-    const modulePrincipal = yield* seedCustomerFixtureProviderPrincipal(
-      admin,
-      tenantId,
-      'service',
-      shell.relaySourceProviderUserId,
     );
     const systemId = randomUUID();
     yield* admin`insert into core.principals(principal_id,tenant_id,kind,status,display_name)
@@ -262,29 +172,11 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
     )({ principalId: integration.issuerPrincipalId, tenantId });
     yield* bindCustomerFixtureProviderKey(admin, setupActor, setupActorKey.providerKeyId);
     yield* setupActorKey.acknowledgeBinding;
-    const moduleKey = yield* shell.issueFixtureRelaySourceProviderKey({
-      ...modulePrincipal,
-      issuerPrincipalId: modulePrincipal.issuerPrincipalId,
-    });
-    yield* bindCustomerFixtureProviderKey(admin, modulePrincipal, moduleKey.providerKeyId);
-    yield* moduleKey.acknowledgeBinding;
-    const pricingProvider = shell.additionalRelaySourceProviderUsers.find(
-      ({ sourceAppId }) => sourceAppId === 'pricing',
-    );
-    assert.isOk(pricingProvider);
-    const pricingPrincipal = yield* seedCustomerFixtureProviderPrincipal(
-      admin,
-      tenantId,
-      'service',
-      pricingProvider.providerUserId,
-    );
-    const pricingKey = yield* shell.issueFixtureModuleProviderKey({
-      ...pricingPrincipal,
-      issuerPrincipalId: pricingPrincipal.issuerPrincipalId,
-      sourceAppId: 'pricing',
-    });
-    yield* bindCustomerFixtureProviderKey(admin, pricingPrincipal, pricingKey.providerKeyId);
-    yield* pricingKey.acknowledgeBinding;
+    // Each calling owner's own module key, provisioned by the platform for its module principal.
+    const moduleKey = yield* shell.provisionRelaySource();
+    const pricingKey = yield* shell.provisionModuleSource('pricing');
+    const catalogKey = yield* shell.provisionModuleSource('catalog');
+    const marketKey = yield* shell.provisionModuleSource(marketApp);
     const spiceEnvironment = yield* Config.all({
       SPICEDB_CA_CERT: Config.String('SPICEDB_CA_CERT'),
       SPICEDB_ENDPOINT: Config.String('SPICEDB_ENDPOINT'),
@@ -396,7 +288,6 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
       ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: shell.compositionSourceUrl,
       ONTOS_C14_TRACE_PROBLEMS: 'true',
       ONTOS_GATEWAY_ISSUER: shell.issuer,
-      ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(moduleKey.secret),
       ONTOS_GATEWAY_PUBLIC_JWKS: shell.publicJwks,
       ONTOS_SHELL_GATEWAY_BASE_URL: `${shell.baseUrl}/shell-super-app-api`,
       ONTOS_SYMMY_JOB_RETENTION_POLICIES: policies,
@@ -412,6 +303,7 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
       artifacts: symmyArtifacts,
       contract: symmy,
       environment,
+      moduleKey: moduleKey.secret,
       port: symmyPort,
       prefix: '/symmy-integration-api',
     });
@@ -419,6 +311,7 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
       artifacts: catalogArtifacts,
       contract: catalog,
       environment,
+      moduleKey: catalogKey.secret,
       port: catalogPort,
       prefix: '/catalog-api',
     });
@@ -426,20 +319,23 @@ export const makeInternalC14PricingRouteFixture = Effect.fn('InternalC14PricingR
       artifacts: marketArtifacts,
       contract: market,
       environment,
+      moduleKey: marketKey.secret,
       port: marketPort,
       prefix: '/commerce-market-catalog-api',
     });
     const pricingOwner = yield* startProductOwner({
       artifacts: pricingArtifacts,
       contract: pricing,
-      environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(pricingKey.secret) },
+      environment,
+      moduleKey: pricingKey.secret,
       port: pricingPort,
       prefix: '/pricing-api',
     });
-    const worker = yield* startProductWorker(workerArtifact, {
-      ...environment,
-      ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PRICING_ROUTES',
-    });
+    const worker = yield* startProductWorker(
+      workerArtifact,
+      { ...environment, ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PRICING_ROUTES' },
+      moduleKey.secret,
+    );
     const at = DateTime.formatIso(DateTime.add(yield* DateTime.now, { seconds: 30 }));
     const plan = yield* decodeInternalC14PriceGroupPlan({
       at,

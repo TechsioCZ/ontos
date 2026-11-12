@@ -18,8 +18,14 @@ import type {
 import { makePublishedApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeHttpServer } from '@effect/platform-node';
 import { Context, Duration, Effect, FileSystem, Layer, Option, Path, Queue, Ref, Schema, Stream } from 'effect';
+import type { Redacted } from 'effect';
 import { HttpServer } from 'effect/http';
 import { ChildProcess } from 'effect/process';
+
+import {
+  encodeModuleCredentialHandover,
+  MODULE_CREDENTIAL_HANDOVER_VARIABLE,
+} from '../../zerops/module-credentials.mts';
 
 export const c14AppRoot = fileURLToPath(new URL('../../../', import.meta.url));
 export class SymmyC14ProductFixtureUnavailable extends Schema.TaggedError<SymmyC14ProductFixtureUnavailable>()(
@@ -203,6 +209,26 @@ export const buildProductOwner = Effect.fn('SymmyC14ProductFixture.buildOwner')(
   return { ownerArtifact, receiverArtifact };
 });
 
+/**
+ * A child's module key travels the way the host hands it to an owners process: once, on the private channel (file
+ * descriptor 3), and never in the environment. A child given no key holds none, so its delegated calls fail closed.
+ */
+const moduleCredentialChannel = Effect.fn('SymmyC14ProductFixture.moduleCredentialChannel')(function* channel(
+  appId: string,
+  moduleKey: Redacted.Redacted | undefined,
+) {
+  const additionalFds: Record<`fd${number}`, ChildProcess.AdditionalFdConfig> = {};
+  const environment: Record<string, string> = {};
+  if (moduleKey !== undefined) {
+    additionalFds.fd3 = {
+      stream: Stream.make(yield* encodeModuleCredentialHandover({ [appId]: moduleKey }, [appId])),
+      type: 'input',
+    };
+    environment[MODULE_CREDENTIAL_HANDOVER_VARIABLE] = 'fd3';
+  }
+  return { additionalFds, environment };
+});
+
 const readySchema = Schema.Struct({
   marker: OntosDeploymentIdentitySchema,
   port: Schema.Int,
@@ -212,6 +238,8 @@ export const startProductOwner = Effect.fn('SymmyC14ProductFixture.startOwner')(
   readonly artifacts: Effect.Success<ReturnType<typeof buildProductOwner>>;
   readonly contract: OntosModuleDeploymentContract;
   readonly environment: Readonly<Record<string, string>>;
+  /** The owner's own module key, handed over on its private channel; absent for an owner that calls no module. */
+  readonly moduleKey?: Redacted.Redacted | undefined;
   readonly port: number;
   readonly prefix:
     | '/catalog-api'
@@ -239,10 +267,13 @@ export const startProductOwner = Effect.fn('SymmyC14ProductFixture.startOwner')(
     process.execPath,
     input.artifacts.receiverArtifact,
   ];
+  const credentialChannel = yield* moduleCredentialChannel(input.contract.deployment.appId, input.moduleKey);
   const child = yield* ChildProcess.make('env', args, {
+    additionalFds: credentialChannel.additionalFds,
     cwd: `${c14AppRoot}/verticals/${input.contract.deployment.appId}`,
     env: {
       ...input.environment,
+      ...credentialChannel.environment,
       ONTOS_C14_OWNER_ARTIFACT: input.artifacts.ownerArtifact,
       ONTOS_C14_OWNER_PORT: String(input.port),
       ONTOS_C14_OWNER_PREFIX: input.prefix,
@@ -322,13 +353,17 @@ export const buildProductWorker = Effect.fn('SymmyC14ProductFixture.buildWorker'
   return artifact;
 });
 
+/** The Symmy Outbox Worker child; its module key, if any, is handed over on its private channel. */
 export const startProductWorker = Effect.fn('SymmyC14ProductFixture.startWorker')(function* startWorker(
   artifact: string,
   environment: Readonly<Record<string, string>>,
+  moduleKey?: Redacted.Redacted,
 ) {
+  const credentialChannel = yield* moduleCredentialChannel('symmy-integration', moduleKey);
   const child = yield* ChildProcess.make(process.execPath, [artifact], {
+    additionalFds: credentialChannel.additionalFds,
     cwd: `${c14AppRoot}/verticals/symmy-integration`,
-    env: environment,
+    env: { ...environment, ...credentialChannel.environment },
     extendEnv: true,
     stderr: 'pipe',
     stdout: 'pipe',

@@ -665,10 +665,11 @@ it.live(
           count: number;
         }>`select count(*)::integer as count from pricing.prices where tenant_id=${fixture.tenantId}`;
         expect(afterLostAck?.count).toBe(1);
-        const restarted = yield* startProductWorker(fixture.workerArtifact, {
-          ...fixture.environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PRICING_RESTARTED_PROCESS',
-        });
+        const restarted = yield* startProductWorker(
+          fixture.workerArtifact,
+          { ...fixture.environment, ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_PRICING_RESTARTED_PROCESS' },
+          fixture.moduleKey.secret,
+        );
         const defined = yield* Effect.raceFirst(
           observe(
             'The restarted worker did not recover the committed Price receipt',

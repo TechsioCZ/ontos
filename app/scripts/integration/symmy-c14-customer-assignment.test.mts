@@ -10,7 +10,7 @@ import {
 } from '@app/privacy/testing/source-processing-native';
 import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { assert, expect, it } from 'effect-rstest';
-import { DateTime, Duration, Effect, Match, Option, Redacted, Schema } from 'effect';
+import { DateTime, Duration, Effect, Match, Option, Schema } from 'effect';
 import { HttpBody, HttpClient } from 'effect/http';
 import { customerFixtureUuid as uuid } from './support/symmy-c14-customer-native-authority.mts';
 import { internalCustomerSource } from './support/symmy-c14-customer-plan.mts';
@@ -186,7 +186,6 @@ it.live(
           ...privacyRuntime,
           environment: {
             ...fixture.environment,
-            ONTOS_GATEWAY_MODULE_API_KEY: privacyRuntime.moduleKey,
             ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: yield* Schema.encodeEffect(
               Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
             )([...fixture.privacy.contexts, ...policy.contexts, ...evidencePolicy.contexts]),
@@ -240,11 +239,14 @@ it.live(
           ],
         });
         const accepted = yield* fixture.submitFor('INTERNAL_C14_EXPLICIT_ASSIGNMENT', plan);
-        const worker = yield* startProductWorker(fixture.workerArtifact, {
-          ...fixture.environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_ASSIGNMENT_WORKER',
-          ONTOS_GATEWAY_MODULE_API_KEY: fixture.moduleKey,
-        });
+        const worker = yield* startProductWorker(
+          fixture.workerArtifact,
+          {
+            ...fixture.environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_ASSIGNMENT_WORKER',
+          },
+          fixture.moduleKey,
+        );
         const assignedEffects = yield* observeAssignmentUntil(
           admin<{ outcome_status: string | null; state: string }>`select state,outcome->>'status' as outcome_status
             from symmy_integration.job_effects where job_id=${accepted.jobId}`,
@@ -314,7 +316,6 @@ it.live(
           ...partyRuntime,
           environment: {
             ...fixture.environment,
-            ONTOS_GATEWAY_MODULE_API_KEY: partyRuntime.moduleKey,
             ONTOS_PARTY_CLIENT_SOURCE_BINDINGS: yield* json(
               [systemId, recoveryReaderId].map((principalId) => ({
                 ...fixture.sourceIdentity,
@@ -386,7 +387,7 @@ it.live(
                 },
               },
               {
-                apiKey: Redacted.make(fixture.moduleKey),
+                apiKey: fixture.moduleKey,
                 baseUrl: fixture.environment.ONTOS_SHELL_GATEWAY_BASE_URL,
                 requestCorrelation: yield* uuid,
               },

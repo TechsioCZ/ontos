@@ -78,11 +78,9 @@ it.live(
     Effect.scoped(
       Effect.gen(function* taxConformance() {
         const runtime = yield* makeSymmyC14PolicyFixture({
-          declarationKey: 'commerce.tax.seller-vat-regime-declaration.import',
           initializeScopes: (scope) =>
             initializePolicyFixtureScopes(scope).pipe(Effect.provideService(PgClient.PgClient, scope.admin)),
           lifecyclePolicy,
-          operation,
           owner: 'tax',
           workloadKey: 'commerce.tax.symmy-seller-vat-fixture-import',
         });
@@ -96,6 +94,7 @@ it.live(
           sellerId,
           shell,
           symmy,
+          symmyModuleKey,
           symmyPort,
           system,
           tenantId,
@@ -146,6 +145,7 @@ it.live(
           artifacts: yield* buildProductOwner(symmy),
           contract: symmy,
           environment,
+          moduleKey: symmyModuleKey,
           port: symmyPort,
           prefix: '/symmy-integration-api',
         });
@@ -160,10 +160,14 @@ it.live(
         expect(yield* submit(acceptedIdempotencyKey)).toEqual(accepted);
 
         const workerArtifact = yield* buildProductWorker(symmy);
-        const worker = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_SELLER_VAT_PROCESS',
-        });
+        const worker = yield* startProductWorker(
+          workerArtifact,
+          {
+            ...environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_SELLER_VAT_PROCESS',
+          },
+          symmyModuleKey,
+        );
         const failure = (reason: string, workerDiagnostic: Effect.Effect<string>) =>
           Effect.all([
             taxReceiver.diagnostic,
@@ -224,10 +228,14 @@ it.live(
         yield* admin`update core.access_workload_bindings set status='revoked',revoked_at=clock_timestamp()
           where tenant_id=${tenantId} and principal_id=${integration.principalId} and workload_key='integration.symmy-admit'`;
         yield* fs.remove(faultMarker);
-        const restarted = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_SELLER_VAT_RESTARTED_PROCESS',
-        });
+        const restarted = yield* startProductWorker(
+          workerArtifact,
+          {
+            ...environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_SELLER_VAT_RESTARTED_PROCESS',
+          },
+          symmyModuleKey,
+        );
         const final = yield* observePolicyFixtureUntil(
           poll(accepted.jobId),
           ({ status }) => status === 'completed_all',

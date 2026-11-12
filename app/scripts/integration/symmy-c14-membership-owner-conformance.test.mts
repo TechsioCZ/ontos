@@ -38,11 +38,7 @@ import {
   issueMembershipFixtureRecovery,
   MembershipNativeInvocationSchema,
 } from './support/symmy-c14-membership-recovery.mts';
-import {
-  membershipActionKey,
-  membershipReceiptKey,
-  membershipWorkerRules,
-} from './support/symmy-c14-membership-rules.mts';
+import { membershipActionKey, membershipReceiptKey } from './support/symmy-c14-membership-rules.mts';
 import {
   startProductOwner,
   startProductWorker,
@@ -82,7 +78,8 @@ const restartOwner = Effect.fn('SymmyC14Membership.restartOwner')(function* rest
   const receiver = yield* startProductOwner({
     artifacts: runtime.artifacts,
     contract: runtime.contract,
-    environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: runtime.moduleKey },
+    environment,
+    moduleKey: runtime.moduleKey,
     port: runtime.port,
     prefix: appId === 'privacy' ? '/privacy-api' : '/symmy-integration-api',
   });
@@ -104,7 +101,6 @@ it.live(
                 writeTestTenantScopes(core, { legalEntityIds: [legalEntityId], principalId, tenantId }),
               ),
             ),
-          workerRules: membershipWorkerRules,
         });
         const { admin, integration, isolated, legalEntityId, shell, systemId, tenantId } = fixture;
         const sourceRouteId = yield* uuid;
@@ -388,11 +384,14 @@ it.live(
         const beforeWorker = yield* effects;
         expect(beforeWorker).toHaveLength(1);
         expect(beforeWorker.every(({ invocationId }) => Option.isNone(invocationId))).toBe(true);
-        const worker = yield* startProductWorker(fixture.workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_SELECTED_MEMBERSHIP',
-          ONTOS_GATEWAY_MODULE_API_KEY: fixture.moduleKey,
-        });
+        const worker = yield* startProductWorker(
+          fixture.workerArtifact,
+          {
+            ...environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_SELECTED_MEMBERSHIP',
+          },
+          fixture.moduleKey,
+        );
         const settled = yield* observeCustomerFixtureUntil(
           effects,
           (rows) => rows.length === 1 && rows.every(({ state }) => state === 'settled'),
@@ -455,7 +454,7 @@ it.live(
             deliveryId,
             expectedReadPrincipalId: systemId,
             legalEntityId,
-            moduleApiKey: Redacted.make(fixture.moduleKey),
+            moduleApiKey: fixture.moduleKey,
             nativeAction: native,
             operationRequirementKey: requirement.key,
             request,
@@ -555,11 +554,14 @@ it.live(
         const deniedResponse = yield* submit(selectedCode, 'INTERNAL_C14_MEMBERSHIP_CURRENT_PRIVACY_DENIED');
         expect(deniedResponse.status).toBe(202);
         const deniedJob = yield* deniedResponse.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)));
-        const deniedWorker = yield* startProductWorker(fixture.workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_MEMBERSHIP_CURRENT_PRIVACY_DENIED',
-          ONTOS_GATEWAY_MODULE_API_KEY: fixture.moduleKey,
-        });
+        const deniedWorker = yield* startProductWorker(
+          fixture.workerArtifact,
+          {
+            ...environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_MEMBERSHIP_CURRENT_PRIVACY_DENIED',
+          },
+          fixture.moduleKey,
+        );
         const deniedEffects = yield* observeCustomerFixtureUntil(
           admin<{
             state: string;

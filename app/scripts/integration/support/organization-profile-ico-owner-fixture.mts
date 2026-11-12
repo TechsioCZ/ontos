@@ -80,12 +80,10 @@ export const makeOrganizationProfileIcoOwnerFixture = Effect.fn('OrganizationPro
     });
     const admin = yield* PgClient.make({ url: Redacted.make(isolated.connections.admin.connectionString) });
     const shell = yield* makeApiKeyGatewayNativeFixture({
-      additionalRelaySources: appIds
-        .filter((appId) => appId !== commerceApp)
-        .map((sourceAppId) => ({ registeredWorkloads: [], sourceAppId })),
+      additionalRelaySources: appIds.filter((appId) => appId !== commerceApp).map((sourceAppId) => ({ sourceAppId })),
       ownedDatabase: isolated,
       productionGate: true,
-      relaySource: { registeredWorkloads: [], sourceAppId: commerceApp },
+      relaySource: { sourceAppId: commerceApp },
       snapshotJson: yield* encodeProductComposition(snapshot),
     });
     const tenantId = randomUUID();
@@ -115,31 +113,14 @@ export const makeOrganizationProfileIcoOwnerFixture = Effect.fn('OrganizationPro
     const key = yield* shell.issueFixtureProviderKey(integration);
     yield* bindCustomerFixtureProviderKey(admin, integration, key.providerKeyId);
     yield* key.acknowledgeBinding;
-    const moduleKeys = new Map<string, string>();
-    if (shell.relaySourceProviderUserId === undefined) {
-      return yield* unavailable('The company module issuer is missing');
-    }
-    const commercePrincipal = yield* seedCustomerFixtureProviderPrincipal(
-      admin,
-      tenantId,
-      'service',
-      shell.relaySourceProviderUserId,
-    );
-    const commerceKey = yield* shell.issueFixtureRelaySourceProviderKey(commercePrincipal);
-    yield* bindCustomerFixtureProviderKey(admin, commercePrincipal, commerceKey.providerKeyId);
-    yield* commerceKey.acknowledgeBinding;
-    moduleKeys.set(commerceApp, Redacted.value(commerceKey.secret));
-    for (const provider of shell.additionalRelaySourceProviderUsers) {
-      const principal = yield* seedCustomerFixtureProviderPrincipal(
-        admin,
-        tenantId,
-        'service',
-        provider.providerUserId,
-      );
-      const moduleKey = yield* shell.issueFixtureModuleProviderKey({ ...principal, sourceAppId: provider.sourceAppId });
-      yield* bindCustomerFixtureProviderKey(admin, principal, moduleKey.providerKeyId);
-      yield* moduleKey.acknowledgeBinding;
-      moduleKeys.set(provider.sourceAppId, Redacted.value(moduleKey.secret));
+    // Each owner's own module key, provisioned by the platform for its module principal as on every environment.
+    const moduleKeys = new Map<string, Redacted.Redacted>([
+      [commerceApp, (yield* shell.provisionRelaySource()).secret],
+    ]);
+    for (const appId of appIds) {
+      if (appId !== commerceApp) {
+        moduleKeys.set(appId, (yield* shell.provisionModuleSource(appId)).secret);
+      }
     }
     const gateway = yield* shell.issueFixtureSetupGateway({ audience: 'privacy', legalEntityId });
     const principal = yield* initializeGovernor({
@@ -258,7 +239,8 @@ export const makeOrganizationProfileIcoOwnerFixture = Effect.fn('OrganizationPro
       const owner = yield* startProductOwner({
         artifacts: yield* buildProductOwner(contract),
         contract,
-        environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: moduleKey },
+        environment,
+        moduleKey,
         port,
         prefix: prefixes[appId],
       });

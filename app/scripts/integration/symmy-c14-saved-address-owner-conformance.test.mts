@@ -26,7 +26,6 @@ import { SymmyEffectIdSchema } from '@app/shared-contracts/symmy';
 import { SymmyInternalExecutionPlanSchema } from '@app/symmy-integration/symmy-internal-contracts';
 import { expect, it } from 'effect-rstest';
 import { Effect, Redacted, Schema } from 'effect';
-import { savedAddressWorkerRules, savedAddressRecoveryRules } from './support/symmy-c14-saved-address-rules.mts';
 import {
   SavedAddressNativeInvocationSchema,
   issueSavedAddressFixtureRecovery,
@@ -118,7 +117,6 @@ it.live(
               ),
             ),
           verifyPausedIntake: true,
-          workerRules: [...savedAddressWorkerRules, ...savedAddressRecoveryRules],
         });
         const runPrefix = `job:${customerWorkerKey}:run:`;
         // The profile is the actual owner-issued result from the preceding native job.
@@ -219,7 +217,6 @@ it.live(
           contract: privacyRuntime.contract,
           environment: {
             ...environment,
-            ONTOS_GATEWAY_MODULE_API_KEY: privacyRuntime.moduleKey,
             ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: yield* Schema.encodeEffect(
               Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
             )([
@@ -235,15 +232,19 @@ it.live(
               },
             ]),
           },
+          moduleKey: privacyRuntime.moduleKey,
           port: privacyRuntime.port,
           prefix: '/privacy-api',
         });
         ownerDiagnostics.set('privacy', restartedPrivacy.diagnostic);
-        const addressWorker = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_SAVED_ADDRESS_NATIVE_WORKER',
-          ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
-        });
+        const addressWorker = yield* startProductWorker(
+          workerArtifact,
+          {
+            ...environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_SAVED_ADDRESS_NATIVE_WORKER',
+          },
+          moduleKey,
+        );
         const addressPlan = (
           tag: 'AddSavedAddress' | 'UpdateSavedAddress' | 'RemoveSavedAddress',
           payload:
@@ -468,7 +469,7 @@ it.live(
           deliveryId: addDeliveryId,
           expectedReadPrincipalId: systemId,
           legalEntityId,
-          moduleApiKey: Redacted.make(moduleKey),
+          moduleApiKey: moduleKey,
           nativeAction: nativeAdd,
           operationRequirementKey: addressRecoveryRequirement.key,
           request: receiptRequest,
@@ -491,7 +492,7 @@ it.live(
           deliveryId: addDeliveryId,
           expectedReadPrincipalId: systemId,
           legalEntityId,
-          moduleApiKey: Redacted.make(moduleKey),
+          moduleApiKey: moduleKey,
           nativeAction: nativeAdd,
           operationRequirementKey: addressRecoveryRequirement.key,
           request: unknownRequest,
@@ -511,7 +512,7 @@ it.live(
           deliveryId: addDeliveryId,
           expectedReadPrincipalId: systemId,
           legalEntityId,
-          moduleApiKey: Redacted.make(moduleKey),
+          moduleApiKey: moduleKey,
           nativeAction: nativeAdd,
           operationRequirementKey: addressRecoveryRequirement.key,
           request: receiptRequest,
@@ -609,7 +610,7 @@ it.live(
           deliveryId: addDeliveryId,
           expectedReadPrincipalId: systemId,
           legalEntityId,
-          moduleApiKey: Redacted.make(moduleKey),
+          moduleApiKey: moduleKey,
           nativeAction: nativeAdd,
           operationRequirementKey: addressRecoveryRequirement.key,
           request: receiptRequest,
@@ -624,11 +625,14 @@ it.live(
         ).pipe(Effect.flip);
         expect(deniedReceipt).toMatchObject({ status: 503 });
         expect(yield* receipts).toEqual(lifecycleRows);
-        const resumedWorker = yield* startProductWorker(workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_SAVED_ADDRESS_WITHDRAWN_PRIVACY',
-          ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
-        });
+        const resumedWorker = yield* startProductWorker(
+          workerArtifact,
+          {
+            ...environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_SAVED_ADDRESS_WITHDRAWN_PRIVACY',
+          },
+          moduleKey,
+        );
         const deniedRows = yield* observeUntil(
           admin`select a.status from core.action_invocations a join symmy_integration.job_effects e on e.effect_id::text=a.idempotency_key
           where e.job_id=${deniedJob.jobId} and a.tenant_id=${tenantId} and a.action_key='commerce.customer-context.update-saved-address'`,
