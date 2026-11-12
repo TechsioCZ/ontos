@@ -25,10 +25,15 @@ import {
   OrderIdSchema,
   OrderSchema,
   ProductIdSchema,
+  grossUnitPriceMinor,
 } from '../../verticals/merchandise/shared/domain/merchandise-model.ts';
 import { merchandiseRelations } from '../../verticals/merchandise/src/database/schema.ts';
 import { withStorefrontVat } from '../../verticals/merchandise/src/services/merchandise-queries.ts';
-import { loadHead, loadProducts } from '../../verticals/merchandise/src/services/merchandise-store.ts';
+import {
+  loadHead,
+  loadProducts,
+  storeMissingGrossPrices,
+} from '../../verticals/merchandise/src/services/merchandise-store.ts';
 import type { MerchandiseDb } from '../../verticals/merchandise/src/services/merchandise-store.ts';
 import { stockLevelsOf, toProductRecord } from '../../verticals/merchandise/src/services/stock-levels.ts';
 import { heldRatesOf, sellableRatesOf } from '../../verticals/merchandise/src/services/tax-rates.ts';
@@ -48,6 +53,15 @@ const ReportSchema = Schema.Struct({
       vatRate: Schema.Number,
     }),
   ),
+  issued: Schema.Struct({
+    id: Schema.String,
+    totals: Schema.Struct({
+      subtotalMinor: Schema.Number,
+      totalMinor: Schema.Number,
+      vatMinor: Schema.Number,
+      vatRecap: Schema.Array(Schema.Struct({ baseMinor: Schema.Number, rate: Schema.Number, vatMinor: Schema.Number })),
+    }),
+  }),
   orderId: OrderIdSchema,
   products: Schema.Array(
     Schema.Struct({
@@ -127,6 +141,22 @@ const checkProducts = Effect.fn('VatWindow.products')(function* checkProducts(
     hydrated.find(({ product }) => product.id === heldProduct.id)?.stock ?? stockLevelsOf([], heldProduct.id);
   const record = withStorefrontVat(toProductRecord(heldProduct, stock, rates), rates, held);
   expect([record.vatRate, record.grossPriceMinor]).toEqual([10, 33_000]);
+
+  // The first staff read or write backfills a price stored without any gross: the old era's variant without one gets
+  // its gross at the rate its classification sells at (21 %); no stored gross moves, however unrelated to its net.
+  const variantGrosses = adminPg.unsafe<{ readonly gross: number | null; readonly id: string; readonly net: number }>(
+    `select variant_id as id, gross_price_minor::integer as gross, price_minor::integer as net
+       from demo_merchandise.product_variants
+      where tenant_id = $1 and legal_entity_id = $2 and variant_id is not null order by variant_id`,
+    [report.tenantId, report.companyId],
+  );
+  const before = yield* variantGrosses;
+  expect(before.filter((row) => row.gross === null).map((row) => row.id)).toEqual(['stage-no-gross-v']);
+  yield* storeMissingGrossPrices(db, store, rates, held);
+  const after = yield* variantGrosses;
+  expect(after).toEqual(
+    before.map((row) => (row.gross === null ? { ...row, gross: grossUnitPriceMinor(row.net, 21) } : row)),
+  );
   return yield* Effect.void;
 });
 
@@ -158,6 +188,15 @@ const checkLedger = Effect.fn('VatWindow.ledger')(function* checkLedger(report: 
   const expectedLines = report.invoiceLines.map((line) => [line.vatRate, lineClassification(line.vatRate)]);
   const [draft, generated] = state.invoices;
   expect(classified(draft?.lines ?? [])).toEqual(expectedLines);
+  // Issued with 21 %, 12 %, 10 % and 0 % lines: its amounts and VAT recap stay exactly as the old release issued them,
+  // and its 10 % line keeps that rate as a fact, with no classification that could later claim 12 %.
+  expect(draft?.businessState).toBe('CONFIRMED');
+  expect({
+    subtotalMinor: draft?.subtotalMinor,
+    totalMinor: draft?.totalMinor,
+    vatMinor: draft?.vatMinor,
+    vatRecap: draft?.vatRecap,
+  }).toEqual(report.issued.totals);
   expect(draft?.lines?.map((line) => [line.quantity, line.unitPriceMinor])).toEqual(
     report.invoiceLines.map((line) => [line.quantity, line.unitPriceMinor]),
   );

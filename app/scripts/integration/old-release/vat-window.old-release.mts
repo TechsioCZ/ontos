@@ -39,6 +39,7 @@ import {
   CommandReferenceValidators,
   prepareApplyCommandServices,
 } from '../../verticals/finance-billing/src/actions/apply-command.action.ts';
+import { computeInvoiceTotals } from '../../verticals/finance-billing/shared/domain/invoice-totals.ts';
 import { financeStates } from '../../verticals/finance-billing/src/database/schema.ts';
 import { MerchandiseCommandPayloadSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
 import { RecordsResponseSchema } from '../../verticals/merchandise/shared/apis/records.ts';
@@ -250,6 +251,27 @@ it.live('the old release keeps reading and writing whole while the new release m
     });
     yield* apply({ _tag: 'ChangeOrderStatus', id: orderId, status: 'CONFIRMED' });
 
+    // A product whose variant has no gross price, as two of stage's 45,501 variants: stored before the deploy in the old
+    // shape (copied from p1, its variant's gross dropped from column and document), through the migration's triggers.
+    yield* adminPg.unsafe(
+      `insert into demo_merchandise.products
+         select (jsonb_populate_record(null::demo_merchandise.products, to_jsonb(p) || jsonb_build_object(
+           'id', 'stage-no-gross', 'sku', 'STAGE-NG', 'sku_key', 'stage-ng', 'slug', 'stage-no-gross',
+           'document', p.document || '{"sku":"STAGE-NG","slug":"stage-no-gross"}'::jsonb))).*
+           from demo_merchandise.products p where p.tenant_id = $1 and p.legal_entity_id = $2 and p.id = 'p1'`,
+      [tenantId, companyId],
+    );
+    yield* adminPg.unsafe(
+      `insert into demo_merchandise.product_variants
+         select (jsonb_populate_record(null::demo_merchandise.product_variants, to_jsonb(v) || jsonb_build_object(
+           'product_id', 'stage-no-gross', 'variant_id', 'stage-no-gross-v', 'gross_price_minor', null,
+           'document', (v.document - 'grossPriceMinor') || '{"id":"stage-no-gross-v","sku":"STAGE-NG-V"}'::jsonb))).*
+           from demo_merchandise.product_variants v
+          where v.tenant_id = $1 and v.legal_entity_id = $2 and v.product_id = 'p1' and v.variant_id is not null
+          limit 1`,
+      [tenantId, companyId],
+    );
+
     // The old release reads back what it wrote, in its own shape.
     const staff = yield* read({ view: { limit: 250, ordersLimit: 50, summary: true } });
     const productsById = new Map(staff.products.map((product) => [String(product.id), product]));
@@ -284,8 +306,9 @@ it.live('the old release keeps reading and writing whole while the new release m
     const financeApply = Effect.fn('VatWindow.finance')(function* financeApply(
       financeCommand: Schema.Json,
       expectedRevision: number,
+      id?: string,
     ) {
-      const actionInvocationId = yield* uuid;
+      const actionInvocationId = id ?? (yield* uuid);
       const payload = yield* Schema.decodeUnknownEffect(ApplyCommandPayloadSchema)({
         command: financeCommand,
         expectedRevision,
@@ -319,6 +342,7 @@ it.live('the old release keeps reading and writing whole while the new release m
       { description: 'Kniha', quantity: 1, unitPriceMinor: 30_000, vatRate: 10 },
       { description: 'Osvobozeno', quantity: 1, unitPriceMinor: 5000, vatRate: 0 },
     ];
+    // An invoice issued with 21 % and 10 % lines, as stage's two ledgers hold them (21 % ×42 and 10 % ×3 in one).
     let financeRevision = yield* financeApply(
       {
         _tag: 'CreateInvoiceDraft',
@@ -331,6 +355,30 @@ it.live('the old release keeps reading and writing whole while the new release m
         lines: invoiceLines,
       },
       0,
+    );
+    const [created] = yield* adminPg.unsafe<{ readonly id: string }>(
+      `select state #>> '{invoices,0,ref,resourceId}' as id from finance_billing.finance_states
+        where tenant_id = $1 and legal_entity_id = $2`,
+      [tenantId, companyId],
+    );
+    const issuedId = created?.id ?? '';
+    const issuedRef = {
+      moduleId: 'finance.billing',
+      resourceId: issuedId,
+      resourceType: 'finance.billing.invoice',
+      tenantId,
+    };
+    financeRevision = yield* financeApply(
+      { _tag: 'MarkInvoicesPrepared', actorLabel: 'Staré vydání', invoiceRefs: [issuedRef] },
+      financeRevision,
+    );
+    financeRevision = yield* financeApply(
+      {
+        _tag: 'ConfirmInvoice',
+        actorLabel: 'Staré vydání',
+        invoiceRef: issuedRef,
+      },
+      financeRevision,
     );
     financeRevision = yield* financeApply(
       {
@@ -377,6 +425,7 @@ it.live('the old release keeps reading and writing whole while the new release m
         financeRevision,
         heldProductId: heldId,
         invoiceLines,
+        issued: { id: issuedId, totals: computeInvoiceTotals(invoiceLines) },
         orderId,
         products: [
           { gross: grossUnitPriceMinor(2000, 21), id: standardId, net: 2000, vatRate: 21 },
