@@ -88,7 +88,7 @@ it('the app host runs the release step after it publishes the composition, witho
   expect(RELEASE_MODULES_SCRIPT).toBe('scripts/demo/release-tenant-modules.mts');
   const published = host.indexOf('yield* openPublicPort;');
   const step = host.indexOf("'release-modules',");
-  const outbox = host.indexOf('const outbox = yield* startChild(');
+  const outbox = host.indexOf('const outboxHost = yield* makeCredentialHolder(');
   expect(published).toBeGreaterThan(0);
   expect(step).toBeGreaterThan(published);
   expect(outbox).toBeGreaterThan(step);
