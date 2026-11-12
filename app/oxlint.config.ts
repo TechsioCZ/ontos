@@ -1435,6 +1435,19 @@ export default defineConfig({
       rules: { 'anti-slop-effect/no-service-constructor-imports': 'off' },
     },
     {
+      // Exception 4 (owner-declared Search): each Facility Ops search provider binds its staged read to
+      // `makeFacilitySearchServices('<kind>')`, the call the owner-declared Search seam proof follows to the resource
+      // kind the provider reads. Pre-binding the factory in an owner service module or a sibling module fails main's
+      // generated-source and owner-local-callback proofs, so the call stays and only this rule is off here.
+      files: [
+        'verticals/facility-operations/src/search/assets.provider.ts',
+        'verticals/facility-operations/src/search/devices.provider.ts',
+        'verticals/facility-operations/src/search/documents.provider.ts',
+        'verticals/facility-operations/src/search/meters.provider.ts',
+      ],
+      rules: { 'anti-slop-effect/no-service-constructor-imports': 'off' },
+    },
+    {
       // Exception 2 (the optional `mcp` manifest key): these are main's Outbox worker compositions, byte for
       // byte. The data-factory proof cannot follow makeModuleContractFixture through the demo manifest schema's
       // `mcp` contribution (or owner-declared Search, exception 4), so main's clean imports report here.
