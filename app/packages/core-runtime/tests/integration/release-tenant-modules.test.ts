@@ -197,6 +197,30 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
           .unsafe(`select kind, status from core.principals where principal_id = '${releaseActorId(tenantId)}'`)
           .pipe(Effect.orDie);
         expect(actor).toEqual([{ kind: 'system', status: 'active' }]);
+        // Audited like the Action (critical, sensitive): the system actor, the Tenant, the module and the release.
+        const audit = yield* admin
+          .unsafe(
+            `select principal_id, auth_method, audit_profile, outcome, target_module_key, evidence_json
+               from core.audit_events
+              where tenant_id = '${tenantId}' and event_type = 'core.modules.tenant-module-installed-by-release'`,
+          )
+          .pipe(Effect.orDie);
+        expect(audit).toEqual([
+          {
+            audit_profile: 'sensitive',
+            auth_method: 'system',
+            evidence_json: {
+              compositionRevision: RUN,
+              moduleKey: TAX,
+              newState: 'active',
+              previousState: null,
+              risk: 'critical',
+            },
+            outcome: 'succeeded',
+            principal_id: releaseActorId(tenantId),
+            target_module_key: TAX,
+          },
+        ]);
 
         // The next release finds it active: nothing installed, nothing reconciled, no new history or wake-up.
         const second = yield* install(declared(tenantId));
@@ -316,7 +340,7 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
         const { executor } = yield* CoreDatabase;
         const locked = yield* executor
           .transaction((transaction) =>
-            installUnderLock(transaction, { moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }, []),
+            installUnderLock(transaction, { moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }, [], RUN),
           )
           .pipe(Effect.orDie);
         expect(locked).toEqual({ _tag: 'NotSelling' });

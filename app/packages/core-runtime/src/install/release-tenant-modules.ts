@@ -9,7 +9,14 @@ import { preserveSystemPrincipalContextTrust } from '../auth/system-principal-co
 import { CoreDatabase } from '../db/client.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import type { OperationalScope } from '../operations/context.ts';
-import { domainEvents, outboxMessages, tenantModuleStateChanges, tenantModuleStates, tenants } from '../db/schema.ts';
+import {
+  auditEvents,
+  domainEvents,
+  outboxMessages,
+  tenantModuleStateChanges,
+  tenantModuleStates,
+  tenants,
+} from '../db/schema.ts';
 import { createChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxMessage } from '../modules/actions/change-tenant-module-state-core-modules-tenant-module-state-changed-v1.outbox-message.ts';
 import { outboxProducerModuleKey, outboxTopic } from '../outbox/core-modules-tenant-module-state-changed-v1.ts';
 import type { InstalledModuleCatalog } from '../modules/catalog.ts';
@@ -131,6 +138,8 @@ export const installUnderLock = Effect.fn('ReleaseTenantModules.installUnderLock
   transaction: CoreTransaction,
   entry: ReleaseTenantModule,
   dependencies: readonly string[],
+  /** Names the release in the audit record: the composition revision the step ran against. */
+  runReference: string,
 ) {
   const locked = yield* transaction
     .select({ tenantId: tenants.tenantId })
@@ -205,6 +214,32 @@ export const installUnderLock = Effect.fn('ReleaseTenantModules.installUnderLock
   if (event === undefined) {
     return yield* refusal('the installation event was not written');
   }
+  // The Action rates this change critical and audits it as sensitive; the platform's install is audited the same
+  // way, by the Tenant's release actor (a system principal), with the release that made it. No secret is recorded.
+  yield* transaction
+    .insert(auditEvents)
+    .values({
+      auditProfile: 'sensitive',
+      authContextRef: `job:${RELEASE_MODULE_INSTALLATION_JOB.jobKey}:run:${runReference}`,
+      authMethod: 'system',
+      eventType: 'core.modules.tenant-module-installed-by-release',
+      evidenceJson: {
+        compositionRevision: runReference,
+        moduleKey: entry.moduleKey,
+        newState: 'active',
+        previousState: null,
+        risk: 'critical',
+      },
+      outcome: 'succeeded',
+      outcomeCode: 'module_installed',
+      outcomeStage: 'execution',
+      principalId: releaseActorId(entry.tenantId),
+      targetModuleKey: entry.moduleKey,
+      targetResourceId: entry.moduleKey,
+      targetResourceType: 'tenant-module-state',
+      tenantId: entry.tenantId,
+    })
+    .pipe(Effect.mapError((cause) => refusal('the installation audit record could not be written', cause)));
   const wakeUp = createChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxMessage({
     data: { moduleKey: entry.moduleKey },
   });
@@ -241,6 +276,7 @@ const installOne = Effect.fn('ReleaseTenantModules.installOne')(
     executor: CoreDatabaseExecutor,
     catalog: InstalledModuleCatalog,
     entry: ReleaseTenantModule,
+    runReference: string,
   ) {
     const tenantRows = yield* executor
       .select({ status: tenants.status })
@@ -273,8 +309,17 @@ const installOne = Effect.fn('ReleaseTenantModules.installOne')(
     const dependencies = yield* tenantModuleIntrinsicDependencyClosure(catalog, entry.moduleKey).pipe(
       Effect.mapError((cause) => refusal(`its dependencies could not be resolved (${cause.reason})`, cause)),
     );
+    // The release actor is the audited author of the install, so it exists before the install transaction starts.
+    const releases = yield* AccessReleaseStore;
+    yield* releases
+      .ensureReleaseActor({
+        displayName: RELEASE_ACTOR_DISPLAY_NAME,
+        principalId: releaseActorId(entry.tenantId),
+        tenantId: entry.tenantId,
+      })
+      .pipe(Effect.mapError((cause) => refusal(`${cause.code}: ${cause.reason}`, cause)));
     const installed = yield* executor
-      .transaction((transaction) => installUnderLock(transaction, entry, dependencies))
+      .transaction((transaction) => installUnderLock(transaction, entry, dependencies, runReference))
       .pipe(
         Effect.mapError((cause) =>
           Schema.is(ReleaseTenantModuleError)(cause) ? cause : refusal('the transaction failed', cause),
@@ -375,7 +420,7 @@ export const installReleaseTenantModules = Effect.fn('ReleaseTenantModules.insta
         withinBudget(input.deadline, Duration.zero).pipe(
           Effect.flatMap((open) =>
             open
-              ? installOne(executor, input.catalog, entry)
+              ? installOne(executor, input.catalog, entry, input.runReference)
               : Effect.succeed(
                   report(entry, 'deferred', 'the release step ran out of time; the next release installs it'),
                 ),
