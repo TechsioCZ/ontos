@@ -4,7 +4,6 @@ import {
   BindingRevisionSchema,
 } from '@app/core-runtime/auth/external-identity-contracts';
 import { Schema } from 'effect';
-import { ExternalIdentityVerificationRequestSchema } from '@app/core-runtime/auth/external-identity-provider';
 import { CommerceEnrollmentAuthenticationReferenceSchema } from './portal-auth-enrollment-reference.ts';
 
 export const COMMERCE_AUTHENTICATION_NAMESPACE_ID = 'ontos.commerce.portal.better-auth.v1';
@@ -37,7 +36,8 @@ export type ExternalUserSubject = typeof ExternalUserSubjectSchema.Type;
 /** Private service-to-service proof input; never included in a gateway assertion. */
 export const VerifyExternalAuthenticationRequestSchema = Schema.Struct({
   ...ExternalUserSubjectSchema.fields,
-  authenticationOperation: ExternalIdentityVerificationRequestSchema.fields.authenticationOperation,
+  /** The authenticated Shell operation, never a caller-selected provider purpose. */
+  authenticationOperation: Schema.Literals(['activate', 'gateway-context', 'read', 'resolve', 'reserve', 'status']),
   enrollmentAttemptId: Schema.optionalKey(EnrollmentAttemptIdSchema),
   nonce: uuid,
   sessionRef: Schema.Union([CommerceSessionReferenceSchema, CommerceEnrollmentAuthenticationReferenceSchema]),
