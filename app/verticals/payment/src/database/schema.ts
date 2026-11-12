@@ -1,4 +1,4 @@
-import { tenantLegalEntityRlsPolicies } from '@app/core-runtime';
+import { tenantLegalEntityRlsPolicies, tenantRlsPolicies } from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
 import {
   bigint,
@@ -10,6 +10,7 @@ import {
   integer,
   jsonb,
   pgSchema,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -832,6 +833,13 @@ export const recoveryRequests = paymentSchema.table.withRLS(
     check('payment_recovery_requests_binding_ck', sql`jsonb_typeof(${table.bindingSnapshot}) = 'object'`),
     reasonCheck('payment_recovery_requests_reason_ck', table.reason),
     compositionRevisionCheck('payment_recovery_requests_composition_ck', table.compositionRevision),
+    /** Recovery rounds and the last request instant of one operation (gateway reconciliation due listing). */
+    index('payment_recovery_requests_operation_idx').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.operationId,
+      table.requestedAt,
+    ),
     ...tenantLegalEntityRlsPolicies('payment_recovery_requests', table.tenantId, table.legalEntityId),
   ],
 );
@@ -1637,6 +1645,87 @@ export const pspProviderEvidence = paymentSchema.table.withRLS(
   ],
 );
 
+/** A bounded optional payer contact text: trimmed and non-empty when present. */
+const contactTextCheck = (name: string, column: AnyPgColumn, maximumLength: number) =>
+  check(
+    name,
+    sql`${column} is null or (${column} = btrim(${column}) and length(${column}) between 1 and ${sql.raw(String(maximumLength))})`,
+  );
+
+/**
+ * Caller-supplied payer contact of one COLLECT (plan D-P3). Transient: inserted by the collection Action,
+ * deleted by the scoped routine that prepares or withholds the dispatch, and purged after a bounded age.
+ * The runtime role may only insert it; it is read and deleted only through SECURITY DEFINER routines.
+ */
+export const pspOperationPayerContacts = paymentSchema.table.withRLS(
+  'psp_operation_payer_contacts',
+  {
+    ...scopeColumns(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    email: text('email'),
+    fullName: text('full_name'),
+    operationId: uuid('operation_id').notNull(),
+    phone: text('phone'),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.legalEntityId, table.operationId],
+      name: 'payment_psp_payer_contacts_pk',
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.operationId],
+      foreignColumns: [paymentOperations.tenantId, paymentOperations.legalEntityId, paymentOperations.operationId],
+      name: 'payment_psp_payer_contacts_operation_fk',
+    }).onDelete('restrict'),
+    check(
+      'payment_psp_payer_contacts_present_ck',
+      sql`num_nonnulls(${table.email}, ${table.fullName}, ${table.phone}) > 0`,
+    ),
+    contactTextCheck('payment_psp_payer_contacts_email_ck', table.email, 254),
+    contactTextCheck('payment_psp_payer_contacts_full_name_ck', table.fullName, 200),
+    contactTextCheck('payment_psp_payer_contacts_phone_ck', table.phone, 40),
+    ...tenantLegalEntityRlsPolicies('payment_psp_operation_payer_contacts', table.tenantId, table.legalEntityId),
+  ],
+);
+
+/**
+ * The notification and reconciliation route of one Provider Account Binding (plan D-P4): an opaque
+ * 43-character base64url key, unique per Tenant, resolved inside the caller's Tenant only. Insert-once;
+ * family and environment are the binding's own (composite foreign key).
+ */
+export const pspBindingRoutes = paymentSchema.table.withRLS(
+  'psp_binding_routes',
+  {
+    ...scopeColumns(),
+    bindingId: uuid('binding_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    environment: text('environment').$type<GatewayEnvironment>().notNull(),
+    providerFamily: text('provider_family').$type<PaymentGatewayProviderFamily>().notNull(),
+    routeKey: text('route_key').notNull(),
+    routeRevision: integer('route_revision').default(1).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tenantId, table.routeKey], name: 'payment_psp_binding_routes_pk' }),
+    unique('payment_psp_binding_routes_binding_uk').on(table.tenantId, table.legalEntityId, table.bindingId),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.bindingId, table.providerFamily, table.environment],
+      foreignColumns: [
+        pspProviderAccountBindings.tenantId,
+        pspProviderAccountBindings.legalEntityId,
+        pspProviderAccountBindings.bindingId,
+        pspProviderAccountBindings.providerFamily,
+        pspProviderAccountBindings.environment,
+      ],
+      name: 'payment_psp_binding_routes_binding_fk',
+    }).onDelete('restrict'),
+    check('payment_psp_binding_routes_key_ck', sql`${table.routeKey} ~ '^[A-Za-z0-9_-]{43}$'`),
+    check('payment_psp_binding_routes_revision_ck', sql`${table.routeRevision} > 0`),
+    gatewayFamilyCheck('payment_psp_binding_routes_family_ck', table.providerFamily),
+    gatewayEnvironmentCheck('payment_psp_binding_routes_environment_ck', table.environment),
+    ...tenantRlsPolicies('payment_psp_binding_routes', table.tenantId),
+  ],
+);
+
 export const PAYMENT_TABLES = [
   gatewayAssertionRedemptions,
   methodEnablements,
@@ -1661,6 +1750,8 @@ export const PAYMENT_TABLES = [
   pspProviderDispatches,
   pspProviderNotifications,
   pspProviderEvidence,
+  pspOperationPayerContacts,
+  pspBindingRoutes,
 ] as const;
 
 export const PAYMENT_TABLE_INVENTORY = [
@@ -1673,9 +1764,11 @@ export const PAYMENT_TABLE_INVENTORY = [
   'payment_authorizations',
   'payment_operations',
   'payments',
+  'psp_binding_routes',
   'psp_credential_revisions',
   'psp_gateway_enablement_revisions',
   'psp_gateway_enablements',
+  'psp_operation_payer_contacts',
   'psp_provider_account_binding_revisions',
   'psp_provider_account_bindings',
   'psp_provider_dispatches',
@@ -1700,9 +1793,11 @@ export const paymentRelations = defineRelations({
   paymentAuthorizations,
   paymentOperations,
   payments,
+  pspBindingRoutes,
   pspCredentialRevisions,
   pspGatewayEnablementRevisions,
   pspGatewayEnablements,
+  pspOperationPayerContacts,
   pspProviderAccountBindingRevisions,
   pspProviderAccountBindings,
   pspProviderDispatches,

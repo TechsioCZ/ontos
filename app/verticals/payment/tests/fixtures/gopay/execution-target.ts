@@ -1,6 +1,6 @@
 /**
- * A GoPay SANDBOX execution target for unit tests. The GoID is the example GoID of the GoPay REST API
- * documentation (https://doc.gopay.com/#standard-payment-creation); every other value is synthetic.
+ * A GoPay SANDBOX execution target for unit tests. Every value is synthetic; the GoID is only the `{goid}` path
+ * segment of `POST /eshops/{goid}/payments` (https://api-docs.gopay.com/spec/en/payments.yaml).
  */
 import { Option, Schema } from 'effect';
 

@@ -3,22 +3,43 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'effect-rstest';
 import { DateTime, Effect, Match, Option, Result, Schema } from 'effect';
 
-import { toComgatePrice, fromComgatePrice } from '../../src/integrations/comgate/comgate-money.ts';
+import {
+  fromComgatePrice,
+  parseComgateStatementAmount,
+  toComgatePrice,
+} from '../../src/integrations/comgate/comgate-money.ts';
 import {
   classifyComgateCancelResponse,
+  COMGATE_STATEMENT_REASONS,
   comgateBindingOf,
+  comgateStatementCandidatesOf,
   comgateTransIdOfLookup,
   comgateVerifiedOrderReference,
   mapComgateCreateResponse,
   mapComgateRefundResponse,
+  mapComgateStatementRefund,
   mapComgateStatus,
 } from '../../src/integrations/comgate/comgate-evidence.ts';
-import type { ComgateBindingIdentity, ComgateCancelAnswer } from '../../src/integrations/comgate/comgate-evidence.ts';
+import type {
+  ComgateBindingIdentity,
+  ComgateCancelAnswer,
+  ComgateStatementCandidate,
+} from '../../src/integrations/comgate/comgate-evidence.ts';
+import {
+  COMGATE_STATEMENT_MAX_DATES,
+  comgateStatementDates,
+  parseComgatePragueWallClock,
+  pragueWallClockToUtc,
+} from '../../src/integrations/comgate/comgate-statement.ts';
 import { ComgateTransIdSchema, decodeComgateStatusBody } from '../../src/integrations/comgate/comgate-wire.ts';
 import { deriveProviderCorrelation } from '../../src/integrations/psp/psp-correlation.ts';
 import { GatewayExecutionTargetSchema } from '../../src/integrations/psp/psp-request.ts';
 import type { GatewayExpectedEffect } from '../../src/integrations/psp/psp-request.ts';
-import type { ProviderDispatchResponse, ProviderFindingResult } from '../../src/integrations/psp/psp-result.ts';
+import type {
+  ProviderDispatchResponse,
+  ProviderEvidence,
+  ProviderFindingResult,
+} from '../../src/integrations/psp/psp-result.ts';
 
 /** Fixture shapes from https://apidoc.comgate.cz/en/api/rest/ (see tests/fixtures/comgate/README.md). */
 const fixtureDir = new URL('../fixtures/comgate/', import.meta.url);
@@ -324,6 +345,233 @@ describe('#1156 Comgate evidence mapping', () => {
         Option.some({ amountMinor: 159_950, currency: 'CZK' }),
       );
       expect(fromComgatePrice({ curr: 'CZK', price: '1599.50' })).toEqual(Option.none());
+    }),
+  );
+});
+
+/* ------------------------------------------------------------------------------------------------ */
+/* Settlement statement (plan D-P2)                                                                  */
+/* ------------------------------------------------------------------------------------------------ */
+
+const refundReference = deriveProviderCorrelation(refundOperationId).orderReference;
+const statementRows = (name: string) =>
+  Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.Record(Schema.String, Schema.Json))))(
+    fixtureText(name),
+  );
+const sampleRefundRow = (overrides: JsonObject = {}) => ({
+  ...fixtureJson('statement-refund-row.json'),
+  'ID od klienta': refundReference,
+  ...overrides,
+});
+const candidate = (overrides: Partial<ComgateStatementCandidate> = {}): ComgateStatementCandidate => ({
+  confirmedAmountMinor: -10_000,
+  createdAt: Option.some(DateTime.makeUnsafe('2026-04-09T12:48:30.000Z')),
+  currency: 'CZK',
+  transferId: 1_234_567,
+  ...overrides,
+});
+const instantOf = (text: string) =>
+  parseComgatePragueWallClock(text).pipe(Option.flatMap(pragueWallClockToUtc), Option.map(DateTime.formatIso));
+const datesOf = (dispatched: string, now: string) =>
+  comgateStatementDates(DateTime.makeUnsafe(dispatched), DateTime.makeUnsafe(now));
+const evidenceField = <K extends keyof ProviderEvidence>(
+  finding: ProviderFindingResult | undefined,
+  key: K,
+): Option.Option<ProviderEvidence[K]> =>
+  Option.fromUndefinedOr(finding).pipe(
+    Option.flatMap((found) => found.evidence),
+    Option.map((evidence) => evidence[key]),
+  );
+const verdictOf = (candidates: readonly ComgateStatementCandidate[]) =>
+  mapComgateStatementRefund({ candidates, expected: { amount, operationId: refundOperationId }, observedAt, transId });
+
+describe('#1156 Comgate settlement statement mapping', () => {
+  it.effect('#1156 Statement amounts with a decimal comma parse exactly into signed minor units', () =>
+    Effect.sync(() => {
+      // Official monthly sample (refund row) and the documented singleTransfer example.
+      expect(parseComgateStatementAmount('-422,00')).toEqual(Option.some(-42_200));
+      expect(parseComgateStatementAmount('1174,00')).toEqual(Option.some(117_400));
+      expect(parseComgateStatementAmount('10,00')).toEqual(Option.some(1000));
+      expect(parseComgateStatementAmount('0,35')).toEqual(Option.some(35));
+      expect(parseComgateStatementAmount('-0,15')).toEqual(Option.some(-15));
+      expect(parseComgateStatementAmount('-0,00')).toEqual(Option.some(0));
+      expect(parseComgateStatementAmount('0,07')).toEqual(Option.some(7));
+      for (const malformed of [
+        '-422.00',
+        '1 174,00',
+        '1.174,00',
+        '10,0',
+        '10,000',
+        '01,00',
+        '+10,00',
+        '',
+        '-',
+        ',50',
+      ]) {
+        expect(parseComgateStatementAmount(malformed)).toEqual(Option.none());
+      }
+    }),
+  );
+
+  it.effect('#1156 Statement times are Europe/Prague wall-clock times', () =>
+    Effect.sync(() => {
+      expect(instantOf('2026-04-09 14:48:30')).toEqual(Option.some('2026-04-09T12:48:30.000Z'));
+      expect(instantOf('2023-01-06 14:11:30')).toEqual(Option.some('2023-01-06T13:11:30.000Z'));
+      // Nonexistent (spring forward) and repeated (fall back) times state no instant.
+      expect(instantOf('2026-03-29 02:30:00')).toEqual(Option.none());
+      expect(instantOf('2026-10-25 02:30:00')).toEqual(Option.none());
+      for (const malformed of ['2026-02-30 10:00:00', '2026-13-01 10:00:00', '2026-04-09T14:48:30', '2026-04-09']) {
+        expect(parseComgatePragueWallClock(malformed)).toEqual(Option.none());
+      }
+    }),
+  );
+
+  it.effect('#1156 Statement dates run from the Prague dispatch date to yesterday, at most 24', () =>
+    Effect.sync(() => {
+      // 22:30 UTC is already the next day in Prague (CEST).
+      expect(datesOf('2026-04-09T22:30:00.000Z', '2026-04-12T08:00:00.000Z')).toEqual(
+        Option.some(['2026-04-10', '2026-04-11']),
+      );
+      // Winter time: 23:30 UTC on 01-31 is 00:30 on 02-01 in Prague.
+      expect(datesOf('2026-01-31T23:30:00.000Z', '2026-02-02T23:30:00.000Z')).toEqual(
+        Option.some(['2026-02-01', '2026-02-02']),
+      );
+      // Today's statement is never read.
+      expect(datesOf('2026-04-09T10:00:00.000Z', '2026-04-09T21:59:59.000Z')).toEqual(Option.some([]));
+      // Across the October DST change: still one entry per calendar day.
+      expect(datesOf('2026-10-24T10:00:00.000Z', '2026-10-27T10:00:00.000Z')).toEqual(
+        Option.some(['2026-10-24', '2026-10-25', '2026-10-26']),
+      );
+      const bounded = Option.getOrElse(datesOf('2026-01-01T10:00:00.000Z', '2026-11-12T10:00:00.000Z'), () => []);
+      expect(bounded).toHaveLength(COMGATE_STATEMENT_MAX_DATES);
+      expect([bounded[0], bounded.at(-1)]).toEqual(['2026-01-01', '2026-01-24']);
+    }),
+  );
+
+  it.effect('#1157 Only rows of the binding merchant with the refund refId are candidates', () =>
+    Effect.gen(function* candidates() {
+      const rows = [
+        ...statementRows('single-transfer.json'),
+        sampleRefundRow({ Merchant: '999999' }),
+        sampleRefundRow({ 'ID od klienta': '6091014383' }),
+        { unrelated: true },
+        sampleRefundRow(),
+      ];
+      const found = yield* comgateStatementCandidatesOf({
+        binding,
+        orderReference: refundReference,
+        rows,
+        transferId: 7,
+      });
+      expect(found).toEqual([
+        {
+          confirmedAmountMinor: -42_200,
+          createdAt: Option.some(DateTime.makeUnsafe('2026-04-09T12:48:30.000Z')),
+          currency: 'CZK',
+          transferId: 7,
+        },
+      ]);
+
+      // A selected row that does not decode strictly proves nothing and is never skipped as absent.
+      const brokenRows: readonly JsonObject[] = [
+        { 'Potvrzená částka': '-422.00' },
+        { Měna: 'czk' },
+        { 'Datum založení': '09.04.2026 14:48:30' },
+      ];
+      for (const broken of brokenRows) {
+        const result = yield* outcome(
+          comgateStatementCandidatesOf({
+            binding,
+            orderReference: refundReference,
+            rows: [sampleRefundRow(broken)],
+            transferId: 7,
+          }),
+        );
+        expect(result).toMatchObject({
+          error: { _tag: 'GatewayProviderResponseInvalid', reason: 'comgate_statement_row_invalid' },
+          ok: false,
+        });
+      }
+    }),
+  );
+
+  it.effect('#1156 One exact debit row confirms; anything else conflicts or stays indeterminate', () =>
+    Effect.sync(() => {
+      const confirmed = verdictOf([candidate()]);
+      expect(confirmed.reason).toEqual(Option.none());
+      const [finding] = confirmed.findings;
+      expect(finding?.finding).toBe('EFFECT_CONFIRMED');
+      expect(finding?.target).toEqual({ operationId: refundOperationId, operationKind: 'REFUND' });
+      expect(finding?.orderReference).toEqual(Option.some(refundReference));
+      const evidence = Option.getOrUndefined(finding?.evidence ?? Option.none());
+      expect(evidence).toMatchObject({
+        factFamily: 'REFUND_EXECUTION',
+        factKind: 'REFUND_CONFIRMED',
+        sourceOccurrenceId: `comgate:statement:1234567:${refundOperationId}:REFUND_CONFIRMED:10000`,
+      });
+      expect(evidence?.economicEffectKey).toEqual(Option.some(`comgate-refund:${transId}:${refundOperationId}`));
+      expect(evidence?.providerOccurredAt).toEqual(Option.some(DateTime.makeUnsafe('2026-04-09T12:48:30.000Z')));
+      expect(evidence?.providerRefs).toEqual([{ _tag: 'COMGATE_TRANSACTION', transId }]);
+
+      // An ambiguous DST wall-clock time keeps the confirmation but states no provider instant.
+      const noInstant = verdictOf([candidate({ createdAt: Option.none() })]);
+      expect(noInstant.findings[0]?.finding).toBe('EFFECT_CONFIRMED');
+      expect(evidenceField(noInstant.findings[0], 'providerOccurredAt')).toEqual(Option.some(Option.none()));
+
+      const cases: readonly [readonly ComgateStatementCandidate[], string, string, boolean][] = [
+        [[], 'INDETERMINATE', COMGATE_STATEMENT_REASONS.notInStatement, true],
+        [
+          [candidate(), candidate({ transferId: 1_234_568 })],
+          'VERIFICATION_CONFLICT',
+          COMGATE_STATEMENT_REASONS.ambiguous,
+          true,
+        ],
+        [
+          [candidate({ confirmedAmountMinor: 10_000 })],
+          'VERIFICATION_CONFLICT',
+          COMGATE_STATEMENT_REASONS.notADebit,
+          true,
+        ],
+        [[candidate({ confirmedAmountMinor: 0 })], 'VERIFICATION_CONFLICT', COMGATE_STATEMENT_REASONS.notADebit, true],
+        [
+          [candidate({ confirmedAmountMinor: -9999 })],
+          'VERIFICATION_CONFLICT',
+          COMGATE_STATEMENT_REASONS.amountMismatch,
+          false,
+        ],
+        [[candidate({ currency: 'EUR' })], 'VERIFICATION_CONFLICT', COMGATE_STATEMENT_REASONS.amountMismatch, false],
+      ];
+      for (const [rows, expectedFinding, reason, withoutEvidence] of cases) {
+        const verdict = verdictOf(rows);
+        expect(verdict.findings.map((found) => [found.finding, Option.isNone(found.evidence)])).toEqual([
+          [expectedFinding, withoutEvidence],
+        ]);
+        expect(verdict.reason).toEqual(Option.some(reason));
+        // #1158: a statement never yields NOT_EFFECTED.
+        expect(verdict.findings.some((found) => found.finding === 'NOT_EFFECTED')).toBe(false);
+      }
+      const [mismatch] = verdictOf([candidate({ confirmedAmountMinor: -9999 })]).findings;
+      expect(evidenceField(mismatch, 'discrepancy')).toEqual(
+        Option.some(Option.some({ expected: amount, observed: { amountMinor: 9999, currency: 'CZK' } })),
+      );
+    }),
+  );
+
+  it.effect('#1156 A refund request response without completion evidence stays non-confirmed', () =>
+    Effect.gen(function* refundResponses() {
+      const accepted = yield* mapComgateRefundResponse({
+        bodyText: fixtureText('result-ok.json'),
+        expected: { amount, operationId: refundOperationId },
+        observedAt,
+        transId,
+      });
+      expect([accepted.finding.finding, factKindOf(accepted.finding)]).toEqual([
+        'ACCEPTED_PENDING',
+        Option.some('REFUND_PENDING'),
+      ]);
+      // A status lookup of the refunded payment never proves the refund either way.
+      const status = yield* lookup(refund, statusBody());
+      expect(status.map((found) => [found.finding, Option.isNone(found.evidence)])).toEqual([['INDETERMINATE', true]]);
     }),
   );
 });

@@ -40,3 +40,20 @@ export const fromComgatePrice = (reported: {
   Option.flatMap(parseExactMinorUnits(reported.price), (amountMinor) =>
     Schema.decodeUnknownOption(ProviderReportedAmountSchema)({ amountMinor, currency: reported.curr }),
   );
+
+/**
+ * A statement amount (`Potvrzená částka`, decimal comma with exactly two decimals, e.g. `"-422,00"`) as
+ * signed integer minor units (`-42200`). The digits are joined as text and parsed exactly; anything else
+ * (thousands separators, a decimal point, more or fewer decimals) is `None`.
+ */
+export const parseComgateStatementAmount = (text: string): Option.Option<number> => {
+  const match = /^(?<sign>-?)(?<units>0|[1-9][0-9]{0,12}),(?<cents>[0-9]{2})$/u.exec(text);
+  const groups = match?.groups;
+  if (groups === undefined) {
+    return Option.none();
+  }
+  const digits = `${groups['units'] ?? ''}${groups['cents'] ?? ''}`.replace(/^0+(?=[0-9])/u, '');
+  return Option.map(parseExactMinorUnits(digits), (magnitude) =>
+    groups['sign'] === '-' && magnitude !== 0 ? -magnitude : magnitude,
+  );
+};

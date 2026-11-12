@@ -750,7 +750,7 @@ const lookupObject = (
     Match.tag('STRIPE_CHECKOUT_SESSION', ({ id }) => lookupCollectionSession(context, id, expected)),
     Match.tag('STRIPE_PAYMENT_INTENT', ({ id }) => lookupPaymentIntent(context, id, expected)),
     Match.tag('STRIPE_REFUND', ({ id }) => lookupRefund(context, id, expected)),
-    Match.tag('GOPAY_PAYMENT', 'COMGATE_TRANSACTION', () =>
+    Match.tag('GOPAY_PAYMENT', 'GOPAY_REFUND', 'COMGATE_TRANSACTION', () =>
       Effect.fail(unsupported('RETRIEVE', 'stripe_lookup_foreign_ref')),
     ),
     Match.exhaustive,
@@ -840,7 +840,9 @@ const readOrderReferenceOf = (
         ),
       ),
     ),
-    Match.tag('GOPAY_PAYMENT', 'COMGATE_TRANSACTION', () => Effect.succeed(Option.none<GatewayOrderReference>())),
+    Match.tag('GOPAY_PAYMENT', 'GOPAY_REFUND', 'COMGATE_TRANSACTION', () =>
+      Effect.succeed(Option.none<GatewayOrderReference>()),
+    ),
     Match.exhaustive,
   );
 

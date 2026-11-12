@@ -44,8 +44,8 @@ import type { ComgateSandboxCredentials, SandboxOperation, SandboxScenarioInput 
  * public IPv4 on the connection's allowed-IP list. The hosted step is done by a human on the payment page
  * or in the Client Portal (Tester role: simulate PAID).
  *
- * Comgate requires a payer contact (N9), so the scenarios send a synthetic one. A refund is only ever
- * REFUND_PENDING (N10: no documented refund status API). Comgate cannot be replayed and has no
+ * Comgate requires a payer contact (N9), so the scenarios send a synthetic one. A sandbox refund is only ever
+ * REFUND_PENDING: statements exist only for production payments (D-P2). Comgate cannot be replayed and has no
  * order-reference lookup. A push carries the shop secret instead of a signature and can only reach a
  * public endpoint, so the push scenario verifies a push-shaped body built from the real payment.
  */

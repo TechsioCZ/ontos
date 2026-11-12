@@ -20,11 +20,13 @@ import {
 } from './database-fixture.ts';
 import { stripeEventEnvelope } from '../fixtures/stripe/stripe-events.ts';
 import {
+  GOPAY_FIXTURE_GOID,
   GOPAY_FIXTURE_PAYMENT_ID,
+  gopayConflictBody,
   gopayCreateResponseBody,
-  gopayInquiryResponseBody,
+  gopayPaymentBody,
 } from '../fixtures/gopay/payment-responses.ts';
-import { gopayRefundResponseBody, gopayTimestampedRefundHistoryBody } from '../fixtures/gopay/refund-responses.ts';
+import { GOPAY_FIXTURE_REFUND_ID, gopayRefundBody } from '../fixtures/gopay/refund-responses.ts';
 import {
   STRIPE_FIXTURE_PAYMENT_INTENT_ID,
   STRIPE_FIXTURE_SESSION_ID,
@@ -79,12 +81,13 @@ const STRIPE_INTENT = `GET ${STRIPE_API}/v1/payment_intents/${STRIPE_FIXTURE_PAY
 const STRIPE_EXPIRE = `POST ${STRIPE_API}/v1/checkout/sessions/${STRIPE_FIXTURE_SESSION_ID}/expire`;
 const STRIPE_SECRET_REF = 'stripe.native.conformance';
 const GOPAY_SECRET_REF = 'gopay.native.conformance';
-const GOPAY_API = 'https://gw.sandbox.gopay.com/api';
+/** GoPay Payments API v4 (https://api-docs.gopay.com/llms-full.txt), sandbox root. */
+const GOPAY_API = 'https://gw.sandbox.gopay.com/gp-gw/api/4.0';
 const GOPAY_TOKEN = `POST ${GOPAY_API}/oauth2/token`;
-const GOPAY_CREATE = `POST ${GOPAY_API}/payments/payment`;
-const GOPAY_PAYMENT = `GET ${GOPAY_API}/payments/payment/${GOPAY_FIXTURE_PAYMENT_ID}`;
-const GOPAY_REFUND = `POST ${GOPAY_API}/payments/payment/${GOPAY_FIXTURE_PAYMENT_ID}/refund`;
-const GOPAY_REFUND_HISTORY = `GET ${GOPAY_API}/payments/payment/${GOPAY_FIXTURE_PAYMENT_ID}/refunds`;
+const GOPAY_CREATE = `POST ${GOPAY_API}/eshops/${GOPAY_FIXTURE_GOID}/payments`;
+const GOPAY_PAYMENT = `GET ${GOPAY_API}/payments/${GOPAY_FIXTURE_PAYMENT_ID}`;
+const GOPAY_CANCEL = `DELETE ${GOPAY_API}/payments/${GOPAY_FIXTURE_PAYMENT_ID}`;
+const GOPAY_REFUND = `POST ${GOPAY_API}/payments/${GOPAY_FIXTURE_PAYMENT_ID}/refunds`;
 const GOPAY_AMOUNT = 10_000;
 const COMGATE_SECRET_REF = 'comgate.native.conformance';
 const COMGATE_SECRET = 'comgate-shop-secret-c17-native';
@@ -107,7 +110,10 @@ const stripeEntry = {
 
 const gopayEntry = { clientId: 'gopay-client-native', clientSecret: 'gopay-secret-native-c17', family: 'GOPAY' };
 const comgateEntry = { family: 'COMGATE', secret: COMGATE_SECRET };
-const gopayToken = respond(200, '{"token_type":"bearer","access_token":"gopay-access-token-native","expires_in":1800}');
+const gopayToken = respond(
+  200,
+  '{"token_type":"bearer","access_token":"gopay-access-token-native","scope":"payment:read payment:write","expires_in":900}',
+);
 
 const comgateFixture = (name: string) => readFileSync(new URL(`../fixtures/comgate/${name}`, import.meta.url), 'utf-8');
 /** The documented Comgate status answer for the collection with order reference `refId`. */
@@ -125,9 +131,10 @@ const comgateStatus = (refId: string, status: string) =>
   );
 
 /**
- * C16 has no payer-contact owner yet (plan N9), so the executor prepares a Comgate COLLECT without one and Comgate
- * refuses it. Only for the COLLECT that sets up a Comgate cancel or refund, this stands in for that missing owner by
- * handing the production adapter a payer contact; every other call is the production adapter unchanged.
+ * Until the executor hands the caller-supplied payer contact to prepare (plan D-P3), it prepares a COLLECT without
+ * one, and both Comgate (full name plus email or phone) and GoPay v4 (`customer.email`) refuse that before sending.
+ * Only for the COLLECT that sets up a Comgate or GoPay cancel or refund, this stands in for that contact by handing the
+ * production adapter one with an email; every other call is the production adapter unchanged.
  */
 const NATIVE_PAYER = Schema.decodeUnknownSync(GatewayPayerContactSchema)({
   email: Option.some('payer@example.test'),
@@ -334,7 +341,8 @@ it.live(
           credentials,
         );
 
-        const gopayExit = yield* deliverExecution(harness, gopay, provider.adapters).pipe(
+        // The GoPay collect carries its payer email, so only the broken credential can stop it.
+        const gopayExit = yield* deliverExecution(harness, gopay, withPayerContact(provider.adapters)).pipe(
           Effect.provide(credentialConfig(credentials)),
         );
         const stripeExit = yield* deliverExecution(harness, stripe, provider.adapters).pipe(
@@ -585,39 +593,113 @@ it.live(
     ),
 );
 
+/** A GoPay COLLECT acknowledged by its 201 create answer, with the payer email the v4 create requires. */
+const gopayCollection = Effect.fn('PspGatewayChainTest.gopayCollection')(function* gopayCollection(
+  harness: NativeHarness,
+  collect: OutboxPayload,
+  credentials: CredentialDocument,
+) {
+  const { orderReference } = deriveProviderCorrelation(collect.operationId);
+  const step = yield* collectThrough(
+    harness,
+    collect,
+    { [GOPAY_CREATE]: [respond(201, gopayCreateResponseBody(orderReference))], [GOPAY_TOKEN]: [gopayToken] },
+    credentials,
+    withPayerContact,
+  );
+  expect(step.sent.map(({ route }) => route)).toEqual([GOPAY_TOKEN, GOPAY_CREATE]);
+  const body = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)))(
+    step.callsTo(GOPAY_CREATE)[0]?.body ?? '',
+  );
+  expect(body.customer).toEqual({ email: 'payer@example.test' });
+  expect(body.order_number).toBe(orderReference);
+  expect(yield* dispatchStateOf(harness, collect.operationId)).toEqual(
+    Option.some(['ACKNOWLEDGED', null, `GOPAY_PAYMENT:${GOPAY_FIXTURE_PAYMENT_ID}`]),
+  );
+  return orderReference;
+});
+
 it.live(
-  '#1156 #1159 L3-14 boundary executor+ledger routines+production GoPay adapter: a GoPay cancel ends UNSUPPORTED with CANCEL_NOT_EFFECTED and reaches no provider',
+  '#1156 #1159 L3-14 boundary executor+ledger routines+production GoPay adapter: a GoPay v4 cancel is sent once and decided by the lookup (204 CANCELED confirmed, 409 PAYMENT_METHOD_CHOSEN not effected)',
   () =>
     Effect.scoped(
       Effect.gen(function* gopayCancel() {
         const credentials = { [GOPAY_SECRET_REF]: gopayEntry };
         const harness = yield* nativeHarness;
         const binding = yield* nativeBindingFor(harness, 'GOPAY', GOPAY_SECRET_REF);
+
+        // (a) 204, then the lookup through the same binding shows CANCELED.
         const collect = yield* nativeCollectionFor(harness, binding, GOPAY_AMOUNT);
-        const { orderReference } = deriveProviderCorrelation(collect.operationId);
-        yield* collectThrough(
-          harness,
-          collect,
-          { [GOPAY_CREATE]: [respond(200, gopayCreateResponseBody(orderReference))], [GOPAY_TOKEN]: [gopayToken] },
+        const orderReference = yield* gopayCollection(harness, collect, credentials);
+        const cancel = yield* nativeCancellationFor(harness, binding, collect);
+        const cancelStep = yield* adaptersOver(
+          {
+            [GOPAY_CANCEL]: [respond(204, '')],
+            [GOPAY_PAYMENT]: [respond(200, gopayPaymentBody({ orderNumber: orderReference, state: 'CANCELED' }))],
+            [GOPAY_TOKEN]: [gopayToken],
+          },
           credentials,
         );
-        expect((yield* dispatchStateOf(harness, collect.operationId)).pipe(Option.map(([state]) => state))).toEqual(
-          Option.some('ACKNOWLEDGED'),
-        );
-
-        const cancel = yield* nativeCancellationFor(harness, binding, collect);
-        const cancelStep = yield* adaptersOver({}, credentials);
         const cancelled = yield* deliverExecution(harness, cancel, cancelStep.adapters).pipe(
           Effect.provide(credentialConfig(credentials)),
         );
         expect(Exit.isSuccess(cancelled)).toBe(true);
-        expect(cancelStep.sent).toEqual([]);
-        expect(yield* dispatchStateOf(harness, cancel.operationId)).toEqual(Option.some(['UNSUPPORTED', null, null]));
+        expect(cancelStep.sent.map(({ route }) => route)).toEqual([GOPAY_TOKEN, GOPAY_CANCEL, GOPAY_PAYMENT]);
+        expect(cancelStep.callsTo(GOPAY_CANCEL)[0]?.body).toBe('');
+        expect((yield* dispatchStateOf(harness, cancel.operationId)).pipe(Option.map(([state]) => state))).toEqual(
+          Option.some('ACKNOWLEDGED'),
+        );
         expect(yield* evidenceFor(harness, cancel.paymentId, cancel.operationId)).toEqual([
+          ['CANCEL_CONFIRMED', 'PENDING_SUBMISSION'],
+        ]);
+        expect(yield* evidenceFor(harness, cancel.paymentId, collect.operationId)).toEqual([
+          ['COLLECTION_NOT_EFFECTED', 'PENDING_SUBMISSION'],
+        ]);
+        // GoPay never replays: no stored request bytes and no replay window; a redelivery sends nothing.
+        const record = yield* dispatchRecordOf(harness, cancel.operationId).pipe(Effect.flatMap(Effect.fromOption));
+        expect([record.requestBody, record.replayStartsAt, record.idempotencyKeyHash]).toEqual([
+          undefined,
+          undefined,
+          undefined,
+        ]);
+        const again = yield* adaptersOver({}, credentials);
+        expect(
+          Exit.isSuccess(
+            yield* deliverExecution(harness, cancel, again.adapters).pipe(
+              Effect.provide(credentialConfig(credentials)),
+            ),
+          ),
+        ).toBe(true);
+        expect(again.sent).toEqual([]);
+
+        // (b) 409 because the payer already chose a method: the cancel is not effected, the collection stays open.
+        const chosen = yield* nativeCollectionFor(harness, binding, GOPAY_AMOUNT);
+        const chosenOrder = yield* gopayCollection(harness, chosen, credentials);
+        const refused = yield* nativeCancellationFor(harness, binding, chosen);
+        const refusedStep = yield* adaptersOver(
+          {
+            [GOPAY_CANCEL]: [respond(409, gopayConflictBody)],
+            [GOPAY_PAYMENT]: [
+              respond(200, gopayPaymentBody({ orderNumber: chosenOrder, state: 'PAYMENT_METHOD_CHOSEN' })),
+            ],
+            [GOPAY_TOKEN]: [gopayToken],
+          },
+          credentials,
+        );
+        const refusedExit = yield* deliverExecution(harness, refused, refusedStep.adapters).pipe(
+          Effect.provide(credentialConfig(credentials)),
+        );
+        expect(Exit.isSuccess(refusedExit)).toBe(true);
+        expect(refusedStep.callsTo(GOPAY_CANCEL)).toHaveLength(1);
+        expect((yield* dispatchStateOf(harness, refused.operationId)).pipe(Option.map(([state]) => state))).toEqual(
+          Option.some('REJECTED_BEFORE_EFFECT'),
+        );
+        expect(yield* evidenceFor(harness, refused.paymentId, refused.operationId)).toEqual([
           ['CANCEL_NOT_EFFECTED', 'PENDING_SUBMISSION'],
         ]);
-        // No fallback: the collection is untouched and no refund was created or sent.
-        expect((yield* dispatchStateOf(harness, collect.operationId)).pipe(Option.map(([state]) => state))).toEqual(
+        // A pending collection proves nothing new: no evidence is kept for it, and it stays acknowledged.
+        expect(yield* evidenceFor(harness, refused.paymentId, chosen.operationId)).toEqual([]);
+        expect((yield* dispatchStateOf(harness, chosen.operationId)).pipe(Option.map(([state]) => state))).toEqual(
           Option.some('ACKNOWLEDGED'),
         );
       }),
@@ -632,50 +714,32 @@ it.live(
         const credentials = { [COMGATE_SECRET_REF]: comgateEntry, [GOPAY_SECRET_REF]: gopayEntry };
         const harness = yield* nativeHarness;
 
-        // GoPay: refund of 40 CZK on the acknowledged payment, then the refund-history read.
+        // GoPay: refund of 40 CZK on the acknowledged payment; the 201 refund resource names the refund by its id.
         const gopayBinding = yield* nativeBindingFor(harness, 'GOPAY', GOPAY_SECRET_REF);
         const gopayCollect = yield* nativeCollectionFor(harness, gopayBinding, GOPAY_AMOUNT);
-        const gopayOrder = deriveProviderCorrelation(gopayCollect.operationId).orderReference;
-        yield* collectThrough(
-          harness,
-          gopayCollect,
-          { [GOPAY_CREATE]: [respond(200, gopayCreateResponseBody(gopayOrder))], [GOPAY_TOKEN]: [gopayToken] },
-          credentials,
-        );
+        yield* gopayCollection(harness, gopayCollect, credentials);
         const gopayRefund = yield* nativeRefundFor(harness, gopayBinding, gopayCollect, 4000);
         const gopayStep = yield* collectThrough(
           harness,
           gopayRefund,
           {
-            [GOPAY_PAYMENT]: [
-              respond(
-                200,
-                gopayInquiryResponseBody({
-                  amount: GOPAY_AMOUNT,
-                  goid: '8123456789',
-                  orderNumber: gopayOrder,
-                  state: 'PARTIALLY_REFUNDED',
-                }),
-              ),
-            ],
-            [GOPAY_REFUND]: [respond(200, gopayRefundResponseBody('ACCEPTED'))],
-            [GOPAY_REFUND_HISTORY]: [
-              respond(
-                200,
-                gopayTimestampedRefundHistoryBody([
-                  { amount: 4000, dateRequested: '2026-11-12T11:00:00.000+0100', state: 'REQUESTED' },
-                ]),
-              ),
-            ],
+            [GOPAY_REFUND]: [respond(201, gopayRefundBody({ amount: 4000, state: 'REQUESTED' }))],
             [GOPAY_TOKEN]: [gopayToken],
           },
           credentials,
         );
-        expect(gopayStep.callsTo(GOPAY_REFUND)).toHaveLength(1);
-        expect(gopayStep.callsTo(GOPAY_REFUND)[0]?.body).toContain('amount=4000');
+        expect(gopayStep.sent.map(({ route }) => route)).toEqual([GOPAY_TOKEN, GOPAY_REFUND]);
+        expect(gopayStep.callsTo(GOPAY_REFUND)[0]?.body).toBe('{"amount":4000}');
         expect((yield* dispatchStateOf(harness, gopayRefund.operationId)).pipe(Option.map(([state]) => state))).toEqual(
           Option.some('ACKNOWLEDGED'),
         );
+        const refundRecord = yield* dispatchRecordOf(harness, gopayRefund.operationId).pipe(
+          Effect.flatMap(Effect.fromOption),
+        );
+        expect([refundRecord.providerPaymentRef, refundRecord.providerRefundRef]).toEqual([
+          `GOPAY_PAYMENT:${GOPAY_FIXTURE_PAYMENT_ID}`,
+          `GOPAY_REFUND:${GOPAY_FIXTURE_PAYMENT_ID}:${GOPAY_FIXTURE_REFUND_ID}`,
+        ]);
         expect(yield* evidenceFor(harness, gopayRefund.paymentId, gopayRefund.operationId)).toEqual([
           ['REFUND_PENDING', 'PENDING_SUBMISSION'],
         ]);

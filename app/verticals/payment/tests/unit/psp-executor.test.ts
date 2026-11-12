@@ -384,7 +384,7 @@ const adapterOf = (world: World, family: Family): GatewayProviderAdapter => {
     });
   return {
     capabilities: {
-      CANCEL_OR_VOID: family === 'GOPAY' ? 'UNSUPPORTED' : 'SUPPORTED',
+      CANCEL_OR_VOID: 'SUPPORTED',
       COLLECT: 'SUPPORTED',
       NOTIFICATION: 'SUPPORTED',
       REFUND: 'SUPPORTED',
@@ -923,6 +923,8 @@ describe('#1156 #1158 Gateway operation executor', () => {
       yield* at(0);
       const world = withOperations(newWorld(), collectSpec('GOPAY'), cancelSpec('GOPAY'));
       expect(Exit.isSuccess(yield* deliver(world, collectSpec('GOPAY')))).toBe(true);
+      // Every Launch family declares a cancel path (GoPay: v4 DELETE); this stub adapter refuses one anyway, so the
+      // executor's generic typed-Unsupported path is proven without any fallback.
       world.failures.set('GOPAY:PREPARE_CANCEL', () =>
         Effect.fail(
           new GatewayProviderUnsupported({

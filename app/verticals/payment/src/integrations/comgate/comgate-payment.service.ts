@@ -15,9 +15,14 @@ import type { ProviderCredentialMaterial } from '../psp/credentials.ts';
 import type { GatewayProviderAdapter } from '../psp/psp-adapter.ts';
 import { deriveProviderCorrelation } from '../psp/psp-correlation.ts';
 import type { GatewayOrderReference } from '../psp/psp-correlation.ts';
-import { GatewayProviderOutcomeUnknown, GatewayProviderUnavailable } from '../psp/psp-errors.ts';
+import {
+  GatewayProviderOutcomeUnknown,
+  GatewayProviderResponseInvalid,
+  GatewayProviderUnavailable,
+} from '../psp/psp-errors.ts';
 import type {
   GatewayProviderOutcomeUnknownError,
+  GatewayProviderResponseInvalidError,
   GatewayProviderUnavailableError,
   GatewayProviderUnsupportedError,
 } from '../psp/psp-errors.ts';
@@ -50,26 +55,38 @@ import {
 } from './comgate-capabilities.ts';
 import {
   classifyComgateCancelResponse,
+  COMGATE_STATEMENT_REASONS,
   comgateBindingOf,
+  comgateStatementCandidatesOf,
+  comgateStatementIndeterminate,
   comgateTransIdOfLookup,
   comgateTransIdOfRef,
   comgateVerifiedOrderReference,
   mapComgateCreateResponse,
   mapComgateRefundResponse,
+  mapComgateStatementRefund,
   mapComgateStatus,
 } from './comgate-evidence.ts';
-import type { ComgateCancelAnswer } from './comgate-evidence.ts';
+import type { ComgateCancelAnswer, ComgateStatementCandidate, ComgateStatementVerdict } from './comgate-evidence.ts';
 import { toComgatePrice, toComgateRefundAmount } from './comgate-money.ts';
 import { verifyComgatePush } from './comgate-push.ts';
+import { comgateStatementDates } from './comgate-statement.ts';
 import {
   COMGATE_BASE_URL,
   COMGATE_ENDPOINTS,
   ComgateCreatePaymentRequestJsonSchema,
   ComgateRefundRequestJsonSchema,
+  ComgateSingleTransferFromJsonSchema,
+  ComgateTransferListFromJsonSchema,
   ComgateTransIdSchema,
   decodeComgateStatusBody,
 } from './comgate-wire.ts';
-import type { ComgateCreatePaymentRequest, ComgateRefundRequest, ComgateStatusAnswer } from './comgate-wire.ts';
+import type {
+  ComgateCreatePaymentRequest,
+  ComgateRefundRequest,
+  ComgateStatusAnswer,
+  ComgateTransferId,
+} from './comgate-wire.ts';
 
 /**
  * Comgate gateway adapter (#1154, #1156, #1158), plan §4 Comgate. REST v2 JSON at
@@ -81,7 +98,8 @@ import type { ComgateCreatePaymentRequest, ComgateRefundRequest, ComgateStatusAn
  *   binding environment. A missing payer contact fails prepare UNAVAILABLE `payer_contact_unavailable`.
  * - Cancel: `DELETE` of the transaction, always followed by a confirming status lookup; the cancel
  *   answer alone never yields a cancel finding.
- * - Refund: `code 0` is REFUND_PENDING only (completion is unprovable, plan N10).
+ * - Refund: `code 0` is REFUND_PENDING only. Comgate has no refund status API (plan N10); a refund
+ *   lookup reads the production settlement statement instead (plan D-P2, `lookupRefund`).
  * - Lookup: by transId only; ORDER_REFERENCE is Unsupported. Replay: Unsupported (no idempotency key).
  * - Order reference of a notified transaction: the same status read, `refId` only for the binding merchant.
  *
@@ -107,11 +125,15 @@ const ACCEPT_JSON: ProviderRequestHeader = { name: 'accept', value: JSON_CONTENT
 const CONTENT_TYPE_JSON: ProviderRequestHeader = { name: 'content-type', value: JSON_CONTENT_TYPE };
 
 type OperationId = GatewayExpectedEffect['operationId'];
+type RefundExpectation = Extract<GatewayExpectedEffect, { readonly _tag: 'REFUND' }>;
 /** The capabilities that act on an existing Comgate transaction. */
 type TransIdCapability = Parameters<typeof comgateTransIdOfRef>[1];
 
 const unavailable = (reason: string): GatewayProviderUnavailableError =>
   new GatewayProviderUnavailable({ code: 'gateway_provider_unavailable', family: FAMILY, reason });
+
+const responseInvalid = (reason: string): GatewayProviderResponseInvalidError =>
+  new GatewayProviderResponseInvalid({ code: 'gateway_provider_response_invalid', family: FAMILY, reason });
 
 const outcomeUnknown = (operationId: OperationId, reason: string): GatewayProviderOutcomeUnknownError =>
   new GatewayProviderOutcomeUnknown({ code: 'gateway_provider_outcome_unknown', family: FAMILY, operationId, reason });
@@ -161,6 +183,13 @@ const pathOf = (endpointRef: string): string => endpointRef.slice(endpointRef.in
 
 const statusUrlOf = (transId: ProviderObjectId): string =>
   `${COMGATE_BASE_URL}${pathOf(COMGATE_ENDPOINTS.status.replace('{transId}', transId))}`;
+
+/** `date` is a `YYYY-MM-DD` Prague date OntOS computed (`comgateStatementDates`), never provider text. */
+const transferListUrlOf = (date: string): string =>
+  `${COMGATE_BASE_URL}${pathOf(COMGATE_ENDPOINTS.transferList.replace('{date}', date))}`;
+
+const singleTransferUrlOf = (transferId: ComgateTransferId): string =>
+  `${COMGATE_BASE_URL}${pathOf(COMGATE_ENDPOINTS.singleTransfer.replace('{transferId}', String(transferId)))}`;
 
 /**
  * sha256 hex over the endpoint, the non-secret headers and the body, each length-prefixed so two
@@ -443,6 +472,44 @@ const statusAnswerOf = (
   );
 };
 
+/**
+ * A statement read answer (transferList, singleTransfer). 200 is decoded; 204 ("No content") is an
+ * empty statement; 401/403 and every other status are UNAVAILABLE (never read as absence). A 200 that
+ * does not decode, or exceeds the read bounds, is ResponseInvalid.
+ */
+const statementBodyOf = <A>(
+  response: ProviderHttpResponse,
+  decode: (bodyText: string) => Option.Option<A>,
+  invalidReason: string,
+): Effect.Effect<A, GatewayProviderResponseInvalidError | GatewayProviderUnavailableError> => {
+  if (isAuthenticationRejected(response.status)) {
+    return Effect.fail(unavailable('comgate_authentication_rejected'));
+  }
+  if (response.status !== 200 && response.status !== 204) {
+    return Effect.fail(unavailable('comgate_statement_status_unexpected'));
+  }
+  return decode(response.status === 204 ? '[]' : response.bodyText).pipe(
+    failWhenNone(() => responseInvalid(invalidReason)),
+  );
+};
+
+/** The verdict's findings; a verdict that settled nothing (or conflicts) is logged with its reason. */
+const settle = (
+  expected: RefundExpectation,
+  verdict: ComgateStatementVerdict,
+): Effect.Effect<readonly ProviderFindingResult[]> =>
+  Option.match(verdict.reason, {
+    onNone: () => Effect.succeed(verdict.findings),
+    onSome: (reason) =>
+      Effect.logInfo('Comgate statement lookup did not confirm the refund').pipe(
+        Effect.annotateLogs({ operationId: expected.operationId, reason }),
+        Effect.as(verdict.findings),
+      ),
+  });
+
+const decodeTransferList = Schema.decodeUnknownOption(ComgateTransferListFromJsonSchema);
+const decodeSingleTransfer = Schema.decodeUnknownOption(ComgateSingleTransferFromJsonSchema);
+
 const cancelUnresolvedReason = (answer: ComgateCancelAnswer): string =>
   Match.value(answer).pipe(
     Match.tag('ACCEPTED', () => 'comgate_cancel_unconfirmed'),
@@ -594,6 +661,77 @@ const makeComgatePaymentService = Effect.gen(function* buildComgatePaymentServic
     return comgateVerifiedOrderReference({ answer, binding, transId });
   });
 
+  /** One read-only statement GET through the binding's merchant authorization (bounded read retry). */
+  const readStatement = <A>(
+    authorize: (request: HttpClientRequest.HttpClientRequest) => HttpClientRequest.HttpClientRequest,
+    url: string,
+    decode: (bodyText: string) => Option.Option<A>,
+    invalidReason: string,
+  ) =>
+    http
+      .read({
+        family: FAMILY,
+        request: authorize(
+          HttpClientRequest.setHeader(HttpClientRequest.get(url), ACCEPT_JSON.name, ACCEPT_JSON.value),
+        ),
+      })
+      .pipe(Effect.flatMap((response) => statementBodyOf(response, decode, invalidReason)));
+
+  /**
+   * Refund lookup from the production settlement statement (plan D-P2). SANDBOX: Comgate generates no
+   * statement for test payments, so nothing is called. LIVE: every transfer of each Prague date from the
+   * dispatch date to min(yesterday, dispatch date + 23 days) is read (at most 24 dates) and its rows are
+   * searched for the refund's refId under the binding merchant. Only GETs are sent; a transport or
+   * credential failure is UNAVAILABLE and nothing is ever concluded from a missing row.
+   */
+  const lookupRefund = Effect.fn('ComgatePayment.lookupRefund')(function* lookupComgateRefund(
+    target: GatewayExecutionTarget,
+    transId: ProviderObjectId,
+    expected: RefundExpectation,
+    dispatchedAt: Option.Option<DateTime.Utc>,
+  ) {
+    const subject = { expected, transId };
+    const binding = yield* comgateBindingOf(target);
+    if (binding.test) {
+      return yield* settle(expected, comgateStatementIndeterminate(subject, COMGATE_STATEMENT_REASONS.testMode));
+    }
+    if (Option.isNone(dispatchedAt)) {
+      return yield* settle(
+        expected,
+        comgateStatementIndeterminate(subject, COMGATE_STATEMENT_REASONS.dispatchTimeUnknown),
+      );
+    }
+    const dates = yield* comgateStatementDates(dispatchedAt.value, yield* DateTime.now).pipe(
+      failWhenNone(() => unavailable('comgate_statement_time_zone_unavailable')),
+    );
+    if (dates.length === 0) {
+      return yield* settle(expected, comgateStatementIndeterminate(subject, COMGATE_STATEMENT_REASONS.notYetAvailable));
+    }
+    const { authorize } = yield* authorizationOf(target);
+    const { orderReference } = deriveProviderCorrelation(expected.operationId);
+    // One GET at a time: the walk is bounded by the dates, and Comgate is never fanned out.
+    const listed = yield* Effect.forEach(
+      dates,
+      (date) => readStatement(authorize, transferListUrlOf(date), decodeTransferList, 'comgate_transfer_list_invalid'),
+      { concurrency: 1 },
+    );
+    const transferIds = [...new Set(listed.flat().map(({ transferId }) => transferId))];
+    const perTransfer = yield* Effect.forEach(
+      transferIds,
+      (transferId) =>
+        readStatement(
+          authorize,
+          singleTransferUrlOf(transferId),
+          decodeSingleTransfer,
+          'comgate_single_transfer_invalid',
+        ).pipe(Effect.flatMap((rows) => comgateStatementCandidatesOf({ binding, orderReference, rows, transferId }))),
+      { concurrency: 1 },
+    );
+    const candidates: readonly ComgateStatementCandidate[] = perTransfer.flat();
+    const observedAt = yield* DateTime.now;
+    return yield* settle(expected, mapComgateStatementRefund({ candidates, expected, observedAt, transId }));
+  });
+
   const lookup = Effect.fn('ComgatePayment.lookup')(function* lookupComgate(
     target: GatewayExecutionTarget,
     request: GatewayLookupRequest,
@@ -601,7 +739,10 @@ const makeComgatePaymentService = Effect.gen(function* buildComgatePaymentServic
     const transId = yield* Effect.flatMap(comgateTransIdOfLookup(request.target), (found) =>
       pathTransIdOf(found, 'RETRIEVE'),
     );
-    return yield* lookupTransaction(target, transId, request.expected);
+    return yield* Match.value(request.expected).pipe(
+      Match.tag('REFUND', (expected) => lookupRefund(target, transId, expected, request.dispatchedAt)),
+      Match.orElse((expected) => lookupTransaction(target, transId, expected)),
+    );
   });
 
   /** Every cancel answer is resolved by a status lookup; a failed lookup leaves the DELETE unknown. */

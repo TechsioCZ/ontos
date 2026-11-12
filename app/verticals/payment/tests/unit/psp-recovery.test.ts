@@ -612,6 +612,43 @@ describe('#1158 gateway operation recovery', () => {
     }),
   );
 
+  it.effect('#1158 A lost GoPay refund is resolved only by a lookup through its refund or payment, never resent', () =>
+    Effect.gen(function* gopayRefundLookup() {
+      yield* at(25 * HOUR_MS);
+      const paymentRef = { _tag: 'GOPAY_PAYMENT', id: '3000006529' } as const;
+      const refundRef = { _tag: 'GOPAY_REFUND', id: '3050123456', paymentId: '3000006529' } as const;
+      const recovered = (recordedRefundRef: Option.Option<unknown>) =>
+        recoverWith(
+          {
+            lookup: () => Effect.succeed([findingOf({ finding: 'INDETERMINATE', kind: 'REFUND' })]),
+            operations: [operationRow({ family: 'GOPAY', kind: 'REFUND' })],
+            record: Option.some(
+              Schema.decodeUnknownSync(ProviderDispatchRecordSchema)({
+                ...Schema.encodeSync(ProviderDispatchRecordSchema)(
+                  dispatchRecord({ family: 'GOPAY', kind: 'REFUND', paymentRef: Option.some(paymentRef) }),
+                ),
+                providerRefundRef: recordedRefundRef,
+              }),
+            ),
+          },
+          { ...recoveryMessage('AUTHORITATIVE_LOOKUP', { family: 'GOPAY' }), operationKind: 'REFUND' },
+        );
+      // With the refund id GoPay returned, the refund resource itself is read.
+      const byRefund = yield* recovered(Option.some(refundRef));
+      expect(byRefund.calls.lookups.map(({ target }) => target)).toEqual([{ _tag: 'PROVIDER_OBJECT', ref: refundRef }]);
+      // Without it (lost response), the payment's refund list is read with the dispatch instant.
+      const byPayment = yield* recovered(Option.none());
+      expect(
+        byPayment.calls.lookups.map(({ dispatchedAt, target }) => [target, Option.getOrNull(dispatchedAt)]),
+      ).toEqual([[{ _tag: 'PROVIDER_OBJECT', ref: paymentRef }, PREPARED_AT]]);
+      for (const { calls, exit } of [byRefund, byPayment]) {
+        expect(reportOf(exit).providerCall).toBe('LOOKUP_PROVIDER_OBJECT');
+        expect(calls.replays).toEqual([]);
+        expect(calls.resolved.map(({ providerFamily }) => providerFamily)).toEqual(['GOPAY']);
+      }
+    }),
+  );
+
   it.effect('#1157 #1158 A Stripe refund without its refund ref is not looked up through the PaymentIntent', () =>
     Effect.gen(function* stripeRefundWithoutRefundRef() {
       yield* at(25 * HOUR_MS);
@@ -843,6 +880,65 @@ describe('#1158 gateway operation recovery', () => {
       const report = reportOf(exit);
       expect([report.appended.length, Option.getOrNull(report.indeterminate)]).toEqual([1, 'evidence_conflict']);
       expect(calls.submitted.length).toBe(1);
+    }),
+  );
+
+  it.effect('#1158 A lost GoPay cancel is resolved by a lookup through the original binding and never resent', () =>
+    Effect.gen(function* gopayCancelLookup() {
+      yield* at(25 * HOUR_MS);
+      const paymentRef = { _tag: 'GOPAY_PAYMENT', id: '3000006529' } as const;
+      const { calls, exit } = yield* recoverWith(
+        {
+          lookup: () =>
+            Effect.succeed([
+              findingOf({
+                factKind: 'CANCEL_CONFIRMED',
+                finding: 'EFFECT_CONFIRMED',
+                kind: 'CANCEL_OR_VOID',
+                operationId: cancelId,
+                refs: [paymentRef],
+              }),
+              findingOf({ factKind: 'COLLECTION_NOT_EFFECTED', finding: 'NOT_EFFECTED', refs: [paymentRef] }),
+            ]),
+          operations: [
+            operationRow({
+              family: 'GOPAY',
+              kind: 'CANCEL_OR_VOID',
+              operationId: cancelId,
+              targetOperationId: operationId,
+            }),
+            operationRow({ family: 'GOPAY' }),
+          ],
+          record: Option.some(
+            dispatchRecord({
+              family: 'GOPAY',
+              kind: 'CANCEL_OR_VOID',
+              operationId: cancelId,
+              paymentRef: Option.some(paymentRef),
+            }),
+          ),
+        },
+        {
+          ...recoveryMessage('AUTHORITATIVE_LOOKUP', { family: 'GOPAY' }),
+          operationId: cancelId,
+          operationKind: 'CANCEL_OR_VOID',
+        },
+      );
+      expect(calls.lookups.map(({ expected, target }) => [expected, target])).toEqual([
+        [
+          { _tag: 'CANCEL_OR_VOID', operationId: cancelId, target: { amount: AMOUNT, operationId } },
+          { _tag: 'PROVIDER_OBJECT', ref: paymentRef },
+        ],
+      ]);
+      expect(calls.replays).toEqual([]);
+      expect(
+        calls.resolved.map(({ providerAccountRef, providerFamily }) => [providerAccountRef, providerFamily]),
+      ).toEqual([[accountRef, 'GOPAY']]);
+      expect(calls.appended.map((input) => [input.operationId, input.evidence.factKind])).toEqual([
+        [cancelId, 'CANCEL_CONFIRMED'],
+        [operationId, 'COLLECTION_NOT_EFFECTED'],
+      ]);
+      expect(reportOf(exit).providerCall).toBe('LOOKUP_PROVIDER_OBJECT');
     }),
   );
 });

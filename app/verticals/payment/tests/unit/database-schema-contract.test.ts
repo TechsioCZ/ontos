@@ -61,6 +61,8 @@ describe('#1148 Payment database schema contract', () => {
           'refund_item_claims',
           'psp_provider_dispatches',
           'psp_provider_evidence',
+          'psp_operation_payer_contacts',
+          'psp_binding_routes',
         ].includes(candidate.name),
     )) {
       expect(config.columns.map((column) => column.name)).toEqual(
@@ -172,5 +174,54 @@ describe('#1155/#1157/#1158 Gateway adapter database schema contract', () => {
         'legalEntityId',
       ]);
     }
+  });
+
+  it('#1157/#1153 a payer contact is one transient row per operation, never operation material', () => {
+    const contacts = byName.get('psp_operation_payer_contacts');
+    const columns = contacts?.columns.map((column) => column.name) ?? [];
+
+    expect(contacts?.primaryKeys.map((key) => key.columns.map((column) => column.name))).toEqual([
+      ['tenant_id', 'legal_entity_id', 'operation_id'],
+    ]);
+    expect(columns).toEqual(expect.arrayContaining(['full_name', 'email', 'phone', 'created_at', 'operation_id']));
+    expect(columns).not.toContain('action_invocation_id');
+    expect(contacts?.foreignKeys.map((key) => key.getName())).toEqual(['payment_psp_payer_contacts_operation_fk']);
+    expect(contacts?.checks.map((constraint) => constraint.name)).toEqual(
+      expect.arrayContaining(['payment_psp_payer_contacts_present_ck']),
+    );
+  });
+
+  it('#1155 a binding route is unique per Tenant and per binding and keeps the binding family', () => {
+    const routes = byName.get('psp_binding_routes');
+
+    expect(routes?.enableRLS).toBe(true);
+    expect(routes?.policies).toHaveLength(4);
+    expect(routes?.primaryKeys.map((key) => key.columns.map((column) => column.name))).toEqual([
+      ['tenant_id', 'route_key'],
+    ]);
+    expect(
+      routes?.uniqueConstraints
+        .find((constraint) => constraint.getName() === 'payment_psp_binding_routes_binding_uk')
+        ?.columns.map((column) => column.name),
+    ).toEqual(['tenant_id', 'legal_entity_id', 'binding_id']);
+    expect(
+      routes?.foreignKeys
+        .find((key) => key.getName() === 'payment_psp_binding_routes_binding_fk')
+        ?.reference()
+        .columns.map((column) => column.name),
+    ).toEqual(['tenant_id', 'legal_entity_id', 'binding_id', 'provider_family', 'environment']);
+  });
+
+  it('#1158 recovery rounds of one operation are indexed for the reconciliation due listing', () => {
+    const index = byName
+      .get('recovery_requests')
+      ?.indexes.find((candidate) => candidate.config.name === 'payment_recovery_requests_operation_idx');
+
+    expect(index?.config.columns.map((column) => ('name' in column ? column.name : undefined))).toEqual([
+      'tenant_id',
+      'legal_entity_id',
+      'operation_id',
+      'requested_at',
+    ]);
   });
 });

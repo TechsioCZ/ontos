@@ -6,7 +6,7 @@ import { ProviderObjectIdSchema } from '../psp/psp-request.ts';
 
 /**
  * Comgate REST v2 wire shapes (#1154, #1156, #1157). Sources, read 2026-11-12:
- * - create, status, cancel, refund: https://apidoc.comgate.cz/en/api/rest/
+ * - create, status, cancel, refund, transferList, singleTransfer: https://apidoc.comgate.cz/en/api/rest/
  * - status vocabulary: https://apidoc.comgate.cz/en/stavy-plateb
  * - push notification: https://apidoc.comgate.cz/en/push-notifikace
  *
@@ -23,7 +23,9 @@ export const COMGATE_ENDPOINTS = {
   cancel: 'comgate:DELETE:/v2.0/payment/transId/{transId}.json',
   create: 'comgate:POST:/v2.0/payment.json',
   refund: 'comgate:POST:/v2.0/refund.json',
+  singleTransfer: 'comgate:GET:/v2.0/singleTransfer/transferId/{transferId}.json',
   status: 'comgate:GET:/v2.0/payment/transId/{transId}.json',
+  transferList: 'comgate:GET:/v2.0/transferList/date/{date}.json',
 } as const;
 
 /** The only success code. Every other value, documented or not, is never success (donor gap C-5). */
@@ -33,8 +35,10 @@ export const COMGATE_SUCCESS_CODE = 0;
 export const COMGATE_CANCEL_NOT_CHANGEABLE_CODE = 1400;
 
 /**
- * Refund codes that prove no refund was made: 1400 (payment not found / not paid / unauthorized),
- * 1401 (payment is CANCELLED), 1402 (refund amount higher than allowed).
+ * Refund codes that prove no refund was made: 1401 (refunded payment is in CANCELLED status) and 1402
+ * (refund amount higher than allowed) are documented refusals. 1400 is documented only as "bad request";
+ * reading it as "no refund was created" is OntOS's interpretation of a validation rejection (UNVERIFIED,
+ * https://apidoc.comgate.cz/en/api/rest/ refund response codes).
  */
 export const COMGATE_REFUND_REFUSED_CODES: readonly number[] = [1400, 1401, 1402];
 
@@ -217,3 +221,76 @@ export const ComgatePushSchema = Schema.Struct({
   transId: ComgateTransIdSchema,
 });
 export type ComgatePush = typeof ComgatePushSchema.Type;
+
+/* ------------------------------------------------------------------------------------------------ */
+/* Settlement statements (production only)                                                           */
+/* ------------------------------------------------------------------------------------------------ */
+
+/**
+ * Bounds of one statement read. A larger answer is never truncated: it fails decoding, so a lookup
+ * proves nothing instead of reading a partial statement.
+ */
+export const COMGATE_STATEMENT_LIMITS = { rowsPerTransfer: 10_000, transfersPerDate: 50 } as const;
+
+/** A transfer id from `transferList` (documented as an integer, e.g. `1234567`). */
+export const ComgateTransferIdSchema = Schema.Finite.check(
+  Schema.isInt(),
+  Schema.isBetween({ maximum: Number.MAX_SAFE_INTEGER, minimum: 1 }),
+);
+export type ComgateTransferId = typeof ComgateTransferIdSchema.Type;
+
+/**
+ * `GET /v2.0/transferList/date/{date}.json`: the transfers made on one Europe/Prague date. Only
+ * `transferId` is read; `transferDate`, the accounts and the variable symbol are ignored.
+ */
+export const ComgateTransferListFromJsonSchema = Schema.fromJsonString(
+  Schema.Array(Schema.Struct({ transferId: ComgateTransferIdSchema })).check(
+    Schema.isMaxLength(COMGATE_STATEMENT_LIMITS.transfersPerDate),
+  ),
+);
+
+/**
+ * `GET /v2.0/singleTransfer/transferId/{id}.json`: the rows of one transfer, kept as JSON objects so an
+ * unrelated row (another payment, a field this mapping does not read) never breaks the decode. Each
+ * candidate row is decoded strictly with `ComgateStatementRowSchema`.
+ */
+export const ComgateSingleTransferFromJsonSchema = Schema.fromJsonString(
+  Schema.Array(Schema.Record(Schema.String, Schema.Json)).check(
+    Schema.isMaxLength(COMGATE_STATEMENT_LIMITS.rowsPerTransfer),
+  ),
+);
+/** One row of a transfer before selection: a JSON object, not yet trusted. */
+export type ComgateStatementRawRow = (typeof ComgateSingleTransferFromJsonSchema.Type)[number];
+
+/** The two fields that select a statement row for one refund: the shop (`Merchant`) and `ID od klienta` (refId). */
+export const ComgateStatementRowKeySchema = Schema.Struct({
+  'ID od klienta': Schema.String.check(Schema.isMaxLength(200)),
+  Merchant: ComgateMerchantSchema,
+});
+
+/**
+ * A statement amount as Comgate prints it: decimal comma, exactly two decimals, optional leading minus
+ * (`"-422,00"`, `"10,00"`). Parsed into integer minor units in comgate-money.ts; never a float.
+ */
+export const ComgateStatementAmountTextSchema = Schema.String.check(
+  Schema.isPattern(/^-?(?:0|[1-9][0-9]{0,12}),[0-9]{2}$/u),
+);
+
+/**
+ * `Datum založení` as Comgate prints it: Europe/Prague wall-clock text `YYYY-MM-DD HH:mm:ss`, kept as
+ * provider text here and decoded into calendar fields by `parseComgatePragueWallClock`.
+ */
+export const ComgateStatementLocalTimeSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32));
+
+/**
+ * The fields of a selected statement row OntOS reads (Czech names as documented for singleTransfer).
+ * `Datum založení` of a refund row is the time the refund was entered (official monthly sample, rows
+ * "Refundace ze dne ..."); `Potvrzená částka` of a refund row is negative.
+ */
+export const ComgateStatementRowSchema = Schema.Struct({
+  'Datum založení': ComgateStatementLocalTimeSchema,
+  'ID od klienta': ComgateRefIdSchema,
+  Měna: ComgateCurrencyCodeSchema,
+  Merchant: ComgateMerchantSchema,
+  'Potvrzená částka': ComgateStatementAmountTextSchema,
+});

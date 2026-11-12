@@ -1,4 +1,5 @@
 import { Effect, Match, Option, Schema } from 'effect';
+import type { DateTime } from 'effect';
 
 import type { PaymentOperationIdSchema } from '../../../shared/domain/payment-identifiers.ts';
 import type { PaymentMonetaryAmount } from '../../../shared/domain/payment-money.ts';
@@ -35,7 +36,8 @@ import type {
   ProviderFindingResult,
 } from '../psp/psp-result.ts';
 import { COMGATE_UNSUPPORTED_REASONS, comgateUnsupported } from './comgate-capabilities.ts';
-import { fromComgatePrice } from './comgate-money.ts';
+import { fromComgatePrice, parseComgateStatementAmount } from './comgate-money.ts';
+import { parseComgatePragueWallClock, pragueWallClockToUtc } from './comgate-statement.ts';
 import {
   COMGATE_CANCEL_NOT_CHANGEABLE_CODE,
   COMGATE_REFUND_REFUSED_CODES,
@@ -43,9 +45,17 @@ import {
   ComgateCreatePaymentResponseFromJsonSchema,
   ComgatePaymentStatusSchema,
   ComgateResultResponseFromJsonSchema,
+  ComgateStatementRowKeySchema,
+  ComgateStatementRowSchema,
   ComgateTransIdSchema,
 } from './comgate-wire.ts';
-import type { ComgatePaymentStatus, ComgateStatusAnswer, ComgateStatusFound } from './comgate-wire.ts';
+import type {
+  ComgatePaymentStatus,
+  ComgateStatementRawRow,
+  ComgateStatusAnswer,
+  ComgateStatusFound,
+  ComgateTransferId,
+} from './comgate-wire.ts';
 
 /**
  * Comgate evidence mapping (#1156, #1157, #1158), plan §4 Comgate and §2.5. Pure functions over
@@ -59,20 +69,23 @@ import type { ComgatePaymentStatus, ComgateStatusAnswer, ComgateStatusFound } fr
  * - `test`, `merchant` (when present), `transId` and `refId` must match the binding and the dispatch,
  *   else VERIFICATION_CONFLICT; nothing is submitted for another merchant or environment.
  * - Refund `code 0` is REFUND_PENDING only (plan N10): Comgate documents no refund id, state, lookup
- *   or notification, so no Comgate answer ever confirms a refund.
+ *   or notification. The only machine proof of a refund is its row in the production settlement
+ *   statement (plan D-P2, `mapComgateStatementRefund`); nothing ever proves a refund NOT_EFFECTED after
+ *   `code 0`.
  * - Cancel `code 0` and `1400` (and every other cancel answer) are resolved by a status lookup.
  *
  * Source occurrence (§2.5): `comgate:<origin>:<transId|none>:<operationId>:<factKind>:<amountMinor>`
  * where origin is `response` (dispatch response) or `lookup` (status lookup, from notification or
- * recovery alike, so the same provider fact deduplicates). Economic effect key: collection = transId;
- * refund = `comgate-refund:<transId>:<operationId>`.
+ * recovery alike, so the same provider fact deduplicates); a statement row is
+ * `comgate:statement:<transferId>:<operationId>:<factKind>:<amountMinor>`. Economic effect key:
+ * collection = transId; refund = `comgate-refund:<transId>:<operationId>`.
  */
 
 const FAMILY = 'COMGATE';
 
 type OperationId = typeof PaymentOperationIdSchema.Type;
 
-export const ComgateEvidenceOriginSchema = Schema.Literals(['lookup', 'response']);
+export const ComgateEvidenceOriginSchema = Schema.Literals(['lookup', 'response', 'statement']);
 export type ComgateEvidenceOrigin = typeof ComgateEvidenceOriginSchema.Type;
 
 /** What a Comgate answer must match: the binding's merchant and environment (`test` flag). */
@@ -141,8 +154,11 @@ interface EvidenceInput {
   readonly factKind: ProviderEvidenceFactKind;
   readonly observedAmount: Option.Option<ProviderReportedAmount>;
   readonly observedAt: ProviderEvidence['observedAt'];
+  /** The provider object the occurrence id names when it is not the transaction (a statement's transfer id). */
+  readonly occurrenceObjectId?: string;
   readonly operationId: OperationId;
   readonly origin: ComgateEvidenceOrigin;
+  readonly providerOccurredAt?: Option.Option<DateTime.Utc>;
   readonly transId: Option.Option<ProviderObjectId>;
 }
 
@@ -156,13 +172,13 @@ const makeEvidence = (input: EvidenceInput): ProviderEvidence => ({
   factKind: input.factKind,
   observedAmount: input.observedAmount,
   observedAt: input.observedAt,
-  providerOccurredAt: Option.none(),
+  providerOccurredAt: input.providerOccurredAt ?? Option.none(),
   providerRefs: Option.match(input.transId, { onNone: () => [], onSome: (transId) => [transactionRef(transId)] }),
   reason: Option.none(),
   sourceOccurrenceId: [
     FAMILY.toLowerCase(),
     input.origin,
-    Option.getOrElse(input.transId, () => 'none'),
+    input.occurrenceObjectId ?? Option.getOrElse(input.transId, () => 'none'),
     input.operationId,
     input.factKind,
     `${input.amountMinor}`,
@@ -677,8 +693,9 @@ const verifiedFindings = (input: ComgateStatusInput, verified: VerifiedStatus): 
  *   collection's order reference: VERIFICATION_CONFLICT without evidence.
  * - COLLECT: the collection table (see `collectionResult`).
  * - CANCEL_OR_VOID: the cancel's finding (see `cancelResult`) plus the target collection's finding.
- * - REFUND: INDETERMINATE without evidence: Comgate exposes no refund state, so a lookup never proves a
- *   refund confirmed or not effected (N10).
+ * - REFUND: INDETERMINATE without evidence: the status exposes no refund state, so it never proves a
+ *   refund confirmed or not effected (N10). The adapter answers a refund lookup from the settlement
+ *   statement instead (`mapComgateStatementRefund`).
  */
 export const mapComgateStatus = (
   input: ComgateStatusInput,
@@ -700,3 +717,183 @@ export const mapComgateStatus = (
     ),
     Match.exhaustive,
   );
+
+/* ------------------------------------------------------------------------------------------------ */
+/* Settlement statement (transferList + singleTransfer, production only)                             */
+/* ------------------------------------------------------------------------------------------------ */
+
+/**
+ * Why a statement lookup proved nothing (or found a contradiction). Logged by the adapter; the finding
+ * contract carries no reason, so recovery records the INDETERMINATE step as `provider_indeterminate`.
+ */
+export const COMGATE_STATEMENT_REASONS = {
+  ambiguous: 'refund_statement_rows_ambiguous',
+  amountMismatch: 'refund_statement_amount_mismatch',
+  dispatchTimeUnknown: 'refund_dispatch_time_unknown',
+  notADebit: 'refund_statement_row_not_a_debit',
+  notInStatement: 'refund_not_in_statement',
+  notYetAvailable: 'statement_not_yet_available',
+  testMode: 'statement_unavailable_in_test_mode',
+} as const;
+export type ComgateStatementReason = (typeof COMGATE_STATEMENT_REASONS)[keyof typeof COMGATE_STATEMENT_REASONS];
+
+/** One statement row of the binding merchant whose `ID od klienta` is the refund's order reference. */
+export interface ComgateStatementCandidate {
+  /** `Potvrzená částka` as signed integer minor units (a refund row is negative). */
+  readonly confirmedAmountMinor: number;
+  /** `Datum založení` (Prague) as an instant; `None` when the wall-clock time is ambiguous around a DST change. */
+  readonly createdAt: Option.Option<DateTime.Utc>;
+  readonly currency: string;
+  readonly transferId: ComgateTransferId;
+}
+
+/** The finding of a statement lookup and, when it settled nothing or conflicts, why. */
+export interface ComgateStatementVerdict {
+  readonly findings: readonly ProviderFindingResult[];
+  readonly reason: Option.Option<ComgateStatementReason>;
+}
+
+interface StatementRefundSubject {
+  readonly expected: { readonly amount: PaymentMonetaryAmount; readonly operationId: OperationId };
+  readonly transId: ProviderObjectId;
+}
+
+const statementFinding = (
+  subject: StatementRefundSubject,
+  finding: ProviderFinding,
+  evidence: Option.Option<ProviderEvidence>,
+  orderReference: Option.Option<GatewayOrderReference>,
+): ProviderFindingResult =>
+  makeFinding({
+    evidence,
+    finding,
+    operationId: subject.expected.operationId,
+    operationKind: 'REFUND',
+    orderReference,
+    transId: Option.some(subject.transId),
+  });
+
+/** A refund lookup that read no statement row it could act on: INDETERMINATE, never NOT_EFFECTED (#1158). */
+export const comgateStatementIndeterminate = (
+  subject: StatementRefundSubject,
+  reason: ComgateStatementReason,
+): ComgateStatementVerdict => ({
+  findings: [statementFinding(subject, 'INDETERMINATE', Option.none(), Option.none())],
+  reason: Option.some(reason),
+});
+
+/**
+ * The candidate rows of one transfer for one refund: rows whose `Merchant` is the binding merchant
+ * (#1157, the original binding only) and whose `ID od klienta` is exactly the refund's order reference
+ * (the per-operation `refId` sent with the refund, https://apidoc.comgate.cz/en/api/rest/ refund
+ * `refId`: "the daily csv for the refund ... Client ID"). Every other row is ignored unread. A selected
+ * row that does not decode strictly (amount, currency, time) proves nothing: ResponseInvalid.
+ */
+export const comgateStatementCandidatesOf = (input: {
+  readonly binding: ComgateBindingIdentity;
+  readonly orderReference: GatewayOrderReference;
+  readonly rows: readonly ComgateStatementRawRow[];
+  readonly transferId: ComgateTransferId;
+}): Effect.Effect<readonly ComgateStatementCandidate[], GatewayProviderResponseInvalidError> => {
+  const selected = input.rows.filter((row) =>
+    Option.match(Schema.decodeUnknownOption(ComgateStatementRowKeySchema)(row), {
+      onNone: () => false,
+      onSome: (key) => key.Merchant === input.binding.merchantId && key['ID od klienta'] === input.orderReference,
+    }),
+  );
+  const candidateOf = (
+    row: ComgateStatementRawRow,
+  ): Effect.Effect<ComgateStatementCandidate, GatewayProviderResponseInvalidError> => {
+    const candidate = Schema.decodeUnknownOption(ComgateStatementRowSchema)(row).pipe(
+      Option.flatMap((decoded) =>
+        Option.all({
+          confirmedAmountMinor: parseComgateStatementAmount(decoded['Potvrzená částka']),
+          wallClock: parseComgatePragueWallClock(decoded['Datum založení']),
+        }).pipe(
+          Option.map(({ confirmedAmountMinor, wallClock }): ComgateStatementCandidate => ({
+            confirmedAmountMinor,
+            createdAt: pragueWallClockToUtc(wallClock),
+            currency: decoded.Měna,
+            transferId: input.transferId,
+          })),
+        ),
+      ),
+    );
+    return Effect.fromOption(candidate).pipe(
+      Effect.catchTag('NoSuchElementError', () => Effect.fail(responseInvalid('comgate_statement_row_invalid'))),
+    );
+  };
+  return Effect.forEach(selected, candidateOf, { concurrency: 1 });
+};
+
+/**
+ * A refund's finding from every candidate statement row found for it (plan D-P2, #1156, #1158, #1159):
+ * - no row: INDETERMINATE `refund_not_in_statement` (a queued refund may still be waiting for funds;
+ *   absence never proves NOT_EFFECTED);
+ * - more than one row: VERIFICATION_CONFLICT without evidence (one refund operation has one refId);
+ * - one row that is not a debit (zero or positive, e.g. an undocumented reversal): VERIFICATION_CONFLICT
+ *   without evidence; it neither confirms nor disproves the refund;
+ * - one debit row of exactly the refund amount and currency: EFFECT_CONFIRMED with REFUND_CONFIRMED
+ *   evidence. It proves Comgate executed the refund against the merchant's settlement, not that the
+ *   payer's bank accepted it;
+ * - one debit row of another amount or currency: VERIFICATION_CONFLICT with REFUND_CONFIRMED evidence
+ *   carrying the discrepancy and the authentic statement amount.
+ * Occurrence `comgate:statement:<transferId>:<operationId>:REFUND_CONFIRMED:<amountMinor>`, effect key
+ * `comgate-refund:<transId>:<operationId>`, provider instant = the row's `Datum založení`.
+ */
+export const mapComgateStatementRefund = (
+  input: StatementRefundSubject & {
+    readonly candidates: readonly ComgateStatementCandidate[];
+    readonly observedAt: ProviderEvidence['observedAt'];
+  },
+): ComgateStatementVerdict => {
+  const [only, ...others] = input.candidates;
+  if (only === undefined) {
+    return comgateStatementIndeterminate(input, COMGATE_STATEMENT_REASONS.notInStatement);
+  }
+  const verifiedReference = Option.some(deriveProviderCorrelation(input.expected.operationId).orderReference);
+  const conflict = (reason: ComgateStatementReason): ComgateStatementVerdict => ({
+    findings: [statementFinding(input, 'VERIFICATION_CONFLICT', Option.none(), verifiedReference)],
+    reason: Option.some(reason),
+  });
+  if (others.length > 0) {
+    return conflict(COMGATE_STATEMENT_REASONS.ambiguous);
+  }
+  const observed = Schema.decodeUnknownOption(ProviderReportedAmountSchema)({
+    amountMinor: -only.confirmedAmountMinor,
+    currency: only.currency,
+  });
+  if (only.confirmedAmountMinor >= 0 || Option.isNone(observed)) {
+    return conflict(COMGATE_STATEMENT_REASONS.notADebit);
+  }
+  const discrepancy = Match.value(compareObservedAmount(input.expected.amount, observed.value)).pipe(
+    Match.tag('MATCH', () => Option.none<ProviderAmountDiscrepancy>()),
+    Match.tag('MISMATCH', ({ discrepancy: found }) => Option.some(found)),
+    Match.exhaustive,
+  );
+  const evidence = makeEvidence({
+    amountMinor: observed.value.amountMinor,
+    discrepancy,
+    economicEffectKey: Option.some(comgateRefundEffectKey(input.transId, input.expected.operationId)),
+    factKind: 'REFUND_CONFIRMED',
+    observedAmount: observed,
+    observedAt: input.observedAt,
+    occurrenceObjectId: `${only.transferId}`,
+    operationId: input.expected.operationId,
+    origin: 'statement',
+    providerOccurredAt: only.createdAt,
+    transId: Option.some(input.transId),
+  });
+  const confirmed = Option.isNone(discrepancy);
+  return {
+    findings: [
+      statementFinding(
+        input,
+        confirmed ? 'EFFECT_CONFIRMED' : 'VERIFICATION_CONFLICT',
+        Option.some(evidence),
+        verifiedReference,
+      ),
+    ],
+    reason: confirmed ? Option.none() : Option.some(COMGATE_STATEMENT_REASONS.amountMismatch),
+  };
+};

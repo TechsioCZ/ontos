@@ -67,7 +67,8 @@ import {
  *
  * Every suite reads only its own `ONTOS_C17_SANDBOX_*` variables through `Config` (never `process.env`):
  * - GoPay: `ONTOS_C17_SANDBOX_GOPAY_CLIENT_ID`, `ONTOS_C17_SANDBOX_GOPAY_CLIENT_SECRET`,
- *   `ONTOS_C17_SANDBOX_GOPAY_GOID` (scope `payment-all`); optional public `ONTOS_C17_SANDBOX_GOPAY_NOTIFICATION_URL`.
+ *   `ONTOS_C17_SANDBOX_GOPAY_GOID` (v4 sandbox credentials, scopes `payment:read payment:write`); optional public
+ *   `ONTOS_C17_SANDBOX_GOPAY_NOTIFICATION_URL`.
  * - Stripe: `ONTOS_C17_SANDBOX_STRIPE_SECRET_KEY` (`sk_test_`/`rk_test_`), `ONTOS_C17_SANDBOX_STRIPE_WEBHOOK_SECRET`
  *   (`whsec_`), `ONTOS_C17_SANDBOX_STRIPE_ACCOUNT_ID` (`acct_`).
  * - Comgate: `ONTOS_C17_SANDBOX_COMGATE_MERCHANT_ID`, `ONTOS_C17_SANDBOX_COMGATE_SECRET` (a shop connection with

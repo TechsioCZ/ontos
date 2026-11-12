@@ -127,10 +127,12 @@ const decodeGuarantee = Schema.decodeUnknownOption(PaymentProviderReplayGuarante
 const decodeEnvironment = Schema.decodeUnknownOption(GatewayEnvironmentSchema);
 const REPLAYABLE_STATES: ReadonlySet<ProviderDispatchRecord['state']> = new Set(['PREPARED', 'OUTCOME_UNKNOWN']);
 
-const isStripeRefundRef = (ref: ProviderObjectRef): boolean =>
+/** A refund's own provider object (Stripe refund, GoPay v4 refund); every other ref is a collection object. */
+const isRefundRef = (ref: ProviderObjectRef): boolean =>
   Match.valueTags(ref, {
     COMGATE_TRANSACTION: () => false,
     GOPAY_PAYMENT: () => false,
+    GOPAY_REFUND: () => true,
     STRIPE_CHECKOUT_SESSION: () => false,
     STRIPE_PAYMENT_INTENT: () => false,
     STRIPE_REFUND: () => true,
@@ -200,8 +202,8 @@ export const recoveryModeAtDispatch = (
 
 /**
  * The provider object a lookup by reference reads: the refund object when known, else the collection object.
- * A Stripe refund is a separate provider object, so only its refund ref addresses it; GoPay and Comgate read a
- * refund through its payment.
+ * A Stripe refund is a separate provider object, so only its refund ref addresses it; a GoPay refund is read by its
+ * recorded refund ref and otherwise through its payment's refund list; Comgate reads a refund through its payment.
  */
 export const recordedLookupRefOf = (record: ProviderDispatchRecord): Option.Option<ProviderObjectRef> => {
   if (record.operationKind !== 'REFUND') {
@@ -235,7 +237,7 @@ export const lookupTargetOf = (record: ProviderDispatchRecord, now: DateTime.Utc
 
 /** The provider ref a correlated OUTCOME_UNKNOWN row records: a refund object for a refund, else the collection object. */
 const correlationRefOf = (record: ProviderDispatchRecord, refs: readonly ProviderObjectRef[]) =>
-  Option.fromUndefinedOr(refs.find((ref) => isStripeRefundRef(ref) === (record.operationKind === 'REFUND')));
+  Option.fromUndefinedOr(refs.find((ref) => isRefundRef(ref) === (record.operationKind === 'REFUND')));
 
 const unavailable = (family: PaymentGatewayAccountBinding['providerFamily'], reason: string) =>
   new GatewayProviderUnavailable({ code: 'gateway_provider_unavailable', family, reason });
@@ -398,10 +400,10 @@ const recordReplayResponse = Effect.fn('GatewayOperationRecovery.recordReplayRes
           customerRedirectUrl: acknowledged.finding.customerAction.pipe(Option.map(({ redirectUrl }) => redirectUrl)),
           providerPaymentRef:
             record.operationKind === 'COLLECT'
-              ? Option.fromUndefinedOr(refs.find((ref) => !isStripeRefundRef(ref)))
+              ? Option.fromUndefinedOr(refs.find((ref) => !isRefundRef(ref)))
               : Option.none(),
           providerRefundRef:
-            record.operationKind === 'REFUND' ? Option.fromUndefinedOr(refs.find(isStripeRefundRef)) : Option.none(),
+            record.operationKind === 'REFUND' ? Option.fromUndefinedOr(refs.find(isRefundRef)) : Option.none(),
           respondedAt: now,
         })
         .pipe(Effect.as(acknowledged.finding));
