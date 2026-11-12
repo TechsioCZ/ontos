@@ -36,7 +36,7 @@ import {
   OperationalScopeResolverLive as GovernedOperationalScopeResolverLive,
   TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
-import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionConfigLive as GovernedApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { Reactivity } from 'effect/reactivity';
 import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
@@ -70,7 +70,7 @@ const governedCompositionHttpClientLive = GovernedFetchHttpClient.layer.pipe(
 const governedApplicationCompositionSourceLive = GovernedApplicationCompositionSourceLive.pipe(
   GovernedReadLayer.provide(governedCompositionHttpClientLive),
 );
-const governedActiveApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+const governedActiveApplicationCompositionLive = GovernedApplicationCompositionConfigLive.pipe(
   GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
 );
 
@@ -114,7 +114,7 @@ const ownerActionApprovalsLive = makeOwnerActionApprovalsLive(
       governedModuleStateGateLive,
       ActionRepositoryLive,
       ActionPermissionLive,
-      ActiveApplicationCompositionConfigLive,
+      GovernedApplicationCompositionConfigLive,
     ),
   ),
 );
@@ -130,7 +130,7 @@ const governedActionRuntimeLive = makeActionRuntimeLive(
       governedModuleStateGateLive,
       ActionRepositoryLive,
       ActionPermissionLive,
-      ActiveApplicationCompositionConfigLive,
+      GovernedApplicationCompositionConfigLive,
     ),
   ),
 );
