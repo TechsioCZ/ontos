@@ -56,7 +56,19 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
   'effect-native/no-ambient-date': 'error',
   'effect-native/no-ambient-process-env': 'error',
   'effect-native/no-async-script-program': 'error',
-  'effect-native/no-bare-effect-run': 'error',
+  'effect-native/no-bare-effect-run': [
+    'error',
+    {
+      adapterFiles: [
+        'apps/*/api/index.ts',
+        'verticals/*/api/index.ts',
+        'packages/core-runtime/src/outbox/process.ts',
+        // The Shell calls a remote's `preloadPage` as a Promise (ModulePagePreload); modulePagePreload is that
+        // one Promise adapter over requirement-free preload steps whose loads fork on each page data's own runtime.
+        'packages/shared-contracts/src/page-data.ts',
+      ],
+    },
+  ],
   'effect-native/no-console-in-scripts': 'error',
   'effect-native/no-dependency-parameters': 'error',
   'effect-native/no-direct-node-io-in-scripts': 'error',
@@ -85,6 +97,9 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
         // This CLI composes administrative Auth/Core database Layers for local initialization.
         'scripts/initialize-local-development.mts',
         'apps/shell-super-app/scripts/bootstrap-stage-accounts.mts',
+        // Exception 1 (agent proposals): the MCP request seam binds each agent request's correlation, trace
+        // and idempotency identity to that one request, as a composition root does.
+        'apps/shell-super-app/api/mcp/request-identity.ts',
       ],
     },
   ],
@@ -1385,6 +1400,97 @@ export default defineConfig({
         'typescript/return-await': 'off',
         'typescript/strict-boolean-expressions': 'off',
         'typescript/strict-void-return': 'off',
+      },
+    },
+    // Demo exceptions recorded at the main→demo merge. Each block names the approved exception or the
+    // fence whose behaviour a rewrite would change. The code stays as reviewed; only the named rules are off.
+    {
+      // Exception 1 (owner-action approvals and agent proposals): the AI approval staleness comparators
+      // compare the proposed change with the current record by canonical JSON, over values of any shape.
+      files: ['packages/shared-contracts/src/ai-approvals.ts', 'verticals/crm/shared/commands/ai-changes.ts'],
+      rules: {
+        'anti-slop/no-runtime-typeof': 'off',
+        'anti-slop/no-unknown-parameters': 'off',
+        'anti-slop/no-unknown-returns': 'off',
+        'effect-native/no-native-json-stringify': 'off',
+      },
+    },
+    {
+      // Exception 1 (owner-action approvals and agent proposals): the approval lifecycle, mandate dispatch and
+      // owner-native approval services compose their stores, intent loaders and currentness per transaction.
+      files: [
+        'packages/core-runtime/src/access/approvals/action-lifecycle-v2.ts',
+        'packages/core-runtime/src/access/approvals/action-mandate-dispatch-service.ts',
+        'packages/core-runtime/src/access/approvals/action-mandate-dispatch.ts',
+        'packages/core-runtime/src/access/approvals/owner-native-services.ts',
+        'packages/core-runtime/src/access/approvals/owner-runtime.ts',
+      ],
+      rules: { 'anti-slop-effect/no-service-constructor-imports': 'off' },
+    },
+    {
+      // Exception 1 (owner-action approvals and agent proposals): the native approval-v2 test composition. It
+      // cannot move under src/testing: lean-core forbids src importing its tests/support helpers, and its
+      // Node-only closure needs the `node`-conditioned export the gate accepts.
+      files: ['packages/core-runtime/tests/support/action-live-v2.ts'],
+      rules: { 'anti-slop-effect/no-service-constructor-imports': 'off' },
+    },
+    {
+      // Exception 2 (the optional `mcp` manifest key): these are main's Outbox worker compositions, byte for
+      // byte. The data-factory proof cannot follow makeModuleContractFixture through the demo manifest schema's
+      // `mcp` contribution (or owner-declared Search, exception 4), so main's clean imports report here.
+      files: [
+        'packages/core-runtime/tests/fixtures/outbox-worker-process.fixture.ts',
+        'packages/core-runtime/tests/support/outbox-worker-composition.ts',
+        'packages/core-runtime/tests/support/outbox-worker-native-composition.ts',
+      ],
+      rules: { 'anti-slop-effect/no-service-constructor-imports': 'off' },
+    },
+    {
+      // Fence: the transaction I/O guard proxies forward every other member with its original receiver.
+      // Typed access, or binding `this` to the target, would bypass the guard on the pooled client.
+      files: ['packages/core-runtime/src/db/transaction-io-guard.ts'],
+      rules: { 'anti-slop/no-reflect-get': 'off' },
+    },
+    {
+      // These tests wrap the executor so `transaction` runs as the worker; every other member must be forwarded
+      // unchanged, as main's adversarial Schema proxy in problem-details.test.ts forwards its members.
+      files: [
+        'packages/core-runtime/tests/integration/search-derived-stamp-sweep.test.ts',
+        'packages/core-runtime/tests/integration/search-indexed-query.test.ts',
+      ],
+      rules: { 'anti-slop/no-reflect-get': 'off' },
+    },
+    {
+      // Fence: CIMD fetches and the OAuth metadata adapter forward upstream Set-Cookie lines verbatim. A
+      // parse-and-reserialize through Effect cookies would change the bytes of the authentication cookies.
+      files: [
+        'apps/shell-super-app/api/auth/cimd-transport.workerd.ts',
+        'apps/shell-super-app/api/auth/oauth-server/forward.ts',
+      ],
+      rules: { 'effect-native/no-manual-cookie-serialization': 'off' },
+    },
+    {
+      // Demo UI owned by the ui-kit/AKROS team: the shared scroll region joins the tab order only while its
+      // content overflows, so keyboard users can reach and scroll it (WCAG 2.1.1, axe scrollable-region-focusable).
+      files: ['packages/admin-ui/src/scroll-region.tsx'],
+      rules: { 'jsx-a11y/no-noninteractive-tabindex': 'off' },
+    },
+    {
+      // Demo UI owned by the ui-kit/AKROS team: the people row is clickable; this wrapper only stops the actions
+      // menu's clicks from also opening the detail, and the Menu's Button trigger is the keyboard target.
+      files: ['apps/shell-super-app/src/routes/people/people-table.tsx'],
+      rules: {
+        'jsx-a11y/click-events-have-key-events': 'off',
+        'jsx-a11y/no-static-element-interactions': 'off',
+      },
+    },
+    {
+      // Test doubles: the routine-only scoped executor and the operation-requirement catalog fake expose just
+      // the members Price Group persistence and the requirement check read, as main's Assortment owner tests do.
+      files: ['verticals/commerce-customer-context/tests/unit/price-group-action-preparation.test.ts'],
+      rules: {
+        'anti-slop/no-chained-type-assertions': 'off',
+        'typescript/no-unsafe-type-assertion': 'off',
       },
     },
   ],
