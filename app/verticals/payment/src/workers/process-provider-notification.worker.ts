@@ -29,10 +29,12 @@ export const processProviderNotificationWorker = defineOutboxWorker(
     legalEntityScope: 'required',
     payloadSchema: OutboxPayloadSchema,
     producerModuleKey: outboxProducerModuleKey,
+    // Provider outages stay recoverable (same schedule as the executor): a transient provider or
+    // ledger outage must never dead-letter a delivery that only an operator could move on.
     retryPolicy: {
       initialBackoffMs: 1000,
-      maxAttempts: 5,
-      maxBackoffMs: 60_000,
+      maxAttempts: 60,
+      maxBackoffMs: 1_800_000,
       multiplier: 2,
     },
     topic: outboxTopic,

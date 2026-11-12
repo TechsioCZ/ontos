@@ -20,7 +20,7 @@ export const gatewayConfigurationRead = defineRead(
       key: 'payment.core.gateway-configuration.read',
       kind: 'read',
       modes: ['run'],
-      placement: { group: 'gateway-configuration', level: 'basic' },
+      placement: { group: 'payments', level: 'basic' },
       risk: 'sensitive',
       selectors: [],
     },

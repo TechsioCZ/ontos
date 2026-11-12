@@ -20,7 +20,7 @@ export const gatewayReturnStatusRead = defineRead(
       key: 'payment.core.gateway-return-status.read',
       kind: 'read',
       modes: ['run'],
-      placement: { group: 'gateway-return-status', level: 'basic' },
+      placement: { group: 'payments', level: 'basic' },
       risk: 'sensitive',
       selectors: [],
     },

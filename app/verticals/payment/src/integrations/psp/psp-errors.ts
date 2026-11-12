@@ -81,6 +81,13 @@ export const GatewayCorrelationConflict = makePspError('GatewayCorrelationConfli
 });
 export type GatewayCorrelationConflictError = Schema.Schema.Type<typeof GatewayCorrelationConflict>;
 
+/** An evidence source occurrence is already stored for another operation or with another statement. */
+export const GatewayEvidenceConflict = makePspError('GatewayEvidenceConflict', {
+  code: Schema.Literal('gateway_evidence_conflict'),
+  reason: reasonText,
+});
+export type GatewayEvidenceConflictError = Schema.Schema.Type<typeof GatewayEvidenceConflict>;
+
 /** The same Payment Operation arrived with different material or request bytes (#1158). No provider call. */
 export const GatewayDispatchConflict = makePspError('GatewayDispatchConflict', {
   code: Schema.Literal('gateway_dispatch_conflict'),

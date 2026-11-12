@@ -162,6 +162,7 @@ CREATE TABLE "payment"."psp_provider_dispatches" (
 	"replay_expires_at" timestamp with time zone,
 	"replay_starts_at" timestamp with time zone,
 	"request_body" bytea,
+	"request_headers" jsonb,
 	"request_hash" text,
 	"responded_at" timestamp with time zone,
 	"return_token" text,
@@ -171,7 +172,7 @@ CREATE TABLE "payment"."psp_provider_dispatches" (
 	"transitioned_at" timestamp with time zone,
 	CONSTRAINT "payment_psp_dispatches_operation_uk" UNIQUE("tenant_id","legal_entity_id","operation_id"),
 	CONSTRAINT "payment_psp_dispatches_order_reference_uk" UNIQUE("tenant_id","legal_entity_id","binding_id","order_reference"),
-	CONSTRAINT "payment_psp_dispatches_vocabulary_ck" CHECK ("state" in ('AWAITING_TARGET', 'PREPARED', 'ACKNOWLEDGED', 'REJECTED_BEFORE_EFFECT', 'OUTCOME_UNKNOWN', 'UNSUPPORTED', 'NOT_SENT', 'TARGET_UNRESOLVED') and "operation_kind" in ('COLLECT', 'CANCEL_OR_VOID', 'REFUND') and ("not_sent_reason" is null or "not_sent_reason" in ('WITHHELD_FOR_CANCELLATION', 'TARGET_WITHHELD', 'TARGET_NOT_EFFECTED', 'PREPARE_UNAVAILABLE'))),
+	CONSTRAINT "payment_psp_dispatches_vocabulary_ck" CHECK ("state" in ('AWAITING_TARGET', 'PREPARED', 'ACKNOWLEDGED', 'REJECTED_BEFORE_EFFECT', 'OUTCOME_UNKNOWN', 'UNSUPPORTED', 'NOT_SENT', 'TARGET_UNRESOLVED') and "operation_kind" in ('COLLECT', 'CANCEL_OR_VOID', 'REFUND') and ("not_sent_reason" is null or "not_sent_reason" in ('WITHHELD_FOR_CANCELLATION', 'TARGET_WITHHELD', 'TARGET_NOT_EFFECTED', 'PREPARE_UNAVAILABLE', 'PRIOR_REFUND_UNRESOLVED'))),
 	CONSTRAINT "payment_psp_dispatches_family_ck" CHECK ("provider_family" in ('GOPAY', 'STRIPE', 'COMGATE')),
 	CONSTRAINT "payment_psp_dispatches_environment_ck" CHECK ("environment" in ('SANDBOX', 'LIVE')),
 	CONSTRAINT "payment_psp_dispatches_target_ck" CHECK (("operation_kind" = 'COLLECT') = ("target_operation_id" is null) and ("target_operation_id" is null or "target_operation_id" <> "operation_id")),
@@ -183,7 +184,9 @@ CREATE TABLE "payment"."psp_provider_dispatches" (
         and ("state" not in ('PREPARED', 'ACKNOWLEDGED', 'REJECTED_BEFORE_EFFECT', 'OUTCOME_UNKNOWN') or "prepared_at" is not null)
         and ("state" not in ('AWAITING_TARGET', 'NOT_SENT', 'UNSUPPORTED', 'TARGET_UNRESOLVED') or "prepared_at" is null)
         and ("idempotency_key_hash" is null or "prepared_at" is not null)
-        and ("request_body" is null or ("prepared_at" is not null and octet_length("request_body") between 1 and 65536))),
+        and ("request_body" is null or ("prepared_at" is not null and octet_length("request_body") between 1 and 65536))
+        and ("request_body" is null) = ("request_headers" is null)
+        and ("request_headers" is null or jsonb_typeof("request_headers") = 'array')),
 	CONSTRAINT "payment_psp_dispatches_replay_ck" CHECK (("replay_starts_at" is null) = ("replay_expires_at" is null)
         and ("replay_starts_at" is null or ("replay_expires_at" > "replay_starts_at"
           and "idempotency_key_hash" is not null and "request_body" is not null))),
@@ -230,20 +233,23 @@ CREATE TABLE "payment"."psp_provider_evidence" (
 	"provider_occurred_at" timestamp with time zone,
 	"provider_refs" jsonb NOT NULL,
 	"reason" text,
+	"received_at" timestamp with time zone NOT NULL,
 	"source_occurrence_id" text NOT NULL,
 	"source_revision" bigint NOT NULL,
 	"submission_state" text NOT NULL,
 	"submitted_at" timestamp with time zone,
 	"submitted_delivery_id" uuid,
+	"verified_at" timestamp with time zone NOT NULL,
 	CONSTRAINT "payment_psp_evidence_scope_id_uk" UNIQUE("tenant_id","legal_entity_id","evidence_id"),
 	CONSTRAINT "payment_psp_evidence_occurrence_uk" UNIQUE("tenant_id","legal_entity_id","binding_id","source_occurrence_id","source_revision"),
 	CONSTRAINT "payment_psp_evidence_vocabulary_ck" CHECK ("evidence_origin" in ('NOTIFICATION_LOOKUP', 'NOTIFICATION_SIGNED', 'DISPATCH_RESPONSE', 'LOCAL_NOT_SENT', 'RECOVERY_LOOKUP', 'RECOVERY_REPLAY')
         and "submission_state" in ('PENDING_SUBMISSION', 'ACCEPTED', 'DUPLICATE', 'HELD', 'CONFLICT', 'DENIED')
-        and "fact_kind" in ('COLLECTION_PENDING', 'COLLECTION_CONFIRMED', 'COLLECTION_NOT_EFFECTED', 'CANCEL_CONFIRMED', 'CANCEL_NOT_EFFECTED', 'REFUND_PENDING', 'REFUND_INDETERMINATE', 'REFUND_CONFIRMED', 'REFUND_NOT_EFFECTED', 'SETTLEMENT_OBSERVED', 'SOURCE_CORRECTION', 'UNRECOGNIZED') and "fact_kind" <> 'UNRECOGNIZED'
+        and "fact_kind" in ('COLLECTION_PENDING', 'COLLECTION_CONFIRMED', 'COLLECTION_NOT_EFFECTED', 'CANCEL_CONFIRMED', 'CANCEL_NOT_EFFECTED', 'REFUND_PENDING', 'REFUND_INDETERMINATE', 'REFUND_CONFIRMED', 'REFUND_NOT_EFFECTED')
         and "fact_family" in ('GATEWAY_OUTCOME', 'REFUND_EXECUTION')),
 	CONSTRAINT "payment_psp_evidence_family_ck" CHECK ("provider_family" in ('GOPAY', 'STRIPE', 'COMGATE')),
 	CONSTRAINT "payment_psp_evidence_environment_ck" CHECK ("environment" in ('SANDBOX', 'LIVE')),
-	CONSTRAINT "payment_psp_evidence_money_ck" CHECK (("observed_amount_minor" is null) = ("observed_currency" is null) and ("observed_amount_minor" is null or ("observed_amount_minor" between 0 and 9007199254740991 and "observed_currency" = 'CZK'))),
+	CONSTRAINT "payment_psp_evidence_money_ck" CHECK (("observed_amount_minor" is null) = ("observed_currency" is null) and ("observed_amount_minor" is null or ("observed_amount_minor" between 0 and 9007199254740991 and "observed_currency" ~ '^[A-Z]{3}$'))),
+	CONSTRAINT "payment_psp_evidence_times_ck" CHECK ("verified_at" >= "received_at"),
 	CONSTRAINT "payment_psp_evidence_submission_ck" CHECK (("submission_state" = 'PENDING_SUBMISSION') = ("submitted_at" is null)
         and ("submitted_at" is null) = ("submitted_delivery_id" is null)
         and ("observation_id" is null or "submission_state" in ('ACCEPTED', 'DUPLICATE', 'HELD', 'CONFLICT'))),
@@ -286,6 +292,7 @@ CREATE TABLE "payment"."psp_provider_notifications" (
 	"transport_delivery_ref" text NOT NULL,
 	"verified_at" timestamp with time zone NOT NULL,
 	CONSTRAINT "payment_psp_notifications_scope_id_uk" UNIQUE("tenant_id","legal_entity_id","notification_id"),
+	CONSTRAINT "payment_psp_notifications_binding_id_uk" UNIQUE("tenant_id","legal_entity_id","binding_id","notification_id"),
 	CONSTRAINT "payment_psp_notifications_delivery_uk" UNIQUE("tenant_id","legal_entity_id","binding_id","delivery_identity"),
 	CONSTRAINT "payment_psp_notifications_vocabulary_ck" CHECK ("state" in ('CAPTURED', 'IGNORED', 'HELD_UNCORRELATED', 'SUBMITTED', 'SUBMISSION_HELD', 'SUBMISSION_DENIED') and "authenticity" in ('SIGNATURE_VERIFIED', 'SHARED_SECRET_VERIFIED', 'LOOKUP_REQUIRED')),
 	CONSTRAINT "payment_psp_notifications_family_ck" CHECK ("provider_family" in ('GOPAY', 'STRIPE', 'COMGATE')),
@@ -323,7 +330,7 @@ ALTER TABLE "payment"."psp_provider_dispatches" ADD CONSTRAINT "payment_psp_disp
 ALTER TABLE "payment"."psp_provider_dispatches" ADD CONSTRAINT "payment_psp_dispatches_credential_fk" FOREIGN KEY ("tenant_id","legal_entity_id","binding_id","credential_revision") REFERENCES "payment"."psp_credential_revisions"("tenant_id","legal_entity_id","binding_id","revision") ON DELETE RESTRICT;--> statement-breakpoint
 ALTER TABLE "payment"."psp_provider_evidence" ADD CONSTRAINT "payment_psp_evidence_operation_fk" FOREIGN KEY ("tenant_id","legal_entity_id","payment_id","operation_id") REFERENCES "payment"."payment_operations"("tenant_id","legal_entity_id","payment_id","operation_id") ON DELETE RESTRICT;--> statement-breakpoint
 ALTER TABLE "payment"."psp_provider_evidence" ADD CONSTRAINT "payment_psp_evidence_binding_fk" FOREIGN KEY ("tenant_id","legal_entity_id","binding_id","provider_family","environment","provider_account_ref") REFERENCES "payment"."psp_provider_account_bindings"("tenant_id","legal_entity_id","binding_id","provider_family","environment","provider_account_ref") ON DELETE RESTRICT;--> statement-breakpoint
-ALTER TABLE "payment"."psp_provider_evidence" ADD CONSTRAINT "payment_psp_evidence_notification_fk" FOREIGN KEY ("tenant_id","legal_entity_id","notification_id") REFERENCES "payment"."psp_provider_notifications"("tenant_id","legal_entity_id","notification_id") ON DELETE RESTRICT;--> statement-breakpoint
+ALTER TABLE "payment"."psp_provider_evidence" ADD CONSTRAINT "payment_psp_evidence_notification_fk" FOREIGN KEY ("tenant_id","legal_entity_id","binding_id","notification_id") REFERENCES "payment"."psp_provider_notifications"("tenant_id","legal_entity_id","binding_id","notification_id") ON DELETE RESTRICT;--> statement-breakpoint
 ALTER TABLE "payment"."psp_provider_evidence" ADD CONSTRAINT "payment_psp_evidence_observation_fk" FOREIGN KEY ("tenant_id","legal_entity_id","observation_id") REFERENCES "payment"."observations"("tenant_id","legal_entity_id","observation_id") ON DELETE RESTRICT;--> statement-breakpoint
 ALTER TABLE "payment"."psp_provider_notifications" ADD CONSTRAINT "payment_psp_notifications_binding_fk" FOREIGN KEY ("tenant_id","legal_entity_id","binding_id","provider_family","environment","provider_account_ref") REFERENCES "payment"."psp_provider_account_bindings"("tenant_id","legal_entity_id","binding_id","provider_family","environment","provider_account_ref") ON DELETE RESTRICT;--> statement-breakpoint
 ALTER TABLE "payment"."psp_provider_notifications" ADD CONSTRAINT "payment_psp_notifications_operation_fk" FOREIGN KEY ("tenant_id","legal_entity_id","correlated_operation_id") REFERENCES "payment"."payment_operations"("tenant_id","legal_entity_id","operation_id") ON DELETE RESTRICT;--> statement-breakpoint

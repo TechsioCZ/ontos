@@ -51,7 +51,11 @@ export interface ProviderNotificationStoreContract {
   readonly read: (
     input: ReadProviderNotificationInput,
   ) => Effect.Effect<Option.Option<StoredProviderNotification>, GatewayLedgerUnavailableError>;
-  /** Idempotent for the same target state and correlation; an illegal transition fails. */
+  /**
+   * Idempotent for the same target state and correlation. An illegal transition, or a correlated
+   * operation whose GATEWAY_ACCOUNT binding is not the notification's own binding, fails; a notification
+   * captured for one binding never affects another merchant's operation (#1157).
+   */
   readonly transition: (
     input: TransitionProviderNotificationInput,
   ) => Effect.Effect<StoredProviderNotification, GatewayLedgerUnavailableError>;

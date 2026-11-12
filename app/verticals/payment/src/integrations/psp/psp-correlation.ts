@@ -8,7 +8,12 @@ import type { PaymentOperationIdSchema } from '../../../shared/domain/payment-id
  * or a replay can never mint a second provider request identity.
  */
 
-/** GoPay `order_number`, Comgate `refId` and Stripe metadata lookup key: the operation UUID as 32 hex digits. */
+/**
+ * The operation UUID as 32 lower-case hex digits. It is the exact value of GoPay `order_number`, Comgate
+ * `refId`, Stripe `metadata[ontos_order_reference]` and `payment_intent_data[metadata][ontos_order_reference]`
+ * (searched as `metadata['ontos_order_reference']:'<orderReference>'`). Stripe `client_reference_id` carries
+ * the dashed operation UUID for dashboard readability only; no lookup uses it.
+ */
 export const GatewayOrderReferenceSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{32}$/u)).pipe(
   Schema.brand('GatewayOrderReference'),
 );

@@ -20,7 +20,7 @@ export const gatewayReconciliationDebtRead = defineRead(
       key: 'payment.core.gateway-reconciliation-debt.read',
       kind: 'read',
       modes: ['run'],
-      placement: { group: 'gateway-reconciliation-debt', level: 'basic' },
+      placement: { group: 'payments', level: 'basic' },
       risk: 'sensitive',
       selectors: [],
     },

@@ -146,7 +146,7 @@ CREATE FUNCTION payment.guard_psp_dispatch_update() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, payment, pg_temp AS $$
 DECLARE
   mutable_columns constant text[] := ARRAY['state', 'not_sent_reason', 'provider_payment_ref', 'provider_refund_ref', 'customer_redirect_url', 'responded_at', 'transition_delivery_id', 'transitioned_at'];
-  request_columns constant text[] := ARRAY['credential_revision', 'endpoint_ref', 'request_hash', 'idempotency_key_hash', 'request_body', 'replay_starts_at', 'replay_expires_at', 'prepared_at'];
+  request_columns constant text[] := ARRAY['credential_revision', 'endpoint_ref', 'request_hash', 'idempotency_key_hash', 'request_body', 'request_headers', 'replay_starts_at', 'replay_expires_at', 'prepared_at'];
 BEGIN
   IF NOT (
       (OLD.state = 'AWAITING_TARGET' AND NEW.state IN ('PREPARED', 'NOT_SENT', 'TARGET_UNRESOLVED', 'UNSUPPORTED'))
@@ -284,6 +284,7 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, payment, pg_temp AS $$
     'replayExpiresAt', payment.psp_utc_text(p_dispatch.replay_expires_at),
     'replayStartsAt', payment.psp_utc_text(p_dispatch.replay_starts_at),
     'requestBody', replace(encode(p_dispatch.request_body, 'base64'), E'\n', ''),
+    'requestHeaders', p_dispatch.request_headers,
     'requestHash', p_dispatch.request_hash,
     'respondedAt', payment.psp_utc_text(p_dispatch.responded_at),
     'returnToken', p_dispatch.return_token,
@@ -307,18 +308,21 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, payment, pg_temp AS $$
     'notificationId', p_evidence.notification_id,
     'observationId', p_evidence.observation_id,
     'observedAmountMinor', p_evidence.observed_amount_minor,
+    'observedCurrency', p_evidence.observed_currency,
     'operationId', p_evidence.operation_id,
     'paymentId', p_evidence.payment_id,
     'providerAccountRef', p_evidence.provider_account_ref,
     'providerFamily', p_evidence.provider_family,
     'providerOccurredAt', payment.psp_utc_text(p_evidence.provider_occurred_at),
     'reason', p_evidence.reason,
+    'receivedAt', payment.psp_utc_text(p_evidence.received_at),
     'recordedAt', payment.psp_utc_text(p_evidence.recorded_at),
     'sourceOccurrenceId', p_evidence.source_occurrence_id,
     'sourceRevision', p_evidence.source_revision,
     'submissionState', p_evidence.submission_state,
     'submittedAt', payment.psp_utc_text(p_evidence.submitted_at),
-    'submittedDeliveryId', p_evidence.submitted_delivery_id
+    'submittedDeliveryId', p_evidence.submitted_delivery_id,
+    'verifiedAt', payment.psp_utc_text(p_evidence.verified_at)
   )) || jsonb_build_object('providerRefs', p_evidence.provider_refs)
     || CASE WHEN p_evidence.discrepancy IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('discrepancy', p_evidence.discrepancy) END;
 $$;
@@ -469,7 +473,7 @@ BEGIN
     'kind', operation.kind,
     'materialHash', operation.material_hash,
     'operationId', operation.operation_id,
-    '_tag', operation.outcome,
+    'outcome', operation.outcome,
     'paymentId', operation.payment_id,
     'targetOperationId', operation.target_operation_id
   )) || jsonb_build_object('binding', operation.binding)
@@ -482,15 +486,15 @@ BEGIN
 END;
 $$;
 --> statement-breakpoint
--- Routine: the exact binding of a historical or current operation (never a Current substitute). A given
--- credential revision is the one recorded on a dispatch; otherwise the binding's current revision.
+-- Routine: the exact binding of a historical or current operation (never a Current substitute), always with the
+-- binding's current credential revision: a rotation authenticates the same account (#1158), so a dispatch's
+-- recorded revision never selects a credential.
 CREATE FUNCTION payment.psp_resolve_execution_target(
   p_tenant_id uuid,
   p_legal_entity_id uuid,
   p_provider_account_ref text,
   p_environment text,
-  p_customer_configuration_id text,
-  p_credential_revision integer
+  p_customer_configuration_id text
 ) RETURNS TABLE(result jsonb)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
@@ -506,7 +510,7 @@ BEGIN
   JOIN payment.psp_credential_revisions AS credential
     ON credential.tenant_id = binding.tenant_id AND credential.legal_entity_id = binding.legal_entity_id
     AND credential.binding_id = binding.binding_id
-    AND credential.revision = coalesce(p_credential_revision, binding.current_credential_revision)
+    AND credential.revision = binding.current_credential_revision
   WHERE binding.tenant_id = p_tenant_id AND binding.legal_entity_id = p_legal_entity_id
     AND binding.provider_account_ref = p_provider_account_ref AND binding.environment = p_environment;
 END;
@@ -596,8 +600,37 @@ BEGIN
 END;
 $$;
 --> statement-breakpoint
+-- Refunds per provider payment are serialized (GoPay/Comgate). A refund is unresolved while it is prepared,
+-- unknown, or acknowledged without definitive refund evidence.
+CREATE FUNCTION payment.psp_unresolved_refund_ids(
+  p_tenant_id uuid,
+  p_legal_entity_id uuid,
+  p_binding_id uuid,
+  p_provider_payment_ref text,
+  p_excluding_operation_id uuid
+) RETURNS uuid[]
+LANGUAGE sql STABLE SET search_path = pg_catalog, payment, pg_temp AS $$
+  SELECT coalesce(array_agg(refund.operation_id ORDER BY refund.recorded_at, refund.operation_id), ARRAY[]::uuid[])
+  FROM payment.psp_provider_dispatches AS refund
+  WHERE refund.tenant_id = p_tenant_id AND refund.legal_entity_id = p_legal_entity_id
+    AND refund.binding_id = p_binding_id AND refund.operation_kind = 'REFUND'
+    AND refund.provider_payment_ref = p_provider_payment_ref
+    AND refund.operation_id IS DISTINCT FROM p_excluding_operation_id
+    AND (
+      refund.state IN ('PREPARED', 'OUTCOME_UNKNOWN')
+      OR (refund.state = 'ACKNOWLEDGED' AND NOT EXISTS (
+        SELECT 1 FROM payment.psp_provider_evidence AS evidence
+        WHERE evidence.tenant_id = refund.tenant_id AND evidence.legal_entity_id = refund.legal_entity_id
+          AND evidence.operation_id = refund.operation_id
+          AND evidence.fact_kind IN ('REFUND_CONFIRMED', 'REFUND_NOT_EFFECTED')
+      ))
+    );
+$$;
+--> statement-breakpoint
 -- Routine: persists the prepared provider request before the first send (#1158). It returns PREPARED,
--- EXISTING (same request), WITHHELD (a CANCEL targets this COLLECT) or CONFLICT (changed material/request).
+-- EXISTING (same request), WITHHELD (a CANCEL targets this COLLECT), DEFERRED (a GoPay/Comgate REFUND while
+-- another refund of the same provider payment is unresolved, decided under the target's lock) or CONFLICT
+-- (changed material/request).
 CREATE FUNCTION payment.psp_prepare_dispatch(
   p_tenant_id uuid,
   p_legal_entity_id uuid,
@@ -610,6 +643,7 @@ CREATE FUNCTION payment.psp_prepare_dispatch(
   p_idempotency_key_hash text,
   p_return_token text,
   p_request_body_base64 text,
+  p_request_headers jsonb,
   p_replay_window_ms integer,
   p_provider_payment_ref text,
   p_origin_action_invocation_id uuid,
@@ -625,6 +659,8 @@ DECLARE
   v_target payment.psp_provider_dispatches%ROWTYPE;
   v_body bytea;
   v_new_request_conflict text;
+  v_family text;
+  v_unresolved uuid[];
 BEGIN
   PERFORM payment.psp_assert_worker_scope(p_tenant_id, p_legal_entity_id);
   SELECT operation.* INTO v_operation FROM payment.payment_operations AS operation
@@ -637,7 +673,11 @@ BEGIN
   END IF;
   PERFORM payment.psp_lock_operation(p_tenant_id, coalesce(v_operation.target_operation_id, v_operation.operation_id));
   v_conflict := payment.psp_dispatch_identity_conflict(p_tenant_id, p_legal_entity_id, p_operation_id, p_binding_id, p_material_hash);
-  IF v_conflict IS NULL AND p_request_body_base64 IS NOT NULL AND p_request_body_base64 !~ '^[A-Za-z0-9+/]*={0,2}$' THEN
+  IF v_conflict IS NULL AND (
+    (p_request_body_base64 IS NOT NULL AND p_request_body_base64 !~ '^[A-Za-z0-9+/]*={0,2}$')
+    OR (p_request_body_base64 IS NULL) <> (p_request_headers IS NULL)
+    OR (p_request_headers IS NOT NULL AND jsonb_typeof(p_request_headers) <> 'array')
+  ) THEN
     v_conflict := 'request_body_invalid';
   END IF;
   IF v_conflict IS NOT NULL THEN
@@ -685,6 +725,7 @@ BEGIN
         request_hash = p_request_hash,
         idempotency_key_hash = p_idempotency_key_hash,
         request_body = v_body,
+        request_headers = p_request_headers,
         replay_starts_at = CASE WHEN p_replay_window_ms IS NULL THEN NULL ELSE now() END,
         replay_expires_at = CASE WHEN p_replay_window_ms IS NULL THEN NULL ELSE now() + make_interval(secs => p_replay_window_ms / 1000.0) END,
         prepared_at = now(),
@@ -697,7 +738,8 @@ BEGIN
     ELSIF v_dispatch.prepared_at IS NOT NULL AND (v_dispatch.request_hash IS DISTINCT FROM p_request_hash
       OR v_dispatch.endpoint_ref IS DISTINCT FROM p_endpoint_ref
       OR v_dispatch.idempotency_key_hash IS DISTINCT FROM p_idempotency_key_hash
-      OR v_dispatch.request_body IS DISTINCT FROM v_body)
+      OR v_dispatch.request_body IS DISTINCT FROM v_body
+      OR v_dispatch.request_headers IS DISTINCT FROM p_request_headers)
     THEN
       result := jsonb_build_object('_tag', 'CONFLICT', 'reason', 'request_mismatch', 'record', payment.psp_dispatch_json(v_dispatch));
     ELSE
@@ -710,6 +752,21 @@ BEGIN
     result := jsonb_build_object('_tag', 'CONFLICT', 'reason', coalesce(v_new_request_conflict, 'cancel_not_registered'));
     RETURN NEXT;
     RETURN;
+  END IF;
+  IF v_operation.kind = 'REFUND' THEN
+    SELECT binding.provider_family INTO v_family FROM payment.psp_provider_account_bindings AS binding
+    WHERE binding.tenant_id = p_tenant_id AND binding.legal_entity_id = p_legal_entity_id
+      AND binding.binding_id = p_binding_id;
+    IF v_family IN ('GOPAY', 'COMGATE') THEN
+      v_unresolved := payment.psp_unresolved_refund_ids(
+        p_tenant_id, p_legal_entity_id, p_binding_id, p_provider_payment_ref, p_operation_id
+      );
+      IF cardinality(v_unresolved) > 0 THEN
+        result := jsonb_build_object('_tag', 'DEFERRED', 'unresolvedRefundOperationIds', to_jsonb(v_unresolved));
+        RETURN NEXT;
+        RETURN;
+      END IF;
+    END IF;
   END IF;
   IF v_operation.kind = 'COLLECT' AND EXISTS (
     SELECT 1 FROM payment.psp_provider_dispatches AS cancel
@@ -728,14 +785,15 @@ BEGIN
     tenant_id, legal_entity_id, delivery_id, origin_action_invocation_id, origin_composition_revision, worker_key,
     binding_id, environment, material_hash, operation_id, operation_kind, order_reference, payment_id,
     provider_account_ref, provider_family, state, target_operation_id, credential_revision, endpoint_ref,
-    request_hash, idempotency_key_hash, return_token, request_body, replay_starts_at, replay_expires_at,
-    prepared_at, provider_payment_ref
+    request_hash, idempotency_key_hash, return_token, request_body, request_headers, replay_starts_at,
+    replay_expires_at, prepared_at, provider_payment_ref
   )
   SELECT p_tenant_id, p_legal_entity_id, p_delivery_id, p_origin_action_invocation_id, p_origin_composition_revision,
     p_worker_key, binding.binding_id, binding.environment, v_operation.material_hash, v_operation.operation_id,
     v_operation.kind, replace(v_operation.operation_id::text, '-', ''), v_operation.payment_id,
     binding.provider_account_ref, binding.provider_family, 'PREPARED', v_operation.target_operation_id,
     p_credential_revision, p_endpoint_ref, p_request_hash, p_idempotency_key_hash, p_return_token, v_body,
+    p_request_headers,
     CASE WHEN p_replay_window_ms IS NULL THEN NULL ELSE now() END,
     CASE WHEN p_replay_window_ms IS NULL THEN NULL ELSE now() + make_interval(secs => p_replay_window_ms / 1000.0) END,
     now(), p_provider_payment_ref
@@ -1036,8 +1094,7 @@ BEGIN
 END;
 $$;
 --> statement-breakpoint
--- Routine: refunds per provider payment are serialized (GoPay/Comgate). A refund is unresolved while it is
--- prepared, unknown, or acknowledged without definitive refund evidence.
+-- Routine: refunds per provider payment are serialized (GoPay/Comgate); see psp_unresolved_refund_ids.
 CREATE FUNCTION payment.psp_has_unresolved_refund(
   p_tenant_id uuid,
   p_legal_entity_id uuid,
@@ -1046,32 +1103,22 @@ CREATE FUNCTION payment.psp_has_unresolved_refund(
   p_excluding_operation_id uuid
 ) RETURNS TABLE(result jsonb)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_unresolved uuid[];
 BEGIN
   PERFORM payment.psp_assert_worker_scope(p_tenant_id, p_legal_entity_id);
-  RETURN QUERY
-  SELECT jsonb_build_object(
-    'operationIds', coalesce(jsonb_agg(refund.operation_id ORDER BY refund.recorded_at, refund.operation_id), '[]'::jsonb),
-    'unresolved', count(*) > 0
-  )
-  FROM payment.psp_provider_dispatches AS refund
-  WHERE refund.tenant_id = p_tenant_id AND refund.legal_entity_id = p_legal_entity_id
-    AND refund.binding_id = p_binding_id AND refund.operation_kind = 'REFUND'
-    AND refund.provider_payment_ref = p_provider_payment_ref
-    AND refund.operation_id IS DISTINCT FROM p_excluding_operation_id
-    AND (
-      refund.state IN ('PREPARED', 'OUTCOME_UNKNOWN')
-      OR (refund.state = 'ACKNOWLEDGED' AND NOT EXISTS (
-        SELECT 1 FROM payment.psp_provider_evidence AS evidence
-        WHERE evidence.tenant_id = refund.tenant_id AND evidence.legal_entity_id = refund.legal_entity_id
-          AND evidence.operation_id = refund.operation_id
-          AND evidence.fact_kind IN ('REFUND_CONFIRMED', 'REFUND_NOT_EFFECTED')
-      ))
-    );
+  v_unresolved := payment.psp_unresolved_refund_ids(
+    p_tenant_id, p_legal_entity_id, p_binding_id, p_provider_payment_ref, p_excluding_operation_id
+  );
+  result := jsonb_build_object('operationIds', to_jsonb(v_unresolved), 'unresolved', cardinality(v_unresolved) > 0);
+  RETURN NEXT;
 END;
 $$;
 --> statement-breakpoint
--- Routine: appends provider evidence idempotently on its source occurrence; a different statement under
--- the same occurrence and revision is a CONFLICT and is never overwritten.
+-- Routine: appends provider evidence idempotently on its source occurrence; a different operation or statement
+-- under the same occurrence and revision is a CONFLICT and is never overwritten. received_at is the captured
+-- notification's receipt (the notification must belong to the same binding) or, without one, the observation
+-- instant; verified_at is the observation instant. A repeat keeps the first row's instants and notification.
 CREATE FUNCTION payment.psp_append_evidence(
   p_tenant_id uuid,
   p_legal_entity_id uuid,
@@ -1082,9 +1129,11 @@ CREATE FUNCTION payment.psp_append_evidence(
   p_fact_family text,
   p_provider_refs jsonb,
   p_observed_amount_minor bigint,
+  p_observed_currency text,
   p_source_occurrence_id text,
   p_source_revision bigint,
   p_provider_occurred_at timestamptz,
+  p_observed_at timestamptz,
   p_economic_effect_key text,
   p_discrepancy jsonb,
   p_reason text,
@@ -1097,10 +1146,19 @@ CREATE FUNCTION payment.psp_append_evidence(
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_conflict text;
+  v_received_at timestamptz := p_observed_at;
   v_evidence payment.psp_provider_evidence%ROWTYPE;
 BEGIN
   PERFORM payment.psp_assert_worker_scope(p_tenant_id, p_legal_entity_id);
   v_conflict := payment.psp_dispatch_identity_conflict(p_tenant_id, p_legal_entity_id, p_operation_id, p_binding_id, NULL);
+  IF v_conflict IS NULL AND p_notification_id IS NOT NULL THEN
+    SELECT notification.received_at INTO v_received_at FROM payment.psp_provider_notifications AS notification
+    WHERE notification.tenant_id = p_tenant_id AND notification.legal_entity_id = p_legal_entity_id
+      AND notification.binding_id = p_binding_id AND notification.notification_id = p_notification_id;
+    IF NOT FOUND THEN
+      v_conflict := 'notification_unknown';
+    END IF;
+  END IF;
   IF v_conflict IS NOT NULL THEN
     result := jsonb_build_object('_tag', 'CONFLICT', 'reason', v_conflict);
     RETURN NEXT;
@@ -1110,15 +1168,15 @@ BEGIN
     tenant_id, legal_entity_id, delivery_id, origin_action_invocation_id, origin_composition_revision, worker_key,
     binding_id, discrepancy, economic_effect_key, environment, evidence_origin, fact_family, fact_kind,
     notification_id, observed_amount_minor, observed_currency, operation_id, payment_id, provider_account_ref,
-    provider_family, provider_occurred_at, provider_refs, reason, source_occurrence_id, source_revision,
-    submission_state
+    provider_family, provider_occurred_at, provider_refs, reason, received_at, source_occurrence_id, source_revision,
+    submission_state, verified_at
   )
   SELECT p_tenant_id, p_legal_entity_id, p_delivery_id, p_origin_action_invocation_id, p_origin_composition_revision,
     p_worker_key, binding.binding_id, p_discrepancy, p_economic_effect_key, binding.environment, p_evidence_origin,
-    p_fact_family, p_fact_kind, p_notification_id, p_observed_amount_minor,
-    CASE WHEN p_observed_amount_minor IS NULL THEN NULL ELSE 'CZK' END, operation.operation_id, operation.payment_id,
-    binding.provider_account_ref, binding.provider_family, p_provider_occurred_at, p_provider_refs, p_reason,
-    p_source_occurrence_id, p_source_revision, 'PENDING_SUBMISSION'
+    p_fact_family, p_fact_kind, p_notification_id, p_observed_amount_minor, p_observed_currency,
+    operation.operation_id, operation.payment_id, binding.provider_account_ref, binding.provider_family,
+    p_provider_occurred_at, p_provider_refs, p_reason, v_received_at, p_source_occurrence_id, p_source_revision,
+    'PENDING_SUBMISSION', p_observed_at
   FROM payment.payment_operations AS operation
   JOIN payment.psp_provider_account_bindings AS binding
     ON binding.tenant_id = operation.tenant_id AND binding.legal_entity_id = operation.legal_entity_id
@@ -1141,6 +1199,7 @@ BEGIN
     OR v_evidence.fact_family IS DISTINCT FROM p_fact_family
     OR v_evidence.provider_refs IS DISTINCT FROM p_provider_refs
     OR v_evidence.observed_amount_minor IS DISTINCT FROM p_observed_amount_minor
+    OR v_evidence.observed_currency IS DISTINCT FROM p_observed_currency
     OR v_evidence.provider_occurred_at IS DISTINCT FROM p_provider_occurred_at
     OR v_evidence.economic_effect_key IS DISTINCT FROM p_economic_effect_key
     OR v_evidence.discrepancy IS DISTINCT FROM p_discrepancy
@@ -1231,14 +1290,23 @@ CREATE FUNCTION payment.psp_transition_notification(
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_notification payment.psp_provider_notifications%ROWTYPE;
+  v_binding_conflict text;
 BEGIN
   PERFORM payment.psp_assert_worker_scope(p_tenant_id, p_legal_entity_id);
   SELECT notification.* INTO v_notification FROM payment.psp_provider_notifications AS notification
   WHERE notification.tenant_id = p_tenant_id AND notification.legal_entity_id = p_legal_entity_id
     AND notification.notification_id = p_notification_id
   FOR UPDATE;
+  IF FOUND AND p_correlated_operation_id IS NOT NULL THEN
+    -- The correlated operation must be executed through exactly the binding the notification was captured for.
+    v_binding_conflict := payment.psp_dispatch_identity_conflict(
+      p_tenant_id, p_legal_entity_id, p_correlated_operation_id, v_notification.binding_id, NULL
+    );
+  END IF;
   IF NOT FOUND THEN
     result := jsonb_build_object('_tag', 'NOT_FOUND');
+  ELSIF v_binding_conflict IS NOT NULL THEN
+    result := jsonb_build_object('_tag', 'CONFLICT', 'reason', v_binding_conflict, 'record', payment.psp_notification_json(v_notification));
   ELSIF v_notification.state = p_to_state
     AND v_notification.correlated_operation_id IS NOT DISTINCT FROM p_correlated_operation_id
   THEN
@@ -1284,15 +1352,16 @@ REVOKE ALL ON FUNCTION
   payment.psp_target_json(payment.psp_provider_account_bindings, payment.psp_credential_revisions, text),
   payment.psp_dispatch_identity_conflict(uuid, uuid, uuid, uuid, text),
   payment.psp_insert_dispatch(uuid, uuid, uuid, uuid, text, text, uuid, text, text, uuid),
-  payment.psp_record_unsent(uuid, uuid, uuid, uuid, text, text, text, uuid, text, text, uuid)
+  payment.psp_record_unsent(uuid, uuid, uuid, uuid, text, text, text, uuid, text, text, uuid),
+  payment.psp_unresolved_refund_ids(uuid, uuid, uuid, text, uuid)
 FROM PUBLIC, ontos_runtime;
 --> statement-breakpoint
 REVOKE ALL ON FUNCTION
   payment.psp_read_operation_for_execution(uuid, uuid, uuid),
-  payment.psp_resolve_execution_target(uuid, uuid, text, text, text, integer),
+  payment.psp_resolve_execution_target(uuid, uuid, text, text, text),
   payment.psp_resolve_notification_binding(uuid, uuid, text, text),
   payment.psp_register_cancel(uuid, uuid, uuid, uuid, text, uuid, text, text, uuid),
-  payment.psp_prepare_dispatch(uuid, uuid, uuid, uuid, text, integer, text, text, text, text, text, integer, text, uuid, text, text, uuid),
+  payment.psp_prepare_dispatch(uuid, uuid, uuid, uuid, text, integer, text, text, text, text, text, jsonb, integer, text, uuid, text, text, uuid),
   payment.psp_record_dispatch_outcome(uuid, uuid, uuid, text, text, text, text, uuid),
   payment.psp_record_not_sent(uuid, uuid, uuid, uuid, text, text, uuid, text, text, uuid),
   payment.psp_record_unsupported(uuid, uuid, uuid, uuid, text, uuid, text, text, uuid),
@@ -1301,7 +1370,7 @@ REVOKE ALL ON FUNCTION
   payment.psp_read_dispatch_by_provider_ref(uuid, uuid, uuid, text),
   payment.psp_read_dispatch_by_order_reference(uuid, uuid, uuid, text),
   payment.psp_has_unresolved_refund(uuid, uuid, uuid, text, uuid),
-  payment.psp_append_evidence(uuid, uuid, uuid, uuid, text, text, text, jsonb, bigint, text, bigint, timestamptz, text, jsonb, text, uuid, uuid, text, text, uuid),
+  payment.psp_append_evidence(uuid, uuid, uuid, uuid, text, text, text, jsonb, bigint, text, text, bigint, timestamptz, timestamptz, text, jsonb, text, uuid, uuid, text, text, uuid),
   payment.psp_list_pending_evidence(uuid, uuid, uuid),
   payment.psp_mark_evidence_submission(uuid, uuid, uuid, text, uuid, uuid),
   payment.psp_read_notification(uuid, uuid, uuid),
@@ -1310,10 +1379,10 @@ FROM PUBLIC;
 --> statement-breakpoint
 GRANT EXECUTE ON FUNCTION
   payment.psp_read_operation_for_execution(uuid, uuid, uuid),
-  payment.psp_resolve_execution_target(uuid, uuid, text, text, text, integer),
+  payment.psp_resolve_execution_target(uuid, uuid, text, text, text),
   payment.psp_resolve_notification_binding(uuid, uuid, text, text),
   payment.psp_register_cancel(uuid, uuid, uuid, uuid, text, uuid, text, text, uuid),
-  payment.psp_prepare_dispatch(uuid, uuid, uuid, uuid, text, integer, text, text, text, text, text, integer, text, uuid, text, text, uuid),
+  payment.psp_prepare_dispatch(uuid, uuid, uuid, uuid, text, integer, text, text, text, text, text, jsonb, integer, text, uuid, text, text, uuid),
   payment.psp_record_dispatch_outcome(uuid, uuid, uuid, text, text, text, text, uuid),
   payment.psp_record_not_sent(uuid, uuid, uuid, uuid, text, text, uuid, text, text, uuid),
   payment.psp_record_unsupported(uuid, uuid, uuid, uuid, text, uuid, text, text, uuid),
@@ -1322,7 +1391,7 @@ GRANT EXECUTE ON FUNCTION
   payment.psp_read_dispatch_by_provider_ref(uuid, uuid, uuid, text),
   payment.psp_read_dispatch_by_order_reference(uuid, uuid, uuid, text),
   payment.psp_has_unresolved_refund(uuid, uuid, uuid, text, uuid),
-  payment.psp_append_evidence(uuid, uuid, uuid, uuid, text, text, text, jsonb, bigint, text, bigint, timestamptz, text, jsonb, text, uuid, uuid, text, text, uuid),
+  payment.psp_append_evidence(uuid, uuid, uuid, uuid, text, text, text, jsonb, bigint, text, text, bigint, timestamptz, timestamptz, text, jsonb, text, uuid, uuid, text, text, uuid),
   payment.psp_list_pending_evidence(uuid, uuid, uuid),
   payment.psp_mark_evidence_submission(uuid, uuid, uuid, text, uuid, uuid),
   payment.psp_read_notification(uuid, uuid, uuid),
