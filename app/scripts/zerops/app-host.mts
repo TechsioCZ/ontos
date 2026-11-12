@@ -8,6 +8,7 @@ import {
 } from '../../packages/core-runtime/src/access/intent/tenant-intent-loader.ts';
 import { startProcessObservability } from './process-observability.mts';
 import { heapLimitArguments, heapLimitMiB, readContainerMemoryBytes } from './heap-limits.mts';
+import { withKeepAlive } from './http-keep-alive.mts';
 import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
 import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
 import { authenticationQueryRedactions, credentialSubmissionRedirect } from '@app/shared-contracts/credential-url';
@@ -770,7 +771,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   yield* HttpServer.serveEffect(hostControlApplication(published, pointer.load));
   const publicScope = yield* Scope.make();
   yield* Effect.addFinalizer(() => Scope.close(publicScope, Exit.void));
-  const openPublicPort = NodeHttpServer.make(createServer, { host: '0.0.0.0', port: publicPort }).pipe(
+  const openPublicPort = NodeHttpServer.make(withKeepAlive(createServer), { host: '0.0.0.0', port: publicPort }).pipe(
     Effect.mapError(() => failure(`public port ${String(publicPort)} could not be opened`)),
     Effect.flatMap((server) => server.serve(hostApplication(ports, published, pointer.load))),
     Scope.provide(publicScope),
@@ -972,7 +973,7 @@ export const ReleaseAccessIntentReaderLive = Layer.effect(
 if (import.meta.main) {
   const program = runAppHost.pipe(
     Effect.scoped,
-    Effect.provide(NodeHttpServer.layer(createServer, { host: '127.0.0.1', port: CONTROL_PORT })),
+    Effect.provide(NodeHttpServer.layer(withKeepAlive(createServer), { host: '127.0.0.1', port: CONTROL_PORT })),
     Effect.provide(ReleaseAccessIntentReaderLive),
     // Every authority transition re-observes legacy owner completion, as the operator publisher does.
     Effect.provide(
