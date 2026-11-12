@@ -11,6 +11,11 @@ type Mutable<Value> = { -readonly [Key in keyof Value]: Value[Key] };
 export interface DraftLine {
   readonly key: string;
   readonly name: string;
+  /**
+   * A new line's price as the catalog offers it; the edit sends a price for the line only when staff changed it, so the
+   * server prices the line itself (the stored gross of a storefront order, never one recomputed from net).
+   */
+  readonly offeredPriceText?: string;
   readonly priceText: string;
   readonly productId: ProductId;
   readonly quantityText: string;
@@ -128,8 +133,12 @@ const editLineOf = (line: DraftLine): EditLine => {
   const edit: Mutable<EditLine> = {
     productId: line.productId,
     quantity: parseQuantity(line.quantityText) ?? 1,
-    unitPriceMinor: parseAmount(line.priceText) ?? 0,
   };
+  const offered = line.offeredPriceText === undefined ? undefined : parseAmount(line.offeredPriceText);
+  const price = parseAmount(line.priceText) ?? 0;
+  if (offered === undefined || offered !== price) {
+    edit.unitPriceMinor = price;
+  }
   if (line.variantId !== undefined) {
     edit.variantId = line.variantId;
   }

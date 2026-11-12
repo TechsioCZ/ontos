@@ -127,6 +127,13 @@ const recordsWith = (order: Order, revision: number) =>
   });
 
 const edits = () => rstest.mocked(executeManageCatalog).mock.calls.length;
+/** The order the form edits; a test replaces it. */
+let shownOrder: Order = orderOf({ updatedAt: opened });
+/** The lines of the edits the form sent. */
+const sentLines = () =>
+  rstest
+    .mocked(executeManageCatalog)
+    .mock.calls.flatMap(([payload]) => (payload.command._tag === 'EditOrder' ? (payload.command.lines ?? []) : []));
 
 const settle = async (): Promise<void> => {
   await browserRuntime.runPromise(Effect.yieldNow);
@@ -156,7 +163,7 @@ const mount = async (): Promise<View> => {
         onSaved={(message) => {
           saved.push(message);
         }}
-        order={orderOf({ updatedAt: opened })}
+        order={shownOrder}
         products={[]}
         revision={7}
         vat={vat}
@@ -234,6 +241,7 @@ beforeEach(() => {
   rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   rstest.resetAllMocks();
   offered.current = beans;
+  shownOrder = orderOf({ updatedAt: opened });
   vat = payer;
   rstest.mocked(executeManageCatalog).mockReturnValue(Effect.succeed({ entityIds: [], revision: 8 }));
   rstest
@@ -366,6 +374,23 @@ describe('VAT of the order lines', () => {
       // 2,42 Kč for the order's line, plus 8 Kč net and no VAT for the new one.
       expect(text()).toContain('10,42 Kč');
       expect(text()).not.toContain('není nastaveno');
+    }),
+  );
+});
+
+describe('a line added to a storefront order (prices include VAT)', () => {
+  it.effect('takes the stored price including VAT and lets the server price it unless staff change the price', () =>
+    Effect.gen(function* storedGross() {
+      shownOrder = { ...orderOf({ updatedAt: opened }), pricesIncludeVat: true };
+      // Stored gross 10 Kč, not 8 Kč net plus 12 % (8,96 Kč).
+      offered.current = { ...beans, grossPriceMinor: 1000 };
+      yield* Effect.promise(mount);
+      yield* Effect.promise(() => click(button('pick product')));
+      yield* Effect.promise(() => click(button('Přidat')));
+      expect(text()).not.toContain('8,96 Kč');
+      expect(text()).toContain('10 Kč');
+      yield* Effect.promise(() => click(button('Uložit')));
+      expect(sentLines().find((line) => line.productId === beans.id)).toEqual({ productId: beans.id, quantity: 1 });
     }),
   );
 });

@@ -50,6 +50,8 @@ const inOrderCurrency = (order: Pick<Order, 'market'>, czkMinor: number): number
   order.market === undefined ? czkMinor : convertGrossMinor(czkMinor, order.market);
 
 interface SellableUnit {
+  /** The record's stored price including VAT (what the storefront sells it at), when it has one. */
+  readonly grossMinor?: number;
   readonly name: string;
   readonly netMinor: number;
   readonly productId: ProductId;
@@ -74,7 +76,7 @@ const sellableUnit = (
   }
   const variants = activeVariants(product);
   if (variants.length === 0) {
-    return {
+    const unit: SellableUnit = {
       name: product.name,
       netMinor: product.currentPriceMinor,
       productId: product.id,
@@ -82,20 +84,23 @@ const sellableUnit = (
       taxClassificationCode: product.taxClassificationCode,
       vatRate,
     };
+    return product.grossPriceMinor === undefined ? unit : { ...unit, grossMinor: product.grossPriceMinor };
   }
   const variant = variants.find((entry) => entry.id === variantId);
-  return variant === undefined
-    ? undefined
-    : {
-        name: product.name,
-        netMinor: variant.priceMinor,
-        productId: product.id,
-        sku: variant.sku,
-        taxClassificationCode: product.taxClassificationCode,
-        variantId: variant.id,
-        variantName: variant.name,
-        vatRate,
-      };
+  if (variant === undefined) {
+    return undefined;
+  }
+  const unit: SellableUnit = {
+    name: product.name,
+    netMinor: variant.priceMinor,
+    productId: product.id,
+    sku: variant.sku,
+    taxClassificationCode: product.taxClassificationCode,
+    variantId: variant.id,
+    variantName: variant.name,
+    vatRate,
+  };
+  return variant.grossPriceMinor === undefined ? unit : { ...unit, grossMinor: variant.grossPriceMinor };
 };
 
 interface ParsedLine {
@@ -298,11 +303,15 @@ const useOrderEditForm = ({
         ? pickedProduct
         : (pickedProduct.variantRecords?.find((entry) => entry.id === unit.variantId) ?? pickedProduct),
     );
-    const unitPrice = inOrderCurrency(order, gross ? grossUnitPriceMinor(unit.netMinor, unit.vatRate) : unit.netMinor);
+    // A gross-priced order (storefront) takes the stored price including VAT, exactly as the server prices the line.
+    const grossMinor = unit.grossMinor ?? grossUnitPriceMinor(unit.netMinor, unit.vatRate);
+    const unitPrice = inOrderCurrency(order, gross ? grossMinor : unit.netMinor);
+    const offered = moneyInputText(unitPrice / 100);
     const line: Mutable<DraftLine> = {
       key: `new-${sequence.current}`,
       name: unit.name,
-      priceText: moneyInputText(unitPrice / 100),
+      offeredPriceText: offered,
+      priceText: offered,
       productId: unit.productId,
       quantityText: String(Math.ceil(rules.minimum / rules.step) * rules.step),
       sku: unit.sku,
