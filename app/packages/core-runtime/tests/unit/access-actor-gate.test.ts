@@ -1,4 +1,4 @@
-import { Effect, Match, Option, Result, Schema } from 'effect';
+import { Effect, Match, Option, Predicate, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -935,7 +935,7 @@ it.effect('runs the real workload-only Action lifecycle but rejects propose befo
         transport: { ...request.transport, idempotencyKey: 'stale-workload-run' },
       })
       .pipe(Effect.flip);
-    expect(stale._tag).toBe('ActionTransactionError');
+    expect(Predicate.isTagged(stale, 'ActionTransactionError')).toBe(true);
     expect(handlers).toBe(1);
     expect(runtime.snapshot().committed).toHaveLength(1);
   }),

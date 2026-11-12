@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { integer, pgTable, uuid } from 'drizzle-orm/pg-core';
-import { Effect, Exit, Schema } from 'effect';
+import { Effect, Exit, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
@@ -177,7 +177,7 @@ it.effect('keeps unlisted preparation SELECTs closed without an empty-row fallba
     const action = actionFor();
     const harness = yield* harnessFor(action);
     const failure = yield* harness.runtime.runAction(requestFor(action)).pipe(Effect.flip);
-    expect(failure._tag).toBe('ActionHandlerExecutionError');
+    expect(Predicate.isTagged(failure, 'ActionHandlerExecutionError')).toBe(true);
     expect(harness.snapshot().preparationQueries.map(({ sql }) => sql)).toEqual([statement]);
     expect(harness.snapshot().committed).toEqual([]);
   }),

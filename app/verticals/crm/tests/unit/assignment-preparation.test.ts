@@ -10,7 +10,7 @@ import { inertAccessEnforcementPorts, makeTestAccessGateLayers } from '@app/core
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { CoreDatabase, testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
-import { Effect, Layer, Option, Schema } from 'effect';
+import { Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
@@ -174,17 +174,17 @@ const registeredAssignment = (scenario: Scenario) =>
         );
       const failure = yield* invoke.pipe(Effect.flip);
       if (scenario === 'stale') {
-        expect(failure._tag).toBe('CrmRevisionConflict');
+        expect(Predicate.isTagged(failure, 'CrmRevisionConflict')).toBe(true);
         expect(ownerWrites).toBe(1);
         expect(eligibilityChecks).toBe(0);
         expect(harness.snapshot().policyDenials).toEqual([]);
       } else if (scenario === 'gate-denied') {
-        expect(failure._tag).toBe('ActionPermissionDenied');
+        expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
         expect(directoryLoads).toBe(0);
         expect(ownerWrites).toBe(0);
         expect(harness.snapshot().policyDenials).toEqual([]);
       } else {
-        expect(failure._tag).toBe('ActionPolicyDenied');
+        expect(Predicate.isTagged(failure, 'ActionPolicyDenied')).toBe(true);
         expect(ownerWrites).toBe(0);
         expect(harness.snapshot().transactionCount).toBe(0);
         expect(harness.snapshot().policyDenials).toHaveLength(1);

@@ -20,7 +20,7 @@ import {
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { sql } from 'drizzle-orm';
-import { ConfigProvider, Context, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import { ConfigProvider, Context, DateTime, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
 import type { Crypto, Scope } from 'effect';
 import { FetchHttpClient, HttpServerResponse } from 'effect/http';
 import { SignJWT, decodeJwt } from 'jose';
@@ -352,7 +352,7 @@ export const makeEnrollmentProfileReconciliationFixture = Effect.fn('EnrollmentP
             payload.audience !== ownerAudience ||
             payload.compositionRevision !== compositionRevision ||
             payload.legalEntityScope !== 'subject' ||
-            subject._tag !== 'Originator' ||
+            !Predicate.isTagged(subject, 'Originator') ||
             subject.actionInvocationId !== originatorInvocationId ||
             subject.legalEntityId !== fixture.legalEntityId ||
             subject.tenantId !== fixture.tenantId

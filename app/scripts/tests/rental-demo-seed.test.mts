@@ -29,7 +29,7 @@ import {
 import { NodeServices } from '@effect/platform-node';
 import { CounterpartyRefSchema } from '../../verticals/party-registry/shared/resources/counterparty.ts';
 import { PartyRefSchema } from '../../verticals/party-registry/shared/resources/party.ts';
-import { Array as EffectArray, DateTime, Effect, FileSystem, Match, Order, Redacted, Schema } from 'effect';
+import { Array as EffectArray, DateTime, Effect, FileSystem, Match, Order, Predicate, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
@@ -456,13 +456,13 @@ const caseFixture = (options: { readonly failOnboardingOnce?: boolean; readonly 
     } else if (url.pathname.endsWith(applyCommandPath)) {
       const { command, expectedRevision } = decodeSeedBody(CaseCommand, body);
       expect(expectedRevision).toBe(revision);
-      if (command._tag === 'CreateOpportunity') {
+      if (Predicate.isTagged(command, 'CreateOpportunity')) {
         expect(customers.some(({ partyRef }) => partyRef.resourceId === command.partyId)).toBe(true);
         if (command.ownerEmployeeId === undefined) {
           return Effect.die('Reviewed case fixture needs an employee display owner');
         }
         items.push({ ...command, id: demoId('seed.case', command.title), ownerEmployeeId: command.ownerEmployeeId });
-      } else if (command._tag === 'UpdateOpportunity') {
+      } else if (Predicate.isTagged(command, 'UpdateOpportunity')) {
         const index = items.findIndex(({ id }) => id === command.id);
         const current = items[index];
         if (current === undefined) {

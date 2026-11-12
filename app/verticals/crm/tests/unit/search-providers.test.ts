@@ -14,7 +14,7 @@ import {
 import { CoreSearchRelevanceSchema } from '@app/core-runtime/search-contract';
 import type { CoreSearchRelevance } from '@app/core-runtime/search-contract';
 import { NodeCrypto } from '@effect/platform-node';
-import { Cause, Context, DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
+import { Cause, Context, DateTime, Effect, Exit, Layer, Option, Predicate, Schema } from 'effect';
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import {
   PrincipalIdSchema as AccessPrincipalIdSchema,
@@ -246,7 +246,7 @@ const assertSearchProjectionSql = (
   expect(sql).toContain('jsonb_strip_nulls');
   for (const condition of predicate?.groups.flatMap(({ clauses }) => clauses.flatMap(({ conditions }) => conditions)) ??
     []) {
-    if (condition._tag === 'RecordKeyIn') {
+    if (Predicate.isTagged(condition, 'RecordKeyIn')) {
       expect(sql).toContain(' in (');
       for (const recordKey of condition.recordKeys) {
         expect(params).toContain(recordKey);

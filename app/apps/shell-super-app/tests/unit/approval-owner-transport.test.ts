@@ -6,7 +6,7 @@ import {
 } from '@app/core-runtime/access/approvals/owner-api';
 import { CommandDigestSchema } from '@app/core-runtime/access/ids';
 import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
-import { Effect, Result, Schema } from 'effect';
+import { Effect, Predicate, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ApprovalOwnerIdentity, requireApprovalOwnerIdentity } from '../../api/access-admin/approval-owner-identity.ts';
@@ -281,7 +281,7 @@ for (const [status, tag] of [
       const result = yield* Effect.result(test.transport.approve(approvalOwnerTenantScope, request));
       expect(Result.isFailure(result) && result.failure._tag).toBe(tag);
       expect(JSON.stringify(result)).not.toContain('private owner detail');
-      if (status === 409 && Result.isFailure(result) && result.failure._tag === 'ApprovalCommandRefused') {
+      if (status === 409 && Result.isFailure(result) && Predicate.isTagged(result.failure, 'ApprovalCommandRefused')) {
         expect(result.failure.code).toBe('revision_stale');
       }
     }),

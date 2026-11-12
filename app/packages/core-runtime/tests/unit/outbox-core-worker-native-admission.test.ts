@@ -1,5 +1,5 @@
 import { NodeServices } from '@effect/platform-node';
-import { Crypto, DateTime, Deferred, Effect, Fiber, Layer, Match, Option, Schema } from 'effect';
+import { Crypto, DateTime, Deferred, Effect, Fiber, Layer, Match, Option, Predicate, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -285,7 +285,7 @@ const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options
   const afterExit = yield* Effect.flip(
     repository.claimNext(workers, 'after-entry-exit', DateTime.toDateUtc(DateTime.makeUnsafe(0)), composition.revision),
   );
-  expect(afterExit._tag).toBe('ApplicationCompositionAuthorityError');
+  expect(Predicate.isTagged(afterExit, 'ApplicationCompositionAuthorityError')).toBe(true);
   return { claimed, claims, completed, failures, observed, outcome, reconciled, results, statements };
 });
 
@@ -335,7 +335,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('Core native Outbox 
         { actorPrincipalId, claimId: 'owner:claim', tenantId: 'not-a-tenant' },
       ]) {
         const failure = yield* Effect.flip(outboxWorkerTenantScope(input));
-        expect(failure._tag).toBe('CoreAuthorizationProjectionError');
+        expect(Predicate.isTagged(failure, 'CoreAuthorizationProjectionError')).toBe(true);
       }
     }),
   );

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Result, Schema } from 'effect';
+import { Effect, Predicate, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { compileFullAccessRole } from '@app/core-runtime/access/bootstrap';
 import { buildAccessCatalogRelease } from '@app/core-runtime/access/catalog';
@@ -315,8 +315,8 @@ it.effect('detects a syntactically valid workload with no source declaration as 
         ),
       );
       const failure = yield* checkAccessCatalogArtifact(root).pipe(Effect.flip);
-      expect(failure._tag).toBe('AccessCatalogArtifactError');
-      expect(failure._tag === 'AccessCatalogArtifactError' && failure.code).toBe('artifact_stale');
+      expect(Predicate.isTagged(failure, 'AccessCatalogArtifactError')).toBe(true);
+      expect(Predicate.isTagged(failure, 'AccessCatalogArtifactError') && failure.code).toBe('artifact_stale');
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

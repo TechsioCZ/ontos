@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
-import { DateTime, Effect, Match, Option, Result } from 'effect';
+import { DateTime, Effect, Match, Option, Predicate, Result } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { stableUuid } from '@app/core-runtime/access/catalog';
@@ -255,7 +255,7 @@ const haltOf = (result: ReturnType<typeof plan>) => (Result.isFailure(result) ? 
 const applied = (state: DesiredState) =>
   simulateAll(stageBefore(state), stepsOf(plan(state, stageBefore(state), apply1)));
 const firstSave = (steps: readonly PlannedStep[]): SaveRole => {
-  const [save] = steps.flatMap((step) => (step._tag === 'SaveRole' ? [step] : []));
+  const [save] = steps.flatMap((step) => (Predicate.isTagged(step, 'SaveRole') ? [step] : []));
   if (save === undefined) {
     throw new Error('no save step');
   }
@@ -425,7 +425,9 @@ it.effect('after a rollback asks for a new generation, and generation 2 admits a
     const again = stepsOf(plan(state, rolledBack, apply2));
     expect(tagsOf(again)).toEqual(PEOPLE_STEPS);
     expect(again.every(({ idempotencyKey }) => idempotencyKey.includes(':g2:'))).toBe(true);
-    const freshIds = again.flatMap((step) => (step._tag === 'Assign' ? [assignmentIdOf(step.idempotencyKey)] : []));
+    const freshIds = again.flatMap((step) =>
+      Predicate.isTagged(step, 'Assign') ? [assignmentIdOf(step.idempotencyKey)] : [],
+    );
     expect(freshIds.filter((id) => firstIds.has(id))).toEqual([]);
     expect(stepsOf(plan(state, simulateAll(rolledBack, again), apply2))).toEqual([]);
 
@@ -472,7 +474,7 @@ it.effect('rolls back only the memberships its own admissions wrote, and stops b
     // Her managed roles are revoked, but her own memberships are not the script's to end.
     const rollback = stepsOf(plan(state, done, rollback1));
     expect(tagsOf(rollback)).toEqual([...times(6, 'RevokeAssignment'), ...times(4, 'EndMembership')]);
-    const ended = rollback.flatMap((step) => (step._tag === 'EndMembership' ? [step.principalId] : []));
+    const ended = rollback.flatMap((step) => (Predicate.isTagged(step, 'EndMembership') ? [step.principalId] : []));
     expect(ended).not.toContain(ucetni);
     // A rollback named with a later generation still recognizes the rows generation 1 admitted.
     const later = stepsOf(plan(state, done, { generation: 2, mode: 'rollback' }));

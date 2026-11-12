@@ -12,7 +12,7 @@ import { makePersistedActionTestAccessGate } from '@app/core-runtime/testing/acc
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
 import { PgClient } from '@effect/sql-pg';
-import { Context, Effect, Layer, Option, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 
@@ -187,7 +187,7 @@ for (const fenceState of ['Changing', 'missing'] as const) {
       Effect.gen(function* unpreparedFenceRefuses() {
         const prepared = yield* preparedDecision({ fenceState });
         const failure = yield* Effect.flip(prepared.prepare(prepared.question));
-        expect(failure._tag).toBe('AccessDecisionUnavailable');
+        expect(Predicate.isTagged(failure, 'AccessDecisionUnavailable')).toBe(true);
       }),
     ),
   );
@@ -200,7 +200,7 @@ it.effect('the scripted authority names the persisted scope ids the native write
     const persisted = bootstrapScopesOf(tenantId, [companyId]);
     expect(scripted.tenantContextScopeId).toBe(persisted[0]?.scopeId);
     expect(scripted.legalEntityScopeIds).toEqual(
-      persisted.flatMap((scope) => (scope._tag === 'LegalEntity' ? [scope.scopeId] : [])),
+      persisted.flatMap((scope) => (Predicate.isTagged(scope, 'LegalEntity') ? [scope.scopeId] : [])),
     );
   }),
 );

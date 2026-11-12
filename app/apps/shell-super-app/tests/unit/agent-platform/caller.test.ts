@@ -444,7 +444,7 @@ it.effect('fails closed as unavailable when the tenant module states cannot be r
       ),
       Effect.flip,
     );
-    expect(failure._tag).toBe('AgentStoreUnavailable');
+    expect(Predicate.isTagged(failure, 'AgentStoreUnavailable')).toBe(true);
   }),
 );
 

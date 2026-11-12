@@ -23,7 +23,7 @@ import {
   TenantIdSchema,
 } from '@app/core-runtime/access/ids';
 import { PgClient } from '@effect/sql-pg';
-import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { ApplyCommandPayloadSchema, UpdateEmployeePayloadSchema } from '../../shared/actions/apply-command.ts';
@@ -250,7 +250,7 @@ it('the published employee.update owns bulk mutation and apply-command publishes
   const encoded = Schema.encodeSync(UpdateEmployeePayloadSchema)(payload);
   expect(Schema.is(ApplyCommandPayloadSchema)(payload)).toBe(false);
   expect(Schema.is(UpdateEmployeePayloadSchema)(payload)).toBe(true);
-  expect(encoded.command._tag).toBe('BulkUpdateEmployees');
+  expect(Predicate.isTagged(encoded.command, 'BulkUpdateEmployees')).toBe(true);
 });
 const noTransactions = (): number => 0;
 for (const outcome of ['DENIED', 'UNAVAILABLE'] as const) {
@@ -354,7 +354,7 @@ for (const refuseMiddle of [false, true]) {
         };
         if (refuseMiddle) {
           const failure = yield* harness.runtime.runAction(request).pipe(Effect.flip);
-          expect(failure._tag).toBe('ActionPermissionDenied');
+          expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
           expect(writes).toBe(0);
           expect(harness.snapshot().committed).toEqual([]);
         } else {
@@ -371,7 +371,7 @@ for (const refuseMiddle of [false, true]) {
           const readCalls = readTargets.length;
           const remoteCalls = gate.remoteChecks();
           const replay = yield* harness.runtime.runAction(request).pipe(Effect.flip);
-          expect(replay._tag).toBe('ActionAlreadyCommitted');
+          expect(Predicate.isTagged(replay, 'ActionAlreadyCommitted')).toBe(true);
           expect(asked).toHaveLength(calls);
           expect(readTargets).toHaveLength(readCalls);
           expect(gate.remoteChecks()).toBe(remoteCalls);
@@ -414,7 +414,7 @@ it.effect('the retired apply-command cannot execute even an otherwise allowed bu
           transport: { correlationId: 'retired-bulk', idempotencyKey: 'retired-bulk' },
         })
         .pipe(Effect.flip);
-      expect(failure._tag).toBe('ActionPayloadValidationError');
+      expect(Predicate.isTagged(failure, 'ActionPayloadValidationError')).toBe(true);
       expect(harness.snapshot().transactionCount).toBe(0);
     }),
   ),
@@ -422,7 +422,7 @@ it.effect('the retired apply-command cannot execute even an otherwise allowed bu
 it.effect('one missing employee prevents the entire owner state transition', () =>
   Effect.gen(function* missingEmployee() {
     const failure = yield* evolveEmployeeState({ employees: [employee] }, payload.command, { now }).pipe(Effect.flip);
-    expect(failure._tag).toBe('WorkforceNotFound');
+    expect(Predicate.isTagged(failure, 'WorkforceNotFound')).toBe(true);
     expect(employee.active).toBe(true);
   }),
 );
@@ -478,7 +478,7 @@ it.effect('expired admission and Changing or missing company fences never reach 
             transport: { correlationId: `fenced-${fenceState}`, idempotencyKey: `fenced-${fenceState}` },
           })
           .pipe(Effect.flip);
-        expect(failure._tag).toBe('ActionPermissionCheckError');
+        expect(Predicate.isTagged(failure, 'ActionPermissionCheckError')).toBe(true);
         expect(persisted.remoteChecks()).toBe(0);
         expect(fencedHarness.snapshot().transactionCount).toBe(0);
         expect(fencedHarness.snapshot().committed).toEqual([]);

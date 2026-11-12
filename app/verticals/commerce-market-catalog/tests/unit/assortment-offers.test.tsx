@@ -7,7 +7,7 @@ import { executeRecords } from '@app/merchandise/clients/records';
 import { RecordsResponseSchema } from '@app/merchandise/contracts/records';
 import { MarketSettingsSchema } from '@app/merchandise/domain/market-offers';
 import { saveLabelsFor } from '@app/admin-ui';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { act } from 'react';
@@ -283,7 +283,7 @@ describe('e-shop offer switches of the price list', () => {
       const server = new Map(Object.entries({ 'p-1': false, 'p-2': true }));
       rstest.mocked(executeManageMarkets).mockImplementation(({ command }) => {
         if (
-          command._tag === 'SetProductMarketOffer' &&
+          Predicate.isTagged(command, 'SetProductMarketOffer') &&
           command.expectedOffered !== undefined &&
           command.expectedOffered !== server.get(command.productId)
         ) {
@@ -313,7 +313,7 @@ describe('e-shop offer switches of the price list', () => {
       // The server: someone withdrew SKU-1 after the page showed it as offered.
       const server = new Map(Object.entries({ 'p-1': false, 'p-2': true }));
       rstest.mocked(executeManageMarkets).mockImplementation(({ command }) => {
-        if (command._tag !== 'SetProductMarketOffer') {
+        if (!Predicate.isTagged(command, 'SetProductMarketOffer')) {
           return Effect.succeed({ entityIds: [], revision: 9 });
         }
         if (command.expectedOffered !== undefined && command.expectedOffered !== server.get(command.productId)) {
@@ -371,7 +371,7 @@ describe('e-shop offer switches of the price list', () => {
       const server = new Map(Object.entries({ 'p-3': false }));
       rstest.mocked(executeManageMarkets).mockImplementation(({ command }) => {
         if (
-          command._tag === 'SetProductMarketOffer' &&
+          Predicate.isTagged(command, 'SetProductMarketOffer') &&
           command.expectedOffered !== undefined &&
           command.expectedOffered !== server.get(command.productId)
         ) {

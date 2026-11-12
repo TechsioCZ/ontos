@@ -10,7 +10,19 @@ import {
 } from '@app/core-runtime';
 import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
-import { Cause, ConfigProvider, DateTime, Effect, Exit, Layer, Option, Redacted, Result, Schema } from 'effect';
+import {
+  Cause,
+  ConfigProvider,
+  DateTime,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Predicate,
+  Redacted,
+  Result,
+  Schema,
+} from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -409,10 +421,10 @@ describe('Market retirement admission phase boundary', () => {
         compositionRevision: fixture.compositionRevision,
         legalEntityScope: 'subject',
       });
-      expect(delegated?.subject._tag).toBe('Assertion');
-      expect(delegated?.subject._tag === 'Assertion' ? Redacted.value(delegated.subject.sourceAssertion) : null).toBe(
-        'original-requester-assertion',
-      );
+      expect(Predicate.isTagged(delegated?.subject, 'Assertion')).toBe(true);
+      expect(
+        Predicate.isTagged(delegated?.subject, 'Assertion') ? Redacted.value(delegated.subject.sourceAssertion) : null,
+      ).toBe('original-requester-assertion');
       expect(assessmentRequests).toHaveLength(1);
       expect(assessmentRequests[0]?.authorization).toBe('Bearer delegated-original-requester-token');
       expect(assessmentRequests[0]?.correlation).toBe(requestCorrelation);

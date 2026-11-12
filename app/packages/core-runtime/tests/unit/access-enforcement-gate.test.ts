@@ -1035,7 +1035,7 @@ it.effect(
         });
         // The merged gate pins a standalone workload to the companies its binding declares (D6).
         const { gate } = harness({
-          declaredCompanies: [uid(2)],
+          declaredCompanies: [LegalEntityIdSchema.make(uid(2))],
           kinds: kindSource('system'),
           workloadKeys: [workloadKey],
         });

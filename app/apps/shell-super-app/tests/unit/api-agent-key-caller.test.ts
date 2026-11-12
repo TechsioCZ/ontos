@@ -8,7 +8,7 @@ import type { OperationalScope } from '@app/core-runtime';
 import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { NodeCrypto } from '@effect/platform-node';
-import { ConfigProvider, Effect, Layer, Result } from 'effect';
+import { ConfigProvider, Effect, Layer, Predicate, Result } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
@@ -139,7 +139,7 @@ it.effect('refuses a company that the canonical gate does not offer', () =>
     const { result } = yield* run({ selectable: false });
     expect(Result.isFailure(result)).toBe(true);
     if (Result.isFailure(result)) {
-      expect(result.failure._tag).toBe('ShellTargetForbiddenProblem');
+      expect(Predicate.isTagged(result.failure, 'ShellTargetForbiddenProblem')).toBe(true);
       expect(result.failure.status).toBe(403);
     }
   }),
@@ -150,7 +150,7 @@ it.effect('keeps unavailable selection retryable instead of reporting a forbidde
     const { result } = yield* run({ selectionUnavailable: true });
     expect(Result.isFailure(result)).toBe(true);
     if (Result.isFailure(result)) {
-      expect(result.failure._tag).toBe('ShellCapabilityUnavailableProblem');
+      expect(Predicate.isTagged(result.failure, 'ShellCapabilityUnavailableProblem')).toBe(true);
       expect(result.failure.status).toBe(503);
     }
   }),
@@ -163,7 +163,7 @@ it.effect('does not ask company authority before the API-key scope has been reva
     expect(gate.selectableAsks).toEqual([]);
     expect(Result.isFailure(result)).toBe(true);
     if (Result.isFailure(result)) {
-      expect(result.failure._tag).toBe('ShellCapabilityUnavailableProblem');
+      expect(Predicate.isTagged(result.failure, 'ShellCapabilityUnavailableProblem')).toBe(true);
       expect(result.failure.status).toBe(503);
     }
   }),
@@ -185,7 +185,7 @@ it.effect('refuses an enrolled module credential before acting as its principal'
     expect(gate.selectableAsks).toEqual([]);
     expect(Result.isFailure(result)).toBe(true);
     if (Result.isFailure(result)) {
-      expect(result.failure._tag).toBe('ShellTargetForbiddenProblem');
+      expect(Predicate.isTagged(result.failure, 'ShellTargetForbiddenProblem')).toBe(true);
       expect(result.failure.status).toBe(403);
     }
   }),
@@ -205,7 +205,7 @@ it.effect('answers an unreadable module enrolment as unavailable instead of admi
     expect(events).toEqual(['verify-key']);
     expect(Result.isFailure(result)).toBe(true);
     if (Result.isFailure(result)) {
-      expect(result.failure._tag).toBe('ShellCapabilityUnavailableProblem');
+      expect(Predicate.isTagged(result.failure, 'ShellCapabilityUnavailableProblem')).toBe(true);
       expect(result.failure.status).toBe(503);
     }
   }),

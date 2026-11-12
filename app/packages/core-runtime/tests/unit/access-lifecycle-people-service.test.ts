@@ -1,4 +1,4 @@
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -557,7 +557,7 @@ const leaverRow = (scopeId: AccessScopeId) =>
     (candidate) =>
       candidate.scopeId === scopeId &&
       candidate.kind === 'member' &&
-      candidate.holder._tag === 'Principal' &&
+      Predicate.isTagged(candidate.holder, 'Principal') &&
       candidate.holder.principalId === LEAVER,
   );
 
@@ -651,7 +651,7 @@ it.effect('refuses an admission the directory refutes inside the write transacti
     const refused = yield* Effect.flip(
       serviceOver([], {
         apply: (writes) =>
-          writes.some((write) => write._tag === 'RequireDirectoryMember' && departed.has(write.principalId))
+          writes.some((write) => Predicate.isTagged(write, 'RequireDirectoryMember') && departed.has(write.principalId))
             ? Effect.fail(peopleRefusal('people_directory_membership_missing', 'departed'))
             : Effect.void,
         memberships: peopleRows,

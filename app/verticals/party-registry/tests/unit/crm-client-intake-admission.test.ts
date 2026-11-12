@@ -7,7 +7,7 @@ import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/sys
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
-import { DateTime, Effect, Option, Result, Schema, Struct } from 'effect';
+import { DateTime, Effect, Option, Predicate, Result, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { createCrmClientPartyAction } from '../../src/actions/create-crm-client-party.action.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
@@ -156,7 +156,7 @@ it.layer(NodeCrypto.layer)('CRM intake workload admission', (suite) => {
               transport: { correlationId: 'exclusive-negative', idempotencyKey: `exclusive-${kind}-${bound}` },
             })
             .pipe(Effect.flip);
-          expect(refused._tag).toBe('ActionPermissionDenied');
+          expect(Predicate.isTagged(refused, 'ActionPermissionDenied')).toBe(true);
           expect(harness.snapshot().committed).toEqual([]);
           expect(harness.snapshot().transactionCount).toBe(0);
           const reads = yield* makeReadTestHarness({
@@ -291,7 +291,7 @@ it.layer(NodeCrypto.layer)('CRM intake workload admission', (suite) => {
             transport: { correlationId: 'stale-composition', idempotencyKey: 'crm-party-intake:stale' },
           })
           .pipe(Effect.flip);
-        expect(stale._tag).toBe('ActionTransactionError');
+        expect(Predicate.isTagged(stale, 'ActionTransactionError')).toBe(true);
         expect(created).toBe(0);
         expect(harness.snapshot().transactionCount).toBe(0);
         expect(harness.snapshot().invocations).toHaveLength(1);
@@ -316,7 +316,7 @@ it.layer(NodeCrypto.layer)('CRM intake workload admission', (suite) => {
             transport: { correlationId: 'bad-client', idempotencyKey: 'crm-party-intake:bad' },
           })
           .pipe(Effect.flip);
-        expect(bad._tag).toBe('PartyEvidenceInsufficient');
+        expect(Predicate.isTagged(bad, 'PartyEvidenceInsufficient')).toBe(true);
         expect(created).toBe(1);
         const foreign = yield* harness.runtime
           .runAction({
@@ -325,7 +325,7 @@ it.layer(NodeCrypto.layer)('CRM intake workload admission', (suite) => {
             transport: { correlationId: 'foreign-company', idempotencyKey: 'crm-party-intake:foreign' },
           })
           .pipe(Effect.flip);
-        expect(foreign._tag).toBe('PartyEvidenceInsufficient');
+        expect(Predicate.isTagged(foreign, 'PartyEvidenceInsufficient')).toBe(true);
         expect(created).toBe(1);
         const unattested = yield* harness.runtime
           .runAction({
@@ -334,7 +334,7 @@ it.layer(NodeCrypto.layer)('CRM intake workload admission', (suite) => {
             transport: { correlationId: 'missing-attestation', idempotencyKey: 'crm-party-intake:unattested' },
           })
           .pipe(Effect.flip);
-        expect(unattested._tag).toBe('PartyEvidenceInsufficient');
+        expect(Predicate.isTagged(unattested, 'PartyEvidenceInsufficient')).toBe(true);
         expect(created).toBe(1);
       }),
   );

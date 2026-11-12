@@ -135,7 +135,9 @@ it('prepares all four Catalog-dependent Actions and leaves Remove Actions local'
   expect(getActionServicePreflight(removeCustomerPriceGroupAction)).toBeUndefined();
   expect(getActionServicePreflight(removeCounterpartyPriceGroupAction)).toBeUndefined();
   expect(getActionServiceFactory(assignCustomerPriceGroupAction)).toBe(assignCustomerPriceGroupServicesForTransaction);
-  expect(getActionServiceFactory(assignCounterpartyPriceGroupAction)).toBe(assignCounterpartyPriceGroupServicesForTransaction);
+  expect(getActionServiceFactory(assignCounterpartyPriceGroupAction)).toBe(
+    assignCounterpartyPriceGroupServicesForTransaction,
+  );
   expect(getActionServiceFactory(migrateCustomerPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
   expect(getActionServiceFactory(migrateCounterpartyPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
 });

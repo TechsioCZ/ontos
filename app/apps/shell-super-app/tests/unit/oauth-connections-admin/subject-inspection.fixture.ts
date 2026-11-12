@@ -17,7 +17,7 @@ import {
   RoleRevisionIdSchema,
 } from '@app/core-runtime/access/ids';
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
-import { Effect, Layer, Option } from 'effect';
+import { Effect, Layer, Option, Predicate } from 'effect';
 
 import type { AccessDecisionUnavailable } from '../../../../../packages/core-runtime/src/access/decision/errors.ts';
 import { makeModuleContractFixture } from '../../../../../packages/core-runtime/src/testing/module-contract.ts';
@@ -152,11 +152,11 @@ export const subjectInspectionFixture = (input: {
           Effect.succeed(input.owners?.includes(actor) === true ? [{ _tag: 'Owner' as const }] : []),
         readConnection: () => Effect.succeed(Option.none()),
         readScope: (query) => {
-          const principal = query.holders.find((holder) => holder._tag === 'Principal');
+          const principal = query.holders.find((holder) => Predicate.isTagged(holder, 'Principal'));
           const inScope =
             query.tenantId === requesterScope.tenantId &&
             query.holders.every((holder) => {
-              const id = holder._tag === 'Principal' ? holder.principalId : holder.agentId;
+              const id = Predicate.isTagged(holder, 'Principal') ? holder.principalId : holder.agentId;
               const subject = subjectOf(id);
               return (
                 subject !== undefined &&
@@ -167,7 +167,11 @@ export const subjectInspectionFixture = (input: {
           const holderDeadlines = query.holders.map((holder) => ({ deadlines: [], holder }));
           return Effect.gen(function* fixtureInspectionScope() {
             reads.scope += 1;
-            if (principal !== undefined && principal._tag === 'Principal' && input.onScopeRead !== undefined) {
+            if (
+              principal !== undefined &&
+              Predicate.isTagged(principal, 'Principal') &&
+              input.onScopeRead !== undefined
+            ) {
               yield* input.onScopeRead(principal.principalId);
             }
             if (!inScope) {

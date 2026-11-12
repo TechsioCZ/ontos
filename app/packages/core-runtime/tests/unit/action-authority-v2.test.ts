@@ -1,4 +1,4 @@
-import { DateTime, Effect, Exit, Option, Schema } from 'effect';
+import { DateTime, Effect, Exit, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -506,7 +506,7 @@ for (const phase of ['approver', 'requester'] as const) {
           prepared.recheck(now, transaction).pipe(insideDatabaseTransaction('stale-stored-forward-proof-writer')),
         )
         .pipe(Effect.flip);
-      expect(stale._tag).toBe('ActionPermissionCheckError');
+      expect(Predicate.isTagged(stale, 'ActionPermissionCheckError')).toBe(true);
       expect(fixture.remoteCalls()).toBe(remoteCalls);
     }),
   );
@@ -532,7 +532,7 @@ it.effect(
         proof: fixture.proof,
         scope,
       }).pipe(Effect.flip);
-      expect(failure._tag).toBe('ActionPermissionCheckError');
+      expect(Predicate.isTagged(failure, 'ActionPermissionCheckError')).toBe(true);
       expect(fixture.remoteCalls()).toBeGreaterThan(before);
     }),
 );
@@ -554,7 +554,7 @@ it.effect('cannot prepare a lost saved incarnation even if a fresh canonical gat
       proof: fixture.proof,
       scope,
     }).pipe(Effect.flip);
-    expect(failure._tag).toBe('ActionPermissionDenied');
+    expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
   }),
 );
 
@@ -580,7 +580,7 @@ it.effect('does not extend the saved proof deadline when current membership has 
           .pipe(insideDatabaseTransaction('expired-stored-proof')),
       )
       .pipe(Effect.flip);
-    expect(failure._tag).toBe('ActionPermissionDenied');
+    expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
   }),
 );
 
@@ -653,7 +653,7 @@ for (const batchReads of [false, true]) {
           proof: fixture.proof,
           scope,
         }).pipe(Effect.flip);
-        expect(failure._tag).toBe('ActionPermissionDenied');
+        expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
       }),
     );
   }
@@ -705,7 +705,7 @@ it.effect('a batched read that offers a live cell of another assignment never re
       proof: fixture.proof,
       scope,
     }).pipe(Effect.flip);
-    expect(failure._tag).toBe('ActionPermissionDenied');
+    expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
   }),
 );
 

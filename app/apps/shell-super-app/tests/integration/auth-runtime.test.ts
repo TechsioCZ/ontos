@@ -652,9 +652,9 @@ it.live(
     ]);
     yield* coreDatabase.insert(accessScopes).values(
       fixtureAccessScopes.map((entry) => ({
-        legalEntityId: entry._tag === 'LegalEntity' ? entry.legalEntityId : null,
+        legalEntityId: Predicate.isTagged(entry, 'LegalEntity') ? entry.legalEntityId : null,
         scopeId: entry.scopeId,
-        tenantContextId: entry._tag === 'TenantContext' ? tenantId : null,
+        tenantContextId: Predicate.isTagged(entry, 'TenantContext') ? tenantId : null,
         tenantId,
       })),
     );

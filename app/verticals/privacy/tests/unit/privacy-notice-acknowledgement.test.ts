@@ -17,7 +17,7 @@ import type { ActionTestPreparationRead } from '@app/core-runtime/testing/action
 import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '@app/commerce-customer-context/portal-auth/contracts';
 import { NodeCrypto } from '@effect/platform-node';
-import { Context, Crypto, DateTime, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
+import { Context, Crypto, DateTime, Effect, Layer, Option, Predicate, Redacted, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 import { base64url } from 'jose';
@@ -986,7 +986,7 @@ it.effect('the real acknowledgement Action commits the actual read metadata with
         Effect.provide(lifecycle.ownerTransport),
         Effect.flip,
       );
-    expect(replay._tag).toBe('ActionAlreadyCommitted');
+    expect(Predicate.isTagged(replay, 'ActionAlreadyCommitted')).toBe(true);
     expect(harness.snapshot().committed).toHaveLength(2);
     expect(harness.snapshot().preparationQueries).toHaveLength(2);
     expect(lifecycle.remote.calls).toHaveLength(callsBeforeActions + 20);
