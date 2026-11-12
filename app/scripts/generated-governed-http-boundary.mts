@@ -5710,7 +5710,7 @@ const nativeReadLayerInjection = (
   if (tuple === null) {
     return undefined;
   }
-  const invocation = cryptoReadInvocation(source, tuple.elements);
+  const invocation = cryptoReadInvocationStaged(source, tuple.elements);
   const position = nativeReadTupleBinding(tuple, service, binding);
   const readProvider = invocation?.actualArguments[0];
   return position !== undefined &&
@@ -6215,7 +6215,7 @@ const hasClosedApprovalFactoryParameters = (initializer: string, returned: strin
 const approvalZeroArgumentFactoryOutput = (source: string, expression: string): string | undefined => {
   const called = /^(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\(\)$/u.exec(expression)?.groups?.binding;
   const initializer = called === undefined ? undefined : constInitializerStaged(source, called);
-  const returned = initializer === undefined ? undefined : callbackReturnedExpression(initializer);
+  const returned = initializer === undefined ? undefined : callbackReturnedExpressionStaged(initializer);
   return called !== undefined &&
     initializer !== undefined &&
     returned !== undefined &&
@@ -7058,6 +7058,56 @@ const hasStagedReadServiceFactory = (
   hasReadServiceFactoryCallback(phaseOwner, source, readExpression, factory) ||
   hasOriginalServiceClosureFactory(phaseOwner, source, factory);
 
+/** Demo-only exception 3: the trunk's returned-expression cut, at the first TOP-LEVEL `;` and the top-level arrow. */
+export const callbackReturnedExpressionStaged = (handlerSource: string): string | undefined => {
+  const structure = maskNonCode(handlerSource);
+  const arrow = firstTopLevelSeparator(structure, '=', 0, structure.length, true);
+  if (arrow === undefined || handlerSource.slice(arrow, arrow + 2) !== '=>') {
+    return undefined;
+  }
+  const body = handlerSource.slice(arrow + 2).trim();
+  if (!body.startsWith('{')) {
+    return body;
+  }
+  const bodyStructure = maskNonCode(body);
+  const returns = [...bodyStructure.matchAll(/\breturn\s+/gu)].filter(
+    (match) => match.index !== undefined && codeDepthBeforePosition(body, match.index) === 1,
+  );
+  const finalReturn = returns.at(-1);
+  if (finalReturn?.index === undefined) {
+    return undefined;
+  }
+  const returned = body.slice(finalReturn.index + finalReturn[0].length);
+  const statementEnd = firstTopLevelSeparator(maskNonCode(returned), ';');
+  return (statementEnd === undefined ? returned : returned.slice(0, statementEnd)).trim();
+};
+
+/** Demo-only exception 3: the trunk's typed read-factory parameter list, which does not read a ternary as an arrow. */
+const isReadFactoryFunctionParametersStaged = (
+  tokens: readonly ReadFactoryToken[],
+  opening: number,
+  closing: number,
+): boolean => {
+  const previous = tokens[opening - 1]?.kind;
+  const beforePrevious = tokens[opening - 2]?.kind;
+  const functionPrefix =
+    previous === SyntaxKind.FunctionKeyword ||
+    (previous === SyntaxKind.AsteriskToken && beforePrevious === SyntaxKind.FunctionKeyword) ||
+    (previous === SyntaxKind.Identifier &&
+      (beforePrevious === SyntaxKind.FunctionKeyword ||
+        (beforePrevious === SyntaxKind.AsteriskToken && tokens[opening - 3]?.kind === SyntaxKind.FunctionKeyword)));
+  if (functionPrefix) {
+    return true;
+  }
+  const after = tokens[closing + 1]?.kind;
+  return (
+    after === SyntaxKind.EqualsGreaterThanToken ||
+    (after === SyntaxKind.ColonToken &&
+      previous !== SyntaxKind.Identifier &&
+      hasReadFactoryReturnArrow(tokens, closing + 1))
+  );
+};
+
 // ---------------------------------------------------------------------------------------------------------------
 // Demo-only exception 3 (staged reads). Main's reads have a single handler; the demo keeps Core's prepare/load/finish read contract so outbound I/O stays outside database transactions. This is the trunk's staged-read and native read-factory proof, kept verbatim (main's same-named helpers take precedence). Offered upstream; changing main needs owner approval.
 // ---------------------------------------------------------------------------------------------------------------
@@ -7090,7 +7140,7 @@ const readFactoryShadowsParameters = (
     !READ_FACTORY_MEMBER_SELECTORS.has(tokens[index - 2]?.kind ?? SyntaxKind.Unknown);
   return (
     closing === undefined ||
-    ((isReadFactoryFunctionParameters(tokens, index, closing) || catchParameter) &&
+    ((isReadFactoryFunctionParametersStaged(tokens, index, closing) || catchParameter) &&
       readFactoryParametersShadow(tokens, index, closing, bindings))
   );
 };
@@ -7172,7 +7222,7 @@ const hasNativeReadPhaseReturn = (
   if (isEffectFnCallbackStaged(phaseSource)) {
     return isReadHandlerCallback(phaseSource, '');
   }
-  const returned = callbackReturnedExpression(phaseSource);
+  const returned = callbackReturnedExpressionStaged(phaseSource);
   if (returned === undefined) {
     return false;
   }
@@ -7250,7 +7300,7 @@ const hasNativePrepareScopeForwarder = (source: string, initializer: string): bo
   const context = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*):\s*ReadPrepareContext$/u.exec(parameters[1] ?? '')?.groups?.name;
   const input = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*):\s*[A-Za-z_$][A-Za-z0-9_$]*$/u.exec(parameters[0] ?? '')?.groups
     ?.name;
-  const returned = callbackReturnedExpression(initializer);
+  const returned = callbackReturnedExpressionStaged(initializer);
   const binding = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(returned ?? '')?.groups?.name;
   return (
     parameters.length === 2 &&
@@ -7296,14 +7346,14 @@ const readPhaseReturnedExpression = (phaseSource: string): string | undefined =>
   const returned =
     arrow === undefined || phaseSource.slice(arrow, arrow + 2) !== '=>'
       ? undefined
-      : callbackReturnedExpression(`() => ${phaseSource.slice(arrow + 2)}`);
+      : callbackReturnedExpressionStaged(`() => ${phaseSource.slice(arrow + 2)}`);
   if (returned === undefined || !returned.startsWith('Effect.suspend(')) {
     return returned;
   }
   const argumentsList = wholeCallArguments(returned, /^Effect\.suspend\(/u, true);
   const suspended = argumentsList?.[0];
   return argumentsList?.length === 1 && suspended?.startsWith('() =>') === true
-    ? callbackReturnedExpression(suspended)
+    ? callbackReturnedExpressionStaged(suspended)
     : undefined;
 };
 
@@ -7418,7 +7468,7 @@ const hasPublicCoreReadCallable = (owner: ReadPhaseOwner, source: string, bindin
     return false;
   }
   const initializer = constInitializerStaged(target, imported.imported);
-  const returned = initializer === undefined ? undefined : callbackReturnedExpression(initializer);
+  const returned = initializer === undefined ? undefined : callbackReturnedExpressionStaged(initializer);
   const native = /^(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(returned ?? '')?.groups?.binding;
   const callback = native === undefined ? undefined : constInitializerStaged(target, native);
   return (
@@ -7468,7 +7518,7 @@ const hasOriginalEmptyTaggedErrorClass = (schema: string, name: string): boolean
 
 const isOriginalFreshTaggedErrorFactory = (owner: ReadPhaseOwner, source: string, binding: string): boolean => {
   const initializer = constInitializerStaged(source, binding);
-  const returned = initializer === undefined ? undefined : callbackReturnedExpression(initializer);
+  const returned = initializer === undefined ? undefined : callbackReturnedExpressionStaged(initializer);
   const error = /^new (?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(returned ?? '')?.groups?.binding;
   const imported = error === undefined ? undefined : namedSourceImport(source, error);
   const file =
@@ -7816,7 +7866,7 @@ const nativeReadSucceedExpression = (expression: string): string | undefined => 
 };
 
 const readReturnedRecord = (initializer: string): string | undefined => {
-  const returned = callbackReturnedExpression(initializer);
+  const returned = callbackReturnedExpressionStaged(initializer);
   const value = returned?.startsWith('(') === true ? returned.slice(1, -1).trim() : returned;
   return value?.startsWith('{') === true && topLevelObjectEntries(value) !== undefined ? value : undefined;
 };
@@ -7826,7 +7876,7 @@ const scopedReadAdapterInput = (target: NonNullable<ReturnType<typeof originalRe
   const first = /^transaction:\s*Parameters<typeof\s+(?<factory>[A-Za-z_$][A-Za-z0-9_$]*)>\[0\]$/u.exec(
     parameters?.[0] ?? '',
   )?.groups?.factory;
-  const returned = callbackReturnedExpression(target.initializer);
+  const returned = callbackReturnedExpressionStaged(target.initializer);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   const mapper =
     pipeline?.transforms.length === 1 ? callArgument(pipeline.transforms[0] ?? '', /^Effect\.map\(/u) : undefined;
@@ -7979,7 +8029,7 @@ const hasOriginalDefaultMethods = (source: string, methods: string, transaction:
     const key = objectEntryKey(entry);
     const method = key === undefined ? undefined : objectProperty(methods, key);
     const names = method === undefined ? undefined : readCallableParameterNames(method);
-    const returned = method === undefined ? undefined : callbackReturnedExpression(method);
+    const returned = method === undefined ? undefined : callbackReturnedExpressionStaged(method);
     const binding = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(returned ?? '')?.groups?.name;
     return (
       method !== undefined &&
@@ -7997,7 +8047,7 @@ const transactionDefaultDefinition = (source: string, parameter: string) => {
       parameter,
     )?.groups;
   const initializer = match === undefined ? undefined : constInitializerStaged(source, match.factory ?? '');
-  const returned = initializer === undefined ? undefined : callbackReturnedExpression(initializer);
+  const returned = initializer === undefined ? undefined : callbackReturnedExpressionStaged(initializer);
   const methods = returned?.startsWith('(') === true ? returned.slice(1, -1).trim() : returned;
   return match !== undefined && initializer !== undefined && methods !== undefined && returned !== undefined
     ? { initializer, match, methods, returned }
@@ -8153,7 +8203,7 @@ const destructuredReadExport = (source: string, name: string) => {
 
 const nativeReferenceObject = (method: string) => {
   const names = readCallableParameterNames(method);
-  const returned = callbackReturnedExpression(method);
+  const returned = callbackReturnedExpressionStaged(method);
   const object = returned?.startsWith('(') === true ? returned.slice(1, -1).trim() : undefined;
   return names?.length === 2 && returned !== undefined && object !== undefined
     ? { names, object, returned }
@@ -8258,7 +8308,7 @@ const hasOriginalResourceRefCallable = (owner: ReadPhaseOwner, source: string, b
     return false;
   }
   const key = destructuredReadKey(definition.record, imported.imported);
-  const returned = callbackReturnedExpression(factory.target.initializer);
+  const returned = callbackReturnedExpressionStaged(factory.target.initializer);
   const methodName = key === undefined || returned === undefined ? undefined : objectPropertyValue(returned, key);
   const body = readCallableBlock(factory.target.initializer)?.slice(1, -1);
   const method =
@@ -8368,7 +8418,7 @@ const hasTenantQueryCondition = (
           new RegExp(`\\bconst ${binding}\\s*=\\s*`, 'u'),
         );
   const names = expression === undefined ? undefined : readCallableParameterNames(expression);
-  const returned = expression === undefined ? undefined : callbackReturnedExpression(expression);
+  const returned = expression === undefined ? undefined : callbackReturnedExpressionStaged(expression);
   return (
     binding !== undefined &&
     expression !== undefined &&
@@ -8387,7 +8437,7 @@ const scopedQueryDefinition = (initializer: string, boundTransaction?: string) =
     parameters === undefined
       ? undefined
       : [...(boundTransaction === undefined ? [] : [boundTransaction]), ...parameters];
-  const returned = callbackReturnedExpression(initializer);
+  const returned = callbackReturnedExpressionStaged(initializer);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   const table = /\.from\(\s*(?<table>[A-Za-z_$][A-Za-z0-9_$]*)\s*\)/u.exec(pipeline?.base ?? '')?.groups?.table;
   const predicate = pipeline === undefined ? undefined : callArgument(pipeline.base, /\.where\(/u);
@@ -8446,7 +8496,7 @@ const hasDestructuredQueryArguments = (
   const binding = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(call)?.groups?.name;
   const args = binding === undefined ? undefined : wholeCallArguments(call, new RegExp(`^${binding}\\(`, 'u'), true);
   const names = readCallableParameterNames(factory);
-  const body = callbackReturnedExpression(factory);
+  const body = callbackReturnedExpressionStaged(factory);
   return (
     args?.length === 2 &&
     names?.length === 2 &&
@@ -8472,7 +8522,7 @@ const originalDestructuredQuery = (
   }
   const { definition, imported, target, targetOwner } = exported;
   const factory = originalReadCallable(targetOwner, target, definition.factory);
-  const returned = factory === undefined ? undefined : callbackReturnedExpression(factory.initializer);
+  const returned = factory === undefined ? undefined : callbackReturnedExpressionStaged(factory.initializer);
   const key = destructuredReadKey(definition.record, imported.imported);
   const method = returned === undefined || key === undefined ? undefined : objectProperty(returned, key);
   return method !== undefined &&
@@ -8492,10 +8542,10 @@ const originalDestructuredQuery = (
 };
 
 const scopedForwarderBuilder = (owner: ReadPhaseOwner, source: string, initializer: string) => {
-  const returned = callbackReturnedExpression(initializer);
+  const returned = callbackReturnedExpressionStaged(initializer);
   const binding = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(returned ?? '')?.groups?.name;
   const factory = binding === undefined ? undefined : originalReadCallable(owner, source, binding);
-  const expression = factory === undefined ? undefined : callbackReturnedExpression(factory.initializer);
+  const expression = factory === undefined ? undefined : callbackReturnedExpressionStaged(factory.initializer);
   const service = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(expression ?? '')?.groups?.name;
   return service === undefined ? undefined : originalReadCallable(owner, source, service);
 };
@@ -8520,7 +8570,7 @@ const hasOriginalServiceResultMethod = (
   method: string,
 ): boolean => {
   const factory = originalReadCallable(owner, source, binding);
-  const returned = factory === undefined ? undefined : callbackReturnedExpression(factory.initializer);
+  const returned = factory === undefined ? undefined : callbackReturnedExpressionStaged(factory.initializer);
   const context = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\.of\(/u.exec(returned ?? '')?.groups?.name;
   const methods =
     returned === undefined || context === undefined
@@ -8558,14 +8608,14 @@ const transactionServiceDefinition = (
   owner: ReadPhaseOwner,
   target: NonNullable<ReturnType<typeof originalReadCallable>>,
 ) => {
-  const returned = callbackReturnedExpression(target.initializer);
+  const returned = callbackReturnedExpressionStaged(target.initializer);
   const names = readCallableParameterNames(target.initializer);
   const match =
     /^(?<factory>[A-Za-z_$][A-Za-z0-9_$]*)\((?<transaction>[A-Za-z_$][A-Za-z0-9_$]*)\)\.(?<method>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(
       returned ?? '',
     )?.groups;
   const factory = match === undefined ? undefined : originalReadCallable(owner, target.source, match.factory ?? '');
-  const expression = factory === undefined ? undefined : callbackReturnedExpression(factory.initializer);
+  const expression = factory === undefined ? undefined : callbackReturnedExpressionStaged(factory.initializer);
   const service = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(expression ?? '')?.groups?.name;
   const lookups =
     expression === undefined || service === undefined
@@ -8689,7 +8739,7 @@ const hasProjectedScopedServiceMethod = (
 ): boolean => {
   const parameters = readCallableParameters(target.initializer);
   const names = readCallableParameterNames(method);
-  const returned = callbackReturnedExpression(method);
+  const returned = callbackReturnedExpressionStaged(method);
   const companyScoped = parameters?.[2] === 'legalEntityId: string | undefined';
   const scopeArguments = companyScoped ? [`${scope}.tenantId`, `${scope}.legalEntityId`] : [`${scope}.tenantId`];
   return (
@@ -8762,7 +8812,7 @@ const hasScopedServiceMethod = (
   transaction: string,
   boundData: readonly string[],
 ): boolean => {
-  const returned = callbackReturnedExpression(method);
+  const returned = callbackReturnedExpressionStaged(method);
   const invocation = returned === undefined ? undefined : scopedReadInvocation(owner, source, returned);
   const methodParameters = readCallableParameterNames(method);
   const names = [...boundData, ...(methodParameters ?? [])];
@@ -8785,7 +8835,7 @@ const hasScopedServiceMethod = (
 };
 
 const hasOriginalRevisionClosureMethod = (owner: ReadPhaseOwner, source: string, method: string): boolean => {
-  const returned = callbackReturnedExpression(method);
+  const returned = callbackReturnedExpressionStaged(method);
   const invocation = returned === undefined ? undefined : scopedReadInvocation(owner, source, returned);
   const parameters = invocation === undefined ? undefined : readCallableParameters(invocation.target.initializer);
   return (
@@ -8810,7 +8860,7 @@ const scopedReadClosureDefinition = (
   const parameters = readCallableParameters(initializer);
   const [transaction, scope] = parameters ?? [];
   const revision = parameters?.length === 3 ? parameters[2] : undefined;
-  const returned = callbackReturnedExpression(initializer);
+  const returned = callbackReturnedExpressionStaged(initializer);
   const methods = returned === undefined ? undefined : objectArgument(returned, /^Effect\.succeed\(/u);
   const entries = methods === undefined ? undefined : topLevelObjectEntries(methods);
   if (
@@ -8871,7 +8921,7 @@ const hasProjectedNativeFactoryResult = (
   target: NonNullable<ReturnType<typeof originalReadCallable>>,
 ): boolean => {
   const names = readCallableParameterNames(target.initializer);
-  const returned = callbackReturnedExpression(target.initializer);
+  const returned = callbackReturnedExpressionStaged(target.initializer);
   const value = returned === undefined ? undefined : nativeReadSucceedExpression(returned);
   const invocation = value === undefined ? undefined : originalReadInvocation(owner, target.source, value);
   const parameters = invocation === undefined ? undefined : readCallableParameters(invocation.target.initializer);
@@ -8911,7 +8961,7 @@ const hasProjectedNativeFactoryResult = (
 const nativeFactoryMappedProjection = (owner: ReadPhaseOwner, source: string, transform: string): boolean => {
   const callback = callArgument(transform, /^Effect\.map\(/u);
   const names = callback === undefined ? undefined : readCallableParameterNames(callback);
-  const returned = callback === undefined ? undefined : callbackReturnedExpression(callback);
+  const returned = callback === undefined ? undefined : callbackReturnedExpressionStaged(callback);
   const invocation = returned === undefined ? undefined : originalReadInvocation(owner, source, returned);
   const record = invocation?.args.length === 1 ? invocation.args[0] : undefined;
   const result = invocation === undefined ? undefined : readReturnedRecord(invocation.target.initializer);
@@ -9023,7 +9073,7 @@ const scopedReadFactories = {
     ancestors: ReadonlySet<string>,
   ): boolean => {
     const names = readCallableParameterNames(target.initializer);
-    const returned = callbackReturnedExpression(target.initializer);
+    const returned = callbackReturnedExpressionStaged(target.initializer);
     const invocation = returned === undefined ? undefined : originalReadInvocation(owner, target.source, returned);
     return (
       names !== undefined &&
@@ -9046,7 +9096,7 @@ const curriedNativeReadFactory = (source: string, initializer: string): string |
   const suffix = initializer.slice(closing + 1).trim();
   const arrow = firstTopLevelSeparator(maskNonCode(suffix), '=', 0, suffix.length, true);
   const annotation = arrow === undefined ? undefined : suffix.slice(0, arrow).replace(/^:\s*/u, '').trim();
-  const returned = callbackReturnedExpression(initializer);
+  const returned = callbackReturnedExpressionStaged(initializer);
   return annotation !== undefined &&
     returned !== undefined &&
     hasDirectReadCallbackExpression(initializer, returned) &&
@@ -9120,7 +9170,7 @@ const boundOwnerScopedReadMethods = (record: string): readonly (string | undefin
 const hasBoundOwnerScopedReadMethod = (record: string, key: string, persistence: string): boolean => {
   const value = objectPropertyValue(record, key);
   const parameters = value === undefined ? undefined : readCallableParameterNames(value);
-  const returned = value === undefined ? undefined : callbackReturnedExpression(value);
+  const returned = value === undefined ? undefined : callbackReturnedExpressionStaged(value);
   return (
     value !== undefined &&
     parameters?.length === 1 &&
@@ -9308,7 +9358,7 @@ const hasOriginalServiceClosureFactory = (
 };
 
 const scopedFactoryForwardingInput = (initializer: string) => {
-  const returned = callbackReturnedExpression(initializer);
+  const returned = callbackReturnedExpressionStaged(initializer);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   const parameters = readCallableParameters(initializer);
   const wrapped = returned === undefined ? undefined : nativeReadSucceedExpression(returned);
@@ -9394,7 +9444,7 @@ const hasScopedReadAdapterDependency = (initializer: string): boolean => {
   const parameter = readCallableParameters(initializer)?.[0];
   const dependency =
     parameter === undefined ? undefined : /^\s*(?<name>[A-Za-z_$][A-Za-z0-9_$]*)/u.exec(parameter)?.groups?.name;
-  const returned = callbackReturnedExpression(initializer);
+  const returned = callbackReturnedExpressionStaged(initializer);
   const body = readCallableBlock(initializer)?.slice(1, -1) ?? returned;
   if (dependency === undefined || returned === undefined || body === undefined) {
     return false;
@@ -9504,7 +9554,7 @@ const hasOriginalScopedReadMember = (
   }
   const invocation = scopedReadValueInvocation(expression);
   const target = invocation === undefined ? undefined : originalReadCallable(owner, source, invocation.name);
-  const returned = target === undefined ? expression : callbackReturnedExpression(target.initializer);
+  const returned = target === undefined ? expression : callbackReturnedExpressionStaged(target.initializer);
   const frozen = returned === undefined ? undefined : wholeCallArguments(returned, /^Object\.freeze\(/u, true);
   const value = frozen?.length === 1 ? frozen[0] : returned;
   const record = value?.startsWith('(') === true ? value.slice(1, -1).trim() : value;
@@ -9588,7 +9638,7 @@ const hasOwnerLocalScopedReadAdapter = (
   transaction: string,
   scope: string,
 ): boolean => {
-  const returned = callbackReturnedExpression(initializer);
+  const returned = callbackReturnedExpressionStaged(initializer);
   const value =
     returned !== undefined && isWholeCallExpression(returned, /^Effect\.succeed\s*\(/u)
       ? nativeReadSucceedExpression(returned)
@@ -9684,7 +9734,7 @@ const mappedReadFactoryRecord = (pipeline: ReturnType<typeof outputPipeExpressio
 const guardedReadFactoryDefinition = (owner: ReadPhaseOwner, source: string, binding: string) => {
   const target = originalReadCallable(owner, source, binding);
   const parameters = target === undefined ? undefined : readCallableParameters(target.initializer);
-  const returned = target === undefined ? undefined : callbackReturnedExpression(target.initializer);
+  const returned = target === undefined ? undefined : callbackReturnedExpressionStaged(target.initializer);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   const invocation = pipeline === undefined ? undefined : originalReadInvocation(owner, source, pipeline.base);
   const { callback, receiver, result } = mappedReadFactoryRecord(pipeline);
@@ -10066,7 +10116,7 @@ const hasFieldsPredicatePhase = (
     return false;
   }
   const callback = callArgument(pipeline.transforms[0] ?? '', /^Effect\.andThen\(/u);
-  const returned = callback === undefined ? undefined : callbackReturnedExpression(callback);
+  const returned = callback === undefined ? undefined : callbackReturnedExpressionStaged(callback);
   const binding = /^(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(returned ?? '')?.groups?.binding;
   const target = binding === undefined ? undefined : originalReadCallable(owner, source, binding);
   return (
@@ -10105,7 +10155,7 @@ const hasCanonicalPredicateReadHelper = (owner: ReadPhaseOwner, source: string, 
   const target = originalReadCallable(owner, source, binding);
   const parameter = target === undefined ? undefined : readCallableParameters(target.initializer)?.[0];
   const name = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\?:\s*ListAccessPredicate$/u.exec(parameter ?? '')?.groups?.name;
-  const returned = target === undefined ? undefined : callbackReturnedExpression(target.initializer);
+  const returned = target === undefined ? undefined : callbackReturnedExpressionStaged(target.initializer);
   const branches = returned === undefined ? undefined : ternaryReadBranches(returned);
   if (target === undefined || name === undefined || branches === undefined) {
     return false;
@@ -10149,7 +10199,7 @@ const scopedReadCapabilityBranches = (
   const target = originalReadCallable(owner, source, binding);
   const parameters = target === undefined ? undefined : readCallableParameters(target.initializer);
   const scope = parameters?.[0]?.split(':')[0]?.trim();
-  const returned = target === undefined ? undefined : callbackReturnedExpression(target.initializer);
+  const returned = target === undefined ? undefined : callbackReturnedExpressionStaged(target.initializer);
   const branches = returned === undefined ? undefined : ternaryReadBranches(returned);
   if (
     target === undefined ||
@@ -10168,7 +10218,7 @@ const scopedReadCapabilityBranches = (
 const nativeCapabilityPipeline = (source: string, expression: string) => {
   const binding = /^(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(expression)?.groups?.binding;
   const initializer = binding === undefined ? undefined : constInitializerStaged(source, binding);
-  const returned = initializer === undefined ? undefined : callbackReturnedExpression(initializer);
+  const returned = initializer === undefined ? undefined : callbackReturnedExpressionStaged(initializer);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   const native = pipeline === undefined ? undefined : namedSourceImport(source, pipeline.base);
   return binding !== undefined &&
@@ -10243,7 +10293,7 @@ const hasConditionalCapabilityPhase = (
 const hasFailClosedScopedGuard = (owner: ReadPhaseOwner, source: string, binding: string): boolean => {
   const target = originalReadCallable(owner, source, binding);
   const parameters = target === undefined ? undefined : readCallableParameters(target.initializer);
-  const returned = target === undefined ? undefined : callbackReturnedExpression(target.initializer);
+  const returned = target === undefined ? undefined : callbackReturnedExpressionStaged(target.initializer);
   const branches = returned === undefined ? undefined : ternaryReadBranches(returned);
   return (
     target !== undefined &&
@@ -10295,7 +10345,7 @@ const nativeListPreparationBody = (
 
 const hasNativeListPreparationFailure = (source: string, binding: string): boolean => {
   const initializer = constInitializerStaged(source, binding);
-  const returned = initializer === undefined ? undefined : callbackReturnedExpression(initializer);
+  const returned = initializer === undefined ? undefined : callbackReturnedExpressionStaged(initializer);
   const options = returned === undefined ? undefined : objectArgument(returned, /^new CoreSearchProjectionInvalid\(/u);
   return (
     initializer !== undefined &&
@@ -10512,7 +10562,7 @@ const hasNativeAggregateReadPhase = (
   const aggregate = isWholeCallExpression(base, /^Effect\.all\(/u);
   const suspend = wholeCallArguments(base, /^Effect\.suspend\(/u, true);
   const suspended = suspend?.length === 1 ? suspend[0] : undefined;
-  const generator = suspended === undefined ? undefined : callbackReturnedExpression(suspended);
+  const generator = suspended === undefined ? undefined : callbackReturnedExpressionStaged(suspended);
   const [, context] = phaseParameterNames(parameters) ?? [];
   return (
     (aggregate ||
@@ -10649,7 +10699,7 @@ const hasNativeServiceLookup = (
 const hasOriginalServiceCatchMapper = (owner: ReadPhaseOwner, source: string, transform: string): boolean => {
   const binding = callArgument(transform, /^Effect\.catch\(/u);
   const mapper = binding === undefined ? undefined : originalReadCallable(owner, source, binding);
-  const returned = mapper === undefined ? undefined : callbackReturnedExpression(mapper.initializer);
+  const returned = mapper === undefined ? undefined : callbackReturnedExpressionStaged(mapper.initializer);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   return (
     mapper !== undefined &&
@@ -10668,7 +10718,7 @@ const nativeServiceInvocationCallback = (
   const callback =
     pipeline.transforms.length === 2 ? callArgument(pipeline.transforms[0] ?? '', /^Effect\.flatMap\(/u) : undefined;
   const receiver = /^\((?<name>[A-Za-z_$][A-Za-z0-9_$]*)\)\s*=>/u.exec(callback ?? '')?.groups?.name;
-  const request = callback === undefined ? undefined : callbackReturnedExpression(callback);
+  const request = callback === undefined ? undefined : callbackReturnedExpressionStaged(callback);
   const args =
     receiver === undefined || request === undefined
       ? undefined
@@ -10782,7 +10832,7 @@ const nativeReadFailureMapperDefinition = (
   const parameters = readCallableParameters(mapper.initializer);
   const names = readCallableParameterNames(mapper.initializer);
   const failure = parameters?.length === 1 && names?.length === 1 ? names[0] : undefined;
-  const returned = callbackReturnedExpression(mapper.initializer);
+  const returned = callbackReturnedExpressionStaged(mapper.initializer);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   const arms = pipeline === undefined ? undefined : pipeline.transforms.slice(0, -1);
   if (
@@ -10839,7 +10889,7 @@ const nativeScopedServiceResolution = (
 ): NativeScopedServiceResolution | undefined => {
   const factory = callArgument(source, /\bdefineRead\(/u, 2);
   const initializer = factory === undefined ? undefined : (constInitializerStaged(source, factory) ?? factory);
-  const returned = initializer === undefined ? undefined : callbackReturnedExpression(initializer);
+  const returned = initializer === undefined ? undefined : callbackReturnedExpressionStaged(initializer);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   const base = pipeline?.base ?? returned;
   const invocation = base === undefined ? undefined : originalReadInvocation(owner, source, base);
@@ -11091,7 +11141,7 @@ const hasNativeLookupFailure = (owner: ReadPhaseOwner, source: string, expressio
   const failed = callArgument(expression, /^Effect\.fail\(/u);
   const invocation = failed === undefined ? undefined : originalReadInvocation(owner, source, failed);
   const target = invocation?.target;
-  const returned = target === undefined ? undefined : callbackReturnedExpression(target.initializer);
+  const returned = target === undefined ? undefined : callbackReturnedExpressionStaged(target.initializer);
   const options = returned === undefined ? undefined : objectArgument(returned, /^new ReadHandlerNotFound\(/u);
   const args = invocation?.args;
   return (
@@ -11111,7 +11161,7 @@ const nativeReadTransformCallback = (transform: string, callee: RegExp) => {
   const args = wholeCallArguments(transform, callee, true);
   const callback = args?.length === 1 ? args[0] : undefined;
   const names = callback === undefined ? undefined : readCallableParameterNames(callback);
-  const returned = callback === undefined ? undefined : callbackReturnedExpression(callback);
+  const returned = callback === undefined ? undefined : callbackReturnedExpressionStaged(callback);
   return callback !== undefined &&
     names?.length === 1 &&
     returned !== undefined &&
@@ -11158,7 +11208,7 @@ const hasNativeLookupTags = (owner: ReadPhaseOwner, source: string, transforms: 
   const [found, missing, exhaustive] = transforms;
   const foundArgs = found === undefined ? undefined : wholeCallArguments(found, /^Match\.tag\(/u, true);
   const missingArgs = missing === undefined ? undefined : wholeCallArguments(missing, /^Match\.tag\(/u, true);
-  const missingResult = missingArgs?.[1] === undefined ? undefined : callbackReturnedExpression(missingArgs[1]);
+  const missingResult = missingArgs?.[1] === undefined ? undefined : callbackReturnedExpressionStaged(missingArgs[1]);
   return (
     transforms.length === 3 &&
     hasNativeFoundLookupTag(foundArgs) &&
@@ -11208,7 +11258,7 @@ const tenantGuardedLookupDefinition = (
   const target = originalReadCallable(owner, source, binding);
   const names = target === undefined ? undefined : readCallableParameterNames(target.initializer);
   const [ref, tenant, load, reason] = names ?? [];
-  const returned = target === undefined ? undefined : callbackReturnedExpression(target.initializer);
+  const returned = target === undefined ? undefined : callbackReturnedExpressionStaged(target.initializer);
   const branches = returned === undefined ? undefined : ternaryReadBranches(returned);
   const pipeline = branches === undefined ? undefined : outputPipeExpression(branches[1]);
   if (
@@ -11267,7 +11317,7 @@ const scopedLookupMethodArgument = (args: readonly string[], input: string, cont
 
 const hasFactoryLookupMethod = (owner: ReadPhaseOwner, source: string, method: string): boolean => {
   const factory = callArgument(source, /\bdefineRead\(/u, 2);
-  const returned = factory === undefined ? undefined : callbackReturnedExpression(factory);
+  const returned = factory === undefined ? undefined : callbackReturnedExpressionStaged(factory);
   const services = returned === undefined ? undefined : objectArgument(returned, /^Effect\.succeed\(/u);
   return (
     factory !== undefined &&
@@ -11386,7 +11436,7 @@ const hasNativeReadErrorCallback = (
 ): boolean => {
   const names = readCallableParameterNames(initializer);
   const cause = names?.length === 1 ? names[0] : undefined;
-  const returned = callbackReturnedExpression(initializer);
+  const returned = callbackReturnedExpressionStaged(initializer);
   if (cause === undefined || returned === undefined || !hasDirectReadCallbackExpression(initializer, returned)) {
     return false;
   }
@@ -11400,7 +11450,7 @@ const nativeReadErrorFactoryDefinition = (target: NonNullable<ReturnType<typeof 
   const parameters = readCallableParameters(target.initializer);
   const reason = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*):\s*string$/u.exec(parameters?.[0] ?? '')?.groups?.name;
   const configurable = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*false$/u.exec(parameters?.[1] ?? '')?.groups?.name;
-  const callback = callbackReturnedExpression(target.initializer);
+  const callback = callbackReturnedExpressionStaged(target.initializer);
   return parameters?.length === 2 && reason !== undefined && configurable !== undefined && callback !== undefined
     ? { callback, configurable, reason }
     : undefined;
@@ -11449,7 +11499,7 @@ const hasNativeReadErrorValue = (owner: ReadPhaseOwner, source: string, value: s
 const hasMissingReadTag = (source: string, transform: string, reason?: string): boolean => {
   const args = wholeCallArguments(transform, /^Match\.tag\(/u, true);
   const callback = args?.[1];
-  const failed = callback === undefined ? undefined : callbackReturnedExpression(callback);
+  const failed = callback === undefined ? undefined : callbackReturnedExpressionStaged(callback);
   const error = failed === undefined ? undefined : callArgument(failed, /^Effect\.fail\(/u);
   return (
     args?.length === 2 &&
@@ -11465,7 +11515,7 @@ const hasMissingReadTag = (source: string, transform: string, reason?: string): 
 
 const hasNativeUnwrapCallback = (source: string, callback: string, reason: string): boolean => {
   const names = readCallableParameterNames(callback);
-  const returned = callbackReturnedExpression(callback);
+  const returned = callbackReturnedExpressionStaged(callback);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   const found = pipeline?.transforms[0];
   return (
@@ -11495,7 +11545,7 @@ const readReasonFactoryDefinition = (owner: ReadPhaseOwner, source: string, expr
   const target = invocation?.target;
   const parameters = target === undefined ? undefined : readCallableParameters(target.initializer);
   const reason = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*):\s*string$/u.exec(parameters?.[0] ?? '')?.groups?.name;
-  const callback = target === undefined ? undefined : callbackReturnedExpression(target.initializer);
+  const callback = target === undefined ? undefined : callbackReturnedExpressionStaged(target.initializer);
   return invocation?.args.length === 1 &&
     invocation.pipeline === undefined &&
     target !== undefined &&
@@ -11643,7 +11693,7 @@ const scopedReadPhaseCall = (returned: string, context: string) => {
 const decodedFoundDefinition = (source: string, transform: string) => {
   const args = wholeCallArguments(transform, /^Match\.tag\(/u, true);
   const callback = args?.[1];
-  const returned = callback === undefined ? undefined : callbackReturnedExpression(callback);
+  const returned = callback === undefined ? undefined : callbackReturnedExpressionStaged(callback);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   const descriptor = objectArgument(source, /\bdefineRead\(/u);
   const schema = descriptor === undefined ? undefined : objectProperty(descriptor, 'resultSchema');
@@ -11767,7 +11817,7 @@ const optionalRefLoadDefinition = (
     }
   | undefined => {
   const [input, context] = phaseParameterNames(parameters) ?? [];
-  const returned = callbackReturnedExpression(phaseSource);
+  const returned = callbackReturnedExpressionStaged(phaseSource);
   if (input === undefined || context === undefined || returned === undefined) {
     return undefined;
   }
@@ -11817,7 +11867,7 @@ const nativeGeneratorBody = (initializer: string): string | undefined =>
 
 const hasZeroArgumentReadFailure = (owner: ReadPhaseOwner, source: string, binding: string): boolean => {
   const target = originalReadCallable(owner, source, binding);
-  const returned = target === undefined ? undefined : callbackReturnedExpression(target.initializer);
+  const returned = target === undefined ? undefined : callbackReturnedExpressionStaged(target.initializer);
   return (
     target !== undefined &&
     readCallableParameters(target.initializer)?.length === 0 &&
@@ -11998,7 +12048,7 @@ const hasAliasReadErrorTransform = (transform: string, ref: string, notFound: st
 const hasOriginalTenantRefBuilder = (owner: ReadPhaseOwner, source: string, binding: string): boolean => {
   const target = originalReadCallable(owner, source, binding);
   const parameters = target === undefined ? undefined : readCallableParameters(target.initializer);
-  const returned = target === undefined ? undefined : callbackReturnedExpression(target.initializer);
+  const returned = target === undefined ? undefined : callbackReturnedExpressionStaged(target.initializer);
   const object = returned?.startsWith('(') === true ? returned.slice(1, -1).trim() : undefined;
   const names = parameters?.map((parameter) => parameter.split(':')[0]?.trim() ?? '');
   return (
@@ -12149,10 +12199,10 @@ interface AliasDetailArchiveCall {
 /** The read's own `defineRead` factory record, its trusted pair, and the named evidence member. */
 const aliasDetailArchiveMember = (source: string, name: string) => {
   const factory = callArgument(source, /\bdefineRead\(/u, 2);
-  const returned = factory === undefined ? undefined : callbackReturnedExpression(factory);
+  const returned = factory === undefined ? undefined : callbackReturnedExpressionStaged(factory);
   const methods = returned === undefined ? undefined : nativeReadSucceedExpression(returned);
   const member = methods === undefined ? undefined : objectProperty(methods, name);
-  const memberReturned = member === undefined ? undefined : callbackReturnedExpression(member);
+  const memberReturned = member === undefined ? undefined : callbackReturnedExpressionStaged(member);
   const [transaction, scope] = (factory === undefined ? undefined : readCallableParameterNames(factory)) ?? [];
   const input = member === undefined ? undefined : readCallableParameterNames(member)?.[0];
   return transaction === undefined || scope === undefined || member === undefined || memberReturned === undefined
@@ -12439,7 +12489,7 @@ const aliasDetailArchiveDecodeProjection = (
     'u',
   ).exec(tail)?.groups;
   const mapper = callArgument(tail, /Effect\.map\(/u);
-  const returned = mapper === undefined ? undefined : callbackReturnedExpression(mapper);
+  const returned = mapper === undefined ? undefined : callbackReturnedExpressionStaged(mapper);
   if (
     decode?.row === undefined ||
     decode.schema === undefined ||
@@ -12670,14 +12720,14 @@ const hasCurrentReadTransactionCallback = (
   resource: string,
 ): boolean => {
   const ids = /^\((?<name>[A-Za-z_$][A-Za-z0-9_$]*)\)\s*=>/u.exec(callback)?.groups?.name;
-  const returned = callbackReturnedExpression(callback);
+  const returned = callbackReturnedExpressionStaged(callback);
   const args =
     returned === undefined
       ? undefined
       : wholeCallArguments(returned, new RegExp(`^${escapeRegExp(context)}\\.transaction\\(`, 'u'), true);
   const current = args?.length === 1 ? args[0] : undefined;
   const transaction = /^\((?<name>[A-Za-z_$][A-Za-z0-9_$]*)\)\s*=>/u.exec(current ?? '')?.groups?.name;
-  const loaded = current === undefined ? undefined : callbackReturnedExpression(current);
+  const loaded = current === undefined ? undefined : callbackReturnedExpressionStaged(current);
   const loader = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(loaded ?? '')?.groups?.name;
   return (
     ids !== undefined &&
@@ -12830,7 +12880,7 @@ const hasPureReadMemberCall = (source: string, root: string, member: string, val
 };
 
 const pureReadValueBody = (initializer: string): string => {
-  const body = readCallableBlock(initializer) ?? callbackReturnedExpression(initializer) ?? initializer;
+  const body = readCallableBlock(initializer) ?? callbackReturnedExpressionStaged(initializer) ?? initializer;
   return body.replaceAll(
     /\bconst\s*\[\s*(?<first>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*''\s*,\s*(?<second>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*''\s*\]\s*=\s*(?<value>[A-Za-z_$][A-Za-z0-9_$]*)\.split\('\.'\)\s*;/gu,
     "const $<first> = $<value>.split('.'); const $<second> = undefined;",
@@ -13137,7 +13187,7 @@ const routineReadCallDefinition = (
 };
 
 const scopedRoutineReadInvocation = (owner: ReadPhaseOwner, source: string, initializer: string) => {
-  const returned = callbackReturnedExpression(initializer);
+  const returned = callbackReturnedExpressionStaged(initializer);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   const parameters = readCallableParameters(initializer);
   const names = readCallableParameterNames(initializer);
@@ -13189,7 +13239,7 @@ const hasOnlyBoundTenantComparisons = (body: string, scope: string, value: strin
 
 const hasScopedRoutineTenantPredicate = (owner: ReadPhaseOwner, source: string, guard: string | undefined): boolean => {
   const predicate = guard === undefined ? undefined : originalReadCallable(owner, source, guard);
-  const predicateBody = predicate === undefined ? undefined : callbackReturnedExpression(predicate.initializer);
+  const predicateBody = predicate === undefined ? undefined : callbackReturnedExpressionStaged(predicate.initializer);
   const predicateNames = predicate === undefined ? undefined : readCallableParameterNames(predicate.initializer);
   return (
     guard !== undefined &&
@@ -13233,7 +13283,7 @@ const hasScopedInputReadMethodBody = (
   method: string,
   factoryNames: readonly string[],
 ): boolean => {
-  const returned = callbackReturnedExpression(method);
+  const returned = callbackReturnedExpressionStaged(method);
   const invocation = returned === undefined ? undefined : originalReadInvocation(owner, source, returned);
   const parameters = invocation === undefined ? undefined : readCallableParameters(invocation.target.initializer);
   const methodNames = readCallableParameterNames(method);
@@ -13395,7 +13445,7 @@ const selectedFactoryReturnInvocation = (
   owner: ReadPhaseOwner,
   target: NonNullable<ReturnType<typeof originalReadCallable>>,
 ) => {
-  const returned = callbackReturnedExpression(target.initializer);
+  const returned = callbackReturnedExpressionStaged(target.initializer);
   const generator = returned === undefined ? undefined : callArgument(returned, /^Effect\.gen\(/u);
   const body = generator?.startsWith('function* ') === true ? readCallableBlock(generator) : undefined;
   const returns =
@@ -13609,11 +13659,11 @@ const hasSelectedOwnerScopeFactory = (
 
 const hasSelectedOwnerReadFactory = (owner: ReadPhaseOwner, source: string, receivingType: string): boolean => {
   const factory = callArgument(source, /\bdefineRead\(/u, 2);
-  const returned = factory === undefined ? undefined : callbackReturnedExpression(factory);
+  const returned = factory === undefined ? undefined : callbackReturnedExpressionStaged(factory);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   const key = nativeServiceSelectionKey(pipeline);
   const invocation = pipeline === undefined ? undefined : originalReadInvocation(owner, source, pipeline.base);
-  const inner = invocation === undefined ? undefined : callbackReturnedExpression(invocation.target.initializer);
+  const inner = invocation === undefined ? undefined : callbackReturnedExpressionStaged(invocation.target.initializer);
   const nestedOwner = invocation === undefined ? owner : readCallableOwner(owner, source, invocation.binding);
   const nested =
     inner === undefined || invocation === undefined
@@ -13660,7 +13710,8 @@ const hasSelectedReadReferenceGuard = (predicate: string, input: string, names: 
 const hasNativeZeroArgumentReadFailure = (owner: ReadPhaseOwner, source: string, expression: string): boolean => {
   const failed = callArgument(expression, /^Effect\.fail\(/u);
   const invocation = failed === undefined ? undefined : originalReadInvocation(owner, source, failed);
-  const returned = invocation === undefined ? undefined : callbackReturnedExpression(invocation.target.initializer);
+  const returned =
+    invocation === undefined ? undefined : callbackReturnedExpressionStaged(invocation.target.initializer);
   return (
     invocation?.args.length === 0 &&
     returned !== undefined &&
@@ -13694,7 +13745,7 @@ const selectedReadServiceSignature = (source: string, type: string) => {
 const selectedReadHelperDefinition = (source: string, target: NonNullable<ReturnType<typeof originalReadCallable>>) => {
   const parameters = readCallableParameters(target.initializer);
   const names = readCallableParameterNames(target.initializer);
-  const returned = callbackReturnedExpression(target.initializer);
+  const returned = callbackReturnedExpressionStaged(target.initializer);
   const expression = returned?.startsWith('(') === true ? returned.slice(1, -1).trim() : returned;
   const branches = expression === undefined ? undefined : ternaryReadBranches(expression);
   const type = parameters?.at(-1)?.split(':')[1]?.trim();
@@ -13763,7 +13814,7 @@ const hasSubjectReferenceEquality = (owner: ReadPhaseOwner, source: string, bind
 const hasExactOwnerReferenceEquality = (owner: ReadPhaseOwner, source: string, binding: string): boolean => {
   const target = originalReadCallable(owner, source, binding);
   const names = target === undefined ? undefined : readCallableParameterNames(target.initializer);
-  const returned = target === undefined ? undefined : callbackReturnedExpression(target.initializer);
+  const returned = target === undefined ? undefined : callbackReturnedExpressionStaged(target.initializer);
   const [left, right] = names ?? [];
   return (
     names?.length === 2 &&
@@ -13802,7 +13853,7 @@ const associationReadDefinition = (
   const names = readCallableParameterNames(target.initializer);
   const parameters = readCallableParameters(target.initializer);
   const body = readCallableBlock(target.initializer);
-  const returned = callbackReturnedExpression(target.initializer);
+  const returned = callbackReturnedExpressionStaged(target.initializer);
   if (names?.length !== 2 || parameters === undefined || body === undefined || returned === undefined) {
     return undefined;
   }
@@ -13837,7 +13888,7 @@ const originalRoutineProjectionDefinition = (
   const port = record === undefined ? undefined : objectPropertyValue(record, 'customerProfileRead');
   const method = port === undefined ? undefined : objectPropertyValue(port, 'readProfile');
   const names = method === undefined ? undefined : readCallableParameterNames(method);
-  const returned = method === undefined ? undefined : callbackReturnedExpression(method);
+  const returned = method === undefined ? undefined : callbackReturnedExpressionStaged(method);
   const invocation =
     returned === undefined
       ? undefined
@@ -13858,7 +13909,7 @@ const originalRoutineProjectionDefinition = (
 };
 
 const nativeRoutineProjectionCall = (loader: string, transaction: string) => {
-  const expression = callbackReturnedExpression(loader);
+  const expression = callbackReturnedExpressionStaged(loader);
   const pipeline = expression === undefined ? undefined : outputPipeExpression(expression);
   const args =
     pipeline === undefined
@@ -14016,7 +14067,7 @@ const hasScopedAssociationReader = (owner: ReadPhaseOwner, source: string, bindi
 };
 
 const guardedAssociationReadFactoryDefinition = (target: NonNullable<ReturnType<typeof originalReadCallable>>) => {
-  const returned = callbackReturnedExpression(target.initializer);
+  const returned = callbackReturnedExpressionStaged(target.initializer);
   const record = returned === undefined ? undefined : nativeReadSucceedRecord(returned);
   const entries = record === undefined ? undefined : topLevelObjectEntries(record);
   const key = entries?.length === 1 ? objectEntryKey(entries[0] ?? '') : undefined;
@@ -14218,7 +14269,7 @@ const hasSelectedOwnerServiceReadPhase = (
 
 const scopedInputReadMethod = (owner: ReadPhaseOwner, source: string, method: string): string | undefined => {
   const target = nativeScopedReadFactoryTarget(owner, source);
-  const returned = target === undefined ? undefined : callbackReturnedExpression(target.initializer);
+  const returned = target === undefined ? undefined : callbackReturnedExpressionStaged(target.initializer);
   const record = target === undefined ? undefined : readReturnedRecord(target.initializer);
   const parameters = target === undefined ? undefined : readCallableParameterNames(target.initializer);
   const methods = record === undefined ? undefined : nativeReadServiceRecord(record);
@@ -14300,7 +14351,7 @@ const originalClosedReadMethod = (owner: ReadPhaseOwner, source: string, method:
   }
   const target = originalReadCallable(owner, source, factory);
   const initializer = target?.initializer ?? factory;
-  const returned = callbackReturnedExpression(initializer);
+  const returned = callbackReturnedExpressionStaged(initializer);
   const record = returned === undefined ? undefined : nativeReadSucceedRecord(returned);
   return record === undefined || !hasClosedUniqueObjectKeys(record) ? undefined : objectPropertyValue(record, method);
 };
@@ -14336,7 +14387,7 @@ const originalNativeCapturedReadMethod = (
   const callback = target === undefined ? undefined : nativeReadCallback(target.initializer);
   const parameters = target === undefined ? undefined : readCallableParameters(target.initializer);
   const names = callback === undefined ? undefined : readCallableParameterNames(callback);
-  const returned = callback === undefined ? undefined : callbackReturnedExpression(callback);
+  const returned = callback === undefined ? undefined : callbackReturnedExpressionStaged(callback);
   const record = returned === undefined ? undefined : nativeReadSucceedRecord(returned);
   const body = callback === undefined ? undefined : readCallableBlock(callback);
   const definition = record === undefined ? undefined : objectPropertyValue(record, method);
@@ -14429,7 +14480,7 @@ const capturedRoutineReadDefinition = (
     return undefined;
   }
   const names = readCallableParameterNames(definition);
-  const returned = callbackReturnedExpression(definition);
+  const returned = callbackReturnedExpressionStaged(definition);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   const args =
     pipeline === undefined
@@ -14513,7 +14564,7 @@ const originalCapturedRoutineReadMethod = (
   }
   const { args, body, factoryNames, names, parameters, pipeline, target } = definition;
   const [transaction, scope] = factoryNames;
-  const returned = callbackReturnedExpression(definition.definition);
+  const returned = callbackReturnedExpressionStaged(definition.definition);
   if (transaction === undefined || scope === undefined || returned === undefined) {
     return undefined;
   }
@@ -14589,7 +14640,7 @@ const hasOriginalPortalReadPort = (owner: ReadPhaseOwner, source: string, bindin
   const targetOwner = readCallableOwner(owner, source, binding);
   const parameters = readCallableParameters(target.initializer);
   const names = readCallableParameterNames(target.initializer);
-  const returned = callbackReturnedExpression(target.initializer);
+  const returned = callbackReturnedExpressionStaged(target.initializer);
   const invocation = returned === undefined ? undefined : originalReadInvocation(targetOwner, target.source, returned);
   if (parameters?.length !== 2 || names === undefined || invocation === undefined) {
     return false;
@@ -14620,7 +14671,7 @@ const requiredPortalReadFactoryDefinition = (
   const parameters = readCallableParameters(target.initializer);
   const names = readCallableParameterNames(target.initializer);
   const body = readCallableBlock(target.initializer);
-  const returned = callbackReturnedExpression(target.initializer);
+  const returned = callbackReturnedExpressionStaged(target.initializer);
   const invocation = returned === undefined ? undefined : originalReadInvocation(owner, target.source, returned);
   if (parameters?.length !== 2 || names === undefined || body === undefined || invocation === undefined) {
     return false;
@@ -14676,7 +14727,7 @@ const originalPortalReadContract = (
 const portalReadFactoryProjection = (owner: ReadPhaseOwner, source: string) => {
   const factory = callArgument(source, /\bdefineRead\(/u, 2);
   const names = factory === undefined ? undefined : readCallableParameterNames(factory);
-  const returned = factory === undefined ? undefined : callbackReturnedExpression(factory);
+  const returned = factory === undefined ? undefined : callbackReturnedExpressionStaged(factory);
   const invocation = returned === undefined ? undefined : originalReadInvocation(owner, source, returned);
   const projection = mappedReadFactoryRecord(invocation?.pipeline);
   const entries = projection.result === undefined ? undefined : topLevelObjectEntries(projection.result);
@@ -14710,7 +14761,7 @@ const originalPortalReadFactoryForRead = (owner: ReadPhaseOwner, source: string)
 const hasOriginalGrantScopeContainment = (owner: ReadPhaseOwner, source: string, binding: string): boolean => {
   const target = originalReadCallable(owner, source, binding);
   const names = target === undefined ? undefined : readCallableParameterNames(target.initializer);
-  const returned = target === undefined ? undefined : callbackReturnedExpression(target.initializer);
+  const returned = target === undefined ? undefined : callbackReturnedExpressionStaged(target.initializer);
   const [grant, requested] = names ?? [];
   return (
     names?.length === 2 &&
@@ -14726,7 +14777,7 @@ const hasOriginalGrantScopeContainment = (owner: ReadPhaseOwner, source: string,
 
 const hasOriginalPortalUnavailable = (owner: ReadPhaseOwner, source: string, binding: string): boolean => {
   const target = originalReadCallable(owner, source, binding);
-  const returned = target === undefined ? undefined : callbackReturnedExpression(target.initializer);
+  const returned = target === undefined ? undefined : callbackReturnedExpressionStaged(target.initializer);
   const options = returned === undefined ? undefined : objectArgument(returned, /^new ReadHandlerUnavailable\(/u);
   const reason = options === undefined ? undefined : objectPropertyValue(options, 'reason');
   const parameters =
@@ -14747,7 +14798,7 @@ const portalReadHelperDefinition = (owner: ReadPhaseOwner, source: string, bindi
   }
   const names = readCallableParameterNames(target.initializer);
   const parameters = readCallableParameters(target.initializer);
-  const returned = callbackReturnedExpression(target.initializer);
+  const returned = callbackReturnedExpressionStaged(target.initializer);
   const body = readCallableBlock(target.initializer);
   const expression = body ?? returned;
   const found =
@@ -14869,7 +14920,7 @@ const hasPortalScopedReadPhase = (owner: ReadPhaseOwner, source: string, phaseSo
   const factory = originalPortalReadFactoryForRead(owner, source);
   const parameters = readCallableParameters(phaseSource);
   const [input, context] = phaseParameterNames(parameters ?? []) ?? [];
-  const returned = callbackReturnedExpression(phaseSource);
+  const returned = callbackReturnedExpressionStaged(phaseSource);
   const invocation = returned === undefined ? undefined : originalReadInvocation(owner, source, returned);
   if (
     factory === undefined ||
@@ -15579,7 +15630,7 @@ const hasScopedSubjectResolutionHelper = (
   const { input, scope, services } = names;
   const binding = 'resolveRetailPrincipalFromServices';
   const body = readCallableBlock(target.initializer);
-  const returned = callbackReturnedExpression(target.initializer);
+  const returned = callbackReturnedExpressionStaged(target.initializer);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   return (
     body !== undefined &&
@@ -15604,7 +15655,7 @@ const hasScopedSubjectVerificationHelper = (
 ): boolean => {
   const { input, scope, services } = names;
   const body = readCallableBlock(target.initializer);
-  const returned = callbackReturnedExpression(target.initializer);
+  const returned = callbackReturnedExpressionStaged(target.initializer);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   const binding = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(pipeline?.base ?? '')?.groups?.name;
   const resolution = binding === undefined ? undefined : originalReadCallable(owner, target.source, binding);
@@ -15682,7 +15733,7 @@ const scopedSubjectReadPhase = (
   const parameters = readCallableParameters(phaseSource);
   const [input, context] = phaseParameterNames(parameters ?? []) ?? [];
   const servicesType = parameters === undefined ? undefined : readLoadContextServicesType(parameters[1] ?? '');
-  const returned = readPhaseReturnedExpression(phaseSource) ?? callbackReturnedExpression(phaseSource);
+  const returned = readPhaseReturnedExpression(phaseSource) ?? callbackReturnedExpressionStaged(phaseSource);
   const invocation = returned === undefined ? undefined : originalReadInvocation(owner, source, returned);
   return input === undefined ||
     context === undefined ||
@@ -15793,7 +15844,7 @@ const hasOriginalFailureCauseWrapper = (owner: ReadPhaseOwner, source: string, b
 const hasNativeContextFactoryFailure = (owner: ReadPhaseOwner, source: string, transform: string): boolean => {
   const callback = callArgument(transform, /^Effect\.mapError\(/u);
   const names = callback === undefined ? undefined : readCallableParameterNames(callback);
-  const returned = callback === undefined ? undefined : callbackReturnedExpression(callback);
+  const returned = callback === undefined ? undefined : callbackReturnedExpressionStaged(callback);
   const invocation = returned === undefined ? undefined : originalReadInvocation(owner, source, returned);
   const options =
     invocation === undefined ? undefined : objectArgument(invocation.args[0], /^new OperationContextUnavailable\(/u);
@@ -15823,7 +15874,7 @@ const hasNativeContextFactoryFailure = (owner: ReadPhaseOwner, source: string, t
 const contextScopedReadFactoryInvocation = (source: string) => {
   const factory = callArgument(source, /\bdefineRead\(/u, 2);
   const parameters = factory === undefined ? undefined : readCallableParameterNames(factory);
-  const returned = factory === undefined ? undefined : callbackReturnedExpression(factory);
+  const returned = factory === undefined ? undefined : callbackReturnedExpressionStaged(factory);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   const call = pipeline === undefined ? undefined : callArgument(pipeline.transforms[0] ?? '', /^Effect\.flatMap\(/u);
   const calledNames = call === undefined ? undefined : readCallableParameterNames(call);
@@ -15902,7 +15953,7 @@ const contextScopedReadPhaseInvocation = (
 ) => {
   const parameters = readCallableParameters(phaseSource);
   const [input, context] = phaseParameterNames(parameters ?? []) ?? [];
-  const returned = callbackReturnedExpression(phaseSource);
+  const returned = callbackReturnedExpressionStaged(phaseSource);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   const base = pipeline?.base;
   const method =
@@ -15953,7 +16004,7 @@ const hasContextScopedReadPhase = (owner: ReadPhaseOwner, source: string, phaseS
 const originalReadContextInvocation = (owner: ReadPhaseOwner, source: string, phaseSource: string, phase: string) => {
   const parameters = readCallableParameters(phaseSource);
   const names = phaseParameterNames(parameters ?? []);
-  const returned = callbackReturnedExpression(phaseSource);
+  const returned = callbackReturnedExpressionStaged(phaseSource);
   const invocation = returned === undefined ? undefined : originalReadInvocation(owner, source, returned);
   const targetParameters = invocation === undefined ? undefined : readCallableParameters(invocation.target.initializer);
   const targetNames = invocation === undefined ? undefined : readCallableParameterNames(invocation.target.initializer);
@@ -15984,7 +16035,7 @@ const nativeCapturedGeneratorRecord = (initializer: string): string | undefined 
 
 const hasOwnerTaggedFailure = (owner: ReadPhaseOwner, source: string, binding: string, code: string): boolean => {
   const target = originalReadCallable(owner, source, binding);
-  const returned = target === undefined ? undefined : callbackReturnedExpression(target.initializer);
+  const returned = target === undefined ? undefined : callbackReturnedExpressionStaged(target.initializer);
   const error = /^new (?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(returned ?? '')?.groups?.binding;
   const imported = error === undefined ? undefined : namedSourceImport(source, error);
   const file =
@@ -16160,7 +16211,7 @@ const originalNativeReadTransactionCallbacks = (body: string, context: string): 
 
 const hasNativeSnapshotWindowVerifier = (owner: ReadPhaseOwner, source: string): boolean => {
   const target = originalReadCallable(owner, source, 'verifyOrderFinalizationSnapshot');
-  const returned = target === undefined ? undefined : callbackReturnedExpression(target.initializer);
+  const returned = target === undefined ? undefined : callbackReturnedExpressionStaged(target.initializer);
   const equivalence = constInitializerStaged(source, 'sameOrderSnapshot');
   return (
     returned !== undefined &&
@@ -16190,7 +16241,7 @@ const hasOriginalRetainedRequestPredicate = (owner: ReadPhaseOwner, source: stri
   const target = originalReadCallable(owner, source, 'retainedRequestAdmitted');
   const body = target === undefined ? undefined : readCallableBlock(target.initializer);
   const ref = originalReadCallable(owner, source, 'sameRef');
-  const equality = ref === undefined ? undefined : callbackReturnedExpression(ref.initializer);
+  const equality = ref === undefined ? undefined : callbackReturnedExpressionStaged(ref.initializer);
   return (
     body !== undefined &&
     equality !== undefined &&
@@ -16394,7 +16445,7 @@ const hasPreparedReadFactoryFailureTransform = (source: string, pipeline: Output
 
 const preparedReadFactoryGenerator = (initializer: string) => {
   const callback = nativeReadCallback(initializer);
-  const returned = callback === undefined ? undefined : callbackReturnedExpression(callback);
+  const returned = callback === undefined ? undefined : callbackReturnedExpressionStaged(callback);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   const generator = pipeline === undefined ? undefined : callArgument(pipeline.base, /^Effect\.gen\(/u);
   const body = generator === undefined ? undefined : readCallableBlock(generator)?.slice(1, -1);
@@ -16538,17 +16589,17 @@ const hasOriginalPreparedFailureProtocol = (owner: ReadPhaseOwner, source: strin
     hasRuntimeNamedSourceImport(schema, 'Schema', 'Schema', 'effect') &&
     hasStableReadFactoryBindingsStaged(source, new Map([['Object', 0]]), '') &&
     hasExactSourceTokens(
-      tokenizeGovernedClient(callbackReturnedExpression(rejection.initializer) ?? ''),
+      tokenizeGovernedClient(callbackReturnedExpressionStaged(rejection.initializer) ?? ''),
       `
       new PurchasingApprovalRejected({code, reason, retryable: code === 'CURRENT_STATE_INDETERMINATE' || code === 'DEPENDENCY_UNAVAILABLE'})
     `,
     ) &&
     hasExactSourceTokens(
-      tokenizeGovernedClient(callbackReturnedExpression(missing.initializer) ?? ''),
+      tokenizeGovernedClient(callbackReturnedExpressionStaged(missing.initializer) ?? ''),
       `rejection('PROPOSAL_NOT_CURRENT', 'The exact preproposal basis is unavailable or no longer current')`,
     ) &&
     hasExactSourceTokens(
-      tokenizeGovernedClient(callbackReturnedExpression(unavailable.initializer) ?? ''),
+      tokenizeGovernedClient(callbackReturnedExpressionStaged(unavailable.initializer) ?? ''),
       `
       Object.defineProperty(rejection('CURRENT_STATE_INDETERMINATE', 'The exact owner preproposal basis cannot currently be established'), 'cause', {value: cause})
     `,
@@ -16560,7 +16611,7 @@ const hasOriginalPreparedReadState = (owner: ReadPhaseOwner, source: string, bod
   const state = constInitializerStaged(body, 'state');
   const loader = constInitializerStaged(body, 'load');
   const loaded = loader === undefined ? undefined : nativeReadCallback(loader);
-  const returned = loaded === undefined ? undefined : callbackReturnedExpression(loaded);
+  const returned = loaded === undefined ? undefined : callbackReturnedExpressionStaged(loaded);
   const generator = returned === undefined ? undefined : callArgument(returned, /^Effect\.gen\(/u);
   const loadBody = generator === undefined ? undefined : readCallableBlock(generator)?.slice(1, -1);
   const routine = constInitializerStaged(source, 'basisRoutine');
@@ -16580,7 +16631,7 @@ const hasOriginalPreparedReadState = (owner: ReadPhaseOwner, source: string, bod
     ) &&
     hasRuntimeNamedSourceImport(source, 'defineScopedRoutine', 'defineScopedRoutine', CORE_RUNTIME_MODULE) &&
     hasExactSourceTokens(
-      tokenizeGovernedClient(callbackReturnedExpression(state) ?? ''),
+      tokenizeGovernedClient(callbackReturnedExpressionStaged(state) ?? ''),
       `transaction.invoke(basisRoutine, [payload]).pipe(Effect.mapError(unavailable),
         Effect.flatMap((rows) => rows[0] === undefined ? Effect.fail(unavailable()) : Effect.succeed(rows[0].result)))`,
     ) &&
@@ -16606,7 +16657,7 @@ const preparedSnapshotMethod = (body: string, method: string) => {
   const record = nativeGeneratorReturnedExpression(body);
   const exposed = record === undefined ? undefined : objectPropertyValue(record, method);
   const exposedParameters = exposed === undefined ? undefined : readCallableParameters(exposed);
-  const exposedReturn = exposed === undefined ? undefined : callbackReturnedExpression(exposed);
+  const exposedReturn = exposed === undefined ? undefined : callbackReturnedExpressionStaged(exposed);
   const native = local === undefined ? undefined : nativePhaseGeneratorBody(local);
   return { exposedParameters, exposedReturn, local, native };
 };
@@ -16681,7 +16732,7 @@ const originalPreparedSnapshotMethod = (owner: ReadPhaseOwner, source: string, m
 const hasPreparedSnapshotReadLoad = (owner: ReadPhaseOwner, source: string, phaseSource: string): boolean => {
   const parameters = readCallableParameters(phaseSource);
   const [input, context] = phaseParameterNames(parameters ?? []) ?? [];
-  const returned = callbackReturnedExpression(phaseSource);
+  const returned = callbackReturnedExpressionStaged(phaseSource);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   const base = pipeline?.base;
   const method =
@@ -16717,7 +16768,7 @@ const hasOriginalOwnerSnapshotHash = (owner: ReadPhaseOwner, source: string): bo
   return (
     originalParameters &&
     hasExactSourceTokens(
-      tokenizeGovernedClient(callbackReturnedExpression(target.initializer) ?? ''),
+      tokenizeGovernedClient(callbackReturnedExpressionStaged(target.initializer) ?? ''),
       'Hex.encode(sha256(utf8ToBytes(canonical(value))))',
     ) &&
     canonical !== undefined &&
@@ -16734,7 +16785,7 @@ const hasOriginalOwnerSnapshotHash = (owner: ReadPhaseOwner, source: string): bo
     ) &&
     encode !== undefined &&
     hasExactSourceTokens(
-      tokenizeGovernedClient(callbackReturnedExpression(encode) ?? ''),
+      tokenizeGovernedClient(callbackReturnedExpressionStaged(encode) ?? ''),
       `Option.getOrElse(encodeScalarOption(value), () => 'null')`,
     ) &&
     scalar !== undefined &&
@@ -16773,7 +16824,7 @@ const hasOriginalPreparedSnapshotEquality = (owner: ReadPhaseOwner, source: stri
   return (
     target !== undefined &&
     hasExactSourceTokens(
-      tokenizeGovernedClient(callbackReturnedExpression(target.initializer) ?? ''),
+      tokenizeGovernedClient(callbackReturnedExpressionStaged(target.initializer) ?? ''),
       `
       stableRevision({basis: before.basis, snapshot: before.snapshot}) ===
         stableRevision({basis: after.basis, snapshot: after.snapshot})
@@ -16957,7 +17008,7 @@ const hasProjectedScopedFactoryMethod = (
   target: NonNullable<ReturnType<typeof originalReadCallable>>,
   method: string,
 ): boolean => {
-  const returned = callbackReturnedExpression(target.initializer);
+  const returned = callbackReturnedExpressionStaged(target.initializer);
   const value = returned === undefined ? undefined : nativeReadSucceedExpression(returned);
   const inner = value === undefined ? undefined : originalReadInvocation(owner, source, value);
   const parameters = inner === undefined ? undefined : readCallableParameters(inner.target.initializer);
@@ -16996,7 +17047,7 @@ const scopedReadMethods = {
       binding === undefined
         ? nativeScopedReadFactoryTarget(owner, source)
         : originalReadCallable(owner, source, binding);
-    const returned = target === undefined ? undefined : callbackReturnedExpression(target.initializer);
+    const returned = target === undefined ? undefined : callbackReturnedExpressionStaged(target.initializer);
     const services = returned === undefined ? undefined : nativeReadSucceedRecord(returned);
     if (services !== undefined && objectProperty(services, method) !== undefined) {
       return true;
@@ -17026,7 +17077,7 @@ const scopedReadMethods = {
     const record = mapper === undefined ? undefined : readReturnedRecord(mapper.initializer);
     const value = record === undefined ? undefined : objectProperty(record, method);
     const parameters = value === undefined ? undefined : readCallableParameterNames(value);
-    const returned = value === undefined ? undefined : callbackReturnedExpression(value);
+    const returned = value === undefined ? undefined : callbackReturnedExpressionStaged(value);
     const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
     const receiver = mapper === undefined ? undefined : readCallableParameterNames(mapper.initializer)?.[0];
     return (
@@ -17106,7 +17157,7 @@ const hasBoundReadValue = (
 const hasPureReadRecovery = (owner: ReadPhaseOwner, source: string, transform: string): boolean => {
   const args = wholeCallArguments(transform, /^Effect\.catchTag\(/u, true);
   const callback = args?.[1];
-  const returned = callback === undefined ? undefined : callbackReturnedExpression(callback);
+  const returned = callback === undefined ? undefined : callbackReturnedExpressionStaged(callback);
   const values = returned === undefined ? undefined : wholeCallArguments(returned, /^Effect\.succeed\(/u, true);
   return (
     args?.length === 2 &&
@@ -17454,7 +17505,7 @@ const hasNativeCommitResolutionFactory = (owner: ReadPhaseOwner, source: string,
 const hasScopedCommitResolutionHelper = (owner: ReadPhaseOwner, source: string, binding: string): boolean => {
   const target = originalReadCallable(owner, source, binding);
   const parameters = target === undefined ? undefined : readCallableParameterNames(target.initializer);
-  const returned = target === undefined ? undefined : callbackReturnedExpression(target.initializer);
+  const returned = target === undefined ? undefined : callbackReturnedExpressionStaged(target.initializer);
   const [input, trusted, resolve] = parameters ?? [];
   return (
     parameters?.length === 3 &&
@@ -17718,7 +17769,7 @@ const currentnessReadFinishDefinition = (returned: string) => {
 const originalCurrentnessLoad = (owner: ReadPhaseOwner, source: string) => {
   const handler = callArgument(source, /\bdefineRead\(/u, 1);
   const load = handler === undefined ? undefined : objectPropertyValue(handler, 'load');
-  const loadReturned = load === undefined ? undefined : callbackReturnedExpression(load);
+  const loadReturned = load === undefined ? undefined : callbackReturnedExpressionStaged(load);
   return loadReturned === undefined ? undefined : originalReadInvocation(owner, source, loadReturned);
 };
 
@@ -17961,7 +18012,7 @@ interface ScopedServiceContract {
 /** The object literal an owner-local factory returns, with its enclosing parentheses removed. */
 const ownerLocalFactoryRecord = (owner: ReadPhaseOwner, source: string, factory: string): string | undefined => {
   const resolved = originalReadCallable(owner, source, factory);
-  const returned = resolved === undefined ? undefined : callbackReturnedExpression(resolved.initializer);
+  const returned = resolved === undefined ? undefined : callbackReturnedExpressionStaged(resolved.initializer);
   const record = returned?.startsWith('(') === true ? returned.slice(1, -1).trim() : returned;
   return record !== undefined && topLevelObjectEntries(record) !== undefined ? record : undefined;
 };
@@ -18029,7 +18080,7 @@ const nativeReadEvidenceCallback = (
   const args = wholeCallArguments(transform, /^Effect\.map\(/u, true);
   const callback = args?.length === 1 ? args[0] : undefined;
   const parameters = callback === undefined ? undefined : readCallableParameters(callback);
-  const returned = callback === undefined ? undefined : callbackReturnedExpression(callback);
+  const returned = callback === undefined ? undefined : callbackReturnedExpressionStaged(callback);
   const pattern = parameters?.length === 1 ? nativeReadParameterPattern(parameters[0] ?? '') : undefined;
   if (
     callback === undefined ||
@@ -18383,7 +18434,7 @@ const hasNativeReadProgram = (input: NativeReadProgramInput): boolean => {
     const body =
       readCallableBlock(resolved.initializer) ??
       nativePhaseGeneratorBody(resolved.initializer) ??
-      callbackReturnedExpression(resolved.initializer);
+      callbackReturnedExpressionStaged(resolved.initializer);
     if (parameters === undefined || names === undefined || body === undefined || names.length !== parameters.length) {
       return false;
     }
@@ -18625,7 +18676,7 @@ const nativeReadSuspendInvocation = (
     return undefined;
   }
   const parameters = readCallableParameters(callback);
-  const returned = callbackReturnedExpression(callback);
+  const returned = callbackReturnedExpressionStaged(callback);
   return parameters?.length === 0 && returned !== undefined
     ? originalReadInvocation(owner, source, returned)
     : undefined;
@@ -18897,11 +18948,11 @@ const curriedOwnerReadHelperCallables = (
     return undefined;
   }
   const outerParameters = readCallableParameters(target.initializer) ?? [];
-  const returned = callbackReturnedExpression(target.initializer);
+  const returned = callbackReturnedExpressionStaged(target.initializer);
   const innerParameters = returned === undefined ? [] : (readCallableParameters(returned) ?? []);
   const [services, tenant] = readDeclaredParameterNames(outerParameters) ?? [];
   const [input] = readDeclaredParameterNames(innerParameters) ?? [];
-  const body = returned === undefined ? undefined : callbackReturnedExpression(returned);
+  const body = returned === undefined ? undefined : callbackReturnedExpressionStaged(returned);
   return body === undefined || services === undefined || tenant === undefined || input === undefined
     ? undefined
     : { body, innerParameters, input, outerParameters, services, tenant };
@@ -18953,7 +19004,7 @@ const curriedOwnerReadHelperSteps = (body: string): CurriedOwnerReadHelperSteps 
   const recovery = catchArguments?.[1];
   const flatArguments = wholeCallArguments(pipeline.transforms[1] ?? '', /^Effect\.flatMap\(/u, true);
   const lookup = flatArguments?.[0];
-  const lookupReturned = lookup === undefined ? undefined : callbackReturnedExpression(lookup);
+  const lookupReturned = lookup === undefined ? undefined : callbackReturnedExpressionStaged(lookup);
   const matchPipeline = lookupReturned === undefined ? undefined : outputPipeExpression(lookupReturned);
   const tags =
     matchPipeline === undefined ? undefined : objectArgument(matchPipeline.transforms[0] ?? '', /^Match\.tags\(/u);
@@ -18968,7 +19019,7 @@ const curriedOwnerReadHelperSteps = (body: string): CurriedOwnerReadHelperSteps 
     pipeline,
     readArguments: wholeCallArguments(pipeline.base, /^[A-Za-z_$][A-Za-z0-9_$]*\s*\./u, true),
     recovery,
-    recoveryReturned: recovery === undefined ? undefined : callbackReturnedExpression(recovery),
+    recoveryReturned: recovery === undefined ? undefined : callbackReturnedExpressionStaged(recovery),
     tagEntries: tags === undefined ? undefined : topLevelObjectEntries(tags),
     tags,
   };
@@ -18988,7 +19039,7 @@ const curriedOwnerReadHelperTags = (tags: string | undefined): CurriedOwnerReadH
   const found = tags === undefined ? undefined : objectPropertyValue(tags, 'found');
   const pattern =
     found === undefined ? undefined : nativeReadParameterPattern(readCallableParameters(found)?.[0] ?? '');
-  const foundReturned = found === undefined ? undefined : callbackReturnedExpression(found);
+  const foundReturned = found === undefined ? undefined : callbackReturnedExpressionStaged(found);
   const missing = tags === undefined ? undefined : objectPropertyValue(tags, 'not_found');
   return {
     found,
@@ -18996,7 +19047,7 @@ const curriedOwnerReadHelperTags = (tags: string | undefined): CurriedOwnerReadH
     foundReturned,
     foundValue: pattern === undefined ? undefined : topLevelObjectEntries(pattern)?.[0],
     missing,
-    missingReturned: missing === undefined ? undefined : callbackReturnedExpression(missing),
+    missingReturned: missing === undefined ? undefined : callbackReturnedExpressionStaged(missing),
   };
 };
 
@@ -19270,7 +19321,7 @@ const inventoryReadFactoryRecord = (
     }
   | undefined => {
   const resolved = originalReadCallable(owner, source, factory);
-  const returned = resolved === undefined ? undefined : callbackReturnedExpression(resolved.initializer);
+  const returned = resolved === undefined ? undefined : callbackReturnedExpressionStaged(resolved.initializer);
   if (resolved === undefined || returned === undefined) {
     return undefined;
   }
@@ -19400,7 +19451,7 @@ const inventoryReadRecordDelegationTarget = (
   value: string,
 ): { readonly contract: InventoryReadContract; readonly member: string } | undefined => {
   const { factory } = contract;
-  const returned = callbackReturnedExpression(value);
+  const returned = callbackReturnedExpressionStaged(value);
   if (factory === undefined || returned === undefined) {
     return undefined;
   }
@@ -19640,7 +19691,7 @@ const hasInventoryReadFailureExpression = (owner: ReadPhaseOwner, source: string
   if (binding === undefined || !hasStableReadFactoryBindingsStaged(source, new Map([[binding, 1]]), '')) {
     return false;
   }
-  const returned = callbackReturnedExpression(constInitializerStaged(source, binding) ?? '');
+  const returned = callbackReturnedExpressionStaged(constInitializerStaged(source, binding) ?? '');
   return returned !== undefined && hasInventoryReadFailure(owner, source, returned);
 };
 
@@ -19736,8 +19787,8 @@ const inventoryReadFoldRecord = (fold: string): string | undefined => {
 const inventoryReadFoldArms = (owner: ReadPhaseOwner, source: string, record: string): boolean => {
   const onNone = objectPropertyValue(record, 'onNone');
   const onSome = objectPropertyValue(record, 'onSome');
-  const noneReturned = onNone === undefined ? undefined : callbackReturnedExpression(onNone);
-  const someReturned = onSome === undefined ? undefined : callbackReturnedExpression(onSome);
+  const noneReturned = onNone === undefined ? undefined : callbackReturnedExpressionStaged(onNone);
+  const someReturned = onSome === undefined ? undefined : callbackReturnedExpressionStaged(onSome);
   const succeeded = someReturned === undefined ? undefined : nativeReadSucceedExpression(someReturned);
   const bound = onSome === undefined ? undefined : readCallableParameterNames(onSome)?.[0];
   return (
@@ -19785,7 +19836,7 @@ const inventoryReadTransforms = (
   const callback =
     isWholeCallExpression(last, /^Effect\.map\(/u) && mapped?.length === 1 ? (mapped[0] ?? '') : undefined;
   const names = callback === undefined ? undefined : readCallableParameterNames(callback);
-  const returned = callback === undefined ? undefined : callbackReturnedExpression(callback);
+  const returned = callback === undefined ? undefined : callbackReturnedExpressionStaged(callback);
   return (
     leading.every((transform) => {
       if (isWholeCallExpression(transform, /^Effect\.mapError\(/u)) {
@@ -20301,7 +20352,7 @@ const inventoryReadPureMatchArm = (transform: string): boolean => {
   const args = wholeCallArguments(transform, /^Match\s*\.\s*(?:tag|whenOr)\(/u, true);
   const arm = args?.at(-1);
   const names = arm === undefined ? undefined : inventoryReadCallbackNames(arm);
-  const returned = arm === undefined ? undefined : callbackReturnedExpression(arm);
+  const returned = arm === undefined ? undefined : callbackReturnedExpressionStaged(arm);
   if (args === undefined || args.length < 2 || names === undefined || returned === undefined) {
     return false;
   }
@@ -20335,7 +20386,7 @@ const inventoryReadPureKind = (
   const target = inventoryReadOwnerCallable(owner, file, source, name);
   const parameters = target === undefined ? undefined : readCallableParameters(target.initializer);
   const names = parameters?.map((parameter) => nativeReadParameterPattern(parameter));
-  const body = target === undefined ? undefined : callbackReturnedExpression(target.initializer);
+  const body = target === undefined ? undefined : callbackReturnedExpressionStaged(target.initializer);
   const bound = names?.filter(
     (candidate): candidate is string => candidate !== undefined && /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate),
   );
@@ -20786,7 +20837,7 @@ const inventoryReadFailureOnlyTarget = (
     return undefined;
   }
   const body = inventoryReadArrowBlock(target.initializer);
-  const returned = body === undefined ? callbackReturnedExpression(target.initializer) : undefined;
+  const returned = body === undefined ? callbackReturnedExpressionStaged(target.initializer) : undefined;
   return { body, bound: new Set(bound), file: target.file, returned, source: target.source };
 };
 
@@ -20824,7 +20875,7 @@ const inventoryReadFailureOnlyCallable = (
     const args = wholeCallArguments(transform, /^Match\s*\.\s*(?:tag|whenOr)\(/u, true);
     const arm = args?.at(-1);
     const names = arm === undefined ? undefined : inventoryReadCallbackNames(arm);
-    const returned = arm === undefined ? undefined : callbackReturnedExpression(arm);
+    const returned = arm === undefined ? undefined : callbackReturnedExpressionStaged(arm);
     if (args === undefined || args.length < 2 || names === undefined || returned === undefined) {
       return false;
     }
@@ -20938,11 +20989,11 @@ const inventoryReadNestedFoldArms = (
   if (onNone === undefined || onSome === undefined) {
     return undefined;
   }
-  const someReturned = callbackReturnedExpression(onSome);
+  const someReturned = callbackReturnedExpressionStaged(onSome);
   return {
     bound: readCallableParameterNames(onSome)?.[0],
     branches: someReturned === undefined ? undefined : ternaryReadBranches(someReturned),
-    noneReturned: callbackReturnedExpression(onNone),
+    noneReturned: callbackReturnedExpressionStaged(onNone),
     onNone,
     onSome,
     someReturned,
@@ -21007,7 +21058,7 @@ const inventoryReadNestedOwnerEffectCallback = (owner: ReadPhaseOwner, source: s
   const args = wholeCallArguments(transform, /^Effect\.flatMap\(/u, true);
   const callback = args?.length === 1 ? (args[0] ?? '') : undefined;
   const names = callback === undefined ? undefined : inventoryReadCallbackNames(callback);
-  const returned = callback === undefined ? undefined : callbackReturnedExpression(callback);
+  const returned = callback === undefined ? undefined : callbackReturnedExpressionStaged(callback);
   const call = returned === undefined ? undefined : inventoryReadWholeCall(inventoryReadUnwrap(returned));
   return (
     args?.length === 1 &&
@@ -21266,7 +21317,7 @@ const hasOriginalBoundReadPhase = (
   if (phase === 'load' && scopedServiceFactory && hasOptionalRefLoadPhase(owner, source, phaseSource, parameters)) {
     return true;
   }
-  const direct = callbackReturnedExpression(phaseSource);
+  const direct = callbackReturnedExpressionStaged(phaseSource);
   const closing = matchingDelimiterEnd(phaseSource, 0, '(', ')');
   if (direct === undefined || closing === undefined) {
     return false;
@@ -21430,7 +21481,7 @@ const hasForwardedNativeReadPhase = (
     return true;
   }
   const parameters = readCallableParameters(phaseSource);
-  const returned = readPhaseReturnedExpression(phaseSource) ?? callbackReturnedExpression(phaseSource);
+  const returned = readPhaseReturnedExpression(phaseSource) ?? callbackReturnedExpressionStaged(phaseSource);
   return (
     parameters !== undefined &&
     returned !== undefined &&
@@ -21521,7 +21572,7 @@ const hasNativeReturnedServiceMethod = (
   factory: NonNullable<ReturnType<typeof originalNativePhaseDependency>>,
   name: string,
 ): boolean => {
-  const returned = callbackReturnedExpression(factory.initializer);
+  const returned = callbackReturnedExpressionStaged(factory.initializer);
   const method = returned === undefined ? undefined : objectPropertyValue(returned, name);
   if (returned === undefined || method === undefined || !hasClosedUniqueObjectKeys(returned)) {
     return false;
@@ -21579,7 +21630,7 @@ const originalScopedEffectImplementation = (
   if (invocation === undefined) {
     return undefined;
   }
-  const returned = callbackReturnedExpression(invocation.target.initializer);
+  const returned = callbackReturnedExpressionStaged(invocation.target.initializer);
   const frozen = returned === undefined ? undefined : wholeCallArguments(returned, /^Object\.freeze\(/u, true);
   const record = frozen?.length === 1 ? frozen[0] : returned;
   const body = readCallableBlock(invocation.target.initializer)?.slice(1, -1);
@@ -21662,7 +21713,7 @@ const hasScopedEffectValuePipeline = (
   phaseSource: string | undefined,
   scopedServiceFactory: boolean,
 ): boolean => {
-  const returned = phaseSource === undefined ? undefined : callbackReturnedExpression(phaseSource);
+  const returned = phaseSource === undefined ? undefined : callbackReturnedExpressionStaged(phaseSource);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   return (
     scopedServiceFactory &&
@@ -21896,7 +21947,7 @@ const hasNativeEvaluationArguments = (parameters: readonly string[], pipeline: O
 const hasNativeEvaluationHelper = (owner: ReadPhaseOwner, source: string, binding: string): boolean => {
   const evaluator = originalReadCallable(owner, source, binding);
   const parameters = evaluator === undefined ? undefined : readCallableParameters(evaluator.initializer);
-  const returned = evaluator === undefined ? undefined : callbackReturnedExpression(evaluator.initializer);
+  const returned = evaluator === undefined ? undefined : callbackReturnedExpressionStaged(evaluator.initializer);
   const pipeline = returned === undefined ? undefined : outputPipeExpression(returned);
   return (
     evaluator !== undefined &&
@@ -22009,7 +22060,7 @@ const hasNativeReadPhaseFactory = (
   const called = /^(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\(\)$/u.exec(expression)?.groups?.binding;
   const initializer = called === undefined ? undefined : constInitializerStaged(source, called);
   const parameters = initializer === undefined ? undefined : readCallableParameters(initializer);
-  const returned = initializer === undefined ? undefined : callbackReturnedExpression(initializer);
+  const returned = initializer === undefined ? undefined : callbackReturnedExpressionStaged(initializer);
   const defaults = parameters === undefined ? undefined : nativePhaseFactoryDefaults(owner, source, parameters);
   const callbackParameters = returned === undefined ? undefined : readCallableParameters(returned);
   const body = returned === undefined ? undefined : nativePhaseGeneratorBody(returned);
@@ -22115,13 +22166,13 @@ const guardedGuestServiceReadFactoryForLoad = (source: string, phase: string): s
 
 const guardedGuestServiceReadFactoryNames = (factory: string, method: string) => {
   const parameters = readCallableParameters(factory);
-  const returned = callbackReturnedExpression(factory);
+  const returned = callbackReturnedExpressionStaged(factory);
   const methods = returned === undefined ? undefined : nativeReadSucceedExpression(returned);
   const keys =
     methods === undefined ? undefined : topLevelObjectEntries(methods)?.map((entry) => objectEntryKey(entry));
   const implementation = methods === undefined ? undefined : objectProperty(methods, method);
   const [input] = readCallableParameterNames(implementation ?? '') ?? [];
-  const invoked = implementation === undefined ? undefined : callbackReturnedExpression(implementation);
+  const invoked = implementation === undefined ? undefined : callbackReturnedExpressionStaged(implementation);
   return { input, invoked, keys, parameters, returned, scope: parameters?.[1], transaction: parameters?.[0] };
 };
 
@@ -22607,7 +22658,7 @@ const returnsNonEffectFactoryValue = (source: string, candidate: string | undefi
   if (initializer === undefined || !hasBalancedArrowCallbackStaged(initializer)) {
     return false;
   }
-  const returned = callbackReturnedExpression(initializer);
+  const returned = callbackReturnedExpressionStaged(initializer);
   if (returned === undefined) {
     return false;
   }
@@ -22938,7 +22989,7 @@ const hasFailClosedConfigurationFallback = (fallback: string): boolean => {
   const args = wholeCallArguments(fallback, /^Effect\.catchTag\(/u, true);
   const callback = args?.length === 2 ? args[1] : undefined;
   const names = callback === undefined ? undefined : readCallableParameterNames(callback);
-  const returned = callback === undefined ? undefined : callbackReturnedExpression(callback);
+  const returned = callback === undefined ? undefined : callbackReturnedExpressionStaged(callback);
   const warning = returned === undefined ? undefined : callArgument(returned, /^Effect\.annotateLogs\(/u);
   const message = warning === undefined ? undefined : callArgument(warning, /^Effect\.logWarning\(/u);
   return (
@@ -23205,7 +23256,7 @@ const conditionalLayerSelection = (pipeline: OutputPipeExpression) => {
   const callback =
     pipeline.transforms.length === 1 ? callArgument(pipeline.transforms[0] ?? '', /^Effect\.map\(/u) : undefined;
   const parameters = callback === undefined ? undefined : readCallableParameters(callback);
-  const returned = callback === undefined ? undefined : callbackReturnedExpression(callback);
+  const returned = callback === undefined ? undefined : callbackReturnedExpressionStaged(callback);
   const branches = returned === undefined ? undefined : ternaryReadBranches(returned);
   return parameters?.length === 1 && branches !== undefined ? { branches, parameters } : undefined;
 };
