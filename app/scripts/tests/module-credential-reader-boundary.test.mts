@@ -18,7 +18,8 @@ const sourcesUnder = (directory: string): string[] =>
     if (entry.isDirectory()) {
       return SKIPPED.has(entry.name) || entry.name.startsWith('.') ? [] : sourcesUnder(relative);
     }
-    return SOURCE.test(entry.name) ? [relative] : [];
+    // Hidden files are never module sources; other tests write short-lived `.api-fixture-*` files into the workspace.
+    return SOURCE.test(entry.name) && !entry.name.startsWith('.') ? [relative] : [];
   });
 
 const isTest = (file: string) => /(?:^|\/)(?:tests?|e2e)\//u.test(file) || /\.test\.[cm]?[jt]sx?$/u.test(file);
