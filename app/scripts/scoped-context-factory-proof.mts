@@ -37,6 +37,7 @@ import {
   describeNativeSqlTransaction,
   describeNativeSqlExecute,
   describeNativeSqlTextSelection,
+  isCoreDatabaseGuardModule,
 } from './native-sql-success-proof.mts';
 import type {
   NativeSqlSourceReference,
@@ -1421,6 +1422,7 @@ class FactoryResolver {
         'Effect',
         'Layer',
         'Context',
+        'Config',
         'ConfigProvider',
         'Data',
         'Crypto',
@@ -3568,8 +3570,11 @@ class FactoryResolver {
         if (!FactoryResolver.consumerCallReached(module, call, readModule, frames, actualFrames)) {
           continue;
         }
+        // Security fence: guarded Core pool (transaction I/O guard + session-role check). Core's guard modules are
+        // Core's own implementations; a context provision there is still checked below.
         if (
           !exactRead &&
+          !isCoreDatabaseGuardModule(module.file) &&
           !(
             actualFrames.length === 0 ? [new Map<Binding, Reference>()] : actualFrames.map((frame) => frame.captures)
           ).every((captures) => this.consumerEffectCallClosed(module, call, readModule, read, binding, captures))
@@ -3862,7 +3867,18 @@ class FactoryResolver {
     if (node.type !== 'MemberExpression' || this.unprovedRestCarrierIndex(reference, node)) {
       return true;
     }
+    let base = unwrap(node.object);
+    for (let depth = 0; base.type === 'MemberExpression' && !base.computed && depth < budget; depth += 1) {
+      base = unwrap(base.object);
+    }
+    if (base.type === 'Identifier' && this.nativeConfigSuccessBinding(module, base)) {
+      return false;
+    }
     if (this.native(module, node, 'Schema', 'String') && this.nativeSchemaConstantCustody('String')) {
+      return false;
+    }
+    // The native PgClient service tag is a key, not an effect: it carries no read of its own.
+    if (this.native(module, node, 'PgClient', 'PgClient')) {
       return false;
     }
     const key = FactoryResolver.carrierProjectionKey(node);
@@ -4725,6 +4741,90 @@ class FactoryResolver {
       ? this.effectCarrierRead(FactoryResolver.reference(module, call, captures), readModule, read, seen, hops + 1)
       : values.some((value) => this.effectCarrierRead(value, readModule, read, seen, hops + 1));
   }
+  /**
+   * A local `const` holding the success of a closed native Config read (`yield* config`, optionally with its
+   * failure mapped): decoded data only, so it carries no effect. The guarded Core pool reads its process budget so.
+   */
+  nativeConfigSuccessBinding(module: Module, node: IdentifierReference): boolean {
+    const binding = bindingAt(module, node.name, node);
+    const init = binding?.init === undefined ? undefined : unwrap(binding.init);
+    return (
+      binding !== undefined &&
+      binding.kind === 'const' &&
+      binding.origin === undefined &&
+      stable(module, binding) &&
+      init?.type === 'YieldExpression' &&
+      init.delegate &&
+      init.argument !== null &&
+      this.nativeConfig(module, this.failureMappedReceiver(module, unwrap(init.argument)), new Set())
+    );
+  }
+  /** `effect.pipe(Effect.mapError(f))` answered as `effect`; anything else as itself. */
+  failureMappedReceiver(module: Module, read: Expression): Expression {
+    const callee = read.type === 'CallExpression' && !read.optional ? unwrap(read.callee) : undefined;
+    const [adapter] = read.type === 'CallExpression' ? read.arguments : [];
+    return callee?.type === 'MemberExpression' &&
+      propertyName(callee) === 'pipe' &&
+      read.type === 'CallExpression' &&
+      read.arguments.length === 1 &&
+      adapter?.type === 'CallExpression' &&
+      adapter.arguments.length === 1 &&
+      this.native(module, adapter.callee, 'Effect', 'mapError')
+      ? callee.object
+      : read;
+  }
+  /** A Config built only from native Config constructors over literal keys and defaults. */
+  nativeConfig(module: Module, input: Expression, seen: Set<Binding>): boolean {
+    const node = unwrap(input);
+    if (node.type === 'CallExpression') {
+      return this.nativeConfigCall(module, node, seen);
+    }
+    const binding = node.type === 'Identifier' ? bindingAt(module, node.name, node) : undefined;
+    return (
+      binding !== undefined &&
+      binding.kind === 'const' &&
+      binding.origin === undefined &&
+      binding.init !== undefined &&
+      !seen.has(binding) &&
+      seen.size < budget &&
+      stable(module, binding) &&
+      this.nativeConfig(module, binding.init, new Set(seen).add(binding))
+    );
+  }
+  nativeConfigCall(module: Module, call: CallExpression, seen: Set<Binding>): boolean {
+    const [argument] = call.arguments;
+    const callee = unwrap(call.callee);
+    if (call.optional || call.arguments.length !== 1 || argument === undefined || argument.type === 'SpreadElement') {
+      return false;
+    }
+    if (callee.type === 'MemberExpression' && propertyName(callee) === 'pipe') {
+      return (
+        argument.type === 'CallExpression' &&
+        argument.arguments.length === 1 &&
+        argument.arguments[0]?.type === 'Literal' &&
+        this.native(module, argument.callee, 'Config', 'withDefault') &&
+        this.nativeConfig(module, callee.object, seen)
+      );
+    }
+    if (['Boolean', 'Int', 'Number', 'String'].some((method) => this.native(module, callee, 'Config', method))) {
+      return argument.type === 'Literal' && Schema.is(Schema.String)(argument.value);
+    }
+    if (this.native(module, callee, 'Config', 'option')) {
+      return this.nativeConfig(module, argument, seen);
+    }
+    const fields = this.native(module, callee, 'Config', 'all') ? unwrap(argument) : undefined;
+    return (
+      fields?.type === 'ObjectExpression' &&
+      fields.properties.every(
+        (property) =>
+          property.type === 'Property' &&
+          property.kind === 'init' &&
+          !property.computed &&
+          !property.method &&
+          this.nativeConfig(module, property.value, seen),
+      )
+    );
+  }
   successCarrierRead(
     reference: Reference,
     readModule: Module,
@@ -4867,6 +4967,9 @@ class FactoryResolver {
     const captured = captures.get(local);
     if (captured !== undefined) {
       return this.effectCarrierRead(captured, readModule, read, next, hops + 1);
+    }
+    if (this.nativeConfigSuccessBinding(module, node)) {
+      return false;
     }
     const symbol = this.symbol(module, node) ?? { binding: local, module };
     if (symbol.binding.init !== undefined) {
@@ -7141,7 +7244,11 @@ class FactoryResolver {
     if (member !== undefined) {
       return this.checkConsumerDataSource(module, call, member, captures, readModule, read, wanted);
     }
-    if (this.consumerOriginalCallClosed(module, call, readModule, read, wanted, captures)) {
+    if (
+      this.consumerOriginalCallClosed(module, call, readModule, read, wanted, captures) ||
+      this.guardedCorePoolAcquisition(module, call) ||
+      this.nativeSchemaComposition(module, call, 0)
+    ) {
       return true;
     }
     const local = this.consumerDataCallableSource(module, call, captures);
@@ -7633,6 +7740,68 @@ class FactoryResolver {
         (this.effectCarrierRead(FactoryResolver.reference(module, first, captures), readModule, read) ||
           this.effectContainsRead(module, first, readModule, read, new Set(), 0, true))) ||
       this.contextProvisionReads(module, call, readModule, read)
+    );
+  }
+  /**
+   * Security fence: guarded Core pool (transaction I/O guard + session-role check). Inside Core's `db/client.ts`,
+   * the pool acquisition the guards wrap (native `PgClient.make` or Core's `openDatabaseClient`) over the plain
+   * pool settings Core's `configureDatabasePool` returned provides no service and runs no effect it is handed.
+   */
+  guardedCorePoolAcquisition(module: Module, call: CallExpression): boolean {
+    const [argument] = call.arguments;
+    const settings = argument?.type === 'Identifier' ? bindingAt(module, argument.name, argument) : undefined;
+    const init = settings?.init === undefined ? undefined : unwrap(settings.init);
+    const configured =
+      init?.type === 'YieldExpression' &&
+      init.delegate &&
+      init.argument?.type === 'CallExpression' &&
+      this.coreDatabaseImport(module, init.argument.callee, 'configureDatabasePool', 'pool-configuration.ts');
+    return (
+      call.arguments.length === 1 &&
+      !call.optional &&
+      settings?.kind === 'const' &&
+      stable(module, settings) &&
+      configured &&
+      (this.native(module, call.callee, 'PgClient', 'make') ||
+        this.coreDatabaseImport(module, call.callee, 'openDatabaseClient', 'database-client.ts'))
+    );
+  }
+  /**
+   * A native Schema constructor applied only to native Schema members and such constructions: it builds a
+   * description, provides no service and runs no effect (Core's database environment schema is one).
+   */
+  nativeSchemaComposition(module: Module, call: CallExpression, depth: number): boolean {
+    const callee = unwrap(call.callee);
+    const method = callee.type === 'MemberExpression' ? propertyName(callee) : undefined;
+    return (
+      depth < budget &&
+      !call.optional &&
+      method !== undefined &&
+      this.native(module, callee, 'Schema', method) &&
+      call.arguments.every((argument) => {
+        const node = argument.type === 'SpreadElement' ? undefined : unwrap(argument);
+        const member = node?.type === 'MemberExpression' ? propertyName(node) : undefined;
+        return (
+          (node?.type === 'MemberExpression' && member !== undefined && this.native(module, node, 'Schema', member)) ||
+          (node?.type === 'CallExpression' && this.nativeSchemaComposition(module, node, depth + 1))
+        );
+      })
+    );
+  }
+  /** An import, in Core's `db/client.ts`, of the export declared by that exact sibling Core module. */
+  coreDatabaseImport(module: Module, callee: Expression, name: string, file: string): boolean {
+    const client = '/packages/core-runtime/src/db/client.ts';
+    const node = unwrap(callee);
+    const binding = node.type === 'Identifier' ? bindingAt(module, node.name, node) : undefined;
+    const dependency = binding?.origin === undefined ? undefined : this.dependency(module, binding.origin.source);
+    const declared = dependency === undefined ? undefined : this.exportedSymbol(dependency, name, new Set());
+    return (
+      module.file.endsWith(client) &&
+      binding?.origin?.imported === name &&
+      dependency?.file === `${module.file.slice(0, module.file.length - 'client.ts'.length)}${file}` &&
+      declared?.module === dependency &&
+      declared.binding.origin === undefined &&
+      declared.binding.kind === 'const'
     );
   }
   consumerOriginalCallClosed(
@@ -10212,6 +10381,13 @@ class FactoryResolver {
         },
         ImportDeclaration(node) {
           allowed.push(node);
+        },
+        NewExpression(node) {
+          // Security fence: guarded Core pool (transaction I/O guard + session-role check). Core's session-role
+          // check constructs the error as the cause of its connection failure; construction is all it may do.
+          if (isCoreDatabaseGuardModule(module.file)) {
+            allowed.push(node.callee);
+          }
         },
         TSTypeAnnotation(node) {
           allowed.push(node);

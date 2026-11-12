@@ -3401,15 +3401,67 @@ it.effect('fails closed when native snapshot constraints exceed the finite proof
   return resolve(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
 });
 
+/** Core's guarded pool modules: the proof accepts their exports only as these exact Core declarations. */
+const coreDatabaseGuardFiles = ['database-client', 'session-identity', 'transaction-io-guard'] as const;
+const foreignGuardSource = 'export const guardPoolAcquisition = (client) => client;';
+const coreAcquisition =
+  "session.pooling === 'pooled' ? openDatabaseClient(configuration) : PgClient.make(configuration)";
+const guardedReturn = 'return guardPoolAcquisition(client);';
+const sessionRoleCheck =
+  'verifySessionRoleOnFirstUse(Context.get(context, PgClient.PgClient), configuration.expectedRole)';
+const guardImport =
+  "import { guardPoolAcquisition, refuseInsideDatabaseTransaction } from './transaction-io-guard.ts';";
+const replaceOnce = (source: string, from: string, to: string): string => {
+  expect(source.split(from)).toHaveLength(2);
+  return source.replace(from, to);
+};
+const unguardedReturn = 'return client;';
+/** Each edit leaves the security fence's guarded Core pool shape, so each must be refused. */
+const guardedPoolEdits = {
+  'foreign pool guard': (source: string) =>
+    replaceOnce(
+      source,
+      guardImport,
+      "import { refuseInsideDatabaseTransaction } from './transaction-io-guard.ts';import { guardPoolAcquisition } from './foreign-guard.ts';",
+    ),
+  'injected codec options': (source: string) =>
+    replaceOnce(source, 'PgClient.make(configuration)', 'PgClient.make({ ...configuration, types: foreignRegistry })'),
+  'look-alike session-role check': (source: string) =>
+    replaceOnce(
+      source,
+      "import { verifySessionRoleOnFirstUse } from './session-identity.ts';",
+      'const verifySessionRoleOnFirstUse = (client: PgClient.PgClient, _role: string) => client;',
+    ),
+  'missing session-role check': (source: string) =>
+    replaceOnce(source, sessionRoleCheck, 'Context.get(context, PgClient.PgClient)'),
+  'missing transaction I/O refusal': (source: string) =>
+    replaceOnce(
+      source,
+      "yield* refuseInsideDatabaseTransaction('pool-acquisition', 'PostgreSQL connection pool');",
+      '',
+    ),
+  'unguarded openDatabaseClient pool': (source: string) =>
+    replaceOnce(
+      replaceOnce(source, coreAcquisition, 'openDatabaseClient(configuration)'),
+      guardedReturn,
+      unguardedReturn,
+    ),
+  'unguarded PgClient.make pool': (source: string) =>
+    replaceOnce(replaceOnce(source, coreAcquisition, 'PgClient.make(configuration)'), guardedReturn, unguardedReturn),
+  'unguarded pool behind the session-role check': (source: string) =>
+    replaceOnce(source, guardedReturn, unguardedReturn),
+} satisfies Readonly<Record<string, (source: string) => string>>;
+const guardedPoolEdit = (name: string) => Object.entries(guardedPoolEdits).find(([edit]) => edit === name)?.[1];
+
 it.effect.each([
   'actual constructor',
-  'injected codec options',
   'counterfeit error native',
   'overridden error iterator',
   'mutated error prototype',
   'spread error payload',
   'ordinary successful error value',
   'overridden error evaluator payload',
+  ...Object.keys(guardedPoolEdits),
 ])('proves the real Core database constructor source: %s', (name) =>
   Effect.gen(function* actualDatabaseConstructor() {
     const path = yield* Path.Path;
@@ -3417,13 +3469,7 @@ it.effect.each([
     const clientFile = nodePath.join(app, 'packages/core-runtime/src/db/client.ts');
     const poolFile = nodePath.join(app, 'packages/core-runtime/src/db/pool-configuration.ts');
     const original = yield* Effect.tryPromise(() => readFile(clientFile, 'utf-8'));
-    const clientSource =
-      name === 'injected codec options'
-        ? original.replace(
-            '...poolConfiguration, maxConnections:',
-            '...poolConfiguration, types: foreignRegistry, maxConnections:',
-          )
-        : original;
+    const clientSource = guardedPoolEdit(name)?.(original) ?? original;
     let poolSource = yield* Effect.tryPromise(() => readFile(poolFile, 'utf-8'));
     let errorSource = yield* Effect.tryPromise(() =>
       readFile(nodePath.join(app, 'packages/core-runtime/src/db/connection-error.ts'), 'utf-8'),
@@ -3440,8 +3486,8 @@ it.effect.each([
     }
     if (name === 'spread error payload') {
       poolSource = poolSource.replace(
-        'new DatabaseConnectionError({',
-        'new DatabaseConnectionError({...foreignOptions,',
+        'return yield* new DatabaseConnectionError({',
+        'return yield* new DatabaseConnectionError({...foreignOptions,',
       );
     }
     if (name === 'ordinary successful error value') {
@@ -3452,15 +3498,20 @@ it.effect.each([
     }
     if (name === 'overridden error evaluator payload') {
       poolSource = poolSource.replace(
-        'new DatabaseConnectionError({',
-        'new DatabaseConnectionError({"~effect/Effect/evaluate":()=>Effect.succeed({url:foreignUrl,types:foreignRegistry}),',
+        'return yield* new DatabaseConnectionError({',
+        'return yield* new DatabaseConnectionError({"~effect/Effect/evaluate":()=>Effect.succeed({url:foreignUrl,types:foreignRegistry}),',
       );
     }
     const snapshot = new Map([
       [clientFile, clientSource],
       [poolFile, poolSource],
       [nodePath.join(app, 'packages/core-runtime/src/db/connection-error.ts'), errorSource],
+      [nodePath.join(app, 'packages/core-runtime/src/db/foreign-guard.ts'), foreignGuardSource],
     ]);
+    for (const guard of coreDatabaseGuardFiles) {
+      const file = nodePath.join(app, `packages/core-runtime/src/db/${guard}.ts`);
+      snapshot.set(file, yield* Effect.tryPromise(() => readFile(file, 'utf-8')));
+    }
     const resolver = makeScopedContextFactoryResolver(snapshot, app, path, new Map());
     let load: Expression | undefined;
     new Visitor({
@@ -3568,7 +3619,7 @@ it.effect.each([
     const shared = `${root}/packages/acquire.ts`;
     const relativeClient = nodePath.relative(nodePath.dirname(rootFile), clientFile);
     const snapshot = sources();
-    for (const name of ['client', 'pool-configuration', 'connection-error', 'config']) {
+    for (const name of ['client', 'pool-configuration', 'connection-error', 'config', ...coreDatabaseGuardFiles]) {
       const file = nodePath.join(app, `packages/core-runtime/src/db/${name}.ts`);
       const source = yield* Effect.tryPromise(() => readFile(file, 'utf-8'));
       snapshot.set(file, sqlRootConfigSource(source, name, variant));

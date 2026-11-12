@@ -1,5 +1,12 @@
 import { Visitor } from 'oxc-parser';
-import type { ArrowFunctionExpression, Expression, Function as FunctionNode, Program, Span } from 'oxc-parser';
+import type {
+  ArrowFunctionExpression,
+  Expression,
+  Function as FunctionNode,
+  Program,
+  Span,
+  Statement,
+} from 'oxc-parser';
 
 import { nativeColumnInitializationEvidence } from '../tools/oxlint/anti-slop/effect/rules/data-factory-proof.ts';
 
@@ -7,6 +14,10 @@ const nativeSqlTag = 'native-drizzle:sql';
 const nativeDrizzleFactory = 'native-drizzle-effect:makeWithDefaults';
 const nativePgMake = 'native-pg-root:PgClient.make';
 const nativeProvideService = 'native-effect:Effect.provideService';
+const nativePgService = 'native-pg-root:PgClient.PgClient';
+const nativeLayerEffect = 'native-effect:Layer.effect';
+const nativeContextGet = 'native-effect:Context.get';
+const transactionIoGuardModule = 'transaction-io-guard.ts';
 const word = /^[a-z_][a-z0-9_]*$/u;
 const unsafeAliases = new Set(['__proto__', 'prototype', 'constructor']);
 const clauseWords = new Set([
@@ -322,6 +333,86 @@ const nativeIdentity = (
     ? nativeIdentity(environment, { ...reference, expression: binding.init }, nextSeen)
     : undefined;
 };
+/*
+ * Security fence: guarded Core pool (transaction I/O guard + session-role check). Core builds its client through
+ * these exports of its own database modules; each is accepted only as the import of that exact Core module, named
+ * from Core's `db/client.ts`, never by name alone.
+ */
+const coreDatabaseDirectory = '/packages/core-runtime/src/db/';
+const coreDatabaseClient = 'client.ts';
+const coreDatabaseExports = new Map([
+  ['configureDatabasePool', 'pool-configuration.ts'],
+  ['guardPoolAcquisition', transactionIoGuardModule],
+  ['openDatabaseClient', 'database-client.ts'],
+  ['refuseInsideDatabaseTransaction', transactionIoGuardModule],
+  ['verifySessionRoleOnFirstUse', 'session-identity.ts'],
+]);
+/** The Core modules whose guard implementations the fence trusts as Core's own. */
+const coreDatabaseGuardModules = new Set(['database-client.ts', 'session-identity.ts', transactionIoGuardModule]);
+const coreDatabaseDirectoryOf = (file: string): string | undefined =>
+  file.endsWith(`${coreDatabaseDirectory}${coreDatabaseClient}`)
+    ? file.slice(0, file.length - coreDatabaseClient.length)
+    : undefined;
+const isCoreDatabaseClient = (file: string): boolean => coreDatabaseDirectoryOf(file) !== undefined;
+export const isCoreDatabaseGuardModule = (file: string): boolean => {
+  const separator = file.lastIndexOf('/');
+  return (
+    file.slice(0, separator + 1).endsWith(coreDatabaseDirectory) &&
+    coreDatabaseGuardModules.has(file.slice(separator + 1))
+  );
+};
+/** One exported top-level `const` of this name, and no other top-level declaration of it. */
+const declaresExportedConst = (module: NativeSqlProofModule, name: string): boolean => {
+  let exported = 0;
+  let declared = 0;
+  for (const statement of module.program.body) {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    if (declaration?.type === 'VariableDeclaration') {
+      for (const declarator of declaration.declarations) {
+        if (declarator.id.type === 'Identifier' && declarator.id.name === name) {
+          declared += 1;
+          if (statement !== declaration && declaration.kind === 'const' && declarator.init !== null) {
+            exported += 1;
+          }
+        }
+      }
+    } else if (
+      (declaration?.type === 'FunctionDeclaration' || declaration?.type === 'ClassDeclaration') &&
+      declaration.id?.name === name
+    ) {
+      declared += 1;
+    }
+  }
+  return (
+    exported === 1 &&
+    declared === 1 &&
+    !module.bindings.some((binding) => binding.name === name && binding.origin !== undefined)
+  );
+};
+/** The Core export an identifier in Core's `db/client.ts` imports, when it is that exact Core declaration. */
+const coreDatabaseExport = (
+  environment: NativeSqlProofEnvironment,
+  reference: NativeSqlSourceReference,
+): string | undefined => {
+  const directory = coreDatabaseDirectoryOf(reference.file);
+  const { expression } = reference;
+  const binding =
+    expression.type === 'Identifier' && sourceExists(environment, reference)
+      ? bindingAt(environment, reference.file, expression)
+      : undefined;
+  const declaredIn = binding?.origin === undefined ? undefined : coreDatabaseExports.get(binding.origin.imported);
+  if (directory === undefined || binding?.origin === undefined || declaredIn === undefined) {
+    return undefined;
+  }
+  const edge = environment.resolveImport(reference.file, binding.origin.source);
+  const module =
+    edge?.kind === 'module' && edge.file === `${directory}${declaredIn}`
+      ? environment.modules.find((candidate) => candidate.file === edge.file)
+      : undefined;
+  return module !== undefined && declaresExportedConst(module, binding.origin.imported)
+    ? binding.origin.imported
+    : undefined;
+};
 const isNativeHandleIdentity = (identity: string | undefined): boolean =>
   identity !== undefined &&
   ['native-pg-root:PgClient', nativeSqlTag, nativeDrizzleFactory, 'native-effect:Effect'].some(
@@ -331,15 +422,37 @@ const hasClosedNativeModuleHandles = (
   environment: NativeSqlProofEnvironment,
   module: NativeSqlProofModule,
 ): boolean => {
+  // Security fence: guarded Core pool (transaction I/O guard + session-role check). Core's own guard modules
+  // hold the client inside their guards; their implementations are Core's, not owner code this proof closes.
+  if (isCoreDatabaseGuardModule(module.file)) {
+    return true;
+  }
   let valid = true;
   const allowed: Span[] = [];
   const identifiers: (Span & { readonly name: string })[] = [];
   const reference = (expression: Expression) => ({ expression, file: module.file });
   const tracked = (expression: Expression) =>
     isNativeHandleIdentity(nativeIdentity(environment, reference(expression)));
+  // Security fence: guarded Core pool. Core's client builds the PgClient service as a Layer and reads it back.
+  const coreClientTag = (call: Extract<Expression, { type: 'CallExpression' }>): Expression | undefined => {
+    const identity = nativeIdentity(environment, reference(call.callee));
+    const tag = call.arguments[identity === nativeLayerEffect ? 0 : 1];
+    return isCoreDatabaseClient(module.file) &&
+      call.arguments.length === 2 &&
+      (identity === nativeLayerEffect || identity === nativeContextGet) &&
+      tag !== undefined &&
+      tag.type !== 'SpreadElement' &&
+      nativeIdentity(environment, reference(tag)) === nativePgService
+      ? tag
+      : undefined;
+  };
   new Visitor({
     CallExpression: (node) => {
       const identity = nativeIdentity(environment, reference(node.callee));
+      const tag = coreClientTag(node);
+      if (tag !== undefined) {
+        allowed.push(tag);
+      }
       if (
         identity === nativePgMake ||
         identity === nativeDrizzleFactory ||
@@ -354,7 +467,7 @@ const hasClosedNativeModuleHandles = (
         if (
           service !== undefined &&
           service.type !== 'SpreadElement' &&
-          nativeIdentity(environment, reference(service)) === 'native-pg-root:PgClient.PgClient'
+          nativeIdentity(environment, reference(service)) === nativePgService
         ) {
           allowed.push(service);
         }
@@ -521,11 +634,12 @@ const hasClosedConfigModuleHandles = (
       }
     },
     CallExpression: (node) => {
+      const callee = { expression: node.callee, file: module.file };
       checkArguments(
         node.arguments,
-        [nativePgMake, nativeDrizzleFactory].includes(
-          nativeIdentity(environment, { expression: node.callee, file: module.file }) ?? '',
-        ),
+        [nativePgMake, nativeDrizzleFactory].includes(nativeIdentity(environment, callee) ?? '') ||
+          // Security fence: guarded Core pool. Core opens its pooled client from the same configuration.
+          coreDatabaseExport(environment, callee) === 'openDatabaseClient',
       );
     },
     NewExpression: (node) => {
@@ -859,12 +973,311 @@ const nativeDatabaseProvider = (
   if (
     service === undefined ||
     service.type === 'SpreadElement' ||
-    nativeIdentity(environment, { ...provider, expression: service }) !== 'native-pg-root:PgClient.PgClient'
+    nativeIdentity(environment, { ...provider, expression: service }) !== nativePgService
   ) {
     return undefined;
   }
   return provider;
 };
+/*
+ * Security fence: guarded Core pool (transaction I/O guard + session-role check). Exactly Core's construction:
+ *
+ *   verifySessionRoleOnFirstUse(Context.get(yield* Layer.build(guardedPgClientLayer(...)).pipe(mapError), PgClient), role)
+ *   guardedPgClientLayer = Layer.effect(PgClient, Effect.gen(function* () {
+ *     yield* refuseInsideDatabaseTransaction(...); const configuration = yield* configureDatabasePool(...);
+ *     const reactivity = yield* Reactivity.make;
+ *     const client = yield* (pooled ? openDatabaseClient(configuration) : PgClient.make(configuration)).pipe(provideService);
+ *     return guardPoolAcquisition(client);
+ *   }))
+ *
+ * Every guard is the import of Core's own export; anything else (an unguarded pool, a missing guard, a look-alike
+ * guard) is not this shape and falls back to the native `PgClient.make` proof, which refuses it.
+ */
+interface GuardedCorePool {
+  /** Each pool acquisition the guards wrap: a native `PgClient.make` or Core's `openDatabaseClient`. */
+  readonly acquisitions: readonly NativeSqlSourceReference[];
+  readonly client: NativeSqlSourceReference;
+}
+const delegatedOperand = (
+  environment: NativeSqlProofEnvironment,
+  reference: NativeSqlSourceReference,
+): NativeSqlSourceReference | undefined => {
+  const origin = custodyAliasOrigin(environment, reference);
+  const { expression } = origin;
+  return expression.type === 'YieldExpression' && expression.delegate && expression.argument !== null
+    ? { ...origin, expression: expression.argument }
+    : undefined;
+};
+/** The piped receiver, when every adapter is a direct call of one of the given native identities. */
+const pipedReceiver = (
+  environment: NativeSqlProofEnvironment,
+  reference: NativeSqlSourceReference,
+  adapter: string,
+): NativeSqlSourceReference | undefined => {
+  const call = callOf(reference);
+  if (call?.callee.type !== 'MemberExpression' || memberName(call.callee) !== 'pipe' || call.arguments.length === 0) {
+    return undefined;
+  }
+  const adapted = call.arguments.every(
+    (argument) =>
+      argument.type === 'CallExpression' &&
+      !argument.optional &&
+      nativeIdentity(environment, { ...reference, expression: argument.callee }) === adapter,
+  );
+  return adapted ? { ...reference, expression: call.callee.object } : undefined;
+};
+const coreCallOf = (
+  environment: NativeSqlProofEnvironment,
+  reference: NativeSqlSourceReference,
+  expression: Expression,
+  name: string,
+  arity: number,
+) =>
+  expression.type === 'CallExpression' &&
+  !expression.optional &&
+  expression.arguments.length === arity &&
+  expression.arguments.every((argument) => argument.type !== 'SpreadElement') &&
+  coreDatabaseExport(environment, { ...reference, expression: expression.callee }) === name
+    ? expression
+    : undefined;
+const isDelegatedCoreCall = (
+  environment: NativeSqlProofEnvironment,
+  reference: NativeSqlSourceReference,
+  expression: Expression,
+  name: string,
+  arity: number,
+): boolean =>
+  expression.type === 'YieldExpression' &&
+  expression.delegate &&
+  expression.argument !== null &&
+  coreCallOf(environment, reference, expression.argument, name, arity) !== undefined;
+const soleConstIdentifier = (statement: Statement | undefined) =>
+  statement?.type === 'VariableDeclaration' &&
+  statement.kind === 'const' &&
+  statement.declarations.length === 1 &&
+  statement.declarations[0]?.id.type === 'Identifier' &&
+  statement.declarations[0].init !== null &&
+  statement.declarations[0].init !== undefined
+    ? { id: statement.declarations[0].id, init: statement.declarations[0].init }
+    : undefined;
+/** `pooled ? openDatabaseClient(configuration) : PgClient.make(configuration)`, or one of them alone. */
+const poolAcquisitions = (
+  environment: NativeSqlProofEnvironment,
+  reference: NativeSqlSourceReference,
+): readonly NativeSqlSourceReference[] | undefined => {
+  const node =
+    reference.expression.type === 'ParenthesizedExpression' ? reference.expression.expression : reference.expression;
+  const plainCondition =
+    node.type === 'ConditionalExpression' &&
+    node.test.type === 'BinaryExpression' &&
+    node.test.operator === '===' &&
+    [node.test.left, node.test.right].every((side) => side.type === 'MemberExpression' || side.type === 'Literal');
+  const branches = node.type === 'ConditionalExpression' ? [node.consequent, node.alternate] : [node];
+  if (node.type === 'ConditionalExpression' && !plainCondition) {
+    return undefined;
+  }
+  const acquisitions = branches.map((branch) => ({ ...reference, expression: branch }));
+  return acquisitions.every((acquisition) => {
+    const call = callOf(acquisition);
+    return (
+      call !== undefined &&
+      call.arguments.length === 1 &&
+      call.arguments[0]?.type !== 'SpreadElement' &&
+      (nativeIdentity(environment, { ...acquisition, expression: call.callee }) === nativePgMake ||
+        coreCallOf(environment, acquisition, call, 'openDatabaseClient', 1) !== undefined)
+    );
+  })
+    ? acquisitions
+    : undefined;
+};
+/** The body of Core's guarded layer: exactly the transaction I/O guards around one pool acquisition. */
+/** A direct call of the given native identity with exactly `arity` plain arguments. */
+const nativeCallOf = (
+  environment: NativeSqlProofEnvironment,
+  reference: NativeSqlSourceReference | undefined,
+  identity: string,
+  arity: number,
+) => {
+  const call = reference === undefined ? undefined : callOf(reference);
+  return reference !== undefined &&
+    call !== undefined &&
+    call.arguments.length === arity &&
+    call.arguments.every((argument) => argument.type !== 'SpreadElement') &&
+    nativeIdentity(environment, { ...reference, expression: call.callee }) === identity
+    ? call
+    : undefined;
+};
+const plainArgument = (call: Extract<Expression, { type: 'CallExpression' }> | undefined, index: number) => {
+  const argument = call?.arguments[index];
+  return argument === undefined || argument.type === 'SpreadElement' ? undefined : argument;
+};
+const isNativeTag = (
+  environment: NativeSqlProofEnvironment,
+  reference: NativeSqlSourceReference,
+  expression: Expression | undefined,
+): boolean => expression !== undefined && nativeIdentity(environment, { ...reference, expression }) === nativePgService;
+/** `const reactivity = yield* Reactivity.make`, with `Reactivity` imported from `effect/reactivity`. */
+const isReactivityMake = (
+  environment: NativeSqlProofEnvironment,
+  program: NativeSqlSourceReference,
+  init: Expression,
+): boolean => {
+  const made = init.type === 'YieldExpression' ? init.argument : undefined;
+  const owner = made?.type === 'MemberExpression' && memberName(made) === 'make' ? made.object : undefined;
+  const origin = owner?.type === 'Identifier' ? bindingAt(environment, program.file, owner)?.origin : undefined;
+  return origin?.source === 'effect/reactivity' && origin.imported === 'Reactivity';
+};
+/** The acquired client is read once in the layer body: by the guard that returns it. */
+const readOnceByGuard = (
+  environment: NativeSqlProofEnvironment,
+  program: NativeSqlSourceReference,
+  returned: Statement | undefined,
+  client: Span,
+): boolean => {
+  const guard =
+    returned?.type === 'ReturnStatement' && returned.argument !== null && returned.argument !== undefined
+      ? coreCallOf(environment, program, returned.argument, 'guardPoolAcquisition', 1)
+      : undefined;
+  const guarded = plainArgument(guard, 0);
+  const module = environment.modules.find((candidate) => candidate.file === program.file);
+  if (guarded?.type !== 'Identifier' || bindingAt(environment, program.file, guarded)?.node !== client || !module) {
+    return false;
+  }
+  let uses = 0;
+  new Visitor({
+    Identifier: (node) => {
+      if (node !== client && bindingAt(environment, program.file, node)?.node === client) {
+        uses += 1;
+      }
+    },
+  }).visit(module.program);
+  return uses === 1;
+};
+/** The body of Core's guarded layer: exactly the transaction I/O guards around one pool acquisition. */
+const guardedLayerAcquisitions = (
+  environment: NativeSqlProofEnvironment,
+  program: NativeSqlSourceReference,
+): readonly NativeSqlSourceReference[] | undefined => {
+  const fn = program.expression;
+  const plain = fn.type === 'FunctionExpression' && fn.generator && !fn.async && fn.params.length === 0;
+  const statements = plain ? fn.body?.body : undefined;
+  if (statements?.length !== 5) {
+    return undefined;
+  }
+  const [refusal, configured, reactive, acquired, returned] = statements;
+  const configuration = soleConstIdentifier(configured);
+  const reactivity = soleConstIdentifier(reactive);
+  const client = soleConstIdentifier(acquired);
+  if (
+    refusal?.type !== 'ExpressionStatement' ||
+    !isDelegatedCoreCall(environment, program, refusal.expression, 'refuseInsideDatabaseTransaction', 2) ||
+    configuration === undefined ||
+    !isDelegatedCoreCall(environment, program, configuration.init, 'configureDatabasePool', 3) ||
+    reactivity === undefined ||
+    !isReactivityMake(environment, program, reactivity.init) ||
+    client === undefined ||
+    !readOnceByGuard(environment, program, returned, client.id)
+  ) {
+    return undefined;
+  }
+  const pooled = delegatedOperand(environment, { ...program, expression: client.init });
+  const receiver = pooled === undefined ? undefined : pipedReceiver(environment, pooled, nativeProvideService);
+  return receiver === undefined ? undefined : poolAcquisitions(environment, receiver);
+};
+/** `yield* Layer.build(layer).pipe(Effect.mapError(...))`, answered as the layer it builds. */
+const builtLayer = (
+  environment: NativeSqlProofEnvironment,
+  context: NativeSqlSourceReference,
+): NativeSqlSourceReference | undefined => {
+  const built = delegatedOperand(environment, context);
+  const build = built === undefined ? undefined : pipedReceiver(environment, built, 'native-effect:Effect.mapError');
+  return nativeCallOf(environment, build, 'native-effect:Layer.build', 1) === undefined || build === undefined
+    ? undefined
+    : resolveArgument(environment, build, 0);
+};
+const guardedCorePool = (
+  environment: NativeSqlProofEnvironment,
+  provided: NativeSqlSourceReference,
+): GuardedCorePool | undefined => {
+  const client = custodyAliasOrigin(environment, provided);
+  const pooled = plainArgument(coreCallOf(environment, client, client.expression, 'verifySessionRoleOnFirstUse', 2), 0);
+  const lookup = pooled === undefined ? undefined : custodyAliasOrigin(environment, { ...client, expression: pooled });
+  const get = nativeCallOf(environment, lookup, nativeContextGet, 2);
+  const context = plainArgument(get, 0);
+  const layer =
+    lookup === undefined || context === undefined || !isNativeTag(environment, lookup, plainArgument(get, 1))
+      ? undefined
+      : builtLayer(environment, { ...lookup, expression: context });
+  const layerCall = nativeCallOf(environment, layer, nativeLayerEffect, 2);
+  const program = plainArgument(layerCall, 1);
+  const generator =
+    layer === undefined || program === undefined
+      ? undefined
+      : nativeCallOf(environment, { ...layer, expression: program }, 'native-effect:Effect.gen', 1);
+  const body = plainArgument(generator, 0);
+  const acquisitions =
+    layer === undefined ||
+    body === undefined ||
+    !isCoreDatabaseClient(layer.file) ||
+    !isNativeTag(environment, layer, plainArgument(layerCall, 0))
+      ? undefined
+      : guardedLayerAcquisitions(environment, { ...layer, expression: body });
+  return acquisitions === undefined ? undefined : { acquisitions, client };
+};
+/**
+ * Security fence: guarded Core pool. The guarded client is one `const` of Core's client, initialized by the
+ * session-role check itself and read only as the PgClient service the executor is built over.
+ */
+const guardedClientClosed = (
+  environment: NativeSqlProofEnvironment,
+  provider: NativeSqlSourceReference,
+  provided: Expression,
+  client: NativeSqlSourceReference,
+): boolean => {
+  if (provided === client.expression) {
+    return true;
+  }
+  const binding = provided.type === 'Identifier' ? bindingAt(environment, provider.file, provided) : undefined;
+  const module = environment.modules.find((candidate) => candidate.file === provider.file);
+  if (
+    binding?.kind !== 'const' ||
+    binding.origin !== undefined ||
+    binding.init !== client.expression ||
+    client.file !== provider.file ||
+    module === undefined
+  ) {
+    return false;
+  }
+  const provisions: Span[] = [];
+  const reads: Span[] = [];
+  new Visitor({
+    CallExpression: (node) => {
+      const [, service] = node.arguments;
+      if (
+        node.arguments.length === 2 &&
+        service !== undefined &&
+        service.type !== 'SpreadElement' &&
+        nativeIdentity(environment, { expression: node.callee, file: module.file }) === nativeProvideService
+      ) {
+        provisions.push(service);
+      }
+    },
+    Identifier: (node) => {
+      if (node !== binding.node && bindingAt(environment, module.file, node)?.node === binding.node) {
+        reads.push(node);
+      }
+    },
+  }).visit(module.program);
+  return reads.length > 0 && reads.every((read) => provisions.includes(read));
+};
+const guardedPoolConfigKeys = new Set([
+  'url',
+  'connectTimeout',
+  'idleTimeout',
+  'maxConnections',
+  'processShared',
+  'startupParameters',
+]);
 const copyNativeSource = (
   environment: NativeSqlProofEnvironment,
   reference: NativeSqlSourceReference,
@@ -912,29 +1325,12 @@ const nativeDatabaseToken = (
   databaseTokens.set(descriptor, { environment, executor: privateExecutor });
   return descriptor;
 };
-/** Conditional native constructor evidence; does not establish decoder custody or row contents. */
-export const describeNativeSqlDatabase = (
+/** Main's native shape: the executor is built over one `PgClient.make` client, adapted only by provide/mapError. */
+const describeNativePgMakeDatabase = (
   environment: NativeSqlProofEnvironment,
-  executor: NativeSqlSourceReference,
+  provider: NativeSqlSourceReference,
+  resolved: NativeSqlSourceReference,
 ): NativeSqlDatabaseDescriptor | undefined => {
-  if (!hasClosedNativeHandles(environment)) {
-    return undefined;
-  }
-  const resolved = sourceValue(environment, executor);
-  const pipe = resolved === undefined ? undefined : callOf(resolved);
-  if (
-    resolved === undefined ||
-    pipe === undefined ||
-    pipe.callee.type !== 'MemberExpression' ||
-    memberName(pipe.callee) !== 'pipe' ||
-    pipe.arguments.length !== 1
-  ) {
-    return undefined;
-  }
-  const provider = nativeDatabaseProvider(environment, resolved, pipe.callee.object);
-  if (provider === undefined) {
-    return undefined;
-  }
   const client = resolveArgument(environment, provider, 1);
   if (client === undefined) {
     return undefined;
@@ -963,6 +1359,59 @@ export const describeNativeSqlDatabase = (
     return undefined;
   }
   return nativeDatabaseToken(environment, client, resolved);
+};
+const notGuarded = 'not guarded';
+/**
+ * Security fence: guarded Core pool (transaction I/O guard + session-role check). The guards wrap a pool
+ * acquisition whose configuration names the URL and pool settings only, never codecs. `not guarded` hands the
+ * provider to the native `PgClient.make` proof unchanged.
+ */
+const guardedCorePoolDatabase = (
+  environment: NativeSqlProofEnvironment,
+  provider: NativeSqlSourceReference,
+  resolved: NativeSqlSourceReference,
+): NativeSqlDatabaseDescriptor | typeof notGuarded | undefined => {
+  const provided = plainArgument(callOf(provider), 1);
+  const guarded =
+    provided === undefined ? undefined : guardedCorePool(environment, { ...provider, expression: provided });
+  if (guarded === undefined || provided === undefined) {
+    return notGuarded;
+  }
+  const configured = guarded.acquisitions.every((acquisition) => {
+    const config = resolveArgument(environment, acquisition, 0);
+    return config !== undefined && objectKeys(environment, config, guardedPoolConfigKeys)?.has('url') === true;
+  });
+  return configured &&
+    guardedClientClosed(environment, provider, provided, guarded.client) &&
+    hasClosedNativeInstance(environment, resolved)
+    ? nativeDatabaseToken(environment, guarded.client, resolved)
+    : undefined;
+};
+/** Conditional native constructor evidence; does not establish decoder custody or row contents. */
+export const describeNativeSqlDatabase = (
+  environment: NativeSqlProofEnvironment,
+  executor: NativeSqlSourceReference,
+): NativeSqlDatabaseDescriptor | undefined => {
+  if (!hasClosedNativeHandles(environment)) {
+    return undefined;
+  }
+  const resolved = sourceValue(environment, executor);
+  const pipe = resolved === undefined ? undefined : callOf(resolved);
+  if (
+    resolved === undefined ||
+    pipe === undefined ||
+    pipe.callee.type !== 'MemberExpression' ||
+    memberName(pipe.callee) !== 'pipe' ||
+    pipe.arguments.length !== 1
+  ) {
+    return undefined;
+  }
+  const provider = nativeDatabaseProvider(environment, resolved, pipe.callee.object);
+  if (provider === undefined) {
+    return undefined;
+  }
+  const guarded = guardedCorePoolDatabase(environment, provider, resolved);
+  return guarded === notGuarded ? describeNativePgMakeDatabase(environment, provider, resolved) : guarded;
 };
 
 const nativeTransactionToken = (
