@@ -286,6 +286,19 @@ const revisionColumns = {
   tenantId: accessRoleRevisions.tenantId,
 } as const;
 
+/**
+ * The revision columns with only the cells of the asked capabilities and modes, in their stored order: a cell read
+ * transfers what it asks about, not a whole preset of every capability the role holds.
+ */
+const askedRevisionColumns = (capabilityKeys: readonly string[], modes: readonly string[]) => ({
+  ...revisionColumns,
+  cellsJson: sql<readonly Cell[]>`coalesce(
+      (select jsonb_agg(asked.cell order by asked.position)
+         from jsonb_array_elements(${accessRoleRevisions.cellsJson}) with ordinality as asked(cell, position)
+        where asked.cell->>'capabilityKey' in ${capabilityKeys} and asked.cell->>'mode' in ${modes}),
+      '[]'::jsonb)`.mapWith(accessRoleRevisions.cellsJson),
+});
+
 const delegationColumns = {
   amountCeilingJson: accessDelegations.amountCeilingJson,
   capabilityKeys: accessDelegations.capabilityKeys,
@@ -938,7 +951,12 @@ const makeIntentLoaderOver = (
     const [revisions, grants, delegationRows] = yield* Effect.all(
       [
         transaction
-          .select(revisionColumns)
+          .select(
+            askedRevisionColumns(
+              [...new Set(queries.map((query) => query.capabilityKey))],
+              [...new Set(queries.map((query) => query.mode))],
+            ),
+          )
           .from(accessRoleRevisions)
           .where(
             and(
