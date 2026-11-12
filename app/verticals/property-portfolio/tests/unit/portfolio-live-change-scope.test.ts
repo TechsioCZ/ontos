@@ -8,7 +8,7 @@ import { propertyRecords, recordsInput } from '../../src/routes/[lang]/nemovitos
 const { records } = rstest.hoisted(() => ({ records: rstest.fn() }));
 
 rstest.mock('../../src/api/records-client', () => ({ executeRecords: records }));
-rstest.mock('@app/workforce/clients/records', () => ({ listEmployees: () => Effect.succeed([]) }));
+rstest.mock('@app/workforce/clients/records', () => ({ executeRecords: () => Effect.succeed({ items: [] }) }));
 
 // The store only works in a document; Node gets the few window members it uses.
 const events = new EventTarget();
