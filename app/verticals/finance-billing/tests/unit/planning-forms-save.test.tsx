@@ -3,7 +3,7 @@
 // ("Uložit"), last in the footer: typing and Enter change only the draft, an untouched form closes without asking, and
 // an edit over someone else's newer version is refused as a conflict. Only the i18n runtime, the router blocker and the
 // select picker are replaced.
-import { DateTime, Effect } from 'effect';
+import { DateTime, Effect, Predicate } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { createElement } from 'react';
@@ -90,12 +90,8 @@ describe('planning forms save from Uložit only', () => {
       yield* clickSave;
       yield* waitUntil(() => closes.length === 1);
       expect(sent).toHaveLength(1);
-      expect(sent[0]).toMatchObject({
-        _tag: 'UpsertBudgetLine',
-        category: 'Energie',
-        period: '2026-10',
-        plannedMinor: 3_000_000,
-      });
+      expect(Predicate.isTagged(sent[0], 'UpsertBudgetLine')).toBe(true);
+      expect(sent[0]).toMatchObject({ category: 'Energie', period: '2026-10', plannedMinor: 3_000_000 });
     }),
   );
 
@@ -180,8 +176,8 @@ describe('planning forms save from Uložit only', () => {
       yield* clickSave;
       yield* waitUntil(() => closes.length === 1);
       expect(sent).toHaveLength(1);
+      expect(Predicate.isTagged(sent[0], 'UpsertPlanItem')).toBe(true);
       expect(sent[0]).toMatchObject({
-        _tag: 'UpsertPlanItem',
         amountMinor: 4_500_000,
         expectedDate: '2026-11-15',
         probabilityPercent: 80,

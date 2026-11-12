@@ -1,7 +1,7 @@
 // @rstest-environment happy-dom
 // The purchasing forms (order or quote, supplier, stock item, stock movement, order from a quote) send their command
 // on the shared Uložit only: one click sends the same command as the old button, and leaving with typed input asks.
-import { Effect, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { createElement } from 'react';
@@ -154,7 +154,8 @@ describe('purchase order, supplier and stock item', () => {
       expect(document.querySelector<HTMLInputElement>('#item-name')?.value).toBe('Filtr G5');
       yield* saveSent(runner, 2);
       expect(runner.sent[1]).toEqual(runner.sent[0]);
-      expect(runner.sent[0]).toMatchObject({ _tag: 'StockItemCreate', maximum: 20, minimum: 5, sku: 'FLT-G5' });
+      expect(Predicate.isTagged(runner.sent[0], 'StockItemCreate')).toBe(true);
+      expect(runner.sent[0]).toMatchObject({ maximum: 20, minimum: 5, sku: 'FLT-G5' });
       expect(calls).toEqual(['created']);
     }),
   );
