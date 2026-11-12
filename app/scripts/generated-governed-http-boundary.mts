@@ -1992,6 +1992,61 @@ const hasGovernedSupportSlots = (handlerRoot: string): boolean => {
   );
 };
 
+const DATABASE_IDENTITY_ENROLLMENT_BINDING = 'databaseIdentitiesLive';
+const DATABASE_IDENTITY_ENROLLMENT_CALL =
+  /^makeDatabaseIdentityEnrollmentLive\(\s*defineDatabaseIdentityEnrollment\(\s*\[(?<descriptors>[^[\]]*)\]\s*,?\s*\)\s*,?\s*\)$/u;
+
+/** An enrolment descriptor is a runtime import from a module inside the owner (the root lives in `<owner>/api`). */
+const isOwnerLocalIdentityDescriptor = (source: string, descriptor: string): boolean => {
+  const imported = /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(descriptor) ? namedSourceImport(source, descriptor) : undefined;
+  return (
+    imported !== undefined &&
+    /^\.\.?\//u.test(imported.modulePath) &&
+    !path.posix.normalize(path.posix.join('api', imported.modulePath)).startsWith('../')
+  );
+};
+
+/**
+ * Demo-only database identity enrolment: an owner root that binds `databaseIdentitiesLive` and provides it to its
+ * Read runtime must bind exactly Core's enrolment layer over owner-local descriptors, as the native Search
+ * provision proof already requires. Any other layer under that name (a Core Read layer, a look-alike factory, an
+ * extra pipe or a reassignment) is not an enrolment and fails the composition root.
+ */
+const hasPinnedDatabaseIdentityEnrollment = (source: string): boolean => {
+  if (!new RegExp(`\\b${DATABASE_IDENTITY_ENROLLMENT_BINDING}\\b`, 'u').test(maskNonCode(source))) {
+    return true;
+  }
+  const initializer = constInitializer(source, DATABASE_IDENTITY_ENROLLMENT_BINDING);
+  const descriptors = DATABASE_IDENTITY_ENROLLMENT_CALL.exec(
+    initializer === undefined ? '' : maskNonCode(initializer).trim(),
+  )?.groups?.descriptors?.split(',');
+  // Only one trailing comma may leave an empty slot; an array hole is not a descriptor.
+  const descriptorNames = (descriptors ?? []).map((descriptor) => descriptor.trim());
+  if (descriptorNames.at(-1) === '') {
+    descriptorNames.pop();
+  }
+  const factories = ['makeDatabaseIdentityEnrollmentLive', 'defineDatabaseIdentityEnrollment'];
+  return (
+    initializer !== undefined &&
+    descriptors !== undefined &&
+    descriptorNames.every((descriptor) => isOwnerLocalIdentityDescriptor(source, descriptor)) &&
+    new Set(descriptorNames).size === descriptorNames.length &&
+    factories.every((name) => hasRuntimeNamedSourceImport(source, name, name, CORE_RUNTIME_MODULE)) &&
+    hasExactSourceTokens(
+      tokenizeGovernedClient(initializer),
+      `makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([${descriptorNames.join(', ')}]))`,
+    ) &&
+    hasStableReadFactoryBindings(
+      source,
+      new Map([
+        [DATABASE_IDENTITY_ENROLLMENT_BINDING, 1],
+        ...[...factories, ...descriptorNames].map((name): [string, number] => [name, 0]),
+      ]),
+      '',
+    )
+  );
+};
+
 export const hasValidGovernedHttpCompositionRoot = (
   sharedApi: string,
   handlerRoot: string,
@@ -2024,6 +2079,7 @@ export const hasValidGovernedHttpCompositionRoot = (
   return (
     sharedRoot !== undefined &&
     hasGovernedHandlerRoot(handlerRoot, backendRegistration, context) &&
+    hasPinnedDatabaseIdentityEnrollment(handlerRoot) &&
     sharedImports?.depth === 0 &&
     handlerImports?.depth === 0 &&
     hasGovernedSupportSlots(handlerRoot) &&
@@ -25419,6 +25475,7 @@ export const hasValidGovernedHttpCompositionRootStaged = (
   return (
     sharedRoot !== undefined &&
     hasGovernedHandlerRootStaged(handlerRoot, backendRegistration) &&
+    hasPinnedDatabaseIdentityEnrollment(handlerRoot) &&
     sharedImports?.depth === 0 &&
     handlerImports?.depth === 0 &&
     hasGovernedSupportSlotsStaged(handlerRoot) &&

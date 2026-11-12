@@ -16,6 +16,7 @@ import { gatewayContextAuthorizationEntrypoints } from '../../packages/shared-co
 import {
   hasCompleteGeneratedModuleApiSeam,
   hasValidGovernedHttpCompositionRoot,
+  hasValidGovernedHttpCompositionRootStaged,
   hasGeneratedActionRegistrationBinding,
   hasGeneratedActionHttpRunnerBinding,
   hasGeneratedActionClientPublication,
@@ -4323,6 +4324,103 @@ it.live('rejects unbound Core Read layers in generated owner HTTP roots', () =>
     for (const invalid of [direct, aliased, directWithEnrollment]) {
       expect(invalid).not.toBe(handler);
       expect(hasValidGovernedHttpCompositionRoot(shared, invalid)).toBe(false);
+    }
+  }),
+);
+
+it.live('pins the database identity enrolment provided to an owner Read runtime to its exact Core form', () =>
+  Effect.gen(function* pinnedDatabaseIdentityEnrollment() {
+    const root = path.resolve(import.meta.dirname, '../..');
+    const [shared, handler] = yield* Effect.all(
+      [PRICING_SHARED_API_PATH, PRICING_HANDLER_PATH].map((file) =>
+        Effect.promise(() => readFile(path.join(root, file), 'utf-8')),
+      ),
+    );
+    const accepts = (source: string) =>
+      hasValidGovernedHttpCompositionRoot(shared, source) && hasValidGovernedHttpCompositionRootStaged(shared, source);
+    const enrollment =
+      'const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));';
+    const coreImport = '  makeDatabaseIdentityEnrollmentLive,\n';
+    const ownerImport = "import { pricingRegistration } from '../vertical.registration.ts';";
+    expect(handler).toContain(enrollment);
+    expect(handler).toContain(coreImport);
+    expect(accepts(handler)).toBe(true);
+    const withEnrollment = (source: string, value: string) => source.replace(enrollment, value);
+    const ownerDescriptor = withEnrollment(
+      handler.replace(
+        ownerImport,
+        `${ownerImport}\nimport { PRICING_DATABASE_IDENTITY_DESCRIPTOR } from '../src/database-identity.ts';`,
+      ),
+      'const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(\n  defineDatabaseIdentityEnrollment([PRICING_DATABASE_IDENTITY_DESCRIPTOR]),\n);',
+    );
+    expect(accepts(ownerDescriptor)).toBe(true);
+    const coreRead = withEnrollment(
+      handler.replace(coreImport, `${coreImport}  ReadRuntimeLive,\n`),
+      'const databaseIdentitiesLive = ReadRuntimeLive.pipe(Layer.provide(DatabaseConfigLive));',
+    );
+    const foreignFactory = handler
+      .replace(coreImport, '')
+      .replace(
+        ownerImport,
+        `${ownerImport}\nimport { makeDatabaseIdentityEnrollmentLive } from './foreign-enrollment.ts';`,
+      );
+    const localLookAlike = handler
+      .replace(coreImport, '')
+      .replace(
+        enrollment,
+        `const makeDatabaseIdentityEnrollmentLive = (_: unknown) => ReadRuntimeLive;\n${enrollment}`,
+      );
+    for (const [name, invalid] of [
+      ['Core Read layer under the enrolment name', coreRead],
+      ['foreign look-alike enrolment factory', foreignFactory],
+      ['local look-alike enrolment factory', localLookAlike],
+      [
+        'extra pipe on the enrolment',
+        withEnrollment(
+          handler,
+          'const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([])).pipe(Layer.provideMerge(DatabaseConfigLive));',
+        ),
+      ],
+      ['reassigned enrolment', `${handler}\ndatabaseIdentitiesLive = DatabaseConfigLive;`],
+      [
+        'mutable enrolment',
+        withEnrollment(
+          handler,
+          'let databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));',
+        ),
+      ],
+      [
+        'shadowing enrolment',
+        `${handler}\nfunction decoy() { const databaseIdentitiesLive = DatabaseConfigLive; return databaseIdentitiesLive; }`,
+      ],
+      [
+        'foreign descriptor',
+        withEnrollment(
+          handler.replace(
+            ownerImport,
+            `${ownerImport}\nimport { CRM_DATABASE_IDENTITY_DESCRIPTOR } from '../../crm/src/database-identity.ts';`,
+          ),
+          'const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([CRM_DATABASE_IDENTITY_DESCRIPTOR]));',
+        ),
+      ],
+      [
+        'computed descriptor',
+        withEnrollment(
+          handler,
+          'const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([...descriptors]));',
+        ),
+      ],
+      [
+        'enrolment through a variable',
+        withEnrollment(
+          handler,
+          'const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(enrollment);\nconst enrollment = defineDatabaseIdentityEnrollment([]);',
+        ),
+      ],
+    ] as const) {
+      expect(invalid, name).not.toBe(handler);
+      expect(hasValidGovernedHttpCompositionRoot(shared, invalid), name).toBe(false);
+      expect(hasValidGovernedHttpCompositionRootStaged(shared, invalid), name).toBe(false);
     }
   }),
 );
