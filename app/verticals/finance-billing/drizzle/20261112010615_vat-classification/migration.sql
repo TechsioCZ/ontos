@@ -11,8 +11,10 @@
 -- window: whatever it writes is classified exactly as the backfill classifies it. Applying it to a ledger the new
 -- release writes changes nothing (its entries already carry a classification or a treatment). The contract step drops
 -- the trigger and the function.
+-- Every function below has a fixed search path and names its own objects by schema.
 CREATE FUNCTION "finance_billing"."vat_classified_entry"(p_entry jsonb) RETURNS jsonb
   LANGUAGE sql IMMUTABLE PARALLEL SAFE
+  SET search_path = pg_catalog, pg_temp
   AS $$
     SELECT CASE
              WHEN p_entry ? 'vatClassification' OR p_entry ? 'vatTreatment' THEN p_entry
@@ -23,6 +25,7 @@ CREATE FUNCTION "finance_billing"."vat_classified_entry"(p_entry jsonb) RETURNS 
   $$;--> statement-breakpoint
 CREATE FUNCTION "finance_billing"."vat_classified_lines"(p_lines jsonb) RETURNS jsonb
   LANGUAGE sql IMMUTABLE PARALLEL SAFE
+  SET search_path = pg_catalog, pg_temp
   AS $$
     SELECT coalesce(jsonb_agg("finance_billing"."vat_classified_entry"(entry) ORDER BY position), '[]'::jsonb)
       FROM jsonb_array_elements(p_lines) WITH ORDINALITY AS entries(entry, position)
@@ -30,6 +33,7 @@ CREATE FUNCTION "finance_billing"."vat_classified_lines"(p_lines jsonb) RETURNS 
 -- Classifies a ledger: the lines of every invoice and recurring template and every price-list item.
 CREATE FUNCTION "finance_billing"."vat_classified_state"(p_state jsonb) RETURNS jsonb
   LANGUAGE sql IMMUTABLE PARALLEL SAFE
+  SET search_path = pg_catalog, pg_temp
   AS $$
     SELECT p_state
              || CASE WHEN jsonb_typeof(p_state -> 'invoices') = 'array' THEN jsonb_build_object(
@@ -60,6 +64,7 @@ UPDATE "finance_billing"."finance_states"
  WHERE "state" IS DISTINCT FROM "finance_billing"."vat_classified_state"("state");--> statement-breakpoint
 CREATE FUNCTION "finance_billing"."vat_classify_finance_state"() RETURNS trigger
   LANGUAGE plpgsql
+  SET search_path = pg_catalog, pg_temp
   AS $$
     BEGIN
       NEW."state" := "finance_billing"."vat_classified_state"(NEW."state");

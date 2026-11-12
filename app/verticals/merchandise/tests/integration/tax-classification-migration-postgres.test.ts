@@ -16,6 +16,7 @@ import {
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { merchandiseRelations } from '../../src/database/schema.ts';
+import { grossUnitPriceMinor } from '../../shared/domain/merchandise-model.ts';
 import { CompanyTaxRatesSchema } from '../../src/services/tax-rates.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
@@ -331,6 +332,136 @@ it.layer(nativeServices, { excludeTestServices: true })('tax classification migr
           name: 'kava',
           taxClassificationCode: 'cz.vat.reduced',
         });
+      }),
+    180_000,
+  );
+
+  suite.effect(
+    'fills a held price without gross at its held rate, reads a rate however JSON spells it, pins every search path',
+    () =>
+      Effect.gen(function* deployDetails() {
+        const isolated = yield* makeIsolatedNativeDatabaseFixture({
+          mode: 'empty',
+          purpose: 'merchandise-tax-classification',
+        });
+        yield* isolated.migrateCoreSchema();
+        const client = yield* makeTestPgClient(isolated.connections.admin.connectionString, { maxConnections: 1 });
+        const db = yield* makeTestDatabaseFromClient(client, merchandiseRelations);
+        const fs = yield* FileSystem.FileSystem;
+        const before = yield* fs.makeTempDirectoryScoped({ prefix: 'ontos-merchandise-before-tax-' });
+        for (const name of yield* fs.readDirectory(migrations)) {
+          if (name === TAX_CLASSIFICATION || !(yield* fs.exists(`${migrations}/${name}/migration.sql`))) {
+            continue;
+          }
+          yield* fs.makeDirectory(`${before}/${name}`);
+          yield* fs.copyFile(`${migrations}/${name}/migration.sql`, `${before}/${name}/migration.sql`);
+          yield* fs.copyFile(`${migrations}/${name}/snapshot.json`, `${before}/${name}/snapshot.json`);
+        }
+        yield* migrate(db, migrationOptions(before));
+        const crypto = yield* Crypto.Crypto;
+        const tenantId = yield* crypto.randomUUIDv4();
+        const legalEntityId = yield* crypto.randomUUIDv4();
+        yield* client.unsafe(
+          'insert into demo_merchandise.catalog_heads (tenant_id, legal_entity_id) values ($1, $2)',
+          [tenantId, legalEntityId],
+        );
+        const insertProduct = (id: string, net: number, vatRate: number | string) =>
+          client.unsafe(
+            `insert into demo_merchandise.products (
+               tenant_id, legal_entity_id, id, active, archived, availability, category, created_at,
+               current_price_minor, document, gross_price_minor, has_photo, is_action, is_new, is_recommended, is_sale,
+               low_stock, name, name_key, published, search_text, sku, sku_key, stock_on_hand, stock_value_minor,
+               updated_at
+             ) values (
+               $1, $2, $3, true, false, 'IN_STOCK', 'Katalog', now(), $4, $5::jsonb, null, false, false, false, false,
+               false, false, $3, $3, true, $3, $3, $3, 0, 0, now()
+             )`,
+            [tenantId, legalEntityId, id, net, JSON.stringify({ currentPriceMinor: net, name: id, vatRate })],
+          );
+        const insertVariant = (productId: string, variantId: string, net: number, active: boolean, position: number) =>
+          client.unsafe(
+            `insert into demo_merchandise.product_variants (
+               tenant_id, legal_entity_id, product_id, variant_id, active, document, name, position, price_minor,
+               stock_on_hand, unit
+             ) values ($1, $2, $3, $4, $5, $6::jsonb, $4, $8, $7, 0, 'ks')`,
+            [tenantId, legalEntityId, productId, variantId, active, JSON.stringify({ id: variantId }), net, position],
+          );
+        // Held products (stored at 10 %) with no gross anywhere, one plain and one with variants; an order the old
+        // release stored without any `lines` key.
+        yield* insertProduct('held-plain', 30_000, 10);
+        yield* insertProduct('held-variants', 1000, 10);
+        yield* insertVariant('held-variants', 'yearly', 1000, true, 0);
+        yield* insertVariant('held-variants', 'monthly', 90, false, 1);
+        yield* client.unsafe(
+          `insert into demo_merchandise.orders (
+             tenant_id, legal_entity_id, id, created_at, document, number, party_id, removed, search_text, status,
+             total_minor, updated_at
+           ) values ($1, $2, 'no-lines', now(), '{"id": "no-lines", "totalMinor": 0}'::jsonb, 'no-lines', 'party',
+             false, 'no-lines', 'NEW', 0, now())`,
+          [tenantId, legalEntityId],
+        );
+        yield* migrate(db, migrationOptions(migrations));
+
+        // Held prices got their gross at 10 %, rounded as `grossUnitPriceMinor`; the product with variants their lowest
+        // active one.
+        const grosses = yield* client.unsafe<{ readonly gross: number | null; readonly id: string }>(
+          `select id, gross_price_minor::integer as gross from demo_merchandise.products where tenant_id = $1
+           union all
+           select product_id || '/' || variant_id, gross_price_minor::integer from demo_merchandise.product_variants
+            where tenant_id = $1 order by 1`,
+          [tenantId],
+        );
+        expect(grosses).toEqual([
+          { gross: grossUnitPriceMinor(30_000, 10), id: 'held-plain' },
+          { gross: grossUnitPriceMinor(1000, 10), id: 'held-variants' },
+          { gross: grossUnitPriceMinor(90, 10), id: 'held-variants/monthly' },
+          { gross: grossUnitPriceMinor(1000, 10), id: 'held-variants/yearly' },
+        ]);
+        // An order stored without `lines` stays exactly as stored, at deploy and when the old release rewrites it.
+        const orderDocument = client
+          .unsafe<{ readonly document: unknown }>(
+            `select document from demo_merchandise.orders where tenant_id = $1 and id = 'no-lines'`,
+            [tenantId],
+          )
+          .pipe(Effect.map(([row]) => row?.document));
+        expect(yield* orderDocument).toEqual({ id: 'no-lines', totalMinor: 0 });
+        yield* client.unsafe(
+          `update demo_merchandise.orders set document = '{"id": "no-lines", "totalMinor": 1}'::jsonb
+            where tenant_id = $1 and id = 'no-lines'`,
+          [tenantId],
+        );
+        expect(yield* orderDocument).toEqual({ id: 'no-lines', totalMinor: 1 });
+
+        // The old release's rate maps however its JSON spells it; a rate nothing maps is refused naming product and rate.
+        yield* insertProduct('spelled-decimal', 100, 21);
+        yield* client.unsafe(
+          `update demo_merchandise.products set document = document || '{"vatRate": 21.0}'::jsonb
+            where tenant_id = $1 and id = 'spelled-decimal'`,
+          [tenantId],
+        );
+        yield* insertProduct('spelled-string', 100, '12');
+        const classified = yield* client.unsafe<{ readonly classification: string; readonly id: string }>(
+          `select id, tax_classification_code as classification from demo_merchandise.products
+            where tenant_id = $1 and id like 'spelled-%' order by id`,
+          [tenantId],
+        );
+        expect(classified).toEqual([
+          { classification: 'cz.vat.standard', id: 'spelled-decimal' },
+          { classification: 'cz.vat.reduced', id: 'spelled-string' },
+        ]);
+        const unsupported = yield* insertProduct('half-rate', 100, 21.5).pipe(Effect.flip);
+        expect(refusalMessage(unsupported).cause.cause.message).toContain(
+          'half-rate has VAT rate 21.5 %, which names no VAT classification',
+        );
+
+        // Every function the deploy adds runs with a fixed search path.
+        const unpinned = yield* client.unsafe<{ readonly name: string }>(
+          `select p.proname as name from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'demo_merchandise'
+              and not coalesce(p.proconfig @> array['search_path=pg_catalog, pg_temp'], false)
+            order by 1`,
+        );
+        expect(unpinned).toEqual([]);
       }),
     180_000,
   );

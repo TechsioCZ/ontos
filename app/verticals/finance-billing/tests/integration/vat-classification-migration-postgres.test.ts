@@ -163,6 +163,10 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('VAT classification 
           const path = yield* Path.Path;
           const migration = yield* fs.readFileString(path.join(import.meta.dirname, '..', '..', MIGRATION));
           expect(migration).toContain('"finance_billing"."finance_states"');
+          // Every function it creates runs with a fixed search path.
+          const created = migration.split('CREATE FUNCTION').slice(1);
+          expect(created.length).toBe(4);
+          expect(created.filter((body) => !body.includes('SET search_path = pg_catalog, pg_temp'))).toEqual([]);
           // The table becomes the probe; the functions and the trigger live in this session's own schema.
           const probe = migration
             .replaceAll('"finance_billing"."finance_states"', PROBE_TABLE)
