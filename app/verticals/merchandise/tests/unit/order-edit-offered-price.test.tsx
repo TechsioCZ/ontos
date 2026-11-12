@@ -10,6 +10,7 @@ import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ManageCatalogActionConflictProblemSchema } from '../../shared/apis/manage-catalog-action.ts';
+import { OrderMarketSchema, convertGrossMinor } from '../../shared/domain/market-offers.ts';
 import { OrderSchema, ProductRecordSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import type { Order, ProductRecord } from '../../shared/apis/records.ts';
 import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
@@ -128,7 +129,7 @@ const settle = async (): Promise<void> => {
   await browserRuntime.runPromise(Effect.yieldNow);
 };
 const unmounts: (() => void)[] = [];
-const mount = async () => {
+const mount = async (shown: Order = order) => {
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
@@ -138,7 +139,7 @@ const mount = async () => {
         movesStock={false}
         onCancel={() => {}}
         onSaved={() => {}}
-        order={order}
+        order={shown}
         products={[]}
         revision={7}
         vat={vat}
@@ -249,5 +250,28 @@ it.effect('picking a product already added again takes its current price onto th
     await click(button('Uložit'));
     await waitUntil(() => sentBeans().length === 1);
     expect(sentBeans()).toEqual([{ offeredUnitPriceMinor: 1200, productId: 'product-2', quantity: 2 }]);
+  }),
+);
+
+it.effect('a market order offers an added line in its own currency, as the server prices it', () =>
+  Effect.promise(async () => {
+    const market = Schema.decodeSync(OrderMarketSchema)({
+      currency: 'EUR',
+      exchangeRate: '0.04',
+      marketCode: 'TEST-SK',
+      marketId: '30000000-0000-4000-8000-000000000001',
+      roundingMinor: 10,
+    });
+    rstest.mocked(executeManageCatalog).mockReturnValue(Effect.succeed({ entityIds: [], revision: 8 }));
+    await mount({ ...order, market });
+    await click(button('pick product'));
+    await click(button('Přidat'));
+    await click(button('Uložit'));
+    await waitUntil(() => sentBeans().length === 1);
+    // 10 Kč with VAT at 0.04 EUR per Kč, rounded to 0.10 EUR: 0.40 EUR, never the CZK amount.
+    expect(sentBeans()).toEqual([
+      { offeredUnitPriceMinor: convertGrossMinor(1000, market), productId: 'product-2', quantity: 1 },
+    ]);
+    expect(convertGrossMinor(1000, market)).toBe(40);
   }),
 );
