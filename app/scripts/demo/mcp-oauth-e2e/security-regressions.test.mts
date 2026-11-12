@@ -1,6 +1,5 @@
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Fiber, FiberSet, FileSystem, Redacted } from 'effect';
-import type { Cause } from 'effect';
+import { Cause, Effect, Fiber, FiberSet, FileSystem, Redacted } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it, rs } from 'effect-rstest';
 import { refreshIsRejected } from './flow.mts';
@@ -95,6 +94,48 @@ it.effect('keeps a network error mentioning invalid_grant as a typed failure, ne
     expect(yield* provider.currentTokens()).toBe(storedTokens);
     expect(fetch).toHaveBeenCalledTimes(2);
   }).pipe(Effect.scoped),
+);
+
+it.effect('names what answered an unclassified failure: status, body excerpt and who answered, never a token', () =>
+  Effect.gen(function* unclassifiedFailure() {
+    // What the SDK throws for an error answer, carrying the body the proof's fetch annotated.
+    const answer = Object.assign(
+      new Error(
+        'Error POSTing to endpoint: [server=nginx; via=-; content-type=text/html] <html>502 Bad Gateway</html>',
+      ),
+      {
+        code: 'CLIENT_HTTP_NOT_IMPLEMENTED',
+        data: {
+          status: 502,
+          statusText: 'Bad Gateway',
+          text: '[server=nginx; via=-; content-type=text/html] <html>502 Bad Gateway</html> Bearer secret-token',
+        },
+        name: 'SdkHttpError',
+      },
+    );
+    const failure = yield* proofToolCall(
+      'ontos_execute',
+      stableWrite,
+      Effect.fail(new Cause.UnknownError(answer)),
+    ).pipe(Effect.flip);
+    expect(failure.message).toContain('HTTP 502 Bad Gateway');
+    expect(failure.message).toContain('server=nginx');
+    expect(failure.message).toContain('code=CLIENT_HTTP_NOT_IMPLEMENTED');
+    expect(failure.message).not.toContain('secret-token');
+    expect(failure.retryable).toBe(false);
+    // A reset before any response byte, wrapped by the SDK, is still a transport failure of a stable write.
+    const reset = Object.assign(new Error('wrapped'), {
+      cause: Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } }),
+      name: 'SdkError',
+    });
+    // (A read, so no same-key retry runs here; a stable write would be retried once.)
+    const resetFailure = yield* proofToolCall(
+      'ontos_read',
+      stableWrite,
+      Effect.fail(new Cause.UnknownError(reset)),
+    ).pipe(Effect.flip);
+    expect(resetFailure.message).toContain('transport ECONNRESET before any response');
+  }),
 );
 
 it.effect('bounds an uncertain write at 30 seconds, interrupts it, and never retries it despite a stable key', () =>

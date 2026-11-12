@@ -27,6 +27,7 @@ const storefrontRegistryModule = 'commerce.storefront-registry';
 const crmModule = 'demo.crm';
 const pipelineModule = 'demo.sales-pipeline';
 const principalResource = 'core.principal';
+const taxModule = 'commerce.tax';
 
 /**
  * Module IDs as declared in each `vertical.manifest.ts`. Vertical directories: party-registry, work-tasks,
@@ -51,6 +52,7 @@ export const demoModuleIds = [
   operationsModule,
   marketModule,
   storefrontRegistryModule,
+  taxModule,
 ] as const;
 export type DemoModuleId = (typeof demoModuleIds)[number];
 
@@ -219,6 +221,29 @@ export const partyHumanWriterKeys = [
   'party.registry.search-label.read',
 ] as const;
 
+/**
+ * VAT reads for people who pick a VAT classification (products, order lines): which rules apply and whether the
+ * company is a VAT payer. Nothing about order-tax evidence or the privacy coverage of tax data.
+ */
+export const taxReaderKeys = [
+  'commerce.tax.seller-vat-regime.read-at-instant',
+  'commerce.tax.tax-rule-set.read',
+] as const;
+/**
+ * VAT administration of the accountant: the rules and the seller's VAT regime, with their histories. Order-tax
+ * finalization is a service call of commerce-order and the regime import is a migration tool; neither is here.
+ */
+export const taxManagerKeys = [
+  ...taxReaderKeys,
+  'commerce.tax.seller-vat-regime-declaration.declare',
+  'commerce.tax.seller-vat-regime-declaration.read-history',
+  'commerce.tax.tax-rule-revision.correct',
+  'commerce.tax.tax-rule-revision.create',
+  'commerce.tax.tax-rule-revision.end',
+  'commerce.tax.tax-rule.create',
+  'commerce.tax.tax-rule.read-history',
+] as const;
+
 const everything = {
   [commerceModule]: 'write',
   'demo.merchandise': 'write',
@@ -234,10 +259,12 @@ const everything = {
 
 export const demoRoles = {
   accountant: {
-    capabilityKeys: { [partyModule]: partyHumanReaderKeys },
+    capabilityKeys: { [partyModule]: partyHumanReaderKeys, [taxModule]: taxManagerKeys },
     label: 'Účetní',
     modules: {
       [commerceModule]: 'read',
+      // Rates and the seller's VAT regime: read and manage, through the explicit tax keys only.
+      [taxModule]: 'write',
       // Invoice lines pick products; without this read the create form's product list fails to load.
       'demo.merchandise': 'read',
       'demo.sales-insights': 'read',
@@ -250,7 +277,7 @@ export const demoRoles = {
       'work.tasks': 'write',
     },
     proposalReview: true,
-    restrictedModules: [partyModule],
+    restrictedModules: [partyModule, taxModule],
   },
   headOfSales: {
     capabilityKeys: { [partyModule]: partyHumanWriterKeys },
@@ -262,10 +289,14 @@ export const demoRoles = {
     tenantOwner: true,
   },
   salesRep: {
-    capabilityKeys: { [partyModule]: partyHumanWriterKeys, [pipelineModule]: pipelineWriterKeys },
+    capabilityKeys: {
+      [partyModule]: partyHumanWriterKeys,
+      [pipelineModule]: pipelineWriterKeys,
+      [taxModule]: taxReaderKeys,
+    },
     label: 'Obchodník',
     proposalReview: true,
-    restrictedModules: [pipelineModule, partyModule],
+    restrictedModules: [pipelineModule, partyModule, taxModule],
     // Billing is visible but not writable: the rep cannot confirm or void invoices.
     modules: {
       [commerceModule]: 'write',
@@ -276,14 +307,19 @@ export const demoRoles = {
       'legal.agreements': 'write',
       [partyModule]: 'write',
       [pipelineModule]: 'write',
+      // Products carry a VAT classification: the rep reads which rates exist.
+      [taxModule]: 'read',
       'work.tasks': 'write',
       [workforceModule]: 'read',
     },
   },
   warehouse: {
+    capabilityKeys: { [taxModule]: taxReaderKeys },
     label: 'Skladník',
-    modules: { 'demo.merchandise': 'write', 'work.tasks': 'write' },
+    // Product edits pick a VAT classification: the warehouse reads which rates exist.
+    modules: { 'demo.merchandise': 'write', [taxModule]: 'read', 'work.tasks': 'write' },
     proposalReview: true,
+    restrictedModules: [taxModule],
   },
 } as const satisfies Readonly<Record<string, DemoRole>>;
 export type DemoRoleKey = keyof typeof demoRoles;
@@ -595,6 +631,7 @@ export const eshopDemoRoles = {
       [commerceModule]: [`${commerceModule}.market-use.assess`, ...commerceEnrollmentOperatorActionKeys],
       [partyModule]: partyHumanWriterKeys,
       'privacy.core': ['privacy.core.processing-purpose.create', 'privacy.core.notice-version.create'],
+      [taxModule]: taxReaderKeys,
     },
     companyAdmin: true,
     label: 'Správce e-shopu',
@@ -608,16 +645,19 @@ export const eshopDemoRoles = {
       [partyModule]: 'write',
       'privacy.core': 'read',
       [storefrontRegistryModule]: 'write',
+      // Products carry a VAT classification: the administrator reads which rates exist.
+      [taxModule]: 'read',
       'work.tasks': 'write',
       [workforceModule]: 'write',
     },
     proposalReview: true,
-    restrictedModules: [partyModule],
+    restrictedModules: [partyModule, taxModule],
   },
   eshopAdmin: {
     capabilityKeys: {
       [commerceModule]: [`${commerceModule}.market-use.assess`, ...commerceEnrollmentOperatorActionKeys],
       [partyModule]: partyHumanWriterKeys,
+      [taxModule]: taxReaderKeys,
     },
     companyAdmin: true,
     label: 'Správce e-shopu',
@@ -628,11 +668,12 @@ export const eshopDemoRoles = {
       [marketModule]: 'write',
       [partyModule]: 'write',
       [storefrontRegistryModule]: 'write',
+      [taxModule]: 'read',
       'work.tasks': 'write',
       [workforceModule]: 'write',
     },
     proposalReview: true,
-    restrictedModules: [partyModule],
+    restrictedModules: [partyModule, taxModule],
   },
   fulfilment: {
     label: 'Expedice',

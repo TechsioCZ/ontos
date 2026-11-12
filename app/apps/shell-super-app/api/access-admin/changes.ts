@@ -42,6 +42,7 @@ import {
   accessAdminForbiddenProblem,
   accessAdminInternalProblem,
   accessAdminUnprocessableProblem,
+  accessAdminSavedPendingProblem,
   accessAdminUnavailableProblem,
 } from './session.ts';
 
@@ -218,6 +219,9 @@ export const accessChangesFailureProblem = (failure: {
     failure.code === 'access_changes_revision_stale' ||
     failure.code === 'access_changes_undo_conflict' ||
     failure.code === 'access_changes_undo_not_an_adoption';
+  if (failure.code === 'access_changes_command_saved_projection_pending') {
+    return accessAdminSavedPendingProblem();
+  }
   return Match.value({ authority, conflict, unavailable: failure.code === 'access_changes_command_unavailable' }).pipe(
     Match.when({ authority: true }, () => accessAdminForbiddenProblem(text)),
     Match.when({ conflict: true }, () => accessAdminConflictProblem(text)),

@@ -53,6 +53,7 @@ import type { AccessAdminSessionService } from '../../api/access-admin/session.t
 import {
   AccessAdminSession,
   accessAdminAuthenticationRequiredProblem,
+  accessAdminSavedPendingProblem,
   accessAdminUnavailableProblem,
 } from '../../api/access-admin/session.ts';
 
@@ -678,6 +679,11 @@ it.effect('maps every Core refusal to the one status its caller repairs it by', 
     expect(accessChangesFailureProblem({ code: 'access_changes_command_unavailable', reason: 'x' })).toEqual(
       accessAdminUnavailableProblem(),
     );
+    // A decision saved whose permissions are still being applied says exactly that, and stays retryable.
+    expect(
+      accessChangesFailureProblem({ code: 'access_changes_command_saved_projection_pending', reason: 'x' }),
+    ).toEqual(accessAdminSavedPendingProblem());
+    expect(accessAdminSavedPendingProblem()).toMatchObject({ retryable: true, status: 503 });
   }),
 );
 

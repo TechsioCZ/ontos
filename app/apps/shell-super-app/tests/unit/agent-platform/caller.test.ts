@@ -1,6 +1,12 @@
 import { AgentAppIdSchema } from '@app/shared-contracts/agent-proposals';
-import type { AccessDeclarationInput, OntosActionContract, OperationalScope } from '@app/core-runtime';
+import type {
+  AccessDeclarationInput,
+  OntosActionContract,
+  OperationalScope,
+  TenantModuleState,
+} from '@app/core-runtime';
 import {
+  decideModuleStateAccess,
   OntosActionContractSchema,
   OntosModuleIdSchema,
   TenantModuleStateReadUnavailableError,
@@ -395,6 +401,48 @@ it.effect('counts a module only while the tenant has it installed, whatever the 
   }),
 );
 
+/** The gate, counting every question it is asked (batched carriers and LISTs alike). */
+const countedGate = (gate: ReturnType<typeof gateAnswering>, asked: { questions: number }) => ({
+  ...gate,
+  decideMany: (input: Parameters<NonNullable<typeof gate.decideMany>>[0]) =>
+    Effect.suspend(() => {
+      asked.questions += input.length;
+      return gate.decideMany?.(input) ?? Effect.die('no batch');
+    }),
+  list: (input: Parameters<typeof gate.list>[0]) =>
+    Effect.suspend(() => {
+      asked.questions += 1;
+      return gate.list(input);
+    }),
+});
+
+it.effect('never asks the gate or the Action authority about a module the tenant has not installed', () =>
+  Effect.gen(function* uninstalledNotAsked() {
+    const installed = yield* catalog();
+    const asked = { actionKeys: 0, questions: 0 };
+    const rights = yield* callerModuleAccess(caller).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(tenantModuleStates([])),
+      Effect.provideService(AccessDecisionGate, countedGate(gateAnswering('ALLOWED'), asked)),
+      Effect.provideService(ActionAuthority, {
+        ...actionAuthority(() => ({ execute: 'allowed' as const, propose: 'allowed' as const })),
+        checkActionAuthorities: (input: { readonly actionKeys: readonly string[]; readonly scope: OperationalScope }) =>
+          Effect.sync(() => {
+            asked.actionKeys += input.actionKeys.length;
+            return [];
+          }),
+      }),
+    );
+    // The answers about it were always dropped; now they are not asked at all.
+    expect({ access: rights.access.size, propose: rights.propose.size, write: rights.write.size }).toEqual({
+      access: 0,
+      propose: 0,
+      write: 0,
+    });
+    expect(asked).toEqual({ actionKeys: 0, questions: 0 });
+  }),
+);
+
 it.effect('keeps reading a read-only module but drops its write and proposal rights', () =>
   Effect.gen(function* readOnlyModuleState() {
     const installed = yield* catalog();
@@ -675,9 +723,11 @@ it.effect('offers a tenant owner only the modules its tenant has installed, not 
     expect([...authority.live.write]).toEqual([moduleId]);
     expect(authority.offered.map((module) => [module.moduleId, module.write])).toEqual([[moduleId, true]]);
     expect(authority.policyCap).toBe('direct');
-    // One state read for every module the gate answered, so no module escapes the tenant's own installation.
+    // One state read of every composed module chooses what is asked; one more, of every module the gate answered,
+    // decides what is kept, so no module escapes the tenant's own installation, even one deactivated meanwhile.
     expect(inspection.stateReads.map((read) => ({ ...read, moduleKeys: read.moduleKeys.toSorted() }))).toEqual([
       { moduleKeys: [uninstalledModuleId, moduleId].toSorted(), tenantId },
+      { moduleKeys: [moduleId], tenantId },
     ]);
   }),
 );
@@ -1107,6 +1157,308 @@ it.effect('answers an Action key that two modules declare exactly as asking ever
       expect(sortedHints(hints.success)).toEqual(sortedHints(reference.success));
       expect(sortedHints(hints.success).run).toEqual(['alpha.mod']);
     }
+  }),
+);
+
+const sorted = (values: Iterable<string>) => [...values].toSorted();
+
+/** Whether every row of `rows` is one of `reference`, counted as a multiset. */
+const isRowSubset = (rows: readonly string[], reference: readonly string[]) => {
+  const remaining = [...reference];
+  return rows.every((row) => {
+    const at = remaining.indexOf(row);
+    if (at === -1) {
+      return false;
+    }
+    remaining.splice(at, 1);
+    return true;
+  });
+};
+
+/** The members of `set` that are in `kept`. */
+const keptOf = (set: ReadonlySet<string>, kept: ReadonlySet<string>) => new Set([...set].filter((id) => kept.has(id)));
+
+/** Hints restricted to `kept`: each set of `hints` without the modules outside it. */
+const restrictedTo = (
+  hints: {
+    readonly access: ReadonlySet<string>;
+    readonly propose: ReadonlySet<string>;
+    readonly run: ReadonlySet<string>;
+  },
+  kept: ReadonlySet<string>,
+) => ({ access: keptOf(hints.access, kept), propose: keptOf(hints.propose, kept), run: keptOf(hints.run, kept) });
+
+/** A capability read hook that records every key asked about in `asked`. */
+const recordedIn = (asked: Set<string>) => (key: string) =>
+  Effect.sync(() => {
+    asked.add(key);
+  });
+
+/** An `askable` lookup that keeps only `kept` of the composed modules. */
+const askableOnly = (kept: ReadonlySet<string>) => (moduleIds: readonly string[]) =>
+  Effect.succeed(keptOf(new Set(moduleIds), kept));
+
+it.effect('asks only the askable modules and answers them exactly as asking every module does', () =>
+  Effect.gen(function* askableModules() {
+    // gamma is not askable (say, not installed); beta repeats alpha's Action; gamma has a record-scoped read.
+    const shared = moduleAction('alpha.mod', 'alpha.mod.shared');
+    const { installed, keyOf, snapshot } = yield* actionModulesCatalog({
+      'alpha.mod': [shared, moduleAction('alpha.mod', 'alpha.mod.second')],
+      'beta.mod': [shared, moduleAction('beta.mod', 'beta.mod.own')],
+      'gamma.mod': [moduleAction('gamma.mod', 'gamma.mod.first'), moduleAction('gamma.mod', 'gamma.mod.second')],
+    });
+    const granted = ['alpha.mod.shared', 'beta.mod.own', 'gamma.mod.second'].map((name) => ({
+      key: keyOf.get(name) ?? '',
+      modes: ['run'] as const,
+    }));
+    const askable = new Set(['alpha.mod', 'beta.mod']);
+    const describe = (only?: ReadonlySet<string>) =>
+      Effect.gen(function* describeWith() {
+        const asked = new Set<string>();
+        const inspection = subjectInspectionFixture({
+          capabilities: granted,
+          onCapabilityRead: recordedIn(asked),
+          snapshot,
+          subjects: [{ legalEntityId, principalId, tenantId }],
+        });
+        const hints = yield* subjectModuleAccess(
+          humanRequest,
+          undefined,
+          only === undefined ? undefined : askableOnly(only),
+        ).pipe(
+          Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+          Effect.provide(inspection.layer),
+        );
+        return { asked, evidence: inspection.evidence, hints };
+      });
+    const everything = yield* describe();
+    const restricted = yield* describe(askable);
+    expect(sortedHints(restricted.hints)).toEqual(sortedHints(restrictedTo(everything.hints, askable)));
+    expect(sortedHints(everything.hints).run).toContain('gamma.mod');
+    // No question about gamma reaches the gate, so it reads nothing for it and leaves no evidence about it.
+    const gammaKeys = [keyOf.get('gamma.mod.first') ?? '', keyOf.get('gamma.mod.second') ?? ''];
+    expect(gammaKeys.some((key) => everything.asked.has(key))).toBe(true);
+    expect(gammaKeys.some((key) => restricted.asked.has(key))).toBe(false);
+    // Every evidence row it writes is one asking everything writes, row for row; it writes none about gamma.
+    expect(isRowSubset(restricted.evidence, everything.evidence)).toBe(true);
+    expect(restricted.evidence.length).toBeLessThan(everything.evidence.length);
+  }),
+);
+
+/** One module per tenant module state, and one with no state row at all. */
+const MODULE_STATES = new Map<string, TenantModuleState | undefined>([
+  ['active.mod', 'active'],
+  ['read-only.mod', 'read_only'],
+  ['deprecated.mod', 'deprecated'],
+  ['suspended.mod', 'suspended'],
+  ['inactive.mod', 'inactive'],
+  ['archived.mod', 'archived'],
+  ['absent.mod', undefined],
+]);
+
+/** Tenant module states answered per read (1-based), so a state can change between two reads of one load. */
+const statesByRead = (stateAt: (read: number, moduleKey: string) => TenantModuleState | undefined) => {
+  let reads = 0;
+  return Layer.mock(TenantModuleStateService, {
+    getTenantModuleStates: (_tenantId, moduleKeys) =>
+      Effect.sync(() => {
+        reads += 1;
+        const read = reads;
+        return moduleKeys.flatMap((moduleKey) => {
+          const state = stateAt(read, moduleKey);
+          return state === undefined ? [] : [{ moduleKey: OntosModuleIdSchema.make(moduleKey), state }];
+        });
+      }),
+  });
+};
+
+/** The members of `modules` whose state in `MODULE_STATES` admits `access`, sorted. */
+const admittedIn = (modules: ReadonlySet<string>, access: 'read' | 'write') =>
+  [...modules].filter((id) => decideModuleStateAccess(MODULE_STATES.get(id) ?? null, access) === 'allow').toSorted();
+
+/** One Action per module of `MODULE_STATES` (and `extra`), each module's Action key named after it. */
+const stateModulesCatalog = (extra: readonly string[] = []) =>
+  actionModulesCatalog(
+    Object.fromEntries([...MODULE_STATES.keys(), ...extra].map((id) => [id, [moduleAction(id, `${id}.act`)]])),
+  );
+
+/** `callerModuleAccess` over `installed` with every gate and Action answer allowed, and these module states. */
+const allowedCallerRights = (
+  installed: Effect.Success<ReturnType<typeof makeInstalledModuleCatalogLoader>>,
+  states: ReturnType<typeof statesByRead>,
+) =>
+  callerModuleAccess(caller).pipe(
+    Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+    Effect.provide(states),
+    Effect.provideService(AccessDecisionGate, gateAnswering('ALLOWED')),
+    Effect.provideService(
+      ActionAuthority,
+      actionAuthority(() => ({ execute: 'allowed' as const, propose: 'allowed' as const })),
+    ),
+  );
+
+it.effect('answers the approval caller exactly as asking every module, then filtering, in every module state', () =>
+  Effect.gen(function* everyModuleState() {
+    const { installed } = yield* stateModulesCatalog();
+    // The reference: every module asked (all active), then the real state rule applied to the answers.
+    const everything = yield* allowedCallerRights(
+      installed,
+      statesByRead(() => 'active'),
+    );
+    const rights = yield* allowedCallerRights(
+      installed,
+      statesByRead((_read, key) => MODULE_STATES.get(key)),
+    );
+    expect(sorted(rights.access)).toEqual(admittedIn(everything.access, 'read'));
+    expect(sorted(rights.propose)).toEqual(admittedIn(everything.propose, 'write'));
+    expect(sorted(rights.write)).toEqual(admittedIn(everything.write, 'write'));
+    expect(sorted(rights.access)).toEqual(['active.mod', 'deprecated.mod', 'read-only.mod']);
+    expect(sorted(rights.write)).toEqual(['active.mod']);
+  }),
+);
+
+it.effect("drops an approval caller's module that was deactivated while its rights were being decided", () =>
+  Effect.gen(function* deactivatedMidway() {
+    const installed = yield* catalog();
+    const stillActive = yield* allowedCallerRights(
+      installed,
+      statesByRead(() => 'active'),
+    );
+    expect([...stillActive.access]).toEqual([moduleId]);
+    // Active when the questions were chosen, suspended by the time the answers are kept: the module is not offered.
+    const deactivated = yield* allowedCallerRights(
+      installed,
+      statesByRead((read) => (read === 1 ? 'active' : 'suspended')),
+    );
+    expect({
+      access: deactivated.access.size,
+      propose: deactivated.propose.size,
+      write: deactivated.write.size,
+    }).toEqual({
+      access: 0,
+      propose: 0,
+      write: 0,
+    });
+  }),
+);
+
+it.effect('gives a caller whose only rights are in a module the tenant has not installed no module at all', () =>
+  Effect.gen(function* rightsOnlyUninstalled() {
+    const { installed, keyOf } = yield* actionModulesCatalog({
+      'absent.mod': [moduleAction('absent.mod', 'absent.mod.act')],
+      'installed.mod': [moduleAction('installed.mod', 'installed.mod.act')],
+    });
+    const absentKey = keyOf.get('absent.mod.act') ?? '';
+    const asked = { actionKeys: new Set<string>(), carrierKeys: new Set<string>() };
+    const gate = makeTestAccessDecision({ answers: { [absentKey]: { outcome: 'ALLOWED' } } });
+    const rights = yield* callerModuleAccess(caller).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(statesByRead((_read, key) => (key === 'installed.mod' ? 'active' : undefined))),
+      Effect.provideService(AccessDecisionGate, {
+        ...gate,
+        decideMany: (input: Parameters<NonNullable<typeof gate.decideMany>>[0]) =>
+          Effect.suspend(() => {
+            for (const { carrier } of input) {
+              asked.carrierKeys.add(carrier.accessDeclaration?.key ?? '');
+            }
+            return gate.decideMany?.(input) ?? Effect.die('no batch');
+          }),
+      }),
+      Effect.provideService(ActionAuthority, {
+        ...actionAuthority((key) =>
+          key === 'absent.mod.act'
+            ? { execute: 'allowed', propose: 'allowed' }
+            : { execute: 'denied', propose: 'denied' },
+        ),
+        checkActionAuthorities: (input: { readonly actionKeys: readonly string[]; readonly scope: OperationalScope }) =>
+          Effect.sync(() => {
+            for (const actionKey of input.actionKeys) {
+              asked.actionKeys.add(actionKey);
+            }
+            return input.actionKeys.map((actionKey) => ({
+              actionKey,
+              execute: 'denied' as const,
+              propose: 'denied' as const,
+            }));
+          }),
+      }),
+    );
+    expect({ access: rights.access.size, propose: rights.propose.size, write: rights.write.size }).toEqual({
+      access: 0,
+      propose: 0,
+      write: 0,
+    });
+    expect(asked.carrierKeys.has(absentKey)).toBe(false);
+    expect(asked.actionKeys.has('absent.mod.act')).toBe(false);
+    expect(asked.actionKeys.has('installed.mod.act')).toBe(true);
+  }),
+);
+
+/** The connection's acting authority over `installed`, with the fixture's inspection and module states. */
+const actingAuthorityOf = (
+  installed: Effect.Success<ReturnType<typeof makeInstalledModuleCatalogLoader>>,
+  inspection: ReturnType<typeof subjectInspectionFixture>,
+) =>
+  loadActingAuthority(scope, { actingKind: 'human', actingPrincipalId: principalId, legalEntityId, tenantId }).pipe(
+    Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+    Effect.provide(inspection.layer),
+  );
+
+it.effect(
+  'describes a connection exactly as asking every module, then the real state rule, in every module state',
+  () =>
+    Effect.gen(function* actingAuthorityStates() {
+      // One more active module the person holds nothing in, so a denial and its carriers are asked too.
+      const { installed, keyOf, snapshot } = yield* stateModulesCatalog(['ungranted.mod']);
+      const granted = [...MODULE_STATES.keys()].map((id) => ({
+        key: keyOf.get(`${id}.act`) ?? '',
+        modes: ['run'] as const,
+      }));
+      const fixture = () =>
+        subjectInspectionFixture({
+          capabilities: granted,
+          moduleStateAt: (_read, key) => (key === 'ungranted.mod' ? 'active' : MODULE_STATES.get(key)),
+          snapshot,
+          subjects: [{ legalEntityId, principalId, tenantId }],
+        });
+      const described = fixture();
+      const { live, policyCap } = yield* actingAuthorityOf(installed, described);
+      // The reference asks every composed module and keeps what the real state rule admits.
+      const referenced = fixture();
+      const reference = yield* subjectModuleAccess(humanRequest).pipe(
+        Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+        Effect.provide(referenced.layer),
+      );
+      const stateOf = (id: string) => (id === 'ungranted.mod' ? 'active' : (MODULE_STATES.get(id) ?? null));
+      const kept = (modules: ReadonlySet<string>, access: 'read' | 'write') =>
+        [...modules].filter((id) => decideModuleStateAccess(stateOf(id), access) === 'allow').toSorted();
+      expect(sorted(live.read)).toEqual(kept(reference.access, 'read'));
+      expect(sorted(live.write)).toEqual(kept(new Set([...reference.run, ...reference.propose]), 'write'));
+      expect(policyCap).toBe('direct');
+      expect(sorted(live.read)).toEqual(['active.mod', 'deprecated.mod', 'read-only.mod']);
+      // Every evidence row the description writes is one the reference writes, row for row, and it writes fewer.
+      expect(described.evidence.length).toBeGreaterThan(0);
+      expect(isRowSubset(described.evidence, referenced.evidence)).toBe(true);
+      expect(described.evidence.length).toBeLessThan(referenced.evidence.length);
+    }),
+);
+
+it.effect("drops a connection's module that was deactivated while its authority was being decided", () =>
+  Effect.gen(function* connectionDeactivatedMidway() {
+    const { installed, keyOf, snapshot } = yield* stateModulesCatalog();
+    const describe = (stateAt: (read: number) => TenantModuleState) =>
+      actingAuthorityOf(
+        installed,
+        subjectInspectionFixture({
+          capabilities: [{ key: keyOf.get('active.mod.act') ?? '', modes: ['run'] as const }],
+          moduleStateAt: (read, key) => (key === 'active.mod' ? stateAt(read) : undefined),
+          snapshot,
+          subjects: [{ legalEntityId, principalId, tenantId }],
+        }),
+      );
+    expect(sorted((yield* describe(() => 'active')).live.read)).toEqual(['active.mod']);
+    const deactivated = yield* describe((read) => (read === 1 ? 'active' : 'inactive'));
+    expect({ read: deactivated.live.read.size, write: deactivated.live.write.size }).toEqual({ read: 0, write: 0 });
   }),
 );
 

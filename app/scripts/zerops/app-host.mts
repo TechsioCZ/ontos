@@ -7,8 +7,15 @@ import {
   TenantIntentLoaderLive,
 } from '../../packages/core-runtime/src/access/intent/tenant-intent-loader.ts';
 import { startProcessObservability } from './process-observability.mts';
-import { heapLimitArguments, heapLimitMiB, readContainerMemoryBytes } from './heap-limits.mts';
+import {
+  OWNERS_SEMI_SPACE_MIB,
+  OWNERS_YOUNG_GENERATION_ARGUMENTS,
+  heapLimitArguments,
+  heapLimitMiB,
+  readContainerMemoryBytes,
+} from './heap-limits.mts';
 import { withKeepAlive } from './http-keep-alive.mts';
+import { compositionSnapshotResponse } from './composition-source-response.mts';
 import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
 import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
 import {
@@ -400,7 +407,8 @@ const mebibytes = (bytes: number) => String(Math.floor(bytes / 1024 / 1024));
 
 /**
  * Only the single-unit Shell process can use the packaged Bun binary. Every other unit process uses Node. The Shell on
- * Node gets its heap share of the container (heap-limits.mts); Bun has no V8 heap flag, and the owners keep Node's own.
+ * Node gets its heap share of the container (heap-limits.mts); Bun has no V8 heap flag. The owners keep Node's own
+ * old-space limit and get a larger young generation, so request garbage dies young (heap-limits.mts).
  */
 export const startUnitProcess = (
   ids: readonly string[],
@@ -412,11 +420,12 @@ export const startUnitProcess = (
   const name = ids.length === 1 ? (ids[0] ?? 'owners') : 'owners';
   const shell = ids.length === 1 && ids[0] === SHELL_ID;
   const bun = runtime === 'bun' && shell;
-  const heap = shell && !bun ? heapLimitArguments('shell', memoryBytes) : [];
-  let limit = 'Node default';
+  let heap: readonly string[] = shell ? [] : OWNERS_YOUNG_GENERATION_ARGUMENTS;
+  let limit = `Node default, semi-space ${String(OWNERS_SEMI_SPACE_MIB)} MiB`;
   if (bun) {
     limit = 'Bun default';
-  } else if (heap.length > 0) {
+  } else if (shell) {
+    heap = heapLimitArguments('shell', memoryBytes);
     limit = `${String(heapLimitMiB('shell', memoryBytes))} MiB`;
   }
   return Console.log(`[app-host] ${name} heap limit: ${limit} (container ${mebibytes(memoryBytes)} MiB)`).pipe(
@@ -439,14 +448,29 @@ export const finiteProcessEnvironment = (environment: ChildEnvironment): ChildEn
   ONTOS_DATABASE_POOL_SHARED: 'false',
 });
 
+/**
+ * How long a finite child gets between SIGTERM and SIGKILL. A child that holds a Tenant's access fence finishes
+ * its projection and gives the fence back in that time; only a child that is truly stuck is killed.
+ */
+export const FINITE_CHILD_FORCE_KILL_AFTER = Duration.minutes(2);
+
 /** Runs one finite child to a successful exit. */
-const runChild = (name: string, command: string, args: readonly string[], cwd: string, env: ChildEnvironment) =>
+const runChild = (
+  name: string,
+  command: string,
+  args: readonly string[],
+  cwd: string,
+  env: ChildEnvironment,
+  /** `false`: the child sees exactly `env` and nothing of the supervisor's own environment. */
+  extendEnv = true,
+) =>
   Effect.scoped(
     Effect.gen(function* runFiniteChild() {
       const handle = yield* ChildProcess.make(command, [...args], {
         cwd,
         env: finiteProcessEnvironment(env),
-        extendEnv: true,
+        extendEnv,
+        forceKillAfter: FINITE_CHILD_FORCE_KILL_AFTER,
         stderr: 'inherit',
         stdout: 'inherit',
       });
@@ -898,6 +922,35 @@ const fetchLoopback = (url: string) =>
     return new Uint8Array(yield* response.arrayBuffer);
   }).pipe(Effect.scoped, Effect.timeout(ARTIFACT_FETCH_TIMEOUT));
 
+/** The release step that installs the modules each stage Tenant is approved to have and still lacks. */
+export const RELEASE_MODULES_SCRIPT = 'scripts/demo/release-tenant-modules.mts';
+/**
+ * The container settings the release step reads, by name; it is started with these and the host-derived composition
+ * URL only, so the supervisor's own secrets (the admin database URL, the owner secrets bundle, database passwords)
+ * never reach it.
+ */
+export const RELEASE_MODULES_SETTINGS = [
+  'DATABASE_URL',
+  'PATH',
+  'SPICEDB_CA_CERT',
+  'SPICEDB_ENDPOINT',
+  'SPICEDB_PRESHARED_KEY',
+  'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
+] as const;
+
+/** The release step's whole environment: the named settings that are set, and the active composition's URL. */
+export const releaseModulesEnvironment = (
+  settings: ReadonlyMap<string, string>,
+  derived: ChildEnvironment,
+): ChildEnvironment => ({
+  ...Object.fromEntries(
+    RELEASE_MODULES_SETTINGS.flatMap((key) =>
+      Option.toArray(Option.fromUndefinedOr(settings.get(key))).map((value) => [key, value]),
+    ),
+  ),
+  ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: derived.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL,
+});
+
 const waitForOwner = (owner: HostedUnit) => {
   const probe = owner.id === SHELL_ID ? ONTOS_SHELL_RUNTIME_CONTRACT_PATH : ONTOS_MODULE_CONTRACT_PATH;
   return fetchLoopback(`${loopbackOrigin(owner.port)}${probe}`).pipe(
@@ -1000,10 +1053,7 @@ const compositionSourceResponse = <Failure, Requirements>(
     }
     const current = yield* load.pipe(Effect.option, Effect.map(Option.flatten));
     return Option.isSome(current)
-      ? HttpServerResponse.text(current.value, {
-          contentType: 'application/json',
-          headers: { 'cache-control': 'no-store' },
-        })
+      ? compositionSnapshotResponse(current.value, request.headers['if-none-match'])
       : HttpServerResponse.empty({ status: 503 });
   });
 
@@ -1445,12 +1495,41 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     // the authority now, the credentials its release superseded. The provisioning program checks the authority row
     // itself: only while this release holds it, and only credentials bound before its revision took it.
     yield* retireReplaced(release, { replaced: [], superseded: true }).pipe(Effect.forkChild);
-    // The release step writes no authorization relationship. Authorization v2 (ADR-0030) projects every tuple from
-    // PostgreSQL intent through the one Core writer, so the retired `scoped_role`/`action`/`context_permission`
-    // reconciliation would only fail here. Live intent is seeded by the operator-gated stage bootstrap
-    // (`apps/shell-super-app/scripts/bootstrap-stage-accounts.mts`); the engine's canonical schema arrives with the
+    // Platform module installation (`release-tenant-modules.mts`): against the composition just published, every
+    // stage Tenant gets the approved modules it still lacks, written as `system` and projected into SpiceDB by the
+    // step itself, so routine module installs need neither a person nor a host shell. It is additive only, keeps its
+    // own time limit (it is never killed for time while it holds a Tenant's fence), runs beside the Outbox host and
+    // never holds or fails the boot: a failure is one loud line.
+    const releaseSettings = new Map<string, string>();
+    for (const key of RELEASE_MODULES_SETTINGS) {
+      const value = yield* Config.option(Config.String(key));
+      if (Option.isSome(value)) {
+        releaseSettings.set(key, value.value);
+      }
+    }
+    yield* runChild(
+      'release-modules',
+      node,
+      [RELEASE_MODULES_SCRIPT],
+      workspaceRoot,
+      releaseModulesEnvironment(releaseSettings, derived),
+      false,
+    ).pipe(
+      Effect.catchTag('AppHostError', ({ reason }) =>
+        Console.error(
+          `[app-host] RELEASE MODULE INSTALLATION FAILED (${reason}); the modules stay as they were until the next release`,
+        ),
+      ),
+      Effect.forkChild,
+    );
+    // No relationship is written by hand here. Authorization v2 (ADR-0030) projects every tuple from PostgreSQL
+    // intent through the one Core writer, so the retired `scoped_role`/`action`/`context_permission` reconciliation
+    // would only fail here. Two release steps change intent and then project it through that writer: the migrator's
+    // access catalog activation, and the release module step above, which reconciles each Tenant it installed a module
+    // in. Everything else in a live Tenant is seeded by the operator-gated stage bootstrap
+    // (`apps/shell-super-app/scripts/bootstrap-stage-accounts.mts`). The engine's canonical schema arrives with the
     // deployment's SpiceDB bootstrap file, and a live schema or tuple retirement is its own approved operation. The
-    // release proves the projected access before it publishes (`verifyReleaseAccessIntent` above) and never mutates it.
+    // release proves the projected access before it publishes (`verifyReleaseAccessIntent` above).
     const outboxHandover = yield* encodeModuleCredentialHandover(
       (yield* Ref.get(heldCredentials)).credentials,
       callers,

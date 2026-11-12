@@ -79,6 +79,14 @@ it.effect('posts canonical proto3 JSON with the preshared key to the gateway rou
   }),
 );
 
+it.effect('sends its deadline to the gateway, so SpiceDB ends a call the client gave up on', () =>
+  Effect.gen(function* sendsDeadline() {
+    const { requests, withGateway } = gateway(() => Response.json({ writtenAt: { token: 't' } }));
+    yield* rpc.writeRelationships(v1.WriteRelationshipsRequest.create({})).pipe(withGateway);
+    expect(requests[0]?.request.headers['grpc-timeout']).toBe(`${String(SPICEDB_CHECK_TIMEOUT_MS)}m`);
+  }),
+);
+
 it.effect('a gateway status becomes a typed failure carrying the gRPC code', () =>
   Effect.gen(function* checksGatewayStatus() {
     const { withGateway } = gateway(() =>

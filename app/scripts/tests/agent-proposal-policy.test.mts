@@ -16,6 +16,7 @@ import {
   rentalDemoRoles,
   pipelineWriterKeys,
   partyHumanWriterKeys,
+  taxManagerKeys,
 } from '../demo/permissions.mts';
 import type { DemoRole } from '../demo/permissions.mts';
 
@@ -36,6 +37,7 @@ const modulesNamedByRoles = [
   'commerce.customer-context',
   'commerce.market-catalog',
   'commerce.storefront-registry',
+  'commerce.tax',
   'core.identity',
   'crm.activities',
   'demo.crm',
@@ -68,6 +70,7 @@ const namedCapabilityKeys = [
   'commerce.customer-context.retail-portal-profile-binding.revoke',
   'privacy.core.processing-purpose.create',
   'privacy.core.notice-version.create',
+  ...taxManagerKeys,
 ] as const;
 const catalog: readonly CatalogSnapshotEntry[] = [
   entry(PROPOSAL_REVIEW_CAPABILITY, { moduleKey: ModuleKeySchema.make('core.identity') }),
