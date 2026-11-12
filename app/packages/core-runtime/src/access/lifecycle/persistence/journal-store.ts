@@ -1,6 +1,6 @@
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { and, eq, sql } from 'drizzle-orm';
-import { Context, Effect, Layer, Option, Result, Schema } from 'effect';
+import { Context, Duration, Effect, Layer, Option, Result, Schema } from 'effect';
 import type { SqlError } from 'effect/sql/SqlError';
 
 import { isDatabaseGuardRefusal, isDatabaseIntegrityRefusal } from '../../../database/driver-failure.ts';
@@ -26,14 +26,16 @@ import {
 import type { OperationJournal, OperationPhase, ScopeFence } from '../../model.ts';
 import type { AccessLifecycleError } from '../errors.ts';
 import { lifecycleRefusal } from '../errors.ts';
-import { AccessWriteJournalPort } from '../fence.ts';
+import { ACCESS_FENCE_LEASE, AccessWriteJournalPort } from '../fence.ts';
 import type {
   AccessWriteJournalPortService,
   FenceAcquireCommand,
   FenceAcquireOutcome,
+  FenceLeaseRenewCommand,
   FenceReadCommand,
   FenceReleaseCommand,
   FenceReleaseOutcome,
+  FenceTakeOverCommand,
   JournalReadCommand,
 } from '../fence.ts';
 
@@ -59,6 +61,9 @@ type DriverFailure = EffectDrizzleQueryError | SqlError;
 type StoreFailure = AccessLifecycleError | DriverFailure;
 /** A refusal of the store in the vocabulary of its port. */
 type Refusal = (reason: string) => AccessLifecycleError;
+
+/** The lapse of a hold, from the database's own clock, so hosts with skewed clocks agree on it. */
+const leaseUntil = sql`pg_catalog.now() + pg_catalog.make_interval(secs => ${Duration.toSeconds(ACCESS_FENCE_LEASE)})`;
 
 const fenceColumns = {
   owningOperationId: accessScopeFences.owningOperationId,
@@ -335,6 +340,7 @@ const acquireFenceTransaction = Effect.fn('accessLifecycle.persistence.acquireFe
     const acquired = yield* transaction
       .update(accessScopeFences)
       .set({
+        leaseExpiresAt: leaseUntil,
         owningOperationId: command.operationId,
         revision: sql`${accessScopeFences.revision} + 1`,
         state: 'Changing',
@@ -399,6 +405,7 @@ const releaseFenceTransaction = Effect.fn('accessLifecycle.persistence.releaseFe
     const released = yield* transaction
       .update(accessScopeFences)
       .set({
+        leaseExpiresAt: null,
         owningOperationId: null,
         revision: sql`${accessScopeFences.revision} + 1`,
         state: 'Ready',
@@ -450,6 +457,131 @@ const releaseFence = Effect.fn('accessLifecycle.persistence.releaseFence')(funct
     scopeRefusal: fenceStoreUnavailable,
   });
 });
+
+/** The holder's lease, renewed only while it still owns the fence; the revision never moves on a renewal. */
+const renewFenceLeaseTransaction = Effect.fn('accessLifecycle.persistence.renewFenceLeaseTransaction')(
+  function* renewFenceLeaseTransactionEffect(request: {
+    readonly command: FenceLeaseRenewCommand;
+    readonly transaction: CoreTransaction;
+  }): Effect.fn.Return<boolean, StoreFailure> {
+    const { command, transaction } = request;
+    const renewed = yield* transaction
+      .update(accessScopeFences)
+      .set({ leaseExpiresAt: leaseUntil })
+      .where(
+        and(
+          eq(accessScopeFences.scopeId, command.scopeId),
+          eq(accessScopeFences.tenantId, command.tenantId),
+          eq(accessScopeFences.state, 'Changing'),
+          eq(accessScopeFences.owningOperationId, command.operationId),
+        ),
+      )
+      .returning({ scopeId: accessScopeFences.scopeId });
+    return renewed.length === 1;
+  },
+);
+
+const renewFenceLease = Effect.fn('accessLifecycle.persistence.renewFenceLease')(function* renewFenceLeaseEffect(
+  database: AccessJournalStoreDatabase,
+  scope: OperationalScope,
+  command: FenceLeaseRenewCommand,
+): Effect.fn.Return<boolean, AccessLifecycleError> {
+  yield* requireScopedTenant(scope, command.tenantId, fenceOutOfScope);
+  return yield* runScoped({
+    body: (transaction) => renewFenceLeaseTransaction({ command, transaction }),
+    database,
+    refusal: fenceSqlRefusal,
+    scope,
+    scopeRefusal: fenceStoreUnavailable,
+  });
+});
+
+/**
+ * Whether the observed holder's lease has lapsed. A hold taken before leases existed has none; it counts as
+ * lapsed once its journal has not moved for a whole lease, so a fence left by a holder that died before this
+ * release is recovered too, while a live writer of the previous release (which still touches its journal) is not.
+ */
+const holdLapsed = (previousOperationId: string) => sql`coalesce(
+  ${accessScopeFences.leaseExpiresAt},
+  (select j.updated_at + pg_catalog.make_interval(secs => ${Duration.toSeconds(ACCESS_FENCE_LEASE)})
+     from core.access_operation_journals j
+    where j.tenant_id = ${accessScopeFences.tenantId} and j.operation_id = ${previousOperationId}::uuid)
+) < pg_catalog.now()`;
+
+/**
+ * D15 for a dead holder: one transaction takes a fence whose holder's lease lapsed (compare-and-set on the
+ * revision and the holder this operation observed) and ends that holder's journal as `failed`, so it can neither
+ * release nor resume. A live hold is never taken: the row comes back as a `Conflict`.
+ */
+const takeOverExpiredFenceTransaction = Effect.fn('accessLifecycle.persistence.takeOverExpiredFenceTransaction')(
+  function* takeOverExpiredFenceTransactionEffect(request: {
+    readonly command: FenceTakeOverCommand;
+    readonly transaction: CoreTransaction;
+  }): Effect.fn.Return<FenceAcquireOutcome, StoreFailure> {
+    const { command, transaction } = request;
+    const taken = yield* transaction
+      .update(accessScopeFences)
+      .set({
+        leaseExpiresAt: leaseUntil,
+        owningOperationId: command.operationId,
+        revision: sql`${accessScopeFences.revision} + 1`,
+      })
+      .where(
+        and(
+          eq(accessScopeFences.scopeId, command.scopeId),
+          eq(accessScopeFences.tenantId, command.tenantId),
+          eq(accessScopeFences.revision, command.expectedRevision),
+          eq(accessScopeFences.state, 'Changing'),
+          eq(accessScopeFences.owningOperationId, command.previousOperationId),
+          holdLapsed(command.previousOperationId),
+        ),
+      )
+      .returning(fenceColumns);
+    const [row] = taken;
+    if (row !== undefined) {
+      yield* transaction
+        .update(accessOperationJournals)
+        .set({ failureCode: 'lease_expired', phase: 'failed', updatedAt: sql`pg_catalog.now()` })
+        .where(
+          and(
+            eq(accessOperationJournals.tenantId, command.tenantId),
+            eq(accessOperationJournals.operationId, command.previousOperationId),
+            sql`${accessOperationJournals.phase} not in ('committed', 'failed')`,
+          ),
+        );
+      return { _tag: 'Acquired', fence: yield* fenceFromRow(row) };
+    }
+    const observed = yield* transaction
+      .select(fenceColumns)
+      .from(accessScopeFences)
+      .where(and(eq(accessScopeFences.scopeId, command.scopeId), eq(accessScopeFences.tenantId, command.tenantId)));
+    const [current] = observed;
+    if (current === undefined) {
+      return yield* lifecycleRefusal(
+        'fence_unavailable',
+        `Scope ${command.scopeId} has no scope fence for this tenant, so nothing may write`,
+      );
+    }
+    return { _tag: 'Conflict', fence: yield* fenceFromRow(current) };
+  },
+);
+
+const takeOverExpiredFence = Effect.fn('accessLifecycle.persistence.takeOverExpiredFence')(
+  function* takeOverExpiredFenceEffect(
+    database: AccessJournalStoreDatabase,
+    scope: OperationalScope,
+    command: FenceTakeOverCommand,
+  ): Effect.fn.Return<FenceAcquireOutcome, AccessLifecycleError> {
+    yield* requireScopedTenant(scope, command.tenantId, fenceOutOfScope);
+    return yield* runScoped({
+      body: (transaction) => takeOverExpiredFenceTransaction({ command, transaction }),
+      database,
+      refusal: fenceSqlRefusal,
+      scope,
+      scopeRefusal: fenceStoreUnavailable,
+    });
+  },
+);
 
 const readFenceTransaction = Effect.fn('accessLifecycle.persistence.readFenceTransaction')(
   function* readFenceTransactionEffect(request: {
@@ -677,6 +809,15 @@ export interface AccessWriteJournalStoreService {
     scope: OperationalScope,
     command: FenceReleaseCommand,
   ) => Effect.Effect<FenceReleaseOutcome, AccessLifecycleError>;
+  /** Optional so a store double without leases stays valid; the database store always provides it. */
+  readonly renewFenceLease?: (
+    scope: OperationalScope,
+    command: FenceLeaseRenewCommand,
+  ) => Effect.Effect<boolean, AccessLifecycleError>;
+  readonly takeOverExpiredFence?: (
+    scope: OperationalScope,
+    command: FenceTakeOverCommand,
+  ) => Effect.Effect<FenceAcquireOutcome, AccessLifecycleError>;
   readonly writeJournal: (
     scope: OperationalScope,
     journal: OperationJournal,
@@ -696,6 +837,8 @@ export const makeAccessWriteJournalStore = (database: AccessJournalStoreDatabase
   readFence: (scope, command) => readFence(database, scope, command),
   readJournal: (scope, command) => readJournal(database, scope, command),
   releaseFence: (scope, command) => releaseFence(database, scope, command),
+  renewFenceLease: (scope, command) => renewFenceLease(database, scope, command),
+  takeOverExpiredFence: (scope, command) => takeOverExpiredFence(database, scope, command),
   writeJournal: (scope, journal) => writeJournal(database, scope, journal),
 });
 
@@ -724,12 +867,23 @@ export const accessWriteJournalPortLayer = (
   Layer.effect(
     AccessWriteJournalPort,
     AccessWriteJournalStore.pipe(
-      Effect.map((store): AccessWriteJournalPortService => ({
-        acquireFence: (command) => store.acquireFence(scope, command),
-        readFence: (command) => store.readFence(scope, command),
-        readJournal: (command) => store.readJournal(scope, command),
-        releaseFence: (command) => store.releaseFence(scope, command),
-        writeJournal: (journal) => store.writeJournal(scope, journal),
-      })),
+      Effect.map((store) => {
+        const { renewFenceLease: renew, takeOverExpiredFence: takeOver } = store;
+        const base: AccessWriteJournalPortService = {
+          acquireFence: (command) => store.acquireFence(scope, command),
+          readFence: (command) => store.readFence(scope, command),
+          readJournal: (command) => store.readJournal(scope, command),
+          releaseFence: (command) => store.releaseFence(scope, command),
+          writeJournal: (journal) => store.writeJournal(scope, journal),
+        };
+        // The lease operations exist exactly when the store has them.
+        return renew === undefined || takeOver === undefined
+          ? base
+          : {
+              ...base,
+              renewFenceLease: (command) => renew(scope, command),
+              takeOverExpiredFence: (command) => takeOver(scope, command),
+            };
+      }),
     ),
   );

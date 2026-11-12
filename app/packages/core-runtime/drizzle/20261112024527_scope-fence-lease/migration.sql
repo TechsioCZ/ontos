@@ -1,0 +1,2 @@
+ALTER TABLE "core"."access_scope_fences" ADD COLUMN "lease_expires_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "core"."access_scope_fences" ADD CONSTRAINT "access_scope_fences_lease_ck" CHECK ("state" <> 'Ready' or "lease_expires_at" is null);

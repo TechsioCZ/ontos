@@ -1,4 +1,4 @@
-import { Clock, Context, DateTime, Effect, Match, Option, Result, Schema } from 'effect';
+import { Clock, Context, DateTime, Duration, Effect, Match, Option, Result, Schema } from 'effect';
 
 import type { AccessOperationId, AccessScopeId, CommandDigest, TenantId } from '../ids.ts';
 import {
@@ -326,6 +326,34 @@ export const advanceOperationJournal = (
  * The fence and journal store, and the one write path every access writer uses
  * ---------------------------------------------------------------------------------------------- */
 
+/**
+ * How long an operation's hold on a fence stays live without being renewed. The holder renews it every
+ * `ACCESS_FENCE_LEASE_RENEWAL` while it works, so only a holder that died (OOM kill, SIGKILL, host loss) lets it
+ * lapse. Once it has lapsed, a later projection of the same tenant may take the fence over; it must finish a full
+ * reconcile before it gives the fence back, so the fence only ever opens on a consistent projection.
+ */
+export const ACCESS_FENCE_LEASE = Duration.minutes(2);
+export const ACCESS_FENCE_LEASE_RENEWAL = Duration.seconds(30);
+
+/** Renew this operation's hold on the fence it owns. */
+export interface FenceLeaseRenewCommand {
+  readonly operationId: AccessOperationId;
+  readonly scopeId: AccessScopeId;
+  readonly tenantId: TenantId;
+}
+
+/**
+ * Take over a fence whose holder's lease has lapsed: the compare-and-set names the revision and the holder this
+ * operation observed, and the store also ends the dead holder's journal as `failed` so it can never resume.
+ */
+export interface FenceTakeOverCommand {
+  readonly expectedRevision: ScopeFence['revision'];
+  readonly operationId: AccessOperationId;
+  readonly previousOperationId: AccessOperationId;
+  readonly scopeId: AccessScopeId;
+  readonly tenantId: TenantId;
+}
+
 export interface AccessWriteJournalPortService {
   /**
    * D15: take the fence in one atomic step (`UPDATE … SET state = 'Changing', owning_operation_id = $op,
@@ -342,6 +370,16 @@ export interface AccessWriteJournalPortService {
    * owning_operation_id = $op`), so a writer never frees somebody else's lock.
    */
   readonly releaseFence: (command: FenceReleaseCommand) => Effect.Effect<FenceReleaseOutcome, AccessLifecycleError>;
+  /**
+   * Renew the holder's lease (`… SET lease_expires_at = now() + lease WHERE state = 'Changing' AND
+   * owning_operation_id = $op`); `false` when this operation no longer holds the fence. A store without leases
+   * (a test double) leaves it out, and its fences are then never taken over.
+   */
+  readonly renewFenceLease?: (command: FenceLeaseRenewCommand) => Effect.Effect<boolean, AccessLifecycleError>;
+  /** Take over a fence whose holder's lease lapsed; `Conflict` answers the fence as it is (a live hold). */
+  readonly takeOverExpiredFence?: (
+    command: FenceTakeOverCommand,
+  ) => Effect.Effect<FenceAcquireOutcome, AccessLifecycleError>;
   readonly writeJournal: (journal: OperationJournal) => Effect.Effect<void, AccessLifecycleError>;
 }
 
@@ -386,6 +424,12 @@ const takeScopeFence = Effect.fn('accessLifecycle.takeScopeFence')(function* tak
 export interface AccessWriteRequest {
   readonly change: AccessChangeReceipt;
   readonly commandDigest: CommandDigest;
+  /**
+   * Keep the fence when the projection fails instead of releasing it. A writer that took the fence over from a dead
+   * holder sets it: the graph may be half-written by that holder, so the fence opens only on a committed reconcile,
+   * and a failed one leaves the fence to lapse to the next taker.
+   */
+  readonly keepFenceOnFailure?: boolean;
   readonly operationId: AccessOperationId;
   /** Writes the projection of this change and returns the projection token of that write. */
   readonly project: (scopeId: AccessScopeId) => Effect.Effect<string, AccessLifecycleError>;
@@ -453,7 +497,9 @@ const failOperation = Effect.fn('accessLifecycle.failOperation')(function* failO
     updatedAt: now,
   });
   yield* port.writeJournal(failed);
-  yield* releaseFence(request.fence, request.write.operationId);
+  if (request.write.keepFenceOnFailure !== true) {
+    yield* releaseFence(request.fence, request.write.operationId);
+  }
 });
 
 const commitProjection = Effect.fn('accessLifecycle.commitProjection')(function* commitProjectionEffect(

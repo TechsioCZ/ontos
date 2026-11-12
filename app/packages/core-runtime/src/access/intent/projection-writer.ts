@@ -18,6 +18,7 @@ import type { AccessOperationId, AccessScopeId, CommandDigest, TenantId } from '
 import type { AccessLifecycleError } from '../lifecycle/errors.ts';
 import { lifecycleRefusal } from '../lifecycle/errors.ts';
 import {
+  ACCESS_FENCE_LEASE_RENEWAL,
   AccessWriteJournalPort,
   acquireScopeFence,
   openOperationJournal,
@@ -25,6 +26,7 @@ import {
   runAccessWrite,
   validateAccessChange,
 } from '../lifecycle/fence.ts';
+import type { AccessWriteJournalPortService } from '../lifecycle/fence.ts';
 import { AccessWriteJournalStore } from '../lifecycle/persistence/journal-store.ts';
 import type { AccessIntentError } from './errors.ts';
 import { AccessProjectionCompiler } from './projection-compiler.ts';
@@ -272,6 +274,58 @@ const fenceCommand = (request: TakenFence) =>
   ({ operationId: request.operationId, scopeId: request.scopeId, tenantId: request.tenantId }) as const;
 
 /**
+ * Take over a fence whose holder died with it held: the store's compare-and-set succeeds only while the observed
+ * holder still owns the fence at the pinned revision and its lease has lapsed, and it ends that holder's journal.
+ * A live holder is never preempted: its fence comes back as a conflict and this reconcile is refused.
+ */
+const takeOverLapsedFence = Effect.fn('AccessProjectionWriter.takeOverLapsedFence')(function* takeOverLapsedFenceEffect(
+  takeOver: NonNullable<AccessWriteJournalPortService['takeOverExpiredFence']>,
+  request: {
+    readonly expectedRevision: number;
+    readonly operationId: AccessOperationId;
+    readonly previousOperationId: AccessOperationId;
+    readonly scopeId: AccessScopeId;
+    readonly tenantId: TenantId;
+  },
+) {
+  const outcome = yield* takeOver(request);
+  return yield* Match.value(outcome).pipe(
+    Match.tag('Acquired', ({ fence }) =>
+      Effect.logWarning(
+        `Tenant ${request.tenantId}: took over the access fence of operation ${request.previousOperationId}, whose hold lapsed; reconciling the whole tenant before it opens`,
+      ).pipe(Effect.as(fence)),
+    ),
+    Match.tag('Conflict', ({ fence }) =>
+      Effect.fail(
+        lifecycleRefusal(
+          'fence_held_by_other_operation',
+          `Scope ${fence.scopeId} is held by operation ${fence.owningOperationId ?? 'nobody'} (${fence.state}, revision ${fence.revision}) whose hold has not lapsed, so nothing may write`,
+        ),
+      ),
+    ),
+    Match.exhaustive,
+  );
+});
+
+/** Keep this operation's hold live while it works; a failed renewal is logged, the next one tries again. */
+const renewHeldLease = Effect.fn('AccessProjectionWriter.renewHeldLease')(function* renewHeldLeaseEffect(
+  taken: TakenFence,
+) {
+  const port = yield* AccessWriteJournalPort;
+  const { renewFenceLease } = port;
+  if (renewFenceLease === undefined) {
+    return yield* Effect.void;
+  }
+  return yield* Effect.sleep(ACCESS_FENCE_LEASE_RENEWAL).pipe(
+    Effect.andThen(renewFenceLease(fenceCommand(taken))),
+    Effect.catchTag('AccessLifecycleError', ({ code, reason }) =>
+      Effect.logWarning(`The tenant scope fence lease could not be renewed (${code}: ${reason})`).pipe(Effect.as(true)),
+    ),
+    Effect.forever,
+  );
+});
+
+/**
  * D15's compare-and-set against the revision this reconcile pinned *before* it read its snapshot (R5a-1).
  *
  * `runAccessWrite` takes the same fence for the projection it commits; this operation already holds it, so
@@ -283,10 +337,18 @@ const fenceCommand = (request: TakenFence) =>
 const takeTenantFence = Effect.fn('AccessProjectionWriter.takeTenantFence')(function* takeTenantFenceEffect(request: {
   readonly expectedRevision: number;
   readonly operationId: AccessOperationId;
+  readonly previousHolder: Option.Option<AccessOperationId>;
   readonly scopeId: AccessScopeId;
   readonly tenantId: TenantId;
 }) {
   const port = yield* AccessWriteJournalPort;
+  const { takeOverExpiredFence } = port;
+  if (Option.isSome(request.previousHolder) && takeOverExpiredFence !== undefined) {
+    return yield* takeOverLapsedFence(takeOverExpiredFence, {
+      ...request,
+      previousOperationId: request.previousHolder.value,
+    });
+  }
   {
     const current = yield* port.readFence({ scopeId: request.scopeId, tenantId: request.tenantId });
     const desired = yield* acquireScopeFence({ ...request, current });
@@ -420,6 +482,8 @@ interface FencedReconcileInput {
   readonly openedJournal: boolean;
   readonly operationId: AccessOperationId;
   readonly pinnedRevision: number;
+  /** The holder whose lapsed hold this reconcile takes over, when the fence was not `Ready`. */
+  readonly previousHolder: Option.Option<AccessOperationId>;
   readonly tenantId: TenantId;
   readonly tenantScopeId: AccessScopeId;
 }
@@ -448,6 +512,7 @@ const reconcileUnderFence = Effect.fn('AccessProjectionWriter.reconcileUnderFenc
     runAccessWrite({
       change: input.change,
       commandDigest: digest,
+      keepFenceOnFailure: Option.isSome(input.previousHolder),
       operationId,
       project: () =>
         projectionStep({
@@ -519,6 +584,7 @@ const fencedReconcile = Effect.fn('AccessProjectionWriter.fencedReconcile')(func
     fence: yield* takeTenantFence({
       expectedRevision: input.pinnedRevision,
       operationId,
+      previousHolder: input.previousHolder,
       scopeId: tenantScopeId,
       tenantId,
     }).pipe(Effect.mapError(fenceRefusalError)),
@@ -526,8 +592,15 @@ const fencedReconcile = Effect.fn('AccessProjectionWriter.fencedReconcile')(func
     scopeId: tenantScopeId,
     tenantId,
   };
-  return yield* reconcileUnderFence(input, taken).pipe(Effect.ensuring(releaseAfterReconcile(taken)));
-});
+  // The renewal runs beside the write and stops with it; it is interruptible although the write is not.
+  yield* renewHeldLease(taken).pipe(Effect.interruptible, Effect.forkScoped);
+  const reconciled = reconcileUnderFence(input, taken);
+  // A fence taken over from a dead holder opens only on a committed reconcile (the write path releases it then);
+  // anything short of that leaves it held, its lease lapsing to the next taker.
+  return yield* Option.isSome(input.previousHolder)
+    ? reconciled
+    : reconciled.pipe(Effect.ensuring(releaseAfterReconcile(taken)));
+}, Effect.scoped);
 
 /**
  * The reconcile program: it states the request scope's fence and journal port in `R` and binds none of
@@ -581,10 +654,22 @@ export const reconcileTenantIntent = (
           ),
         ),
       );
+    // A fence another operation holds may be taken over once that holder's lease has lapsed; whether it has is the
+    // store's decision (database clock), made atomically when this reconcile tries to take the fence.
+    const previousHolder = pinned.pipe(
+      Option.flatMap((current) =>
+        current.state === 'Changing' &&
+        current.owningOperationId !== undefined &&
+        current.owningOperationId !== operationId &&
+        port.takeOverExpiredFence !== undefined
+          ? Option.some(current.owningOperationId)
+          : Option.none(),
+      ),
+    );
     const pinnedIssue = Option.match(pinned, {
       onNone: () => Option.some(`The tenant context scope ${tenantScopeId} has no scope fence, so nothing may write`),
       onSome: (current) =>
-        current.state === 'Ready'
+        current.state === 'Ready' || Option.isSome(previousHolder)
           ? Option.none()
           : Option.some(
               `The tenant's scope fence is ${current.state} and held by operation ${current.owningOperationId ?? 'nobody'}, so nothing may write`,
@@ -648,6 +733,7 @@ export const reconcileTenantIntent = (
         openedJournal,
         operationId,
         pinnedRevision,
+        previousHolder,
         tenantId,
         tenantScopeId,
       }),
@@ -674,17 +760,29 @@ export const AccessProjectionWriterLive: Layer.Layer<
     const journal = yield* AccessWriteJournalStore;
     const loader = yield* TenantIntentLoader;
     const reconcile = reconcileTenantIntent(compiler, loader);
+    const { renewFenceLease: renew, takeOverExpiredFence: takeOver } = journal;
+    // The port of one request scope; the lease operations exist exactly when the store has them.
+    const portOver = (scope: OperationalScope): AccessWriteJournalPortService => {
+      const base: AccessWriteJournalPortService = {
+        acquireFence: (command) => journal.acquireFence(scope, command),
+        readFence: (command) => journal.readFence(scope, command),
+        readJournal: (command) => journal.readJournal(scope, command),
+        releaseFence: (command) => journal.releaseFence(scope, command),
+        writeJournal: (entry) => journal.writeJournal(scope, entry),
+      };
+      return renew === undefined || takeOver === undefined
+        ? base
+        : {
+            ...base,
+            renewFenceLease: (command) => renew(scope, command),
+            takeOverExpiredFence: (command) => takeOver(scope, command),
+          };
+    };
     return Object.freeze({
       reconcileTenant: (request: TenantProjectionRequest) =>
         reconcile(request).pipe(
           Effect.provideContext(
-            Context.make(AccessWriteJournalPort, {
-              acquireFence: (command) => journal.acquireFence(request.scope, command),
-              readFence: (command) => journal.readFence(request.scope, command),
-              readJournal: (command) => journal.readJournal(request.scope, command),
-              releaseFence: (command) => journal.releaseFence(request.scope, command),
-              writeJournal: (entry) => journal.writeJournal(request.scope, entry),
-            }).pipe(Context.add(Crypto.Crypto, crypto)),
+            Context.make(AccessWriteJournalPort, portOver(request.scope)).pipe(Context.add(Crypto.Crypto, crypto)),
           ),
         ),
     });
