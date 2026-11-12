@@ -527,6 +527,9 @@ const queueReadActionKeys = Effect.gen(function* queueReadActionKeys() {
   );
 });
 
+/** The first work-tasks Action key: what one work-tasks proposal batch names. */
+const firstTaskAction = (keys: readonly string[]) => keys.filter((key) => key.startsWith('work.tasks.')).slice(0, 1);
+
 const sorted = (values: Iterable<string>) => [...values].toSorted();
 
 /** The members of `modules` that are in `kept`, sorted. */
@@ -536,9 +539,10 @@ const reportPath = Config.option(Config.String('CALLER_AUTHORITY_REPORT'));
 
 /**
  * Bounds of a stage tenant's caller authority load: one engine snapshot each for the carriers, the LISTs and the
- * Actions. Asking every composed module took 86 transactions; one LIST call at a time, 36 and 6 snapshots.
+ * Actions, with one kind and scope read for all LISTs. Asking every composed module took 86 transactions; one LIST
+ * call at a time, 36 and 6 snapshots; one call with a preamble per LIST, 30.
  */
-const CALLER_INSTALLED_BOUNDS = { checkBulk: 3, transactions: 30 };
+const CALLER_INSTALLED_BOUNDS = { checkBulk: 3, transactions: 20 };
 
 it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '900 seconds' })(
   'agent platform caller authority over the installed release',
@@ -666,12 +670,40 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '900 secon
               expect(at).toBeGreaterThanOrEqual(0);
               remaining.splice(at, 1);
             }
+            // One exact proposal batch read's Action authority: every Action of the release (as it asked before) or
+            // only the one its rows name (a work-tasks proposal), as an approval's five batch reads now ask it.
+            const batchScope = yield* ownerScope('installed-batch-authority');
+            const everyAction = yield* measured({
+              authorityCase,
+              correlationId: 'installed-batch-every-action',
+              read: Effect.gen(function* everyActionAuthority() {
+                const actionKeys = yield* queueReadActionKeys;
+                return yield* (yield* ActionAuthority).checkActionAuthorities({ actionKeys, scope: batchScope });
+              }),
+              snapshot,
+            });
+            const oneAction = yield* measured({
+              authorityCase,
+              correlationId: 'installed-batch-one-action',
+              read: Effect.gen(function* oneActionAuthority() {
+                const actionKeys = firstTaskAction(yield* queueReadActionKeys);
+                return yield* (yield* ActionAuthority).checkActionAuthorities({ actionKeys, scope: batchScope });
+              }),
+              snapshot,
+            });
+            const [taskAction] = oneAction.value;
+            expect(oneAction.value).toEqual(
+              everyAction.value.filter(({ actionKey }) => actionKey === taskAction?.actionKey),
+            );
+            expect(oneAction.counters.checkItems).toBeLessThan(everyAction.counters.checkItems);
             const path = yield* reportPath;
             if (Option.isSome(path)) {
               yield* (yield* FileSystem.FileSystem).writeFileString(
                 `${path.value}.installed.json`,
                 yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
                   after: reportOf(caller),
+                  batchAuthorityEvery: reportOf(everyAction),
+                  batchAuthorityOne: reportOf(oneAction),
                   everything: reportOf(everything),
                   trace: yield* Ref.get(trace),
                 }),
