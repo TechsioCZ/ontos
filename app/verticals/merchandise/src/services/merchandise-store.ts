@@ -1025,6 +1025,27 @@ const categoryIdsForWorkingSet = (request: WorkingSetRequest, loadedProducts: re
 };
 
 /** Loads the rows `request` names under the locked head row. */
+/** The lines of one order as stored; none when the company has no such order. */
+export const loadOrderLines = Effect.fn('MerchandiseStore.loadOrderLines')(function* loadOrderLines(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  orderId: string,
+) {
+  const rows = yield* query(
+    db
+      .select({ document: orders.document })
+      .from(orders)
+      .where(and(whereScope(orders, scope), eq(orders.id, orderId)))
+      .limit(1),
+    'Order could not be read',
+  );
+  const loaded = yield* query(
+    Effect.forEach(rows, (row) => decodeOrder(row.document), { concurrency: 1 }),
+    'Stored order does not decode',
+  );
+  return loaded.flatMap((order) => order.lines);
+});
+
 export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(function* loadWorkingSet(
   db: MerchandiseDb,
   scope: StoreScope,

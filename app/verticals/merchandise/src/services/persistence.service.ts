@@ -14,7 +14,12 @@ import {
   reviewOrderChangesCarrier,
 } from '../../shared/access-declarations.ts';
 import { OperationContextUnavailable } from '@app/core-runtime';
-import type { MediaRendition, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import type {
+  ActionOwnerTransaction,
+  MediaRendition,
+  OperationalScope,
+  ScopedTransactionExecutor,
+} from '@app/core-runtime';
 import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
 import { executeCounterpartyReadWithAuthorization } from '@app/party-registry/api/client';
 import { Effect, DateTime, Match, Option, Predicate, Result, Schema } from 'effect';
@@ -100,6 +105,7 @@ import {
   lockHeadForWrite,
   persistChange,
   advanceHeadRevision,
+  loadOrderLines,
   materialiseTaxRatesIfIdle,
   storeMissingGrossPrices,
   writeTaxRates,
@@ -2232,8 +2238,8 @@ const entersPrices = (command: MerchandiseCommand) =>
 
 /**
  * Commands that price something new with a current rate: new orders and new product prices. They wait (briefly) for
- * the company's refresh from Tax when its answer is stale. An order edit never waits: its existing lines keep what
- * they stored, and a line it adds is priced from the company's materialised rates.
+ * the company's refresh from Tax when its answer is stale. An order edit waits only when it adds a line
+ * ({@link editAddsOrderLines}); its existing lines keep the rate they stored.
  */
 const currentRatesWanted = (command: MerchandiseCommand) =>
   (Predicate.isTagged(command, 'PlaceStorefrontOrder') && command.dryRun !== true) ||
@@ -2275,6 +2281,23 @@ const taxUnavailable = () =>
   });
 
 /**
+ * Whether an order edit adds a line the order does not have yet (read in a short snapshot before the owner
+ * transaction): such an edit prices something new, so it waits for current rates like a new order.
+ */
+const editAddsOrderLines = Effect.fn('Merchandise.editAddsOrderLines')(function* editAddsOrderLines(
+  transaction: ScopedTransactionExecutor,
+  scope: OperationalScope,
+  command: MerchandiseCommand,
+) {
+  if (!Predicate.isTagged(command, 'EditOrder') || command.lines === undefined || scope.legalEntityId === undefined) {
+    return false;
+  }
+  const store: StoreScope = { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId };
+  const existing = new Set((yield* loadOrderLines(transaction, store, command.id)).map(lineKey));
+  return command.lines.some((line) => !existing.has(lineKey(line)));
+});
+
+/**
  * Tax's answer for a command, before the owner transaction opens (a remote call never runs inside it): an explicit
  * sync always asks Tax; a command that prices something new waits briefly for the company's single refresh when the
  * known answer is stale; every other command works with what is known and never waits. The transaction then decides,
@@ -2283,8 +2306,17 @@ const taxUnavailable = () =>
 export const prepareCommandTax = Effect.fn('Merchandise.prepareCommandTax')(function* prepareCommandTax(
   command: MerchandiseCommand,
   scope: OperationalScope,
+  /** The Action's preparation snapshot: an order edit reads there whether it adds a line. */
+  snapshot?: ActionOwnerTransaction,
 ) {
-  if (!Predicate.isTagged(command, 'SyncTaxRates') && !currentRatesWanted(command)) {
+  const addsOrderLines =
+    snapshot !== undefined && Predicate.isTagged(command, 'EditOrder')
+      ? yield* snapshot((transaction) => editAddsOrderLines(transaction, scope, command)).pipe(
+          // When the order cannot be read the edit waits anyway: waiting is never wrong, only slower.
+          Effect.orElseSucceed(() => true),
+        )
+      : false;
+  if (!Predicate.isTagged(command, 'SyncTaxRates') && !currentRatesWanted(command) && !addsOrderLines) {
     const known = yield* knownTaxRateBook(scope);
     return { fetched: known.fetched, refused: known.refused } satisfies PreparedTax;
   }

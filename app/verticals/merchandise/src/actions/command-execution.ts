@@ -65,7 +65,7 @@ export const prepareApplyCommandServices = Effect.fn('Merchandise.prepareApplyCo
     }
     const preparedAt = yield* DateTime.now;
     yield* prepareMerchandiseCommand(payload.command, context.scope);
-    const tax = yield* prepareCommandTax(payload.command, context.scope);
+    const tax = yield* prepareCommandTax(payload.command, context.scope, context.transaction);
     return Effect.fn('Merchandise.revalidatePreparedGrants')(function* revalidatePreparedGrants(
       transaction: ScopedTransactionExecutor,
       scope: OperationalScope,
