@@ -141,8 +141,8 @@ import { sellingModuleKeys, taxModuleKey } from '../demo/stage-tenant-modules.mt
 import { collectToolingProcess } from '../tests/tooling-process-fixture.mts';
 
 const COMPOSITION_URL = 'https://composition.vat-deploy.test/active';
-const SHELL_ORIGIN = 'http://shell.vat-deploy.test';
-const TAX_ORIGIN = 'http://tax.vat-deploy.test';
+const SHELL_ORIGIN = 'https://shell.vat-deploy.test';
+const TAX_ORIGIN = 'https://tax.vat-deploy.test';
 const SHELL_GATEWAY_BASE_URL = `${SHELL_ORIGIN}${shellGatewayContextContract.apiPrefix}`;
 const DELEGATION_PATH = `${shellGatewayContextContract.apiPrefix}/auth/delegated/gateway-context`;
 const TAX_PREFIX = '/tax-api';
