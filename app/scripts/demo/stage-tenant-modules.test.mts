@@ -88,4 +88,15 @@ it('the app host runs the release step after it publishes the composition, witho
   const wiring = host.slice(step, outbox);
   expect(wiring).toContain('Effect.forkChild');
   expect(wiring).toContain('RELEASE MODULE INSTALLATION FAILED');
+  // The host never kills the step for time: the step keeps its own limit, and a stop is SIGTERM first.
+  expect(wiring).not.toContain('timeout');
+  const runChild = host.slice(host.indexOf('const runChild = '), host.indexOf('// HTTP'));
+  expect(runChild).toContain('forceKillAfter: FINITE_CHILD_FORCE_KILL_AFTER');
+});
+
+it('the release step turns SIGTERM into an interrupt and keeps its own time limit', () => {
+  const step = readFileSync(new URL('release-tenant-modules.mts', import.meta.url), 'utf-8');
+  expect(step).toContain('NodeRuntime.runMain(');
+  expect(step).not.toContain('Effect.runPromiseExit');
+  expect(step).toContain('deadline: DateTime.addDuration(yield* DateTime.now, RELEASE_MODULES_BUDGET)');
 });

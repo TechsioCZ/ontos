@@ -389,6 +389,12 @@ export const finiteProcessEnvironment = (environment: ChildEnvironment): ChildEn
   ONTOS_DATABASE_POOL_SHARED: 'false',
 });
 
+/**
+ * How long a finite child gets between SIGTERM and SIGKILL. A child that holds a Tenant's access fence finishes
+ * its projection and gives the fence back in that time; only a child that is truly stuck is killed.
+ */
+export const FINITE_CHILD_FORCE_KILL_AFTER = Duration.minutes(2);
+
 /** Runs one finite child to a successful exit. */
 const runChild = (name: string, command: string, args: readonly string[], cwd: string, env: ChildEnvironment) =>
   Effect.scoped(
@@ -397,6 +403,7 @@ const runChild = (name: string, command: string, args: readonly string[], cwd: s
         cwd,
         env: finiteProcessEnvironment(env),
         extendEnv: true,
+        forceKillAfter: FINITE_CHILD_FORCE_KILL_AFTER,
         stderr: 'inherit',
         stdout: 'inherit',
       });
@@ -421,8 +428,6 @@ const fetchLoopback = (url: string) =>
     return new Uint8Array(yield* response.arrayBuffer);
   }).pipe(Effect.scoped, Effect.timeout(ARTIFACT_FETCH_TIMEOUT));
 
-/** How long the release module installation may take before the host goes on without it. */
-const RELEASE_MODULES_BUDGET = Duration.minutes(3);
 /** The release step that installs the modules each stage Tenant is approved to have and still lacks. */
 export const RELEASE_MODULES_SCRIPT = 'scripts/demo/release-tenant-modules.mts';
 
@@ -915,13 +920,10 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     yield* closePublicPortWhenSuperseded(revision).pipe(Effect.forkChild);
     // Platform module installation (`release-tenant-modules.mts`): against the composition just published, every
     // stage Tenant gets the approved modules it still lacks, written as `system` and projected into SpiceDB by the
-    // step itself, so routine module installs need neither a person nor a host shell. It is additive only, bounded,
-    // runs beside the Outbox host and never holds or fails the boot: a failure is one loud line.
+    // step itself, so routine module installs need neither a person nor a host shell. It is additive only, keeps its
+    // own time limit (it is never killed for time while it holds a Tenant's fence), runs beside the Outbox host and
+    // never holds or fails the boot: a failure is one loud line.
     yield* runChild('release-modules', node, [RELEASE_MODULES_SCRIPT], workspaceRoot, derived).pipe(
-      Effect.timeoutOrElse({
-        duration: RELEASE_MODULES_BUDGET,
-        orElse: () => Effect.fail(failure('the release module installation exceeded its time budget')),
-      }),
       Effect.catchTag('AppHostError', ({ reason }) =>
         Console.error(
           `[app-host] RELEASE MODULE INSTALLATION FAILED (${reason}); the modules stay as they were until the next release`,

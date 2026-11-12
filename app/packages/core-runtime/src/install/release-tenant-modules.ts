@@ -1,5 +1,5 @@
 import { and, eq, inArray } from 'drizzle-orm';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Duration, Effect, Schema } from 'effect';
 
 import { AccessReleaseStore } from '../access/changes/persistence/release-store.ts';
 import { AccessProjectionWriter } from '../access/intent/projection-writer.ts';
@@ -49,6 +49,7 @@ export interface ReleaseTenantModule {
 
 export const ReleaseModuleOutcomeSchema = Schema.Literals([
   'already_active',
+  'deferred',
   'failed',
   'installed',
   'left_as_set',
@@ -279,17 +280,45 @@ const reconcileInstalledTenant = Effect.fn('ReleaseTenantModules.reconcileTenant
  * Installs every declared module that a Tenant still lacks, then reconciles each Tenant that gained one. A second
  * run over the same state installs and reconciles nothing.
  */
+/** A projection is started only with at least this much of the budget left, so it never has to be cut short. */
+export const RELEASE_RECONCILE_RESERVE = Duration.minutes(1);
+
+/** Whether the run's budget still covers `reserve` from now; a run with no deadline always has time. */
+const withinBudget = (deadline: DateTime.Utc | undefined, reserve: Duration.Duration) =>
+  DateTime.now.pipe(
+    Effect.map(
+      (now) => deadline === undefined || DateTime.isLessThanOrEqualTo(DateTime.addDuration(now, reserve), deadline),
+    ),
+  );
+
 export const installReleaseTenantModules = Effect.fn('ReleaseTenantModules.install')(
   function* installReleaseModules(input: {
     readonly catalog: InstalledModuleCatalog;
+    /**
+     * The run's time limit. Installs (short transactions) stop being started at the deadline; a Tenant's projection,
+     * which takes the Tenant's access fence, is started only with `RELEASE_RECONCILE_RESERVE` left and then always
+     * runs to its end. Anything not reached is reported `deferred` for the next release.
+     */
+    readonly deadline?: DateTime.Utc;
     readonly modules: readonly ReleaseTenantModule[];
     /** Names this run in the release actor's trusted context, e.g. the composition revision. */
     readonly runReference: string;
   }) {
     const { executor } = yield* CoreDatabase;
-    const modules = yield* Effect.forEach(input.modules, (entry) => installOne(executor, input.catalog, entry), {
-      concurrency: 1,
-    });
+    const modules = yield* Effect.forEach(
+      input.modules,
+      (entry) =>
+        withinBudget(input.deadline, Duration.zero).pipe(
+          Effect.flatMap((open) =>
+            open
+              ? installOne(executor, input.catalog, entry)
+              : Effect.succeed(
+                  report(entry, 'deferred', 'the release step ran out of time; the next release installs it'),
+                ),
+          ),
+        ),
+      { concurrency: 1 },
+    );
     const changedTenants = new Set<string>();
     for (const { outcome, tenantId } of modules) {
       if (outcome === 'installed') {
@@ -298,7 +327,19 @@ export const installReleaseTenantModules = Effect.fn('ReleaseTenantModules.insta
     }
     const reconciles = yield* Effect.forEach(
       [...changedTenants],
-      (tenantId) => reconcileInstalledTenant(tenantId, input.runReference),
+      (tenantId) =>
+        withinBudget(input.deadline, RELEASE_RECONCILE_RESERVE).pipe(
+          Effect.flatMap((open) =>
+            open
+              ? reconcileInstalledTenant(tenantId, input.runReference)
+              : Effect.succeed({
+                  deletions: 0,
+                  failure: 'deferred: too little of the release budget was left to start the projection',
+                  tenantId,
+                  touches: 0,
+                } satisfies ReleaseTenantReconcile),
+          ),
+        ),
       { concurrency: 1 },
     );
     return { modules, reconciles } satisfies ReleaseTenantModulesReport;

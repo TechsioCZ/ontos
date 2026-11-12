@@ -302,6 +302,40 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
     ),
   );
 
+  suite.effect('starts nothing past its deadline, and never starts a projection it may not have time to finish', () =>
+    withTenant(true, (tenantId, admin) =>
+      Effect.gen(function* boundedRun() {
+        yield* bootstrapOwner(tenantId);
+        // The suite runs on the test clock, which starts at the epoch: that is the step's `now` as well.
+        const now = DateTime.makeUnsafe(0);
+        const late = yield* installReleaseTenantModules({
+          catalog,
+          deadline: DateTime.subtract(now, { seconds: 1 }),
+          modules: declared(tenantId),
+          runReference: 'a'.repeat(64),
+        });
+        expect(late.modules.map(({ outcome }) => outcome)).toEqual(['deferred', 'deferred', 'deferred']);
+        expect(yield* historyOf(admin, tenantId)).toEqual([]);
+        // Time for the install, not for the projection: the module is installed and its projection deferred.
+        const tight = yield* installReleaseTenantModules({
+          catalog,
+          deadline: DateTime.add(now, { seconds: 30 }),
+          modules: declared(tenantId),
+          runReference: 'a'.repeat(64),
+        });
+        expect(tight.modules[0]).toMatchObject({ outcome: 'installed' });
+        expect(tight.reconciles).toEqual([
+          {
+            deletions: 0,
+            failure: 'deferred: too little of the release budget was left to start the projection',
+            tenantId,
+            touches: 0,
+          },
+        ]);
+      }),
+    ),
+  );
+
   suite.effect('never changes a state a person set, and installs nothing where the Tenant does not sell', () =>
     withTenant(false, (tenantId, admin) =>
       Effect.gen(function* additiveOnly() {

@@ -12,8 +12,8 @@
  *
  *   node scripts/demo/release-tenant-modules.mts
  */
-import { NodeServices } from '@effect/platform-node';
-import { Cause, Config, Console, Effect, Exit, Layer, Predicate, Redacted, Schema } from 'effect';
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
+import { Cause, Config, Console, DateTime, Duration, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
@@ -41,6 +41,11 @@ import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/c
 import { stageReleaseTenantModules } from './stage-tenant-modules.mts';
 
 const LOG_PREFIX = '[release-modules]';
+/**
+ * The step's own time limit, enforced here and not by killing the process: installs stop being started at the
+ * deadline, and a projection is only started with enough of it left to finish (`RELEASE_RECONCILE_RESERVE`).
+ */
+export const RELEASE_MODULES_BUDGET = Duration.minutes(3);
 
 export class ReleaseTenantModulesFailure extends Schema.TaggedError<ReleaseTenantModulesFailure>()(
   'ReleaseTenantModulesFailure',
@@ -110,6 +115,7 @@ export const installDeclaredModules = Effect.gen(function* installDeclaredModule
   );
   const report = yield* installReleaseTenantModules({
     catalog,
+    deadline: DateTime.addDuration(yield* DateTime.now, RELEASE_MODULES_BUDGET),
     modules: stageReleaseTenantModules,
     runReference: snapshot.composition.revision,
   });
@@ -131,6 +137,9 @@ const failureReason = (cause: Cause.Cause<unknown>): string => {
   return Predicate.hasProperty(problem, '_tag') ? `unexpected failure (${String(problem._tag)})` : 'unexpected failure';
 };
 
+// The process is stopped with SIGTERM (by the app host, or by a container shutdown). `runMain` turns that into an
+// interrupt, so every finalizer runs: a projection that already took a Tenant's access fence runs to its end and
+// gives the fence back (the writer makes that stretch uninterruptible) instead of the process dying with it held.
 if (import.meta.main) {
   const program = Effect.gen(function* releaseTenantModulesProgram() {
     const environment = yield* stageOnly;
@@ -140,7 +149,7 @@ if (import.meta.main) {
           `${LOG_PREFIX} ${environment || 'this environment'} declares no Tenant modules; nothing to do`,
         );
   });
-  const exit = await Effect.runPromiseExit(
+  NodeRuntime.runMain(
     program.pipe(
       Effect.provide(ReleaseRuntimeLive),
       Effect.tapCause((cause) =>
@@ -148,6 +157,6 @@ if (import.meta.main) {
       ),
       Effect.provide(NodeServices.layer),
     ),
+    { disableErrorReporting: true },
   );
-  process.exitCode = Exit.isFailure(exit) ? 1 : 0;
 }
