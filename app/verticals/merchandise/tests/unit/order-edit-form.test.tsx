@@ -363,6 +363,19 @@ describe('VAT of the order lines', () => {
     }),
   );
 
+  it.effect('a product without a VAT classification cannot be added, and the form says why', () =>
+    Effect.gen(function* unclassified() {
+      const { taxClassificationCode: _code, ...withoutClassification } = beans;
+      void _code;
+      offered.current = withoutClassification;
+      yield* Effect.promise(mount);
+      yield* Effect.promise(() => click(button('pick product')));
+      expect(text()).toContain('Produkt nemá zařazení do sazby DPH, proto ho nelze přidat.');
+      expect(text()).not.toContain('„není nastaveno“');
+      expect(button('Přidat').disabled).toBe(true);
+    }),
+  );
+
   it.effect('a company that is not a VAT payer adds a product at 0 % and the line says so', () =>
     Effect.gen(function* nonPayer() {
       vat = { rates: [], regime: 'NON_PAYER' };

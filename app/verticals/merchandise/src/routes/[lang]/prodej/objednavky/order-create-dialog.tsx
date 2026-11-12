@@ -142,10 +142,14 @@ export const OrderCreateDialog = ({
   // The server snapshots the rate Tax gives the classification; without a usable one the line cannot be ordered.
   const rateErrorOf = (product: ProductRecord) => {
     const classification = lineClassification(product, vat, now);
-    return classification?.current === undefined
-      ? taxLabels.rateMissing(product.taxClassificationCode, classification?.problem)
+    if (classification === null) {
+      return taxLabels.noClassification;
+    }
+    return classification.current === undefined
+      ? taxLabels.rateMissing(classification.code, classification.problem)
       : undefined;
   };
+
   const lineErrorsOf = (value: Draft) =>
     value.lines.map((line) => {
       if (line.picked === null) {

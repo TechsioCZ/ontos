@@ -564,6 +564,7 @@
       "rateNotInForce": "The VAT classification “{{name}}” has no rate in force for the company yet; pick another or set it up in the tax module first.",
       "rateConflict": "More than one tax-module rule is in force at once for the VAT classification “{{name}}”; the product cannot be added.",
       "rateNotWhole": "The VAT classification “{{name}}” has no whole-percent rate in the tax module; the product cannot be added.",
+      "noClassification": "The product has no VAT classification, so it cannot be added. Set its VAT classification in the product detail.",
       "noRates": "No VAT rate is set for this company.",
       "notSet": "not set",
       "option": "{{name}} ({{rate}})",

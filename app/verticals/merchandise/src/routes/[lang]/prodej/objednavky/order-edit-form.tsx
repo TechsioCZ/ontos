@@ -40,7 +40,7 @@ import { loadProductRecord } from '../../provoz/produkty/product-reads.ts';
 import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts';
 import { ProductSearchCombobox } from '../../provoz/produkty/product-search.tsx';
 import { useTaxLabels } from '../../provoz/produkty/product-tax-classification.ts';
-import type { CompanyVat } from '../../provoz/produkty/product-tax-classification.ts';
+import type { CompanyVat, TaxLabels } from '../../provoz/produkty/product-tax-classification.ts';
 import { DateTime } from 'effect';
 
 type Mutable<Value> = { -readonly [Key in keyof Value]: Value[Key] };
@@ -61,6 +61,26 @@ interface SellableUnit {
   readonly variantName?: string;
   readonly vatRate: DraftLine['vatRate'];
 }
+
+/**
+ * Why the picked product cannot be added: it names no VAT classification, or its classification has no usable rate.
+ * Nothing while no product is picked or it can be added.
+ */
+const pickedRateMessage = (
+  product: ProductRecord | null,
+  classification: ReturnType<typeof lineClassification>,
+  labels: TaxLabels,
+): string | undefined => {
+  if (product === null) {
+    return undefined;
+  }
+  if (classification === null) {
+    return labels.noClassification;
+  }
+  return classification.current === undefined
+    ? labels.rateMissing(classification.code, classification.problem)
+    : undefined;
+};
 
 /**
  * The unit a pick adds: the product itself, or its chosen active variant, with the rate Tax gives the product's
@@ -203,10 +223,7 @@ const useOrderEditForm = ({
   // A product whose classification has no rate in force cannot go on the order: the server snapshots that rate.
   const pickedClassification = lineClassification(pickedProduct, vat, DateTime.nowUnsafe());
   const ratesConfirmation = taxLabels.confirmation(vat, DateTime.nowUnsafe());
-  const pickedRateMissing =
-    pickedClassification !== null && pickedClassification.current === undefined
-      ? taxLabels.rateMissing(pickedClassification.code, pickedClassification.problem)
-      : undefined;
+  const pickedRateMissing = pickedRateMessage(pickedProduct, pickedClassification, taxLabels);
   const unit =
     pickedProduct === null
       ? undefined

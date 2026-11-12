@@ -196,13 +196,14 @@ export const taxLabelsOf = (t: Translate, language = 'cs') => {
       ? ratePercentText(ratePercent)
       : t(`${KEY_PREFIX}.option`, { name: name(code), rate: ratePercentText(ratePercent) });
   /** Why a product cannot go on an order line: its classification has no rate in force for the company. */
-  const rateMissing = (code: CzVatClassificationCode | undefined, problem: RateProblem | undefined = 'NO_RULE') => {
-    const values = { name: code === undefined ? notSet : name(code) };
+  const rateMissing = (code: CzVatClassificationCode, problem: RateProblem | undefined = 'NO_RULE') => {
+    const values = { name: name(code) };
     if (problem === 'RULE_CONFLICT') {
       return t(`${KEY_PREFIX}.rateConflict`, values);
     }
     return problem === 'NOT_INTEGER' ? t(`${KEY_PREFIX}.rateNotWhole`, values) : t(`${KEY_PREFIX}.rateMissing`, values);
   };
+
   /**
    * When the company's rates are not current: not yet confirmed by Tax (taken over from the stored prices), or last
    * confirmed long enough ago to say when. Nothing while they are recent or unknown.
@@ -222,6 +223,8 @@ export const taxLabelsOf = (t: Translate, language = 'cs') => {
     line,
     name,
     noRates: t(`${KEY_PREFIX}.noRates`),
+    /** Why a product that names no VAT classification cannot go on an order line. */
+    noClassification: t(`${KEY_PREFIX}.noClassification`),
     /** Under the VAT select of a company that is not a VAT payer. */
     nonPayerHint: t(`${KEY_PREFIX}.nonPayerHint`),
     /** Why a new product cannot be created: the company has no VAT rate in force for any classification. */
