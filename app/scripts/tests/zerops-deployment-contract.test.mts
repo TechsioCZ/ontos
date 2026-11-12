@@ -18,6 +18,7 @@ import { OUTBOX_WORKER_HOST } from '../outbox-worker-delivery.mjs';
 import {
   gatewayModuleBindingsProblem,
   OWNER_RUNTIME_CONFIGURATIONS,
+  SHELL_CREDENTIAL_VARIABLES,
   requestServiceHoldsModuleCredential,
   SHELL_GATEWAY_BASE_URL_VARIABLE,
 } from '../ops/owner-runtime-configuration.mts';
@@ -338,6 +339,34 @@ it('gives the Shell the module bindings from the migrator and no other service',
     `\${migrator_ONTOS_GATEWAY_MODULE_BINDINGS}`,
   );
   expect(holders).toStrictEqual(['shellsuperapp']);
+});
+
+it('gives the Shell its own secrets from the migrator and no other service', () => {
+  const environments = serviceEnvironments();
+
+  expect(SHELL_CREDENTIAL_VARIABLES).toStrictEqual(['ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS']);
+  for (const variable of SHELL_CREDENTIAL_VARIABLES) {
+    const holders = [...environments]
+      .filter(([, environment]) => Object.values(environment).some((value) => value.includes(variable)))
+      .map(([setup]) => setup);
+    expect(environments.get('shellsuperapp')?.[variable]).toBe(`\${migrator_${variable}}`);
+    expect(holders).toStrictEqual(['shellsuperapp']);
+  }
+});
+
+it('gives the Payment reconciliation and notification values to the Payment units only', () => {
+  const environments = serviceEnvironments();
+  const paymentUnits = ['payment', 'payment-worker', OUTBOX_WORKER_HOST.stageSetup];
+
+  for (const variable of ['ONTOS_PAYMENT_NOTIFICATION_BASE_URL', 'ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS']) {
+    const holders = [...environments]
+      .filter(([, environment]) => Object.values(environment).some((value) => value.includes(variable)))
+      .map(([setup]) => setup);
+    expect(EffectArray.sort(holders, Order.String)).toStrictEqual(EffectArray.sort(paymentUnits, Order.String));
+    for (const setup of paymentUnits) {
+      expect(environments.get(setup)?.[variable]).toBe(`\${migrator_${variable}}`);
+    }
+  }
 });
 
 it('retires the per-owner gateway keys, grant lists, principal IDs and caller namespaces', () => {

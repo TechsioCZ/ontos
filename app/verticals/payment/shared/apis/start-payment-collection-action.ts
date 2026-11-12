@@ -74,6 +74,8 @@ export const StartPaymentCollectionActionIneligibleProblemSchema = makeProblemDe
       'payment_method_binding_mismatch',
       'payment_no_established_collection',
       'payment_outcome_transition_illegal',
+      'payment_payer_contact_not_applicable',
+      'payment_payer_contact_required',
       'payment_refund_amount_mismatch',
       'payment_refund_basis_invalid',
       'payment_refund_item_fractioned',

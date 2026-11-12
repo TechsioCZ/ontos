@@ -5,7 +5,13 @@
   "type": "module",
   "exports": {
     "./api": "./shared/api.ts",
+    "./api/capture-provider-notification-action": "./shared/apis/capture-provider-notification-action.ts",
+    "./api/capture-provider-notification-action/client": "./src/api/capture-provider-notification-action-client.ts",
     "./api/client": "./src/api/payment-client.ts",
+    "./api/provider-binding-route": "./shared/apis/provider-binding-route.ts",
+    "./api/provider-binding-route/client": "./src/api/provider-binding-route-client.ts",
+    "./api/request-payment-operation-recovery-action": "./shared/apis/request-payment-operation-recovery-action.ts",
+    "./api/request-payment-operation-recovery-action/client": "./src/api/request-payment-operation-recovery-action-client.ts",
     "./outbox/payment-core-authorization-issued-v1": "./shared/outbox/payment-core-authorization-issued-v1.ts",
     "./outbox/payment-core-operation-outcome-changed-v1": "./shared/outbox/payment-core-operation-outcome-changed-v1.ts",
     "./outbox/payment-core-operation-recovery-requested-v1": "./shared/outbox/payment-core-operation-recovery-requested-v1.ts",
@@ -13,6 +19,7 @@
     "./outbox/payment-core-payment-created-v1": "./shared/outbox/payment-core-payment-created-v1.ts",
     "./outbox/payment-core-provider-notification-captured-v1": "./shared/outbox/payment-core-provider-notification-captured-v1.ts",
     "./owner-evidence/commitment-attempt": "./shared/domain/commitment-attempt-evidence.ts",
+    "./payment-gateway-relay": "./shared/payment-gateway-relay.ts",
     "./resources/payment": "./shared/resources/payment.ts",
     "./resources/payment-root": "./shared/resources/payment-root.ts",
     "./outbox-worker-host": "./src/worker-host/entry.ts"

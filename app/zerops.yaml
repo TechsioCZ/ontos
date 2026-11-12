@@ -1046,7 +1046,9 @@ zerops:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
         ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_PAYMENT}
+        ONTOS_PAYMENT_NOTIFICATION_BASE_URL: ${migrator_ONTOS_PAYMENT_NOTIFICATION_BASE_URL}
         ONTOS_PAYMENT_PROVIDER_CREDENTIALS: ${migrator_ONTOS_PAYMENT_PROVIDER_CREDENTIALS}
+        ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS: ${migrator_ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS}
         ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
         PORT: '4117'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
@@ -1207,6 +1209,7 @@ zerops:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
         ONTOS_GATEWAY_MODULE_BINDINGS: ${migrator_ONTOS_GATEWAY_MODULE_BINDINGS}
+        ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS: ${migrator_ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS}
         PORT: '3020'
         SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:${migrator_SHELL_GATEWAY_ISSUER_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
         SHELL_SUPER_APP_PORT: '3020'
@@ -1517,7 +1520,9 @@ zerops:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
         ONTOS_GATEWAY_MODULE_API_KEY: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_PAYMENT}
+        ONTOS_PAYMENT_NOTIFICATION_BASE_URL: ${migrator_ONTOS_PAYMENT_NOTIFICATION_BASE_URL}
         ONTOS_PAYMENT_PROVIDER_CREDENTIALS: ${migrator_ONTOS_PAYMENT_PROVIDER_CREDENTIALS}
+        ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS: ${migrator_ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS}
         ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shellsuperapp:3020/shell-super-app-api'
         PORT: '4117'
         OUTBOX_WORKER_HEALTH_PORT: '4117'
@@ -1628,7 +1633,9 @@ zerops:
         ONTOS_GATEWAY_MODULE_API_KEY_SYMMY_INTEGRATION: ${migrator_ONTOS_GATEWAY_MODULE_API_KEY_SYMMY_INTEGRATION}
         ONTOS_ORDER_API_BASE_URL: 'http://commerceorder:4116/commerce-order-api'
         ONTOS_PARTY_REGISTRY_API_BASE_URL: 'http://partyregistry:4102/party-registry-api'
+        ONTOS_PAYMENT_NOTIFICATION_BASE_URL: ${migrator_ONTOS_PAYMENT_NOTIFICATION_BASE_URL}
         ONTOS_PAYMENT_PROVIDER_CREDENTIALS: ${migrator_ONTOS_PAYMENT_PROVIDER_CREDENTIALS}
+        ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS: ${migrator_ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS}
         ONTOS_PAYMENT_TERM_CATALOG_API_BASE_URL: 'http://paymenttermcatalog:4103/payment-term-catalog-api'
         ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'
         ONTOS_PRICING_API_BASE_URL: 'http://pricing:4106/pricing-api'

@@ -70,6 +70,7 @@ import { paymentAuthorizationValidationReadApiLive } from './payment-authorizati
 import { paymentHistoryReadApiLive } from './payment-history-read-server.ts';
 import { paymentMethodApplicabilityReadApiLive } from './payment-method-applicability-read-server.ts';
 import { paymentReconciliationDebtReadApiLive } from './payment-reconciliation-debt-read-server.ts';
+import { providerBindingRouteReadApiLive } from './provider-binding-route-read-server.ts';
 import { recordPaymentLocalEvidenceActionApiLive } from './record-payment-local-evidence-action-server.ts';
 import { recordPaymentReconciliationDecisionActionApiLive } from './record-payment-reconciliation-decision-action-server.ts';
 import { requestPaymentCancellationActionApiLive } from './request-payment-cancellation-action-server.ts';
@@ -241,6 +242,7 @@ export const makePaymentApiRuntime = (
     paymentHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     paymentMethodApplicabilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     paymentReconciliationDebtReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    providerBindingRouteReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     recordPaymentLocalEvidenceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     recordPaymentReconciliationDecisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     requestPaymentCancellationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

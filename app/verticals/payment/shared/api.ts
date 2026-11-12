@@ -25,6 +25,7 @@ import { PaymentAuthorizationValidationApi } from './apis/payment-authorization-
 import { PaymentHistoryApi } from './apis/payment-history.ts';
 import { PaymentMethodApplicabilityApi } from './apis/payment-method-applicability.ts';
 import { PaymentReconciliationDebtApi } from './apis/payment-reconciliation-debt.ts';
+import { ProviderBindingRouteApi } from './apis/provider-binding-route.ts';
 import { RecordPaymentLocalEvidenceActionApi } from './apis/record-payment-local-evidence-action.ts';
 import { RecordPaymentReconciliationDecisionActionApi } from './apis/record-payment-reconciliation-decision-action.ts';
 import { RequestPaymentCancellationActionApi } from './apis/request-payment-cancellation-action.ts';
@@ -75,6 +76,7 @@ export const paymentApi = HttpApi.make('PaymentApi')
   .addHttpApi(PaymentHistoryApi)
   .addHttpApi(PaymentMethodApplicabilityApi)
   .addHttpApi(PaymentReconciliationDebtApi)
+  .addHttpApi(ProviderBindingRouteApi)
   .addHttpApi(RecordPaymentLocalEvidenceActionApi)
   .addHttpApi(RecordPaymentReconciliationDecisionActionApi)
   .addHttpApi(RequestPaymentCancellationActionApi)

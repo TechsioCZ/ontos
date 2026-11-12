@@ -23,6 +23,7 @@ import { paymentHistoryRead } from './src/api/payment-history.read.ts';
 import { paymentMethodApplicabilityRead } from './src/api/payment-method-applicability.read.ts';
 import { paymentReconciliationDebtRead } from './src/api/payment-reconciliation-debt.read.ts';
 import { processProviderNotificationWorker } from './src/workers/process-provider-notification.worker.ts';
+import { providerBindingRouteRead } from './src/api/provider-binding-route.read.ts';
 import { recordPaymentLocalEvidenceAction } from './src/actions/record-payment-local-evidence.action.ts';
 import { recordPaymentReconciliationDecisionAction } from './src/actions/record-payment-reconciliation-decision.action.ts';
 import { recoverGatewayOperationWorker } from './src/workers/recover-gateway-operation.worker.ts';
@@ -65,6 +66,7 @@ export const paymentRegistration = defineVerticalRuntimeRegistration({
       'payment-history': () => import('./src/api/payment-history-client.ts'),
       'payment-method-applicability': () => import('./src/api/payment-method-applicability-client.ts'),
       'payment-reconciliation-debt': () => import('./src/api/payment-reconciliation-debt-client.ts'),
+      'provider-binding-route': () => import('./src/api/provider-binding-route-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {
@@ -103,6 +105,7 @@ export const paymentRegistration = defineVerticalRuntimeRegistration({
     paymentHistoryRead,
     paymentMethodApplicabilityRead,
     paymentReconciliationDebtRead,
+    providerBindingRouteRead,
     // </generated-module-registration-reads>
   ],
 });
