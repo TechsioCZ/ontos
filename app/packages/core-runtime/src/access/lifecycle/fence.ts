@@ -333,6 +333,15 @@ export const advanceOperationJournal = (
  * reconcile before it gives the fence back, so the fence only ever opens on a consistent projection.
  */
 export const ACCESS_FENCE_LEASE = Duration.minutes(2);
+
+/**
+ * A hold taken before leases existed has none to lapse. It counts as lapsed once its journal has not moved for
+ * `ACCESS_FENCE_PRE_LEASE_IDLE` plus `ACCESS_FENCE_CLOCK_SKEW_MARGIN`. A holder moves its journal only between
+ * phases, never during an engine write, so the idle time must exceed any real projection, not a renewal interval.
+ * The journal's `updated_at` comes from the holder's clock and is compared with the database's, hence the margin.
+ */
+export const ACCESS_FENCE_PRE_LEASE_IDLE = Duration.minutes(30);
+export const ACCESS_FENCE_CLOCK_SKEW_MARGIN = Duration.minutes(5);
 export const ACCESS_FENCE_LEASE_RENEWAL = Duration.seconds(30);
 
 /** Renew this operation's hold on the fence it owns. */

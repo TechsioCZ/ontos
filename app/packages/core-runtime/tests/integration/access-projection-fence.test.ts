@@ -129,6 +129,14 @@ const plantDeadHolder = (
     return yield* Effect.void;
   });
 
+/** The dead holder's journal last moved `age` ago. */
+const idleJournal = (admin: PgClient.PgClient, age: string) =>
+  admin
+    .unsafe(
+      `update core.access_operation_journals set updated_at = now() - interval '${age}' where operation_id = '${DEAD_HOLDER}'`,
+    )
+    .pipe(Effect.orDie);
+
 /** The lapse of the hold, as time passing would bring it. */
 const lapseLease = (admin: PgClient.PgClient, tenantId: TenantId) =>
   admin
@@ -320,22 +328,27 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
       ),
   );
 
-  suite.effect('a hold taken before leases existed is recovered once its journal stopped moving, not before', () =>
-    withProjectionTenant({ activeModules: [MODULE] }, (tenantId, admin) =>
-      Effect.gen(function* legacyHold() {
-        const scope = yield* bootstrapTenant(tenantId);
-        yield* plantDeadHolder(admin, tenantId, { journalAge: '10 seconds', lease: null });
-        const writer = yield* AccessProjectionWriter;
-        expect(yield* refusalOf(writer.reconcileTenant({ scope }))).toContain('whose hold has not lapsed');
-        yield* admin
-          .unsafe(
-            `update core.access_operation_journals set updated_at = now() - interval '10 minutes' where operation_id = '${DEAD_HOLDER}'`,
-          )
-          .pipe(Effect.orDie);
-        yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
-        expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
-      }),
-    ),
+  suite.effect(
+    'a hold taken before leases existed is recovered after 30 idle minutes and a skew margin, not before',
+    () =>
+      withProjectionTenant({ activeModules: [MODULE] }, (tenantId, admin) =>
+        Effect.gen(function* legacyHold() {
+          const scope = yield* bootstrapTenant(tenantId);
+          yield* plantDeadHolder(admin, tenantId, { journalAge: '10 seconds', lease: null });
+          const writer = yield* AccessProjectionWriter;
+          expect(yield* refusalOf(writer.reconcileTenant({ scope }))).toContain('whose hold has not lapsed');
+          // A writer of the previous release moves its journal only between phases: ten quiet minutes inside one long
+          // engine write is no lapse.
+          yield* idleJournal(admin, '10 minutes');
+          expect(yield* refusalOf(writer.reconcileTenant({ scope }))).toContain('whose hold has not lapsed');
+          // Thirty minutes plus the five-minute margin for the writer's clock against the database's is.
+          yield* idleJournal(admin, '34 minutes');
+          expect(yield* refusalOf(writer.reconcileTenant({ scope }))).toContain('whose hold has not lapsed');
+          yield* idleJournal(admin, '36 minutes');
+          yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+          expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+        }),
+      ),
   );
 
   suite.effect('a live holder in the middle of its write is never preempted, and holds a lease while it works', () =>

@@ -26,7 +26,12 @@ import {
 import type { OperationJournal, OperationPhase, ScopeFence } from '../../model.ts';
 import type { AccessLifecycleError } from '../errors.ts';
 import { lifecycleRefusal } from '../errors.ts';
-import { ACCESS_FENCE_LEASE, AccessWriteJournalPort } from '../fence.ts';
+import {
+  ACCESS_FENCE_CLOCK_SKEW_MARGIN,
+  ACCESS_FENCE_LEASE,
+  ACCESS_FENCE_PRE_LEASE_IDLE,
+  AccessWriteJournalPort,
+} from '../fence.ts';
 import type {
   AccessWriteJournalPortService,
   FenceAcquireCommand,
@@ -497,13 +502,17 @@ const renewFenceLease = Effect.fn('accessLifecycle.persistence.renewFenceLease')
 });
 
 /**
- * Whether the observed holder's lease has lapsed. A hold taken before leases existed has none; it counts as
- * lapsed once its journal has not moved for a whole lease, so a fence left by a holder that died before this
- * release is recovered too, while a live writer of the previous release (which still touches its journal) is not.
+ * Whether the observed holder's lease has lapsed, on the database clock. A hold taken before leases existed has
+ * none: it counts as lapsed once its journal has not moved for `ACCESS_FENCE_PRE_LEASE_IDLE` plus the clock skew
+ * margin. A writer of the previous release moves its journal only between phases, never while it writes the
+ * engine, so that idle time is longer than any real projection; the journal's timestamp comes from the writer's
+ * clock, hence the margin.
  */
+const PRE_LEASE_LAPSE_SECONDS =
+  Duration.toSeconds(ACCESS_FENCE_PRE_LEASE_IDLE) + Duration.toSeconds(ACCESS_FENCE_CLOCK_SKEW_MARGIN);
 const holdLapsed = (previousOperationId: string) => sql`coalesce(
   ${accessScopeFences.leaseExpiresAt},
-  (select j.updated_at + pg_catalog.make_interval(secs => ${Duration.toSeconds(ACCESS_FENCE_LEASE)})
+  (select j.updated_at + pg_catalog.make_interval(secs => ${PRE_LEASE_LAPSE_SECONDS})
      from core.access_operation_journals j
     where j.tenant_id = ${accessScopeFences.tenantId} and j.operation_id = ${previousOperationId}::uuid)
 ) < pg_catalog.now()`;
