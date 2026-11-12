@@ -23982,6 +23982,10 @@ const hasReadCallbacksStaged = (
   }
   const isOwnerLocalImportedCallback = (candidate: string | undefined): boolean =>
     isOwnerLocalImportedModuleBinding(source, candidate);
+  // Staged reads bind the ported staged factory proof; main-origin reads keep main's owner-local factory proof.
+  const isOwnerLocalServiceFactory = (candidate: string | undefined): boolean =>
+    hasOwnerLocalReadServiceFactoryStaged(sources, readFile, ownerPath, candidate) ||
+    hasOwnerLocalReadServiceFactory(sources, readFile, ownerPath, candidate);
   const isOwnerLocalImportedFactoryResult = (candidate: string | undefined): boolean => {
     if (candidate === undefined || !/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate)) {
       return false;
@@ -24051,7 +24055,7 @@ const hasReadCallbacksStaged = (
         isOwnerLocalImportedCallback(callback) ||
         isOwnerLocalImportedFactoryResult(callback) ||
         (index === 2 && hasOriginalServiceClosureFactory({ ownerPath, readFile, sources }, source, callback)) ||
-        (index === 2 && hasOwnerLocalReadServiceFactoryStaged(sources, readFile, ownerPath, callback)) ||
+        (index === 2 && isOwnerLocalServiceFactory(callback)) ||
         (index === 2 && hasOwnerLocalReadServiceFactoryResult(sources, readFile, ownerPath, callback)) ||
         (index === 3 && isConditionalPermissionDescriptor(callback))
       );

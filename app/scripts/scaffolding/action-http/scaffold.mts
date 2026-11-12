@@ -1251,7 +1251,11 @@ interface ActionRuntimeSupportImport {
 
 const actionRuntimeSupportBindings = (module: string): ReadonlyMap<string, string> | undefined => {
   if (module === './auth/action-principal.ts') {
-    return new Map([['ActionPrincipalVerifierLive', 'GovernedActionPrincipalVerifierLive']]);
+    return new Map([
+      ['ActionPrincipalVerifierLive', 'GovernedActionPrincipalVerifierLive'],
+      // Demo-only exception 1 (owner-action approvals): the approval routes authenticate with the owner's principal.
+      ['authenticateOperationPrincipal', 'authenticateOwnerApprovalPrincipal'],
+    ]);
   }
   if (module === './auth/gateway-assertion-redemption.ts') {
     return new Map([

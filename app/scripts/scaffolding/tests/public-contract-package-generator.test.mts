@@ -4,7 +4,10 @@ import { expect, it } from 'effect-rstest';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
-import { hasCompleteGeneratedModuleApiSeam } from '../../generated-governed-http-boundary.mts';
+import {
+  hasCompleteGeneratedModuleApiSeam,
+  OWNER_ACTION_APPROVAL_PUBLICATION,
+} from '../../generated-governed-http-boundary.mts';
 import { planGovernedContributionScaffold } from '../governed-contribution/scaffold.mts';
 import { readGeneratedSlotEntries, removeGeneratedSlotEntry } from '../shared.mts';
 
@@ -117,7 +120,11 @@ const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): R
           if (!insideSlot) {
             return true;
           }
-          if (line.includes("'payment-term-affected-use-assessment'")) {
+          // Demo-only exception 1: the owner's approval API publication is proved with the seam, so it stays in focus.
+          if (
+            line.includes("'payment-term-affected-use-assessment'") ||
+            line.includes(`'${OWNER_ACTION_APPROVAL_PUBLICATION.key}'`)
+          ) {
             keepTargetEntry = !line.trimEnd().endsWith(',');
             return true;
           }

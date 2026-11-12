@@ -72,10 +72,17 @@ it('proves the real conditional Position-set load through its readonly owner Eff
 });
 
 for (const [name, original, replacement] of [
-  ['foreign context', 'context.services.observe(input.scope)', 'foreign.services.observe(input.scope)'],
+  [
+    'foreign context',
+    'context.services.observe(input.scope, context.prepared)',
+    'foreign.services.observe(input.scope, context.prepared)',
+  ],
   ['mutable result contract', 'readonly observe:', 'observe:'],
-  ['non-Effect branch', 'Effect.succeedNone', 'Option.none()'],
-  ['unknown Effect transform', 'Effect.asSome', 'Effect.unknownProperty'],
+  [
+    'unknown Effect transform',
+    'context.prepared).pipe(Effect.mapError(mapPositionSetReadFailure))',
+    'context.prepared).pipe(Effect.unknownProperty(mapPositionSetReadFailure))',
+  ],
   ['unbound observation', '../persistence/current-relevant-stock-position-set-repository.ts', '../foreign-owner.ts'],
 ] as const) {
   it(`rejects a conditional Position-set load with ${name}`, () => {
@@ -177,7 +184,7 @@ for (const read of [projectionRead, guardedBlockLoadRead]) {
 
 it('still rejects a foreign context projection masquerading as the phase context', () => {
   const source = sources.get(readFile(projectionRead)) ?? '';
-  const invalid = source.replace('context.prepared.kind', 'foreign.prepared.kind');
+  const invalid = source.replace('observe(input.scope, context.prepared)', 'observe(input.scope, foreign.prepared)');
   expect(invalid).not.toBe(source);
   expect(parseSync(readFile(projectionRead), invalid).errors).toEqual([]);
   const diagnostics: string[] = [];

@@ -4,6 +4,7 @@ import { expect, it } from 'effect-rstest';
 
 import {
   hasOwnerLocalReadServiceFactory,
+  hasOwnerLocalReadServiceFactoryStaged,
   hasReadOwnerPermissionDeclaration,
 } from '../generated-governed-http-boundary.mts';
 
@@ -36,13 +37,43 @@ const currentSources = new Map<string, string>(
   ),
 );
 
+// Demo-only exception 3 (staged reads): these Customer Context reads run a staged `load` phase over a factory typed
+// with Core's scoped routine capability, so they bind to the ported staged-read factory proof, not the trunk helper.
 for (const name of currentReadFiles) {
   it(`accepts the real CCC ${name} owner service factory without widening the boundary`, () => {
     expect(
-      hasOwnerLocalReadServiceFactory(currentSources, `${ownerPath}/src/api/${name}.read.ts`, ownerPath, factoryName),
+      hasOwnerLocalReadServiceFactoryStaged(
+        currentSources,
+        `${ownerPath}/src/api/${name}.read.ts`,
+        ownerPath,
+        factoryName,
+      ),
     ).toBe(true);
   });
 }
+
+it('accepts only the original scoped Core routine capability paired with its native operational scope', () => {
+  const source = `import type { ScopedRoutineInvoker, OperationalScope } from '@app/core-runtime';
+export const ${factoryName} = (transaction: ScopedRoutineInvoker, scope: OperationalScope) => makeService(transaction, scope);`;
+  const acceptsStaged = (factorySource: string): boolean =>
+    hasOwnerLocalReadServiceFactoryStaged(sourcesFor(factoryImport, factorySource), readFile, ownerPath, factoryName);
+  expect(acceptsStaged(source)).toBe(true);
+  for (const invalid of [
+    source.replace("from '@app/core-runtime'", "from './foreign-core.ts'"),
+    source.replace(
+      'ScopedRoutineInvoker, OperationalScope',
+      'ForeignRoutineInvoker as ScopedRoutineInvoker, OperationalScope',
+    ),
+    source.replace('transaction: ScopedRoutineInvoker', 'transaction: ForeignRoutineInvoker'),
+    source.replace('scope: OperationalScope', 'scope: unknown'),
+    `${source}\ntype ScopedRoutineInvoker = unknown;`,
+    `${source}\nfunction shadow(ScopedRoutineInvoker) {}`,
+    `${source}\nfunction shadow(OperationalScope) {}`,
+  ]) {
+    expect(invalid).not.toBe(source);
+    expect(acceptsStaged(invalid)).toBe(false);
+  }
+});
 
 const privacyOwner = 'verticals/privacy';
 const privacyRead = `${privacyOwner}/src/api/measure-execution-eligibility.read.ts`;

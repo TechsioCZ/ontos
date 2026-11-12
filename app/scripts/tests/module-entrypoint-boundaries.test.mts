@@ -4143,18 +4143,33 @@ for (const owner of [CATALOG_VERTICAL_PATH, CUSTOMER_CONTEXT_VERTICAL_PATH]) {
           Effect.promise(() => readPricingSourceTree(root, folder)),
         ),
       );
+      const runtimeDeclarationFile = `${owner}/vertical.runtime-declaration.ts`;
+      const hasRuntimeDeclaration = yield* Effect.promise(() =>
+        readFile(path.join(root, runtimeDeclarationFile), 'utf-8').then(
+          () => true,
+          () => false,
+        ),
+      );
       const metadata = yield* Effect.all(
-        [`${owner}/package.json`, `${owner}/vertical.manifest.ts`, `${owner}/vertical.registration.ts`].map((file) =>
+        [
+          `${owner}/package.json`,
+          `${owner}/vertical.manifest.ts`,
+          `${owner}/vertical.registration.ts`,
+          ...(hasRuntimeDeclaration ? [runtimeDeclarationFile] : []),
+        ].map((file) =>
           Effect.promise(() => readFile(path.join(root, file), 'utf-8')).pipe(
             Effect.map((source) => [file, source] as const),
           ),
         ),
       );
       const sources = new Map([...trees.flat(), ...metadata]);
-      const manifestFile = `${owner}/vertical.manifest.ts`;
-      const manifest = sources.get(manifestFile) ?? '';
       const start = '// <generated-module-manifest-operation-contracts>';
       const end = '// </generated-module-manifest-operation-contracts>';
+      // A runtime declaration split (as in main's Party Registry) carries the operation contracts instead of the manifest.
+      const manifestFile = (sources.get(`${owner}/vertical.manifest.ts`) ?? '').includes(start)
+        ? `${owner}/vertical.manifest.ts`
+        : runtimeDeclarationFile;
+      const manifest = sources.get(manifestFile) ?? '';
       const begin = manifest.indexOf(start);
       const finish = manifest.indexOf(end);
       expect(begin).toBeGreaterThan(0);
@@ -4162,13 +4177,15 @@ for (const owner of [CATALOG_VERTICAL_PATH, CUSTOMER_CONTEXT_VERTICAL_PATH]) {
       const claims = manifest.slice(begin + start.length, finish);
       const outside = `${manifest.slice(0, begin)}${claims}${start}\n${manifest.slice(finish)}`;
       const deployment = path.posix.basename(owner);
-      const accepts = (source: string) =>
+      const diagnostics: string[] = [];
+      const accepts = (source: string, sink?: string[]) =>
         hasCompleteGeneratedModuleApiSeam(
           new Map([...sources, [manifestFile, source]]),
           `${owner}/shared/api.ts`,
           deployment,
+          sink,
         );
-      expect(accepts(manifest)).toBe(true);
+      expect(accepts(manifest, diagnostics), diagnostics.join('\n')).toBe(true);
       expect(accepts(outside)).toBe(true);
       const detached = manifest.slice(0, begin + start.length) + manifest.slice(finish);
       expect(accepts(`${detached}\nconst detachedContracts = [${claims}];`)).toBe(false);
@@ -4178,7 +4195,11 @@ for (const owner of [CATALOG_VERTICAL_PATH, CUSTOMER_CONTEXT_VERTICAL_PATH]) {
         false,
       );
       expect(accepts(manifest.replaceAll(CORE_RUNTIME_SOURCE_IMPORT, "from './counterfeit-core.ts'"))).toBe(false);
-      const duplicateRoot = `${manifest}\nexport const detachedManifest = defineOntosModuleManifest({ publicSurface: { operationContracts: [] } });`;
+      const runtimeManifestName = `${deployment.replaceAll(/-(?<letter>[a-z])/gu, (_match, letter: string) => letter.toUpperCase())}RuntimeManifest`;
+      const duplicateRoot =
+        manifestFile === runtimeDeclarationFile
+          ? `${manifest}\nexport const ${runtimeManifestName} = { publicSurface: { operationContracts: [] } };`
+          : `${manifest}\nexport const detachedManifest = defineOntosModuleManifest({ publicSurface: { operationContracts: [] } });`;
       expect(accepts(duplicateRoot)).toBe(false);
     }),
   );

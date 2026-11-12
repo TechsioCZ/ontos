@@ -1,7 +1,8 @@
 import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect';
 
+import { hasNativeActionPrincipalComposition } from '../../generated-governed-http-boundary.mts';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
-import { planOwnerApprovalPublication } from './owner-approval-publication.mts';
+import { acceptOwnedRedemptionReexport, planOwnerApprovalPublication } from './owner-approval-publication.mts';
 import {
   createMutationEffect,
   discoverOntosModuleEffect,
@@ -36,11 +37,34 @@ const { scaffoldError, trySync } = createScaffoldErrorTools(
   'action boundary update failed',
 );
 
+const hasOwnedGeneratedMarkers = (source: string | undefined, requiredMarkers: readonly string[]): boolean =>
+  source !== undefined &&
+  source.startsWith(`${ACTION_BOUNDARY_GENERATOR_HEADER}\n`) &&
+  requiredMarkers.every((marker) => source.includes(marker));
+
+const readOptionalActionBoundarySource = (filePath: string) =>
+  Effect.gen(function* readOptionalActionBoundarySourceEffect() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const exists = yield* fileSystem
+      .exists(filePath)
+      .pipe(Effect.mapError((cause) => scaffoldError(`failed to inspect ${filePath}`, cause)));
+    return exists
+      ? yield* fileSystem
+          .readFileString(filePath)
+          .pipe(Effect.mapError((cause) => scaffoldError(`failed to read ${filePath}`, cause)))
+      : undefined;
+  });
+
 const createOrAcceptOwnedMutation = (
   filePath: string,
   content: string,
   requiredMarkers: readonly string[],
-  requiredContracts: readonly { readonly marker: string; readonly migration: string }[] = [],
+  requiredContracts: readonly {
+    // Demo-only exception 1: a structural proof that also accepts an owner whose formatter differs from the marker.
+    readonly isSatisfied?: (source: string) => boolean;
+    readonly marker: string;
+    readonly migration: string;
+  }[] = [],
 ): Effect.Effect<Option.Option<Mutation>, ActionBoundaryScaffoldError | ScaffoldFailure, FileSystem.FileSystem> =>
   Effect.gen(function* createOrAcceptOwnedMutationEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -53,11 +77,10 @@ const createOrAcceptOwnedMutation = (
     const current = yield* fileSystem
       .readFileString(filePath)
       .pipe(Effect.mapError((cause) => scaffoldError(`failed to read ${filePath}`, cause)));
-    if (
-      current.startsWith(`${ACTION_BOUNDARY_GENERATOR_HEADER}\n`) &&
-      requiredMarkers.every((marker) => current.includes(marker))
-    ) {
-      const missingContract = requiredContracts.find(({ marker }) => !current.includes(marker));
+    if (hasOwnedGeneratedMarkers(current, requiredMarkers)) {
+      const missingContract = requiredContracts.find(
+        ({ isSatisfied, marker }) => !current.includes(marker) && isSatisfied?.(current) !== true,
+      );
       if (missingContract !== undefined) {
         return yield* scaffoldError(
           `incompatible generated Action boundary: ${filePath}. ${missingContract.migration}`,
@@ -256,6 +279,7 @@ export const planActionBoundaryScaffold = (
           migration: 'Bind the gateway principal verifier to this owner release with ultramodernApiMarker.',
         },
         {
+          isSatisfied: hasNativeActionPrincipalComposition,
           marker: 'ActiveApplicationCompositionConfigLive,',
           migration:
             'Merge ActiveApplicationCompositionConfigLive into ActionPrincipalVerifierLive so each operation validates current release authority.',
@@ -273,11 +297,19 @@ export const planActionBoundaryScaffold = (
       `ACTION_GATEWAY_AUDIENCE = '${vertical.appId}'`,
       'makeOperationGateway',
     ]);
-    const redemptionMutation = yield* createOrAcceptOwnedMutation(
-      redemptionPath,
-      renderGatewayAssertionRedemptionAdapter(vertical),
-      ['GatewayAssertionRedemption', `@ontos-action-boundary-owner ${vertical.appId}`],
-    );
+    const redemptionMarkers = ['GatewayAssertionRedemption', `@ontos-action-boundary-owner ${vertical.appId}`];
+    const redemptionSource = yield* readOptionalActionBoundarySource(redemptionPath);
+    // Demo-only exception 1: an owner may forward the seam to its own native redemption Layer. Main's generated
+    // adapter is decided by main's rule; any other forwarder is accepted only after its original owner target is proved.
+    const redemptionMutation =
+      !hasOwnedGeneratedMarkers(redemptionSource, redemptionMarkers) &&
+      (yield* acceptOwnedRedemptionReexport(vertical, redemptionPath))
+        ? Option.none<Mutation>()
+        : yield* createOrAcceptOwnedMutation(
+            redemptionPath,
+            renderGatewayAssertionRedemptionAdapter(vertical),
+            redemptionMarkers,
+          );
     const runnerMutation = yield* createOrAcceptOwnedMutation(runnerPath, renderActionHttpRunner(vertical), [
       'bindActionHttpRunner',
       `@ontos-action-boundary-owner ${vertical.appId}`,
