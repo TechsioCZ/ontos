@@ -46,4 +46,6 @@ export const standardLineVat = (tenantId: string) => ({
 /** Tax answering with the baseline for the scope's own tenant. */
 export const FinanceTaxRatesBaseline = Layer.succeed(FinanceTaxRates, {
   choices: (scope, on) => Effect.succeed(baselineVatChoices(scope.tenantId, on)),
+  choicesFor: ({ subject }, on) =>
+    Effect.succeed(baselineVatChoices(subject._tag === 'Originator' ? subject.tenantId : subject.scope.tenantId, on)),
 });

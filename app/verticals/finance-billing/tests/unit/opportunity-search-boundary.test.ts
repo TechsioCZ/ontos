@@ -24,6 +24,7 @@ import {
   draftInvoiceFromWonOpportunityWorker,
   handleDraftInvoiceFromWonOpportunity,
 } from '../../src/workers/draft-invoice-from-won-opportunity.worker.ts';
+import { FinanceTaxRates } from '../../src/integrations/tax-rates.ts';
 import { OpportunityInvoiceLedger } from '../../src/workers/opportunity-invoice-ledger.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
@@ -42,6 +43,8 @@ const foreignClaim: OutboxWorkerHandlerContext = attestOutboxWorkerHandlerContex
   domainEventId: '50000000-0000-4000-8000-000000000003',
   legalEntityScope: 'required',
   messageId: '50000000-0000-4000-8000-000000000004',
+  // The sales-pipeline invocation that marked the opportunity won; Finance asks Tax for it.
+  originatorInvocationId: '50000000-0000-4000-8000-000000000005',
   producerModuleKey: outboxProducerModuleKey,
   tenantId,
   tenantSequenceNo: 1n,
@@ -166,11 +169,23 @@ const committedDraft = Effect.gen(function* committedDraftDoesNotProject() {
   let commits = 0;
   let drafts = 0;
   const draft = handleDraftInvoiceFromWonOpportunity(payload, foreignClaim).pipe(
+    // The ledger below stands in for Finance's; it never asks Tax.
+    Effect.provideService(
+      FinanceTaxRates,
+      FinanceTaxRates.of({
+        choices: () => Effect.die('The stand-in ledger never asks Tax'),
+        choicesFor: () => Effect.die('The stand-in ledger never asks Tax'),
+      }),
+    ),
     Effect.provideService(OpportunityInvoiceLedger, {
-      draft: (actualScope, command) =>
+      draft: (actualScope, command, originator) =>
         Effect.sync(() => {
           expect(actualScope).toBe(scope);
           expect(command.opportunityId).toBe(opportunityId);
+          expect(originator).toEqual({
+            actionInvocationId: '50000000-0000-4000-8000-000000000005',
+            compositionRevision: 'a'.repeat(64),
+          });
           drafts += 1;
           return Option.some(invoice);
         }),

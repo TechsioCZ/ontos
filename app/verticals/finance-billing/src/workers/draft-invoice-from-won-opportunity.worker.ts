@@ -19,6 +19,8 @@ import type { FinanceError } from '../../shared/actions/apply-command.ts';
 import { opportunityWonInvoiceCommand } from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
 import type { CreateInvoiceFromOpportunityCommand } from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
 import { OpportunityInvoiceLedger } from './opportunity-invoice-ledger.ts';
+import type { OpportunityWonOriginator } from './opportunity-invoice-ledger.ts';
+import type { FinanceTaxRates } from '../integrations/tax-rates.ts';
 
 const workerKey = 'finance.billing.draft-invoice-from-won-opportunity' as const;
 const moduleKey = 'finance.billing' as const;
@@ -31,6 +33,7 @@ export class DraftInvoiceFromWonOpportunityRejected extends Schema.TaggedError<D
       'FINANCE_LEDGER_MISSING',
       'FINANCE_REJECTED',
       'PERSISTENCE_UNAVAILABLE',
+      'TAX_UNAVAILABLE',
     ]),
     reason: Schema.String,
     retryable: Schema.Boolean,
@@ -57,6 +60,10 @@ const mapFailure = (
   if (Predicate.isTagged(failure, 'FinanceRejected')) {
     return rejected('FINANCE_REJECTED', failure.reason, false);
   }
+  // Tax cannot give the lines their VAT now (unreachable, not installed, or refusing): the delivery retries later.
+  if (Predicate.isTagged(failure, 'FinanceReferenceUnavailable')) {
+    return rejected('TAX_UNAVAILABLE', failure.reason, true);
+  }
   return rejected('PERSISTENCE_UNAVAILABLE', failure.reason, true);
 };
 
@@ -65,12 +72,13 @@ const draftInScope = Effect.fn('DraftInvoiceFromWonOpportunityWorker.draftInScop
   settled: Ref.Ref<boolean>,
   scope: OutboxWorkerLegalEntityScope,
   command: CreateInvoiceFromOpportunityCommand,
+  originator: OpportunityWonOriginator,
 ) {
   if (yield* Ref.get(settled)) {
     return;
   }
   const ledger = yield* OpportunityInvoiceLedger;
-  const invoice = yield* ledger.draft(scope, command);
+  const invoice = yield* ledger.draft(scope, command, originator);
   if (Option.isSome(invoice)) {
     yield* Ref.set(settled, true);
   }
@@ -88,7 +96,7 @@ export const handleDraftInvoiceFromWonOpportunity = Effect.fn('DraftInvoiceFromW
   ): Effect.fn.Return<
     void,
     DraftInvoiceFromWonOpportunityRejected,
-    Crypto.Crypto | OpportunityInvoiceLedger | OutboxWorkerLegalEntityScopeFanout
+    Crypto.Crypto | FinanceTaxRates | OpportunityInvoiceLedger | OutboxWorkerLegalEntityScopeFanout
   > {
     if (!deliveryMatchesWorker(context)) {
       return yield* rejected(
@@ -101,10 +109,19 @@ export const handleDraftInvoiceFromWonOpportunity = Effect.fn('DraftInvoiceFromW
     if (Option.isNone(command)) {
       return yield* Effect.void;
     }
+    // Its lines take their VAT from Tax for the person who marked the opportunity won: without that invocation
+    // Finance cannot ask Tax, and never stores a line without its Tax rule revision.
+    if (context.originatorInvocationId === undefined) {
+      return yield* rejected('WORKER_CONTEXT_INVALID', 'The won message names no originating invocation', false);
+    }
+    const originator: OpportunityWonOriginator = {
+      actionInvocationId: context.originatorInvocationId,
+      compositionRevision: context.compositionRevision,
+    };
     const fanout = yield* OutboxWorkerLegalEntityScopeFanout;
     const settled = yield* Ref.make(false);
     yield* fanout
-      .forEachScope(context, (scope) => draftInScope(settled, scope, command.value))
+      .forEachScope(context, (scope) => draftInScope(settled, scope, command.value, originator))
       .pipe(Effect.mapError(mapFailure));
     if (!(yield* Ref.get(settled))) {
       return yield* rejected('FINANCE_LEDGER_MISSING', 'No Legal Entity of this Tenant keeps a finance ledger', true);

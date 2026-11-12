@@ -6,6 +6,7 @@ import { FinanceConflict, FinancePersistenceUnavailable } from '../../shared/act
 import { FinanceStateSchema } from '../../shared/apis/records.ts';
 import type { Invoice } from '../../shared/apis/records.ts';
 import type { CreateInvoiceFromOpportunityCommand } from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
+import { FinanceTaxRates } from '../integrations/tax-rates.ts';
 import { transitionFinance } from '../services/persistence.service.ts';
 import type { FinanceValidators } from '../services/persistence.service.ts';
 
@@ -37,11 +38,42 @@ export const saveFinanceStateForWorkerRoutine = defineScopedRoutine({
   schema: 'finance_billing',
 });
 
+/** The invocation a won message runs for: the one that marked the opportunity won, under its release. */
+export interface OpportunityWonOriginator {
+  readonly actionInvocationId: string;
+  readonly compositionRevision: string;
+}
+
 /**
  * The worker has no gateway principal, so it cannot read the party registry. The counterparty comes
  * from the sales-pipeline snapshot, which already validated it; billing's local invariants still apply.
+ * Its VAT comes from Tax like every new line's: Finance asks Tax for the person who marked the opportunity won,
+ * in the company of this ledger. While Tax cannot answer the delivery fails and retries later; no line is stored
+ * without the Tax rule revision of its rate.
  */
-const workerValidators: FinanceValidators = { invoice: () => Effect.void };
+const workerValidators = Effect.fn('Finance.opportunityWorkerValidators')(function* workerValidators(
+  scope: OutboxWorkerLegalEntityScope,
+  originator: OpportunityWonOriginator,
+) {
+  const taxRates = yield* FinanceTaxRates;
+  return {
+    invoice: () => Effect.void,
+    vat: (on: string) =>
+      taxRates.choicesFor(
+        {
+          requestCorrelation: `finance-won-opportunity-${originator.actionInvocationId}`,
+          subject: {
+            _tag: 'Originator',
+            actionInvocationId: originator.actionInvocationId,
+            compositionRevision: originator.compositionRevision,
+            legalEntityId: scope.legalEntityId,
+            tenantId: scope.tenantId,
+          },
+        },
+        on,
+      ),
+  } satisfies FinanceValidators;
+});
 
 const unavailable = (cause: unknown) =>
   Object.defineProperty(
@@ -61,7 +93,8 @@ export const draftOpportunityInvoiceInScope = Effect.fn('Finance.draftOpportunit
   function* draftOpportunityInvoiceInScope(
     scope: OutboxWorkerLegalEntityScope,
     command: CreateInvoiceFromOpportunityCommand,
-  ): Effect.fn.Return<Option.Option<Invoice>, FinanceError, Crypto.Crypto> {
+    originator: OpportunityWonOriginator,
+  ): Effect.fn.Return<Option.Option<Invoice>, FinanceError, Crypto.Crypto | FinanceTaxRates> {
     const [row] = yield* scope.routineInvoker
       .invoke(readFinanceStateForWorkerRoutine, [])
       .pipe(Effect.mapError(unavailable));
@@ -77,7 +110,7 @@ export const draftOpportunityInvoiceInScope = Effect.fn('Finance.draftOpportunit
       state,
       command,
       { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId },
-      workerValidators,
+      yield* workerValidators(scope, originator),
       { attemptId, now, resourceId },
     );
     if (!result.changed) {
@@ -98,7 +131,8 @@ export interface OpportunityInvoiceLedgerService {
   readonly draft: (
     scope: OutboxWorkerLegalEntityScope,
     command: CreateInvoiceFromOpportunityCommand,
-  ) => Effect.Effect<Option.Option<Invoice>, FinanceError, Crypto.Crypto>;
+    originator: OpportunityWonOriginator,
+  ) => Effect.Effect<Option.Option<Invoice>, FinanceError, Crypto.Crypto | FinanceTaxRates>;
 }
 
 /** Owner-local seam over the finance ledger; the worker host binds the scoped-routine adapter. */

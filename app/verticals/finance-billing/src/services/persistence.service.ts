@@ -71,8 +71,8 @@ export interface FinanceValidators {
   readonly exportReferences?: Effect.Effect<ExportReferences, FinanceError>;
   readonly invoice: (invoice: Invoice) => Effect.Effect<void, FinanceError>;
   /**
-   * The VAT Tax publishes for the company on a date (YYYY-MM-DD). Absent in hosts without Tax access (outbox worker,
-   * seeds, tests); their lines are stored exactly as given.
+   * The VAT Tax publishes for the company on a date (YYYY-MM-DD). Absent only in seeds and tests, whose lines are stored
+   * exactly as given; every host that creates invoice lines (the app's Action, the Outbox worker) gives it.
    */
   readonly vat?: (on: string) => Effect.Effect<VatChoices, FinanceError>;
 }
@@ -317,6 +317,32 @@ const handleCreateInvoiceDraft = Effect.fn('Finance.handleCreateInvoiceDraft')(f
   return { changed: true, invoice, state: { ...state, invoices: [...state.invoices, invoice] } };
 });
 
+/**
+ * A won opportunity's lines as a new invoice stores them: each line takes Tax's rate for its classification on the
+ * issue date, with the Tax rule revision that published it, exactly as a person's new line must. A line whose rate
+ * names no classification, or a company Tax gives no usable VAT, refuses the invoice; Finance never guesses a rate.
+ */
+const opportunityLines = Effect.fn('Finance.opportunityLines')(function* opportunityLines(
+  lines: readonly InvoiceLine[],
+  issueDate: string,
+  validators: FinanceValidators,
+) {
+  if (validators.vat === undefined) {
+    return lines;
+  }
+  const choices = yield* validators.vat(issueDate);
+  const priced: InvoiceLine[] = [];
+  for (const line of lines) {
+    const current = withCurrentTaxRate(line, choices);
+    const issue = current === undefined ? 'vat_rate_changed' : lineVatIssue(current, choices, 'OUTGOING');
+    if (current === undefined || issue !== undefined) {
+      return yield* rejected(issue ?? 'vat_rate_changed');
+    }
+    priced.push(current);
+  }
+  return priced;
+});
+
 const handleCreateInvoiceFromOpportunity = Effect.fn('Finance.handleCreateInvoiceFromOpportunity')(
   function* handleCreateInvoiceFromOpportunity(
     command: Extract<FinanceCommand, { readonly _tag: 'CreateInvoiceFromOpportunity' }>,
@@ -334,8 +360,8 @@ const handleCreateInvoiceFromOpportunity = Effect.fn('Finance.handleCreateInvoic
     ) {
       return yield* conflict('invoice_already_exists');
     }
-    const totals = yield* draftTotals({ lines: command.lines });
     const issueDate = command.issueDate ?? calendarDateOf(input.now);
+    const totals = yield* draftTotals({ lines: yield* opportunityLines(command.lines, issueDate, validators) });
     const invoice: Invoice = {
       ...totals,
       accountingCorrelation: `demo-accounting:${input.resourceId}`,

@@ -2,6 +2,7 @@ import type { OperationalScope } from '@app/core-runtime';
 import { czVatClassificationCodes } from '@app/shared-contracts/cz-vat-classifications';
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
+import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import {
   executeApplicableTaxRuleSetWithAuthorization,
   executeSellerVatRegimeAtInstantWithAuthorization,
@@ -36,6 +37,18 @@ export interface FinanceTaxRatesService {
    * Tax publishes exactly one whole-percent rate for at the start of that Prague day.
    */
   readonly choices: (scope: OperationalScope, on: string) => Effect.Effect<VatChoices, FinanceReferenceUnavailable>;
+  /**
+   * The same for asynchronous work: Finance asks Tax for the person or workload of the invocation the work runs for
+   * (`Originator`), in the company the work belongs to.
+   */
+  readonly choicesFor: (call: TaxCall, on: string) => Effect.Effect<VatChoices, FinanceReferenceUnavailable>;
+}
+
+/** Whom one Tax call is for, and the correlation it carries. */
+export interface TaxCall {
+  /** The request correlation the Shell records for the module call. */
+  readonly requestCorrelation: string;
+  readonly subject: GatewayDelegationSubject;
 }
 
 /**
@@ -52,28 +65,28 @@ export const FinanceTaxRatesLive = Layer.effect(
   FinanceTaxRates,
   Effect.gen(function* financeTaxRatesLayer() {
     const crypto = yield* Crypto.Crypto;
-    /** A fresh single-use module-call assertion naming Finance as the caller and the requester as the subject. */
-    const taxCredential = (scope: OperationalScope) =>
+    /** A fresh single-use module-call assertion naming Finance as the caller and the call's subject. */
+    const taxCredential = (call: TaxCall) =>
       acquireDelegatedGatewayContext(
         {
           audience: TAX_AUDIENCE,
           callingAppId: 'finance-billing',
           legalEntityScope: 'subject',
-          requestCorrelation: scope.correlationId,
-          subject: { _tag: 'Assertion', scope },
+          requestCorrelation: call.requestCorrelation,
+          subject: call.subject,
         },
         crypto,
       );
     const rateOf = Effect.fn('FinanceTaxRates.rate')(function* rateOf(
-      scope: OperationalScope,
+      call: TaxCall,
       code: CzVatClassificationCode,
       instant: NonNullable<ReturnType<typeof pragueDayStart>>,
     ) {
-      const credential = yield* taxCredential(scope);
+      const credential = yield* taxCredential(call);
       const response = yield* executeApplicableTaxRuleSetWithAuthorization(
         { jurisdiction: 'CZ_DOMESTIC', taxClassificationCode: code, taxRelevantTime: instant },
         credential.authorization,
-        scope.correlationId,
+        call.requestCorrelation,
         { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
       );
       const [revision, ...others] = response.applicable;
@@ -91,14 +104,14 @@ export const FinanceTaxRatesLive = Layer.effect(
       return [rate];
     });
     const regimeOf = Effect.fn('FinanceTaxRates.regime')(function* regimeOf(
-      scope: OperationalScope,
+      call: TaxCall,
       instant: NonNullable<ReturnType<typeof pragueDayStart>>,
     ) {
-      const credential = yield* taxCredential(scope);
+      const credential = yield* taxCredential(call);
       const response = yield* executeSellerVatRegimeAtInstantWithAuthorization(
         { instant },
         credential.authorization,
-        scope.correlationId,
+        call.requestCorrelation,
         { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
       );
       return Match.value(response.selection).pipe(
@@ -106,21 +119,24 @@ export const FinanceTaxRatesLive = Layer.effect(
         Match.orElse(() => 'NOT_DECLARED' as const),
       );
     });
+    const choicesFor = Effect.fn('FinanceTaxRates.choices')(function* choices(call: TaxCall, on: string) {
+      const instant = pragueDayStart(on);
+      if (instant === undefined) {
+        return yield* taxUnavailable();
+      }
+      const [regime, rates] = yield* Effect.all(
+        [
+          regimeOf(call, instant),
+          Effect.forEach(czVatClassificationCodes, (code) => rateOf(call, code, instant), { concurrency: 2 }),
+        ],
+        { concurrency: 2 },
+      );
+      return { on, rates: rates.flat(), regime } satisfies VatChoices;
+    }, Effect.mapError(taxUnavailable));
     return {
-      choices: Effect.fn('FinanceTaxRates.choices')(function* choices(scope: OperationalScope, on: string) {
-        const instant = pragueDayStart(on);
-        if (instant === undefined) {
-          return yield* taxUnavailable();
-        }
-        const [regime, rates] = yield* Effect.all(
-          [
-            regimeOf(scope, instant),
-            Effect.forEach(czVatClassificationCodes, (code) => rateOf(scope, code, instant), { concurrency: 2 }),
-          ],
-          { concurrency: 2 },
-        );
-        return { on, rates: rates.flat(), regime } satisfies VatChoices;
-      }, Effect.mapError(taxUnavailable)),
+      choices: (scope: OperationalScope, on: string) =>
+        choicesFor({ requestCorrelation: scope.correlationId, subject: { _tag: 'Assertion', scope } }, on),
+      choicesFor,
     } satisfies FinanceTaxRatesService;
   }),
 );

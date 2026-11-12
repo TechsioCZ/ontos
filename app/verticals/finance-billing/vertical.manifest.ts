@@ -23,6 +23,10 @@ export const financeBillingManifest = defineOntosModuleManifest({
     scope: 'tenant',
     supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],
   },
+  originatorActions: [
+    // A won opportunity's draft invoice asks Tax for the person whose sales-pipeline command marked it won.
+    'demo.sales-pipeline.apply-command',
+  ],
   publicSurface: {
     ...financeBillingRuntimeManifest.publicSurface,
     businessPermissions: [
