@@ -399,12 +399,16 @@ const validateProcessingIssuance = Effect.fn('GatewayIssuer.validateProcessingIs
   return yield* Effect.void;
 });
 
+/** The exact trusted principal, rejected as a `principal` failure before any admission is read. */
+const decodeTrustedPrincipal = (principal: unknown) =>
+  Schema.decodeUnknownEffect(GatewayTrustedPrincipalContextSchema, { onExcessProperty: 'error' })(principal).pipe(
+    Effect.mapError((failureCause) => unavailable('principal', failureCause)),
+  );
+
 const decodeIssuanceIdentity = Effect.fn('GatewayIssuer.decodeIdentity')(function* decodeIdentity<Principal>(
   input: IssueGatewayAssertionInput<Principal>,
 ) {
-  const principal = yield* Schema.decodeUnknownEffect(GatewayTrustedPrincipalContextSchema, {
-    onExcessProperty: 'error',
-  })(input.principal).pipe(Effect.mapError((failureCause) => unavailable('principal', failureCause)));
+  const principal = yield* decodeTrustedPrincipal(input.principal);
   if (deniesSymmyAudience(input, principal)) {
     return yield* symmyAudienceForbidden();
   }
@@ -651,6 +655,8 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
     if (input.audiences.length === 0) {
       return [];
     }
+    // A malformed principal is refused before the document reads any admission.
+    yield* decodeTrustedPrincipal(input.principal);
     // One document is one issuance operation. Its audiences share this fresh admission; a later
     // document or individual issuance always reads authority again, with fresh tokens.
     const approved = yield* admission;

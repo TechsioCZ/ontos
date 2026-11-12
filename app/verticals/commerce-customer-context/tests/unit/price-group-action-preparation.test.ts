@@ -52,7 +52,11 @@ import {
   preparedPriceGroupWindowOpen,
   samePreparedPriceGroupProfile,
 } from '../../src/actions/price-group-action-preparation.ts';
-import { priceGroupActionServicesForTransaction } from '../../src/actions/price-group-action-services.ts';
+import {
+  assignCounterpartyPriceGroupServicesForTransaction,
+  assignCustomerPriceGroupServicesForTransaction,
+  priceGroupActionServicesForTransaction,
+} from '../../src/actions/price-group-action-services.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 
 const scope: OperationalScope = {
@@ -130,8 +134,8 @@ it('prepares all four Catalog-dependent Actions and leaves Remove Actions local'
   );
   expect(getActionServicePreflight(removeCustomerPriceGroupAction)).toBeUndefined();
   expect(getActionServicePreflight(removeCounterpartyPriceGroupAction)).toBeUndefined();
-  expect(getActionServiceFactory(assignCustomerPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
-  expect(getActionServiceFactory(assignCounterpartyPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
+  expect(getActionServiceFactory(assignCustomerPriceGroupAction)).toBe(assignCustomerPriceGroupServicesForTransaction);
+  expect(getActionServiceFactory(assignCounterpartyPriceGroupAction)).toBe(assignCounterpartyPriceGroupServicesForTransaction);
   expect(getActionServiceFactory(migrateCustomerPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
   expect(getActionServiceFactory(migrateCounterpartyPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
 });

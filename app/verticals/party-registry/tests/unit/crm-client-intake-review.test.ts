@@ -53,6 +53,10 @@ it.layer(NodeCrypto.layer)('CRM intake owner review', (suite) => {
             operationTime: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-07T00:00:00Z')),
             executeOwnerQuery: ({ sql, params, scope }) => {
               expect(scope).toEqual({ tenantId, legalEntityId });
+              if (sql.includes('party_create_source_receipts')) {
+                // CRM intake creates no source-owned Party, so the case holds no source create receipt.
+                return Effect.succeed([]);
+              }
               if (sql.includes('party_match_decisions')) {
                 expect(params).toContain(decisionRef.resourceId);
                 expect(params).toContain(caseRef.resourceId);

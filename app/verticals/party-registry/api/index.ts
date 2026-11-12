@@ -171,10 +171,10 @@ type PartyRegistryApiRuntimeArguments = readonly [
   >,
 ];
 
-export const makePartyRegistryApiRuntime = (
-  ...args: PartyRegistryApiRuntimeArguments
-): EffectBffDefinition<typeof partyRegistryApi, EffectRuntimeLayer> &
-  EffectBffRuntime<typeof partyRegistryApi, EffectRuntimeLayer> => {
+type PartyRegistryApiRuntime = EffectBffDefinition<typeof partyRegistryApi, EffectRuntimeLayer> &
+  EffectBffRuntime<typeof partyRegistryApi, EffectRuntimeLayer>;
+
+export const makePartyRegistryApiRuntime = (...args: PartyRegistryApiRuntimeArguments): PartyRegistryApiRuntime => {
   const [
     governedReadRuntimeLive,
     aresSubjectService,
@@ -272,7 +272,7 @@ export const makePartyRegistryApiRuntime = (
   });
 };
 
-const apiRuntime = makePartyRegistryApiRuntime(
+const apiRuntime: PartyRegistryApiRuntime = makePartyRegistryApiRuntime(
   productionReadRuntimeLive,
   partyRegistryAresSubjectServiceLive,
   productionSearchProjectionGatewayLive,

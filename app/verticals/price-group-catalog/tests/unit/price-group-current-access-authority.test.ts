@@ -58,6 +58,9 @@ const fenceDatabase = (fences: Fences) =>
           );
           return [];
         }
+        if (statement === 'select current_user::text as role') {
+          return [{ role: SHARED_RUNTIME_IDENTITY.role }];
+        }
         if (statement === readInstalledScope) {
           return [
             {
