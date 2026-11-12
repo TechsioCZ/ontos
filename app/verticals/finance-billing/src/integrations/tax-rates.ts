@@ -1,10 +1,12 @@
 import type { OperationalScope } from '@app/core-runtime';
-import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { czVatClassificationCodes } from '@app/shared-contracts/cz-vat-classifications';
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { taxApi, taxApiContract } from '@app/tax/api';
-import { Context, Crypto, Effect, Layer, Match, Redacted } from 'effect';
+import {
+  executeApplicableTaxRuleSetWithAuthorization,
+  executeSellerVatRegimeAtInstantWithAuthorization,
+} from '@app/tax/api/client';
+import { Context, Crypto, Effect, Layer, Match } from 'effect';
 import { FinanceReferenceUnavailable } from '../../shared/actions/apply-command.ts';
 import type { VatChoices, VatClassificationRate } from '../../shared/apis/vat-choices.ts';
 import { pragueDayStart } from '../../shared/domain/line-vat.ts';
@@ -50,7 +52,8 @@ export const FinanceTaxRatesLive = Layer.effect(
   FinanceTaxRates,
   Effect.gen(function* financeTaxRatesLayer() {
     const crypto = yield* Crypto.Crypto;
-    const taxClient = (scope: OperationalScope) =>
+    /** A fresh single-use module-call assertion naming Finance as the caller and the requester as the subject. */
+    const taxCredential = (scope: OperationalScope) =>
       acquireDelegatedGatewayContext(
         {
           audience: TAX_AUDIENCE,
@@ -59,28 +62,19 @@ export const FinanceTaxRatesLive = Layer.effect(
           subject: { _tag: 'Assertion', scope },
         },
         crypto,
-      ).pipe(
-        Effect.flatMap((credential) =>
-          makeGovernedEffectBffClient(
-            {
-              api: taxApi,
-              credential: Redacted.make(credential.authorization),
-              defaultApiPrefix: taxApiContract.apiPrefix,
-              requestCorrelation: scope.correlationId,
-            },
-            { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
-          ),
-        ),
       );
     const rateOf = Effect.fn('FinanceTaxRates.rate')(function* rateOf(
       scope: OperationalScope,
       code: CzVatClassificationCode,
       instant: NonNullable<ReturnType<typeof pragueDayStart>>,
     ) {
-      const client = yield* taxClient(scope);
-      const response = yield* client.applicableTaxRuleSet.execute({
-        payload: { jurisdiction: 'CZ_DOMESTIC', taxClassificationCode: code, taxRelevantTime: instant },
-      });
+      const credential = yield* taxCredential(scope);
+      const response = yield* executeApplicableTaxRuleSetWithAuthorization(
+        { jurisdiction: 'CZ_DOMESTIC', taxClassificationCode: code, taxRelevantTime: instant },
+        credential.authorization,
+        scope.correlationId,
+        { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
+      );
       const [revision, ...others] = response.applicable;
       const ratePercent = revision === undefined ? undefined : wholePercent(revision.ratePercent);
       // An overlap, conflict or missing rule leaves the classification out: Finance never guesses a rate.
@@ -99,8 +93,13 @@ export const FinanceTaxRatesLive = Layer.effect(
       scope: OperationalScope,
       instant: NonNullable<ReturnType<typeof pragueDayStart>>,
     ) {
-      const client = yield* taxClient(scope);
-      const response = yield* client.sellerVatRegimeAtInstant.execute({ payload: { instant } });
+      const credential = yield* taxCredential(scope);
+      const response = yield* executeSellerVatRegimeAtInstantWithAuthorization(
+        { instant },
+        credential.authorization,
+        scope.correlationId,
+        { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
+      );
       return Match.value(response.selection).pipe(
         Match.tag('DECLARED', ({ regime }) => regime),
         Match.orElse(() => 'NOT_DECLARED' as const),

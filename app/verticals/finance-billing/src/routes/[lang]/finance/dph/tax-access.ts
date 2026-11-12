@@ -1,65 +1,44 @@
 // The VAT settings page talks to Tax itself, as the signed-in person: every read and change is judged by Tax against
 // that person's own Tax rights, so an accountant manages VAT and anyone else sees Tax's refusal.
-import { makeOperationGateway } from '@app/shared-contracts';
-import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
-import { taxApi, taxApiContract } from '@app/tax/api';
 import {
+  executeApplicableTaxRuleSet,
   executeCreateTaxRule,
   executeCreateTaxRuleRevision,
   executeDeclareSellerVatRegime,
   executeEndTaxRuleRevision,
+  executeSellerVatRegimeAtInstant,
+  executeSellerVatRegimeHistory,
+  executeTaxRuleHistory,
 } from '@app/tax/api/client';
 import type { TaxRuleRevisionRef } from '@app/tax/resources/tax-rule-revision';
 import type { TaxRuleRef } from '@app/tax/resources/tax-rule';
-import { Effect, Match, Redacted } from 'effect';
+import { Effect, Match } from 'effect';
 import type { DateTime } from 'effect';
 import type { VatChangeOutcome } from './vat-settings-model.ts';
 
-const TAX_AUDIENCE = 'tax';
+// Tax's own clients acquire a single-use assertion for the signed-in person on every call.
 const REQUEST_CORRELATION = 'finance-billing.vat-settings';
 /** Where a change was made, as Tax records it next to the person and the reason. */
 const PROVENANCE = 'ontos:finance-billing:vat-settings';
 const ACTION_APPROVAL_REQUIRED = 'action_approval_required';
 
-const taxGateway = makeOperationGateway(TAX_AUDIENCE);
-
-const taxClientFor = (credential: Redacted.Redacted, apiBaseUrl: string, compositionRevision: string) =>
-  makeGovernedEffectBffClient(
-    {
-      api: taxApi,
-      credential,
-      defaultApiPrefix: taxApiContract.apiPrefix,
-      requestCorrelation: REQUEST_CORRELATION,
-    },
-    { baseUrl: apiBaseUrl, compositionRevision },
-  );
-type TaxClient = Effect.Success<ReturnType<typeof taxClientFor>>;
-
-/** One Tax read with its own single-use assertion for the signed-in person. */
-const asPerson = <A, E>(read: (client: TaxClient) => Effect.Effect<A, E>) =>
-  taxGateway.invoke((authorization, { apiBaseUrl, compositionRevision }) =>
-    taxClientFor(Redacted.make(authorization), apiBaseUrl, compositionRevision).pipe(Effect.flatMap(read)),
-  );
-
 /** The company's applicable rule set of one classification at an instant. */
 export const readApplicableRule = (code: CzVatClassificationCode, instant: DateTime.Utc) =>
-  asPerson((client) =>
-    client.applicableTaxRuleSet.execute({
-      payload: { jurisdiction: 'CZ_DOMESTIC', taxClassificationCode: code, taxRelevantTime: instant },
-    }),
+  executeApplicableTaxRuleSet(
+    { jurisdiction: 'CZ_DOMESTIC', taxClassificationCode: code, taxRelevantTime: instant },
+    REQUEST_CORRELATION,
   );
 
 /** Every revision of one rule, with the basis a change must name. */
-export const readRuleHistory = (taxRuleRef: TaxRuleRef) =>
-  asPerson((client) => client.taxRuleHistory.execute({ payload: { taxRuleRef } }));
+export const readRuleHistory = (taxRuleRef: TaxRuleRef) => executeTaxRuleHistory({ taxRuleRef }, REQUEST_CORRELATION);
 
 /** The company's declared VAT regime at an instant, with the revision a new declaration must name. */
 export const readRegimeAt = (instant: DateTime.Utc) =>
-  asPerson((client) => client.sellerVatRegimeAtInstant.execute({ payload: { instant } }));
+  executeSellerVatRegimeAtInstant({ instant }, REQUEST_CORRELATION);
 
 /** Every declared regime revision of the company. */
-export const readRegimeHistory = () => asPerson((client) => client.sellerVatRegimeHistory.execute({ payload: {} }));
+export const readRegimeHistory = () => executeSellerVatRegimeHistory({}, REQUEST_CORRELATION);
 
 /** A refusal of a Tax Action: approval needed (the person may only propose) or no right at all. */
 const refused = (problem: { readonly code: string }): VatChangeOutcome =>
