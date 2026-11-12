@@ -27,7 +27,7 @@ import { bootstrapRuntimeRoles } from '../../../../scripts/postgres/runtime-role
 import { AuthConfig, parseAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { session, user } from '../../api/auth/db/schema.ts';
-import { makeShellTestAuthentication } from './shell-authentication.ts';
+import { shellTestAuthentication } from './shell-authentication.ts';
 
 export class NativeHumanSessionFixtureError extends Schema.TaggedError<NativeHumanSessionFixtureError>()(
   'NativeHumanSessionFixtureError',
@@ -181,7 +181,7 @@ export const makeNativeHumanSessionProvider = Effect.fn('NativeHumanSessions.mak
     Layer.succeed(DatabaseIdentityEnrollmentContext, options.enrollment),
     Layer.succeed(PrincipalResolver, resolver),
   );
-  const authentication = yield* makeShellTestAuthentication({ allowFixtureSignUp: true }).pipe(
+  const authentication = yield* shellTestAuthentication({ allowFixtureSignUp: true }).pipe(
     Effect.provide(base),
     Effect.mapError(unavailable),
   );
