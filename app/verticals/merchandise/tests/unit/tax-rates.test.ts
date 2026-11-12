@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type { OperationalScope } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { vatRateAt } from '@app/shared-contracts/cz-vat-classifications';
-import { DateTime, Deferred, Effect, Fiber, Option, Ref, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Fiber, Option, Ref, Result, Scheduler, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -264,6 +264,34 @@ it.effect('keeps the last answer through an outage and drops it when Tax refuses
     yield* Ref.set(outcome, Effect.fail(new TaxRatesFailure({ kind: 'REFUSED' })));
     yield* write;
     expect(yield* read).toEqual({ fresh: false, refused: true });
+  }),
+);
+
+it.live('a caller interrupted while it starts the refresh never leaves one that nobody runs', () =>
+  Effect.gen(function* interruptedLeader() {
+    const source = { read: () => Effect.succeed(TEST_TAX_BOOK) };
+    // The first caller may yield every few steps and is interrupted after a growing number of turns, so the
+    // interruption lands at every point of starting the refresh (with a budget of 3 steps, after 36 turns it hit
+    // between registering the refresh and starting it). A leaked refresh keeps the second caller waiting for nothing.
+    const cases = [2, 3, 4, 5].flatMap((budget) =>
+      Array.from({ length: 120 }, (_unused, turns) => [budget, turns] as const),
+    );
+    for (const [budget, turns] of cases) {
+      const company = scopeOf(randomUUID());
+      const first = yield* Effect.forkChild(
+        currentTaxRateBook(company).pipe(
+          Effect.provideService(TaxRateSource, source),
+          Effect.provideService(Scheduler.MaxOpsBeforeYield, budget),
+        ),
+      );
+      yield* Effect.replicateEffect(Effect.yieldNow, turns);
+      yield* Fiber.interrupt(first);
+      const second = yield* currentTaxRateBook(company).pipe(
+        Effect.provideService(TaxRateSource, source),
+        Effect.result,
+      );
+      expect([budget, turns, Result.isSuccess(second)]).toEqual([budget, turns, true]);
+    }
   }),
 );
 

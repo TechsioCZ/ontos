@@ -556,24 +556,31 @@ const runRefresh = Effect.fn('Merchandise.runTaxRatesRefresh')(function* runRefr
 });
 
 /**
- * Joins the company's refresh in flight or starts one. The refresh runs on its own fiber, so it finishes (and is
- * recorded) even when the caller stops waiting for it; the caller gets the pending answer.
+ * Joins the company's refresh in flight or starts one. Registering the refresh and starting its fiber are one
+ * uninterruptible step, so an interrupted caller never leaves a registered refresh that nobody runs. The fiber is
+ * detached from the caller (owned by the process): it finishes, is recorded and clears its entry even when every
+ * caller stopped waiting for it.
  */
-const refreshOf = Effect.fn('Merchandise.refreshTaxRates')(function* refreshOf(scope: OperationalScope) {
-  const key = companyKey(scope);
-  const created = yield* Deferred.make<TaxRateBook, TaxRatesFailure>();
-  const joined = yield* Ref.modify(companyAnswers, (answers) => {
-    const current = entryOf(answers, key);
-    return current.inflight === undefined
-      ? ([undefined, new Map([...answers, [key, { ...current, inflight: created }]])] as const)
-      : ([current.inflight, answers] as const);
-  });
-  if (joined !== undefined) {
-    return joined;
-  }
-  yield* Effect.forkDetach(runRefresh(scope, created).pipe(Effect.ensuring(releaseRefresh(key, created))));
-  return created;
-});
+const refreshOf = (scope: OperationalScope) =>
+  Effect.uninterruptible(
+    Effect.gen(function* registerRefresh() {
+      const key = companyKey(scope);
+      const created = yield* Deferred.make<TaxRateBook, TaxRatesFailure>();
+      const joined = yield* Ref.modify(companyAnswers, (answers) => {
+        const current = entryOf(answers, key);
+        return current.inflight === undefined
+          ? ([undefined, new Map([...answers, [key, { ...current, inflight: created }]])] as const)
+          : ([current.inflight, answers] as const);
+      });
+      if (joined !== undefined) {
+        return joined;
+      }
+      yield* Effect.forkDetach(
+        Effect.interruptible(runRefresh(scope, created)).pipe(Effect.ensuring(releaseRefresh(key, created))),
+      );
+      return created;
+    }),
+  ).pipe(Effect.withSpan('Merchandise.refreshTaxRates'));
 
 /** What this process knows from Tax about the company. */
 export interface KnownTaxRates {
