@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Config, ConfigProvider, Effect, Option, Queue, Redacted, Ref, Schema, Stream } from 'effect';
+import { Config, ConfigProvider, Effect, Fiber, Option, Queue, Redacted, Ref, Schema, Stream } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -15,6 +15,7 @@ import {
   makeCredentialHolder,
   planModuleCredentialHealing,
   recordHostBoot,
+  retireAfterHandoverWith,
 } from '../zerops/app-host.mts';
 import type { HandoverChannel } from '../zerops/app-host.mts';
 import {
@@ -321,5 +322,34 @@ describe("a container's record of its host boots", () => {
         }),
       (directory) => Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
     ).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+const BOOT_ORDER_KEY = 'boot-order-key';
+
+describe('retirement after a handover', () => {
+  it.effect('keeps every key the host holds when the superseded retirement runs, not only those of the boot pass', () =>
+    Effect.gen(function* lateKeepList() {
+      const held = yield* Ref.make<readonly string[]>([BOOT_ORDER_KEY]);
+      const runs: (readonly [string, readonly string[]])[] = [];
+      const run = (pass: 'retire' | 'retire-own', retiring: { readonly providerKeyIds: readonly string[] }) =>
+        Effect.sync(() => runs.push([pass, retiring.providerKeyIds]));
+      const retirement = yield* Effect.forkChild(
+        retireAfterHandoverWith(run)({
+          compositionRevision: 'a'.repeat(64),
+          current: Ref.get(held),
+          earlierBoots: [],
+          replaced: [],
+          shellEnvironment: {},
+          superseded: true,
+        }),
+      );
+      // A fill issues a key for a caller the boot pass missed, during the grace period.
+      yield* TestClock.adjust('1 minute');
+      yield* Ref.set(held, [BOOT_ORDER_KEY, 'filled-party-key']);
+      yield* TestClock.adjust('1 minute');
+      yield* Fiber.join(retirement);
+      expect(runs).toEqual([['retire', [BOOT_ORDER_KEY, 'filled-party-key']]]);
+    }),
   );
 });
