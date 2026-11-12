@@ -42,7 +42,7 @@ import {
 } from '../../packages/core-runtime/src/access/model.ts';
 import { policyRoleCellRows } from './access-policy.mts';
 import { demoLegalEntityId, demoTenantId } from './fixture-ids.mts';
-import { demoHumanAccounts, demoShellRoutingRoleKey, reviewedDemoAssignments } from './permissions.mts';
+import { demoHumanAccounts, demoShellRoutingRoleKey, reviewedDemoAssignments, taxManagerKeys } from './permissions.mts';
 
 export type HumanId = typeof AccessHumanIdSchema.Type;
 export type RoleId = typeof AccessRoleIdSchema.Type;
@@ -612,20 +612,27 @@ const revisionOf = (observed: ObservedState, roleId: RoleId): Option.Option<Role
   Option.map(Option.fromUndefinedOr(observed.roles.find(({ id }) => id === roleId)), ({ revisionId }) => revisionId);
 
 /**
- * The reviewed cells a saved role lacks, when it holds nothing else: a later review only ever adds rights to a
- * managed role (for example the tax rights of Phase 1). `undefined` when the role holds a cell outside the review
- * or a narrowed cell; that role is never rewritten.
+ * The capabilities that are new in this review: the only ones a role saved earlier is ever extended with. Today the
+ * VAT rights of Phase 1 (`taxManagerKeys` covers the readers' two keys as well). A reviewed cell outside this set that
+ * a saved role lacks was removed by a person and is never given back by this script.
+ */
+export const NEW_IN_THIS_REVIEW: ReadonlySet<string> = new Set<string>(taxManagerKeys);
+
+/**
+ * The cells new in this review that a saved role lacks, when it holds nothing but plain reviewed cells. `undefined`
+ * when the role holds a cell outside the review or a narrowed cell; that role is never rewritten.
  */
 export const reviewedAdditions = (
   held: readonly ObservedCell[],
   reviewed: readonly ReviewedCell[],
+  newInReview: ReadonlySet<string> = NEW_IN_THIS_REVIEW,
 ): readonly ReviewedCell[] | undefined => {
   const reviewedSlots = new Set(reviewed.map(slotOf));
   const heldSlots = new Set(held.map(({ slot }) => slot));
   if (heldSlots.size !== held.length || held.some(({ plain, slot }) => !plain || !reviewedSlots.has(slot))) {
     return undefined;
   }
-  return reviewed.filter((cell) => !heldSlots.has(slotOf(cell)));
+  return reviewed.filter((cell) => !heldSlots.has(slotOf(cell)) && newInReview.has(cell.capabilityKey));
 };
 
 /** The writes one reviewed role still needs, or why it must not be touched. */
@@ -635,7 +642,7 @@ const roleSteps = (
   entries: ReadonlyMap<string, CatalogSnapshotEntry>,
 ): Planned => {
   const listed = observed.roles.find(({ id }) => id === role.roleId);
-  const save = (addedCells: readonly ReviewedCell[]): Planned => {
+  const save = (addedCells: readonly ReviewedCell[], cells: readonly ReviewedCell[]): Planned => {
     const confirmations = confirmationsOf(addedCells, entries);
     if (Result.isFailure(confirmations)) {
       return halt(`role ${role.key}: ${confirmations.failure}`);
@@ -646,10 +653,11 @@ const roleSteps = (
         addedCells,
         adminCells: role.adminCells.filter((admin) => addedSlots.has(admin.slice(0, admin.lastIndexOf(' (')))),
         catalogSnapshotId: observed.release.catalogSnapshotId,
-        cells: role.cells,
+        cells,
         confirmations: confirmations.success,
         expectedRoleRevisionId: revisionOf(observed, role.roleId),
-        idempotencyKey: role.saveKey,
+        // The key names the exact cell set saved, so a save that keeps a person's removal is its own write.
+        idempotencyKey: keyOf(`ontos-demo-reviewed-role-save:v1:${role.key}:${digest(sortedSlots(cells))}`),
         roleId: role.roleId,
         roleKey: role.key,
       }),
@@ -664,7 +672,7 @@ const roleSteps = (
       roleKey: role.key,
       scope: role.scope,
     });
-    return Result.map(save(role.cells), (steps) => [create, ...steps]);
+    return Result.map(save(role.cells, role.cells), (steps) => [create, ...steps]);
   }
   const wanted: string = role.scope.kind === 'company' ? role.scope.legalEntityId : 'tenant';
   if (Option.getOrElse(listed.legalEntityId, (): string => 'tenant') !== wanted) {
@@ -673,10 +681,24 @@ const roleSteps = (
   if (holdsExactly(listed.cells, role.cells)) {
     return Result.succeed([]);
   }
+  if (listed.cells.length === 0) {
+    // Created by an earlier run and not yet saved: its first save is the whole reviewed set.
+    return save(role.cells, role.cells);
+  }
   const additions = reviewedAdditions(listed.cells, role.cells);
-  return additions === undefined
-    ? halt(`the managed role ${role.key} holds other cells; this script never rewrites a saved role`)
-    : save(additions);
+  if (additions === undefined) {
+    return halt(`the managed role ${role.key} holds other cells; this script never rewrites a saved role`);
+  }
+  if (additions.length === 0) {
+    // Nothing new in this review is missing; whatever else it lacks a person removed, and it stays removed.
+    return Result.succeed([]);
+  }
+  const heldSlots = new Set(listed.cells.map(({ slot }) => slot));
+  const addedSlots = new Set(additions.map(slotOf));
+  return save(
+    additions,
+    role.cells.filter((cell) => heldSlots.has(slotOf(cell)) || addedSlots.has(slotOf(cell))),
+  );
 };
 
 /** The admission one person still needs, or why the plan must stop. */

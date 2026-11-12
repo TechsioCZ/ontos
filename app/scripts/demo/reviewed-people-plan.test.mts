@@ -406,6 +406,7 @@ it.effect('halts instead of saving over a managed role with other cells or an un
 );
 
 const TAX_PREFIX = 'commerce.tax.';
+const TAX_RULE_SET_READ_SLOT = 'commerce.tax.tax-rule-set.read run all';
 const withoutTax = (observed: ObservedState, id: string): ObservedState => ({
   ...observed,
   roles: observed.roles.map((role) =>
@@ -436,7 +437,7 @@ it.effect('adds only the newly reviewed tax cells to a role saved before them, a
       'commerce.tax.tax-rule-revision.end approve all',
       'commerce.tax.tax-rule-revision.end propose all',
       'commerce.tax.tax-rule-revision.end run all',
-      'commerce.tax.tax-rule-set.read run all',
+      TAX_RULE_SET_READ_SLOT,
       'commerce.tax.tax-rule.create approve all',
       'commerce.tax.tax-rule.create propose all',
       'commerce.tax.tax-rule.create run all',
@@ -478,14 +479,49 @@ it.effect('adds only the newly reviewed tax cells to a role saved before them, a
   }),
 );
 
+it.effect('never gives back a reviewed cell a person removed from a saved role; only the new cells are added', () =>
+  Effect.gen(function* keepsRemovals() {
+    const state = yield* desired;
+    const accounting = state.roles.find(({ key }) => key === 'accounting');
+    if (accounting === undefined) {
+      throw new Error('no accounting role');
+    }
+    const removed = accounting.cells.find(({ capabilityKey }) => !capabilityKey.startsWith(TAX_PREFIX));
+    if (removed === undefined) {
+      throw new Error('the accounting role holds no other cell');
+    }
+    // Saved before Phase 1, and since then a person removed one of its reviewed cells in the role editor.
+    let before = withoutTax(applied(state), accounting.roleId);
+    before = {
+      ...before,
+      roles: before.roles.map((role) =>
+        role.id === accounting.roleId
+          ? { ...role, cells: role.cells.filter(({ slot }) => slot !== slotOf(removed)) }
+          : role,
+      ),
+    };
+    const steps = stepsOf(plan(state, before, apply1));
+    const saves = steps.flatMap((step) => (step._tag === 'SaveRole' ? [step] : []));
+    expect(saves.map(({ roleKey }) => roleKey)).toEqual(['accounting']);
+    const [save] = saves;
+    expect(save?.addedCells.every(({ capabilityKey }) => capabilityKey.startsWith(TAX_PREFIX))).toBe(true);
+    expect(save?.cells.map(slotOf)).not.toContain(slotOf(removed));
+    expect(save?.cells).toHaveLength(accounting.cells.length - 1);
+    // Once the new cells are saved there is nothing left to do: the removal stays.
+    expect(stepsOf(plan(state, simulateAll(before, steps), apply1))).toEqual([]);
+  }),
+);
+
 it('extends a saved role only when it holds nothing but plain reviewed cells', () => {
   const reviewed = [
     { capabilityKey: AccessCapabilityKeySchema.make('commerce.tax.tax-rule-set.read'), mode: 'run', selector: 'all' },
     { capabilityKey: AccessCapabilityKeySchema.make('work.tasks.api-records.read'), mode: 'run', selector: 'all' },
   ] as const;
   const tasksCell = { plain: true, slot: 'work.tasks.api-records.read run all' };
-  expect(reviewedAdditions([tasksCell], reviewed)?.map(slotOf)).toEqual(['commerce.tax.tax-rule-set.read run all']);
-  expect(reviewedAdditions([], reviewed)).toHaveLength(2);
+  expect(reviewedAdditions([tasksCell], reviewed)?.map(slotOf)).toEqual([TAX_RULE_SET_READ_SLOT]);
+  // Only what is new in this review is ever added: the Tasks read a role lacks was removed by a person.
+  expect(reviewedAdditions([], reviewed)?.map(slotOf)).toEqual([TAX_RULE_SET_READ_SLOT]);
+  expect(reviewedAdditions([tasksCell], reviewed, new Set())).toEqual([]);
   expect(reviewedAdditions([{ ...tasksCell, plain: false }], reviewed)).toBeUndefined();
   expect(reviewedAdditions([{ plain: true, slot: 'core.identity.unreviewed.read run all' }], reviewed)).toBeUndefined();
   expect(reviewedAdditions([tasksCell, tasksCell], reviewed)).toBeUndefined();

@@ -482,7 +482,7 @@ const byteLength = (json: string): number => new TextEncoder().encode(json).leng
 const savedRoleAdditions = (step: PlannedStep): readonly string[] =>
   Schema.is(SaveRoleStep)(step) && step.addedCells.length < step.cells.length
     ? [
-        `     adds to the saved role ${step.roleKey}:`,
+        `     adds to the saved role ${step.roleKey} (new in this review):`,
         ...step.addedCells.map((cell) => `       + ${slotOf(cell)}`),
         ...step.confirmations.map(({ effect, slot }) => `       ! ${slot}: ${effect}`),
         ...step.adminCells.map((admin) => `       admin: ${admin}`),

@@ -318,10 +318,11 @@ printf %s "$OWNER_PASSWORD" | pnpm demo:stage:reviewed-people \
   compared with the stage release and with the server's preview, never echoed back unseen.
 - It stops at the first refusal and is safe to re-run. A role that already holds other cells, a managed role
   held by anyone else, or a used-up generation halts it before any write.
-- A role saved earlier that holds only plain reviewed cells is extended, never rewritten: when the review adds
-  rights (Phase 1 added the tax rights below), the plan prints `adds to the saved role <key>:` with every added
-  cell (`+ <capability> <mode> <selector>`), each dangerous effect (`!`) and admin-kind cell, and the Shell's
-  preview must add exactly those cells. Nobody gains a right that the plan did not name.
+- A role saved earlier that holds only plain reviewed cells is extended, never rewritten, and only with the cells
+  that are new in this review (`NEW_IN_THIS_REVIEW` in `reviewed-people-plan.mts`, today the `commerce.tax` rights).
+  The plan prints `adds to the saved role <key> (new in this review):` with every added cell
+  (`+ <capability> <mode> <selector>`), each dangerous effect (`!`) and admin-kind cell, and the Shell's preview must
+  add exactly those cells. A reviewed cell a person removed from the role is never given back.
 
 VAT rights (`commerce.tax`), named key by key in `permissions.mts`: Účetní reads and manages the rules and the
 seller's VAT regime (`tax-rule.create`, `tax-rule-revision.create|end|correct`,
