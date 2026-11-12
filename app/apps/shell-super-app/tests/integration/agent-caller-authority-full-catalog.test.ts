@@ -571,11 +571,32 @@ const valuesOfEach = <A>(results: readonly { readonly value: readonly A[] }[]) =
 const rowsOfEach = (results: readonly { readonly decisionRowContents: readonly string[] }[]) =>
   results.flatMap(({ decisionRowContents }) => decisionRowContents).toSorted();
 
+/**
+ * The Action keys a person's `run` grant over everything admits without naming a record: those whose carrier declares a
+ * `run` capability of its own with no selector (a selected capability needs a target).
+ */
+const personRunnableActionKeys = Effect.gen(function* personRunnableActionKeys() {
+  const installed = yield* (yield* ShellInstalledModuleCatalog).load;
+  return installed.contracts.flatMap(({ manifest }) =>
+    manifest.publicSurface.actions.flatMap((action) =>
+      action.owningModuleId === manifest.module.id &&
+      action.legalEntityScope !== 'forbidden' &&
+      action.accessDeclaration?.modes.includes('run') === true &&
+      action.accessDeclaration.selectors.length === 0
+        ? [action.actionKey]
+        : [],
+    ),
+  );
+});
+
 /** The first Action key of each of `modules`, in that order. */
 const firstActionsOf = (keys: readonly string[], modules: readonly string[]) =>
   modules.flatMap((moduleKey) => keys.filter((key) => key.startsWith(`${moduleKey}.`)).slice(0, 1));
 
-/** The first Action of each of `modules`, asked of the real gate in one batch by `person` in `legalEntityId`. */
+/**
+ * The first person-runnable Action of each of `modules`, asked of the real gate in one batch by `person` in
+ * `legalEntityId`.
+ */
 const firstActionsAsked = (input: {
   readonly authorityCase: AuthorityCase;
   readonly correlationId: string;
@@ -587,7 +608,7 @@ const firstActionsAsked = (input: {
     authorityCase: input.authorityCase,
     correlationId: input.correlationId,
     read: Effect.gen(function* askActions() {
-      const actionKeys = firstActionsOf(yield* queueReadActionKeys, input.modules);
+      const actionKeys = firstActionsOf(yield* personRunnableActionKeys, input.modules);
       const scope = yield* sessionScope({
         correlationId: input.correlationId,
         legalEntityId: input.legalEntityId,
