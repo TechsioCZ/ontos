@@ -216,7 +216,6 @@ const runInvitationClaimPreflight = Effect.fn('InvitationClaimActionPreflight.ru
   },
 );
 
-// oxlint-disable-next-line effect-native/no-wide-factory-signature -- This public factory preserves the direct unit-test seam while capturing three already-yielded Core services; expires: 2027-03-31.
 export const makeInvitationClaimActionAuthorizationPreflight = (
   // oxlint-disable-next-line effect-native/no-dependency-parameters -- The factory captures the already-yielded Core preflight database seam; expires: 2027-03-31.
   database: ActionAuthorizationPreflightDatabaseService,
