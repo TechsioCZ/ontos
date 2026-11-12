@@ -86,6 +86,10 @@ const fenceDatabase = (fences: AccessFences) =>
         if (['begin', 'commit', 'rollback'].includes(statement)) {
           return [];
         }
+        // Main's scope authority probes the connected role before it installs a scope.
+        if (statement === 'select current_user::text as role') {
+          return [{ role: SHARED_RUNTIME_IDENTITY.role }];
+        }
         if (
           statement === "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)"
         ) {
