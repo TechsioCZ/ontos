@@ -1,5 +1,6 @@
 import type { Dictionary } from "@/i18n";
 import type { InquiryOutcome } from "@/ontos/inquiry";
+import type { PasswordRecoveryOutcome } from "@/ontos/password-recovery";
 
 export type ContactFeedbackState = InquiryOutcome["state"] | "idle" | "pending";
 export type ProfileFeedbackState =
@@ -45,3 +46,29 @@ export const profileActionFeedback = (
   statusText: state === "idle" || state === "saving" || state === "saved" ? "" : copy[state],
   successToast: state === "saved" ? { title: copy.saved, type: "success" } : null,
 });
+
+export const passwordRecoveryActionFeedback = (
+  state: PasswordRecoveryOutcome["state"] | null,
+  mode: "request" | "reset",
+  d: Dictionary,
+): ActionFeedback => {
+  if (state === null) {
+    return { statusText: "", successToast: null };
+  }
+  const copy = d.passwordRecovery;
+  if (state === "completed" && mode === "reset") {
+    return {
+      statusText: copy.completedNextStep,
+      successToast: { title: copy.states.completed, type: "success" },
+    };
+  }
+  // The shared outcome union permits both steps; only confirm the current one.
+  const messages = {
+    ...copy.states,
+    completed: copy.requestUnconfirmed,
+    invalid: mode === "request" ? d.auth.errors.email : copy.states.invalid,
+    requested: mode === "reset" ? copy.states.unconfirmed : copy.states.requested,
+    unconfirmed: mode === "request" ? copy.requestUnconfirmed : copy.states.unconfirmed,
+  };
+  return { statusText: messages[state], successToast: null };
+};
