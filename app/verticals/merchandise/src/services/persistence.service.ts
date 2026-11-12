@@ -472,13 +472,23 @@ const withEnteredGross = <Priced extends { readonly grossPriceMinor?: number }>(
   return rate === undefined ? rest : { ...rest, grossPriceMinor: grossUnitPriceMinor(net, rate) };
 };
 
+/**
+ * The rate a price entered now for `product` stores its gross at: a product held at its stored rate (BOOK-IT, 10 %,
+ * until Tax first prices the company) keeps that rate, as its order lines and the storefront do; any other product
+ * takes the rate Tax gives its classification now.
+ */
+const enteredRateOf = (
+  tax: CommandTax,
+  product: { readonly id: string; readonly taxClassificationCode: CzVatClassificationCode },
+): number | undefined => tax.held[product.id] ?? tax.rates[product.taxClassificationCode];
+
 /** Appends an effective-dated price entry. A price equal to the current one is not a change and adds no entry. */
 const repriced = (product: Product, priceMinor: number, input: MerchandiseCommandInput): Product => {
   if (product.currentPriceMinor === priceMinor) {
     return product;
   }
   const updated: Mutable<Product> = {
-    ...withEnteredGross(product, priceMinor, input.tax.rates[product.taxClassificationCode]),
+    ...withEnteredGross(product, priceMinor, enteredRateOf(input.tax, product)),
     currentPriceMinor: priceMinor,
     priceHistory: [
       ...product.priceHistory,
@@ -496,7 +506,7 @@ const repriced = (product: Product, priceMinor: number, input: MerchandiseComman
       product.priceTiers,
       product.currentPriceMinor,
       priceMinor,
-      input.tax.rates[product.taxClassificationCode],
+      enteredRateOf(input.tax, product),
     );
   }
   return updated;
@@ -596,7 +606,7 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
       // The stored gross is the server's: kept while the price stays, entered anew with a new price.
       const kept =
         previous !== undefined && previous.priceMinor === variant.priceMinor ? previous.grossPriceMinor : undefined;
-      const rate = input.tax.rates[product.taxClassificationCode];
+      const rate = enteredRateOf(input.tax, product);
       const updated: Mutable<ProductVariant> = { ...rest };
       if (kept !== undefined) {
         updated.grossPriceMinor = kept;
@@ -608,7 +618,7 @@ const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* n
           previous.priceTiers,
           previous.priceMinor,
           variant.priceMinor,
-          input.tax.rates[product.taxClassificationCode],
+          enteredRateOf(input.tax, product),
         );
       }
       if (id !== undefined) {
@@ -655,7 +665,7 @@ const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
   };
   let product: Mutable<Product> = pricedByVariants
     ? base
-    : { ...withEnteredGross(base, priceMinor, input.tax.rates[value.taxClassificationCode]) };
+    : { ...withEnteredGross(base, priceMinor, enteredRateOf(input.tax, base)) };
   if (additionalCategoryIds !== undefined) {
     if (value.categoryId === undefined) {
       return yield* conflict(missingPrimaryCategoryReason);
@@ -757,7 +767,7 @@ const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
       return entry;
     }
     const updated: Mutable<ProductVariant> = {
-      ...withEnteredGross(entry, value.priceMinor, input.tax.rates[product.taxClassificationCode]),
+      ...withEnteredGross(entry, value.priceMinor, enteredRateOf(input.tax, product)),
       priceHistory: [
         ...(entry.priceHistory ?? []),
         {
@@ -774,7 +784,7 @@ const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
         entry.priceTiers,
         entry.priceMinor,
         value.priceMinor,
-        input.tax.rates[product.taxClassificationCode],
+        enteredRateOf(input.tax, product),
       );
     }
     return updated;
