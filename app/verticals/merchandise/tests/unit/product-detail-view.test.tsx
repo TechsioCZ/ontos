@@ -406,6 +406,20 @@ describe('VAT classification on the product editor', () => {
   );
 });
 
+/** One variant record of the product, priced net and with its stored gross. */
+const variant = (id: string, priceMinor: number, grossPriceMinor: number) => ({
+  active: true,
+  attributes: '',
+  availability: 'IN_STOCK' as const,
+  grossPriceMinor,
+  id,
+  name: id,
+  priceHistory: [],
+  priceMinor,
+  sku: `ETI-${id}`,
+  stockOnHand: 1,
+});
+
 describe('the price including VAT on the product editor', () => {
   it.effect(
     'shows the stored gross, even when it is not net plus VAT, and keeps it when only the classification changes',
@@ -431,6 +445,26 @@ describe('the price including VAT on the product editor', () => {
       expect(fieldById('detail-price-gross').value).toBe('není nastaveno');
       yield* Effect.promise(() => pickVat(CZ_VAT_REDUCED));
       expect(text()).not.toContain('změní se jen podíl DPH');
+    }),
+  );
+
+  it.effect('a product with variants shows its lowest variant price as such, unmoved by the product net price', () =>
+    Effect.gen(function* fromVariants() {
+      // Net 1 Kč on the product; its variants sell at 2,40 and 2,60 Kč net (2,90 and 3,15 Kč stored with VAT).
+      shown = Schema.decodeSync(ProductRecordSchema)({
+        ...productInput,
+        currentPriceMinor: 100,
+        grossPriceMinor: 290,
+        taxClassificationCode: CZ_VAT_STANDARD,
+        variantRecords: [variant('v1', 240, 290), variant('v2', 260, 315)],
+      });
+      yield* Effect.promise(mount);
+      expect(text()).toContain('Cena s DPH od (nejnižší cena varianty, Kč)');
+      expect(fieldById('detail-price-gross').value.replaceAll('\u00A0', ' ')).toBe('2,90 Kč');
+      // The product's own net price does not change what its variants sell at: no preview of a product-level gross.
+      yield* Effect.promise(() => typeInto('detail-price', '2'));
+      expect(fieldById('detail-price-gross').value.replaceAll('\u00A0', ' ')).toBe('2,90 Kč');
+      expect(text()).not.toContain('Cena s DPH po uložení (náhled, Kč)');
     }),
   );
 

@@ -375,6 +375,7 @@
           "priceNet": "Cena bez DPH (Kč)",
           "priceGross": "Cena s DPH (Kč)",
           "priceGrossPreview": "Cena s DPH po uložení (náhled, Kč)",
+          "priceGrossFromVariants": "Cena s DPH od (nejnižší cena varianty, Kč)",
           "shortDescription": "Krátký popis",
           "description": "Popis",
           "weightGrams": "Hmotnost (g)",

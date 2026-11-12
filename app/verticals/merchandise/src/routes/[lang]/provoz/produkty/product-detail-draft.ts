@@ -185,7 +185,8 @@ export const detailDraftInvalid = (draft: DetailDraft): boolean =>
 
 /** The price including VAT the product editor shows: the stored one, or a preview of what saving an edit stores. */
 export interface DetailGross {
-  readonly kind: 'preview' | 'stored';
+  /** `fromVariants`: the lowest price including VAT of the product's variants, which sell at their own prices. */
+  readonly kind: 'fromVariants' | 'preview' | 'stored';
   /** Minor units; null when there is none (no stored gross, or no rate for a preview). */
   readonly minor: number | null;
 }
@@ -193,13 +194,17 @@ export interface DetailGross {
 /**
  * While the net price is the saved one it is the STORED gross (it never moves with a rate or a classification
  * change). An edited net price shows a preview of what saving stores: the new net plus the selected classification's
- * rate today; without a rate there is none.
+ * rate today; without a rate there is none. A product with variants sells only at its variants' prices: it shows their
+ * lowest price including VAT, which the product's own net price does not change, so there is no preview.
  */
 export const detailGrossOf = (
-  product: Pick<ProductRecord, 'currentPriceMinor' | 'grossPriceMinor'>,
+  product: Pick<ProductRecord, 'currentPriceMinor' | 'grossPriceMinor' | 'variantRecords'>,
   priceMinor: number,
   vatRate: number | undefined,
 ): DetailGross => {
+  if ((product.variantRecords ?? []).length > 0) {
+    return { kind: 'fromVariants', minor: product.grossPriceMinor ?? null };
+  }
   if (priceMinor === product.currentPriceMinor) {
     return { kind: 'stored', minor: product.grossPriceMinor ?? null };
   }

@@ -371,6 +371,7 @@
           "priceNet": "Price excl. VAT (CZK)",
           "priceGross": "Price incl. VAT (CZK)",
           "priceGrossPreview": "Price incl. VAT after saving (preview, CZK)",
+          "priceGrossFromVariants": "Price incl. VAT from (lowest variant price, CZK)",
           "shortDescription": "Short description",
           "description": "Description",
           "weightGrams": "Weight (g)",

@@ -100,6 +100,11 @@ export interface ProductMarketsAccess {
 }
 const NO_MARKETS: ProductMarketsAccess = { canManage: false, entries: [] };
 const REQUIRED_MESSAGE_KEY = 'validation.required';
+const grossLabelKeys = {
+  fromVariants: 'fields.priceGrossFromVariants',
+  preview: 'fields.priceGrossPreview',
+  stored: 'fields.priceGross',
+} as const;
 
 const PriceHistory = ({ product }: { readonly product: ProductRecord }) => {
   const k = useProductLabel();
@@ -185,7 +190,7 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: De
   const grossText = gross.minor === null ? taxLabels.notSet : formatMoney(gross.minor);
   // Only a stored gross stays the same on a classification change; with none ("not set") there is no share to keep.
   const grossNote =
-    gross.kind === 'stored' && gross.minor !== null && taxClassificationCode !== product.taxClassificationCode
+    gross.kind !== 'preview' && gross.minor !== null && taxClassificationCode !== product.taxClassificationCode
       ? k('detail.vatShareOnly')
       : undefined;
 
@@ -292,7 +297,7 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: De
       <FormInput
         disabled
         id="detail-price-gross"
-        label={k(gross.kind === 'preview' ? 'fields.priceGrossPreview' : 'fields.priceGross')}
+        label={k(grossLabelKeys[gross.kind])}
         name="grossPrice"
         value={grossText}
         {...(grossNote === undefined ? {} : { helpText: grossNote })}
