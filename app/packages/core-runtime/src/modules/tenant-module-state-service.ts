@@ -3,9 +3,10 @@ import { Clock, Context, DateTime, Effect, Layer, Match, Schema } from 'effect';
 
 import { CoreDatabase } from '../db/client.ts';
 import type { ActionAuthMethod } from '../db/schema.ts';
-import { tenantModuleStateChanges, tenantModuleStates, tenants } from '../db/schema.ts';
+import { auditEvents, tenantModuleStateChanges, tenantModuleStates, tenants } from '../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
+import type { OperationalScope } from '../operations/context.ts';
 import type { InstalledModuleCatalog } from './catalog.ts';
 import {
   tenantModuleInstallsWithClosure,
@@ -246,8 +247,16 @@ export const TenantModuleStateServiceLive = Layer.effect(
 
 export interface PersistTenantModuleStateChangeInput {
   readonly actionInvocationId: string;
+  /** How the person was signed in, as the Action's own audit record names it; each module installed with it is
+   * audited for the same person, the same way. */
+  readonly actor: Pick<
+    OperationalScope,
+    'authBindingId' | 'authContextRef' | 'impersonatedByPrincipalId' | 'legalEntityId'
+  >;
   readonly authMethod: ActionAuthMethod;
   readonly catalog: InstalledModuleCatalog;
+  /** The composition revision the change ran against, named in the audit record of each module installed with it. */
+  readonly compositionRevision: string;
   readonly expectedState?: TenantModuleState;
   readonly moduleKey: string;
   readonly newState: TenantModuleState;
@@ -274,6 +283,9 @@ const persistenceUnavailable = (cause?: unknown) => {
   }
   return error;
 };
+
+/** The audit event of a module a person's activation installed with another (its manifest's `installsWith`). */
+export const TENANT_MODULE_INSTALLED_WITH_EVENT = 'core.modules.tenant-module-installed-with';
 
 export const persistTenantModuleStateChange = Effect.fn('TenantModuleStateService.persistTenantModuleStateChange')(
   function* persistTenantModuleStateChangeEffect(
@@ -458,7 +470,7 @@ export const persistTenantModuleStateChange = Effect.fn('TenantModuleStateServic
         if (companionHistory === undefined) {
           return yield* persistenceUnavailable();
         }
-        return yield* transaction
+        yield* transaction
           .insert(tenantModuleStates)
           .values({
             lastChangeId: companionHistory.moduleStateChangeId,
@@ -466,6 +478,37 @@ export const persistTenantModuleStateChange = Effect.fn('TenantModuleStateServic
             state: 'active',
             tenantId: input.tenantId,
             updatedAt: changedAt,
+          })
+          .pipe(Effect.mapError(persistenceUnavailable));
+        // Audited as the release audits a module it installs with another: its own sensitive record, critical, in
+        // this transaction, by the person whose Action installed it. No secret is recorded.
+        return yield* transaction
+          .insert(auditEvents)
+          .values({
+            actionInvocationId: input.actionInvocationId,
+            auditProfile: 'sensitive',
+            authBindingId: input.actor.authBindingId,
+            authContextRef: input.actor.authContextRef,
+            authMethod: input.authMethod,
+            eventType: TENANT_MODULE_INSTALLED_WITH_EVENT,
+            evidenceJson: {
+              compositionRevision: input.compositionRevision,
+              installedWith: input.moduleKey,
+              moduleKey,
+              newState: 'active',
+              previousState: null,
+              risk: 'critical',
+            },
+            impersonatedByPrincipalId: input.actor.impersonatedByPrincipalId,
+            legalEntityId: input.actor.legalEntityId,
+            outcome: 'succeeded',
+            outcomeCode: 'module_installed',
+            outcomeStage: 'execution',
+            principalId: input.principalId,
+            targetModuleKey: moduleKey,
+            targetResourceId: moduleKey,
+            targetResourceType: 'tenant-module-state',
+            tenantId: input.tenantId,
           })
           .pipe(Effect.mapError(persistenceUnavailable), Effect.asVoid);
       }),

@@ -50,10 +50,16 @@ const ChangeTenantModuleStatePayloadSchema = Schema.Struct({
 });
 export type ChangeTenantModuleStatePayload = Schema.Schema.Type<typeof ChangeTenantModuleStatePayloadSchema>;
 
-const ChangeTenantModuleStateResultSchema = Schema.Struct({
+const TenantModuleStateChangedEventSchema = Schema.Struct({
   moduleKey: moduleKeySchema,
   newState: TenantModuleStateSchema,
   previousState: Schema.Union([TenantModuleStateSchema, Schema.Null]),
+});
+
+const ChangeTenantModuleStateResultSchema = Schema.Struct({
+  ...TenantModuleStateChangedEventSchema.fields,
+  /** The modules installed `active` with this one (its manifest's `installsWith` the Tenant had no state for). */
+  installedWith: Schema.Array(moduleKeySchema),
 });
 
 const ChangeTenantModuleStateError = Schema.Union([
@@ -69,7 +75,7 @@ const ChangeTenantModuleStateError = Schema.Union([
 ]);
 
 const changeTenantModuleStateDomainEvents = {
-  'core.modules.tenant-module-state-changed.v1': ChangeTenantModuleStateResultSchema,
+  'core.modules.tenant-module-state-changed.v1': TenantModuleStateChangedEventSchema,
 };
 type ChangeTenantModuleStateDomainEvents = typeof changeTenantModuleStateDomainEvents;
 
@@ -92,8 +98,10 @@ const handleChangeTenantModuleState = Effect.fn('ChangeTenantModuleStateAction.h
         withOptionalProperty(
           {
             actionInvocationId: context.actionInvocationId,
+            actor: context.scope,
             authMethod: context.scope.authMethod,
             catalog,
+            compositionRevision: context.compositionRevision,
           },
           payload.expectedState !== undefined,
           'expectedState',
@@ -151,7 +159,7 @@ const handleChangeTenantModuleState = Effect.fn('ChangeTenantModuleStateAction.h
         data: { moduleKey: payload.moduleKey },
       }),
     );
-    return result;
+    return { ...result, installedWith };
   },
 );
 

@@ -268,6 +268,7 @@ const concurrentGateFixture = Effect.gen(function* concurrentGateFixtureEffect()
       Effect.flatMap((scoped) =>
         persistTenantModuleStateChange(scoped, {
           actionInvocationId,
+          actor: { authContextRef: 'better-auth-session:gate' },
           authMethod: 'session',
           catalog: makeInstalledCatalogFixture(
             makeModuleContractFixture({
@@ -276,6 +277,7 @@ const concurrentGateFixture = Effect.gen(function* concurrentGateFixtureEffect()
               supportedStates: ['inactive', 'active', 'read_only'],
             }),
           ),
+          compositionRevision: 'gate-fixture',
           expectedState: 'active',
           moduleKey,
           newState: 'read_only',

@@ -34,6 +34,7 @@ import { changeTenantModuleStateAction } from '../../src/modules/actions/change-
 import { TenantModuleStateValidationUnavailableError } from '../../src/modules/tenant-module-state-errors.ts';
 import { InstalledModuleCatalogService } from '../../src/modules/catalog.ts';
 import {
+  TENANT_MODULE_INSTALLED_WITH_EVENT,
   TenantModuleStateService,
   makeTenantModuleStateService,
 } from '../../src/modules/tenant-module-state-service.ts';
@@ -346,18 +347,21 @@ const tenantModuleStateTest2 = Effect.gen(function* createAndTransitionTenantMod
     return Effect.gen(function* transitionSequence() {
       const created = yield* runtime.runAction(actionInput(moduleKey, 'active', 'create'));
       expect(created).toEqual({
+        installedWith: [],
         moduleKey,
         newState: 'active',
         previousState: null,
       });
       const suspended = yield* runtime.runAction(actionInput(moduleKey, 'suspended', 'suspend'));
       expect(suspended).toEqual({
+        installedWith: [],
         moduleKey,
         newState: 'suspended',
         previousState: 'active',
       });
       const reactivated = yield* runtime.runAction(actionInput(moduleKey, 'active', 'reactivate'));
       expect(reactivated).toEqual({
+        installedWith: [],
         moduleKey,
         newState: 'active',
         previousState: 'suspended',
@@ -853,9 +857,26 @@ const tenantModuleStateInstallsWith = withDatabase((database) =>
         .where(and(eq(tenantModuleStateChanges.tenantId, tenantOne), eq(tenantModuleStateChanges.moduleKey, moduleKey)))
         .orderBy(asc(tenantModuleStateChanges.occurredAt));
 
+    const auditsOf = (actionInvocationId: string | null | undefined) =>
+      database.executor
+        .select({
+          auditProfile: auditEvents.auditProfile,
+          authContextRef: auditEvents.authContextRef,
+          authMethod: auditEvents.authMethod,
+          eventType: auditEvents.eventType,
+          evidenceJson: auditEvents.evidenceJson,
+          outcome: auditEvents.outcome,
+          outcomeCode: auditEvents.outcomeCode,
+          principalId: auditEvents.principalId,
+          targetModuleKey: auditEvents.targetModuleKey,
+        })
+        .from(auditEvents)
+        .where(and(eq(auditEvents.tenantId, tenantOne), eq(auditEvents.actionInvocationId, actionInvocationId ?? '')));
+
     // Activating the selling module in a Tenant without the tax module installs it in the same operation, recorded as
-    // the same person's change in the same Action invocation, and the Action's result is unchanged.
+    // the same person's change in the same Action invocation; the result names it.
     expect(yield* run(seller, 'active', 'installs-with-first')).toEqual({
+      installedWith: [tax],
       moduleKey: seller,
       newState: 'active',
       previousState: null,
@@ -882,11 +903,37 @@ const tenantModuleStateInstallsWith = withDatabase((database) =>
         ),
       );
     expect(events.map(({ subjectModuleKey }) => subjectModuleKey).toSorted()).toEqual([seller, tax].toSorted());
+    // The tax module gets its own audit record next to the Action's own, by the same person, as the release audits it.
+    const sellerAudits = yield* auditsOf(sellerChange?.actionInvocationId);
+    expect(sellerAudits.filter(({ eventType }) => eventType === 'action.executed')).toHaveLength(1);
+    expect(sellerAudits.filter(({ eventType }) => eventType !== 'action.executed')).toEqual([
+      {
+        auditProfile: 'sensitive',
+        authContextRef: sellerAudits.find(({ eventType }) => eventType === 'action.executed')?.authContextRef ?? null,
+        authMethod: 'session',
+        eventType: TENANT_MODULE_INSTALLED_WITH_EVENT,
+        evidenceJson: {
+          compositionRevision: expect.any(String),
+          installedWith: seller,
+          moduleKey: tax,
+          newState: 'active',
+          previousState: null,
+          risk: 'critical',
+        },
+        outcome: 'succeeded',
+        outcomeCode: 'module_installed',
+        principalId: principalOne,
+        targetModuleKey: tax,
+      },
+    ]);
 
     // An already active tax module is left untouched when the selling module is activated again.
     yield* run(seller, 'suspended', 'installs-with-suspend');
-    yield* run(seller, 'active', 'installs-with-reactivate');
+    expect(yield* run(seller, 'active', 'installs-with-reactivate')).toMatchObject({ installedWith: [] });
     expect(yield* historyOf(tax)).toHaveLength(1);
+    const reactivations = yield* historyOf(seller);
+    const reactivationAudits = yield* auditsOf(reactivations.at(-1)?.actionInvocationId);
+    expect(reactivationAudits.map(({ eventType }) => eventType)).toEqual(['action.executed']);
 
     // A state somebody set is never changed by it.
     yield* run(tax, 'suspended', 'installs-with-tax-suspended');
@@ -895,9 +942,12 @@ const tenantModuleStateInstallsWith = withDatabase((database) =>
     expect(yield* stateOf(tax)).toEqual([{ state: 'suspended' }]);
     expect(yield* historyOf(tax)).toHaveLength(2);
 
-    // A module that declares nothing brings nothing.
-    yield* run(plain, 'active', 'installs-with-plain');
+    // A module that declares nothing brings nothing, and is audited once.
+    expect(yield* run(plain, 'active', 'installs-with-plain')).toMatchObject({ installedWith: [] });
     const [plainChange] = yield* historyOf(plain);
+    expect((yield* auditsOf(plainChange?.actionInvocationId)).map(({ eventType }) => eventType)).toEqual([
+      'action.executed',
+    ]);
     const sameInvocation = yield* database.executor
       .select({ moduleKey: tenantModuleStateChanges.moduleKey })
       .from(tenantModuleStateChanges)
