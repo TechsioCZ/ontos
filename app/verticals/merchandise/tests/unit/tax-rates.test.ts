@@ -566,3 +566,23 @@ it('only the Shell saying Tax is not installed for the tenant reads as not insta
   );
   expect(taxCallFailureOf(new Error('timeout')).refusal).toBeUndefined();
 });
+
+it.effect(
+  'a refresh that dies counts as an attempt without an answer: waiters get unavailable, the wait is recorded',
+  () =>
+    Effect.gen(function* defect() {
+      const calls = yield* Ref.make(0);
+      const source = {
+        read: () => Ref.update(calls, (count) => count + 1).pipe(Effect.andThen(Effect.die('Tax client bug'))),
+      };
+      const company = scopeOf(randomUUID());
+      const write = currentTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source), Effect.flip);
+      expect((yield* write).kind).toBe('UNAVAILABLE');
+      // The wait after it runs: the next write fails at once without asking Tax again.
+      expect((yield* write).kind).toBe('UNAVAILABLE');
+      expect(yield* Ref.get(calls)).toBe(1);
+      yield* TestClock.adjust('1 minute');
+      yield* write;
+      expect(yield* Ref.get(calls)).toBe(2);
+    }),
+);

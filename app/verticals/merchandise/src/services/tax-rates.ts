@@ -25,6 +25,7 @@ import {
   Deferred,
   Duration,
   Effect,
+  Exit,
   Match,
   Option,
   Redacted,
@@ -583,21 +584,32 @@ const answerAfter = (
     : { fetched: kept.fetched, refused: false, retry };
 };
 
-/** Forgets a refresh that ended without an answer (a defect), so the next caller starts a new one. */
-const releaseRefresh = (key: string, done: Deferred.Deferred<FetchedTaxRates, TaxRatesFailure>) =>
-  Deferred.interrupt(done).pipe(
-    Effect.andThen(
-      Ref.update(companyAnswers, (answers) => {
-        const entry = entryOf(answers, key);
-        if (entry.inflight !== done) {
-          return answers;
-        }
-        const { inflight: _ended, ...rest } = entry;
-        void _ended;
-        return new Map([...answers, [key, rest]]);
-      }),
-    ),
-  );
+/**
+ * Ends a refresh. One that recorded its outcome only leaves its entry. One that ended without an outcome (its read died,
+ * or the process stopped it) is an attempt without an answer like any outage: its wait is recorded, its waiters learn
+ * Tax is unavailable (never an interruption), and it is logged.
+ */
+const settleRefresh = Effect.fn('Merchandise.settleTaxRatesRefresh')(function* settleRefresh(
+  key: string,
+  done: Deferred.Deferred<FetchedTaxRates, TaxRatesFailure>,
+  recorded: boolean,
+) {
+  const at = yield* DateTime.now;
+  const lost = new TaxRatesFailure({ kind: 'UNAVAILABLE' });
+  if (!recorded) {
+    yield* Effect.logError('Reading VAT rates from Tax ended without an answer; counted as a failed attempt');
+  }
+  yield* Ref.update(companyAnswers, (answers) => {
+    const entry = entryOf(answers, key);
+    if (entry.inflight !== done) {
+      return answers;
+    }
+    const { inflight: _ended, ...rest } = entry;
+    void _ended;
+    return new Map([...answers, [key, recorded ? rest : answerAfter(rest, Result.fail(lost), at)]]);
+  });
+  yield* Deferred.fail(done, lost);
+});
 
 /** Says why a refresh got no answer: a refusal of the call is logged loudly, it is an outage of the price guard. */
 const logFailedRefresh = (failure: TaxRatesFailure) => {
@@ -652,7 +664,9 @@ const refreshOf = (scope: OperationalScope) =>
         return joined;
       }
       yield* Effect.forkDetach(
-        Effect.interruptible(runRefresh(scope, created)).pipe(Effect.ensuring(releaseRefresh(key, created))),
+        Effect.interruptible(runRefresh(scope, created)).pipe(
+          Effect.onExit((exit) => settleRefresh(key, created, Exit.isSuccess(exit))),
+        ),
       );
       return created;
     }),
