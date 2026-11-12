@@ -26,7 +26,10 @@
     "./calendar-date": "./src/calendar-date.ts",
     "./demo/sales-customer-fixtures": "./src/demo-sales-customer-fixtures.ts",
     "./credential-url": "./src/credential-url.ts",
-    "./gateway-context-server": "./src/gateway-context-server.ts"
+    "./gateway-context-server": "./src/gateway-context-server.ts",
+    "./symmy": "./src/symmy/index.ts",
+    "./symmy/organization-source-witness": "./src/symmy/organization-source-witness.ts",
+    "./symmy/route-catalog": "./src/symmy/routes.ts"
   },
   "scripts": {
     "test:types": "ultramodern-create ultramodern typecheck --project tests/tsconfig.json && ultramodern-create ultramodern typecheck --project tests/client-runtime-types.tsconfig.json",

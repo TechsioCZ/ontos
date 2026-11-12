@@ -1737,28 +1737,42 @@ const partyReviewResolutionMatches = (
   review.decisionRef?.tenantId === tenantId &&
   !Schema.toEquivalence(PartyMatchDecisionResponseSchema.fields.decisionRef)(review.decisionRef, initial.decisionRef);
 
-const reviewedPartyCreationMatches = (
-  decision: typeof PartyMatchDecisionResponseSchema.Type,
-  review: Effect.Success<ReturnType<typeof resolveDuplicateCandidateCreateWithAuthorization>>,
-  detail: typeof DuplicateCandidateDetailResponseSchema.Type,
-) =>
-  decision.outcome === 'CREATED' &&
-  decision.committedCreateOutcome === 'CREATED' &&
-  decision.operation === 'REVIEW_CREATE' &&
-  review.decisionRef !== null &&
-  Schema.toEquivalence(PartyMatchDecisionResponseSchema.fields.decisionRef)(decision.decisionRef, review.decisionRef) &&
-  decision.partyRef !== null &&
-  review.partyRef !== null &&
-  Schema.toEquivalence(CounterpartyCustomerOnboardPayloadSchema.fields.partyRef)(decision.partyRef, review.partyRef) &&
-  decision.evidenceEvaluation !== null &&
-  decision.evidenceEvaluation !== undefined &&
-  decision.evidenceEvaluation.subjectEligible &&
-  decision.evidenceEvaluation.typeSupported &&
-  decision.evidenceEvaluation.evidence.length > 0 &&
-  Schema.toEquivalence(Schema.toEncoded(CreatePartyPayloadSchema.fields.candidate.fields.subjectEvidence))(
-    decision.evidenceEvaluation.evidence,
-    detail.candidate.subjectEvidence ?? [],
-  );
+const reviewedPartyCreationMatches = Effect.fn('PreproposalNative.reviewedPartyCreationMatches')(
+  function* reviewedPartyCreationMatches(
+    decision: typeof PartyMatchDecisionResponseSchema.Type,
+    review: Effect.Success<ReturnType<typeof resolveDuplicateCandidateCreateWithAuthorization>>,
+    detail: typeof DuplicateCandidateDetailResponseSchema.Type,
+  ) {
+    const candidateEvidence = yield* Schema.encodeEffect(
+      CreatePartyPayloadSchema.fields.candidate.fields.subjectEvidence,
+    )(detail.candidate.subjectEvidence ?? []);
+    return (
+      decision.outcome === 'CREATED' &&
+      decision.committedCreateOutcome === 'CREATED' &&
+      decision.operation === 'REVIEW_CREATE' &&
+      review.decisionRef !== null &&
+      Schema.toEquivalence(PartyMatchDecisionResponseSchema.fields.decisionRef)(
+        decision.decisionRef,
+        review.decisionRef,
+      ) &&
+      decision.partyRef !== null &&
+      review.partyRef !== null &&
+      Schema.toEquivalence(CounterpartyCustomerOnboardPayloadSchema.fields.partyRef)(
+        decision.partyRef,
+        review.partyRef,
+      ) &&
+      decision.evidenceEvaluation !== null &&
+      decision.evidenceEvaluation !== undefined &&
+      decision.evidenceEvaluation.subjectEligible &&
+      decision.evidenceEvaluation.typeSupported &&
+      decision.evidenceEvaluation.evidence.length > 0 &&
+      Schema.toEquivalence(Schema.toEncoded(CreatePartyPayloadSchema.fields.candidate.fields.subjectEvidence))(
+        decision.evidenceEvaluation.evidence,
+        candidateEvidence ?? [],
+      )
+    );
+  },
+);
 
 const refuse = (outcome: string, reason: string) =>
   new PreproposalNativeProtocolError({
@@ -1856,7 +1870,7 @@ export const createRegisteredPreproposalParty = Effect.fn('PreproposalNative.cre
       `${input.intent}:party-review-decision`,
       input.options,
     );
-    if (!reviewedPartyCreationMatches(createdDecision, review, detail)) {
+    if (!(yield* reviewedPartyCreationMatches(createdDecision, review, detail))) {
       return yield* refuse(
         createdDecision.outcome,
         'The public review decision must prove literal CREATED for that Party and original concrete subject evidence',

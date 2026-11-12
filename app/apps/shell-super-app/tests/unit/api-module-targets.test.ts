@@ -18,8 +18,8 @@ import {
 } from '../../api/modules/installed-module-catalog.ts';
 import { ShellGovernedReads } from '../../api/modules/shell-governed-reads.ts';
 import type { ShellGovernedReadsService } from '../../api/modules/shell-governed-reads.ts';
-import { ModuleIdSchema, ResolvedModuleTargetSchema, ResolvedModuleTargetsSchema } from '../../shared/api.ts';
-import type { ResolveModuleTargetsPayload } from '../../shared/api.ts';
+import { ModuleIdSchema, ResolvedModuleTargetSchema, ResolvedModuleTargetsSchema } from '../../shared/browser-api.ts';
+import type { ResolveModuleTargetsPayload } from '../../shared/browser-api.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { makeAuthenticationServiceDouble } from '../support/impersonation-service-doubles.ts';

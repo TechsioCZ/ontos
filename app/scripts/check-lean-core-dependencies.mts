@@ -707,8 +707,102 @@ interface AllowedCompositionSeam {
 }
 
 const orderApprovalOwnerGateway = 'verticals/commerce-order/src/services/approval-owner-gateway.ts';
+const privacyConsentProfileAuthority =
+  'verticals/privacy/src/integrations/commerce-customer-context/commerce-customer-context-consent-withdrawal.service.ts';
+const privacyNoticeProfileAuthority =
+  'verticals/privacy/src/integrations/commerce-customer-context/commerce-customer-context-notice-subject-authority.service.ts';
 
 const allowedCompositionSeams: readonly AllowedCompositionSeam[] = [
+  ...[
+    '/api/client',
+    '/api/customer-group-definition-source/client',
+    '/api/customer-group-membership-source-receipt/client',
+    '/api/customer-profile-ico/client',
+    '/api/organization-customer-profile-ico/client',
+    '/api/change-organization-customer-profile-ico-action/client',
+    '/api/migrate-organization-customer-profile-ico-action/client',
+    '/api/customer-profile-source/client',
+    '/api/customer-price-group-assignment-receipt/client',
+    '/api/add-saved-address-action/client',
+    '/api/update-saved-address-action/client',
+    '/api/remove-saved-address-action/client',
+    '/api/saved-address-source-receipt/client',
+  ].map((suffix) => ({
+    importer: 'verticals/symmy-integration/src/services/symmy-party-commerce-adapters.ts',
+    reason:
+      'Approved C14 source orchestration calls the governed Commerce owner clients for separate native effects and exact recovery.',
+    specifier: `${commercePackageSpecifierPrefix}${suffix}`,
+  })),
+  ...[
+    '/api/customer-profile-ico/client',
+    '/api/customer-profile-source/client',
+    '/api/organization-customer-profile-ico/client',
+  ].map((suffix) => ({
+    importer: 'apps/shell-super-app/api/symmy/source-read-projections.ts',
+    reason: 'Approved C14 customer export projects current qualified profiles and IČO through governed Commerce Reads.',
+    specifier: `${commercePackageSpecifierPrefix}${suffix}`,
+  })),
+  ...[
+    'verticals/privacy/src/services/organization-profile-ico-applicability.service.ts',
+    'verticals/privacy/src/services/organization-business-applicability.service.ts',
+  ].flatMap((importer) =>
+    ['/api/customer-profile-organization-ico-facts', '/api/customer-profile-organization-ico-facts/client'].map(
+      (suffix) => ({
+        importer,
+        reason:
+          'Approved organization policy verifies the exact current profile through the governed owner projection.',
+        specifier: `${commercePackageSpecifierPrefix}${suffix}`,
+      }),
+    ),
+  ),
+  {
+    importer: privacyConsentProfileAuthority,
+    reason:
+      'Privacy Consent withdrawal verifies the exact customer profile through its existing governed Customer Context integration boundary.',
+    specifier: `${commercePackageSpecifierPrefix}/api/customer-profile-read/client`,
+  },
+  {
+    importer: privacyConsentProfileAuthority,
+    reason:
+      'Privacy Consent withdrawal verifies the profile-bound Principal through its existing governed Customer Context integration boundary.',
+    specifier: `${commercePackageSpecifierPrefix}/api/retail-principal-resolution/client`,
+  },
+  {
+    importer: privacyConsentProfileAuthority,
+    reason:
+      'Privacy Consent withdrawal verifies the exact portal profile binding through its existing governed Customer Context integration boundary.',
+    specifier: `${commercePackageSpecifierPrefix}/api/retail-portal-profile-binding-read/client`,
+  },
+  {
+    importer: privacyConsentProfileAuthority,
+    reason:
+      'Privacy Consent withdrawal verifies current Consent authority through its existing governed Customer Context integration boundary.',
+    specifier: `${commercePackageSpecifierPrefix}/api/retail-access-decision/client`,
+  },
+  {
+    importer: privacyNoticeProfileAuthority,
+    reason:
+      'Privacy Notice acknowledgement verifies the exact customer profile through its existing governed Customer Context integration boundary.',
+    specifier: `${commercePackageSpecifierPrefix}/api/customer-profile-read/client`,
+  },
+  {
+    importer: privacyNoticeProfileAuthority,
+    reason:
+      'Privacy Notice acknowledgement verifies the profile-bound Principal through its existing governed Customer Context integration boundary.',
+    specifier: `${commercePackageSpecifierPrefix}/api/retail-principal-resolution/client`,
+  },
+  {
+    importer: privacyNoticeProfileAuthority,
+    reason:
+      'Privacy Notice acknowledgement verifies the exact portal profile binding through its existing governed Customer Context integration boundary.',
+    specifier: `${commercePackageSpecifierPrefix}/api/retail-portal-profile-binding-read/client`,
+  },
+  {
+    importer: privacyNoticeProfileAuthority,
+    reason:
+      'Privacy Notice acknowledgement verifies current Consent authority through its existing governed Customer Context integration boundary.',
+    specifier: `${commercePackageSpecifierPrefix}/api/retail-access-decision/client`,
+  },
   {
     importer: 'verticals/commerce-cart/src/services/final-cart-candidate-owners.service.ts',
     reason:

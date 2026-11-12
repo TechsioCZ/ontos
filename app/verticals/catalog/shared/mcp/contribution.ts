@@ -1,4 +1,4 @@
-import { defineOntosMcpContribution } from '@app/core-runtime';
+import { defineOntosMcpContribution, OntosMcpHidden } from '@app/core-runtime';
 
 export const catalogMcpContribution = defineOntosMcpContribution({
   actions: {
@@ -44,6 +44,8 @@ export const catalogMcpContribution = defineOntosMcpContribution({
         en: 'Assign an SKU',
       },
     },
+    // Owner-to-owner or enrolled source-workload integration action; never a general agent tool.
+    'bind-initial-variant-source': OntosMcpHidden,
     'change-local-override': {
       title: {
         cs: 'Změnit místní přepsání katalogových údajů',
@@ -528,6 +530,8 @@ export const catalogMcpContribution = defineOntosMcpContribution({
     'assortment-product-classification-v1': 'hidden',
     'assortment-selection-assessment-v1': 'hidden',
     'assortment-set-composition-v1': 'hidden',
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'bind-initial-variant-source-recovery': OntosMcpHidden,
     'brand-current': {
       title: {
         cs: 'Aktuální značky',
@@ -552,6 +556,8 @@ export const catalogMcpContribution = defineOntosMcpContribution({
         en: 'Current catalog media',
       },
     },
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'catalog-source-products': OntosMcpHidden,
     'catalog-source-resolution': 'hidden',
     'change-local-override-recovery': 'hidden',
     'change-product-manufacturer-recovery': 'hidden',

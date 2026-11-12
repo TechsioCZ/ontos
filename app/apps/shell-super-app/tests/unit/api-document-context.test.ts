@@ -21,7 +21,7 @@ import {
 } from '../../api/modules/installed-module-catalog.ts';
 import { ShellGovernedReads } from '../../api/modules/shell-governed-reads.ts';
 import type { ShellGovernedReadsService } from '../../api/modules/shell-governed-reads.ts';
-import { ShellCompositionSchema, ShellDocumentContextSchema } from '../../shared/api.ts';
+import { ShellCompositionSchema, ShellDocumentContextSchema } from '../../shared/browser-api.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { makeShellTestAccessGate } from '../support/access-decision-double.ts';

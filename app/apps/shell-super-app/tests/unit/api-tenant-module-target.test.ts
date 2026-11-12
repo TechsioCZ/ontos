@@ -38,8 +38,8 @@ import {
   ShellGovernedReads,
 } from '../../api/modules/shell-governed-reads.ts';
 import type { ShellGovernedReadsService } from '../../api/modules/shell-governed-reads.ts';
-import { ResolvedModuleTargetSchema, ResolveModuleTargetPayloadSchema } from '../../shared/api.ts';
-import type { ResolveModuleTargetPayload } from '../../shared/api.ts';
+import { ResolvedModuleTargetSchema, ResolveModuleTargetPayloadSchema } from '../../shared/browser-api.ts';
+import type { ResolveModuleTargetPayload } from '../../shared/browser-api.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { makeAuthenticationServiceDouble } from '../support/impersonation-service-doubles.ts';

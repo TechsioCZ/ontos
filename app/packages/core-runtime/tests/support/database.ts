@@ -20,10 +20,16 @@ export const privacyMeasureDeferredCases = [
   { dispositionDecision: null, kind: 'EXPORT', right: 'ACCESS' },
 ] as const;
 
+export interface ScriptedDatabaseRoleOptions {
+  /** The identity this scripted connection represents; null delegates the exact role query to the supplied script. */
+  readonly currentRole?: string | null;
+}
+
 /** Scripted SQL connection fixture; Drizzle and Effect own query and transaction execution. */
 /** Behind the same pool guard as the production Core database. */
 export const makeTestDatabase = (
   execute: (sql: string, params: readonly unknown[]) => Effect.Effect<readonly object[], SqlError>,
+  options: ScriptedDatabaseRoleOptions = {},
 ) =>
   Effect.scoped(
     Effect.flatMap(Effect.service(PgClient.PgClient), (client) =>
@@ -32,7 +38,15 @@ export const makeTestDatabase = (
       ),
     ).pipe(
       Effect.provide(
-        scriptedPgClientLayer(Effect.succeed(testSqlConnection(execute))).pipe(Layer.provideMerge(Reactivity.layer)),
+        scriptedPgClientLayer(
+          Effect.succeed(
+            testSqlConnection((statement, params) =>
+              statement === 'select current_user::text as role' && options.currentRole !== null
+                ? Effect.succeed([{ role: options.currentRole ?? 'ontos_runtime' }])
+                : execute(statement, params),
+            ),
+          ),
+        ).pipe(Layer.provideMerge(Reactivity.layer)),
       ),
     ),
   );

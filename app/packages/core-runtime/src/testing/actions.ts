@@ -396,6 +396,29 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
         ),
     };
 
+    /**
+     * Models the grant Shell registered for this assertion: the database derives the scope from the
+     * redeemed assertion's principal claim, never from the request.
+     */
+    const establishTestGatewayScope = Effect.fn('ActionTestHarness.establishGatewayScope')(
+      function* establishTestGatewayScope(
+        scope: ActionTestConnectionScope,
+        [assertion]: typeof gatewayAssertionValuesSchema.Type,
+      ) {
+        const { aud, principal } = yield* decodeGatewayAssertionClaims(assertion.split('.')[1] ?? '');
+        const role = gatewayScopeGrantRoleForAudience(databaseIdentities, aud);
+        if (Option.isNone(role)) {
+          return yield* Effect.die('The Action test gateway audience has no enrolled database identity');
+        }
+        scope.tenantId = principal.tenantId;
+        scope.legalEntityId = principal.legalEntityId ?? '';
+        scope.role = role.value;
+        return {
+          rows: [{ legal_entity_id: scope.legalEntityId, tenant_id: scope.tenantId }],
+        };
+      },
+    );
+
     const executeTestQuery = Effect.fn('ActionTestHarness.executeQuery')(function* executeTestQueryEffect<
       Query,
       Values,
@@ -420,21 +443,13 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
         }
       } else if (statement === 'rollback') {
         pendingCommit = [];
+      } else if (statement === 'select current_user::text as role') {
+        return { rows: [{ role: scope.role }] };
       } else if (statement === ESTABLISH_GATEWAY_SCOPE_SQL) {
-        // Models the grant Shell registered for this assertion: the database derives the scope
-        // from the redeemed assertion's principal claim, never from the request.
-        const [assertion] = yield* Schema.decodeUnknownEffect(gatewayAssertionValuesSchema)(values);
-        const { aud, principal } = yield* decodeGatewayAssertionClaims(assertion.split('.')[1] ?? '');
-        const role = gatewayScopeGrantRoleForAudience(databaseIdentities, aud);
-        if (Option.isNone(role)) {
-          return yield* Effect.die('The Action test gateway audience has no enrolled database identity');
-        }
-        scope.tenantId = principal.tenantId;
-        scope.legalEntityId = principal.legalEntityId ?? '';
-        scope.role = role.value;
-        return {
-          rows: [{ legal_entity_id: scope.legalEntityId, tenant_id: scope.tenantId }],
-        };
+        return yield* establishTestGatewayScope(
+          scope,
+          yield* Schema.decodeUnknownEffect(gatewayAssertionValuesSchema)(values),
+        );
       } else if (statement === INSTALL_TEST_SCOPE_SQL) {
         [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(values);
       } else if (statement === READ_TEST_SCOPE_SQL || statement === READ_GATEWAY_SCOPE_SQL) {

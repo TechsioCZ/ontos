@@ -247,6 +247,11 @@ export {
   executeCreateCrmClientPartyWithAuthorization,
 } from './create-crm-client-party-action-client.ts';
 export type { CreateCrmClientPartyActionClientOptions } from './create-crm-client-party-action-client.ts';
+export {
+  executeFenceLegacyIcoAuthority,
+  executeFenceLegacyIcoAuthorityWithAuthorization,
+} from './fence-legacy-ico-authority-action-client.ts';
+export type { FenceLegacyIcoAuthorityActionClientOptions } from './fence-legacy-ico-authority-action-client.ts';
 // </generated-action-http-client-exports>
 export {
   AresApplySelectionInvalid,
@@ -328,3 +333,62 @@ export {
   executeCrmClientIntakeReview,
   executeCrmClientIntakeReviewWithAuthorization,
 } from './crm-client-intake-review-client.ts';
+
+export {
+  executeLegacyIcoInventory,
+  executeLegacyIcoInventoryWithAuthorization,
+} from './legacy-ico-inventory-client.ts';
+export type { LegacyIcoInventoryClientOptions } from './legacy-ico-inventory-client.ts';
+
+export {
+  executePartySourceEffectReceipt,
+  executePartySourceEffectReceiptWithAuthorization,
+} from './party-source-effect-receipt-client.ts';
+export type { PartySourceEffectReceiptClientOptions } from './party-source-effect-receipt-client.ts';
+
+export {
+  executeCounterpartyMigrationCorrelation,
+  executeCounterpartyMigrationCorrelationWithAuthorization,
+} from './counterparty-migration-correlation-client.ts';
+export type { CounterpartyMigrationCorrelationClientOptions } from './counterparty-migration-correlation-client.ts';
+
+export {
+  executeSourcePersonAdmission,
+  executeSourcePersonAdmissionWithAuthorization,
+} from './source-person-admission-client.ts';
+export type { SourcePersonAdmissionClientOptions } from './source-person-admission-client.ts';
+
+export {
+  executeSourceProfileExport,
+  executeSourceProfileExportWithAuthorization,
+} from './source-profile-export-client.ts';
+export type { SourceProfileExportClientOptions } from './source-profile-export-client.ts';
+
+export {
+  executeSourceCounterpartyAdmission,
+  executeSourceCounterpartyAdmissionWithAuthorization,
+} from './source-counterparty-admission-client.ts';
+export type { SourceCounterpartyAdmissionClientOptions } from './source-counterparty-admission-client.ts';
+
+export {
+  executeOrganizationIcoFacts,
+  executeOrganizationIcoFactsWithAuthorization,
+} from './organization-ico-facts-client.ts';
+export type { OrganizationIcoFactsClientOptions } from './organization-ico-facts-client.ts';
+
+export {
+  executeCounterpartyOrganizationIcoFacts,
+  executeCounterpartyOrganizationIcoFactsWithAuthorization,
+} from './counterparty-organization-ico-facts-client.ts';
+export type { CounterpartyOrganizationIcoFactsClientOptions } from './counterparty-organization-ico-facts-client.ts';
+
+export {
+  executeOrganizationRecordFacts,
+  executeOrganizationRecordFactsWithAuthorization,
+} from './organization-record-facts-client.ts';
+export type { OrganizationRecordFactsClientOptions } from './organization-record-facts-client.ts';
+export {
+  executeOrganizationBusinessNameExport,
+  executeOrganizationBusinessNameExportWithAuthorization,
+} from './organization-business-name-export-client.ts';
+export type { OrganizationBusinessNameExportClientOptions } from './organization-business-name-export-client.ts';

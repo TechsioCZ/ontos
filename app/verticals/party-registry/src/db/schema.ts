@@ -1,3 +1,4 @@
+import type { Schema } from 'effect';
 import {
   PARTY_REGISTRY_REQUEST_IDENTITY,
   PARTY_REGISTRY_WORKER_IDENTITY,
@@ -18,6 +19,7 @@ import {
   jsonb,
   pgSchema,
   pgPolicy,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -28,7 +30,11 @@ import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { OwnerExecutionOutcome, PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
 
 import type { AresAppliedEvidence, AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
-import type { PartySubjectEvidence, PartyEvidenceEvaluation } from '../../shared/domain/identity-contracts.ts';
+import type {
+  PartySubjectEvidenceSchema,
+  PartyClientSourceReceiptReferenceSchema,
+  PartyEvidenceEvaluationSchema,
+} from '../../shared/domain/identity-contracts.ts';
 import type { MergeSelectionEvidenceStep, MergeSurvivorSelectionReason } from '../../shared/domain/merge-selection.ts';
 import type { DuplicateCandidateCaseRefSchema } from '../../shared/resources/duplicate-candidate-case.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
@@ -49,12 +55,16 @@ export const PARTY_TABLE_INVENTORY = [
   'party_contact_points',
   'party_corrections',
   'party_fact_assertion_identities',
+  'party_create_source_receipts',
   'party_fact_assertions',
   'party_historical_name_assertions',
+  'party_ico_correlation_epochs',
+  'party_legacy_ico_authority_fences',
   'party_match_decisions',
   'party_merges',
   'party_official_identifiers',
   'party_relationships',
+  'party_source_effect_receipts',
   'privacy_measure_executions',
 ] as const;
 
@@ -134,7 +144,7 @@ export interface PartyCandidateIdentifierSnapshot {
 }
 
 export interface PartyCandidateSnapshot {
-  readonly subjectEvidence?: readonly PartySubjectEvidence[];
+  readonly subjectEvidence?: readonly (typeof PartySubjectEvidenceSchema.Encoded)[];
   readonly contactSignals?: readonly string[];
   readonly evidenceArtifactRefs?: readonly string[];
   readonly intent?: string;
@@ -311,7 +321,7 @@ export const partyFactAssertions = enableGovernedRls(
       tenantId: uuid('tenant_id').notNull(),
       partyId: uuid('party_id').notNull(),
       factKind: text('fact_kind').notNull(),
-      evidenceEvaluation: jsonb('evidence_evaluation').$type<PartyEvidenceEvaluation>(),
+      evidenceEvaluation: jsonb('evidence_evaluation').$type<typeof PartyEvidenceEvaluationSchema.Encoded>(),
       normalizedValue: text('normalized_value').notNull(),
       ...activePeriodColumns(),
       ...provenanceColumns(),
@@ -1022,7 +1032,7 @@ export const partyMatchDecisions = enableGovernedRls(
       matchRuleVersion: text('match_rule_version').notNull(),
       operation: text('operation').notNull().default('LEGACY'),
       committedCreateOutcome: text('committed_create_outcome'),
-      evidenceEvaluation: jsonb('evidence_evaluation').$type<PartyEvidenceEvaluation>(),
+      evidenceEvaluation: jsonb('evidence_evaluation').$type<typeof PartyEvidenceEvaluationSchema.Encoded>(),
       outcome: text('outcome').notNull(),
       partyId: uuid('party_id'),
       candidateCaseId: uuid('candidate_case_id'),
@@ -1061,6 +1071,125 @@ export const partyMatchDecisions = enableGovernedRls(
       ),
       ...gatewayScopedTenantRlsPolicies(
         'party_match_decisions_tenant',
+        table.tenantId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
+    ],
+  ),
+);
+
+/** An opaque owner version. Request and worker roles cannot publish a new epoch. */
+export const partyIcoCorrelationEpochs = enableGovernedRls(
+  partySchema.table(
+    'party_ico_correlation_epochs',
+    {
+      tenantId: uuid('tenant_id').primaryKey(),
+      epoch: uuid('epoch').defaultRandom().notNull(),
+    },
+    (table) => [
+      ...gatewayScopedTenantRlsPolicies(
+        'party_ico_correlation_epoch',
+        table.tenantId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
+    ],
+  ),
+);
+
+/** A tenant cutover fence is immutable and has no expiry or implicit reset. */
+export const partyLegacyIcoAuthorityFences = enableGovernedRls(
+  partySchema.table(
+    'party_legacy_ico_authority_fences',
+    {
+      tenantId: uuid('tenant_id').primaryKey(),
+      fenceId: uuid('fence_id').defaultRandom().notNull(),
+      snapshotVersion: text('snapshot_version').notNull(),
+      fencedAt: timestamp('fenced_at', { withTimezone: true }).defaultNow().notNull(),
+      actionInvocationId: uuid('action_invocation_id').notNull(),
+      principalId: uuid('principal_id').notNull(),
+      migrationPlanRef: text('migration_plan_ref').notNull(),
+    },
+    (table) => [
+      unique('party_legacy_ico_authority_fences_tenant_id_uk').on(table.tenantId, table.fenceId),
+      check('party_legacy_ico_authority_fences_version_ck', sql`${table.snapshotVersion} ~ '^[0-9a-f]{64}$'`),
+      check('party_legacy_ico_authority_fences_plan_ck', sql`length(${table.migrationPlanRef}) between 1 and 300`),
+      ...gatewayScopedTenantRlsPolicies(
+        'party_legacy_ico_authority_fences_tenant',
+        table.tenantId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
+    ],
+  ),
+);
+
+/** Bounded owner effect receipts contain only the result projection, never the source payload. */
+export const partySourceEffectReceipts = enableGovernedRls(
+  partySchema.table(
+    'party_source_effect_receipts',
+    {
+      tenantId: uuid('tenant_id').notNull(),
+      sourceOccurrenceHash: text('source_occurrence_hash').notNull(),
+      sourceReference: jsonb('source_reference')
+        .$type<typeof PartyClientSourceReceiptReferenceSchema.Encoded>()
+        .notNull(),
+      requestHash: text('request_hash').notNull(),
+      operation: text('operation').notNull(),
+      partyId: uuid('party_id').notNull(),
+      principalId: uuid('principal_id').notNull(),
+      legalEntityId: uuid('legal_entity_id'),
+      actionInvocationId: uuid('action_invocation_id').notNull(),
+      result: jsonb('result').$type<Schema.Json>().notNull(),
+      recordedAt: recordedAt(),
+    },
+    (table) => [
+      primaryKey({ columns: [table.tenantId, table.sourceOccurrenceHash] }),
+      unique('party_source_effect_receipts_invocation_uk').on(table.tenantId, table.actionInvocationId),
+      foreignKey({
+        columns: [table.tenantId, table.partyId],
+        foreignColumns: [parties.tenantId, parties.partyId],
+        name: 'party_source_effect_receipts_tenant_party_fk',
+      }).onDelete('restrict'),
+      check(
+        'party_source_effect_receipts_hash_ck',
+        sql`${table.sourceOccurrenceHash} ~ '^[0-9a-f]{64}$' and ${table.requestHash} ~ '^[0-9a-f]{64}$'`,
+      ),
+      check(
+        'party_source_effect_receipts_operation_ck',
+        sql`${table.operation} in ('UPDATE', 'CORRECTION', 'ONBOARD_COUNTERPARTY_CUSTOMER', 'ADD_CONTACT_POINT', 'UPDATE_CONTACT_POINT', 'END_CONTACT_POINT')`,
+      ),
+      check(
+        'party_source_effect_receipts_result_ck',
+        sql`jsonb_typeof(${table.result}) = 'object' and octet_length(${table.result}::text) <= 4096`,
+      ),
+      ...gatewayScopedTenantRlsPolicies(
+        'party_source_effect_receipts_tenant',
+        table.tenantId,
+        PARTY_REGISTRY_REQUEST_IDENTITY.role,
+      ),
+    ],
+  ),
+);
+
+export const partyCreateSourceReceipts = enableGovernedRls(
+  partySchema.table(
+    'party_create_source_receipts',
+    {
+      tenantId: uuid('tenant_id').notNull(),
+      actionInvocationId: uuid('action_invocation_id').notNull(),
+      principalId: uuid('principal_id').notNull(),
+      legalEntityId: uuid('legal_entity_id'),
+      matchDecisionId: uuid('match_decision_id').notNull(),
+    },
+    (table) => [
+      primaryKey({ columns: [table.tenantId, table.actionInvocationId] }),
+      index('party_create_source_receipts_tenant_decision_idx').on(table.tenantId, table.matchDecisionId),
+      foreignKey({
+        columns: [table.tenantId, table.matchDecisionId],
+        foreignColumns: [partyMatchDecisions.tenantId, partyMatchDecisions.matchDecisionId],
+        name: 'party_create_source_receipts_tenant_decision_fk',
+      }).onDelete('restrict'),
+      ...gatewayScopedTenantRlsPolicies(
+        'party_create_source_receipts_tenant',
         table.tenantId,
         PARTY_REGISTRY_REQUEST_IDENTITY.role,
       ),
@@ -1311,6 +1440,10 @@ export const partyDatabaseSchema = {
   partyContactPoints,
   partyCorrections,
   partyFactAssertionIdentities,
+  partyCreateSourceReceipts,
+  partySourceEffectReceipts,
+  partyIcoCorrelationEpochs,
+  partyLegacyIcoAuthorityFences,
   partyFactAssertions,
   partyHistoricalNameAssertions,
   partyMatchDecisions,
@@ -1333,6 +1466,10 @@ export const PARTY_TABLES = [
   partyContactPoints,
   partyCorrections,
   partyFactAssertionIdentities,
+  partyCreateSourceReceipts,
+  partySourceEffectReceipts,
+  partyIcoCorrelationEpochs,
+  partyLegacyIcoAuthorityFences,
   partyFactAssertions,
   partyHistoricalNameAssertions,
   partyMatchDecisions,

@@ -267,7 +267,9 @@ it.effect('records bounded audit evidence for a maximum-size valid group definit
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
       scope: {
-        authMethod: 'system',
+        authBindingId: '70000000-0000-4000-8000-000000000002',
+        authContextRef: 'better-auth-session:maximum-group-definition-test',
+        authMethod: 'session',
         correlationId: 'customer-group-maximum-definition',
         legalEntityId,
         principalId: '70000000-0000-4000-8000-000000000001',

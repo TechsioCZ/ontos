@@ -34,5 +34,10 @@ export const UpdatePartyPayloadSchema = Schema.Struct({
   ),
 );
 export type UpdatePartyPayload = typeof UpdatePartyPayloadSchema.Type;
-export const UpdatePartyResultSchema = PartySchema;
+/** Governed company-only processing acknowledges refs and revision without a compatibility snapshot. */
+export const OrganizationBusinessPartyUpdatedSchema = Schema.TaggedStruct('OrganizationBusinessPartyUpdated', {
+  partyRef: PartyRefSchema,
+  revision: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+export const UpdatePartyResultSchema = Schema.Union([PartySchema, OrganizationBusinessPartyUpdatedSchema]);
 export type UpdatePartyResult = typeof UpdatePartyResultSchema.Type;

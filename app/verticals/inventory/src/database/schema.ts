@@ -1,9 +1,8 @@
 import { defineRelations } from 'drizzle-orm';
 import type { EmptyRelations, ExtractTablesFromSchema, ExtractTablesWithRelations } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
-import { index, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
-import { inventorySchema } from './inventory-schema.ts';
 
+import { inventoryGatewayAssertionRedemptions } from '../persistence/gateway-assertion-redemption-table.ts';
 import { inventoryBackendConfigurations } from '../persistence/inventory-backend-configuration-table.ts';
 import { inventoryBindingCorrectionReconciliations } from '../persistence/binding-correction-impact-table.ts';
 import {
@@ -58,6 +57,7 @@ import {
   inventoryStockSharingEligibilityHistory,
 } from '../persistence/stock-sharing-eligibility-table.ts';
 
+export { inventoryGatewayAssertionRedemptions } from '../persistence/gateway-assertion-redemption-table.ts';
 export { INVENTORY_SCHEMA_NAME, inventorySchema } from './inventory-schema.ts';
 export { inventoryBackendConfigurations } from '../persistence/inventory-backend-configuration-table.ts';
 export { inventoryBindingCorrectionReconciliations } from '../persistence/binding-correction-impact-table.ts';
@@ -113,22 +113,6 @@ export {
   inventoryStockSharingEligibilityHistory,
 } from '../persistence/stock-sharing-eligibility-table.ts';
 
-/** Global pre-authentication replay identities, independent of Tenant/SLE business rows. */
-export const gatewayAssertionRedemptions = inventorySchema.table(
-  'gateway_assertion_redemptions',
-  {
-    audience: text('audience').notNull(),
-    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    issuer: text('issuer').notNull(),
-    jti: uuid('jti').notNull(),
-    redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
-  },
-  (table) => [
-    unique('inventory_gateway_redemptions_identity_uk').on(table.issuer, table.audience, table.jti),
-    index('inventory_gateway_redemptions_expiry_idx').on(table.expiresAt),
-  ],
-);
-
 export const INVENTORY_TABLE_INVENTORY = [
   'backend_configurations',
   'binding_correction_reconciliations',
@@ -168,8 +152,10 @@ export const INVENTORY_TABLE_INVENTORY = [
   'stock_sharing_eligibility_history',
 ] as const;
 
+export const INVENTORY_INGRESS_TABLE_INVENTORY = ['gateway_assertion_redemptions'] as const;
+
 export const INVENTORY_TABLES: readonly PgTable[] = [
-  gatewayAssertionRedemptions,
+  inventoryGatewayAssertionRedemptions,
   inventoryBackendConfigurations,
   inventoryBindingCorrectionReconciliations,
   inventoryCatalogToStockBindingHistory,
@@ -207,7 +193,9 @@ export const INVENTORY_TABLES: readonly PgTable[] = [
   inventoryStockSharingEligibilityHistory,
 ] as const;
 
-const inventoryDatabaseSchemaSecurity = { gatewayAssertionRedemptions } as const;
+export const INVENTORY_GOVERNED_TABLES = INVENTORY_TABLES.filter(
+  (table) => table !== inventoryGatewayAssertionRedemptions,
+);
 
 const inventoryDatabaseSchemaIdentity = {
   inventoryBackendConfigurations,
@@ -247,6 +235,7 @@ const inventoryDatabaseSchemaEvidence = {
 } as const;
 
 const inventoryDatabaseSchemaStock = {
+  inventoryGatewayAssertionRedemptions,
   inventoryStockCorrectionSourceEvidenceCurrent,
   inventoryStockItems,
   inventoryStockLocationRevisions,
@@ -256,12 +245,10 @@ const inventoryDatabaseSchemaStock = {
   inventoryStockSharingEligibilityHistory,
 } as const;
 
-const inventoryDatabaseSchema: typeof inventoryDatabaseSchemaSecurity &
-  typeof inventoryDatabaseSchemaIdentity &
+const inventoryDatabaseSchema: typeof inventoryDatabaseSchemaIdentity &
   typeof inventoryDatabaseSchemaReservations &
   typeof inventoryDatabaseSchemaEvidence &
   typeof inventoryDatabaseSchemaStock = {
-  ...inventoryDatabaseSchemaSecurity,
   ...inventoryDatabaseSchemaIdentity,
   ...inventoryDatabaseSchemaReservations,
   ...inventoryDatabaseSchemaEvidence,

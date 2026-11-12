@@ -9,7 +9,7 @@ import { renderToString } from 'react-dom/server';
 
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 
-import { ResolvedModuleTargetSchema, SafeTenantIdentitySchema } from '../../../../shared/api.ts';
+import { ResolvedModuleTargetSchema, SafeTenantIdentitySchema } from '../../../../shared/browser-api.ts';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts';
 import {
   moduleEntrypointLoadIdentity,

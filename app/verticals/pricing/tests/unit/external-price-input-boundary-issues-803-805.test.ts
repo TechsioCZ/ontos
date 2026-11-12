@@ -1,3 +1,6 @@
+import { PriceIdentityKeySchema } from '@app/pricing-contracts/domain/price-definition';
+import { DefinePricePayloadSchema } from '../../shared/actions/define-price.ts';
+import { priceSourceFactFingerprint } from '../../src/services/price-source-provenance.service.ts';
 import { PriceSourceAssertionInputSchema } from '@app/pricing-contracts/domain/price-source-provenance';
 import { Context, DateTime, Effect, Layer, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -183,4 +186,99 @@ describe('Pricing Source Authority and external Price input boundary', () => {
       });
     }),
   );
+  it.effect('C14 internal source conformance keeps every full Price key dimension exact', () =>
+    Effect.gen(function* c14FullKeyConformance() {
+      const changedKeys = [
+        { ...identityKey, currencyCode: 'EUR' },
+        { ...identityKey, commercialScope: { ...identityKey.commercialScope, channelId: 'B2C' as const } },
+        { ...identityKey, commercialScope: { ...identityKey.commercialScope, marketId: 'other-market' } },
+        {
+          ...identityKey,
+          commercialScope: {
+            ...identityKey.commercialScope,
+            sellingLegalEntityId: '22222222-2222-4222-8222-222222222223',
+          },
+        },
+        { ...identityKey, unitBasis: { ...unitBasis, quantity: '2' } },
+        {
+          ...identityKey,
+          catalogSelection: {
+            ...identityKey.catalogSelection,
+            variantRef: {
+              ...identityKey.catalogSelection.variantRef,
+              resourceId: '55555555-5555-4555-8555-555555555556',
+            },
+          },
+        },
+        {
+          ...identityKey,
+          priceGroupSelector: {
+            kind: 'PRICE_GROUP' as const,
+            priceGroupRef: {
+              moduleId: 'pricing.price-group-catalog' as const,
+              resourceId: '88888888-8888-4888-8888-888888888888',
+              resourceType: 'pricing.price-group-catalog.price-group' as const,
+              tenantId,
+            },
+          },
+        },
+      ];
+      for (const changedKey of changedKeys) {
+        const exactKey = yield* Schema.decodeUnknownEffect(PriceIdentityKeySchema)(changedKey);
+        const outcome = yield* boundaryFor({ grant, outcome: 'AUTHORITY_GRANTED' }).assess({
+          ...request,
+          identityKey: exactKey,
+        });
+        expect(outcome).toMatchObject({ outcome: 'PRICE_SOURCE_ASSERTION_KNOWN_INVALID', reason: 'MAPPING_REJECTED' });
+      }
+    }),
+  );
+
+  it('C14 source provenance isolates issuer, record revision and mapping while preserving delivery replay', () => {
+    const original = priceSourceFactFingerprint(assertion);
+    const otherIssuer = Schema.decodeSync(PriceSourceAssertionInputSchema)({
+      ...assertion,
+      sourceRecord: {
+        ...assertion.sourceRecord,
+        sourceSystem: { ...assertion.sourceRecord.sourceSystem, sourceSystemRef: 'internal-other-issuer' },
+      },
+    });
+    const otherRevision = Schema.decodeSync(PriceSourceAssertionInputSchema)({
+      ...assertion,
+      sourceRecord: { ...assertion.sourceRecord, sourceRecordVersion: '12' },
+    });
+    const laterDelivery = Schema.decodeSync(PriceSourceAssertionInputSchema)({
+      ...assertion,
+      timing: { ...assertion.timing, importedAt: '2026-09-30T09:59:00.000Z' },
+    });
+    expect(priceSourceFactFingerprint(otherIssuer)).not.toBe(original);
+    expect(priceSourceFactFingerprint(otherRevision)).not.toBe(original);
+    expect(priceSourceFactFingerprint(laterDelivery)).toBe(original);
+  });
+
+  it('C14 rejects missing Unit and amount basis before any native owner effect', () => {
+    const { unitBasis: omittedUnit, ...incompleteKey } = identityKey;
+    expect(omittedUnit).toEqual(unitBasis);
+    expect(Schema.is(PriceIdentityKeySchema)(incompleteKey)).toBe(false);
+    const { monetaryBoundary: omittedBoundary, ...incompleteOriginal } = assertion.originalAssertion;
+    expect(omittedBoundary).toBe('PRE_TAX');
+    expect(Schema.is(PriceSourceAssertionInputSchema)({ ...assertion, originalAssertion: incompleteOriginal })).toBe(
+      false,
+    );
+    expect(
+      Schema.is(DefinePricePayloadSchema)({
+        effectiveFrom: request.effectiveFrom,
+        identityKey,
+        monetaryAmount: { amount: '125.50', currencyCode: 'EUR' },
+        priceRef: {
+          moduleId: 'commerce.pricing',
+          resourceId: '99999999-9999-4999-8999-999999999999',
+          resourceType: 'commerce.pricing.price',
+          tenantId,
+        },
+        reason: 'Internal C14 currency mismatch control.',
+        sourceAssertion: assertion,
+      }),
+    ).toBe(false);
+  });
 });

@@ -9,9 +9,13 @@ import {
   RemoveSavedAddressResultSchema,
 } from '../../shared/actions/remove-saved-address.ts';
 import type { RemoveSavedAddressPayload } from '../../shared/actions/remove-saved-address.ts';
-import { AddressBookDomainErrorSchema } from '../../shared/domain/address-errors.ts';
+import {
+  SourceSavedAddressDomainErrorSchema as AddressBookDomainErrorSchema,
+  SavedAddressSourceRejected,
+} from '../../shared/domain/saved-address-source.ts';
 
 import { addressActionPersistenceForTransaction } from '../persistence/address-persistence.ts';
+import { savedAddressSourceService } from '../services/saved-address-source.service.ts';
 import {
   RemoveSavedAddressCommerceCustomerContextSavedAddressRemovedV1OutboxPayloadSchema,
   RemoveSavedAddressCommerceCustomerContextSavedAddressRemovedV1OutboxProducerModuleKey,
@@ -38,6 +42,12 @@ const handle = Effect.fn('RemoveSavedAddress.handle')(function* handleRemoveSave
   payload: RemoveSavedAddressPayload,
   context: ActionHandlerContext<typeof domainEvents, Services>,
 ) {
+  if (context.scope.authMethod === 'system' && payload.source === undefined) {
+    return yield* new SavedAddressSourceRejected({
+      code: 'saved_address_source_authority_denied',
+      reason: 'A source workload must state its exact qualified address assertion',
+    });
+  }
   const result = yield* context.services.remove(payload, {
     actionInvocationId: context.actionInvocationId,
     principalId: context.scope.principalId,
@@ -88,6 +98,10 @@ export const removeSavedAddressAction = defineAction(
       policyKey: 'commerce.customer-context.remove-saved-address.access.v1',
     },
     accessOwnerFacts: manageAddressOwnerFacts,
+    accessWorkload: {
+      reason: 'Registered source writers may apply qualified Saved Address assertions',
+      workloads: ['commerce.customer-context.source-write'],
+    },
     actionKey: 'commerce.customer-context.remove-saved-address',
     auditProfile: 'sensitive',
     domainErrorSchema: AddressBookDomainErrorSchema,
@@ -108,7 +122,10 @@ export const removeSavedAddressAction = defineAction(
     schemaVersion: '1',
   },
   handle,
-  (transaction, scope) => Effect.succeed<Services>(addressActionPersistenceForTransaction(transaction, scope)),
+  (transaction, scope): Effect.Effect<Services> =>
+    Effect.succeed(
+      savedAddressSourceService(transaction, scope, addressActionPersistenceForTransaction(transaction, scope)),
+    ),
 );
 
 // <generated-outbox-message-exports>

@@ -1,4 +1,4 @@
-import { defineOntosMcpContribution } from '@app/core-runtime';
+import { defineOntosMcpContribution, OntosMcpHidden } from '@app/core-runtime';
 
 export const commerceMarketCatalogMcpContribution = defineOntosMcpContribution({
   actions: {
@@ -73,6 +73,8 @@ export const commerceMarketCatalogMcpContribution = defineOntosMcpContribution({
     en: 'Commerce markets',
   },
   reads: {
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'assortment-fixture-market-association': OntosMcpHidden,
     'current-market-catalog': {
       title: {
         cs: 'Aktuální katalog obchodních trhů',

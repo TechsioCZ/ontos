@@ -1,3 +1,9 @@
+export {
+  SystemPrincipalContextResolver,
+  SystemPrincipalContextResolverLive,
+  registerSystemWorkload,
+  registeredAdmissionAuthContextRef,
+} from '../auth/system-principal-context.ts';
 /** Focused server-only entrypoint used to bundle the combined Outbox Worker host and its MicroVertical entries. */
 export { SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
 export { databaseRuntime } from '#database-runtime';
@@ -16,6 +22,7 @@ export {
   isVerifiedGatewayPrincipalContext,
   readVerifiedGatewayActor,
   readVerifiedGatewayCompositionRevision,
+  readVerifiedGatewayOrganizationGovernanceRead,
   readVerifiedGatewayScopeAssertion,
 } from '../auth/system-principal-context-provenance.ts';
 export {
@@ -26,7 +33,10 @@ export {
 } from '../reads/definition.ts';
 export { OperationContextUnavailable } from '../operations/operation-context-unavailable.ts';
 export { defineVerticalRuntimeRegistration } from '../modules/runtime-registration.ts';
-export { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '../modules/module-dependency-contracts.ts';
+export {
+  ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY,
+  OntosRequiredOperationContractSchema,
+} from '../modules/module-dependency-contracts.ts';
 export {
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
@@ -34,7 +44,7 @@ export {
   ShellReportContributionSchema,
   ShellSearchContributionSchema,
 } from '../modules/shell-contribution.ts';
-export { requireModuleOperation } from '../modules/module-operation-requirement.ts';
+export { readModuleOperationRequirement, requireModuleOperation } from '../modules/module-operation-requirement.ts';
 export {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
@@ -102,6 +112,7 @@ export {
   isVerifiedOutboxWorkerHandlerContext,
 } from './definition.ts';
 export { defineOutboxWorkerCompletion, OutboxWorkerCompletionPublicationError } from './completion-publication.ts';
+export { OutboxWorkerDeferred } from './outbox-worker-deferred.ts';
 export {
   defineOutboxWorkerEntry,
   hostedOutboxWorkerEntry,
@@ -153,3 +164,12 @@ export type {
 } from '../search/worker-snapshot.ts';
 
 export type { OwnerPermissionAccessTarget, OwnerPermissionContract } from '../permissions/context-access.ts';
+
+export { readWorkerModuleOperationRequirement } from '../modules/module-operation-requirement.ts';
+export type { WorkerModuleOperationRequirementFact } from '../modules/module-operation-requirement.ts';
+
+export { readWorkerExecutionContext } from '../modules/module-operation-execution.ts';
+export type { WorkerExecutionContextFact } from '../modules/module-operation-execution.ts';
+
+export { readScopedCurrentActionInvocation } from '../actions/current-invocation.ts';
+export type { ScopedCurrentActionInvocationFact } from '../actions/current-invocation.ts';

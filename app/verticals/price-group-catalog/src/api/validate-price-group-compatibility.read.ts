@@ -159,6 +159,10 @@ export const validatePriceGroupCompatibilityRead = defineRead(
       selectors: [],
     },
     accessKind: 'detail',
+    accessWorkload: {
+      reason: 'Native Price Group source compatibility reads',
+      workloads: ['pricing.price-group-catalog.source-read'],
+    },
     domainErrorSchema: ValidatePriceGroupCompatibilityDomainErrorSchema,
     entrypoint: validatePriceGroupCompatibilityEntrypoint,
     evidencePolicy: {

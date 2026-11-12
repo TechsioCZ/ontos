@@ -607,6 +607,9 @@ const resolveApplicabilityInput = (input: ResolvePrivacyEligibilityInputsInput):
   if (input.applicability === null) {
     return resolution;
   }
+  if (input.applicability.nonPersonalApplicability !== undefined) {
+    return scopeMismatch('organization_ico_applicability_cannot_authorize_personal_processing', input.asOf);
+  }
   const applicabilityTargetsIntendedScope =
     input.applicabilityScope.operation === input.intendedScope.operation &&
     input.applicabilityScope.processingScopeRef.scopeId === input.intendedScope.processingScopeRef.scopeId &&

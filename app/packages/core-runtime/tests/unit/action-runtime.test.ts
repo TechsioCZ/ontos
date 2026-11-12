@@ -1,3 +1,19 @@
+import { organizationProcessingReadPrincipal } from '../support/organization-processing-read-principal.ts';
+import { organizationGovernanceReadPrincipal } from '../support/organization-governance-read-principal.ts';
+import { privacyDispatchPrincipal } from '../support/privacy-dispatch-principal.ts';
+import { openScopedSourceExecutionFence } from '../../src/access/workloads/source-execution-fence.ts';
+import type { AccessDecisionUnavailable } from '../../src/access/decision/errors.ts';
+import type { ActionServiceFactory } from '../../src/actions/definition.ts';
+import type { TestAccessOutcome } from '../../src/testing/access-gate.ts';
+import { readScopedAdmittedWorkload } from '../../src/access/enforcement/workload-admission.ts';
+import type { ScopedTransactionExecutor } from '../../src/db/scoped-transaction.ts';
+import { makeAccessDecisionService } from '../../src/access/enforcement/service.ts';
+import { bindAccessGate } from '../../src/operations/access-gate.ts';
+import type { BoundAccessGate } from '../../src/operations/access-gate.ts';
+import { inertAccessEnforcementPorts, makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
+import { PrincipalIdSchema } from '../../src/access/ids.ts';
+import { cell, makeAuthority, makeCheck, principalHolder } from './access-decision-support.ts';
+import { registeredGatewayRecoveryPrincipal } from '../support/registered-gateway-recovery.ts';
 import { historicalOwnerContract, historicalOwnerTarget } from '../support/historical-owner-targets.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { remainingPermissionBaselines } from './owner-permission-baseline.ts';
@@ -74,8 +90,7 @@ import {
 } from '../../src/actions/repository.ts';
 import type { ActionRuntimeOptions, ActionRuntimeStage } from '../../src/actions/runtime.ts';
 import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
-import { makeScriptedBoundAccessGate } from '../../src/testing/access-gate.ts';
-import type { TestAccessOutcome } from '../../src/testing/access-gate.ts';
+
 import { makeActionAuthorizationPreflightPermit } from '../../src/actions/owner-proof-preflight.ts';
 import type { ActionAuthorizationPreflightService } from '../../src/actions/owner-proof-preflight.ts';
 import { allowOwnerAuthorizationOverlay } from '../../src/access/enforcement/owner-overlay.ts';
@@ -86,7 +101,12 @@ import type {
 import type { PrincipalManagementRepositoryService } from '../../src/auth/principal-management.ts';
 import { PrincipalManagementRepository } from '../../src/auth/principal-management.ts';
 import { supportRecoveryPrincipalContextResolverFromRepository } from '../../src/auth/support-recovery-principal-context.ts';
-import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
+import {
+  RegisteredGatewayWorkloadSchema,
+  preserveSystemPrincipalContextTrust,
+  readVerifiedGatewayWorkload,
+  trustVerifiedGatewayPrincipalContext,
+} from '../../src/auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
 import { recordSupportImpersonationAction } from '../../src/modules/actions/record-support-impersonation.action.ts';
 import { makeModuleEntrypointGateway } from '../../src/modules/module-entrypoint-gateway.ts';
@@ -187,8 +207,10 @@ interface TestCompositionAuthority {
 interface HarnessOptions {
   /** A scripted gate answer for this run: `denied` proves the reduction exemption is real (O71). */
   readonly access?: TestAccessOutcome;
+  readonly accessDecision?: BoundAccessGate;
   readonly applicationComposition?: ActiveApplicationCompositionServiceContract;
   readonly authorizationPreflight?: ActionAuthorizationPreflightService;
+  readonly beforeInvocationLookup?: Effect.Effect<void>;
   readonly businessPermissionDecision?: PermissionDecision;
   readonly commit?: Effect.Effect<readonly object[], SqlError>;
   readonly commitFailureCode?: string;
@@ -215,12 +237,15 @@ interface HarnessOptions {
   readonly permissionFailure?: boolean;
   readonly policyFinalizationFailure?: boolean;
   /** Simulates a concurrent request whose rejection committed before this one finalizes. */
+  readonly readSourceExecutionFence?: () => boolean;
   readonly recordedByConcurrentRequest?: ActionRecordedRejection;
   readonly rejectionFailure?: boolean;
   readonly resolutionUnavailable?: boolean;
   readonly resolveCommitted?: boolean;
   readonly resolveCompositionRevision?: Effect.Effect<string, ActionTransactionError>;
+  readonly resolvedScope?: OperationalScope;
   readonly resourcePermissionDecision?: PermissionDecision;
+  readonly sourceExecutionFenceOpen?: boolean;
   readonly tenantPermissionDecision?: PermissionDecision;
   readonly transactionMode?: 'commit-definite' | 'definite-failure' | 'normal' | 'uncertain';
 }
@@ -251,6 +276,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   const permissionChecks: CheckActionPermissionInput[] = [];
   const rejections: RejectPermissionDeniedInput[] = [];
   const requestHashes: string[] = [];
+  const preparedPrincipals: (typeof principal)[] = [];
   const resourceChecks: unknown[] = [];
   const stages: ActionRuntimeStage[] = [];
   const tenantChecks: unknown[] = [];
@@ -286,11 +312,14 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     createOrResolveInvocation: (_executor, input) => {
       createCount += 1;
       requestHashes.push(input.requestHash);
+      preparedPrincipals.push(input.principal);
       preparedHash = input.requestHash;
-      return Effect.succeed({
-        ...currentInvocation,
-        requestHash: currentInvocation.requestHash || input.requestHash,
-      });
+      return (options.beforeInvocationLookup ?? Effect.void).pipe(
+        Effect.as({
+          ...currentInvocation,
+          requestHash: currentInvocation.requestHash || input.requestHash,
+        }),
+      );
     },
     finalizePolicyDenial: (_executor, input) => {
       if (options.policyFinalizationFailure === true) {
@@ -405,6 +434,25 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       installedLegalEntityId = legalEntityId;
     }
   };
+  const sourceExecutionFenceAllowed = () =>
+    options.readSourceExecutionFence?.() ?? options.sourceExecutionFenceOpen !== false;
+  const compositionAuthorityRows = () => {
+    const authority = options.compositionAuthority ?? {
+      phase: 'active',
+      revision: approvedCompositionRevision,
+      unexpired: true,
+    };
+    return authority === 'missing'
+      ? []
+      : [
+          {
+            phase: authority.phase,
+            revision: authority.revision,
+            subscriptionsJson: [],
+            unexpired: authority.unexpired,
+          },
+        ];
+  };
   const query = Effect.fn(function* executeQuery(statement: string, values: readonly unknown[]) {
     const text = statement.toLowerCase();
     if (text.includes('set_config')) {
@@ -456,21 +504,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       }
     }
     if (text.includes('application_composition_authority')) {
-      const authority = options.compositionAuthority ?? {
-        phase: 'active',
-        revision: approvedCompositionRevision,
-        unexpired: true,
-      };
-      return authority === 'missing'
-        ? []
-        : [
-            {
-              phase: authority.phase,
-              revision: authority.revision,
-              subscriptionsJson: [],
-              unexpired: authority.unexpired,
-            },
-          ];
+      return compositionAuthorityRows();
     }
     if (text.includes("current_setting('transaction_isolation')")) {
       return [{ isolation: options.compositionIsolation ?? 'read committed' }];
@@ -493,8 +527,16 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       }
       return [{ operation_at: transactionOperationAt }];
     }
+    if (text.includes('lock_access_scope_fence')) {
+      return [{ state: 'Ready' }];
+    }
     if (text.startsWith('select')) {
-      return [{ authBindingId: principalAuthBindingId }];
+      return [
+        {
+          allowed: sourceExecutionFenceAllowed(),
+          authBindingId: principalAuthBindingId,
+        },
+      ];
     }
     return [];
   });
@@ -670,11 +712,17 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   if (scriptedAccess !== undefined) {
     runtimeOptions = { ...runtimeOptions, accessDecision: scriptedAccess.bound };
   }
-  const baseRuntime = makeActionRuntime(database, repository, permission, testOperationalScopeResolver, runtimeOptions);
+  if (options.accessDecision !== undefined) {
+    runtimeOptions = { ...runtimeOptions, accessDecision: options.accessDecision };
+  }
+  const { resolvedScope } = options;
+  const scopeResolver =
+    resolvedScope === undefined ? testOperationalScopeResolver : { resolve: () => Effect.succeed(resolvedScope) };
+  const baseRuntime = makeActionRuntime(database, repository, permission, scopeResolver, runtimeOptions);
   const runAction: typeof baseRuntime.runAction = (input) =>
     options.omitOwnerRegistration === true || options.ownerRegistration !== undefined
       ? baseRuntime.runAction(input)
-      : makeActionRuntime(database, repository, permission, testOperationalScopeResolver, {
+      : makeActionRuntime(database, repository, permission, scopeResolver, {
           ...runtimeOptions,
           ownerRegistration: historicalFixtureOwner(input.registration.descriptor.owningModuleKey),
         }).runAction(input);
@@ -706,6 +754,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     ownerPermissionInputs,
     permissionChecks,
     permissionCounts: () => ({ permissionCheckCount, rejectionCount }),
+    preparedPrincipals,
     rejections,
     requestHashes,
     resourceChecks,
@@ -5417,3 +5466,702 @@ it.layer(NodeCrypto.layer)('Core Actions hosted by genuine registered modules', 
     }),
   );
 });
+
+it.effect('rejects signed receipt recovery authority before creating or executing any Action', () =>
+  Effect.gen(function* receiptRecoveryCannotWrite() {
+    const action = registration();
+    const recovered = registeredGatewayRecoveryPrincipal({
+      declarationKey: action.descriptor.accessDeclaration?.key ?? 'core.shell.write',
+      entrypointKey: action.descriptor.entrypoint.entrypointKey,
+      principalId: principal.principalId,
+      requestHash: computeCanonicalValueHash({ amount: 1 }),
+      tenantId: principal.tenantId,
+      workloadKey: 'core.shell.receipt-recovery',
+    });
+    const harness = yield* makeHarness();
+    const failure = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal: recovered,
+        registration: action,
+        transport: transport('recovery-cannot-write'),
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ActionTrustedContextValidationError')).toBe(true);
+    expect(harness.counts()).toEqual({ createCount: 0, lockCount: 0, transactionCount: 0, transitionCount: 0 });
+    expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+    expect(harness.flushed).toHaveLength(0);
+  }),
+);
+
+it.effect(
+  'records and hashes the Core-installed operational company while the source system Principal remains tenant-local',
+  () =>
+    Effect.gen(function* actionOperationalCompanyEvidence() {
+      const company = '00000000-0000-4000-8000-000000000002';
+      const recoveryPrincipal = registeredGatewayRecoveryPrincipal({
+        declarationKey: 'core.shell.write',
+        entrypointKey: 'shell.counter.change',
+        principalId: principal.principalId,
+        requestHash: computeCanonicalValueHash({ amount: 2 }),
+        tenantId: principal.tenantId,
+        workloadKey: 'core.shell.source-write',
+      });
+      const metadata = yield* Schema.decodeUnknownEffect(RegisteredGatewayWorkloadSchema)(
+        readVerifiedGatewayWorkload(recoveryPrincipal),
+      );
+      const { recovery: _historicalRecovery, ...freshMetadata } = metadata;
+      const workload = yield* Schema.decodeUnknownEffect(RegisteredGatewayWorkloadSchema)({
+        ...freshMetadata,
+        legalEntityId: company,
+        legalEntityScope: 'optional',
+        originalOwnerBindingIncarnation: '60000000-0000-4000-8000-000000000006',
+        originalWorkloadBindingIncarnation: '60000000-0000-4000-8000-000000000005',
+        originalWorkloadKey: 'integration.source-admit',
+      });
+      const source = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+        authContextRef: recoveryPrincipal.authContextRef,
+        authMethod: 'system',
+        principalId: principal.principalId,
+        tenantId: principal.tenantId,
+      });
+      const trusted = trustVerifiedGatewayPrincipalContext(
+        source,
+        approvedCompositionRevision,
+        undefined,
+        undefined,
+        workload,
+      );
+      const resolvedScope = preserveSystemPrincipalContextTrust(trusted, {
+        ...trusted,
+        correlationId: 'operational-company',
+        legalEntityId: company,
+      });
+      const harness = yield* makeHarness({ resolvedScope });
+      yield* harness.runtime.runAction({
+        payload: { amount: 2 },
+        principal: trusted,
+        registration: registration(),
+        transport: transport('company-evidence'),
+      });
+      expect(source.legalEntityId).toBeUndefined();
+      expect(trusted.legalEntityId).toBeUndefined();
+      expect(harness.preparedPrincipals[0]?.legalEntityId).toBe(company);
+      expect(harness.flushed[0]?.principal.legalEntityId).toBe(company);
+      const envelope = {
+        actionKey: 'shell.counter.change',
+        normalizedPayload: { amount: 2 },
+        owningModuleKey: 'core.shell',
+        principal: { ...source, legalEntityId: company },
+        schemaVersion: '1',
+        target: { targetModuleKey: 'core.shell', targetResourceId: 'primary', targetResourceType: 'counter' },
+      };
+      expect(harness.requestHashes).toEqual([computeActionRequestHash(envelope)]);
+      expect(harness.requestHashes[0]).not.toBe(computeActionRequestHash({ ...envelope, principal: source }));
+      const cancelled = yield* makeHarness({ resolvedScope, sourceExecutionFenceOpen: false });
+      const failure = yield* Effect.flip(
+        cancelled.runtime.runAction({
+          payload: { amount: 2 },
+          principal: trusted,
+          registration: registration(),
+          transport: transport('stale-admission-after-cancel'),
+        }),
+      );
+      expect(Predicate.isTagged(failure, 'ActionTransactionError')).toBe(true);
+      expect(cancelled.gateCounts().handlerResolutionCount).toBe(0);
+      expect(cancelled.flushed).toHaveLength(0);
+      const cancelledReplay = yield* makeHarness({
+        createRecord: {
+          actionInvocationId: '70000000-0000-4000-8000-000000000003',
+          completedAt: completionTime(),
+          requestHash: '',
+          status: 'succeeded',
+        },
+        resolvedScope,
+        sourceExecutionFenceOpen: false,
+      });
+      const replayFailure = yield* Effect.flip(
+        cancelledReplay.runtime.runAction({
+          payload: { amount: 2 },
+          principal: trusted,
+          registration: registration(),
+          transport: transport('closed-admission-cached-replay'),
+        }),
+      );
+      expect(Predicate.isTagged(replayFailure, 'ActionTransactionError')).toBe(true);
+      expect(cancelledReplay.counts().createCount).toBe(0);
+      expect(cancelledReplay.gateCounts().handlerResolutionCount).toBe(0);
+    }),
+);
+
+it.effect('exposes only the actual gate-selected workload branch to the exact live owner overlay and factory', () =>
+  Effect.gen(function* selectedOwnerWorkloadBranch() {
+    const workloadKey = 'party.registry.source-write';
+    const otherWorkloadKey = 'party.registry.other-machine';
+    const principalId = PrincipalIdSchema.make(principal.principalId);
+    const authoritySpec = {
+      cells: [
+        {
+          ...cell({ capability: 'party.registry.fixture.action', holder: principalHolder(principalId) }),
+          assignedAt: transactionOperationAt,
+        },
+      ],
+    };
+    const authority = makeAuthority(authoritySpec);
+    const check = makeCheck({ authority: authoritySpec });
+    const escapedReads: Effect.Effect<boolean, AccessDecisionUnavailable>[] = [];
+    const overlayAnswers: boolean[] = [];
+    const factoryAnswers: boolean[] = [];
+    const services: ActionServiceFactory<{ readonly machine: boolean }> = Effect.fn(
+      function* selectedBranchFactory(transaction, operationScope) {
+        const narrowInvoker: Pick<ScopedTransactionExecutor, 'invoke'> = transaction;
+        const machine = yield* readScopedAdmittedWorkload(narrowInvoker, operationScope, workloadKey).pipe(
+          Effect.mapError(
+            () =>
+              new OperationContextUnavailable({
+                code: 'operation_context_unavailable',
+                reason: 'Workload admission facts unavailable',
+              }),
+          ),
+        );
+        factoryAnswers.push(machine);
+        escapedReads.push(readScopedAdmittedWorkload(transaction, operationScope, workloadKey));
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(readScopedAdmittedWorkload({ ...transaction }, operationScope, workloadKey)),
+          ),
+        ).toBe(true);
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(readScopedAdmittedWorkload(transaction, { ...operationScope }, workloadKey)),
+          ),
+        ).toBe(true);
+        return { machine };
+      },
+    );
+    const action = defineAction(
+      {
+        accessDeclaration: fixtureActionAccess('party.registry'),
+        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'party.registry.selected-branch.v1' },
+        accessWorkload: {
+          reason: 'Exact declared source machine branches',
+          workloads: [workloadKey, otherWorkloadKey],
+        },
+        actionKey: 'party.registry.selected-workload-branch',
+        auditProfile: 'standard',
+        domainErrorSchema: Schema.Never,
+        domainEvents: {},
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'write',
+          authorization: { kind: 'protected' },
+          entrypointKey: 'party.registry.selected-workload-branch',
+          moduleKey: 'party.registry',
+          role: 'action',
+        }),
+        idempotency: 'required',
+        legalEntityScope: 'forbidden',
+        owningModuleKey: 'party.registry',
+        payloadSchema: Schema.Void,
+        policies: [],
+        resultSchema: Schema.Boolean,
+        schemaVersion: '1',
+      },
+      (_payload, context) => Effect.succeed(context.services.machine),
+      services,
+    );
+    const directApiKey = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+      authBindingId: principalAuthBindingId,
+      authContextRef: 'better-auth-api-key:direct-source-fixture',
+      authMethod: 'api_key',
+      principalId,
+      tenantId: principal.tenantId,
+    });
+    for (const row of [
+      { expected: true, keys: [workloadKey], kind: 'integration' },
+      { expected: true, keys: [workloadKey], kind: 'service' },
+      { expected: true, keys: [workloadKey], kind: 'system' },
+      { expected: false, keys: [workloadKey], kind: 'human' },
+      { expected: false, keys: [otherWorkloadKey], kind: 'integration' },
+    ] as const) {
+      const ports = {
+        ...inertAccessEnforcementPorts(),
+        check: check.port,
+        intent: { authorityFor: () => authority.port },
+        principalKinds: { readKind: () => Effect.succeed(Option.some(row.kind)) },
+        workloadBindings: {
+          readActiveWorkloadKeys: () => Effect.succeed(new Set(row.keys)),
+          readCompanyDeclaration: () => Effect.succeed({ activeCompanyIds: new Set<never>(), pinned: false }),
+        },
+      };
+      const gate = makeAccessDecisionService({
+        authorityFor: ports.intent.authorityFor,
+        check: ports.check,
+        decisionLog: ports.decisionLog,
+        legalEntities: ports.candidates,
+        principalKinds: ports.principalKinds,
+        workloadBindings: ports.workloadBindings,
+      });
+      const harness = yield* makeHarness({
+        accessDecision: bindAccessGate(gate, ports),
+        ownerAuthorizationOverlay: {
+          authorize: (transaction, input) =>
+            Effect.gen(function* selectedBranchOwnerOverlay() {
+              overlayAnswers.push(yield* readScopedAdmittedWorkload(transaction, input.scope, workloadKey));
+              escapedReads.push(readScopedAdmittedWorkload(transaction, input.scope, workloadKey));
+              expect(
+                Exit.isFailure(
+                  yield* Effect.exit(readScopedAdmittedWorkload({ ...transaction }, input.scope, workloadKey)),
+                ),
+              ).toBe(true);
+              expect(
+                Exit.isFailure(
+                  yield* Effect.exit(readScopedAdmittedWorkload(transaction, { ...input.scope }, workloadKey)),
+                ),
+              ).toBe(true);
+              return 'allowed' as const;
+            }).pipe(Effect.orElseSucceed(() => 'unavailable' as const)),
+        },
+      });
+      expect(
+        yield* harness.runtime.runAction({
+          payload: undefined,
+          principal: directApiKey,
+          registration: action,
+          transport: {
+            correlationId: `branch-${row.kind}-${row.expected}`,
+            idempotencyKey: `branch-${row.kind}-${row.expected}`,
+          },
+        }),
+      ).toBe(row.expected);
+    }
+    expect(overlayAnswers).toEqual([true, true, true, false, false]);
+    expect(factoryAnswers).toEqual([true, true, true, false, false]);
+    for (const escaped of escapedReads) {
+      expect(Predicate.isTagged(yield* Effect.flip(escaped), 'AccessDecisionUnavailable')).toBe(true);
+    }
+    const deniedPorts = {
+      ...inertAccessEnforcementPorts(),
+      principalKinds: { readKind: () => Effect.succeed(Option.some('integration' as const)) },
+      workloadBindings: {
+        readActiveWorkloadKeys: () => Effect.succeed(new Set<string>()),
+        readCompanyDeclaration: () => Effect.succeed({ activeCompanyIds: new Set<never>(), pinned: false }),
+      },
+    };
+    const deniedGate = makeAccessDecisionService({
+      authorityFor: deniedPorts.intent.authorityFor,
+      check: deniedPorts.check,
+      decisionLog: deniedPorts.decisionLog,
+      legalEntities: deniedPorts.candidates,
+      principalKinds: deniedPorts.principalKinds,
+      workloadBindings: deniedPorts.workloadBindings,
+    });
+    let deniedOverlayCalls = 0;
+    const denied = yield* makeHarness({
+      accessDecision: bindAccessGate(deniedGate, deniedPorts),
+      ownerAuthorizationOverlay: {
+        authorize: () =>
+          Effect.sync(() => {
+            deniedOverlayCalls += 1;
+            return 'allowed' as const;
+          }),
+      },
+    });
+    expect(
+      Exit.isFailure(
+        yield* denied.runtime
+          .runAction({
+            payload: undefined,
+            principal: directApiKey,
+            registration: action,
+            transport: { correlationId: 'no-bound-source', idempotencyKey: 'no-bound-source' },
+          })
+          .pipe(Effect.exit),
+      ),
+    ).toBe(true);
+    expect(deniedOverlayCalls).toBe(0);
+    expect(factoryAnswers).toHaveLength(5);
+  }),
+);
+
+it.effect('resolves only the exact signed historical invocation without executing as its writer', () =>
+  Effect.gen(function* signedHistoricalCommitResolution() {
+    const invocationId = '60000000-0000-4000-8000-000000000004';
+    const originalPrincipalId = '40000000-0000-4000-8000-000000000009';
+    const recovered = registeredGatewayRecoveryPrincipal({
+      declarationKey: 'core.shell.receipt.read',
+      entrypointKey: 'core.shell.receipt.read',
+      originalPrincipalId,
+      principalId: principal.principalId,
+      requestHash: 'a'.repeat(64),
+      tenantId: principal.tenantId,
+      workloadKey: 'core.shell.receipt-recovery',
+    });
+    const open = yield* makeHarness({
+      createRecord: {
+        actionInvocationId: invocationId,
+        completedAt: null,
+        requestHash: 'b'.repeat(64),
+        status: 'running',
+      },
+    });
+    expect(
+      Predicate.isTagged(
+        yield* open.runtime.resolveActionCommit({ invocationId, principal: recovered }),
+        'ActionCommitOpen',
+      ),
+    ).toBe(true);
+    const committed = yield* makeHarness({
+      createRecord: {
+        actionInvocationId: invocationId,
+        completedAt: completionTime(),
+        requestHash: 'b'.repeat(64),
+        status: 'succeeded',
+      },
+    });
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(committed.runtime.resolveActionCommit({ invocationId, principal: recovered })),
+        'ActionAlreadyCommitted',
+      ),
+    ).toBe(true);
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          committed.runtime.resolveActionCommit({ invocationId: principal.principalId, principal: recovered }),
+        ),
+        'ActionInvocationNotFound',
+      ),
+    ).toBe(true);
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(committed.runtime.resolveActionCommit({ invocationId, principal: { ...recovered } })),
+        'ActionTrustedContextValidationError',
+      ),
+    ).toBe(true);
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(
+          committed.runtime.runAction({
+            payload: { amount: 1 },
+            principal: recovered,
+            registration: registration(),
+            transport: { correlationId: 'recovery-cannot-write', idempotencyKey: 'recovery-cannot-write' },
+          }),
+        ),
+        'ActionTrustedContextValidationError',
+      ),
+    ).toBe(true);
+    expect(committed.requestHashes).toHaveLength(0);
+  }),
+);
+
+it.effect('opens source execution fences only for the exact live Action invocation', () =>
+  Effect.gen(function* actualActionFenceProvenance() {
+    const invocationId = '70000000-0000-4000-8000-000000000001';
+    const otherInvocation = '70000000-0000-4000-8000-000000000002';
+    interface FenceServices {
+      readonly open: (id: string) => Effect.Effect<void, OperationContextUnavailable>;
+    }
+    let escaped: Effect.Effect<void, OperationContextUnavailable> | undefined;
+    const services: ActionServiceFactory<FenceServices> = (transaction) =>
+      Effect.succeed({
+        open: (id) =>
+          Effect.gen(function* openFenceFromRealFactory() {
+            expect(Exit.isFailure(yield* Effect.exit(openScopedSourceExecutionFence({ ...transaction }, id)))).toBe(
+              true,
+            );
+            expect(
+              Exit.isFailure(yield* Effect.exit(openScopedSourceExecutionFence(transaction, otherInvocation))),
+            ).toBe(true);
+            escaped = openScopedSourceExecutionFence(transaction, id);
+            return yield* openScopedSourceExecutionFence(transaction, id);
+          }),
+      });
+    const action = defineAction(
+      { ...registration().descriptor, domainErrorSchema: OperationContextUnavailable },
+      (_payload, context) => context.services.open(context.actionInvocationId).pipe(Effect.as({ total: 1 })),
+      services,
+    );
+    const harness = yield* makeHarness({
+      createRecord: { actionInvocationId: invocationId, completedAt: null, requestHash: '', status: 'running' },
+    });
+    yield* harness.runtime.runAction({
+      payload: { amount: 1 },
+      principal,
+      registration: action,
+      transport: transport('source-fence-provenance'),
+    });
+    if (escaped === undefined) {
+      throw new Error('Missing real factory capability');
+    }
+    expect(Exit.isFailure(yield* Effect.exit(escaped))).toBe(true);
+  }),
+);
+
+const fencedGatewayWriteFixture = Effect.fn('Test.fencedGatewayWriteFixture')(function* fencedGatewayWriteFixture() {
+  const recovered = registeredGatewayRecoveryPrincipal({
+    declarationKey: 'core.shell.write',
+    entrypointKey: 'shell.counter.change',
+    principalId: principal.principalId,
+    requestHash: 'a'.repeat(64),
+    tenantId: principal.tenantId,
+    workloadKey: 'core.shell.source-write',
+  });
+  const metadata = yield* Schema.decodeUnknownEffect(RegisteredGatewayWorkloadSchema)(
+    readVerifiedGatewayWorkload(recovered),
+  );
+  const { recovery: _recovery, ...native } = metadata;
+  const workload = yield* Schema.decodeUnknownEffect(RegisteredGatewayWorkloadSchema)({
+    ...native,
+    legalEntityScope: 'optional',
+    originalOwnerBindingIncarnation: '60000000-0000-4000-8000-000000000006',
+    originalWorkloadBindingIncarnation: '60000000-0000-4000-8000-000000000005',
+    originalWorkloadKey: 'integration.source-admit',
+  });
+  const source = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+    authContextRef: recovered.authContextRef,
+    authMethod: 'system',
+    principalId: principal.principalId,
+    tenantId: principal.tenantId,
+  });
+  const trusted = trustVerifiedGatewayPrincipalContext(
+    source,
+    approvedCompositionRevision,
+    undefined,
+    undefined,
+    workload,
+  );
+  return {
+    principal: trusted,
+    scope: preserveSystemPrincipalContextTrust(trusted, { ...trusted, correlationId: 'fenced-replay' }),
+  };
+});
+
+it.effect('holds the source fence across paused cached lookup and recovery result preparation', () =>
+  Effect.gen(function* fencedCachedReplayPreparation() {
+    const gateway = yield* fencedGatewayWriteFixture();
+    const lookupStarted = yield* Deferred.make<string>();
+    const releaseLookup = yield* Deferred.make<string>();
+    const hookStarted = yield* Deferred.make<string>();
+    const releaseHook = yield* Deferred.make<string>();
+    const harness = yield* makeHarness({
+      beforeInvocationLookup: Deferred.succeed(lookupStarted, 'lookup').pipe(
+        Effect.andThen(Deferred.await(releaseLookup)),
+        Effect.asVoid,
+      ),
+      createRecord: {
+        actionInvocationId: 'invocation-1',
+        completedAt: completionTime(),
+        requestHash: '',
+        status: 'succeeded',
+      },
+      resolvedScope: gateway.scope,
+    });
+    const action = defineAction(
+      registration().descriptor,
+      () => Effect.succeed({ total: 1 }),
+      () => Effect.succeed({}),
+      undefined,
+      () =>
+        Deferred.succeed(hookStarted, 'hook').pipe(
+          Effect.andThen(Deferred.await(releaseHook)),
+          Effect.as({ _tag: 'Recovered' as const, result: { total: 9 } }),
+        ),
+    );
+    const running = yield* Effect.forkChild(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal: gateway.principal,
+        registration: action,
+        transport: transport('fenced-paused-replay'),
+      }),
+    );
+    yield* Deferred.await(lookupStarted);
+    expect(harness.transactionOutcomes().committedTransactionCount).toBe(0);
+    expect(harness.transactionSteps).not.toContain('commit_started');
+    yield* Deferred.succeed(releaseLookup, 'resume');
+    yield* Deferred.await(hookStarted);
+    expect(harness.transactionOutcomes().committedTransactionCount).toBe(1);
+    expect(harness.counts().transactionCount).toBe(2);
+    yield* Deferred.succeed(releaseHook, 'resume');
+    expect(yield* Fiber.join(running)).toEqual({ total: 9 });
+    expect(harness.transactionOutcomes()).toEqual({ committedTransactionCount: 2, rolledBackTransactionCount: 0 });
+    expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+  }),
+);
+
+it.effect(
+  'refuses ordinary cached materialization if source cancellation commits between lookup and the recovery hook',
+  () =>
+    Effect.gen(function* cancelledBetweenReplayStages() {
+      const gateway = yield* fencedGatewayWriteFixture();
+      let open = true;
+      let hookCalls = 0;
+      const harness = yield* makeHarness({
+        commit: Effect.sync(() => {
+          open = false;
+          return [];
+        }),
+        createRecord: {
+          actionInvocationId: 'invocation-1',
+          completedAt: completionTime(),
+          requestHash: '',
+          status: 'succeeded',
+        },
+        readSourceExecutionFence: () => open,
+        resolvedScope: gateway.scope,
+      });
+      const action = defineAction(
+        registration().descriptor,
+        () => Effect.succeed({ total: 1 }),
+        () => Effect.succeed({}),
+        undefined,
+        () => {
+          hookCalls += 1;
+          return Effect.succeed({ _tag: 'Recovered' as const, result: { total: 9 } });
+        },
+      );
+      const failure = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 1 },
+          principal: gateway.principal,
+          registration: action,
+          transport: transport('closed-between-replay-stages'),
+        }),
+      );
+      expect(Predicate.isTagged(failure, 'ActionTransactionError')).toBe(true);
+      expect(hookCalls).toBe(0);
+      expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+    }),
+);
+
+it.effect('rejects finite Privacy dispatch authority for an unrelated Action before invocation or private work', () =>
+  Effect.gen(function* privacyDispatchWrongAction() {
+    const admitted = privacyDispatchPrincipal(principal, 'SymmyRetention', computeCanonicalValueHash({ amount: 1 }));
+    const harness = yield* makeHarness();
+    const failure = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal: admitted,
+        registration: registration(),
+        transport: transport('privacy-wrong-action'),
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ActionTrustedContextValidationError')).toBe(true);
+    expect(harness.counts().createCount).toBe(0);
+    expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+  }),
+);
+
+it.effect(
+  'rejects finite Privacy payload substitution and stale authority before resolving an ordinary cached Action',
+  () =>
+    Effect.gen(function* privacyDispatchActionPayloadAndCache() {
+      const action = defineAction(
+        {
+          accessDeclaration: fixtureActionAccess('integration.symmy'),
+          accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'privacy-dispatch.unit' },
+          actionKey: 'integration.symmy.execute-symmy-retention',
+          auditProfile: 'standard',
+          domainErrorSchema: Schema.Never,
+          domainEvents: {},
+          entrypoint: defineTenantModuleEntrypoint({
+            access: 'write',
+            authorization: { kind: 'protected' },
+            entrypointKey: 'integration.symmy.execute-symmy-retention',
+            moduleKey: 'integration.symmy',
+            role: 'action',
+          }),
+          idempotency: 'required',
+          legalEntityScope: 'optional',
+          owningModuleKey: 'integration.symmy',
+          payloadSchema: Schema.Struct({ amount: Schema.Finite }),
+          policies: [],
+          resultSchema: Schema.Struct({ total: Schema.Finite }),
+          schemaVersion: '1',
+        },
+        () => Effect.succeed({ total: 1 }),
+        () => Effect.succeed({}),
+      );
+      const admitted = privacyDispatchPrincipal(principal, 'SymmyRetention', computeCanonicalValueHash({ amount: 1 }));
+      const resolvedScope = preserveSystemPrincipalContextTrust(admitted, {
+        ...admitted,
+        correlationId: 'privacy-cache',
+      });
+      const changed = yield* makeHarness({ resolvedScope });
+      const changedFailure = yield* Effect.flip(
+        changed.runtime.runAction({
+          payload: { amount: 2 },
+          principal: admitted,
+          registration: action,
+          transport: transport('privacy-changed-payload'),
+        }),
+      );
+      expect(Predicate.isTagged(changedFailure, 'ActionPayloadValidationError')).toBe(true);
+      expect(changed.counts().createCount).toBe(0);
+      const denied = yield* makeHarness({
+        access: 'denied',
+        createRecord: {
+          actionInvocationId: 'cached-native-invocation',
+          completedAt: completionTime(),
+          requestHash: '',
+          status: 'succeeded',
+        },
+        resolvedScope,
+      });
+      const deniedFailure = yield* Effect.flip(
+        denied.runtime.runAction({
+          payload: { amount: 1 },
+          principal: admitted,
+          registration: action,
+          transport: transport('privacy-stale-cached-command'),
+        }),
+      );
+      expect(Predicate.isTagged(deniedFailure, 'ActionPermissionDenied')).toBe(true);
+      expect(denied.counts().createCount).toBe(0);
+      expect(denied.gateCounts().handlerResolutionCount).toBe(0);
+    }),
+);
+
+it.effect('absolutely rejects Organization governance read authority before any Action invocation', () =>
+  Effect.gen(function* organizationGovernanceCannotWrite() {
+    const admitted = organizationGovernanceReadPrincipal(principal, computeCanonicalValueHash({ amount: 1 }));
+    const harness = yield* makeHarness();
+    const failure = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal: admitted,
+        registration: registration(),
+        transport: transport('org-gov-read-cannot-write'),
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ActionTrustedContextValidationError')).toBe(true);
+    expect(harness.counts().createCount).toBe(0);
+    expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+  }),
+);
+
+it.effect('rejects finite Organization processing Read authority before cached Action lookup', () =>
+  Effect.gen(function* processingReadCannotExecuteAction() {
+    const admitted = organizationProcessingReadPrincipal(computeCanonicalValueHash({ purpose: 'PROCESSING' }));
+    const harness = yield* makeHarness({
+      createRecord: {
+        actionInvocationId: 'cached-processing-write',
+        completedAt: completionTime(),
+        requestHash: '',
+        status: 'succeeded',
+      },
+    });
+    const failure = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal: admitted,
+        registration: registration(),
+        transport: transport('processing-read-cannot-write'),
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ActionTrustedContextValidationError')).toBe(true);
+    expect(harness.counts().createCount).toBe(0);
+    expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+  }),
+);

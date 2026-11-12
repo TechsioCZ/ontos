@@ -102,6 +102,21 @@ export const PARTY_REGISTRY_REQUEST_DATABASE_GRANTS: DatabaseRoleGrants = {
         privileges: ['select', 'insert', 'update', 'delete'] as const,
         reason: 'Party Registry services and Drizzle repositories own and maintain this table under gateway-scoped RLS',
       })),
+      {
+        table: 'party.party_create_source_receipts',
+        privileges: ['select', 'insert'],
+        reason: 'Party Create commits an immutable invocation receipt and its governed Read resolves it',
+      },
+      {
+        table: 'party.party_source_effect_receipts',
+        privileges: ['select', 'insert'],
+        reason: 'Party source Update and Correction commit bounded immutable occurrence receipts atomically',
+      },
+      {
+        table: 'party.party_legacy_ico_authority_fences',
+        privileges: ['select', 'insert'],
+        reason: 'Party legacy ICO cutover commits one immutable tenant authority fence and reads its proof',
+      },
       ...CONTACTS_PROFILE_TABLES.map((table) => ({
         table: `contacts.${table}`,
         privileges: ['select', 'insert', 'update', 'delete'] as const,
@@ -219,6 +234,8 @@ export const PARTY_REGISTRY_REQUEST_DATABASE_GRANTS: DatabaseRoleGrants = {
       executableBy.includes(PARTY_REGISTRY_REQUEST_IDENTITY.role) ? [signature] : [],
     ),
     PRUNE_EXPIRED_GATEWAY_ASSERTION_REDEMPTIONS_SIGNATURE,
+    'party.issue_ico_correlation_witness(uuid)',
+    'party.observe_ico_correlation_coverage(uuid[],jsonb)',
   ],
   acceptedFindings: [],
 };

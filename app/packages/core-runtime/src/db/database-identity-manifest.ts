@@ -336,8 +336,25 @@ export const trustRoutinesForIdentities = (identities: readonly DatabaseIdentity
     identity.scopeAuthority === 'gateway_grant' ? [identity.role] : [],
   );
   const actionRunners = identities.flatMap((identity) => (identity.runsActions ? [identity.role] : []));
+  const sharedRuntime = identities.flatMap((identity) =>
+    identity.id === SHARED_RUNTIME_IDENTITY.id ? [identity.role] : [],
+  );
   return Object.freeze([
     ...[
+      { executableBy: sharedRuntime, signature: 'trust.open_source_execution_fence(uuid,uuid)' },
+      { executableBy: sharedRuntime, signature: 'trust.open_source_execution_fence(uuid,uuid,uuid,text,text)' },
+      { executableBy: [], signature: 'trust.register_source_execution_gated_action(text,text)' },
+      {
+        executableBy: [],
+        signature: 'trust.publish_source_execution_gate(uuid,uuid,text,uuid,uuid,text,text,boolean,boolean)',
+      },
+      { executableBy: sharedRuntime, signature: 'trust.cancel_source_execution_fence(uuid,uuid)' },
+      { executableBy: actionRunners, signature: 'trust.lock_source_execution_fence(uuid,uuid)' },
+      { executableBy: actionRunners, signature: 'trust.read_source_execution_fence(uuid,uuid)' },
+      {
+        executableBy: [...sharedRuntime, ...requests],
+        signature: 'trust.registered_workload_delivery_is_active(uuid,text,text,text,uuid)',
+      },
       {
         executableBy: registrars,
         signature: 'trust.register_gateway_scope_grant(text,text,uuid,uuid,uuid,uuid,timestamptz)',

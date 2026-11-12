@@ -70,7 +70,7 @@ import {
   SignInPayloadSchema,
   SignInResponseSchema,
   SwitchLegalEntityPayloadSchema,
-} from '../../apps/shell-super-app/shared/api.ts';
+} from '../../apps/shell-super-app/shared/browser-api.ts';
 import { PeopleListRequestSchema, PeopleListResponseSchema } from '../../apps/shell-super-app/shared/people-api.ts';
 import { readAccessCatalogArtifact } from '../authorization-catalog-artifact.mts';
 import { policyReleaseEntries } from './access-policy.mts';

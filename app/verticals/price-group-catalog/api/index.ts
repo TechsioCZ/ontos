@@ -51,8 +51,8 @@ import {
   authenticateOperationPrincipal as authenticateOwnerApprovalPrincipal,
 } from './auth/action-principal.ts';
 import {
-  GatewayAssertionRedemptionDatabaseLive as GovernedGatewayAssertionRedemptionDatabaseLive,
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
+  GatewayAssertionRedemptionDatabaseLive,
 } from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 
@@ -60,6 +60,8 @@ import {
 import { createPriceGroupActionApiLive } from './create-price-group-action-server.ts';
 import { createPriceGroupDefinitionRevisionActionApiLive } from './create-price-group-definition-revision-action-server.ts';
 import { priceGroupDefinitionReadApiLive } from './price-group-definition-read-server.ts';
+import { priceGroupResultLookupReadApiLive } from './price-group-result-lookup-read-server.ts';
+import { priceGroupSourceAssociationsReadApiLive } from './price-group-source-associations-read-server.ts';
 import { retirePriceGroupActionApiLive } from './retire-price-group-action-server.ts';
 import { validatePriceGroupCompatibilityReadApiLive } from './validate-price-group-compatibility-read-server.ts';
 // </generated-governed-http-handler-imports>
@@ -137,6 +139,16 @@ const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
 const priceGroupCatalogOwnerOperations = [
+  {
+    capabilityKey: 'pricing.price-group-catalog.price-group-source-associations.read',
+    operation: 'read',
+    operationKey: 'pricing.price-group-catalog.api.price-group-source-associations',
+  },
+  {
+    capabilityKey: 'pricing.price-group-catalog.price-group-result-lookup.read',
+    operation: 'read',
+    operationKey: 'pricing.price-group-catalog.api.price-group-result-lookup',
+  },
   {
     capabilityKey: 'pricing.price-group-catalog.price-group.create',
     operation: 'action',
@@ -265,7 +277,7 @@ const priceGroupCatalogActionRuntimeLive = makeActionRuntimeLive(
   Layer.provide(databaseIdentitiesLive),
 );
 const priceGroupCatalogGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
-  Layer.provide(GovernedGatewayAssertionRedemptionDatabaseLive),
+  Layer.provide(GatewayAssertionRedemptionDatabaseLive),
   Layer.provide(DatabaseConfigLive),
 );
 
@@ -302,6 +314,8 @@ export const makePriceGroupCatalogApiRuntime = (
     createPriceGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     createPriceGroupDefinitionRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     priceGroupDefinitionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    priceGroupResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    priceGroupSourceAssociationsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     retirePriceGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     validatePriceGroupCompatibilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     // </generated-governed-http-handler-layers>

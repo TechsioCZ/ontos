@@ -9,6 +9,17 @@ export class CustomerPriceGroupScopeMismatch extends Schema.TaggedError<Customer
   { code: Schema.Literal('customer_price_group_scope_mismatch'), reason: ErrorReasonSchema },
 ) {}
 
+export class CustomerPriceGroupSourceRejected extends Schema.TaggedError<CustomerPriceGroupSourceRejected>()(
+  'CustomerPriceGroupSourceRejected',
+  {
+    code: Schema.Literals([
+      'customer_price_group_source_authority_denied',
+      'customer_price_group_source_privacy_denied',
+    ]),
+    reason: ErrorReasonSchema,
+  },
+) {}
+
 export class CustomerPriceGroupRetroactiveScheduleRejected extends Schema.TaggedError<CustomerPriceGroupRetroactiveScheduleRejected>()(
   'CustomerPriceGroupRetroactiveScheduleRejected',
   {

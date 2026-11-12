@@ -103,6 +103,7 @@ import {
 // <generated-governed-http-handler-imports>
 import { activateMarketActionApiLive } from './activate-market-action-server.ts';
 import { associateStorefrontActionApiLive } from './associate-storefront-action-server.ts';
+import { assortmentFixtureMarketAssociationReadApiLive } from './assortment-fixture-market-association-read-server.ts';
 import { createMarketActionApiLive } from './create-market-action-server.ts';
 import { currentMarketCatalogReadApiLive } from './current-market-catalog-read-server.ts';
 import { eligibleMarketTuplesReadApiLive } from './eligible-market-tuples-read-server.ts';
@@ -638,6 +639,7 @@ export const makeCommerceMarketCatalogApiRuntime = (
     // <generated-governed-http-handler-layers>
     activateMarketActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     associateStorefrontActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    assortmentFixtureMarketAssociationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     createMarketActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     currentMarketCatalogReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     eligibleMarketTuplesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

@@ -50,6 +50,8 @@ export interface OutboxWorkerDescriptor<
   readonly leaseDurationMs: number;
   /** Defaults to required so existing Legal Entity workers cannot silently broaden their scope. */
   readonly legalEntityScope?: 'forbidden' | 'required';
+  /** Opts into rescheduling a persisted continuation independently of the failure budget. */
+  readonly maxDeferralMs?: number;
   readonly payloadSchema: PayloadSchema;
   readonly producerModuleKey: Producer;
   readonly retryPolicy: OutboxWorkerRetryPolicy;
@@ -237,6 +239,9 @@ export const defineOutboxWorker = <
     throw descriptorError('Core system workers must explicitly use tenant-wide owner database scope');
   }
   assertFiniteInteger(descriptor.leaseDurationMs, 1000, 3_600_000, 'leaseDurationMs');
+  if (descriptor.maxDeferralMs !== undefined) {
+    assertFiniteInteger(descriptor.maxDeferralMs, 1, 90_000_000, 'maxDeferralMs');
+  }
   if (
     descriptor.legalEntityScope !== undefined &&
     descriptor.legalEntityScope !== 'forbidden' &&

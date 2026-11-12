@@ -9,6 +9,7 @@ import { Config, Effect, Layer, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 
 import { PartyDatabase, PartyDatabaseLive } from '../../src/db/client.ts';
+import type { PartyDatabaseExecutor } from '../../src/db/types.ts';
 
 class CurrentOwnerSchemaFixtureError extends Schema.TaggedError<CurrentOwnerSchemaFixtureError>()(
   'CurrentOwnerSchemaFixtureError',
@@ -21,18 +22,25 @@ const runOwnerCommand = Effect.fn('CurrentPartySchema.runOwnerCommand')(function
   command: 'db:migrate' | 'db:verify',
   environment: Readonly<Record<string, string>>,
 ) {
-  const child = yield* ChildProcess.make('mise', ['exec', '--', 'pnpm', command], {
+  const child = yield* ChildProcess.make('pnpm', [command], {
     cwd: ownerDirectory,
     env: environment,
     extendEnv: false,
     stderr: 'pipe',
     stdout: 'pipe',
   });
-  const [exitCode] = yield* Effect.all([child.exitCode, Stream.runDrain(child.stdout), Stream.runDrain(child.stderr)], {
-    concurrency: 3,
-  });
+  const [exitCode, stdout, stderr] = yield* Effect.all(
+    [
+      child.exitCode,
+      child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+      child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+    ],
+    {
+      concurrency: 3,
+    },
+  );
   if (exitCode !== 0) {
-    return yield* failed(`The actual Party ${command} command failed`);
+    return yield* failed(`The actual Party ${command} command failed: ${stderr.slice(-4000)} ${stdout.slice(-4000)}`);
   }
 });
 
@@ -44,7 +52,44 @@ const isOwnedFixtureConfiguration = (connections: DatabaseConnectionPair, expect
   [connections.admin, connections.runtime].every(({ host }) => ['localhost', '127.0.0.1'].includes(host)) &&
   connections.runtime.user === 'ontos_runtime';
 
-const OwnerSchemaPhaseSchema = Schema.Literals(['rebuild', 'verify']);
+const OwnerSchemaPhaseSchema = Schema.Literals(['migrate', 'rebuild', 'verify']);
+
+const resetEmptyPartySchemas = Effect.fn('CurrentPartySchema.resetEmpty')(function* resetEmptyPartySchemas(
+  executor: PartyDatabaseExecutor,
+) {
+  const [foreign] = yield* executor.execute<{ count: number }>(
+    sql`
+      select count(*)::integer as count from pg_constraint c join pg_class own on own.oid=c.conrelid
+      join pg_namespace own_ns on own_ns.oid=own.relnamespace join pg_class referenced on referenced.oid=c.confrelid
+      join pg_namespace referenced_ns on referenced_ns.oid=referenced.relnamespace
+      where c.contype='f' and referenced_ns.nspname in ('party','contacts','crm') and own_ns.nspname not in ('party','contacts','crm')`,
+    'objects',
+  );
+  if (foreign?.count !== 0) {
+    return yield* failed('Another owner references the Party fixture schemata');
+  }
+  const tables = yield* executor.execute<{ name: string; schema: string }>(
+    sql`
+      select tablename as name,schemaname as schema from pg_tables where schemaname in ('party','contacts','crm')`,
+    'objects',
+  );
+  for (const table of tables) {
+    const [row] = yield* executor.execute<{ populated: boolean }>(
+      sql`select exists(select 1 from ${sql.identifier(table.schema)}.${sql.identifier(table.name)} limit 1) as populated`,
+      'objects',
+    );
+    if (row?.populated !== false) {
+      return yield* failed('The Party schema fixture only replaces empty copied owner schemata');
+    }
+  }
+  // Only this scope's empty clone is reachable. Rebuild both actual CLI-owned domains and journals.
+  for (const schema of ['party', 'contacts', 'crm']) {
+    yield* executor.execute(sql`drop schema if exists ${sql.identifier(schema)} cascade`, 'objects');
+  }
+  for (const journal of ['__drizzle_migrations_party', '__drizzle_migrations_contacts', '__drizzle_migrations_crm']) {
+    yield* executor.execute(sql`drop table if exists drizzle.${sql.identifier(journal)}`, 'objects');
+  }
+});
 
 const prepare = Effect.fn('CurrentPartySchema.prepare')(function* prepareCurrentOwnerSchema(
   phase: typeof OwnerSchemaPhaseSchema.Type,
@@ -98,37 +143,8 @@ const prepare = Effect.fn('CurrentPartySchema.prepare')(function* prepareCurrent
   if (runtime?.unsafe !== false) {
     return yield* failed('The Party fixture runtime role must retain forced RLS');
   }
-  const [foreign] = yield* executor.execute<{ count: number }>(
-    sql`
-    select count(*)::integer as count from pg_constraint c join pg_class own on own.oid=c.conrelid
-    join pg_namespace own_ns on own_ns.oid=own.relnamespace join pg_class referenced on referenced.oid=c.confrelid
-    join pg_namespace referenced_ns on referenced_ns.oid=referenced.relnamespace
-    where c.contype='f' and referenced_ns.nspname in ('party','contacts','crm') and own_ns.nspname not in ('party','contacts','crm')`,
-    'objects',
-  );
-  if (foreign?.count !== 0) {
-    return yield* failed('Another owner references the Party fixture schemata');
-  }
-  const tables = yield* executor.execute<{ name: string; schema: string }>(
-    sql`
-    select tablename as name,schemaname as schema from pg_tables where schemaname in ('party','contacts','crm')`,
-    'objects',
-  );
-  for (const table of tables) {
-    const [row] = yield* executor.execute<{ populated: boolean }>(
-      sql`select exists(select 1 from ${sql.identifier(table.schema)}.${sql.identifier(table.name)} limit 1) as populated`,
-      'objects',
-    );
-    if (row?.populated !== false) {
-      return yield* failed('The Party schema fixture only replaces empty copied owner schemata');
-    }
-  }
-  // Only this scope's empty clone is reachable. Rebuild both actual CLI-owned domains and journals.
-  for (const schema of ['party', 'contacts', 'crm']) {
-    yield* executor.execute(sql`drop schema if exists ${sql.identifier(schema)} cascade`, 'objects');
-  }
-  for (const journal of ['__drizzle_migrations_party', '__drizzle_migrations_contacts', '__drizzle_migrations_crm']) {
-    yield* executor.execute(sql`drop table if exists drizzle.${sql.identifier(journal)}`, 'objects');
+  if (phase === 'rebuild') {
+    yield* resetEmptyPartySchemas(executor);
   }
   yield* runOwnerCommand('db:migrate', environment);
   // Historical migrations may grant the shared role access. This owned clone must
@@ -136,7 +152,7 @@ const prepare = Effect.fn('CurrentPartySchema.prepare')(function* prepareCurrent
   const runtimeRole = sql.identifier(connections.runtime.user);
   yield* executor.execute(sql`revoke all on all tables in schema party,contacts from ${runtimeRole}`, 'objects');
   yield* executor.execute(sql`revoke all on schema party,contacts from ${runtimeRole}`, 'objects');
-  yield* Effect.logInfo('Rebuilt owned Party schema; canonical identity setup and verification remain pending');
+  yield* Effect.logInfo('Migrated owned Party schema; canonical identity setup and verification remain pending');
 });
 
 NodeRuntime.runMain(

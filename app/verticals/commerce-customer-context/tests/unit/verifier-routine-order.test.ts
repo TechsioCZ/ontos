@@ -82,15 +82,19 @@ it('accepts the complete SQL-ordered runtime routine set through the verifier co
   expect(source).toContain('array_agg(routine.proname::text order by routine.proname)');
   expect(source).toContain('!sameStrings(row.runtime_routines, EXPECTED_RUNTIME_ROUTINES)');
   expect(source).toContain('row.routine_count !== EXPECTED_RUNTIME_ROUTINES.length');
-  expect(expected).toHaveLength(126);
-  expect(new Set(expected).size).toBe(126);
+  expect(expected).toHaveLength(149);
+  expect(new Set(expected).size).toBe(149);
   expect(shippedRuntimeRoutines()).toEqual(sqlOrdered);
+  expect(expected).toContain('apply_customer_group_membership_source');
+  expect(expected).toContain('lock_profile_ico_correlation');
   expect(expected).toContain('recover_market_retirement_reservation');
+  expect(expected).toContain('read_customer_group_membership_source_receipt');
   expect(compare(sqlOrdered)).toBe(true);
 });
 
 it('rejects missing, duplicate, unexpected, and substituted runtime routines', () => {
   expect(compare(sqlOrdered.slice(1))).toBe(false);
+  expect(compare(sqlOrdered.filter((routine) => routine !== 'lock_profile_ico_correlation'))).toBe(false);
   expect(compare(EffectArray.sort([sqlOrdered[1], ...sqlOrdered.slice(1)], Order.String))).toBe(false);
   expect(compare(EffectArray.sort([...sqlOrdered, 'unexpected_runtime_routine'], Order.String))).toBe(false);
   expect(compare(EffectArray.sort(['wrong_runtime_routine', ...sqlOrdered.slice(1)], Order.String))).toBe(false);

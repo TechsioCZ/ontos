@@ -47,6 +47,10 @@
  *   dependency acquired directly with `const service = yield* Dependency` in that generator. Only
  *   `provideService` of that same immutable tag/binding is allowed; the Layer keeps the dependency
  *   in R. Nested runtime entry, injected values and lookalike factories do not establish this proof.
+ * - A captured `provideService` in a native `Layer.effect` registered exclusively as the layer of an
+ *   exported Core `defineOutboxWorkerEntry`: the immutable supplied value must be acquired from the
+ *   same generator using the identical imported tag. Detached, exported, mutable or escaped local
+ *   Layers and mutated/aliased namespace imports do not establish this root.
  * - Test files (`includeTests: false` by default); tests legitimately provide stub layers.
  * - `Layer.provide` / `Layer.provideMerge` (layer composition, not requirement erasure) and
  *   `Layer.orDie` at a deliberate startup root (D tier) are never matched by this rule.
@@ -61,6 +65,7 @@ import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
 import { unwrapNode as unwrap, memberName as staticMemberName, FUNCTION_TYPES, walk } from '../shared/ast.ts';
 import { lookupVariable, resolvesToImport, isUnshadowedGlobal } from '../shared/bindings.ts';
+import { isCapturedWorkerRootServiceProvision } from '../shared/registered-worker-root.ts';
 import { bindingsFor } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
 import { collectNamedImports, collectRootNamespaces } from '../shared/imports.ts';
@@ -258,6 +263,125 @@ function isPipeCall(context: Context, call: ESTree.CallExpression, bindings: Pro
 
 const REFERENCE_KEYS = new Set(['Property', 'PropertyDefinition', 'MethodDefinition', 'AccessorProperty']);
 
+const genuineNamedImport = (context: Context, node: ESTree.Node, source: string, imported: string): boolean => {
+  const value = unwrap(node);
+  if (value.type !== 'Identifier') {
+    return false;
+  }
+  const variable = lookupVariable(context, value);
+  if (variable?.defs.length !== 1) {
+    return false;
+  }
+  const [definition] = variable.defs;
+  return (
+    definition?.type === 'ImportBinding' &&
+    definition.parent?.type === 'ImportDeclaration' &&
+    definition.parent.source.value === source &&
+    definition.parent.importKind !== 'type' &&
+    definition.node.type === 'ImportSpecifier' &&
+    definition.node.importKind !== 'type' &&
+    definition.node.imported.type === 'Identifier' &&
+    definition.node.imported.name === imported
+  );
+};
+
+/** An artifact namespace is decoded inside a deferred loader; it never supplies the process runner. */
+const fileArtifactAddress = (context: Context, node: ESTree.ImportExpression): boolean => {
+  const address = unwrap(node.source);
+  if (address.type !== 'MemberExpression' || address.computed || address.optional || memberName(address) !== 'href') {
+    return false;
+  }
+  const fileUrl = unwrap(address.object);
+  return (
+    fileUrl.type === 'CallExpression' &&
+    !fileUrl.optional &&
+    fileUrl.arguments.length === 1 &&
+    fileUrl.arguments[0]?.type !== 'SpreadElement' &&
+    genuineNamedImport(context, fileUrl.callee, 'node:url', 'pathToFileURL')
+  );
+};
+
+const artifactDecodeCall = (context: Context, node: ESTree.ImportExpression): ESTree.CallExpression | null => {
+  const awaited = node.parent;
+  const decoded = awaited?.parent;
+  if (
+    awaited?.type !== 'AwaitExpression' ||
+    decoded?.type !== 'CallExpression' ||
+    decoded.optional ||
+    decoded.arguments.length !== 1 ||
+    decoded.arguments[0] !== awaited
+  ) {
+    return null;
+  }
+  const codec = unwrap(decoded.callee);
+  if (
+    codec.type !== 'CallExpression' ||
+    codec.optional ||
+    codec.arguments.length !== 1 ||
+    codec.arguments[0]?.type === 'SpreadElement'
+  ) {
+    return null;
+  }
+  const decode = unwrap(codec.callee);
+  return decode.type === 'MemberExpression' &&
+    !decode.computed &&
+    !decode.optional &&
+    memberName(decode) === 'decodeUnknownPromise' &&
+    genuineNamedImport(context, decode.object, 'effect', 'Schema')
+    ? decoded
+    : null;
+};
+
+const nativeTryPromiseCall = (context: Context, options: ESTree.Node): boolean => {
+  const invocation = options.parent;
+  if (
+    invocation?.type !== 'CallExpression' ||
+    invocation.optional ||
+    invocation.arguments.length !== 1 ||
+    invocation.arguments[0] !== options
+  ) {
+    return false;
+  }
+  const effect = unwrap(invocation.callee);
+  return (
+    effect.type === 'MemberExpression' &&
+    !effect.computed &&
+    !effect.optional &&
+    memberName(effect) === 'tryPromise' &&
+    genuineNamedImport(context, effect.object, 'effect', 'Effect')
+  );
+};
+
+const deferredArtifactLoader = (context: Context, decoded: ESTree.CallExpression): boolean => {
+  const result = decoded.parent?.type === 'AwaitExpression' ? decoded.parent : decoded;
+  const loader = result.parent;
+  if (
+    loader?.type !== 'ArrowFunctionExpression' ||
+    !loader.async ||
+    loader.params.length !== 0 ||
+    loader.body !== result
+  ) {
+    return false;
+  }
+  const field = loader.parent;
+  const options = field?.parent;
+  return (
+    field?.type === 'Property' &&
+    !field.computed &&
+    field.kind === 'init' &&
+    !field.method &&
+    field.key.type === 'Identifier' &&
+    field.key.name === 'try' &&
+    options?.type === 'ObjectExpression' &&
+    nativeTryPromiseCall(context, options)
+  );
+};
+
+const independentArtifactImport = (context: Context, node: ESTree.ImportExpression): boolean => {
+  const decoded = artifactDecodeCall(context, node);
+  return decoded !== null && fileArtifactAddress(context, node) && deferredArtifactLoader(context, decoded);
+};
+
 const closedNodeRuntimeOrigins = (context: Context): boolean => {
   let imports = 0;
   for (const statement of context.sourceCode.ast.body) {
@@ -276,7 +400,9 @@ const closedNodeRuntimeOrigins = (context: Context): boolean => {
   if (imports !== 1) return false;
   let closed = true;
   walk(context.sourceCode.ast, context.sourceCode.visitorKeys, (value) => {
-    if (value.type === 'ImportExpression') closed = false;
+    if (value.type === 'ImportExpression' && !independentArtifactImport(context, value)) {
+      closed = false;
+    }
     if (
       value.type === 'Identifier' &&
       ['require', 'module', 'eval', 'Function', 'globalThis', 'global', 'Reflect'].includes(value.name) &&
@@ -807,7 +933,8 @@ export const rule = defineRule({
     const report = (node: ESTree.Node, member: string): void => {
       if (
         isInsideCoreReadTestHarnessCallback(context, node) ||
-        (member === 'provideService' && isNativeServiceFactoryAcquisition(context, node)) ||
+        (member === 'provideService' &&
+          (isNativeServiceFactoryAcquisition(context, node) || isCapturedWorkerRootServiceProvision(context, node))) ||
         isCapturedLayerDependency(context, node, member)
       ) {
         return;

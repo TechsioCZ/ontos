@@ -16,7 +16,12 @@ import {
   validateOutboxWorkerRegistrations,
   validateOutboxWorkerSubscriptions,
 } from './definition.ts';
-import { OutboxHandlerExecutionError, OutboxPayloadDecodeError, OutboxWorkerDescriptorError } from './errors.ts';
+import {
+  OutboxHandlerExecutionError,
+  OutboxPayloadDecodeError,
+  OutboxWorkerDeferred,
+  OutboxWorkerDescriptorError,
+} from './errors.ts';
 import type { PersistenceFailure } from '../database/persistence-failure.ts';
 import type { OutboxClaimLostError } from './errors.ts';
 import { OutboxRepository } from './repository.ts';
@@ -296,15 +301,16 @@ const failOutboxDelivery = Effect.fn('OutboxRuntime.failDelivery')(function* fai
   state: OutboxCycleProgress,
   reason: string,
   outcome: string,
+  wakeAt?: Date,
 ) {
-  const status = yield* repository.fail(claim, reason, now).pipe(
+  const status = yield* repository.fail(claim, reason, now, wakeAt).pipe(
     Effect.tapErrorTag('PersistenceFailure', () => logUnexpectedPersistence(claim)),
     (effect) => withOutcomeSpan(effect, claim, outcome),
   );
   return {
     ...state,
     dead: state.dead + (status === 'dead' ? 1 : 0),
-    failed: state.failed + 1,
+    failed: state.failed + (wakeAt === undefined ? 1 : 0),
     retried: state.retried + (status === 'pending' ? 1 : 0),
   };
 });
@@ -351,31 +357,30 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
       );
     }
 
+    const context = handlerContext(
+      claim,
+      registration.descriptor.legalEntityScope ?? 'required',
+      nativeOutboxClaimRevision(claim, registration) ?? execution.compositionRevision,
+    );
     const handler = getOutboxWorkerHandler(registration);
     const handlerExit = yield* Effect.exit(
       withNativeOutboxClaimExecution(
         claim,
         registration,
-        Effect.suspend(() =>
-          handler(
-            decoded.value,
-            handlerContext(
-              claim,
-              registration.descriptor.legalEntityScope ?? 'required',
-              nativeOutboxClaimRevision(claim, registration) ?? execution.compositionRevision,
-            ),
-          ),
-        ),
+        context,
+        Effect.suspend(() => handler(decoded.value, context)),
       ).pipe(
         Effect.matchEffect({
-          onFailure: (error) =>
-            Effect.annotateLogs(Effect.logWarning('Outbox Worker handler returned a declared failure'), {
-              ...claimAnnotations(claim, 'declared_failure'),
-              ...outboxDeclaredFailureDiagnostics(
-                Schema.decodeUnknownResult(OutboxDeclaredFailureIdentitySchema)(error),
-              ),
-            }).pipe(Effect.as('declared_failure' as const)),
-          onSuccess: () => Effect.succeed('success' as const),
+          onFailure: (error): Effect.Effect<'declared_failure' | OutboxWorkerDeferred> =>
+            Schema.is(OutboxWorkerDeferred)(error)
+              ? Effect.succeed(error)
+              : Effect.annotateLogs(Effect.logWarning('Outbox Worker handler returned a declared failure'), {
+                  ...claimAnnotations(claim, 'declared_failure'),
+                  ...outboxDeclaredFailureDiagnostics(
+                    Schema.decodeUnknownResult(OutboxDeclaredFailureIdentitySchema)(error),
+                  ),
+                }).pipe(Effect.as('declared_failure' as const)),
+          onSuccess: (): Effect.Effect<'success'> => Effect.succeed('success' as const),
         }),
         Effect.withSpan('OutboxWorker.handle', {
           attributes: claimAnnotations(claim),
@@ -388,7 +393,23 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
         claimAnnotations(claim, 'handler_defect'),
       );
     }
-    if (Exit.isFailure(handlerExit) || handlerExit.value === 'declared_failure') {
+    // Read settlement time again. A handler may have used most of its lease.
+    const settledAt = execution.clockOverride ?? (yield* DateTime.nowAsDate);
+    if (Exit.isSuccess(handlerExit) && Schema.is(OutboxWorkerDeferred)(handlerExit.value)) {
+      const delay = handlerExit.value.wakeAtMs - settledAt.getTime();
+      if (delay > 0 && delay <= (registration.descriptor.maxDeferralMs ?? 0)) {
+        return yield* failOutboxDelivery(
+          repository,
+          claim,
+          settledAt,
+          claimedState,
+          'Outbox Worker deferred until its durable due time',
+          'deferred',
+          DateTime.toDateUtc(DateTime.makeUnsafe(handlerExit.value.wakeAtMs)),
+        );
+      }
+    }
+    if (Exit.isFailure(handlerExit) || handlerExit.value !== 'success') {
       const executionError = new OutboxHandlerExecutionError({
         code: 'outbox_handler_execution_failed',
         reason: Exit.isFailure(handlerExit)
@@ -398,16 +419,14 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
       return yield* failOutboxDelivery(
         repository,
         claim,
-        // Settlement reads the clock again: reusing the claim timestamp recorded a zero handler duration and
-        // placed the retry's availableAt in the past, which skipped the backoff.
-        execution.clockOverride ?? (yield* DateTime.nowAsDate),
+        settledAt,
         claimedState,
         executionError.reason,
         'handler_failure',
       );
     }
 
-    yield* repository.complete(claim, execution.clockOverride ?? (yield* DateTime.nowAsDate)).pipe(
+    yield* repository.complete(claim, settledAt).pipe(
       Effect.tapErrorTag('PersistenceFailure', () => logUnexpectedPersistence(claim)),
       (effect) => withOutcomeSpan(effect, claim, 'success'),
     );

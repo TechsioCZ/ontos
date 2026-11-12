@@ -1,13 +1,33 @@
+import {
+  RegisteredGatewayRouteScopeSchema,
+  RegisteredGatewayWorkloadSchema,
+  RegisteredGatewayPrivacyDispatchSchema,
+  RegisteredGatewayOrganizationGovernanceReadSchema,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
+import type {
+  RegisteredGatewayRouteScope,
+  RegisteredGatewayWorkload,
+  RegisteredGatewayPrivacyDispatch,
+  RegisteredGatewayOrganizationGovernanceRead,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
 import { GatewayScopeGrantRegistrar } from '@app/core-runtime';
 import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
 
 import {
   DELEGATED_GATEWAY_ASSERTION_VERSION,
+  WORKLOAD_GATEWAY_ASSERTION_VERSION,
+  PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION,
+  ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION,
+  VERSIONED_PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION,
+  VERSIONED_ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION,
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_TTL_SECONDS,
   GATEWAY_ASSERTION_VERSION,
   GatewayActorClaimSchema,
+  GatewayContextResponseSchema,
   GatewayTrustedPrincipalContextSchema,
+  organizationGovernanceReadOperationContract,
+  privacyDispatchOperationContract,
 } from '@app/shared-contracts';
 import type { GatewayActorClaim, GatewayContextResponse, GatewayTrustedPrincipalContext } from '@app/shared-contracts';
 import {
@@ -37,6 +57,12 @@ import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog
 import type { InstalledModuleCatalogError } from '../modules/installed-module-catalog.ts';
 import { loadGatewayIssuerConfig } from './gateway-issuer-config.ts';
 import type { GatewayIssuerConfigError, GatewayIssuerConfigValue } from './gateway-issuer-config.ts';
+import { readAdmittedPrivacyDispatch } from './gateway-privacy-dispatch-evidence.ts';
+import type { AdmittedPrivacyDispatch } from './gateway-privacy-dispatch-evidence.ts';
+import { readAdmittedOrganizationGovernanceRead } from './gateway-organization-governance-evidence.ts';
+import type { AdmittedOrganizationGovernanceRead } from './gateway-organization-governance-evidence.ts';
+import { takeAdmittedOrganizationProcessingRead } from './gateway-registered-assertion.ts';
+import type { AdmittedOrganizationProcessingRead } from './gateway-registered-assertion.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -48,6 +74,12 @@ const withOptionalProperty = <Base extends object, Key extends PropertyKey, Valu
 
 const SIGNING_CONFIGURATION_REFRESH = Duration.seconds(30);
 const DOCUMENT_GATEWAY_SIGNING_CONCURRENCY = 8;
+export const SYMMY_INGRESS_AUDIENCE = 'symmy-integration';
+const symmyIngressIssuance = Symbol('Symmy ingress issuance');
+const routeScopedIssuance = Symbol('Verified route scoped issuance');
+const privacyDispatchIssuance = Symbol('Verified finite Privacy dispatch issuance');
+const organizationGovernanceReadIssuance = Symbol('Verified organization governance Read issuance');
+const organizationProcessingReadIssuance = Symbol('Verified organization processing Read issuance');
 
 const GatewayIssuerFailureCauseSchema = Schema.Defect();
 type GatewayIssuerFailureCause = Schema.Schema.Type<typeof GatewayIssuerFailureCauseSchema>;
@@ -67,13 +99,22 @@ export { GatewayIssuerErrorConstructor as GatewayIssuerError };
 export type GatewayIssuerError = Schema.Schema.Type<typeof GatewayIssuerErrorSchema>;
 
 export interface IssueGatewayAssertionInput<Principal = GatewayTrustedPrincipalContext> {
-  /** The calling module of a delegated call; present only for version 3 assertions. */
+  /** The calling module of a delegated or privately attested human call. */
   readonly actor?: GatewayActorClaim;
   readonly audience: string;
   readonly compositionRevision: string;
+  readonly organizationGovernanceRead?: RegisteredGatewayOrganizationGovernanceRead;
+  readonly [organizationGovernanceReadIssuance]?: true;
+  readonly [organizationProcessingReadIssuance]?: true;
   readonly principal: Principal;
+  readonly privacyDispatch?: RegisteredGatewayPrivacyDispatch;
+  readonly [privacyDispatchIssuance]?: true;
+  readonly routeScope?: RegisteredGatewayRouteScope;
+  readonly [routeScopedIssuance]?: true;
   /** Delegated paths keep the requester's exact signing interval; fresh issuance uses the default window. */
   readonly sourceValidity?: { readonly expiresAt: number; readonly issuedAt: number } | undefined;
+  readonly [symmyIngressIssuance]?: true;
+  readonly workload?: RegisteredGatewayWorkload;
 }
 
 interface IssueDocumentGatewayAssertionsInput<Principal> {
@@ -129,6 +170,26 @@ const unavailable = (
           stage,
         },
   );
+
+const symmyAudienceForbidden = () =>
+  new GatewayIssuerErrorConstructor({
+    code: 'gateway_audience_invalid',
+    reason: 'The Symmy audience requires the dedicated Integration Principal admission',
+    stage: 'audience',
+  });
+
+const deniesSymmyAudience = <Principal>(
+  input: IssueGatewayAssertionInput<Principal>,
+  principal: GatewayTrustedPrincipalContext,
+): boolean =>
+  input.audience === SYMMY_INGRESS_AUDIENCE &&
+  input[privacyDispatchIssuance] !== true &&
+  input[organizationGovernanceReadIssuance] !== true &&
+  input[organizationProcessingReadIssuance] !== true &&
+  (input[symmyIngressIssuance] !== true ||
+    input.actor !== undefined ||
+    input.sourceValidity !== undefined ||
+    principal.authMethod !== 'api_key');
 
 const fromPromise = <Success, Failure>(
   operation: () => PromiseLike<Success>,
@@ -188,6 +249,215 @@ const assertionVersionOf = (
     : EXTERNAL_GATEWAY_ASSERTION_VERSION;
 };
 
+/** The route marker can enter signing only through the private route issuance wrapper. */
+const decodeRouteScopedIssuance = Effect.fn('GatewayIssuer.decodeRouteScope')(function* decodeRouteScope<Principal>(
+  input: IssueGatewayAssertionInput<Principal>,
+  principal: GatewayTrustedPrincipalContext,
+) {
+  if (input.routeScope === undefined) {
+    return Option.none<RegisteredGatewayRouteScope>();
+  }
+  if (
+    input[routeScopedIssuance] !== true ||
+    input.actor !== undefined ||
+    input.workload !== undefined ||
+    input.sourceValidity !== undefined
+  ) {
+    return yield* unavailable('principal');
+  }
+  const routeScope = yield* Schema.decodeUnknownEffect(RegisteredGatewayRouteScopeSchema, {
+    onExcessProperty: 'error',
+  })(input.routeScope).pipe(Effect.mapError((cause) => unavailable('principal', cause)));
+  if (
+    principal.authMethod !== 'api_key' ||
+    principal.authenticationNamespaceId === undefined ||
+    principal.tenantId !== routeScope.tenantId ||
+    principal.principalId !== routeScope.principalId ||
+    principal.legalEntityId !== routeScope.legalEntityId
+  ) {
+    return yield* unavailable('principal');
+  }
+  return Option.some(routeScope);
+});
+
+const decodePrivacyDispatchIssuance = Effect.fn('GatewayIssuer.decodePrivacyDispatch')(
+  function* decodePrivacyDispatchIssuance<Principal>(
+    input: IssueGatewayAssertionInput<Principal>,
+    principal: GatewayTrustedPrincipalContext,
+  ) {
+    if (input.privacyDispatch === undefined) {
+      if (input[privacyDispatchIssuance] === true) {
+        return yield* unavailable('principal');
+      }
+      return Option.none<RegisteredGatewayPrivacyDispatch>();
+    }
+    const metadata = yield* Schema.decodeUnknownEffect(RegisteredGatewayPrivacyDispatchSchema)(
+      input.privacyDispatch,
+    ).pipe(Effect.mapError((cause) => unavailable('principal', cause)));
+    if (
+      input[privacyDispatchIssuance] !== true ||
+      input.actor === undefined ||
+      input.sourceValidity !== undefined ||
+      input.workload !== undefined ||
+      input.routeScope !== undefined ||
+      input.organizationGovernanceRead !== undefined
+    ) {
+      return yield* unavailable('principal');
+    }
+    if (
+      (principal.authMethod !== 'session' && principal.authMethod !== 'api_key') ||
+      principal.impersonatedByPrincipalId !== undefined ||
+      principal.principalId !== metadata.principalId ||
+      principal.tenantId !== metadata.tenantId ||
+      principal.legalEntityId !== metadata.governanceLegalEntityId ||
+      input.audience !== privacyDispatchOperationContract(metadata.operation, metadata.target).appId
+    ) {
+      return yield* unavailable('principal');
+    }
+    return Option.some(metadata);
+  },
+);
+
+const finiteAssertionVersion = (
+  principal: GatewayTrustedPrincipalContext,
+  actor: GatewayActorClaim | undefined,
+  workload: RegisteredGatewayWorkload | undefined,
+  privacyDispatch: RegisteredGatewayPrivacyDispatch | undefined,
+  organizationGovernanceRead: RegisteredGatewayOrganizationGovernanceRead | undefined,
+) => {
+  if (organizationGovernanceRead !== undefined) {
+    return organizationGovernanceRead.target === undefined
+      ? ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION
+      : VERSIONED_ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION;
+  }
+  if (privacyDispatch !== undefined) {
+    return privacyDispatch.target === undefined
+      ? PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION
+      : VERSIONED_PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION;
+  }
+  if (workload !== undefined) {
+    return WORKLOAD_GATEWAY_ASSERTION_VERSION;
+  }
+  return assertionVersionOf(principal, actor);
+};
+
+const decodeOrganizationGovernanceIssuance = Effect.fn('GatewayIssuer.decodeOrganizationGovernance')(
+  function* decodeOrganizationGovernanceIssuance<Principal>(
+    input: IssueGatewayAssertionInput<Principal>,
+    principal: GatewayTrustedPrincipalContext,
+  ) {
+    if (input.organizationGovernanceRead === undefined) {
+      if (input[organizationGovernanceReadIssuance] === true) {
+        return yield* unavailable('principal');
+      }
+      return Option.none<RegisteredGatewayOrganizationGovernanceRead>();
+    }
+    const metadata = yield* Schema.decodeUnknownEffect(RegisteredGatewayOrganizationGovernanceReadSchema)(
+      input.organizationGovernanceRead,
+    ).pipe(Effect.mapError((cause) => unavailable('principal', cause)));
+    if (
+      input[organizationGovernanceReadIssuance] !== true ||
+      input.actor?.appId !== 'privacy' ||
+      input.sourceValidity === undefined ||
+      input.workload !== undefined ||
+      input.routeScope !== undefined ||
+      input.privacyDispatch !== undefined
+    ) {
+      return yield* unavailable('principal');
+    }
+    if (
+      (principal.authMethod !== 'session' && principal.authMethod !== 'api_key') ||
+      principal.authenticationNamespaceId === undefined ||
+      principal.impersonatedByPrincipalId !== undefined ||
+      principal.principalId !== metadata.principalId ||
+      principal.tenantId !== metadata.tenantId ||
+      principal.legalEntityId !== metadata.governanceLegalEntityId ||
+      input.audience !== organizationGovernanceReadOperationContract(metadata.target).appId
+    ) {
+      return yield* unavailable('principal');
+    }
+    return Option.some(metadata);
+  },
+);
+
+const validateProcessingIssuance = Effect.fn('GatewayIssuer.validateProcessingIssuance')(function* validate<Principal>(
+  input: IssueGatewayAssertionInput<Principal>,
+  workload: RegisteredGatewayWorkload | undefined,
+) {
+  if (
+    (workload?.organizationProcessingRead !== undefined) !== (input[organizationProcessingReadIssuance] === true) ||
+    (input[organizationProcessingReadIssuance] === true &&
+      (input.audience !== SYMMY_INGRESS_AUDIENCE ||
+        input.sourceValidity === undefined ||
+        input.actor !== undefined ||
+        input.routeScope !== undefined ||
+        input.privacyDispatch !== undefined ||
+        input.organizationGovernanceRead !== undefined))
+  ) {
+    return yield* unavailable('principal');
+  }
+  return yield* Effect.void;
+});
+
+const decodeIssuanceIdentity = Effect.fn('GatewayIssuer.decodeIdentity')(function* decodeIdentity<Principal>(
+  input: IssueGatewayAssertionInput<Principal>,
+) {
+  const principal = yield* Schema.decodeUnknownEffect(GatewayTrustedPrincipalContextSchema, {
+    onExcessProperty: 'error',
+  })(input.principal).pipe(Effect.mapError((failureCause) => unavailable('principal', failureCause)));
+  if (deniesSymmyAudience(input, principal)) {
+    return yield* symmyAudienceForbidden();
+  }
+  const routeScope = Option.getOrUndefined(yield* decodeRouteScopedIssuance(input, principal));
+  const workload =
+    input.workload === undefined
+      ? undefined
+      : yield* Schema.decodeUnknownEffect(RegisteredGatewayWorkloadSchema)(input.workload).pipe(
+          Effect.mapError((cause) => unavailable('principal', cause)),
+        );
+  yield* validateProcessingIssuance(input, workload);
+  const privacyDispatch = Option.getOrUndefined(yield* decodePrivacyDispatchIssuance(input, principal));
+  const organizationGovernanceRead = Option.getOrUndefined(
+    yield* decodeOrganizationGovernanceIssuance(input, principal),
+  );
+  if (
+    (principal.authMethod === 'system' && workload === undefined) ||
+    (workload !== undefined &&
+      (principal.authMethod !== 'system' ||
+        input.actor !== undefined ||
+        (input.sourceValidity !== undefined && input[organizationProcessingReadIssuance] !== true) ||
+        principal.authContextRef !== `job:${workload.jobKey}:run:${workload.runReference}`))
+  ) {
+    return yield* unavailable('principal');
+  }
+  const actor = input.actor === undefined ? undefined : yield* decodeDelegatedActor(input.actor);
+  if (
+    actor !== undefined &&
+    (actor.principalId === principal.principalId ||
+      (privacyDispatch === undefined &&
+        organizationGovernanceRead === undefined &&
+        principal.authenticationNamespaceId === undefined))
+  ) {
+    // A version 3 assertion names two different parties, and its subject must carry an explicit namespace.
+    return yield* unavailable('principal');
+  }
+  return { actor, organizationGovernanceRead, principal, privacyDispatch, routeScope, workload };
+});
+
+const issuanceWindow = (now: number, validity: IssueGatewayAssertionInput['sourceValidity']) => {
+  const issuedAt = validity?.issuedAt ?? now;
+  const expiresAt = validity?.expiresAt ?? now + GATEWAY_ASSERTION_TTL_SECONDS;
+  return Number.isSafeInteger(now) &&
+    now >= 0 &&
+    Number.isSafeInteger(issuedAt) &&
+    Number.isSafeInteger(expiresAt) &&
+    issuedAt <= now &&
+    expiresAt > now &&
+    expiresAt - issuedAt === GATEWAY_ASSERTION_TTL_SECONDS
+    ? Effect.succeed({ expiresAt, issuedAt })
+    : Effect.fail(unavailable('clock'));
+};
+
 const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssuerService(
   options: GatewayIssuerLayerOptions,
 ) {
@@ -233,19 +503,12 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
     );
   };
 
-  const issueAdmitted = Effect.fn('GatewayIssuer.issueAdmitted')(function* issueAdmittedGatewayAssertion(
-    input: IssueGatewayAssertionInput,
+  const issueAdmitted = Effect.fn('GatewayIssuer.issueAdmitted')(function* issueAdmittedGatewayAssertion<Principal>(
+    input: IssueGatewayAssertionInput<Principal>,
+    identity: Effect.Success<ReturnType<typeof decodeIssuanceIdentity<Principal>>>,
     admission: Effect.Success<GatewayIssuerLayerOptions['loadAdmission']>,
   ) {
-    const { principal } = input;
-    const actor = input.actor === undefined ? undefined : yield* decodeDelegatedActor(input.actor);
-    if (
-      actor !== undefined &&
-      (actor.principalId === principal.principalId || principal.authenticationNamespaceId === undefined)
-    ) {
-      // A version 3 assertion names two different parties, and its subject must carry an explicit namespace.
-      return yield* unavailable('principal');
-    }
+    const { actor, organizationGovernanceRead, principal, privacyDispatch, routeScope, workload } = identity;
     const targetBuildMarker = admission.audiences.get(input.audience);
     if (targetBuildMarker === undefined) {
       return yield* new GatewayIssuerErrorConstructor({
@@ -265,20 +528,7 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
 
     const configuration = yield* Cache.get(configurationCache, 'configuration');
     const now = yield* options.currentTimeSeconds;
-    if (!Number.isSafeInteger(now) || now < 0) {
-      return yield* unavailable('clock');
-    }
-    const issuedAt = input.sourceValidity?.issuedAt ?? now;
-    const expiresAt = input.sourceValidity?.expiresAt ?? now + GATEWAY_ASSERTION_TTL_SECONDS;
-    if (
-      !Number.isSafeInteger(issuedAt) ||
-      !Number.isSafeInteger(expiresAt) ||
-      issuedAt > now ||
-      expiresAt <= now ||
-      expiresAt - issuedAt !== GATEWAY_ASSERTION_TTL_SECONDS
-    ) {
-      return yield* unavailable('clock');
-    }
+    const { expiresAt, issuedAt } = yield* issuanceWindow(now, input.sourceValidity);
     const jti = yield* options.generateJti;
     const preparedSigningMaterial: GatewaySigningMaterial = {
       issuer: configuration.issuer,
@@ -287,11 +537,37 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
     };
     const signer = new SignJWT(
       withOptionalProperty(
-        { compositionRevision: admission.revision, principal, targetBuildMarker },
+        withOptionalProperty(
+          withOptionalProperty(
+            withOptionalProperty(
+              withOptionalProperty(
+                { compositionRevision: admission.revision, principal, targetBuildMarker },
+                organizationGovernanceRead !== undefined,
+                'organizationGovernanceRead',
+                organizationGovernanceRead,
+                {},
+              ),
+              privacyDispatch !== undefined,
+              'privacyDispatch',
+              privacyDispatch,
+              {},
+            ),
+            routeScope !== undefined,
+            'routeScope',
+            routeScope,
+            {},
+          ),
+          workload !== undefined,
+          'workload',
+          workload,
+          {},
+        ),
         actor !== undefined,
         'act',
         actor,
-        { ver: assertionVersionOf(principal, actor) },
+        {
+          ver: finiteAssertionVersion(principal, actor, workload, privacyDispatch, organizationGovernanceRead),
+        },
       ),
     )
       .setProtectedHeader({
@@ -320,9 +596,9 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
             assertion: Redacted.make(token),
             audience: input.audience,
           },
-          principal.legalEntityId !== undefined,
+          (workload?.legalEntityId ?? principal.legalEntityId) !== undefined,
           'legalEntityId',
-          principal.legalEntityId,
+          workload?.legalEntityId ?? principal.legalEntityId,
           {
             expiresAtEpochSeconds: expiresAt,
             jti,
@@ -333,7 +609,7 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
       )
       .pipe(Effect.mapError((failureCause) => unavailable('scope_grant', failureCause)));
 
-    const response: GatewayContextResponse = {
+    const response = {
       apiBaseUrl:
         input.audience === 'shell-super-app'
           ? '/shell-super-app-api'
@@ -342,23 +618,32 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
       expiresAt,
       token,
     };
-    return response;
+    const machine =
+      workload === undefined
+        ? response
+        : {
+            ...response,
+            machineContext: {
+              authContextRef: principal.authContextRef,
+              bindingIncarnation: workload.bindingIncarnation,
+              principalId: principal.principalId,
+            },
+          };
+    const result = workload?.recovery === undefined ? machine : { ...machine, recovery: workload.recovery };
+    return yield* Schema.decodeUnknownEffect(GatewayContextResponseSchema)(result).pipe(
+      Effect.mapError((cause) => unavailable('principal', cause)),
+    );
   });
 
-  const decodePrincipal = Schema.decodeUnknownEffect(GatewayTrustedPrincipalContextSchema, {
-    onExcessProperty: 'error',
-  });
   const admission = options.loadAdmission.pipe(
     Effect.mapError((failureCause) => unavailable('audience', failureCause)),
   );
   const issue = Effect.fn('GatewayIssuer.issue')(function* issueGatewayAssertion<Principal>(
     input: IssueGatewayAssertionInput<Principal>,
   ) {
-    const principal = yield* decodePrincipal(input.principal).pipe(
-      Effect.mapError((failureCause) => unavailable('principal', failureCause)),
-    );
+    const identity = yield* decodeIssuanceIdentity(input);
     const approved = yield* admission;
-    return yield* issueAdmitted({ ...input, principal }, approved);
+    return yield* issueAdmitted(input, identity, approved);
   });
   const issueDocument = Effect.fn('GatewayIssuer.issueDocument')(function* issueDocumentGatewayAssertions<Principal>(
     input: IssueDocumentGatewayAssertionsInput<Principal>,
@@ -366,22 +651,23 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
     if (input.audiences.length === 0) {
       return [];
     }
-    const principal = yield* decodePrincipal(input.principal).pipe(
-      Effect.mapError((failureCause) => unavailable('principal', failureCause)),
-    );
     // One document is one issuance operation. Its audiences share this fresh admission; a later
     // document or individual issuance always reads authority again, with fresh tokens.
     const approved = yield* admission;
     const issued = yield* Effect.forEach(
       input.audiences,
-      (audience) =>
-        issueAdmitted({ audience, compositionRevision: input.compositionRevision, principal }, approved).pipe(
+      (audience) => {
+        const audienceInput = { audience, compositionRevision: input.compositionRevision, principal: input.principal };
+        // Each audience decodes its own issuance identity, so an audience the subject may not hold is skipped.
+        return decodeIssuanceIdentity(audienceInput).pipe(
+          Effect.flatMap((identity) => issueAdmitted(audienceInput, identity, approved)),
           Effect.map((assertion) => Option.some({ ...assertion, audience })),
           Effect.catchIf(
             (error) => error.code === 'gateway_audience_invalid',
             () => Effect.succeedNone,
           ),
-        ),
+        );
+      },
       { concurrency: DOCUMENT_GATEWAY_SIGNING_CONCURRENCY },
     );
     return issued.flatMap((assertion) => (Option.isSome(assertion) ? [assertion.value] : []));
@@ -423,5 +709,104 @@ export const issueGatewayContextAssertion = Effect.fn('GatewayIssuer.issueGatewa
   function* issueGatewayContextAssertionEffect<Principal>(input: IssueGatewayAssertionInput<Principal>) {
     const gatewayIssuer = yield* GatewayIssuer;
     return yield* gatewayIssuer.issue(input);
+  },
+);
+
+/** Shell-private: only the native evidence module's opaque witness may request finite human issuance. */
+export const issuePrivacyDispatchGatewayContextAssertion: (
+  witness: AdmittedPrivacyDispatch,
+  input: { readonly actor: GatewayActorClaim; readonly audience: string; readonly compositionRevision: string },
+) => Effect.Effect<GatewayContextResponse, GatewayIssuerError, GatewayIssuer> = Effect.fn(
+  'GatewayIssuer.issuePrivacyDispatch',
+)(function* issuePrivacyDispatchGatewayContextAssertion(
+  witness: AdmittedPrivacyDispatch,
+  input: { readonly actor: GatewayActorClaim; readonly audience: string; readonly compositionRevision: string },
+) {
+  const admitted = readAdmittedPrivacyDispatch(witness);
+  if (admitted === undefined) {
+    return yield* unavailable('principal');
+  }
+  return yield* (yield* GatewayIssuer).issue({
+    ...input,
+    principal: admitted.principal,
+    privacyDispatch: admitted.privacyDispatch,
+    [privacyDispatchIssuance]: true,
+  });
+});
+
+/** Shell-private: identity and validity come only from the complete current-human Read witness. */
+export const issueOrganizationGovernanceReadGatewayContextAssertion: (
+  witness: AdmittedOrganizationGovernanceRead,
+  input: { readonly actor: GatewayActorClaim; readonly audience: string; readonly compositionRevision: string },
+) => Effect.Effect<GatewayContextResponse, GatewayIssuerError, GatewayIssuer> = Effect.fn(
+  'GatewayIssuer.issueOrganizationGovernanceRead',
+)(function* issueOrganizationGovernanceReadGatewayContextAssertion(
+  witness: AdmittedOrganizationGovernanceRead,
+  input: { readonly actor: GatewayActorClaim; readonly audience: string; readonly compositionRevision: string },
+) {
+  const admitted = readAdmittedOrganizationGovernanceRead(witness);
+  if (admitted === undefined) {
+    return yield* unavailable('principal');
+  }
+  return yield* (yield* GatewayIssuer).issue({
+    ...input,
+    organizationGovernanceRead: admitted.organizationGovernanceRead,
+    [organizationGovernanceReadIssuance]: true,
+    principal: admitted.principal,
+    sourceValidity: admitted.sourceValidity,
+  });
+});
+
+/** Shell-private: the one-use witness is minted only after the exact native V4 conditional admission. */
+export const issueOrganizationProcessingReadGatewayContextAssertion: (
+  witness: AdmittedOrganizationProcessingRead,
+) => Effect.Effect<GatewayContextResponse, GatewayIssuerError, GatewayIssuer> = Effect.fn(
+  'GatewayIssuer.issueOrganizationProcessingRead',
+)(function* issueOrganizationProcessingReadGatewayContextAssertion(witness: AdmittedOrganizationProcessingRead) {
+  const admitted = takeAdmittedOrganizationProcessingRead(witness);
+  if (admitted === undefined) {
+    return yield* unavailable('principal');
+  }
+  return yield* (yield* GatewayIssuer).issue({
+    audience: SYMMY_INGRESS_AUDIENCE,
+    compositionRevision: admitted.compositionRevision,
+    [organizationProcessingReadIssuance]: true,
+    principal: admitted.principal,
+    sourceValidity: admitted.sourceValidity,
+    workload: admitted.workload,
+  });
+});
+
+export const issueSymmyGatewayContextAssertion = Effect.fn('GatewayIssuer.issueSymmyGatewayContextAssertion')(
+  function* issueSymmyGatewayContextAssertionEffect<Principal>({
+    compositionRevision,
+    principal,
+    principalKind,
+  }: Pick<IssueGatewayAssertionInput<Principal>, 'compositionRevision' | 'principal'> & {
+    readonly principalKind: string;
+  }) {
+    if (principalKind !== 'integration') {
+      return yield* symmyAudienceForbidden();
+    }
+    const gatewayIssuer = yield* GatewayIssuer;
+    return yield* gatewayIssuer.issue({
+      audience: SYMMY_INGRESS_AUDIENCE,
+      compositionRevision,
+      principal,
+      [symmyIngressIssuance]: true,
+    });
+  },
+);
+
+/** Shell-private route scope issuance: the proof owner supplies only its actual protected Read result. */
+export const issueRouteScopedGatewayContextAssertion = Effect.fn('GatewayIssuer.issueRouteScoped')(
+  function* issueRouteScoped(input: {
+    readonly audience: string;
+    readonly compositionRevision: string;
+    readonly principal: GatewayTrustedPrincipalContext;
+    readonly routeScope: RegisteredGatewayRouteScope;
+  }) {
+    const gatewayIssuer = yield* GatewayIssuer;
+    return yield* gatewayIssuer.issue({ ...input, [routeScopedIssuance]: true, [symmyIngressIssuance]: true });
   },
 );

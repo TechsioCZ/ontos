@@ -1,5 +1,5 @@
 import { ScopedRoutineInvocationError, TrustedPrincipalContextSchema } from '@app/core-runtime';
-import { Effect, Match, Option, Schema } from 'effect';
+import { Array as EffectArray, Effect, Match, Option, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CustomerGroupMeaningKeySchema } from '../../shared/domain/group-contract.ts';
@@ -95,18 +95,25 @@ const scope = {
 };
 
 it('declares immutable exact group routine allowlist entries with Core-injected scope first', () => {
-  expect(customerGroupRoutineAllowlist.map(({ name }) => name)).toEqual([
-    'read_customer_group',
-    'create_customer_group',
-    'update_customer_group',
+  expect(
+    EffectArray.sort(
+      customerGroupRoutineAllowlist.map(({ name }) => name),
+      Order.String,
+    ),
+  ).toEqual([
+    'apply_customer_group_definition_source',
     'archive_customer_group',
-    'reactivate_customer_group',
     'assign_customer_group_membership',
-    'remove_customer_group_membership',
-    'read_customer_group_members',
+    'create_customer_group',
+    'reactivate_customer_group',
+    'read_customer_group',
+    'read_customer_group_definition_source',
     'read_customer_group_history',
+    'read_customer_group_members',
     'read_effective_customer_group_memberships',
     'read_counterparty_customer_group_memberships',
+    'remove_customer_group_membership',
+    'update_customer_group',
   ]);
   for (const routine of customerGroupRoutineAllowlist) {
     expect(Object.isFrozen(routine)).toBe(true);
@@ -382,6 +389,11 @@ it.effect('sanitizes Core routine failures as the owner persistence error', () =
 
 it('accepts native SQL wire rows at the exact Core result-schema boundary', () => {
   const examples = new Map<string, object>([
+    [
+      'apply_customer_group_definition_source',
+      { actual_revision: 1, changed: true, group_json: group, outcome: 'CREATED' },
+    ],
+    ['read_customer_group_definition_source', { outcome: 'FOUND', result: { _tag: 'ABSENT' } }],
     ['create_customer_group', { actual_revision: 1, changed: true, group_json: group, outcome: 'CREATED' }],
     [
       'archive_customer_group',

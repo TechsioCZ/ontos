@@ -5,11 +5,19 @@ import {
   PriceGroupRefSchema,
 } from '@app/price-group-catalog-contracts';
 import type { ValidatePriceGroupCompatibilityRequest } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
+import { ValidatePriceGroupCompatibilityRequestSchema } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
+import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { Effect, Match, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { GatewayDelegationSourceError } from '@app/shared-contracts/gateway-context-server';
+import type { GatewayDelegationRequest } from '@app/shared-contracts/gateway-context-server';
+import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
+import {
+  RegisteredGatewayWorkloadSchema,
+  trustVerifiedGatewayPrincipalContext,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
 
 import { CustomerPriceGroupCatalogUnavailable } from '../../shared/domain/price-group-errors.ts';
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
@@ -337,5 +345,136 @@ it.effect('fails closed before provider execution when the selected connection c
     expect(failure.reason).toBe('The Price Group Catalog compatibility decision could not be resolved');
     expect(executionCount).toBe(0);
     expect(issuanceCount).toBe(1);
+  }),
+);
+
+it.effect('explicitly delegates sealed workload compatibility reads and ignores caller-shaped workload metadata', () =>
+  Effect.gen(function* registeredCompatibilitySubject() {
+    const revision = 'a'.repeat(64);
+    const principal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+      authContextRef: 'job:symmy:run:compatibility-unit',
+      authMethod: 'system',
+      principalId: '60000000-0000-4000-8000-000000000001',
+      tenantId,
+    });
+    const workload = Schema.decodeUnknownSync(RegisteredGatewayWorkloadSchema)({
+      admissionInvocationId: '50000000-0000-4000-8000-000000000001',
+      bindingIncarnation: '50000000-0000-4000-8000-000000000002',
+      declarationKey: 'commerce.customer-context.assign-customer-price-group',
+      entrypointKey: 'commerce.customer-context.assign-customer-price-group',
+      jobKey: 'symmy-integration.apply',
+      legalEntityScope: 'forbidden',
+      originalOwnerBindingIncarnation: '50000000-0000-4000-8000-000000000003',
+      originalPrincipalId: principal.principalId,
+      originalWorkloadBindingIncarnation: '50000000-0000-4000-8000-000000000004',
+      originalWorkloadKey: 'commerce.customer-context.source-write',
+      runReference: '50000000-0000-4000-8000-000000000005',
+      schemaVersion: '1',
+      sourceAppId: 'symmy-integration',
+      sourceBuildMarker: 'fixture-build',
+      sourceMode: 'admission',
+      workloadKey: 'commerce.customer-context.source-write',
+    });
+    // Core's public provenance constructor is a unit seam here; this does not claim signed HTTP admission.
+    const sealed = trustVerifiedGatewayPrincipalContext(principal, revision, undefined, undefined, workload);
+    const ordinary = trustVerifiedGatewayPrincipalContext({ ...principal, workload }, revision);
+    const recoveryWorkload = Schema.decodeUnknownSync(RegisteredGatewayWorkloadSchema)({
+      ...workload,
+      recovery: {
+        originalActionInvocationId: workload.admissionInvocationId,
+        originalActionKey: 'commerce.customer-context.assign-customer-price-group',
+        originalAuthContextRef: 'job:symmy:run:original',
+        originalIdempotencyKey: 'original-effect-key',
+        originalPrincipalId: principal.principalId,
+        originalRequestHash: 'b'.repeat(64),
+        requestHash: 'c'.repeat(64),
+      },
+    });
+    const sealedRecovery = trustVerifiedGatewayPrincipalContext(
+      principal,
+      revision,
+      undefined,
+      undefined,
+      recoveryWorkload,
+    );
+    const decodedCompatibilityRead = Schema.decodeUnknownSync(ValidatePriceGroupCompatibilityRequestSchema)({
+      priceGroupRef,
+      requiredContract: { contractId: CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT, version: 1 },
+      trustedOperationAt,
+    });
+    for (const [scope, expectedSubject] of [
+      [
+        sealed,
+        {
+          _tag: 'RegisteredAssertion',
+          declarationKey: 'pricing.price-group-catalog.price-group.read.compatibility',
+          operationRequirementKey: 'commerce.customer-context.requirement.assign-customer-price-group-catalog',
+          scope: sealed,
+        },
+      ],
+      [ordinary, { _tag: 'Assertion', scope: ordinary }],
+      [
+        sealedRecovery,
+        {
+          _tag: 'RegisteredAssertion',
+          declarationKey: 'pricing.price-group-catalog.price-group.read.compatibility',
+          operationRequirementKey: 'commerce.customer-context.requirement.assign-customer-price-group-catalog',
+          recoveryRequestHash: computeCanonicalValueHash(decodedCompatibilityRead),
+          scope: sealedRecovery,
+        },
+      ],
+    ] as const) {
+      const requests: GatewayDelegationRequest[] = [];
+      const credentials: string[] = [];
+      const port = yield* priceGroupCatalogPortFromEnvironment(
+        {
+          operationRequirementKey: 'commerce.customer-context.requirement.assign-customer-price-group-catalog',
+          requestCorrelation: 'registered-price-group',
+          subject: { _tag: 'Assertion', scope },
+        },
+        (_payload, credential) => {
+          credentials.push(Redacted.value(credential));
+          return Effect.succeed(decision({ evidence: compatibility, kind: 'USABLE' }));
+        },
+        (request) =>
+          Effect.sync(() => {
+            requests.push(request);
+            return issuedDelegatedContext({ compositionRevision: revision, token: `attempt-${requests.length}` });
+          }),
+      ).pipe(Effect.provide(nodeCryptoLayer));
+      yield* port.resolveCurrent(priceGroupRef, CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT, trustedOperationAt);
+      yield* port.resolveCurrent(priceGroupRef, CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT, trustedOperationAt);
+      expect(requests).toEqual(
+        Array.from({ length: 2 }, () => ({
+          audience: 'price-group-catalog',
+          legalEntityScope: 'tenant',
+          requestCorrelation: 'registered-price-group',
+          subject: expectedSubject,
+        })),
+      );
+      expect(credentials).toEqual(['Bearer attempt-1', 'Bearer attempt-2']);
+    }
+    let missingRequirementAcquisitions = 0;
+    const missingRequirement = yield* priceGroupCatalogPortFromEnvironment(
+      { requestCorrelation: 'missing-native-requirement', subject: { _tag: 'Assertion', scope: sealed } },
+      () => Effect.succeed(decision({ evidence: compatibility, kind: 'USABLE' })),
+      () =>
+        Effect.sync(() => {
+          missingRequirementAcquisitions += 1;
+          return issuedDelegatedContext({ compositionRevision: revision });
+        }),
+    ).pipe(Effect.provide(nodeCryptoLayer));
+    expect(
+      Schema.is(CustomerPriceGroupCatalogUnavailable)(
+        yield* Effect.flip(
+          missingRequirement.resolveCurrent(
+            priceGroupRef,
+            CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT,
+            trustedOperationAt,
+          ),
+        ),
+      ),
+    ).toBe(true);
+    expect(missingRequirementAcquisitions).toBe(0);
   }),
 );

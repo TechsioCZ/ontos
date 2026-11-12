@@ -1,6 +1,6 @@
 import { Option, Predicate, Schema } from 'effect';
 
-import type { ShellSearchResult } from '../../shared/api.ts';
+import type { ShellSearchResult } from '../../shared/browser-api.ts';
 import { shellSearchFamilies, shellSearchFamiliesInOrder } from './shell-search-resource-types.ts';
 import type { ShellSearchFamilyPresentation, ShellSearchPresentationIndex } from './shell-search-resource-types.ts';
 

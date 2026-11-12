@@ -23,6 +23,7 @@ import {
   PartyCorrectionPolicyVersion,
   PartyCorrectionReasonCodeSchema,
   PartyCorrectionResultSchema,
+  PartyCorrectionCommandSchema,
   ReplacementAssertionIdSchema,
   TargetAssertionIdSchema,
   classifyCorrectionRoute,
@@ -35,23 +36,30 @@ import {
 import type { PartyPersistenceUnavailableError, PartyType } from '../../shared/domain/identity-contracts.ts';
 import {
   PartyPersistenceUnavailable,
+  PartyEvidenceEvaluationSchema,
   PartyTypeSchema,
   derivePartyDisplayName,
   makePartyRef,
 } from '../../shared/domain/identity-contracts.ts';
 import { PartyRelationshipProvenanceSchema, partyRelationshipRef } from '../../shared/domain/relationship-contract.ts';
-// eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This is a pure ResourceRef value factory, not an Effect service constructor.
 import { makePartyCorrectionRef } from '../../shared/resources/party-correction.ts';
 import {
   parties,
   partyAliases,
   partyCorrections,
+  partySourceEffectReceipts,
   partyFactAssertions,
   partyOfficialIdentifiers,
   partyRelationships,
 } from '../db/schema.ts';
 import type { PartyTransaction } from '../db/types.ts';
 import { requireCanonicalPartyWriteTarget, resolvePartyAlias } from '../merge/party-alias-resolution.service.ts';
+import {
+  authorizePartyClientSourceReference,
+  requireSupportedPartyEvidenceOperation,
+} from './party-client-source-evidence.service.ts';
+import type { PartyClientSourceScope } from './party-client-source-evidence.service.ts';
+import { preparePartySourceEffect, recordPartySourceEffect } from './party-source-effect.service.ts';
 import { evaluatePartySubjectEvidence } from '../policies/create-party-without-strong-identifier.policy.ts';
 import { lockTenantIdentityWrites } from './party-identifier-claim.service.ts';
 import { findCurrentMatchingIdentifier } from './party-official-identifier-persistence.service.ts';
@@ -225,9 +233,27 @@ const validatePartyTypeCorrection = Effect.fn('PartyCorrectionService.validatePa
     command: IdentityCorrectionCommand,
     currentValue: string,
     now: Date,
+    names: Pick<typeof parties.$inferSelect, 'firstName' | 'lastName' | 'businessName' | 'currentType'>,
   ) {
     if (command.factKind !== 'PARTY_TYPE') {
-      return null;
+      if (command.subjectEvidence?.some((evidence) => evidence.kind !== 'ACTOR_ATTESTATION') !== true) {
+        return null;
+      }
+      const partyType = yield* Schema.decodeUnknownEffect(PartyTypeSchema)(names.currentType).pipe(
+        Effect.mapError(unavailable),
+      );
+      const evaluation = evaluatePartySubjectEvidence({
+        ...names,
+        firstName: command.factKind === 'FIRST_NAME' ? (command.replacementValue ?? null) : names.firstName,
+        lastName: command.factKind === 'LAST_NAME' ? (command.replacementValue ?? null) : names.lastName,
+        businessName: command.factKind === 'BUSINESS_NAME' ? (command.replacementValue ?? null) : names.businessName,
+        partyType,
+        subjectEvidence: command.subjectEvidence,
+      });
+      if (!evaluation.subjectEligible || !evaluation.typeSupported) {
+        return yield* new PartyCorrectionConflict({ code: 'party_correction_conflict', reason: evaluation.reasonCode });
+      }
+      return yield* Schema.encodeEffect(PartyEvidenceEvaluationSchema)(evaluation).pipe(Effect.mapError(unavailable));
     }
     const nextType = yield* Schema.decodeUnknownEffect(PartyTypeSchema)(command.replacementValue).pipe(
       Effect.mapError((cause) =>
@@ -241,6 +267,7 @@ const validatePartyTypeCorrection = Effect.fn('PartyCorrectionService.validatePa
       ),
     );
     const evaluation = evaluatePartySubjectEvidence({
+      ...names,
       partyType: nextType,
       subjectEvidence: command.subjectEvidence ?? [],
     });
@@ -276,7 +303,7 @@ const validatePartyTypeCorrection = Effect.fn('PartyCorrectionService.validatePa
         reason: 'The corrected Party Type conflicts with active Party Relationships',
       });
     }
-    return evaluation;
+    return yield* Schema.encodeEffect(PartyEvidenceEvaluationSchema)(evaluation).pipe(Effect.mapError(unavailable));
   },
 );
 
@@ -563,6 +590,7 @@ const correctIdentityAssertion = Effect.fn('PartyCorrectionService.correctIdenti
       command,
       target.normalizedValue,
       now,
+      currentParty,
     );
     const partyFactAssertionId = target.assertionId;
     yield* transaction
@@ -639,9 +667,29 @@ export const correctPartyFactRecord = Effect.fn('PartyCorrectionService.correctP
   acceptance: {
     readonly actionInvocationId: string;
     readonly principalId: string;
+    readonly sourceScope?: PartyClientSourceScope;
   },
 ) {
   yield* lockTenantIdentityWrites(transaction, tenantId);
+  const request = yield* Schema.encodeEffect(PartyCorrectionCommandSchema)(command).pipe(Effect.mapError(unavailable));
+  const sourceInput =
+    command.factKind === 'RELATIONSHIP'
+      ? undefined
+      : {
+          ...acceptance,
+          tenantId,
+          partyId: command.partyId,
+          subjectEvidence: command.subjectEvidence,
+          operation: 'CORRECTION' as const,
+          request,
+        };
+  const prepared = sourceInput === undefined ? undefined : yield* preparePartySourceEffect(transaction, sourceInput);
+  if (prepared?.receipt !== undefined) {
+    const result = yield* Schema.decodeUnknownEffect(PartyCorrectionResultSchema)(prepared.receipt.result).pipe(
+      Effect.mapError(unavailable),
+    );
+    return { ...result, replayed: true as const };
+  }
   const now = yield* DateTime.nowAsDate;
   const correctionTarget = yield* Match.value(command).pipe(
     Match.when({ factKind: 'RELATIONSHIP' }, (relationship) =>
@@ -693,7 +741,7 @@ export const correctPartyFactRecord = Effect.fn('PartyCorrectionService.correctP
   if (correction === undefined) {
     return yield* unavailable();
   }
-  return yield* Schema.decodeEffect(PartyCorrectionResultSchema)({
+  const result = yield* Schema.decodeEffect(PartyCorrectionResultSchema)({
     correctionRef: makePartyCorrectionRef(tenantId, correction.correctionId),
     factKind: command.factKind,
     followUp: classifyCorrectionRoute(command.factKind),
@@ -704,6 +752,11 @@ export const correctPartyFactRecord = Effect.fn('PartyCorrectionService.correctP
     retractedAssertionId:
       command.factKind === 'RELATIONSHIP' ? command.relationshipRef.resourceId : command.targetAssertionId,
   }).pipe(Effect.mapError(unavailable));
+  if (prepared !== undefined && sourceInput !== undefined) {
+    const encoded = yield* Schema.encodeEffect(PartyCorrectionResultSchema)(result).pipe(Effect.mapError(unavailable));
+    yield* recordPartySourceEffect(transaction, sourceInput, prepared, encoded);
+  }
+  return result;
 });
 
 const relationshipEndEvidence = (row: typeof partyRelationships.$inferSelect) =>
@@ -728,6 +781,7 @@ const loadCorrectionAssertion = Effect.fn('PartyCorrectionService.loadCorrection
     tenantId: string,
     factKind: CorrectablePartyFact,
     assertionId: string,
+    sourceScope?: PartyClientSourceScope,
   ) {
     if (factKind === 'RELATIONSHIP') {
       const [row] = yield* transaction
@@ -796,6 +850,10 @@ const loadCorrectionAssertion = Effect.fn('PartyCorrectionService.loadCorrection
     if (row === undefined) {
       return yield* unavailable();
     }
+    yield* requireSupportedPartyEvidenceOperation(row.evidenceEvaluation?.evidence, 'EVIDENCE_READ', sourceScope, {
+      kind: 'PARTY',
+      partyId: row.partyId,
+    });
     return yield* Schema.decodeUnknownEffect(PartyCorrectionAssertionValueSchema)({
       assertionId: row.assertionId,
       factKind: row.factKind,
@@ -838,6 +896,7 @@ export const findPartyCorrection = Effect.fn('PartyCorrectionService.findPartyCo
   transaction: Pick<PartyTransaction, 'select'>,
   tenantId: string,
   correctionId: string,
+  sourceScope?: PartyClientSourceScope,
 ) {
   const [row] = yield* transaction
     .select()
@@ -848,16 +907,45 @@ export const findPartyCorrection = Effect.fn('PartyCorrectionService.findPartyCo
   if (row === undefined) {
     return { _tag: 'not_found' } as const;
   }
+  const [sourceReceipt] =
+    row.relationshipId === null
+      ? yield* transaction
+          .select()
+          .from(partySourceEffectReceipts)
+          .where(
+            and(
+              eq(partySourceEffectReceipts.tenantId, tenantId),
+              eq(partySourceEffectReceipts.actionInvocationId, row.actionInvocationId),
+            ),
+          )
+          .limit(1)
+          .pipe(Effect.mapError(unavailable))
+      : [];
+  if (sourceReceipt !== undefined) {
+    if (sourceScope === undefined) {
+      return yield* unavailable();
+    }
+    yield* authorizePartyClientSourceReference(sourceReceipt.sourceReference, sourceScope, {
+      operation: 'EVIDENCE_READ',
+      target: { kind: 'PARTY', partyId: row.partyId },
+    }).pipe(Effect.mapError(unavailable));
+  }
   if (row.policyVersion !== PartyCorrectionPolicyVersion) {
     return yield* unavailable();
   }
   const storedReason = yield* decodeStoredCorrectionReason(row.reason);
   const { factKind, targetAssertionId, replacementAssertionId } = yield* correctionAssertionTargets(row, storedReason);
-  const originalAssertion = yield* loadCorrectionAssertion(transaction, tenantId, factKind, targetAssertionId);
+  const originalAssertion = yield* loadCorrectionAssertion(
+    transaction,
+    tenantId,
+    factKind,
+    targetAssertionId,
+    sourceScope,
+  );
   const resultingAssertion =
     replacementAssertionId === null
       ? null
-      : yield* loadCorrectionAssertion(transaction, tenantId, factKind, replacementAssertionId);
+      : yield* loadCorrectionAssertion(transaction, tenantId, factKind, replacementAssertionId, sourceScope);
   const actingPrincipalId = Result.getOrThrow(Schema.decodeResult(ActingPrincipalIdSchema)(row.actingPrincipalId));
   const actionInvocationId = Result.getOrThrow(Schema.decodeResult(ActionInvocationIdSchema)(row.actionInvocationId));
   const approvingPrincipalId = Option.map(Option.fromNullishOr(row.approvingPrincipalId), (id) =>

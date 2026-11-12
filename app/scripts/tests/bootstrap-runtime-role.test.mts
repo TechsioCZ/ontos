@@ -298,6 +298,7 @@ it('exposes only the governed Pricing routine signatures to the runtime role', (
       'pricing.read_current_zero_floor_authorization_set_for_query_v1(uuid,uuid,jsonb)',
       'pricing.read_current_zero_floor_authorization_set_v1(uuid,uuid,jsonb)',
       'pricing.read_current_price_definition_v1(uuid,uuid,uuid)',
+      'pricing.read_price_group_source_prices_v1(uuid,uuid,jsonb)',
       'pricing.read_price_schedule_v1(uuid,uuid,jsonb)',
       'pricing.read_quantity_tier_schedule_v1(uuid,uuid,jsonb)',
       'pricing.read_tenant_currency_support_v1(uuid,jsonb)',
@@ -312,7 +313,7 @@ it('exposes only the governed Pricing routine signatures to the runtime role', (
       'pricing.store_external_price_source_authority_grant_v1(uuid,uuid,jsonb)',
     ]),
   );
-  expect(PRICING_RUNTIME_ROUTINE_SIGNATURES).toHaveLength(91);
+  expect(PRICING_RUNTIME_ROUTINE_SIGNATURES).toHaveLength(92);
   const signatures = PRICING_RUNTIME_ROUTINE_SIGNATURES.map(normalizedRoutine);
   expect(new Set(signatures).size).toBe(signatures.length);
   for (const signature of migrationRoutineGrants) {

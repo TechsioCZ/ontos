@@ -1,5 +1,13 @@
+import type { ApplicationComposition } from '@app/core-runtime';
+import { OntosModuleDeploymentContractSchema } from '@app/core-runtime/modules/manifest';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
-import type { VerifiedGatewayActor } from '@app/core-runtime/auth/system-principal-context-provenance';
+import type {
+  RegisteredGatewayRouteScope,
+  RegisteredGatewayPrivacyDispatch,
+  RegisteredGatewayOrganizationGovernanceRead,
+  RegisteredGatewayWorkload,
+  VerifiedGatewayActor,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { GatewayAssertionRedemption } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
@@ -10,6 +18,7 @@ import {
 } from '@app/core-runtime/modules/active-application-composition';
 import {
   DELEGATED_GATEWAY_ASSERTION_VERSION,
+  WORKLOAD_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_VERSION,
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
@@ -19,6 +28,9 @@ import {
   GatewayContextClaimsSchema,
   decodeSupportedGatewayContextClaims,
   decodeGatewayContextProtectedHeader,
+  organizationGovernanceReadOperationContract,
+  privacyDispatchAuthorityPolicy,
+  privacyDispatchOperationContract,
 } from '@app/shared-contracts';
 import {
   Clock,
@@ -195,61 +207,49 @@ export class GatewayPrincipalVerifierConfiguration extends Context.Service<
   GatewayPrincipalVerifierService
 >()('@app/gateway-principal-verifier/server/GatewayPrincipalVerifierConfiguration') {}
 
-const loadGatewayPrincipalVerificationConfiguration = (
+const loadGatewayPrincipalVerificationConfiguration = Effect.fn('GatewayPrincipalVerifier.loadConfiguration')((
   provider?: ConfigProvider.ConfigProvider,
   input: GatewayPrincipalVerifierConfigurationInput = {},
 ): Effect.Effect<VerificationConfiguration, ActionPrincipalConfigurationError> => {
   const configuration =
     provider === undefined ? gatewayVerificationEnvironment : gatewayVerificationEnvironment.parse(provider);
   const legacyNamespaceMapping = decodeLegacyGatewayNamespaceMapping(input.legacyNamespaceMapping);
-  return configuration.pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(VerificationEnvironmentSchema)),
-    Effect.flatMap(({ ONTOS_GATEWAY_ISSUER: issuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks }) =>
-      legacyNamespaceMapping.pipe(
-        Effect.flatMap((mappingOption) => {
-          if (Option.isSome(mappingOption) && mappingOption.value.issuer !== issuer) {
-            return Effect.fail(configurationError());
-          }
-          const mapping = Option.getOrUndefined(mappingOption);
-          const keys = jwks.keys.map(({ alg, crv, kid, kty, use, x }) => ({
-            alg,
-            crv,
-            kid,
-            kty,
-            use,
-            x,
-          }));
-          const keySet = createLocalJWKSet({ keys });
-          return Effect.forEach(
-            keys,
-            // Validate through the resolver that verifies requests, retaining its imported keys.
-            // A separate import discarded each key and forced another import on the first JWT.
-            (key) =>
-              Effect.tryPromise({
-                // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Configuration failures are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
-                catch: configurationError,
-                try: keySet.bind(undefined, { alg: key.alg, kid: key.kid }, undefined),
-              }),
-            { concurrency: 8 },
-          ).pipe(
-            Effect.timeoutOrElse({
-              duration: VERIFY_ASSERTION_TIMEOUT,
-              orElse: () => Effect.fail(configurationError()),
-            }),
-            Effect.map((): VerificationConfiguration => {
-              if (mapping === undefined) {
-                return { issuer, keySet };
-              }
-              return { issuer, keySet, legacyNamespaceMapping: mapping };
-            }),
-          );
+  return Effect.gen(function* loadVerificationConfiguration() {
+    const { ONTOS_GATEWAY_ISSUER: issuer, ONTOS_GATEWAY_PUBLIC_JWKS: jwks } = yield* configuration.pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(VerificationEnvironmentSchema)),
+    );
+    const mappingOption = yield* legacyNamespaceMapping;
+    if (Option.isSome(mappingOption) && mappingOption.value.issuer !== issuer) {
+      return yield* Effect.fail(configurationError());
+    }
+    const mapping = Option.getOrUndefined(mappingOption);
+    const keys = jwks.keys.map(({ alg, crv, kid, kty, use, x }) => ({ alg, crv, kid, kty, use, x }));
+    const keySet = createLocalJWKSet({ keys });
+    return yield* Effect.forEach(
+      keys,
+      // Validate through the resolver that verifies requests, retaining its imported keys.
+      // A separate import discarded each key and forced another import on the first JWT.
+      (key) =>
+        Effect.tryPromise({
+          // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Configuration failures are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
+          catch: configurationError,
+          try: keySet.bind(undefined, { alg: key.alg, kid: key.kid }, undefined),
         }),
+      { concurrency: 8 },
+    ).pipe(
+      Effect.timeoutOrElse({
+        duration: VERIFY_ASSERTION_TIMEOUT,
+        orElse: () => Effect.fail(configurationError()),
+      }),
+      Effect.map((): VerificationConfiguration =>
+        mapping === undefined ? { issuer, keySet } : { issuer, keySet, legacyNamespaceMapping: mapping },
       ),
-    ),
+    );
+  }).pipe(
     // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Configuration failures are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
     Effect.mapError(() => configurationError()),
   );
-};
+});
 
 export const makeGatewayPrincipalVerifierLayer = (
   provider?: ConfigProvider.ConfigProvider,
@@ -323,7 +323,11 @@ interface VerifiedGatewayPrincipal {
   readonly expiresAtEpochSeconds: number;
   readonly issuer: string;
   readonly jti: string;
+  readonly organizationGovernanceRead?: RegisteredGatewayOrganizationGovernanceRead | undefined;
   readonly principal: TrustedPrincipalContext;
+  readonly privacyDispatch?: RegisteredGatewayPrivacyDispatch | undefined;
+  readonly routeScope?: RegisteredGatewayRouteScope | undefined;
+  readonly workload?: RegisteredGatewayWorkload | undefined;
 }
 
 const ReceivingGatewayDeploymentSchema = Schema.Struct({
@@ -331,6 +335,92 @@ const ReceivingGatewayDeploymentSchema = Schema.Struct({
   buildMarker: GatewayContextClaimsSchema.fields.targetBuildMarker,
 });
 type ReceivingGatewayDeployment = typeof ReceivingGatewayDeploymentSchema.Type;
+
+const targetReleaseIsApproved = (
+  revision: string,
+  signedRevision: string,
+  targetBuild: string,
+  expectedBuild: string,
+  approvedBuild: string | undefined,
+): boolean => revision === signedRevision && targetBuild === expectedBuild && approvedBuild === expectedBuild;
+
+const signedSourceBuildIsApproved = (
+  deployment: Pick<ReceivingGatewayDeployment, 'buildMarker'> | undefined,
+  buildMarker: string,
+): boolean => deployment !== undefined && deployment.buildMarker === buildMarker;
+
+const privacyDispatchSourceIsApproved = (
+  deployment: Parameters<typeof signedSourceBuildIsApproved>[0],
+  sourceBuildMarker: string,
+  dispatch: RegisteredGatewayPrivacyDispatch,
+  audience: string,
+): boolean =>
+  signedSourceBuildIsApproved(deployment, sourceBuildMarker) &&
+  privacyDispatchOperationContract(dispatch.operation, dispatch.target).appId === audience;
+
+const decodePublishedContract = Schema.decodeUnknownOption(Schema.fromJsonString(OntosModuleDeploymentContractSchema), {
+  onExcessProperty: 'error',
+});
+const privacyDispatchAuthorityFromComposition = (
+  composition: ApplicationComposition,
+  dispatch: RegisteredGatewayPrivacyDispatch,
+) => {
+  const policy = privacyDispatchAuthorityPolicy(dispatch.operation);
+  const contractOf = (moduleId: string) =>
+    decodePublishedContract(composition.modules.find((module) => module.moduleId === moduleId)?.contractDocument);
+  const producer = contractOf(policy.producerModuleKey);
+  const consumer = contractOf(policy.consumerModuleKey);
+  if (Option.isNone(producer) || Option.isNone(consumer)) {
+    return Option.none();
+  }
+  const actions = producer.value.manifest.publicSurface.actions.filter(
+    ({ actionKey }) => actionKey === policy.originActionKey,
+  );
+  const subscriptions = consumer.value.runtime.outboxSubscriptions.filter(
+    ({ workerKey }) => workerKey === policy.workerKey,
+  );
+  const [action] = actions;
+  const [subscription] = subscriptions;
+  if (
+    actions.length !== 1 ||
+    subscriptions.length !== 1 ||
+    action?.accessDeclaration?.key !== policy.originCapabilityKey ||
+    action.accessWorkload !== undefined ||
+    action.entrypoint.access !== 'write' ||
+    action.legalEntityScope !== 'required' ||
+    consumer.value.manifest.originatorActions?.includes(action.actionKey) !== true ||
+    subscription?.consumerModuleKey !== policy.consumerModuleKey ||
+    subscription.producerModuleKey !== policy.producerModuleKey ||
+    subscription.entrypoint.entrypointKey !== policy.workerKey ||
+    subscription.topic !== policy.topic
+  ) {
+    return Option.none();
+  }
+  return Option.some({
+    consumerModuleKey: subscription.consumerModuleKey,
+    originActionKey: action.actionKey,
+    originCapabilityKey: action.accessDeclaration.key,
+    producerModuleKey: subscription.producerModuleKey,
+    subjectResourceType: policy.subjectResourceType,
+    targetAccess: policy.targetAccess,
+    topic: subscription.topic,
+    workerKey: subscription.workerKey,
+  });
+};
+
+const legacyMappingMatchesIssuer = (
+  mapping: LegacyGatewayNamespaceMapping | undefined,
+  configuredIssuer: string,
+  signedIssuer: string,
+): boolean => mapping === undefined || (mapping.issuer === configuredIssuer && mapping.issuer === signedIssuer);
+const organizationGovernanceSourceIsApproved = (
+  deployment: Parameters<typeof signedSourceBuildIsApproved>[0],
+  sourceBuildMarker: string,
+  read: RegisteredGatewayOrganizationGovernanceRead,
+  audience: string,
+): boolean =>
+  signedSourceBuildIsApproved(deployment, sourceBuildMarker) &&
+  organizationGovernanceReadOperationContract(read.target).appId === audience;
 
 const makeAuthenticatedTokenVerifier = Effect.fn('GatewayPrincipalVerifier.makeAuthenticatedTokenVerifier')(
   function* makeAuthenticatedTokenVerifierEffect() {
@@ -398,9 +488,13 @@ const makeAuthenticatedTokenVerifier = Effect.fn('GatewayPrincipalVerifier.makeA
           ? snapshot.composition.shell.deployment
           : snapshot.composition.modules.find((module) => module.deployment.appId === appId)?.deployment;
       if (
-        snapshot.composition.revision !== claims.compositionRevision ||
-        claims.targetBuildMarker !== deployment.buildMarker ||
-        approvedDeploymentOf(deployment.appId)?.buildMarker !== deployment.buildMarker
+        !targetReleaseIsApproved(
+          snapshot.composition.revision,
+          claims.compositionRevision,
+          claims.targetBuildMarker,
+          deployment.buildMarker,
+          approvedDeploymentOf(deployment.appId)?.buildMarker,
+        )
       ) {
         return yield* Effect.fail(
           ActionPrincipalScopeErrorSchema.make({
@@ -409,16 +503,17 @@ const makeAuthenticatedTokenVerifier = Effect.fn('GatewayPrincipalVerifier.makeA
         );
       }
       let actor: VerifiedGatewayActor | undefined;
+      let workload: RegisteredGatewayWorkload | undefined;
+      let routeScope: RegisteredGatewayRouteScope | undefined;
+      let organizationGovernanceRead: RegisteredGatewayOrganizationGovernanceRead | undefined;
+      let privacyDispatch: RegisteredGatewayPrivacyDispatch | undefined;
       let principalFromClaims: TrustedPrincipalContext;
       if (claims.ver === GATEWAY_ASSERTION_VERSION) {
         // Mapping occurs only after jwtVerify and claim decoding.  The mapping
         // is deployment configuration bound to the verified issuer; it never
         // comes from the request, JWT principal, or persisted binding.
         const { legacyNamespaceMapping } = configuration;
-        if (
-          legacyNamespaceMapping !== undefined &&
-          (legacyNamespaceMapping.issuer !== configuration.issuer || legacyNamespaceMapping.issuer !== claims.iss)
-        ) {
+        if (!legacyMappingMatchesIssuer(legacyNamespaceMapping, configuration.issuer, claims.iss)) {
           return yield* Effect.fail(invalidError());
         }
         principalFromClaims =
@@ -441,11 +536,59 @@ const makeAuthenticatedTokenVerifier = Effect.fn('GatewayPrincipalVerifier.makeA
           return yield* Effect.fail(invalidError());
         }
         principalFromClaims = claims.principal;
+        ({ routeScope } = claims);
+      } else if (claims.ver === WORKLOAD_GATEWAY_ASSERTION_VERSION) {
+        const sourceDeployment = approvedDeploymentOf(claims.workload.sourceAppId);
+        if (!signedSourceBuildIsApproved(sourceDeployment, claims.workload.sourceBuildMarker)) {
+          return yield* Effect.fail(invalidError());
+        }
+        principalFromClaims = claims.principal;
+        ({ workload } = claims);
+      } else if ('organizationGovernanceRead' in claims) {
+        const approvedActor = approvedDeploymentOf(claims.act.appId);
+        if (
+          !organizationGovernanceSourceIsApproved(
+            approvedActor,
+            claims.act.buildMarker,
+            claims.organizationGovernanceRead,
+            expectedAudience,
+          )
+        ) {
+          return yield* Effect.fail(invalidError());
+        }
+        principalFromClaims = claims.principal;
+        organizationGovernanceRead = {
+          ...claims.organizationGovernanceRead,
+          target: organizationGovernanceReadOperationContract(claims.organizationGovernanceRead.target),
+        };
+        actor = { appId: claims.act.appId, buildMarker: claims.act.buildMarker, principalId: claims.act.principalId };
+      } else if ('privacyDispatch' in claims) {
+        const approvedActor = approvedDeploymentOf(claims.act.appId);
+        if (
+          !privacyDispatchSourceIsApproved(
+            approvedActor,
+            claims.act.buildMarker,
+            claims.privacyDispatch,
+            expectedAudience,
+          )
+        ) {
+          return yield* Effect.fail(invalidError());
+        }
+        principalFromClaims = claims.principal;
+        privacyDispatch = {
+          ...claims.privacyDispatch,
+          authority: yield* Effect.fromOption(
+            privacyDispatchAuthorityFromComposition(snapshot.composition, claims.privacyDispatch),
+            invalidError,
+          ),
+          target: privacyDispatchOperationContract(claims.privacyDispatch.operation, claims.privacyDispatch.target),
+        };
+        actor = { appId: claims.act.appId, buildMarker: claims.act.buildMarker, principalId: claims.act.principalId };
       } else if (claims.ver === DELEGATED_GATEWAY_ASSERTION_VERSION) {
         // The Shell signs `act` only for a calling module it resolved from a bound module key. The calling
         // module must be an installed app whose approved release is the build the Shell recorded for it.
         const approvedActorDeployment = approvedDeploymentOf(claims.act.appId);
-        if (approvedActorDeployment === undefined || approvedActorDeployment.buildMarker !== claims.act.buildMarker) {
+        if (!signedSourceBuildIsApproved(approvedActorDeployment, claims.act.buildMarker)) {
           return yield* Effect.fail(
             ActionPrincipalScopeErrorSchema.make({
               reason: 'The Bearer assertion names a calling module that is not an approved release',
@@ -468,7 +611,11 @@ const makeAuthenticatedTokenVerifier = Effect.fn('GatewayPrincipalVerifier.makeA
         expiresAtEpochSeconds: claims.exp,
         issuer: claims.iss,
         jti: claims.jti,
+        organizationGovernanceRead,
         principal: principalFromClaims,
+        privacyDispatch,
+        routeScope,
+        workload,
       };
     });
   },
@@ -578,13 +725,27 @@ export const bindGatewayPrincipalVerifier = <const Audience extends string>(
           }),
         ),
       ),
-      Effect.map(({ actor, assertion, compositionRevision, principal }) =>
-        trustVerifiedGatewayPrincipalContext(
-          principal,
-          compositionRevision,
-          { assertion, audience: expectedAudience },
+      Effect.map(
+        ({
           actor,
-        ),
+          assertion,
+          compositionRevision,
+          organizationGovernanceRead,
+          principal,
+          privacyDispatch,
+          routeScope,
+          workload,
+        }) =>
+          trustVerifiedGatewayPrincipalContext(
+            principal,
+            compositionRevision,
+            { assertion, audience: expectedAudience },
+            actor,
+            workload,
+            routeScope,
+            privacyDispatch,
+            organizationGovernanceRead,
+          ),
       ),
     );
   }

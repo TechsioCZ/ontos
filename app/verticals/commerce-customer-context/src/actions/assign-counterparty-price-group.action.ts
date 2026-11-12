@@ -29,6 +29,7 @@ import {
   CustomerPriceGroupRevisionConflict,
   CustomerPriceGroupRetroactiveScheduleRejected,
   CustomerPriceGroupScopeMismatch,
+  CustomerPriceGroupSourceRejected,
 } from '../../shared/domain/price-group-errors.ts';
 import type {
   AssignCustomerPriceGroupStoreResult,
@@ -39,8 +40,14 @@ import type {
 import { CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT } from '../../shared/domain/price-group-ports.ts';
 import { createAssignCounterpartyPriceGroupCommerceCustomerContextCounterpartyPriceGroupAssignedV1OutboxMessage } from './assign-counterparty-price-group.commerce-customer-context-counterparty-price-group-assigned-v1.outbox-message.ts';
 import { prepareAssignCounterpartyPriceGroupServices } from './price-group-action-preparation.ts';
-import { priceGroupActionServicesForTransaction } from './price-group-action-services.ts';
+import { assignCounterpartyPriceGroupServicesForTransaction } from './price-group-action-services.ts';
 import { counterpartyOwnerFacts } from './owner-access-facts.ts';
+import type { CustomerPriceGroupAssignmentReceiptCapture } from '../services/customer-price-group-assignment-receipt.service.ts';
+import {
+  OrganizationPriceGroupAssignmentPayloadSchema,
+  OrganizationPriceGroupAssignmentResultSchema,
+} from '../../shared/domain/organization-price-assignment.ts';
+import { createAssignCounterpartyPriceGroupCommerceCustomerContextOrganizationCounterpartyPriceGroupAssignedV1OutboxMessage } from './assign-counterparty-price-group-commerce-customer-context-organization-counterparty-price-group-assigned-v1.outbox-message.ts';
 
 export { AssignCounterpartyPriceGroupPayloadSchema } from '../../shared/actions/assign-counterparty-price-group.ts';
 export type { AssignCounterpartyPriceGroupPayload } from '../../shared/actions/assign-counterparty-price-group.ts';
@@ -57,13 +64,15 @@ const AssignCounterpartyPriceGroupErrorSchema = Schema.Union([
   CustomerPriceGroupRevisionConflict,
   CustomerPriceGroupRetroactiveScheduleRejected,
   CustomerPriceGroupScopeMismatch,
+  CustomerPriceGroupSourceRejected,
 ]);
 
 type DomainEvents = Readonly<{
   'commerce.customer-context.counterparty-price-group-assigned.v1': typeof CounterpartyPriceGroupAssignedEventSchema;
+  'commerce.customer-context.organization-counterparty-price-group-assigned.v1': typeof OrganizationPriceGroupAssignmentResultSchema;
 }>;
 
-export interface AssignCounterpartyPriceGroupServices {
+export interface AssignCounterpartyPriceGroupServices extends CustomerPriceGroupAssignmentReceiptCapture {
   readonly catalog: PriceGroupCatalogPort;
   readonly now: Effect.Effect<string>;
   readonly profileValidation: CustomerPriceGroupProfileValidationPort;
@@ -287,6 +296,7 @@ const handleAssignCounterpartyPriceGroup = Effect.fn(
   context: ActionHandlerContext<DomainEvents, AssignCounterpartyPriceGroupServices>,
 ) {
   yield* validateAssignCounterpartyPriceGroupScope(payload, context.scope.tenantId);
+  yield* context.services.validateAssignmentSource({ _tag: 'COUNTERPARTY', payload });
 
   const recordedAt = yield* context.services.now;
   if (isPriceGroupInstantBefore(payload.effectiveFrom, recordedAt)) {
@@ -311,10 +321,11 @@ const handleAssignCounterpartyPriceGroup = Effect.fn(
     effectiveFrom: payload.effectiveFrom,
     effectiveTo: payload.effectiveTo ?? null,
     expectedProfileRevision: payload.expectedProfileRevision,
+    organizationBusiness: Schema.is(OrganizationPriceGroupAssignmentPayloadSchema)(payload),
     priceGroupRef: catalogOutcome.priceGroupRef,
     principalId: context.scope.principalId,
     profile: payload.profile,
-    reason: payload.reason,
+    reason: payload.reason ?? null,
     recordedAt,
     tenantId: context.scope.tenantId,
   });
@@ -338,13 +349,73 @@ const handleAssignCounterpartyPriceGroup = Effect.fn(
   }
   yield* context.recordAuditEvidence(auditEvidence);
   yield* recordAssignCounterpartyPriceGroupDataAccess(payload, catalogOutcome, context);
-  yield* emitAssignCounterpartyPriceGroupEvent(payload, result, context);
 
-  return {
+  const committedResult = {
     assignment: result.assignment,
     changed: result.changed,
     replacedAssignmentRef: result.replacedAssignmentRef,
   };
+  yield* context.services.captureAssignmentReceipt(context.actionInvocationId, committedResult, {
+    _tag: 'COUNTERPARTY',
+    payload,
+  });
+  if (Schema.is(OrganizationPriceGroupAssignmentPayloadSchema)(payload)) {
+    const {
+      assignmentRef,
+      effectiveFrom,
+      effectiveTo,
+      priceGroupRef,
+      profile,
+      recordedAt: assignmentRecordedAt,
+      revision,
+      state,
+    } = result.assignment;
+    const safe = yield* Schema.decodeUnknownEffect(OrganizationPriceGroupAssignmentResultSchema)({
+      assignment: {
+        assignmentRef,
+        effectiveFrom,
+        effectiveTo,
+        priceGroupRef,
+        profile,
+        recordedAt: assignmentRecordedAt,
+        revision,
+        state,
+      },
+      changed: result.changed,
+      processingKind: 'ORGANIZATION_BUSINESS',
+      replacedAssignmentRef: result.replacedAssignmentRef,
+    }).pipe(
+      Effect.mapError((cause) =>
+        Object.defineProperty(
+          new CustomerPriceGroupPersistenceUnavailable({
+            code: 'customer_price_group_persistence_unavailable',
+            reason: 'The native Organization assignment result is invalid',
+          }),
+          'cause',
+          { value: cause },
+        ),
+      ),
+    );
+    if (result.changed) {
+      const event = yield* context.addDomainEvent({
+        eventType: 'commerce.customer-context.organization-counterparty-price-group-assigned.v1',
+        payloadJson: safe,
+        producerModuleKey: 'commerce.customer-context',
+        subjectModuleKey: 'commerce.customer-context',
+        subjectResourceId: safe.assignment.assignmentRef.resourceId,
+        subjectResourceType: safe.assignment.assignmentRef.resourceType,
+      });
+      yield* context.addOutboxMessage(
+        event,
+        createAssignCounterpartyPriceGroupCommerceCustomerContextOrganizationCounterpartyPriceGroupAssignedV1OutboxMessage(
+          safe,
+        ),
+      );
+    }
+    return safe;
+  }
+  yield* emitAssignCounterpartyPriceGroupEvent(payload, result, context);
+  return committedResult;
 });
 
 export const assignCounterpartyPriceGroupAction = defineAction(
@@ -362,12 +433,18 @@ export const assignCounterpartyPriceGroupAction = defineAction(
       policyKey: 'commerce.customer-context.assign-counterparty-price-group.access.v1',
     },
     accessOwnerFacts: (payload) => counterpartyOwnerFacts(payload.counterpartyRef.resourceId),
+    accessWorkload: {
+      reason: 'Explicitly enrolled source integrations execute affirmative native Price Group Assignments',
+      workloads: ['commerce.customer-context.source-write'],
+    },
     actionKey: 'commerce.customer-context.assign-counterparty-price-group',
     auditEvidenceSchema: CustomerPriceGroupAssignedAuditEvidenceSchema,
     auditProfile: 'sensitive',
     domainErrorSchema: AssignCounterpartyPriceGroupErrorSchema,
     domainEvents: {
       'commerce.customer-context.counterparty-price-group-assigned.v1': CounterpartyPriceGroupAssignedEventSchema,
+      'commerce.customer-context.organization-counterparty-price-group-assigned.v1':
+        OrganizationPriceGroupAssignmentResultSchema,
     },
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
@@ -385,6 +462,14 @@ export const assignCounterpartyPriceGroupAction = defineAction(
     schemaVersion: '1',
   },
   handleAssignCounterpartyPriceGroup,
-  priceGroupActionServicesForTransaction,
+  assignCounterpartyPriceGroupServicesForTransaction,
   { prepareServices: prepareAssignCounterpartyPriceGroupServices },
 );
+
+// <generated-outbox-message-exports>
+export { AssignCounterpartyPriceGroupCommerceCustomerContextOrganizationCounterpartyPriceGroupAssignedV1OutboxPayloadSchema } from './assign-counterparty-price-group-commerce-customer-context-organization-counterparty-price-group-assigned-v1.outbox-message.ts';
+export { AssignCounterpartyPriceGroupCommerceCustomerContextOrganizationCounterpartyPriceGroupAssignedV1OutboxProducerModuleKey } from './assign-counterparty-price-group-commerce-customer-context-organization-counterparty-price-group-assigned-v1.outbox-message.ts';
+export { AssignCounterpartyPriceGroupCommerceCustomerContextOrganizationCounterpartyPriceGroupAssignedV1OutboxTopic } from './assign-counterparty-price-group-commerce-customer-context-organization-counterparty-price-group-assigned-v1.outbox-message.ts';
+export { createAssignCounterpartyPriceGroupCommerceCustomerContextOrganizationCounterpartyPriceGroupAssignedV1OutboxMessage } from './assign-counterparty-price-group-commerce-customer-context-organization-counterparty-price-group-assigned-v1.outbox-message.ts';
+export type { AssignCounterpartyPriceGroupCommerceCustomerContextOrganizationCounterpartyPriceGroupAssignedV1OutboxPayload } from './assign-counterparty-price-group-commerce-customer-context-organization-counterparty-price-group-assigned-v1.outbox-message.ts';
+// </generated-outbox-message-exports>

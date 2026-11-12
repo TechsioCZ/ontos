@@ -61,6 +61,10 @@ export const createVariantRecoveryRead = defineRead(
       selectors: [],
     },
     accessKind: 'detail',
+    accessWorkload: {
+      reason: 'Original native Product effect recovery for the registered source integration',
+      workloads: ['commerce.catalog.symmy-product-read'],
+    },
     entrypoint: createVariantRecoveryEntrypoint,
     evidencePolicy: {
       captureMode: 'metadata_only',

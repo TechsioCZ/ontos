@@ -221,6 +221,7 @@ it.effect(
         'pricing',
         'privacy',
         'storefront-registry',
+        'symmy-integration',
         'tax',
         'property-portfolio',
         'property-leasing',
@@ -280,6 +281,7 @@ it.effect(
         'property_leasing',
         'property_portfolio',
         'storefront_registry',
+        'symmy_integration',
         'tax',
         'trust',
         'work_tasks',
@@ -362,6 +364,13 @@ it.effect(
           schemas: [schema],
           verifierPaths: [`verticals/${ownerId}/scripts/verify-db-schema.mts`],
         })),
+        {
+          journalName: '__drizzle_migrations_symmy_integration',
+          ownerId: 'symmy-integration',
+          runtimeIdentityIds: ['shared_runtime'],
+          schemas: ['symmy_integration'],
+          verifierPaths: ['verticals/symmy-integration/scripts/verify-db-schema.mts'],
+        },
       ]) {
         const matching = inventory.filter(({ ownerId }) => ownerId === expected.ownerId);
         expect(matching).toHaveLength(1);

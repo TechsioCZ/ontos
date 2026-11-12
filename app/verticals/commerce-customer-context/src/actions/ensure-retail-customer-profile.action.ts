@@ -46,6 +46,13 @@ const handleEnsureRetailCustomerProfile = Effect.fn('EnsureRetailCustomerProfile
     payload: EnsureRetailCustomerProfilePayload,
     context: ActionHandlerContext<DomainEvents, EnsureRetailCustomerProfileServices>,
   ) {
+    if (context.scope.authMethod === 'system' && payload.source === undefined) {
+      return yield* new EnsureRetailCustomerProfileRejected({
+        code: 'SOURCE_AUTHORITY_DENIED',
+        reason: 'System source workloads require an exact admitted source assertion',
+        retryable: false,
+      });
+    }
     if (
       payload.subject.partyRef.tenantId !== context.scope.tenantId ||
       payload.subject.sellingLegalEntityRef.tenantId !== context.scope.tenantId
@@ -79,9 +86,9 @@ const handleEnsureRetailCustomerProfile = Effect.fn('EnsureRetailCustomerProfile
     yield* recordProfileResourceLookup(
       context,
       result.profileRef,
-      `retail-profile-current:${result.profileRef.resourceId}:${result.revision}`,
+      `retail-profile-${result.sourceEffect?.replayed === true ? 'source-receipt' : 'current'}:${result.profileRef.resourceId}:${result.revision}`,
     );
-    if (result.outcome === 'PROFILE_CREATED') {
+    if (result.outcome === 'PROFILE_CREATED' && result.sourceEffect?.replayed !== true) {
       const event = yield* context.addDomainEvent({
         eventType: 'commerce.customer-context.retail-customer-profile-created.v1',
         payloadJson: result,
@@ -250,6 +257,10 @@ export const ensureRetailCustomerProfileAction = defineAction(
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
       policyKey: 'commerce.customer-context.ensure-retail-customer-profile.access.v1',
+    },
+    accessWorkload: {
+      reason: 'Registered Commerce source workloads ensure only qualified source Profiles',
+      workloads: ['commerce.customer-context.source-write'],
     },
     actionKey: 'commerce.customer-context.ensure-retail-customer-profile',
     auditProfile: 'standard',

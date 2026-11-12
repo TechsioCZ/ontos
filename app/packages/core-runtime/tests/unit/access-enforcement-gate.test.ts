@@ -1,7 +1,15 @@
+import { organizationProcessingReadPrincipal } from '../support/organization-processing-read-principal.ts';
+import { organizationGovernanceReadPrincipal } from '../support/organization-governance-read-principal.ts';
+import { privacyDispatchPrincipal } from '../support/privacy-dispatch-principal.ts';
+import { preserveSystemPrincipalContextTrust } from '../../src/auth/system-principal-context-provenance.ts';
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { WorkloadKeySchema, decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
+import {
+  AccessActorSchema,
+  WorkloadKeySchema,
+  decodeAccessDeclarationOrThrow,
+} from '../../src/authorization/access-declaration.ts';
 import type {
   AccessDeclaration,
   AccessDeclarationInput,
@@ -141,6 +149,7 @@ interface RunOptions {
   readonly engineFailure?: boolean;
   readonly kinds?: AccessPrincipalKinds;
   readonly logFails?: boolean;
+  readonly privacyDispatchLive?: boolean;
   readonly scopeMissing?: boolean;
   readonly selectableLegalEntities?: readonly LegalEntityId[];
   /** The active workload keys the registry answers for this actor; default none (O73). */
@@ -187,6 +196,7 @@ const harness = (options: RunOptions = {}) => {
     decisionLog: log,
     legalEntities: legalEntityCandidates(options.selectableLegalEntities ?? []),
     principalKinds: options.kinds ?? kindSource('human'),
+    privacyDispatchLiveness: { read: () => Effect.succeed(options.privacyDispatchLive === true) },
     workloadBindings,
   };
   const gate = makeAccessDecisionService(
@@ -897,5 +907,149 @@ it.effect(
         ['ALLOWED', 'ALLOWED', 'ALLOWED', 'DENIED', 'DENIED'],
         ['DENIED', 'ALLOWED', 'ALLOWED', 'DENIED', 'DENIED'],
       ]);
+    }),
+);
+
+it.effect('records delegated finite Privacy refusals for current source-claim and governance permission denials', () =>
+  Effect.gen(function* privacyDispatchRefusalEvidence() {
+    const governance = LegalEntityIdSchema.make(uid(71));
+    const principal = privacyDispatchPrincipal(scopeFor(person, governance), 'SymmyRetention', 'c'.repeat(64));
+    const scope = preserveSystemPrincipalContextTrust(principal, {
+      ...principal,
+      correlationId: 'privacy-denial-evidence',
+    });
+    const accessActor = yield* Schema.decodeUnknownEffect(AccessActorSchema)({
+      callers: ['symmy-integration'],
+      reason: 'Exact native Privacy dispatch owner operation',
+      subject: 'identity',
+    });
+    const declaration = decodeAccessDeclarationOrThrow(
+      {
+        key: 'integration.symmy.symmy-retention.execute',
+        kind: 'action',
+        modes: ['run', 'propose', 'approve'],
+        placement: { group: 'symmy', level: 'extended' },
+        risk: 'critical',
+        selectors: [],
+      },
+      { access: 'write', authorization: { kind: 'protected' }, moduleKey: 'integration.symmy', role: 'action' },
+    );
+    for (const privacyDispatchLive of [false, true]) {
+      const { gate, state } = harness({ privacyDispatchLive });
+      const decision = yield* gate.decide({
+        carrier: {
+          accessActor,
+          accessDeclaration: declaration,
+          entrypoint: { entrypointKey: 'integration.symmy.execute-symmy-retention' },
+          schemaVersion: '1',
+        },
+        legalEntityScope: 'optional',
+        now,
+        scope,
+      });
+      expect(decision.outcome).toBe('DENIED');
+      expect(state.entries).toHaveLength(1);
+      expect(state.entries[0]?.delegation?.appId).toBe('symmy-integration');
+      expect(state.entries[0]?.actor.principalId).toBe(person);
+      expect(state.entries[0]?.scope.legalEntityId).toBe(governance);
+      expect(state.entries[0]?.outcome).toBe('DENIED');
+    }
+  }),
+);
+
+it.effect('requires the original human Organization facts Read grant despite an identity-only module carrier', () =>
+  Effect.gen(function* organizationGovernanceUsesHumanRights() {
+    const governance = LegalEntityIdSchema.make(uid(72));
+    const nativeHuman = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+      ...scopeFor(person, governance),
+      authenticationNamespaceId: 'core-identity',
+    });
+    const admitted = organizationGovernanceReadPrincipal(nativeHuman, 'e'.repeat(64));
+    const scope = preserveSystemPrincipalContextTrust(admitted, { ...admitted, correlationId: 'org-human-read' });
+    const accessActor = yield* Schema.decodeUnknownEffect(AccessActorSchema)({
+      callers: ['privacy'],
+      reason: 'Exact governed Organization source facts',
+      subject: 'identity',
+    });
+    const declaration = decodeAccessDeclarationOrThrow(
+      {
+        key: 'integration.symmy.symmy-source-organization-facts.read',
+        kind: 'read',
+        modes: ['run'],
+        placement: { group: 'symmy', level: 'extended' },
+        risk: 'routine',
+        selectors: [],
+      },
+      { access: 'read', authorization: { kind: 'protected' }, moduleKey: 'integration.symmy', role: 'api' },
+    );
+    const input: GateInput = {
+      carrier: {
+        accessActor,
+        accessDeclaration: declaration,
+        entrypoint: { entrypointKey: 'integration.symmy.api.symmy-source-organization-facts' },
+        schemaVersion: '1',
+      },
+      legalEntityScope: 'required',
+      now,
+      scope,
+    };
+    for (const granted of [false, true]) {
+      const { gate, state } = harness({
+        authority: {
+          cells: granted ? [cell({ capability: declaration.key })] : [],
+          legalEntityScope: { _tag: 'LegalEntity', legalEntityId: governance, tenantId: tenant },
+        },
+      });
+      expect((yield* gate.decide(input)).outcome).toBe(granted ? 'ALLOWED' : 'DENIED');
+      expect(state.entries).toHaveLength(1);
+      expect(state.entries[0]?.scope.legalEntityId).toBe(governance);
+      expect(state.entries[0]?.delegation?.appId).toBe('privacy');
+    }
+    const machine = harness({ kinds: kindSource('integration') });
+    expect((yield* machine.gate.decide(input)).outcome).toBe('DENIED');
+  }),
+);
+
+it.effect(
+  'requires the finite processing marker for the exact normal V4 SourceFacts target even with an active workload binding',
+  () =>
+    Effect.gen(function* normalV4SourceFactsRequiresRestriction() {
+      const workloadKey = WorkloadKeySchema.make('integration.symmy.source-organization-facts.read');
+      const declaration = decodeAccessDeclarationOrThrow(
+        {
+          key: 'integration.symmy.symmy-source-organization-facts.read',
+          kind: 'read',
+          modes: ['run'],
+          placement: { group: 'symmy', level: 'extended' },
+          risk: 'routine',
+          selectors: [],
+        },
+        { access: 'read', authorization: { kind: 'protected' }, moduleKey: 'integration.symmy', role: 'api' },
+      );
+      for (const restricted of [false, true]) {
+        const principal = organizationProcessingReadPrincipal('f'.repeat(64), restricted);
+        const scope = preserveSystemPrincipalContextTrust(principal, {
+          ...principal,
+          correlationId: 'processing-marker-gate',
+          legalEntityId: uid(2),
+        });
+        const { gate } = harness({ kinds: kindSource('system'), workloadKeys: [workloadKey] });
+        const decision = yield* gate.decide({
+          carrier: {
+            accessDeclaration: declaration,
+            accessWorkload: {
+              reason: 'Finite native organization processing read',
+              requestPurpose: 'PROCESSING',
+              workloads: [workloadKey],
+            },
+            entrypoint: { entrypointKey: 'integration.symmy.api.symmy-source-organization-facts' },
+            schemaVersion: '1',
+          },
+          legalEntityScope: 'required',
+          now,
+          scope,
+        });
+        expect(decision.outcome).toBe(restricted ? 'ALLOWED' : 'DENIED');
+      }
     }),
 );

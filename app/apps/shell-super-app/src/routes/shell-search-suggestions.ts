@@ -2,7 +2,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Effect } from 'effect';
 import { useEffect, useRef, useState } from 'react';
 
-import type { ShellSearchResult } from '../../shared/api.ts';
+import type { ShellSearchResult } from '../../shared/browser-api.ts';
 import { searchResources } from '../api/auth-client.ts';
 import type { ShellSearchClientError } from '../api/auth-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';

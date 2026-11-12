@@ -71,7 +71,12 @@ import type {
   PrivacyRetentionRuleVersion,
   RetentionRuleAuthorityResolution,
 } from '../../shared/domain/privacy-retention-rule.ts';
-import type { PrivacySubjectRecord, Representation } from '../../shared/domain/privacy-subject.ts';
+import type {
+  PrivacySubjectRecord,
+  PrivacySourceSubjectAdmission,
+  PrivacySourcePersonReference,
+  Representation,
+} from '../../shared/domain/privacy-subject.ts';
 
 type PrivacyResponsibilityAssignment = typeof PrivacyResponsibilityAssignmentSchema.Type;
 
@@ -115,6 +120,7 @@ export interface PrivacyOperationRepositoryService {
     legalEntityId: string,
     actionInvocationId: string,
     handoff: PrivacyMeasureHandoff,
+    compositionRevision?: string,
   ) => Effect.Effect<PrivacyMeasureDispatchAdmission, PrivacyOperationPersistenceError>;
   readonly assignDsrResolver: (
     tenantId: string,
@@ -167,6 +173,14 @@ export interface PrivacyOperationRepositoryService {
     legalEntityId: string,
     caseRef: string,
   ) => Effect.Effect<Option.Option<DsrCase>, PrivacyOperationPersistenceError>;
+  readonly getPrivacyMeasureDispatchOriginator: (
+    tenantId: string,
+    legalEntityId: string,
+    measureId: string,
+  ) => Effect.Effect<
+    Option.Option<{ readonly actionInvocationId: string; readonly compositionRevision: string }>,
+    PrivacyOperationPersistenceError
+  >;
   readonly getPrivacyMeasureHandoff: (
     tenantId: string,
     legalEntityId: string,
@@ -378,6 +392,11 @@ export interface PrivacyOperationRepositoryService {
     actorPrincipalRef: string,
     request: RetentionProtectionRequest,
   ) => Effect.Effect<RetentionException, PrivacyOperationPersistenceError>;
+  readonly resolveSourceSubjectReference: (
+    tenantId: string,
+    legalEntityId: string,
+    admission: PrivacySourceSubjectAdmission,
+  ) => Effect.Effect<PrivacySourcePersonReference, PrivacyOperationPersistenceError>;
   readonly updateDsrCase: (
     tenantId: string,
     legalEntityId: string,

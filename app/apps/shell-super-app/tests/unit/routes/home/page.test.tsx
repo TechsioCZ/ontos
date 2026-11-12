@@ -16,7 +16,7 @@ import {
   TenantAccessForbiddenProblemSchema,
   TenantAuthenticationRequiredProblemSchema,
   TenantIdSchema,
-} from '../../../../shared/api.ts';
+} from '../../../../shared/browser-api.ts';
 import type { ModuleTargetPageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/module-page-model.ts';
 import type { HomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
 import { HomeView } from '../../../../src/routes/[lang]/page.tsx';

@@ -1,7 +1,7 @@
 import { findPostgresFailure } from '@app/core-runtime';
 import type { ReadServiceFactory } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import { Context, DateTime, Effect, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
 import { StockItemRejected, StockItemSchema } from '../../shared/domain/stock-item.ts';
 import type { ExactCatalogSelectionMeaningId, StockItem, StockItemInstant } from '../../shared/domain/stock-item.ts';
@@ -161,3 +161,8 @@ export const makeDrizzleStockItemRepository = (transaction: ScopedTransaction): 
         ),
       ),
 });
+
+/** Owner composition binds this repository only to an already installed native operation transaction. */
+export const stockItemRepositoryLayerForTransaction = (
+  transaction: ScopedTransaction,
+): Layer.Layer<StockItemRepository> => Layer.succeed(StockItemRepository, makeDrizzleStockItemRepository(transaction));

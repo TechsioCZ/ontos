@@ -147,7 +147,7 @@ export const CustomerPriceGroupAssignmentSchema = Schema.Struct({
   effectiveTo: Schema.NullOr(PriceGroupInstantJsonSchema),
   priceGroupRef: PriceGroupRefSchema,
   profile: CommerceCustomerProfileTargetSchema,
-  reason: PriceGroupReasonSchema,
+  reason: Schema.toEncoded(Schema.OptionFromNullOr(PriceGroupReasonSchema)),
   recordedAt: PriceGroupInstantJsonSchema,
   revision: PriceGroupRevisionSchema,
   state: CustomerPriceGroupAssignmentStateSchema,
@@ -164,6 +164,9 @@ export const CustomerPriceGroupAssignmentSchema = Schema.Struct({
         assignment.compatibility.priceGroupRef.resourceId !== assignment.priceGroupRef.resourceId ||
         assignment.compatibility.priceGroupRef.tenantId !== assignment.priceGroupRef.tenantId);
     const issues: { readonly issue: string; readonly path: readonly string[] }[] = [];
+    if (assignment.reason === null && assignment.profile.kind !== 'COUNTERPARTY') {
+      issues.push({ issue: 'Only a Counterparty business assignment can omit a personal reason', path: ['reason'] });
+    }
     if (invalidAssignmentPeriod) {
       issues.push({ issue: 'effectiveTo must be later than effectiveFrom', path: ['effectiveTo'] });
     }

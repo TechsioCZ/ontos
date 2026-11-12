@@ -1,0 +1,1 @@
+ALTER TABLE "party"."party_source_effect_receipts" ADD COLUMN "source_reference" jsonb NOT NULL;

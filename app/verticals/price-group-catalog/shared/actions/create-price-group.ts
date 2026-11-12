@@ -1,6 +1,9 @@
 import { Schema } from 'effect';
+import { PriceGroupBusinessOriginalInvocationIdSchema } from '../domain/source-operation.ts';
+import { PriceGroupSourceCorrelationSchema } from '../apis/price-group-source-associations.ts';
 
 import {
+  PriceGroupCreatedResultSchema,
   CatalogFenceRevisionSchema,
   PriceGroupCodeSchema,
   PriceGroupCompatibilityContractSchema,
@@ -13,7 +16,16 @@ import {
 import { PriceGroupCatalogRootRefSchema } from '../resources/price-group-catalog-root.ts';
 import { PriceGroupRefSchema } from '../resources/price-group.ts';
 
-export { PriceGroupCreatedResultSchema as CreatePriceGroupResultSchema } from '../domain/price-group.ts';
+export const CreatePriceGroupResultSchema = Schema.Struct({
+  ...PriceGroupCreatedResultSchema.fields,
+  businessOriginalInvocationId: Schema.optionalKey(PriceGroupBusinessOriginalInvocationIdSchema),
+}).check(
+  Schema.makeFilter((result) =>
+    Schema.is(PriceGroupCreatedResultSchema)(result)
+      ? undefined
+      : 'The original Price Group result must retain its native invariants',
+  ),
+);
 
 const compatibilityContractsSchema = Schema.Array(PriceGroupCompatibilityContractSchema).check(
   Schema.isMinLength(1),
@@ -38,6 +50,7 @@ export const CreatePriceGroupPayloadSchema = Schema.Struct({
   effectiveTo: Schema.Null,
   expectedCatalogRevision: CatalogFenceRevisionSchema,
   reason: PriceGroupReasonSchema,
+  sourceCorrelation: Schema.optionalKey(PriceGroupSourceCorrelationSchema),
 });
 export type CreatePriceGroupPayload = typeof CreatePriceGroupPayloadSchema.Type;
 

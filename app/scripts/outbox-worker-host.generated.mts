@@ -19,6 +19,7 @@ import { outboxWorkerEntry as financeBillingOutboxWorkerEntry } from '@app/finan
 import { outboxWorkerEntry as crmOutboxWorkerEntry } from '@app/crm/outbox-worker-host';
 import { outboxWorkerEntry as projectsOutboxWorkerEntry } from '@app/projects/outbox-worker-host';
 import { outboxWorkerEntry as commerceOrderOutboxWorkerEntry } from '@app/commerce-order/outbox-worker-host';
+import { outboxWorkerEntry as symmyIntegrationOutboxWorkerEntry } from '@app/symmy-integration/outbox-worker-host';
 
 startOutboxWorkerHost({
   entries: [
@@ -40,6 +41,7 @@ startOutboxWorkerHost({
     crmOutboxWorkerEntry,
     projectsOutboxWorkerEntry,
     commerceOrderOutboxWorkerEntry,
+    symmyIntegrationOutboxWorkerEntry,
   ],
   health: true,
   startup: startZeropsOutboxHost,

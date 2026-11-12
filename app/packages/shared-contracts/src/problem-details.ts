@@ -4,7 +4,7 @@ import { Match, Predicate, Schema, SchemaAST } from 'effect';
 /* oxlint-disable anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-argument, typescript/no-unsafe-assignment, typescript/no-unsafe-call, typescript/no-unsafe-return, typescript/no-unsafe-type-assertion -- SAFETY: Schema ASTs are runtime-discriminated Effect objects; the clone boundary preserves the checked graph's exact generic schema type. remove-when: Effect exposes a typed AST clone API; expires: 2026-12-31. */
 
 /** HTTP statuses currently used by OntOS public Problem Details contracts. */
-export type ProblemDetailsStatus = 400 | 401 | 403 | 404 | 409 | 422 | 428 | 429 | 500 | 503 | 504;
+export type ProblemDetailsStatus = 400 | 401 | 403 | 404 | 405 | 409 | 422 | 428 | 429 | 500 | 503 | 504;
 
 export const problemDetailsFields = Object.freeze({
   detail: Schema.String,

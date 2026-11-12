@@ -1,3 +1,5 @@
+import { PrivacyDispatchLivenessSource } from '../access/enforcement/privacy-dispatch-liveness.ts';
+import type { PrivacyDispatchLiveness } from '../access/enforcement/privacy-dispatch-liveness.ts';
 import { Context, Effect, Option } from 'effect';
 
 import { AccessPrincipalKindSource } from '../access/enforcement/actor.ts';
@@ -58,9 +60,13 @@ export interface BoundAccessGate {
   readonly decide: (input: GateInput, transaction?: CoreTransaction) => Effect.Effect<AccessDecision>;
   /**
    * Many decisions of one request in ONE engine snapshot, one answer and one evidence row each, exactly
-   * as `decide` would give them one at a time. Present when the seam answers a batch.
+   * as `decide` would give them one at a time. `transaction` joins a transaction the caller already
+   * owns, exactly as for `decide`; without it the batch reads in a transaction of the request scope.
    */
-  readonly decideMany?: (input: readonly GateInput[]) => Effect.Effect<readonly AccessDecision[]>;
+  readonly decideMany?: (
+    input: readonly GateInput[],
+    transaction?: CoreTransaction,
+  ) => Effect.Effect<readonly AccessDecision[]>;
   /**
    * A list, search or history page: the owner applies the returned predicate in its own query (O25).
    * `transaction` joins a transaction the caller already owns, exactly as for `decide`.
@@ -82,7 +88,7 @@ export interface BoundAccessGate {
  */
 export interface UnboundAccessGate {
   readonly decide: (input: GateInput) => Effect.Effect<AccessDecision, never, AccessDecisionRequirements>;
-  readonly decideMany?: (
+  readonly decideMany: (
     input: readonly GateInput[],
   ) => Effect.Effect<readonly AccessDecision[], never, AccessDecisionRequirements>;
   readonly list: (input: ListGateInput) => Effect.Effect<ListAccessResolution, never, AccessDecisionRequirements>;
@@ -116,6 +122,7 @@ export interface AccessEnforcementPorts {
    */
   readonly intent: AccessIntentSource;
   readonly principalKinds: AccessPrincipalKinds;
+  readonly privacyDispatchLiveness?: PrivacyDispatchLiveness;
   /**
    * The registered workload identities of the acting principal (O73). Optional so a composition that
    * only ever decides human or agent requests stays valid; the seam then admits no workload.
@@ -131,9 +138,14 @@ export const AccessEnforcementPortsLive = Effect.gen(function* resolveAccessEnfo
   );
   // The registry is optional: a composition that binds none admits no workload and fails closed (O73).
   const workloadBindings = yield* Effect.serviceOption(AccessWorkloadBindingSource);
+  const privacyDispatchLiveness = Option.getOrUndefined(yield* Effect.serviceOption(PrivacyDispatchLivenessSource));
   return Object.freeze(
     withOptional(
-      { candidates, check, decisionLog, intent, principalKinds },
+      withOptional(
+        { candidates, check, decisionLog, intent, principalKinds },
+        'privacyDispatchLiveness',
+        privacyDispatchLiveness,
+      ),
       'workloadBindings',
       Option.getOrUndefined(workloadBindings),
     ),
@@ -156,7 +168,7 @@ export const joinAccessEnforcementPorts = (
   ports: AccessEnforcementPorts,
   transaction: CoreTransaction,
 ): AccessEnforcementPorts => {
-  const { workloadBindings } = ports;
+  const { privacyDispatchLiveness, workloadBindings } = ports;
   const joined = {
     candidates: Object.freeze({
       listCandidateIds: (scope: OperationalScope) => ports.candidates.listCandidateIds(scope, transaction),
@@ -172,11 +184,21 @@ export const joinAccessEnforcementPorts = (
       readKind: (query: PrincipalKindQuery) => ports.principalKinds.readKind(query, transaction),
     }),
   };
+  const withLiveness = withOptional(
+    joined,
+    'privacyDispatchLiveness',
+    privacyDispatchLiveness === undefined
+      ? undefined
+      : Object.freeze({
+          read: (scope: OperationalScope, dispatch: Parameters<PrivacyDispatchLiveness['read']>[1]) =>
+            privacyDispatchLiveness.read(scope, dispatch, transaction),
+        }),
+  );
   return Object.freeze(
     workloadBindings === undefined
-      ? joined
+      ? withLiveness
       : {
-          ...joined,
+          ...withLiveness,
           workloadBindings: Object.freeze({
             readActiveWorkloadKeys: (query: WorkloadBindingQuery) =>
               workloadBindings.readActiveWorkloadKeys(query, transaction),
@@ -204,13 +226,17 @@ const contextOf = (ports: AccessEnforcementPorts) => {
 /** The ports the seam's own service takes, from the ports this binding holds. */
 const decisionPortsOf = (ports: AccessEnforcementPorts): AccessDecisionPorts =>
   withOptional(
-    {
-      authorityFor: ports.intent.authorityFor,
-      check: ports.check,
-      decisionLog: ports.decisionLog,
-      legalEntities: ports.candidates,
-      principalKinds: ports.principalKinds,
-    },
+    withOptional(
+      {
+        authorityFor: ports.intent.authorityFor,
+        check: ports.check,
+        decisionLog: ports.decisionLog,
+        legalEntities: ports.candidates,
+        principalKinds: ports.principalKinds,
+      },
+      'privacyDispatchLiveness',
+      ports.privacyDispatchLiveness,
+    ),
     'workloadBindings',
     ports.workloadBindings,
   );
@@ -283,6 +309,10 @@ export const bindAccessGate = (gate: UnboundAccessGate, ports: AccessEnforcement
       const active = boundTo(transaction);
       return active.seam.decide(input).pipe(Effect.provideContext(active.context));
     },
+    decideMany: (input: readonly GateInput[], transaction?: CoreTransaction) => {
+      const active = boundTo(transaction);
+      return active.seam.decideMany(input).pipe(Effect.provideContext(active.context));
+    },
     list: (input: ListGateInput, transaction?: CoreTransaction) => {
       const active = boundTo(transaction);
       return active.seam.list(input).pipe(Effect.provideContext(active.context));
@@ -290,15 +320,7 @@ export const bindAccessGate = (gate: UnboundAccessGate, ports: AccessEnforcement
     selectableLegalEntities: (input: SelectableLegalEntitiesInput) =>
       gate.selectableLegalEntities(input).pipe(Effect.provideContext(context)),
   };
-  const { decideMany } = gate;
-  const batched =
-    decideMany === undefined
-      ? bound
-      : {
-          ...bound,
-          decideMany: (input: readonly GateInput[]) => decideMany(input).pipe(Effect.provideContext(context)),
-        };
-  return Object.freeze(ports.currentness === undefined ? batched : { ...batched, prepare });
+  return Object.freeze(ports.currentness === undefined ? bound : { ...bound, prepare });
 };
 
 /** The runtime's own wiring: the seam from the tag, the ports from the layers it is built with. */

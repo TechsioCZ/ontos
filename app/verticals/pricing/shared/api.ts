@@ -28,8 +28,10 @@ import { ManageQuantityTierActionApi } from './apis/manage-quantity-tier-action.
 import { ManageQuotationActionApi } from './apis/manage-quotation-action.ts';
 import { ManageZeroFloorAuthorizationActionApi } from './apis/manage-zero-floor-authorization-action.ts';
 import { PriceDefinitionApi } from './apis/price-definition.ts';
+import { PriceGroupSourcePricesApi } from './apis/price-group-source-prices.ts';
 import { PriceResultLookupApi } from './apis/price-result-lookup.ts';
 import { PriceScheduleApi } from './apis/price-schedule.ts';
+import { PriceSourceResultLookupApi } from './apis/price-source-result-lookup.ts';
 import { QuantityTierResultLookupApi } from './apis/quantity-tier-result-lookup.ts';
 import { QuotationResultLookupApi } from './apis/quotation-result-lookup.ts';
 import { QuotationVerificationApi } from './apis/quotation-verification.ts';
@@ -101,6 +103,7 @@ export type {
 export const pricingApi = HttpApi.make('PricingApi')
   .addHttpApi(pricingFoundationApi)
   .addHttpApi(OwnerActionApprovalApi)
+  .annotate(HttpApi.HeadersParseOptions, { onExcessProperty: 'ignore' })
   // <generated-governed-http-api-additions>
   .addHttpApi(CommercialFeeDefinitionApi)
   .addHttpApi(CommercialFeeResultLookupApi)
@@ -121,8 +124,10 @@ export const pricingApi = HttpApi.make('PricingApi')
   .addHttpApi(ManageQuotationActionApi)
   .addHttpApi(ManageZeroFloorAuthorizationActionApi)
   .addHttpApi(PriceDefinitionApi)
+  .addHttpApi(PriceGroupSourcePricesApi)
   .addHttpApi(PriceResultLookupApi)
   .addHttpApi(PriceScheduleApi)
+  .addHttpApi(PriceSourceResultLookupApi)
   .addHttpApi(QuantityTierResultLookupApi)
   .addHttpApi(QuotationResultLookupApi)
   .addHttpApi(QuotationVerificationApi)
@@ -132,7 +137,6 @@ export const pricingApi = HttpApi.make('PricingApi')
   .addHttpApi(ZeroFloorAuthorizationResultLookupApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
-  .annotate(HttpApi.HeadersParseOptions, { onExcessProperty: 'ignore' })
   .pipe(identity);
 
 export const pricingOperationContexts = {

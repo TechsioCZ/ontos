@@ -4,6 +4,15 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint, OperationContextUnavailable } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
+import { requireAdmittedPartySourceReference } from '../services/party-client-source-evidence.service.ts';
+import {
+  withPartyClientSourceActionPayload,
+  withPartyClientSourcePrivacyRequirement,
+} from '../services/party-client-source-privacy.service.ts';
+import type {
+  OrganizationBusinessOnboardedSchema,
+  OrganizationBusinessOnboardFailure,
+} from '../services/organization-business-onboard.service.ts';
 
 import {
   CounterpartyCustomerOnboardPayloadSchema,
@@ -19,6 +28,7 @@ import {
   CounterpartyPersistenceUnavailable,
   CounterpartyRoleOverlap,
   CounterpartyScopeMismatch,
+  CounterpartyTemporalConflict,
 } from '../../shared/domain/counterparty-errors.ts';
 import {
   counterpartyContextEvidenceIsSufficient,
@@ -27,7 +37,15 @@ import {
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 import { OutboxPayloadSchema as CounterpartyCreatedEventSchema } from '../../shared/outbox/party-registry-counterparty-created-v1.ts';
 import { OutboxPayloadSchema as CounterpartyRoleAddedEventSchema } from '../../shared/outbox/party-registry-counterparty-role-added-v1.ts';
-import { onboardCounterpartyCustomerRecord } from '../services/counterparty-persistence.service.ts';
+import {
+  onboardCounterpartyCustomerSourceRecord,
+  SourceOnboardReplaySchema,
+} from '../services/party-source-lifecycle.service.ts';
+import { PartyEvidenceInsufficient, PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
+import type {
+  PartyEvidenceInsufficientError,
+  PartyPersistenceUnavailableError,
+} from '../../shared/domain/identity-contracts.ts';
 import type { CustomerOnboardResult as PersistenceResult } from '../services/counterparty-persistence.service.ts';
 import { createCounterpartyCustomerOnboardPartyRegistryCounterpartyCreatedV1OutboxMessage } from './counterparty-customer-onboard-party-registry-counterparty-created-v1.outbox-message.ts';
 import { createCounterpartyCustomerOnboardPartyRegistryCounterpartyRoleAddedV1OutboxMessage } from './counterparty-customer-onboard-party-registry-counterparty-role-added-v1.outbox-message.ts';
@@ -38,6 +56,8 @@ const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
 const COUNTERPARTY_RESOURCE_TYPE = 'party.registry.counterparty' as const;
 
 const CounterpartyCustomerOnboardError = Schema.Union([
+  PartyEvidenceInsufficient,
+  PartyPersistenceUnavailable,
   PartyAliasWriteRejected,
   CounterpartyEvidenceInsufficient,
   CounterpartyNotFound,
@@ -46,6 +66,7 @@ const CounterpartyCustomerOnboardError = Schema.Union([
   CounterpartyPersistenceUnavailable,
   CounterpartyRoleOverlap,
   CounterpartyScopeMismatch,
+  CounterpartyTemporalConflict,
 ]);
 
 type CounterpartyCustomerOnboardDomainEvents = Readonly<{
@@ -57,7 +78,13 @@ export interface CounterpartyCustomerOnboardServices {
   readonly onboard: (
     payload: CounterpartyCustomerOnboardPayload,
     context: ActionHandlerContext<CounterpartyCustomerOnboardDomainEvents, CounterpartyCustomerOnboardServices>,
-  ) => Effect.Effect<PersistenceResult, CounterpartyPersistenceUnavailable>;
+  ) => Effect.Effect<
+    PersistenceResult | typeof SourceOnboardReplaySchema.Type | typeof OrganizationBusinessOnboardedSchema.Type,
+    | CounterpartyPersistenceUnavailable
+    | PartyEvidenceInsufficientError
+    | PartyPersistenceUnavailableError
+    | OrganizationBusinessOnboardFailure
+  >;
 }
 
 const handleCounterpartyCustomerOnboard = Effect.fn('CounterpartyCustomerOnboardAction.handle')(function* handle(
@@ -80,7 +107,11 @@ const handleCounterpartyCustomerOnboard = Effect.fn('CounterpartyCustomerOnboard
       reason: 'The Party reference must belong to the trusted Tenant',
     });
   }
-  const result = yield* Match.value(yield* context.services.onboard(payload, context)).pipe(
+  const persisted = yield* context.services.onboard(payload, context);
+  const sourceReplayed = Schema.is(SourceOnboardReplaySchema)(persisted);
+  const result = yield* Match.value(persisted).pipe(
+    Match.tag('organization_business_onboarded', ({ result: minimalResult }) => Effect.succeed(minimalResult)),
+    Match.tag('source_onboard_replayed', ({ result: originalResult }) => Effect.succeed(originalResult)),
     Match.tag('party_alias', ({ aliasPartyRef, canonicalPartyRef }) =>
       Effect.fail(
         new PartyAliasWriteRejected({
@@ -127,7 +158,19 @@ const handleCounterpartyCustomerOnboard = Effect.fn('CounterpartyCustomerOnboard
         }),
       ),
     ),
-    Match.tag('onboarded', (onboarded) => Effect.succeed(onboarded)),
+    Match.tag('onboarded', (onboarded) =>
+      Effect.succeed({
+        counterpartyCreated: onboarded.counterpartyCreated,
+        counterpartyRef: onboarded.counterpartyRef,
+        legalEntityRef: onboarded.legalEntityRef,
+        partyRef: onboarded.partyRef,
+        rolePeriodCreated: onboarded.rolePeriodCreated,
+        rolePeriodRef: onboarded.role.rolePeriodRef,
+        roleType: 'CUSTOMER' as const,
+        validFrom: onboarded.role.validFrom,
+        validTo: onboarded.role.validTo,
+      }),
+    ),
     Match.exhaustive,
   );
   yield* context.recordAuditEvidence({
@@ -149,7 +192,7 @@ const handleCounterpartyCustomerOnboard = Effect.fn('CounterpartyCustomerOnboard
     targetResourceId: result.counterpartyRef.resourceId,
     targetResourceType: COUNTERPARTY_RESOURCE_TYPE,
   });
-  if (result.counterpartyCreated) {
+  if (!sourceReplayed && result.counterpartyCreated) {
     const eventPayload = {
       counterpartyRef: result.counterpartyRef,
       legalEntityRef: result.legalEntityRef,
@@ -168,13 +211,13 @@ const handleCounterpartyCustomerOnboard = Effect.fn('CounterpartyCustomerOnboard
       createCounterpartyCustomerOnboardPartyRegistryCounterpartyCreatedV1OutboxMessage(eventPayload),
     );
   }
-  if (result.rolePeriodCreated) {
+  if (!sourceReplayed && result.rolePeriodCreated) {
     const eventPayload = {
       counterpartyRef: result.counterpartyRef,
-      rolePeriodRef: result.role.rolePeriodRef,
-      roleType: result.role.roleType,
-      validFrom: result.role.validFrom,
-      validTo: result.role.validTo,
+      rolePeriodRef: result.rolePeriodRef,
+      roleType: result.roleType,
+      validFrom: result.validFrom,
+      validTo: result.validTo,
     } as const;
     const event = yield* context.addDomainEvent({
       eventType: 'party.registry.counterparty-role-added.v1',
@@ -189,17 +232,7 @@ const handleCounterpartyCustomerOnboard = Effect.fn('CounterpartyCustomerOnboard
       createCounterpartyCustomerOnboardPartyRegistryCounterpartyRoleAddedV1OutboxMessage(eventPayload),
     );
   }
-  return {
-    counterpartyCreated: result.counterpartyCreated,
-    counterpartyRef: result.counterpartyRef,
-    rolePeriodCreated: result.rolePeriodCreated,
-    legalEntityRef: result.legalEntityRef,
-    partyRef: result.partyRef,
-    rolePeriodRef: result.role.rolePeriodRef,
-    roleType: 'CUSTOMER' as const,
-    validFrom: result.role.validFrom,
-    validTo: result.role.validTo,
-  };
+  return result;
 });
 
 export const counterpartyCustomerOnboardAction = defineAction(
@@ -210,6 +243,10 @@ export const counterpartyCustomerOnboardAction = defineAction(
       subjectWorkloads: ['demo.crm.party-intake'],
       reason:
         'CRM reconciles owner-held client identities through native Party operations under its bound intake workload; humans retain existing rights.',
+    },
+    accessWorkload: {
+      workloads: ['party.registry.source-write'],
+      reason: 'Execute the enrolled client source occurrence through native Counterparty customer onboarding.',
     },
     accessDeclaration: {
       key: 'party.registry.counterparty.onboard',
@@ -262,19 +299,31 @@ export const counterpartyCustomerOnboardAction = defineAction(
         payload: CounterpartyCustomerOnboardPayload,
         context: ActionHandlerContext<CounterpartyCustomerOnboardDomainEvents, CounterpartyCustomerOnboardServices>,
       ) =>
-        onboardCounterpartyCustomerRecord(transaction, {
-          actionInvocationId: context.actionInvocationId,
-          counterpartyProvenance: payload.counterpartyProvenance,
-          customerEvidence: payload.customerEvidence,
-          legalEntityId,
-          partyId: payload.partyRef.resourceId,
-          policyVersion: 'counterparty-customer-onboard.v1',
-          principalId: context.scope.principalId,
-          provenance: payload.customerEvidence,
-          tenantId: context.scope.tenantId,
-          validFrom: payload.validFrom,
-          validTo: payload.validTo ?? null,
-        }),
+        requireAdmittedPartySourceReference(transaction, scope, payload.sourceReference).pipe(
+          Effect.andThen(
+            onboardCounterpartyCustomerSourceRecord(transaction, scope, payload, {
+              actionInvocationId: context.actionInvocationId,
+              counterpartyProvenance: payload.counterpartyProvenance,
+              customerEvidence: payload.customerEvidence,
+              legalEntityId,
+              partyId: payload.partyRef.resourceId,
+              policyVersion: 'counterparty-customer-onboard.v1',
+              principalId: context.scope.principalId,
+              provenance: payload.customerEvidence,
+              tenantId: context.scope.tenantId,
+              validFrom: payload.validFrom,
+              validTo: payload.validTo ?? null,
+            }),
+          ),
+          withPartyClientSourceActionPayload(
+            transaction,
+            scope,
+            'ONBOARD_COUNTERPARTY_CUSTOMER',
+            CounterpartyCustomerOnboardPayloadSchema,
+            payload,
+          ),
+          withPartyClientSourcePrivacyRequirement('party.registry.counterparty-customer-onboard'),
+        ),
     });
   },
 );

@@ -1,3 +1,4 @@
+import type { PrivacyDispatchLiveness } from './privacy-dispatch-liveness.ts';
 import { Context } from 'effect';
 import type { Effect } from 'effect';
 
@@ -60,6 +61,8 @@ export interface GateCarrier {
   readonly accessActor?: DeclaredAccessCarrier['accessActor'];
   readonly accessDeclaration?: DeclaredAccessCarrier['accessDeclaration'];
   readonly accessWorkload?: DeclaredAccessCarrier['accessWorkload'];
+  readonly entrypoint?: { readonly entrypointKey: string };
+  readonly schemaVersion?: string;
 }
 
 /** One enforcement question about one protected entrypoint. */
@@ -120,6 +123,7 @@ export interface AccessDecisionPorts {
   readonly legalEntities: AccessLegalEntityCandidates;
   /** The acting principal's `core.principals.kind`. */
   readonly principalKinds: AccessPrincipalKinds;
+  readonly privacyDispatchLiveness?: PrivacyDispatchLiveness;
   /**
    * The registered workload identities of the acting principal (O73). A composition that omits the
    * registry admits no workload at all: the seam answers UNAVAILABLE rather than guessing a binding.

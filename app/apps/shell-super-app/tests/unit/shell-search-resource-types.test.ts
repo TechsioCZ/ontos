@@ -2,8 +2,8 @@ import type { CoreSearchPresentationEntry, CoreSystemSearchPresentation } from '
 import { Schema } from 'effect';
 import { expect, test } from 'effect-rstest';
 
-import { LegalEntityIdSchema, ModuleIdSchema, ResourceIdSchema, TenantIdSchema } from '../../shared/api.ts';
-import type { ShellSearchResult } from '../../shared/api.ts';
+import { LegalEntityIdSchema, ModuleIdSchema, ResourceIdSchema, TenantIdSchema } from '../../shared/browser-api.ts';
+import type { ShellSearchResult } from '../../shared/browser-api.ts';
 import {
   ownerRecordTarget,
   recordAgendaPaths,

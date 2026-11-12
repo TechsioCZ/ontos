@@ -43,7 +43,7 @@ import { expect, it } from 'effect-rstest';
 
 import { AuthenticationService } from '../../api/auth/service.ts';
 import type { ShellContextResult } from '../../api/auth/service.ts';
-import { ShellAuthenticationApi, ShellSearchPayloadSchema } from '../../shared/api.ts';
+import { ShellAuthenticationApi, ShellSearchPayloadSchema } from '../../shared/browser-api.ts';
 import { issueShellSearchProviderAssertion, makeShellSearchNoStoreLayer, shellSearchHandler } from '../../api/index.ts';
 import { GatewayIssuer, makeGatewayIssuerLayer, ShellCryptoLive } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';

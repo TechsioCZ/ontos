@@ -5,7 +5,7 @@ import { beforeEach, expect, it, rstest } from 'effect-rstest';
 
 import { loader } from '../../../../src/routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/resource-page-model.ts';
 import { authenticatedShellFixture } from '../authenticated-shell-fixture.ts';
-import { ModuleIdSchema, ShellResourceResponseSchema } from '../../../../shared/api.ts';
+import { ModuleIdSchema, ShellResourceResponseSchema } from '../../../../shared/browser-api.ts';
 
 const { loadHomePageModelMock, resourceDetailMock } = rstest.hoisted(() => ({
   loadHomePageModelMock: rstest.fn(),

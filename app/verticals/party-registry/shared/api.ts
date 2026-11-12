@@ -11,6 +11,8 @@ import { Brand, identity } from 'effect';
 // <generated-governed-http-api-imports>
 import { AresLookupApi } from './apis/ares-lookup.ts';
 import { CounterpartiesSearchApi } from './apis/counterparties-search.ts';
+import { CounterpartyMigrationCorrelationApi } from './apis/counterparty-migration-correlation.ts';
+import { CounterpartyOrganizationIcoFactsApi } from './apis/counterparty-organization-ico-facts.ts';
 import { CounterpartyReadApi } from './apis/counterparty-read.ts';
 import { CounterpartyRoleHistoryApi } from './apis/counterparty-role-history.ts';
 import { CreateCrmClientPartyActionApi } from './apis/create-crm-client-party-action.ts';
@@ -19,8 +21,13 @@ import { CustomerListApi } from './apis/customer-list.ts';
 import { DuplicateCandidateDetailApi } from './apis/duplicate-candidate-detail.ts';
 import { DuplicateCandidateListApi } from './apis/duplicate-candidate-list.ts';
 import { ExecutePrivacyMeasureActionApi } from './apis/execute-privacy-measure-action.ts';
+import { FenceLegacyIcoAuthorityActionApi } from './apis/fence-legacy-ico-authority-action.ts';
 import { GuestPartyResolutionApi } from './apis/guest-party-resolution.ts';
+import { LegacyIcoInventoryApi } from './apis/legacy-ico-inventory.ts';
+import { OrganizationBusinessNameExportApi } from './apis/organization-business-name-export.ts';
 import { OrganizationEngagementProfileApi } from './apis/organization-engagement-profile.ts';
+import { OrganizationIcoFactsApi } from './apis/organization-ico-facts.ts';
+import { OrganizationRecordFactsApi } from './apis/organization-record-facts.ts';
 import { PartiesSearchApi } from './apis/parties-search.ts';
 import { PartyContactPointDetailApi } from './apis/party-contact-point-detail.ts';
 import { PartyContactPointsApi } from './apis/party-contact-points.ts';
@@ -32,9 +39,13 @@ import { PartyMergeReadinessApi } from './apis/party-merge-readiness.ts';
 import { PartyOfficialIdentifierDetailApi } from './apis/party-official-identifier-detail.ts';
 import { PartyOfficialIdentifierHistoryApi } from './apis/party-official-identifier-history.ts';
 import { PartyRelationshipDetailApi } from './apis/party-relationship-detail.ts';
+import { PartySourceEffectReceiptApi } from './apis/party-source-effect-receipt.ts';
 import { PersonEngagementProfileApi } from './apis/person-engagement-profile.ts';
 import { PrivacyMeasureExecutionApi } from './apis/privacy-measure-execution.ts';
 import { SearchLabelsApi } from './apis/search-labels.ts';
+import { SourceCounterpartyAdmissionApi } from './apis/source-counterparty-admission.ts';
+import { SourcePersonAdmissionApi } from './apis/source-person-admission.ts';
+import { SourceProfileExportApi } from './apis/source-profile-export.ts';
 // </generated-governed-http-api-imports>
 import { partyRegistryCommandRecoveryApi, partyRegistryCommandsApi } from './command-api.ts';
 import { organizationEngagementMutationApi, personEngagementMutationApi } from './engagement-profile-api.ts';
@@ -558,6 +569,8 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   // <generated-governed-http-api-additions>
   .addHttpApi(AresLookupApi)
   .addHttpApi(CounterpartiesSearchApi)
+  .addHttpApi(CounterpartyMigrationCorrelationApi)
+  .addHttpApi(CounterpartyOrganizationIcoFactsApi)
   .addHttpApi(CounterpartyReadApi)
   .addHttpApi(CounterpartyRoleHistoryApi)
   .addHttpApi(CreateCrmClientPartyActionApi)
@@ -566,8 +579,13 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(DuplicateCandidateDetailApi)
   .addHttpApi(DuplicateCandidateListApi)
   .addHttpApi(ExecutePrivacyMeasureActionApi)
+  .addHttpApi(FenceLegacyIcoAuthorityActionApi)
   .addHttpApi(GuestPartyResolutionApi)
+  .addHttpApi(LegacyIcoInventoryApi)
+  .addHttpApi(OrganizationBusinessNameExportApi)
   .addHttpApi(OrganizationEngagementProfileApi)
+  .addHttpApi(OrganizationIcoFactsApi)
+  .addHttpApi(OrganizationRecordFactsApi)
   .addHttpApi(PartiesSearchApi)
   .addHttpApi(PartyContactPointDetailApi)
   .addHttpApi(PartyContactPointsApi)
@@ -579,9 +597,13 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(PartyOfficialIdentifierDetailApi)
   .addHttpApi(PartyOfficialIdentifierHistoryApi)
   .addHttpApi(PartyRelationshipDetailApi)
+  .addHttpApi(PartySourceEffectReceiptApi)
   .addHttpApi(PersonEngagementProfileApi)
   .addHttpApi(PrivacyMeasureExecutionApi)
   .addHttpApi(SearchLabelsApi)
+  .addHttpApi(SourceCounterpartyAdmissionApi)
+  .addHttpApi(SourcePersonAdmissionApi)
+  .addHttpApi(SourceProfileExportApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);
@@ -685,3 +707,260 @@ export const partyRegistryApiContract = {
   ownerId: 'party-registry',
   readinessPath: '/party-registry-api/party-registry/readiness',
 } as const;
+
+export {
+  PartySourceContactResultSchema,
+  PartySourceEffectReceiptApi,
+  PartySourceEffectReceiptAuthenticationProblemSchema,
+  PartySourceEffectReceiptForbiddenProblemSchema,
+  PartySourceEffectReceiptInternalProblemSchema,
+  PartySourceEffectReceiptInvalidProblemSchema,
+  PartySourceEffectReceiptNotFoundProblemSchema,
+  PartySourceEffectReceiptPolicyConflictProblemSchema,
+  PartySourceEffectReceiptPolicyProblemSchema,
+  PartySourceEffectReceiptRequestSchema,
+  PartySourceEffectReceiptResponseSchema,
+  PartySourceEffectReceiptUnavailableProblemSchema,
+  PartySourceLifecycleInputSchema,
+  PartySourceUpdateReceiptResultSchema,
+} from './apis/party-source-effect-receipt.ts';
+export type {
+  PartySourceEffectReceiptRequest,
+  PartySourceEffectReceiptResponse,
+  PartySourceLifecycleInput,
+} from './apis/party-source-effect-receipt.ts';
+
+export {
+  CounterpartyMigrationCorrelationApi,
+  CounterpartyMigrationCorrelationAuthenticationProblemSchema,
+  CounterpartyMigrationCorrelationForbiddenProblemSchema,
+  CounterpartyMigrationCorrelationInternalProblemSchema,
+  CounterpartyMigrationCorrelationInvalidProblemSchema,
+  CounterpartyMigrationCorrelationNotFoundProblemSchema,
+  CounterpartyMigrationCorrelationPolicyConflictProblemSchema,
+  CounterpartyMigrationCorrelationPolicyProblemSchema,
+  CounterpartyMigrationCorrelationRequestSchema,
+  CounterpartyMigrationCorrelationResponseSchema,
+  CounterpartyMigrationCorrelationUnavailableProblemSchema,
+} from './apis/counterparty-migration-correlation.ts';
+export type {
+  CounterpartyMigrationCorrelationRequest,
+  CounterpartyMigrationCorrelationResponse,
+} from './apis/counterparty-migration-correlation.ts';
+
+export {
+  IcoCorrelationCoverageSchema,
+  IcoCorrelationEpochSchema,
+  IcoCorrelationWitnessSchema,
+  IcoCorrelationWitnessesSchema,
+  LegacyIcoInventoryApi,
+  LegacyIcoInventoryAssertionSchema,
+  LegacyIcoInventoryAuthenticationProblemSchema,
+  LegacyIcoInventoryForbiddenProblemSchema,
+  LegacyIcoInventoryInternalProblemSchema,
+  LegacyIcoInventoryInvalidProblemSchema,
+  LegacyIcoInventoryNotFoundProblemSchema,
+  LegacyIcoInventoryPolicyConflictProblemSchema,
+  LegacyIcoInventoryPolicyProblemSchema,
+  LegacyIcoInventoryRequestSchema,
+  LegacyIcoInventoryResponseSchema,
+  LegacyIcoInventoryUnavailableProblemSchema,
+} from './apis/legacy-ico-inventory.ts';
+export type {
+  IcoCorrelationWitness,
+  LegacyIcoInventoryAssertion,
+  LegacyIcoInventoryRequest,
+  LegacyIcoInventoryResponse,
+} from './apis/legacy-ico-inventory.ts';
+
+export {
+  ActionProposalAcceptedSchema,
+  FenceLegacyIcoAuthorityActionAlreadyCommittedProblemSchema,
+  FenceLegacyIcoAuthorityActionApi,
+  FenceLegacyIcoAuthorityActionAuthenticationProblemSchema,
+  FenceLegacyIcoAuthorityActionCommitIndeterminateProblemSchema,
+  FenceLegacyIcoAuthorityActionConflictProblemSchema,
+  FenceLegacyIcoAuthorityActionForbiddenProblemSchema,
+  FenceLegacyIcoAuthorityActionIneligibleProblemSchema,
+  FenceLegacyIcoAuthorityActionInternalProblemSchema,
+  FenceLegacyIcoAuthorityActionInvalidProblemSchema,
+  FenceLegacyIcoAuthorityActionNotFoundProblemSchema,
+  FenceLegacyIcoAuthorityActionPreconditionProblemSchema,
+  FenceLegacyIcoAuthorityActionSchemaErrorMiddleware,
+  FenceLegacyIcoAuthorityActionUnavailableProblemSchema,
+  FenceLegacyIcoAuthorityPayloadSchema,
+  fenceLegacyIcoAuthorityActionGroupDefinition,
+} from './apis/fence-legacy-ico-authority-action.ts';
+export type {
+  FenceLegacyIcoAuthorityActionGroupContract,
+  FenceLegacyIcoAuthorityActionProblem,
+} from './apis/fence-legacy-ico-authority-action.ts';
+
+export {
+  SourcePersonAdmissionApi,
+  SourcePersonAdmissionAuthenticationProblemSchema,
+  SourcePersonAdmissionForbiddenProblemSchema,
+  SourcePersonAdmissionInternalProblemSchema,
+  SourcePersonAdmissionInvalidProblemSchema,
+  SourcePersonAdmissionNotFoundProblemSchema,
+  SourcePersonAdmissionPolicyConflictProblemSchema,
+  SourcePersonAdmissionPolicyProblemSchema,
+  SourcePersonAdmissionReferenceSchema,
+  SourcePersonAdmissionRequestSchema,
+  SourcePersonAdmissionResponseSchema,
+  SourcePersonAdmissionUnavailableProblemSchema,
+} from './apis/source-person-admission.ts';
+export type { SourcePersonAdmissionRequest, SourcePersonAdmissionResponse } from './apis/source-person-admission.ts';
+
+export {
+  SourceProfileExportApi,
+  SourceProfileExportAuthenticationProblemSchema,
+  SourceProfileExportContactSchema,
+  SourceProfileExportForbiddenProblemSchema,
+  SourceProfileExportInternalProblemSchema,
+  SourceProfileExportInvalidProblemSchema,
+  SourceProfileExportNotFoundProblemSchema,
+  SourceProfileExportPolicyConflictProblemSchema,
+  SourceProfileExportPolicyProblemSchema,
+  SourceProfileExportRequestSchema,
+  SourceProfileExportResponseSchema,
+  SourceProfileExportUnavailableProblemSchema,
+} from './apis/source-profile-export.ts';
+export type {
+  SourceProfileExportContact,
+  SourceProfileExportRequest,
+  SourceProfileExportResponse,
+} from './apis/source-profile-export.ts';
+
+export {
+  SourceCounterpartyAdmissionApi,
+  SourceCounterpartyAdmissionAuthenticationProblemSchema,
+  SourceCounterpartyAdmissionForbiddenProblemSchema,
+  SourceCounterpartyAdmissionInternalProblemSchema,
+  SourceCounterpartyAdmissionInvalidProblemSchema,
+  SourceCounterpartyAdmissionNotFoundProblemSchema,
+  SourceCounterpartyAdmissionPolicyConflictProblemSchema,
+  SourceCounterpartyAdmissionPolicyProblemSchema,
+  SourceCounterpartyAdmissionRequestSchema,
+  SourceCounterpartyAdmissionResponseSchema,
+  SourceCounterpartyAdmissionUnavailableProblemSchema,
+} from './apis/source-counterparty-admission.ts';
+export type {
+  SourceCounterpartyAdmissionRequest,
+  SourceCounterpartyAdmissionResponse,
+} from './apis/source-counterparty-admission.ts';
+
+export {
+  OrganizationIcoFactsApi,
+  OrganizationIcoFactsAuthenticationProblemSchema,
+  OrganizationIcoFactsForbiddenProblemSchema,
+  OrganizationIcoFactsInternalProblemSchema,
+  OrganizationIcoFactsInvalidProblemSchema,
+  OrganizationIcoFactsNotFoundProblemSchema,
+  OrganizationIcoFactsPolicyConflictProblemSchema,
+  OrganizationIcoFactsPolicyProblemSchema,
+  OrganizationIcoFactsRequestSchema,
+  OrganizationIcoFactsResponseSchema,
+  OrganizationIcoFactsUnavailableProblemSchema,
+  OrganizationIcoFieldContractVersion,
+  OrganizationIcoProjectionFieldSchema,
+  OrganizationIcoProjectionFields,
+} from './apis/organization-ico-facts.ts';
+export type { OrganizationIcoFactsRequest, OrganizationIcoFactsResponse } from './apis/organization-ico-facts.ts';
+
+export {
+  CounterpartyOrganizationIcoFactsApi,
+  CounterpartyOrganizationIcoFactsAuthenticationProblemSchema,
+  CounterpartyOrganizationIcoFactsForbiddenProblemSchema,
+  CounterpartyOrganizationIcoFactsInternalProblemSchema,
+  CounterpartyOrganizationIcoFactsInvalidProblemSchema,
+  CounterpartyOrganizationIcoFactsNotFoundProblemSchema,
+  CounterpartyOrganizationIcoFactsPolicyConflictProblemSchema,
+  CounterpartyOrganizationIcoFactsPolicyProblemSchema,
+  CounterpartyOrganizationIcoFactsRequestSchema,
+  CounterpartyOrganizationIcoFactsResponseSchema,
+  CounterpartyOrganizationIcoFactsUnavailableProblemSchema,
+} from './apis/counterparty-organization-ico-facts.ts';
+export type {
+  CounterpartyOrganizationIcoFactsRequest,
+  CounterpartyOrganizationIcoFactsResponse,
+} from './apis/counterparty-organization-ico-facts.ts';
+
+export {
+  CurrentCanonicalOrganizationCustomerRecordFactsSchema,
+  CurrentOrganizationCustomerRecordFactsSchema,
+  CurrentOrganizationRecordFactsSchema,
+  OrganizationBusinessCorrectionFieldSchema,
+  OrganizationBusinessCorrectionFields,
+  OrganizationBusinessCorrectionInputSchema,
+  OrganizationBusinessCorrectionPolicyVersion,
+  OrganizationBusinessCorrectionReason,
+  OrganizationBusinessCounterpartyContextReason,
+  OrganizationBusinessCustomerRoleReason,
+  OrganizationBusinessEvidenceReadFieldSchema,
+  OrganizationBusinessEvidenceReadFields,
+  OrganizationBusinessOnboardFieldSchema,
+  OrganizationBusinessOnboardFields,
+  OrganizationBusinessOnboardInputSchema,
+  OrganizationBusinessOnboardTemplateProjectionVersion,
+  OrganizationBusinessOnboardTemplateSchema,
+  OrganizationBusinessPartyEffectReferenceSchema,
+  OrganizationBusinessPartyUpdatedSchema,
+  OrganizationBusinessRecordFieldSchema,
+  OrganizationBusinessRecordFieldsByOperation,
+  OrganizationBusinessRecordInputSchema,
+  OrganizationBusinessRecordProjectionVersion,
+  OrganizationBusinessSourceAssertionSchema,
+  OrganizationBusinessSourceCandidateSchema,
+  OrganizationBusinessSourceFieldSchema,
+  OrganizationBusinessSourceFields,
+  OrganizationBusinessSourceInputSchema,
+  OrganizationBusinessSourceProjectionVersion,
+  OrganizationBusinessSourceReferenceSchema,
+  OrganizationBusinessSourceStatement,
+  OrganizationBusinessUpdateFieldSchema,
+  OrganizationBusinessUpdateFields,
+  OrganizationBusinessUpdateInputSchema,
+  OrganizationRecordFactsApi,
+  OrganizationRecordFactsAuthenticationProblemSchema,
+  OrganizationRecordFactsForbiddenProblemSchema,
+  OrganizationRecordFactsInternalProblemSchema,
+  OrganizationRecordFactsInvalidProblemSchema,
+  OrganizationRecordFactsNotFoundProblemSchema,
+  OrganizationRecordFactsPolicyConflictProblemSchema,
+  OrganizationRecordFactsPolicyProblemSchema,
+  OrganizationRecordFactsRequestSchema,
+  OrganizationRecordFactsResponseSchema,
+  OrganizationRecordFactsUnavailableProblemSchema,
+  OrganizationSourceRecordSchema,
+  organizationBusinessOnboardTemplateDigest,
+  organizationBusinessRecordInputDigest,
+  organizationBusinessSourceInputDigest,
+} from './apis/organization-record-facts.ts';
+export type {
+  OrganizationBusinessSourceCandidate,
+  OrganizationBusinessSourceInput,
+  OrganizationRecordFactsRequest,
+  OrganizationRecordFactsResponse,
+} from './apis/organization-record-facts.ts';
+export {
+  OrganizationBusinessNameExportApi,
+  OrganizationBusinessNameExportAuthenticationProblemSchema,
+  OrganizationBusinessNameExportFieldSchema,
+  OrganizationBusinessNameExportFields,
+  OrganizationBusinessNameExportForbiddenProblemSchema,
+  OrganizationBusinessNameExportInternalProblemSchema,
+  OrganizationBusinessNameExportInvalidProblemSchema,
+  OrganizationBusinessNameExportNotFoundProblemSchema,
+  OrganizationBusinessNameExportPolicyConflictProblemSchema,
+  OrganizationBusinessNameExportPolicyProblemSchema,
+  OrganizationBusinessNameExportProjectionVersion,
+  OrganizationBusinessNameExportRequestSchema,
+  OrganizationBusinessNameExportResponseSchema,
+  OrganizationBusinessNameExportUnavailableProblemSchema,
+  organizationBusinessNameExportInputDigest,
+} from './apis/organization-business-name-export.ts';
+export type {
+  OrganizationBusinessNameExportRequest,
+  OrganizationBusinessNameExportResponse,
+} from './apis/organization-business-name-export.ts';

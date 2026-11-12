@@ -15,8 +15,13 @@ export const privacyRegistration = defineVerticalRuntimeRegistration({
       'current-consent': () => import('./src/api/current-consent-client.ts'),
       'dsr-cases': () => import('./src/api/dsr-cases-client.ts'),
       'legal-basis-assignments': () => import('./src/api/legal-basis-assignments-client.ts'),
+      'measure-execution-eligibility': () => import('./src/api/measure-execution-eligibility-client.ts'),
       'notice-presentation': () => import('./src/api/notice-presentation-client.ts'),
       'notice-versions': () => import('./src/api/notice-versions-client.ts'),
+      'organization-business-applicability': () => import('./src/api/organization-business-applicability-client.ts'),
+      'organization-ico-applicability': () => import('./src/api/organization-ico-applicability-client.ts'),
+      'organization-profile-ico-applicability': () =>
+        import('./src/api/organization-profile-ico-applicability-client.ts'),
       'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'owner-inventory': () => import('./src/api/owner-inventory-client.ts'),
       'privacy-subjects': () => import('./src/api/privacy-subjects-client.ts'),
@@ -25,6 +30,7 @@ export const privacyRegistration = defineVerticalRuntimeRegistration({
       'processing-purposes': () => import('./src/api/processing-purposes-client.ts'),
       'responsibility-assignments': () => import('./src/api/responsibility-assignments-client.ts'),
       'retention-rules': () => import('./src/api/retention-rules-client.ts'),
+      'source-processing-eligibility': () => import('./src/api/source-processing-eligibility-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {

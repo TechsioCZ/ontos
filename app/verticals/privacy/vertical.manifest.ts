@@ -26,6 +26,7 @@ export const privacyManifest: OntosModuleManifestInput = defineOntosModuleManife
     scope: 'tenant',
     supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],
   },
+  originatorActions: ['privacy.core.dispatch-privacy-measure'],
   publicSurface: {
     ...privacyRuntimeManifest.publicSurface,
     businessPermissions: [

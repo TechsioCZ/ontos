@@ -22,7 +22,7 @@ import type { Scope } from 'effect';
 import { Clock, Context, DateTime, Duration, Effect, Layer, Redacted } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 
-import { gatewayAssertionRedemptions } from '../database/schema.ts';
+import { inventoryGatewayAssertionRedemptions as gatewayAssertionRedemptions } from '../database/schema.ts';
 
 const inventoryGatewayAssertionRedemptionRelations = defineRelations({ gatewayAssertionRedemptions });
 

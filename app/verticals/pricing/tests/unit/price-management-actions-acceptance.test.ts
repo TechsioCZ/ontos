@@ -32,6 +32,7 @@ import {
 } from '../../src/actions/set-supported-currencies.action.ts';
 import { executePriceScheduleWithAuthorization } from '../../src/api/price-schedule-client.ts';
 import { readPriceResult, resolvePriceResultCommit } from '../../src/api/price-result-lookup.read.ts';
+import type { PriceActionCommitResolution } from '../../src/api/price-result-lookup.read.ts';
 import type { SetCurrencySupportCommand } from '../../src/persistence/currency-support-persistence.ts';
 import type {
   DefinePricePersistenceOutcome,
@@ -49,7 +50,7 @@ const lookupPriceResult = (
   input: Parameters<typeof readPriceResult>[0],
   trustedScope: Parameters<typeof resolvePriceResultCommit>[1],
   services: Parameters<typeof readPriceResult>[2] & {
-    readonly resolveCommit: Parameters<typeof resolvePriceResultCommit>[2];
+    readonly resolveCommit: (actionInvocationId: string) => Effect.Effect<PriceActionCommitResolution>;
   },
 ) =>
   resolvePriceResultCommit(input, trustedScope, services.resolveCommit).pipe(

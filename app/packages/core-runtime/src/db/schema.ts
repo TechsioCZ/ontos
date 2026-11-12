@@ -243,6 +243,69 @@ const principalId = (columnName = 'principal_id') => uuid(columnName).notNull();
 
 const optionalPrincipalId = (columnName = 'principal_id') => uuid(columnName);
 
+/** Owner-published enrollment changes serialize with the receiving Action's write. */
+export const sourceExecutionGates = enableCoreGovernedRls(
+  coreSchema.table(
+    'source_execution_gates',
+    {
+      tenantId: uuid('tenant_id').notNull(),
+      gateId: uuid('gate_id').notNull(),
+      ownerKey: text('owner_key').notNull(),
+      principalId: uuid('principal_id').notNull(),
+      legalEntityId: uuid('legal_entity_id'),
+      revision: text('revision').notNull(),
+      mappingVersion: text('mapping_version').notNull(),
+      epoch: uuid('epoch').notNull(),
+      active: boolean('active').notNull(),
+    },
+    (table) => [
+      primaryKey({ name: 'source_execution_gates_pk', columns: [table.tenantId, table.gateId] }),
+      foreignKey({
+        name: 'source_execution_gates_principal_scope_fk',
+        columns: [table.tenantId, table.principalId],
+        foreignColumns: [principals.tenantId, principals.principalId],
+      }),
+      foreignKey({
+        name: 'source_execution_gates_legal_entity_scope_fk',
+        columns: [table.tenantId, table.legalEntityId],
+        foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+      }),
+    ],
+  ),
+);
+
+/** Protected admission Actions fail closed until an enrollment is bound. */
+export const sourceExecutionGateActions = enableCoreGovernedRls(
+  coreSchema.table('source_execution_gate_actions', {
+    actionKey: text('action_key').primaryKey(),
+    ownerKey: text('owner_key').notNull(),
+  }),
+);
+
+/** Permanent admission tombstones serialize cancellation with remote owner effects. Only scoped trust routines mutate these. */
+export const sourceExecutionFences = enableCoreGovernedRls(
+  coreSchema.table(
+    'source_execution_fences',
+    {
+      tenantId: uuid('tenant_id').notNull(),
+      admissionInvocationId: uuid('admission_invocation_id').notNull(),
+      state: text('state').$type<'open' | 'cancelled'>().notNull(),
+      gateId: uuid('gate_id'),
+      gateEpoch: uuid('gate_epoch'),
+    },
+    (table) => [
+      primaryKey({ name: 'source_execution_fences_pk', columns: [table.tenantId, table.admissionInvocationId] }),
+      check('source_execution_fences_state_ck', sql`${table.state} in ('open', 'cancelled')`),
+      check('source_execution_fences_gate_pair_ck', sql`(${table.gateId} is null) = (${table.gateEpoch} is null)`),
+      foreignKey({
+        columns: [table.tenantId, table.gateId],
+        foreignColumns: [sourceExecutionGates.tenantId, sourceExecutionGates.gateId],
+        name: 'source_execution_fences_gate_fk',
+      }),
+    ],
+  ),
+);
+
 export const principalAuthBindings = enableCoreGovernedRls(
   coreSchema.table(
     'principal_auth_bindings',
@@ -1542,6 +1605,9 @@ export const CORE_TABLE_INVENTORY = [
   'agent_proposals',
   'legal_entity_navigation_exclusions',
   'oauth_connection_grants',
+  'source_execution_gates',
+  'source_execution_gate_actions',
+  'source_execution_fences',
   ...ACCESS_TABLE_INVENTORY,
 ] as const;
 
@@ -1579,6 +1645,9 @@ export const coreDatabaseSchema = {
   tenantModuleStates,
   tenants,
   workerCheckpoints,
+  sourceExecutionGates,
+  sourceExecutionGateActions,
+  sourceExecutionFences,
 } as const;
 
 export const CORE_TABLES = [
@@ -1611,6 +1680,9 @@ export const CORE_TABLES = [
   searchProjectionGenerations,
   searchProjectionRebuilds,
   workerCheckpoints,
+  sourceExecutionGates,
+  sourceExecutionGateActions,
+  sourceExecutionFences,
   ...ACCESS_TABLES,
   agentProposals,
   legalEntityNavigationExclusions,

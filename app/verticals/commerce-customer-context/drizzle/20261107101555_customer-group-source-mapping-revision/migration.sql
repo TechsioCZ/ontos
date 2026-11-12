@@ -1,0 +1,2 @@
+ALTER TABLE "commerce_customer_context"."customer_group_definition_source_routes" ADD COLUMN "mapping_revision" text;--> statement-breakpoint
+ALTER TABLE "commerce_customer_context"."customer_group_definition_source_routes" ADD CONSTRAINT "ccc_group_def_source_route_mapping_ck" CHECK ("mapping_revision" is null or ("mapping_revision" = btrim("mapping_revision") and length("mapping_revision") > 0));

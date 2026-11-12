@@ -4,6 +4,7 @@
 import { OwnerActionApprovalApi } from '@app/core-runtime/access/approvals/owner-api';
 import {
   defineOntosModuleManifest,
+  ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
   ShellPublicComponentContributionSchema,
@@ -11,8 +12,6 @@ import {
   ShellSearchContributionSchema,
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
-// <generated-module-manifest-imports>
-import { applicabilityBindingResourceDescriptor } from './shared/resources/applicability-binding.ts';
 import { assortmentBindingCreatePermission } from './shared/permissions/assortment-binding-create.ts';
 import { assortmentBindingEndPermission } from './shared/permissions/assortment-binding-end.ts';
 import { assortmentBoundaryCreatePermission } from './shared/permissions/assortment-boundary-create.ts';
@@ -22,8 +21,11 @@ import { assortmentDecisionExplainPermission } from './shared/permissions/assort
 import { assortmentRuleCreatePermission } from './shared/permissions/assortment-rule-create.ts';
 import { assortmentRuleRetirePermission } from './shared/permissions/assortment-rule-retire.ts';
 import { assortmentRuleRevisionCreatePermission } from './shared/permissions/assortment-rule-revision-create.ts';
+// <generated-module-manifest-imports>
+import { applicabilityBindingResourceDescriptor } from './shared/resources/applicability-binding.ts';
 import { closedAssortmentBoundaryResourceDescriptor } from './shared/resources/closed-assortment-boundary.ts';
 import { ConfigurationApi } from './shared/apis/configuration.ts';
+import { assortmentFixtureOwnerRequirements } from './src/adapters/assortment-fixture-owner-currentness.ts';
 import { createApplicabilityBindingAction } from './src/actions/create-applicability-binding.action.ts';
 import { createClosedAssortmentBoundaryAction } from './src/actions/create-closed-assortment-boundary.action.ts';
 import { createRuleAction } from './src/actions/create-rule.action.ts';
@@ -32,6 +34,8 @@ import { DecisionExplanationApi } from './shared/apis/decision-explanation.ts';
 import { decisionSetProofResourceDescriptor } from './shared/resources/decision-set-proof.ts';
 import { endApplicabilityBindingAction } from './src/actions/end-applicability-binding.action.ts';
 import { endClosedAssortmentBoundaryAction } from './src/actions/end-closed-assortment-boundary.action.ts';
+import { ImportSymmyRuleActionApi } from './shared/apis/import-symmy-rule-action.ts';
+import { importSymmyRuleAction } from './src/actions/import-symmy-rule.action.ts';
 import { issueAssortmentCommitmentConfirmationAction } from './src/actions/issue-assortment-commitment-confirmation.action.ts';
 import { PurchaseApi } from './shared/apis/purchase.ts';
 import { replaceApplicabilityBindingAction } from './src/actions/replace-applicability-binding.action.ts';
@@ -83,6 +87,7 @@ export const assortmentManifest = defineOntosModuleManifest({
       createRuleRevisionAction,
       endApplicabilityBindingAction,
       endClosedAssortmentBoundaryAction,
+      importSymmyRuleAction,
       issueAssortmentCommitmentConfirmationAction,
       replaceApplicabilityBindingAction,
       replaceClosedAssortmentBoundaryAction,
@@ -93,6 +98,7 @@ export const assortmentManifest = defineOntosModuleManifest({
       // <generated-module-manifest-apis>
       configuration: ConfigurationApi,
       'decision-explanation': DecisionExplanationApi,
+      'import-symmy-rule-action': ImportSymmyRuleActionApi,
       'owner-action-approvals': OwnerActionApprovalApi,
       purchase: PurchaseApi,
       visibility: VisibilityApi,
@@ -117,6 +123,15 @@ export const assortmentManifest = defineOntosModuleManifest({
     },
     events: [],
     mcp: assortmentMcpContribution,
+    operationContracts: [
+      // <generated-module-manifest-operation-contracts>
+      {
+        apiKey: 'import-symmy-rule-action',
+        operationKey: 'importSymmyRuleAction.execute',
+        registration: importSymmyRuleAction,
+      },
+      // </generated-module-manifest-operation-contracts>
+    ],
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>
@@ -159,5 +174,11 @@ export const assortmentManifest = defineOntosModuleManifest({
       ],
       timelines: [],
     },
+  },
+  requirements: {
+    coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
+    intrinsic: [],
+    operations: assortmentFixtureOwnerRequirements,
+    schemaVersion: '1',
   },
 });

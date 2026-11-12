@@ -110,6 +110,19 @@ const compositionPublicationLockRows = (
  * admission and evidence writes execute normally; this does not prove native PostgreSQL or RLS.
  * The caller owns its Effect scope. Permissions and owner authorization default to denied.
  */
+/** Read and write admissions select only the fence columns; matching also reads the approved subscriptions. */
+const COMPOSITION_FENCE_SUBSCRIPTIONS: ReadonlyMap<string, { readonly subscriptionsJson: readonly never[] | null }> =
+  new Map([
+    [
+      'select "phase", "revision", null, "valid_until" > clock_timestamp() from "core"."application_composition_authority" where "core"."application_composition_authority"."authority_key" = $1',
+      { subscriptionsJson: null },
+    ],
+    [
+      'select "phase", "revision", "subscriptions_json", "valid_until" > clock_timestamp() from "core"."application_composition_authority" where "core"."application_composition_authority"."authority_key" = $1',
+      { subscriptionsJson: [] },
+    ],
+  ]);
+
 export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* makeReadTestHarness(
   options: ReadTestHarnessOptions,
 ) {
@@ -146,23 +159,23 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       if (/^(?:begin|commit|rollback|savepoint|release savepoint)(?:\s|$)/u.test(text)) {
         return [];
       }
+      if (text === 'select current_user::text as role') {
+        return [{ role: connection.role }];
+      }
       const publicationLock = compositionPublicationLockRows(text, params);
       if (Option.isSome(publicationLock)) {
         return yield* publicationLock.value;
       }
-      // Read and write admissions (the unlocked precheck and the locked fence) select only the fence columns;
-      // matching also reads the approved subscriptions.
-      if (
-        text ===
-        'select "phase", "revision", null, "valid_until" > clock_timestamp() from "core"."application_composition_authority" where "core"."application_composition_authority"."authority_key" = $1'
-      ) {
-        return [{ phase: 'active', revision: options.compositionRevision, subscriptionsJson: null, unexpired: true }];
-      }
-      if (
-        text ===
-        'select "phase", "revision", "subscriptions_json", "valid_until" > clock_timestamp() from "core"."application_composition_authority" where "core"."application_composition_authority"."authority_key" = $1'
-      ) {
-        return [{ phase: 'active', revision: options.compositionRevision, subscriptionsJson: [], unexpired: true }];
+      const fence = COMPOSITION_FENCE_SUBSCRIPTIONS.get(text);
+      if (fence !== undefined) {
+        return [
+          {
+            phase: 'active',
+            revision: options.compositionRevision,
+            subscriptionsJson: fence.subscriptionsJson,
+            unexpired: true,
+          },
+        ];
       }
       if (text === "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)") {
         [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(params).pipe(

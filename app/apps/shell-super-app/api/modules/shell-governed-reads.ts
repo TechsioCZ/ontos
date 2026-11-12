@@ -31,7 +31,7 @@ import {
   ShellResourceResponseSchema,
   ShellSearchPayloadSchema,
   ShellSearchResponseSchema,
-} from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
 import type {
   ResourceRef,
   ResolvedModuleTarget,
@@ -39,7 +39,7 @@ import type {
   ShellResourceResponse,
   ShellSearchPayload,
   ShellSearchResponse,
-} from '../../shared/api.ts';
+} from '../../shared/browser-api.ts';
 import { capturedShellCatalog } from './captured-shell-catalog.ts';
 import type { ShellInstalledCatalog } from './installed-module-catalog.ts';
 import { ShellGovernedReadDefinitions } from './shell-governed-read-definitions.ts';

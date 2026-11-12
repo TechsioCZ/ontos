@@ -190,6 +190,9 @@ const makeFixtureTransactionExecutor = (role: string) => {
       const query = new PgDialect().sqlToQuery(statement);
       // Statements run when the Effect is run, not when the Core builds it, so a verify that is built
       // before the install reads the settings the install has written by then.
+      if (query.sql === 'select current_user::text as role') {
+        return Effect.succeed([{ role: fixtureRuntimeRole }]);
+      }
       if (query.sql.includes('set_config(')) {
         const [tenantId, legalEntityId] = query.params;
         return Effect.sync(() => {

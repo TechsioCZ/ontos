@@ -250,19 +250,26 @@ const configurationSourceForScope = (
             },
           };
         }
+        const canonicalFixture = row.fixtureScopeVersion === 'C14_CANONICAL_V1';
         const commercialScope = {
           channelRef: ref('commerce.channel.channel', row.channelResourceId, tenant, 'commerce.channel'),
-          sellingLegalEntityRef: ref('party.registry.legal-entity', legalEntityId, tenant, PARTY_REGISTRY_MODULE_ID),
+          sellingLegalEntityRef: canonicalFixture
+            ? ref('core.identity.legal-entity', legalEntityId, tenant, 'core.identity')
+            : ref('party.registry.legal-entity', legalEntityId, tenant, PARTY_REGISTRY_MODULE_ID),
           ...(row.marketResourceId !== null && {
-            commerceMarketRef: ref('commerce.market.market', row.marketResourceId, tenant, 'commerce.market'),
+            commerceMarketRef: canonicalFixture
+              ? ref('commerce.market-catalog.market', row.marketResourceId, tenant, 'commerce.market-catalog')
+              : ref('commerce.market.market', row.marketResourceId, tenant, 'commerce.market'),
           }),
           ...(row.storefrontResourceId !== null && {
-            storefrontRef: ref(
-              'commerce.storefront.storefront',
-              row.storefrontResourceId,
-              tenant,
-              'commerce.storefront',
-            ),
+            storefrontRef: canonicalFixture
+              ? ref(
+                  'commerce.storefront-registry.storefront-application',
+                  row.storefrontResourceId,
+                  tenant,
+                  'commerce.storefront-registry',
+                )
+              : ref('commerce.storefront.storefront', row.storefrontResourceId, tenant, 'commerce.storefront'),
           }),
         };
         const ends = yield* transaction

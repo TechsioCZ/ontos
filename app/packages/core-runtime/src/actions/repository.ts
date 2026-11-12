@@ -1,3 +1,4 @@
+import { readVerifiedGatewayRecovery } from '../auth/system-principal-context-provenance.ts';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
@@ -48,7 +49,7 @@ export interface ActionRequestHashInput {
   readonly actionKey: string;
   readonly normalizedPayload: unknown;
   readonly owningModuleKey: string;
-  readonly principal: TrustedPrincipalContext;
+  readonly principal: Pick<TrustedPrincipalContext, 'legalEntityId' | 'principalId' | 'tenantId'>;
   readonly schemaVersion: string;
   readonly target: Pick<ActionTransportMetadata, 'targetModuleKey' | 'targetResourceId' | 'targetResourceType'>;
 }
@@ -58,6 +59,7 @@ type CanonicalValue =
   | readonly ['bigint', string]
   | readonly ['boolean', boolean]
   | readonly ['date', string]
+  | readonly ['dateTimeUtc', string]
   | readonly ['null']
   | readonly ['number', string]
   | readonly ['object', readonly (readonly [string, CanonicalValue])[]]
@@ -145,6 +147,9 @@ const normalizeForHash = <Value>(value: Value, seen: WeakSet<object>): Canonical
   }
   if (Predicate.isBigInt(value)) {
     return ['bigint', value.toString(10)];
+  }
+  if (DateTime.isDateTime(value) && DateTime.isUtc(value)) {
+    return ['dateTimeUtc', DateTime.formatIso(value)];
   }
   if (Predicate.isDate(value)) {
     return ['date', value.toISOString()];
@@ -498,9 +503,18 @@ export const recoverSqlTransactionError = <A, E, R>(
 const resolveInvocation: ActionRepositoryService['resolveInvocation'] = (executor, input) => {
   const failureReason = 'Unable to resolve the Action invocation commit state';
   const hasInvocationId = input.invocationId !== undefined;
+  const recovery = readVerifiedGatewayRecovery(input.principal);
+  if (recovery !== undefined && input.invocationId !== recovery.originalActionInvocationId) {
+    return Effect.fail(
+      new ActionInvocationNotFound({
+        code: 'action_invocation_not_found',
+        reason: 'The Action invocation does not match the exact recovery authority',
+      }),
+    );
+  }
   return executor
-    .transaction((transaction) =>
-      transaction
+    .transaction((transaction) => {
+      const query = transaction
         .select({ ...invocationSelection, actionKey: actionInvocations.actionKey })
         .from(actionInvocations)
         .where(
@@ -515,25 +529,32 @@ const resolveInvocation: ActionRepositoryService['resolveInvocation'] = (executo
               ? isNull(actionInvocations.legalEntityId)
               : eq(actionInvocations.legalEntityId, input.principal.legalEntityId),
             eq(actionInvocations.tenantId, input.principal.tenantId),
-            eq(actionInvocations.principalId, input.principal.principalId),
+            eq(actionInvocations.principalId, recovery?.originalPrincipalId ?? input.principal.principalId),
+            ...(recovery === undefined
+              ? []
+              : [
+                  eq(actionInvocations.actionKey, recovery.originalActionKey),
+                  eq(actionInvocations.requestHash, recovery.originalRequestHash),
+                  eq(actionInvocations.idempotencyKey, recovery.originalIdempotencyKey),
+                  eq(actionInvocations.authContextRef, recovery.originalAuthContextRef),
+                ]),
           ),
         )
-        .for('update')
-        .limit(1)
-        .pipe(
-          Effect.mapError((cause) => persistenceFailure(failureReason, cause)),
-          Effect.flatMap(([invocation]) =>
-            invocation === undefined
-              ? Effect.fail(
-                  new ActionInvocationNotFound({
-                    code: 'action_invocation_not_found',
-                    reason: 'The Action invocation does not exist in this principal scope',
-                  }),
-                )
-              : Effect.succeed(invocation),
-          ),
+        .limit(1);
+      return (recovery === undefined ? query.for('update') : query).pipe(
+        Effect.mapError((cause) => persistenceFailure(failureReason, cause)),
+        Effect.flatMap(([invocation]) =>
+          invocation === undefined
+            ? Effect.fail(
+                new ActionInvocationNotFound({
+                  code: 'action_invocation_not_found',
+                  reason: 'The Action invocation does not exist in this principal scope',
+                }),
+              )
+            : Effect.succeed(invocation),
         ),
-    )
+      );
+    })
     .pipe(
       recoverSqlTransactionError,
       Effect.catchTags({
@@ -627,7 +648,7 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
     function* lockInvocationEffect(transaction: CoreTransaction, invocationId: string) {
       const failureReason = 'Unable to lock the Action invocation';
       const rows = yield* transaction
-        .select(invocationSelection)
+        .select({ ...invocationSelection, actionKey: actionInvocations.actionKey })
         .from(actionInvocations)
         .where(eq(actionInvocations.actionInvocationId, invocationId))
         .for('update')
@@ -803,7 +824,7 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
       transaction: CoreTransaction,
     ) {
       const rows = yield* transaction
-        .select(invocationSelection)
+        .select({ ...invocationSelection, actionKey: actionInvocations.actionKey })
         .from(actionInvocations)
         .where(eq(actionInvocations.actionInvocationId, input.actionInvocationId))
         .for('update')

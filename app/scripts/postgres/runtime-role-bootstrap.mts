@@ -295,6 +295,9 @@ export const grantSharedRuntimeRole = (
             return;
           }
           const role = quoteIdentifier(entry.identity.role);
+          if (grant.table === 'assortment.gateway_assertion_redemptions') {
+            yield* query(client, `grant usage on schema assortment to ${role}`);
+          }
           yield* query(client, `revoke all on table ${qualifiedRelation(grant.table)} from public, ${role}`);
           yield* grantExactTable(client, role, grant);
         }),

@@ -1,7 +1,7 @@
 import type { GatewayContextResponse } from '@app/shared-contracts';
 import { Clock, Deferred, Effect, MutableRef, Option } from 'effect';
 
-import { shellAuthenticationApiContract } from '../../shared/api.ts';
+import { shellAuthenticationApiContract } from '../../shared/browser-api.ts';
 import { DOCUMENT_GATEWAY_AUDIENCE_LIMIT } from '../../shared/document-gateway-api.ts';
 import type { DocumentGatewayAssertion } from '../../shared/document-gateway-api.ts';
 import { issueDocumentGatewayContexts } from '../api/auth-client.ts';

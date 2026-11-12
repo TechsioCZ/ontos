@@ -3,6 +3,12 @@ import { Predicate } from 'effect';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import type { PrincipalContextProvenance } from './system-principal-context-provenance.ts';
 
+export interface PrincipalContextProvenanceCarrier {
+  readonly authMethod: TrustedPrincipalContext['authMethod'];
+  readonly principalId: string;
+  readonly tenantId: string;
+}
+
 const provenanceProperty = '__ontosCorePrincipalContextProvenance';
 
 /**
@@ -20,7 +26,7 @@ class PrincipalContextProvenanceSeal {
     Object.freeze(this);
   }
 
-  static read(carrier: TrustedPrincipalContext): PrincipalContextProvenance | undefined {
+  static read(carrier: PrincipalContextProvenanceCarrier): PrincipalContextProvenance | undefined {
     const seal: unknown = Object.getOwnPropertyDescriptor(carrier, provenanceProperty)?.value;
     return Predicate.isObject(seal) && #provenance in seal && seal.#carrier === carrier ? seal.#provenance : undefined;
   }
@@ -38,5 +44,5 @@ export const sealPrincipalContextProvenance = (
 
 /** Returns the provenance sealed on this exact carrier, if any. */
 export const readPrincipalContextProvenanceSeal = (
-  carrier: TrustedPrincipalContext,
+  carrier: PrincipalContextProvenanceCarrier,
 ): PrincipalContextProvenance | undefined => PrincipalContextProvenanceSeal.read(carrier);

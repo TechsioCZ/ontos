@@ -152,12 +152,18 @@ const writePinnedEffectApi = (root: string, slug: string): Effect.Effect<void, u
     yield* write(
       root,
       `verticals/${slug}/shared/api.ts`,
-      `export const fixtureApi = HttpApi.make('FixtureApi').add(HttpApiGroup.make('fixture'));\n`,
+      `import { HttpApi, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
+export const fixtureApi = HttpApi.make('FixtureApi').add(HttpApiGroup.make('fixture'));
+`,
     );
     yield* write(
       root,
       `verticals/${slug}/api/index.ts`,
-      `const fixtureLayer = HttpApiBuilder.group(fixtureApi, 'fixture', handlers => handlers);
+      `import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
+import type { EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
+import { fixtureApi } from '../shared/api.ts';
+
+const fixtureLayer = HttpApiBuilder.group(fixtureApi, 'fixture', handlers => handlers);
 const layer = HttpApiBuilder.layer(fixtureApi).pipe(
   Layer.provide(fixtureLayer),
 ) satisfies EffectRuntimeLayer;
@@ -1335,7 +1341,8 @@ it.live(
   Effect.fn(function* mergedScenario5() {
     yield* withFixture(
       Effect.fn(function* mergedScenario4(root) {
-        const source = `// export const commentApi = HttpApi.make('Comment');
+        const source = `import { HttpApi } from '@modern-js/bff-effect/effect-client';
+// export const commentApi = HttpApi.make('Comment');
 const example = "export const stringApi = HttpApi.make('String');";
 export const fixtureApi = HttpApi.make('Fixture;Api')
   /* semicolon ; before the end of the expression */
@@ -1366,7 +1373,12 @@ it.live(
         yield* write(
           root,
           PROPERTY_RUNTIME_PATH,
-          `const layer = HttpApiBuilder.layer(fixtureApi).pipe(
+          `import { defineEffectBff, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import type { EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
+import { identity } from 'effect';
+import { fixtureApi } from '../shared/api.ts';
+
+const layer = HttpApiBuilder.layer(fixtureApi).pipe(
   identity,
 ) satisfies EffectRuntimeLayer;
 export default defineEffectBff({ api: fixtureApi, layer });
@@ -1484,7 +1496,9 @@ it.live(
       Effect.fn(function* invalidAssemblerFixture(root) {
         const sharedPath = PROPERTY_API_PATH;
         const runtimePath = PROPERTY_RUNTIME_PATH;
-        const shared = "export const fixtureApi = HttpApi.make('FixtureApi');\n";
+        const shared = `import { HttpApi } from '@modern-js/bff-effect/effect-client';
+export const fixtureApi = HttpApi.make('FixtureApi');
+`;
         const runtime = `
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';

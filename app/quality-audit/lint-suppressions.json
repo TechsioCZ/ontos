@@ -1,6 +1,6 @@
 {
   "rules": {
-    "anti-slop-effect/no-service-constructor-imports": 39,
+    "anti-slop-effect/no-service-constructor-imports": 35,
     "anti-slop/no-chained-type-assertions": 13,
     "anti-slop/no-conditional-empty-object-spread": 11,
     "anti-slop/no-known-value-widening": 6,
@@ -74,7 +74,7 @@
     "react-doctor/js-combine-iterations": 1,
     "sonarjs/no-built-in-override": 1,
     "sonarjs/no-duplicate-string": 17,
-    "sonarjs/no-nested-functions": 37,
+    "sonarjs/no-nested-functions": 38,
     "sonarjs/no-undefined-assignment": 5,
     "sonarjs/no-wildcard-import": 18,
     "sonarjs/too-many-break-or-continue-in-loop": 2,

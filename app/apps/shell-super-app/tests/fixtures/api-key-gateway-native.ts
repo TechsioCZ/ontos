@@ -12,22 +12,36 @@ import {
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
-import { GatewayContextRequestSchema, GatewayContextResponseSchema } from '@app/shared-contracts';
+import {
+  GatewayContextRequestSchema,
+  GatewayContextResponseSchema,
+  GatewayAuthenticationRequiredProblemSchema,
+  GatewayAudienceInvalidProblemSchema,
+  GatewayReloadRequiredProblemSchema,
+  GatewayForbiddenProblemSchema,
+  GatewayRateLimitedProblemSchema,
+  GatewayUnavailableProblemSchema,
+  GatewayInternalProblemSchema,
+} from '@app/shared-contracts';
 import { NodeHttpServer, NodeSocketServer } from '@effect/platform-node';
 import {
   Context,
+  Config,
+  Clock,
   Crypto,
   Duration,
   Effect,
   FileSystem,
   Layer,
   Option,
+  Predicate,
   Path,
   Queue,
   Deferred,
   Redacted,
   Ref,
   Schema,
+  Semaphore,
   Stream,
 } from 'effect';
 import { ChildProcess } from 'effect/process';
@@ -35,8 +49,18 @@ import { Socket } from 'effect/socket';
 import { HttpServer, HttpServerResponse } from 'effect/http';
 import { exportJWK, generateKeyPair } from 'jose';
 
+import { readCompiledNodeShellIdentity } from '../../../../scripts/ontos-shell-runtime-contract.ts';
 import { OwnedAuthRuntimeContract, OwnedAuthRuntimeContractLive } from '../support/api-key-gateway-auth-runtime.ts';
 import type { ShellNativeOwnedDatabase } from '../support/api-key-gateway-auth-runtime.ts';
+import { allocateLoopbackPort, startCompiledSymmyShell } from '../support/server-owner-relay-native-fixture.ts';
+import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-policy.ts';
+import { GatewayIssuerError } from '../../api/auth/gateway-issuer.ts';
+import { ShellGatewayReleaseDiagnosticSchema } from '../../api/auth/gateway-release-diagnostic.ts';
+import { SwitchLegalEntityPayloadSchema } from '../../shared/browser-api.ts';
+import { SymmyRegionsProjectionConfigurationSchema } from '../../api/symmy/regions-projection.ts';
+import { SymmyPriceReadProjectionConfigurationSchema } from '../../api/symmy/source-read-projections.ts';
+
+export { SymmyPriceReadProjectionConfigurationSchema } from '../../api/symmy/source-read-projections.ts';
 
 export class ApiKeyGatewayNativeFixtureError extends Schema.TaggedError<ApiKeyGatewayNativeFixtureError>()(
   'ApiKeyGatewayNativeFixtureError',
@@ -48,53 +72,309 @@ const unavailable = (cause?: unknown) =>
     reason: 'The scoped Shell gateway test fixture is unavailable',
   });
 const appRoot = new URL('../../../../', import.meta.url).pathname;
+const sourceIssueTag = 'relay-source-issue';
+const sourceBoundTag = 'relay-source-bound';
+const sessionGatewayTag = 'session-gateway';
+const gatewayDiagnosticsTag = 'gateway-diagnostics';
+const issuerDiagnosticsTag = 'issuer-diagnostics';
+const requestDiagnosticsTag = 'request-diagnostics';
+const releaseDiagnosticsTag = 'release-diagnostics';
+const marketAppId = 'commerce-market-catalog';
+const customerContextAppId = 'commerce-customer-context';
 export interface ApiKeyGatewayNativeFixtureOptions {
+  readonly additionalRelaySources?: readonly Pick<
+    typeof ShellNativeAdditionalRelaySourceSchema.Type,
+    'registeredWorkloads' | 'sourceAppId'
+  >[];
   readonly ownedDatabase: ShellNativeOwnedDatabase;
-  readonly relaySource?: { readonly sourceAppId: typeof ShellNativeRelaySourceSchema.Type.sourceAppId };
+  readonly priceReadProjectionJson?: string;
+  /** Exercise the actual Core/SpiceDB gate and both production Shell prefixes. */
+  readonly productionGate?: true;
+  readonly regionsProjectionJson?: string;
+  readonly relaySource?: Pick<typeof ShellNativeRelaySourceSchema.Type, 'registeredWorkloads' | 'sourceAppId'>;
   readonly snapshotJson: string;
 }
 export const ShellNativeRelaySourceSchema = Schema.Struct({
   compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
-  sourceAppId: Schema.Literals(['commerce-customer-context', 'commerce-market-catalog']),
+  registeredWorkloads: GatewayModuleBindingSchema.fields.registeredWorkloads,
+  sourceAppId: Schema.Literals([customerContextAppId, marketAppId, 'symmy-integration']),
   sourceBuildMarker: Schema.String.check(Schema.isMinLength(1)),
 });
+export const ShellNativeModuleAppIdSchema = Schema.Literals([
+  'assortment',
+  'party-registry',
+  customerContextAppId,
+  'privacy',
+  'symmy-integration',
+  'pricing',
+  'price-group-catalog',
+  'catalog',
+  marketAppId,
+]);
+export const ShellNativeAdditionalRelaySourceSchema = Schema.Struct({
+  ...ShellNativeRelaySourceSchema.fields,
+  sourceAppId: ShellNativeModuleAppIdSchema,
+});
+const additionalProviderUserSchema = Schema.Struct({
+  providerUserId: ProviderSubjectIdSchema,
+  sourceAppId: ShellNativeModuleAppIdSchema,
+});
 export const ShellNativeChildReadySchema = Schema.Struct({
+  additionalRelaySourceProviderUsers: Schema.optionalKey(Schema.Array(additionalProviderUserSchema)),
   baseUrl: Schema.String,
   providerUserId: ProviderSubjectIdSchema,
   relaySourceProviderUserId: Schema.optionalKey(ProviderSubjectIdSchema),
 });
+export const ShellNativeStartupStageSchema = Schema.Literals([
+  'entry',
+  'connecting_private_channel',
+  'loading_database',
+  'creating_authentication',
+  'creating_provider_users',
+  'composing_runtime',
+  'binding_server',
+  'publishing_readiness',
+  'ready',
+  'awaiting_module_bindings',
+  'typed_failure',
+  'defect',
+]);
+export const ShellNativeStartupEventSchema = Schema.Struct({ stage: ShellNativeStartupStageSchema });
 export const ShellNativeIssueCommandSchema = Schema.TaggedStruct('issue', {
+  issuerPrincipalId: Schema.optionalKey(PrincipalIdSchema),
   principalId: PrincipalIdSchema,
   tenantId: TenantIdSchema,
 });
-export const ShellNativeSessionGatewayCommandSchema = Schema.TaggedStruct('session-gateway', {
+export const ShellNativeSessionGatewayCommandSchema = Schema.TaggedStruct(sessionGatewayTag, {
   request: GatewayContextRequestSchema,
 });
-export const ShellNativeSessionGatewayResponseSchema = Schema.TaggedStruct('session-gateway', {
+export const ShellNativeSessionGatewayResponseSchema = Schema.TaggedStruct(sessionGatewayTag, {
+  gateway: GatewayContextResponseSchema,
+});
+export const ShellNativeTenantSetupGatewayRequestSchema = Schema.Struct({
+  audience: Schema.Literals(['catalog', 'pricing']),
+});
+export const ShellNativeSetupGatewayRequestSchema = Schema.Union([
+  ShellNativeTenantSetupGatewayRequestSchema,
+  Schema.Struct({
+    audience: Schema.Literals([marketAppId, 'privacy', 'party-registry', customerContextAppId]),
+    legalEntityId: SwitchLegalEntityPayloadSchema.fields.legalEntityId,
+  }),
+]);
+export const ShellNativeSetupKeyIssueCommandSchema = Schema.TaggedStruct('setup-key-issue', {});
+export const ShellNativeSetupKeyBoundCommandSchema = Schema.TaggedStruct('setup-key-bound', {});
+export const ShellNativeSetupKeyIssuedResponseSchema = Schema.TaggedStruct('setup-key-issued', {
+  providerKeyId: ProviderSubjectIdSchema,
+});
+export const ShellNativeTenantSetupGatewayCommandSchema = Schema.TaggedStruct('tenant-setup-gateway', {
+  request: Schema.Struct({
+    ...ShellNativeTenantSetupGatewayRequestSchema.fields,
+    compositionRevision: GatewayContextRequestSchema.fields.compositionRevision,
+  }),
+});
+export const ShellNativeSetupGatewayResponseSchema = Schema.TaggedStruct('setup-gateway', {
   gateway: GatewayContextResponseSchema,
 });
 export const ShellNativeBoundCommandSchema = Schema.TaggedStruct('bound', {});
-export const ShellNativeRelaySourceIssueCommandSchema = Schema.TaggedStruct('relay-source-issue', {
+export const ShellNativeRelaySourceIssueCommandSchema = Schema.TaggedStruct(sourceIssueTag, {
+  issuerPrincipalId: Schema.optionalKey(PrincipalIdSchema),
   principalId: PrincipalIdSchema,
   tenantId: TenantIdSchema,
 });
-export const ShellNativeRelaySourceBoundCommandSchema = Schema.TaggedStruct('relay-source-bound', {});
+export const ShellNativeRelaySourceBoundCommandSchema = Schema.TaggedStruct(sourceBoundTag, {});
+export const ShellNativeModuleSourceIssueCommandSchema = Schema.TaggedStruct('module-source-issue', {
+  issuerPrincipalId: Schema.optionalKey(PrincipalIdSchema),
+  principalId: PrincipalIdSchema,
+  sourceAppId: ShellNativeModuleAppIdSchema,
+  tenantId: TenantIdSchema,
+});
+export const ShellNativeModuleSourceBoundCommandSchema = Schema.TaggedStruct('module-source-bound', {
+  sourceAppId: ShellNativeModuleAppIdSchema,
+});
+export const ShellNativeGatewayProblemSchema = Schema.Union([
+  GatewayAuthenticationRequiredProblemSchema,
+  GatewayAudienceInvalidProblemSchema,
+  GatewayReloadRequiredProblemSchema,
+  GatewayForbiddenProblemSchema,
+  GatewayRateLimitedProblemSchema,
+  GatewayUnavailableProblemSchema,
+  GatewayInternalProblemSchema,
+]);
+export const ShellNativeGatewayDiagnosticSchema = Schema.Struct({
+  problem: Schema.Union([
+    Schema.Literal('success'),
+    Schema.Literal('unclassified'),
+    ...ShellNativeGatewayProblemSchema.members.map((problem) => problem.fields._tag),
+  ]),
+  status: Schema.Int.check(Schema.isGreaterThanOrEqualTo(100), Schema.isLessThanOrEqualTo(599)),
+});
+export const ShellNativeGatewayDiagnosticsCommandSchema = Schema.TaggedStruct(gatewayDiagnosticsTag, {});
+export const ShellNativeGatewayDiagnosticsResponseSchema = Schema.TaggedStruct(gatewayDiagnosticsTag, {
+  outcomes: Schema.Array(ShellNativeGatewayDiagnosticSchema).check(Schema.isMaxLength(32)),
+});
+export const ShellNativeIssuerCauseTagSchema = Schema.Literals([
+  'InstalledModuleCatalogUnavailableError',
+  'InstalledModuleCatalogInvalidError',
+  'ActiveApplicationCompositionUnavailableError',
+  'ActiveApplicationCompositionSourceReadError',
+  'ApplicationCompositionValidationError',
+  'GatewayIssuerConfigError',
+  'GatewayScopeGrantUnavailableError',
+  'SchemaError',
+  'SqlError',
+  'SqlTransactionError',
+  'UnknownException',
+  'HttpClientError',
+  'RequestError',
+  'ResponseError',
+  'ConfigError',
+  'other',
+]);
+export const ShellNativeIssuerDiagnosticSchema = Schema.Struct({
+  audience: Schema.Union([ShellNativeModuleAppIdSchema, Schema.Literal('other')]),
+  code: Schema.optionalKey(GatewayIssuerError.fields.code),
+  failureCauseTag: Schema.optionalKey(ShellNativeIssuerCauseTagSchema),
+  nestedCauseTag: Schema.optionalKey(ShellNativeIssuerCauseTagSchema),
+  outcome: Schema.Literals(['success', 'audience', 'clock', 'configuration', 'principal', 'scope_grant', 'signing']),
+});
+const issuerCauseTag = (cause: unknown) => {
+  if (cause === undefined) {
+    return null;
+  }
+  return Predicate.hasProperty(cause, '_tag') && Schema.is(ShellNativeIssuerCauseTagSchema)(cause._tag)
+    ? cause._tag
+    : 'other';
+};
+interface ShellNativeIssuerCauseTags {
+  failureCauseTag?: typeof ShellNativeIssuerCauseTagSchema.Type;
+  nestedCauseTag?: typeof ShellNativeIssuerCauseTagSchema.Type;
+}
+export const describeShellNativeIssuerFailure = (failure: GatewayIssuerError) => {
+  const failureCauseTag = issuerCauseTag(failure.failureCause);
+  const nestedCauseTag = Predicate.hasProperty(failure.failureCause, 'cause')
+    ? issuerCauseTag(failure.failureCause.cause)
+    : null;
+  const tags: ShellNativeIssuerCauseTags = {};
+  if (failureCauseTag !== null) {
+    tags.failureCauseTag = failureCauseTag;
+  }
+  if (nestedCauseTag !== null) {
+    tags.nestedCauseTag = nestedCauseTag;
+  }
+  return {
+    code: failure.code,
+    ...tags,
+    outcome: failure.stage,
+  };
+};
+export const ShellNativeIssuerDiagnosticsCommandSchema = Schema.TaggedStruct(issuerDiagnosticsTag, {});
+export const ShellNativeIssuerDiagnosticsResponseSchema = Schema.TaggedStruct(issuerDiagnosticsTag, {
+  outcomes: Schema.Array(ShellNativeIssuerDiagnosticSchema).check(Schema.isMaxLength(32)),
+});
+export const ShellNativeRequestDiagnosticSchema = Schema.Struct({
+  elapsedMillis: Schema.Int.check(Schema.isBetween({ maximum: 60_000, minimum: 0 })),
+  phase: Schema.Literals(['dispatch_started', 'dispatch_completed', 'dispatch_failed', 'dispatch_timeout']),
+  status: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ maximum: 599, minimum: 100 }))),
+  surface: Schema.Literals(['symmy', 'gateway', 'other']),
+});
+export const ShellNativeRequestDiagnosticsCommandSchema = Schema.TaggedStruct(requestDiagnosticsTag, {});
+export const ShellNativeRequestDiagnosticsResponseSchema = Schema.TaggedStruct(requestDiagnosticsTag, {
+  outcomes: Schema.Array(ShellNativeRequestDiagnosticSchema).check(Schema.isMaxLength(32)),
+});
+export const ShellNativeReleaseDiagnosticSchema = Schema.Struct({
+  reason: ShellGatewayReleaseDiagnosticSchema,
+  stage: Schema.Literal('release'),
+});
+export const ShellNativeReleaseDiagnosticsCommandSchema = Schema.TaggedStruct(releaseDiagnosticsTag, {});
+export const ShellNativeReleaseDiagnosticsResponseSchema = Schema.TaggedStruct(releaseDiagnosticsTag, {
+  outcomes: Schema.Array(ShellNativeReleaseDiagnosticSchema).check(Schema.isMaxLength(32)),
+});
+const appendRequestOutcome = Effect.fn('ShellNativeFixture.recordRequestPhase')(function* recordRequestPhase(
+  outcomes: Ref.Ref<readonly (typeof ShellNativeRequestDiagnosticSchema.Type)[]>,
+  surface: typeof ShellNativeRequestDiagnosticSchema.Type.surface,
+  started: number,
+  phase: typeof ShellNativeRequestDiagnosticSchema.Type.phase,
+  status?: number,
+) {
+  const elapsedMillis = Math.min(60_000, Math.max(0, Math.round((yield* Clock.currentTimeMillis) - started)));
+  const outcome = status === undefined ? { elapsedMillis, phase, surface } : { elapsedMillis, phase, status, surface };
+  yield* Ref.update(outcomes, (previous) => [...previous, outcome].slice(-32));
+});
+
+export const observeShellNativeRequestDispatch = Effect.fn('ShellNativeFixture.observeRequestDispatch')(
+  function* observeRequestDispatch<DispatchFailure, TimeoutFailure>(
+    dispatch: Effect.Effect<Response, DispatchFailure>,
+    onTimeout: Effect.Effect<never, TimeoutFailure>,
+    outcomes: Ref.Ref<readonly (typeof ShellNativeRequestDiagnosticSchema.Type)[]>,
+    surface: typeof ShellNativeRequestDiagnosticSchema.Type.surface,
+  ) {
+    const started = yield* Clock.currentTimeMillis;
+    yield* appendRequestOutcome(outcomes, surface, started, 'dispatch_started');
+    return yield* dispatch.pipe(
+      Effect.tapError(() => appendRequestOutcome(outcomes, surface, started, 'dispatch_failed')),
+      Effect.timeoutOrElse({
+        duration: Duration.seconds(20),
+        orElse: () =>
+          appendRequestOutcome(outcomes, surface, started, 'dispatch_timeout').pipe(Effect.andThen(onTimeout)),
+      }),
+      Effect.tap((response) => appendRequestOutcome(outcomes, surface, started, 'dispatch_completed', response.status)),
+    );
+  },
+);
+
 export const ShellNativeChildCommandSchema = Schema.Union([
   ShellNativeIssueCommandSchema,
   ShellNativeSessionGatewayCommandSchema,
   ShellNativeBoundCommandSchema,
   ShellNativeRelaySourceIssueCommandSchema,
   ShellNativeRelaySourceBoundCommandSchema,
+  ShellNativeModuleSourceIssueCommandSchema,
+  ShellNativeModuleSourceBoundCommandSchema,
+  ShellNativeGatewayDiagnosticsCommandSchema,
+  ShellNativeIssuerDiagnosticsCommandSchema,
+  ShellNativeRequestDiagnosticsCommandSchema,
+  ShellNativeReleaseDiagnosticsCommandSchema,
+  ShellNativeSetupKeyIssueCommandSchema,
+  ShellNativeSetupKeyBoundCommandSchema,
+  ShellNativeTenantSetupGatewayCommandSchema,
   Schema.TaggedStruct('enabled', { enabled: Schema.Boolean }),
 ]);
 export const ShellNativeIssuedResponseSchema = Schema.TaggedStruct('issued', {
   providerKeyId: ProviderSubjectIdSchema,
   secret: Schema.String,
 });
-export const ShellNativeUnavailableResponseSchema = Schema.TaggedStruct('unavailable', {});
+export const ShellNativeSafeFailureSchema = Schema.Union([
+  Schema.Literals([
+    'ShellNativeChildUnavailable',
+    'InvalidCredentialsError',
+    'AuthenticationUnavailableError',
+    'PrincipalBindingMissingError',
+    'PrincipalBindingAmbiguousError',
+    'PrincipalInactiveError',
+    'TenantInactiveError',
+    'PrincipalResolutionUnavailableError',
+    'SqlError',
+    'SchemaError',
+    'ApiKeyCredentialInvalidError',
+    'ApiKeyProviderUnavailableError',
+    'ApiKeyRateLimitedError',
+    'ApiKeyStateInconsistentError',
+    'unclassified',
+  ]),
+  ...ShellNativeGatewayProblemSchema.members.map((problem) => problem.fields._tag),
+]);
+export const ShellNativeUnavailableResponseSchema = Schema.TaggedStruct('unavailable', {
+  failure: Schema.optionalKey(ShellNativeSafeFailureSchema),
+});
 export const ShellNativeChildResponseSchema = Schema.Union([
   ShellNativeIssuedResponseSchema,
   ShellNativeSessionGatewayResponseSchema,
+  ShellNativeGatewayDiagnosticsResponseSchema,
+  ShellNativeIssuerDiagnosticsResponseSchema,
+  ShellNativeRequestDiagnosticsResponseSchema,
+  ShellNativeReleaseDiagnosticsResponseSchema,
+  ShellNativeSetupKeyIssuedResponseSchema,
+  ShellNativeSetupGatewayResponseSchema,
   Schema.TaggedStruct('ack', {}),
   ShellNativeUnavailableResponseSchema,
 ]);
@@ -111,29 +391,85 @@ const requestTimeout = Effect.timeoutOrElse({
   duration: Duration.seconds(20),
   orElse: () => Effect.fail(unavailable()),
 });
+interface FixtureProviderKeyTarget extends Pick<TrustedPrincipalContext, 'principalId' | 'tenantId'> {
+  readonly issuerPrincipalId?: TrustedPrincipalContext['principalId'];
+}
+
+/** Only the child receives this schema-checked owner configuration. */
+export const decodeShellNativeRegionsEnvironment = Effect.fn('ShellNativeFixture.regionsEnvironment')(
+  function* decodeShellNativeRegionsEnvironment(regionsProjectionJson?: string) {
+    if (regionsProjectionJson === undefined) {
+      return {};
+    }
+    const configuration = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(SymmyRegionsProjectionConfigurationSchema),
+      { onExcessProperty: 'error' },
+    )(regionsProjectionJson).pipe(Effect.mapError(unavailable));
+    return {
+      ONTOS_SYMMY_REGIONS_PROJECTION: yield* Schema.encodeEffect(
+        Schema.fromJsonString(SymmyRegionsProjectionConfigurationSchema),
+      )(configuration).pipe(Effect.mapError(unavailable)),
+    };
+  },
+);
+export const decodeShellNativePriceReadEnvironment = Effect.fn('ShellNativeFixture.priceReadEnvironment')(
+  function* decodeShellNativePriceReadEnvironment(priceReadProjectionJson?: string) {
+    if (priceReadProjectionJson === undefined) {
+      return {};
+    }
+    const configuration = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(SymmyPriceReadProjectionConfigurationSchema),
+      { onExcessProperty: 'error' },
+    )(priceReadProjectionJson).pipe(Effect.mapError(unavailable));
+    return {
+      ONTOS_SYMMY_PRICE_READ_SOURCES: yield* Schema.encodeEffect(
+        Schema.fromJsonString(SymmyPriceReadProjectionConfigurationSchema),
+      )(configuration).pipe(Effect.mapError(unavailable)),
+    };
+  },
+);
+
 export { makeCompositionSnapshot as makeApiKeyGatewayNativeComposition } from './application-composition.ts';
 
-const bundleChild = Effect.fn('ApiKeyGatewayNativeFixture.bundle')(function* bundleChild() {
+export const resolveShellFixtureRelease = Effect.fn('ApiKeyGatewayNativeFixture.resolveRelease')(
+  function* resolveShellFixtureRelease() {
+    const filesystem = yield* FileSystem.FileSystem;
+    const generated = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          deliveryUnit: Schema.Struct({
+            buildMarker: Schema.String,
+            unitId: Schema.String.pipe(Schema.brand('UltramodernDeliveryUnitId')),
+          }),
+        }),
+      ),
+    )(yield* filesystem.readFileString(new URL('../../shared/ultramodern-build.json', import.meta.url).pathname));
+    return yield* Effect.try({
+      catch: unavailable,
+      try: () =>
+        resolveUltramodernReleaseIdentity({
+          generationBuildMarker: generated.deliveryUnit.buildMarker,
+          unitId: generated.deliveryUnit.unitId,
+          workspaceRoot: appRoot,
+        }),
+    });
+  },
+);
+
+const bundleChild = Effect.fn('ApiKeyGatewayNativeFixture.bundle')(function* bundleChild(expectedBuildMarker: string) {
   const filesystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const generated = yield* Schema.decodeUnknownEffect(
-    Schema.fromJsonString(
-      Schema.Struct({
-        deliveryUnit: Schema.Struct({
-          buildMarker: Schema.String,
-          unitId: Schema.String.pipe(Schema.brand('UltramodernDeliveryUnitId')),
-        }),
-      }),
-    ),
-  )(yield* filesystem.readFileString(new URL('../../shared/ultramodern-build.json', import.meta.url).pathname));
-  const identity = yield* Effect.try({
-    catch: unavailable,
-    try: () =>
-      resolveUltramodernReleaseIdentity({
-        generationBuildMarker: generated.deliveryUnit.buildMarker,
-        unitId: generated.deliveryUnit.unitId,
-        workspaceRoot: appRoot,
-      }),
+  const release = yield* resolveShellFixtureRelease();
+  const compiled =
+    release.sourceRevision === 'workspace' && release.buildMarker !== expectedBuildMarker
+      ? yield* readCompiledNodeShellIdentity(`${appRoot}apps/shell-super-app`).pipe(Effect.mapError(unavailable))
+      : Option.none();
+  const identity = Option.match(compiled, {
+    onNone: () => release,
+    onSome: (candidate) =>
+      candidate.sourceRevision === release.sourceRevision && candidate.buildMarker === expectedBuildMarker
+        ? candidate
+        : release,
   });
   const cache = new URL('../../node_modules/.cache/ontos-1250/', import.meta.url).pathname;
   yield* filesystem.makeDirectory(cache, { recursive: true });
@@ -156,7 +492,7 @@ const bundleChild = Effect.fn('ApiKeyGatewayNativeFixture.bundle')(function* bun
       `--define:ULTRAMODERN_SOURCE_REVISION=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(identity.sourceRevision)}`,
       `--outfile=${artifact}`,
     ],
-    { cwd: appRoot, stderr: 'pipe', stdout: 'pipe' },
+    { cwd: appRoot, forceKillAfter: Duration.seconds(3), stderr: 'pipe', stdout: 'pipe' },
   );
   const [exit] = yield* Effect.all([bundle.exitCode, Stream.runDrain(bundle.stdout), Stream.runDrain(bundle.stderr)], {
     concurrency: 3,
@@ -167,6 +503,7 @@ const bundleChild = Effect.fn('ApiKeyGatewayNativeFixture.bundle')(function* bun
   const description = yield* ChildProcess.make(process.execPath, [artifact, '--describe'], {
     cwd: appRoot,
     extendEnv: true,
+    forceKillAfter: Duration.seconds(3),
     stderr: 'pipe',
     stdin: 'ignore',
     stdout: 'pipe',
@@ -223,6 +560,7 @@ const migrateAuth = Effect.fn('ApiKeyGatewayNativeFixture.migrateAuth')(function
         ONTOS_1250_AUTH_SCHEMA: new URL('../../api/auth/db/schema.ts', import.meta.url).pathname,
       },
       extendEnv: true,
+      forceKillAfter: Duration.seconds(3),
       stderr: 'pipe',
       stdout: 'pipe',
     },
@@ -253,6 +591,7 @@ export const openShellNativePrivateChannel = Effect.fn('ShellNativePrivateChanne
     const failure = yield* Deferred.make<never, ApiKeyGatewayNativeFixtureError>();
     const connected = yield* Ref.make(false);
     const closing = yield* Ref.make(false);
+    const exchangeGate = yield* Semaphore.make(1);
     const close = Ref.set(closing, true).pipe(Effect.andThen(Deferred.fail(failure, unavailable())), Effect.asVoid);
     yield* Effect.forkScoped(
       server
@@ -300,7 +639,9 @@ export const openShellNativePrivateChannel = Effect.fn('ShellNativePrivateChanne
         if (yield* Ref.get(closing)) {
           return yield* unavailable();
         }
-        const line = yield* Schema.decodeUnknownEffect(ShellNativeChildCommandSchema)(command).pipe(
+        const line = yield* Schema.decodeUnknownEffect(ShellNativeChildCommandSchema, { onExcessProperty: 'error' })(
+          command,
+        ).pipe(
           Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(ShellNativeChildCommandSchema))),
           Effect.mapError(unavailable),
         );
@@ -309,10 +650,58 @@ export const openShellNativePrivateChannel = Effect.fn('ShellNativePrivateChanne
           yield* output.write(`${line}\n`).pipe(Effect.mapError(unavailable));
           return yield* Queue.take(responses);
         });
-        return yield* Effect.raceFirst(send, Deferred.await(failure)).pipe(requestTimeout);
+        return yield* Semaphore.withPermits(
+          exchangeGate,
+          1,
+        )(Effect.raceFirst(send, Deferred.await(failure))).pipe(
+          requestTimeout,
+          Effect.tapError((error) => Deferred.fail(failure, error)),
+        );
       }),
       socketPath,
     });
+  },
+);
+
+const resolveAdditionalRelaySources = Effect.fn('ApiKeyGatewayNativeFixture.resolveAdditionalRelaySources')(
+  function* resolveAdditionalRelaySources(
+    options: ApiKeyGatewayNativeFixtureOptions,
+    snapshot: typeof ActiveApplicationCompositionSnapshotSchema.Type,
+  ) {
+    const additionalInputs = yield* Schema.decodeUnknownEffect(
+      Schema.Array(
+        Schema.Struct({
+          registeredWorkloads: ShellNativeAdditionalRelaySourceSchema.fields.registeredWorkloads,
+          sourceAppId: ShellNativeModuleAppIdSchema,
+        }),
+      ),
+      { onExcessProperty: 'error' },
+    )(options.additionalRelaySources ?? []).pipe(Effect.mapError(unavailable));
+    if (
+      additionalInputs.length > 0 &&
+      (options.productionGate !== true ||
+        options.relaySource === undefined ||
+        new Set([...additionalInputs.map(({ sourceAppId }) => sourceAppId), options.relaySource.sourceAppId]).size !==
+          additionalInputs.length + 1)
+    ) {
+      return yield* unavailable();
+    }
+    return yield* Effect.forEach(
+      additionalInputs,
+      (input) => {
+        const sourceRelease = snapshot.composition.modules.find(
+          ({ deployment }) => deployment.appId === input.sourceAppId,
+        )?.deployment;
+        return sourceRelease === undefined
+          ? Effect.fail(unavailable())
+          : Effect.succeed({
+              ...input,
+              compositionRevision: snapshot.composition.revision,
+              sourceBuildMarker: sourceRelease.buildMarker,
+            });
+      },
+      { concurrency: 1 },
+    );
   },
 );
 
@@ -330,7 +719,10 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
       Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
     )(options.snapshotJson).pipe(Effect.mapError(unavailable));
     yield* validateActiveApplicationCompositionSnapshot(snapshot).pipe(Effect.mapError(unavailable));
-    const { artifact, receiverDeployment } = yield* bundleChild();
+    const regionsEnvironment = yield* decodeShellNativeRegionsEnvironment(options.regionsProjectionJson);
+    const priceReadEnvironment = yield* decodeShellNativePriceReadEnvironment(options.priceReadProjectionJson);
+    const additionalRelaySources = yield* resolveAdditionalRelaySources(options, snapshot);
+    const { artifact, receiverDeployment } = yield* bundleChild(snapshot.composition.shell.deployment.buildMarker);
     if (
       snapshot.composition.shell.deployment.appId !== receiverDeployment.appId ||
       snapshot.composition.shell.deployment.buildMarker !== receiverDeployment.buildMarker
@@ -346,11 +738,11 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
       return yield* unavailable();
     }
     const relaySource: typeof ShellNativeRelaySourceSchema.Type | undefined =
-      sourceDeployment === undefined
+      sourceDeployment === undefined || options.relaySource === undefined
         ? undefined
         : {
             compositionRevision: snapshot.composition.revision,
-            sourceAppId: 'commerce-market-catalog',
+            ...options.relaySource,
             sourceBuildMarker: sourceDeployment.buildMarker,
           };
     const authRuntime = Context.get(
@@ -359,7 +751,11 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
       ),
       OwnedAuthRuntimeContract,
     );
-    yield* migrateAuth(Redacted.value(authRuntime.adminConnectionString));
+    // A schema-only native clone already includes Auth objects, while its migration journal contains no rows.
+    // Existing objects must pass establish's exact inventory checks instead of replaying CREATE SCHEMA.
+    if (yield* authRuntime.needsMigration().pipe(Effect.mapError(unavailable))) {
+      yield* migrateAuth(Redacted.value(authRuntime.adminConnectionString));
+    }
     yield* authRuntime.establish().pipe(Effect.mapError(unavailable));
     const crypto = yield* Crypto.Crypto;
     const suffix = yield* crypto.randomUUIDv4();
@@ -402,24 +798,45 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
     );
     const privateChannel = yield* openShellNativePrivateChannel();
     yield* authRuntime.assertCurrent().pipe(Effect.mapError(unavailable));
+    const childEnvironment = {
+      ...priceReadEnvironment,
+      ...regionsEnvironment,
+      BETTER_AUTH_SECRET: secret,
+      // The Shell's MCP resource accepts only HTTPS or a loopback development origin.
+      BETTER_AUTH_URL: 'http://localhost',
+      DATABASE_ADMIN_URL: Redacted.value(authRuntime.adminConnectionString),
+      DATABASE_URL: Redacted.value(authRuntime.runtimeConnectionString),
+      ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: sourceUrl,
+      ONTOS_GATEWAY_ISSUER: issuer,
+      ONTOS_GATEWAY_MODULE_BINDINGS: '[]',
+      ONTOS_GATEWAY_PRIVATE_JWK: privateJwk,
+      ONTOS_GATEWAY_PUBLIC_JWKS: publicJwks,
+      ONTOS_SHELL_NATIVE_ADDITIONAL_RELAY_SOURCES: yield* Schema.encodeEffect(
+        Schema.fromJsonString(Schema.Array(ShellNativeAdditionalRelaySourceSchema)),
+      )(additionalRelaySources),
+      ONTOS_SHELL_NATIVE_PRODUCTION_GATE: options.productionGate === true ? 'true' : 'false',
+      ONTOS_SHELL_NATIVE_RELAY_SOURCE: yield* Schema.encodeEffect(
+        Schema.fromJsonString(Schema.OptionFromNullOr(ShellNativeRelaySourceSchema)),
+      )(relaySource === undefined ? Option.none() : Option.some(relaySource)),
+      ONTOS_SHELL_NATIVE_SOCKET: privateChannel.socketPath,
+    };
+    const issuerConnectionString =
+      options.productionGate === true
+        ? yield* Config.schema(Schema.URLFromString, 'SHELL_GATEWAY_ISSUER_DATABASE_URL').pipe(
+            Effect.map((url) => {
+              url.pathname = new URL(pair.runtime.connectionString).pathname;
+              return url.href;
+            }),
+          )
+        : undefined;
+    const effectiveEnvironment =
+      issuerConnectionString === undefined
+        ? childEnvironment
+        : { ...childEnvironment, SHELL_GATEWAY_ISSUER_DATABASE_URL: issuerConnectionString };
     const child = yield* ChildProcess.make(process.execPath, [artifact], {
       cwd: appRoot,
-      env: {
-        BETTER_AUTH_SECRET: secret,
-        // The Shell's MCP resource accepts only HTTPS or a loopback development origin.
-        BETTER_AUTH_URL: 'http://localhost',
-        DATABASE_ADMIN_URL: Redacted.value(authRuntime.adminConnectionString),
-        DATABASE_URL: Redacted.value(authRuntime.runtimeConnectionString),
-        ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: sourceUrl,
-        ONTOS_GATEWAY_ISSUER: issuer,
-        ONTOS_GATEWAY_MODULE_BINDINGS: '[]',
-        ONTOS_GATEWAY_PRIVATE_JWK: privateJwk,
-        ONTOS_GATEWAY_PUBLIC_JWKS: publicJwks,
-        ONTOS_SHELL_NATIVE_RELAY_SOURCE: yield* Schema.encodeEffect(
-          Schema.fromJsonString(Schema.OptionFromNullOr(ShellNativeRelaySourceSchema)),
-        )(relaySource === undefined ? Option.none() : Option.some(relaySource)),
-        ONTOS_SHELL_NATIVE_SOCKET: privateChannel.socketPath,
-      },
+      env: effectiveEnvironment,
+      forceKillAfter: Duration.seconds(3),
       // Inherit the configured native runner's TLS permission environment; every DB/auth destination above is owned.
       extendEnv: true,
       stderr: 'pipe',
@@ -428,8 +845,63 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
     });
     // Register after the process: mark intentional disposal before process/socket finalizers run.
     yield* Effect.addFinalizer(() => privateChannel.close);
-    yield* Effect.forkScoped(Stream.runDrain(child.stderr));
-    const line = yield* child.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runHead, requestTimeout);
+    const latestStage = yield* Ref.make<string>('spawning');
+    const childFailure = yield* Ref.make<string>('none');
+    const observedFailures = new Set<string>();
+    yield* Effect.forkScoped(
+      child.stderr.pipe(
+        Stream.decodeText(),
+        Stream.splitLines,
+        Stream.runForEach((line) =>
+          Schema.decodeUnknownEffect(Schema.fromJsonString(ShellNativeStartupEventSchema), {
+            onExcessProperty: 'error',
+          })(line.slice(0, 2048)).pipe(
+            Effect.flatMap(({ stage }) =>
+              Ref.set(latestStage, stage).pipe(
+                Effect.andThen(Effect.logInfo('Shell native fixture startup', { stage })),
+              ),
+            ),
+            Effect.catch(() => {
+              const classification = [
+                'ERR_MODULE_NOT_FOUND',
+                'ERR_PACKAGE_PATH_NOT_EXPORTED',
+                'SyntaxError',
+                'TypeError',
+                'ECONNREFUSED',
+                'ETIMEDOUT',
+              ].find((name) => line.includes(name));
+              if (classification === undefined || observedFailures.has(classification)) {
+                return Effect.void;
+              }
+              observedFailures.add(classification);
+              return Ref.set(childFailure, classification).pipe(
+                Effect.andThen(Effect.logWarning('Shell native fixture child failure', { classification })),
+              );
+            }),
+          ),
+        ),
+      ),
+    );
+    const line = yield* Effect.raceFirst(
+      child.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runHead),
+      child.exitCode.pipe(
+        Effect.flatMap((code) =>
+          Effect.logWarning('Shell native fixture exited before readiness', { exitCode: Number(code) }).pipe(
+            Effect.andThen(Effect.fail(unavailable())),
+          ),
+        ),
+      ),
+    ).pipe(
+      requestTimeout,
+      Effect.tapError(() =>
+        Effect.gen(function* reportStartupFailure() {
+          yield* Effect.logWarning('Shell native fixture startup failed', {
+            classification: yield* Ref.get(childFailure),
+            stage: yield* Ref.get(latestStage),
+          });
+        }),
+      ),
+    );
     if (Option.isNone(line)) {
       return yield* unavailable();
     }
@@ -439,7 +911,10 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
     const closed = yield* Ref.make(false);
     const issuedOnce = yield* Ref.make(false);
     const sourceIssuedOnce = yield* Ref.make(false);
+    const setupKeyIssuedOnce = yield* Ref.make(false);
+    const issuedModulePrincipals = new Map<typeof ShellNativeModuleAppIdSchema.Type, string>();
     const boundPrincipal = yield* Ref.make(Option.none<TrustedPrincipalContext>());
+    const fixtureBoundActor = yield* Ref.make(Option.none<Pick<TrustedPrincipalContext, 'principalId' | 'tenantId'>>());
     yield* Effect.addFinalizer(() => Ref.set(closed, true).pipe(Effect.asVoid));
     const ensureOpen = Ref.get(closed).pipe(
       Effect.flatMap((value) => (value ? Effect.fail(unavailable()) : Effect.void)),
@@ -453,13 +928,28 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
         child.exitCode.pipe(Effect.flatMap(() => Effect.fail(unavailable()))),
       );
       if (Schema.is(ShellNativeUnavailableResponseSchema)(response)) {
+        yield* Effect.logWarning('Shell native private command refused', {
+          command: command._tag,
+          failure: response.failure ?? 'unclassified',
+        });
         return yield* unavailable();
       }
       return response;
     });
     return Object.freeze({
+      additionalRelaySourceProviderUsers: ready.additionalRelaySourceProviderUsers ?? [],
       baseUrl: ready.baseUrl,
       compositionSourceUrl: sourceUrl,
+      gatewayDiagnostics: Effect.fn('ApiKeyGatewayNativeFixture.gatewayDiagnostics')(function* gatewayDiagnostics() {
+        yield* ensureOpen;
+        if (options.productionGate !== true) {
+          return yield* unavailable();
+        }
+        const response = yield* exchange({ _tag: gatewayDiagnosticsTag });
+        return Schema.is(ShellNativeGatewayDiagnosticsResponseSchema)(response)
+          ? response.outcomes
+          : yield* unavailable();
+      }),
       issueAndBind: Effect.fn('ApiKeyGatewayNativeFixture.issueAndBind')(function* issueAndBind(
         principal: TrustedPrincipalContext,
       ) {
@@ -494,7 +984,153 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
           setEnabled: (enabled: boolean) => exchange({ _tag: 'enabled', enabled }).pipe(Effect.asVoid),
         });
       }),
+      issueFixtureModuleProviderKey: Effect.fn('ApiKeyGatewayNativeFixture.issueFixtureModuleProviderKey')(
+        function* issueFixtureModuleProviderKey(
+          input: FixtureProviderKeyTarget & {
+            readonly sourceAppId: typeof ShellNativeModuleAppIdSchema.Type;
+          },
+        ) {
+          yield* ensureOpen;
+          const actor = yield* Ref.get(fixtureBoundActor);
+          if (
+            options.productionGate !== true ||
+            !additionalRelaySources.some(({ sourceAppId }) => sourceAppId === input.sourceAppId) ||
+            (ready.additionalRelaySourceProviderUsers ?? []).every(
+              ({ sourceAppId }) => sourceAppId !== input.sourceAppId,
+            ) ||
+            Option.isNone(actor) ||
+            actor.value.principalId === input.principalId ||
+            actor.value.tenantId !== input.tenantId ||
+            issuedModulePrincipals.has(input.sourceAppId) ||
+            [...issuedModulePrincipals.values()].includes(input.principalId)
+          ) {
+            return yield* unavailable();
+          }
+          issuedModulePrincipals.set(input.sourceAppId, input.principalId);
+          const issued = yield* exchange({ _tag: 'module-source-issue', ...input });
+          if (!Schema.is(ShellNativeIssuedResponseSchema)(issued)) {
+            return yield* unavailable();
+          }
+          return Object.freeze({
+            acknowledgeBinding: exchange({ _tag: 'module-source-bound', sourceAppId: input.sourceAppId }).pipe(
+              Effect.asVoid,
+            ),
+            providerKeyId: issued.providerKeyId,
+            secret: Redacted.make(issued.secret),
+          });
+        },
+      ),
+      issueFixtureProviderKey: Effect.fn('ApiKeyGatewayNativeFixture.issueFixtureProviderKey')(
+        function* issueFixtureProviderKey(principal: FixtureProviderKeyTarget) {
+          yield* ensureOpen;
+          if (options.productionGate !== true || (yield* Ref.getAndSet(issuedOnce, true))) {
+            return yield* unavailable();
+          }
+          const issued = yield* exchange({
+            _tag: 'issue',
+            issuerPrincipalId: principal.issuerPrincipalId ?? principal.principalId,
+            principalId: principal.principalId,
+            tenantId: principal.tenantId,
+          });
+          if (!Schema.is(ShellNativeIssuedResponseSchema)(issued)) {
+            return yield* unavailable();
+          }
+          return Object.freeze({
+            acknowledgeBinding: exchange({ _tag: 'bound' }).pipe(
+              Effect.andThen(Ref.set(fixtureBoundActor, Option.some(principal))),
+              Effect.asVoid,
+            ),
+            providerKeyId: issued.providerKeyId,
+            secret: Redacted.make(issued.secret),
+          });
+        },
+      ),
+      issueFixtureRelaySourceProviderKey: Effect.fn('ApiKeyGatewayNativeFixture.issueFixtureRelaySourceProviderKey')(
+        function* issueFixtureRelaySourceProviderKey(principal: FixtureProviderKeyTarget) {
+          yield* ensureOpen;
+          const actor = yield* Ref.get(fixtureBoundActor);
+          if (
+            options.productionGate !== true ||
+            relaySource === undefined ||
+            ready.relaySourceProviderUserId === undefined ||
+            Option.isNone(actor) ||
+            actor.value.principalId === principal.principalId ||
+            actor.value.tenantId !== principal.tenantId ||
+            [...issuedModulePrincipals.values()].includes(principal.principalId) ||
+            (yield* Ref.getAndSet(sourceIssuedOnce, true))
+          ) {
+            return yield* unavailable();
+          }
+          const issued = yield* exchange({
+            _tag: sourceIssueTag,
+            issuerPrincipalId: principal.issuerPrincipalId ?? principal.principalId,
+            principalId: principal.principalId,
+            tenantId: principal.tenantId,
+          });
+          if (!Schema.is(ShellNativeIssuedResponseSchema)(issued)) {
+            return yield* unavailable();
+          }
+          return Object.freeze({
+            acknowledgeBinding: exchange({ _tag: sourceBoundTag }).pipe(Effect.asVoid),
+            providerKeyId: issued.providerKeyId,
+            secret: Redacted.make(issued.secret),
+          });
+        },
+      ),
+      issueFixtureSetupActorKey: Effect.fn('ApiKeyGatewayNativeFixture.issueFixtureSetupActorKey')(
+        function* issueFixtureSetupActorKey() {
+          yield* ensureOpen;
+          if (
+            options.productionGate !== true ||
+            Option.isNone(yield* Ref.get(fixtureBoundActor)) ||
+            (yield* Ref.getAndSet(setupKeyIssuedOnce, true))
+          ) {
+            return yield* unavailable();
+          }
+          const issued = yield* exchange({ _tag: 'setup-key-issue' });
+          if (!Schema.is(ShellNativeSetupKeyIssuedResponseSchema)(issued)) {
+            return yield* unavailable();
+          }
+          return Object.freeze({
+            acknowledgeBinding: exchange({ _tag: 'setup-key-bound' }).pipe(Effect.asVoid),
+            providerKeyId: issued.providerKeyId,
+          });
+        },
+      ),
+      issueFixtureSetupGateway: Effect.fn('ApiKeyGatewayNativeFixture.issueFixtureSetupGateway')(
+        function* issueFixtureSetupGateway(input: typeof ShellNativeSetupGatewayRequestSchema.Encoded) {
+          yield* ensureOpen;
+          if (options.productionGate !== true || Option.isNone(yield* Ref.get(fixtureBoundActor))) {
+            return yield* unavailable();
+          }
+          const request = yield* Schema.decodeUnknownEffect(ShellNativeSetupGatewayRequestSchema, {
+            onExcessProperty: 'error',
+          })(input).pipe(Effect.mapError(unavailable));
+          if (Schema.is(ShellNativeTenantSetupGatewayRequestSchema)(request)) {
+            const response = yield* exchange({
+              _tag: 'tenant-setup-gateway',
+              request: { ...request, compositionRevision: snapshot.composition.revision },
+            });
+            return Schema.is(ShellNativeSetupGatewayResponseSchema)(response) ? response.gateway : yield* unavailable();
+          }
+          const response = yield* exchange({
+            _tag: sessionGatewayTag,
+            request: { ...request, compositionRevision: snapshot.composition.revision },
+          });
+          return Schema.is(ShellNativeSessionGatewayResponseSchema)(response) ? response.gateway : yield* unavailable();
+        },
+      ),
       issuer,
+      issuerDiagnostics: Effect.fn('ApiKeyGatewayNativeFixture.issuerDiagnostics')(function* issuerDiagnostics() {
+        yield* ensureOpen;
+        if (options.productionGate !== true) {
+          return yield* unavailable();
+        }
+        const response = yield* exchange({ _tag: issuerDiagnosticsTag });
+        return Schema.is(ShellNativeIssuerDiagnosticsResponseSchema)(response)
+          ? response.outcomes
+          : yield* unavailable();
+      }),
       issueRelaySourceAndBind: Effect.fn('ApiKeyGatewayNativeFixture.issueRelaySourceAndBind')(
         function* issueRelaySourceAndBind(principal: TrustedPrincipalContext) {
           yield* ensureOpen;
@@ -510,7 +1146,7 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
             return yield* unavailable();
           }
           const issued = yield* exchange({
-            _tag: 'relay-source-issue',
+            _tag: sourceIssueTag,
             principalId: principal.principalId,
             tenantId: principal.tenantId,
           });
@@ -528,7 +1164,7 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
               idempotencyKey: `native-relay-source-bind:${issued.providerKeyId}`,
             },
           });
-          yield* exchange({ _tag: 'relay-source-bound' });
+          yield* exchange({ _tag: sourceBoundTag });
           return Object.freeze({
             ...relaySource,
             authBindingId: binding.authBindingId,
@@ -541,6 +1177,51 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
       providerUserId: ready.providerUserId,
       publicJwks,
       relaySourceProviderUserId: ready.relaySourceProviderUserId,
+      releaseDiagnostics: Effect.fn('ApiKeyGatewayNativeFixture.releaseDiagnostics')(function* releaseDiagnostics() {
+        yield* ensureOpen;
+        if (options.productionGate !== true) {
+          return yield* unavailable();
+        }
+        const response = yield* exchange({ _tag: releaseDiagnosticsTag });
+        return Schema.is(ShellNativeReleaseDiagnosticsResponseSchema)(response)
+          ? response.outcomes
+          : yield* unavailable();
+      }),
+      requestDiagnostics: Effect.fn('ApiKeyGatewayNativeFixture.requestDiagnostics')(function* requestDiagnostics() {
+        yield* ensureOpen;
+        if (options.productionGate !== true) {
+          return yield* unavailable();
+        }
+        const response = yield* exchange({ _tag: requestDiagnosticsTag });
+        return Schema.is(ShellNativeRequestDiagnosticsResponseSchema)(response)
+          ? response.outcomes
+          : yield* unavailable();
+      }),
+      startCompiledShell: Effect.fn('ApiKeyGatewayNativeFixture.startCompiledShell')(function* startCompiledShell() {
+        yield* ensureOpen;
+        if (issuerConnectionString === undefined) {
+          return yield* unavailable();
+        }
+        const spice = yield* Config.all({
+          caCertificate: Config.String('SPICEDB_CA_CERT'),
+          endpoint: Config.String('SPICEDB_ENDPOINT'),
+          preSharedKey: Config.Redacted('SPICEDB_PRESHARED_KEY'),
+        });
+        return yield* startCompiledSymmyShell({
+          appId: 'shell-super-app',
+          authentication: {
+            baseUrl: childEnvironment.BETTER_AUTH_URL,
+            connectionString: authRuntime.runtimeConnectionString,
+            issuerConnectionString: Redacted.make(issuerConnectionString),
+            port: yield* allocateLoopbackPort(),
+            secret: Redacted.make(secret),
+            spice,
+          },
+          compositionUrl: sourceUrl,
+          gateway: { issuer, privateJwk: Redacted.make(privateJwk), publicJwks },
+          relativeDirectory: `${appRoot}apps/shell-super-app`,
+        });
+      }),
     });
   },
 );

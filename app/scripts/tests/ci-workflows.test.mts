@@ -501,12 +501,15 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
     'pnpm api:check:ontos',
     'pnpm handler-services:check',
     'pnpm shell:ui-candidates:check',
-    'pnpm test:scripts',
     'pnpm module-entrypoints:check',
     'pnpm test:generation',
   ]) {
     expect(commands).toContain(check);
   }
+  const sourceShards = readGateCommandJobs()[WORKSPACE_GATE_JOB].strategy.matrix.include;
+  expect(
+    sourceShards.map((entry) => entry.commands.trim()).filter((command) => command.startsWith('pnpm test:scripts')),
+  ).toEqual(['pnpm test:scripts --shard 1/3', 'pnpm test:scripts --shard 2/3', 'pnpm test:scripts --shard 3/3']);
   const { scripts } = readRootScripts();
   // The module entrypoint boundary check is the repository's own boundary script.
   expect(scripts['module-entrypoints:check']).toContain('check-module-entrypoint-boundaries.mts');
@@ -592,6 +595,7 @@ const IntegrationShardsWorkflowSchema = Schema.Struct({
               'native-composition': Schema.optional(Schema.Boolean),
               'native-preproposal': Schema.optional(Schema.Boolean),
               'package-filters': Schema.optional(Schema.String),
+              'root-rstest-shard': Schema.optional(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
               'root-suite': Schema.optional(Schema.Boolean),
               'rstest-shard': Schema.optional(Schema.String.check(Schema.isPattern(/^\d+\/\d+$/u))),
               suite: Schema.Literals(['integration', 'browser']),
@@ -623,6 +627,7 @@ it('runs the root integration suite once and every package integration suite in 
     'mise exec -- pnpm -r --no-sort --workspace-concurrency 1 --if-present $PACKAGE_FILTERS run test:integration --pool.maxWorkers 1',
   );
   expect(run?.run).toContain('--shard "$RSTEST_SHARD"');
+  expect(run?.run).toContain('--shard "$ROOT_RSTEST_SHARD"');
   // Opted-in native proofs supplement (not replace or shard) the ordinary package suites.
   const nativeShards = job.strategy.matrix.include.filter((shard) => shard['native-preproposal'] === true);
   expect(nativeShards).toHaveLength(1);
@@ -644,12 +649,14 @@ it('runs the root integration suite once and every package integration suite in 
     'ONTOS_PREPROPOSAL_STANDALONE=true ONTOS_PREPROPOSAL_NATIVE=true ONTOS_APPROVAL_NATIVE=true rstest --project integration --pool.maxWorkers 1 tests/integration/preproposal-basis-postgres.test.ts --testTimeout 1200000',
   );
   const shards = job.strategy.matrix.include.filter(({ suite }) => suite === 'integration');
-  expect(shards.filter((shard) => shard['root-suite'] === true)).toHaveLength(1);
-  const named = shards.filter((shard) => shardFilters(shard).every((filter) => !filter.startsWith('!')));
-  const remainder = shards.filter((shard) => shardFilters(shard).some((filter) => filter.startsWith('!')));
-  // The root-suite shard runs every package the others do not name, excluding the workspace root like `pnpm -r`.
-  expect(remainder.map((shard) => shard['root-suite'])).toEqual([true]);
-  expect(named.length + remainder.length).toBe(shards.length);
+  const roots = shards.filter((shard) => shard['root-suite'] === true);
+  expect(roots.map((shard) => shard['root-rstest-shard'])).toEqual(['1/3', '2/3', '3/3']);
+  expect(roots.every((shard) => shardFilters(shard).length === 0)).toBe(true);
+  const packages = shards.filter((shard) => shard['root-suite'] !== true);
+  const named = packages.filter((shard) => shardFilters(shard).every((filter) => !filter.startsWith('!')));
+  const remainder = packages.filter((shard) => shardFilters(shard).some((filter) => filter.startsWith('!')));
+  expect(remainder).toHaveLength(1);
+  expect(named.length + remainder.length).toBe(packages.length);
   // A package too large for one job is split by Rstest shards that are alone in their jobs and cover 1..n once.
   const split = named.filter((shard) => shard['rstest-shard'] !== undefined);
   for (const shard of split) {
@@ -879,8 +886,8 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   // The producer depends only on queue proof, so waiting for its complete matrix cannot create a cycle.
   expect(jobs[NODE_ARTIFACT_BUILD_JOB]?.needs).toEqual([CI_PLAN_JOB]);
   const roots = integration.strategy.matrix.include.filter((shard) => shard['root-suite'] === true);
-  expect(roots).toHaveLength(1);
-  expect(roots[0]?.suite).toBe('integration');
+  expect(roots).toHaveLength(3);
+  expect(roots.every(({ suite }) => suite === 'integration')).toBe(true);
   const customerContext = integration.strategy.matrix.include.filter((shard) =>
     shardFilters(shard).includes('./verticals/commerce-customer-context'),
   );

@@ -35,7 +35,7 @@ import { Socket } from 'effect/socket';
 import { Reactivity } from 'effect/reactivity';
 
 import { makeShellAuthenticationApiRuntime, shellProductionRuntimeArguments } from '../../api/index.ts';
-import { shellAuthenticationApiContract } from '../../shared/api.ts';
+import { shellAuthenticationApiContract } from '../../shared/browser-api.ts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import { BetterAuthFrameworkLive } from '../../api/auth/better-auth-framework.ts';
 import { BetterAuthRuntimeLive } from '../../api/auth/better-auth-runtime.ts';

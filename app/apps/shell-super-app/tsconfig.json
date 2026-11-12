@@ -41,6 +41,36 @@
     },
     {
       "path": "../../packages/better-auth-effect-drizzle"
+    },
+    {
+      "path": "../../verticals/catalog"
+    },
+    {
+      "path": "../../verticals/price-group-catalog"
+    },
+    {
+      "path": "../../verticals/inventory"
+    },
+    {
+      "path": "../../verticals/commerce-market-catalog"
+    },
+    {
+      "path": "../../verticals/commerce-customer-context"
+    },
+    {
+      "path": "../../verticals/symmy-integration"
+    },
+    {
+      "path": "../../packages/pricing-contracts"
+    },
+    {
+      "path": "../../packages/gateway-principal-verifier"
+    },
+    {
+      "path": "../../verticals/pricing"
+    },
+    {
+      "path": "../../verticals/party-registry"
     }
   ]
 }

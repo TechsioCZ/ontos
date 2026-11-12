@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
+import { CustomerGroupHistoryResponseSchema } from '../../shared/apis/customer-group-history.ts';
 import { EffectiveCustomerGroupMembershipSetV1ResponseSchema } from '../../shared/apis/effective-customer-group-membership-set-v1.ts';
 import { VerifyEffectiveCustomerGroupMembershipSetV1ResponseSchema } from '../../shared/apis/verify-effective-customer-group-membership-set-v1.ts';
 import type {
   CommerceCustomerGroupMembership,
   CommerceCustomerProfileSubject,
 } from '../../shared/domain/group-contract.ts';
+import { projectCustomerGroupMembershipRead } from '../../src/api/customer-group-read-support.ts';
 import {
   CommerceCustomerGroupMembershipSchema,
   CommerceCustomerProfileSubjectSchema,
@@ -73,6 +75,55 @@ const set = (
 });
 
 describe('Commerce Customer Group complete-set evidence', () => {
+  it.effect('proves the public set without disclosing private assignment or removal source identity', () =>
+    Effect.gen(function* proveProjectedSet() {
+      const source = { assertionId: 'assertion-1', effectId: 'effect-1', order: 2, sourceRecordId: 'private-record' };
+      const manager = {
+        factFamily: 'CUSTOMER_GROUP_MEMBERSHIP',
+        issuer: 'fixture',
+        sourceNamespace: 'groups',
+        tenantId,
+      };
+      const raw = Schema.decodeUnknownSync(CommerceCustomerGroupMembershipSchema)({
+        ...membership,
+        effectiveTo: '2026-09-29T12:00:00.000Z',
+        management: { kind: 'EXTERNAL_SOURCE', manager, source },
+        removal: {
+          effectiveAt: '2026-09-29T12:00:00.000Z',
+          kind: 'EXPLICIT_END',
+          reason: 'Test end',
+          recordedAt: asOf,
+          source: { ...source, order: 3 },
+        },
+        revision: 2,
+      });
+      const projected = projectCustomerGroupMembershipRead(raw);
+      expect(projected.management).toEqual({ kind: 'EXTERNAL_SOURCE', manager, source: { order: 2 } });
+      expect(projected.removal?.source).toEqual({ order: 3 });
+      expect(projected.revision).toBe(2);
+      expect(projectCustomerGroupMembershipRead(membership)).toEqual(membership);
+
+      const fields = { ...set([]), memberships: [projected] };
+      const proof = yield* computeEffectiveCustomerGroupMembershipSetProof(fields);
+      const decode = Schema.decodeUnknownSync(EffectiveCustomerGroupMembershipSetV1ResponseSchema, {
+        onExcessProperty: 'error',
+      });
+      const wire = {
+        ...fields,
+        predicateRef: 'commerce.customer-context.customer-group-memberships.effective.v1',
+        proof,
+      };
+      expect(decode(wire).memberships).toEqual([projected]);
+      expect(() => decode({ ...wire, memberships: [raw] })).toThrow();
+      const decodeHistoryMemberships = Schema.decodeUnknownSync(CustomerGroupHistoryResponseSchema.fields.memberships, {
+        onExcessProperty: 'error',
+      });
+      expect(decodeHistoryMemberships([projected])).toEqual([projected]);
+      expect(() => decodeHistoryMemberships([raw])).toThrow();
+      expect(yield* effectiveCustomerGroupMembershipSetMatchesProof(fields, proof)).toBe(true);
+    }),
+  );
+
   it.effect('proves a complete empty set and keeps a changed insertion stale', () =>
     Effect.gen(function* proveCompleteEmptySet() {
       const empty = set([]);

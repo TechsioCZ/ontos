@@ -1,4 +1,4 @@
-import { defineOntosMcpContribution } from '@app/core-runtime';
+import { defineOntosMcpContribution, OntosMcpHidden } from '@app/core-runtime';
 
 export const inventoryMcpContribution = defineOntosMcpContribution({
   actions: {
@@ -157,6 +157,8 @@ export const inventoryMcpContribution = defineOntosMcpContribution({
         en: 'Inventory source conflict details',
       },
     },
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'inventory-source-import-receipt': OntosMcpHidden,
     'reservation-confirmation-verification': 'hidden',
     'stock-sharing-eligibility-resolution': 'hidden',
   },

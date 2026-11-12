@@ -73,6 +73,7 @@ import { inventoryEffectOutcomeReadApiLive } from './inventory-effect-outcome-re
 import { inventoryReconciliationEvidenceReadApiLive } from './inventory-reconciliation-evidence-read-server.ts';
 import { inventoryReservationDetailReadApiLive } from './inventory-reservation-detail-read-server.ts';
 import { inventorySourceConflictDetailReadApiLive } from './inventory-source-conflict-detail-read-server.ts';
+import { inventorySourceImportReceiptReadApiLive } from './inventory-source-import-receipt-read-server.ts';
 import { recoverInventoryEffectActionApiLive } from './recover-inventory-effect-action-server.ts';
 import { releaseInventoryReservationActionApiLive } from './release-inventory-reservation-action-server.ts';
 import { reservationConfirmationVerificationReadApiLive } from './reservation-confirmation-verification-read-server.ts';
@@ -256,6 +257,7 @@ export const makeInventoryApiRuntime = (
     inventoryReconciliationEvidenceReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     inventoryReservationDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     inventorySourceConflictDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    inventorySourceImportReceiptReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     recoverInventoryEffectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     releaseInventoryReservationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     reservationConfirmationVerificationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

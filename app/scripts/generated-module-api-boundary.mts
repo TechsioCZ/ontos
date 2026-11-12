@@ -2219,6 +2219,29 @@ const objectHasExactString = (
     [SyntaxKind.StringLiteral, value],
   ]);
 
+const directShorthandPropertyPositions = (
+  tokens: readonly GovernedClientToken[],
+  open: number,
+  close: number,
+  property: string,
+): readonly number[] => {
+  const positions: number[] = [];
+  let depth = 0;
+  for (let index = open; index < close; index += 1) {
+    depth += tokenBraceDelta(tokenKind(tokens, index));
+    if (
+      depth === 1 &&
+      tokenKind(tokens, index) === SyntaxKind.Identifier &&
+      tokenValue(tokens, index) === property &&
+      [SyntaxKind.OpenBraceToken, SyntaxKind.CommaToken].includes(tokenKind(tokens, index - 1) ?? SyntaxKind.Unknown) &&
+      [SyntaxKind.CommaToken, SyntaxKind.CloseBraceToken].includes(tokenKind(tokens, index + 1) ?? SyntaxKind.Unknown)
+    ) {
+      positions.push(index);
+    }
+  }
+  return positions;
+};
+
 const objectHasExactStringsOrConstAliases = (
   tokens: readonly GovernedClientToken[],
   open: number,
@@ -2226,10 +2249,14 @@ const objectHasExactStringsOrConstAliases = (
   expected: Readonly<Record<string, string>>,
 ): boolean =>
   Object.entries(expected).every(([property, value]) => {
-    if (directObjectPropertyOccurrences(tokens, open, close, property) !== 1) {
+    const positions = [
+      ...objectPropertyValuePositions(tokens, open, close, property),
+      ...directShorthandPropertyPositions(tokens, open, close, property),
+    ];
+    if (positions.length !== 1) {
       return false;
     }
-    const valueStart = findObjectPropertyValue(tokens, open, close, property);
+    const [valueStart] = positions;
     if (hasExactObjectPropertyValue(tokens, valueStart, [[SyntaxKind.StringLiteral, value]])) {
       return true;
     }

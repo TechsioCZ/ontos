@@ -6,7 +6,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Effect, Fiber, Match, Option, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 
-import type { ShellSearchResult } from '../../../../shared/api.ts';
+import type { ShellSearchResult } from '../../../../shared/browser-api.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { buildShellNavigation, ShellRouteLink, shellSearchScopeKey } from '../../shell-frame.tsx';
 import { shellSearchResultKey } from '../../shell-search-match.ts';

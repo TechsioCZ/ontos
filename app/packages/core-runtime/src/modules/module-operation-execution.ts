@@ -20,7 +20,14 @@ import {
 } from '../auth/external-identity/read.ts';
 import { legalEntityDetailRead } from '../generated-reads/legal-entity-detail.ts';
 import type { TrustedPrincipalContext } from '../actions/context.ts';
-import { readVerifiedGatewayCompositionRevision } from '../auth/system-principal-context-provenance.ts';
+import {
+  isVerifiedGatewayPrincipalContext,
+  readVerifiedGatewayPrivacyDispatch,
+  readVerifiedGatewayOrganizationGovernanceRead,
+  readVerifiedGatewayCompositionRevision,
+  readVerifiedGatewayRouteScope,
+  readVerifiedGatewayWorkload,
+} from '../auth/system-principal-context-provenance.ts';
 import { coreActionCatalog } from './actions/catalog.ts';
 import {
   validateActiveApplicationCompositionSnapshot,
@@ -42,8 +49,8 @@ import { isActionRegistration } from '../actions/definition.ts';
 import type { AnyActionRegistration } from '../actions/definition.ts';
 import { isReadRegistration } from '../reads/definition.ts';
 import type { AnyReadRegistration } from '../reads/definition.ts';
-import { isOutboxWorkerRegistration } from '../outbox/definition.ts';
-import type { AnyOutboxWorkerRegistration } from '../outbox/definition.ts';
+import { isOutboxWorkerRegistration, isVerifiedOutboxWorkerHandlerContext } from '../outbox/definition.ts';
+import type { AnyOutboxWorkerRegistration, OutboxWorkerHandlerContext } from '../outbox/definition.ts';
 import type { InstalledModuleCatalog } from './catalog.ts';
 import {
   extractVerticalRuntimeSafeDescriptors,
@@ -60,7 +67,15 @@ interface ModuleOperationExecutionInput {
   readonly phase: 'execution' | 'recovery' | 'settlement';
   readonly registration: AnyActionRegistration | AnyReadRegistration | AnyOutboxWorkerRegistration;
   readonly revision: string;
-  readonly scope: Readonly<{ readonly tenantId: string }>;
+  readonly scope: Readonly<{
+    readonly legalEntityId?: string;
+    readonly principalId?: string;
+    readonly tenantId: string;
+  }>;
+  readonly workerExecution?: Readonly<{
+    readonly context: OutboxWorkerHandlerContext;
+    readonly isCurrent: () => boolean;
+  }>;
 }
 
 interface ExecutionLeaseMint {
@@ -71,16 +86,41 @@ const executionLeaseToken: ExecutionLeaseMint = Object.freeze({ purpose: 'module
 /** Core-private, execution-local authority. No public export exposes its tag or constructor. */
 class ModuleOperationExecutionLease {
   #active = false;
+  readonly #originalScope: ModuleOperationExecutionInput['scope'];
+  readonly #workerContext: OutboxWorkerHandlerContext | undefined;
+  readonly #workerCurrent: (() => boolean) | undefined;
   readonly input: ModuleOperationExecutionInput;
 
   constructor(input: ModuleOperationExecutionInput, token: ExecutionLeaseMint) {
     this.#active = token === executionLeaseToken;
+    this.#originalScope = input.scope;
+    this.#workerContext = input.workerExecution?.context;
+    this.#workerCurrent = input.workerExecution?.isCurrent;
     this.input = Object.freeze({ ...input, scope: Object.freeze({ ...input.scope }) });
     Object.freeze(this);
   }
 
   static owns(value: ModuleOperationExecutionLease): boolean {
     return #active in value;
+  }
+
+  matchesWorker(context: OutboxWorkerHandlerContext): boolean {
+    return (
+      this.#active &&
+      this.#workerContext === context &&
+      this.#workerCurrent?.() === true &&
+      context.tenantId === this.input.scope.tenantId &&
+      context.compositionRevision === this.input.revision
+    );
+  }
+
+  matchesScope(scope: TrustedPrincipalContext): boolean {
+    return (
+      this.#originalScope === scope &&
+      this.input.scope.tenantId === scope.tenantId &&
+      this.input.scope.principalId === scope.principalId &&
+      this.input.scope.legalEntityId === scope.legalEntityId
+    );
   }
 
   get active(): boolean {
@@ -134,10 +174,7 @@ export const withModuleOperationExecution = <Value, Failure, Requirements>(
     );
   });
 
-/** Private implementation of the public key-only facade; it grants no provider authority. */
-export const requireExecutingModuleOperation = Effect.fn('ModuleOperation.require')(function* requireOperation(
-  requirementKey: string,
-) {
+const readActiveExecutionLease = Effect.fn('ModuleOperation.readActiveLease')(function* readActiveExecutionLease() {
   const selected = yield* Schema.decodeUnknownEffect(Schema.Option(ModuleOperationExecutionLeaseSchema))(
     yield* ModuleOperationExecution,
   ).pipe(Effect.mapError(unavailable));
@@ -148,47 +185,62 @@ export const requireExecutingModuleOperation = Effect.fn('ModuleOperation.requir
   if (!lease.active || lease.input.scope.tenantId.length === 0 || !/^[a-f0-9]{64}$/u.test(lease.input.revision)) {
     return yield* unavailable();
   }
-  const { registration } = lease.input;
-  if (
-    !isActionRegistration(registration) &&
-    !isReadRegistration(registration) &&
-    !isOutboxWorkerRegistration(registration)
-  ) {
-    return yield* unavailable();
-  }
-  const catalog = yield* lease.input.loadCatalog;
-  if (!lease.active) {
-    return yield* unavailable();
-  }
-  const consumer = catalog.getByModuleId(lease.input.registration.descriptor.entrypoint.moduleKey);
-  const requirement = consumer?.manifest.requirements?.operations.find(({ key }) => key === requirementKey);
-  if (
-    requirement === undefined ||
-    requirement.entrypointKey !== lease.input.registration.descriptor.entrypoint.entrypointKey
-  ) {
-    return yield* unsatisfied();
-  }
-  const owner = lease.input.ownerRegistration;
-  if (owner === undefined || owner.moduleId !== lease.input.registration.descriptor.entrypoint.moduleKey) {
-    return yield* unavailable();
-  }
-  const registered = yield* Effect.try({
-    catch: unavailable,
-    try: () =>
-      getVerticalRuntimeActions(owner).some((candidate) => candidate === registration) ||
-      getVerticalRuntimeReads(owner).some((candidate) => candidate === registration) ||
-      getVerticalRuntimeOutboxWorkers(owner).some((candidate) => candidate === registration),
-  });
-  if (!registered) {
-    return yield* unavailable();
-  }
-  const provider = catalog.getByModuleId(requirement.provider.moduleId);
-  if (
-    provider === undefined ||
-    !providesRequiredOperationContracts(provider.manifest.publicSurface.operationContracts, [requirement.provider])
-  ) {
-    return yield* unsatisfied();
-  }
+  return lease;
+});
+
+const resolveExecutingRequirement = Effect.fn('ModuleOperation.resolveRequirement')(
+  function* resolveExecutingRequirement(lease: ModuleOperationExecutionLease, requirementKey: string) {
+    const { registration } = lease.input;
+    if (
+      !isActionRegistration(registration) &&
+      !isReadRegistration(registration) &&
+      !isOutboxWorkerRegistration(registration)
+    ) {
+      return yield* unavailable();
+    }
+    const catalog = yield* lease.input.loadCatalog;
+    if (!lease.active) {
+      return yield* unavailable();
+    }
+    const consumer = catalog.getByModuleId(lease.input.registration.descriptor.entrypoint.moduleKey);
+    const requirement = consumer?.manifest.requirements?.operations.find(({ key }) => key === requirementKey);
+    if (
+      requirement === undefined ||
+      requirement.entrypointKey !== lease.input.registration.descriptor.entrypoint.entrypointKey
+    ) {
+      return yield* unsatisfied();
+    }
+    const owner = lease.input.ownerRegistration;
+    if (owner === undefined || owner.moduleId !== lease.input.registration.descriptor.entrypoint.moduleKey) {
+      return yield* unavailable();
+    }
+    const registered = yield* Effect.try({
+      catch: unavailable,
+      try: () =>
+        getVerticalRuntimeActions(owner).some((candidate) => candidate === registration) ||
+        getVerticalRuntimeReads(owner).some((candidate) => candidate === registration) ||
+        getVerticalRuntimeOutboxWorkers(owner).some((candidate) => candidate === registration),
+    });
+    if (!registered) {
+      return yield* unavailable();
+    }
+    const provider = catalog.getByModuleId(requirement.provider.moduleId);
+    if (
+      provider === undefined ||
+      !providesRequiredOperationContracts(provider.manifest.publicSurface.operationContracts, [requirement.provider])
+    ) {
+      return yield* unsatisfied();
+    }
+    return { catalog, consumer, ownerRegistration: owner, provider, requirement };
+  },
+);
+
+/** Private implementation of the public key-only facade; it grants no provider authority. */
+export const requireExecutingModuleOperation = Effect.fn('ModuleOperation.require')(function* requireOperation(
+  requirementKey: string,
+) {
+  const lease = yield* readActiveExecutionLease();
+  yield* resolveExecutingRequirement(lease, requirementKey);
   return yield* Effect.void;
 });
 
@@ -289,6 +341,206 @@ const validateOwnerContractProjection = Effect.fn('ModuleOperation.validateOwner
       return yield* unavailable();
     }
     return yield* Effect.void;
+  },
+);
+
+export interface ModuleOperationRequirementFact {
+  readonly compositionRevision: string;
+  readonly consumerEntrypointKey: string;
+  readonly consumerSchemaVersion: string;
+  readonly providerAppId: string;
+  readonly providerEntrypointKey: string;
+  readonly providerModuleId: string;
+  readonly providerSchemaVersion: string;
+  readonly requirementKey: string;
+  readonly tenantId: string;
+}
+
+const matchesSignedOperation = (lease: ModuleOperationExecutionLease, scope: TrustedPrincipalContext): boolean => {
+  const { registration } = lease.input;
+  if (!isActionRegistration(registration) && !isReadRegistration(registration)) {
+    return false;
+  }
+  const { entrypoint, schemaVersion } = registration.descriptor;
+  const governanceRead = readVerifiedGatewayOrganizationGovernanceRead(scope);
+  if (governanceRead !== undefined) {
+    const operation = governanceRead.target;
+    if (operation.entrypointKey !== entrypoint.entrypointKey || operation.schemaVersion !== schemaVersion) {
+      return false;
+    }
+  }
+  const privacy = readVerifiedGatewayPrivacyDispatch(scope);
+  if (privacy !== undefined) {
+    const operation = privacy.target;
+    if (operation.entrypointKey !== entrypoint.entrypointKey || operation.schemaVersion !== schemaVersion) {
+      return false;
+    }
+  }
+  const workload = readVerifiedGatewayWorkload(scope);
+  if (
+    workload !== undefined &&
+    (workload.entrypointKey !== entrypoint.entrypointKey || workload.schemaVersion !== schemaVersion)
+  ) {
+    return false;
+  }
+  const route = readVerifiedGatewayRouteScope(scope);
+  return (
+    route === undefined ||
+    (route.tenantId === scope.tenantId &&
+      route.principalId === scope.principalId &&
+      route.legalEntityId === scope.legalEntityId &&
+      route.operations.some(
+        (operation) =>
+          operation.entrypointKey === entrypoint.entrypointKey && operation.schemaVersion === schemaVersion,
+      ))
+  );
+};
+
+const matchesGatewayExecutionScope = (lease: ModuleOperationExecutionLease, scope: TrustedPrincipalContext): boolean =>
+  lease.active &&
+  lease.matchesScope(scope) &&
+  isVerifiedGatewayPrincipalContext(scope) &&
+  readVerifiedGatewayCompositionRevision(scope) === lease.input.revision &&
+  matchesSignedOperation(lease, scope);
+
+/** Factual owner contract projection only; this supplies neither provider credentials nor invocation authority. */
+export const readModuleOperationRequirement = Effect.fn('ModuleOperation.readRequirement')(
+  function* readModuleOperationRequirement(
+    requirementKey: string,
+    scope: TrustedPrincipalContext,
+  ): Effect.fn.Return<Readonly<ModuleOperationRequirementFact>, ModuleOperationRequirementError> {
+    const lease = yield* readActiveExecutionLease();
+    const { registration } = lease.input;
+    if (
+      !matchesGatewayExecutionScope(lease, scope) ||
+      (!isActionRegistration(registration) && !isReadRegistration(registration))
+    ) {
+      return yield* unavailable();
+    }
+    const resolved = yield* resolveExecutingRequirement(lease, requirementKey);
+    const owner = yield* readBoundOperationOwner(registration, resolved.ownerRegistration);
+    if (owner === undefined) {
+      return yield* unavailable();
+    }
+    yield* validateOwnerContractProjection(owner, resolved.catalog);
+    if (!matchesGatewayExecutionScope(lease, scope)) {
+      return yield* unavailable();
+    }
+    return Object.freeze({
+      compositionRevision: lease.input.revision,
+      consumerEntrypointKey: registration.descriptor.entrypoint.entrypointKey,
+      consumerSchemaVersion: registration.descriptor.schemaVersion,
+      providerAppId: resolved.provider.deployment.appId,
+      providerEntrypointKey: resolved.requirement.provider.entrypointKey,
+      providerModuleId: resolved.requirement.provider.moduleId,
+      providerSchemaVersion: resolved.requirement.provider.schemaVersion,
+      requirementKey: resolved.requirement.key,
+      tenantId: scope.tenantId,
+    });
+  },
+);
+
+export interface WorkerExecutionContextFact {
+  readonly compositionRevision: string;
+  readonly consumerEntrypointKey: string;
+  readonly consumerModuleKey: string;
+  readonly producerModuleKey: string;
+  readonly tenantId: string;
+  readonly topic: string;
+  readonly workerKey: string;
+}
+/** Factual native handler identity only, never a provider grant or a caller-minted context. */
+export const readWorkerExecutionContext = Effect.fn('ModuleOperation.readWorkerExecutionContext')(
+  function* readWorkerExecutionContext(
+    context: OutboxWorkerHandlerContext,
+  ): Effect.fn.Return<Readonly<WorkerExecutionContextFact>, ModuleOperationRequirementError> {
+    const lease = yield* readActiveExecutionLease();
+    const { ownerRegistration, registration } = lease.input;
+    if (
+      !isOutboxWorkerRegistration(registration) ||
+      !isVerifiedOutboxWorkerHandlerContext(context) ||
+      !lease.matchesWorker(context) ||
+      ownerRegistration === undefined
+    ) {
+      return yield* unavailable();
+    }
+    const registered = yield* Effect.try({
+      catch: unavailable,
+      try: () => getVerticalRuntimeOutboxWorkers(ownerRegistration).some((candidate) => candidate === registration),
+    });
+    if (!registered) {
+      return yield* unavailable();
+    }
+    const catalog = yield* lease.input.loadCatalog;
+    const owner = yield* readBoundOperationOwner(registration, ownerRegistration);
+    if (owner === undefined) {
+      return yield* unavailable();
+    }
+    yield* validateOwnerContractProjection(owner, catalog);
+    if (!lease.matchesWorker(context)) {
+      return yield* unavailable();
+    }
+    return Object.freeze({
+      compositionRevision: lease.input.revision,
+      consumerEntrypointKey: registration.descriptor.entrypoint.entrypointKey,
+      consumerModuleKey: registration.descriptor.consumerModuleKey,
+      producerModuleKey: registration.descriptor.producerModuleKey,
+      tenantId: context.tenantId,
+      topic: registration.descriptor.topic,
+      workerKey: registration.descriptor.workerKey,
+    });
+  },
+);
+
+export interface WorkerModuleOperationRequirementFact {
+  readonly compositionRevision: string;
+  readonly consumerEntrypointKey: string;
+  readonly kind: 'worker';
+  readonly providerAppId: string;
+  readonly providerEntrypointKey: string;
+  readonly providerModuleId: string;
+  readonly providerSchemaVersion: string;
+  readonly requirementKey: string;
+  readonly tenantId: string;
+  readonly workerKey: string;
+}
+
+/** Native claim execution fact only; no worker receiving schema version or provider authority is invented. */
+export const readWorkerModuleOperationRequirement = Effect.fn('ModuleOperation.readWorkerRequirement')(
+  function* readWorkerModuleOperationRequirement(
+    requirementKey: string,
+    context: OutboxWorkerHandlerContext,
+  ): Effect.fn.Return<Readonly<WorkerModuleOperationRequirementFact>, ModuleOperationRequirementError> {
+    const lease = yield* readActiveExecutionLease();
+    const { registration } = lease.input;
+    if (
+      !isOutboxWorkerRegistration(registration) ||
+      !isVerifiedOutboxWorkerHandlerContext(context) ||
+      !lease.matchesWorker(context)
+    ) {
+      return yield* unavailable();
+    }
+    const resolved = yield* resolveExecutingRequirement(lease, requirementKey);
+    const owner = yield* readBoundOperationOwner(registration, resolved.ownerRegistration);
+    if (owner === undefined) {
+      return yield* unavailable();
+    }
+    yield* validateOwnerContractProjection(owner, resolved.catalog);
+    if (!lease.matchesWorker(context)) {
+      return yield* unavailable();
+    }
+    return Object.freeze({
+      compositionRevision: lease.input.revision,
+      consumerEntrypointKey: registration.descriptor.entrypoint.entrypointKey,
+      kind: 'worker' as const,
+      providerAppId: resolved.provider.deployment.appId,
+      providerEntrypointKey: resolved.requirement.provider.entrypointKey,
+      providerModuleId: resolved.requirement.provider.moduleId,
+      providerSchemaVersion: resolved.requirement.provider.schemaVersion,
+      requirementKey: resolved.requirement.key,
+      tenantId: context.tenantId,
+      workerKey: registration.descriptor.workerKey,
+    });
   },
 );
 

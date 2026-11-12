@@ -1526,7 +1526,7 @@ export const shellHttpFor = Effect.fn('AccessAdminFixture.shellHttp')(function* 
       await Promise.all([
         import('../../api/index.ts'),
         import('../../api/auth/service.ts'),
-        import('../../shared/api.ts'),
+        import('../../shared/browser-api.ts'),
         import('@modern-js/bff-effect/effect-edge'),
       ]),
   );

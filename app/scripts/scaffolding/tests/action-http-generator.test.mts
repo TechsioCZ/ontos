@@ -33,6 +33,8 @@ import {
   readGeneratedSlotEntries,
 } from '../shared.mts';
 
+const CORE_RUNTIME_IMPORT_TAIL = "from '@app/core-runtime';";
+
 const OWNER_SLUG = 'pricing-policy';
 const OWNER_DIRECTORY = `verticals/${OWNER_SLUG}`;
 const OWNER_PACKAGE = '@app/pricing-policy';
@@ -176,7 +178,7 @@ it.effect('accepts actual owner backend registrations and native constructors wi
       const patched = patchRuntimeRoot(source, owner, 'fixtureActionApiLive');
       expect(patchRuntimeRoot(patched, owner, 'fixtureActionApiLive')).toBe(patched);
       for (const invalid of [
-        source.replace("from '@app/core-runtime';", "from './fake-runtime.ts';"),
+        source.replace(CORE_RUNTIME_IMPORT_TAIL, "from './fake-runtime.ts';"),
         source.replace('../shared/ultramodern-build.ts', '../shared/foreign-build.ts'),
         source
           .replace('../vertical.runtime-declaration.ts', '../foreign.runtime-declaration.ts')
@@ -225,6 +227,126 @@ it.effect('keeps an existing owner-bound Commerce Order root valid without requi
     const patched = patchRuntimeRoot(source, owner, 'commitOrderActionApiLive');
     expect(patched).toContain('GovernedMakeReadRuntimeLive(governedActionDeliveryUnit, commerceOrderRegistration)');
     expect(patchRuntimeRoot(patched, owner, 'commitOrderActionApiLive')).toBe(patched);
+  }),
+);
+
+it.effect('preserves the actual Symmy owner runtimes with public unaliased Core constructors', () =>
+  Effect.gen(function* actualSymmyOwnerRoot() {
+    const source = yield* Effect.promise(() =>
+      readFile(path.join(appRoot, 'verticals/symmy-integration/api/index.ts'), 'utf-8'),
+    );
+    const owner = { ...vertical, slug: 'symmy-integration' };
+    const patched = patchRuntimeRoot(source, owner, 'admitSymmyJobActionApiLive');
+    expect(patched).toContain('makeReadRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationRegistration)');
+    expect(patched).toContain('makeActionRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationRegistration)');
+    expect(patchRuntimeRoot(patched, owner, 'admitSymmyJobActionApiLive')).toBe(patched);
+    for (const [original, counterfeit] of [
+      [CORE_RUNTIME_IMPORT_TAIL, "from './counterfeit-core.ts';"],
+      ["from '../vertical.registration.ts';", "from '../foreign/vertical.registration.ts';"],
+      ["from '../shared/ultramodern-build.ts';", "from '../foreign/ultramodern-build.ts';"],
+      ['makeReadRuntimeLive,', 'ReadRuntimeLive as makeReadRuntimeLive,'],
+      [
+        'makeActionRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationRegistration)',
+        'makeActionRuntimeLive(ultramodernApiMarker, symmyIntegrationRegistration)',
+      ],
+      [
+        'const governedActionRuntimeLive = makeActionRuntimeLive(',
+        'const governedActionRuntimeLive = Layer.empty; const decoyActionRuntimeLive = makeActionRuntimeLive(',
+      ],
+    ] as const) {
+      const changed = source.replace(original, counterfeit);
+      expect(changed).not.toBe(source);
+      expect(() => patchRuntimeRoot(changed, owner, 'admitSymmyJobActionApiLive')).toThrow(/owner-bound/u);
+    }
+  }),
+);
+
+it.effect('upgrades only recognized mixed Action support and preserves the actual Symmy fresh Read runtime', () =>
+  Effect.gen(function* symmyActionSupportUpgrade() {
+    const source = yield* Effect.promise(() =>
+      readFile(path.join(appRoot, 'verticals/symmy-integration/api/index.ts'), 'utf-8'),
+    );
+    const owner = { ...vertical, slug: 'symmy-integration' };
+    const patched = patchRuntimeRoot(source, owner, 'executeSymmyRetentionActionApiLive');
+    const supportImports = readGeneratedSlotEntries(
+      patched,
+      GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
+      '// </generated-governed-http-handler-support-imports>',
+    );
+    expect(supportImports).toHaveLength(2);
+    const redemptionImport =
+      supportImports.find((entry) => entry.includes('GovernedGatewayAssertionRedemptionLive')) ?? '';
+    expect(redemptionImport).toContain('gatewayAssertionRedemptionPgClient');
+    expect(supportImports.filter((entry) => entry.includes('gatewayAssertionRedemptionPgClient'))).toHaveLength(1);
+    const actionEntries = readGeneratedSlotEntries(
+      patched,
+      GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
+      GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
+    );
+    expect(actionEntries).toHaveLength(1);
+    expect(actionEntries[0]).toContain('GovernedActionPrincipalVerifierLive.pipe(');
+    expect(patched).toContain(
+      ').pipe(\n  GovernedReadLayer.provide(governedReadRuntimeLive),\n  // <generated-governed-http-handler-support-layers>',
+    );
+    expect(patched).toContain('GovernedReadLayer.provide(PgClient.layerFrom(gatewayAssertionRedemptionPgClient))');
+    expect(patchRuntimeRoot(patched, owner, 'executeSymmyRetentionActionApiLive')).toBe(patched);
+    const legacy =
+      'GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive)),';
+    const mixed = patched.replace(
+      GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
+      `${GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START}\n  ${legacy}`,
+    );
+    expect(
+      readGeneratedSlotEntries(
+        mixed,
+        GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
+        GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
+      ),
+    ).toHaveLength(2);
+    const upgraded = patchRuntimeRoot(mixed, owner, 'executeSymmyRetentionActionApiLive');
+    expect(
+      readGeneratedSlotEntries(
+        upgraded,
+        GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
+        GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
+      ),
+    ).toHaveLength(1);
+    expect(patchRuntimeRoot(upgraded, owner, 'executeSymmyRetentionActionApiLive')).toBe(upgraded);
+    for (const [index, changed] of [
+      patched.replace(
+        redemptionImport,
+        redemptionImport.replace(
+          'gatewayAssertionRedemptionPgClient',
+          'counterfeitPgClient as gatewayAssertionRedemptionPgClient',
+        ),
+      ),
+      patched.replace(
+        redemptionImport,
+        redemptionImport.replace('./auth/gateway-assertion-redemption.ts', './auth/counterfeit-redemption.ts'),
+      ),
+      patched.replace(redemptionImport, "import * as Redemption from './auth/gateway-assertion-redemption.ts';"),
+      patched.replace(
+        redemptionImport,
+        redemptionImport.replace(
+          'GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive',
+          'GatewayAssertionRedemptionLive as CounterfeitRedemption',
+        ),
+      ),
+      patched.replace(redemptionImport, `${redemptionImport}\n${redemptionImport}`),
+      patched.replace(
+        GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
+        `${GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START}\n  GovernedReadLayer.provide(foreignAuthority),`,
+      ),
+      patched.replace(
+        /GovernedActionPrincipalVerifierLive\.pipe\(\s*GovernedReadLayer\.provide\(governedActionRuntimeLive\),?\s*\)/u,
+        'GovernedActionPrincipalVerifierLive.pipe(GovernedReadLayer.provide(foreignActionRuntime))',
+      ),
+    ].entries()) {
+      expect(changed, `${index}`).not.toBe(patched);
+      expect(() => patchRuntimeRoot(changed, owner, 'executeSymmyRetentionActionApiLive')).toThrow(
+        /unsupported Action runtime support/u,
+      );
+    }
   }),
 );
 
@@ -325,7 +447,7 @@ it.live(
     const source = yield* Effect.promise(() =>
       readFile(path.join(appRoot, 'verticals/party-registry/api/index.ts'), 'utf-8'),
     );
-    const invocation = `const apiRuntime = makePartyRegistryApiRuntime(
+    const invocation = `const apiRuntime: PartyRegistryApiRuntime = makePartyRegistryApiRuntime(
   productionReadRuntimeLive,
   partyRegistryAresSubjectServiceLive,
   productionSearchProjectionGatewayLive,
@@ -1117,6 +1239,42 @@ it.live(
 );
 
 it.live(
+  'rejects counterfeit owner constructor provenance before and after Action HTTP generation',
+  Effect.fn(function* counterfeitOwnerRuntimeConstruction() {
+    yield* withPublishedClientFixture(true)(
+      Effect.fn(function* counterfeitOwnerRuntimeFixture(root) {
+        const file = `${OWNER_DIRECTORY}/${RUNTIME_ROOT_PATH}`;
+        for (const actionAlreadyMounted of [false, true]) {
+          if (actionAlreadyMounted) {
+            yield* scaffoldHttp(root);
+          }
+          const runtime = yield* Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
+          for (const [original, counterfeit] of [
+            [CORE_RUNTIME_IMPORT_TAIL, "from './counterfeit-core.ts';"],
+            ["from '../vertical.registration.ts';", "from '../foreign/vertical.registration.ts';"],
+            [
+              'ultramodernDeliveryUnit as governedActionDeliveryUnit',
+              'ultramodernApiMarker as governedActionDeliveryUnit',
+            ],
+            [
+              'pricingPolicyRegistration as governedOwnerRegistration',
+              'foreignRegistration as governedOwnerRegistration',
+            ],
+          ] as const) {
+            const changed = runtime.replace(original, counterfeit);
+            expect(changed).not.toBe(runtime);
+            expect(() => patchRuntimeRoot(changed, vertical, 'changeRateActionApiLive')).toThrow(/owner-bound/u);
+            yield* write(root, file, changed);
+            yield* assertHttpRefused(root);
+            yield* write(root, file, runtime);
+          }
+        }
+      }),
+    );
+  }),
+);
+
+it.live(
   'Action HTTP preserves canonical named owner client exports',
   Effect.fn(function* canonicalNamedClientExports() {
     for (const shared of [true, false]) {
@@ -1399,6 +1557,7 @@ it.live(
             '--eval',
             `import { Schema } from 'effect';
 import { ChangeRateOriginalProblemSchema, mapChangeRateOriginalProblem } from './${OWNER_DIRECTORY}/${CUSTOM_PROBLEM_MODULE}';
+
 const problem = mapChangeRateOriginalProblem({ reason: 'Reviewed safe reason' });
 console.log(JSON.stringify({ accepted: Schema.is(ChangeRateOriginalProblemSchema)(problem), problem }));`,
           ],

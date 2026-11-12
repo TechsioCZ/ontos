@@ -168,6 +168,11 @@ import {
   commerceCustomerAuthorityUnavailableLive,
 } from './portal-auth/session/customer-authority.ts';
 import { commercePortalAuthPlatformCryptoLive } from './portal-auth/deployment.ts';
+import { commerceSourceProcessingEligibilityLive } from '../src/integrations/source-processing-eligibility.ts';
+import { commerceOrganizationProfileIcoEligibilityLive } from '../src/integrations/organization-profile-ico-eligibility.ts';
+import { commerceOrganizationBusinessEligibilityLive } from '../src/integrations/organization-business-eligibility.ts';
+import { commerceSourceProfileOwnerProofLive } from '../src/integrations/source-profile-owner-proof.ts';
+import { commerceLegacyIcoInventoryLive } from '../src/integrations/party-legacy-ico-inventory.ts';
 import { FetchHttpClient } from 'effect/http';
 import {
   CommerceEnrollmentOwnerTransitionPreparation,
@@ -209,6 +214,8 @@ import {
 
 // <generated-governed-http-handler-imports>
 import { addSavedAddressActionApiLive } from './add-saved-address-action-server.ts';
+import { admitCustomerGroupMembershipSnapshotActionApiLive } from './admit-customer-group-membership-snapshot-action-server.ts';
+import { applyCustomerGroupMembershipSourceActionApiLive } from './apply-customer-group-membership-source-action-server.ts';
 import { archiveCustomerGroupActionApiLive } from './archive-customer-group-action-server.ts';
 import { archiveCustomerProfileActionApiLive } from './archive-customer-profile-action-server.ts';
 import { assignCounterpartyPriceGroupActionApiLive } from './assign-counterparty-price-group-action-server.ts';
@@ -219,6 +226,8 @@ import { bindRetailPortalProfileActionApiLive } from './bind-retail-portal-profi
 import { bootstrapCounterpartyAccessAdministratorActionApiLive } from './bootstrap-counterparty-access-administrator-action-server.ts';
 import { changeCounterpartyPurchaseLimitActionApiLive } from './change-counterparty-purchase-limit-action-server.ts';
 import { changeCustomerPaymentTermsActionApiLive } from './change-customer-payment-terms-action-server.ts';
+import { changeCustomerProfileIcoActionApiLive } from './change-customer-profile-ico-action-server.ts';
+import { changeOrganizationCustomerProfileIcoActionApiLive } from './change-organization-customer-profile-ico-action-server.ts';
 import { changePrincipalPurchaseLimitOverrideActionApiLive } from './change-principal-purchase-limit-override-action-server.ts';
 import { changeRetailPaymentTermPreferenceActionApiLive } from './change-retail-payment-term-preference-action-server.ts';
 import { claimCounterpartyAccessInvitationActionApiLive } from './claim-counterparty-access-invitation-action-server.ts';
@@ -246,13 +255,20 @@ import { createCounterpartyPurchasingProfileActionApiLive } from './create-count
 import { createCustomerGroupActionApiLive } from './create-customer-group-action-server.ts';
 import { createPurchaseProposalRevisionActionApiLive } from './create-purchase-proposal-revision-action-server.ts';
 import { customerArchiveReadApiLive } from './customer-archive-read-server.ts';
+import { customerGroupDefinitionSourceReadApiLive } from './customer-group-definition-source-read-server.ts';
 import { customerGroupDetailReadApiLive } from './customer-group-detail-read-server.ts';
 import { customerGroupHistoryReadApiLive } from './customer-group-history-read-server.ts';
+import { customerGroupMembershipSourceReceiptReadApiLive } from './customer-group-membership-source-receipt-read-server.ts';
 import { customerGroupMembersReadApiLive } from './customer-group-members-read-server.ts';
 import { customerPaymentTermEntitlementReadReadApiLive } from './customer-payment-term-entitlement-read-read-server.ts';
 import { customerPriceGroupAssignmentReadReadApiLive } from './customer-price-group-assignment-read-read-server.ts';
+import { customerPriceGroupAssignmentReceiptReadApiLive } from './customer-price-group-assignment-receipt-read-server.ts';
 import { customerPriceGroupResolutionReadApiLive } from './customer-price-group-resolution-read-server.ts';
+import { customerProfileIcoMigrationReadApiLive } from './customer-profile-ico-migration-read-server.ts';
+import { customerProfileIcoReadApiLive } from './customer-profile-ico-read-server.ts';
+import { customerProfileOrganizationIcoFactsReadApiLive } from './customer-profile-organization-ico-facts-read-server.ts';
 import { customerProfileReadReadApiLive } from './customer-profile-read-read-server.ts';
+import { customerProfileSourceReadApiLive } from './customer-profile-source-read-server.ts';
 import { customerProfileTradingGateReadApiLive } from './customer-profile-trading-gate-read-server.ts';
 import { customerRecordVisibilityReadApiLive } from './customer-record-visibility-read-server.ts';
 import { decidePurchaseApprovalRequestActionApiLive } from './decide-purchase-approval-request-action-server.ts';
@@ -272,9 +288,13 @@ import { marketRetirementReservationRecoveryReadApiLive } from './market-retirem
 import { marketSubjectRestrictionsCurrentReadApiLive } from './market-subject-restrictions-current-read-server.ts';
 import { migrateCounterpartyPriceGroupActionApiLive } from './migrate-counterparty-price-group-action-server.ts';
 import { migrateCustomerPriceGroupActionApiLive } from './migrate-customer-price-group-action-server.ts';
+import { migrateCustomerProfileIcoActionApiLive } from './migrate-customer-profile-ico-action-server.ts';
+import { migrateOrganizationCustomerProfileIcoActionApiLive } from './migrate-organization-customer-profile-ico-action-server.ts';
 import { openProfileReconciliationActionApiLive } from './open-profile-reconciliation-action-server.ts';
 import { orderCommitmentApprovalEvidenceReadApiLive } from './order-commitment-approval-evidence-read-server.ts';
 import { orderServiceApprovalEvidenceReadApiLive } from './order-service-approval-evidence-read-server.ts';
+import { organizationCustomerProfileIcoMigrationReadApiLive } from './organization-customer-profile-ico-migration-read-server.ts';
+import { organizationCustomerProfileIcoReadApiLive } from './organization-customer-profile-ico-read-server.ts';
 import { paymentTermAffectedUseAssessmentReadApiLive } from './payment-term-affected-use-assessment-read-server.ts';
 import { paymentTermPolicyCurrentReadApiLive } from './payment-term-policy-current-read-server.ts';
 import { paymentTermsResolutionReadApiLive } from './payment-terms-resolution-read-server.ts';
@@ -318,6 +338,7 @@ import { revokeRetailPortalProfileBindingActionApiLive } from './revoke-retail-p
 import { savedAddressDefaultsReadApiLive } from './saved-address-defaults-read-server.ts';
 import { savedAddressDetailReadApiLive } from './saved-address-detail-read-server.ts';
 import { savedAddressListReadApiLive } from './saved-address-list-read-server.ts';
+import { savedAddressSourceReceiptReadApiLive } from './saved-address-source-receipt-read-server.ts';
 import { setDefaultBillingAddressActionApiLive } from './set-default-billing-address-action-server.ts';
 import { setDefaultDeliveryDestinationActionApiLive } from './set-default-delivery-destination-action-server.ts';
 import { startPortalEnrollmentActionApiLive } from './start-portal-enrollment-action-server.ts';
@@ -1029,10 +1050,70 @@ const actionRuntimeAwaitingOwnerPreparation = actionRuntimeAwaitingOwnerPrefligh
 );
 /** Deployment composition seam. External owner ports remain visible requirements here. */
 const commerceCustomerContextActionRuntime = actionRuntimeAwaitingOwnerPreparation.pipe(
+  Layer.provideMerge(
+    commerceSourceProfileOwnerProofLive.pipe(
+      Layer.provide(commercePortalAuthPlatformCryptoLive),
+      Layer.provide(FetchHttpClient.layer),
+    ),
+  ),
+  Layer.provideMerge(
+    commerceLegacyIcoInventoryLive.pipe(
+      Layer.provide(commercePortalAuthPlatformCryptoLive),
+      Layer.provide(FetchHttpClient.layer),
+    ),
+  ),
+  Layer.provideMerge(
+    commerceOrganizationBusinessEligibilityLive.pipe(
+      Layer.provide(commercePortalAuthPlatformCryptoLive),
+      Layer.provide(FetchHttpClient.layer),
+    ),
+  ),
+  Layer.provideMerge(
+    commerceOrganizationProfileIcoEligibilityLive.pipe(
+      Layer.provide(commercePortalAuthPlatformCryptoLive),
+      Layer.provide(FetchHttpClient.layer),
+    ),
+  ),
+  Layer.provideMerge(
+    commerceSourceProcessingEligibilityLive.pipe(
+      Layer.provide(commercePortalAuthPlatformCryptoLive),
+      Layer.provide(FetchHttpClient.layer),
+    ),
+  ),
   Layer.provide(deploymentEnrollmentOwnerPreparationLive.pipe(Layer.provide(DatabaseConfigLive))),
 );
 /** Deployment composition seam. External owner ports remain visible requirements here. */
 const commerceCustomerContextReadRuntime = readRuntimeCoreLive.pipe(
+  Layer.provideMerge(
+    commerceSourceProfileOwnerProofLive.pipe(
+      Layer.provide(commercePortalAuthPlatformCryptoLive),
+      Layer.provide(FetchHttpClient.layer),
+    ),
+  ),
+  Layer.provideMerge(
+    commerceLegacyIcoInventoryLive.pipe(
+      Layer.provide(commercePortalAuthPlatformCryptoLive),
+      Layer.provide(FetchHttpClient.layer),
+    ),
+  ),
+  Layer.provideMerge(
+    commerceOrganizationBusinessEligibilityLive.pipe(
+      Layer.provide(commercePortalAuthPlatformCryptoLive),
+      Layer.provide(FetchHttpClient.layer),
+    ),
+  ),
+  Layer.provideMerge(
+    commerceOrganizationProfileIcoEligibilityLive.pipe(
+      Layer.provide(commercePortalAuthPlatformCryptoLive),
+      Layer.provide(FetchHttpClient.layer),
+    ),
+  ),
+  Layer.provideMerge(
+    commerceSourceProcessingEligibilityLive.pipe(
+      Layer.provide(commercePortalAuthPlatformCryptoLive),
+      Layer.provide(FetchHttpClient.layer),
+    ),
+  ),
   Layer.provideMerge(activeApplicationCompositionLive),
   Layer.provideMerge(productionOwnerRuntimeServicesLive),
   Layer.provideMerge(productionOwnerAuthorizationOverlayLive),
@@ -1205,6 +1286,8 @@ export const makeCommerceCustomerContextApiRuntime = (
     ),
     // <generated-governed-http-handler-layers>
     addSavedAddressActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    admitCustomerGroupMembershipSnapshotActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    applyCustomerGroupMembershipSourceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     archiveCustomerGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     archiveCustomerProfileActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     assignCounterpartyPriceGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -1218,6 +1301,8 @@ export const makeCommerceCustomerContextApiRuntime = (
     bootstrapCounterpartyAccessAdministratorActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     changeCounterpartyPurchaseLimitActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     changeCustomerPaymentTermsActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    changeCustomerProfileIcoActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    changeOrganizationCustomerProfileIcoActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     changePrincipalPurchaseLimitOverrideActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     changeRetailPaymentTermPreferenceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     claimCounterpartyAccessInvitationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -1245,13 +1330,20 @@ export const makeCommerceCustomerContextApiRuntime = (
     createCustomerGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     createPurchaseProposalRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     customerArchiveReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    customerGroupDefinitionSourceReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     customerGroupDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     customerGroupHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    customerGroupMembershipSourceReceiptReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     customerGroupMembersReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     customerPaymentTermEntitlementReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     customerPriceGroupAssignmentReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    customerPriceGroupAssignmentReceiptReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     customerPriceGroupResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    customerProfileIcoMigrationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    customerProfileIcoReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    customerProfileOrganizationIcoFactsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     customerProfileReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    customerProfileSourceReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     customerProfileTradingGateReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     customerRecordVisibilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     decidePurchaseApprovalRequestActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
@@ -1271,9 +1363,13 @@ export const makeCommerceCustomerContextApiRuntime = (
     marketSubjectRestrictionsCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     migrateCounterpartyPriceGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     migrateCustomerPriceGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    migrateCustomerProfileIcoActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    migrateOrganizationCustomerProfileIcoActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     openProfileReconciliationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     orderCommitmentApprovalEvidenceReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     orderServiceApprovalEvidenceReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    organizationCustomerProfileIcoMigrationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    organizationCustomerProfileIcoReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     paymentTermAffectedUseAssessmentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     paymentTermPolicyCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     paymentTermsResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -1317,6 +1413,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     savedAddressDefaultsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     savedAddressDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     savedAddressListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    savedAddressSourceReceiptReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     setDefaultBillingAddressActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     setDefaultDeliveryDestinationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     startPortalEnrollmentActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

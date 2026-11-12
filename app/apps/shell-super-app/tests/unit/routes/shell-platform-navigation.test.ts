@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { expect, it } from 'effect-rstest';
 
-import type { ShellNavigationItem } from '../../../shared/api.ts';
-import { AppIdSchema, EntrypointKeySchema, GroupKeySchema, ModuleIdSchema } from '../../../shared/api.ts';
+import type { ShellNavigationItem } from '../../../shared/browser-api.ts';
+import { AppIdSchema, EntrypointKeySchema, GroupKeySchema, ModuleIdSchema } from '../../../shared/browser-api.ts';
 import {
   hasModuleAiApprovals,
   moduleAgentApprovalsGroupKey,

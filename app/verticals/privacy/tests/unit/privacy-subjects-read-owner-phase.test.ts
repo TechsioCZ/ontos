@@ -104,7 +104,7 @@ const ownerPhase = Effect.fn('PrivacySubjectsRead.ownerPhaseTest')(function* own
         Effect.provideService(
           PrivacySubjectPartyOwner,
           PrivacySubjectPartyOwner.of({
-            resolve: (requested, scope, canonicalWrite, revision) =>
+            resolve: (requested, scope, canonicalWrite, _sourceReference, _requirement, revision) =>
               // The real Party owner is an outbound fetch; the Core guard refuses it inside the read transaction.
               refuseInsideDatabaseTransaction('outbound-fetch', 'party-registry-api/reads/party-detail').pipe(
                 Effect.andThen(() => {

@@ -3,8 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "exports": {
+    "./actions/create-applicability-binding": "./shared/actions/create-applicability-binding.ts",
+    "./actions/create-rule": "./shared/actions/create-rule.ts",
+    "./actions/import-symmy-rule": "./shared/actions/import-symmy-rule.ts",
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/assortment-client.ts",
+    "./api/import-symmy-rule-action-client": "./src/api/import-symmy-rule-action-client.ts",
     "./contracts/consumer-evidence": "./shared/domain/consumer-evidence.ts",
     "./outbox/commerce-assortment-binding-created-v1": "./shared/outbox/commerce-assortment-binding-created-v1.ts",
     "./outbox/commerce-assortment-binding-ended-v1": "./shared/outbox/commerce-assortment-binding-ended-v1.ts",
@@ -46,11 +50,14 @@
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
+    "@app/catalog": "workspace:*",
     "@app/commerce-customer-context": "workspace:*",
+    "@app/commerce-market-catalog": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
+    "@app/storefront-registry-contracts": "workspace:*",
     "@effect/opentelemetry": "4.0.7",
     "@effect/platform-node": "4.0.7",
     "@effect/sql-pg": "4.0.7",

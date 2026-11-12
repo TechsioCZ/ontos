@@ -3,8 +3,8 @@ import { Cache, Context, Effect, Exit, MutableHashMap, Predicate, Schema } from 
 import type { Duration, Option } from 'effect';
 import type { ComponentType } from 'react';
 
-import { ResolvedModuleTargetSchema } from '../../shared/api.ts';
-import type { ResolvedModuleTarget } from '../../shared/api.ts';
+import { ResolvedModuleTargetSchema } from '../../shared/browser-api.ts';
+import type { ResolvedModuleTarget } from '../../shared/browser-api.ts';
 import type { HomePageModel } from './[lang]/home-page-model.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import {

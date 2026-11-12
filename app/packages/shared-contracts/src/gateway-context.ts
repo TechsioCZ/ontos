@@ -1,3 +1,14 @@
+import type {
+  FiniteGatewayOperationTarget,
+  PrivacyDispatchOperation,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
+import {
+  RegisteredGatewayRecoverySchema,
+  RegisteredGatewayRouteScopeSchema,
+  RegisteredGatewayWorkloadSchema,
+  RegisteredGatewayPrivacyDispatchSchema,
+  RegisteredGatewayOrganizationGovernanceReadSchema,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import {
@@ -19,6 +30,11 @@ import { problemDetailsContentType, problemDetailsFields } from './problem-detai
 export const GATEWAY_ASSERTION_VERSION = 1 as const;
 export const EXTERNAL_GATEWAY_ASSERTION_VERSION = 2 as const;
 export const DELEGATED_GATEWAY_ASSERTION_VERSION = 3 as const;
+export const WORKLOAD_GATEWAY_ASSERTION_VERSION = 4 as const;
+export const PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION = 5 as const;
+export const ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION = 6 as const;
+export const VERSIONED_PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION = 7 as const;
+export const VERSIONED_ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION = 8 as const;
 export const GATEWAY_ASSERTION_TTL_SECONDS = 300 as const;
 export const GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS = 30 as const;
 
@@ -32,6 +48,17 @@ const PrincipalIdSchema = uuid.pipe(Schema.brand('PrincipalId'));
 const TenantIdSchema = uuid.pipe(Schema.brand('TenantId'));
 const ActionInvocationIdSchema = uuid.pipe(Schema.brand('ActionInvocationId'));
 const EXACT_LIFETIME_ISSUE = 'exp must be exactly 300 seconds after iat';
+export const GatewayCapabilityKeySchema = nonEmptyString.pipe(
+  Schema.brand('GatewayCapabilityKey'),
+  Schema.decodeTo(Schema.String),
+);
+export const GatewaySourceActionKeySchema = nonEmptyString.pipe(
+  Schema.brand('GatewaySourceActionKey'),
+  Schema.decodeTo(Schema.String),
+);
+const GatewayClaimIdSchema = nonEmptyString.pipe(Schema.brand('GatewayClaimId'), Schema.decodeTo(Schema.String));
+const GatewayDeliveryIdSchema = uuid.pipe(Schema.brand('GatewayDeliveryId'), Schema.decodeTo(Schema.String));
+const GatewayWorkerKeySchema = nonEmptyString.pipe(Schema.brand('GatewayWorkerKey'), Schema.decodeTo(Schema.String));
 const SUBJECT_IS_PRINCIPAL_ISSUE = 'sub must equal principal.principalId';
 export const GatewayAudienceSchema = nonEmptyString.check(
   Schema.makeFilter((value) =>
@@ -96,6 +123,7 @@ export const GatewayContextV2ClaimsSchema = Schema.Struct({
   iss: nonEmptyString,
   jti: uuid,
   principal: GatewayTrustedPrincipalContextSchema,
+  routeScope: Schema.optionalKey(RegisteredGatewayRouteScopeSchema),
   sub: uuid,
   targetBuildMarker,
   ver: Schema.Literal(EXTERNAL_GATEWAY_ASSERTION_VERSION),
@@ -105,6 +133,13 @@ export const GatewayContextV2ClaimsSchema = Schema.Struct({
       ? []
       : [{ issue: EXACT_LIFETIME_ISSUE, path: ['exp'] }]),
     ...(claims.sub === claims.principal.principalId ? [] : [{ issue: SUBJECT_IS_PRINCIPAL_ISSUE, path: ['sub'] }]),
+    ...(claims.routeScope === undefined ||
+    (claims.principal.authMethod === 'api_key' &&
+      claims.principal.principalId === claims.routeScope.principalId &&
+      claims.principal.tenantId === claims.routeScope.tenantId &&
+      claims.principal.legalEntityId === claims.routeScope.legalEntityId)
+      ? []
+      : [{ issue: 'A route scope requires its exact API-key principal, tenant, and company', path: ['routeScope'] }]),
     ...(claims.principal.authenticationNamespaceId === undefined
       ? [{ issue: 'version 2 requires an explicit authentication namespace', path: ['principal'] }]
       : []),
@@ -149,10 +184,260 @@ export const GatewayContextV3ClaimsSchema = Schema.Struct({
 );
 export type GatewayContextV3Claims = typeof GatewayContextV3ClaimsSchema.Type;
 
+/** A tenant-local registered system workload, restricted to one owner capability and binding incarnation. */
+export const GatewayContextV4ClaimsSchema = Schema.Struct({
+  aud: GatewayAudienceSchema,
+  compositionRevision,
+  exp: epochSeconds,
+  iat: epochSeconds,
+  iss: nonEmptyString,
+  jti: uuid,
+  principal: GatewayTrustedPrincipalContextSchema,
+  sub: uuid,
+  targetBuildMarker,
+  ver: Schema.Literal(WORKLOAD_GATEWAY_ASSERTION_VERSION),
+  workload: RegisteredGatewayWorkloadSchema,
+}).check(
+  Schema.makeFilter((claims) => [
+    ...(claims.exp - claims.iat === GATEWAY_ASSERTION_TTL_SECONDS
+      ? []
+      : [{ issue: EXACT_LIFETIME_ISSUE, path: ['exp'] }]),
+    ...(claims.sub === claims.principal.principalId ? [] : [{ issue: SUBJECT_IS_PRINCIPAL_ISSUE, path: ['sub'] }]),
+    ...(claims.principal.authMethod === 'system' &&
+    claims.principal.authContextRef === `job:${claims.workload.jobKey}:run:${claims.workload.runReference}`
+      ? []
+      : [{ issue: 'version 4 requires the registered delivery system context', path: ['principal'] }]),
+  ]),
+);
+
+const privacyModuleKey = 'privacy.core';
+const symmyAppId = 'symmy-integration';
+const symmyModuleKey = 'integration.symmy';
+const privacyDispatchContracts: Readonly<Record<PrivacyDispatchOperation, FiniteGatewayOperationTarget>> =
+  Object.freeze({
+    PrivacyEligibility: Object.freeze({
+      access: 'read',
+      appId: 'privacy',
+      declarationKey: 'privacy.core.measure-execution-eligibility.read',
+      entrypointKey: 'privacy.core.api.measure-execution-eligibility',
+      legalEntityScope: 'required',
+      moduleId: privacyModuleKey,
+      schemaVersion: '1',
+    }),
+    PrivacyOutcome: Object.freeze({
+      access: 'write',
+      appId: 'privacy',
+      declarationKey: 'privacy.core.owner-execution-outcome.record',
+      entrypointKey: 'privacy.core.record-owner-execution-outcome',
+      legalEntityScope: 'required',
+      moduleId: privacyModuleKey,
+      schemaVersion: '1',
+    }),
+    SymmyReceipt: Object.freeze({
+      access: 'read',
+      appId: symmyAppId,
+      declarationKey: 'integration.symmy.privacy-measure.read-receipt',
+      entrypointKey: 'integration.symmy.api.symmy-job-privacy-execution',
+      legalEntityScope: 'optional',
+      moduleId: symmyModuleKey,
+      schemaVersion: '1',
+    }),
+    SymmyRetention: Object.freeze({
+      access: 'write',
+      appId: symmyAppId,
+      declarationKey: 'integration.symmy.symmy-retention.execute',
+      entrypointKey: 'integration.symmy.execute-symmy-retention',
+      legalEntityScope: 'optional',
+      moduleId: symmyModuleKey,
+      schemaVersion: '1',
+    }),
+  });
+/** Exact finite receiver contracts, not a permission grant. */
+export const privacyDispatchOperationContract = (
+  operation: PrivacyDispatchOperation,
+  target?: FiniteGatewayOperationTarget,
+): FiniteGatewayOperationTarget => target ?? privacyDispatchContracts[operation];
+
+/** Derive receiver authority from the verified finite operation. Never accept it from wire metadata. */
+export const privacyDispatchAuthorityPolicy = (operation: PrivacyDispatchOperation) => {
+  const targetAccess = {
+    PrivacyEligibility: 'delegated-actor',
+    PrivacyOutcome: 'delegated-actor',
+    SymmyReceipt: 'tenant-unrestricted-list',
+    SymmyRetention: 'tenant-scope',
+  } as const;
+  return {
+    consumerModuleKey: symmyModuleKey,
+    originActionKey: 'privacy.core.dispatch-privacy-measure',
+    originCapabilityKey: 'privacy.core.privacy-measure.dispatch',
+    producerModuleKey: privacyModuleKey,
+    subjectResourceType: 'privacy.core.privacy-measure',
+    targetAccess: targetAccess[operation],
+    topic: 'privacy.measure.dispatched',
+    workerKey: 'integration.symmy.symmy-job-privacy-dispatch',
+  };
+};
+
+const organizationGovernanceReadContract = Object.freeze({
+  access: 'read',
+  appId: symmyAppId,
+  declarationKey: 'integration.symmy.symmy-source-organization-facts.read',
+  entrypointKey: 'integration.symmy.api.symmy-source-organization-facts',
+  legalEntityScope: 'required',
+  moduleId: symmyModuleKey,
+  schemaVersion: '1',
+} as const);
+/** A fixed read contract only; this supplies neither source facts nor permission to obtain them. */
+export const organizationGovernanceReadOperationContract = (
+  target?: FiniteGatewayOperationTarget,
+): FiniteGatewayOperationTarget => target ?? organizationGovernanceReadContract;
+
+const matchesFiniteOperationIdentity = (
+  target: FiniteGatewayOperationTarget,
+  approved: FiniteGatewayOperationTarget,
+): boolean =>
+  target.access === approved.access &&
+  target.appId === approved.appId &&
+  target.declarationKey === approved.declarationKey &&
+  target.entrypointKey === approved.entrypointKey &&
+  target.legalEntityScope === approved.legalEntityScope &&
+  target.moduleId === approved.moduleId;
+/** Finite native Privacy dispatch authority retains its original human and governance company. */
+const privacyDispatchClaims = <Version extends 5 | 7>(version: Version) =>
+  Schema.Struct({
+    act: GatewayActorClaimSchema,
+    aud: GatewayAudienceSchema,
+    compositionRevision,
+    exp: epochSeconds,
+    iat: epochSeconds,
+    iss: nonEmptyString,
+    jti: uuid,
+    principal: GatewayTrustedPrincipalContextSchema,
+    privacyDispatch: RegisteredGatewayPrivacyDispatchSchema,
+    sub: uuid,
+    targetBuildMarker,
+    ver: Schema.Literal(version),
+  }).check(
+    Schema.makeFilter((claims) => [
+      ...(claims.exp - claims.iat === GATEWAY_ASSERTION_TTL_SECONDS
+        ? []
+        : [{ issue: EXACT_LIFETIME_ISSUE, path: ['exp'] }]),
+      ...(claims.sub === claims.principal.principalId ? [] : [{ issue: SUBJECT_IS_PRINCIPAL_ISSUE, path: ['sub'] }]),
+      ...((claims.principal.authMethod === 'session' || claims.principal.authMethod === 'api_key') &&
+      claims.principal.impersonatedByPrincipalId === undefined &&
+      claims.principal.principalId === claims.privacyDispatch.principalId &&
+      claims.principal.tenantId === claims.privacyDispatch.tenantId &&
+      claims.principal.legalEntityId === claims.privacyDispatch.governanceLegalEntityId
+        ? []
+        : [{ issue: 'Version 5 requires the exact original human and governance company', path: ['principal'] }]),
+      ...(claims.act.principalId === claims.sub
+        ? [{ issue: 'act.principalId must differ from sub', path: ['act', 'principalId'] }]
+        : []),
+      ...((claims.privacyDispatch.target !== undefined) ===
+      (claims.ver === VERSIONED_PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION)
+        ? []
+        : [{ issue: 'Only versioned Privacy dispatch requires a signed target', path: ['privacyDispatch', 'target'] }]),
+      ...(claims.privacyDispatch.authority === undefined &&
+      (claims.privacyDispatch.sourceMode === 'worker'
+        ? claims.privacyDispatch.workerKey === 'integration.symmy.symmy-job-privacy-dispatch' &&
+          claims.privacyDispatch.workerModuleKey === 'integration.symmy'
+        : claims.privacyDispatch.operation === 'SymmyReceipt')
+        ? []
+        : [{ issue: 'The dispatch authority must derive from its approved native source', path: ['privacyDispatch'] }]),
+      ...(claims.privacyDispatch.target === undefined ||
+      matchesFiniteOperationIdentity(
+        claims.privacyDispatch.target,
+        privacyDispatchContracts[claims.privacyDispatch.operation],
+      )
+        ? []
+        : [
+            {
+              issue: 'The finite Privacy dispatch requires its approved operation identity',
+              path: ['privacyDispatch', 'target'],
+            },
+          ]),
+      ...(claims.aud ===
+      privacyDispatchOperationContract(claims.privacyDispatch.operation, claims.privacyDispatch.target).appId
+        ? []
+        : [{ issue: 'The finite Privacy dispatch operation requires its exact audience', path: ['aud'] }]),
+    ]),
+  );
+export const GatewayContextV5ClaimsSchema = privacyDispatchClaims(PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION);
+const GatewayContextV7ClaimsSchema = privacyDispatchClaims(VERSIONED_PRIVACY_DISPATCH_GATEWAY_ASSERTION_VERSION);
+export type GatewayContextV5Claims = typeof GatewayContextV5ClaimsSchema.Type;
+
+/** One governed organization source-facts Read under the original live human Privacy context. */
+const organizationGovernanceClaims = <Version extends 6 | 8>(version: Version) =>
+  Schema.Struct({
+    act: GatewayActorClaimSchema,
+    aud: GatewayAudienceSchema,
+    compositionRevision,
+    exp: epochSeconds,
+    iat: epochSeconds,
+    iss: nonEmptyString,
+    jti: uuid,
+    organizationGovernanceRead: RegisteredGatewayOrganizationGovernanceReadSchema,
+    principal: GatewayTrustedPrincipalContextSchema,
+    sub: uuid,
+    targetBuildMarker,
+    ver: Schema.Literal(version),
+  }).check(
+    Schema.makeFilter((claims) => [
+      ...(claims.exp - claims.iat === GATEWAY_ASSERTION_TTL_SECONDS
+        ? []
+        : [{ issue: EXACT_LIFETIME_ISSUE, path: ['exp'] }]),
+      ...(claims.sub === claims.principal.principalId ? [] : [{ issue: SUBJECT_IS_PRINCIPAL_ISSUE, path: ['sub'] }]),
+      ...(claims.act.appId === 'privacy' && claims.act.principalId !== claims.sub
+        ? []
+        : [{ issue: 'Only the distinct Privacy module actor may carry this human Read', path: ['act'] }]),
+      ...((claims.principal.authMethod === 'session' || claims.principal.authMethod === 'api_key') &&
+      claims.principal.authenticationNamespaceId !== undefined &&
+      claims.principal.impersonatedByPrincipalId === undefined &&
+      claims.principal.principalId === claims.organizationGovernanceRead.principalId &&
+      claims.principal.tenantId === claims.organizationGovernanceRead.tenantId &&
+      claims.principal.legalEntityId === claims.organizationGovernanceRead.governanceLegalEntityId
+        ? []
+        : [{ issue: 'Version 6 requires the exact original human and governance company', path: ['principal'] }]),
+      ...((claims.organizationGovernanceRead.target !== undefined) ===
+      (claims.ver === VERSIONED_ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION)
+        ? []
+        : [
+            {
+              issue: 'Only versioned organization governance requires a signed target',
+              path: ['organizationGovernanceRead', 'target'],
+            },
+          ]),
+      ...(claims.organizationGovernanceRead.target === undefined ||
+      matchesFiniteOperationIdentity(claims.organizationGovernanceRead.target, organizationGovernanceReadContract)
+        ? []
+        : [
+            {
+              issue: 'Organization governance requires its approved Read identity',
+              path: ['organizationGovernanceRead', 'target'],
+            },
+          ]),
+      ...(claims.aud === organizationGovernanceReadOperationContract(claims.organizationGovernanceRead.target).appId
+        ? []
+        : [{ issue: 'The organization governance Read requires its exact audience', path: ['aud'] }]),
+    ]),
+  );
+export const GatewayContextV6ClaimsSchema = organizationGovernanceClaims(
+  ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION,
+);
+const GatewayContextV8ClaimsSchema = organizationGovernanceClaims(
+  VERSIONED_ORGANIZATION_GOVERNANCE_GATEWAY_ASSERTION_VERSION,
+);
+export type GatewayContextV6Claims = typeof GatewayContextV6ClaimsSchema.Type;
+
 export const SupportedGatewayContextClaimsSchema = Schema.Union([
   GatewayContextClaimsSchema,
   GatewayContextV2ClaimsSchema,
   GatewayContextV3ClaimsSchema,
+  GatewayContextV4ClaimsSchema,
+  GatewayContextV5ClaimsSchema,
+  GatewayContextV6ClaimsSchema,
+  GatewayContextV7ClaimsSchema,
+  GatewayContextV8ClaimsSchema,
 ]);
 export type SupportedGatewayContextClaims = typeof SupportedGatewayContextClaimsSchema.Type;
 export const decodeSupportedGatewayContextClaims = Schema.decodeUnknownEffect(SupportedGatewayContextClaimsSchema, {
@@ -206,15 +491,126 @@ export const API_KEY_GATEWAY_CONTEXT_HEADER = 'x-ontos-gateway-context';
  * admits that company only for a workload requester bound in the tenant; a person keeps the company the
  * invocation recorded.
  */
-export const GatewayDelegatedSubjectSchema = Schema.Union([
-  Schema.TaggedStruct('Assertion', {
-    sourceAssertion: Schema.RedactedFromValue(nonEmptyString),
+export const GatewayRegisteredAssertionSubjectSchema = Schema.TaggedStruct('RegisteredAssertion', {
+  declarationKey: GatewayCapabilityKeySchema,
+  expectedPrincipalId: Schema.optionalKey(PrincipalIdSchema),
+  operationRequirementKey: Schema.optionalKey(GatewayCapabilityKeySchema),
+  processingRequestHash: Schema.optionalKey(compositionRevision),
+  recoveryRequestHash: Schema.optionalKey(compositionRevision),
+  sourceAssertion: Schema.RedactedFromValue(nonEmptyString),
+}).check(
+  Schema.makeFilter((subject) =>
+    subject.processingRequestHash === undefined || subject.recoveryRequestHash === undefined
+      ? undefined
+      : 'Processing and recovery request restrictions cannot be combined',
+  ),
+);
+
+export const GatewayRegisteredAdmissionSubjectSchema = Schema.TaggedStruct('RegisteredAdmission', {
+  actionInvocationId: ActionInvocationIdSchema,
+  declarationKey: GatewayCapabilityKeySchema,
+  expectedAuthContextRef: Schema.optionalKey(nonEmptyString.check(Schema.isMaxLength(500))),
+  expectedPrincipalId: Schema.optionalKey(PrincipalIdSchema),
+  legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+  operationRequirementKey: Schema.optionalKey(GatewayCapabilityKeySchema),
+  sourceActionKey: GatewaySourceActionKeySchema,
+  tenantId: TenantIdSchema,
+});
+
+export const GatewayRegisteredWorkloadSubjectSchema = Schema.TaggedStruct('RegisteredWorkload', {
+  claimId: GatewayClaimIdSchema,
+  declarationKey: GatewayCapabilityKeySchema,
+  deliveryId: GatewayDeliveryIdSchema,
+  expectedPrincipalId: Schema.optionalKey(PrincipalIdSchema),
+  legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+  operationRequirementKey: Schema.optionalKey(GatewayCapabilityKeySchema),
+  tenantId: TenantIdSchema,
+  workerKey: GatewayWorkerKeySchema,
+});
+
+export const GatewayAssertionSubjectSchema = Schema.TaggedStruct('Assertion', {
+  sourceAssertion: Schema.RedactedFromValue(nonEmptyString),
+});
+
+export const GatewayOriginatorSubjectSchema = Schema.TaggedStruct('Originator', {
+  actionInvocationId: ActionInvocationIdSchema,
+  legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+  tenantId: TenantIdSchema,
+});
+const privacyDispatchAttempt = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1));
+export const GatewayPrivacyDispatchOperationSchema = Schema.Union([
+  Schema.TaggedStruct('SymmyRetention', {}),
+  Schema.TaggedStruct('SymmyReceipt', { attempt: Schema.optionalKey(privacyDispatchAttempt) }),
+  Schema.TaggedStruct('PrivacyEligibility', {}),
+  Schema.TaggedStruct('PrivacyOutcome', { attempt: privacyDispatchAttempt }),
+]);
+export const GatewayPrivacyDispatchSourceSchema = Schema.Union([
+  Schema.TaggedStruct('Worker', {
+    claimId: GatewayClaimIdSchema,
+    deliveryId: GatewayDeliveryIdSchema,
+    tenantId: TenantIdSchema,
+    workerKey: GatewayWorkerKeySchema,
   }),
-  Schema.TaggedStruct('Originator', {
-    actionInvocationId: ActionInvocationIdSchema,
-    legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+  Schema.TaggedStruct('Dispatch', {
+    dispatchInvocationId: ActionInvocationIdSchema,
+    legalEntityId: LegalEntityIdSchema,
     tenantId: TenantIdSchema,
   }),
+  Schema.TaggedStruct('Assertion', { sourceAssertion: Schema.RedactedFromValue(nonEmptyString) }),
+]);
+export const GatewayPrivacyDispatchSubjectSchema = Schema.TaggedStruct('PrivacyDispatch', {
+  operation: GatewayPrivacyDispatchOperationSchema,
+  operationRequirementKey: Schema.optionalKey(GatewayCapabilityKeySchema),
+  source: GatewayPrivacyDispatchSourceSchema,
+});
+export const GatewayOrganizationGovernanceReadSubjectSchema = Schema.TaggedStruct('OrganizationGovernanceRead', {
+  requestHash: compositionRevision,
+  sourceAssertion: Schema.RedactedFromValue(nonEmptyString),
+});
+const GatewayRecoverySourceSchema = Schema.Union([
+  Schema.TaggedStruct('HistoricalDelivery', {
+    deliveryId: GatewayDeliveryIdSchema,
+    legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+    tenantId: TenantIdSchema,
+    workerKey: GatewayWorkerKeySchema,
+  }),
+  Schema.TaggedStruct('Worker', {
+    claimId: GatewayClaimIdSchema,
+    deliveryId: GatewayDeliveryIdSchema,
+    legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+    tenantId: TenantIdSchema,
+    workerKey: GatewayWorkerKeySchema,
+  }),
+  Schema.TaggedStruct('Admission', {
+    actionInvocationId: ActionInvocationIdSchema,
+    legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+    sourceActionKey: GatewaySourceActionKeySchema,
+    tenantId: TenantIdSchema,
+  }),
+]);
+export const GatewayRecoveryIntentFields = {
+  declarationKey: GatewayCapabilityKeySchema,
+  expectedPrincipalId: Schema.optionalKey(PrincipalIdSchema),
+  operationRequirementKey: Schema.optionalKey(GatewayCapabilityKeySchema),
+  originalActionKey: GatewaySourceActionKeySchema,
+  originalIdempotencyKey: nonEmptyString.pipe(Schema.brand('OriginalIdempotencyKey'), Schema.decodeTo(Schema.String)),
+  originalPrincipalId: PrincipalIdSchema,
+  originalRequestHash: compositionRevision,
+  requestHash: compositionRevision,
+};
+export const GatewayRegisteredRecoverySubjectSchema = Schema.TaggedStruct('RegisteredRecovery', {
+  ...GatewayRecoveryIntentFields,
+  source: GatewayRecoverySourceSchema,
+});
+export const GatewayDelegatedSubjectSchema = Schema.Union([
+  GatewayPrivacyDispatchSubjectSchema,
+  GatewayOrganizationGovernanceReadSubjectSchema,
+  GatewayRegisteredAssertionSubjectSchema,
+  GatewayRegisteredAdmissionSubjectSchema,
+  GatewayRegisteredWorkloadSubjectSchema,
+  GatewayRegisteredRecoverySubjectSchema,
+  GatewayAssertionSubjectSchema,
+  GatewayOriginatorSubjectSchema,
 ]);
 export type GatewayDelegatedSubject = typeof GatewayDelegatedSubjectSchema.Encoded;
 
@@ -240,6 +636,14 @@ export const GatewayContextResponseSchema = Schema.Struct({
   ),
   compositionRevision,
   expiresAt: epochSeconds,
+  machineContext: Schema.optionalKey(
+    Schema.Struct({
+      authContextRef: nonEmptyString.check(Schema.isMaxLength(500)),
+      bindingIncarnation: uuid,
+      principalId: PrincipalIdSchema,
+    }),
+  ),
+  recovery: Schema.optionalKey(RegisteredGatewayRecoverySchema),
   token: nonEmptyString,
 });
 export type GatewayContextResponse = Schema.Schema.Type<typeof GatewayContextResponseSchema>;

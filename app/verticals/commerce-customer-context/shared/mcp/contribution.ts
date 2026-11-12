@@ -1,4 +1,4 @@
-import { defineOntosMcpContribution } from '@app/core-runtime';
+import { defineOntosMcpContribution, OntosMcpHidden } from '@app/core-runtime';
 
 export const commerceCustomerContextMcpContribution = defineOntosMcpContribution({
   actions: {
@@ -32,6 +32,10 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
         en: 'Manage purchasing currency policies',
       },
     },
+    // Owner-to-owner or enrolled source-workload integration action; never a general agent tool.
+    'admit-customer-group-membership-snapshot': OntosMcpHidden,
+    // Owner-to-owner or enrolled source-workload integration action; never a general agent tool.
+    'apply-customer-group-membership-source': OntosMcpHidden,
     'archive-customer-group': {
       title: {
         cs: 'Archivovat zákaznickou skupinu',
@@ -98,6 +102,10 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
         en: 'Change customer payment terms',
       },
     },
+    // Owner-to-owner or enrolled source-workload integration action; never a general agent tool.
+    'change-customer-profile-ico': OntosMcpHidden,
+    // Owner-to-owner or enrolled source-workload integration action; never a general agent tool.
+    'change-organization-customer-profile-ico': OntosMcpHidden,
     'change-principal-purchase-limit-override': {
       title: {
         cs: 'Změnit individuální limit nákupu uživatele',
@@ -198,6 +206,10 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
         en: 'Move a customer to another price group',
       },
     },
+    // A critical IČO migration is run by people only; never a general agent tool.
+    'migrate-customer-profile-ico': OntosMcpHidden,
+    // A critical IČO migration is run by people only; never a general agent tool.
+    'migrate-organization-customer-profile-ico': OntosMcpHidden,
     'open-profile-reconciliation': {
       title: {
         cs: 'Zahájit sladění zákaznických profilů',
@@ -470,6 +482,8 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
         en: 'Customer archive',
       },
     },
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'customer-group-definition-source': OntosMcpHidden,
     'customer-group-detail': {
       title: {
         cs: 'Detail zákaznické skupiny',
@@ -488,6 +502,8 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
         en: 'Customer group members',
       },
     },
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'customer-group-membership-source-receipt': OntosMcpHidden,
     'customer-payment-term-entitlement-read': {
       title: {
         cs: 'Nárok zákazníka na platební podmínky',
@@ -500,13 +516,23 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
         en: 'Customer price group assignment',
       },
     },
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'customer-price-group-assignment-receipt': OntosMcpHidden,
     'customer-price-group-resolution': 'hidden',
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'customer-profile-ico': OntosMcpHidden,
+    // Critical evidence for people only; never a general agent tool.
+    'customer-profile-ico-migration': OntosMcpHidden,
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'customer-profile-organization-ico-facts': OntosMcpHidden,
     'customer-profile-read': {
       title: {
         cs: 'Profil zákazníka',
         en: 'Customer profile',
       },
     },
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'customer-profile-source': OntosMcpHidden,
     'customer-profile-trading-gate': {
       title: {
         cs: 'Smí zákazník nakupovat',
@@ -554,6 +580,10 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
     },
     'order-commitment-approval-evidence': 'hidden',
     'order-service-approval-evidence': 'hidden',
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'organization-customer-profile-ico': OntosMcpHidden,
+    // Critical evidence for people only; never a general agent tool.
+    'organization-customer-profile-ico-migration': OntosMcpHidden,
     'payment-term-affected-use-assessment': {
       title: {
         cs: 'Dopad změny platebních podmínek',
@@ -650,6 +680,8 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
         en: 'Saved addresses',
       },
     },
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'saved-address-source-receipt': OntosMcpHidden,
     'verify-effective-customer-group-membership-set-v1': 'hidden',
     'verify-retail-purchasing-subject-current-v1': 'hidden',
   },

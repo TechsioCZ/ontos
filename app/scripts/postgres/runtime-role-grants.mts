@@ -5,6 +5,46 @@ const promotionImmutableEvidenceReason = 'Promotion immutable publication, attri
 
 export const SHARED_RUNTIME_TABLE_GRANT_EXCEPTIONS = [
   {
+    privileges: [],
+    reason: 'Only hardened trust routines may access source execution fence state',
+    table: 'core.source_execution_fences',
+  },
+  {
+    privileges: [],
+    reason: 'Only admin migrations may declare the Actions requiring an execution gate',
+    table: 'core.source_execution_gate_actions',
+  },
+  {
+    privileges: [],
+    reason: 'Only admin publication and scoped trust routines may access execution gates',
+    table: 'core.source_execution_gates',
+  },
+  {
+    privileges: ['select', 'insert', 'delete'],
+    reason: 'Assortment atomically redeems one-use assertions before Tenant scope without storing business data',
+    table: 'assortment.gateway_assertion_redemptions',
+  },
+  {
+    privileges: ['select', 'insert', 'delete'],
+    reason: 'Inventory atomically redeems one-use assertions before Tenant scope without storing business data',
+    table: 'inventory.gateway_assertion_redemptions',
+  },
+  {
+    privileges: ['select', 'insert', 'delete'],
+    reason: 'Privacy atomically redeems one-use assertions before Tenant scope without storing business data',
+    table: 'privacy.gateway_assertion_redemptions',
+  },
+  {
+    privileges: ['select', 'insert', 'delete'],
+    reason: 'Tax atomically redeems one-use assertions before Tenant scope without storing business data',
+    table: 'tax.gateway_assertion_redemptions',
+  },
+  {
+    privileges: ['select', 'insert'],
+    reason: 'Symmy workers pin original effect claims and settle them only through scoped owner routines',
+    table: 'symmy_integration.job_effects',
+  },
+  {
     privileges: ['select', 'insert'],
     reason: 'Immutable before/after Promotion selection and basis policy evidence',
     table: 'promotion.policy_changes',
@@ -63,6 +103,21 @@ export const SHARED_RUNTIME_TABLE_GRANT_EXCEPTIONS = [
     privileges: ['select', 'insert', 'update'],
     reason: 'Market retirement transitions preserve durable aborted and committed admission fences without deletion',
     table: 'commerce_market_catalog.market_retirement_admissions',
+  },
+  {
+    privileges: ['select', 'insert'],
+    reason: 'The Symmy receiver records one-use gateway assertions before opening business scope',
+    table: 'symmy_integration.gateway_assertion_redemptions',
+  },
+  {
+    privileges: ['select', 'insert'],
+    reason: 'Symmy job admission writes immutable receipts and polling reads their current projection',
+    table: 'symmy_integration.import_jobs',
+  },
+  {
+    privileges: ['select'],
+    reason: 'Symmy admission reads operator-managed route registrations',
+    table: 'symmy_integration.job_routes',
   },
 ] as const satisfies readonly DatabaseTableGrant[];
 
@@ -239,6 +294,7 @@ export const PRICING_RUNTIME_ROUTINE_SIGNATURES = [
   'pricing.read_current_quantity_tier_v1(uuid,uuid,jsonb)',
   'pricing.read_current_supported_currencies(uuid,uuid,jsonb)',
   'pricing.read_current_price_definition_v1(uuid,uuid,uuid)',
+  'pricing.read_price_group_source_prices_v1(uuid,uuid,jsonb)',
   'pricing.read_price_schedule_v1(uuid,uuid,jsonb)',
   'pricing.read_quantity_tier_schedule_v1(uuid,uuid,jsonb)',
   'pricing.read_tenant_currency_support_v1(uuid,jsonb)',
