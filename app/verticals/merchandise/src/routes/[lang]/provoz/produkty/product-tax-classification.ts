@@ -1,6 +1,6 @@
 // A product's VAT classification as staff see it: which rate Tax gives each classification of the selected company
 // now, which one it has scheduled next, and how the forms name them. Tax owns the rates; Merchandise never keeps one.
-import { formatDate, formatNumber } from '@app/admin-ui';
+import { formatNumber } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { CZ_VAT_STANDARD, czVatClassificationCodes } from '@app/shared-contracts/cz-vat-classifications';
 import type { CzVatClassificationCode, TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
@@ -164,6 +164,7 @@ const dateFormatOf = (language: string, withTime: boolean) => {
 /** Words for the classifications and their rates. Pure, so the forms and their tests read the same text. */
 export const taxLabelsOf = (t: Translate, language = 'cs') => {
   const dateTime = dateFormatOf(language, true);
+  const date = dateFormatOf(language, false);
   const name = (code: CzVatClassificationCode) => t(`${KEY_PREFIX}.classification.${nameKeys[code]}`);
   const notSet = t(`${KEY_PREFIX}.notSet`);
   const nonPayer = t(`${KEY_PREFIX}.nonPayer`);
@@ -184,7 +185,7 @@ export const taxLabelsOf = (t: Translate, language = 'cs') => {
     next === undefined
       ? undefined
       : t(`${KEY_PREFIX}.scheduled`, {
-          date: formatDate(DateTime.formatIso(next.effectiveFrom)),
+          date: date.format(DateTime.toEpochMillis(next.effectiveFrom)),
           rate: ratePercentText(next.ratePercent),
         });
   /**

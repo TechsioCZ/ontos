@@ -35,7 +35,7 @@ const payerVat = (rates: readonly TaxRateView[]): CompanyVat => ({ rates, regime
 const nonPayerVat: CompanyVat = { rates: [], regime: 'NON_PAYER' };
 
 const cs = taxLabelsOf(translateIn('cs'));
-const en = taxLabelsOf(translateIn('en'));
+const en = taxLabelsOf(translateIn('en'), 'en');
 
 describe('rates of a classification', () => {
   it('picks the period in force: from its start up to, not including, its end', () => {
@@ -98,7 +98,8 @@ describe('labels', () => {
   it('hints a scheduled change with its date and rate', () => {
     const choice = classificationChoice(payerVat([standardNow, standardNext]), CZ_VAT_STANDARD, now);
     expect(cs.scheduled(choice)).toBe('Od 1. 1. 2027 23\u00A0%');
-    expect(en.scheduled(choice)).toBe('From 1. 1. 2027 23\u00A0%');
+    // Each screen language writes the date its own way.
+    expect(en.scheduled(choice)).toBe('From 1 Jan 2027 23\u00A0%');
     expect(cs.scheduled(classificationChoice(payerVat([reducedNow]), CZ_VAT_REDUCED, now))).toBeUndefined();
   });
 
