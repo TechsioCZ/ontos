@@ -532,12 +532,14 @@
       "pickerStored": "Original rate {{rate}} %",
       "storedRate": "{{rate}} %",
       "ratesUnavailable": "The VAT rates could not be loaded right now. Please try again shortly.",
+      "regimeNotDeclared": "The company has no VAT regime set. Set it on the DPH page.",
       "nonPayerOnly": "The company is not a VAT payer. Choose “Not a VAT payer – no VAT”.",
       "chooseVat": "Choose a VAT rate the company has for this date in its VAT settings.",
       "rejected": {
         "vat_classification_required": "Choose a VAT rate or an exemption for the line. An original rate cannot be used for a new line.",
         "vat_not_payer": "The company is not a VAT payer, so its lines must be without VAT.",
         "vat_rate_changed": "The VAT rate has changed in the meantime. Check the lines and save again.",
+        "vat_regime_not_declared": "The company has no VAT regime set. Set it on the DPH page; new VAT lines cannot be saved yet.",
         "vat_treatment": "The chosen VAT treatment does not fit this document."
       }
     },

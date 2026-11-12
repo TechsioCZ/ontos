@@ -77,8 +77,16 @@ export const lineVatOf = (choice: LineVatChoice, choices: VatChoices | undefined
 export type InvoiceDirection = typeof InvoiceDirectionSchema.Type;
 
 /**
+ * Whether the company's own documents can carry new VAT lines: only once its VAT regime is declared in Tax. Without a
+ * declared regime the company is not ready, never assumed to be a payer. A supplier's invoice records the supplier's
+ * VAT and never depends on it.
+ */
+export const regimeReady = (direction: InvoiceDirection, regime: VatChoices['regime'] | undefined): boolean =>
+  direction === 'INCOMING' || regime !== 'NOT_DECLARED';
+
+/**
  * Which treatments a line may use. A supplier's own invoice may carry any of them. A company that is not a VAT payer
- * issues only non-payer lines; a payer (or a company with no declared regime yet) never does.
+ * issues only non-payer lines, a payer never does, and a company without a declared regime issues none.
  */
 export const allowedTreatments = (
   direction: InvoiceDirection,
@@ -87,14 +95,20 @@ export const allowedTreatments = (
   if (direction === 'INCOMING') {
     return lineVatTreatments;
   }
+  if (!regimeReady(direction, regime)) {
+    return [];
+  }
   return regime === 'NON_PAYER' ? ['NON_PAYER'] : ['EXEMPT', 'REVERSE_CHARGE'];
 };
 
-/** Whether a company's own invoice may use the VAT classifications: never for a company that is not a VAT payer. */
+/**
+ * Whether a company's own invoice may use the VAT classifications: only for a declared VAT payer (a supplier's invoice
+ * always may).
+ */
 export const classificationsAllowed = (
   direction: InvoiceDirection,
   regime: VatChoices['regime'] | undefined,
-): boolean => direction === 'INCOMING' || regime !== 'NON_PAYER';
+): boolean => direction === 'INCOMING' || (regime !== 'NON_PAYER' && regimeReady(direction, regime));
 
 /** The default VAT of a new line: the standard rate, or the non-payer treatment for a company without VAT. */
 export const defaultLineVatChoice = (direction: InvoiceDirection, regime?: VatChoices['regime']): LineVatChoice =>
@@ -119,6 +133,7 @@ export const LineVatIssueSchema = Schema.Literals([
   'vat_classification_required',
   'vat_not_payer',
   'vat_rate_changed',
+  'vat_regime_not_declared',
   'vat_treatment',
 ]);
 export type LineVatIssue = typeof LineVatIssueSchema.Type;
@@ -139,6 +154,9 @@ export const lineVatIssue = (
 ): LineVatIssue | undefined => {
   if (kept) {
     return undefined;
+  }
+  if (!regimeReady(direction, choices.regime)) {
+    return 'vat_regime_not_declared';
   }
   if (line.vatTreatment !== undefined) {
     return allowedTreatments(direction, choices.regime).includes(line.vatTreatment) ? undefined : 'vat_treatment';

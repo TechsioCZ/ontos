@@ -9,6 +9,7 @@ import {
   classificationLabelKey,
   classificationsAllowed,
   rateOf,
+  regimeReady,
   treatmentLabelKey,
 } from '../../../../shared/domain/line-vat.ts';
 import type { InvoiceDirection, LineVatChoice } from '../../../../shared/domain/line-vat.ts';
@@ -103,7 +104,12 @@ export const VatChoiceSelect = ({ choice, direction, invalid = false, name, onCh
           {t('finance-billing.vat.ratesUnavailable')}
         </StatusText>
       )}
-      {vat.state !== 'unavailable' && invalid && (
+      {choices !== undefined && !regimeReady(direction, regime) && (
+        <StatusText showIcon size="sm" status="error">
+          {t('finance-billing.vat.regimeNotDeclared')}
+        </StatusText>
+      )}
+      {vat.state !== 'unavailable' && regimeReady(direction, regime) && invalid && (
         <StatusText showIcon size="sm" status="error">
           {t(
             regime === 'NON_PAYER' && direction === 'OUTGOING'

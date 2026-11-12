@@ -6,8 +6,7 @@
  *   (end the covering rate, add the new one, each against Tax's latest basis) and sees it listed as planned.
  * - A Finance clerk without any Tax right is refused by Tax (403, the problem the page shows as "no access").
  * - Finance, calling Tax for that same clerk with the module-call assertion the Shell signs for Finance, gets the
- *   company's rates for an invoice line. Tax admits this only once its reads list `finance-billing` as a caller;
- *   until then the case is skipped (see FINANCE_LISTED_AS_TAX_CALLER).
+ *   company's rates for an invoice line; Tax's reads list `finance-billing` as a caller.
  */
 import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
 import {
@@ -47,7 +46,6 @@ import { importJWK, SignJWT } from 'jose';
 import { governedReadApiHandlersLive } from '../../../tax/api/index.ts';
 import { taxApi } from '../../../tax/shared/api.ts';
 import { ultramodernApiMarker } from '../../../tax/shared/ultramodern-build.ts';
-import { applicableTaxRuleSetRead } from '../../../tax/src/api/applicable-tax-rule-set.read.ts';
 import { publishedTaxComposition } from '../../../tax/tests/support/published-tax-composition.ts';
 import { bootstrapScopesOf } from '../../../../packages/core-runtime/src/access/bootstrap/persistence.ts';
 import { pragueDayStart } from '../../shared/domain/line-vat.ts';
@@ -60,9 +58,6 @@ const COMPOSITION_URL = 'https://composition.finance-vat-settings.test/active';
 const TAX_ORIGIN = 'http://localhost:3020';
 const AUTHORITY_LOCK = "hashtextextended('ontos.application-composition-authority', 0)";
 const SCENARIO_LOCK = "hashtextextended('ontos.finance-vat-settings-authority', 0)";
-/** Whether Tax's reads already name Finance as a calling module (package B's caller-list lines). */
-const FINANCE_LISTED_AS_TAX_CALLER =
-  applicableTaxRuleSetRead.descriptor.accessActor?.callers.includes(FINANCE_APP) === true;
 
 const digest = (document: string) => bytesToHex(sha256(utf8ToBytes(document)));
 const uuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
@@ -583,8 +578,8 @@ it.live(
   120_000,
 );
 
-it.live.skipIf(!FINANCE_LISTED_AS_TAX_CALLER)(
-  'Finance reads the company rates and regime from Tax for a clerk without Tax rights (pending: Tax lists finance-billing)',
+it.live(
+  'Finance reads the company rates and regime from Tax for a clerk without Tax rights',
   () =>
     Effect.scoped(
       Effect.gen(function* financeCallerPath() {

@@ -532,12 +532,14 @@
       "pickerStored": "Původní sazba {{rate}} %",
       "storedRate": "{{rate}} %",
       "ratesUnavailable": "Sazby DPH se teď nepodařilo načíst. Zkuste to prosím za chvíli.",
+      "regimeNotDeclared": "Firma nemá nastavený režim DPH. Nastavte ho na stránce DPH.",
       "nonPayerOnly": "Firma není plátcem DPH. Vyberte „Neplátce DPH – bez daně“.",
       "chooseVat": "Vyberte DPH, kterou má firma k tomuto dni v nastavení DPH.",
       "rejected": {
         "vat_classification_required": "U položky vyberte sazbu DPH nebo osvobození. Původní sazbu už nelze použít pro novou položku.",
         "vat_not_payer": "Firma není plátcem DPH, položky musí být bez daně.",
         "vat_rate_changed": "Sazba DPH se mezitím změnila. Zkontrolujte položky a uložte znovu.",
+        "vat_regime_not_declared": "Firma nemá nastavený režim DPH. Nastavte ho na stránce DPH, nové položky s DPH zatím nelze uložit.",
         "vat_treatment": "Zvolený režim DPH se k tomuto dokladu nehodí."
       }
     },
