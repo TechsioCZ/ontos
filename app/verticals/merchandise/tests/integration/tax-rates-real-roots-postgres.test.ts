@@ -30,6 +30,7 @@ import {
   DELEGATED_GATEWAY_ASSERTION_VERSION,
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_TTL_SECONDS,
+  GATEWAY_MODULE_NOT_INSTALLED_TYPE,
   GatewayDelegatedContextRequestSchema,
   shellGatewayContextContract,
 } from '@app/shared-contracts';
@@ -405,11 +406,24 @@ const forbidden = () =>
     { contentType: 'application/problem+json', status: 403 },
   );
 
+const moduleNotInstalled = () =>
+  HttpServerResponse.jsonUnsafe(
+    {
+      _tag: 'GatewayForbiddenProblem',
+      detail: 'The module the call is for is not installed for the tenant.',
+      status: 403,
+      title: 'Module not installed',
+      type: GATEWAY_MODULE_NOT_INSTALLED_TYPE,
+    },
+    { contentType: 'application/problem+json', status: 403 },
+  );
+
 type Gateway = Effect.Success<ReturnType<typeof makeGateway>>;
 
 /**
  * The Shell's delegated issuance as the real issuer decides it: Merchandise's module key, a valid source assertion,
- * both modules installed for the subject's tenant; it then signs the module-call assertion for the audience.
+ * both modules installed for the subject's tenant (Tax missing: the Shell's own "not installed" problem); it then signs
+ * the module-call assertion for the audience.
  */
 const delegationHandler = (input: {
   readonly admin: PgClient.PgClient;
@@ -434,8 +448,12 @@ const delegationHandler = (input: {
       [principal.tenantId],
     );
     const keys = new Set(installed.map((row) => row.module_key));
-    if (!keys.has('demo.merchandise') || !keys.has('commerce.tax')) {
+    if (!keys.has('demo.merchandise')) {
       return forbidden();
+    }
+    // The one refusal the real Shell gives for a module the tenant has not installed.
+    if (!keys.has('commerce.tax')) {
+      return moduleNotInstalled();
     }
     const issued = yield* input.gateway.sign({
       actor: input.merchandise,
