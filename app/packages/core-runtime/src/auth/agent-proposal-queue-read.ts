@@ -57,35 +57,51 @@ const executableActions = Effect.fn('AgentProposalQueueRead.executableActions')(
 const ANY_ACTION_ROUNDS = [8, 32] as const;
 
 /**
- * Whether the acting person may run at least one of `actions`: asked in rounds of growing size and stopped at the first
- * round that admits one. Every Action's answer is its own whatever else is asked with it, so this is exactly whether one
- * question over all of them admits any; a person with no right at all is asked about every Action, whatever they read.
+ * The rounds of `actions`, those of modules with an approval review (the ones agent proposals name) first: the sizes of
+ * `ANY_ACTION_ROUNDS`, then everything left. The order only decides which question comes first, never the answer.
  */
-/** The rounds of `actions`: the sizes of `ANY_ACTION_ROUNDS`, then everything left. */
 const roundsOf = (actions: readonly AgentProposalQueueAction[]): readonly (readonly AgentProposalQueueAction[])[] => {
+  const ordered = [
+    ...actions.filter(({ review }) => review !== undefined),
+    ...actions.filter(({ review }) => review === undefined),
+  ];
   const rounds: (readonly AgentProposalQueueAction[])[] = [];
   let from = 0;
   for (const size of ANY_ACTION_ROUNDS) {
-    rounds.push(actions.slice(from, from + size));
+    rounds.push(ordered.slice(from, from + size));
     from += size;
   }
-  rounds.push(actions.slice(from));
+  rounds.push(ordered.slice(from));
   return rounds.filter((round) => round.length > 0);
 };
 
-/** Whether a round from `index` on admits one Action, asking the next only while none did. */
+/** What the rounds asked so far answered: whether one admitted an Action, and every asked Action's own answer. */
+interface AnyActionAnswer {
+  readonly answered: ReadonlyMap<string, boolean>;
+  readonly found: boolean;
+}
+
+/** The rounds from `index` on, asking the next only while none admitted an Action. */
 const anyRoundAdmits = (
   rounds: readonly (readonly AgentProposalQueueAction[])[],
   index: number,
   scope: ReadPrepareContext['scope'],
-): Effect.Effect<boolean, ReadHandlerUnavailable, ActionAuthority> => {
+  answered: ReadonlyMap<string, boolean>,
+): Effect.Effect<AnyActionAnswer, ReadHandlerUnavailable, ActionAuthority> => {
   const round = rounds[index];
   return round === undefined
-    ? Effect.succeed(false)
+    ? Effect.succeed({ answered, found: false })
     : executableActions(round, scope).pipe(
-        Effect.flatMap((admitted) =>
-          admitted.length > 0 ? Effect.succeed(true) : anyRoundAdmits(rounds, index + 1, scope),
-        ),
+        Effect.flatMap((admitted) => {
+          const runnable = new Set(admitted.map(({ actionKey }) => actionKey));
+          const next = new Map([
+            ...answered,
+            ...round.map(({ actionKey }) => [actionKey, runnable.has(actionKey)] as const),
+          ]);
+          return admitted.length > 0
+            ? Effect.succeed({ answered: next, found: true })
+            : anyRoundAdmits(rounds, index + 1, scope, next);
+        }),
       );
 };
 
@@ -93,9 +109,15 @@ const anyRoundAdmits = (
  * Whether the acting person may run at least one of `actions`: asked in rounds of growing size and stopped at the first
  * round that admits one. Every Action's answer is its own whatever else is asked with it, so this is exactly whether one
  * question over all of them admits any; a person with no right at all is asked about every Action, whatever they read.
+ * The asked Actions' answers come back too, for the read to apply to its rows as it always applied `prepare`'s.
  */
 const holdsAnyExecutableAction = (actions: readonly AgentProposalQueueAction[], scope: ReadPrepareContext['scope']) =>
-  anyRoundAdmits(roundsOf(actions), 0, scope).pipe(Effect.withSpan('AgentProposalQueueRead.holdsAnyExecutableAction'));
+  anyRoundAdmits(roundsOf(actions), 0, scope, new Map()).pipe(
+    Effect.withSpan('AgentProposalQueueRead.holdsAnyExecutableAction'),
+  );
+
+/** No Action answered yet: what every read but an exact batch carries from `prepare`. */
+const NOTHING_ANSWERED: ReadonlyMap<string, boolean> = new Map();
 
 const prepare = Effect.fn('AgentProposalQueueRead.prepare')(function* prepare(
   input: AgentProposalQueueInput,
@@ -118,12 +140,12 @@ const prepare = Effect.fn('AgentProposalQueueRead.prepare')(function* prepare(
       return yield* agentProposalQueueDenied();
     }
     const actions: readonly AgentProposalQueueAction[] = [];
-    return { actions, revision: '' };
+    return { actions, answered: NOTHING_ANSWERED, revision: '' };
   }
   if (isOwnProposalRead(input)) {
     // Kind is checked against the current principal row in the owner transaction, not client input.
     const actions: readonly AgentProposalQueueAction[] = [];
-    return { actions, revision: '' };
+    return { actions, answered: NOTHING_ANSWERED, revision: '' };
   }
   const snapshot = yield* (yield* ActiveApplicationCompositionService).load.pipe(
     Effect.flatMap(validateActiveApplicationCompositionSnapshot),
@@ -161,16 +183,17 @@ const prepare = Effect.fn('AgentProposalQueueRead.prepare')(function* prepare(
     // A person who may run no Action at all is refused here, before any row is loaded or locked, whatever the batch
     // (an existing or a missing one costs the same). Every row's own Action is authorized in `finish`: only the Actions
     // its rows name are asked there, never every Action of the release.
-    if (!(yield* holdsAnyExecutableAction(unique, context.scope))) {
+    const any = yield* holdsAnyExecutableAction(unique, context.scope);
+    if (!any.found) {
       return yield* agentProposalQueueDenied();
     }
-    return { actions: unique, revision };
+    return { actions: unique, answered: any.answered, revision };
   }
   const actions = yield* executableActions(unique, context.scope);
   if (actions.length === 0) {
     return yield* agentProposalQueueDenied();
   }
-  return { actions, revision };
+  return { actions, answered: NOTHING_ANSWERED, revision };
 });
 
 type Prepared = Effect.Success<ReturnType<typeof prepare>>;
@@ -263,7 +286,15 @@ const finish = Effect.fn('AgentProposalQueueRead.finish')(function* finish(
   const named = [
     ...new Set(loaded.proposals.map((row) => actionOf(row, prepared.actions)).filter((action) => action !== undefined)),
   ];
-  const actions = exactBatch ? yield* executableActions(named, context.scope) : prepared.actions;
+  // The rows' Actions `prepare` already asked keep its answer, as the read always applied `prepare`'s answers; only the
+  // others are asked now.
+  const unasked = named.filter(({ actionKey }) => !prepared.answered.has(actionKey));
+  const actions = exactBatch
+    ? [
+        ...named.filter(({ actionKey }) => prepared.answered.get(actionKey) === true),
+        ...(yield* executableActions(unasked, context.scope)),
+      ]
+    : prepared.actions;
   if (exactBatch && loaded.proposals.some((row) => actionOf(row, actions) === undefined)) {
     return yield* agentProposalQueueDenied();
   }

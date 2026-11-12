@@ -274,6 +274,9 @@ const recordingAuthority = (executable: ReadonlySet<string>, calls: string[][]):
   checkActionProposalPermission: () => Effect.die('Proposal permission never authorizes queue reads'),
 });
 
+/** Nine more work-tasks Actions besides `update`: the ninth (`s9`) lies beyond `prepare`'s first round of eight. */
+const LATE_SLUGS = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9'];
+
 /** The `index`-th row of the table's batch, naming the work-tasks Action `slug`. */
 const tableRow = (slug: string, index: number) =>
   driverRow({
@@ -740,11 +743,9 @@ it.layer(
             return;
           }
           expect(loadedProposals).toBe(true);
-          // `finish` asks exactly the Actions the rows name, and nothing when they name no declared Action.
-          const named = [...new Set(scenario.rows.filter((slug) => declared.has(slug)))].map(
-            (slug) => `work.tasks.${slug}`,
-          );
-          expect(calls.slice(1)).toEqual(named.length === 0 ? [] : [named]);
+          // Both declared Actions were answered in `prepare`'s first round: `finish` applies those answers to the rows,
+          // as the read always applied `prepare`'s, and asks nothing more.
+          expect(calls.slice(1)).toEqual([]);
         }),
       );
     }
@@ -778,7 +779,7 @@ it.layer(
         );
       expect(outcome).toBe('denied');
       // The refused row's own Action was asked (so its denial is decided and recorded), with its sibling's.
-      expect(new Set(calls.at(-1))).toEqual(new Set(['work.tasks.update', 'party.registry.update']));
+      expect(new Set(calls.flat())).toEqual(new Set(['work.tasks.update', 'party.registry.update']));
     }),
   );
 
@@ -809,19 +810,55 @@ it.layer(
     }),
   );
 
+  suite.effect("asks in finish exactly the rows' Actions prepare did not answer, and applies the others", () =>
+    Effect.gen(function* lateRowAction() {
+      const harness = yield* makeReadTestHarness({
+        executeOwnerQuery: tableQueries([tableRow('s9', 0)]),
+        operationTime,
+        ownerAuthorizationDecision: 'allowed',
+        permissionDecision: 'allowed',
+        scope,
+      });
+      const services = yield* Layer.build(
+        Layer.mergeAll(
+          harness.layer,
+          outboxWorkerCompositionLayer(yield* executableComposition('no-review', LATE_SLUGS)),
+        ),
+      );
+      const calls: string[][] = [];
+      const outcome = yield* harness.runtime
+        .runRead({ input: tableInput('batch'), principal: scope, registration: agentProposalQueueRead, transport })
+        .pipe(
+          Effect.provideService(
+            ActionAuthority,
+            recordingAuthority(new Set(['work.tasks.update', 'work.tasks.s9']), calls),
+          ),
+          Effect.provide(services),
+          Effect.match({ onFailure: outcomeOfFailure, onSuccess: (read) => `rows ${read.proposals.length}` }),
+        );
+      expect(outcome).toBe('rows 1');
+      // `prepare`'s first round (eight Actions) found a right; `finish` asks only the row's Action it did not answer.
+      expect(calls.map((call) => call.length)).toEqual([8, 1]);
+      expect(calls[1]).toEqual(['work.tasks.s9']);
+    }),
+  );
+
   suite.effect(
     "answers an exact batch unavailable, never refused or allowed, when its rows' Actions cannot be asked",
     () =>
       Effect.gen(function* authorityUnavailable() {
         const harness = yield* makeReadTestHarness({
-          executeOwnerQuery: tableQueries([tableRow('update', 0)]),
+          executeOwnerQuery: tableQueries([tableRow('s9', 0)]),
           operationTime,
           ownerAuthorizationDecision: 'allowed',
           permissionDecision: 'allowed',
           scope,
         });
         const services = yield* Layer.build(
-          Layer.mergeAll(harness.layer, outboxWorkerCompositionLayer(yield* executableComposition())),
+          Layer.mergeAll(
+            harness.layer,
+            outboxWorkerCompositionLayer(yield* executableComposition('no-review', LATE_SLUGS)),
+          ),
         );
         const asked = { count: 0 };
         const outcome = yield* harness.runtime
