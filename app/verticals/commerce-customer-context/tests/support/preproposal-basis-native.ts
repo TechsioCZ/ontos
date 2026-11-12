@@ -1327,6 +1327,45 @@ const resolveNativeOwnerIdentity = Effect.fn('PreproposalNative.ownerIdentity')(
   });
 });
 
+/**
+ * A hosted owner's identity is the one its build recorded (`dist/ultramodern-build.json`): its API bundle verifies
+ * every assertion against that release marker, which a build with a configured source revision derives from that
+ * revision. The checkout the test runs in (a dirty worktree, an export without Git) may resolve a different one.
+ */
+const resolveHostedOwnerIdentity = Effect.fn('PreproposalNative.hostedOwnerIdentity')(function* resolveHostedIdentity(
+  owner: string,
+  appId: string,
+) {
+  const built = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(
+      Schema.Struct({
+        deliveryUnit: Schema.Struct({ ...MarkerSchema.fields, sourceRevision: Schema.String }),
+        surfaces: Schema.Struct({ api: MarkerSchema }),
+      }),
+    ),
+  )(
+    yield* io(
+      `hosted-owner-build-identity:${appId}`,
+      async () => await readFile(`${applicationRoot}${owner}/dist/ultramodern-build.json`, 'utf-8'),
+    ),
+  ).pipe(Effect.mapError(() => safeFailure(`hosted-owner-build-identity:${appId}`)));
+  yield* requireProtocol(
+    built.deliveryUnit.appId === appId &&
+      built.surfaces.api.appId === appId &&
+      built.surfaces.api.buildMarker === built.deliveryUnit.buildMarker,
+    `hosted-owner-build-identity:${appId}`,
+  );
+  return { buildMarker: built.deliveryUnit.buildMarker, sourceRevision: built.deliveryUnit.sourceRevision };
+});
+
+/** The release identity an owner of this run serves and signs as: a hosted owner's built one, else its source's. */
+const resolveOwnerIdentity = (owner: string) => {
+  const hosted = ownerDefinitions.find((definition) => definition.owner === owner && definition.hosted);
+  return hosted === undefined
+    ? resolveNativeOwnerIdentity(owner)
+    : resolveHostedOwnerIdentity(hosted.owner, hosted.appId);
+};
+
 const buildOwnerExecutable = Effect.fn('PreproposalNative.buildOwnerExecutable')(function* buildOwnerExecutable(
   owner: string,
   filename: string,
@@ -1358,7 +1397,8 @@ const buildOwnerExecutable = Effect.fn('PreproposalNative.buildOwnerExecutable')
   );
   const identityDefines: string[] = [];
   if (!owner.startsWith('packages/')) {
-    const identity = yield* resolveNativeOwnerIdentity(owner);
+    // A hosted owner's own fixtures (Market's setup child, Catalog's producer) are that same release.
+    const identity = yield* resolveOwnerIdentity(owner);
     identityDefines.push(
       `--define:ULTRAMODERN_BUILD_MARKER=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(identity.buildMarker)}`,
       `--define:ULTRAMODERN_SOURCE_REVISION=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(identity.sourceRevision)}`,
@@ -1551,6 +1591,8 @@ const makeAdmittedPreproposalOutbox = (
 const makeNativeComposition = Effect.fn('PreproposalNative.composition')(function* makeNativeComposition(
   owners: readonly {
     readonly appId: string;
+    /** A hosted owner's build source revision; its contract names the release marker the build derived from it. */
+    readonly builtSourceRevision: string | undefined;
     readonly marker: typeof MarkerSchema.Type;
     readonly moduleId: string;
     readonly origin: string;
@@ -1568,7 +1610,10 @@ const makeNativeComposition = Effect.fn('PreproposalNative.composition')(functio
       Effect.gen(function* nativeContract() {
         const generator = yield* openNativeChild({
           args: ['scripts/generate-ontos-module-contract.mts', '--vertical', owner.appId, '--target', 'dist'],
-          environment: { APP_ENV_PATH: '/dev/null' },
+          environment:
+            owner.builtSourceRevision === undefined
+              ? { APP_ENV_PATH: '/dev/null' }
+              : { APP_ENV_PATH: '/dev/null', ULTRAMODERN_SOURCE_REVISION: owner.builtSourceRevision },
           stage: `module-contract:${owner.appId}`,
         });
         yield* generator.exit;
@@ -2106,11 +2151,12 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
             ),
           )(document);
           const generatedMarker = definition.appId === shellAudience ? metadata.deliveryUnit : metadata.surfaces.api;
-          const identity = yield* resolveNativeOwnerIdentity(definition.owner);
+          const identity = yield* resolveOwnerIdentity(definition.owner);
           const marker = { ...generatedMarker, buildMarker: identity.buildMarker };
           yield* requireProtocol(marker.appId === definition.appId, `owner-marker:${definition.appId}`);
           const placement = yield* makeOwnerPlacement(definition.appId, definition.hosted);
-          return { ...definition, artifact, marker, ...placement };
+          const builtSourceRevision = definition.hosted ? identity.sourceRevision : undefined;
+          return { ...definition, artifact, builtSourceRevision, marker, ...placement };
         }),
       ),
     );
@@ -2635,7 +2681,7 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
 
     const overlay = commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(Layer.provide(ContextAccessLive));
     const ownerConfiguration = ConfigProvider.layer(ConfigProvider.fromUnknown(environment));
-    const ownIdentity = yield* resolveNativeOwnerIdentity('verticals/commerce-customer-context');
+    const ownIdentity = yield* resolveOwnerIdentity('verticals/commerce-customer-context');
     const ownDeployment = { appId: contextAudience, buildMarker: ownIdentity.buildMarker };
     const database = Layer.succeed(
       DatabaseConfig,
