@@ -28,6 +28,10 @@ const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
 );
+/**
+ * The pinned folders are the Party chain stage applied from the demo trunk, in its order. The canonical
+ * owner migration then appends main's folders and the merge's convergence leaf, as the next deploy does.
+ */
 const baselineFolders = [
   '20260903174425_yummy_glorian',
   '20260904104109_nebulous_cardiac',
@@ -35,6 +39,7 @@ const baselineFolders = [
   '20261019115249_official_identifier_original_input',
   '20261020063911_party-gateway-scope-rls',
   '20261020113551_legal-entity-scope',
+  '20261027230000_party-migration-equivalence',
 ] as const;
 const structuredNamesFolder = '20261105082358_flashy_gravity';
 const forwardFolders = [
@@ -303,6 +308,17 @@ it.layer(nativeServices, { excludeTestServices: true })('verification removal up
         yield* isolated.publishInitialComposition(composition);
         // The historical upgrade is pinned. Continue via the canonical CLI before invoking current code.
         const native = yield* preparePartyReconciliationNative(isolated.connections, 'migrate');
+        const pinned: readonly string[] = [...baselineFolders, structuredNamesFolder, ...forwardFolders];
+        const ledger = (yield* admin.execute<{ readonly name: string }>(
+          sql`select name from drizzle.__drizzle_migrations_party order by id`,
+          'objects',
+        )).map((row) => row.name);
+        // Main's folders follow the trunk chain even where they sort before its last folder.
+        expect(ledger.slice(0, pinned.length)).toEqual(pinned);
+        expect(ledger.slice(pinned.length).toSorted()).toEqual(ledger.slice(pinned.length));
+        expect(ledger.slice(pinned.length).every((folder) => folder > structuredNamesFolder)).toBe(true);
+        expect(ledger).toHaveLength(new Set(ledger).size);
+        expect(yield* readAssertion()).toEqual([before]);
         expect(decodeURIComponent(new URL(native.partyConfiguration.connectionString).pathname.slice(1))).toBe(
           isolated.connections.admin.database,
         );
