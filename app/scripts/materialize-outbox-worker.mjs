@@ -156,7 +156,7 @@ const failure = (message) => new OutboxWorkerMaterializationError(message);
  *
  * @param {{ readonly inputs: Readonly<Record<string, unknown>> }} metafile The worker build's input map.
  * @param {string} bundledWorker The built worker.
- * @returns {Effect.Effect<void, OutboxWorkerMaterializationError>} Fails unless the worker carries one claimed store.
+ * @returns {Effect.Effect<void, OutboxWorkerMaterializationError>} Fails when it carries a store other than one claimed copy.
  */
 const assertOneClaimedStore = (metafile, bundledWorker) => {
   const inputs = Object.keys(metafile.inputs);
@@ -165,10 +165,13 @@ const assertOneClaimedStore = (metafile, bundledWorker) => {
   );
   const hostClaims = inputs.some((input) => input.endsWith('scripts/zerops/module-credentials.mts'));
   const storeCopies = [...bundledWorker.matchAll(/["']HostedModuleCredentials\.claim["']/gu)].length;
-  return storeInputs.length === 1 &&
-    hostClaims &&
-    storeCopies === 1 &&
-    bundledWorker.includes('ModuleCredentials.holdOwnCopy')
+  // A worker that bundles no store at all reads no module credential; any that does must carry exactly one, claimed.
+  const noStore = storeInputs.length === 0 && storeCopies === 0;
+  return noStore ||
+    (storeInputs.length === 1 &&
+      hostClaims &&
+      storeCopies === 1 &&
+      bundledWorker.includes('ModuleCredentials.holdOwnCopy'))
     ? Effect.void
     : Effect.fail(
         failure(
