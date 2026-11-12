@@ -409,7 +409,7 @@ const recordReplayResponse = Effect.fn('GatewayOperationRecovery.recordReplayRes
     REJECTED_BEFORE_EFFECT: (rejected) =>
       ledger.recordRejected({ ...write, at: now }).pipe(Effect.as(rejected.finding)),
   });
-  return yield* appendFindings(call, expected, [finding], 'REPLAY');
+  return yield* appendFindings(call, expected, [finding, ...Option.toArray(response.targetFinding)], 'REPLAY');
 });
 
 /**

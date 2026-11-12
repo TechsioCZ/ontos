@@ -166,6 +166,7 @@ const acknowledgement = (family: Family, expected: GatewayExpectedEffect): Provi
       providerRefs: [PAYMENT_REFS[family]],
       target: { operationId: expected.operationId, operationKind: expected._tag },
     }),
+    targetFinding: Option.none(),
   };
 };
 

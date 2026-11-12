@@ -279,6 +279,7 @@ export const mapGopayCreateResponse = (input: {
     payment: input.payment,
     target: input.target,
   }),
+  targetFinding: Option.none(),
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -303,7 +304,11 @@ export const mapGopayRefundResponse = (input: {
   const providerRefs = [gopayPaymentRef(paymentRef)];
   const subject = { operationId: expected.operationId, operationKind: 'REFUND' as const };
   if (gopayProviderObjectId(input.response.id) !== paymentRef) {
-    return { _tag: 'ACKNOWLEDGED', finding: bareFinding('VERIFICATION_CONFLICT', subject, providerRefs) };
+    return {
+      _tag: 'ACKNOWLEDGED',
+      finding: bareFinding('VERIFICATION_CONFLICT', subject, providerRefs),
+      targetFinding: Option.none(),
+    };
   }
   const refundFinding = (finding: ProviderFinding, factKind: ProviderEvidenceFactKind) =>
     findingOf({
@@ -332,10 +337,12 @@ export const mapGopayRefundResponse = (input: {
     Match.when('FAILED', (): ProviderDispatchResponse => ({
       _tag: 'REJECTED_BEFORE_EFFECT',
       finding: refundFinding('NOT_EFFECTED', 'REFUND_NOT_EFFECTED'),
+      targetFinding: Option.none(),
     })),
     Match.orElse((): ProviderDispatchResponse => ({
       _tag: 'ACKNOWLEDGED',
       finding: refundFinding('ACCEPTED_PENDING', 'REFUND_PENDING'),
+      targetFinding: Option.none(),
     })),
   );
 };

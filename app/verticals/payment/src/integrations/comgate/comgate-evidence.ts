@@ -238,6 +238,7 @@ export const mapComgateCreateResponse = (
         orderReference: Option.none(),
         transId: Option.none(),
       }),
+      targetFinding: Option.none(),
     });
   }
   const transId = Option.flatMap(Option.fromUndefinedOr(response.transId), (value) =>
@@ -260,6 +261,7 @@ export const mapComgateCreateResponse = (
       orderReference: Option.none(),
       transId,
     }),
+    targetFinding: Option.none(),
   });
 };
 
@@ -345,6 +347,7 @@ export const mapComgateRefundResponse = (
         orderReference: Option.none(),
         transId: Option.some(transId),
       }),
+      targetFinding: Option.none(),
     });
   }
   if (COMGATE_REFUND_REFUSED_CODES.includes(code)) {
@@ -370,6 +373,7 @@ export const mapComgateRefundResponse = (
         orderReference: Option.none(),
         transId: Option.some(transId),
       }),
+      targetFinding: Option.none(),
     });
   }
   return Effect.fail(outcomeUnknown(expected.operationId, `comgate_refund_code_${code}`));

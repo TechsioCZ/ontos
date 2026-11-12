@@ -286,6 +286,15 @@ const appendFinding = (execution: Execution, finding: ProviderFindingResult) =>
       appendEvidence(execution, finding.target.operationId, evidence, 'DISPATCH_RESPONSE').pipe(Effect.asVoid),
   });
 
+/** A cancel answer's proof about its own collection target (e.g. already paid) is kept as well (#1156). */
+const appendTargetFinding = (execution: Execution, targetFinding: Option.Option<ProviderFindingResult>) =>
+  Option.match(
+    targetFinding.pipe(
+      Option.filter((found) => Option.contains(execution.identity.targetOperationId, found.target.operationId)),
+    ),
+    { onNone: () => Effect.void, onSome: (found) => appendFinding(execution, found) },
+  );
+
 // ---------------------------------------------------------------------------------------------
 // Terminal ledger steps
 // ---------------------------------------------------------------------------------------------
@@ -949,10 +958,13 @@ const recordAnswer = Effect.fn('GatewayOperationExecutor.recordAnswer')(function
   const execution: Execution = { ...plan.execution, now: yield* DateTime.now };
   const replay = Option.orElse(plan.replay, () => replayRequestOf(plan.record));
   if (Result.isSuccess(answer)) {
-    return yield* Match.valueTags(answer.success, {
+    const { targetFinding } = answer.success;
+    const recorded = yield* Match.valueTags(answer.success, {
       ACKNOWLEDGED: ({ finding }) => recordAcknowledged(execution, finding),
       REJECTED_BEFORE_EFFECT: ({ finding }) => recordRejected(execution, Option.some(finding), 'provider_rejected'),
     });
+    yield* appendTargetFinding(execution, targetFinding);
+    return recorded;
   }
   return yield* Match.valueTags(answer.failure, {
     GatewayProviderOutcomeUnknown: () => recordUnknown(execution, replay),

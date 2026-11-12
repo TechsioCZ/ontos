@@ -1146,6 +1146,8 @@ $$;
 -- under the same occurrence and revision is a CONFLICT and is never overwritten. received_at is the captured
 -- notification's receipt (the notification must belong to the same binding) or, without one, the observation
 -- instant; verified_at is the observation instant. A repeat keeps the first row's instants and notification.
+-- The evidence origin is provenance, like the notification: a lookup occurrence is the same fact whether a
+-- notification or a recovery read it, so a repeat from the other path returns the existing (pending) row.
 CREATE FUNCTION payment.psp_append_evidence(
   p_tenant_id uuid,
   p_legal_entity_id uuid,
@@ -1221,7 +1223,6 @@ BEGIN
     AND evidence.binding_id = p_binding_id AND evidence.source_occurrence_id = p_source_occurrence_id
     AND evidence.source_revision = p_source_revision;
   IF v_evidence.operation_id IS DISTINCT FROM p_operation_id
-    OR v_evidence.evidence_origin IS DISTINCT FROM p_evidence_origin
     OR v_evidence.fact_kind IS DISTINCT FROM p_fact_kind
     OR v_evidence.fact_family IS DISTINCT FROM p_fact_family
     OR v_evidence.provider_refs IS DISTINCT FROM p_provider_refs

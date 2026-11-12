@@ -340,7 +340,31 @@ const acknowledgement = (family: Family, call: ProviderCall, kind: keyof typeof 
     providerRefs: [PAYMENT_REFS[family]],
     target: { operationId: call.operationId, operationKind: kind },
   }),
+  targetFinding: Option.none(),
 });
+
+/** A proven finding of a refused Stripe cancel (own) or of its collection target. */
+const provenFinding = (operationId: string, operationKind: 'CANCEL_OR_VOID' | 'COLLECT', factKind: string) =>
+  Schema.decodeUnknownSync(ProviderFindingResultSchema)({
+    customerAction: Option.none(),
+    evidence: Option.some({
+      discrepancy: Option.none(),
+      economicEffectKey: operationKind === 'COLLECT' ? Option.some('pi_test_1') : Option.none(),
+      factFamily: 'GATEWAY_OUTCOME',
+      factKind,
+      observedAmount: Option.none(),
+      observedAt: REQUESTED_AT,
+      providerOccurredAt: Option.none(),
+      providerRefs: [PAYMENT_REFS.STRIPE],
+      reason: Option.none(),
+      sourceOccurrenceId: `stripe:dispatch_response:cs_test_1:${operationId}:${factKind}:100000`,
+      sourceRevision: 0,
+    }),
+    finding: operationKind === 'COLLECT' ? 'EFFECT_CONFIRMED' : 'NOT_EFFECTED',
+    orderReference: Option.none(),
+    providerRefs: [PAYMENT_REFS.STRIPE],
+    target: { operationId, operationKind },
+  });
 
 const kindOfCall = (world: World, operationId: string) => world.operations.get(operationId)?.kind ?? 'COLLECT';
 
@@ -746,6 +770,30 @@ describe('#1156 #1158 Gateway operation executor', () => {
       expect(world.calls.find((call) => call.kind === 'PREPARE_CANCEL')?.providerTarget).toEqual(PAYMENT_REFS.STRIPE);
       expect(stateOf(world, CANCEL_ID)).toBe('ACKNOWLEDGED');
       expect(factsOf(world)).toEqual([[CANCEL_ID, 'CANCEL_CONFIRMED']]);
+    }),
+  );
+
+  it.effect('#1156 A cancel refused because the customer already paid keeps the proven collection', () =>
+    Effect.gen(function* cancelAfterPayment() {
+      yield* at(0);
+      const world = withOperations(newWorld(), collectSpec('STRIPE'), cancelSpec('STRIPE'));
+      expect(Exit.isSuccess(yield* deliver(world, collectSpec('STRIPE')))).toBe(true);
+      // The expire is refused; the session lookup proves the cancel did nothing and the collection is paid.
+      world.script = (call) =>
+        call.kind === 'SEND' && call.operationId === CANCEL_ID
+          ? Effect.succeed({
+              _tag: 'REJECTED_BEFORE_EFFECT',
+              finding: provenFinding(CANCEL_ID, 'CANCEL_OR_VOID', 'CANCEL_NOT_EFFECTED'),
+              targetFinding: Option.some(provenFinding(COLLECT_ID, 'COLLECT', 'COLLECTION_CONFIRMED')),
+            })
+          : 'DEFAULT';
+      expect(Exit.isSuccess(yield* deliver(world, cancelSpec('STRIPE')))).toBe(true);
+      expect(stateOf(world, CANCEL_ID)).toBe('REJECTED_BEFORE_EFFECT');
+      expect(factsOf(world)).toEqual([
+        [CANCEL_ID, 'CANCEL_NOT_EFFECTED'],
+        [COLLECT_ID, 'COLLECTION_CONFIRMED'],
+      ]);
+      expect(world.evidence.map((stored) => stored.origin)).toEqual(['DISPATCH_RESPONSE', 'DISPATCH_RESPONSE']);
     }),
   );
 
