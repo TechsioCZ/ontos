@@ -106,12 +106,12 @@ it('declares immutable exact group routine allowlist entries with Core-injected 
     'assign_customer_group_membership',
     'create_customer_group',
     'reactivate_customer_group',
+    'read_counterparty_customer_group_memberships',
     'read_customer_group',
     'read_customer_group_definition_source',
     'read_customer_group_history',
     'read_customer_group_members',
     'read_effective_customer_group_memberships',
-    'read_counterparty_customer_group_memberships',
     'remove_customer_group_membership',
     'update_customer_group',
   ]);
