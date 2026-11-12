@@ -4,6 +4,7 @@
 // mounted while its order reloads, so these prove what the draft does when the reloaded order arrives.
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { DateTime, Effect, Option, Schema } from 'effect';
+import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { act, createElement, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -151,7 +152,13 @@ interface HarnessProps {
 }
 
 const Harness = ({ isValid, order, revision }: HarnessProps) => {
-  const value = useOrderEditDraft({ isValid, order, revision });
+  const value = useOrderEditDraft({
+    isValid,
+    onOfferedPriceChanged: () => Effect.void,
+    onSend: constVoid,
+    order,
+    revision,
+  });
   useEffect(() => {
     latest = value;
   }, [value]);
