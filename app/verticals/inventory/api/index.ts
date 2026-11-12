@@ -1,3 +1,4 @@
+import { PgClient } from '@effect/sql-pg';
 import {
   OwnerActionApprovalSchemaErrorLive,
   makeOwnerActionApproveHandler,
@@ -46,6 +47,7 @@ import {
 import {
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
   GatewayAssertionRedemptionDatabaseLive,
+  gatewayAssertionRedemptionPgClient,
 } from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 
@@ -201,7 +203,9 @@ const inventoryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit
 );
 
 const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
-  Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+  Layer.provide(
+    GatewayAssertionRedemptionDatabaseLive.pipe(Layer.provide(PgClient.layerFrom(gatewayAssertionRedemptionPgClient))),
+  ),
   Layer.provide(DatabaseConfigLive),
 );
 
