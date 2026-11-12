@@ -888,6 +888,155 @@ const ViolationOrder = Order.combine(
   Order.combine(byField('line', Order.Number), byField('reason', Order.String)),
 );
 
+// ---------------------------------------------------------------------------------------------------------------
+// Demo rule: Core and the Shell platform name no MicroVertical.
+// Every vertical id, module id, tool name, label, navigation entry or review rule comes from the composed module
+// contracts, so a vertical's app id (quoted, or as an `@app/<id>` / `verticals/<id>` path segment) or module id must
+// not appear in Core or Shell platform source. Demo guide content, demo seed data and Core's test fixtures name demo
+// tenants' modules on purpose. Main's governed integration layer is deliberately vertical-aware (Shell owns the
+// Symmy ingress and the gateway evidence that issues Symmy, Privacy-dispatch and organization-governance
+// assertions), so those files, or only the audiences they name, are exempt.
+// ---------------------------------------------------------------------------------------------------------------
+export interface PlatformVertical {
+  readonly appId: string;
+  readonly moduleId: string | undefined;
+}
+
+const PLATFORM_GUARDED = [
+  'packages/core-runtime/src/',
+  'packages/shared-contracts/src/',
+  'apps/shell-super-app/api/',
+  'apps/shell-super-app/server/',
+  'apps/shell-super-app/shared/',
+  'apps/shell-super-app/src/',
+  'scripts/ontos-mcp-contribution.mts',
+];
+const PLATFORM_EXEMPT = [
+  'apps/shell-super-app/src/demo-guide/guides/',
+  'packages/core-runtime/src/testing/',
+  'apps/shell-super-app/api/symmy/',
+  'apps/shell-super-app/api/auth/gateway-organization-governance-evidence.ts',
+  'apps/shell-super-app/api/auth/gateway-privacy-dispatch-evidence.ts',
+  'apps/shell-super-app/api/auth/gateway-recovery-evidence.ts',
+  'apps/shell-super-app/api/auth/gateway-registered-assertion.ts',
+  'apps/shell-super-app/api/auth/gateway-symmy-route-scope.ts',
+  'packages/shared-contracts/src/gateway-context.ts',
+  'packages/shared-contracts/src/gateway-context-server.ts',
+];
+/** Mixed files: only the audiences main's integration layer names there, never another vertical. */
+const PLATFORM_EXEMPT_IDS = new Map<string, readonly string[]>([
+  ['apps/shell-super-app/api/auth/gateway-delegation-issuer.ts', ['privacy']],
+  ['apps/shell-super-app/api/auth/gateway-issuer.ts', ['privacy', 'symmy-integration']],
+  ['apps/shell-super-app/api/auth/gateway-originator-evidence.ts', ['privacy.core']],
+  ['apps/shell-super-app/api/index.ts', ['symmy-integration']],
+]);
+
+const isPlatformGuarded = (relative: string): boolean =>
+  PLATFORM_GUARDED.some((prefix) => relative.startsWith(prefix)) &&
+  !PLATFORM_EXEMPT.some((prefix) => relative.startsWith(prefix)) &&
+  !relative.includes('/demo-seed/') &&
+  !isTestSource(relative) &&
+  !/\.(?:test|spec)\.[cm]?tsx?$/u.test(relative);
+
+const escapeRegExp = (value: string): string => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
+
+const verticalPatterns = (verticals: readonly PlatformVertical[]) =>
+  verticals.flatMap(({ appId, moduleId }) => [
+    {
+      id: appId,
+      pattern: new RegExp(
+        `(?:['"\`]${escapeRegExp(appId)}['"\`]|(?:@app/|verticals/)${escapeRegExp(appId)}['"\`/])`,
+        'u',
+      ),
+    },
+    ...(moduleId === undefined ? [] : [{ id: moduleId, pattern: new RegExp(escapeRegExp(moduleId), 'u') }]),
+  ]);
+
+/** Lines of one Core or Shell platform source that name a vertical; empty outside the guarded platform. */
+export const platformVerticalIdViolations = (
+  relative: string,
+  source: string,
+  verticals: readonly PlatformVertical[],
+): readonly LeanCoreDependencyViolation[] => {
+  if (!isPlatformGuarded(relative)) {
+    return [];
+  }
+  const exemptIds = PLATFORM_EXEMPT_IDS.get(relative) ?? [];
+  const patterns = verticalPatterns(verticals).filter(({ id }) => !exemptIds.includes(id));
+  return source
+    .split('\n')
+    .flatMap((line, index) =>
+      patterns
+        .filter(({ pattern }) => pattern.test(line))
+        .map(({ id }) => ({ file: relative, line: index + 1, reason: `platform source names MicroVertical ${id}` })),
+    );
+};
+
+const VerticalPackageFromJson = Schema.fromJsonString(
+  Schema.Struct({
+    modernjs: Schema.optionalKey(
+      Schema.Struct({
+        appId: Schema.optionalKey(Schema.String.pipe(Schema.brand('LeanCorePlatformAppId'))),
+        ontosModule: Schema.optionalKey(
+          Schema.Struct({ moduleId: Schema.optionalKey(Schema.String.pipe(Schema.brand('LeanCorePlatformModuleId'))) }),
+        ),
+      }),
+    ),
+  }),
+);
+
+const discoverPlatformVerticals = (
+  fileSystem: FileSystem.FileSystem,
+  root: string,
+  path: Path.Path,
+): Effect.Effect<readonly PlatformVertical[], PlatformError> =>
+  Effect.gen(function* discoverPlatformVerticalsProgram() {
+    const verticalsRoot = path.join(root, 'verticals');
+    if (!(yield* fileSystem.exists(verticalsRoot))) {
+      return [];
+    }
+    const directories = yield* fileSystem.readDirectory(verticalsRoot);
+    const verticals = yield* Effect.all(
+      directories.map((directory) =>
+        fileSystem.readFileString(path.join(root, 'verticals', directory, 'package.json'), 'utf-8').pipe(
+          Effect.flatMap(Schema.decodeEffect(VerticalPackageFromJson)),
+          Effect.map((manifest) =>
+            Option.some({
+              appId: manifest.modernjs?.appId ?? directory,
+              moduleId: manifest.modernjs?.ontosModule?.moduleId,
+            }),
+          ),
+          Effect.orElseSucceed(() => Option.none<PlatformVertical>()),
+        ),
+      ),
+      { concurrency: 32 },
+    );
+    return verticals.flatMap((vertical) => Option.toArray(vertical));
+  });
+
+/** Demo rule over the workspace: every Core or Shell platform line that names a MicroVertical. */
+export const checkPlatformVerticalIds = (
+  root: string,
+): Effect.Effect<readonly LeanCoreDependencyViolation[], PlatformError, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* checkPlatformVerticalIdsProgram() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const [files, verticals] = yield* Effect.all([collect(root), discoverPlatformVerticals(fileSystem, root, path)]);
+    const violations = yield* Effect.all(
+      files.map((file) =>
+        fileSystem
+          .readFileString(file, 'utf-8')
+          .pipe(
+            Effect.map((source) =>
+              platformVerticalIdViolations(path.relative(root, file).split(path.sep).join('/'), source, verticals),
+            ),
+          ),
+      ),
+      { concurrency: 32 },
+    );
+    return EffectArray.sort(violations.flat(), ViolationOrder);
+  });
+
 export const checkLeanCoreDependencies = (
   root: string,
 ): Effect.Effect<readonly LeanCoreDependencyViolation[], PlatformError, FileSystem.FileSystem | Path.Path> =>
@@ -955,7 +1104,13 @@ class LeanCoreDependencyCheckFailed extends Schema.TaggedError<LeanCoreDependenc
 
 const main = Effect.gen(function* leanCoreDependencyMain() {
   const path = yield* Path.Path;
-  const violations = yield* checkLeanCoreDependencies(path.resolve(process.cwd()));
+  const root = path.resolve(process.cwd());
+  const [leanCore, platformVerticalIds] = yield* Effect.all([
+    checkLeanCoreDependencies(root),
+    // Demo rule: Core and the Shell platform name no MicroVertical.
+    checkPlatformVerticalIds(root),
+  ]);
+  const violations = [...leanCore, ...platformVerticalIds];
   if (violations.length > 0) {
     yield* Effect.all(
       violations.map((violation) => Console.error(`${violation.file}:${violation.line}: ${violation.reason}`)),
