@@ -4,9 +4,10 @@ import { Context, Crypto, DateTime, Effect, Option, Schema } from 'effect';
 import type { FinanceError } from '../../shared/actions/apply-command.ts';
 import { FinanceConflict, FinancePersistenceUnavailable } from '../../shared/actions/apply-command.ts';
 import { FinanceStateSchema } from '../../shared/apis/records.ts';
-import type { Invoice } from '../../shared/apis/records.ts';
+import type { FinanceState, Invoice, OpportunityLeftWon } from '../../shared/apis/records.ts';
 import type { CreateInvoiceFromOpportunityCommand } from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
 import { FinanceTaxRates } from '../integrations/tax-rates.ts';
+import { OpportunityNoLongerWon } from './opportunity-no-longer-won.ts';
 import { transitionFinance } from '../services/persistence.service.ts';
 import type { FinanceValidators } from '../services/persistence.service.ts';
 
@@ -86,22 +87,63 @@ const unavailable = (cause: unknown) =>
   );
 
 /**
+ * How long a ledger remembers an opportunity that left WON before its invoice was drafted: longer than this worker
+ * retries a won delivery at all (100 attempts, at most a day apart), so no older won message can outlive the record.
+ */
+const LEFT_WON_RETENTION_DAYS = 100;
+const LEFT_WON_MAX_RECORDS = 1000;
+
+/** This Legal Entity's finance ledger and the revision it was read at; none when it keeps no ledger. */
+const readLedger = Effect.fn('Finance.readOpportunityLedger')(function* readLedger(
+  scope: OutboxWorkerLegalEntityScope,
+): Effect.fn.Return<Option.Option<{ readonly revision: number; readonly state: FinanceState }>, FinanceError> {
+  const [row] = yield* scope.routineInvoker
+    .invoke(readFinanceStateForWorkerRoutine, [])
+    .pipe(Effect.mapError(unavailable));
+  if (row === undefined) {
+    return Option.none();
+  }
+  const state = yield* Schema.decodeUnknownEffect(FinanceStateSchema)(row.state).pipe(Effect.mapError(unavailable));
+  return Option.some({ revision: row.revision, state });
+});
+
+/** Saves the ledger only if nobody saved it since it was read at `revision`. */
+const saveLedger = Effect.fn('Finance.saveOpportunityLedger')(function* saveLedger(
+  scope: OutboxWorkerLegalEntityScope,
+  revision: number,
+  state: FinanceState,
+): Effect.fn.Return<void, FinanceError> {
+  const encoded = yield* Schema.encodeEffect(FinanceStateSchema)(state).pipe(Effect.mapError(unavailable));
+  const [saved] = yield* scope.routineInvoker
+    .invoke(saveFinanceStateForWorkerRoutine, [revision, encoded])
+    .pipe(Effect.mapError(unavailable));
+  if (saved === undefined) {
+    return yield* new FinanceConflict({ code: 'finance_conflict', reason: 'stale_revision' });
+  }
+  return yield* Effect.void;
+});
+
+/**
  * Drafts the opportunity invoice inside one Core-verified Legal Entity scope and returns it (new or the one
- * a previous delivery drafted). None means this Legal Entity keeps no finance ledger.
+ * a previous delivery drafted). None means this Legal Entity keeps no finance ledger. A won message older than the
+ * opportunity's recorded move out of WON (`wonRevision` below that move's revision) drafts nothing and asks no Tax.
  */
 export const draftOpportunityInvoiceInScope = Effect.fn('Finance.draftOpportunityInvoiceInScope')(
   function* draftOpportunityInvoiceInScope(
     scope: OutboxWorkerLegalEntityScope,
     command: CreateInvoiceFromOpportunityCommand,
     originator: OpportunityWonOriginator,
-  ): Effect.fn.Return<Option.Option<Invoice>, FinanceError, Crypto.Crypto | FinanceTaxRates> {
-    const [row] = yield* scope.routineInvoker
-      .invoke(readFinanceStateForWorkerRoutine, [])
-      .pipe(Effect.mapError(unavailable));
-    if (row === undefined) {
+    wonRevision: number,
+  ): Effect.fn.Return<Option.Option<Invoice>, FinanceError | OpportunityNoLongerWon, Crypto.Crypto | FinanceTaxRates> {
+    const ledger = yield* readLedger(scope);
+    if (Option.isNone(ledger)) {
       return Option.none();
     }
-    const state = yield* Schema.decodeUnknownEffect(FinanceStateSchema)(row.state).pipe(Effect.mapError(unavailable));
+    const { revision, state } = ledger.value;
+    const left = state.opportunitiesLeftWon?.find((record) => record.opportunityId === command.opportunityId);
+    if (left !== undefined && left.revision > wonRevision) {
+      return yield* new OpportunityNoLongerWon({ leftAtRevision: left.revision });
+    }
     const now = yield* DateTime.now;
     const crypto = yield* Crypto.Crypto;
     const resourceId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
@@ -113,26 +155,64 @@ export const draftOpportunityInvoiceInScope = Effect.fn('Finance.draftOpportunit
       yield* workerValidators(scope, originator),
       { attemptId, now, resourceId },
     );
-    if (!result.changed) {
-      return Option.fromUndefinedOr(result.invoice);
-    }
-    const encoded = yield* Schema.encodeEffect(FinanceStateSchema)(result.state).pipe(Effect.mapError(unavailable));
-    const [saved] = yield* scope.routineInvoker
-      .invoke(saveFinanceStateForWorkerRoutine, [row.revision, encoded])
-      .pipe(Effect.mapError(unavailable));
-    if (saved === undefined) {
-      return yield* new FinanceConflict({ code: 'finance_conflict', reason: 'stale_revision' });
+    if (result.changed) {
+      yield* saveLedger(scope, revision, result.state);
     }
     return Option.fromUndefinedOr(result.invoice);
   },
 );
+
+/**
+ * Remembers in this Legal Entity's ledger that the opportunity left WON, so its older won message, still waiting to
+ * retry, no longer drafts an invoice. Nothing to remember once its invoice is drafted (the old message converges on
+ * it) or when a later move is already recorded. False means this Legal Entity keeps no finance ledger.
+ */
+export const recordOpportunityLeftWonInScope = Effect.fn('Finance.recordOpportunityLeftWonInScope')(
+  function* recordOpportunityLeftWonInScope(
+    scope: OutboxWorkerLegalEntityScope,
+    left: OpportunityLeftWon,
+  ): Effect.fn.Return<boolean, FinanceError> {
+    const ledger = yield* readLedger(scope);
+    if (Option.isNone(ledger)) {
+      return false;
+    }
+    const { revision, state } = ledger.value;
+    const recorded = state.opportunitiesLeftWon ?? [];
+    if (
+      state.invoices.some((invoice) => invoice.opportunityId === left.opportunityId) ||
+      recorded.some((record) => record.opportunityId === left.opportunityId && record.revision >= left.revision)
+    ) {
+      return true;
+    }
+    const keepFrom = DateTime.subtract(yield* DateTime.now, { days: LEFT_WON_RETENTION_DAYS });
+    const kept = recorded.filter(
+      (record) =>
+        record.opportunityId !== left.opportunityId && DateTime.isGreaterThanOrEqualTo(record.leftAt, keepFrom),
+    );
+    yield* saveLedger(scope, revision, {
+      ...state,
+      opportunitiesLeftWon: [...kept, left].slice(-LEFT_WON_MAX_RECORDS),
+    });
+    return true;
+  },
+);
+
+/** Whether this Legal Entity keeps a finance ledger at all. */
+export const holdsOpportunityLedgerInScope = (scope: OutboxWorkerLegalEntityScope) =>
+  readLedger(scope).pipe(Effect.map(Option.isSome));
 
 export interface OpportunityInvoiceLedgerService {
   readonly draft: (
     scope: OutboxWorkerLegalEntityScope,
     command: CreateInvoiceFromOpportunityCommand,
     originator: OpportunityWonOriginator,
-  ) => Effect.Effect<Option.Option<Invoice>, FinanceError, Crypto.Crypto | FinanceTaxRates>;
+    wonRevision: number,
+  ) => Effect.Effect<Option.Option<Invoice>, FinanceError | OpportunityNoLongerWon, Crypto.Crypto | FinanceTaxRates>;
+  readonly holds: (scope: OutboxWorkerLegalEntityScope) => Effect.Effect<boolean, FinanceError>;
+  readonly recordLeftWon: (
+    scope: OutboxWorkerLegalEntityScope,
+    left: OpportunityLeftWon,
+  ) => Effect.Effect<boolean, FinanceError>;
 }
 
 /** Owner-local seam over the finance ledger; the worker host binds the scoped-routine adapter. */
@@ -143,4 +223,6 @@ export class OpportunityInvoiceLedger extends Context.Service<
 
 export const opportunityInvoiceLedgerLive = Object.freeze({
   draft: draftOpportunityInvoiceInScope,
+  holds: holdsOpportunityLedgerInScope,
+  recordLeftWon: recordOpportunityLeftWonInScope,
 }) satisfies OpportunityInvoiceLedgerService;

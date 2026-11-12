@@ -425,6 +425,16 @@ export const CashFlowOpeningSchema = Schema.Struct({
   openingDate: CalendarDateSchema,
 });
 export type CashFlowOpening = typeof CashFlowOpeningSchema.Type;
+/**
+ * A won opportunity that left WON (lost or reopened) before its invoice was drafted, at the Sales Pipeline revision
+ * of that change: a won message older than it no longer drafts an invoice.
+ */
+export const OpportunityLeftWonSchema = Schema.Struct({
+  leftAt: Schema.DateTimeUtcFromString,
+  opportunityId: FinanceOpportunityIdSchema,
+  revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type OpportunityLeftWon = typeof OpportunityLeftWonSchema.Type;
 export const FinanceStateSchema = Schema.Struct({
   accountingExports: Schema.optionalKey(Schema.Array(AccountingExportSchema).check(Schema.isMaxLength(200))),
   accountingSetup: Schema.optionalKey(AccountingSetupSchema),
@@ -434,6 +444,7 @@ export const FinanceStateSchema = Schema.Struct({
   financialPlanEntries: Schema.Array(FinancialPlanEntrySchema).check(Schema.isMaxLength(1000)),
   invoices: Schema.Array(InvoiceSchema).check(Schema.isMaxLength(1000)),
   manualPayments: Schema.optionalKey(Schema.Array(ManualPaymentSchema).check(Schema.isMaxLength(5000))),
+  opportunitiesLeftWon: Schema.optionalKey(Schema.Array(OpportunityLeftWonSchema).check(Schema.isMaxLength(1000))),
   planItems: Schema.optionalKey(Schema.Array(PlanItemSchema).check(Schema.isMaxLength(2000))),
   priceList: Schema.optionalKey(Schema.Array(PriceListItemSchema).check(Schema.isMaxLength(500))),
   recurringTemplates: Schema.optionalKey(Schema.Array(RecurringTemplateSchema).check(Schema.isMaxLength(500))),

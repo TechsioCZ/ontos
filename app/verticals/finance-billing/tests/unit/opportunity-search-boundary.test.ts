@@ -45,6 +45,8 @@ const foreignClaim: OutboxWorkerHandlerContext = attestOutboxWorkerHandlerContex
   messageId: '50000000-0000-4000-8000-000000000004',
   // The sales-pipeline invocation that marked the opportunity won; Finance asks Tax for it.
   originatorInvocationId: '50000000-0000-4000-8000-000000000005',
+  // The company that invocation acted in, as Core recorded it: the invoice is drafted there.
+  originatorLegalEntityId: legalEntityId,
   producerModuleKey: outboxProducerModuleKey,
   tenantId,
   tenantSequenceNo: 1n,
@@ -189,6 +191,8 @@ const committedDraft = Effect.gen(function* committedDraftDoesNotProject() {
           drafts += 1;
           return Option.some(invoice);
         }),
+      holds: () => Effect.die('The opportunity company is the only scope'),
+      recordLeftWon: () => Effect.die('A won message records no move out of WON'),
     }),
     Effect.provideService(OutboxWorkerLegalEntityScopeFanout, {
       forEachScope: (claim, observe) => {

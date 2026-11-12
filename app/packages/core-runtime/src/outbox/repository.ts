@@ -50,6 +50,8 @@ export interface OutboxClaim {
   readonly domainEventId: string;
   readonly messageId: string;
   readonly originatorInvocationId?: string;
+  /** The company (Legal Entity) the event's action invocation acted in; absent for a tenant-level event. */
+  readonly originatorLegalEntityId?: string;
   readonly payloadJson: unknown;
   readonly producerModuleKey: string;
   readonly retryPolicy: OutboxWorkerRetryPolicy;
@@ -328,6 +330,7 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
                   consumerModuleKey: outboxDeliveries.consumerModuleKey,
                   deliveryId: outboxDeliveries.outboxDeliveryId,
                   domainEventId: domainEvents.domainEventId,
+                  legalEntityId: domainEvents.legalEntityId,
                   messageId: outboxMessages.outboxMessageId,
                   payloadJson: outboxMessages.payloadJson,
                   producerModuleKey: outboxMessages.producerModuleKey,
@@ -426,6 +429,11 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
                 candidate.actionInvocationId,
                 candidate.tenantId,
               );
+              // The company the event's invocation acted in, so a consumer can keep its work in that company.
+              const eventEvidence =
+                candidate.legalEntityId === null
+                  ? invocationEvidence
+                  : { ...invocationEvidence, originatorLegalEntityId: candidate.legalEntityId };
               return Option.some(
                 attestNativeOutboxClaim(
                   Object.freeze({
@@ -435,7 +443,7 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
                     consumerModuleKey: candidate.consumerModuleKey,
                     deliveryId: candidate.deliveryId,
                     domainEventId: candidate.domainEventId,
-                    ...invocationEvidence,
+                    ...eventEvidence,
                     messageId: candidate.messageId,
                     payloadJson: candidate.payloadJson,
                     producerModuleKey: candidate.producerModuleKey,

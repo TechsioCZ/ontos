@@ -15,6 +15,7 @@ class VerifiedOutboxWorkerHandlerContextValue implements OutboxWorkerHandlerCont
   declare readonly legalEntityScope?: 'forbidden' | 'required';
   declare readonly messageId: string;
   declare readonly originatorInvocationId?: string;
+  declare readonly originatorLegalEntityId?: string;
   declare readonly producerModuleKey: string;
   declare readonly tenantId: string;
   declare readonly tenantSequenceNo: bigint;

@@ -13,14 +13,18 @@ import {
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/sales-pipeline/outbox/opportunity-stage-changed';
-import { Effect, Option, Predicate, Ref, Schema } from 'effect';
+import { Clock, DateTime, Duration, Effect, Option, Predicate, Ref, Schema } from 'effect';
 import type { Crypto } from 'effect';
 import type { FinanceError } from '../../shared/actions/apply-command.ts';
 import type { LineVatIssue } from '../../shared/domain/line-vat.ts';
-import { opportunityWonInvoiceCommand } from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
+import {
+  opportunityLeftWon,
+  opportunityWonInvoiceCommand,
+} from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
 import type { CreateInvoiceFromOpportunityCommand } from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
 import { OpportunityInvoiceLedger } from './opportunity-invoice-ledger.ts';
 import type { OpportunityWonOriginator } from './opportunity-invoice-ledger.ts';
+import type { OpportunityNoLongerWon } from './opportunity-no-longer-won.ts';
 import type { FinanceTaxRates } from '../integrations/tax-rates.ts';
 
 const workerKey = 'finance.billing.draft-invoice-from-won-opportunity' as const;
@@ -33,9 +37,13 @@ export class DraftInvoiceFromWonOpportunityRejected extends Schema.TaggedError<D
       'WORKER_CONTEXT_INVALID',
       'FINANCE_LEDGER_MISSING',
       'FINANCE_REJECTED',
+      'OPPORTUNITY_COMPANY_WITHOUT_LEDGER',
+      'OPPORTUNITY_NO_LONGER_WON',
       'PERSISTENCE_UNAVAILABLE',
+      'TAX_STILL_UNAVAILABLE',
       'TAX_UNAVAILABLE',
       'VAT_NOT_READY',
+      'VAT_NOT_SET_UP',
     ]),
     reason: Schema.String,
     retryable: Schema.Boolean,
@@ -65,47 +73,113 @@ const deliveryMatchesWorker = (context: OutboxWorkerHandlerContext): boolean =>
  */
 const vatNotReadyIssues: ReadonlySet<string> = new Set<LineVatIssue>(['vat_regime_not_declared', 'vat_rate_changed']);
 
-const mapFailure = (
-  failure: FinanceError | OutboxWorkerLegalEntityScopeError,
-): DraftInvoiceFromWonOpportunityRejected => {
-  if (Predicate.isTagged(failure, 'OutboxWorkerLegalEntityScopeError')) {
-    return failure.code === 'outbox_worker_scope_context_invalid'
-      ? rejected('WORKER_CONTEXT_INVALID', failure.reason, false)
-      : rejected('PERSISTENCE_UNAVAILABLE', failure.reason, true);
+/**
+ * How long a won opportunity waits for its company's VAT: from the moment it was won (`changedAt`, stamped by Sales
+ * Pipeline's clock in the transaction that wrote this Outbox message) to this attempt. 72 hours spans a release's
+ * deploy-to-seed gap and a weekend; after that the delivery ends terminal, naming the company, where operators see it.
+ */
+const NOT_READY_WINDOW_HOURS = 72;
+const NOT_READY_WINDOW = Duration.hours(NOT_READY_WINDOW_HOURS);
+
+/** What one delivery maps its failures with: the opportunity's company and whether its not-ready window is over. */
+interface FailureContext {
+  readonly company: string;
+  readonly notReadyWindowOver: boolean;
+  readonly wonRevision: number;
+}
+
+/**
+ * A not-ready refusal: retried within the window; after it terminal, under its own code (Core logs the code of a
+ * dead delivery) and with a reason naming the company.
+ */
+const notReady = (
+  code: 'TAX_UNAVAILABLE' | 'VAT_NOT_READY',
+  reason: string,
+  { company, notReadyWindowOver }: FailureContext,
+) => {
+  if (!notReadyWindowOver) {
+    return rejected(code, reason, true);
   }
-  if (Predicate.isTagged(failure, 'FinanceRejected')) {
-    return vatNotReadyIssues.has(failure.reason)
-      ? rejected('VAT_NOT_READY', failure.reason, true)
-      : rejected('FINANCE_REJECTED', failure.reason, false);
-  }
-  // Tax cannot give the lines their VAT now (unreachable, not installed, or refusing): the delivery retries later.
-  if (Predicate.isTagged(failure, 'FinanceReferenceUnavailable')) {
-    return rejected('TAX_UNAVAILABLE', failure.reason, true);
-  }
-  return rejected('PERSISTENCE_UNAVAILABLE', failure.reason, true);
+  return code === 'VAT_NOT_READY'
+    ? rejected(
+        'VAT_NOT_SET_UP',
+        `VAT is not set up for company ${company} (no declared regime or no rate) after ${NOT_READY_WINDOW_HOURS} hours; the won opportunity's invoice was not drafted`,
+        false,
+      )
+    : rejected(
+        'TAX_STILL_UNAVAILABLE',
+        `Tax gave company ${company} no VAT rates for ${NOT_READY_WINDOW_HOURS} hours; the won opportunity's invoice was not drafted`,
+        false,
+      );
 };
 
-/** Drafts in this Legal Entity unless an earlier one (by id) already holds the opportunity invoice. */
+const mapFailure =
+  (context: FailureContext) =>
+  (
+    failure: FinanceError | OpportunityNoLongerWon | OutboxWorkerLegalEntityScopeError,
+  ): DraftInvoiceFromWonOpportunityRejected => {
+    if (Predicate.isTagged(failure, 'OutboxWorkerLegalEntityScopeError')) {
+      return failure.code === 'outbox_worker_scope_context_invalid'
+        ? rejected('WORKER_CONTEXT_INVALID', failure.reason, false)
+        : rejected('PERSISTENCE_UNAVAILABLE', failure.reason, true);
+    }
+    if (Predicate.isTagged(failure, 'OpportunityNoLongerWon')) {
+      return rejected(
+        'OPPORTUNITY_NO_LONGER_WON',
+        `The opportunity left WON at Sales Pipeline revision ${failure.leftAtRevision}, after this won message (revision ${context.wonRevision}); its invoice was not drafted`,
+        false,
+      );
+    }
+    if (Predicate.isTagged(failure, 'FinanceRejected')) {
+      return vatNotReadyIssues.has(failure.reason)
+        ? notReady('VAT_NOT_READY', failure.reason, context)
+        : rejected('FINANCE_REJECTED', failure.reason, false);
+    }
+    // Tax cannot give the lines their VAT now (unreachable, not installed, or refusing): the delivery retries later.
+    if (Predicate.isTagged(failure, 'FinanceReferenceUnavailable')) {
+      return notReady('TAX_UNAVAILABLE', failure.reason, context);
+    }
+    return rejected('PERSISTENCE_UNAVAILABLE', failure.reason, true);
+  };
+
+/** Where the invoice can go: drafted in the opportunity's company, or which other company keeps a ledger. */
+interface DraftProgress {
+  readonly drafted: boolean;
+  readonly otherLedger: Option.Option<string>;
+}
+
+/**
+ * Drafts only in the opportunity's own company. Another company is never drafted into: Tax answers for the person
+ * who marked the opportunity won only in that person's company, and the invoice belongs to the company that sold.
+ * For another company the worker only notes whether it keeps a ledger, to tell "wrong company" from "no ledger yet".
+ */
 const draftInScope = Effect.fn('DraftInvoiceFromWonOpportunityWorker.draftInScope')(function* draftInScope(
-  settled: Ref.Ref<boolean>,
+  progress: Ref.Ref<DraftProgress>,
   scope: OutboxWorkerLegalEntityScope,
+  company: string,
   command: CreateInvoiceFromOpportunityCommand,
   originator: OpportunityWonOriginator,
+  wonRevision: number,
 ) {
-  if (yield* Ref.get(settled)) {
+  const ledger = yield* OpportunityInvoiceLedger;
+  const { drafted, otherLedger } = yield* Ref.get(progress);
+  if (scope.legalEntityId !== company) {
+    if (!drafted && Option.isNone(otherLedger) && (yield* ledger.holds(scope))) {
+      yield* Ref.set(progress, { drafted, otherLedger: Option.some(scope.legalEntityId) });
+    }
     return;
   }
-  const ledger = yield* OpportunityInvoiceLedger;
-  const invoice = yield* ledger.draft(scope, command, originator);
+  const invoice = yield* ledger.draft(scope, command, originator, wonRevision);
   if (Option.isSome(invoice)) {
-    yield* Ref.set(settled, true);
+    yield* Ref.update(progress, (current) => ({ ...current, drafted: true }));
   }
 });
 
 /**
- * On WON drafts exactly one invoice from the message's line snapshot; every other stage is a no-op.
- * The invoice goes to the first Legal Entity (by id) that keeps a finance ledger, so redeliveries
- * always land on the same ledger, where CreateInvoiceFromOpportunity converges by opportunityId.
+ * On WON drafts exactly one invoice from the message's line snapshot, in the opportunity's own company (the one the
+ * invocation that won it acted in, as Core recorded it), where CreateInvoiceFromOpportunity converges by
+ * opportunityId on every redelivery. A later move out of WON is remembered there, so the won message, if it is still
+ * waiting to retry, drafts nothing. Every other stage change is a no-op.
  */
 export const handleDraftInvoiceFromWonOpportunity = Effect.fn('DraftInvoiceFromWonOpportunityWorker.handle')(
   function* handle(
@@ -124,6 +198,30 @@ export const handleDraftInvoiceFromWonOpportunity = Effect.fn('DraftInvoiceFromW
       );
     }
     const command = opportunityWonInvoiceCommand(payload);
+    const left = opportunityLeftWon(payload);
+    if (Option.isNone(command) && Option.isNone(left)) {
+      return yield* Effect.void;
+    }
+    // Sales Pipeline keeps each company's opportunities apart; Core records the company its invocation acted in.
+    const company = context.originatorLegalEntityId;
+    if (company === undefined) {
+      return yield* rejected('WORKER_CONTEXT_INVALID', 'The stage change names no company of the opportunity', false);
+    }
+    const wonAt = DateTime.toEpochMillis(DateTime.makeUnsafe(payload.changedAt));
+    const failureContext: FailureContext = {
+      company,
+      notReadyWindowOver: (yield* Clock.currentTimeMillis) - wonAt >= Duration.toMillis(NOT_READY_WINDOW),
+      wonRevision: payload.revision,
+    };
+    const fanout = yield* OutboxWorkerLegalEntityScopeFanout;
+    if (Option.isSome(left)) {
+      const ledger = yield* OpportunityInvoiceLedger;
+      return yield* fanout
+        .forEachScope(context, (scope) =>
+          scope.legalEntityId === company ? Effect.asVoid(ledger.recordLeftWon(scope, left.value)) : Effect.void,
+        )
+        .pipe(Effect.mapError(mapFailure(failureContext)));
+    }
     if (Option.isNone(command)) {
       return yield* Effect.void;
     }
@@ -136,18 +234,27 @@ export const handleDraftInvoiceFromWonOpportunity = Effect.fn('DraftInvoiceFromW
       actionInvocationId: context.originatorInvocationId,
       compositionRevision: context.compositionRevision,
     };
-    const fanout = yield* OutboxWorkerLegalEntityScopeFanout;
-    const settled = yield* Ref.make(false);
+    const progress = yield* Ref.make<DraftProgress>({ drafted: false, otherLedger: Option.none() });
     yield* fanout
-      .forEachScope(context, (scope) => draftInScope(settled, scope, command.value, originator))
-      .pipe(Effect.mapError(mapFailure));
-    if (!(yield* Ref.get(settled))) {
-      return yield* rejected('FINANCE_LEDGER_MISSING', 'No Legal Entity of this Tenant keeps a finance ledger', true);
+      .forEachScope(context, (scope) =>
+        draftInScope(progress, scope, company, command.value, originator, payload.revision),
+      )
+      .pipe(Effect.mapError(mapFailure(failureContext)));
+    const { drafted, otherLedger } = yield* Ref.get(progress);
+    if (drafted) {
+      // The claim's producer remains sales-pipeline. It cannot replace a finance-owned Core Search projection.
+      // A committed finance-owned refresh event needs an approved publisher; the governed finance rebuild
+      // (or a subsequent finance Action) currently picks up this invoice without failing this completed draft.
+      return yield* Effect.void;
     }
-    // The claim's producer remains sales-pipeline. It cannot replace a finance-owned Core Search projection.
-    // A committed finance-owned refresh event needs an approved publisher; the governed finance rebuild
-    // (or a subsequent finance Action) currently picks up this invoice without failing this completed draft.
-    return yield* Effect.void;
+    if (Option.isSome(otherLedger)) {
+      return yield* rejected(
+        'OPPORTUNITY_COMPANY_WITHOUT_LEDGER',
+        `The won opportunity belongs to company ${company}, which keeps no finance ledger; its invoice is never drafted into another company (${otherLedger.value} keeps one)`,
+        false,
+      );
+    }
+    return yield* rejected('FINANCE_LEDGER_MISSING', 'No Legal Entity of this Tenant keeps a finance ledger', true);
   },
 );
 
@@ -166,9 +273,9 @@ export const draftInvoiceFromWonOpportunityWorker = defineOutboxWorker(
     payloadSchema: OutboxPayloadSchema,
     producerModuleKey: outboxProducerModuleKey,
     // Core retries every retryable failure on this one schedule and gives up (dead) at maxAttempts; a terminal refusal
-    // is dead at once. A company may leave its VAT regime undeclared for days, so a not-ready delivery keeps retrying at
-    // the Outbox's longest back-off (Core's limits: 100 attempts, one day apart): after about a day and a half it
-    // retries daily, for about 85 days in all.
+    // is dead at once. A not-ready delivery (VAT not set up, Tax unavailable) retries for 72 hours from the win, then
+    // the worker ends it terminal (NOT_READY_WINDOW_HOURS); other retryable failures keep the Outbox's longest back-off
+    // (Core's limits: 100 attempts, one day apart).
     retryPolicy: {
       initialBackoffMs: 1000,
       maxAttempts: 100,

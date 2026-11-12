@@ -118,6 +118,7 @@ const runEntry = Effect.fn('TestCoreOutbox.runEntry')(function* runEntry(options
             consumerModuleKey: selected.descriptor.consumerModuleKey,
             deliveryId: 'delivery-1',
             domainEventId: 'event-1',
+            legalEntityId: null,
             messageId: 'message-1',
             payloadJson: payloadFor(selected),
             producerModuleKey: selected.descriptor.producerModuleKey,

@@ -1,7 +1,7 @@
 import type { OpportunityStageChangedLine, OutboxPayload } from '@app/sales-pipeline/outbox/opportunity-stage-changed';
 import { DateTime, Option } from 'effect';
 import type { FinanceCommand } from '../actions/apply-command.ts';
-import type { InvoiceLine } from '../apis/records.ts';
+import type { InvoiceLine, OpportunityLeftWon } from '../apis/records.ts';
 import { classificationOfStoredRate } from '../domain/line-vat.ts';
 
 export type CreateInvoiceFromOpportunityCommand = Extract<
@@ -46,3 +46,17 @@ export const opportunityWonInvoiceCommand = (
     partyId: payload.partyId,
   });
 };
+
+/**
+ * A stage change that takes a won opportunity out of WON (lost, or reopened to an earlier stage), stamped with the
+ * Sales Pipeline revision of that change. Sales Pipeline publishes every transition on this one topic, so the won
+ * message and the later change reach the same worker; none for every other change.
+ */
+export const opportunityLeftWon = (payload: OutboxPayload): Option.Option<OpportunityLeftWon> =>
+  payload.fromStage === 'WON' && payload.toStage !== 'WON'
+    ? Option.some({
+        leftAt: DateTime.makeUnsafe(payload.changedAt),
+        opportunityId: payload.opportunityId,
+        revision: payload.revision,
+      })
+    : Option.none();

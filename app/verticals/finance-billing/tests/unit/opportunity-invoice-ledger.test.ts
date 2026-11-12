@@ -22,6 +22,9 @@ const originator = {
   compositionRevision: 'a'.repeat(64),
 };
 
+/** The Sales Pipeline revision of the won message. */
+const wonRevision = 1;
+
 const command: CreateInvoiceFromOpportunityCommand = {
   _tag: 'CreateInvoiceFromOpportunity',
   issueDate: '2026-10-07',
@@ -74,7 +77,7 @@ it.layer(NodeCrypto.layer)('Opportunity invoice ledger cryptography', (suite) =>
     Effect.gen(function* uuidFailure() {
       const crypto = yield* Crypto.Crypto;
       const cause = PlatformError.systemError({ _tag: 'Unknown', method: 'randomUUIDv4', module: 'Crypto' });
-      const failure = yield* draftOpportunityInvoiceInScope(scope, command, originator).pipe(
+      const failure = yield* draftOpportunityInvoiceInScope(scope, command, originator, wonRevision).pipe(
         Effect.provideService(FinanceTaxRates, taxBaseline),
         Effect.provideService(Crypto.Crypto, Crypto.Crypto.of({ ...crypto, randomUUIDv4: () => Effect.fail(cause) })),
         Effect.flip,
@@ -92,7 +95,7 @@ it.layer(NodeCrypto.layer)('Opportunity invoice VAT from Tax', (suite) => {
   suite.effect('stores each line with the rate and the Tax rule revision Tax gives on the issue date', () =>
     Effect.gen(function* priced() {
       saved.length = 0;
-      const invoice = yield* draftOpportunityInvoiceInScope(scope, command, originator).pipe(
+      const invoice = yield* draftOpportunityInvoiceInScope(scope, command, originator, wonRevision).pipe(
         Effect.provideService(FinanceTaxRates, taxBaseline),
       );
       expect(Option.getOrUndefined(invoice)?.lines).toEqual([
@@ -105,7 +108,7 @@ it.layer(NodeCrypto.layer)('Opportunity invoice VAT from Tax', (suite) => {
   suite.effect('stores nothing while Tax cannot answer, so the delivery retries later', () =>
     Effect.gen(function* unavailable() {
       saved.length = 0;
-      const failure = yield* draftOpportunityInvoiceInScope(scope, command, originator).pipe(
+      const failure = yield* draftOpportunityInvoiceInScope(scope, command, originator, wonRevision).pipe(
         Effect.provideService(FinanceTaxRates, taxUnavailable),
         Effect.flip,
       );
@@ -121,6 +124,7 @@ it.layer(NodeCrypto.layer)('Opportunity invoice VAT from Tax', (suite) => {
         scope,
         { ...command, lines: [{ description: 'Kniha', quantity: 1, unitPriceMinor: 49_000, vatRate: 10 }] },
         originator,
+        wonRevision,
       ).pipe(Effect.provideService(FinanceTaxRates, taxBaseline), Effect.flip);
       expect(Schema.is(FinanceRejected)(failure)).toBe(true);
       expect(failure).toMatchObject({ reason: 'vat_classification_required' });
