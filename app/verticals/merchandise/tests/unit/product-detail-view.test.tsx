@@ -9,7 +9,8 @@ import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
+import { ProductRecordSchema, ProductSchema } from '../../shared/domain/merchandise-model.ts';
+import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
 import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
 import { ProductDetailView } from '../../src/routes/[lang]/provoz/produkty/product-detail-dialog.tsx';
 import type { CompanyVat } from '../../src/routes/[lang]/provoz/produkty/product-tax-classification.ts';
@@ -406,19 +407,35 @@ describe('VAT classification on the product editor', () => {
   );
 });
 
-/** One variant record of the product, priced net and with its stored gross. */
-const variant = (id: string, priceMinor: number, grossPriceMinor: number) => ({
-  active: true,
-  attributes: '',
-  availability: 'IN_STOCK' as const,
-  grossPriceMinor,
-  id,
-  name: id,
-  priceHistory: [],
-  priceMinor,
-  sku: `ETI-${id}`,
-  stockOnHand: 1,
-});
+/**
+ * The coffee with variants as the staff records read builds it (`toProductRecord`): its own net 1 Kč and a gross of
+ * 9,99 Kč stored on the product itself, and variants at the given net and stored gross (none: no gross stored yet).
+ */
+const withVariants = (variants: readonly (readonly [string, number, number | undefined])[]) =>
+  toProductRecord(
+    Schema.decodeSync(ProductSchema)({
+      active: true,
+      category: 'Zrnková káva',
+      createdAt: '2026-10-20T09:00:00.000Z',
+      currentPriceMinor: 100,
+      grossPriceMinor: 999,
+      id: 'product-1',
+      lowStockThreshold: 0,
+      name: 'Etiopie',
+      priceHistory: [],
+      sku: 'ETI-250',
+      taxClassificationCode: CZ_VAT_STANDARD,
+      unit: 'ks',
+      updatedAt: '2026-10-20T09:00:00.000Z',
+      variants: variants.map(([id, priceMinor, grossPriceMinor]) =>
+        grossPriceMinor === undefined
+          ? { attributes: '', id, name: id, priceMinor, sku: `ETI-${id}` }
+          : { attributes: '', grossPriceMinor, id, name: id, priceMinor, sku: `ETI-${id}` },
+      ),
+    }),
+    stockLevelsOf([], 'product-1'),
+    {},
+  );
 
 describe('the price including VAT on the product editor', () => {
   it.effect(
@@ -450,21 +467,30 @@ describe('the price including VAT on the product editor', () => {
 
   it.effect('a product with variants shows its lowest variant price as such, unmoved by the product net price', () =>
     Effect.gen(function* fromVariants() {
-      // Net 1 Kč on the product; its variants sell at 2,40 and 2,60 Kč net (2,90 and 3,15 Kč stored with VAT).
-      shown = Schema.decodeSync(ProductRecordSchema)({
-        ...productInput,
-        currentPriceMinor: 100,
-        grossPriceMinor: 290,
-        taxClassificationCode: CZ_VAT_STANDARD,
-        variantRecords: [variant('v1', 240, 290), variant('v2', 260, 315)],
-      });
+      // Its variants sell at 2,40 and 2,60 Kč net (2,90 and 3,15 Kč stored with VAT); the 9,99 Kč on the product
+      // itself is never what it sells at.
+      shown = withVariants([
+        ['v1', 240, 290],
+        ['v2', 260, 315],
+      ]);
       yield* Effect.promise(mount);
       expect(text()).toContain('Cena s DPH od (nejnižší cena varianty, Kč)');
       expect(fieldById('detail-price-gross').value.replaceAll('\u00A0', ' ')).toBe('2,90 Kč');
-      // The product's own net price does not change what its variants sell at: no preview of a product-level gross.
+      // The product's own net price does not change what its variants sell at: no preview of a product-level gross,
+      // and no sentence about one.
       yield* Effect.promise(() => typeInto('detail-price', '2'));
       expect(fieldById('detail-price-gross').value.replaceAll('\u00A0', ' ')).toBe('2,90 Kč');
       expect(text()).not.toContain('Cena s DPH po uložení (náhled, Kč)');
+      expect(text()).not.toContain('nová cena bez DPH uloží novou cenu s DPH');
+    }),
+  );
+
+  it.effect('a product whose variants have no gross yet shows none under the variants label', () =>
+    Effect.gen(function* noVariantGross() {
+      shown = withVariants([['v1', 240, undefined]]);
+      yield* Effect.promise(mount);
+      expect(text()).toContain('Cena s DPH od (nejnižší cena varianty, Kč)');
+      expect(fieldById('detail-price-gross').value).toBe('není nastaveno');
     }),
   );
 

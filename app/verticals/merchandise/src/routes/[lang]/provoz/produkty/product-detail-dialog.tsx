@@ -302,7 +302,8 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: De
         value={grossText}
         {...(grossNote === undefined ? {} : { helpText: grossNote })}
       />
-      <p className="text-fg-secondary text-sm">{k('detail.priceExplanation')}</p>
+      {/* A product with variants sells at its variants' prices: its own net price stores no gross that staff see. */}
+      {gross.kind !== 'fromVariants' && <p className="text-fg-secondary text-sm">{k('detail.priceExplanation')}</p>}
       <FormTextarea
         disabled={disabled}
         id="detail-short-description"

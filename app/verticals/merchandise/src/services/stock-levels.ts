@@ -174,8 +174,12 @@ export const toProductRecord = (product: Product, stock: StockLevels, rates: Sel
   const grossPrices = (sellable.length > 0 ? sellable : variants).flatMap((variant) =>
     variant.grossPriceMinor === undefined ? [] : [variant.grossPriceMinor],
   );
+  // A product with variants sells only at its variants' prices: its price including VAT is their lowest, or none when
+  // no variant has one yet; never a gross stored on the product itself.
+  const { grossPriceMinor: _own, ...unpriced } = product;
+  void _own;
   const record: ProductRecord = {
-    ...product,
+    ...unpriced,
     availability: product.active ? best : 'OUT_OF_STOCK',
     lowStock: product.lowStockThreshold > 0 && stockOnHand < product.lowStockThreshold,
     stockOnHand,
