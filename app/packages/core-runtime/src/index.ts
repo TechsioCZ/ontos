@@ -1051,6 +1051,16 @@ export {
 } from './modules/manifest.ts';
 export { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from './modules/module-dependency-contracts.ts';
 export {
+  OntosRegisteredWorkloadCallSchema,
+  OntosRegisteredWorkloadCallsSchema,
+  registeredWorkloadCallReceiverIssue,
+} from './modules/registered-workload-calls.ts';
+export type {
+  OntosRegisteredWorkloadCall,
+  OntosRegisteredWorkloadCallInput,
+  RegisteredWorkloadCallReceiver,
+} from './modules/registered-workload-calls.ts';
+export {
   ONTOS_MODULE_MCP_TOOL_CATALOG_PATH,
   OntosMcpCommandActionsSchema,
   OntosMcpContributionSchema,

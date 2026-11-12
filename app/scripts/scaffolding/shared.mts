@@ -1681,7 +1681,14 @@ export const validRuntimeDeclarationViews = (
     ownerImport(backend, 'VerticalRuntimeRegistrationInput', CORE_RUNTIME_PACKAGE, true),
     ownerAnnotation(backend, manifestName, "VerticalRuntimeRegistrationInput['manifest']"),
     ownerAnnotation(backend, declarationName, 'VerticalRuntimeRegistrationInput'),
-    ownerObjectView(fullManifest, manifest, manifestName, ['activation', 'publicSurface'], ['originatorActions']),
+    ownerObjectView(
+      fullManifest,
+      manifest,
+      manifestName,
+      ['activation', 'publicSurface'],
+      // `registeredWorkloadCalls` is demo divergence exception 8 (upstream main has no production source for them).
+      ['originatorActions', 'registeredWorkloadCalls'],
+    ),
     ownerObjectView(
       fullPublicSurface,
       manifest,

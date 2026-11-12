@@ -107,7 +107,7 @@ import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-po
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import { makeAuthDatabase, AuthDatabase } from '../../api/auth/db/client.ts';
 import { issueDelegatedGatewayContextAssertion } from '../../api/auth/gateway-delegation-issuer.ts';
-import { GatewayDelegationVerificationLive } from '../../api/auth/gateway-delegation-verification.ts';
+import { makeGatewayDelegationVerificationLayer } from '../../api/auth/gateway-delegation-verification.ts';
 import { GatewayOriginatorEvidenceLive } from '../../api/auth/gateway-originator-evidence.service.ts';
 import {
   GatewayDelegationExchangeLedger,
@@ -647,7 +647,7 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
           });
         }).pipe(
           Effect.provide(signer),
-          Effect.provide(GatewayDelegationVerificationLive),
+          Effect.provide(makeGatewayDelegationVerificationLayer(Effect.succeed(signing))),
           Effect.provide(GatewayOriginatorEvidenceLive),
           Effect.provide(services),
           Effect.provideService(ConfigProvider.ConfigProvider, configuration),
@@ -987,7 +987,7 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
           installed,
           subject: opaqueSubject,
         }).pipe(
-          Effect.provide(GatewayDelegationVerificationLive),
+          Effect.provide(makeGatewayDelegationVerificationLayer(Effect.succeed(signing))),
           Effect.provide(GatewayOriginatorEvidenceLive),
           Effect.provide(services),
           Effect.provideService(ConfigProvider.ConfigProvider, configuration),

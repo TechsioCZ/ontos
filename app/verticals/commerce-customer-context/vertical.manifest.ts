@@ -230,6 +230,7 @@ import { VerifyRetailPurchasingSubjectCurrentV1Api } from './shared/apis/verify-
 // </generated-module-manifest-imports>
 import { commerceCustomerContextMcpContribution } from './shared/mcp/contribution.ts';
 import { commercePortalExternalIdentityProvider } from './shared/portal-auth-verification.ts';
+import { commerceCustomerContextRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 
 const createCounterpartyProfileEntrypoint = 'commerce.customer-context.create-counterparty-purchasing-profile';
 const organizationBusinessProviderEntrypoint = 'privacy.core.api.organization-business-applicability';
@@ -750,6 +751,8 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       timelines: [],
     },
   },
+  // Demo divergence exception 8: see ./src/registered-workload-calls.ts.
+  registeredWorkloadCalls: commerceCustomerContextRegisteredWorkloadCalls,
   requirements: {
     coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
     intrinsic: [],

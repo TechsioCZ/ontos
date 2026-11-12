@@ -46,6 +46,7 @@ import { stableRuleResourceDescriptor } from './shared/resources/stable-rule.ts'
 import { VisibilityApi } from './shared/apis/visibility.ts';
 // </generated-module-manifest-imports>
 import { assortmentMcpContribution } from './shared/mcp/contribution.ts';
+import { assortmentRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -175,6 +176,8 @@ export const assortmentManifest = defineOntosModuleManifest({
       timelines: [],
     },
   },
+  // Demo divergence exception 8: see ./src/registered-workload-calls.ts.
+  registeredWorkloadCalls: assortmentRegisteredWorkloadCalls,
   requirements: {
     coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
     intrinsic: [],

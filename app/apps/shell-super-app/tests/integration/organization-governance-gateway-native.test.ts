@@ -85,7 +85,7 @@ import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.t
 import { makeAuthDatabase, AuthDatabase } from '../../api/auth/db/client.ts';
 import { issueDelegatedGatewayContextAssertion } from '../../api/auth/gateway-delegation-issuer.ts';
 import { GatewayModuleBindingSchema } from '../../api/auth/gateway-delegation-policy.ts';
-import { GatewayDelegationVerificationLive } from '../../api/auth/gateway-delegation-verification.ts';
+import { makeGatewayDelegationVerificationLayer } from '../../api/auth/gateway-delegation-verification.ts';
 import { admitOrganizationGovernanceRead } from '../../api/auth/gateway-organization-governance-evidence.ts';
 import { GatewayOriginatorEvidenceLive } from '../../api/auth/gateway-originator-evidence.service.ts';
 import {
@@ -512,7 +512,7 @@ it.live(
             });
           }).pipe(
             Effect.provide(signer),
-            Effect.provide(GatewayDelegationVerificationLive),
+            Effect.provide(makeGatewayDelegationVerificationLayer(Effect.succeed(signing))),
             Effect.provide(GatewayOriginatorEvidenceLive),
             Effect.provide(services),
             Effect.provideService(ConfigProvider.ConfigProvider, config),
@@ -618,7 +618,7 @@ it.live(
               installed: unpinnedInstalled,
               subject: { ...subject, sourceAssertion: Redacted.make(unpinnedSource.token) },
             }).pipe(
-              Effect.provide(GatewayDelegationVerificationLive),
+              Effect.provide(makeGatewayDelegationVerificationLayer(Effect.succeed(signing))),
               Effect.provide(services),
               Effect.provideService(ConfigProvider.ConfigProvider, config),
               Effect.provideService(AuthenticationNamespaceRegistry, registry),

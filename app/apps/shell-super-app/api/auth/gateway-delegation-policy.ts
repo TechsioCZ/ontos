@@ -1,5 +1,6 @@
+import { OntosRegisteredWorkloadCallSchema, registeredWorkloadCallReceiverIssue } from '@app/core-runtime';
+import type { OntosRegisteredWorkloadCall, RegisteredWorkloadCallReceiver } from '@app/core-runtime';
 import type { ModuleEntrypointAccess } from '@app/core-runtime/module-entrypoint';
-import { RegisteredGatewayWorkloadSchema } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { FiniteGatewayOperationTarget } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
 import type { ModuleCredentialEnrolment } from '@app/core-runtime/auth/module-credentials';
@@ -19,41 +20,16 @@ export {
 } from './module-credential-enrolment.service.ts';
 
 const nonEmpty = Schema.String.check(Schema.isMinLength(1));
-const sourceActionKeySchema = nonEmpty.pipe(Schema.brand('GatewaySourceActionKey'), Schema.decodeTo(Schema.String));
-const workerKeySchema = nonEmpty.pipe(Schema.brand('GatewayWorkerKey'), Schema.decodeTo(Schema.String));
-const workloadFields = RegisteredGatewayWorkloadSchema.fields;
 
 /**
- * One module credential's binding: the key's provider id, the module it belongs to, and the build and release that
- * module runs. The platform derives it from its own enrolment and the installed release; nothing configures it.
+ * One module credential's binding: the key's provider id, the module it belongs to, the build and release that
+ * module runs, and the registered-workload calls that build declares in its manifest. The platform derives it from
+ * its own enrolment and the installed release; nothing configures it.
  */
 export const GatewayModuleBindingSchema = Schema.Struct({
   compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
   providerKeyId: nonEmpty.pipe(Schema.brand('GatewayModuleCredentialId')),
-  registeredWorkloads: Schema.optionalKey(
-    Schema.Array(
-      Schema.Struct({
-        allowHistoricalDeliveryRecovery: Schema.optionalKey(Schema.Boolean),
-        allowRecoverySource: Schema.optionalKey(Schema.Boolean),
-        audience: GatewayAudienceSchema,
-        declarationKey: workloadFields.declarationKey,
-        entrypointKey: workloadFields.entrypointKey,
-        jobKey: workloadFields.jobKey.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/u)),
-        legalEntityScope: Schema.Literals(['forbidden', 'optional', 'required']),
-        recoveryOf: Schema.optionalKey(
-          Schema.Struct({
-            actionKey: sourceActionKeySchema,
-            jobKey: workloadFields.jobKey,
-          }),
-        ),
-        schemaVersion: nonEmpty,
-        sourceActionKey: Schema.optionalKey(sourceActionKeySchema),
-        sourceWorkloadKey: Schema.optionalKey(workloadFields.workloadKey),
-        workerKey: Schema.optionalKey(workerKeySchema),
-        workloadKey: workloadFields.workloadKey,
-      }),
-    ),
-  ),
+  registeredWorkloads: Schema.optionalKey(Schema.Array(OntosRegisteredWorkloadCallSchema)),
   sourceAppId: GatewayAudienceSchema,
   sourceBuildMarker: nonEmpty,
 });
@@ -67,18 +43,44 @@ const bindingsSchema = Schema.Array(GatewayModuleBindingSchema).check(
   ),
 );
 
+/** The parts of an installed contract the derivation reads: its deployment and, when present, its manifest. */
+interface DerivationContract {
+  readonly deployment: { readonly appId: string; readonly buildMarker: string };
+  readonly manifest?: RegisteredWorkloadCallReceiver['manifest'] & {
+    readonly registeredWorkloadCalls?: readonly OntosRegisteredWorkloadCall[];
+  };
+}
+
+/**
+ * The calls the attested source contract declares that its receiver, as installed now, still takes. A call is dropped
+ * unless the installed receiver publishes its exact operation version with that declaration and that workload, so a
+ * receiver that was removed, replaced or changed never inherits a caller's earlier declaration.
+ */
+const receivedCalls = (source: DerivationContract, contracts: readonly DerivationContract[]) =>
+  (source.manifest?.registeredWorkloadCalls ?? []).filter((call) => {
+    const receiver = contracts.find((candidate) => candidate.deployment.appId === call.audience);
+    return (
+      registeredWorkloadCallReceiverIssue(
+        call,
+        receiver?.manifest === undefined ? undefined : { deployment: receiver.deployment, manifest: receiver.manifest },
+      ) === undefined
+    );
+  });
+
 /**
  * The bindings of the installed release. A credential binds only what its issuing host attested with the key: its
  * module, that module's build marker and the composition revision of the issuing host's release. It binds while the
  * installed release has exactly that build of that module at exactly that revision, and nothing otherwise, so during a
  * deploy overlap only the keys issued for the release that holds the authority bind; an older or newer host's keys,
- * a key without an attestation and a key of a module this release does not install all bind nothing.
+ * a key without an attestation and a key of a module this release does not install all bind nothing. A binding
+ * carries the registered-workload calls of exactly that attested contract (demo divergence exception 8); no
+ * configuration, table or request adds one.
  */
 export const deriveGatewayModuleBindings = (
   enrolment: readonly Pick<AttestedModuleCredential, 'appId' | 'attestation' | 'providerKeyId'>[],
   installed: {
     readonly composition: { readonly revision: string };
-    readonly contracts: readonly { readonly deployment: { readonly appId: string; readonly buildMarker: string } }[];
+    readonly contracts: readonly DerivationContract[];
   },
 ) =>
   Schema.decodeUnknownEffect(bindingsSchema)(
@@ -88,19 +90,23 @@ export const deriveGatewayModuleBindings = (
       }
       const attested = credential.attestation.value;
       const contract = installed.contracts.find((candidate) => candidate.deployment.appId === credential.appId);
-      return contract === undefined ||
+      if (
+        contract === undefined ||
         attested.appId !== credential.appId ||
         attested.buildMarker !== contract.deployment.buildMarker ||
         attested.compositionRevision !== installed.composition.revision
-        ? []
-        : [
-            {
-              compositionRevision: attested.compositionRevision,
-              providerKeyId: credential.providerKeyId,
-              sourceAppId: credential.appId,
-              sourceBuildMarker: attested.buildMarker,
-            },
-          ];
+      ) {
+        return [];
+      }
+      const binding = {
+        compositionRevision: attested.compositionRevision,
+        providerKeyId: credential.providerKeyId,
+        sourceAppId: credential.appId,
+        sourceBuildMarker: attested.buildMarker,
+      };
+      return contract.manifest?.registeredWorkloadCalls === undefined
+        ? [binding]
+        : [{ ...binding, registeredWorkloads: receivedCalls(contract, installed.contracts) }];
     }),
   ).pipe(Effect.mapError((cause) => new GatewayDelegationPolicyUnavailable({ cause })));
 

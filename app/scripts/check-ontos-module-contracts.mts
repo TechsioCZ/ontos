@@ -17,10 +17,12 @@ import {
   OntosMcpToolCatalogJsonSchema,
   OntosModuleIdSchema,
   buildInstalledModuleCatalog,
+  registeredWorkloadCallReceiverIssue,
 } from '../packages/core-runtime/src/index.ts';
 import type {
   InstalledDeploymentContractInput,
   OntosModuleDeploymentContract,
+  RegisteredWorkloadCallReceiver,
 } from '../packages/core-runtime/src/index.ts';
 import { deriveOntosModuleDeploymentContract } from './generate-ontos-module-contract.mts';
 import {
@@ -627,6 +629,34 @@ const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contra
     } satisfies InstalledDeploymentContractInput;
   });
 
+/**
+ * Every registered-workload call a module declares must reach a deployment whose published operation version declares
+ * that declaration for that workload (demo divergence exception 8). The Shell drops any other call at runtime too.
+ */
+export const assertRegisteredWorkloadCallsReceived = (
+  contracts: readonly (RegisteredWorkloadCallReceiver & {
+    readonly manifest: {
+      readonly registeredWorkloadCalls?: readonly Parameters<typeof registeredWorkloadCallReceiverIssue>[0][];
+    };
+  })[],
+) =>
+  Effect.forEach(
+    contracts,
+    (caller) =>
+      Effect.forEach(
+        caller.manifest.registeredWorkloadCalls ?? [],
+        (call) => {
+          const issue = registeredWorkloadCallReceiverIssue(
+            call,
+            contracts.find((candidate) => candidate.deployment.appId === call.audience),
+          );
+          return issue === undefined ? Effect.void : Effect.fail(failure(`${caller.deployment.appId} ${issue}`));
+        },
+        { discard: true },
+      ),
+    { discard: true },
+  );
+
 const checkOntosModuleContractsEffect = (workspaceRoot: string) =>
   Effect.gen(function* checkWorkspaceContracts() {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -657,6 +687,7 @@ const checkOntosModuleContractsEffect = (workspaceRoot: string) =>
     if (duplicateModuleId !== undefined) {
       yield* failure(`duplicate OntOS module ID ${duplicateModuleId}`);
     }
+    yield* assertRegisteredWorkloadCallsReceived(contracts.map(({ contract }) => contract));
     buildInstalledModuleCatalog(contracts);
   });
 

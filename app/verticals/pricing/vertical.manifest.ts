@@ -64,6 +64,7 @@ import { ZeroFloorAuthorizationResultLookupApi } from './shared/apis/zero-floor-
 import { zeroFloorAuthorizationResultLookupRead } from './src/api/zero-floor-authorization-result-lookup.read.ts';
 // </generated-module-manifest-imports>
 import { pricingMcpContribution } from './shared/mcp/contribution.ts';
+import { pricingRegisteredWorkloadCalls } from './src/registered-workload-calls.ts';
 
 const catalogModuleId = 'commerce.catalog';
 const marketCatalogModuleId = 'commerce.market-catalog';
@@ -272,6 +273,8 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
       timelines: [],
     },
   },
+  // Demo divergence exception 8: see ./src/registered-workload-calls.ts.
+  registeredWorkloadCalls: pricingRegisteredWorkloadCalls,
   requirements: {
     coreCapabilities: [ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY],
     intrinsic: [],
