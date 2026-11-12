@@ -212,7 +212,7 @@ export const makePartyRegistryApiRuntime = (...args: PartyRegistryApiRuntimeArgu
     createCrmClientPartyActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     crmClientIntakeReviewReadApiLive.pipe(
       GovernedReadLayer.provide(governedReadRuntimeLive),
-      GovernedReadLayer.provide(governedActionRuntimeLive),
+      Layer.provide(governedActionRuntimeLive),
     ),
     customerListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     duplicateCandidateDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

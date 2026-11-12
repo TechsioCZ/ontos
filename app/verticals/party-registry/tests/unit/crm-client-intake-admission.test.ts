@@ -1,5 +1,5 @@
 import { crmClientEvidenceReference } from '../../shared/domain/crm-client-evidence.ts';
-import { ActionRuntime, collectAccessCatalog } from '@app/core-runtime';
+import { ActionRuntime, ReadPermissionDenied, collectAccessCatalog } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
 import { makeAccessDecisionService } from '@app/core-runtime/access/enforcement';
 import { AccessScopeIdSchema, LegalEntityIdSchema, TenantIdSchema } from '@app/core-runtime/access/ids';
@@ -197,7 +197,7 @@ it.layer(NodeCrypto.layer)('CRM intake workload admission', (suite) => {
               }),
               Effect.flip,
             );
-          expect(deniedRead._tag, deniedRead.reason).toBe('ReadPermissionDenied');
+          expect(Schema.is(ReadPermissionDenied)(deniedRead), deniedRead.reason).toBe(true);
         }
       }),
   );

@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { Effect, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   commandActionSlugOf,
@@ -66,7 +66,9 @@ it.effect(
         const catalog = yield* Schema.decodeEffect(OntosMcpToolCatalogJsonSchema)(derived.toolCatalog);
         let exercised = 0;
         for (const { command, slug } of taggingCases) {
-          const tool = catalog.tools.find((entry) => entry.invoke.commandTag === command._tag);
+          const tool = catalog.tools.find(
+            (entry) => entry.invoke.commandTag !== undefined && Predicate.isTagged(command, entry.invoke.commandTag),
+          );
           // Authored hidden tools stay hidden. The HTTP-only cleanup/image/review tests remain separate.
           if (tool === undefined) {
             expect(manifest.publicSurface.mcp?.commands?.[command._tag]).toBe('hidden');
@@ -124,7 +126,9 @@ it.effect(
         const catalog = yield* Schema.decodeEffect(OntosMcpToolCatalogJsonSchema)(derived.toolCatalog);
         let exercised = 0;
         for (const { command, slug } of workforceCases) {
-          const tool = catalog.tools.find((entry) => entry.invoke.commandTag === command._tag);
+          const tool = catalog.tools.find(
+            (entry) => entry.invoke.commandTag !== undefined && Predicate.isTagged(command, entry.invoke.commandTag),
+          );
           // Authored hidden tools stay hidden. The HTTP-only cleanup/image/review tests remain separate.
           if (tool === undefined) {
             expect(manifest.publicSurface.mcp?.commands?.[command._tag]).toBe('hidden');
@@ -182,7 +186,9 @@ it.effect(
         const catalog = yield* Schema.decodeEffect(OntosMcpToolCatalogJsonSchema)(derived.toolCatalog);
         let exercised = 0;
         for (const { command, slug } of salesInsightsCases) {
-          const tool = catalog.tools.find((entry) => entry.invoke.commandTag === command._tag);
+          const tool = catalog.tools.find(
+            (entry) => entry.invoke.commandTag !== undefined && Predicate.isTagged(command, entry.invoke.commandTag),
+          );
           // Authored hidden tools stay hidden. The HTTP-only cleanup/image/review tests remain separate.
           if (tool === undefined) {
             expect(manifest.publicSurface.mcp?.commands?.[command._tag]).toBe('hidden');
@@ -240,7 +246,9 @@ it.effect(
         const catalog = yield* Schema.decodeEffect(OntosMcpToolCatalogJsonSchema)(derived.toolCatalog);
         let exercised = 0;
         for (const { command, slug } of merchandiseCases) {
-          const tool = catalog.tools.find((entry) => entry.invoke.commandTag === command._tag);
+          const tool = catalog.tools.find(
+            (entry) => entry.invoke.commandTag !== undefined && Predicate.isTagged(command, entry.invoke.commandTag),
+          );
           // Authored hidden tools stay hidden. The HTTP-only cleanup/image/review tests remain separate.
           if (tool === undefined) {
             expect(manifest.publicSurface.mcp?.commands?.[command._tag]).toBe('hidden');

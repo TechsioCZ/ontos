@@ -1,5 +1,5 @@
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../database/identity-enrollment.ts';
-import { makeDatabaseIdentityEnrollmentLive } from '../packages/core-runtime/src/db/database-identities.ts';
+import { makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
