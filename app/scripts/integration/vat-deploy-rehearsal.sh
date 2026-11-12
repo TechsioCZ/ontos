@@ -5,7 +5,7 @@
 # 1. The window: the deploy's migrations run on the clone while the release before them keeps serving, as on stage
 #    (the new container migrates minutes before it publishes). The OLD release's own code, from a checkout of the trunk
 #    the deploy replaces, reads the storefront, places an order and writes products, orders and Finance ledgers on the
-#    migrated clone (`old-release/vat-window.old-release.mts`); then the new release reads every row it wrote
+#    migrated clone (`tests/vat-window.old-release.mts`); then the new release reads every row it wrote
 #    (`vat-window-new-release.test.mts`).
 # 2. The deploy sequence: migrations, the storefront without Tax, the release install, the seed, the first sync and
 #    Finance (`vat-deploy-sequence.test.mts`, which applies the migrations itself); then the release's BUILT Merchandise
@@ -60,7 +60,7 @@ psql_admin "create database ${window_clone} template ${deployed}"
 for owner in tax finance-billing merchandise; do
   (cd "verticals/$owner" && on_clone "$window_clone" pnpm exec drizzle-kit migrate --config drizzle.config.ts)
 done
-cp scripts/integration/old-release/vat-window.old-release.mts "$window_test"
+cp scripts/integration/tests/vat-window.old-release.mts "$window_test"
 (cd "$old_release" && on_clone "$window_clone" \
   ONTOS_VAT_WINDOW_REPORT="$report" \
   ONTOS_VAT_WINDOW_FIXTURE="$app/verticals/merchandise/tests/fixtures/vat-transition-pre-migration.json" \

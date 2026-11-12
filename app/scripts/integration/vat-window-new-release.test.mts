@@ -1,6 +1,6 @@
 // @effect-diagnostics strictEffectProvide:off -- Integration test entrypoint composes its layers once; expires: 2027-03-31.
 /*
- * After the old release kept serving on the migrated database (`old-release/vat-window.old-release.mts`, run by the
+ * After the old release kept serving on the migrated database (`tests/vat-window.old-release.mts`, run by the
  * deploy rehearsal in a trunk checkout), the new release reads every row the old one wrote through its own store:
  * - each product decodes with its classification (column and document agree) and its net and gross exactly as the
  *   old release computed them; one created at 10 % is held at 10 %, so it keeps selling at that rate;
