@@ -8,9 +8,14 @@
 #    migrated clone (`old-release/vat-window.old-release.mts`); then the new release reads every row it wrote
 #    (`vat-window-new-release.test.mts`).
 # 2. The deploy sequence: migrations, the storefront without Tax, the release install, the seed, the first sync and
-#    Finance (`vat-deploy-sequence.test.mts`, which applies the migrations itself).
+#    Finance (`vat-deploy-sequence.test.mts`, which applies the migrations itself); then the release's BUILT Merchandise
+#    under the owners process, its module key handed over only on fd 3, reading Tax through the Shell.
 #
-#   . <integration env>; ONTOS_VAT_OLD_RELEASE_DIR=<trunk checkout>/app scripts/integration/vat-deploy-rehearsal.sh
+#   . <integration env>; ONTOS_VAT_OLD_RELEASE_DIR=<trunk checkout>/app ONTOS_VAT_BUILT_APP=<built export>/app \
+#     scripts/integration/vat-deploy-rehearsal.sh
+#
+# ONTOS_VAT_BUILT_APP names the app folder of an export of this tree with Merchandise built (`pnpm run build` in
+# verticals/merchandise, then `node scripts/zerops/owner-entry.mts verticals/merchandise`), as the deploy builds it.
 #
 # Needs the integration stack's environment (DATABASE_URL, DATABASE_ADMIN_URL naming the deployed database, SpiceDB,
 # gateway keys), a database container named by ONTOS_TEST_DB_CONTAINER (default ontos-itest-db), and the trunk
@@ -19,6 +24,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 app="$PWD"
 old_release="${ONTOS_VAT_OLD_RELEASE_DIR:?ONTOS_VAT_OLD_RELEASE_DIR must name the app directory of a trunk checkout}"
+built_app="${ONTOS_VAT_BUILT_APP:?ONTOS_VAT_BUILT_APP must name the app directory of a built export of this tree}"
 container="${ONTOS_TEST_DB_CONTAINER:-ontos-itest-db}"
 deployed="$(node -e 'console.log(new URL(process.env.DATABASE_ADMIN_URL).pathname.slice(1))')"
 stamp="$(date +%s)"
@@ -64,5 +70,5 @@ on_clone "$window_clone" ONTOS_VAT_WINDOW_REPORT="$report" \
 
 # 2. The deploy sequence.
 psql_admin "create database ${sequence_clone} template ${deployed}"
-on_clone "$sequence_clone" ONTOS_VAT_DEPLOY_REHEARSAL=1 \
+on_clone "$sequence_clone" ONTOS_VAT_DEPLOY_REHEARSAL=1 ONTOS_VAT_BUILT_APP="$built_app" \
   pnpm exec rstest run --project integration --reporter=default scripts/integration/vat-deploy-sequence.test.mts

@@ -182,7 +182,13 @@ const makePackagedEnvironment = Effect.fn('ServerOwnerRelayNative.makePackagedEn
   },
 );
 
-const HostedOwnerAppIdSchema = Schema.Literals(['crm', 'catalog', CUSTOMER_CONTEXT_APP_ID, MARKET_APP_ID]);
+const HostedOwnerAppIdSchema = Schema.Literals([
+  'crm',
+  'catalog',
+  CUSTOMER_CONTEXT_APP_ID,
+  MARKET_APP_ID,
+  'merchandise',
+]);
 type HostedOwnerAppId = typeof HostedOwnerAppIdSchema.Type;
 const HostedOwnerBuildSchema = Schema.Struct({
   deliveryUnit: Schema.Struct({ appId: HostedOwnerAppIdSchema, buildMarker: IdentitySchema.fields.buildMarker }),

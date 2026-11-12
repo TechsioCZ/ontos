@@ -18,18 +18,24 @@
  * 6. Finance reads Tax for an invoice line: before the seed its line is refused (no declared regime); after it the line
  *    picks a classification and stores the Tax rule revision, for an invoice dated 1 January 2024 (Prague) and today.
  *
- * Merchandise's own runtime runs in process (its native read runtime and its owner write path); Tax runs as its
- * deployment root; the Shell's delegated issuance is stood in for by a handler that decides as the real issuer does
- * (module key, a valid source assertion, both modules installed, else the Shell's own "not installed" problem).
+ * 7. With `ONTOS_VAT_BUILT_APP` naming the app folder of a built export (both units built and given their in-process
+ *    entry by `scripts/zerops/owner-entry.mts`), the release's Merchandise is that BUILT unit: the owners process
+ *    (`scripts/zerops/serve-units.mts`) serves it with an environment that holds no key, the host hands its module key
+ *    over on the process's private channel (fd 3), and a staff read over HTTP asks Tax through the Shell with that key
+ *    and stores Tax's answer.
  *
- * Pending: the segment Merchandise → Tax through BUILT unit bundles with a real module-credential hand-over channel
- * (fd 3). It needs the module-process fixture `fix/after-credentials-20261112` adds to
- * `apps/shell-super-app/tests/support/server-owner-relay-native-fixture.ts`; until that lands this runs from source.
+ * Merchandise's own runtime runs in process for steps 1 to 6 (its native read runtime and its owner write path); Tax
+ * runs as its deployment root; the Shell's delegated issuance is stood in for by a handler that decides as the real
+ * issuer does (module key, a valid source assertion, both modules installed, else the Shell's own "not installed"
+ * problem). In step 7 a loopback ingress puts the active release, that handler and Tax's API in front of the built
+ * process, as the app host's Shell does.
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { holdTestModuleCredentials } from '../../packages/core-runtime/tests/support/module-credentials.ts';
+import { startNativeHttpServer } from '../../apps/shell-super-app/tests/support/native-http-server.ts';
+import { startHostedOwnerWithHandover } from '../../apps/shell-super-app/tests/support/server-owner-relay-native-fixture.ts';
 
 import {
   canonicalizeApplicationComposition,
@@ -55,7 +61,7 @@ import {
   shellGatewayContextContract,
 } from '@app/shared-contracts';
 import type { ActiveApplicationCompositionSnapshot, TrustedPrincipalContext } from '@app/core-runtime';
-import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
+import { NodeChildProcessSpawner, NodeCrypto, NodeHttpClient, NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -68,15 +74,17 @@ import {
   DateTime,
   Duration,
   Effect,
+  FileSystem,
   Layer,
   Option,
   Predicate,
   Redacted,
+  Schedule,
   Schema,
   Scope,
 } from 'effect';
 import { expect, it, rs } from 'effect-rstest';
-import { FetchHttpClient, HttpEffect, HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { FetchHttpClient, HttpBody, HttpClient, HttpEffect, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { ChildProcess } from 'effect/process';
 import { createLocalJWKSet, importJWK, jwtVerify, SignJWT } from 'jose';
 
@@ -108,6 +116,7 @@ import {
   MerchandiseCommandPayloadSchema,
   StorefrontOrderResultSchema,
 } from '../../verticals/merchandise/shared/actions/apply-command.ts';
+import { recordsDeclaration } from '../../verticals/merchandise/shared/access-declarations.ts';
 import { RecordsResponseSchema } from '../../verticals/merchandise/shared/apis/records.ts';
 import type { RecordsRequestEncoded } from '../../verticals/merchandise/shared/apis/records.ts';
 import { ultramodernApiMarker as merchandiseMarker } from '../../verticals/merchandise/shared/ultramodern-build.ts';
@@ -139,6 +148,7 @@ import {
 import type { TaxBaselineCompanyPort, TaxBaselineTenantPort } from '../demo/seed-tax-baseline.mts';
 import { sellingModuleKeys, taxModuleKey } from '../demo/stage-tenant-modules.mts';
 import { collectToolingProcess } from '../tests/tooling-process-fixture.mts';
+import { encodeModuleCredentialHandover } from '../zerops/module-credentials.mts';
 
 const COMPOSITION_URL = 'https://composition.vat-deploy.test/active';
 const SHELL_ORIGIN = 'https://shell.vat-deploy.test';
@@ -222,11 +232,16 @@ const comparable = (response: typeof RecordsResponseSchema.Type) => {
 const uuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const digest = (document: string) => bytesToHex(sha256(utf8ToBytes(document)));
 
-/** Merchandise, Tax and Finance Billing, each at its own build marker, in one validated release. */
-const compositionSnapshot = Effect.gen(function* compositionSnapshot() {
+/**
+ * Merchandise, Tax and Finance Billing, each at its own build marker, in one validated release; Merchandise at the
+ * built unit's marker when step 7 runs it.
+ */
+const compositionSnapshot = Effect.fn('VatDeploy.composition')(function* compositionSnapshot(
+  merchandiseBuildMarker: string,
+) {
   const merchandise = yield* makeOwnerApplicationCompositionFixture({
     appId: merchandiseMarker.appId,
-    buildMarker: merchandiseMarker.buildMarker,
+    buildMarker: merchandiseBuildMarker,
     ownerRegistration: merchandiseRegistration,
   });
   const finance = yield* makeOwnerApplicationCompositionFixture({
@@ -361,6 +376,8 @@ const delegationHandler = (input: {
   readonly admin: PgClient.PgClient;
   readonly callers: ReadonlyMap<string, Caller>;
   readonly gateway: Gateway;
+  /** The calling app of every module-call assertion issued, in order. */
+  readonly issued: string[];
   readonly revision: string;
 }) =>
   Effect.gen(function* delegation() {
@@ -397,6 +414,7 @@ const delegationHandler = (input: {
       revision: input.revision,
       targetBuildMarker: taxMarker.buildMarker,
     });
+    input.issued.push(caller.module.appId);
     return HttpServerResponse.jsonUnsafe({
       apiBaseUrl: TAX_PREFIX,
       compositionRevision: input.revision,
@@ -637,6 +655,103 @@ const deployOnStageRows = Effect.fn('VatDeploy.deploy')(function* deployOnStageR
   return { adminPg, allowAll, companyId, database, native, tenantId };
 });
 
+const BuiltUnitSchema = Schema.fromJsonString(
+  Schema.Struct({ deliveryUnit: Schema.Struct({ appId: Schema.Literal('merchandise'), buildMarker: Schema.String }) }),
+);
+
+/** The built Merchandise unit of a built export (`ONTOS_VAT_BUILT_APP` names its app folder), when step 7 is asked for. */
+const builtMerchandise = Effect.gen(function* builtMerchandise() {
+  const app = yield* Config.option(Config.String('ONTOS_VAT_BUILT_APP'));
+  if (Option.isNone(app)) {
+    return Option.none<{ readonly buildMarker: string; readonly directory: string; readonly workspace: string }>();
+  }
+  const directory = `${app.value}/verticals/merchandise`;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const { deliveryUnit } = yield* fileSystem
+    .readFileString(`${directory}/.output/ultramodern-build.json`)
+    .pipe(Effect.flatMap(Schema.decodeEffect(BuiltUnitSchema)), Effect.orDie);
+  return Option.some({ buildMarker: deliveryUnit.buildMarker, directory, workspace: app.value });
+});
+type BuiltMerchandise = Option.Option.Value<Effect.Success<typeof builtMerchandise>>;
+
+/**
+ * 7. The release's BUILT Merchandise, served as the app host serves it: the owners process claims the unit before it
+ *    loads, its environment holds no key, and its module key arrives only on its private channel (fd 3). Its first staff
+ *    read asks Tax through the Shell with that key (the Shell issues the module-call assertion for Merchandise's built
+ *    release) and stores Tax's answer.
+ */
+const builtMerchandiseReadsTax = Effect.fn('VatDeploy.builtMerchandise')(function* builtMerchandiseReadsTax(input: {
+  readonly adminPg: PgClient.PgClient;
+  readonly built: BuiltMerchandise;
+  readonly companyId: string;
+  /** The app host's loopback ingress in front of the active release, the Shell and Tax. */
+  readonly ingress: { readonly origin: string };
+  readonly issued: readonly string[];
+  readonly revision: string;
+  readonly staffToken: Effect.Effect<string, never, Crypto.Crypto>;
+  readonly tenantId: string;
+}) {
+  const { ingress } = input;
+  const merchandise = yield* startHostedOwnerWithHandover({
+    appId: 'merchandise',
+    compositionUrl: `${ingress.origin}/active`,
+    gateway: {
+      issuer: yield* Config.String('ONTOS_GATEWAY_ISSUER'),
+      publicJwks: yield* Config.String('ONTOS_GATEWAY_PUBLIC_JWKS'),
+    },
+    relativeDirectory: input.built.directory,
+    shellGatewayBaseUrl: `${ingress.origin}${shellGatewayContextContract.apiPrefix}`,
+    workspaceDirectory: input.built.workspace,
+  });
+  expect(merchandise.buildMarker).toBe(input.built.buildMarker);
+  yield* merchandise.handOver(
+    yield* encodeModuleCredentialHandover({ merchandise: Redacted.make(MERCHANDISE_KEY) }, ['merchandise']),
+  );
+  expect(yield* merchandise.received).toBe('merchandise');
+
+  const client = yield* HttpClient.HttpClient;
+  const staffRead = Effect.gen(function* builtStaffRead() {
+    const response = yield* client.post(`${merchandise.origin}/merchandise-api/reads/records`, {
+      body: yield* HttpBody.json({ view: { limit: 0, ordersLimit: 0, summary: true } }),
+      headers: {
+        authorization: `Bearer ${yield* input.staffToken}`,
+        'x-correlation-id': yield* uuid,
+        'x-ontos-composition-revision': input.revision,
+      },
+    });
+    expect(response.status).toBe(200);
+    return yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(RecordsResponseSchema)));
+  });
+  const syncedAt = input.adminPg
+    .unsafe<{ readonly synced: string | null }>(
+      "select tax_rates ->> 'syncedAt' as synced from demo_merchandise.catalog_heads where tenant_id = $1 and legal_entity_id = $2",
+      [input.tenantId, input.companyId],
+    )
+    .pipe(
+      Effect.map(([row]) => row?.synced ?? null),
+      Effect.orDie,
+    );
+  const before = yield* syncedAt;
+  const issuedBefore = input.issued.length;
+  // The first read starts the refresh; a later one stores Tax's answer with the time Tax gave it.
+  const stored = yield* staffRead.pipe(
+    Effect.andThen(syncedAt),
+    Effect.repeat({ schedule: Schedule.spaced('1 second'), times: 20, until: (synced) => synced !== before }),
+  );
+  expect(stored).not.toBe(before);
+  // Every module-call assertion the Shell issued meanwhile went to Merchandise's key, which only fd 3 carried.
+  expect(input.issued.slice(issuedBefore).length).toBeGreaterThan(0);
+  expect(input.issued.slice(issuedBefore).every((app) => app === 'merchandise')).toBe(true);
+  const records = yield* staffRead;
+  expect([records.sellerVatRegime, records.taxRatesSource]).toEqual(['VAT_PAYER', 'TAX']);
+  expect(records.taxRates?.map((rate) => [rate.code, rate.ratePercent])).toEqual([
+    [STANDARD, 21],
+    ['cz.vat.reduced', 12],
+  ]);
+  // The process never printed the key.
+  expect(merchandise.diagnostics.filter((line) => Redacted.value(line).includes(MERCHANDISE_KEY))).toEqual([]);
+});
+
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
@@ -652,11 +767,16 @@ const rehearsalRequested = Config.Boolean('ONTOS_VAT_DEPLOY_REHEARSAL').pipe(Con
 const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySequence() {
   // 1. The deploy: migrations on the stage-shaped rows.
   const { adminPg, allowAll, companyId, database, native, tenantId } = yield* deployOnStageRows();
+  const built = yield* builtMerchandise;
   // Merchandise and Finance call Tax with their own keys, handed over as the host hands them.
   yield* holdTestModuleCredentials({ 'finance-billing': FINANCE_KEY, merchandise: MERCHANDISE_KEY });
 
   // The release, the gateway, the stand-in Shell and Tax's deployment root on this database.
-  const snapshot = yield* compositionSnapshot;
+  const merchandiseBuildMarker = Option.match(built, {
+    onNone: () => merchandiseMarker.buildMarker,
+    onSome: (unit) => unit.buildMarker,
+  });
+  const snapshot = yield* compositionSnapshot(merchandiseBuildMarker);
   const { revision } = snapshot.composition;
   const now = yield* databaseNow(adminPg);
   yield* adminPg.unsafe(UPSERT_AUTHORITY, [
@@ -667,7 +787,7 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
   const gateway = yield* makeGateway(adminPg);
   const merchandiseModule: CallingModule = {
     appId: merchandiseMarker.appId,
-    buildMarker: merchandiseMarker.buildMarker,
+    buildMarker: merchandiseBuildMarker,
     principalId: yield* uuid,
   };
   const financeModule: CallingModule = {
@@ -675,6 +795,7 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
     buildMarker: financeMarker.buildMarker,
     principalId: yield* uuid,
   };
+  const issued: string[] = [];
   const shell = HttpEffect.toWebHandlerWith<Crypto.Crypto, HttpServerRequest.HttpServerRequest | Crypto.Crypto>(
     yield* Effect.context<Crypto.Crypto>(),
   )(
@@ -685,6 +806,7 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
         [FINANCE_KEY, { module: financeModule, moduleKey: 'finance.billing' }],
       ]),
       gateway,
+      issued,
       revision,
     }),
   );
@@ -720,9 +842,15 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
         }),
       ),
     );
-  // The owner's rights: the seed's four tax rights, as a role of the tenant; effective once Tax is installed.
+  // The owner's rights: the seed's four tax rights, as a role of the tenant, effective once Tax is installed; and the
+  // Merchandise records read the built unit's own gate decides in step 7.
   yield* grantTestTenantRoleAccess({
-    holders: [{ capabilityKeys: Object.values(taxBaselineRights), principalId: owner.principalId }],
+    holders: [
+      {
+        capabilityKeys: [...Object.values(taxBaselineRights), recordsDeclaration.key],
+        principalId: owner.principalId,
+      },
+    ],
     legalEntityIds: [companyId],
     spiceDb: yield* loadSpiceDbConfig().pipe(Effect.orDie),
     tenantId,
@@ -893,6 +1021,31 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
       true,
     ]);
     expect(lineVatIssue({ ...line, ...stored }, choices, OUTGOING)).toBeUndefined();
+  }
+
+  // 7. The built Merchandise of the release, its key only on fd 3, reads Tax through the Shell.
+  if (Option.isSome(built)) {
+    // The host's loopback ingress: the active release, the Shell's delegated issuance and Tax's API behind the Shell,
+    // each request forwarded with its method, headers and body.
+    const ingress = yield* startNativeHttpServer(async (request) => {
+      const url = new URL(request.url);
+      const target = url.pathname === '/active' ? COMPOSITION_URL : `${SHELL_ORIGIN}${url.pathname}${url.search}`;
+      const body = request.method === 'GET' || request.method === 'HEAD' ? null : await request.arrayBuffer();
+      return await fetchThroughRoots(target, { body, headers: request.headers, method: request.method });
+    });
+    yield* builtMerchandiseReadsTax({
+      adminPg,
+      built: built.value,
+      companyId,
+      ingress,
+      issued,
+      revision,
+      staffToken: signedIn(merchandiseModule.appId, merchandiseModule.buildMarker).pipe(
+        Effect.map(({ token }) => token),
+        Effect.orDie,
+      ),
+      tenantId,
+    }).pipe(Effect.provide(NodeHttpClient.layerNodeHttp));
   }
 });
 
