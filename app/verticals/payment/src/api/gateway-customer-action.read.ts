@@ -20,7 +20,7 @@ export const gatewayCustomerActionRead = defineRead(
       key: 'payment.core.gateway-customer-action.read',
       kind: 'read',
       modes: ['run'],
-      placement: { group: 'gateway-customer-action', level: 'basic' },
+      placement: { group: 'payments', level: 'basic' },
       risk: 'sensitive',
       selectors: [],
     },

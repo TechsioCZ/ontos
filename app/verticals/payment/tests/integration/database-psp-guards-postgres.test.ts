@@ -1,6 +1,6 @@
 import type { ScopedRoutineInvoker } from '@app/core-runtime';
 import type { PgClient } from '@effect/sql-pg';
-import { Effect, Option, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -19,9 +19,11 @@ import type {
 import {
   PspNotificationIdSchema,
   pspAppendEvidence,
+  pspHasUnresolvedRefund,
   pspMarkEvidenceSubmission,
   pspPrepareDispatch,
   pspReadDispatch,
+  pspReadOperationForExecution,
   pspRecordDispatchOutcome,
   pspRegisterCancel,
   pspTransitionNotification,
@@ -31,6 +33,8 @@ import type {
   PspPrepareDispatchInput,
   PspWorkerOrigin,
 } from '../../src/persistence/psp-worker-routines.ts';
+import type { PaymentGatewayProviderFamilySchema } from '../../shared/domain/payment-vocabulary.ts';
+import { configuredRefundExecutionRouteFor } from '../support/refund-execution-route.fixture.ts';
 import {
   COMPOSITION_REVISION,
   collectInput,
@@ -46,6 +50,7 @@ import {
 } from './database-fixture.ts';
 import type { PaymentTestDatabase, PaymentTestScope } from './database-fixture.ts';
 
+type PaymentGatewayProviderFamily = typeof PaymentGatewayProviderFamilySchema.Type;
 type PaymentTestTransaction = Parameters<Parameters<PaymentTestDatabase['transaction']>[0]>[0];
 
 const WORKER_KEY = 'payment.core.execute-gateway-operation';
@@ -78,8 +83,15 @@ interface GatewayFixture {
   readonly bindingId: GatewayProviderAccountBindingId;
   readonly collectMaterialHash: string;
   readonly collectOperationId: string;
+  readonly family: PaymentGatewayProviderFamily;
   readonly paymentId: string;
 }
+
+const MERCHANT_IDENTITIES = {
+  COMGATE: '{"_tag":"COMGATE","merchantId":"123456"}',
+  GOPAY: '{"_tag":"GOPAY","goid":"8123456789"}',
+  STRIPE: '{"_tag":"STRIPE","accountId":"acct_1TestAccount"}',
+} as const satisfies Record<PaymentGatewayProviderFamily, string>;
 
 /** Inserts one CURRENT binding and its ACTIVE credential the way the configuration Action does. */
 const insertBinding = (
@@ -88,7 +100,7 @@ const insertBinding = (
   input: {
     readonly accountRef: string;
     readonly bindingId: string;
-    readonly family: 'GOPAY' | 'STRIPE';
+    readonly family: PaymentGatewayProviderFamily;
     readonly merchantIdentity: string;
   },
 ) =>
@@ -126,6 +138,7 @@ const gatewayFixture = Effect.fn('PspGuardsFixture.gateway')(function* gatewayFi
   runtime: PaymentTestDatabase,
   runtimeClient: PgClient.PgClient,
   scope: PaymentTestScope,
+  family: PaymentGatewayProviderFamily = 'STRIPE',
 ) {
   const [refSeed, bindingSeed] = yield* Effect.all([randomUuid, randomUuid], { concurrency: 1 });
   const [accountRef, bindingId] = yield* Effect.all(
@@ -136,13 +149,13 @@ const gatewayFixture = Effect.fn('PspGuardsFixture.gateway')(function* gatewayFi
     _tag: 'GATEWAY_ACCOUNT',
     environment: 'SANDBOX',
     providerAccountRef: accountRef,
-    providerFamily: 'STRIPE',
+    providerFamily: family,
   } as const;
   yield* insertBinding(runtimeClient, scope, {
     accountRef,
     bindingId,
-    family: 'STRIPE',
-    merchantIdentity: '{"_tag":"STRIPE","accountId":"acct_1TestAccount"}',
+    family,
+    merchantIdentity: MERCHANT_IDENTITIES[family],
   });
   const paymentInput = yield* newPaymentInput(scope);
   const created = yield* withPersistence(runtime, scope, (persistence) =>
@@ -158,9 +171,18 @@ const gatewayFixture = Effect.fn('PspGuardsFixture.gateway')(function* gatewayFi
     bindingId,
     collectMaterialHash: collected.record.materialHash,
     collectOperationId: collected.record.operationId,
+    family,
     paymentId,
   } satisfies GatewayFixture;
 });
+
+const gatewayBindingOf = (fixture: GatewayFixture) =>
+  ({
+    _tag: 'GATEWAY_ACCOUNT',
+    environment: 'SANDBOX',
+    providerAccountRef: fixture.accountRef,
+    providerFamily: fixture.family,
+  }) as const;
 
 const cancelOperation = Effect.fn('PspGuardsFixture.cancel')(function* cancelOperation(
   runtime: PaymentTestDatabase,
@@ -171,12 +193,7 @@ const cancelOperation = Effect.fn('PspGuardsFixture.cancel')(function* cancelOpe
   const cancelled = yield* withPersistence(runtime, scope, (persistence) =>
     persistence.insertOperation({
       amount: { amountMinor: 0, currency: 'CZK' },
-      binding: {
-        _tag: 'GATEWAY_ACCOUNT',
-        environment: 'SANDBOX',
-        providerAccountRef: fixture.accountRef,
-        providerFamily: 'STRIPE',
-      },
+      binding: gatewayBindingOf(fixture),
       initialOutcome: 'PENDING',
       kind: 'CANCEL_OR_VOID',
       materialRequest: { kind: 'CANCEL_OR_VOID', targetOperationId: fixture.collectOperationId },
@@ -189,6 +206,11 @@ const cancelOperation = Effect.fn('PspGuardsFixture.cancel')(function* cancelOpe
   return { materialHash: cancelled.record.materialHash, operationId: cancelled.record.operationId };
 });
 
+const REQUEST_HEADERS = [
+  { name: 'content-type', value: 'application/x-www-form-urlencoded' },
+  { name: 'idempotency-key', value: 'ontos-pop-key' },
+];
+
 const prepareInput = (fixture: GatewayFixture, origin: PspWorkerOrigin): PspPrepareDispatchInput => ({
   bindingId: fixture.bindingId,
   credentialRevision: 1,
@@ -198,7 +220,11 @@ const prepareInput = (fixture: GatewayFixture, origin: PspWorkerOrigin): PspPrep
   operationId: fixture.collectOperationId,
   origin,
   providerPaymentRef: Option.none(),
-  replayBody: Option.some({ body: new TextEncoder().encode('mode=payment&amount=100000'), windowMs: 86_400_000 }),
+  replayRequest: Option.some({
+    body: new TextEncoder().encode('mode=payment&amount=100000'),
+    headers: REQUEST_HEADERS,
+    windowMs: 86_400_000,
+  }),
   requestHash: REQUEST_HASH,
   returnToken: Option.some('AbCdEfGhIjKlMnOpQrStUv'),
 });
@@ -247,8 +273,14 @@ it.live('#1158 One dispatch per Payment Operation', () =>
           Option.map((body) => new TextDecoder().decode(body)),
         ),
       ).toEqual(Option.some('mode=payment&amount=100000'));
-      expect(preparedRow.record.replayStartsAt).toBeDefined();
-      expect(preparedRow.record.replayExpiresAt).toBeDefined();
+      expect(preparedRow.record.requestHeaders).toEqual(REQUEST_HEADERS);
+      expect(preparedRow.record.replayStartsAt).toEqual(preparedRow.record.preparedAt);
+      expect(
+        Option.all([
+          Option.fromUndefinedOr(preparedRow.record.replayStartsAt),
+          Option.fromUndefinedOr(preparedRow.record.replayExpiresAt),
+        ]).pipe(Option.map(([starts, expires]) => DateTime.toEpochMillis(expires) - DateTime.toEpochMillis(starts))),
+      ).toEqual(Option.some(86_400_000));
 
       // A redelivery (another delivery of the same admitted work) and a concurrent executor reuse the row.
       const [redelivered, concurrent] = yield* Effect.all(
@@ -297,6 +329,17 @@ it.live('#1158 Changed material under the same operation is a conflict', () =>
         pspPrepareDispatch(invoker, { ...prepareInput(fixture, origin), requestHash: 'e'.repeat(64) }),
       );
       expect(conflictReason(changedRequest)).toEqual(Option.some('request_mismatch'));
+      const changedHeaders = yield* withRoutines(runtime, scope, (invoker) =>
+        pspPrepareDispatch(invoker, {
+          ...prepareInput(fixture, origin),
+          replayRequest: Option.some({
+            body: new TextEncoder().encode('mode=payment&amount=100000'),
+            headers: [REQUEST_HEADERS[0] ?? { name: 'content-type', value: '' }],
+            windowMs: 86_400_000,
+          }),
+        }),
+      );
+      expect(conflictReason(changedHeaders)).toEqual(Option.some('request_mismatch'));
       expect(yield* dispatchCount(runtimeClient, scope, fixture.collectOperationId)).toBe(1);
       const stored = yield* withRoutines(runtime, scope, (invoker) =>
         pspReadDispatch(invoker, fixture.collectOperationId),
@@ -566,7 +609,8 @@ it.live('#1158 Provider evidence is append-only except its one submission step',
         factFamily: 'GATEWAY_OUTCOME',
         factKind: 'COLLECTION_CONFIRMED',
         notificationId: Option.none(),
-        observedAmountMinor: Option.some(100_000),
+        observedAmount: Option.some({ amountMinor: 100_000, currency: 'CZK' }),
+        observedAt: DateTime.makeUnsafe('2026-11-12T10:00:00.000Z'),
         operationId: fixture.collectOperationId,
         origin,
         providerOccurredAt: Option.none(),
@@ -582,9 +626,21 @@ it.live('#1158 Provider evidence is append-only except its one submission step',
       const appendedRow = yield* expectTagged(appended, 'APPENDED');
       expect(appendedRow.record.submissionState).toBe('PENDING_SUBMISSION');
       expect(appendedRow.record.deliveryId).toBe(origin.deliveryId);
-      expect(Predicate.isTagged(yield* append(evidence), 'EXISTING')).toBe(true);
+      // Without a notification, receipt and verification are the observation instant.
+      expect([appendedRow.record.receivedAt, appendedRow.record.verifiedAt]).toEqual([
+        evidence.observedAt,
+        evidence.observedAt,
+      ]);
+      // The same fact proven again later is the same occurrence; the first receipt is kept.
+      const repeated = yield* append({ ...evidence, observedAt: DateTime.makeUnsafe('2026-11-12T11:00:00.000Z') });
+      expect((yield* expectTagged(repeated, 'EXISTING')).record.receivedAt).toEqual(evidence.observedAt);
       const rewritten = yield* append({ ...evidence, factKind: 'COLLECTION_NOT_EFFECTED' });
       expect(conflictReason(rewritten)).toEqual(Option.some('occurrence_mismatch'));
+      const otherCurrency = yield* append({
+        ...evidence,
+        observedAmount: Option.some({ amountMinor: 100_000, currency: 'EUR' }),
+      });
+      expect(conflictReason(otherCurrency)).toEqual(Option.some('occurrence_mismatch'));
 
       const mark = (state: 'ACCEPTED' | 'DENIED') =>
         withRoutines(runtime, scope, (invoker) =>
@@ -689,6 +745,17 @@ it.live('#1158 Scoped routines refuse arguments outside the installed scope', ()
       const other = yield* makeTestScope;
       const fixture = yield* gatewayFixture(runtime, runtimeClient, scope);
 
+      // In its own scope the routine decodes into the typed C16 operation facts.
+      const operation = yield* withRoutines(runtime, scope, (invoker) =>
+        pspReadOperationForExecution(invoker, fixture.collectOperationId),
+      );
+      expect(
+        operation.pipe(
+          Option.map((read) => [read.operationId, read.kind, read.outcome, read.materialHash, read.amountMinor]),
+        ),
+      ).toEqual(Option.some([fixture.collectOperationId, 'COLLECT', 'PENDING', fixture.collectMaterialHash, 100_000]));
+      expect(operation.pipe(Option.map((read) => read.binding))).toEqual(Option.some(gatewayBindingOf(fixture)));
+
       yield* expectSqlFailure(
         inScope(
           runtimeClient,
@@ -787,6 +854,213 @@ it.live('#1158 The runtime role cannot write worker-owned gateway rows directly'
         ),
         '42501',
       );
+    }),
+  ),
+);
+
+it.live('#1157 A notification only affects operations of the binding it was captured for', () =>
+  Effect.scoped(
+    Effect.gen(function* notificationBindingTie() {
+      const { runtime: runtimeClient } = yield* testDatabaseClients;
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, paymentTestRelations);
+      const scope = yield* makeTestScope;
+      const stripe = yield* gatewayFixture(runtime, runtimeClient, scope, 'STRIPE');
+      const gopay = yield* gatewayFixture(runtime, runtimeClient, scope, 'GOPAY');
+      const origin = yield* workerOrigin;
+      const [captured] = yield* insertNotification(runtimeClient, scope, {
+        accountRef: gopay.accountRef,
+        bindingId: gopay.bindingId,
+        deliveryIdentity: 'gopay:3000006529:relay-delivery-1',
+        family: 'GOPAY',
+      });
+      const notificationId = yield* Schema.decodeUnknownEffect(PspNotificationIdSchema)(captured?.notification_id);
+      const transition = (operationId: string) =>
+        withRoutines(runtime, scope, (invoker) =>
+          pspTransitionNotification(invoker, {
+            correlatedOperationId: Option.some(operationId),
+            deliveryId: origin.deliveryId,
+            notificationId,
+            to: 'SUBMITTED',
+          }),
+        );
+
+      // A GoPay notification cannot be correlated with an operation executed through the Stripe binding.
+      expect(conflictReason(yield* transition(stripe.collectOperationId))).toEqual(Option.some('binding_mismatch'));
+      const evidence: PspAppendEvidenceInput = {
+        bindingId: stripe.bindingId,
+        discrepancy: Option.none(),
+        economicEffectKey: Option.none(),
+        evidenceOrigin: 'NOTIFICATION_LOOKUP',
+        factFamily: 'GATEWAY_OUTCOME',
+        factKind: 'COLLECTION_PENDING',
+        notificationId: Option.some(notificationId),
+        observedAmount: Option.none(),
+        observedAt: DateTime.makeUnsafe('2099-01-01T00:00:00.000Z'),
+        operationId: stripe.collectOperationId,
+        origin,
+        providerOccurredAt: Option.none(),
+        providerRefs: [],
+        reason: Option.none(),
+        sourceOccurrenceId: `gopay:NOTIFICATION_LOOKUP:3000006529:${stripe.collectOperationId}:COLLECTION_PENDING:100000`,
+        sourceRevision: 0,
+      };
+      const foreign = yield* withRoutines(runtime, scope, (invoker) => pspAppendEvidence(invoker, evidence));
+      expect(conflictReason(foreign)).toEqual(Option.some('notification_unknown'));
+
+      // Inside its own binding the evidence keeps the notification's receipt and the lookup's verification.
+      const own = yield* withRoutines(runtime, scope, (invoker) =>
+        pspAppendEvidence(invoker, {
+          ...evidence,
+          bindingId: gopay.bindingId,
+          operationId: gopay.collectOperationId,
+          sourceOccurrenceId: `gopay:NOTIFICATION_LOOKUP:3000006529:${gopay.collectOperationId}:COLLECTION_PENDING:100000`,
+        }),
+      );
+      const ownRow = yield* expectTagged(own, 'APPENDED');
+      expect(ownRow.record.notificationId).toBe(notificationId);
+      expect(ownRow.record.verifiedAt).toEqual(evidence.observedAt);
+      expect(DateTime.toEpochMillis(ownRow.record.receivedAt)).toBeLessThan(
+        DateTime.toEpochMillis(evidence.observedAt),
+      );
+      expect(Predicate.isTagged(yield* transition(gopay.collectOperationId), 'TRANSITIONED')).toBe(true);
+    }),
+  ),
+);
+
+it.live('#1156 GoPay refunds of one provider payment are serialized under the collection lock', () =>
+  Effect.scoped(
+    Effect.gen(function* refundSerialization() {
+      const { runtime: runtimeClient } = yield* testDatabaseClients;
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, paymentTestRelations);
+      const scope = yield* makeTestScope;
+      const fixture = yield* gatewayFixture(runtime, runtimeClient, scope, 'GOPAY');
+      const origin = yield* workerOrigin;
+      const providerPaymentRef = '3000006529';
+      const gopayRequest = {
+        ...prepareInput(fixture, origin),
+        endpointRef: 'gopay:payment-create',
+        idempotencyKeyHash: Option.none(),
+        replayRequest: Option.none(),
+        returnToken: Option.none(),
+      } satisfies PspPrepareDispatchInput;
+      yield* expectTagged(
+        yield* withRoutines(runtime, scope, (invoker) => pspPrepareDispatch(invoker, gopayRequest)),
+        'PREPARED',
+      );
+      yield* expectTagged(
+        yield* withRoutines(runtime, scope, (invoker) =>
+          pspRecordDispatchOutcome(invoker, {
+            customerRedirectUrl: Option.none(),
+            deliveryId: origin.deliveryId,
+            operationId: fixture.collectOperationId,
+            providerPaymentRef: Option.some(providerPaymentRef),
+            providerRefundRef: Option.none(),
+            to: 'ACKNOWLEDGED',
+          }),
+        ),
+        'RECORDED',
+      );
+      const binding = gatewayBindingOf(fixture);
+      const [confirm, refundExecutionRoute] = yield* Effect.all(
+        [provenanceFor(scope), configuredRefundExecutionRouteFor(runtime, scope, binding)],
+        { concurrency: 1 },
+      );
+      yield* withPersistence(runtime, scope, (persistence) =>
+        persistence.transitionOperationOutcome({
+          causedBy: { kind: 'OBSERVATION', sourceId: 'observation:captured' },
+          expectedOutcomeRevision: 1,
+          operationId: fixture.collectOperationId,
+          paymentId: fixture.paymentId,
+          provenance: confirm,
+          to: 'EFFECT_CONFIRMED',
+        }),
+      );
+      const refund = Effect.fn('PspGuardsFixture.refund')(function* refund(itemRef: string) {
+        const provenance = yield* provenanceFor(scope);
+        const created = yield* withPersistence(runtime, scope, (persistence) =>
+          persistence.insertOperation({
+            amount: { amountMinor: 10_000, currency: 'CZK' },
+            binding,
+            initialOutcome: 'PENDING',
+            kind: 'REFUND',
+            materialRequest: { itemRefs: [itemRef], kind: 'REFUND', operationKey: `refund-${itemRef}` },
+            operationKey: `refund-${itemRef}`,
+            paymentId: fixture.paymentId,
+            provenance,
+            refundBasis: {
+              _tag: 'REFUNDABLE_ITEMS',
+              items: [{ amountMinor: 10_000, currency: 'CZK', itemRef, sourceEvidenceRef: `order:item:${itemRef}` }],
+            },
+            refundExecutionRoute,
+            targetOperationId: fixture.collectOperationId,
+          }),
+        );
+        return { materialHash: created.record.materialHash, operationId: created.record.operationId };
+      });
+      const [first, second] = yield* Effect.all([refund('A'), refund('B')], { concurrency: 1 });
+      const prepareRefund = (operation: { readonly materialHash: string; readonly operationId: string }) =>
+        withRoutines(runtime, scope, (invoker) =>
+          pspPrepareDispatch(invoker, {
+            ...gopayRequest,
+            endpointRef: 'gopay:payment-refund',
+            materialHash: operation.materialHash,
+            operationId: operation.operationId,
+            providerPaymentRef: Option.some(providerPaymentRef),
+          }),
+        );
+
+      // Truly concurrent: exactly one refund is prepared, the other is deferred behind it.
+      const raced = yield* Effect.all([prepareRefund(first), prepareRefund(second)], { concurrency: 2 });
+      const preparedIndex = raced.findIndex((result) => Predicate.isTagged(result, 'PREPARED'));
+      expect(preparedIndex).toBeGreaterThanOrEqual(0);
+      const [winner, loser] = preparedIndex === 0 ? [first, second] : [second, first];
+      const deferred = yield* expectTagged(raced[1 - preparedIndex] ?? raced[0], 'DEFERRED');
+      expect(deferred.unresolvedRefundOperationIds).toEqual([winner.operationId]);
+      expect(yield* dispatchCount(runtimeClient, scope, loser.operationId)).toBe(0);
+
+      // Acknowledged without definitive refund evidence is still unresolved.
+      yield* withRoutines(runtime, scope, (invoker) =>
+        pspRecordDispatchOutcome(invoker, {
+          customerRedirectUrl: Option.none(),
+          deliveryId: origin.deliveryId,
+          operationId: winner.operationId,
+          providerPaymentRef: Option.none(),
+          providerRefundRef: Option.none(),
+          to: 'ACKNOWLEDGED',
+        }),
+      );
+      yield* expectTagged(yield* prepareRefund(loser), 'DEFERRED');
+      const unresolved = yield* withRoutines(runtime, scope, (invoker) =>
+        pspHasUnresolvedRefund(invoker, {
+          bindingId: fixture.bindingId,
+          excludingOperationId: Option.some(loser.operationId),
+          providerPaymentRef,
+        }),
+      );
+      expect(unresolved).toEqual({ operationIds: [winner.operationId], unresolved: true });
+
+      // Definitive refund evidence resolves it, and the next refund may be prepared.
+      yield* withRoutines(runtime, scope, (invoker) =>
+        pspAppendEvidence(invoker, {
+          bindingId: fixture.bindingId,
+          discrepancy: Option.none(),
+          economicEffectKey: Option.some(`gopay-refund:${providerPaymentRef}:${winner.operationId}`),
+          evidenceOrigin: 'RECOVERY_LOOKUP',
+          factFamily: 'REFUND_EXECUTION',
+          factKind: 'REFUND_CONFIRMED',
+          notificationId: Option.none(),
+          observedAmount: Option.some({ amountMinor: 10_000, currency: 'CZK' }),
+          observedAt: DateTime.makeUnsafe('2026-11-12T10:00:00.000Z'),
+          operationId: winner.operationId,
+          origin,
+          providerOccurredAt: Option.none(),
+          providerRefs: [{ _tag: 'GOPAY_PAYMENT', id: providerPaymentRef }],
+          reason: Option.none(),
+          sourceOccurrenceId: `gopay:RECOVERY_LOOKUP:${providerPaymentRef}:${winner.operationId}:REFUND_CONFIRMED:10000`,
+          sourceRevision: 0,
+        }),
+      );
+      yield* expectTagged(yield* prepareRefund(loser), 'PREPARED');
     }),
   ),
 );

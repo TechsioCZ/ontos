@@ -9,7 +9,8 @@ import {
   ProviderEvidenceOriginSchema,
   ProviderEvidenceSubmissionStateSchema,
 } from '../../../shared/domain/psp-vocabulary.ts';
-import type { GatewayLedgerUnavailableError } from './psp-errors.ts';
+import { ProviderNotificationIdSchema } from './notification-store.ts';
+import type { GatewayEvidenceConflictError, GatewayLedgerUnavailableError } from './psp-errors.ts';
 import { ProviderEvidenceSchema } from './psp-result.ts';
 
 /**
@@ -32,21 +33,33 @@ export const ProviderEvidenceSubmissionOutcomeSchema = ProviderEvidenceSubmissio
 ]);
 export type ProviderEvidenceSubmissionOutcome = typeof ProviderEvidenceSubmissionOutcomeSchema.Type;
 
+/**
+ * One stored evidence row. `receivedAt` is the durable transport receipt of what proved the fact: the
+ * captured notification's `receivedAt` when the evidence came from a notification (taken by the ledger
+ * from the notification row of the same binding), otherwise `evidence.observedAt`. `verifiedAt` is
+ * `evidence.observedAt`, never earlier than `receivedAt`. The A8 submitter sends `receivedAt` as the
+ * statement `receivedAt`; neither is ever replaced by `recordedAt` or the submission time.
+ */
 export const StoredProviderEvidenceSchema = Schema.Struct({
   bindingId: GatewayProviderAccountBindingIdSchema,
   evidence: ProviderEvidenceSchema,
   evidenceId: ProviderEvidenceIdSchema,
+  notificationId: Schema.Option(ProviderNotificationIdSchema),
   operationId: PaymentOperationIdSchema,
   origin: ProviderEvidenceOriginSchema,
   paymentId: PaymentIdSchema,
+  receivedAt: Schema.DateTimeUtc,
   recordedAt: Schema.DateTimeUtc,
   submissionState: ProviderEvidenceSubmissionStateSchema,
+  verifiedAt: Schema.DateTimeUtc,
 });
 export type StoredProviderEvidence = typeof StoredProviderEvidenceSchema.Type;
 
 export interface AppendProviderEvidenceInput {
   readonly bindingId: typeof GatewayProviderAccountBindingIdSchema.Type;
   readonly evidence: typeof ProviderEvidenceSchema.Type;
+  /** The captured notification this evidence was obtained for; it must belong to `bindingId`. */
+  readonly notificationId: Option.Option<typeof ProviderNotificationIdSchema.Type>;
   readonly operationId: OperationId;
   readonly origin: typeof ProviderEvidenceOriginSchema.Type;
   readonly paymentId: typeof PaymentIdSchema.Type;
@@ -68,10 +81,14 @@ export interface MarkProviderEvidenceSubmissionInput {
 }
 
 export interface ProviderEvidenceStoreContract {
-  /** Idempotent on (binding, sourceOccurrenceId, sourceRevision): a repeat returns the existing id. */
+  /**
+   * Keyed on (binding, sourceOccurrenceId, sourceRevision). An identical statement for the same operation
+   * returns the existing row (its first receipt instants and notification are kept). The same key with a
+   * different operation or a different statement fails with `GatewayEvidenceConflict`; nothing is written.
+   */
   readonly append: (
     input: AppendProviderEvidenceInput,
-  ) => Effect.Effect<ProviderEvidenceId, GatewayLedgerUnavailableError>;
+  ) => Effect.Effect<StoredProviderEvidence, GatewayEvidenceConflictError | GatewayLedgerUnavailableError>;
   /** Oldest first. */
   readonly listPending: (
     input: ListPendingProviderEvidenceInput,

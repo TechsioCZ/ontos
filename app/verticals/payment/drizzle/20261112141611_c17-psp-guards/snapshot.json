@@ -1,10 +1,10 @@
 {
+  "id": "0421a8cc-627e-44c3-b04e-bbf54716cd8c",
+  "prevIds": [
+    "c2566ae6-2e70-467a-9fb9-d0674522c5ab"
+  ],
   "version": "8",
   "dialect": "postgres",
-  "id": "193ec8c2-26a1-45ea-b165-964ad19090c7",
-  "prevIds": [
-    "85a988b8-fa62-4492-b667-176d1be56d6b"
-  ],
   "ddl": [
     {
       "name": "payment",
@@ -3412,6 +3412,19 @@
       "table": "psp_provider_dispatches"
     },
     {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "request_headers",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "psp_provider_dispatches"
+    },
+    {
       "type": "text",
       "typeSchema": null,
       "notNull": false,
@@ -3841,6 +3854,19 @@
       "table": "psp_provider_evidence"
     },
     {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "received_at",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "psp_provider_evidence"
+    },
+    {
       "type": "text",
       "typeSchema": null,
       "notNull": true,
@@ -3901,6 +3927,19 @@
       "generated": null,
       "identity": null,
       "name": "submitted_delivery_id",
+      "entityType": "columns",
+      "schema": "payment",
+      "table": "psp_provider_evidence"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "verified_at",
       "entityType": "columns",
       "schema": "payment",
       "table": "psp_provider_evidence"
@@ -6378,6 +6417,7 @@
       "columns": [
         "tenant_id",
         "legal_entity_id",
+        "binding_id",
         "notification_id"
       ],
       "schemaTo": "payment",
@@ -6385,6 +6425,7 @@
       "columnsTo": [
         "tenant_id",
         "legal_entity_id",
+        "binding_id",
         "notification_id"
       ],
       "onUpdate": "NO ACTION",
@@ -7247,6 +7288,20 @@
         "tenant_id",
         "legal_entity_id",
         "binding_id",
+        "notification_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "payment_psp_notifications_binding_id_uk",
+      "entityType": "uniques",
+      "schema": "payment",
+      "table": "psp_provider_notifications"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "binding_id",
         "delivery_identity"
       ],
       "nullsNotDistinct": false,
@@ -8053,7 +8108,7 @@
       "table": "psp_provider_account_bindings"
     },
     {
-      "value": "\"state\" in ('AWAITING_TARGET', 'PREPARED', 'ACKNOWLEDGED', 'REJECTED_BEFORE_EFFECT', 'OUTCOME_UNKNOWN', 'UNSUPPORTED', 'NOT_SENT', 'TARGET_UNRESOLVED') and \"operation_kind\" in ('COLLECT', 'CANCEL_OR_VOID', 'REFUND') and (\"not_sent_reason\" is null or \"not_sent_reason\" in ('WITHHELD_FOR_CANCELLATION', 'TARGET_WITHHELD', 'TARGET_NOT_EFFECTED', 'PREPARE_UNAVAILABLE'))",
+      "value": "\"state\" in ('AWAITING_TARGET', 'PREPARED', 'ACKNOWLEDGED', 'REJECTED_BEFORE_EFFECT', 'OUTCOME_UNKNOWN', 'UNSUPPORTED', 'NOT_SENT', 'TARGET_UNRESOLVED') and \"operation_kind\" in ('COLLECT', 'CANCEL_OR_VOID', 'REFUND') and (\"not_sent_reason\" is null or \"not_sent_reason\" in ('WITHHELD_FOR_CANCELLATION', 'TARGET_WITHHELD', 'TARGET_NOT_EFFECTED', 'PREPARE_UNAVAILABLE', 'PRIOR_REFUND_UNRESOLVED'))",
       "name": "payment_psp_dispatches_vocabulary_ck",
       "entityType": "checks",
       "schema": "payment",
@@ -8095,7 +8150,7 @@
       "table": "psp_provider_dispatches"
     },
     {
-      "value": "(\"prepared_at\" is null) = (\"request_hash\" is null)\n        and (\"prepared_at\" is null) = (\"endpoint_ref\" is null)\n        and (\"prepared_at\" is null) = (\"credential_revision\" is null)\n        and (\"state\" not in ('PREPARED', 'ACKNOWLEDGED', 'REJECTED_BEFORE_EFFECT', 'OUTCOME_UNKNOWN') or \"prepared_at\" is not null)\n        and (\"state\" not in ('AWAITING_TARGET', 'NOT_SENT', 'UNSUPPORTED', 'TARGET_UNRESOLVED') or \"prepared_at\" is null)\n        and (\"idempotency_key_hash\" is null or \"prepared_at\" is not null)\n        and (\"request_body\" is null or (\"prepared_at\" is not null and octet_length(\"request_body\") between 1 and 65536))",
+      "value": "(\"prepared_at\" is null) = (\"request_hash\" is null)\n        and (\"prepared_at\" is null) = (\"endpoint_ref\" is null)\n        and (\"prepared_at\" is null) = (\"credential_revision\" is null)\n        and (\"state\" not in ('PREPARED', 'ACKNOWLEDGED', 'REJECTED_BEFORE_EFFECT', 'OUTCOME_UNKNOWN') or \"prepared_at\" is not null)\n        and (\"state\" not in ('AWAITING_TARGET', 'NOT_SENT', 'UNSUPPORTED', 'TARGET_UNRESOLVED') or \"prepared_at\" is null)\n        and (\"idempotency_key_hash\" is null or \"prepared_at\" is not null)\n        and (\"request_body\" is null or (\"prepared_at\" is not null and octet_length(\"request_body\") between 1 and 65536))\n        and (\"request_body\" is null) = (\"request_headers\" is null)\n        and (\"request_headers\" is null or jsonb_typeof(\"request_headers\") = 'array')",
       "name": "payment_psp_dispatches_request_ck",
       "entityType": "checks",
       "schema": "payment",
@@ -8186,7 +8241,7 @@
       "table": "psp_provider_dispatches"
     },
     {
-      "value": "\"evidence_origin\" in ('NOTIFICATION_LOOKUP', 'NOTIFICATION_SIGNED', 'DISPATCH_RESPONSE', 'LOCAL_NOT_SENT', 'RECOVERY_LOOKUP', 'RECOVERY_REPLAY')\n        and \"submission_state\" in ('PENDING_SUBMISSION', 'ACCEPTED', 'DUPLICATE', 'HELD', 'CONFLICT', 'DENIED')\n        and \"fact_kind\" in ('COLLECTION_PENDING', 'COLLECTION_CONFIRMED', 'COLLECTION_NOT_EFFECTED', 'CANCEL_CONFIRMED', 'CANCEL_NOT_EFFECTED', 'REFUND_PENDING', 'REFUND_INDETERMINATE', 'REFUND_CONFIRMED', 'REFUND_NOT_EFFECTED', 'SETTLEMENT_OBSERVED', 'SOURCE_CORRECTION', 'UNRECOGNIZED') and \"fact_kind\" <> 'UNRECOGNIZED'\n        and \"fact_family\" in ('GATEWAY_OUTCOME', 'REFUND_EXECUTION')",
+      "value": "\"evidence_origin\" in ('NOTIFICATION_LOOKUP', 'NOTIFICATION_SIGNED', 'DISPATCH_RESPONSE', 'LOCAL_NOT_SENT', 'RECOVERY_LOOKUP', 'RECOVERY_REPLAY')\n        and \"submission_state\" in ('PENDING_SUBMISSION', 'ACCEPTED', 'DUPLICATE', 'HELD', 'CONFLICT', 'DENIED')\n        and \"fact_kind\" in ('COLLECTION_PENDING', 'COLLECTION_CONFIRMED', 'COLLECTION_NOT_EFFECTED', 'CANCEL_CONFIRMED', 'CANCEL_NOT_EFFECTED', 'REFUND_PENDING', 'REFUND_INDETERMINATE', 'REFUND_CONFIRMED', 'REFUND_NOT_EFFECTED')\n        and \"fact_family\" in ('GATEWAY_OUTCOME', 'REFUND_EXECUTION')",
       "name": "payment_psp_evidence_vocabulary_ck",
       "entityType": "checks",
       "schema": "payment",
@@ -8207,8 +8262,15 @@
       "table": "psp_provider_evidence"
     },
     {
-      "value": "(\"observed_amount_minor\" is null) = (\"observed_currency\" is null) and (\"observed_amount_minor\" is null or (\"observed_amount_minor\" between 0 and 9007199254740991 and \"observed_currency\" = 'CZK'))",
+      "value": "(\"observed_amount_minor\" is null) = (\"observed_currency\" is null) and (\"observed_amount_minor\" is null or (\"observed_amount_minor\" between 0 and 9007199254740991 and \"observed_currency\" ~ '^[A-Z]{3}$'))",
       "name": "payment_psp_evidence_money_ck",
+      "entityType": "checks",
+      "schema": "payment",
+      "table": "psp_provider_evidence"
+    },
+    {
+      "value": "\"verified_at\" >= \"received_at\"",
+      "name": "payment_psp_evidence_times_ck",
       "entityType": "checks",
       "schema": "payment",
       "table": "psp_provider_evidence"

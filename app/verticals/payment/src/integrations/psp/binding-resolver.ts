@@ -12,14 +12,15 @@ import type { GatewayExecutionTarget } from './psp-request.ts';
  * Resolves the exact Provider Account Binding named by a C16 operation binding or a notification
  * route (#1155). Retired bindings resolve for their historical operations; the Current binding is
  * never substituted. Unknown refs, environment mismatches and credential gaps are UNAVAILABLE.
+ *
+ * Credential rule (#1158): every resolution returns the binding's current ACTIVE credential revision.
+ * A rotation authenticates the same account, so replay, lookup and notification processing after a
+ * rotation use the new revision of the same binding. A dispatch's recorded `credentialRevision` is
+ * audit only and never selects a credential. The capture Action resolves through
+ * `GatewayCaptureBindingResolver` (capture-binding-resolver.ts) under the same rules.
  */
 
 export interface GatewayExecutionTargetQuery {
-  /**
-   * The credential revision recorded on an existing dispatch (replay, lookup, notification of an
-   * in-flight operation). `None` selects the binding's current revision for a first dispatch.
-   */
-  readonly credentialRevision: Option.Option<number>;
   /** Present for COLLECT (enablement return URL); absent for cancel, refund and recovery. */
   readonly customerConfigurationId: Option.Option<typeof PaymentCustomerConfigurationIdSchema.Type>;
   readonly environment: GatewayEnvironment;
@@ -34,6 +35,7 @@ export interface GatewayNotificationTargetQuery {
   readonly scope: OutboxWorkerLegalEntityScope;
 }
 
+/** Worker side: implemented over the scoped routines by L-CONFIG-BINDING. */
 export interface GatewayBindingResolverContract {
   readonly resolveExecutionTarget: (
     query: GatewayExecutionTargetQuery,

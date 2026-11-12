@@ -17,12 +17,11 @@ import {
 import { PAYMENT_LAUNCH_CURRENCY } from '../../shared/domain/payment-money.ts';
 import {
   PaymentGatewayProviderFamilySchema,
-  PaymentObservationFactKindSchema,
   PaymentOperationKindSchema,
   PaymentOperationOutcomeSchema,
   PaymentSourceFactFamilySchema,
 } from '../../shared/domain/payment-vocabulary.ts';
-import type { PaymentObservationFactKind, PaymentSourceFactFamily } from '../../shared/domain/payment-vocabulary.ts';
+import type { PaymentSourceFactFamily } from '../../shared/domain/payment-vocabulary.ts';
 import {
   GatewayCredentialSecretRefSchema,
   GatewayHttpsUrlSchema,
@@ -42,6 +41,7 @@ import {
   GatewayCredentialStatusSchema,
   GatewayEnvironmentSchema,
   ProviderDispatchStateSchema,
+  ProviderEvidenceFactKindSchema,
   ProviderEvidenceOriginSchema,
   ProviderEvidenceSubmissionStateSchema,
   ProviderNotificationAuthenticitySchema,
@@ -50,6 +50,7 @@ import {
 } from '../../shared/domain/psp-vocabulary.ts';
 import type {
   GatewayEnvironment,
+  ProviderEvidenceFactKind,
   ProviderEvidenceOrigin,
   ProviderEvidenceSubmissionState,
   ProviderNotificationState,
@@ -91,6 +92,12 @@ const PspProviderObjectRefTextSchema = boundedText;
 /** The provider's own event or notification identity, when it has one. */
 const PspProviderOccurrenceIdSchema = boundedText.pipe(Schema.brand('PspProviderOccurrenceId'));
 const PspCurrencySchema = Schema.Literal(PAYMENT_LAUNCH_CURRENCY);
+/** A provider-reported ISO 4217 code, kept as reported (any currency). */
+const PspObservedCurrencySchema = Schema.String.check(Schema.isPattern(/^[A-Z]{3}$/u));
+const PspRequestHeaderSchema = Schema.Struct({
+  name: Schema.String.check(Schema.isPattern(/^[a-z0-9-]{1,64}$/u)),
+  value: Schema.String.check(Schema.isMaxLength(1000)),
+});
 
 /** Every reason a routine refuses a worker request; nothing is written for a refusal. */
 const PSP_ROUTINE_CONFLICT_REASONS = [
@@ -107,6 +114,7 @@ const PSP_ROUTINE_CONFLICT_REASONS = [
   'illegal_transition',
   'correlation_mismatch',
   'occurrence_mismatch',
+  'notification_unknown',
 ] as const;
 const PspRoutineConflictReasonSchema = Schema.Literals(PSP_ROUTINE_CONFLICT_REASONS);
 
@@ -173,6 +181,8 @@ const PspDispatchRecordSchema = Schema.Struct({
   /** Exact request bytes for a Stripe replay. Contains no secret. */
   requestBody: Schema.optionalKey(Schema.Uint8ArrayFromBase64),
   requestHash: Schema.optionalKey(sha256Hex),
+  /** The non-secret request headers covered by the request hash; present exactly when `requestBody` is. */
+  requestHeaders: Schema.optionalKey(Schema.Array(PspRequestHeaderSchema)),
   respondedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   returnToken: Schema.optionalKey(GatewayReturnTokenSchema),
   state: ProviderDispatchStateSchema,
@@ -191,10 +201,11 @@ const PspEvidenceRecordSchema = Schema.Struct({
   evidenceId: PspEvidenceIdSchema,
   evidenceOrigin: ProviderEvidenceOriginSchema,
   factFamily: PaymentSourceFactFamilySchema,
-  factKind: PaymentObservationFactKindSchema,
+  factKind: ProviderEvidenceFactKindSchema,
   notificationId: Schema.optionalKey(PspNotificationIdSchema),
   observationId: Schema.optionalKey(PaymentObservationIdSchema),
   observedAmountMinor: Schema.optionalKey(nonNegativeIntSchema),
+  observedCurrency: Schema.optionalKey(PspObservedCurrencySchema),
   operationId: PaymentOperationIdSchema,
   paymentId: PaymentIdSchema,
   providerAccountRef: GatewayProviderAccountRefSchema,
@@ -202,12 +213,16 @@ const PspEvidenceRecordSchema = Schema.Struct({
   providerOccurredAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   providerRefs: Schema.Array(Schema.Json),
   reason: Schema.optionalKey(boundedText),
+  /** The captured notification's receipt, or the observation instant when no notification is linked. */
+  receivedAt: Schema.DateTimeUtcFromString,
   recordedAt: Schema.DateTimeUtcFromString,
   sourceOccurrenceId: PaymentSourceOccurrenceIdSchema,
   sourceRevision: nonNegativeIntSchema,
   submissionState: ProviderEvidenceSubmissionStateSchema,
   submittedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   submittedDeliveryId: Schema.optionalKey(PspOutboxDeliveryIdSchema),
+  /** When the provider response, lookup or signed notification proving the fact was verified. */
+  verifiedAt: Schema.DateTimeUtcFromString,
 });
 export type PspEvidenceRecord = typeof PspEvidenceRecordSchema.Type;
 
@@ -257,6 +272,8 @@ const PspPrepareDispatchResultSchema = Schema.Union([
   Schema.TaggedStruct('PREPARED', { record: PspDispatchRecordSchema }),
   Schema.TaggedStruct('EXISTING', { record: PspDispatchRecordSchema }),
   Schema.TaggedStruct('WITHHELD', { record: PspDispatchRecordSchema }),
+  /** A GoPay/Comgate REFUND while another refund of the same provider payment is unresolved; nothing written. */
+  Schema.TaggedStruct('DEFERRED', { unresolvedRefundOperationIds: Schema.Array(PaymentOperationIdSchema) }),
   conflict(PspDispatchRecordSchema),
 ]);
 export type PspPrepareDispatchResult = typeof PspPrepareDispatchResultSchema.Type;
@@ -354,7 +371,6 @@ const resolveExecutionTargetRoutine = defineScopedRoutine({
     { source: 'input', type: 'text' },
     { source: 'input', type: 'text' },
     { nullable: true, source: 'input', type: 'text' },
-    { nullable: true, source: 'input', type: 'integer' },
   ] as const,
   resultSchema: resultRow(PspExecutionTargetSchema),
   routineKey: 'psp.resolve-execution-target',
@@ -396,6 +412,7 @@ const prepareDispatchRoutine = defineScopedRoutine({
     { nullable: true, source: 'input', type: 'text' },
     { nullable: true, source: 'input', type: 'text' },
     { nullable: true, source: 'input', type: 'text' },
+    { nullable: true, source: 'input', type: 'jsonb' },
     { nullable: true, source: 'input', type: 'integer' },
     { nullable: true, source: 'input', type: 'text' },
     ...origin,
@@ -513,9 +530,11 @@ const appendEvidenceRoutine = defineScopedRoutine({
     { source: 'input', type: 'text' },
     { source: 'input', type: 'jsonb' },
     { nullable: true, source: 'input', type: 'bigint' },
+    { nullable: true, source: 'input', type: 'text' },
     { source: 'input', type: 'text' },
     { source: 'input', type: 'bigint' },
     { nullable: true, source: 'input', type: 'timestamptz' },
+    { source: 'input', type: 'timestamptz' },
     { nullable: true, source: 'input', type: 'text' },
     { nullable: true, source: 'input', type: 'jsonb' },
     { nullable: true, source: 'input', type: 'text' },
@@ -662,21 +681,21 @@ export const pspReadOperationForExecution = (invoker: ScopedRoutineInvoker, oper
     .pipe(Effect.flatMap(decodeOptional(readOperationForExecutionRoutine.routineKey, PspOperationForExecutionSchema)));
 
 export interface PspResolveExecutionTargetInput {
-  /** The credential revision recorded on an existing dispatch; none selects the binding's current revision. */
-  readonly credentialRevision: Option.Option<number>;
   readonly customerConfigurationId: Option.Option<string>;
   readonly environment: GatewayEnvironment;
   readonly providerAccountRef: GatewayProviderAccountRef;
 }
 
-/** The exact (possibly retired) binding of an operation. Unknown ref or another environment is none. */
+/**
+ * The exact (possibly retired) binding of an operation with its current credential revision (a rotation
+ * authenticates the same account, #1158). Unknown ref or another environment is none.
+ */
 export const pspResolveExecutionTarget = (invoker: ScopedRoutineInvoker, input: PspResolveExecutionTargetInput) =>
   invoker
     .invoke(resolveExecutionTargetRoutine, [
       input.providerAccountRef,
       input.environment,
       Option.getOrNull(input.customerConfigurationId),
-      Option.getOrNull(input.credentialRevision),
     ])
     .pipe(Effect.flatMap(decodeOptional(resolveExecutionTargetRoutine.routineKey, PspExecutionTargetSchema)));
 
@@ -718,15 +737,19 @@ export interface PspPrepareDispatchInput extends PspDispatchIdentity {
   readonly origin: PspWorkerOrigin;
   /** The acknowledged provider payment the CANCEL or REFUND acts on; none for a COLLECT. */
   readonly providerPaymentRef: Option.Option<string>;
-  /** Exact request bytes, persisted only when a replay window exists. */
-  readonly replayBody: Option.Option<{ readonly body: Uint8Array; readonly windowMs: number }>;
+  /** Exact request bytes and non-secret headers, persisted only when a replay window exists. */
+  readonly replayRequest: Option.Option<{
+    readonly body: Uint8Array;
+    readonly headers: readonly { readonly name: string; readonly value: string }[];
+    readonly windowMs: number;
+  }>;
   readonly requestHash: string;
   readonly returnToken: Option.Option<GatewayReturnToken>;
 }
 
 /** Persists the prepared request before the first send (#1158). */
 export const pspPrepareDispatch = (invoker: ScopedRoutineInvoker, input: PspPrepareDispatchInput) =>
-  encodeBody(input.replayBody.pipe(Option.map(({ body }) => body)), prepareDispatchRoutine.routineKey).pipe(
+  encodeBody(input.replayRequest.pipe(Option.map(({ body }) => body)), prepareDispatchRoutine.routineKey).pipe(
     Effect.flatMap((body) =>
       invoker.invoke(prepareDispatchRoutine, [
         input.operationId,
@@ -738,7 +761,8 @@ export const pspPrepareDispatch = (invoker: ScopedRoutineInvoker, input: PspPrep
         Option.getOrNull(input.idempotencyKeyHash),
         Option.getOrNull(input.returnToken),
         Option.getOrNull(body),
-        Option.getOrNull(input.replayBody.pipe(Option.map(({ windowMs }) => windowMs))),
+        Option.getOrNull(input.replayRequest.pipe(Option.map(({ headers }) => headers))),
+        Option.getOrNull(input.replayRequest.pipe(Option.map(({ windowMs }) => windowMs))),
         Option.getOrNull(input.providerPaymentRef),
         ...originValues(input.origin),
       ]),
@@ -863,9 +887,13 @@ export interface PspAppendEvidenceInput {
   readonly economicEffectKey: Option.Option<string>;
   readonly evidenceOrigin: ProviderEvidenceOrigin;
   readonly factFamily: Extract<PaymentSourceFactFamily, 'GATEWAY_OUTCOME' | 'REFUND_EXECUTION'>;
-  readonly factKind: Exclude<PaymentObservationFactKind, 'UNRECOGNIZED'>;
+  readonly factKind: ProviderEvidenceFactKind;
+  /** The captured notification of the same binding; its receipt becomes the evidence `receivedAt`. */
   readonly notificationId: Option.Option<PspNotificationId>;
-  readonly observedAmountMinor: Option.Option<number>;
+  /** The authentic provider amount in the provider's own currency. */
+  readonly observedAmount: Option.Option<{ readonly amountMinor: number; readonly currency: string }>;
+  /** When the provider response, lookup or signed notification proving the fact was received and verified. */
+  readonly observedAt: DateTime.Utc;
   readonly operationId: string;
   readonly origin: PspWorkerOrigin;
   readonly providerOccurredAt: Option.Option<DateTime.Utc>;
@@ -875,7 +903,10 @@ export interface PspAppendEvidenceInput {
   readonly sourceRevision: number;
 }
 
-/** Appends evidence idempotently on (binding, source occurrence, revision); a different statement conflicts. */
+/**
+ * Appends evidence idempotently on (binding, source occurrence, revision); another operation or statement
+ * under that key conflicts. A repeat keeps the first row's receipt instants and notification.
+ */
 export const pspAppendEvidence = (invoker: ScopedRoutineInvoker, input: PspAppendEvidenceInput) =>
   invoker
     .invoke(appendEvidenceRoutine, [
@@ -885,10 +916,12 @@ export const pspAppendEvidence = (invoker: ScopedRoutineInvoker, input: PspAppen
       input.factKind,
       input.factFamily,
       input.providerRefs,
-      Option.getOrNull(input.observedAmountMinor.pipe(Option.map(String))),
+      Option.getOrNull(input.observedAmount.pipe(Option.map(({ amountMinor }) => String(amountMinor)))),
+      Option.getOrNull(input.observedAmount.pipe(Option.map(({ currency }) => currency))),
       input.sourceOccurrenceId,
       String(input.sourceRevision),
       Option.getOrNull(input.providerOccurredAt.pipe(Option.map((instant) => DateTime.toDateUtc(instant)))),
+      DateTime.toDateUtc(input.observedAt),
       Option.getOrNull(input.economicEffectKey),
       Option.getOrNull(input.discrepancy),
       Option.getOrNull(input.reason),

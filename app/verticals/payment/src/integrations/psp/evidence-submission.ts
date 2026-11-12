@@ -3,11 +3,10 @@ import { Context, Schema } from 'effect';
 import type { Effect } from 'effect';
 
 import type { PaymentGatewayAccountBinding } from '../../../shared/domain/payment-execution-binding.ts';
-import type { PaymentIdSchema, PaymentOperationIdSchema } from '../../../shared/domain/payment-identifiers.ts';
 import { PaymentObservationIdSchema } from '../../../shared/domain/payment-identifiers.ts';
 import { ProviderEvidenceSubmissionOutcomeSchema } from './evidence-store.ts';
+import type { StoredProviderEvidence } from './evidence-store.ts';
 import type { GatewayProviderUnavailableError } from './psp-errors.ts';
-import type { ProviderEvidence } from './psp-result.ts';
 
 /**
  * Submits C17 provider evidence through the public A8 `accept-payment-observation` Action with a
@@ -22,12 +21,17 @@ export const ProviderEvidenceSubmissionResultSchema = Schema.Struct({
 });
 export type ProviderEvidenceSubmissionResult = typeof ProviderEvidenceSubmissionResultSchema.Type;
 
+/**
+ * Evidence is always appended before it is submitted, so the submission carries the stored row. A8
+ * mapping: operationId, paymentId, factKind, factFamily, sourceOccurrenceId, sourceRevision and
+ * economicEffectKey from the row; `amount` = `evidence.observedAmount` (its own currency);
+ * `sourceOccurredAt` = `evidence.providerOccurredAt`; `receivedAt` = `stored.receivedAt` (never the
+ * submission time).
+ */
 export interface ProviderEvidenceSubmission {
   /** The immutable C16 operation binding: A8 source system, account ref and environment come from it. */
   readonly binding: PaymentGatewayAccountBinding;
-  readonly evidence: ProviderEvidence;
-  readonly operationId: typeof PaymentOperationIdSchema.Type;
-  readonly paymentId: typeof PaymentIdSchema.Type;
+  readonly evidence: StoredProviderEvidence;
   readonly scope: OutboxWorkerLegalEntityScope;
   readonly workerContext: OutboxWorkerHandlerContext;
 }

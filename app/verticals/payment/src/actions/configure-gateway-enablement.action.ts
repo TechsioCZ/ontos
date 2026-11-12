@@ -31,7 +31,7 @@ export const configureGatewayEnablementAction = defineAction(
       key: 'payment.core.gateway-enablement.configure',
       kind: 'action',
       modes: ['run', 'propose', 'approve'],
-      placement: { group: 'gateway-enablement', level: 'extended' },
+      placement: { group: 'payments', level: 'manage' },
       risk: 'critical',
       selectors: [],
     },

@@ -31,7 +31,7 @@ export const rotateProviderCredentialAction = defineAction(
       key: 'payment.core.provider-credential.rotate',
       kind: 'action',
       modes: ['run', 'propose', 'approve'],
-      placement: { group: 'provider-credential', level: 'extended' },
+      placement: { group: 'payments', level: 'manage' },
       risk: 'critical',
       selectors: [],
     },

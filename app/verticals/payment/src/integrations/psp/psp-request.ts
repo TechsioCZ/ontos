@@ -8,7 +8,7 @@ import {
   PaymentTenantIdSchema,
 } from '../../../shared/domain/payment-identifiers.ts';
 import { PaymentPositiveMonetaryAmountSchema } from '../../../shared/domain/payment-money.ts';
-import { PaymentOperationKindSchema, PaymentRefundBasisKindSchema } from '../../../shared/domain/payment-vocabulary.ts';
+import { PaymentRefundBasisKindSchema } from '../../../shared/domain/payment-vocabulary.ts';
 import {
   GatewayCredentialSecretRefSchema,
   GatewayHttpsUrlSchema,
@@ -47,6 +47,9 @@ export type ProviderObjectRef = typeof ProviderObjectRefSchema.Type;
 /**
  * Everything an adapter needs to act for one Provider Account Binding. Historical (retired)
  * bindings resolve too; a Current binding is never substituted for the recorded one (#1155).
+ * The credential is always the binding's current ACTIVE revision at resolution time: a rotation
+ * authenticates the same account (#1158), so replay, lookup and notification after a rotation use
+ * the new revision of the same binding, never another binding.
  */
 export const GatewayExecutionTargetSchema = Schema.Struct({
   binding: PaymentGatewayAccountBindingSchema,
@@ -73,9 +76,16 @@ export const GatewayPayerContactSchema = Schema.Struct({
 });
 export type GatewayPayerContact = typeof GatewayPayerContactSchema.Type;
 
+/**
+ * Every input of a prepare is explicit, so preparation is a pure function of it. The executor calls
+ * prepare only when the ledger holds no prepared request for the operation (plan §2.1); a redelivery
+ * reuses the persisted request and never prepares again.
+ */
 export const GatewayCollectRequestSchema = Schema.Struct({
   amount: PaymentPositiveMonetaryAmountSchema,
   correlation: ProviderCorrelationSchema,
+  /** Fixed by the executor before prepare; Stripe `expires_at` = issuedAt + 24 h. */
+  issuedAt: Schema.DateTimeUtc,
   operationId: PaymentOperationIdSchema,
   payerContact: Schema.Option(GatewayPayerContactSchema),
   paymentId: PaymentIdSchema,
@@ -101,15 +111,34 @@ export const GatewayRefundRequestSchema = Schema.Struct({
 });
 export type GatewayRefundRequest = typeof GatewayRefundRequestSchema.Type;
 
-/** What Payment expects the looked-up provider object to prove. */
-export const GatewayExpectedEffectSchema = Schema.Struct({
+/** The collection a cancel acts on, with the amount a provider "already paid" answer must prove. */
+export const GatewayCancelTargetSchema = Schema.Struct({
   amount: PaymentPositiveMonetaryAmountSchema,
   operationId: PaymentOperationIdSchema,
-  operationKind: PaymentOperationKindSchema,
 });
+export type GatewayCancelTarget = typeof GatewayCancelTargetSchema.Type;
+
+/**
+ * The Payment Operation(s) a send, replay or lookup may report on, tagged by operation kind. An adapter
+ * emits findings only for `operationId` and, for CANCEL_OR_VOID, for `target.operationId` (e.g.
+ * CANCEL_NOT_EFFECTED plus COLLECTION_CONFIRMED when the collection was already paid). It never
+ * invents a target for another provider object.
+ */
+export const GatewayExpectedEffectSchema = Schema.Union([
+  Schema.TaggedStruct('COLLECT', {
+    amount: PaymentPositiveMonetaryAmountSchema,
+    operationId: PaymentOperationIdSchema,
+  }),
+  Schema.TaggedStruct('REFUND', { amount: PaymentPositiveMonetaryAmountSchema, operationId: PaymentOperationIdSchema }),
+  Schema.TaggedStruct('CANCEL_OR_VOID', { operationId: PaymentOperationIdSchema, target: GatewayCancelTargetSchema }),
+]);
 export type GatewayExpectedEffect = typeof GatewayExpectedEffectSchema.Type;
 
-/** Lookup by a known provider object, or (Stripe metadata search only) by the order reference. */
+/**
+ * Lookup by a known provider object, or by the order reference. ORDER_REFERENCE is Stripe PaymentIntent
+ * search only; GoPay and Comgate have no documented order-reference lookup and fail it with
+ * `GatewayProviderUnsupported`.
+ */
 export const GatewayLookupTargetSchema = Schema.Union([
   Schema.TaggedStruct('PROVIDER_OBJECT', { ref: ProviderObjectRefSchema }),
   Schema.TaggedStruct('ORDER_REFERENCE', { orderReference: GatewayOrderReferenceSchema }),
@@ -117,6 +146,12 @@ export const GatewayLookupTargetSchema = Schema.Union([
 export type GatewayLookupTarget = typeof GatewayLookupTargetSchema.Type;
 
 export const GatewayLookupRequestSchema = Schema.Struct({
+  /**
+   * The ledger `preparedAt` of the expected operation's dispatch; a provider entry created before it
+   * cannot be that dispatch (GoPay refund history `date_requested >= dispatchedAt`). None when the
+   * operation was never prepared.
+   */
+  dispatchedAt: Schema.Option(Schema.DateTimeUtc),
   expected: GatewayExpectedEffectSchema,
   target: GatewayLookupTargetSchema,
 });

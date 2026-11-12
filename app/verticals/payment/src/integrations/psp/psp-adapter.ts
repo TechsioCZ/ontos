@@ -19,11 +19,20 @@ import type {
   GatewayLookupRequest,
   GatewayRefundRequest,
 } from './psp-request.ts';
-import type { PreparedProviderRequest, ProviderDispatchResponse, ProviderFindingResult } from './psp-result.ts';
+import type {
+  PreparedProviderRequest,
+  ProviderDispatchResponse,
+  ProviderFindingResult,
+  ProviderReplayRequest,
+} from './psp-result.ts';
 
 /**
  * Provider-neutral adapter contract implemented once per gateway family (#1154). Preparation is
  * pure and happens before the dispatch ledger commits; `send` makes exactly one provider attempt.
+ *
+ * Findings vs failures: a finding states what the provider proved about an operation. A capability
+ * the family lacks is always `GatewayProviderUnsupported` and an unreachable provider, credential or
+ * binding is always `GatewayProviderUnavailable`; neither is ever expressed as a finding.
  */
 
 type PrepareFailure = GatewayProviderUnavailableError | GatewayProviderUnsupportedError;
@@ -33,15 +42,17 @@ export interface GatewayProviderAdapter {
   readonly capabilities: GatewayCapabilityRow;
   readonly family: typeof PaymentGatewayProviderFamilySchema.Type;
   /**
-   * Bounded-retry read through the target's binding. May return several findings (e.g. a
-   * collection plus its refunds). A miss or "not found" is INDETERMINATE, never NOT_EFFECTED.
+   * Bounded-retry read through the target's binding. Returns at most one finding per operation named
+   * by `request.expected` (the operation itself, plus the collection target of a CANCEL_OR_VOID) and
+   * never a finding for any other provider object. A miss or "not found" is INDETERMINATE, never
+   * NOT_EFFECTED. ORDER_REFERENCE on a family without an order-reference lookup is Unsupported.
    */
   readonly lookup: (
     target: GatewayExecutionTarget,
     request: GatewayLookupRequest,
   ) => Effect.Effect<
     readonly ProviderFindingResult[],
-    GatewayProviderResponseInvalidError | GatewayProviderUnavailableError
+    GatewayProviderResponseInvalidError | GatewayProviderUnavailableError | GatewayProviderUnsupportedError
   >;
   readonly prepareCancel: (
     target: GatewayExecutionTarget,
@@ -55,10 +66,16 @@ export interface GatewayProviderAdapter {
     target: GatewayExecutionTarget,
     request: GatewayRefundRequest,
   ) => Effect.Effect<PreparedProviderRequest, PrepareFailure>;
-  /** Re-sends the exact persisted bytes and key inside the replay window. Stripe only; others are Unsupported. */
+  /**
+   * Re-sends the exact persisted bytes, headers and key of `ProviderReplayRequest` (built by
+   * `replayRequestOf` from the ledger record). Stripe only; other families are Unsupported. Reading the
+   * Effect Clock immediately before the single mutate, it fails Unsupported with reason
+   * `replay_window_expired` unless `window.startsAt <= now < window.expiresAt`, and caps the mutate
+   * timeout at `window.expiresAt`.
+   */
   readonly replay: (
     target: GatewayExecutionTarget,
-    prepared: PreparedProviderRequest,
+    request: ProviderReplayRequest,
     expected: GatewayExpectedEffect,
   ) => Effect.Effect<ProviderDispatchResponse, GatewayProviderUnsupportedError | SendFailure>;
   /** One provider attempt; never retried here. */

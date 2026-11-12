@@ -3,10 +3,12 @@ import type { Option } from 'effect';
 
 import { PaymentAmountMinorSchema, PaymentMonetaryAmountSchema } from '../../../shared/domain/payment-money.ts';
 import type { PaymentMonetaryAmount } from '../../../shared/domain/payment-money.ts';
+import { PaymentSourceClaimedAmountSchema } from '../../../shared/domain/source-statement.ts';
 
 /**
- * Exact provider money handling (#1156). All three Launch providers report CZK in integer minor
- * units (haléře). Nothing here rounds, scales, converts currencies or accepts a float.
+ * Exact provider money handling (#1156). Payment expects CZK integer minor units (haléře) at Launch;
+ * a provider may still report another currency, and that authentic amount is kept as evidence of a
+ * different monetary effect. Nothing here rounds, scales, converts currencies or accepts a float.
  */
 
 /**
@@ -21,23 +23,22 @@ const ExactMinorUnitsTextSchema = Schema.String.check(Schema.isPattern(/^(?:0|[1
 export const parseExactMinorUnits = (text: string): Option.Option<number> =>
   Schema.decodeUnknownOption(ExactMinorUnitsTextSchema)(text);
 
-/** A provider-reported amount before it is admitted as Launch money. Currency is compared exactly. */
-export interface ProviderReportedAmount {
-  readonly amountMinor: number;
-  readonly currency: string;
-}
-
 /**
- * Admits only CZK integer minor units in the safe range. Providers that report lower-case
- * currency codes (Stripe `czk`) upper-case them in their own wire mapping before calling this.
+ * A provider-reported amount: exact integer minor units and the provider's own upper-case ISO 4217
+ * code, in any currency (the C16 A8 claimed amount). Providers that report lower-case codes (Stripe
+ * `czk`) upper-case them in their own wire mapping before decoding.
  */
+export const ProviderReportedAmountSchema = PaymentSourceClaimedAmountSchema;
+export type ProviderReportedAmount = typeof ProviderReportedAmountSchema.Type;
+
+/** Admits only CZK integer minor units in the safe range; any other currency is `None`. */
 export const assertLaunchMinor = (amount: ProviderReportedAmount): Option.Option<PaymentMonetaryAmount> =>
   Schema.decodeUnknownOption(PaymentMonetaryAmountSchema)(amount);
 
-/** The amount Payment expected next to the amount the provider reported. */
+/** The amount Payment expected next to the authentic amount the provider reported, in its own currency. */
 export const ProviderAmountDiscrepancySchema = Schema.Struct({
   expected: PaymentMonetaryAmountSchema,
-  observed: PaymentMonetaryAmountSchema,
+  observed: ProviderReportedAmountSchema,
 });
 export type ProviderAmountDiscrepancy = typeof ProviderAmountDiscrepancySchema.Type;
 
@@ -48,12 +49,12 @@ export const ObservedAmountComparisonSchema = Schema.Union([
 export type ObservedAmountComparison = typeof ObservedAmountComparisonSchema.Type;
 
 /**
- * A mismatch is a discrepancy for verification, never a confirmation of either amount (#1156):
- * callers map MISMATCH to VERIFICATION_CONFLICT with the discrepancy attached.
+ * A mismatch of amount or currency is a discrepancy for verification, never a confirmation of either
+ * amount (#1156): callers map MISMATCH to VERIFICATION_CONFLICT with the discrepancy attached.
  */
 export const compareObservedAmount = (
   expected: PaymentMonetaryAmount,
-  observed: PaymentMonetaryAmount,
+  observed: ProviderReportedAmount,
 ): ObservedAmountComparison =>
   expected.amountMinor === observed.amountMinor && expected.currency === observed.currency
     ? { _tag: 'MATCH' }

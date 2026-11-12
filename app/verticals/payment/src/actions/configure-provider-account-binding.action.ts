@@ -31,7 +31,7 @@ export const configureProviderAccountBindingAction = defineAction(
       key: 'payment.core.provider-account-binding.configure',
       kind: 'action',
       modes: ['run', 'propose', 'approve'],
-      placement: { group: 'provider-account-binding', level: 'extended' },
+      placement: { group: 'payments', level: 'manage' },
       risk: 'critical',
       selectors: [],
     },

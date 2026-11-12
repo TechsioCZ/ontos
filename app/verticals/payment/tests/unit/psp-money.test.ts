@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'effect-rstest';
-import { Match, Option } from 'effect';
+import { Match, Option, Schema } from 'effect';
 
 import {
   assertLaunchMinor,
   compareObservedAmount,
   parseExactMinorUnits,
+  ProviderAmountDiscrepancySchema,
+  ProviderReportedAmountSchema,
 } from '../../src/integrations/psp/psp-money.ts';
 import type { ObservedAmountComparison } from '../../src/integrations/psp/psp-money.ts';
 
@@ -47,5 +49,18 @@ describe('#1156 PSP exact money', () => {
     ).toBe(true);
     const observed = { amountMinor: 159_900, currency: 'CZK' } as const;
     expect(discrepancyOf(compareObservedAmount(expected, observed))).toEqual(Option.some({ expected, observed }));
+  });
+
+  it('#1156 A provider amount in another currency is kept as authentic mismatch evidence', () => {
+    const expected = { amountMinor: 159_950, currency: 'CZK' } as const;
+    const observed = { amountMinor: 159_950, currency: 'EUR' } as const;
+
+    expect(discrepancyOf(compareObservedAmount(expected, observed))).toEqual(Option.some({ expected, observed }));
+    expect(Schema.decodeUnknownOption(ProviderAmountDiscrepancySchema)({ expected, observed })).toEqual(
+      Option.some({ expected, observed }),
+    );
+    expect(
+      Option.isNone(Schema.decodeUnknownOption(ProviderReportedAmountSchema)({ amountMinor: 1, currency: 'eur' })),
+    ).toBe(true);
   });
 });

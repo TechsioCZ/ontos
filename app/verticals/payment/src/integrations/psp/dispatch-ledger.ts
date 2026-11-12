@@ -1,6 +1,9 @@
 import type { OutboxWorkerHandlerContext, OutboxWorkerLegalEntityScope } from '@app/core-runtime/outbox/worker';
-import { Context, Schema } from 'effect';
-import type { DateTime, Effect, Option } from 'effect';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { Context, DateTime, Option, Schema } from 'effect';
+import type { Effect } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import {
   PaymentEvidenceRefSchema,
@@ -25,17 +28,24 @@ import {
   ProviderNotSentReasonSchema,
 } from '../../../shared/domain/psp-vocabulary.ts';
 import type { ProviderNotSentReason } from '../../../shared/domain/psp-vocabulary.ts';
-import { GatewayOrderReferenceSchema } from './psp-correlation.ts';
-import type { GatewayOrderReference } from './psp-correlation.ts';
+import { deriveProviderCorrelation, GatewayOrderReferenceSchema } from './psp-correlation.ts';
+import type { GatewayIdempotencyKey, GatewayOrderReference } from './psp-correlation.ts';
 import type { GatewayCorrelationConflictError, GatewayLedgerUnavailableError } from './psp-errors.ts';
 import { ProviderObjectRefSchema } from './psp-request.ts';
 import type { GatewayExecutionTarget, ProviderObjectRef } from './psp-request.ts';
-import type { PreparedProviderRequest } from './psp-result.ts';
+import { ProviderReplayRequestSchema, ProviderRequestHeaderSchema } from './psp-result.ts';
+import type { PreparedProviderRequest, ProviderReplayRequest } from './psp-result.ts';
 
 /**
  * Worker-side provider dispatch ledger (#1156, #1158; plan §2.1, §3.4). One row per Payment
  * Operation. Every call goes through a SECURITY DEFINER scoped routine of the Core-verified worker
  * scope; workers hold no database executor. Writes carry the delivery's origin, never a human actor.
+ *
+ * Redelivery rule: the executor calls `readByOperation` before any adapter `prepare*`. When a prepared
+ * row exists it never prepares again; it continues from the persisted row (a Stripe replay uses
+ * `replayRequestOf(record)`), so a new return token or a new clock reading can never turn an honest
+ * retry into a conflict. `prepare` is called only when no row exists or the row is an AWAITING_TARGET
+ * cancel.
  */
 
 type OperationId = typeof PaymentOperationIdSchema.Type;
@@ -68,8 +78,10 @@ export const ProviderDispatchRecordSchema = Schema.Struct({
   providerRefundRef: Schema.Option(ProviderObjectRefSchema),
   replayExpiresAt: Schema.Option(Schema.DateTimeUtc),
   replayStartsAt: Schema.Option(Schema.DateTimeUtc),
+  /** Exact persisted request bytes and non-secret headers; present only with a replay window (Stripe). */
   requestBody: Schema.Option(Schema.Uint8Array),
   requestHash: Schema.Option(PaymentMaterialHashSchema),
+  requestHeaders: Schema.Option(Schema.Array(ProviderRequestHeaderSchema)),
   respondedAt: Schema.Option(Schema.DateTimeUtc),
   returnToken: Schema.Option(GatewayReturnTokenSchema),
   state: ProviderDispatchStateSchema,
@@ -106,23 +118,30 @@ export interface CancelRegistration {
   readonly target: Option.Option<ProviderDispatchRecord>;
 }
 
+/**
+ * The ledger stamps `preparedAt` with its own transaction time and, when `prepared.replayWindowMs` is
+ * present, persists the exact body and headers with `replayStartsAt = preparedAt` and
+ * `replayExpiresAt = preparedAt + replayWindowMs`.
+ */
 export interface PrepareDispatchInput extends LedgerWrite {
   readonly identity: ProviderDispatchIdentity;
   readonly prepared: PreparedProviderRequest;
-  readonly preparedAt: DateTime.Utc;
   /** COLLECT only; generated before the commit so the return URL in `prepared` already carries it. */
   readonly returnToken: Option.Option<typeof GatewayReturnTokenSchema.Type>;
 }
 
 /**
  * PREPARED: committed now, safe to send. EXISTING: a row already exists with equal material and
- * request hash (redelivery). WITHHELD: a COLLECT targeted by a cancel, stored NOT_SENT. CONFLICT:
- * same operation, different material or request hash; nothing may be sent.
+ * request (a concurrent identical prepare). WITHHELD: a COLLECT targeted by a cancel, stored NOT_SENT.
+ * DEFERRED: a GoPay or Comgate REFUND while another refund of the same provider payment is unresolved
+ * (checked under the target's lock); nothing was written. CONFLICT: same operation, different material
+ * or request; nothing may be sent.
  */
 export const ProviderPrepareResultSchema = Schema.Union([
   Schema.TaggedStruct('PREPARED', { record: ProviderDispatchRecordSchema }),
   Schema.TaggedStruct('EXISTING', { record: ProviderDispatchRecordSchema }),
   Schema.TaggedStruct('WITHHELD', { record: ProviderDispatchRecordSchema }),
+  Schema.TaggedStruct('DEFERRED', { unresolvedRefundOperationIds: Schema.Array(PaymentOperationIdSchema) }),
   Schema.TaggedStruct('CONFLICT', { existing: ProviderDispatchRecordSchema }),
 ]);
 export type ProviderPrepareResult = typeof ProviderPrepareResultSchema.Type;
@@ -183,7 +202,12 @@ export interface ProviderDispatchLedgerContract {
   readonly correlateUnknown: (
     input: CorrelateUnknownInput,
   ) => Effect.Effect<Option.Option<ProviderDispatchRecord>, GatewayCorrelationConflictError | LedgerFailure>;
-  /** True while a REFUND on this provider payment is PREPARED or OUTCOME_UNKNOWN (GoPay, Comgate serialization). */
+  /**
+   * True while another REFUND of this provider payment is unresolved: PREPARED, OUTCOME_UNKNOWN, or
+   * ACKNOWLEDGED without REFUND_CONFIRMED or REFUND_NOT_EFFECTED evidence (GoPay and Comgate
+   * serialization; `prepare` re-checks it under the target's lock and answers DEFERRED). A Comgate refund
+   * stays unresolved until such evidence exists (completion is unprovable, plan N10).
+   */
   readonly hasUnresolvedRefund: (input: HasUnresolvedRefundInput) => Effect.Effect<boolean, LedgerFailure>;
   readonly prepare: (input: PrepareDispatchInput) => Effect.Effect<ProviderPrepareResult, LedgerFailure>;
   readonly readByOperation: (
@@ -215,3 +239,42 @@ export interface ProviderDispatchLedgerContract {
 export class ProviderDispatchLedger extends Context.Service<ProviderDispatchLedger, ProviderDispatchLedgerContract>()(
   '@app/payment/integrations/psp/dispatch-ledger/ProviderDispatchLedger',
 ) {}
+
+/** SHA-256 hex of an idempotency key, the only form the ledger stores (`idempotencyKeyHash`). */
+export const idempotencyKeyHashOf = (key: GatewayIdempotencyKey): typeof PaymentMaterialHashSchema.Type =>
+  PaymentMaterialHashSchema.make(Hex.encode(sha256(utf8ToBytes(key))));
+
+/**
+ * The exact persisted request of a dispatch with a replay window, rebuilt for `adapter.replay`. The key
+ * is re-derived from the operation id and must hash to the stored `idempotencyKeyHash`. `None` when the
+ * row has no complete replayable request (GoPay, Comgate, unprepared rows) or the key does not match.
+ */
+export const replayRequestOf = (record: ProviderDispatchRecord): Option.Option<ProviderReplayRequest> => {
+  const { idempotencyKey } = deriveProviderCorrelation(record.operationId);
+  return Option.all({
+    body: record.requestBody,
+    endpointRef: record.endpointRef,
+    expiresAt: record.replayExpiresAt,
+    headers: record.requestHeaders,
+    keyHash: record.idempotencyKeyHash,
+    requestHash: record.requestHash,
+    startsAt: record.replayStartsAt,
+  }).pipe(
+    Option.filter(({ keyHash }) => keyHash === idempotencyKeyHashOf(idempotencyKey)),
+    Option.flatMap(({ body, endpointRef, expiresAt, headers, requestHash, startsAt }) =>
+      Schema.decodeUnknownOption(ProviderReplayRequestSchema)({
+        prepared: {
+          body,
+          endpointRef,
+          family: record.providerFamily,
+          headers,
+          idempotencyKey: Option.some(idempotencyKey),
+          orderReference: record.orderReference,
+          replayWindowMs: Option.some(DateTime.toEpochMillis(expiresAt) - DateTime.toEpochMillis(startsAt)),
+          requestHash,
+        },
+        window: { expiresAt, startsAt },
+      }),
+    ),
+  );
+};

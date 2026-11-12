@@ -63,6 +63,7 @@ import {
   GATEWAY_CREDENTIAL_STATUSES,
   GATEWAY_ENVIRONMENTS,
   PROVIDER_DISPATCH_STATES,
+  PROVIDER_EVIDENCE_FACT_KINDS,
   PROVIDER_EVIDENCE_ORIGINS,
   PROVIDER_EVIDENCE_SUBMISSION_STATES,
   PROVIDER_NOT_SENT_REASONS,
@@ -74,6 +75,7 @@ import type {
   GatewayCredentialStatus,
   GatewayEnvironment,
   ProviderDispatchState,
+  ProviderEvidenceFactKind,
   ProviderEvidenceOrigin,
   ProviderEvidenceSubmissionState,
   ProviderNotificationAuthenticity,
@@ -1256,6 +1258,8 @@ export const pspProviderDispatches = paymentSchema.table.withRLS(
     /** Opaque request bytes for an exact Stripe replay; never contains a secret. */
     requestBody: bytea('request_body'),
     requestHash: text('request_hash'),
+    /** Non-secret request headers covered by `request_hash`, persisted with the replay body. */
+    requestHeaders: jsonb('request_headers').$type<Schema.Json>(),
     respondedAt: timestamp('responded_at', { withTimezone: true }),
     returnToken: text('return_token'),
     state: text('state').$type<ProviderDispatchState>().notNull(),
@@ -1357,7 +1361,9 @@ export const pspProviderDispatches = paymentSchema.table.withRLS(
         and (${table.state} not in ('PREPARED', 'ACKNOWLEDGED', 'REJECTED_BEFORE_EFFECT', 'OUTCOME_UNKNOWN') or ${table.preparedAt} is not null)
         and (${table.state} not in ('AWAITING_TARGET', 'NOT_SENT', 'UNSUPPORTED', 'TARGET_UNRESOLVED') or ${table.preparedAt} is null)
         and (${table.idempotencyKeyHash} is null or ${table.preparedAt} is not null)
-        and (${table.requestBody} is null or (${table.preparedAt} is not null and octet_length(${table.requestBody}) between 1 and ${MAXIMUM_OPAQUE_BYTES}))`,
+        and (${table.requestBody} is null or (${table.preparedAt} is not null and octet_length(${table.requestBody}) between 1 and ${MAXIMUM_OPAQUE_BYTES}))
+        and (${table.requestBody} is null) = (${table.requestHeaders} is null)
+        and (${table.requestHeaders} is null or jsonb_typeof(${table.requestHeaders}) = 'array')`,
     ),
     check(
       'payment_psp_dispatches_replay_ck',
@@ -1427,6 +1433,12 @@ export const pspProviderNotifications = paymentSchema.table.withRLS(
   },
   (table) => [
     unique('payment_psp_notifications_scope_id_uk').on(table.tenantId, table.legalEntityId, table.notificationId),
+    unique('payment_psp_notifications_binding_id_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.bindingId,
+      table.notificationId,
+    ),
     unique('payment_psp_notifications_delivery_uk').on(
       table.tenantId,
       table.legalEntityId,
@@ -1501,7 +1513,7 @@ export const pspProviderEvidence = paymentSchema.table.withRLS(
     evidenceId: uuid('evidence_id').defaultRandom().primaryKey(),
     evidenceOrigin: text('evidence_origin').$type<ProviderEvidenceOrigin>().notNull(),
     factFamily: text('fact_family').$type<PaymentSourceFactFamily>().notNull(),
-    factKind: text('fact_kind').$type<PaymentObservationFactKind>().notNull(),
+    factKind: text('fact_kind').$type<ProviderEvidenceFactKind>().notNull(),
     notificationId: uuid('notification_id'),
     observationId: uuid('observation_id'),
     observedAmountMinor: bigint('observed_amount_minor', { mode: 'number' }),
@@ -1513,11 +1525,15 @@ export const pspProviderEvidence = paymentSchema.table.withRLS(
     providerOccurredAt: timestamp('provider_occurred_at', { withTimezone: true }),
     providerRefs: jsonb('provider_refs').$type<Schema.Json>().notNull(),
     reason: text('reason'),
+    /** Durable transport receipt: the notification's received_at, else the provider response receipt. */
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull(),
     sourceOccurrenceId: text('source_occurrence_id').notNull(),
     sourceRevision: bigint('source_revision', { mode: 'number' }).notNull(),
     submissionState: text('submission_state').$type<ProviderEvidenceSubmissionState>().notNull(),
     submittedAt: timestamp('submitted_at', { withTimezone: true }),
     submittedDeliveryId: uuid('submitted_delivery_id'),
+    /** When the provider response, lookup or signed notification proving the fact was verified. */
+    verifiedAt: timestamp('verified_at', { withTimezone: true }).notNull(),
   },
   (table) => [
     unique('payment_psp_evidence_scope_id_uk').on(table.tenantId, table.legalEntityId, table.evidenceId),
@@ -1564,10 +1580,11 @@ export const pspProviderEvidence = paymentSchema.table.withRLS(
       name: 'payment_psp_evidence_binding_fk',
     }).onDelete('restrict'),
     foreignKey({
-      columns: [table.tenantId, table.legalEntityId, table.notificationId],
+      columns: [table.tenantId, table.legalEntityId, table.bindingId, table.notificationId],
       foreignColumns: [
         pspProviderNotifications.tenantId,
         pspProviderNotifications.legalEntityId,
+        pspProviderNotifications.bindingId,
         pspProviderNotifications.notificationId,
       ],
       name: 'payment_psp_evidence_notification_fk',
@@ -1581,15 +1598,16 @@ export const pspProviderEvidence = paymentSchema.table.withRLS(
       'payment_psp_evidence_vocabulary_ck',
       sql`${table.evidenceOrigin} in (${literalList(PROVIDER_EVIDENCE_ORIGINS)})
         and ${table.submissionState} in (${literalList(PROVIDER_EVIDENCE_SUBMISSION_STATES)})
-        and ${table.factKind} in (${literalList(PAYMENT_OBSERVATION_FACT_KINDS)}) and ${table.factKind} <> 'UNRECOGNIZED'
+        and ${table.factKind} in (${literalList(PROVIDER_EVIDENCE_FACT_KINDS)})
         and ${table.factFamily} in ('GATEWAY_OUTCOME', 'REFUND_EXECUTION')`,
     ),
     gatewayFamilyCheck('payment_psp_evidence_family_ck', table.providerFamily),
     gatewayEnvironmentCheck('payment_psp_evidence_environment_ck', table.environment),
     check(
       'payment_psp_evidence_money_ck',
-      sql`(${table.observedAmountMinor} is null) = (${table.observedCurrency} is null) and (${table.observedAmountMinor} is null or (${table.observedAmountMinor} between 0 and ${maximumAmountMinor} and ${table.observedCurrency} = ${launchCurrency}))`,
+      sql`(${table.observedAmountMinor} is null) = (${table.observedCurrency} is null) and (${table.observedAmountMinor} is null or (${table.observedAmountMinor} between 0 and ${maximumAmountMinor} and ${table.observedCurrency} ~ '^[A-Z]{3}$'))`,
     ),
+    check('payment_psp_evidence_times_ck', sql`${table.verifiedAt} >= ${table.receivedAt}`),
     check(
       'payment_psp_evidence_submission_ck',
       sql`(${table.submissionState} = 'PENDING_SUBMISSION') = (${table.submittedAt} is null)
