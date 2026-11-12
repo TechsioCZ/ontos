@@ -348,7 +348,8 @@ const startChild = Effect.fn('AppHost.startChild')(function* startChild(
   const handle = yield* ChildProcess.make(command, [...args], {
     additionalFds,
     cwd,
-    env: channel === undefined ? { ...env } : { ...env, [MODULE_CREDENTIAL_HANDOVER_VARIABLE]: 'fd3' },
+    // The channel lives as long as this host: its end tells the child the host is gone, so it never runs orphaned.
+    env: channel === undefined ? { ...env } : { ...env, [MODULE_CREDENTIAL_HANDOVER_VARIABLE]: 'fd3-lifetime' },
     extendEnv: true,
     stderr: 'inherit',
     stdin: 'ignore',

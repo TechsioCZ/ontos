@@ -1,3 +1,20 @@
+/**
+ * Packaged-owner relay: the Shell, Party Registry, Catalog, Customer Context, Market Catalog and Price Group Catalog
+ * run from their built `.output`, as on the app host. To run it locally:
+ *
+ * 1. Build the six units from a clean source tree whose Git HEAD is `ULTRAMODERN_SOURCE_REVISION`, or from a non-Git
+ *    export (`git archive <sha> app`, then `pnpm install --frozen-lockfile --offline` and remove any `.git` the
+ *    install created) with `ULTRAMODERN_SOURCE_REVISION=<sha>`; otherwise the build stops at "sourceRevision workspace
+ *    cannot produce a promotable envelope". The public addresses do not matter: `MODERN_PUBLIC_SITE_URL=http://localhost:8080`
+ *    and `scripts/zerops/build-app.sh` with placeholder origins both pass.
+ * 2. Run it against a database migrated to this tree's level (a private `ontos_test_party_gateway_<32 hex>` database,
+ *    migrated with `pnpm db:migrate`, when this branch adds a migration the shared `ontos_ci` lacks: on an older
+ *    database the Shell's authority reads fail with "Failed query").
+ * 3. Run it alone, with the shared SpiceDB below about 6 GiB: the three flows that issue a personal-key gateway context
+ *    through the Shell (Catalog to Party Manufacturer, Customer Context Guest attribution and Retail Ensure) fail with
+ *    "Actual public personal-key gateway issuance failed" when the Shell's issuance is refused; the
+ *    "personal-key gateway issuance failure" log line before it names the Shell's declared code and status.
+ */
 import {
   makeDatabaseIdentityEnrollmentLive,
   ActiveApplicationCompositionSnapshotSchema,
