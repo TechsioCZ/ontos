@@ -126,8 +126,7 @@ export const captureProviderNotificationActionProblem = {
 const mapDomainProblem = (error: DomainError): CaptureProviderNotificationActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      CaptureProviderNotificationNotImplemented: () =>
-        captureProviderNotificationActionProblem.ineligible('action_not_implemented'),
+      PaymentUnavailable: () => captureProviderNotificationActionProblem.unavailable('payment_unavailable'),
     }),
     Match.exhaustive,
   );

@@ -3,9 +3,22 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-export const GatewayReconciliationDebtRequestSchema = Schema.Struct({});
+import { PaymentOperationIdSchema } from '../domain/payment-identifiers.ts';
+import { GatewayReconciliationDebtRowSchema } from '../domain/psp-configuration.ts';
+
+export const GatewayReconciliationDebtRequestSchema = Schema.Struct({
+  /** Keyset cursor: the `nextAfterOperationId` of the previous page; absent starts at the first operation. */
+  afterOperationId: Schema.optionalKey(PaymentOperationIdSchema),
+  /** Page size, `1..200`; absent uses the server default of 50. */
+  limit: Schema.optionalKey(Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 200, minimum: 1 }))),
+});
 export type GatewayReconciliationDebtRequest = typeof GatewayReconciliationDebtRequestSchema.Type;
-export const GatewayReconciliationDebtResponseSchema = Schema.Struct({ ok: Schema.Literal(true) });
+export const GatewayReconciliationDebtResponseSchema = Schema.Struct({
+  /** Cursor of the next page; absent on the last page. */
+  nextAfterOperationId: Schema.optionalKey(PaymentOperationIdSchema),
+  rows: Schema.Array(GatewayReconciliationDebtRowSchema),
+});
+export type GatewayReconciliationDebtResponse = typeof GatewayReconciliationDebtResponseSchema.Type;
 
 export const GatewayReconciliationDebtAuthenticationProblemSchema = makeProblemDetailsSchema(
   'GatewayReconciliationDebtAuthenticationProblem',
