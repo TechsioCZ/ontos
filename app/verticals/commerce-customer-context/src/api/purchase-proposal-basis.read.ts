@@ -114,10 +114,6 @@ export const purchaseProposalBasisRead = defineRead(
     schemaVersion: '1',
   },
   {
-    load: (
-      input: typeof RequestSchema.Type,
-      context: ReadLoadContext<Effect.Success<ReturnType<typeof purchaseProposalBasisService>>>,
-    ) => context.services.loadRead(input).pipe(Effect.mapError(mapBasisReadFailure)),
     finish: (
       input: typeof RequestSchema.Type,
       context: ReadFinishContext<undefined, PurchaseProposalBasisReadSnapshot>,
@@ -157,6 +153,10 @@ export const purchaseProposalBasisRead = defineRead(
         Effect.mapError(mapBasisReadFailure),
       );
     },
+    load: (
+      input: typeof RequestSchema.Type,
+      context: ReadLoadContext<Effect.Success<ReturnType<typeof purchaseProposalBasisService>>>,
+    ) => context.services.loadRead(input).pipe(Effect.mapError(mapBasisReadFailure)),
   },
   purchaseProposalBasisService,
 );

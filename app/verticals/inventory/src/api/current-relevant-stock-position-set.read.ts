@@ -68,12 +68,6 @@ export const currentRelevantStockPositionSetRead = defineRead(
     schemaVersion: '1',
   },
   {
-    prepare: (input: RelevantStockPositionSetRequest, context) =>
-      prepareRelevantStockPositionSet(input, context.scope).pipe(Effect.mapError(mapPositionSetReadFailure)),
-    load: (input, context: ReadLoadContext<PositionSetServices, RelevantStockPositionSetPrepared>) =>
-      context.prepared.kind === 'RESULT'
-        ? Effect.succeedNone
-        : context.services.observe(input.scope).pipe(Effect.asSome, Effect.mapError(mapPositionSetReadFailure)),
     finish: Effect.fn('CurrentRelevantStockPositionSetRead.finish')(
       function* finishPositionSetRead(
         input: RelevantStockPositionSetRequest,
@@ -90,6 +84,12 @@ export const currentRelevantStockPositionSetRead = defineRead(
       })),
       Effect.mapError(mapPositionSetReadFailure),
     ),
+    load: (input, context: ReadLoadContext<PositionSetServices, RelevantStockPositionSetPrepared>) =>
+      context.prepared.kind === 'RESULT'
+        ? Effect.succeedNone
+        : context.services.observe(input.scope).pipe(Effect.asSome, Effect.mapError(mapPositionSetReadFailure)),
+    prepare: (input: RelevantStockPositionSetRequest, context) =>
+      prepareRelevantStockPositionSet(input, context.scope).pipe(Effect.mapError(mapPositionSetReadFailure)),
   },
   (transaction, scope) =>
     Effect.succeed({

@@ -274,13 +274,6 @@ export const searchLabelsRead = defineRead(
     schemaVersion: '1',
   },
   {
-    load: Effect.fn('PropertyLabels.load')(function* loadLabels(
-      input: SearchLabelsRequest,
-      context: ReadLoadContext<LabelServices>,
-    ): Effect.fn.Return<SearchLabelsResponse, ReadHandlerUnavailable> {
-      const predicate = yield* parsePredicate(context.listAccess).pipe(Effect.mapError(unavailable));
-      return yield* context.services.lookup(uniqueRefs(input.refs, context.scope.tenantId), predicate);
-    }),
     finish: Effect.fn('PropertyLabels.finish')(function* finishLabels(
       _input: SearchLabelsRequest,
       context: ReadFinishContext<undefined, SearchLabelsResponse>,
@@ -293,6 +286,13 @@ export const searchLabelsRead = defineRead(
         }),
       );
       return { evidence: { resultCount: labels.length }, result: { ...context.loaded, labels } };
+    }),
+    load: Effect.fn('PropertyLabels.load')(function* loadLabels(
+      input: SearchLabelsRequest,
+      context: ReadLoadContext<LabelServices>,
+    ): Effect.fn.Return<SearchLabelsResponse, ReadHandlerUnavailable> {
+      const predicate = yield* parsePredicate(context.listAccess).pipe(Effect.mapError(unavailable));
+      return yield* context.services.lookup(uniqueRefs(input.refs, context.scope.tenantId), predicate);
     }),
   },
   makeLabelServices,

@@ -94,7 +94,6 @@ export const recordsRead = defineRead(
     schemaVersion: '1',
   },
   {
-    prepare: (_input, context) => occupancyWriteCapability(context.scope),
     load: (input, context: ReadLoadContext<Services, boolean>) =>
       context.services.load().pipe(
         Effect.mapError((cause) =>
@@ -120,6 +119,7 @@ export const recordsRead = defineRead(
             : Effect.succeed({ evidence: { resultCount }, result: { ...result, canWrite: context.prepared } });
         }),
       ),
+    prepare: (_input, context) => occupancyWriteCapability(context.scope),
   },
   makeRecordsServices,
 );

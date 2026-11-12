@@ -83,15 +83,15 @@ export const recordsRead = defineRead(
     schemaVersion: '1',
   },
   {
-    prepare: (_input, context) =>
-      salesInsightsRecordsGrants(context.scope, context.listAccess).pipe(Effect.mapError(readFailure)),
-    load: (_input, context) =>
-      context.services.loadRecords(context.prepared.predicate).pipe(Effect.mapError(readFailure)),
     finish: (input: RecordsRequest, context) =>
       finishSalesInsightsRecords(input, context.loaded, context.prepared, context.scope).pipe(
         Effect.mapError(readFailure),
         Effect.map((result: RecordsResponse) => ({ evidence: { resultCount: result.items.length }, result })),
       ),
+    load: (_input, context) =>
+      context.services.loadRecords(context.prepared.predicate).pipe(Effect.mapError(readFailure)),
+    prepare: (_input, context) =>
+      salesInsightsRecordsGrants(context.scope, context.listAccess).pipe(Effect.mapError(readFailure)),
   },
   makeRecordsServices,
 );

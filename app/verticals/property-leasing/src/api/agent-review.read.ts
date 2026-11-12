@@ -54,8 +54,6 @@ export const agentReviewRead = defineRead(
   },
   {
     // The write right is a SpiceDB round trip: it is decided before the transaction opens.
-    prepare: (input: AgentReviewRequest, context) =>
-      reviewsLiveProposals(input) ? occupancyWriteCapability(context.scope) : Effect.succeed(false),
     load: Effect.fn('Occupancy.agentReview')(function* reviewOccupancies(
       input: AgentReviewRequest,
       context: ReadLoadContext<Services, boolean>,
@@ -89,6 +87,8 @@ export const agentReviewRead = defineRead(
       );
       return { evidence: { resultCount: items.length }, result: { items, seesAllRecords: true } };
     }),
+    prepare: (input: AgentReviewRequest, context) =>
+      reviewsLiveProposals(input) ? occupancyWriteCapability(context.scope) : Effect.succeed(false),
   },
   makeRecordsServices,
 );

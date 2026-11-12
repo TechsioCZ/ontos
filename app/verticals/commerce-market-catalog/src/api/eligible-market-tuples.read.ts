@@ -167,6 +167,6 @@ export const eligibleMarketTuplesRead = defineRead(
     resultSchema: EligibleMarketTuplesResponseSchema,
     schemaVersion: '1',
   },
-  { prepare: (input, context) => prepareEligibleMarketTuples(input, context), load: handleEligibleMarketTuples },
+  { load: handleEligibleMarketTuples, prepare: (input, context) => prepareEligibleMarketTuples(input, context) },
   marketResolutionPersistenceForScope,
 );

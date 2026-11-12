@@ -50,7 +50,6 @@ export const tasksRead = defineRead(
     schemaVersion: '1',
   },
   {
-    prepare: (_input, context) => prepareTaskSearch(context.scope, context.listAccess),
     load: (input, context: ReadLoadContext<SearchServices, ListAccessPredicate>) =>
       context.services.load(input, context.prepared).pipe(
         Effect.map((result) => ({
@@ -58,6 +57,7 @@ export const tasksRead = defineRead(
           result,
         })),
       ),
+    prepare: (_input, context) => prepareTaskSearch(context.scope, context.listAccess),
   },
   (_transaction, scope) =>
     Effect.succeed({

@@ -83,9 +83,6 @@ export const recordsRead = defineRead(
     schemaVersion: '1',
   },
   {
-    prepare: (_input, context) => facilityOperationsGrants(context.scope).pipe(Effect.mapError(readFailure)),
-    load: (input: RecordsRequest, context) =>
-      context.services.loadRecords(input, context.prepared).pipe(Effect.mapError(readFailure)),
     finish: (input: RecordsRequest, context) =>
       finishFacilityRecords(input, context.loaded, context.prepared, context.scope).pipe(
         Effect.mapError(readFailure),
@@ -94,6 +91,9 @@ export const recordsRead = defineRead(
           result,
         })),
       ),
+    load: (input: RecordsRequest, context) =>
+      context.services.loadRecords(input, context.prepared).pipe(Effect.mapError(readFailure)),
+    prepare: (_input, context) => facilityOperationsGrants(context.scope).pipe(Effect.mapError(readFailure)),
   },
   makeRecordsServices,
 );

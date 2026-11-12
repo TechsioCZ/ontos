@@ -718,6 +718,35 @@ const componentRead = defineRead(
     schemaVersion: '1',
   },
   {
+    finish: (input, context) =>
+      Effect.gen(function* finishRealNativeTier() {
+        if (input.wholeRequest === undefined) {
+          if (context.loaded === null) {
+            return yield* unavailable('native-component-load-absent');
+          }
+          return context.loaded;
+        }
+        return {
+          evidence: { resultCount: input.wholeRequest.decision.lines.length },
+          result: yield* evaluateNativeWhole1225(
+            context.transaction,
+            context.scope,
+            context.compositionRevision,
+            input.wholeRequest,
+          ).pipe(
+            Effect.scoped,
+            Effect.mapError(
+              (cause) =>
+                new ReadHandlerUnavailable({
+                  code: 'read_handler_unavailable',
+                  reason: Schema.is(WholeCandidateReceiverTestUnavailable)(cause)
+                    ? cause.stage
+                    : 'Native whole-candidate authority unavailable',
+                }),
+            ),
+          ),
+        };
+      }),
     load: (input, context: ReadLoadContext<ComponentServices>) =>
       Effect.gen(function* readRealNativeTier() {
         if (input.wholeRequest !== undefined) {
@@ -775,35 +804,6 @@ const componentRead = defineRead(
             }),
         ),
       ),
-    finish: (input, context) =>
-      Effect.gen(function* finishRealNativeTier() {
-        if (input.wholeRequest === undefined) {
-          if (context.loaded === null) {
-            return yield* unavailable('native-component-load-absent');
-          }
-          return context.loaded;
-        }
-        return {
-          evidence: { resultCount: input.wholeRequest.decision.lines.length },
-          result: yield* evaluateNativeWhole1225(
-            context.transaction,
-            context.scope,
-            context.compositionRevision,
-            input.wholeRequest,
-          ).pipe(
-            Effect.scoped,
-            Effect.mapError(
-              (cause) =>
-                new ReadHandlerUnavailable({
-                  code: 'read_handler_unavailable',
-                  reason: Schema.is(WholeCandidateReceiverTestUnavailable)(cause)
-                    ? cause.stage
-                    : 'Native whole-candidate authority unavailable',
-                }),
-            ),
-          ),
-        };
-      }),
   },
   componentServicesForScope,
 );

@@ -100,8 +100,6 @@ export const privacySubjectsRead = defineRead(
     schemaVersion: '1',
   },
   {
-    load: (_input, context: ReadLoadContext<PrivacySubjectsSnapshotServices>) =>
-      context.services.load().pipe(Effect.mapError(unavailable)),
     finish: Effect.fn('PrivacySubjects.verifyOwners')(function* verifySelectedPersons(
       input: typeof PrivacySubjectsRequestSchema.Type,
       context: ReadFinishContext<undefined, PrivacySubjectsSnapshot>,
@@ -152,6 +150,8 @@ export const privacySubjectsRead = defineRead(
         },
       };
     }),
+    load: (_input, context: ReadLoadContext<PrivacySubjectsSnapshotServices>) =>
+      context.services.load().pipe(Effect.mapError(unavailable)),
   },
   (transaction, scope) => Effect.succeed({ load: () => readPrivacySubjectsSnapshot(transaction, scope) }),
 );

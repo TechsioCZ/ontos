@@ -45,11 +45,6 @@ export const devicesRead = defineRead(
     schemaVersion: '1',
   },
   {
-    prepare: (_input, context: ReadPrepareContext) => prepareFacilitySearch(context.scope, context.listAccess),
-    load: (
-      _input: DevicesProviderRequest,
-      context: ReadLoadContext<FacilitySearchServices, FacilitySearchPreparation>,
-    ) => context.services.load(context.prepared, false),
     finish: Effect.fn('FacilitySearch.devices.finish')(function* finishSearch(
       input: DevicesProviderRequest,
       context: ReadFinishContext<FacilitySearchPreparation, FacilitySearchRecords>,
@@ -66,6 +61,11 @@ export const devicesRead = defineRead(
       });
       return { evidence: { resultCount: result.length }, result };
     }),
+    load: (
+      _input: DevicesProviderRequest,
+      context: ReadLoadContext<FacilitySearchServices, FacilitySearchPreparation>,
+    ) => context.services.load(context.prepared, false),
+    prepare: (_input, context: ReadPrepareContext) => prepareFacilitySearch(context.scope, context.listAccess),
   },
   makeFacilitySearchServices('device'),
 );

@@ -45,9 +45,6 @@ export const metersRead = defineRead(
     schemaVersion: '1',
   },
   {
-    prepare: (_input, context: ReadPrepareContext) => prepareFacilitySearch(context.scope, context.listAccess),
-    load: (input: MetersProviderRequest, context: ReadLoadContext<FacilitySearchServices, FacilitySearchPreparation>) =>
-      context.services.load(context.prepared, input.includeArchived ?? false),
     finish: Effect.fn('FacilitySearch.meters.finish')(function* finishSearch(
       input: MetersProviderRequest,
       context: ReadFinishContext<FacilitySearchPreparation, FacilitySearchRecords>,
@@ -70,6 +67,9 @@ export const metersRead = defineRead(
       });
       return { evidence: { resultCount: result.length }, result };
     }),
+    load: (input: MetersProviderRequest, context: ReadLoadContext<FacilitySearchServices, FacilitySearchPreparation>) =>
+      context.services.load(context.prepared, input.includeArchived ?? false),
+    prepare: (_input, context: ReadPrepareContext) => prepareFacilitySearch(context.scope, context.listAccess),
   },
   makeFacilitySearchServices('meter'),
 );

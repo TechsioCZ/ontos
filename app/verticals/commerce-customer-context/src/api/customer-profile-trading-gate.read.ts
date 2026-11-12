@@ -138,7 +138,16 @@ export const customerProfileTradingGateRead = defineRead(
     schemaVersion: '1',
   },
   {
-    prepare: prepareTradingRole,
+    finish: Effect.fn('CustomerProfileTradingGate.finish')(function* finish(
+      _input: CustomerProfileTradingGateRequest,
+      context: ReadFinishContext<
+        Option.Option<CounterpartyRoleEligibility>,
+        ReadHandlerResult<CustomerProfileTradingGateResponse>
+      >,
+    ) {
+      yield* assertCurrentRole(context.prepared);
+      return context.loaded;
+    }),
     load: Effect.fn('CustomerProfileTradingGate.load')(function* load(
       input: CustomerProfileTradingGateRequest,
       context: ReadLoadContext<CustomerProfileTradingGateServices, Option.Option<CounterpartyRoleEligibility>>,
@@ -154,16 +163,7 @@ export const customerProfileTradingGateRead = defineRead(
       yield* assertCurrentRole(context.prepared);
       return { evidence: { resultCount: 1 }, result };
     }),
-    finish: Effect.fn('CustomerProfileTradingGate.finish')(function* finish(
-      _input: CustomerProfileTradingGateRequest,
-      context: ReadFinishContext<
-        Option.Option<CounterpartyRoleEligibility>,
-        ReadHandlerResult<CustomerProfileTradingGateResponse>
-      >,
-    ) {
-      yield* assertCurrentRole(context.prepared);
-      return context.loaded;
-    }),
+    prepare: prepareTradingRole,
   },
   (transaction, scope) => {
     const { legalEntityId } = scope;

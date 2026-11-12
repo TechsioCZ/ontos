@@ -106,21 +106,6 @@ export const pricingPurchaseContextVerificationRead = defineRead(
     schemaVersion: '1',
   },
   {
-    load: (
-      input: PricingPurchaseContextVerificationRequest,
-      context: ReadLoadContext<{
-        readonly load: (
-          request: PricingPurchaseContextVerificationRequest,
-        ) => ReturnType<typeof loadVerificationSnapshot>;
-      }>,
-    ) =>
-      context.services
-        .load(input)
-        .pipe(
-          Effect.mapError(
-            (cause) => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: String(cause) }),
-          ),
-        ),
     finish: Effect.fn('PricingPurchaseContextVerificationRead.finish')(function* finish(
       input: PricingPurchaseContextVerificationRequest,
       context: ReadFinishContext<undefined, Effect.Success<ReturnType<typeof loadVerificationSnapshot>>>,
@@ -361,6 +346,21 @@ export const pricingPurchaseContextVerificationRead = defineRead(
             });
       return { evidence: { resultCount: result.outcome === 'PURCHASE_CONTEXT_VERIFIED' ? 1 : 0 }, result };
     }),
+    load: (
+      input: PricingPurchaseContextVerificationRequest,
+      context: ReadLoadContext<{
+        readonly load: (
+          request: PricingPurchaseContextVerificationRequest,
+        ) => ReturnType<typeof loadVerificationSnapshot>;
+      }>,
+    ) =>
+      context.services
+        .load(input)
+        .pipe(
+          Effect.mapError(
+            (cause) => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: String(cause) }),
+          ),
+        ),
   },
   (transaction, scope, revision) =>
     Effect.succeed({

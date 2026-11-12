@@ -90,15 +90,6 @@ export const orderServiceApprovalEvidenceRead = defineRead(
     schemaVersion: '1',
   },
   {
-    prepare: (input: OrderServiceApprovalEvidenceRequest, context: ReadPrepareContext) =>
-      prepareOrderFinalizationRead(input, context).pipe(Effect.mapError(mapOrderReadFailure)),
-    load: (
-      input: OrderServiceApprovalEvidenceRequest,
-      context: ReadLoadContext<
-        Effect.Success<ReturnType<typeof orderApprovalFinalizationService>>,
-        Effect.Success<ReturnType<typeof prepareOrderFinalizationRead>>
-      >,
-    ) => context.services.load(input).pipe(Effect.mapError(mapOrderReadFailure)),
     finish: (
       input: OrderServiceApprovalEvidenceRequest,
       context: ReadFinishContext<
@@ -110,6 +101,15 @@ export const orderServiceApprovalEvidenceRead = defineRead(
         Effect.mapError(mapOrderReadFailure),
         Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
       ),
+    load: (
+      input: OrderServiceApprovalEvidenceRequest,
+      context: ReadLoadContext<
+        Effect.Success<ReturnType<typeof orderApprovalFinalizationService>>,
+        Effect.Success<ReturnType<typeof prepareOrderFinalizationRead>>
+      >,
+    ) => context.services.load(input).pipe(Effect.mapError(mapOrderReadFailure)),
+    prepare: (input: OrderServiceApprovalEvidenceRequest, context: ReadPrepareContext) =>
+      prepareOrderFinalizationRead(input, context).pipe(Effect.mapError(mapOrderReadFailure)),
   },
   orderApprovalFinalizationService,
 );

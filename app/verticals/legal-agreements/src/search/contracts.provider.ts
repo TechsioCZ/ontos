@@ -74,16 +74,6 @@ export const contractsRead = defineRead(
     schemaVersion: '1',
   },
   {
-    prepare: (_input, context) =>
-      requireSearchFields(context.deniedFieldPaths).pipe(
-        Effect.andThen(() => requireSearchPredicate(context.listAccess)),
-        Effect.mapError(unavailable),
-      ),
-    load: (_input: ContractsProviderRequest, context: ReadLoadContext<SearchServices, ListAccessPredicate>) =>
-      context.services.load().pipe(
-        Effect.map(({ snapshot }) => snapshot),
-        Effect.mapError(unavailable),
-      ),
     finish: Effect.fn('Agreements.search.contracts.finish')(function* finishSearch(
       input: ContractsProviderRequest,
       context: ReadFinishContext<ListAccessPredicate, AgreementsState>,
@@ -94,6 +84,16 @@ export const contractsRead = defineRead(
       }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(ContractsProviderResponseSchema)));
       return { evidence: { resultCount: result.length }, result };
     }, Effect.mapError(unavailable)),
+    load: (_input: ContractsProviderRequest, context: ReadLoadContext<SearchServices, ListAccessPredicate>) =>
+      context.services.load().pipe(
+        Effect.map(({ snapshot }) => snapshot),
+        Effect.mapError(unavailable),
+      ),
+    prepare: (_input, context) =>
+      requireSearchFields(context.deniedFieldPaths).pipe(
+        Effect.andThen(() => requireSearchPredicate(context.listAccess)),
+        Effect.mapError(unavailable),
+      ),
   },
   makeSearchServices,
 );

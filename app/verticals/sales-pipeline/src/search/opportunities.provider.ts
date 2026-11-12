@@ -48,11 +48,6 @@ export const opportunitiesRead = defineRead(
     schemaVersion: '1',
   },
   {
-    prepare: (_input, context: ReadPrepareContext) => preparePipelineSearch(context.scope),
-    load: (
-      _input: OpportunitiesProviderRequest,
-      context: ReadLoadContext<PipelineSearchServices, ListAccessPredicate>,
-    ) => context.services.load(context.prepared),
     finish: Effect.fn('Pipeline.search.finish')(function* finish(
       input: OpportunitiesProviderRequest,
       context: ReadFinishContext<ListAccessPredicate, readonly PipelineSearchRecord[]>,
@@ -60,6 +55,11 @@ export const opportunitiesRead = defineRead(
       const result = yield* loadCurrentOpportunitySearch(context.scope, input.query, context.loaded);
       return { evidence: { resultCount: result.length }, result };
     }),
+    load: (
+      _input: OpportunitiesProviderRequest,
+      context: ReadLoadContext<PipelineSearchServices, ListAccessPredicate>,
+    ) => context.services.load(context.prepared),
+    prepare: (_input, context: ReadPrepareContext) => preparePipelineSearch(context.scope),
   },
   makePipelineSearchServices,
 );

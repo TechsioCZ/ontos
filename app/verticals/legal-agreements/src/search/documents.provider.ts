@@ -77,16 +77,6 @@ export const documentsRead = defineRead(
     schemaVersion: '1',
   },
   {
-    prepare: (_input, context) =>
-      requireSearchFields(context.deniedFieldPaths).pipe(
-        Effect.andThen(() => requireSearchPredicate(context.listAccess)),
-        Effect.mapError(unavailable),
-      ),
-    load: (_input: DocumentsProviderRequest, context: ReadLoadContext<SearchServices, ListAccessPredicate>) =>
-      context.services.load().pipe(
-        Effect.map(({ snapshot }) => snapshot),
-        Effect.mapError(unavailable),
-      ),
     finish: Effect.fn('Agreements.search.documents.finish')(function* finishSearch(
       input: DocumentsProviderRequest,
       context: ReadFinishContext<ListAccessPredicate, AgreementsState>,
@@ -98,6 +88,16 @@ export const documentsRead = defineRead(
       }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(DocumentsProviderResponseSchema)));
       return { evidence: { resultCount: result.length }, result };
     }, Effect.mapError(unavailable)),
+    load: (_input: DocumentsProviderRequest, context: ReadLoadContext<SearchServices, ListAccessPredicate>) =>
+      context.services.load().pipe(
+        Effect.map(({ snapshot }) => snapshot),
+        Effect.mapError(unavailable),
+      ),
+    prepare: (_input, context) =>
+      requireSearchFields(context.deniedFieldPaths).pipe(
+        Effect.andThen(() => requireSearchPredicate(context.listAccess)),
+        Effect.mapError(unavailable),
+      ),
   },
   makeSearchServices,
 );
