@@ -152,19 +152,20 @@ type Translate = (key: string, values?: Record<string, number | string>) => stri
 /** How old the company's rates may be before the staff screens say when Tax last confirmed them. */
 const CONFIRMATION_SHOWN_AFTER = Duration.minutes(30);
 
-/** A date (and time) in the screen's language, in Prague time. */
-const dateFormatOf = (language: string, withTime: boolean) => {
+/** A date (and time) in the screen's locale (from its translations), in Prague time. */
+const dateFormatOf = (locale: string, withTime: boolean) => {
   const options: Intl.DateTimeFormatOptions = { dateStyle: 'medium', timeZone: 'Europe/Prague' };
   if (withTime) {
     options.timeStyle = 'short';
   }
-  return new Intl.DateTimeFormat(language === 'en' ? 'en-GB' : 'cs-CZ', options);
+  return new Intl.DateTimeFormat(locale, options);
 };
 
 /** Words for the classifications and their rates. Pure, so the forms and their tests read the same text. */
-export const taxLabelsOf = (t: Translate, language = 'cs') => {
-  const dateTime = dateFormatOf(language, true);
-  const date = dateFormatOf(language, false);
+export const taxLabelsOf = (t: Translate) => {
+  const locale = t(`${KEY_PREFIX}.dateLocale`);
+  const dateTime = dateFormatOf(locale, true);
+  const date = dateFormatOf(locale, false);
   const name = (code: CzVatClassificationCode) => t(`${KEY_PREFIX}.classification.${nameKeys[code]}`);
   const notSet = t(`${KEY_PREFIX}.notSet`);
   const nonPayer = t(`${KEY_PREFIX}.nonPayer`);
@@ -240,6 +241,6 @@ export const taxLabelsOf = (t: Translate, language = 'cs') => {
 export type TaxLabels = ReturnType<typeof taxLabelsOf>;
 
 export const useTaxLabels = (): TaxLabels => {
-  const { language, t } = useModernI18n();
-  return taxLabelsOf(t, language);
+  const { t } = useModernI18n();
+  return taxLabelsOf(t);
 };

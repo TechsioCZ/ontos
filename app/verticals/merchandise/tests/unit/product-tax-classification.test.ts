@@ -35,7 +35,7 @@ const payerVat = (rates: readonly TaxRateView[]): CompanyVat => ({ rates, regime
 const nonPayerVat: CompanyVat = { rates: [], regime: 'NON_PAYER' };
 
 const cs = taxLabelsOf(translateIn('cs'));
-const en = taxLabelsOf(translateIn('en'), 'en');
+const en = taxLabelsOf(translateIn('en'));
 
 describe('rates of a classification', () => {
   it('picks the period in force: from its start up to, not including, its end', () => {
@@ -142,7 +142,7 @@ describe('how current the company rates are', () => {
     expect(cs.confirmation(stale, now)?.replaceAll(' ', ' ')).toBe(
       'Sazby DPH naposledy potvrdil modul Daně 12. 11. 2026 8:30; modul Daně teď neodpovídá.',
     );
-    expect(taxLabelsOf(translateIn('en'), 'en').confirmation(stale, now)).toBe(
+    expect(taxLabelsOf(translateIn('en')).confirmation(stale, now)).toBe(
       'The tax module last confirmed the VAT rates on 12 Nov 2026, 08:30; it is not answering now.',
     );
   });
