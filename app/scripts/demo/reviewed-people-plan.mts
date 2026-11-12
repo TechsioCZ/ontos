@@ -42,7 +42,13 @@ import {
 } from '../../packages/core-runtime/src/access/model.ts';
 import { policyRoleCellRows } from './access-policy.mts';
 import { demoLegalEntityId, demoTenantId } from './fixture-ids.mts';
-import { demoHumanAccounts, demoShellRoutingRoleKey, reviewedDemoAssignments, taxManagerKeys } from './permissions.mts';
+import {
+  demoHumanAccounts,
+  demoShellRoutingRoleKey,
+  financeVatReadKeys,
+  reviewedDemoAssignments,
+  taxAccountantKeys,
+} from './permissions.mts';
 
 export type HumanId = typeof AccessHumanIdSchema.Type;
 export type RoleId = typeof AccessRoleIdSchema.Type;
@@ -613,10 +619,11 @@ const revisionOf = (observed: ObservedState, roleId: RoleId): Option.Option<Role
 
 /**
  * The capabilities that are new in this review: the only ones a role saved earlier is ever extended with. Today the
- * VAT rights of Phase 1 (`taxManagerKeys` covers the readers' two keys as well). A reviewed cell outside this set that
- * a saved role lacks was removed by a person and is never given back by this script.
+ * VAT reads of Phase 1, all reads: the accountant's four Tax reads and Finance's three VAT reads (no Tax write is in
+ * any preset role). A reviewed cell outside this set that a saved role lacks was removed by a person and is never
+ * given back by this script.
  */
-export const NEW_IN_THIS_REVIEW: ReadonlySet<string> = new Set<string>(taxManagerKeys);
+export const NEW_IN_THIS_REVIEW: ReadonlySet<string> = new Set<string>([...taxAccountantKeys, ...financeVatReadKeys]);
 
 /**
  * The cells new in this review that a saved role lacks, when it holds nothing but plain reviewed cells. `undefined`

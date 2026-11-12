@@ -319,18 +319,21 @@ printf %s "$OWNER_PASSWORD" | pnpm demo:stage:reviewed-people \
 - It stops at the first refusal and is safe to re-run. A role that already holds other cells, a managed role
   held by anyone else, or a used-up generation halts it before any write.
 - A role saved earlier that holds only plain reviewed cells is extended, never rewritten, and only with the cells
-  that are new in this review (`NEW_IN_THIS_REVIEW` in `reviewed-people-plan.mts`, today the `commerce.tax` rights).
+  that are new in this review (`NEW_IN_THIS_REVIEW` in `reviewed-people-plan.mts`, today the VAT reads: the
+  accountant's four `commerce.tax` reads and Finance's three VAT reads).
   The plan prints `adds to the saved role <key> (new in this review):` with every added cell
   (`+ <capability> <mode> <selector>`), each dangerous effect (`!`) and admin-kind cell, and the Shell's preview must
   add exactly those cells. A reviewed cell a person removed from the role is never given back.
 
-VAT rights (`commerce.tax`), named key by key in `permissions.mts`: Účetní reads and manages the rules and the
-seller's VAT regime (`tax-rule.create`, `tax-rule-revision.create|end|correct`,
-`seller-vat-regime-declaration.declare`, the two history reads and the two governed reads); Obchodník, Skladník
-and the e-shop administrators read only `tax-rule-set.read` and `seller-vat-regime.read-at-instant` (they pick a
-VAT classification on products). Order-tax finalization (a commerce-order service call) and the regime import (a
-migration tool) are in no human role. The Novinky review cannot place these rights: it only suggests a new
-capability to roles that already hold the same editor group, and these roles held no tax capability.
+VAT rights (`commerce.tax`), named key by key in `permissions.mts`: Účetní only reads Tax, the four reads the DPH
+page makes as the signed-in person (`tax-rule-set.read`, `seller-vat-regime.read-at-instant` and the two history
+reads), plus Finance's VAT page, navigation and VAT choices reads. No preset role but full access holds a Tax write:
+a rate or a regime declaration changes what every sale costs, so people with full access (which follows the
+catalogue) or a role an owner edits in the role editor manage them. Obchodník, Skladník and the e-shop administrators
+hold no Tax right: Merchandise and Finance read the rates through their own module calls, which Tax admits for the
+person they act for without a Tax right of that person. Order-tax finalization (a commerce-order service call) and the
+regime import (a migration tool) are in no human role. The Novinky review cannot place these rights: it only suggests
+a new capability to roles that already hold the same editor group, and these roles held no tax capability.
 
 - Exits: 0 done, 2 usage, 3 not the tenant owner, 4 validation halt, 5 HTTP refusal or unexpected answer.
 

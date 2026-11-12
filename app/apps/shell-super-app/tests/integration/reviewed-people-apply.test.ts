@@ -184,7 +184,7 @@ it.layer(accessAdminTemplateLayer, { excludeTestServices: true, timeout: '300 se
             Effect.gen(function* reviewedRoleSave() {
               const handler = yield* shellHandlerFor(accessCase);
               const role = yield* reviewedRole;
-              expect([role.cells.length, role.confirmations.length]).toEqual([35, 25]);
+              expect([role.cells.length, role.confirmations.length]).toEqual([33, 23]);
               const [companyA] = accessCase.companies;
               const legalEntityId = AccessCompanyIdSchema.make(companyA ?? '');
 
