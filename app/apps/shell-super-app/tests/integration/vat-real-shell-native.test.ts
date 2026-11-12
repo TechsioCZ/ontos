@@ -98,6 +98,8 @@ import {
 } from '../../../../packages/core-runtime/src/access/ids.ts';
 import { lineVatOf } from '../../../../verticals/finance-billing/shared/domain/line-vat.ts';
 import { PlaceStorefrontOrderPayloadSchema } from '../../../../verticals/merchandise/shared/actions/apply-command.ts';
+import { ApplyCommandPayloadSchema } from '../../../../verticals/finance-billing/shared/actions/apply-command.ts';
+import { executeApplyCommandWithAuthorization } from '../../../../verticals/finance-billing/src/api/apply-command-action-client.ts';
 import { executeVatChoicesWithAuthorization } from '../../../../verticals/finance-billing/src/api/vat-choices-client.ts';
 import { executePlaceStorefrontOrderWithAuthorization } from '../../../../verticals/merchandise/src/api/place-storefront-order-action-client.ts';
 import { executeRecordsWithAuthorization } from '../../../../verticals/merchandise/src/api/records-client.ts';
@@ -702,6 +704,18 @@ const taxDecisionsOf = (scenario: Scenario, principalId: string, since: string) 
     )
     .pipe(Effect.map((rows) => [...new Set(rows.map((row) => row.line))]));
 
+/** Finance's decisions on its writes since `since` for `principalId`, with their reason codes. */
+const financeWriteDecisionsOf = (scenario: Scenario, principalId: string, since: string) =>
+  scenario.sql
+    .unsafe<{ readonly line: string }>(
+      `select capability_key || ': ' || outcome || ' ' || coalesce(reasons_json::text, '') as line
+         from core.access_decision_logs
+        where actor_principal_id = $1 and decided_at > $2::timestamptz and capability_key like 'finance.billing.%.write'
+        order by decided_at`,
+      [principalId, since],
+    )
+    .pipe(Effect.map((rows) => [...new Set(rows.map((row) => row.line))]));
+
 const interestingLines = (diagnostics: readonly Redacted.Redacted[]) =>
   diagnostics
     .map(Redacted.value)
@@ -883,7 +897,46 @@ const financePersona = Effect.fn('VatRealShell.financePersona')(function* financ
     { baseUrl: `${scenario.finance.origin}${FINANCE_API}`, compositionRevision: scenario.revision },
   ).pipe(Effect.result);
   const line = lineVatOf({ code: STANDARD, kind: 'classification' }, Result.getOrUndefined(choices));
-  const decisions = yield* taxDecisionsOf(scenario, scenario.core.reader.principalId, since);
+  // The invoice itself: an Obchodník's role reads Finance only, so Finance's own gate decides before anything else.
+  const invoice =
+    persona === 'Obchodník'
+      ? yield* Schema.decodeUnknownEffect(ApplyCommandPayloadSchema)({
+          command: {
+            _tag: 'CreateInvoiceDraft',
+            counterpartyRef: {
+              moduleId: 'party.registry',
+              resourceId: yield* scenario.uuid,
+              resourceType: 'party.registry.counterparty',
+              tenantId: scenario.tenantId,
+            },
+            currency: 'CZK',
+            direction: 'OUTGOING',
+            documentNumber: 'FV-VAT-REAL-SHELL',
+            dueDate: '2026-12-31',
+            issueDate: DateTime.formatIsoDateUtc(yield* DateTime.now),
+            lines: [{ description: 'Služba', quantity: 1, unitPriceMinor: 10_000, ...line }],
+          },
+          expectedRevision: 0,
+        }).pipe(
+          Effect.flatMap((payload) =>
+            Effect.all([scenario.sessionContext(cookie, 'finance-billing'), scenario.uuid, scenario.uuid]).pipe(
+              Effect.flatMap(([authorization, correlation, idempotencyKey]) =>
+                executeApplyCommandWithAuthorization(payload, authorization, correlation, {
+                  baseUrl: `${scenario.finance.origin}${FINANCE_API}`,
+                  compositionRevision: scenario.revision,
+                  idempotencyKey,
+                }),
+              ),
+            ),
+          ),
+          Effect.result,
+          Effect.map((created) => `; invoice draft: ${outcomeOf(created, () => 'created')}`),
+        )
+      : '';
+  const decisions = [
+    ...(yield* taxDecisionsOf(scenario, scenario.core.reader.principalId, since)),
+    ...(yield* financeWriteDecisionsOf(scenario, scenario.core.reader.principalId, since)),
+  ];
   const revisionNote = line?.taxRuleRevisionRef === undefined ? 'missing' : 'stored';
   const describedLine = `${String(line?.vatRate)} % ${line?.vatClassification ?? '-'}, rule revision ${revisionNote}`;
   return {
@@ -892,7 +945,7 @@ const financePersona = Effect.fn('VatRealShell.financePersona')(function* financ
       decisions,
       outcome: [
         `DPH page: regime history ${outcomeOf(history, () => 'shown')}, rates ${outcomeOf(rules, () => 'shown')}`,
-        `invoice line VAT choices: ${outcomeOf(choices, () => describedLine)}`,
+        `invoice line VAT choices: ${outcomeOf(choices, () => describedLine)}${invoice}`,
       ].join('; '),
       persona,
       route:
@@ -976,6 +1029,8 @@ it.live(
                 21,
                 true,
               ]);
+              // The Obchodník's role reads Finance only: Finance refuses the invoice itself, whatever Tax would answer.
+              expect(persona !== 'Obchodník' || run.outcome.outcome.includes('invoice draft: refused 403')).toBe(true);
             }
             yield* Effect.logInfo('Hosted owners and Shell', {
               finance: interestingLines(scenario.finance.diagnostics),
