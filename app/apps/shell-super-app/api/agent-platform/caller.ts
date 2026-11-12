@@ -132,7 +132,7 @@ export const moduleCarriers = (installed: ShellInstalledCatalog): readonly Modul
 };
 
 /** The inner steps of one caller authority load, in the order they run. */
-export const CALLER_ACCESS_PHASES = ['modules', 'states', 'carriers', 'lists', 'actions'] as const;
+export const CALLER_ACCESS_PHASES = ['modules', 'states', 'carriers', 'lists', 'actions', 'states-after'] as const;
 export type CallerAccessPhase = (typeof CALLER_ACCESS_PHASES)[number];
 
 /**
@@ -325,7 +325,7 @@ export const callerModuleAccess = Effect.fn('AgentPlatform.callerModuleAccess')(
   // indexed statement, outside any transaction.
   const current = yield* callerPhase(
     progress,
-    'states',
+    'states-after',
     (yield* TenantModuleStateService)
       .getTenantModuleStates(caller.scope.tenantId, [...visible])
       .pipe(Effect.mapError((cause) => new AgentStoreUnavailable({ cause }))),
