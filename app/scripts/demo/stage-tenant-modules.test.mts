@@ -17,6 +17,9 @@ import {
 
 const tax = 'commerce.tax';
 const selling = ['demo.merchandise', 'finance.billing'];
+const appHostSource = () => readFileSync(new URL('../zerops/app-host.mts', import.meta.url), 'utf-8');
+/** Where the app host starts the release module step. */
+const RELEASE_STEP_MARKER = "'release-modules',";
 
 it('the release installs only its own reviewed pairs, each of them also a manual pair', () => {
   const released = stageReleaseTenantModules.map(({ moduleKey, tenantId }) => `${tenantId} ${moduleKey}`);
@@ -84,13 +87,31 @@ it('reports every decision in one line and fails only on a module it could not i
     reconciles: [{ deletions: 0, failure: 'engine down', tenantId: N1_TENANT_ID, touches: 0 }],
   };
   expect(reportProblems(failed)).toEqual([`${demoTenantId} ${tax}`, `${N1_TENANT_ID} reconcile`]);
+  // A failed reconcile says what heals it; no Outbox wake-up is written with the install any more.
+  const [, failedLine] = reportLines(failed);
+  expect(failedLine).toContain(`tenant ${N1_TENANT_ID}: RECONCILE FAILED (engine down)`);
+  expect(failedLine).toContain('this step reconciles it again on the next deploy');
+  expect(failedLine).not.toContain('Outbox');
+});
+
+it('the access catalog activation runs inside the migrator, before the release step of the same boot', () => {
+  const host = appHostSource();
+  const migrator = readFileSync(new URL('../run-zerops-migrator.mjs', import.meta.url), 'utf-8');
+  // The migrator's last step is the activation: the same boot's activation can never heal the release step's work,
+  // which is why the step reconciles an already active module itself.
+  expect(migrator.indexOf('accessReleaseActivationArguments(appDirectory)')).toBeGreaterThan(
+    migrator.indexOf("runAppScript('scripts/verify-application-db-schema.mts')"),
+  );
+  const migrated = host.indexOf("runChild('migrator', node, ['scripts/run-zerops-migrator.mjs']");
+  expect(migrated).toBeGreaterThan(0);
+  expect(host.indexOf(RELEASE_STEP_MARKER)).toBeGreaterThan(migrated);
 });
 
 it('the app host runs the release step after it publishes the composition, without holding the boot', () => {
-  const host = readFileSync(new URL('../zerops/app-host.mts', import.meta.url), 'utf-8');
+  const host = appHostSource();
   expect(RELEASE_MODULES_SCRIPT).toBe('scripts/demo/release-tenant-modules.mts');
   const published = host.indexOf('yield* openPublicPort;');
-  const step = host.indexOf("'release-modules',");
+  const step = host.indexOf(RELEASE_STEP_MARKER);
   const outbox = host.indexOf('const outboxHost = yield* makeCredentialHolder(');
   expect(published).toBeGreaterThan(0);
   expect(step).toBeGreaterThan(published);
@@ -135,8 +156,11 @@ it('starts the release step with only the settings it reads, never the superviso
     SPICEDB_PRESHARED_KEY: 'k',
     ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
   });
-  const host = readFileSync(new URL('../zerops/app-host.mts', import.meta.url), 'utf-8');
-  const step = host.slice(host.indexOf("'release-modules',"), host.indexOf('const outbox = yield* startChild('));
+  const host = appHostSource();
+  const step = host.slice(
+    host.indexOf(RELEASE_STEP_MARKER),
+    host.indexOf('const outboxHost = yield* makeCredentialHolder('),
+  );
   // `false`: the child does not inherit the supervisor's environment on top.
   expect(step).toMatch(/releaseModulesEnvironment\(releaseSettings, derived\),\s+false,/u);
 });

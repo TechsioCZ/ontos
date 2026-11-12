@@ -405,8 +405,11 @@ const reconcileInstalledTenant = Effect.fn('ReleaseTenantModules.reconcileTenant
 );
 
 /**
- * Installs every declared module that a Tenant still lacks, then reconciles each Tenant that gained one. A second
- * run over the same state installs and reconciles nothing.
+ * Installs every declared module that a Tenant still lacks, then reconciles each Tenant whose declared module is
+ * active, newly installed or already there. A second run installs nothing; its reconcile writes nothing when the
+ * projection is current, and repairs it when an earlier run installed the module but its reconcile failed. That repair
+ * cannot be left to the access catalog activation: the migrator runs it before this step in the same boot, so it
+ * would reach the Tenant only at the next deploy.
  */
 
 export const installReleaseTenantModules = Effect.fn('ReleaseTenantModules.install')(
@@ -441,7 +444,7 @@ export const installReleaseTenantModules = Effect.fn('ReleaseTenantModules.insta
     );
     const changedTenants = new Set<string>();
     for (const { outcome, tenantId } of modules) {
-      if (outcome === 'installed') {
+      if (outcome === 'installed' || outcome === 'already_active') {
         changedTenants.add(tenantId);
       }
     }
