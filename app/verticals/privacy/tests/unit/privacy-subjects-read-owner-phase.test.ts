@@ -1,4 +1,9 @@
-import { TrustedPrincipalContextSchema, trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
+import {
+  ReadHandlerUnavailable,
+  TrustedPrincipalContextSchema,
+  trustVerifiedGatewayPrincipalContext,
+} from '@app/core-runtime';
+import { makeOwnerApplicationCompositionFixture } from '@app/core-runtime/testing/module-contract';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { NodeCrypto } from '@effect/platform-node';
 import { DateTime, Effect, Schema } from 'effect';
@@ -9,10 +14,10 @@ import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-
 import { PrivacySubjectPartyOwner } from '../../src/persistence/privacy-subject-party-owner.ts';
 import { PrivacySubjectOwnerEvidenceSchema, PrivacySubjectRecordSchema } from '../../shared/domain/privacy-subject.ts';
 import { privacyRegistration } from '../../vertical.registration.ts';
+import { partyRegistryRegistration } from '../../../party-registry/vertical.registration.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000004';
-const compositionRevision = 'b'.repeat(64);
 const now = DateTime.makeUnsafe('2026-11-09T12:00:00.000Z');
 const identity = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
   authBindingId: '20000000-0000-4000-8000-000000000003',
@@ -22,7 +27,6 @@ const identity = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
   principalId: '20000000-0000-4000-8000-000000000002',
   tenantId,
 });
-const principal = trustVerifiedGatewayPrincipalContext(identity, compositionRevision);
 const partyRef = {
   moduleId: 'party.registry',
   resourceId: '20000000-0000-4000-8000-000000000007',
@@ -69,8 +73,16 @@ const ownerEvidence = Schema.decodeUnknownSync(PrivacySubjectOwnerEvidenceSchema
 });
 
 const ownerPhase = Effect.fn('PrivacySubjectsRead.ownerPhaseTest')(function* ownerPhase() {
+  // The selected person's owner answer is the Party Registry Party detail the composition must provide.
+  const owner = yield* makeOwnerApplicationCompositionFixture({
+    additionalOwners: [{ appId: 'party-registry', ownerRegistration: partyRegistryRegistration }],
+    ownerRegistration: privacyRegistration,
+  });
+  const compositionRevision = owner.snapshot.composition.revision;
+  const principal = trustVerifiedGatewayPrincipalContext(identity, compositionRevision);
   const harness = yield* makeReadTestHarness({
     access: 'allowed',
+    applicationComposition: owner.applicationComposition,
     compositionRevision,
     executeOwnerQuery: ({ scope, sql }) => {
       if (scope.tenantId !== tenantId || scope.legalEntityId !== legalEntityId) {
@@ -86,6 +98,7 @@ const ownerPhase = Effect.fn('PrivacySubjectsRead.ownerPhaseTest')(function* own
       }
       return Effect.die(`Unexpected Privacy Subject owner SQL: ${sql}`);
     },
+    expectedDeployment: owner.expectedDeployment,
     operationTime: DateTime.toDateUtc(now),
     ownerAuthorizationDecision: 'allowed',
     ownerRegistration: privacyRegistration,
@@ -137,7 +150,8 @@ const ownerPhase = Effect.fn('PrivacySubjectsRead.ownerPhaseTest')(function* own
 
   // A selected person whose owner answer is unavailable stays unavailable; nothing fails open.
   const refused = yield* run([person.subjectRef], false).pipe(Effect.flip);
-  expect(refused).toMatchObject({ _tag: 'ReadHandlerUnavailable', code: 'read_handler_unavailable' });
+  expect(Schema.is(ReadHandlerUnavailable)(refused)).toBe(true);
+  expect(refused).toMatchObject({ code: 'read_handler_unavailable' });
   expect(ownerCalls).toHaveLength(2);
 
   // A foreign-Tenant reference selects nothing and asks the owner nothing.
