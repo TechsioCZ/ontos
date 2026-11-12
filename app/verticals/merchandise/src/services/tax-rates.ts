@@ -641,12 +641,15 @@ const runRefresh = Effect.fn('Merchandise.runTaxRatesRefresh')(function* runRefr
   explicit: boolean,
 ) {
   const source = yield* TaxRateSource;
+  // Tax answers for the instant it is asked about (its replies carry no time of their own): that instant, not when the
+  // calls finished, is the confirmation time.
+  const askedAt = yield* DateTime.now;
   const read = yield* Effect.result(source.read(scope));
   if (Result.isFailure(read)) {
     yield* logFailedRefresh(read.failure);
   }
   const at = yield* DateTime.now;
-  const result = read.pipe(Result.map((book): FetchedTaxRates => ({ book, fetchedAt: at })));
+  const result = read.pipe(Result.map((book): FetchedTaxRates => ({ book, fetchedAt: askedAt })));
   const key = companyKey(scope);
   yield* Ref.update(
     companyAnswers,

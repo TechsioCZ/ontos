@@ -211,6 +211,7 @@ it.effect('a write waits for Tax at most 3 seconds; the refresh still lands for 
   Effect.gen(function* timeout() {
     const { calls, release, source } = yield* gatedSource;
     const company = scopeOf(randomUUID());
+    const asked = yield* DateTime.now;
     const write = yield* Effect.forkChild(
       currentTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source), Effect.flip),
     );
@@ -219,7 +220,8 @@ it.effect('a write waits for Tax at most 3 seconds; the refresh still lands for 
     yield* Deferred.succeed(release, TEST_TAX_BOOK);
     yield* Effect.yieldNow;
     expect(yield* knownTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source))).toEqual({
-      fetched: { book: TEST_TAX_BOOK, fetchedAt: yield* DateTime.now },
+      // Tax answered for the instant it was asked about.
+      fetched: { book: TEST_TAX_BOOK, fetchedAt: asked },
       refused: false,
       waiting: false,
     });
@@ -622,3 +624,18 @@ it('a stored confirmation time ahead of the clock never keeps a newer answer of 
     materialise: { book: newer, source: 'TAX', syncedAt: NOW },
   });
 });
+
+it.effect('the confirmation time is the instant Tax was asked, not when its slow answer arrived', () =>
+  Effect.gen(function* askedAt() {
+    const { release, source } = yield* gatedSource;
+    const company = scopeOf(randomUUID());
+    const asked = yield* DateTime.now;
+    const sync = yield* Effect.forkChild(
+      refreshedTaxRateBook(company).pipe(Effect.provideService(TaxRateSource, source)),
+    );
+    yield* Effect.yieldNow;
+    yield* TestClock.adjust('2 seconds');
+    yield* Deferred.succeed(release, TEST_TAX_BOOK);
+    expect(yield* Fiber.join(sync)).toEqual({ book: TEST_TAX_BOOK, fetchedAt: asked });
+  }),
+);
