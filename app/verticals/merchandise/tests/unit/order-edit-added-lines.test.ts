@@ -28,7 +28,12 @@ const apply = (state: MerchandiseState, command: CommandInput, resourceId: strin
 const conflictReason = (outcome: Effect.Effect<unknown, unknown>) =>
   outcome.pipe(
     Effect.flip,
-    Effect.map((failure) => (Schema.is(MerchandiseLifecycleConflict)(failure) ? failure.reason : 'no conflict')),
+    // The refusal carries its own code, so the editor knows the price changed (and not something else).
+    Effect.map((failure) =>
+      Schema.is(MerchandiseLifecycleConflict)(failure) && failure.code === 'merchandise_offered_price_changed'
+        ? failure.reason
+        : 'no price-change refusal',
+    ),
   );
 
 const orderMarket = Schema.decodeSync(OrderMarketSchema)({

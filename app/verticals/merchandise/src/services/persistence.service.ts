@@ -1602,9 +1602,10 @@ const addedOrderLine = Effect.fn('Merchandise.addedOrderLine')(function* addedOr
     request.offeredUnitPriceMinor !== undefined &&
     request.offeredUnitPriceMinor !== currentPrice
   ) {
-    return yield* conflict(
-      `Cena produktu ${variant?.sku ?? product.sku} se mezitím změnila; načtěte objednávku znovu a přidejte řádek s aktuální cenou.`,
-    );
+    return yield* new MerchandiseLifecycleConflict({
+      code: 'merchandise_offered_price_changed',
+      reason: `Cena produktu ${variant?.sku ?? product.sku} se mezitím změnila; uložte řádek s aktuální cenou.`,
+    });
   }
   return {
     productId: product.id,

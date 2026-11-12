@@ -578,6 +578,7 @@
       "scheduled": "Od {{date}} {{rate}}"
     },
     "ui": {
+      "offeredPriceChanged": "Cena přidaného zboží se mezitím změnila, nic se neuložilo. Řádky teď nesou aktuální cenu — {{lines}}. Zkontrolujte ji a uložte znovu.",
       "storefrontBadge": "E-shop",
       "demoBadge": "DEMO",
       "variantStockMovement": "Skladový pohyb varianty",

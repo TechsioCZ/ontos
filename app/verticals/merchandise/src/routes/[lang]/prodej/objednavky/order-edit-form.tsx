@@ -17,7 +17,8 @@ import {
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { constVoid } from 'effect/Function';
 import { createPortal } from 'react-dom';
 import type { Order, ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductId, ShippingMethod, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
@@ -36,12 +37,12 @@ import { addressIncomplete, contactIncomplete, parseAmount, parseQuantity } from
 import type { Draft, DraftLine } from './order-edit-draft.ts';
 import { useOrderEditDraft } from './order-edit-save.ts';
 import { activeVariants, lineClassification } from './order-line-draft.ts';
-import { loadProductRecord } from '../../provoz/produkty/product-reads.ts';
+import { loadProductRecord, readProductRecord } from '../../provoz/produkty/product-reads.ts';
 import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts';
 import { ProductSearchCombobox } from '../../provoz/produkty/product-search.tsx';
 import { useTaxLabels } from '../../provoz/produkty/product-tax-classification.ts';
 import type { CompanyVat, TaxLabels } from '../../provoz/produkty/product-tax-classification.ts';
-import { DateTime } from 'effect';
+import { DateTime, Effect, Option } from 'effect';
 
 type Mutable<Value> = { -readonly [Key in keyof Value]: Value[Key] };
 
@@ -61,6 +62,59 @@ interface SellableUnit {
   readonly variantName?: string;
   readonly vatRate: DraftLine['vatRate'];
 }
+
+/** Products read again at once after a refused save (an order edit adds a handful of lines). */
+const OFFER_READS_AT_ONCE = 4;
+
+/**
+ * An added line at a newly offered price: the price staff left at the old offer follows the new one, a price they
+ * typed themselves stays.
+ */
+const withOffer = (line: DraftLine, offer: number): DraftLine => {
+  const text = moneyInputText(offer / 100);
+  const typed =
+    line.offeredPriceText !== undefined && parseAmount(line.priceText) !== parseAmount(line.offeredPriceText);
+  return { ...line, offeredPriceText: text, priceText: typed ? line.priceText : text };
+};
+
+interface RepricedLine {
+  readonly name: string;
+  readonly price: number;
+}
+
+/** The current offer of every added line whose product can be read and sold now, by line key. */
+const currentOffers = (
+  lines: readonly DraftLine[],
+  offerOf: (product: ProductRecord, line: DraftLine) => number | undefined,
+): Effect.Effect<ReadonlyMap<string, number>> =>
+  Effect.forEach(
+    lines.filter((line) => line.offeredPriceText !== undefined),
+    (line) =>
+      readProductRecord(line.productId).pipe(
+        Effect.map((product) => Option.fromUndefinedOr(product === undefined ? product : offerOf(product, line))),
+        // A product that cannot be read keeps its line as it is; staff see the refusal and can pick it again.
+        Effect.orElseSucceed(() => Option.none<number>()),
+        Effect.map((offer) =>
+          Option.match(offer, { onNone: () => [], onSome: (price) => [[line.key, price] as const] }),
+        ),
+      ),
+    { concurrency: OFFER_READS_AT_ONCE },
+  ).pipe(Effect.map((offers) => new Map(offers.flat())));
+
+/** The added lines a new offer changes the price of, named as staff see them. */
+const repricedLines = (lines: readonly DraftLine[], offers: ReadonlyMap<string, number>): RepricedLine[] =>
+  lines.flatMap((line) => {
+    const price = offers.get(line.key);
+    const name = line.variantName === undefined ? line.name : `${line.name} (${line.variantName})`;
+    return price === undefined || price === parseAmount(line.offeredPriceText ?? '') ? [] : [{ name, price }];
+  });
+
+/** The lines with their new offers taken. */
+const withOffers = (lines: readonly DraftLine[], offers: ReadonlyMap<string, number>): DraftLine[] =>
+  lines.map((line) => {
+    const offer = offers.get(line.key);
+    return offer === undefined ? line : withOffer(line, offer);
+  });
 
 /**
  * Why the picked product cannot be added: it names no VAT classification, or its classification has no usable rate.
@@ -272,12 +326,45 @@ const useOrderEditForm = ({
       valid: !linesInvalid && !shippingInvalid && !addressInvalid && !contactInvalid,
     };
   };
+  /** The price an added line is offered at: what the server prices it at in this order. */
+  const offerOf = (offeredUnit: SellableUnit) =>
+    inOrderCurrency(
+      order,
+      gross
+        ? (offeredUnit.grossMinor ?? grossUnitPriceMinor(offeredUnit.netMinor, offeredUnit.vatRate))
+        : offeredUnit.netMinor,
+    );
+  /** An added line's offer as its product prices it now; undefined when the product cannot go on the order now. */
+  const currentOfferOf = (product: ProductRecord, line: DraftLine) => {
+    const current = sellableUnit(
+      product,
+      line.variantId ?? null,
+      lineClassification(product, vat, DateTime.nowUnsafe())?.current?.ratePercent,
+    );
+    return current === undefined ? undefined : offerOf(current);
+  };
+  // The added lines whose price changed meanwhile, with the price they carry now; shown until the next save is sent.
+  const [repriced, setRepriced] = useState<readonly RepricedLine[]>([]);
+  // Set once `record` exists: takes newly read offers into the draft.
+  const takeOffers = useRef<(offers: ReadonlyMap<string, number>) => void>(constVoid);
   const { record, savedOnce } = useOrderEditDraft({
     isValid: (value, confirmed) => draftValidation(value, confirmed).valid,
+    onSend: () => setRepriced([]),
+    // The server refused an added line whose price changed after it was picked: read those products again.
+    onOfferedPriceChanged: (value) =>
+      currentOffers(value.lines, currentOfferOf).pipe(
+        Effect.flatMap((offers) => Effect.sync(() => takeOffers.current(offers))),
+      ),
     order,
     revision,
   });
   const { draft } = record;
+  useEffect(() => {
+    takeOffers.current = (offers) => {
+      setRepriced(repricedLines(draft.lines, offers));
+      record.setDraft((current) => ({ ...current, lines: withOffers(current.lines, offers) }));
+    };
+  }, [draft.lines, record]);
   const patch = (next: Partial<Draft>) => record.setDraft((current) => ({ ...current, ...next }));
   const patchLine = (key: string, next: Partial<DraftLine>) =>
     patch({ lines: draft.lines.map((line) => (line.key === key ? { ...line, ...next } : line)) });
@@ -311,7 +398,9 @@ const useOrderEditForm = ({
     const existing = draft.lines.find((line) => line.productId === unit.productId && line.variantId === unit.variantId);
     if (existing !== undefined) {
       const quantity = parseQuantity(existing.quantityText) ?? 0;
-      patchLine(existing.key, { quantityText: String(quantity + rulesFor(existing).step) });
+      const more = { ...existing, quantityText: String(quantity + rulesFor(existing).step) };
+      // A line added in this edit takes the product's price as it is now; the order's own lines keep theirs.
+      patchLine(existing.key, existing.offeredPriceText === undefined ? more : withOffer(more, offerOf(unit)));
       clearPick();
       return;
     }
@@ -321,9 +410,7 @@ const useOrderEditForm = ({
         : (pickedProduct.variantRecords?.find((entry) => entry.id === unit.variantId) ?? pickedProduct),
     );
     // A gross-priced order (storefront) takes the stored price including VAT, exactly as the server prices the line.
-    const grossMinor = unit.grossMinor ?? grossUnitPriceMinor(unit.netMinor, unit.vatRate);
-    const unitPrice = inOrderCurrency(order, gross ? grossMinor : unit.netMinor);
-    const offered = moneyInputText(unitPrice / 100);
+    const offered = moneyInputText(offerOf(unit) / 100);
     const line: Mutable<DraftLine> = {
       key: `new-${sequence.current}`,
       name: unit.name,
@@ -378,6 +465,7 @@ const useOrderEditForm = ({
     preview,
     ratesConfirmation,
     record,
+    repriced,
     setPickedVariantId,
     shippingInvalid,
     t,
@@ -535,6 +623,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
     preview,
     ratesConfirmation,
     record,
+    repriced,
     setPickedVariantId,
     t,
     taxLabels,
@@ -731,6 +820,15 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
             {pick?.record.status === 'error' && (
               <StatusText showIcon status="error">
                 Produkt se nepodařilo načíst. Vyberte ho znovu.
+              </StatusText>
+            )}
+            {repriced.length > 0 && (
+              <StatusText showIcon status="warning">
+                {t('merchandise.ui.offeredPriceChanged', {
+                  lines: repriced
+                    .map((entry) => `${entry.name}: ${formatMoney(entry.price, orderCurrency(order))}`)
+                    .join(', '),
+                })}
               </StatusText>
             )}
           </div>
