@@ -845,26 +845,6 @@ export const privacyConsentPrincipal = {
   principalId: demoId(principalResource, 'privacy-consent-authority'),
 } as const;
 
-export const marketRetirementPrincipal = {
-  apiKeyName: 'market-retirement-authority',
-  displayName: 'Market · retirement authority',
-  kind: 'service',
-  legalEntityId: akrosDemoLegalEntityId,
-  principalId: demoId(principalResource, 'market-retirement-authority'),
-} as const;
-
-/**
- * Kavárna's Market owner gateway: API keys are bound to one company, so Kavárna's markets validate their storefront
- * (and reserve their retirement) through their own key (`ONTOS_COMMERCE_MARKET_CATALOG_COMPANY_GATEWAY_API_KEYS`).
- */
-export const kavarnaMarketAuthorityPrincipal = {
-  apiKeyName: 'kavarna-market-authority',
-  displayName: 'Market · Kavárna owner gateway',
-  kind: 'service',
-  legalEntityId: eshopDemoLegalEntityId,
-  principalId: demoId(principalResource, 'kavarna-market-authority'),
-} as const;
-
 export const COMMERCE_PORTAL_NAMESPACE = 'ontos.commerce.portal.better-auth.v1';
 
 /**
@@ -1067,20 +1047,6 @@ export const unmappedServicePrincipals = [
     reason:
       'The legacy customer.consent.resolve_authority / customer.notice.resolve_authority context permissions have no declared v2 capability.',
   },
-  {
-    carrier:
-      'commerce.customer-context.market-retirement.reserve (accessActor.callers=[commerce-market-catalog], subject=rights)',
-    principalId: marketRetirementPrincipal.principalId,
-    reason:
-      "The carrier delegates to the acting principal's rights, and the gateway principal is a service: it is refused on a rights carrier and declares no accessWorkload.",
-  },
-  {
-    carrier:
-      'commerce.customer-context.market-retirement.reserve (accessActor.callers=[commerce-market-catalog], subject=rights)',
-    principalId: kavarnaMarketAuthorityPrincipal.principalId,
-    reason:
-      "Same rights-delegated carrier as the AKROS market authority; Kavárna's gateway principal declares no accessWorkload either.",
-  },
 ] as const;
 
 /**
@@ -1118,8 +1084,6 @@ export const reviewedMachinePrincipals = [
   akrosStorefrontPrincipal,
   commercePortalPrincipal,
   privacyConsentPrincipal,
-  marketRetirementPrincipal,
-  kavarnaMarketAuthorityPrincipal,
   crmPartyIntakePrincipal,
 ] as const satisfies readonly {
   readonly displayName: string;

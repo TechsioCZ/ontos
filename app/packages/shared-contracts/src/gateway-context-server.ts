@@ -9,7 +9,11 @@ import type { Crypto } from 'effect';
 import { Config, ConfigProvider, Effect, Match, Option, Redacted, Schema } from 'effect';
 
 import { issueApiKeyGatewayContext, issueDelegatedGatewayContext } from './gateway-context-api-key.ts';
-import type { GatewayDelegatedContextRequest } from './gateway-context.ts';
+import type {
+  GatewayContextClientError,
+  GatewayContextProblem,
+  GatewayDelegatedContextRequest,
+} from './gateway-context.ts';
 
 export class GatewayDelegationSourceError extends Schema.TaggedError<GatewayDelegationSourceError>()(
   'GatewayDelegationSourceError',
@@ -18,6 +22,50 @@ export class GatewayDelegationSourceError extends Schema.TaggedError<GatewayDele
     reason: Schema.String,
   },
 ) {}
+
+/** Every way getting a gateway context can fail at the caller. */
+export type GatewayContextFailure = GatewayContextClientError | GatewayDelegationSourceError;
+
+const describeShellRefusal = (problem: GatewayContextProblem): string =>
+  Match.value(problem).pipe(
+    Match.tag(
+      'GatewayAuthenticationRequiredProblem',
+      'GatewayForbiddenProblem',
+      'GatewayReloadRequiredProblem',
+      'GatewayUnavailableProblem',
+      (refusal) =>
+        refusal.reason === undefined
+          ? `Shell refused (${refusal._tag})`
+          : `Shell refused (${refusal._tag}, reason ${refusal.reason})`,
+    ),
+    Match.orElse((refusal) => `Shell refused (${refusal._tag})`),
+  );
+
+/**
+ * What went wrong getting a gateway context, in words an operator can act on and nothing secret: the caller's own
+ * reason, the Shell's problem with its refusal code, or the transport failure. Never a key, token or subject.
+ */
+export const describeGatewayContextFailure = (failure: GatewayContextFailure): string =>
+  Match.value(failure).pipe(
+    Match.tag('GatewayDelegationSourceError', ({ reason }) => reason),
+    Match.tag('SchemaError', () => 'the Shell response could not be decoded'),
+    Match.tag('HttpClientError', ({ reason }) => `transport failure (${reason._tag})`),
+    Match.orElse(describeShellRefusal),
+  );
+
+/** The one warning a caller writes when its gateway context was not issued. */
+const logGatewayContextFailure = (
+  failure: GatewayContextFailure,
+  request: { readonly audience: string; readonly callingAppId: string; readonly subjectTenant: string },
+) =>
+  Effect.logWarning('gateway context not issued').pipe(
+    Effect.annotateLogs({
+      audience: request.audience,
+      callingAppId: request.callingAppId,
+      reason: describeGatewayContextFailure(failure),
+      subjectTenant: request.subjectTenant,
+    }),
+  );
 
 const VerifiedScopeSchema = Schema.declare<TrustedPrincipalContext>((value): value is TrustedPrincipalContext =>
   Schema.is(TrustedPrincipalContextSchema)(value),
@@ -119,61 +167,75 @@ const ShellGatewayBaseUrl = Config.schema(
 );
 
 /** Requests a fresh module-to-module context authenticated by this deployment's own module credential. */
-export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acquire')(function* acquire(
-  request: GatewayDelegationRequest,
-  crypto: Crypto.Crypto,
-) {
-  // Every delegated call reads its caller's own key from the slot the host claimed for that module, whichever
-  // runtime, worker or background fiber it runs in; nothing else in a process reads a module credential.
-  const apiKey = yield* ownModuleCredential(request.callingAppId);
-  if (Option.isNone(apiKey)) {
-    const reason = `No module credential of ${request.callingAppId} in this process: the host has not handed one over`;
-    // Owners turn this into a generic unavailable problem; the log keeps the cause visible to the operator.
-    yield* Effect.logWarning(reason);
-    return yield* new GatewayDelegationSourceError({ reason });
-  }
-  const [baseUrl, source] = yield* Effect.all(
-    [
-      ShellGatewayBaseUrl.parse(yield* ConfigProvider.ConfigProvider).pipe(
-        Effect.mapError(
-          (cause) => new GatewayDelegationSourceError({ cause, reason: 'Gateway delegation transport is unavailable' }),
+export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acquire')(
+  function* acquire(request: GatewayDelegationRequest, crypto: Crypto.Crypto) {
+    // Every delegated call reads its caller's own key from the slot the host claimed for that module, whichever
+    // runtime, worker or background fiber it runs in; nothing else in a process reads a module credential.
+    const apiKey = yield* ownModuleCredential(request.callingAppId);
+    if (Option.isNone(apiKey)) {
+      // Owners turn this into a generic unavailable problem; the warning below keeps the reason visible to the operator.
+      return yield* new GatewayDelegationSourceError({
+        reason: `No module credential of ${request.callingAppId} in this process: the host has not handed one over`,
+      });
+    }
+    const [baseUrl, source] = yield* Effect.all(
+      [
+        ShellGatewayBaseUrl.parse(yield* ConfigProvider.ConfigProvider).pipe(
+          Effect.mapError(
+            (cause) =>
+              new GatewayDelegationSourceError({ cause, reason: 'Gateway delegation transport is unavailable' }),
+          ),
         ),
-      ),
-      subjectWireOf(request.subject),
-    ],
-    { concurrency: 1 },
-  );
-  const exchangeId = yield* crypto
-    .randomUUIDv4()
-    .pipe(
-      Effect.mapError(
-        (cause) =>
-          new GatewayDelegationSourceError({ cause, reason: 'Gateway delegation attempt identity is unavailable' }),
-      ),
+        subjectWireOf(request.subject),
+      ],
+      { concurrency: 1 },
     );
-  const payload = {
-    audience: request.audience,
-    compositionRevision: source.compositionRevision,
-    exchangeId,
-    legalEntityScope: request.legalEntityScope,
-    subject: source.subject,
-  };
-  const response = yield* issueDelegatedGatewayContext(payload, {
-    apiKey: apiKey.value,
-    baseUrl,
-    requestCorrelation: request.requestCorrelation,
-  });
-  if (response.compositionRevision !== source.compositionRevision) {
-    return yield* new GatewayDelegationSourceError({ reason: 'Gateway delegation changed the admitted release' });
-  }
-  const authorization: `Bearer ${string}` = `Bearer ${response.token}`;
-  return {
-    apiBaseUrl: new URL(response.apiBaseUrl, baseUrl).toString(),
-    authorization,
-    compositionRevision: response.compositionRevision,
-    expiresAt: response.expiresAt,
-  };
-});
+    const exchangeId = yield* crypto
+      .randomUUIDv4()
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new GatewayDelegationSourceError({ cause, reason: 'Gateway delegation attempt identity is unavailable' }),
+        ),
+      );
+    const payload = {
+      audience: request.audience,
+      compositionRevision: source.compositionRevision,
+      exchangeId,
+      legalEntityScope: request.legalEntityScope,
+      subject: source.subject,
+    };
+    const response = yield* issueDelegatedGatewayContext(payload, {
+      apiKey: apiKey.value,
+      baseUrl,
+      requestCorrelation: request.requestCorrelation,
+    });
+    if (response.compositionRevision !== source.compositionRevision) {
+      return yield* new GatewayDelegationSourceError({ reason: 'Gateway delegation changed the admitted release' });
+    }
+    const authorization: `Bearer ${string}` = `Bearer ${response.token}`;
+    return {
+      apiBaseUrl: new URL(response.apiBaseUrl, baseUrl).toString(),
+      authorization,
+      compositionRevision: response.compositionRevision,
+      expiresAt: response.expiresAt,
+    };
+  },
+  (effect, request) =>
+    effect.pipe(
+      Effect.tapError((failure) =>
+        logGatewayContextFailure(failure, {
+          audience: request.audience,
+          callingAppId: request.callingAppId,
+          subjectTenant: Match.value(request.subject).pipe(
+            Match.tag('Originator', ({ tenantId }) => tenantId),
+            Match.tag('Assertion', ({ scope }) => scope.tenantId),
+            Match.exhaustive,
+          ),
+        }),
+      ),
+    ),
+);
 
 /** One internal workload context request: the calling module, its own workload and the tenant and company. */
 export interface WorkloadGatewayRequest {
@@ -193,41 +255,55 @@ export interface WorkloadGatewayRequest {
  * (never an environment variable). The Shell admits it exactly as any API key of that principal: through the
  * workload's binding and the carriers that declare it. Without a key for that tenant it fails closed.
  */
-export const acquireWorkloadGatewayContext = Effect.fn('GatewayWorkload.acquire')(function* acquireWorkload(
-  request: WorkloadGatewayRequest,
-) {
-  const key = yield* ownWorkloadCredential({
-    appId: request.callingAppId,
-    tenantId: request.tenantId,
-    workloadKey: request.workloadKey,
-  });
-  if (Option.isNone(key)) {
-    return yield* new GatewayDelegationSourceError({
-      reason: `No credential of ${request.workloadKey} for this tenant: the workload is not registered, or not provisioned yet`,
+export const acquireWorkloadGatewayContext = Effect.fn('GatewayWorkload.acquire')(
+  function* acquireWorkload(request: WorkloadGatewayRequest) {
+    const key = yield* ownWorkloadCredential({
+      appId: request.callingAppId,
+      tenantId: request.tenantId,
+      workloadKey: request.workloadKey,
     });
-  }
-  const baseUrl = yield* ShellGatewayBaseUrl.parse(yield* ConfigProvider.ConfigProvider).pipe(
-    Effect.mapError(
-      (cause) => new GatewayDelegationSourceError({ cause, reason: 'Gateway workload transport is unavailable' }),
+    if (Option.isNone(key)) {
+      return yield* new GatewayDelegationSourceError({
+        reason: `No credential of ${request.workloadKey} for this tenant: the workload is not registered, or not provisioned yet`,
+      });
+    }
+    const baseUrl = yield* ShellGatewayBaseUrl.parse(yield* ConfigProvider.ConfigProvider).pipe(
+      Effect.mapError(
+        (cause) => new GatewayDelegationSourceError({ cause, reason: 'Gateway workload transport is unavailable' }),
+      ),
+    );
+    const response = yield* issueApiKeyGatewayContext(
+      {
+        audience: request.audience,
+        compositionRevision: request.compositionRevision,
+        legalEntityId: request.legalEntityId,
+      },
+      { apiKey: key.value, baseUrl, requestCorrelation: request.requestCorrelation },
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new GatewayDelegationSourceError({
+            cause,
+            reason: `The workload gateway context was not issued: ${describeGatewayContextFailure(cause)}`,
+          }),
+      ),
+    );
+    const authorization: `Bearer ${string}` = `Bearer ${response.token}`;
+    return {
+      apiBaseUrl: new URL(response.apiBaseUrl, baseUrl).toString(),
+      authorization,
+      compositionRevision: response.compositionRevision,
+      expiresAt: response.expiresAt,
+    };
+  },
+  (effect, request) =>
+    effect.pipe(
+      Effect.tapError((failure) =>
+        logGatewayContextFailure(failure, {
+          audience: request.audience,
+          callingAppId: request.callingAppId,
+          subjectTenant: request.tenantId,
+        }),
+      ),
     ),
-  );
-  const response = yield* issueApiKeyGatewayContext(
-    {
-      audience: request.audience,
-      compositionRevision: request.compositionRevision,
-      legalEntityId: request.legalEntityId,
-    },
-    { apiKey: key.value, baseUrl, requestCorrelation: request.requestCorrelation },
-  ).pipe(
-    Effect.mapError(
-      (cause) => new GatewayDelegationSourceError({ cause, reason: 'The workload gateway context was not issued' }),
-    ),
-  );
-  const authorization: `Bearer ${string}` = `Bearer ${response.token}`;
-  return {
-    apiBaseUrl: new URL(response.apiBaseUrl, baseUrl).toString(),
-    authorization,
-    compositionRevision: response.compositionRevision,
-    expiresAt: response.expiresAt,
-  };
-});
+);

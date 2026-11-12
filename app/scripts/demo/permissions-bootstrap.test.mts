@@ -22,8 +22,6 @@ import {
   demoShellRoutingRole,
   demoTenantMemberships,
   demoPrincipalRoleKey,
-  kavarnaMarketAuthorityPrincipal,
-  marketRetirementPrincipal,
   privacyConsentPrincipal,
   reviewedDemoAssignments,
   reviewedMachinePrincipals,
@@ -151,13 +149,7 @@ it('binds each storefront to what its BFF calls, registered for its own company 
 it('leaves every other service principal unbound and names its carrier gap', () => {
   const bound = new Set(reviewedWorkloadBindings().map((binding) => binding.principalId));
   const unmapped = unmappedServicePrincipals.map((entry) => entry.principalId);
-  expect(new Set(unmapped)).toEqual(
-    new Set([
-      privacyConsentPrincipal.principalId,
-      marketRetirementPrincipal.principalId,
-      kavarnaMarketAuthorityPrincipal.principalId,
-    ]),
-  );
+  expect(new Set(unmapped)).toEqual(new Set([privacyConsentPrincipal.principalId]));
   for (const principalId of unmapped) {
     expect(bound.has(principalId)).toBe(false);
   }

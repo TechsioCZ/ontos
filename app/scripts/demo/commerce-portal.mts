@@ -43,8 +43,6 @@ import {
 import {
   COMMERCE_PORTAL_NAMESPACE,
   commercePortalPrincipal,
-  kavarnaMarketAuthorityPrincipal,
-  marketRetirementPrincipal,
   privacyConsentPrincipal,
   STOREFRONT_CLIENT_WORKLOAD,
   unmappedServicePrincipals,
@@ -335,20 +333,6 @@ export const provisionCommercePortal = (existing: ReadonlyMap<string, string> = 
         kind: 'service' as const,
         legalEntityId: privacyConsentPrincipal.legalEntityId,
         principalId: privacyConsentPrincipal.principalId,
-        tenantId: demoTenantId,
-      },
-      {
-        displayName: marketRetirementPrincipal.displayName,
-        kind: 'service' as const,
-        legalEntityId: marketRetirementPrincipal.legalEntityId,
-        principalId: marketRetirementPrincipal.principalId,
-        tenantId: demoTenantId,
-      },
-      {
-        displayName: kavarnaMarketAuthorityPrincipal.displayName,
-        kind: 'service' as const,
-        legalEntityId: kavarnaMarketAuthorityPrincipal.legalEntityId,
-        principalId: kavarnaMarketAuthorityPrincipal.principalId,
         tenantId: demoTenantId,
       },
     ]);
