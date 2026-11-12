@@ -129,6 +129,13 @@ import {
 } from '../../verticals/merchandise/src/services/persistence.service.ts';
 import { TAX_RATE_FRESHNESS, currentTaxRateBook } from '../../verticals/merchandise/src/services/tax-rates.ts';
 import { merchandiseRegistration } from '../../verticals/merchandise/vertical.registration.ts';
+import {
+  INFORMATIONAL_GROSS,
+  JACKET_GROSS,
+  VAT_TRANSITION_VIEWS,
+  expectJacketAtVariantPrice,
+  withBookItAt,
+} from '../../verticals/merchandise/tests/support/vat-transition-fixture.ts';
 import { governedReadApiHandlersLive as taxHandlersLive } from '../../verticals/tax/api/index.ts';
 import { taxApi } from '../../verticals/tax/shared/api.ts';
 import { ultramodernApiMarker as taxMarker } from '../../verticals/tax/shared/ultramodern-build.ts';
@@ -170,6 +177,7 @@ const here = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 const FixtureSchema = Schema.Struct({
   after: Schema.Record(Schema.String, Schema.Json),
   before: Schema.Record(Schema.String, Schema.Json),
+  jacketOrder: Schema.Struct({ command: Schema.Json, storefrontOrder: Schema.Json }),
   order: Schema.Struct({ command: Schema.Json, storefrontOrder: Schema.Json }),
   rows: Schema.Record(Schema.String, Schema.Array(Schema.Record(Schema.String, Schema.Json))),
 });
@@ -188,38 +196,10 @@ const TABLES = [
   'market_settings',
   'market_product_offers',
 ] as const;
-const MARKET_ID = '5f2d6c1e-7a3b-4c8d-9e0f-1a2b3c4d5e6f';
-const STOREFRONT = { storefront: true } as const;
-const views = {
-  cards: { view: { ...STOREFRONT, storefrontCatalog: { fields: 'card' } } },
-  cart: { view: { ...STOREFRONT, storefrontCatalog: { fields: 'full', productIds: ['book-it', 'p-reduced', 'p2'] } } },
-  category: { view: { ...STOREFRONT, storefrontCatalog: { categorySlug: 'metricke', fields: 'card' } } },
-  detailBookIt: { view: { ...STOREFRONT, storefrontCatalog: { fields: 'full', slug: 'book-it' } } },
-  detailOddVariant: { view: { ...STOREFRONT, storefrontCatalog: { fields: 'full', slug: 'odd-variant' } } },
-  detailReduced: { view: { ...STOREFRONT, storefrontCatalog: { fields: 'full', slug: 'kava-zrnkova' } } },
-  featured: { view: { ...STOREFRONT, storefrontCatalog: { featured: true, fields: 'card' } } },
-  legacyList: { view: { ...STOREFRONT, limit: 250, summary: true } },
-  marketCards: { view: { ...STOREFRONT, storefrontCatalog: { fields: 'card', marketId: MARKET_ID } } },
-  marketDetail: {
-    view: { ...STOREFRONT, storefrontCatalog: { fields: 'full', marketId: MARKET_ID, slug: 'book-it' } },
-  },
-  priceAscending: { view: { ...STOREFRONT, storefrontCatalog: { fields: 'card', sort: 'price-asc' } } },
-  priceBounds: { view: { ...STOREFRONT, storefrontCatalog: { fields: 'card', maxMinor: 60_000, minMinor: 100 } } },
-  search: { view: { ...STOREFRONT, storefrontCatalog: { fields: 'card', q: 'sroub' } } },
-} satisfies Readonly<Record<string, RecordsRequestEncoded>>;
+const views = VAT_TRANSITION_VIEWS;
 
 const JsonRecordSchema = Schema.Record(Schema.String, Schema.Json);
-/** A response with BOOK-IT at the rate Tax gives the reduced classification; every price stays as it was. */
-const withBookItAt = (value: Schema.Json, vatRate: number): Schema.Json => {
-  if (Array.isArray(value)) {
-    return value.map((item: Schema.Json) => withBookItAt(item, vatRate));
-  }
-  if (!Schema.is(JsonRecordSchema)(value)) {
-    return value;
-  }
-  const mapped = Object.fromEntries(Object.entries(value).map(([key, item]) => [key, withBookItAt(item, vatRate)]));
-  return mapped.id === 'book-it' && 'vatRate' in mapped ? { ...mapped, vatRate } : mapped;
-};
+const decodeResponses = Schema.decodeUnknownSync(JsonRecordSchema);
 const encodeResponse = Schema.encodeSync(RecordsResponseSchema);
 /** The encoded response without the per-run identities (the actor and the catalog revision). */
 const comparable = (response: typeof RecordsResponseSchema.Type) => {
@@ -871,13 +851,16 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
     { concurrency: 1 },
   ).pipe(Effect.map(Object.fromEntries));
   /** The fixture's storefront order, prepared (Tax asked through the delegated call) and written by Merchandise. */
-  const placeOrder = Effect.fn('VatDeploy.placeOrder')(function* placeOrder(clientRequestId: string) {
+  const placeOrder = Effect.fn('VatDeploy.placeOrder')(function* placeOrder(
+    clientRequestId: string,
+    entry: { readonly command: Schema.Json } = fixture.order,
+  ) {
     const [head] = yield* adminPg.unsafe<{ readonly revision: number }>(
       'select revision from demo_merchandise.catalog_heads where tenant_id = $1 and legal_entity_id = $2',
       [tenantId, companyId],
     );
     const expectedRevision = head?.revision ?? 0;
-    const { command } = Schema.decodeUnknownSync(Schema.Struct({ command: JsonRecordSchema }))(fixture.order.command);
+    const { command } = Schema.decodeUnknownSync(Schema.Struct({ command: JsonRecordSchema }))(entry.command);
     const payload = Schema.decodeUnknownSync(MerchandiseCommandPayloadSchema)({
       command: { ...command, clientRequestId },
       expectedRevision,
@@ -905,12 +888,21 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
   });
 
   // 2. Tax not installed: the same bytes, and the same order with the same lines and totals.
-  expect(yield* storefront).toEqual(fixture.before);
+  const migrated = decodeResponses(yield* storefront);
+  expect(migrated).toEqual(fixture.before);
+  expectJacketAtVariantPrice(migrated);
   const placed = yield* placeOrder('vat-deploy-order-1');
   expect(placed.prepared.refused).toBe(true);
   const orderBefore = Schema.decodeUnknownSync(JsonRecordSchema)(fixture.order.storefrontOrder);
   expect(placed.order).toEqual({ ...orderBefore, orderId: placed.order?.orderId });
-  expect(yield* storefront).toEqual(fixture.after);
+  // A jacket variant at 10 623,80 and the product with informational variants at its own price, as before.
+  const jacket = yield* placeOrder('vat-transition-order-jacket', fixture.jacketOrder);
+  const jacketBefore = Schema.decodeUnknownSync(JsonRecordSchema)(fixture.jacketOrder.storefrontOrder);
+  expect(jacket.order).toEqual({ ...jacketBefore, orderId: jacket.order?.orderId });
+  expect(jacket.order?.lines.map((sold) => sold.unitPriceMinor)).toEqual([JACKET_GROSS, INFORMATIONAL_GROSS]);
+  const after = decodeResponses(yield* storefront);
+  expect(after).toEqual(fixture.after);
+  expectJacketAtVariantPrice(after);
 
   // The seed as the owner, through its own planner, against Tax's root.
   const taxCall: TaxCall = (run) =>
@@ -1006,7 +998,11 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
     ],
   );
   // Storefront: the same bytes, except BOOK-IT, now reduced at 12 %; no price moved.
-  expect(yield* later(storefront)).toEqual(withBookItAt(fixture.after, 12));
+  const priced = decodeResponses(yield* later(storefront));
+  expect(priced).toEqual(withBookItAt(fixture.after, 12));
+  expectJacketAtVariantPrice(priced);
+  const pricedJacket = yield* later(placeOrder('vat-deploy-order-jacket-priced', fixture.jacketOrder));
+  expect(pricedJacket.order?.lines.map((sold) => sold.unitPriceMinor)).toEqual([JACKET_GROSS, INFORMATIONAL_GROSS]);
 
   // 6. Finance after the seed: the line picks the standard classification and stores Tax's rule revision, for an
   //    invoice dated today and one dated 1 January 2024 (the seed's Prague midnight).

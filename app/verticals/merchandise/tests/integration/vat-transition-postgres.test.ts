@@ -41,6 +41,13 @@ import {
 } from '../../src/services/tax-rates.ts';
 import type { TaxRateBook } from '../../src/services/tax-rates.ts';
 import { merchandiseRegistration } from '../../vertical.registration.ts';
+import {
+  INFORMATIONAL_GROSS,
+  JACKET_GROSS,
+  VAT_TRANSITION_VIEWS,
+  expectJacketAtVariantPrice,
+  withBookItAt,
+} from '../support/vat-transition-fixture.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -54,26 +61,28 @@ const migrationOptions = (folder: string) => ({
   migrationsTable: '__drizzle_migrations_demo_merchandise',
 });
 
+const FixtureOrderSchema = Schema.Struct({
+  command: Schema.Json,
+  document: Schema.Struct({
+    lines: Schema.Array(
+      Schema.Struct({
+        quantity: Schema.Number,
+        sku: Schema.String,
+        unitPriceMinor: Schema.Number,
+        vatRate: Schema.Number,
+      }),
+    ),
+    shipping: Schema.Json,
+    totalMinor: Schema.Number,
+    totalVatMinor: Schema.Number,
+  }),
+  storefrontOrder: Schema.Json,
+});
 const FixtureSchema = Schema.Struct({
   after: Schema.Record(Schema.String, Schema.Json),
   before: Schema.Record(Schema.String, Schema.Json),
-  order: Schema.Struct({
-    command: Schema.Json,
-    document: Schema.Struct({
-      lines: Schema.Array(
-        Schema.Struct({
-          quantity: Schema.Number,
-          sku: Schema.String,
-          unitPriceMinor: Schema.Number,
-          vatRate: Schema.Number,
-        }),
-      ),
-      shipping: Schema.Json,
-      totalMinor: Schema.Number,
-      totalVatMinor: Schema.Number,
-    }),
-    storefrontOrder: Schema.Json,
-  }),
+  jacketOrder: FixtureOrderSchema,
+  order: FixtureOrderSchema,
   rows: Schema.Record(Schema.String, Schema.Array(Schema.Record(Schema.String, Schema.Json))),
 });
 const fixture = Schema.decodeUnknownSync(Schema.fromJsonString(FixtureSchema))(
@@ -91,26 +100,8 @@ const TABLES = [
   'market_settings',
   'market_product_offers',
 ] as const;
-const MARKET_ID = '5f2d6c1e-7a3b-4c8d-9e0f-1a2b3c4d5e6f';
-const views = {
-  cards: { view: { storefront: true, storefrontCatalog: { fields: 'card' } } },
-  cart: {
-    view: { storefront: true, storefrontCatalog: { fields: 'full', productIds: ['book-it', 'p-reduced', 'p2'] } },
-  },
-  category: { view: { storefront: true, storefrontCatalog: { categorySlug: 'metricke', fields: 'card' } } },
-  detailBookIt: { view: { storefront: true, storefrontCatalog: { fields: 'full', slug: 'book-it' } } },
-  detailOddVariant: { view: { storefront: true, storefrontCatalog: { fields: 'full', slug: 'odd-variant' } } },
-  detailReduced: { view: { storefront: true, storefrontCatalog: { fields: 'full', slug: 'kava-zrnkova' } } },
-  featured: { view: { storefront: true, storefrontCatalog: { featured: true, fields: 'card' } } },
-  legacyList: { view: { limit: 250, storefront: true, summary: true } },
-  marketCards: { view: { storefront: true, storefrontCatalog: { fields: 'card', marketId: MARKET_ID } } },
-  marketDetail: {
-    view: { storefront: true, storefrontCatalog: { fields: 'full', marketId: MARKET_ID, slug: 'book-it' } },
-  },
-  priceAscending: { view: { storefront: true, storefrontCatalog: { fields: 'card', sort: 'price-asc' } } },
-  priceBounds: { view: { storefront: true, storefrontCatalog: { fields: 'card', maxMinor: 60_000, minMinor: 100 } } },
-  search: { view: { storefront: true, storefrontCatalog: { fields: 'card', q: 'sroub' } } },
-} satisfies Readonly<Record<string, RecordsRequestEncoded>>;
+const views = VAT_TRANSITION_VIEWS;
+const JsonRecordSchema = Schema.Record(Schema.String, Schema.Json);
 
 /** Tax's Czech baseline for the company: a payer from 1 January 2024 (Prague), standard 21 %, reduced 12 %. */
 const PRAGUE_2024 = DateTime.makeUnsafe('2023-12-31T23:00:00.000Z');
@@ -134,19 +125,6 @@ const BASELINE: TaxRateBook = {
 };
 const refused = () => Effect.fail(new TaxRatesFailure({ kind: 'REFUSED' }));
 
-/** A response with BOOK-IT at the rate Tax gives the reduced classification; every price stays as it was. */
-const JsonRecordSchema = Schema.Record(Schema.String, Schema.Json);
-const withBookItAt = (value: Schema.Json, vatRate: number): Schema.Json => {
-  if (Array.isArray(value)) {
-    return value.map((item: Schema.Json) => withBookItAt(item, vatRate));
-  }
-  if (!Schema.is(JsonRecordSchema)(value)) {
-    return value;
-  }
-  const mapped = Object.fromEntries(Object.entries(value).map(([key, item]) => [key, withBookItAt(item, vatRate)]));
-  return mapped.id === 'book-it' && 'vatRate' in mapped ? { ...mapped, vatRate } : mapped;
-};
-
 const encodeResponse = Schema.encodeSync(RecordsResponseSchema);
 /** The encoded response without the per-run identities (the actor and the catalog revision). */
 const comparable = (response: typeof RecordsResponseSchema.Type) => {
@@ -159,18 +137,23 @@ const comparable = (response: typeof RecordsResponseSchema.Type) => {
 type RuntimeDb = Effect.Success<ReturnType<typeof makeTestDatabaseFromClient<typeof merchandiseRelations>>>;
 type TaxSource = Effect.Success<typeof TaxRateSource>;
 
-/** The fixture's storefront order (a fresh client request id), placed through Merchandise's own preparation and write. */
+/** An order's lines as compared: what was sold, at what unit price and rate. */
+const linesOf = (document: typeof FixtureOrderSchema.Type.document) =>
+  document.lines.map(({ quantity, sku, unitPriceMinor, vatRate }) => ({ quantity, sku, unitPriceMinor, vatRate }));
+
+/** A fixture's storefront order (a fresh client request id), placed through Merchandise's own preparation and write. */
 const placeOrder = Effect.fn('VatTransition.placeOrder')(function* placeOrder(
   input: {
     readonly db: RuntimeDb;
     readonly principal: Effect.Success<ReturnType<typeof makeNativeReadTestContext>>['principal'];
     readonly source: TaxSource;
   },
+  entry: typeof FixtureOrderSchema.Type,
   clientRequestId: string,
   expectedRevision: number,
 ) {
   const { command } = Schema.decodeUnknownSync(Schema.Struct({ command: Schema.Record(Schema.String, Schema.Json) }))(
-    fixture.order.command,
+    entry.command,
   );
   const payload = Schema.decodeUnknownSync(MerchandiseCommandPayloadSchema)({
     command: { ...command, clientRequestId },
@@ -301,7 +284,9 @@ it.layer(nativeServices, { excludeTestServices: true })('VAT classification depl
         ).pipe(Effect.map(Object.fromEntries));
 
         // 1. Right after the migration, Tax not installed: the same bytes as before, and no call to Tax.
-        expect(yield* storefront).toEqual(fixture.before);
+        const migrated = yield* storefront;
+        expect(migrated).toEqual(fixture.before);
+        expectJacketAtVariantPrice(migrated);
         expect(yield* Ref.get(taxCalls)).toBe(0);
 
         // The same storefront order, placed by Merchandise's persistence in a runtime-role transaction.
@@ -309,40 +294,43 @@ it.layer(nativeServices, { excludeTestServices: true })('VAT classification depl
           yield* makeTestPgClient(isolated.connections.runtime.connectionString, { maxConnections: 1 }),
           merchandiseRelations,
         );
-        const [head] = yield* admin.unsafe<{ readonly revision: number }>(
-          'select revision from demo_merchandise.catalog_heads where tenant_id = $1 and legal_entity_id = $2',
-          [company.tenantId, company.legalEntityId],
-        );
         const orders = { db: runtimeDb, principal: native.principal, source };
-        const placed = yield* placeOrder(orders, 'vat-transition-order-1', head?.revision ?? 0);
-        // The same order as before the migration; only its id, derived from this run's invocation, differs.
-        const orderBefore = Schema.decodeUnknownSync(JsonRecordSchema)(fixture.order.storefrontOrder);
-        expect(placed).toEqual({ ...orderBefore, orderId: placed?.orderId });
-        const [stored] = yield* admin.unsafe<{ readonly document: typeof fixture.order.document }>(
-          `select document from demo_merchandise.orders where tenant_id = $1 and legal_entity_id = $2
-              and client_request_id = 'vat-transition-order-1'`,
-          [company.tenantId, company.legalEntityId],
+        const revisionNow = admin
+          .unsafe<{ readonly revision: number }>(
+            'select revision from demo_merchandise.catalog_heads where tenant_id = $1 and legal_entity_id = $2',
+            [company.tenantId, company.legalEntityId],
+          )
+          .pipe(Effect.map(([head]) => head?.revision ?? 0));
+        // The same order as before the migration; only its id (and, when placed again, its number) differs.
+        const placeSameOrder = Effect.fn('VatTransition.placeSameOrder')(function* placeSameOrder(
+          entry: typeof FixtureOrderSchema.Type,
+          clientRequestId: string,
+        ) {
+          const placed = yield* placeOrder(orders, entry, clientRequestId, yield* revisionNow);
+          const orderBefore = Schema.decodeUnknownSync(JsonRecordSchema)(entry.storefrontOrder);
+          expect(placed).toEqual({ ...orderBefore, orderId: placed?.orderId, orderNumber: placed?.orderNumber });
+          const [stored] = yield* admin.unsafe<{ readonly document: typeof entry.document }>(
+            `select document from demo_merchandise.orders where tenant_id = $1 and legal_entity_id = $2
+                and client_request_id = $3`,
+            [company.tenantId, company.legalEntityId, clientRequestId],
+          );
+          expect(stored?.document.totalMinor).toBe(entry.document.totalMinor);
+          expect(stored?.document.totalVatMinor).toBe(entry.document.totalVatMinor);
+          expect(stored?.document.shipping).toEqual(entry.document.shipping);
+          expect(stored === undefined ? [] : linesOf(stored.document)).toEqual(linesOf(entry.document));
+          return placed;
+        });
+        const placed = yield* placeSameOrder(fixture.order, 'vat-transition-order-1');
+        expect(placed?.orderNumber).toEqual(
+          Schema.decodeUnknownSync(JsonRecordSchema)(fixture.order.storefrontOrder).orderNumber,
         );
-        expect(stored?.document.totalMinor).toBe(fixture.order.document.totalMinor);
-        expect(stored?.document.totalVatMinor).toBe(fixture.order.document.totalVatMinor);
-        expect(stored?.document.shipping).toEqual(fixture.order.document.shipping);
-        expect(
-          stored?.document.lines.map(({ quantity, sku, unitPriceMinor, vatRate }) => ({
-            quantity,
-            sku,
-            unitPriceMinor,
-            vatRate,
-          })),
-        ).toEqual(
-          fixture.order.document.lines.map(({ quantity, sku, unitPriceMinor, vatRate }) => ({
-            quantity,
-            sku,
-            unitPriceMinor,
-            vatRate,
-          })),
-        );
-        // The storefront after the order: exactly what the code before classifications showed after it.
-        expect(yield* storefront).toEqual(fixture.after);
+        // A jacket variant sells at 10 623,80 as before; the product with informational variants at its own price.
+        const jacket = yield* placeSameOrder(fixture.jacketOrder, 'vat-transition-order-jacket');
+        expect(jacket?.lines.map((line) => line.unitPriceMinor)).toEqual([JACKET_GROSS, INFORMATIONAL_GROSS]);
+        // The storefront after the orders: exactly what the code before classifications showed after them.
+        const after = yield* storefront;
+        expect(after).toEqual(fixture.after);
+        expectJacketAtVariantPrice(after);
 
         // 2. Tax is installed and seeded, and the wait after its refusal has passed; staff reads sync the company with
         //    no person involved. The first one answers from the materialised rates at once and starts the refresh;
@@ -372,8 +360,13 @@ it.layer(nativeServices, { excludeTestServices: true })('VAT classification depl
           false,
         ]);
         const callsBeforeStorefront = yield* Ref.get(taxCalls);
-        expect(yield* storefront).toEqual(withBookItAt(fixture.after, 12));
+        const priced = yield* storefront;
+        expect(priced).toEqual(withBookItAt(fixture.after, 12));
         expect(yield* Ref.get(taxCalls)).toBe(callsBeforeStorefront);
+        // Once Tax prices the company the jacket still sells at its variants' 10 623,80.
+        expectJacketAtVariantPrice(priced);
+        const again = yield* placeSameOrder(fixture.jacketOrder, 'vat-transition-order-jacket-priced');
+        expect(again?.lines.map((line) => line.unitPriceMinor)).toEqual([JACKET_GROSS, INFORMATIONAL_GROSS]);
       }).pipe(Effect.provideServiceEffect(Clock.Clock, Clock.Clock.pipe(Effect.map((real) => laterClock(real))))),
     240_000,
   );

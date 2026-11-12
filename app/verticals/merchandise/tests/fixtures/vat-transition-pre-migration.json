@@ -32,18 +32,95 @@
       ],
       "page": 1,
       "pageSize": 24,
-      "total": 9,
-      "totalProducts": 9,
+      "total": 11,
+      "totalProducts": 11,
       "indicators": {
         "lowStockCount": 5,
         "openOrderValueMinor": 0,
         "orderCount": 0,
-        "productCount": 9,
+        "productCount": 11,
         "stockValueMinor": 0
       },
       "movements": [],
       "orders": [],
       "products": [
+        {
+          "slug": "panska-bunda-spyder-vyper-jacket-cerna",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.891Z",
+          "currentPriceMinor": 1878000,
+          "id": "spyder-jacket",
+          "lowStockThreshold": 0,
+          "name": "Pánská bunda Spyder Vyper Jacket – černá",
+          "priceHistory": [],
+          "sku": "38SA073510-BLK",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.902Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 1062380,
+          "lowStock": false,
+          "stockOnHand": 14,
+          "stockValueMinor": 12292000,
+          "variantSummary": {
+            "count": 5,
+            "minGrossPriceMinor": 1062380,
+            "stockOnHand": 14,
+            "units": [
+              "ks"
+            ]
+          },
+          "storefrontVariantPreview": {
+            "total": 5,
+            "variants": [
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v1",
+                "name": "S"
+              },
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v2",
+                "name": "M"
+              },
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v3",
+                "name": "L"
+              }
+            ]
+          },
+          "gallery": []
+        },
+        {
+          "slug": "tricko-barvy",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.911Z",
+          "currentPriceMinor": 41240,
+          "id": "informational-variants",
+          "lowStockThreshold": 0,
+          "name": "Tričko v barvách",
+          "priceHistory": [],
+          "sku": "TRICKO-BARVY",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.911Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 49900,
+          "lowStock": false,
+          "stockOnHand": 3,
+          "stockValueMinor": 123720,
+          "variantSummary": {
+            "count": 0,
+            "minGrossPriceMinor": null,
+            "stockOnHand": 0,
+            "units": []
+          },
+          "storefrontVariantPreview": {
+            "total": 0,
+            "variants": []
+          },
+          "gallery": []
+        },
         {
           "categoryId": "c",
           "categoryPathIds": [
@@ -700,6 +777,223 @@
         }
       ]
     },
+    "detailInformational": {
+      "categories": [
+        {
+          "description": "Krátký popis",
+          "hasChildren": true,
+          "id": "r",
+          "imageAlt": "Šrouby",
+          "imageSrc": "",
+          "name": "Šrouby",
+          "parentId": null,
+          "position": 0,
+          "slug": "srouby"
+        },
+        {
+          "hasChildren": false,
+          "id": "c",
+          "name": "Metrické",
+          "parentId": "r",
+          "position": 1,
+          "slug": "metricke"
+        }
+      ],
+      "canCleanupDemo": false,
+      "canEditOrders": false,
+      "canManageCatalog": false,
+      "canManageMarkets": false,
+      "canWrite": false,
+      "homepageFeaturedProductIds": [
+        "p3"
+      ],
+      "page": 1,
+      "pageSize": 2,
+      "total": 1,
+      "totalProducts": 1,
+      "indicators": {
+        "lowStockCount": 0,
+        "openOrderValueMinor": 0,
+        "orderCount": 0,
+        "productCount": 1,
+        "stockValueMinor": 0
+      },
+      "movements": [],
+      "orders": [],
+      "products": [
+        {
+          "slug": "tricko-barvy",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.911Z",
+          "currentPriceMinor": 41240,
+          "id": "informational-variants",
+          "lowStockThreshold": 0,
+          "name": "Tričko v barvách",
+          "priceHistory": [],
+          "sku": "TRICKO-BARVY",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.911Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 49900,
+          "lowStock": false,
+          "stockOnHand": 3,
+          "stockValueMinor": 123720,
+          "variantSummary": {
+            "count": 0,
+            "minGrossPriceMinor": null,
+            "stockOnHand": 0,
+            "units": []
+          },
+          "descriptionParagraphs": [],
+          "gallery": []
+        }
+      ]
+    },
+    "detailJacket": {
+      "categories": [
+        {
+          "description": "Krátký popis",
+          "hasChildren": true,
+          "id": "r",
+          "imageAlt": "Šrouby",
+          "imageSrc": "",
+          "name": "Šrouby",
+          "parentId": null,
+          "position": 0,
+          "slug": "srouby"
+        },
+        {
+          "hasChildren": false,
+          "id": "c",
+          "name": "Metrické",
+          "parentId": "r",
+          "position": 1,
+          "slug": "metricke"
+        }
+      ],
+      "canCleanupDemo": false,
+      "canEditOrders": false,
+      "canManageCatalog": false,
+      "canManageMarkets": false,
+      "canWrite": false,
+      "homepageFeaturedProductIds": [
+        "p3"
+      ],
+      "page": 1,
+      "pageSize": 2,
+      "total": 1,
+      "totalProducts": 1,
+      "indicators": {
+        "lowStockCount": 0,
+        "openOrderValueMinor": 0,
+        "orderCount": 0,
+        "productCount": 1,
+        "stockValueMinor": 0
+      },
+      "movements": [],
+      "orders": [],
+      "products": [
+        {
+          "slug": "panska-bunda-spyder-vyper-jacket-cerna",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.891Z",
+          "currentPriceMinor": 1878000,
+          "id": "spyder-jacket",
+          "lowStockThreshold": 0,
+          "name": "Pánská bunda Spyder Vyper Jacket – černá",
+          "priceHistory": [],
+          "sku": "38SA073510-BLK",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.902Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 1062380,
+          "lowStock": false,
+          "stockOnHand": 14,
+          "stockValueMinor": 12292000,
+          "variantRecords": [
+            {
+              "active": true,
+              "attributes": "Velikost: S",
+              "availability": "IN_STOCK",
+              "grossPriceMinor": 1062380,
+              "id": "8ccf370e-f138-4127-b859-051c3529933e-v1",
+              "name": "S",
+              "priceHistory": [],
+              "priceMinor": 878000,
+              "sku": "38SA073510-BLK-S",
+              "stockOnHand": 3,
+              "unit": "ks"
+            },
+            {
+              "active": true,
+              "attributes": "Velikost: M",
+              "availability": "IN_STOCK",
+              "grossPriceMinor": 1062380,
+              "id": "8ccf370e-f138-4127-b859-051c3529933e-v2",
+              "name": "M",
+              "priceHistory": [],
+              "priceMinor": 878000,
+              "sku": "38SA073510-BLK-M",
+              "stockOnHand": 2,
+              "unit": "ks"
+            },
+            {
+              "active": true,
+              "attributes": "Velikost: L",
+              "availability": "IN_STOCK",
+              "grossPriceMinor": 1062380,
+              "id": "8ccf370e-f138-4127-b859-051c3529933e-v3",
+              "name": "L",
+              "priceHistory": [],
+              "priceMinor": 878000,
+              "sku": "38SA073510-BLK-L",
+              "stockOnHand": 3,
+              "unit": "ks"
+            },
+            {
+              "active": true,
+              "attributes": "Velikost: XL",
+              "availability": "IN_STOCK",
+              "grossPriceMinor": 1062380,
+              "id": "8ccf370e-f138-4127-b859-051c3529933e-v4",
+              "name": "XL",
+              "priceHistory": [],
+              "priceMinor": 878000,
+              "sku": "38SA073510-BLK-XL",
+              "stockOnHand": 3,
+              "unit": "ks"
+            },
+            {
+              "active": true,
+              "attributes": "Velikost: XXL",
+              "availability": "IN_STOCK",
+              "grossPriceMinor": 1062380,
+              "id": "8ccf370e-f138-4127-b859-051c3529933e-v5",
+              "name": "XXL",
+              "priceHistory": [],
+              "priceMinor": 878000,
+              "sku": "38SA073510-BLK-XXL",
+              "stockOnHand": 3,
+              "unit": "ks"
+            }
+          ],
+          "variantSummary": {
+            "count": 5,
+            "minGrossPriceMinor": 1062380,
+            "stockOnHand": 14,
+            "units": [
+              "ks"
+            ]
+          },
+          "descriptionParagraphs": [],
+          "gallery": []
+        }
+      ]
+    },
     "detailOddVariant": {
       "categories": [
         {
@@ -1038,18 +1332,74 @@
       "canManageCatalog": false,
       "canManageMarkets": false,
       "canWrite": false,
-      "totalProducts": 9,
+      "totalProducts": 11,
       "canResetDemo": false,
       "indicators": {
         "lowStockCount": 5,
         "openOrderValueMinor": 0,
         "orderCount": 0,
-        "productCount": 9,
+        "productCount": 11,
         "stockValueMinor": 0
       },
       "movements": [],
       "orders": [],
       "products": [
+        {
+          "slug": "panska-bunda-spyder-vyper-jacket-cerna",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.891Z",
+          "currentPriceMinor": 1878000,
+          "id": "spyder-jacket",
+          "lowStockThreshold": 0,
+          "name": "Pánská bunda Spyder Vyper Jacket – černá",
+          "priceHistory": [],
+          "sku": "38SA073510-BLK",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.902Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 1062380,
+          "lowStock": false,
+          "stockOnHand": 14,
+          "stockValueMinor": 12292000,
+          "variantCount": 5,
+          "variantSummary": {
+            "count": 5,
+            "minGrossPriceMinor": 1062380,
+            "stockOnHand": 14,
+            "units": [
+              "ks"
+            ]
+          }
+        },
+        {
+          "slug": "tricko-barvy",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.911Z",
+          "currentPriceMinor": 41240,
+          "id": "informational-variants",
+          "lowStockThreshold": 0,
+          "name": "Tričko v barvách",
+          "priceHistory": [],
+          "sku": "TRICKO-BARVY",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.911Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 49900,
+          "lowStock": false,
+          "stockOnHand": 3,
+          "stockValueMinor": 123720,
+          "variantCount": 0,
+          "variantSummary": {
+            "count": 0,
+            "minGrossPriceMinor": null,
+            "stockOnHand": 0,
+            "units": []
+          }
+        },
         {
           "parameters": [
             {
@@ -1398,18 +1748,95 @@
       ],
       "page": 1,
       "pageSize": 24,
-      "total": 8,
-      "totalProducts": 8,
+      "total": 10,
+      "totalProducts": 10,
       "indicators": {
         "lowStockCount": 4,
         "openOrderValueMinor": 0,
         "orderCount": 0,
-        "productCount": 8,
+        "productCount": 10,
         "stockValueMinor": 0
       },
       "movements": [],
       "orders": [],
       "products": [
+        {
+          "slug": "panska-bunda-spyder-vyper-jacket-cerna",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.891Z",
+          "currentPriceMinor": 75120,
+          "id": "spyder-jacket",
+          "lowStockThreshold": 0,
+          "name": "Pánská bunda Spyder Vyper Jacket – černá",
+          "priceHistory": [],
+          "sku": "38SA073510-BLK",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.902Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 42500,
+          "lowStock": false,
+          "stockOnHand": 14,
+          "stockValueMinor": 12292000,
+          "variantSummary": {
+            "count": 5,
+            "minGrossPriceMinor": 42500,
+            "stockOnHand": 14,
+            "units": [
+              "ks"
+            ]
+          },
+          "storefrontVariantPreview": {
+            "total": 5,
+            "variants": [
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v1",
+                "name": "S"
+              },
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v2",
+                "name": "M"
+              },
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v3",
+                "name": "L"
+              }
+            ]
+          },
+          "gallery": []
+        },
+        {
+          "slug": "tricko-barvy",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.911Z",
+          "currentPriceMinor": 1650,
+          "id": "informational-variants",
+          "lowStockThreshold": 0,
+          "name": "Tričko v barvách",
+          "priceHistory": [],
+          "sku": "TRICKO-BARVY",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.911Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 2000,
+          "lowStock": false,
+          "stockOnHand": 3,
+          "stockValueMinor": 123720,
+          "variantSummary": {
+            "count": 0,
+            "minGrossPriceMinor": null,
+            "stockOnHand": 0,
+            "units": []
+          },
+          "storefrontVariantPreview": {
+            "total": 0,
+            "variants": []
+          },
+          "gallery": []
+        },
         {
           "categoryId": "c",
           "categoryPathIds": [
@@ -1851,13 +2278,13 @@
       ],
       "page": 1,
       "pageSize": 24,
-      "total": 9,
-      "totalProducts": 9,
+      "total": 11,
+      "totalProducts": 11,
       "indicators": {
         "lowStockCount": 5,
         "openOrderValueMinor": 0,
         "orderCount": 0,
-        "productCount": 9,
+        "productCount": 11,
         "stockValueMinor": 0
       },
       "movements": [],
@@ -2190,6 +2617,37 @@
           "gallery": []
         },
         {
+          "slug": "tricko-barvy",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.911Z",
+          "currentPriceMinor": 41240,
+          "id": "informational-variants",
+          "lowStockThreshold": 0,
+          "name": "Tričko v barvách",
+          "priceHistory": [],
+          "sku": "TRICKO-BARVY",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.911Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 49900,
+          "lowStock": false,
+          "stockOnHand": 3,
+          "stockValueMinor": 123720,
+          "variantSummary": {
+            "count": 0,
+            "minGrossPriceMinor": null,
+            "stockOnHand": 0,
+            "units": []
+          },
+          "storefrontVariantPreview": {
+            "total": 0,
+            "variants": []
+          },
+          "gallery": []
+        },
+        {
           "categoryId": "x",
           "isSale": true,
           "slug": "book-it",
@@ -2219,6 +2677,52 @@
           "storefrontVariantPreview": {
             "total": 0,
             "variants": []
+          },
+          "gallery": []
+        },
+        {
+          "slug": "panska-bunda-spyder-vyper-jacket-cerna",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.891Z",
+          "currentPriceMinor": 1878000,
+          "id": "spyder-jacket",
+          "lowStockThreshold": 0,
+          "name": "Pánská bunda Spyder Vyper Jacket – černá",
+          "priceHistory": [],
+          "sku": "38SA073510-BLK",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.902Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 1062380,
+          "lowStock": false,
+          "stockOnHand": 14,
+          "stockValueMinor": 12292000,
+          "variantSummary": {
+            "count": 5,
+            "minGrossPriceMinor": 1062380,
+            "stockOnHand": 14,
+            "units": [
+              "ks"
+            ]
+          },
+          "storefrontVariantPreview": {
+            "total": 5,
+            "variants": [
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v1",
+                "name": "S"
+              },
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v2",
+                "name": "M"
+              },
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v3",
+                "name": "L"
+              }
+            ]
           },
           "gallery": []
         }
@@ -2256,18 +2760,49 @@
       ],
       "page": 1,
       "pageSize": 24,
-      "total": 6,
-      "totalProducts": 6,
+      "total": 7,
+      "totalProducts": 7,
       "indicators": {
         "lowStockCount": 3,
         "openOrderValueMinor": 0,
         "orderCount": 0,
-        "productCount": 6,
+        "productCount": 7,
         "stockValueMinor": 0
       },
       "movements": [],
       "orders": [],
       "products": [
+        {
+          "slug": "tricko-barvy",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.911Z",
+          "currentPriceMinor": 41240,
+          "id": "informational-variants",
+          "lowStockThreshold": 0,
+          "name": "Tričko v barvách",
+          "priceHistory": [],
+          "sku": "TRICKO-BARVY",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.911Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 49900,
+          "lowStock": false,
+          "stockOnHand": 3,
+          "stockValueMinor": 123720,
+          "variantSummary": {
+            "count": 0,
+            "minGrossPriceMinor": null,
+            "stockOnHand": 0,
+            "units": []
+          },
+          "storefrontVariantPreview": {
+            "total": 0,
+            "variants": []
+          },
+          "gallery": []
+        },
         {
           "categoryId": "c",
           "categoryPathIds": [
@@ -2630,6 +3165,101 @@
             "/a.jpg",
             "/b.jpg"
           ]
+        }
+      ]
+    },
+    "searchJacket": {
+      "categories": [
+        {
+          "description": "Krátký popis",
+          "hasChildren": true,
+          "id": "r",
+          "imageAlt": "Šrouby",
+          "imageSrc": "",
+          "name": "Šrouby",
+          "parentId": null,
+          "position": 0,
+          "slug": "srouby"
+        },
+        {
+          "hasChildren": false,
+          "id": "c",
+          "name": "Metrické",
+          "parentId": "r",
+          "position": 1,
+          "slug": "metricke"
+        }
+      ],
+      "canCleanupDemo": false,
+      "canEditOrders": false,
+      "canManageCatalog": false,
+      "canManageMarkets": false,
+      "canWrite": false,
+      "homepageFeaturedProductIds": [
+        "p3"
+      ],
+      "page": 1,
+      "pageSize": 24,
+      "total": 1,
+      "totalProducts": 1,
+      "indicators": {
+        "lowStockCount": 0,
+        "openOrderValueMinor": 0,
+        "orderCount": 0,
+        "productCount": 1,
+        "stockValueMinor": 0
+      },
+      "movements": [],
+      "orders": [],
+      "products": [
+        {
+          "slug": "panska-bunda-spyder-vyper-jacket-cerna",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.891Z",
+          "currentPriceMinor": 1878000,
+          "id": "spyder-jacket",
+          "lowStockThreshold": 0,
+          "name": "Pánská bunda Spyder Vyper Jacket – černá",
+          "priceHistory": [],
+          "sku": "38SA073510-BLK",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.902Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 1062380,
+          "lowStock": false,
+          "stockOnHand": 14,
+          "stockValueMinor": 12292000,
+          "searchMatch": {
+            "kind": "product"
+          },
+          "variantSummary": {
+            "count": 5,
+            "minGrossPriceMinor": 1062380,
+            "stockOnHand": 14,
+            "units": [
+              "ks"
+            ]
+          },
+          "storefrontVariantPreview": {
+            "total": 5,
+            "variants": [
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v1",
+                "name": "S"
+              },
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v2",
+                "name": "M"
+              },
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v3",
+                "name": "L"
+              }
+            ]
+          },
+          "gallery": []
         }
       ]
     }
@@ -2667,18 +3297,95 @@
       ],
       "page": 1,
       "pageSize": 24,
-      "total": 9,
-      "totalProducts": 9,
+      "total": 11,
+      "totalProducts": 11,
       "indicators": {
         "lowStockCount": 5,
         "openOrderValueMinor": 0,
         "orderCount": 0,
-        "productCount": 9,
+        "productCount": 11,
         "stockValueMinor": 0
       },
       "movements": [],
       "orders": [],
       "products": [
+        {
+          "slug": "panska-bunda-spyder-vyper-jacket-cerna",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.891Z",
+          "currentPriceMinor": 1878000,
+          "id": "spyder-jacket",
+          "lowStockThreshold": 0,
+          "name": "Pánská bunda Spyder Vyper Jacket – černá",
+          "priceHistory": [],
+          "sku": "38SA073510-BLK",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.902Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 1062380,
+          "lowStock": false,
+          "stockOnHand": 15,
+          "stockValueMinor": 13170000,
+          "variantSummary": {
+            "count": 5,
+            "minGrossPriceMinor": 1062380,
+            "stockOnHand": 15,
+            "units": [
+              "ks"
+            ]
+          },
+          "storefrontVariantPreview": {
+            "total": 5,
+            "variants": [
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v1",
+                "name": "S"
+              },
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v2",
+                "name": "M"
+              },
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v3",
+                "name": "L"
+              }
+            ]
+          },
+          "gallery": []
+        },
+        {
+          "slug": "tricko-barvy",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.911Z",
+          "currentPriceMinor": 41240,
+          "id": "informational-variants",
+          "lowStockThreshold": 0,
+          "name": "Tričko v barvách",
+          "priceHistory": [],
+          "sku": "TRICKO-BARVY",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.911Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 49900,
+          "lowStock": false,
+          "stockOnHand": 4,
+          "stockValueMinor": 164960,
+          "variantSummary": {
+            "count": 0,
+            "minGrossPriceMinor": null,
+            "stockOnHand": 0,
+            "units": []
+          },
+          "storefrontVariantPreview": {
+            "total": 0,
+            "variants": []
+          },
+          "gallery": []
+        },
         {
           "categoryId": "c",
           "categoryPathIds": [
@@ -3335,6 +4042,223 @@
         }
       ]
     },
+    "detailInformational": {
+      "categories": [
+        {
+          "description": "Krátký popis",
+          "hasChildren": true,
+          "id": "r",
+          "imageAlt": "Šrouby",
+          "imageSrc": "",
+          "name": "Šrouby",
+          "parentId": null,
+          "position": 0,
+          "slug": "srouby"
+        },
+        {
+          "hasChildren": false,
+          "id": "c",
+          "name": "Metrické",
+          "parentId": "r",
+          "position": 1,
+          "slug": "metricke"
+        }
+      ],
+      "canCleanupDemo": false,
+      "canEditOrders": false,
+      "canManageCatalog": false,
+      "canManageMarkets": false,
+      "canWrite": false,
+      "homepageFeaturedProductIds": [
+        "p3"
+      ],
+      "page": 1,
+      "pageSize": 2,
+      "total": 1,
+      "totalProducts": 1,
+      "indicators": {
+        "lowStockCount": 0,
+        "openOrderValueMinor": 0,
+        "orderCount": 0,
+        "productCount": 1,
+        "stockValueMinor": 0
+      },
+      "movements": [],
+      "orders": [],
+      "products": [
+        {
+          "slug": "tricko-barvy",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.911Z",
+          "currentPriceMinor": 41240,
+          "id": "informational-variants",
+          "lowStockThreshold": 0,
+          "name": "Tričko v barvách",
+          "priceHistory": [],
+          "sku": "TRICKO-BARVY",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.911Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 49900,
+          "lowStock": false,
+          "stockOnHand": 4,
+          "stockValueMinor": 164960,
+          "variantSummary": {
+            "count": 0,
+            "minGrossPriceMinor": null,
+            "stockOnHand": 0,
+            "units": []
+          },
+          "descriptionParagraphs": [],
+          "gallery": []
+        }
+      ]
+    },
+    "detailJacket": {
+      "categories": [
+        {
+          "description": "Krátký popis",
+          "hasChildren": true,
+          "id": "r",
+          "imageAlt": "Šrouby",
+          "imageSrc": "",
+          "name": "Šrouby",
+          "parentId": null,
+          "position": 0,
+          "slug": "srouby"
+        },
+        {
+          "hasChildren": false,
+          "id": "c",
+          "name": "Metrické",
+          "parentId": "r",
+          "position": 1,
+          "slug": "metricke"
+        }
+      ],
+      "canCleanupDemo": false,
+      "canEditOrders": false,
+      "canManageCatalog": false,
+      "canManageMarkets": false,
+      "canWrite": false,
+      "homepageFeaturedProductIds": [
+        "p3"
+      ],
+      "page": 1,
+      "pageSize": 2,
+      "total": 1,
+      "totalProducts": 1,
+      "indicators": {
+        "lowStockCount": 0,
+        "openOrderValueMinor": 0,
+        "orderCount": 0,
+        "productCount": 1,
+        "stockValueMinor": 0
+      },
+      "movements": [],
+      "orders": [],
+      "products": [
+        {
+          "slug": "panska-bunda-spyder-vyper-jacket-cerna",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.891Z",
+          "currentPriceMinor": 1878000,
+          "id": "spyder-jacket",
+          "lowStockThreshold": 0,
+          "name": "Pánská bunda Spyder Vyper Jacket – černá",
+          "priceHistory": [],
+          "sku": "38SA073510-BLK",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.902Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 1062380,
+          "lowStock": false,
+          "stockOnHand": 15,
+          "stockValueMinor": 13170000,
+          "variantRecords": [
+            {
+              "active": true,
+              "attributes": "Velikost: S",
+              "availability": "IN_STOCK",
+              "grossPriceMinor": 1062380,
+              "id": "8ccf370e-f138-4127-b859-051c3529933e-v1",
+              "name": "S",
+              "priceHistory": [],
+              "priceMinor": 878000,
+              "sku": "38SA073510-BLK-S",
+              "stockOnHand": 3,
+              "unit": "ks"
+            },
+            {
+              "active": true,
+              "attributes": "Velikost: M",
+              "availability": "IN_STOCK",
+              "grossPriceMinor": 1062380,
+              "id": "8ccf370e-f138-4127-b859-051c3529933e-v2",
+              "name": "M",
+              "priceHistory": [],
+              "priceMinor": 878000,
+              "sku": "38SA073510-BLK-M",
+              "stockOnHand": 3,
+              "unit": "ks"
+            },
+            {
+              "active": true,
+              "attributes": "Velikost: L",
+              "availability": "IN_STOCK",
+              "grossPriceMinor": 1062380,
+              "id": "8ccf370e-f138-4127-b859-051c3529933e-v3",
+              "name": "L",
+              "priceHistory": [],
+              "priceMinor": 878000,
+              "sku": "38SA073510-BLK-L",
+              "stockOnHand": 3,
+              "unit": "ks"
+            },
+            {
+              "active": true,
+              "attributes": "Velikost: XL",
+              "availability": "IN_STOCK",
+              "grossPriceMinor": 1062380,
+              "id": "8ccf370e-f138-4127-b859-051c3529933e-v4",
+              "name": "XL",
+              "priceHistory": [],
+              "priceMinor": 878000,
+              "sku": "38SA073510-BLK-XL",
+              "stockOnHand": 3,
+              "unit": "ks"
+            },
+            {
+              "active": true,
+              "attributes": "Velikost: XXL",
+              "availability": "IN_STOCK",
+              "grossPriceMinor": 1062380,
+              "id": "8ccf370e-f138-4127-b859-051c3529933e-v5",
+              "name": "XXL",
+              "priceHistory": [],
+              "priceMinor": 878000,
+              "sku": "38SA073510-BLK-XXL",
+              "stockOnHand": 3,
+              "unit": "ks"
+            }
+          ],
+          "variantSummary": {
+            "count": 5,
+            "minGrossPriceMinor": 1062380,
+            "stockOnHand": 15,
+            "units": [
+              "ks"
+            ]
+          },
+          "descriptionParagraphs": [],
+          "gallery": []
+        }
+      ]
+    },
     "detailOddVariant": {
       "categories": [
         {
@@ -3673,18 +4597,74 @@
       "canManageCatalog": false,
       "canManageMarkets": false,
       "canWrite": false,
-      "totalProducts": 9,
+      "totalProducts": 11,
       "canResetDemo": false,
       "indicators": {
         "lowStockCount": 5,
         "openOrderValueMinor": 0,
         "orderCount": 0,
-        "productCount": 9,
+        "productCount": 11,
         "stockValueMinor": 0
       },
       "movements": [],
       "orders": [],
       "products": [
+        {
+          "slug": "panska-bunda-spyder-vyper-jacket-cerna",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.891Z",
+          "currentPriceMinor": 1878000,
+          "id": "spyder-jacket",
+          "lowStockThreshold": 0,
+          "name": "Pánská bunda Spyder Vyper Jacket – černá",
+          "priceHistory": [],
+          "sku": "38SA073510-BLK",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.902Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 1062380,
+          "lowStock": false,
+          "stockOnHand": 15,
+          "stockValueMinor": 13170000,
+          "variantCount": 5,
+          "variantSummary": {
+            "count": 5,
+            "minGrossPriceMinor": 1062380,
+            "stockOnHand": 15,
+            "units": [
+              "ks"
+            ]
+          }
+        },
+        {
+          "slug": "tricko-barvy",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.911Z",
+          "currentPriceMinor": 41240,
+          "id": "informational-variants",
+          "lowStockThreshold": 0,
+          "name": "Tričko v barvách",
+          "priceHistory": [],
+          "sku": "TRICKO-BARVY",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.911Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 49900,
+          "lowStock": false,
+          "stockOnHand": 4,
+          "stockValueMinor": 164960,
+          "variantCount": 0,
+          "variantSummary": {
+            "count": 0,
+            "minGrossPriceMinor": null,
+            "stockOnHand": 0,
+            "units": []
+          }
+        },
         {
           "parameters": [
             {
@@ -4033,18 +5013,95 @@
       ],
       "page": 1,
       "pageSize": 24,
-      "total": 8,
-      "totalProducts": 8,
+      "total": 10,
+      "totalProducts": 10,
       "indicators": {
         "lowStockCount": 4,
         "openOrderValueMinor": 0,
         "orderCount": 0,
-        "productCount": 8,
+        "productCount": 10,
         "stockValueMinor": 0
       },
       "movements": [],
       "orders": [],
       "products": [
+        {
+          "slug": "panska-bunda-spyder-vyper-jacket-cerna",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.891Z",
+          "currentPriceMinor": 75120,
+          "id": "spyder-jacket",
+          "lowStockThreshold": 0,
+          "name": "Pánská bunda Spyder Vyper Jacket – černá",
+          "priceHistory": [],
+          "sku": "38SA073510-BLK",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.902Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 42500,
+          "lowStock": false,
+          "stockOnHand": 15,
+          "stockValueMinor": 13170000,
+          "variantSummary": {
+            "count": 5,
+            "minGrossPriceMinor": 42500,
+            "stockOnHand": 15,
+            "units": [
+              "ks"
+            ]
+          },
+          "storefrontVariantPreview": {
+            "total": 5,
+            "variants": [
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v1",
+                "name": "S"
+              },
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v2",
+                "name": "M"
+              },
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v3",
+                "name": "L"
+              }
+            ]
+          },
+          "gallery": []
+        },
+        {
+          "slug": "tricko-barvy",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.911Z",
+          "currentPriceMinor": 1650,
+          "id": "informational-variants",
+          "lowStockThreshold": 0,
+          "name": "Tričko v barvách",
+          "priceHistory": [],
+          "sku": "TRICKO-BARVY",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.911Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 2000,
+          "lowStock": false,
+          "stockOnHand": 4,
+          "stockValueMinor": 164960,
+          "variantSummary": {
+            "count": 0,
+            "minGrossPriceMinor": null,
+            "stockOnHand": 0,
+            "units": []
+          },
+          "storefrontVariantPreview": {
+            "total": 0,
+            "variants": []
+          },
+          "gallery": []
+        },
         {
           "categoryId": "c",
           "categoryPathIds": [
@@ -4486,13 +5543,13 @@
       ],
       "page": 1,
       "pageSize": 24,
-      "total": 9,
-      "totalProducts": 9,
+      "total": 11,
+      "totalProducts": 11,
       "indicators": {
         "lowStockCount": 5,
         "openOrderValueMinor": 0,
         "orderCount": 0,
-        "productCount": 9,
+        "productCount": 11,
         "stockValueMinor": 0
       },
       "movements": [],
@@ -4825,6 +5882,37 @@
           "gallery": []
         },
         {
+          "slug": "tricko-barvy",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.911Z",
+          "currentPriceMinor": 41240,
+          "id": "informational-variants",
+          "lowStockThreshold": 0,
+          "name": "Tričko v barvách",
+          "priceHistory": [],
+          "sku": "TRICKO-BARVY",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.911Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 49900,
+          "lowStock": false,
+          "stockOnHand": 4,
+          "stockValueMinor": 164960,
+          "variantSummary": {
+            "count": 0,
+            "minGrossPriceMinor": null,
+            "stockOnHand": 0,
+            "units": []
+          },
+          "storefrontVariantPreview": {
+            "total": 0,
+            "variants": []
+          },
+          "gallery": []
+        },
+        {
           "categoryId": "x",
           "isSale": true,
           "slug": "book-it",
@@ -4854,6 +5942,52 @@
           "storefrontVariantPreview": {
             "total": 0,
             "variants": []
+          },
+          "gallery": []
+        },
+        {
+          "slug": "panska-bunda-spyder-vyper-jacket-cerna",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.891Z",
+          "currentPriceMinor": 1878000,
+          "id": "spyder-jacket",
+          "lowStockThreshold": 0,
+          "name": "Pánská bunda Spyder Vyper Jacket – černá",
+          "priceHistory": [],
+          "sku": "38SA073510-BLK",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.902Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 1062380,
+          "lowStock": false,
+          "stockOnHand": 15,
+          "stockValueMinor": 13170000,
+          "variantSummary": {
+            "count": 5,
+            "minGrossPriceMinor": 1062380,
+            "stockOnHand": 15,
+            "units": [
+              "ks"
+            ]
+          },
+          "storefrontVariantPreview": {
+            "total": 5,
+            "variants": [
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v1",
+                "name": "S"
+              },
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v2",
+                "name": "M"
+              },
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v3",
+                "name": "L"
+              }
+            ]
           },
           "gallery": []
         }
@@ -4891,18 +6025,49 @@
       ],
       "page": 1,
       "pageSize": 24,
-      "total": 6,
-      "totalProducts": 6,
+      "total": 7,
+      "totalProducts": 7,
       "indicators": {
         "lowStockCount": 3,
         "openOrderValueMinor": 0,
         "orderCount": 0,
-        "productCount": 6,
+        "productCount": 7,
         "stockValueMinor": 0
       },
       "movements": [],
       "orders": [],
       "products": [
+        {
+          "slug": "tricko-barvy",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.911Z",
+          "currentPriceMinor": 41240,
+          "id": "informational-variants",
+          "lowStockThreshold": 0,
+          "name": "Tričko v barvách",
+          "priceHistory": [],
+          "sku": "TRICKO-BARVY",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.911Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 49900,
+          "lowStock": false,
+          "stockOnHand": 4,
+          "stockValueMinor": 164960,
+          "variantSummary": {
+            "count": 0,
+            "minGrossPriceMinor": null,
+            "stockOnHand": 0,
+            "units": []
+          },
+          "storefrontVariantPreview": {
+            "total": 0,
+            "variants": []
+          },
+          "gallery": []
+        },
         {
           "categoryId": "c",
           "categoryPathIds": [
@@ -5267,11 +6432,223 @@
           ]
         }
       ]
+    },
+    "searchJacket": {
+      "categories": [
+        {
+          "description": "Krátký popis",
+          "hasChildren": true,
+          "id": "r",
+          "imageAlt": "Šrouby",
+          "imageSrc": "",
+          "name": "Šrouby",
+          "parentId": null,
+          "position": 0,
+          "slug": "srouby"
+        },
+        {
+          "hasChildren": false,
+          "id": "c",
+          "name": "Metrické",
+          "parentId": "r",
+          "position": 1,
+          "slug": "metricke"
+        }
+      ],
+      "canCleanupDemo": false,
+      "canEditOrders": false,
+      "canManageCatalog": false,
+      "canManageMarkets": false,
+      "canWrite": false,
+      "homepageFeaturedProductIds": [
+        "p3"
+      ],
+      "page": 1,
+      "pageSize": 24,
+      "total": 1,
+      "totalProducts": 1,
+      "indicators": {
+        "lowStockCount": 0,
+        "openOrderValueMinor": 0,
+        "orderCount": 0,
+        "productCount": 1,
+        "stockValueMinor": 0
+      },
+      "movements": [],
+      "orders": [],
+      "products": [
+        {
+          "slug": "panska-bunda-spyder-vyper-jacket-cerna",
+          "active": true,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.891Z",
+          "currentPriceMinor": 1878000,
+          "id": "spyder-jacket",
+          "lowStockThreshold": 0,
+          "name": "Pánská bunda Spyder Vyper Jacket – černá",
+          "priceHistory": [],
+          "sku": "38SA073510-BLK",
+          "unit": "ks",
+          "updatedAt": "2026-11-12T23:06:43.902Z",
+          "vatRate": 21,
+          "availability": "IN_STOCK",
+          "grossPriceMinor": 1062380,
+          "lowStock": false,
+          "stockOnHand": 15,
+          "stockValueMinor": 13170000,
+          "searchMatch": {
+            "kind": "product"
+          },
+          "variantSummary": {
+            "count": 5,
+            "minGrossPriceMinor": 1062380,
+            "stockOnHand": 15,
+            "units": [
+              "ks"
+            ]
+          },
+          "storefrontVariantPreview": {
+            "total": 5,
+            "variants": [
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v1",
+                "name": "S"
+              },
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v2",
+                "name": "M"
+              },
+              {
+                "id": "8ccf370e-f138-4127-b859-051c3529933e-v3",
+                "name": "L"
+              }
+            ]
+          },
+          "gallery": []
+        }
+      ]
     }
   },
   "company": {
-    "legalEntityId": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
-    "tenantId": "fa3e2892-860b-4caa-81cc-81855d50412d"
+    "legalEntityId": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+    "tenantId": "69f786d2-02a2-4701-b893-2e7e0d1446dc"
+  },
+  "jacketOrder": {
+    "command": {
+      "command": {
+        "_tag": "PlaceStorefrontOrder",
+        "clientRequestId": "vat-transition-order-jacket",
+        "contact": {
+          "email": "tereza@example.cz",
+          "name": "Tereza Ukázková"
+        },
+        "deliveryAddress": {
+          "city": "Brno",
+          "postalCode": "602 00",
+          "street": "Ukázková 12"
+        },
+        "lines": [
+          {
+            "expectedUnitPriceMinor": 1062380,
+            "productId": "spyder-jacket",
+            "quantity": 1,
+            "variantId": "8ccf370e-f138-4127-b859-051c3529933e-v2"
+          },
+          {
+            "expectedUnitPriceMinor": 49900,
+            "productId": "informational-variants",
+            "quantity": 1
+          }
+        ],
+        "shippingMethod": "ZASILKOVNA"
+      }
+    },
+    "document": {
+      "id": "a28b9e78-8a37-4902-9e64-812040b28d86",
+      "lines": [
+        {
+          "sku": "38SA073510-BLK-M",
+          "vatRate": 21,
+          "quantity": 1,
+          "productId": "spyder-jacket",
+          "variantId": "8ccf370e-f138-4127-b859-051c3529933e-v2",
+          "productName": "Pánská bunda Spyder Vyper Jacket – černá",
+          "variantName": "M",
+          "unitPriceMinor": 1062380
+        },
+        {
+          "sku": "TRICKO-BARVY",
+          "vatRate": 21,
+          "quantity": 1,
+          "productId": "informational-variants",
+          "productName": "Tričko v barvách",
+          "unitPriceMinor": 49900
+        }
+      ],
+      "number": "OBJ-2026-0004",
+      "status": "NEW",
+      "channel": "STOREFRONT",
+      "contact": {
+        "name": "Tereza Ukázková",
+        "email": "tereza@example.cz"
+      },
+      "history": [
+        {
+          "at": "2026-11-12T23:06:44.117Z",
+          "kind": "CREATED",
+          "after": "Nová",
+          "actorLabel": "Zákazník – e-shop"
+        }
+      ],
+      "partyId": "storefront-guest",
+      "shipping": {
+        "label": "Zásilkovna – výdejní místo",
+        "method": "ZASILKOVNA",
+        "vatRate": 21,
+        "priceMinor": 7900
+      },
+      "createdAt": "2026-11-12T23:06:44.117Z",
+      "updatedAt": "2026-11-12T23:06:44.117Z",
+      "totalMinor": 1120180,
+      "totalVatMinor": 194411,
+      "clientRequestId": "vat-transition-order-jacket",
+      "deliveryAddress": {
+        "city": "Brno",
+        "street": "Ukázková 12",
+        "postalCode": "602 00"
+      },
+      "pricesIncludeVat": true
+    },
+    "storefrontOrder": {
+      "issues": [],
+      "lines": [
+        {
+          "lineTotalMinor": 1062380,
+          "name": "Pánská bunda Spyder Vyper Jacket – černá",
+          "productId": "spyder-jacket",
+          "quantity": 1,
+          "sku": "38SA073510-BLK-M",
+          "unitPriceMinor": 1062380,
+          "variantId": "8ccf370e-f138-4127-b859-051c3529933e-v2",
+          "variantName": "M"
+        },
+        {
+          "lineTotalMinor": 49900,
+          "name": "Tričko v barvách",
+          "productId": "informational-variants",
+          "quantity": 1,
+          "sku": "TRICKO-BARVY",
+          "unitPriceMinor": 49900
+        }
+      ],
+      "orderId": "a28b9e78-8a37-4902-9e64-812040b28d86",
+      "orderNumber": "OBJ-2026-0004",
+      "outcome": "PLACED",
+      "status": "NEW",
+      "totalMinor": 1120180,
+      "totalVatMinor": 194411,
+      "shippingPriceMinor": 7900
+    }
   },
   "order": {
     "command": {
@@ -5309,7 +6686,7 @@
       "expectedRevision": 0
     },
     "document": {
-      "id": "vat-fixture-order-cc3f1a5e-a49c-47c6-a512-66d2042ae815",
+      "id": "82995f18-9136-45c5-9ae0-04ea20b2ed70",
       "lines": [
         {
           "sku": "BOOK-IT",
@@ -5345,7 +6722,7 @@
       },
       "history": [
         {
-          "at": "2026-11-12T04:39:17.272Z",
+          "at": "2026-11-12T23:06:44.108Z",
           "kind": "CREATED",
           "after": "Nová",
           "actorLabel": "Zákazník – e-shop"
@@ -5358,8 +6735,8 @@
         "vatRate": 21,
         "priceMinor": 7900
       },
-      "createdAt": "2026-11-12T04:39:17.272Z",
-      "updatedAt": "2026-11-12T04:39:17.272Z",
+      "createdAt": "2026-11-12T23:06:44.108Z",
+      "updatedAt": "2026-11-12T23:06:44.108Z",
       "totalMinor": 144783,
       "totalVatMinor": 14299,
       "clientRequestId": "vat-transition-order-1",
@@ -5398,7 +6775,7 @@
           "unitPriceMinor": 61
         }
       ],
-      "orderId": "vat-fixture-order-cc3f1a5e-a49c-47c6-a512-66d2042ae815",
+      "orderId": "82995f18-9136-45c5-9ae0-04ea20b2ed70",
       "orderNumber": "OBJ-2026-0003",
       "outcome": "PLACED",
       "status": "NEW",
@@ -5410,11 +6787,11 @@
   "rows": {
     "catalog_heads": [
       {
-        "revision": 0,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
+        "revision": 9,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
         "ai_changes": null,
-        "updated_at": "2026-11-12T04:39:17.131+00:00",
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
+        "updated_at": "2026-11-12T23:06:43.956+00:00",
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
         "bootstrap_checkpoint": null,
         "homepage_featured_product_ids": [
           "p3"
@@ -5422,24 +6799,6 @@
       }
     ],
     "categories": [
-      {
-        "id": "r",
-        "name": "Šrouby",
-        "slug": "srouby",
-        "heading": "Šrouby",
-        "history": [],
-        "ordinal": 11883,
-        "position": 0,
-        "image_alt": "Šrouby",
-        "image_src": "",
-        "parent_id": null,
-        "published": null,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
-        "description": "Krátký popis",
-        "has_children": true,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
-        "long_description": "Dlouhý popis kořene"
-      },
       {
         "id": "c",
         "name": "Metrické",
@@ -5452,14 +6811,389 @@
         "image_src": "",
         "parent_id": "r",
         "published": null,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
         "description": "",
         "has_children": false,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
         "long_description": "Dlouhý popis"
+      },
+      {
+        "id": "r",
+        "name": "Šrouby",
+        "slug": "srouby",
+        "heading": "Šrouby",
+        "history": [],
+        "ordinal": 11883,
+        "position": 0,
+        "image_alt": "Šrouby",
+        "image_src": "",
+        "parent_id": null,
+        "published": null,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "description": "Krátký popis",
+        "has_children": true,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+        "long_description": "Dlouhý popis kořene"
       }
     ],
     "products": [
+      {
+        "id": "book-it",
+        "sku": "BOOK-IT",
+        "name": "Příručka IT bezpečnosti",
+        "slug": "book-it",
+        "active": true,
+        "is_new": false,
+        "is_sale": true,
+        "ordinal": 8388,
+        "sku_key": "book-it",
+        "archived": false,
+        "category": "Knihy",
+        "document": {
+          "id": "book-it",
+          "sku": "BOOK-IT",
+          "name": "Příručka IT bezpečnosti",
+          "slug": "book-it",
+          "unit": "ks",
+          "active": true,
+          "isSale": true,
+          "vatRate": 10,
+          "category": "Knihy",
+          "createdAt": "2026-10-19T08:00:00.000Z",
+          "updatedAt": "2026-10-19T08:00:00.000Z",
+          "categoryId": "x",
+          "priceHistory": [],
+          "currentPriceMinor": 49000,
+          "lowStockThreshold": 1
+        },
+        "name_key": "prirucka it bezpecnosti",
+        "has_photo": false,
+        "is_action": false,
+        "low_stock": false,
+        "published": true,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "created_at": "2026-10-19T08:00:00+00:00",
+        "updated_at": "2026-10-19T08:00:00+00:00",
+        "category_id": "x",
+        "search_text": "prirucka it bezpecnosti book-it",
+        "availability": "IN_STOCK",
+        "stock_on_hand": 10,
+        "is_recommended": false,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+        "source_group_id": null,
+        "category_path_ids": [],
+        "featured_position": null,
+        "gross_price_minor": 53900,
+        "stock_value_minor": 490000,
+        "current_price_minor": 49000
+      },
+      {
+        "id": "informational-variants",
+        "sku": "TRICKO-BARVY",
+        "name": "Tričko v barvách",
+        "slug": "tricko-barvy",
+        "active": true,
+        "is_new": false,
+        "is_sale": false,
+        "ordinal": 3,
+        "sku_key": "tricko-barvy",
+        "archived": false,
+        "category": "Podložky",
+        "document": {
+          "id": "informational-variants",
+          "sku": "TRICKO-BARVY",
+          "name": "Tričko v barvách",
+          "slug": "tricko-barvy",
+          "unit": "ks",
+          "active": true,
+          "vatRate": 21,
+          "category": "Podložky",
+          "createdAt": "2026-11-12T23:06:43.911Z",
+          "updatedAt": "2026-11-12T23:06:43.911Z",
+          "priceHistory": [
+            {
+              "changedBy": {
+                "tenantId": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+                "principalId": "0d9a6523-6dfb-434e-a97b-004bf7ab9cb7"
+              },
+              "priceMinor": 41240,
+              "effectiveFrom": "2026-11-12T23:06:43.911Z"
+            }
+          ],
+          "currentPriceMinor": 41240,
+          "lowStockThreshold": 0
+        },
+        "name_key": "tricko v barvach",
+        "has_photo": false,
+        "is_action": false,
+        "low_stock": false,
+        "published": true,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "created_at": "2026-11-12T23:06:43.911+00:00",
+        "updated_at": "2026-11-12T23:06:43.911+00:00",
+        "category_id": null,
+        "search_text": "tricko v barvach tricko-barvy  cerna  barva: cerna bila  barva: bila",
+        "availability": "IN_STOCK",
+        "stock_on_hand": 4,
+        "is_recommended": false,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+        "source_group_id": null,
+        "category_path_ids": [],
+        "featured_position": null,
+        "gross_price_minor": 49900,
+        "stock_value_minor": 164960,
+        "current_price_minor": 41240
+      },
+      {
+        "id": "p-odd-variant",
+        "sku": "38SA073510",
+        "name": "Bunda 38SA073510",
+        "slug": "odd-variant",
+        "active": true,
+        "is_new": false,
+        "is_sale": true,
+        "ordinal": 8392,
+        "sku_key": "38sa073510",
+        "archived": false,
+        "category": "Podložky",
+        "document": {
+          "id": "p-odd-variant",
+          "sku": "38SA073510",
+          "name": "Bunda 38SA073510",
+          "slug": "odd-variant",
+          "unit": "ks",
+          "active": true,
+          "isSale": true,
+          "vatRate": 21,
+          "category": "Podložky",
+          "createdAt": "2026-10-19T08:00:00.000Z",
+          "updatedAt": "2026-10-19T08:00:00.000Z",
+          "categoryId": "x",
+          "priceHistory": [],
+          "currentPriceMinor": 1878000,
+          "lowStockThreshold": 1
+        },
+        "name_key": "bunda 38sa073510",
+        "has_photo": false,
+        "is_action": false,
+        "low_stock": true,
+        "published": true,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "created_at": "2026-10-19T08:00:00+00:00",
+        "updated_at": "2026-10-19T08:00:00+00:00",
+        "category_id": "x",
+        "search_text": "bunda 38sa073510 38sa073510  cerna 38sa073510-blk  bila 38sa073510-wht",
+        "availability": "OUT_OF_STOCK",
+        "stock_on_hand": 0,
+        "is_recommended": false,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+        "source_group_id": null,
+        "category_path_ids": [],
+        "featured_position": null,
+        "gross_price_minor": 12099,
+        "stock_value_minor": 0,
+        "current_price_minor": 1878000
+      },
+      {
+        "id": "p-off-more",
+        "sku": "10520900",
+        "name": "Uložená cena 10520900",
+        "slug": "off-more",
+        "active": true,
+        "is_new": false,
+        "is_sale": true,
+        "ordinal": 8390,
+        "sku_key": "10520900",
+        "archived": false,
+        "category": "Podložky",
+        "document": {
+          "id": "p-off-more",
+          "sku": "10520900",
+          "name": "Uložená cena 10520900",
+          "slug": "off-more",
+          "unit": "ks",
+          "active": true,
+          "isSale": true,
+          "vatRate": 21,
+          "category": "Podložky",
+          "createdAt": "2026-10-19T08:00:00.000Z",
+          "updatedAt": "2026-10-19T08:00:00.000Z",
+          "categoryId": "x",
+          "priceHistory": [],
+          "currentPriceMinor": 446,
+          "lowStockThreshold": 1
+        },
+        "name_key": "ulozena cena 10520900",
+        "has_photo": false,
+        "is_action": false,
+        "low_stock": true,
+        "published": true,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "created_at": "2026-10-19T08:00:00+00:00",
+        "updated_at": "2026-10-19T08:00:00+00:00",
+        "category_id": "x",
+        "search_text": "ulozena cena 10520900 10520900",
+        "availability": "OUT_OF_STOCK",
+        "stock_on_hand": 0,
+        "is_recommended": false,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+        "source_group_id": null,
+        "category_path_ids": [],
+        "featured_position": null,
+        "gross_price_minor": 646,
+        "stock_value_minor": 0,
+        "current_price_minor": 446
+      },
+      {
+        "id": "p-off-one",
+        "sku": "OFF-ONE",
+        "name": "Uložená cena o haléř",
+        "slug": "off-one",
+        "active": true,
+        "is_new": false,
+        "is_sale": true,
+        "ordinal": 8389,
+        "sku_key": "off-one",
+        "archived": false,
+        "category": "Podložky",
+        "document": {
+          "id": "p-off-one",
+          "sku": "OFF-ONE",
+          "name": "Uložená cena o haléř",
+          "slug": "off-one",
+          "unit": "ks",
+          "active": true,
+          "isSale": true,
+          "vatRate": 21,
+          "category": "Podložky",
+          "createdAt": "2026-10-19T08:00:00.000Z",
+          "updatedAt": "2026-10-19T08:00:00.000Z",
+          "categoryId": "x",
+          "priceHistory": [],
+          "currentPriceMinor": 1000,
+          "lowStockThreshold": 1
+        },
+        "name_key": "ulozena cena o haler",
+        "has_photo": false,
+        "is_action": false,
+        "low_stock": true,
+        "published": true,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "created_at": "2026-10-19T08:00:00+00:00",
+        "updated_at": "2026-10-19T08:00:00+00:00",
+        "category_id": "x",
+        "search_text": "ulozena cena o haler off-one",
+        "availability": "OUT_OF_STOCK",
+        "stock_on_hand": 0,
+        "is_recommended": false,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+        "source_group_id": null,
+        "category_path_ids": [],
+        "featured_position": null,
+        "gross_price_minor": 1211,
+        "stock_value_minor": 0,
+        "current_price_minor": 1000
+      },
+      {
+        "id": "p-reduced",
+        "sku": "KAVA-1",
+        "name": "Káva zrnková",
+        "slug": "kava-zrnkova",
+        "active": true,
+        "is_new": false,
+        "is_sale": true,
+        "ordinal": 8387,
+        "sku_key": "kava-1",
+        "archived": false,
+        "category": "Káva",
+        "document": {
+          "id": "p-reduced",
+          "sku": "KAVA-1",
+          "name": "Káva zrnková",
+          "slug": "kava-zrnkova",
+          "unit": "ks",
+          "active": true,
+          "isSale": true,
+          "vatRate": 12,
+          "category": "Káva",
+          "createdAt": "2026-10-19T08:00:00.000Z",
+          "updatedAt": "2026-10-19T08:00:00.000Z",
+          "categoryId": "x",
+          "priceHistory": [],
+          "currentPriceMinor": 25804,
+          "lowStockThreshold": 1
+        },
+        "name_key": "kava zrnkova",
+        "has_photo": false,
+        "is_action": false,
+        "low_stock": false,
+        "published": true,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "created_at": "2026-10-19T08:00:00+00:00",
+        "updated_at": "2026-10-19T08:00:00+00:00",
+        "category_id": "x",
+        "search_text": "kava zrnkova kava-1",
+        "availability": "IN_STOCK",
+        "stock_on_hand": 10,
+        "is_recommended": false,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+        "source_group_id": null,
+        "category_path_ids": [],
+        "featured_position": null,
+        "gross_price_minor": 28900,
+        "stock_value_minor": 258040,
+        "current_price_minor": 25804
+      },
+      {
+        "id": "p-zero-gross",
+        "sku": "ZERO",
+        "name": "Nulová hrubá cena",
+        "slug": "zero-gross",
+        "active": true,
+        "is_new": false,
+        "is_sale": true,
+        "ordinal": 8391,
+        "sku_key": "zero",
+        "archived": false,
+        "category": "Podložky",
+        "document": {
+          "id": "p-zero-gross",
+          "sku": "ZERO",
+          "name": "Nulová hrubá cena",
+          "slug": "zero-gross",
+          "unit": "ks",
+          "active": true,
+          "isSale": true,
+          "vatRate": 21,
+          "category": "Podložky",
+          "createdAt": "2026-10-19T08:00:00.000Z",
+          "updatedAt": "2026-10-19T08:00:00.000Z",
+          "categoryId": "x",
+          "priceHistory": [],
+          "currentPriceMinor": 500,
+          "lowStockThreshold": 1
+        },
+        "name_key": "nulova hruba cena",
+        "has_photo": false,
+        "is_action": false,
+        "low_stock": true,
+        "published": true,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "created_at": "2026-10-19T08:00:00+00:00",
+        "updated_at": "2026-10-19T08:00:00+00:00",
+        "category_id": "x",
+        "search_text": "nulova hruba cena zero",
+        "availability": "OUT_OF_STOCK",
+        "stock_on_hand": 0,
+        "is_recommended": false,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+        "source_group_id": null,
+        "category_path_ids": [],
+        "featured_position": null,
+        "gross_price_minor": 0,
+        "stock_value_minor": 0,
+        "current_price_minor": 500
+      },
       {
         "id": "p1",
         "sku": "P1",
@@ -5509,7 +7243,7 @@
         "is_action": false,
         "low_stock": false,
         "published": true,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
         "created_at": "2026-10-19T08:00:00+00:00",
         "updated_at": "2026-10-19T08:00:00+00:00",
         "category_id": "c",
@@ -5517,7 +7251,7 @@
         "availability": "IN_STOCK",
         "stock_on_hand": 5,
         "is_recommended": true,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
         "source_group_id": null,
         "category_path_ids": [
           "c",
@@ -5561,7 +7295,7 @@
         "is_action": false,
         "low_stock": false,
         "published": true,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
         "created_at": "2026-10-19T08:00:00+00:00",
         "updated_at": "2026-10-19T08:00:00+00:00",
         "category_id": "x",
@@ -5569,7 +7303,7 @@
         "availability": "IN_STOCK",
         "stock_on_hand": 10,
         "is_recommended": false,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
         "source_group_id": null,
         "category_path_ids": [],
         "featured_position": null,
@@ -5613,7 +7347,7 @@
         "is_action": false,
         "low_stock": true,
         "published": true,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
         "created_at": "2026-10-19T08:00:00+00:00",
         "updated_at": "2026-10-19T08:00:00+00:00",
         "category_id": "r",
@@ -5621,7 +7355,7 @@
         "availability": "OUT_OF_STOCK",
         "stock_on_hand": 0,
         "is_recommended": false,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
         "source_group_id": null,
         "category_path_ids": [
           "r"
@@ -5663,7 +7397,7 @@
         "is_action": false,
         "low_stock": true,
         "published": false,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
         "created_at": "2026-10-19T08:00:00+00:00",
         "updated_at": "2026-10-19T08:00:00+00:00",
         "category_id": null,
@@ -5671,7 +7405,7 @@
         "availability": "OUT_OF_STOCK",
         "stock_on_hand": 0,
         "is_recommended": false,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
         "source_group_id": null,
         "category_path_ids": [],
         "featured_position": null,
@@ -5680,327 +7414,99 @@
         "current_price_minor": 10
       },
       {
-        "id": "p-reduced",
-        "sku": "KAVA-1",
-        "name": "Káva zrnková",
-        "slug": "kava-zrnkova",
+        "id": "spyder-jacket",
+        "sku": "38SA073510-BLK",
+        "name": "Pánská bunda Spyder Vyper Jacket – černá",
+        "slug": "panska-bunda-spyder-vyper-jacket-cerna",
         "active": true,
         "is_new": false,
-        "is_sale": true,
-        "ordinal": 8387,
-        "sku_key": "kava-1",
-        "archived": false,
-        "category": "Káva",
-        "document": {
-          "id": "p-reduced",
-          "sku": "KAVA-1",
-          "name": "Káva zrnková",
-          "slug": "kava-zrnkova",
-          "unit": "ks",
-          "active": true,
-          "isSale": true,
-          "vatRate": 12,
-          "category": "Káva",
-          "createdAt": "2026-10-19T08:00:00.000Z",
-          "updatedAt": "2026-10-19T08:00:00.000Z",
-          "categoryId": "x",
-          "priceHistory": [],
-          "currentPriceMinor": 25804,
-          "lowStockThreshold": 1
-        },
-        "name_key": "kava zrnkova",
-        "has_photo": false,
-        "is_action": false,
-        "low_stock": false,
-        "published": true,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
-        "created_at": "2026-10-19T08:00:00+00:00",
-        "updated_at": "2026-10-19T08:00:00+00:00",
-        "category_id": "x",
-        "search_text": "kava zrnkova kava-1",
-        "availability": "IN_STOCK",
-        "stock_on_hand": 10,
-        "is_recommended": false,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
-        "source_group_id": null,
-        "category_path_ids": [],
-        "featured_position": null,
-        "gross_price_minor": 28900,
-        "stock_value_minor": 258040,
-        "current_price_minor": 25804
-      },
-      {
-        "id": "book-it",
-        "sku": "BOOK-IT",
-        "name": "Příručka IT bezpečnosti",
-        "slug": "book-it",
-        "active": true,
-        "is_new": false,
-        "is_sale": true,
-        "ordinal": 8388,
-        "sku_key": "book-it",
-        "archived": false,
-        "category": "Knihy",
-        "document": {
-          "id": "book-it",
-          "sku": "BOOK-IT",
-          "name": "Příručka IT bezpečnosti",
-          "slug": "book-it",
-          "unit": "ks",
-          "active": true,
-          "isSale": true,
-          "vatRate": 10,
-          "category": "Knihy",
-          "createdAt": "2026-10-19T08:00:00.000Z",
-          "updatedAt": "2026-10-19T08:00:00.000Z",
-          "categoryId": "x",
-          "priceHistory": [],
-          "currentPriceMinor": 49000,
-          "lowStockThreshold": 1
-        },
-        "name_key": "prirucka it bezpecnosti",
-        "has_photo": false,
-        "is_action": false,
-        "low_stock": false,
-        "published": true,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
-        "created_at": "2026-10-19T08:00:00+00:00",
-        "updated_at": "2026-10-19T08:00:00+00:00",
-        "category_id": "x",
-        "search_text": "prirucka it bezpecnosti book-it",
-        "availability": "IN_STOCK",
-        "stock_on_hand": 10,
-        "is_recommended": false,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
-        "source_group_id": null,
-        "category_path_ids": [],
-        "featured_position": null,
-        "gross_price_minor": 53900,
-        "stock_value_minor": 490000,
-        "current_price_minor": 49000
-      },
-      {
-        "id": "p-off-one",
-        "sku": "OFF-ONE",
-        "name": "Uložená cena o haléř",
-        "slug": "off-one",
-        "active": true,
-        "is_new": false,
-        "is_sale": true,
-        "ordinal": 8389,
-        "sku_key": "off-one",
+        "is_sale": false,
+        "ordinal": 1,
+        "sku_key": "38sa073510-blk",
         "archived": false,
         "category": "Podložky",
         "document": {
-          "id": "p-off-one",
-          "sku": "OFF-ONE",
-          "name": "Uložená cena o haléř",
-          "slug": "off-one",
+          "id": "spyder-jacket",
+          "sku": "38SA073510-BLK",
+          "name": "Pánská bunda Spyder Vyper Jacket – černá",
+          "slug": "panska-bunda-spyder-vyper-jacket-cerna",
           "unit": "ks",
           "active": true,
-          "isSale": true,
           "vatRate": 21,
           "category": "Podložky",
-          "createdAt": "2026-10-19T08:00:00.000Z",
-          "updatedAt": "2026-10-19T08:00:00.000Z",
-          "categoryId": "x",
-          "priceHistory": [],
-          "currentPriceMinor": 1000,
-          "lowStockThreshold": 1
-        },
-        "name_key": "ulozena cena o haler",
-        "has_photo": false,
-        "is_action": false,
-        "low_stock": true,
-        "published": true,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
-        "created_at": "2026-10-19T08:00:00+00:00",
-        "updated_at": "2026-10-19T08:00:00+00:00",
-        "category_id": "x",
-        "search_text": "ulozena cena o haler off-one",
-        "availability": "OUT_OF_STOCK",
-        "stock_on_hand": 0,
-        "is_recommended": false,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
-        "source_group_id": null,
-        "category_path_ids": [],
-        "featured_position": null,
-        "gross_price_minor": 1211,
-        "stock_value_minor": 0,
-        "current_price_minor": 1000
-      },
-      {
-        "id": "p-off-more",
-        "sku": "10520900",
-        "name": "Uložená cena 10520900",
-        "slug": "off-more",
-        "active": true,
-        "is_new": false,
-        "is_sale": true,
-        "ordinal": 8390,
-        "sku_key": "10520900",
-        "archived": false,
-        "category": "Podložky",
-        "document": {
-          "id": "p-off-more",
-          "sku": "10520900",
-          "name": "Uložená cena 10520900",
-          "slug": "off-more",
-          "unit": "ks",
-          "active": true,
-          "isSale": true,
-          "vatRate": 21,
-          "category": "Podložky",
-          "createdAt": "2026-10-19T08:00:00.000Z",
-          "updatedAt": "2026-10-19T08:00:00.000Z",
-          "categoryId": "x",
-          "priceHistory": [],
-          "currentPriceMinor": 446,
-          "lowStockThreshold": 1
-        },
-        "name_key": "ulozena cena 10520900",
-        "has_photo": false,
-        "is_action": false,
-        "low_stock": true,
-        "published": true,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
-        "created_at": "2026-10-19T08:00:00+00:00",
-        "updated_at": "2026-10-19T08:00:00+00:00",
-        "category_id": "x",
-        "search_text": "ulozena cena 10520900 10520900",
-        "availability": "OUT_OF_STOCK",
-        "stock_on_hand": 0,
-        "is_recommended": false,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
-        "source_group_id": null,
-        "category_path_ids": [],
-        "featured_position": null,
-        "gross_price_minor": 646,
-        "stock_value_minor": 0,
-        "current_price_minor": 446
-      },
-      {
-        "id": "p-zero-gross",
-        "sku": "ZERO",
-        "name": "Nulová hrubá cena",
-        "slug": "zero-gross",
-        "active": true,
-        "is_new": false,
-        "is_sale": true,
-        "ordinal": 8391,
-        "sku_key": "zero",
-        "archived": false,
-        "category": "Podložky",
-        "document": {
-          "id": "p-zero-gross",
-          "sku": "ZERO",
-          "name": "Nulová hrubá cena",
-          "slug": "zero-gross",
-          "unit": "ks",
-          "active": true,
-          "isSale": true,
-          "vatRate": 21,
-          "category": "Podložky",
-          "createdAt": "2026-10-19T08:00:00.000Z",
-          "updatedAt": "2026-10-19T08:00:00.000Z",
-          "categoryId": "x",
-          "priceHistory": [],
-          "currentPriceMinor": 500,
-          "lowStockThreshold": 1
-        },
-        "name_key": "nulova hruba cena",
-        "has_photo": false,
-        "is_action": false,
-        "low_stock": true,
-        "published": true,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
-        "created_at": "2026-10-19T08:00:00+00:00",
-        "updated_at": "2026-10-19T08:00:00+00:00",
-        "category_id": "x",
-        "search_text": "nulova hruba cena zero",
-        "availability": "OUT_OF_STOCK",
-        "stock_on_hand": 0,
-        "is_recommended": false,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
-        "source_group_id": null,
-        "category_path_ids": [],
-        "featured_position": null,
-        "gross_price_minor": 0,
-        "stock_value_minor": 0,
-        "current_price_minor": 500
-      },
-      {
-        "id": "p-odd-variant",
-        "sku": "38SA073510",
-        "name": "Bunda 38SA073510",
-        "slug": "odd-variant",
-        "active": true,
-        "is_new": false,
-        "is_sale": true,
-        "ordinal": 8392,
-        "sku_key": "38sa073510",
-        "archived": false,
-        "category": "Podložky",
-        "document": {
-          "id": "p-odd-variant",
-          "sku": "38SA073510",
-          "name": "Bunda 38SA073510",
-          "slug": "odd-variant",
-          "unit": "ks",
-          "active": true,
-          "isSale": true,
-          "vatRate": 21,
-          "category": "Podložky",
-          "createdAt": "2026-10-19T08:00:00.000Z",
-          "updatedAt": "2026-10-19T08:00:00.000Z",
-          "categoryId": "x",
-          "priceHistory": [],
+          "createdAt": "2026-11-12T23:06:43.891Z",
+          "updatedAt": "2026-11-12T23:06:43.902Z",
+          "priceHistory": [
+            {
+              "changedBy": {
+                "tenantId": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+                "principalId": "0d9a6523-6dfb-434e-a97b-004bf7ab9cb7"
+              },
+              "priceMinor": 1878000,
+              "effectiveFrom": "2026-11-12T23:06:43.891Z"
+            }
+          ],
           "currentPriceMinor": 1878000,
-          "lowStockThreshold": 1
+          "lowStockThreshold": 0
         },
-        "name_key": "bunda 38sa073510",
+        "name_key": "panska bunda spyder vyper jacket – cerna",
         "has_photo": false,
         "is_action": false,
-        "low_stock": true,
+        "low_stock": false,
         "published": true,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
-        "created_at": "2026-10-19T08:00:00+00:00",
-        "updated_at": "2026-10-19T08:00:00+00:00",
-        "category_id": "x",
-        "search_text": "bunda 38sa073510 38sa073510  cerna 38sa073510-blk  bila 38sa073510-wht",
-        "availability": "OUT_OF_STOCK",
-        "stock_on_hand": 0,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "created_at": "2026-11-12T23:06:43.891+00:00",
+        "updated_at": "2026-11-12T23:06:43.902+00:00",
+        "category_id": null,
+        "search_text": "panska bunda spyder vyper jacket – cerna 38sa073510-blk  s 38sa073510-blk-s velikost: s m 38sa073510-blk-m velikost: m l 38sa073510-blk-l velikost: l xl 38sa073510-blk-xl velikost: xl xxl 38sa073510-blk-xxl velikost: xxl",
+        "availability": "IN_STOCK",
+        "stock_on_hand": 15,
         "is_recommended": false,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
         "source_group_id": null,
         "category_path_ids": [],
         "featured_position": null,
-        "gross_price_minor": 12099,
-        "stock_value_minor": 0,
+        "gross_price_minor": 1062380,
+        "stock_value_minor": 13170000,
         "current_price_minor": 1878000
       }
     ],
     "product_variants": [
       {
-        "sku": "P1-M8",
-        "name": "M8 × 20",
+        "sku": null,
+        "name": "bílá",
         "unit": "ks",
         "active": true,
         "document": {
-          "id": "v1",
-          "sku": "P1-M8",
-          "name": "M8 × 20",
-          "attributes": "",
-          "priceMinor": 100
+          "name": "bílá",
+          "attributes": "Barva: bílá"
+        },
+        "position": 1,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "product_id": "informational-variants",
+        "variant_id": null,
+        "price_minor": null,
+        "stock_on_hand": 0,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+        "gross_price_minor": null
+      },
+      {
+        "sku": null,
+        "name": "černá",
+        "unit": "ks",
+        "active": true,
+        "document": {
+          "name": "černá",
+          "attributes": "Barva: černá"
         },
         "position": 0,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
-        "product_id": "p1",
-        "variant_id": "v1",
-        "price_minor": 100,
-        "stock_on_hand": 5,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
-        "gross_price_minor": 121
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "product_id": "informational-variants",
+        "variant_id": null,
+        "price_minor": null,
+        "stock_on_hand": 0,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+        "gross_price_minor": null
       },
       {
         "sku": "38SA073510-BLK",
@@ -6015,12 +7521,167 @@
           "priceMinor": 1878000
         },
         "position": 0,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
         "product_id": "p-odd-variant",
         "variant_id": "v-odd",
         "price_minor": 1878000,
         "stock_on_hand": 0,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+        "gross_price_minor": 1062380
+      },
+      {
+        "sku": "38SA073510-BLK-L",
+        "name": "L",
+        "unit": "ks",
+        "active": true,
+        "document": {
+          "id": "8ccf370e-f138-4127-b859-051c3529933e-v3",
+          "sku": "38SA073510-BLK-L",
+          "name": "L",
+          "attributes": "Velikost: L",
+          "priceMinor": 878000,
+          "priceHistory": [
+            {
+              "changedBy": {
+                "tenantId": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+                "principalId": "0d9a6523-6dfb-434e-a97b-004bf7ab9cb7"
+              },
+              "priceMinor": 878000,
+              "effectiveFrom": "2026-11-12T23:06:43.902Z"
+            }
+          ]
+        },
+        "position": 2,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "product_id": "spyder-jacket",
+        "variant_id": "8ccf370e-f138-4127-b859-051c3529933e-v3",
+        "price_minor": 878000,
+        "stock_on_hand": 3,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+        "gross_price_minor": 1062380
+      },
+      {
+        "sku": "38SA073510-BLK-M",
+        "name": "M",
+        "unit": "ks",
+        "active": true,
+        "document": {
+          "id": "8ccf370e-f138-4127-b859-051c3529933e-v2",
+          "sku": "38SA073510-BLK-M",
+          "name": "M",
+          "attributes": "Velikost: M",
+          "priceMinor": 878000,
+          "priceHistory": [
+            {
+              "changedBy": {
+                "tenantId": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+                "principalId": "0d9a6523-6dfb-434e-a97b-004bf7ab9cb7"
+              },
+              "priceMinor": 878000,
+              "effectiveFrom": "2026-11-12T23:06:43.902Z"
+            }
+          ]
+        },
+        "position": 1,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "product_id": "spyder-jacket",
+        "variant_id": "8ccf370e-f138-4127-b859-051c3529933e-v2",
+        "price_minor": 878000,
+        "stock_on_hand": 3,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+        "gross_price_minor": 1062380
+      },
+      {
+        "sku": "38SA073510-BLK-S",
+        "name": "S",
+        "unit": "ks",
+        "active": true,
+        "document": {
+          "id": "8ccf370e-f138-4127-b859-051c3529933e-v1",
+          "sku": "38SA073510-BLK-S",
+          "name": "S",
+          "attributes": "Velikost: S",
+          "priceMinor": 878000,
+          "priceHistory": [
+            {
+              "changedBy": {
+                "tenantId": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+                "principalId": "0d9a6523-6dfb-434e-a97b-004bf7ab9cb7"
+              },
+              "priceMinor": 878000,
+              "effectiveFrom": "2026-11-12T23:06:43.902Z"
+            }
+          ]
+        },
+        "position": 0,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "product_id": "spyder-jacket",
+        "variant_id": "8ccf370e-f138-4127-b859-051c3529933e-v1",
+        "price_minor": 878000,
+        "stock_on_hand": 3,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+        "gross_price_minor": 1062380
+      },
+      {
+        "sku": "38SA073510-BLK-XL",
+        "name": "XL",
+        "unit": "ks",
+        "active": true,
+        "document": {
+          "id": "8ccf370e-f138-4127-b859-051c3529933e-v4",
+          "sku": "38SA073510-BLK-XL",
+          "name": "XL",
+          "attributes": "Velikost: XL",
+          "priceMinor": 878000,
+          "priceHistory": [
+            {
+              "changedBy": {
+                "tenantId": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+                "principalId": "0d9a6523-6dfb-434e-a97b-004bf7ab9cb7"
+              },
+              "priceMinor": 878000,
+              "effectiveFrom": "2026-11-12T23:06:43.902Z"
+            }
+          ]
+        },
+        "position": 3,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "product_id": "spyder-jacket",
+        "variant_id": "8ccf370e-f138-4127-b859-051c3529933e-v4",
+        "price_minor": 878000,
+        "stock_on_hand": 3,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+        "gross_price_minor": 1062380
+      },
+      {
+        "sku": "38SA073510-BLK-XXL",
+        "name": "XXL",
+        "unit": "ks",
+        "active": true,
+        "document": {
+          "id": "8ccf370e-f138-4127-b859-051c3529933e-v5",
+          "sku": "38SA073510-BLK-XXL",
+          "name": "XXL",
+          "attributes": "Velikost: XXL",
+          "priceMinor": 878000,
+          "priceHistory": [
+            {
+              "changedBy": {
+                "tenantId": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+                "principalId": "0d9a6523-6dfb-434e-a97b-004bf7ab9cb7"
+              },
+              "priceMinor": 878000,
+              "effectiveFrom": "2026-11-12T23:06:43.902Z"
+            }
+          ]
+        },
+        "position": 4,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "product_id": "spyder-jacket",
+        "variant_id": "8ccf370e-f138-4127-b859-051c3529933e-v5",
+        "price_minor": 878000,
+        "stock_on_hand": 3,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
         "gross_price_minor": 1062380
       },
       {
@@ -6036,75 +7697,96 @@
           "priceMinor": 9999
         },
         "position": 1,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
         "product_id": "p-odd-variant",
         "variant_id": "v-plain",
         "price_minor": 9999,
         "stock_on_hand": 0,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
         "gross_price_minor": 12099
+      },
+      {
+        "sku": "P1-M8",
+        "name": "M8 × 20",
+        "unit": "ks",
+        "active": true,
+        "document": {
+          "id": "v1",
+          "sku": "P1-M8",
+          "name": "M8 × 20",
+          "attributes": "",
+          "priceMinor": 100
+        },
+        "position": 0,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "product_id": "p1",
+        "variant_id": "v1",
+        "price_minor": 100,
+        "stock_on_hand": 5,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+        "gross_price_minor": 121
       }
     ],
     "price_tiers": [
       {
         "position": 0,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
-        "product_id": "p-reduced",
-        "price_minor": 28900,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "product_id": "p-odd-variant",
+        "price_minor": 1062380,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
         "minimum_quantity": 1,
-        "variant_position": -1,
-        "price_excluding_vat_minor": 25804
-      },
-      {
-        "position": 1,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
-        "product_id": "p-reduced",
-        "price_minor": 26011,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
-        "minimum_quantity": 10,
-        "variant_position": -1,
-        "price_excluding_vat_minor": 23224
+        "variant_position": 0,
+        "price_excluding_vat_minor": 1878000
       },
       {
         "position": 0,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
-        "product_id": "p-off-one",
-        "price_minor": 1211,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
-        "minimum_quantity": 1,
-        "variant_position": -1,
-        "price_excluding_vat_minor": 1000
-      },
-      {
-        "position": 0,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
         "product_id": "p-off-more",
         "price_minor": 646,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
         "minimum_quantity": 1,
         "variant_position": -1,
         "price_excluding_vat_minor": 446
       },
       {
         "position": 0,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "product_id": "p-off-one",
+        "price_minor": 1211,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+        "minimum_quantity": 1,
+        "variant_position": -1,
+        "price_excluding_vat_minor": 1000
+      },
+      {
+        "position": 0,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "product_id": "p-reduced",
+        "price_minor": 28900,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+        "minimum_quantity": 1,
+        "variant_position": -1,
+        "price_excluding_vat_minor": 25804
+      },
+      {
+        "position": 0,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
         "product_id": "p-zero-gross",
         "price_minor": 0,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
         "minimum_quantity": 1,
         "variant_position": -1,
         "price_excluding_vat_minor": 500
       },
       {
-        "position": 0,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
-        "product_id": "p-odd-variant",
-        "price_minor": 1062380,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
-        "minimum_quantity": 1,
-        "variant_position": 0,
-        "price_excluding_vat_minor": 1878000
+        "position": 1,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "product_id": "p-reduced",
+        "price_minor": 26011,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
+        "minimum_quantity": 10,
+        "variant_position": -1,
+        "price_excluding_vat_minor": 23224
       }
     ],
     "stock_movements": [
@@ -6116,10 +7798,10 @@
         "reason": "RECEIPT",
         "ordinal": 64940,
         "reference": null,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
         "product_id": "p1",
         "variant_id": "v1",
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54"
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c"
       },
       {
         "at": "2026-10-19T08:00:00+00:00",
@@ -6129,23 +7811,10 @@
         "reason": "RECEIPT",
         "ordinal": 64941,
         "reference": null,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
         "product_id": "book-it",
         "variant_id": null,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54"
-      },
-      {
-        "at": "2026-10-19T08:00:00+00:00",
-        "id": "receipt-reduced",
-        "note": null,
-        "delta": 10,
-        "reason": "RECEIPT",
-        "ordinal": 64942,
-        "reference": null,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
-        "product_id": "p-reduced",
-        "variant_id": null,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54"
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c"
       },
       {
         "at": "2026-10-19T08:00:00+00:00",
@@ -6155,10 +7824,101 @@
         "reason": "RECEIPT",
         "ordinal": 64943,
         "reference": null,
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
         "product_id": "p2",
         "variant_id": null,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54"
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c"
+      },
+      {
+        "at": "2026-10-19T08:00:00+00:00",
+        "id": "receipt-reduced",
+        "note": null,
+        "delta": 10,
+        "reason": "RECEIPT",
+        "ordinal": 64942,
+        "reference": null,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "product_id": "p-reduced",
+        "variant_id": null,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c"
+      },
+      {
+        "at": "2026-11-12T23:06:43.921+00:00",
+        "id": "1bd955ac-925a-4a7b-a37c-92253b683d83",
+        "note": null,
+        "delta": 4,
+        "reason": "RECEIPT",
+        "ordinal": 1,
+        "reference": null,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "product_id": "informational-variants",
+        "variant_id": null,
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c"
+      },
+      {
+        "at": "2026-11-12T23:06:43.935+00:00",
+        "id": "1360afc1-c36d-4e29-8c86-7c94af8efdfc",
+        "note": null,
+        "delta": 3,
+        "reason": "RECEIPT",
+        "ordinal": 2,
+        "reference": null,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "product_id": "spyder-jacket",
+        "variant_id": "8ccf370e-f138-4127-b859-051c3529933e-v1",
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c"
+      },
+      {
+        "at": "2026-11-12T23:06:43.941+00:00",
+        "id": "71974e03-f0c9-4ce9-8073-ecf424ae8542",
+        "note": null,
+        "delta": 3,
+        "reason": "RECEIPT",
+        "ordinal": 3,
+        "reference": null,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "product_id": "spyder-jacket",
+        "variant_id": "8ccf370e-f138-4127-b859-051c3529933e-v2",
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c"
+      },
+      {
+        "at": "2026-11-12T23:06:43.947+00:00",
+        "id": "38a1a1fc-fc5a-42ce-afb9-708929ec7c2f",
+        "note": null,
+        "delta": 3,
+        "reason": "RECEIPT",
+        "ordinal": 4,
+        "reference": null,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "product_id": "spyder-jacket",
+        "variant_id": "8ccf370e-f138-4127-b859-051c3529933e-v3",
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c"
+      },
+      {
+        "at": "2026-11-12T23:06:43.952+00:00",
+        "id": "2aab1ed7-9da8-4c61-a683-6365577d4512",
+        "note": null,
+        "delta": 3,
+        "reason": "RECEIPT",
+        "ordinal": 5,
+        "reference": null,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "product_id": "spyder-jacket",
+        "variant_id": "8ccf370e-f138-4127-b859-051c3529933e-v4",
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c"
+      },
+      {
+        "at": "2026-11-12T23:06:43.956+00:00",
+        "id": "8e6c2486-5974-4d55-b1ca-1e159b6dff69",
+        "note": null,
+        "delta": 3,
+        "reason": "RECEIPT",
+        "ordinal": 6,
+        "reference": null,
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
+        "product_id": "spyder-jacket",
+        "variant_id": "8ccf370e-f138-4127-b859-051c3529933e-v5",
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c"
       }
     ],
     "orders": [
@@ -6192,13 +7952,13 @@
           "clientRequestId": "secret-request-1"
         },
         "party_id": "storefront-guest",
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
         "created_at": "2026-10-19T08:00:00+00:00",
         "updated_at": "2026-10-19T08:00:00+00:00",
         "search_text": "obj-2026-0001",
         "total_minor": 100,
         "opportunity_id": null,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
         "client_request_id": "secret-request-1"
       },
       {
@@ -6239,13 +7999,13 @@
           "clientRequestId": "secret-request-2"
         },
         "party_id": "storefront-guest",
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
         "created_at": "2026-10-19T08:00:00+00:00",
         "updated_at": "2026-10-19T08:00:00+00:00",
         "search_text": "obj-2026-0002",
         "total_minor": 100,
         "opportunity_id": null,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54",
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c",
         "client_request_id": "secret-request-2"
       }
     ],
@@ -6254,23 +8014,23 @@
         "currency": "EUR",
         "revision": 1,
         "market_id": "5f2d6c1e-7a3b-4c8d-9e0f-1a2b3c4d5e6f",
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
         "offer_mode": "WHOLE_CATALOGUE",
         "updated_at": "2026-11-12T04:39:17.136292+00:00",
         "market_code": "SK",
         "exchange_rate": 0.04,
         "rounding_minor": 10,
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54"
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c"
       }
     ],
     "market_product_offers": [
       {
         "offered": false,
         "market_id": "5f2d6c1e-7a3b-4c8d-9e0f-1a2b3c4d5e6f",
-        "tenant_id": "fa3e2892-860b-4caa-81cc-81855d50412d",
+        "tenant_id": "69f786d2-02a2-4701-b893-2e7e0d1446dc",
         "product_id": "p-off-more",
         "updated_at": "2026-11-12T04:39:17.143711+00:00",
-        "legal_entity_id": "8b0904e7-646d-4a6f-8a99-eb46fd6b0b54"
+        "legal_entity_id": "b7866f2e-ddfa-4c22-978f-eb855019864c"
       }
     ]
   }
