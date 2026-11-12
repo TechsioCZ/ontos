@@ -215,6 +215,26 @@ export const installUnderLock = Effect.fn('ReleaseTenantModules.installUnderLock
   return LockedInstallSchema.members[0].make({});
 });
 
+/**
+ * The outcome of the locked install, as the run reports it. A row somebody wrote between the step's first read and
+ * its lock is reported with the state it actually has: active is `already_active`, anything else is a state a
+ * person set, which a release never changes.
+ */
+export const lockedInstallReport = (entry: ReleaseTenantModule, locked: LockedInstall): ReleaseModuleReport =>
+  Match.valueTags(locked, {
+    AlreadyPresent: ({ state }) =>
+      state === 'active'
+        ? report(entry, 'already_active', 'installed concurrently')
+        : report(
+            entry,
+            'left_as_set',
+            `set ${state} by someone else while this release decided; a release never changes that`,
+          ),
+    Installed: () => report(entry, 'installed', 'installed active by the release'),
+    NotSelling: () =>
+      report(entry, 'selling_module_missing', `none of ${entry.sellingModuleKeys.join(', ')} is active`),
+  });
+
 /** Decide and, when the module is missing, install one module of one Tenant. Never fails: the outcome says why. */
 const installOne = Effect.fn('ReleaseTenantModules.installOne')(
   function* installReleaseModule(
@@ -260,12 +280,7 @@ const installOne = Effect.fn('ReleaseTenantModules.installOne')(
           Schema.is(ReleaseTenantModuleError)(cause) ? cause : refusal('the transaction failed', cause),
         ),
       );
-    return Match.valueTags(installed, {
-      AlreadyPresent: () => report(entry, 'already_active', 'installed concurrently'),
-      Installed: () => report(entry, 'installed', 'installed active by the release'),
-      NotSelling: () =>
-        report(entry, 'selling_module_missing', `none of ${entry.sellingModuleKeys.join(', ')} is active`),
-    });
+    return lockedInstallReport(entry, installed);
   },
   (effect, _executor, _catalog, entry) =>
     effect.pipe(
