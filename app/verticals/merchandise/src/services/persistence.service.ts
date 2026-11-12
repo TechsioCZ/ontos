@@ -2392,7 +2392,7 @@ export const prepareCommandTax = Effect.fn('Merchandise.prepareCommandTax')(func
 });
 
 /** The staff response's view of the company's VAT: its current and scheduled rates and its declared regime. */
-const staffTaxFields = (state: CompanyTaxRates | undefined, now: DateTime.Utc) => ({
+export const staffTaxFields = (state: CompanyTaxRates | undefined, now: DateTime.Utc) => ({
   sellerVatRegime: state === undefined || state.book.regime === 'NOT_DECLARED' ? null : state.book.regime,
   taxRates: state === undefined ? [] : taxRateViews(state.book, now),
   taxRatesConfirmedAt: state?.source === 'TAX' ? state.syncedAt : null,
