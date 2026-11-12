@@ -57,6 +57,7 @@ describe('#1157 GoPay notification', () => {
         providerEventAt: Option.none(),
         providerOccurrenceId: Option.none(),
         providerRefs: [{ _tag: 'GOPAY_PAYMENT', id: paymentRef }],
+        retainedBody: new Uint8Array(0),
         signedObject: Option.none(),
         verifiedAt: verifiedInstant,
       });

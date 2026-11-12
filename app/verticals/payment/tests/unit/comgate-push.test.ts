@@ -143,6 +143,8 @@ describe('#1157 Comgate push verification', () => {
       expect(trigger?.providerRefs).toEqual([{ _tag: 'COMGATE_TRANSACTION', transId: 'AB12-EF34-IJ56' }]);
       expect(trigger?.deliveryIdentity).toBe('comgate:AB12-EF34-IJ56:PAID');
       expect(JSON.stringify(trigger)).not.toContain('gx4q8OV3TJt6noJnfhjqJKyX3Z6Ych0y');
+      // #1155: no byte of the body (which carries the shop secret) is handed to the capture for storage.
+      expect(trigger?.retainedBody).toEqual(new Uint8Array(0));
 
       // The lookup that follows says CANCELLED: the push is not rejected, the difference is recorded,
       // and the evidence comes only from the lookup.

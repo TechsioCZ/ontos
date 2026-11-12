@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'effect-rstest';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { DateTime, Effect, Option, Result, Schema } from 'effect';
 
 import type { GatewayEnvironment } from '../../shared/domain/psp-vocabulary.ts';
-import { decodeStripeEvent, stripeSignedObjectOrderReference } from '../../src/integrations/stripe/stripe-event.ts';
+import {
+  decodeStripeEvent,
+  stripeRetainedBodyOf,
+  stripeSignedObjectOrderReference,
+} from '../../src/integrations/stripe/stripe-event.ts';
 import {
   STRIPE_FIXTURE_EVENT_CREATED,
   STRIPE_FIXTURE_EVENT_ID,
@@ -97,6 +102,8 @@ describe('#1157 Stripe event decoding and routing', () => {
     Effect.gen(function* unmappedType() {
       const trigger = yield* decode({ object: { id: 'seti_1', object: 'setup_intent' }, type: 'setup_intent.created' });
       expect(trigger.actionable).toBe(false);
+      // Nothing reads an IGNORED event again, so the capture keeps none of its bytes.
+      expect(stripeRetainedBodyOf(trigger, utf8ToBytes('{"id":"evt"}'))).toEqual(new Uint8Array(0));
       expect(trigger.deliveryIdentity).toBe(`stripe:evt:${STRIPE_FIXTURE_EVENT_ID}`);
       expect(trigger.providerOccurrenceId).toEqual(Option.none());
       expect(trigger.signedObject).toEqual(Option.none());

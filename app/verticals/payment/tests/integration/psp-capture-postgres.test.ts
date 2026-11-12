@@ -12,7 +12,14 @@ import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtim
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
-import { coreRelations, outboxMessages } from '../../../../packages/core-runtime/src/db/schema.ts';
+import {
+  actionInvocations,
+  auditEvents,
+  coreRelations,
+  dataAccessEvents,
+  domainEvents,
+  outboxMessages,
+} from '../../../../packages/core-runtime/src/db/schema.ts';
 import { makeScriptedBoundAccessGate } from '../../../../packages/core-runtime/src/testing/access-gate.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
@@ -33,9 +40,12 @@ import {
 } from '../../src/integrations/psp/notification-store.ts';
 import { ProviderNotificationStoreLive } from '../../src/integrations/psp/notification-store-live.ts';
 import { GatewayProviderAdapters } from '../../src/integrations/psp/psp-adapter.ts';
-import type { GatewayProviderAdapter } from '../../src/integrations/psp/psp-adapter.ts';
+import type {
+  GatewayProviderAdapter,
+  GatewayProviderAdaptersContract,
+} from '../../src/integrations/psp/psp-adapter.ts';
 import { GatewayNotificationRejected, GatewayProviderUnavailable } from '../../src/integrations/psp/psp-errors.ts';
-import { decodeStripeEvent } from '../../src/integrations/stripe/stripe-event.ts';
+import { decodeStripeEvent, stripeRetainedBodyOf } from '../../src/integrations/stripe/stripe-event.ts';
 import { verifyStripeSignature } from '../../src/integrations/stripe/stripe-webhook-signature.ts';
 import { pspBindingPersistenceForTransaction } from '../../src/persistence/psp-binding-persistence.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
@@ -45,6 +55,7 @@ import {
   STRIPE_FIXTURE_EVENT_CREATED,
 } from '../fixtures/stripe/stripe-events.ts';
 import { stripePaymentIntentObject } from '../fixtures/stripe/stripe-objects.ts';
+import { credentialConfig, recordedGatewayAdapters } from '../support/psp-conformance-provider.fixture.ts';
 import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
 import { makeTestScope, operationalScopeOf, provenanceFor } from './database-fixture.ts';
 import type { PaymentTestScope } from './database-fixture.ts';
@@ -116,11 +127,12 @@ const stripeAdapter: GatewayProviderAdapter = {
         toleranceSeconds: STRIPE_TOLERANCE_SECONDS,
         verifiedAt,
       });
-      return yield* decodeStripeEvent({
+      const trigger = yield* decodeStripeEvent({
         environment: notification.environment,
         rawBody: notification.rawBody,
         verifiedAt,
       });
+      return { ...trigger, retainedBody: stripeRetainedBodyOf(trigger, notification.rawBody) };
     }),
 };
 
@@ -157,16 +169,15 @@ const nativeDatabase = Effect.gen(function* nativeDatabase() {
   } satisfies EvidenceNativeDatabase;
 });
 
-/** A Stripe SANDBOX Provider Account Binding of the scope, created through the binding owner persistence. */
-const createStripeBinding = Effect.fn('PspCaptureNative.createStripeBinding')(function* createStripeBinding(
+/** A SANDBOX Provider Account Binding of the scope for `merchantIdentity`, through the binding owner persistence. */
+const createBinding = Effect.fn('PspCaptureNative.createBinding')(function* createBinding(
   database: EvidenceNativeDatabase,
   scope: PaymentTestScope,
+  merchantIdentityDocument: Schema.Json,
+  secretRef: string,
 ) {
   const provenance = yield* provenanceFor(scope);
-  const merchantIdentity = yield* Schema.decodeUnknownEffect(GatewayMerchantIdentitySchema)({
-    _tag: 'STRIPE',
-    accountId: 'acct_1C17CaptureFixture',
-  });
+  const merchantIdentity = yield* Schema.decodeUnknownEffect(GatewayMerchantIdentitySchema)(merchantIdentityDocument);
   const created = yield* database.database.transaction((transaction) =>
     installOperationalScope(transaction, operationalScopeOf(scope)).pipe(
       Effect.flatMap((scoped) =>
@@ -175,15 +186,19 @@ const createStripeBinding = Effect.fn('PspCaptureNative.createStripeBinding')(fu
           merchantIdentity,
           notificationUrl: 'https://hooks.example.test/psp/stripe',
           provenance,
-          reason: 'Configure the sandbox Stripe account',
+          reason: 'Configure the sandbox gateway account',
           replaces: Option.none(),
-          secretRef: STRIPE_SECRET_REF,
+          secretRef,
         }),
       ),
     ),
   );
   return created.binding.view;
 });
+
+/** A Stripe SANDBOX Provider Account Binding of the scope, created through the binding owner persistence. */
+const createStripeBinding = (database: EvidenceNativeDatabase, scope: PaymentTestScope) =>
+  createBinding(database, scope, { _tag: 'STRIPE', accountId: 'acct_1C17CaptureFixture' }, STRIPE_SECRET_REF);
 
 const encodeBase64 = Schema.encodeSync(Schema.Uint8ArrayFromBase64);
 const bodyOf = (event: StripeEvent) => utf8ToBytes(JSON.stringify(event));
@@ -204,8 +219,12 @@ interface SmuggledScope {
 }
 
 interface DeliveryInput {
+  /** The verifying adapters; the fixture Stripe adapter unless given (the production set for Comgate). */
+  readonly adapters?: GatewayProviderAdaptersContract;
   readonly body: Uint8Array;
   readonly family?: GatewayFamily;
+  /** The relay headers; when absent, a JSON body with `signature` as its Stripe-Signature header. */
+  readonly headers?: Readonly<Record<string, string>>;
   readonly idempotencyKey: string;
   readonly providerAccountRef: GatewayProviderAccountRef;
   readonly signature: string;
@@ -223,7 +242,7 @@ const deliver = Effect.fn('PspCaptureNative.deliver')(function* deliver(
     ...input.smuggled,
     environment: 'SANDBOX',
     family: input.family ?? 'STRIPE',
-    headers: { contentType: 'application/json; charset=utf-8', stripeSignature: input.signature },
+    headers: input.headers ?? { contentType: 'application/json; charset=utf-8', stripeSignature: input.signature },
     providerAccountRef: input.providerAccountRef,
     query: {},
     rawBody: encodeBase64(input.body),
@@ -237,7 +256,14 @@ const deliver = Effect.fn('PspCaptureNative.deliver')(function* deliver(
       registration: captureProviderNotificationAction,
       transport: { correlationId: 'payment-psp-capture', idempotencyKey: input.idempotencyKey },
     });
-  }).pipe(Effect.provide(Layer.merge(AdaptersLive, TestClock.layer())));
+  }).pipe(
+    Effect.provide(
+      Layer.merge(
+        input.adapters === undefined ? AdaptersLive : Layer.succeed(GatewayProviderAdapters, input.adapters),
+        TestClock.layer(),
+      ),
+    ),
+  );
 });
 
 /** The result as `[tag, notificationId | rejection reason]`. */
@@ -309,6 +335,73 @@ const scenario = Effect.fn('PspCaptureNative.scenario')(function* scenario() {
   const binding = yield* createStripeBinding(database, scope);
   const actions = yield* makeActions(database);
   return { actions, binding, database, scope };
+});
+
+/** The fixture Comgate shop secret of the binding's credential reference; an obvious fake, no real account. */
+const COMGATE_SECRET_REF = 'comgate-sandbox-1';
+const COMGATE_FAKE_SECRET = 'FAKE-comgate-shop-secret-c17-never-stored';
+const COMGATE_MERCHANT_ID = '123456';
+const COMGATE_TRANS_ID = 'AB12-CD34-EF56';
+
+/** A Comgate push of the binding's merchant as Comgate sends it: the shop secret travels in the body. */
+const comgatePushFields = (secret: string, status: string) => ({
+  curr: 'CZK',
+  merchant: COMGATE_MERCHANT_ID,
+  price: '10000',
+  refId: 'c17-capture-order',
+  secret,
+  status,
+  test: 'true',
+  transId: COMGATE_TRANS_ID,
+});
+const comgateJsonPush = (secret: string, status: string) =>
+  utf8ToBytes(JSON.stringify(comgatePushFields(secret, status)));
+const comgateFormPush = (secret: string, status: string) =>
+  utf8ToBytes(new URLSearchParams(comgatePushFields(secret, status)).toString());
+
+/**
+ * The production adapter set, verifying with the fake Comgate secret from the credential deployment value. No
+ * provider route is scripted: verifying a push never calls Comgate.
+ */
+const comgateAdapters = recordedGatewayAdapters({}).pipe(
+  Effect.map(({ adapters }) => adapters),
+  Effect.provide(credentialConfig({ [COMGATE_SECRET_REF]: { family: 'COMGATE', secret: COMGATE_FAKE_SECRET } })),
+);
+
+/**
+ * Everything this Tenant's captures wrote, as text: notification rows (the body decoded as UTF-8 and as hex), the
+ * domain events and Outbox messages, the Action invocations and the audit and data-access evidence.
+ */
+const storedTextOf = Effect.fn('PspCaptureNative.storedTextOf')(function* storedTextOf(
+  database: EvidenceNativeDatabase,
+  tenantId: string,
+) {
+  const admin = database.coreAdmin;
+  const notifications = yield* notificationRows(database, tenantId);
+  const tables = yield* Effect.all(
+    [
+      // Every text and JSON column of the domain events (their bigint sequence number carries no text).
+      admin
+        .select({
+          eventType: domainEvents.eventType,
+          payloadJson: domainEvents.payloadJson,
+          subjectResourceId: domainEvents.subjectResourceId,
+        })
+        .from(domainEvents)
+        .where(eq(domainEvents.tenantId, tenantId)),
+      admin.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
+      admin.select().from(actionInvocations).where(eq(actionInvocations.tenantId, tenantId)),
+      admin.select().from(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
+      admin.select().from(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
+    ],
+    { concurrency: 1 },
+  );
+  const rows = notifications.map((row) => ({
+    ...row,
+    rawBody: new TextDecoder().decode(row.rawBody),
+    rawBodyHex: bytesToHex(new Uint8Array(row.rawBody)),
+  }));
+  return JSON.stringify([rows, tables]);
 });
 
 describe('#1157 capture-provider-notification through the Core Action runtime', () => {
@@ -413,8 +506,14 @@ describe('#1157 capture-provider-notification through the Core Action runtime', 
         const ignoredAgain = yield* deliver(actions, scope, { ...unmapped, idempotencyKey: 'capture-ignored-again' });
         expect(summaryOf(ignored)[0]).toBe('IGNORED');
         expect(summaryOf(ignoredAgain)).toEqual(['DUPLICATE', notificationIdOf(ignored)]);
-        const states = (yield* notificationRows(database, scope.tenantId)).map((row) => row.state);
-        expect(new Set(states)).toEqual(new Set(['CAPTURED', 'IGNORED']));
+        // The actionable event keeps its exact signed body for the worker; the IGNORED one keeps none.
+        const stored = (yield* notificationRows(database, scope.tenantId)).map((row) => [
+          row.state,
+          row.rawBody.length,
+        ]);
+        expect(new Set(stored.map((entry) => entry.join(':')))).toEqual(
+          new Set([`CAPTURED:${body.length}`, 'IGNORED:0']),
+        );
         expect(yield* capturedMessages(database, scope.tenantId)).toHaveLength(1);
       }),
     ),
@@ -498,6 +597,108 @@ describe('#1157 capture-provider-notification through the Core Action runtime', 
         const rows = yield* notificationRows(database, scope.tenantId);
         expect(rows.map((row) => [row.tenantId, row.legalEntityId])).toEqual([[scope.tenantId, scope.legalEntityId]]);
         expect(yield* notificationRows(database, other.tenantId)).toHaveLength(0);
+      }),
+    ),
+  );
+  it.live('#1155 #1157 A Comgate push is captured without its shop secret', () =>
+    native(
+      Effect.gen(function* comgateSecretNeverStored() {
+        yield* installPaymentTestCompositionAuthority(COMPOSITION_R1);
+        const database = yield* nativeDatabase;
+        const scope = yield* makeTestScope;
+        yield* seedCoreScope(database, scope);
+        const binding = yield* createBinding(
+          database,
+          scope,
+          { _tag: 'COMGATE', merchantId: COMGATE_MERCHANT_ID },
+          COMGATE_SECRET_REF,
+        );
+        const actions = yield* makeActions(database);
+        const adapters = yield* comgateAdapters;
+        // A Comgate push has no signature header; only its content type reaches the capture.
+        const comgate = {
+          adapters,
+          family: 'COMGATE',
+          providerAccountRef: binding.providerAccountRef,
+          signature: 'not-sent-by-comgate',
+        } as const;
+        const credentials = credentialConfig({
+          [COMGATE_SECRET_REF]: { family: 'COMGATE', secret: COMGATE_FAKE_SECRET },
+        });
+        const deliverComgate = (input: Omit<DeliveryInput, keyof typeof comgate>) =>
+          deliver(actions, scope, { ...comgate, ...input }).pipe(Effect.provide(credentials));
+
+        // Authentic pushes (REST v2 JSON and v1 form) carry the shop secret in their bodies.
+        const paid = yield* deliverComgate({
+          body: comgateJsonPush(COMGATE_FAKE_SECRET, 'PAID'),
+          headers: { contentType: 'application/json' },
+          idempotencyKey: 'comgate-paid',
+        });
+        const cancelled = yield* deliverComgate({
+          body: comgateFormPush(COMGATE_FAKE_SECRET, 'CANCELLED'),
+          headers: { contentType: 'application/x-www-form-urlencoded; charset=UTF-8' },
+          idempotencyKey: 'comgate-cancelled',
+        });
+        // The same source occurrence redelivered is still recognised without its body.
+        const redelivered = yield* deliverComgate({
+          body: comgateJsonPush(COMGATE_FAKE_SECRET, 'PAID'),
+          headers: { contentType: 'application/json' },
+          idempotencyKey: 'comgate-paid-again',
+        });
+        // Not authentic: a wrong secret, and the right secret for another merchant. Nothing of either is stored.
+        const wrongSecret = yield* deliverComgate({
+          body: comgateJsonPush(`${COMGATE_FAKE_SECRET}-guess`, 'PAID'),
+          headers: { contentType: 'application/json' },
+          idempotencyKey: 'comgate-wrong-secret',
+        });
+        const otherMerchant = yield* deliverComgate({
+          body: utf8ToBytes(JSON.stringify({ ...comgatePushFields(COMGATE_FAKE_SECRET, 'PAID'), merchant: '654321' })),
+          headers: { contentType: 'application/json' },
+          idempotencyKey: 'comgate-other-merchant',
+        });
+        expect([paid, cancelled].map((result) => summaryOf(result)[0])).toEqual(['CAPTURED', 'CAPTURED']);
+        expect([redelivered, wrongSecret, otherMerchant].map(summaryOf)).toEqual([
+          ['DUPLICATE', notificationIdOf(paid)],
+          ['REJECTED', 'SECRET_MISMATCH'],
+          ['REJECTED', 'MERCHANT_MISMATCH'],
+        ]);
+
+        // The shop secret appears nowhere this Tenant's captures wrote, in any column or payload.
+        const rows = yield* notificationRows(database, scope.tenantId);
+        expect(
+          new Set(rows.map((row) => [row.deliveryIdentity, row.authenticity, row.rawBody.length].join(' '))),
+        ).toEqual(
+          new Set([
+            `comgate:${COMGATE_TRANS_ID}:CANCELLED SHARED_SECRET_VERIFIED 0`,
+            `comgate:${COMGATE_TRANS_ID}:PAID SHARED_SECRET_VERIFIED 0`,
+          ]),
+        );
+        const stored = yield* storedTextOf(database, scope.tenantId);
+        expect(stored).toContain(`comgate:${COMGATE_TRANS_ID}:PAID`);
+        expect(stored).not.toContain(COMGATE_FAKE_SECRET);
+        expect(stored).not.toContain(bytesToHex(utf8ToBytes(COMGATE_FAKE_SECRET)));
+        expect(yield* capturedMessages(database, scope.tenantId)).toHaveLength(2);
+
+        // The worker still has everything it needs: the transaction to look up through the binding, and the
+        // pushed status to compare with that lookup.
+        const read = yield* readAsWorker(database, scope, notificationIdOf(paid));
+        expect(
+          read.pipe(
+            Option.map((notification) => [
+              notification.bindingId,
+              notification.trigger.providerRefs,
+              notification.trigger.claimedStatus,
+              notification.trigger.signedObject,
+            ]),
+          ),
+        ).toEqual(
+          Option.some([
+            binding.bindingId,
+            [{ _tag: 'COMGATE_TRANSACTION', transId: COMGATE_TRANS_ID }],
+            Option.some('PAID'),
+            Option.none(),
+          ]),
+        );
       }),
     ),
   );

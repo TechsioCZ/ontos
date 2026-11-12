@@ -20,7 +20,7 @@ import { captureProviderNotificationAction } from '../../src/actions/capture-pro
 import type { CaptureProviderNotificationServices } from '../../src/actions/capture-provider-notification.action.ts';
 import { GATEWAY_LAUNCH_CAPABILITIES } from '../../src/integrations/psp/capability-matrix.ts';
 import type { GatewayCaptureTargetQuery } from '../../src/integrations/psp/capture-binding-resolver.ts';
-import { VerifiedNotificationTriggerSchema } from '../../src/integrations/psp/notification-envelope.ts';
+import { VerifiedNotificationCaptureSchema } from '../../src/integrations/psp/notification-envelope.ts';
 import type { RawProviderNotification } from '../../src/integrations/psp/notification-envelope.ts';
 import { GatewayProviderAdapters } from '../../src/integrations/psp/psp-adapter.ts';
 import type { GatewayProviderAdapter } from '../../src/integrations/psp/psp-adapter.ts';
@@ -77,7 +77,7 @@ const target = Schema.decodeUnknownSync(GatewayExecutionTargetSchema)({
 });
 
 const triggerOf = (actionable: boolean) =>
-  Schema.decodeUnknownSync(VerifiedNotificationTriggerSchema)({
+  Schema.decodeUnknownSync(VerifiedNotificationCaptureSchema)({
     actionable,
     authenticity: 'SIGNATURE_VERIFIED',
     claimedStatus: Option.some('succeeded'),
@@ -86,6 +86,7 @@ const triggerOf = (actionable: boolean) =>
     providerEventAt: Option.none(),
     providerOccurrenceId: Option.none(),
     providerRefs: [{ _tag: 'STRIPE_PAYMENT_INTENT', id: 'pi_c17_unit' }],
+    retainedBody: new Uint8Array(0),
     signedObject: Option.none(),
     verifiedAt: RECEIVED_AT,
   });
