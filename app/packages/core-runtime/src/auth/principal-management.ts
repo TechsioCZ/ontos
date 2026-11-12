@@ -48,7 +48,7 @@ const isApiKeyBindingStatus = Schema.is(ApiKeyBindingStatusSchema);
 
 export interface PrincipalManagementPersistence {
   readonly createPrincipal: (
-    input: CreateNonHumanPrincipalInput,
+    input: CreateNonHumanPrincipalInput & { readonly principalId?: string },
   ) => Effect.Effect<Option.Option<{ readonly principalId: string }>, IdentityPersistenceUnavailableError>;
   readonly insertApiKeyBinding: (
     input: BindApiKeyInput,
@@ -88,6 +88,13 @@ export interface PrincipalManagementRepositoryService {
   readonly createNonHumanPrincipal: (
     input: CreateNonHumanPrincipalInput,
   ) => Effect.Effect<{ readonly principalId: string; readonly status: 'active' }, PrincipalManagementError>;
+  /**
+   * The platform's own service principal with an id the platform derived (a module's internal workload in one company,
+   * `internalWorkloadPrincipalId`). Only the release step calls it; no Action or API passes a principal id through.
+   */
+  readonly createPlatformServicePrincipal: (
+    input: CreatePlatformServicePrincipalInput,
+  ) => Effect.Effect<{ readonly principalId: string; readonly status: 'active' }, PrincipalManagementError>;
   readonly setApiKeyBindingStatus: (
     input: SetApiKeyBindingStatusInput,
   ) => Effect.Effect<
@@ -111,12 +118,17 @@ const principalManagementPersistenceFromTransaction = (
   createPrincipal: (input) =>
     transaction
       .insert(principals)
-      .values({
-        displayName: input.displayName,
-        kind: input.kind,
-        status: 'active',
-        tenantId: input.tenantId,
-      })
+      .values(
+        input.principalId === undefined
+          ? { displayName: input.displayName, kind: input.kind, status: 'active', tenantId: input.tenantId }
+          : {
+              displayName: input.displayName,
+              kind: input.kind,
+              principalId: input.principalId,
+              status: 'active',
+              tenantId: input.tenantId,
+            },
+      )
       .returning({ principalId: principals.principalId })
       .pipe(
         Effect.mapError(persistenceFailure),
@@ -295,6 +307,23 @@ export interface CreateNonHumanPrincipalInput {
   readonly kind: Extract<PrincipalKind, 'integration' | 'service'>;
   readonly tenantId: string;
 }
+
+export interface CreatePlatformServicePrincipalInput {
+  readonly displayName: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+}
+
+const createPlatformServicePrincipalFor = (persistence: PrincipalManagementPersistence) =>
+  Effect.fn('PrincipalManagement.createPlatformServicePrincipal')(function* createPlatformPrincipal(
+    input: CreatePlatformServicePrincipalInput,
+  ) {
+    const created = yield* persistence.createPrincipal({ ...input, kind: 'service' });
+    if (Option.isNone(created) || created.value.principalId !== input.principalId) {
+      return yield* persistenceFailure();
+    }
+    return { principalId: created.value.principalId, status: 'active' as const };
+  });
 
 const createNonHumanPrincipalFor = (persistence: PrincipalManagementPersistence) =>
   Effect.fn('PrincipalManagement.createNonHumanPrincipal')(function* createPrincipal(
@@ -480,6 +509,7 @@ export const principalManagementRepositoryFromPersistence = (
     bindApiKey: bindApiKeyFor(persistence),
     changePrincipalStatus: changePrincipalStatusFor(persistence),
     createNonHumanPrincipal: createNonHumanPrincipalFor(persistence),
+    createPlatformServicePrincipal: createPlatformServicePrincipalFor(persistence),
     setApiKeyBindingStatus: setApiKeyBindingStatusFor(persistence),
     validateSupportImpersonation: validateSupportImpersonationFor(persistence),
   });

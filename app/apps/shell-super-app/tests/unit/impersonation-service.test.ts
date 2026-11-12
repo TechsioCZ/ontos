@@ -74,6 +74,7 @@ const principalManagementRepository: PrincipalManagementRepositoryService = {
   bindApiKey: () => unconfiguredPrincipalManagement('bindApiKey'),
   changePrincipalStatus: () => unconfiguredPrincipalManagement('changePrincipalStatus'),
   createNonHumanPrincipal: () => unconfiguredPrincipalManagement('createNonHumanPrincipal'),
+  createPlatformServicePrincipal: () => unconfiguredPrincipalManagement('createPlatformServicePrincipal'),
   setApiKeyBindingStatus: () => unconfiguredPrincipalManagement('setApiKeyBindingStatus'),
   validateSupportImpersonation: () => unconfiguredPrincipalManagement('validateSupportImpersonation'),
 };

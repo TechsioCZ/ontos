@@ -244,12 +244,14 @@ export const acquireWorkloadGatewayContext = Effect.fn('GatewayWorkload.acquire'
   function* acquireWorkload(request: WorkloadGatewayRequest) {
     const key = yield* ownWorkloadCredential({
       appId: request.callingAppId,
+      legalEntityId: request.legalEntityId,
       tenantId: request.tenantId,
       workloadKey: request.workloadKey,
     });
     if (Option.isNone(key)) {
+      // The caller shows its own unavailable answer; the warning below keeps which tenant and company had no key.
       return yield* new GatewayDelegationSourceError({
-        reason: `No credential of ${request.workloadKey} for this tenant: the workload is not registered, or not provisioned yet`,
+        reason: `No credential of ${request.workloadKey} for tenant ${request.tenantId} company ${request.legalEntityId}: the workload is not registered there, or not provisioned yet`,
       });
     }
     const baseUrl = yield* ShellGatewayBaseUrl.parse(yield* ConfigProvider.ConfigProvider).pipe(

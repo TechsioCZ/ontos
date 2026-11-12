@@ -1,10 +1,13 @@
-import { loadModuleCredentialEnrolment, PLATFORM_TENANT } from '@app/core-runtime/auth/module-credentials';
+import {
+  internalWorkloadPrincipalId,
+  loadModuleCredentialEnrolment,
+  PLATFORM_TENANT,
+} from '@app/core-runtime/auth/module-credentials';
 import { CoreDatabase } from '@app/core-runtime/db/client';
-import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
-import { and, eq, like, sql } from 'drizzle-orm';
+import { and, eq, inArray, like, sql } from 'drizzle-orm';
 import { Clock, DateTime, Duration, Effect, Exit, Layer, Redacted, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
@@ -35,13 +38,23 @@ import {
 } from '../../api/modules/installed-module-catalog.ts';
 import {
   accessWorkloadBindings,
+  accessWorkloadCompanyBindings,
   applicationCompositionAuthority,
   auditEvents,
   coreRelations,
+  legalEntities,
   principalAuthBindings,
   principals,
+  tenantModuleStates,
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
+import { AccessReleaseStoreLive } from '../../../../packages/core-runtime/src/access/changes/persistence/drizzle-store.ts';
+import { makeDatabaseIdentityEnrollmentLive } from '../../../../packages/core-runtime/src/db/database-identities.ts';
+import { registerReleaseInternalWorkloads } from '../../../../packages/core-runtime/src/install/release-internal-workloads.ts';
+import type { ReleaseInternalWorkloadTenantReport } from '../../../../packages/core-runtime/src/install/release-internal-workloads.ts';
+import { writeTestTenantScopes } from '../../../../packages/core-runtime/src/testing/tenant-access.ts';
+import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../../../database/identity-enrollment.ts';
+import { internalWorkloadDeclarations } from '../../../../scripts/demo/release-internal-workloads.mts';
 import {
   makeTestDatabaseFromClient,
   makeTestPgClient,
@@ -689,26 +702,37 @@ it.live(
 
 /** CRM's Party intake: the internal workload its own server acts as, registered by the operator per tenant (O73). */
 const INTAKE_WORKLOAD = 'demo.crm.party-intake';
+const CRM_MODULE = 'demo.crm';
 
-/** The value a pass must have produced; its absence fails the test. */
-const present = <Value>(value: Value | undefined) =>
-  value === undefined ? Effect.die('An expected workload credential is missing') : Effect.succeed(value);
+/** One tenant's counts in a run's report. */
+const counts = (reports: readonly ReleaseInternalWorkloadTenantReport[], tenantId: string) => {
+  const report = reports.find((candidate) => candidate.tenantId === tenantId);
+  return report === undefined
+    ? undefined
+    : {
+        failed: report.failed,
+        registered: report.registered,
+        retired: report.retired,
+        unchanged: report.unchanged,
+      };
+};
 
 it.live(
-  'issues, attests, rotates and retires the key of a registered internal workload, admitted only where its binding is',
+  'registers internal workloads per tenant and company at release, keys exactly those in the same pass, and retires what is no longer wanted',
   () =>
     Effect.scoped(
-      Effect.gen(function* internalWorkloadCredential() {
+      Effect.gen(function* releaseSequence() {
         const { adminDatabase, catalog, coreDatabase, keys, services } = yield* platform;
-        const registeredTenant = crypto.randomUUID();
-        const unregisteredTenant = crypto.randomUUID();
-        const intakePrincipal = crypto.randomUUID();
-        const otherPrincipal = crypto.randomUUID();
-        const bindingId = crypto.randomUUID();
-        // The operator's data (ADR-0028): two customer tenants, CRM's intake principal registered in one of them, and
-        // a service principal in the other whose registration was already revoked. The platform never writes these.
+        const enrollment = APP_DATABASE_IDENTITY_ENROLLMENT;
+        const [tenantOne, tenantTwo] = [crypto.randomUUID(), crypto.randomUUID()];
+        const [companyA, companyB, companyC] = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+        const owners = [crypto.randomUUID(), crypto.randomUUID()];
+        const foreignPrincipal = crypto.randomUUID();
+        const now = yield* DateTime.nowAsDate;
+        // Product state the release step derives everything from: two tenants serving people, CRM installed in both,
+        // two companies in the first and one in the second.
         yield* adminDatabase.insert(tenants).values(
-          [registeredTenant, unregisteredTenant].map((tenantId, index) => ({
+          [tenantOne, tenantTwo].map((tenantId, index) => ({
             defaultLocale: 'cs',
             name: `Customer ${String(index)}`,
             slug: `customer-${tenantId}`,
@@ -716,191 +740,204 @@ it.live(
             tenantId,
           })),
         );
+        yield* adminDatabase.insert(legalEntities).values(
+          [
+            [companyA, tenantOne],
+            [companyB, tenantOne],
+            [companyC, tenantTwo],
+          ].map(([legalEntityId = '', tenantId = ''], index) => ({
+            legalEntityId,
+            legalName: `Company ${String(index)}`,
+            registrationCountry: 'CZ',
+            registrationNumber: `0000000${String(index)}`,
+            status: 'active',
+            tenantId,
+          })),
+        );
         yield* adminDatabase.insert(principals).values([
+          ...[tenantOne, tenantTwo].map((tenantId, index) => ({
+            displayName: 'Owner',
+            kind: 'human' as const,
+            principalId: owners[index] ?? '',
+            status: 'active' as const,
+            tenantId,
+          })),
+          // A registration someone made by hand: never adopted, never keyed.
           {
-            displayName: 'CRM Party intake',
-            kind: 'service',
-            principalId: intakePrincipal,
-            status: 'active',
-            tenantId: registeredTenant,
-          },
-          {
-            displayName: 'CRM Party intake',
-            kind: 'service',
-            principalId: otherPrincipal,
-            status: 'active',
-            tenantId: unregisteredTenant,
-          },
-        ]);
-        yield* adminDatabase.insert(accessWorkloadBindings).values([
-          {
-            bindingId,
-            incarnation: crypto.randomUUID(),
-            principalId: intakePrincipal,
-            status: 'active',
-            tenantId: registeredTenant,
-            workloadKey: INTAKE_WORKLOAD,
-          },
-          {
-            bindingId: crypto.randomUUID(),
-            incarnation: crypto.randomUUID(),
-            principalId: otherPrincipal,
-            revokedAt: yield* DateTime.nowAsDate,
-            status: 'revoked',
-            tenantId: unregisteredTenant,
-            workloadKey: INTAKE_WORKLOAD,
+            displayName: 'CRM Party intake (by hand)',
+            kind: 'service' as const,
+            principalId: foreignPrincipal,
+            status: 'active' as const,
+            tenantId: tenantOne,
           },
         ]);
+        yield* adminDatabase
+          .insert(tenantModuleStates)
+          .values([tenantOne, tenantTwo].map((tenantId) => ({ moduleKey: CRM_MODULE, state: 'active', tenantId })));
+        for (const [index, tenantId] of [tenantOne, tenantTwo].entries()) {
+          yield* writeTestTenantScopes(coreDatabase, {
+            databaseIdentities: enrollment,
+            legalEntityIds: tenantId === tenantOne ? [companyA, companyB] : [companyC],
+            principalId: owners[index] ?? '',
+            tenantId,
+          });
+        }
+        const foreignBinding = crypto.randomUUID();
+        yield* adminDatabase.insert(accessWorkloadBindings).values({
+          bindingId: foreignBinding,
+          createdAt: now,
+          incarnation: crypto.randomUUID(),
+          principalId: foreignPrincipal,
+          status: 'active',
+          tenantId: tenantOne,
+          workloadKey: INTAKE_WORKLOAD,
+        });
+        yield* adminDatabase.insert(accessWorkloadCompanyBindings).values({
+          companyBindingId: crypto.randomUUID(),
+          createdAt: now,
+          incarnation: crypto.randomUUID(),
+          legalEntityId: companyA,
+          status: 'active',
+          tenantId: tenantOne,
+          workloadBindingId: foreignBinding,
+        });
         const release: ModuleCredentialRelease = {
           ...moduleCredentialReleaseOf(catalog),
           buildMarkers: { ...moduleCredentialReleaseOf(catalog).buildMarkers, crm: 'crm-build' },
         };
-        const appIds = ['catalog', 'crm'];
-        const hostId = 'host-w';
-        const issue = (bootId: string) =>
-          provisionModuleCredentials({
-            appIds,
-            bootId,
-            hostId,
-            operationId: crypto.randomUUID(),
-            release,
-            workloads: MODULE_INTERNAL_WORKLOADS,
-          }).pipe(Effect.provide(services));
-        const entry = `crm/${INTAKE_WORKLOAD}/${registeredTenant}`;
-        const shell = Layer.mergeAll(
-          ModuleCredentialEnrolmentSourceLive.pipe(Layer.provide(services)),
-          Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
-        );
-        const bindingOf = (providerKeyId: string) =>
-          coreDatabase
-            .select({
-              authenticationNamespaceId: principalAuthBindings.authenticationNamespaceId,
-              principalId: principalAuthBindings.principalId,
-              provider: principalAuthBindings.provider,
-              status: principalAuthBindings.status,
-              subjectType: principalAuthBindings.subjectType,
-              tenantId: principalAuthBindings.tenantId,
-            })
-            .from(principalAuthBindings)
-            .where(eq(principalAuthBindings.providerSubjectId, providerKeyId))
-            .pipe(Effect.map(([row]) => row));
-
-        // A boot: the module keys and one workload key, for the tenant where the workload is registered, only.
-        const bootOne = crypto.randomUUID();
-        const first = yield* issue(bootOne);
-        expect(first.failedAppIds).toEqual([]);
-        expect([...first.workloadCredentials.keys()]).toEqual([entry]);
-        const firstKey = yield* present(first.keys.get(entry));
-        const firstSecret = yield* present(first.workloadCredentials.get(entry));
-        expect(first.providerKeyIds.has(firstKey.providerKeyId)).toBe(true);
-        expect(yield* verifies(keys, firstSecret)).toBe(true);
-        // Bound to the operator's registered principal in that tenant, as the key it replaces was: same principal,
-        // same kind of binding. No new principal and no new subject kind.
-        expect(yield* bindingOf(firstKey.providerKeyId)).toEqual({
-          authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
-          principalId: intakePrincipal,
-          provider: 'better_auth',
-          status: 'active',
-          subjectType: 'api_key',
-          tenantId: registeredTenant,
-        });
-        const [stored] = yield* (yield* AuthDatabase.pipe(Effect.provide(services))).executor
-          .select({ metadata: apikey.metadata, referenceId: apikey.referenceId })
-          .from(apikey)
-          .where(eq(apikey.id, firstKey.providerKeyId));
-        expect(stored?.referenceId).toBe('ontos-platform-module-credentials');
-        expect(JSON.parse(stored?.metadata ?? 'null')).toMatchObject({
-          appId: 'crm',
-          bootId: bootOne,
-          hostId,
-          ontosModuleCredential: 'workload_attested_v1',
-          principalId: intakePrincipal,
-          tenantId: registeredTenant,
-          workloadKey: INTAKE_WORKLOAD,
-        });
-        expect(yield* liveModuleKeyIds(coreDatabase, [firstKey.providerKeyId])).toEqual(
-          new Set([firstKey.providerKeyId]),
-        );
-
-        // Admission is unchanged: the workload key is an ordinary key of its principal, admitted at the API-key
-        // endpoint; it is no module credential, so the delegated endpoint binds nothing to it. A module's key stays
-        // refused there as an ordinary key.
-        expect(
-          Exit.isSuccess(
-            yield* Effect.exit(admitIntegrationCredential(firstKey.providerKeyId).pipe(Effect.provide(shell))),
-          ),
-        ).toBe(true);
-        const enrolment = yield* loadModuleCredentialEnrolment(coreDatabase);
-        expect(enrolment.some(({ providerKeyId }) => providerKeyId === firstKey.providerKeyId)).toBe(false);
-        const delegated = yield* loadGatewayModuleBindings.pipe(Effect.provide(shell));
-        expect(delegated.some(({ providerKeyId }) => providerKeyId === firstKey.providerKeyId)).toBe(false);
-        const catalogKey = first.keys.get('catalog');
-        expect(catalogKey).toBeDefined();
-        const refused = yield* Effect.flip(
-          admitIntegrationCredential(catalogKey?.providerKeyId ?? '').pipe(Effect.provide(shell)),
-        );
-        expect(Schema.is(GatewayDelegationError)(refused) && refused.code === 'forbidden').toBe(true);
-
-        // Rotation: the next boot of the host issues a fresh workload key and retires the one its earlier boot held.
-        const bootTwo = crypto.randomUUID();
-        const second = yield* issue(bootTwo);
-        const secondKey = yield* present(second.keys.get(entry));
-        const secondSecret = yield* present(second.workloadCredentials.get(entry));
-        expect(secondKey.providerKeyId).not.toBe(firstKey.providerKeyId);
-        const retiredOwn = yield* retireOwnModuleCredentials({
-          bootId: bootTwo,
-          compositionRevision: release.compositionRevision,
-          earlierBoots: new Set([bootOne]),
-          hostId,
-          operationId: crypto.randomUUID(),
-          replaced: new Set(),
-        }).pipe(Effect.provide(services));
-        expect(retiredOwn.retired).toBe(first.providerKeyIds.size);
-        expect(yield* verifies(keys, firstSecret)).toBe(false);
-        expect((yield* bindingOf(firstKey.providerKeyId))?.status).toBe('revoked');
-        expect(yield* verifies(keys, secondSecret)).toBe(true);
-
-        // The operator ends the registration: the next pass issues no workload key, and once this revision holds the
-        // authority, the key bound before that moment is retired with the superseded module keys.
-        yield* adminDatabase
-          .update(accessWorkloadBindings)
-          .set({ revokedAt: yield* DateTime.nowAsDate, status: 'revoked' })
-          .where(eq(accessWorkloadBindings.bindingId, bindingId));
-        const third = yield* issue(crypto.randomUUID());
-        expect([...third.workloadCredentials.keys()]).toEqual([]);
-        yield* Effect.sleep(Duration.millis(20));
-        yield* adminDatabase
-          .update(applicationCompositionAuthority)
-          .set({ phase: 'active', revision: release.compositionRevision, revisionActivatedAt: sql`clock_timestamp()` })
-          .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
-        const superseded = yield* retireSupersededModuleCredentials({
-          bootId: crypto.randomUUID(),
-          compositionRevision: release.compositionRevision,
-          current: third.providerKeyIds,
-          hostId,
-          operationId: crypto.randomUUID(),
-        }).pipe(Effect.provide(services));
-        expect(superseded.holdsAuthority).toBe(true);
-        expect(superseded.retired).toBe(second.providerKeyIds.size);
-        expect(yield* verifies(keys, secondSecret)).toBe(false);
-        expect((yield* bindingOf(secondKey.providerKeyId))?.status).toBe('revoked');
-
-        // Each pass is audited by entry and provider key id, never with a key.
-        const audits = yield* coreDatabase
-          .select({ evidence: auditEvents.evidenceJson })
-          .from(auditEvents)
-          .where(
-            and(
-              eq(auditEvents.tenantId, PLATFORM_TENANT.tenantId),
-              like(auditEvents.eventType, 'platform.module_credentials.%'),
+        const declarations = internalWorkloadDeclarations(MODULE_INTERNAL_WORKLOADS, new Set([INTAKE_WORKLOAD]));
+        const registrationRuntime = Layer.mergeAll(
+          Layer.succeed(CoreDatabase, { executor: coreDatabase }),
+          AccessReleaseStoreLive.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(CoreDatabase, { executor: coreDatabase }),
+                makeDatabaseIdentityEnrollmentLive(enrollment),
+              ),
             ),
+          ),
+        );
+        const register = (run: string) =>
+          registerReleaseInternalWorkloads(
+            { enrollment, executor: coreDatabase },
+            { declarations, runReference: run },
+          ).pipe(Effect.provide(registrationRuntime));
+        const provision = provisionModuleCredentials({
+          appIds: ['catalog', 'crm'],
+          bootId: crypto.randomUUID(),
+          hostId: 'host-r',
+          operationId: crypto.randomUUID(),
+          release,
+          workloads: MODULE_INTERNAL_WORKLOADS,
+        }).pipe(Effect.provide(services));
+        const entry = (tenantId: string, legalEntityId: string) =>
+          `crm/${INTAKE_WORKLOAD}/${tenantId}/${legalEntityId}`;
+        // First deploy: registration runs before the boot's key provisioning, so every registration is keyed at once.
+        // The platform tenant (made by provisioning) is skipped; the two tenants are decided on their own.
+        yield* provision;
+        const first = yield* register('run-1');
+        expect(first.some(({ tenantId }) => tenantId === PLATFORM_TENANT.tenantId)).toBe(false);
+        expect(counts(first, tenantOne)).toEqual({ failed: null, registered: 2, retired: 0, unchanged: 0 });
+        expect(counts(first, tenantTwo)).toEqual({ failed: null, registered: 1, retired: 0, unchanged: 0 });
+        const keyed = yield* provision;
+        expect([...keyed.workloadCredentials.keys()].toSorted()).toEqual(
+          [entry(tenantOne, companyA), entry(tenantOne, companyB), entry(tenantTwo, companyC)].toSorted(),
+        );
+        for (const secret of keyed.workloadCredentials.values()) {
+          expect(yield* verifies(keys, secret)).toBe(true);
+        }
+        // Each registration is its own principal, bound to exactly its company; the hand-made one is left alone.
+        const principalOf = (tenantId: string, legalEntityId: string) =>
+          internalWorkloadPrincipalId({ legalEntityId, tenantId, workloadKey: INTAKE_WORKLOAD });
+        const registered = yield* adminDatabase
+          .select({
+            kind: principals.kind,
+            principalId: principals.principalId,
+            status: principals.status,
+            tenantId: principals.tenantId,
+          })
+          .from(principals)
+          .where(
+            inArray(principals.principalId, [
+              principalOf(tenantOne, companyA),
+              principalOf(tenantOne, companyB),
+              principalOf(tenantTwo, companyC),
+              foreignPrincipal,
+            ]),
           );
-        const recorded = JSON.stringify(audits);
-        expect(recorded.includes(entry)).toBe(true);
-        expect(recorded.includes(firstKey.providerKeyId)).toBe(true);
-        expect(recorded.includes(secondKey.providerKeyId)).toBe(true);
-        expect(recorded.includes(Redacted.value(firstSecret))).toBe(false);
-        expect(recorded.includes(Redacted.value(secondSecret))).toBe(false);
+        expect(registered.every(({ kind, status }) => kind === 'service' && status === 'active')).toBe(true);
+        expect(registered).toHaveLength(4);
+        const activeCompanyOf = (principalId: string) =>
+          adminDatabase
+            .select({ legalEntityId: accessWorkloadCompanyBindings.legalEntityId })
+            .from(accessWorkloadCompanyBindings)
+            .innerJoin(
+              accessWorkloadBindings,
+              eq(accessWorkloadBindings.bindingId, accessWorkloadCompanyBindings.workloadBindingId),
+            )
+            .where(
+              and(
+                eq(accessWorkloadBindings.principalId, principalId),
+                eq(accessWorkloadBindings.status, 'active'),
+                eq(accessWorkloadCompanyBindings.status, 'active'),
+              ),
+            );
+        expect(yield* activeCompanyOf(principalOf(tenantOne, companyB))).toEqual([{ legalEntityId: companyB }]);
+        expect(yield* activeCompanyOf(principalOf(tenantTwo, companyC))).toEqual([{ legalEntityId: companyC }]);
+        expect(yield* activeCompanyOf(foreignPrincipal)).toEqual([{ legalEntityId: companyA }]);
+
+        // Re-running changes nothing.
+        const again = yield* register('run-2');
+        expect(counts(again, tenantOne)).toEqual({ failed: null, registered: 0, retired: 0, unchanged: 2 });
+        expect(counts(again, tenantTwo)).toEqual({ failed: null, registered: 0, retired: 0, unchanged: 1 });
+
+        // Company B is suspended and CRM is uninstalled in the second tenant: those registrations are retired (never
+        // deleted) and get no key; the hand-made registration stays exactly as it was.
+        yield* adminDatabase
+          .update(legalEntities)
+          .set({ status: 'suspended' })
+          .where(eq(legalEntities.legalEntityId, companyB));
+        yield* adminDatabase
+          .update(tenantModuleStates)
+          .set({ state: 'inactive' })
+          .where(and(eq(tenantModuleStates.tenantId, tenantTwo), eq(tenantModuleStates.moduleKey, CRM_MODULE)));
+        const retired = yield* register('run-3');
+        expect(counts(retired, tenantOne)).toEqual({ failed: null, registered: 0, retired: 1, unchanged: 1 });
+        expect(counts(retired, tenantTwo)).toEqual({ failed: null, registered: 0, retired: 1, unchanged: 0 });
+        const statusOf = (principalId: string) =>
+          adminDatabase
+            .select({ status: principals.status })
+            .from(principals)
+            .where(eq(principals.principalId, principalId))
+            .pipe(Effect.map(([row]) => row?.status));
+        expect(yield* statusOf(principalOf(tenantOne, companyB))).toBe('disabled');
+        expect(yield* statusOf(principalOf(tenantTwo, companyC))).toBe('disabled');
+        expect(yield* activeCompanyOf(principalOf(tenantOne, companyB))).toEqual([]);
+        expect(yield* activeCompanyOf(foreignPrincipal)).toEqual([{ legalEntityId: companyA }]);
+        const afterRetirement = yield* provision;
+        expect([...afterRetirement.workloadCredentials.keys()]).toEqual([entry(tenantOne, companyA)]);
+
+        // Company B is active again: the same principal takes the workload again, with a fresh binding.
+        yield* adminDatabase
+          .update(legalEntities)
+          .set({ status: 'active' })
+          .where(eq(legalEntities.legalEntityId, companyB));
+        const back = yield* register('run-4');
+        expect(counts(back, tenantOne)).toEqual({ failed: null, registered: 1, retired: 0, unchanged: 1 });
+        expect(yield* statusOf(principalOf(tenantOne, companyB))).toBe('active');
+        expect(yield* activeCompanyOf(principalOf(tenantOne, companyB))).toEqual([{ legalEntityId: companyB }]);
+        const restored = yield* provision;
+        expect([...restored.workloadCredentials.keys()].toSorted()).toEqual(
+          [entry(tenantOne, companyA), entry(tenantOne, companyB)].toSorted(),
+        );
+
+        // Each converging run left one audit row per tenant it changed, by that tenant's release actor; never a key.
+        const audits = yield* adminDatabase
+          .select({ evidence: auditEvents.evidenceJson, tenantId: auditEvents.tenantId })
+          .from(auditEvents)
+          .where(eq(auditEvents.eventType, 'core.access.internal-workloads-registered-by-release'));
+        expect(audits.filter(({ tenantId }) => tenantId === tenantOne)).toHaveLength(3);
+        expect(audits.filter(({ tenantId }) => tenantId === tenantTwo)).toHaveLength(2);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer))),
 );
