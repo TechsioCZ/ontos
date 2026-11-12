@@ -50,6 +50,8 @@ const productInput: typeof ProductRecordSchema.Encoded = {
   createdAt: '2026-10-20T09:00:00.000Z',
   currentPriceMinor: 25_804,
   description: 'Etiopie, 250 g.',
+  // The stored gross as staff records carry it (entered with the price; 289 Kč at 12 %).
+  grossPriceMinor: 28_900,
   id: 'product-1',
   lowStock: false,
   lowStockThreshold: 3,
@@ -353,8 +355,8 @@ describe('VAT classification on the product editor', () => {
         { disabled: false, label: 'Základní (21\u00A0%)', value: CZ_VAT_STANDARD },
         { disabled: true, label: 'Snížená (není nastaveno)', value: CZ_VAT_REDUCED },
       ]);
-      // The product keeps its classification; without a rate there is no gross price, and it says so.
-      expect(fieldById('detail-price-gross').value).toBe('není nastaveno');
+      // The product keeps its classification and its stored price including VAT.
+      expect(fieldById('detail-price-gross').value).toContain('289');
     }),
   );
 
@@ -368,7 +370,8 @@ describe('VAT classification on the product editor', () => {
         'Snížená (není nastaveno)',
       ]);
       expect(vatOptions().every((option) => option.disabled)).toBe(true);
-      expect(fieldById('detail-price-gross').value).toBe('není nastaveno');
+      // The stored price including VAT is still the price; no rate is shown anywhere.
+      expect(fieldById('detail-price-gross').value).toContain('289');
       expect(text()).not.toMatch(/\d\s?%/u);
     }),
   );
@@ -396,6 +399,33 @@ describe('VAT classification on the product editor', () => {
       yield* Effect.promise(() => click(button('Zahodit změny')));
       expect(vatSelect().value).toBe(CZ_VAT_REDUCED);
       expect(commands()).toEqual([]);
+    }),
+  );
+});
+
+describe('the price including VAT on the product editor', () => {
+  it.effect(
+    'shows the stored gross, even when it is not net plus VAT, and keeps it when only the classification changes',
+    () =>
+      Effect.gen(function* storedGross() {
+        // As on stage: net 1000, stored gross 1211 (one haléř off net plus 21 %).
+        shown = { ...product, currentPriceMinor: 1000, grossPriceMinor: 1211, taxClassificationCode: CZ_VAT_STANDARD };
+        yield* Effect.promise(mount);
+        expect(fieldById('detail-price-gross').value.replaceAll('\u00A0', ' ')).toBe('12,11 Kč');
+        yield* Effect.promise(() => pickVat(CZ_VAT_REDUCED));
+        // The server keeps the stored gross on a classification change: the field says the same and why.
+        expect(fieldById('detail-price-gross').value.replaceAll('\u00A0', ' ')).toBe('12,11 Kč');
+        expect(text()).toContain('merchandise.pages.products.detail.vatShareOnly');
+      }),
+  );
+
+  it.effect('an edited net price shows a preview of the gross saving will store, labelled as such', () =>
+    Effect.gen(function* preview() {
+      shown = { ...product, currentPriceMinor: 1000, grossPriceMinor: 1211, taxClassificationCode: CZ_VAT_STANDARD };
+      yield* Effect.promise(mount);
+      yield* Effect.promise(() => typeInto('detail-price', '20'));
+      expect(fieldById('detail-price-gross').value.replaceAll('\u00A0', ' ')).toBe('24,20 Kč');
+      expect(text()).toContain('merchandise.pages.products.fields.priceGrossPreview');
     }),
   );
 });

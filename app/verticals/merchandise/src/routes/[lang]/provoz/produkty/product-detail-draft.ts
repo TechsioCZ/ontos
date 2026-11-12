@@ -1,5 +1,6 @@
 // The editable fields of a product: how a draft of them is compared, validated and turned into an update patch.
 import { Option, Schema } from 'effect';
+import { orderLineVatMinor } from '../../../../../shared/domain/order-totals.ts';
 import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import { isRealVariant, ProductMetadataSchema } from '../../../../../shared/domain/merchandise-model.ts';
@@ -181,3 +182,28 @@ export const detailDraftInvalid = (draft: DetailDraft): boolean =>
       variant.name.trim() === '' || variant.name.trim().length > 100 || variant.attributes.trim().length > 1000,
   ) ||
   [draft.weightGrams, draft.lengthMm, draft.widthMm, draft.heightMm].some(measurementInvalid);
+
+/** The price including VAT the product editor shows: the stored one, or a preview of what saving an edit stores. */
+export interface DetailGross {
+  readonly kind: 'preview' | 'stored';
+  /** Minor units; null when there is none (no stored gross, or no rate for a preview). */
+  readonly minor: number | null;
+}
+
+/**
+ * While the net price is the saved one it is the STORED gross (it never moves with a rate or a classification
+ * change). An edited net price shows a preview of what saving stores: the new net plus the selected classification's
+ * rate today; without a rate there is none.
+ */
+export const detailGrossOf = (
+  product: Pick<ProductRecord, 'currentPriceMinor' | 'grossPriceMinor'>,
+  priceMinor: number,
+  vatRate: number | undefined,
+): DetailGross => {
+  if (priceMinor === product.currentPriceMinor) {
+    return { kind: 'stored', minor: product.grossPriceMinor ?? null };
+  }
+  return vatRate !== undefined && Number.isFinite(priceMinor) && priceMinor >= 0
+    ? { kind: 'preview', minor: priceMinor + orderLineVatMinor({ quantity: 1, unitPriceMinor: priceMinor, vatRate }) }
+    : { kind: 'preview', minor: null };
+};

@@ -22,10 +22,9 @@ import { useState } from 'react';
 import type { CategoryTrail, ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit } from '../../../../../shared/domain/merchandise-model.ts';
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
-import { orderLineVatMinor } from '../../../../../shared/domain/order-totals.ts';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { useProductDetailDraft } from './product-detail-save.ts';
-import { detailDraftInvalid, draftOf, measurementInvalid } from './product-detail-draft.ts';
+import { detailDraftInvalid, draftOf, measurementInvalid, detailGrossOf } from './product-detail-draft.ts';
 import type { DetailDraft } from './product-detail-draft.ts';
 import {
   PRODUCT_LIMITS,
@@ -178,13 +177,16 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: De
   const lowStockError = lowStockKey === undefined ? undefined : k(lowStockKey);
   const priceMinor = Math.round(priceCzk * 100);
   const draftInvalid = detailDraftInvalid(draft);
-  // The gross preview uses the rate Tax gives the classification today; without one there is no gross price to show.
-  const vatRate = rateAt(vat, taxClassificationCode, DateTime.nowUnsafe())?.ratePercent;
-  const grossMinor =
-    vatRate !== undefined && Number.isFinite(priceMinor) && priceMinor >= 0
-      ? priceMinor + orderLineVatMinor({ quantity: 1, unitPriceMinor: priceMinor, vatRate })
-      : null;
-  const grossText = vatRate === undefined ? taxLabels.notSet : '—';
+  const gross = detailGrossOf(
+    product,
+    priceMinor,
+    rateAt(vat, taxClassificationCode, DateTime.nowUnsafe())?.ratePercent,
+  );
+  const grossText = gross.minor === null ? taxLabels.notSet : formatMoney(gross.minor);
+  const grossNote =
+    gross.kind === 'stored' && taxClassificationCode !== product.taxClassificationCode
+      ? k('detail.vatShareOnly')
+      : undefined;
 
   // noValidate: the save bar and the field messages say what is missing; native validation would only add a second,
   // differently worded set of messages.
@@ -289,9 +291,10 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: De
       <FormInput
         disabled
         id="detail-price-gross"
-        label={k('fields.priceGross')}
+        label={k(gross.kind === 'preview' ? 'fields.priceGrossPreview' : 'fields.priceGross')}
         name="grossPrice"
-        value={grossMinor === null ? grossText : formatMoney(grossMinor)}
+        value={grossText}
+        {...(grossNote === undefined ? {} : { helpText: grossNote })}
       />
       <p className="text-fg-secondary text-sm">{k('detail.priceExplanation')}</p>
       <FormTextarea
