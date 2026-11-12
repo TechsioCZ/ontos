@@ -13425,11 +13425,11 @@
               "merchandise"
             ],
             "subject": "identity",
-            "subjectWorkloads": [
-              "demo.storefront-client"
-            ],
             "subjectWorkloadCallers": [
               "merchandise"
+            ],
+            "subjectWorkloads": [
+              "demo.storefront-client"
             ]
           }
         },
@@ -13652,11 +13652,11 @@
               "merchandise"
             ],
             "subject": "identity",
-            "subjectWorkloads": [
-              "demo.storefront-client"
-            ],
             "subjectWorkloadCallers": [
               "merchandise"
+            ],
+            "subjectWorkloads": [
+              "demo.storefront-client"
             ]
           }
         },
@@ -13719,11 +13719,11 @@
               "merchandise"
             ],
             "subject": "identity",
-            "subjectWorkloads": [
-              "demo.storefront-client"
-            ],
             "subjectWorkloadCallers": [
               "merchandise"
+            ],
+            "subjectWorkloads": [
+              "demo.storefront-client"
             ]
           }
         }
