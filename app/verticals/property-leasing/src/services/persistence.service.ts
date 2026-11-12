@@ -6,10 +6,8 @@ import type { PartyRef } from '@app/party-registry/resources/party';
 import type { ContractRef } from '@app/legal-agreements/resources/contract';
 import type { UnitRef } from '@app/property-portfolio/resources/unit';
 import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
-import {
-  executeCounterpartyReadWithAuthorization,
-  executePartyDetailWithAuthorization,
-} from '@app/party-registry/api/client';
+import { executeCounterpartyReadWithAuthorization } from '@app/party-registry/apis/counterparty-read/client';
+import { executePartyDetailWithAuthorization } from '@app/party-registry/apis/party-detail/client';
 import { executeRecordsWithAuthorization as executePropertyRecords } from '@app/property-portfolio/clients/records';
 import { executeRecordsWithAuthorization as executeAgreementsRecords } from '@app/legal-agreements/clients/records';
 import { and, eq } from 'drizzle-orm';

@@ -9,3 +9,21 @@ export const listCustomers = (request: Parameters<typeof executeCustomerList>[0]
     ),
     Effect.map(({ items }) => items),
   );
+
+const fold = (value: string) =>
+  value
+    .normalize('NFD')
+    .replaceAll(/\p{Diacritic}/gu, '')
+    .toLowerCase();
+
+/** Active customers whose name, IČO, e-mail or phone contains `query`, ignoring case and diacritics. */
+export const findCustomers = (query: string) =>
+  listCustomers({ includeArchived: false }).pipe(
+    Effect.map((items) =>
+      items.filter(
+        (item) =>
+          item.status === 'ACTIVE' &&
+          fold([item.displayName, item.companyId, item.email, item.phone].join(' ')).includes(fold(query.trim())),
+      ),
+    ),
+  );
