@@ -1,4 +1,4 @@
-import { listCustomers } from '@app/party-registry/api/client';
+import { executeCustomerList } from '@app/party-registry/apis/customer-list/client';
 import { listMovements, listOrders, listProducts } from '@app/merchandise/clients/records';
 import { executeRecords as executeOpportunityRecords } from '@app/sales-pipeline/clients/records';
 import { listInvoices } from '@app/finance-billing/clients/records';
@@ -25,6 +25,15 @@ import type {
 } from '../../shared/metrics.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { unreadableSources } from './readable-sources.ts';
+
+/** Current CUSTOMER Counterparties of the selected Legal Entity through Party Registry's customer-list read. */
+const listCustomers = (request: Parameters<typeof executeCustomerList>[0] = {}) =>
+  Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
+    Effect.flatMap(([first, second]) =>
+      executeCustomerList(request, `party-registry:customer-list:${first}:${second}`),
+    ),
+    Effect.map(({ items }) => items),
+  );
 
 /** Work Tasks records for this view, each read under its own correlation. */
 const listTasks = (filters: Parameters<typeof executeTaskRecords>[0] = {}) =>

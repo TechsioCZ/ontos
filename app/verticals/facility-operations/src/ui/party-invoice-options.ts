@@ -1,6 +1,6 @@
 // Contact (party registry) and invoice (finance) references for documents. Read through each owner's PUBLIC governed
 // read, filtered to what the current person may see; the link stores the owner's resource id + a display snapshot.
-import { listCustomers } from '@app/party-registry/api/client';
+import { listCustomers } from './party-customers.ts';
 import { Effect } from 'effect';
 import type { Cause } from 'effect';
 import { useEffect, useState } from 'react';

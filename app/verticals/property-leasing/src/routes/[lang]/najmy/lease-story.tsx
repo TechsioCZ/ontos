@@ -1,5 +1,5 @@
 import { DetailList, SectionCard, formatDate, formatMoney, surfaceTileClassName } from '@app/admin-ui';
-import type { listCustomers } from '@app/party-registry/api/client';
+import type { listCustomers } from './party-customers.ts';
 import type { executeRecords as readAgreements } from '@app/legal-agreements/clients/records';
 import type { Invoice } from '@app/finance-billing/contracts/records';
 import type { executeRecords as readProperty } from '@app/property-portfolio/clients/records';

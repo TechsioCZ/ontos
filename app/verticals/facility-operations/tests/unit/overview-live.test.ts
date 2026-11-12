@@ -24,7 +24,9 @@ rstest.mock('@app/legal-agreements/clients/records', () => ({ executeRecords: re
 rstest.mock('@app/property-leasing/clients/records', () => ({ executeRecords: reads.occupancy }));
 rstest.mock('@app/property-portfolio/clients/records', () => ({ executeRecords: reads.property }));
 rstest.mock('@app/work-tasks/clients/records', () => ({ executeRecords: reads.work }));
-rstest.mock('@app/party-registry/api/client', () => ({ listCustomers: reads.customers }));
+rstest.mock('../../src/ui/party-customers.ts', () => ({
+  listCustomers: reads.customers,
+}));
 rstest.mock('../../src/ui/finance-reads.ts', () => ({ readFinance: reads.finance }));
 rstest.mock('../../src/api/overview-client.ts', () => ({ executeOverview: reads.overview }));
 rstest.mock('../../src/ui/ops-agenda/sales-source.ts', () => ({ loadSalesCases: reads.sales }));

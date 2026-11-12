@@ -6,7 +6,9 @@ import { agreementCustomerData } from '../../src/routes/[lang]/smlouvy/agreement
 
 const mocks = rstest.hoisted(() => ({ counterparty: rstest.fn() }));
 
-rstest.mock('@app/party-registry/api/client', () => ({ executeCounterpartyRead: mocks.counterparty }));
+rstest.mock('@app/party-registry/apis/counterparty-read/client', () => ({
+  executeCounterpartyRead: mocks.counterparty,
+}));
 rstest.mock('@app/property-portfolio/clients/records', () => ({ executeRecords: () => Effect.fail('unused') }));
 rstest.mock('@app/property-leasing/clients/records', () => ({ executeRecords: () => Effect.fail('unused') }));
 rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: () => Effect.fail('unused') }));

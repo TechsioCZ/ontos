@@ -6,7 +6,7 @@ import { optionalField } from '../../../../../shared/domain/common.ts';
 // S06 prodej: nabídky zákazníkům → prodejní objednávky → dodání → vystavená faktura (návrh ve Financích).
 // The customer is a party-registry counterparty; the invoice is created by Finance from a snapshot of the order lines
 // and counterparty (CreateInvoiceDraft), so a later quote edit never changes an issued invoice.
-import { listCustomers } from '@app/party-registry/api/client';
+import { listCustomers } from '../../../../ui/party-customers.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import {
   DetailList,

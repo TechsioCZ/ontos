@@ -1,6 +1,7 @@
 import { Data, Match, Option } from 'effect';
 import type { Effect, Schema } from 'effect';
-import type { listCustomers, loadPartiesClient } from '@app/party-registry/api/client';
+import type { listCustomers } from './party-customers.ts';
+import type { loadPartiesClient } from '@app/party-registry/apis/parties-search/client';
 import type { Occupancy, OccupancySchema, RentTerms } from '../../../../shared/apis/records.ts';
 import { crownsInput } from './lease-story.tsx';
 

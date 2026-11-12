@@ -29,7 +29,7 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   useBlocker: () => ({ status: 'idle' }),
 }));
-rstest.mock('@app/party-registry/api/client', () => ({
+rstest.mock('../../src/ui/party-customers.ts', () => ({
   // Read when the panel loads its customers, long after the imports resolved.
   listCustomers: () =>
     Effect.succeed([

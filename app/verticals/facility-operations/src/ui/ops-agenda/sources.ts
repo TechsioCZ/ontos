@@ -1,7 +1,7 @@
 // Loads every Nájempark source the calendar / overview / search read, each through its owner's PUBLIC governed read
 // (own gateway audience, own permission check). A source the person may not read, or that is down, is reported
 // per source ("bez oprávnění" / "zdroj nedostupný") and never replaced by zeros. Owned by the ops-agenda lane.
-import { listCustomers } from '@app/party-registry/api/client';
+import { listCustomers } from '../party-customers.ts';
 import { executeRecords as executeAgreements } from '@app/legal-agreements/clients/records';
 import { executeRecords as executeOccupancy } from '@app/property-leasing/clients/records';
 import { executeRecords as executeProperty } from '@app/property-portfolio/clients/records';
