@@ -276,10 +276,8 @@ it.effect(
         Effect.provide(inspection.layer),
         Effect.flip,
       );
-      expect(failure).toMatchObject({
-        _tag: 'ConnectionUnavailable',
-        cause: { _tag: 'SubjectInspectionUnavailable' },
-      });
+      expect(Predicate.isTagged(failure, 'ConnectionUnavailable')).toBe(true);
+      expect(failure).toMatchObject({ cause: expect.any(SubjectInspectionUnavailable) });
       expect(inspection.requesterScopes).toEqual([]);
     }),
 );
