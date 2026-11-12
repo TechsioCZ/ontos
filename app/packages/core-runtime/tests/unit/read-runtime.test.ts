@@ -95,6 +95,8 @@ const scope: OperationalScope = Object.freeze({
 });
 const transactionOperationAt = DateTime.toDateUtc(DateTime.makeUnsafe(Date.parse('2026-09-28T09:00:00.000Z')));
 const approvedCompositionRevision = 'a'.repeat(64);
+const installAndReadScopeSql =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 interface ReadAuthorityFixture {
   readonly phase: 'active' | 'draining' | 'sealed' | 'migrated';
   readonly revision: string;
@@ -257,6 +259,10 @@ const makeHarness = Effect.fn(function* makeHarness(
       if (text.includes('set_config')) {
         scopeInstalls += 1;
         options.authorityEvents?.push('scope_installed');
+      }
+      // A session-setting role installs its scope and reads back the connected role in one statement.
+      if (text === installAndReadScopeSql) {
+        return [databaseScopeRow()];
       }
       if (text.includes('transaction_timestamp')) {
         transactionTimestampReadCount += 1;
