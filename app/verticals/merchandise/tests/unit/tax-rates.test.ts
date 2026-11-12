@@ -21,6 +21,7 @@ import {
   pricesCompany,
   resolveVatRate,
   sellableRatesAt,
+  shownTaxRates,
   taxRateViews,
 } from '../../src/services/tax-rates.ts';
 import type { CompanyTaxRates, TaxRateBook, TaxRatePeriod } from '../../src/services/tax-rates.ts';
@@ -503,4 +504,22 @@ it('a rule starting at Prague midnight applies from that Czech day, in winter an
   expect(resolveVatRate(summer, 'cz.vat.standard', DateTime.subtract(afterSwitch, { milliseconds: 1 }))).toMatchObject({
     ratePercent: 21,
   });
+});
+
+it("a staff read shows one whole state: the stored one, the one it stored, or Tax's while nothing is stored", () => {
+  const newer = testTaxBook({ reduced: '12', standard: '23' });
+  const takeover = decideTaxRates(MIGRATED, answered(newer), NOW);
+  // Stored by this read: the new state, with its own source and confirmation time.
+  expect(shownTaxRates(MIGRATED, takeover, true)).toEqual({ book: newer, source: 'TAX', syncedAt: NOW });
+  // Storing skipped (a write holds the company): the stored state, never Tax's rates beside the stored source.
+  expect(shownTaxRates(MIGRATED, takeover, false)).toBe(MIGRATED);
+  // Nothing stored at all (no head row yet): Tax's answer, stated as Tax's with the time Tax gave it.
+  expect(shownTaxRates(undefined, decideTaxRates(undefined, answered(newer), NOW), false)).toEqual({
+    book: newer,
+    source: 'TAX',
+    syncedAt: NOW,
+  });
+  // No answer: the stored state; Tax refusing a company it was in charge of: nothing.
+  expect(shownTaxRates(CONFIRMED, decideTaxRates(CONFIRMED, unreachable, NOW), false)).toBe(CONFIRMED);
+  expect(shownTaxRates(CONFIRMED, decideTaxRates(CONFIRMED, refusedByTax, NOW), false)).toBeUndefined();
 });

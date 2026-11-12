@@ -114,6 +114,7 @@ import {
   refreshedTaxRateBook,
   resolveVatRate,
   sellableRatesAt,
+  shownTaxRates,
   taxRateViews,
 } from './tax-rates.ts';
 import type {
@@ -2303,9 +2304,9 @@ export const prepareCommandTax = Effect.fn('Merchandise.prepareCommandTax')(func
 });
 
 /** The staff response's view of the company's VAT: its current and scheduled rates and its declared regime. */
-const staffTaxFields = (book: TaxRateBook | undefined, state: CompanyTaxRates | undefined, now: DateTime.Utc) => ({
-  sellerVatRegime: book === undefined || book.regime === 'NOT_DECLARED' ? null : book.regime,
-  taxRates: book === undefined ? [] : taxRateViews(book, now),
+const staffTaxFields = (state: CompanyTaxRates | undefined, now: DateTime.Utc) => ({
+  sellerVatRegime: state === undefined || state.book.regime === 'NOT_DECLARED' ? null : state.book.regime,
+  taxRates: state === undefined ? [] : taxRateViews(state.book, now),
   taxRatesConfirmedAt: state?.source === 'TAX' ? state.syncedAt : null,
   taxRatesSource: state?.source ?? null,
 });
@@ -2821,9 +2822,10 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       return metadata;
     });
     /**
-     * A staff read's sync with Tax: the rates it shows (Tax's answer when it is in charge, else the stored state) and,
-     * when Tax's answer takes over, its materialisation on the head row (rates, a new revision, first gross prices of
-     * what had none). Storefront reads never call it: they read the stored state only.
+     * A staff read's sync with Tax: when Tax's answer takes over or confirms the rates again, its materialisation on
+     * the head row (rates, a new revision when they changed, first gross prices of what had none), and the rates the
+     * read shows ({@link shownTaxRates}: one whole state with its source). Storefront reads never call it: they read
+     * the stored state only.
      */
     const staffTaxSync = Effect.fn('Merchandise.staffTaxSync')(function* staffTaxSync(
       loaded: CatalogHead | undefined,
@@ -2834,7 +2836,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         tax.fetched === undefined ? { refused: tax.refused } : { fetched: tax.fetched, refused: tax.refused };
       const decision = decideTaxRates(loaded?.taxRates, answer, now);
       if (loaded === undefined || decision.materialise === undefined) {
-        return { book: decision.book, head: loaded, state: loaded?.taxRates };
+        return { head: loaded, shown: shownTaxRates(loaded?.taxRates, decision, false) };
       }
       const value = decision.materialise;
       const revision = yield* materialiseTaxRatesIfIdle(
@@ -2846,14 +2848,14 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         decision.changed,
       ).pipe(Effect.mapError(unavailable));
       if (revision === undefined) {
-        return { book: decision.book, head: loaded, state: loaded.taxRates };
+        return { head: loaded, shown: shownTaxRates(loaded.taxRates, decision, false) };
       }
       if (decision.changed) {
         yield* storeMissingGrossPrices(transaction, store, sellableRatesAt(value.book, now)).pipe(
           Effect.mapError(unavailable),
         );
       }
-      return { book: decision.book, head: { ...loaded, revision, taxRates: value }, state: value };
+      return { head: { ...loaded, revision, taxRates: value }, shown: shownTaxRates(loaded.taxRates, decision, true) };
     });
     /** The head a records read answers from: synced with Tax first for a staff read that prepared Tax's answer. */
     const readHead = Effect.fn('Merchandise.readHead')(function* readHead(
@@ -2950,7 +2952,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         response.totalOrders = orderList.total;
       }
       if (synced !== undefined) {
-        Object.assign(response, staffTaxFields(synced.book, synced.state, yield* DateTime.now));
+        Object.assign(response, staffTaxFields(synced.shown, yield* DateTime.now));
       }
       return storefrontOrigin === undefined ? response : { ...response, storefrontOrigin };
     });

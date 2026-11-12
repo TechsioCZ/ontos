@@ -276,6 +276,27 @@ export const decideTaxRates = (
   return { book, changed, held: NO_HELD_RATES, materialise, usable: true };
 };
 
+/**
+ * The rates a staff read shows, always one whole state with its own source and confirmation time: the stored state,
+ * or the one this read stored. When storing was skipped (a write holds the company) the stored state stays shown.
+ * Tax's answer is shown unstored only while nothing is stored at all, stated as Tax's with the time Tax gave it (the
+ * company's first write stores exactly that). Nothing when no rates are usable (Tax refused a company it was in
+ * charge of).
+ */
+export const shownTaxRates = (
+  stored: CompanyTaxRates | undefined,
+  decision: TaxRatesDecision,
+  written: boolean,
+): CompanyTaxRates | undefined => {
+  if (decision.book === undefined) {
+    return undefined;
+  }
+  if (decision.materialise === undefined) {
+    return stored;
+  }
+  return written || stored === undefined ? decision.materialise : stored;
+};
+
 const classificationLabels = {
   [CZ_VAT_REDUCED]: 'snížená sazba DPH',
   [CZ_VAT_STANDARD]: 'základní sazba DPH',
