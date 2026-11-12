@@ -236,14 +236,9 @@ it('keeps the tenant-owned Rule lineage reusable across Selling Legal Entities',
 });
 
 it('keeps gateway assertion replay identities global, unique and expiry-indexed', () => {
-  const table = ASSORTMENT_TABLES.find(
-    (candidate) => getTableConfig(candidate).name === 'gateway_assertion_redemptions',
-  );
-  expect(table).toBeDefined();
-  if (table === undefined) {
-    throw new Error('Missing gateway assertion redemption table');
-  }
-  const config = getTableConfig(table);
+  // Main's operational inventory (ASSORTMENT_TABLES) leaves the redemption store out; prove the table itself.
+  const config = getTableConfig(gatewayAssertionRedemptions);
+  expect(config.name).toBe('gateway_assertion_redemptions');
   expect(config.schema).toBe('assortment');
   expect(config.enableRLS).toBe(false);
   expect(config.policies).toEqual([]);
