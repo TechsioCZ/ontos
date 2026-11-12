@@ -33,7 +33,8 @@ export const TaxRatePeriodSchema = Schema.Struct({
   effectiveFrom: Schema.DateTimeUtcFromString,
   effectiveTo: Schema.optionalKey(Schema.DateTimeUtcFromString),
   ratePercent: Schema.String,
-  taxRuleRevisionId: TaxRuleRevisionIdSchema,
+  /** Absent only in the state the classification migration seeded: no Tax rule stands behind it yet. */
+  taxRuleRevisionId: Schema.optionalKey(TaxRuleRevisionIdSchema),
 });
 export type TaxRatePeriod = typeof TaxRatePeriodSchema.Type;
 
@@ -59,12 +60,28 @@ export type SellableVatRates = typeof SellableVatRatesSchema.Type;
 export const NO_SELLABLE_RATES: SellableVatRates = {};
 
 /**
- * What Merchandise keeps of Tax per company (`catalog_heads.tax_rates`): the book of its last sync, so storefront reads
- * resolve the rate at any instant locally. Stored prices are never derived from it again: a rate entered with a price
- * stays in that price.
+ * Where a company's materialised rates come from. `TAX`: Tax's own answer, which is then in charge (a later gap in Tax
+ * fails closed). `MIGRATION`: seeded by the classification migration from the rates the products were stored with
+ * (standard 21 %, reduced 12 %), not yet confirmed by Tax; Tax's first answer that prices the company replaces it.
+ */
+export const CompanyTaxRatesSourceSchema = Schema.Literals(['MIGRATION', 'TAX']);
+export type CompanyTaxRatesSource = typeof CompanyTaxRatesSourceSchema.Type;
+
+/** Per product, the rate it keeps selling at while the migrated state is unconfirmed (BOOK-IT, stored at 10 %). */
+export const HeldProductRatesSchema = Schema.Record(Schema.String, VatPercentSchema);
+export type HeldProductRates = typeof HeldProductRatesSchema.Type;
+export const NO_HELD_RATES: HeldProductRates = {};
+
+/**
+ * What Merchandise keeps of Tax per company (`catalog_heads.tax_rates`): the book of its last sync (or the migrated
+ * one), so storefront reads resolve the rate at any instant locally and never call Tax. Stored prices are never derived
+ * from it again: a rate entered with a price stays in that price.
  */
 export const CompanyTaxRatesSchema = Schema.Struct({
   book: TaxRateBookSchema,
+  /** Only in the migrated state: products whose stored rate differs from their classification's seeded rate. */
+  heldProductRates: Schema.optionalKey(HeldProductRatesSchema),
+  source: CompanyTaxRatesSourceSchema,
   syncedAt: Schema.DateTimeUtcFromString,
 });
 export type CompanyTaxRates = typeof CompanyTaxRatesSchema.Type;
@@ -120,7 +137,10 @@ export const resolveVatRate = (
   if (!Number.isInteger(ratePercent) || ratePercent <= 0 || ratePercent > 100) {
     return notSellable('NOT_INTEGER');
   }
-  return { _tag: 'Rate', ratePercent, taxRuleRevisionId: period.taxRuleRevisionId };
+  // The migrated state has no rule behind its rates: its lines carry no rule revision.
+  return period.taxRuleRevisionId === undefined
+    ? { _tag: 'Rate', ratePercent }
+    : { _tag: 'Rate', ratePercent, taxRuleRevisionId: period.taxRuleRevisionId };
 };
 
 /** The integer rate a resolution sells at, if it sells. */
@@ -145,6 +165,55 @@ export const sellableRatesAt = (book: TaxRateBook, at: DateTime.Utc): SellableVa
 /** The rates a company sells at, at one instant, from its last sync with Tax (none before the first sync). */
 export const sellableRatesOf = (stored: CompanyTaxRates | undefined, at: DateTime.Utc): SellableVatRates =>
   stored === undefined ? NO_SELLABLE_RATES : sellableRatesAt(stored.book, at);
+
+/** The per-product rates the company still holds from the migration (none once Tax is in charge). */
+export const heldRatesOf = (stored: CompanyTaxRates | undefined): HeldProductRates =>
+  stored?.source === 'MIGRATION' ? (stored.heldProductRates ?? NO_HELD_RATES) : NO_HELD_RATES;
+
+/**
+ * Whether Tax's answer prices the company on its own: a non-payer, or a payer with a usable rate for every
+ * classification. Only such an answer replaces the migrated state; until then the stored rates keep selling.
+ */
+export const pricesCompany = (book: TaxRateBook, at: DateTime.Utc): boolean =>
+  book.regime === 'NON_PAYER' ||
+  (book.regime === 'VAT_PAYER' &&
+    czVatClassificationCodes.every((code) => Option.isSome(rateOf(resolveVatRate(book, code, at)))));
+
+/** The company's rates a read or a write works with, and the state to materialise when Tax's answer takes over. */
+export interface TaxRatesDecision {
+  /** Absent when no rates exist (nothing stored and no answer, or Tax refused a company it was in charge of). */
+  readonly book?: TaxRateBook;
+  readonly held: HeldProductRates;
+  /** Present when the stored state must become this one (Tax's answer is in charge and differs from what is stored). */
+  readonly materialise?: CompanyTaxRates;
+}
+
+/**
+ * Tax's answer is in charge once it prices the company or once Tax has been in charge before (a later gap then fails
+ * closed); a company without any stored state takes whatever Tax answers. Otherwise the stored state keeps serving:
+ * the migrated rates while Tax is not installed, not reachable or not seeded yet, and Tax's last answer (its dated
+ * periods, scheduled changes included) while Tax is unreachable. Tax refusing a company it was in charge of leaves
+ * nothing sellable.
+ */
+export const decideTaxRates = (
+  stored: CompanyTaxRates | undefined,
+  answer: TaxRateBook | undefined,
+  refused: boolean,
+  at: DateTime.Utc,
+): TaxRatesDecision => {
+  if (answer === undefined && refused && stored?.source === 'TAX') {
+    return { held: NO_HELD_RATES };
+  }
+  const inCharge =
+    answer !== undefined && (stored === undefined || stored.source === 'TAX' || pricesCompany(answer, at));
+  if (answer === undefined || !inCharge) {
+    return stored === undefined ? { held: NO_HELD_RATES } : { book: stored.book, held: heldRatesOf(stored) };
+  }
+  const unchanged = stored?.source === 'TAX' && stored.book.fingerprint === answer.fingerprint;
+  return unchanged
+    ? { book: answer, held: NO_HELD_RATES }
+    : { book: answer, held: NO_HELD_RATES, materialise: { book: answer, source: 'TAX', syncedAt: at } };
+};
 
 const classificationLabels = {
   [CZ_VAT_REDUCED]: 'snížená sazba DPH',

@@ -27,7 +27,7 @@ const apply = (state: MerchandiseState, command: CommandInput, resourceId: strin
 
 /** Tax later moves the standard rate to 23 % and the reduced one to 14 %. */
 const raisedBook = testTaxBook({ reduced: '14', standard: '23' });
-const RAISED_TAX = { book: raisedBook, rates: sellableRatesAt(raisedBook, t0), refused: false };
+const RAISED_TAX = { book: raisedBook, held: {}, rates: sellableRatesAt(raisedBook, t0), refused: false };
 
 /** BOOK-IT as the migration leaves it: classified reduced, its stored 10 % prices untouched. */
 const bookIt = Effect.gen(function* seedBookIt() {

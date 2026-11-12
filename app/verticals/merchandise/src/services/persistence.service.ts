@@ -100,12 +100,14 @@ import {
   lockHeadForWrite,
   persistChange,
   advanceHeadRevision,
+  materialiseTaxRatesIfIdle,
   storeMissingGrossPrices,
   writeTaxRates,
 } from './merchandise-store.ts';
 import type { CatalogHead, StoreScope, WorkingSet, WorkingSetRequest } from './merchandise-store.ts';
 import {
   cachedTaxRateBook,
+  decideTaxRates,
   freshTaxRateBook,
   NO_SELLABLE_RATES,
   notSellableMessage,
@@ -113,9 +115,9 @@ import {
   sellableRatesAt,
   taxRateViews,
 } from './tax-rates.ts';
-import type { SellableVatRates, TaxRateBook, TaxRatesFailure } from './tax-rates.ts';
+import type { HeldProductRates, SellableVatRates, TaxRateBook } from './tax-rates.ts';
 import { CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
-import type { CzVatClassificationCode, TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
+import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import {
   storedGrossOf,
   realVariantsOf,
@@ -217,15 +219,19 @@ export type MerchandiseCommandError = MerchandiseLifecycleConflict | Merchandise
  */
 export interface CommandTax {
   readonly book: TaxRateBook | undefined;
+  /** Products that keep selling at their stored rate while the migrated state is unconfirmed (BOOK-IT, 10 %). */
+  readonly held: HeldProductRates;
   readonly rates: SellableVatRates;
   /** Tax refused this company (not installed for it): nothing sells, and the storefront is told why. */
   readonly refused: boolean;
 }
 
-/** What Tax answered before the owner transaction opened: its book, or none (and whether Tax refused). */
+/** What Tax answered before the owner transaction opened: its book, or none (and why not). */
 export interface PreparedTax {
   readonly book: TaxRateBook | undefined;
   readonly refused: boolean;
+  /** Tax could not be reached (or the module credentials are not configured yet). */
+  readonly unavailable?: boolean;
 }
 
 export interface MerchandiseCommandInput {
@@ -311,7 +317,13 @@ const lineTaxResolution = (
   tax: CommandTax,
   code: CzVatClassificationCode,
   now: DateTime.Utc,
+  productId?: string,
 ): { readonly message: string } | { readonly tax: LineTax } => {
+  const held = productId === undefined ? undefined : tax.held[productId];
+  if (held !== undefined) {
+    // Unconfirmed migrated state: the product sells at the rate it was stored with, as before the migration.
+    return { tax: { taxClassificationCode: code, vatRate: held } };
+  }
   if (tax.book === undefined) {
     return { message: notSellableMessage(code, tax.refused ? 'TAX_NOT_AVAILABLE' : 'TAX_NOT_SYNCED') };
   }
@@ -328,7 +340,7 @@ const lineTaxResolution = (
 };
 
 const lineTaxOf = (input: MerchandiseCommandInput, product: Product) => {
-  const resolved = lineTaxResolution(input.tax, product.taxClassificationCode, input.now);
+  const resolved = lineTaxResolution(input.tax, product.taxClassificationCode, input.now, product.id);
   return 'message' in resolved ? Effect.fail(conflict(resolved.message)) : Effect.succeed(resolved.tax);
 };
 
@@ -1091,7 +1103,7 @@ const sellableUnitOf = (
   if (product === undefined || !product.active || product.published === false) {
     return { issue: { ...ids, code: 'NOT_AVAILABLE', message: 'Produkt už není v nabídce.' } };
   }
-  const taxed = lineTaxResolution(input.tax, product.taxClassificationCode, input.now);
+  const taxed = lineTaxResolution(input.tax, product.taxClassificationCode, input.now, product.id);
   if ('message' in taxed) {
     return { issue: { ...ids, code: 'PRICE_UNAVAILABLE', message: `${product.name}: ${taxed.message}` } };
   }
@@ -2207,23 +2219,15 @@ const freshRatesRequired = (command: MerchandiseCommand) =>
 const TAX_REFUSED_REASON =
   'Prodej není možný: daně firmy nejsou dostupné (modul Daně není pro firmu aktivní nebo dotaz odmítl).';
 
-const taxUnavailable = (failure: TaxRatesFailure) =>
-  Object.defineProperty(
-    new MerchandiseReferenceUnavailable({
-      code: 'merchandise_reference_unavailable',
-      reason: 'VAT rates are temporarily unavailable',
-    }),
-    'cause',
-    { enumerable: false, value: failure },
-  );
-
-const taxFailure = (failure: TaxRatesFailure) =>
-  failure.kind === 'REFUSED' ? conflict(TAX_REFUSED_REASON) : taxUnavailable(failure);
+const taxUnavailable = () =>
+  new MerchandiseReferenceUnavailable({
+    code: 'merchandise_reference_unavailable',
+    reason: 'VAT rates are temporarily unavailable',
+  });
 
 /**
- * Reads the company's VAT rates from Tax before the owner transaction opens (a remote call never runs inside it).
- * A command that prices order lines fails without them; any other command syncs when Tax answers and otherwise keeps
- * the stored rates.
+ * Reads the company's VAT rates from Tax before the owner transaction opens (a remote call never runs inside it). The
+ * transaction then decides, with the company's stored rates, which rates the command works with (`syncTax`).
  */
 export const prepareCommandTax = Effect.fn('Merchandise.prepareCommandTax')(function* prepareCommandTax(
   command: MerchandiseCommand,
@@ -2234,50 +2238,45 @@ export const prepareCommandTax = Effect.fn('Merchandise.prepareCommandTax')(func
   if (Result.isSuccess(outcome)) {
     return { book: outcome.success, refused: false } satisfies PreparedTax;
   }
-  const refused = outcome.failure.kind === 'REFUSED';
-  // A storefront order states a refusal as readable issues on its lines; a retryable outage stays an error.
-  if (refused && Predicate.isTagged(command, 'PlaceStorefrontOrder')) {
-    return { book: Option.getOrUndefined(Option.none<TaxRateBook>()), refused } satisfies PreparedTax;
-  }
-  if (ratesRequired(command)) {
-    return yield* taxFailure(outcome.failure);
-  }
-  yield* Effect.logWarning('Merchandise keeps the stored VAT rates: Tax did not answer').pipe(
+  // The owner transaction decides with the company's stored rates whether the command can still run.
+  yield* Effect.logWarning('Merchandise could not read VAT rates from Tax').pipe(
     Effect.annotateLogs({ reason: outcome.failure.kind }),
   );
-  return { book: Option.getOrUndefined(Option.none<TaxRateBook>()), refused } satisfies PreparedTax;
+  return {
+    book: Option.getOrUndefined(Option.none<TaxRateBook>()),
+    refused: outcome.failure.kind === 'REFUSED',
+    unavailable: outcome.failure.kind === 'UNAVAILABLE',
+  } satisfies PreparedTax;
 });
 
-/** What a staff records read shows of Tax: the company's current and scheduled rates and its regime. */
-export interface StaffTaxRates {
-  /** Null when no regime is declared or Tax does not know the company. */
-  readonly regime: 'NON_PAYER' | 'VAT_PAYER' | null;
-  readonly views: readonly TaxRateView[];
-}
+/** The staff response's view of the company's VAT: its current and scheduled rates and its declared regime. */
+const staffTaxFields = (book: TaxRateBook | undefined, now: DateTime.Utc) => ({
+  sellerVatRegime: book === undefined || book.regime === 'NOT_DECLARED' ? null : book.regime,
+  taxRates: book === undefined ? [] : taxRateViews(book, now),
+});
 
-/** What the records read prepares outside its transaction: the caller's rights and, for staff reads, Tax's rates. */
+/** What the records read prepares outside its transaction: the caller's rights and, for staff reads, Tax's answer. */
 export interface RecordsPrepared {
   readonly grants: MerchandiseRecordsGrants;
-  readonly tax?: StaffTaxRates;
+  readonly tax?: PreparedTax;
 }
 
+/**
+ * Tax's answer for a staff read (reused for at most 60 s). It never fails the read: without an answer the read shows
+ * the company's stored rates, and its transaction materialises the answer when Tax takes over (`records`).
+ */
 export const prepareStaffTaxRates = Effect.fn('Merchandise.prepareStaffTaxRates')(function* prepareStaffTaxRates(
   scope: OperationalScope,
 ) {
   const outcome = yield* Effect.result(cachedTaxRateBook(scope));
   if (Result.isSuccess(outcome)) {
-    const now = yield* DateTime.now;
-    const { regime } = outcome.success;
-    return {
-      regime: regime === 'NOT_DECLARED' ? null : regime,
-      views: taxRateViews(outcome.success, now),
-    } satisfies StaffTaxRates;
+    return { book: outcome.success, refused: false } satisfies PreparedTax;
   }
-  if (outcome.failure.kind === 'REFUSED') {
-    // Tax is not installed for the company (or refuses Merchandise): no rate exists, nothing is sellable.
-    return { regime: null, views: [] } satisfies StaffTaxRates;
-  }
-  return yield* taxUnavailable(outcome.failure);
+  return {
+    book: Option.getOrUndefined(Option.none<TaxRateBook>()),
+    refused: outcome.failure.kind === 'REFUSED',
+    unavailable: outcome.failure.kind === 'UNAVAILABLE',
+  } satisfies PreparedTax;
 });
 
 /** Cross-owner reference verification happens after Core admission but before the owner transaction opens. */
@@ -2361,28 +2360,32 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       return yield* lockHeadForWrite(transaction, store, { aiChanges }).pipe(Effect.mapError(unavailable));
     });
     /**
-     * Records what Tax answered for this command on the company's head row when it changed (storefront reads resolve
-     * rates from it locally). Stored prices are never touched. Without an answer the last sync stays.
+     * The company's rates for this command: Tax's answer when it is in charge (materialised on the head row when it
+     * changed, stored prices untouched), else the stored state (the migrated rates until Tax first prices the company,
+     * Tax's last answer while Tax is unreachable). A command that prices new order lines fails when no rates exist,
+     * except a storefront order, which states a refusal as issues on its lines.
      */
-    const syncTax = Effect.fn('Merchandise.syncTax')(function* syncTax(head: CatalogHead) {
-      const answered = prepared?.tax.book;
+    const syncTax = Effect.fn('Merchandise.syncTax')(function* syncTax(head: CatalogHead, command: MerchandiseCommand) {
       const refused = prepared?.tax.refused === true;
       const now = yield* DateTime.now;
-      if (answered === undefined || head.taxRates?.book.fingerprint === answered.fingerprint) {
-        const book = answered ?? head.taxRates?.book;
-        const rates = book === undefined ? NO_SELLABLE_RATES : sellableRatesAt(book, now);
-        return { head, synced: false, tax: { book: answered, rates, refused } satisfies CommandTax };
+      const decision = decideTaxRates(head.taxRates, prepared?.tax.book, refused, now);
+      const rates = decision.book === undefined ? NO_SELLABLE_RATES : sellableRatesAt(decision.book, now);
+      const tax = { book: decision.book, held: decision.held, rates, refused } satisfies CommandTax;
+      if (
+        decision.book === undefined &&
+        ratesRequired(command) &&
+        !(refused && Predicate.isTagged(command, 'PlaceStorefrontOrder'))
+      ) {
+        return yield* refused ? conflict(TAX_REFUSED_REASON) : taxUnavailable();
       }
-      const taxRates = { book: answered, syncedAt: now };
-      const rates = sellableRatesAt(answered, now);
+      if (decision.materialise === undefined) {
+        return { head, synced: false, tax };
+      }
+      const taxRates = decision.materialise;
       yield* writeTaxRates(transaction, store, taxRates).pipe(Effect.mapError(unavailable));
       // What was priced while its classification had no rate gets its first gross now; stored prices stay.
       yield* storeMissingGrossPrices(transaction, store, rates).pipe(Effect.mapError(unavailable));
-      return {
-        head: { ...head, taxRates },
-        synced: true,
-        tax: { book: answered, rates, refused } satisfies CommandTax,
-      };
+      return { head: { ...head, taxRates }, synced: true, tax };
     });
     const persist = Effect.fn('Merchandise.persist')(function* persist(
       working: WorkingSet,
@@ -2416,7 +2419,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       if (!ownRevisionGuard(command) && locked.revision !== expectedRevision) {
         return yield* revisionConflict();
       }
-      const { head, synced, tax } = yield* syncTax(locked);
+      const { head, synced, tax } = yield* syncTax(locked, command);
       /** The revision of a command that writes no catalog rows itself: advanced once when the sync changed rates. */
       const revisionAfterSync = Effect.fn('Merchandise.revisionAfterSync')(function* revisionAfterSync() {
         if (!synced) {
@@ -2521,7 +2524,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       if (locked.revision !== expectedRevision) {
         return yield* revisionConflict();
       }
-      const { head, synced, tax } = yield* syncTax(locked);
+      const { head, synced, tax } = yield* syncTax(locked, command);
       const working = yield* loadWorkingSet(
         transaction,
         store,
@@ -2764,6 +2767,41 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       return metadata;
     });
     /**
+     * A staff read's sync with Tax: the rates it shows (Tax's answer when it is in charge, else the stored state) and,
+     * when Tax's answer takes over, its materialisation on the head row (rates, a new revision, first gross prices of
+     * what had none). Storefront reads never call it: they read the stored state only.
+     */
+    const staffTaxSync = Effect.fn('Merchandise.staffTaxSync')(function* staffTaxSync(
+      loaded: CatalogHead | undefined,
+      tax: PreparedTax,
+    ) {
+      const now = yield* DateTime.now;
+      const decision = decideTaxRates(loaded?.taxRates, tax.book, tax.refused, now);
+      if (loaded === undefined || decision.materialise === undefined) {
+        return { book: decision.book, head: loaded };
+      }
+      const value = decision.materialise;
+      const revision = yield* materialiseTaxRatesIfIdle(transaction, store, loaded.revision, value, now).pipe(
+        Effect.mapError(unavailable),
+      );
+      if (revision === undefined) {
+        return { book: decision.book, head: loaded };
+      }
+      yield* storeMissingGrossPrices(transaction, store, sellableRatesAt(value.book, now)).pipe(
+        Effect.mapError(unavailable),
+      );
+      return { book: decision.book, head: { ...loaded, revision, taxRates: value } };
+    });
+    /** The head a records read answers from: synced with Tax first for a staff read that prepared Tax's answer. */
+    const readHead = Effect.fn('Merchandise.readHead')(function* readHead(
+      options: HeadReadOptions,
+      tax: PreparedTax | undefined,
+    ) {
+      const loaded = yield* loadHead(transaction, store, options).pipe(Effect.mapError(unavailable));
+      const synced = tax === undefined ? undefined : yield* staffTaxSync(loaded, tax);
+      return { head: synced?.head ?? loaded ?? EMPTY_CATALOG_HEAD, synced };
+    });
+    /**
      * The records read's transaction step: database queries only; rights come from {@link merchandiseRecordsGrants}
      * and, for staff, the company's rates from Tax ({@link prepareStaffTaxRates}), both prepared before it.
      * `detailLimit` lifts the 2-product cap of variant-carrying pages for in-process callers (agent review).
@@ -2787,8 +2825,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       if (request.agentHistory !== undefined) {
         headOptions.history = request.agentHistory;
       }
-      const head =
-        (yield* loadHead(transaction, store, headOptions).pipe(Effect.mapError(unavailable))) ?? EMPTY_CATALOG_HEAD;
+      const { head, synced } = yield* readHead(headOptions, staff ? tax : undefined);
       if (request.agentHistory !== undefined) {
         const response: Mutable<RecordsResponse> = {
           actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
@@ -2849,9 +2886,8 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       if (orderList.total !== undefined) {
         response.totalOrders = orderList.total;
       }
-      if (staff && tax !== undefined) {
-        response.taxRates = [...tax.views];
-        response.sellerVatRegime = tax.regime;
+      if (synced !== undefined) {
+        Object.assign(response, staffTaxFields(synced.book, yield* DateTime.now));
       }
       return storefrontOrigin === undefined ? response : { ...response, storefrontOrigin };
     });

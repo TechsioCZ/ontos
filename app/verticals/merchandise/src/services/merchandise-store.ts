@@ -809,6 +809,35 @@ export const advanceHeadRevision = Effect.fn('MerchandiseStore.advanceHeadRevisi
   return heads.length === 1 ? revision + 1 : undefined;
 });
 
+/**
+ * A read's materialisation of Tax's answer: records the rates and advances the revision in one statement, only when the
+ * head is still at `revision` and no writer holds it (a read never waits for a writer; the next read retries). Returns
+ * the new revision, or undefined when it did not run.
+ */
+export const materialiseTaxRatesIfIdle = Effect.fn('MerchandiseStore.materialiseTaxRatesIfIdle')(
+  function* materialiseTaxRatesIfIdle(
+    db: MerchandiseDb,
+    scope: StoreScope,
+    revision: number,
+    value: CompanyTaxRates,
+    now: DateTime.Utc,
+  ) {
+    const encoded = yield* query(encodeTaxRates(value), 'Company tax rates do not encode');
+    const idle = sql`exists (select 1 from ${catalogHeads} as idle
+      where idle.tenant_id = ${scope.tenantId}::uuid and idle.legal_entity_id = ${scope.legalEntityId}::uuid
+        and idle.revision = ${revision} for update skip locked)`;
+    const heads = yield* query(
+      db
+        .update(catalogHeads)
+        .set({ revision: revision + 1, taxRates: encoded, updatedAt: date(now) })
+        .where(and(whereScope(catalogHeads, scope), eq(catalogHeads.revision, revision), idle))
+        .returning({ revision: catalogHeads.revision }),
+      'Company tax rates could not be written',
+    );
+    return heads.length === 1 ? revision + 1 : undefined;
+  },
+);
+
 /** The company's head row; `lock` serializes writers of the company (SELECT … FOR UPDATE). */
 export const loadHead = Effect.fn('MerchandiseStore.loadHead')(function* loadHead(
   db: MerchandiseDb,

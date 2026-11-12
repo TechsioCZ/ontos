@@ -32,6 +32,7 @@ const apply = (state: MerchandiseState, command: CommandInput, resourceId: strin
 /** A non-payer sells without VAT: Tax's regime, not a 0 % product rate. */
 const NON_PAYER_TAX = {
   book: testTaxBook({}, 'NON_PAYER'),
+  held: {},
   rates: { 'cz.vat.reduced': 0, 'cz.vat.standard': 0 },
   refused: false,
 };

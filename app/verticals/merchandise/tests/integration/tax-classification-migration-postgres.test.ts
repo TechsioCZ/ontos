@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { migrate } from 'drizzle-orm/effect-postgres/migrator';
-import { Array as Arr, Crypto, Effect, FileSystem, Layer, Order, Predicate } from 'effect';
+import { Array as Arr, Crypto, Effect, FileSystem, Layer, Order, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -16,6 +16,7 @@ import {
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { merchandiseRelations } from '../../src/database/schema.ts';
+import { CompanyTaxRatesSchema } from '../../src/services/tax-rates.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -187,11 +188,33 @@ it.layer(nativeServices, { excludeTestServices: true })('tax classification migr
           totalMinor: 107_800,
         });
         expect(orders[1]?.document).toEqual({ id: 'OBJ-2026-0007', lines: [], totalMinor: 107_800 });
+        // The company starts from its stored rates, unconfirmed by Tax: 21 and 12 %, BOOK-IT held at its 10 %.
         const heads = yield* client.unsafe<{ readonly taxRates: unknown }>(
+          `select tax_rates - 'syncedAt' as "taxRates" from demo_merchandise.catalog_heads where tenant_id = $1`,
+          [tenantId],
+        );
+        expect(heads).toEqual([
+          {
+            taxRates: {
+              book: {
+                fingerprint: 'migration:cz.vat.standard=21;cz.vat.reduced=12',
+                periods: [
+                  { code: 'cz.vat.standard', effectiveFrom: '1970-01-01T00:00:00.000Z', ratePercent: '21' },
+                  { code: 'cz.vat.reduced', effectiveFrom: '1970-01-01T00:00:00.000Z', ratePercent: '12' },
+                ],
+                regime: 'VAT_PAYER',
+              },
+              heldProductRates: { 'book-it': 10 },
+              source: 'MIGRATION',
+            },
+          },
+        ]);
+        const stored = yield* client.unsafe<{ readonly taxRates: unknown }>(
           'select tax_rates as "taxRates" from demo_merchandise.catalog_heads where tenant_id = $1',
           [tenantId],
         );
-        expect(heads).toEqual([{ taxRates: null }]);
+        // It decodes as the state a sync writes.
+        expect(Schema.decodeUnknownSync(CompanyTaxRatesSchema)(stored[0]?.taxRates).source).toBe('MIGRATION');
       }),
     180_000,
   );

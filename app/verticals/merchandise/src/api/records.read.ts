@@ -67,7 +67,7 @@ const prepareRecords = Effect.fn('Merchandise.prepareRecords')(function* prepare
   if (!staff) {
     return { grants } satisfies RecordsPrepared;
   }
-  const tax = yield* prepareStaffTaxRates(scope).pipe(Effect.mapError(readFailure));
+  const tax = yield* prepareStaffTaxRates(scope);
   return { grants, tax } satisfies RecordsPrepared;
 });
 

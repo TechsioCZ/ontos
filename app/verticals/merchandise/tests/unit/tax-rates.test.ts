@@ -1,4 +1,4 @@
-// How Merchandise reads a company's VAT from its book of Tax rules: the rate of a classification at an instant, the
+// How Merchandise reads a company's VAT from its book of Tax rules (and from the migrated state until Tax takes over): the rate of a classification at an instant, the
 // non-payer and undeclared regimes, the failures that make goods unsellable, the staff view of the rates, the
 // 60-second reuse of Tax's answer, and the shared rule other modules apply to the staff records response.
 import { randomUUID } from 'node:crypto';
@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type { OperationalScope } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { vatRateAt } from '@app/shared-contracts/cz-vat-classifications';
-import { DateTime, Effect, Ref, Schema } from 'effect';
+import { DateTime, Effect, Option, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -15,12 +15,14 @@ import { grossPriceOf } from '../../src/services/stock-levels.ts';
 import {
   TaxRateSource,
   cachedTaxRateBook,
+  decideTaxRates,
   freshTaxRateBook,
+  pricesCompany,
   resolveVatRate,
   sellableRatesAt,
   taxRateViews,
 } from '../../src/services/tax-rates.ts';
-import type { TaxRateBook, TaxRatePeriod } from '../../src/services/tax-rates.ts';
+import type { CompanyTaxRates, TaxRateBook, TaxRatePeriod } from '../../src/services/tax-rates.ts';
 import { TEST_SINCE, TEST_TAX_BOOK, testTaxBook } from '../support/tax-fixtures.ts';
 
 const at = (iso: string) => DateTime.makeUnsafe(iso);
@@ -193,3 +195,104 @@ it.effect('reuses Tax answer for 60 seconds per company and asks again afterward
     expect(yield* Ref.get(calls)).toBe(4);
   }),
 );
+
+const MIGRATED: CompanyTaxRates = {
+  book: {
+    fingerprint: 'migration:cz.vat.standard=21;cz.vat.reduced=12',
+    periods: [
+      { code: 'cz.vat.standard', effectiveFrom: at('1970-01-01T00:00:00.000Z'), ratePercent: '21' },
+      { code: 'cz.vat.reduced', effectiveFrom: at('1970-01-01T00:00:00.000Z'), ratePercent: '12' },
+    ],
+    regime: 'VAT_PAYER',
+  },
+  heldProductRates: { 'book-it': 10 },
+  source: 'MIGRATION',
+  syncedAt: at('2026-11-12T00:00:00.000Z'),
+};
+const CONFIRMED: CompanyTaxRates = { book: TEST_TAX_BOOK, source: 'TAX', syncedAt: NOW };
+
+it('the migrated state keeps selling until Tax prices the company, and holds BOOK-IT at its stored 10 %', () => {
+  // Tax not installed, unreachable, or installed without a regime or without every rule yet: the stored rates serve.
+  for (const answer of [undefined, testTaxBook(undefined, 'NOT_DECLARED'), testTaxBook({ standard: '21' })]) {
+    expect(decideTaxRates(MIGRATED, answer, false, NOW)).toEqual({ book: MIGRATED.book, held: { 'book-it': 10 } });
+  }
+  expect(decideTaxRates(MIGRATED, undefined, true, NOW)).toEqual({ book: MIGRATED.book, held: { 'book-it': 10 } });
+  // The migrated periods name no Tax rule: lines sell at 21 / 12 % without a rule revision.
+  expect(resolveVatRate(MIGRATED.book, 'cz.vat.reduced', NOW)).toEqual({ _tag: 'Rate', ratePercent: 12 });
+  // Tax's first answer that prices the company replaces it, held rates included.
+  expect(decideTaxRates(MIGRATED, TEST_TAX_BOOK, false, NOW)).toEqual({
+    book: TEST_TAX_BOOK,
+    held: {},
+    materialise: { book: TEST_TAX_BOOK, source: 'TAX', syncedAt: NOW },
+  });
+  const nonPayer = testTaxBook({}, 'NON_PAYER');
+  expect(decideTaxRates(MIGRATED, nonPayer, false, NOW).materialise?.book).toBe(nonPayer);
+});
+
+it('once Tax is in charge its answer rules: a gap fails closed, an outage keeps Tax last answer', () => {
+  expect(decideTaxRates(CONFIRMED, TEST_TAX_BOOK, false, NOW)).toEqual({ book: TEST_TAX_BOOK, held: {} });
+  const standardOnly = testTaxBook({ standard: '21' });
+  const gap = decideTaxRates(CONFIRMED, standardOnly, false, NOW);
+  expect(gap.book).toBe(standardOnly);
+  expect(gap.materialise?.source).toBe('TAX');
+  expect(resolveVatRate(standardOnly, 'cz.vat.reduced', NOW)).toEqual({ _tag: 'NotSellable', reason: 'NO_RULE' });
+  // Tax unreachable: its last answer (dated periods, scheduled changes included) keeps serving.
+  expect(decideTaxRates(CONFIRMED, undefined, false, NOW)).toEqual({ book: TEST_TAX_BOOK, held: {} });
+  // Tax refusing a company it was in charge of: nothing is sellable.
+  expect(decideTaxRates(CONFIRMED, undefined, true, NOW)).toEqual({ held: {} });
+  // A company that never had rates takes whatever Tax answers.
+  expect(decideTaxRates(undefined, standardOnly, false, NOW).materialise?.book).toBe(standardOnly);
+  expect(decideTaxRates(undefined, undefined, true, NOW)).toEqual({ held: {} });
+});
+
+it('prices the company only with a non-payer regime or a usable rate for every classification', () => {
+  expect(pricesCompany(TEST_TAX_BOOK, NOW)).toBe(true);
+  expect(pricesCompany(testTaxBook({}, 'NON_PAYER'), NOW)).toBe(true);
+  expect(pricesCompany(testTaxBook({ standard: '21' }), NOW)).toBe(false);
+  expect(pricesCompany(testTaxBook(undefined, 'NOT_DECLARED'), NOW)).toBe(false);
+});
+
+/** The instant a Czech calendar day starts (Prague midnight), as Finance turns an issue date into Tax's instant. */
+const pragueMidnight = (year: number, month: number, day: number) =>
+  Option.getOrThrow(
+    DateTime.makeZoned(
+      { day, hour: 0, millisecond: 0, minute: 0, month, second: 0, year },
+      { adjustForTimeZone: true, timeZone: 'Europe/Prague' },
+    ).pipe(Option.map(DateTime.toUtc)),
+  );
+const ruleFrom = (start: DateTime.Utc, ratePercent: string): TaxRateBook => ({
+  fingerprint: `test:from-${DateTime.formatIso(start)}`,
+  periods: [
+    {
+      code: 'cz.vat.standard',
+      effectiveFrom: TEST_SINCE,
+      effectiveTo: start,
+      ratePercent: '21',
+      taxRuleRevisionId: revision('standard-21'),
+    },
+    { code: 'cz.vat.standard', effectiveFrom: start, ratePercent, taxRuleRevisionId: revision('standard-new') },
+  ],
+  regime: 'VAT_PAYER',
+});
+
+it('a rule starting at Prague midnight applies from that Czech day, in winter and across a DST change', () => {
+  // 1 January 2027 (CET, UTC+1): the day starts at 23:00 UTC the evening before.
+  const newYear = pragueMidnight(2027, 1, 1);
+  expect(DateTime.formatIso(newYear)).toBe('2026-12-31T23:00:00.000Z');
+  const winter = ruleFrom(newYear, '23');
+  expect(resolveVatRate(winter, 'cz.vat.standard', DateTime.subtract(newYear, { milliseconds: 1 }))).toMatchObject({
+    ratePercent: 21,
+  });
+  expect(resolveVatRate(winter, 'cz.vat.standard', newYear)).toMatchObject({ ratePercent: 23 });
+  // 29 March 2027, the day after clocks go forward (CEST, UTC+2): the day starts at 22:00 UTC.
+  const afterSwitch = pragueMidnight(2027, 3, 29);
+  expect(DateTime.formatIso(afterSwitch)).toBe('2027-03-28T22:00:00.000Z');
+  const summer = ruleFrom(afterSwitch, '23');
+  // 23:30 UTC on 28 March is already 29 March in Prague: the new rate; an hour earlier it is still 28 March.
+  expect(resolveVatRate(summer, 'cz.vat.standard', at('2027-03-28T23:30:00.000Z'))).toMatchObject({ ratePercent: 23 });
+  expect(resolveVatRate(summer, 'cz.vat.standard', at('2027-03-28T21:30:00.000Z'))).toMatchObject({ ratePercent: 21 });
+  // A whole Czech day of 23 hours (28 March) keeps the old rate up to its last millisecond.
+  expect(resolveVatRate(summer, 'cz.vat.standard', DateTime.subtract(afterSwitch, { milliseconds: 1 }))).toMatchObject({
+    ratePercent: 21,
+  });
+});

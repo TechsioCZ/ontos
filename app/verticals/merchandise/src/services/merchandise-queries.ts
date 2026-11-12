@@ -57,9 +57,9 @@ import {
   whereScope,
 } from './merchandise-store.ts';
 import type { MerchandiseDb, StoreScope } from './merchandise-store.ts';
-import { CompanyTaxRatesSchema, sellableRatesOf } from './tax-rates.ts';
+import { CompanyTaxRatesSchema, heldRatesOf, sellableRatesOf } from './tax-rates.ts';
 import type { SellableVariantRecord } from './market-pricing.ts';
-import type { CompanyTaxRates, SellableVatRates } from './tax-rates.ts';
+import type { CompanyTaxRates, HeldProductRates, SellableVatRates } from './tax-rates.ts';
 import { toProductRecord } from './stock-levels.ts';
 import { czkBoundsForMarket } from '../../shared/domain/market-offers.ts';
 import { NO_CATALOG_MARKET } from './market-store.ts';
@@ -164,6 +164,8 @@ type StorefrontHeadEncoded = typeof StorefrontHeadSchema.Encoded;
 
 interface ProductPage {
   readonly head: StorefrontHead | null;
+  /** Products still selling at their stored rate while the migrated state is unconfirmed (same statement). */
+  readonly held: HeldProductRates;
   readonly products: readonly ProductRecord[];
   /** The rates the company sells at now, from its last sync with Tax read in the same statement as the page. */
   readonly rates: SellableVatRates;
@@ -194,10 +196,17 @@ export const sellableClassificationFilter = (scope: StoreScope) =>
               and (period.value ->> 'effectiveTo' is null
                 or statement_timestamp() < (period.value ->> 'effectiveTo')::timestamptz)))))`;
 
-/** A product as the storefront sees it: the rate its prices include instead of its classification. */
-export const withStorefrontVat = (record: ProductRecord, rates: SellableVatRates): ProductRecord => {
+/**
+ * A product as the storefront sees it: the rate its prices include instead of its classification (a product held at
+ * its stored rate shows that rate until Tax confirms the company).
+ */
+export const withStorefrontVat = (
+  record: ProductRecord,
+  rates: SellableVatRates,
+  held: HeldProductRates,
+): ProductRecord => {
   const { taxClassificationCode, ...rest } = record;
-  const vatRate = taxClassificationCode === undefined ? undefined : rates[taxClassificationCode];
+  const vatRate = held[record.id] ?? (taxClassificationCode === undefined ? undefined : rates[taxClassificationCode]);
   return vatRate === undefined ? rest : { ...rest, vatRate };
 };
 
@@ -333,6 +342,7 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
   const total = result[0]?.total ?? 0;
   const taxRates = yield* decodePageTaxRates(result[0]?.taxRates ?? null);
   const pricedRates = sellableRatesOf(taxRates, yield* DateTime.now);
+  const held = heldRatesOf(taxRates);
   const rows = result.flatMap(({ product }) => (product === null ? [] : [product]));
   const variantRows = rows.flatMap((row) => row.variantRows);
   const tierRows = rows.flatMap((row) => row.tierRows);
@@ -395,7 +405,7 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
     rawHead === undefined || rawHead === null
       ? null
       : yield* Schema.decodeEffect(StorefrontHeadSchema)(rawHead).pipe(Effect.mapError(storedRowsFailure));
-  return { head, products: records, rates: pricedRates, total } satisfies ProductPage;
+  return { head, held, products: records, rates: pricedRates, total } satisfies ProductPage;
 });
 
 const staffProductFilters = (view: RecordsView, storefront: boolean, scope: StoreScope): (SQL | undefined)[] => [
@@ -453,7 +463,7 @@ export const staffProducts = (
           const { contentHistory: _history, ...summary } = record;
           void _history;
           const row = { ...summary, priceHistory: [] };
-          return storefront ? withStorefrontVat(row, page.rates) : row;
+          return storefront ? withStorefrontVat(row, page.rates, page.held) : row;
         }
         if (!storefront) {
           return record;
@@ -461,7 +471,7 @@ export const staffProducts = (
         const { contentHistory: _content, variants: _raw, ...publicProduct } = record;
         void _raw;
         void _content;
-        const projected = withStorefrontVat({ ...publicProduct, priceHistory: [] }, page.rates);
+        const projected = withStorefrontVat({ ...publicProduct, priceHistory: [] }, page.rates, page.held);
         return record.variantRecords === undefined
           ? projected
           : {
@@ -1208,6 +1218,7 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
             ? record
             : { ...record, variantRecords: record.variantRecords.filter((variant) => variantIds.has(variant.id)) },
           result.rates,
+          result.held,
         ),
         fields,
       );
