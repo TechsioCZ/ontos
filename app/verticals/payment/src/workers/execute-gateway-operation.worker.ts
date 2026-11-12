@@ -3,18 +3,19 @@
 // @ontos-outbox-worker-owner payment.core
 // @ontos-outbox-worker-producer payment.core
 // @ontos-outbox-worker-topic payment.core.operation-requested.v1
-import { Effect } from 'effect';
 import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/payment/outbox/payment-core-operation-requested-v1';
+import { executeGatewayOperation } from '../integrations/psp/gateway-operation-executor.ts';
 
-// Wave 0 skeleton: completes every delivery as a no-op so the subscription is registered and its
-// deliveries settle. Wave 3 of C17 (#1146) replaces this handler with the governed implementation.
-const handleExecuteGatewayOperation = () => Effect.void;
-
+/**
+ * Causes one gateway Payment Operation through its exact Provider Account Binding (#1153, #1156, #1158).
+ * The handler completes only at a safe checkpoint: a recorded provider answer, a terminal never-sent state or
+ * an unknown outcome that only reconciliation can resolve. Waits defer the delivery inside `maxDeferralMs`.
+ */
 export const executeGatewayOperationWorker = defineOutboxWorker(
   {
     consumerModuleKey: 'payment.core',
@@ -41,5 +42,5 @@ export const executeGatewayOperationWorker = defineOutboxWorker(
     topic: outboxTopic,
     workerKey: 'payment.core.execute-gateway-operation',
   },
-  handleExecuteGatewayOperation,
+  executeGatewayOperation,
 );

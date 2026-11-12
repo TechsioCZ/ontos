@@ -3,8 +3,15 @@
 // @ontos-outbox-topic payment.core.provider-notification-captured.v1
 import { Schema } from 'effect';
 
+/**
+ * One authentic, actionable provider notification captured by `capture-provider-notification` (#1157).
+ * The message names only the captured row; the processing worker reads the exact stored envelope through
+ * the notification's own Tenant, Selling Legal Entity and binding, never from this payload.
+ */
 export const OutboxPayloadSchema = Schema.Struct({
-  data: Schema.Json,
+  data: Schema.Struct({
+    notificationId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('ProviderNotificationId')),
+  }),
 });
 export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
 

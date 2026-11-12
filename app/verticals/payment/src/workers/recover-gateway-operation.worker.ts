@@ -3,17 +3,32 @@
 // @ontos-outbox-worker-owner payment.core
 // @ontos-outbox-worker-producer payment.core
 // @ontos-outbox-worker-topic payment.core.operation-recovery-requested.v1
-import { Effect } from 'effect';
+import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
+import { Effect } from 'effect';
+import type { OutboxPayload } from '@app/payment/outbox/payment-core-operation-recovery-requested-v1';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/payment/outbox/payment-core-operation-recovery-requested-v1';
 
-// Wave 0 skeleton: completes every delivery as a no-op so the subscription is registered and its
-// deliveries settle. Wave 3 of C17 (#1146) replaces this handler with the governed implementation.
-const handleRecoverGatewayOperation = () => Effect.void;
+import { recoverGatewayOperationInScope } from '../integrations/psp/gateway-operation-recovery.ts';
+
+/**
+ * Recovers one original gateway operation (plan §2.2). The message names no legal entity, so every
+ * Core-verified scope of the delivery is asked; only the scope that owns the operation does any work.
+ * Completing the delivery is the safe checkpoint: evidence is durable in the C17 store before it returns.
+ */
+const handleRecoverGatewayOperation = (payload: OutboxPayload, context: OutboxWorkerHandlerContext) =>
+  OutboxWorkerLegalEntityScopeFanout.pipe(
+    Effect.flatMap((fanout) =>
+      fanout.forEachScope(context, (scope) =>
+        recoverGatewayOperationInScope(payload, scope, context).pipe(Effect.asVoid),
+      ),
+    ),
+  );
 
 export const recoverGatewayOperationWorker = defineOutboxWorker(
   {

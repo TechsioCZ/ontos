@@ -76,8 +76,10 @@ describe('#1157 GoPay notification', () => {
         rejectionOf(query(Option.some('99999999999999999'))),
         rejectionOf(query(Option.some(GOPAY_FIXTURE_PAYMENT_ID), Option.some('x1'))),
         rejectionOf(notification({ rawBody: new TextEncoder().encode('state=PAID') })),
+        // The delivery identity would exceed the stored 200-character bound.
+        rejectionOf(notification({ transportDeliveryRef: 'r'.repeat(200) })),
       ]);
-      expect(reasons).toEqual(Array.from({ length: 8 }, () => 'MALFORMED'));
+      expect(reasons).toEqual(Array.from({ length: 9 }, () => 'MALFORMED'));
     }),
   );
 

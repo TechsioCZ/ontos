@@ -3,9 +3,15 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-export const GatewayCustomerActionRequestSchema = Schema.Struct({});
+import { GatewayCustomerActionViewSchema } from '../domain/psp-configuration.ts';
+import { PaymentIdSchema, PaymentOperationIdSchema } from '../domain/payment-identifiers.ts';
+
+export const GatewayCustomerActionRequestSchema = Schema.Struct({
+  operationId: PaymentOperationIdSchema,
+  paymentId: PaymentIdSchema,
+});
 export type GatewayCustomerActionRequest = typeof GatewayCustomerActionRequestSchema.Type;
-export const GatewayCustomerActionResponseSchema = Schema.Struct({ ok: Schema.Literal(true) });
+export const GatewayCustomerActionResponseSchema = GatewayCustomerActionViewSchema;
 
 export const GatewayCustomerActionAuthenticationProblemSchema = makeProblemDetailsSchema(
   'GatewayCustomerActionAuthenticationProblem',

@@ -3,9 +3,11 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-export const GatewayReturnStatusRequestSchema = Schema.Struct({});
+import { GatewayReturnStatusViewSchema, GatewayReturnTokenSchema } from '../domain/psp-configuration.ts';
+
+export const GatewayReturnStatusRequestSchema = Schema.Struct({ returnToken: GatewayReturnTokenSchema });
 export type GatewayReturnStatusRequest = typeof GatewayReturnStatusRequestSchema.Type;
-export const GatewayReturnStatusResponseSchema = Schema.Struct({ ok: Schema.Literal(true) });
+export const GatewayReturnStatusResponseSchema = GatewayReturnStatusViewSchema;
 
 export const GatewayReturnStatusAuthenticationProblemSchema = makeProblemDetailsSchema(
   'GatewayReturnStatusAuthenticationProblem',

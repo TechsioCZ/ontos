@@ -27,7 +27,7 @@ import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
-import { FetchHttpClient } from 'effect/http';
+import { FetchHttpClient, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
@@ -37,6 +37,13 @@ import {
   GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
 } from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
+import { GopayOAuthTokenLive } from '../src/integrations/gopay/gopay-oauth-token.ts';
+import { ProviderCredentialStoreLive } from '../src/integrations/psp/credentials-live.ts';
+import {
+  GatewayProviderAdaptersLive,
+  GatewayProviderServicesLive,
+} from '../src/integrations/psp/gateway-adapters-live.ts';
+import { ProviderHttpLive } from '../src/integrations/psp/provider-http-live.ts';
 import { paymentProductionOwnerPortsLive } from './payment-production-layers.ts';
 import {
   paymentCorsAllowedHeaders,
@@ -150,7 +157,27 @@ const paymentReadRuntime = makeReadRuntimeLive(ultramodernDeliveryUnit, paymentR
   Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provide(activeApplicationCompositionLive),
 );
-const paymentOwnerEvidenceLive = paymentProductionOwnerPortsLive.pipe(Layer.provide(nodeCryptoLayer));
+/** Provider calls carry no client span or trace headers, follow no redirect and are never retried here. */
+const providerHttpClientLive = Layer.effect(
+  HttpClient.HttpClient,
+  Effect.gen(function* makeProviderHttpClient() {
+    const client = yield* HttpClient.HttpClient;
+    return client.pipe(
+      HttpClient.transform((effect) => Effect.updateService(effect, HttpClient.TracerDisabledWhen, () => () => true)),
+    );
+  }),
+).pipe(Layer.provide(compositionHttpClientLive));
+/** The capture Action verifies notifications through the live adapters; one GoPay token cache per process. */
+const gatewayProviderAdaptersLive = GatewayProviderAdaptersLive.pipe(
+  Layer.provide(GatewayProviderServicesLive),
+  Layer.provide(GopayOAuthTokenLive),
+  Layer.provide(
+    Layer.mergeAll(ProviderHttpLive, ProviderCredentialStoreLive).pipe(Layer.provide(providerHttpClientLive)),
+  ),
+);
+const paymentOwnerEvidenceLive = Layer.mergeAll(paymentProductionOwnerPortsLive, gatewayProviderAdaptersLive).pipe(
+  Layer.provide(nodeCryptoLayer),
+);
 const productionReadRuntimeLive = paymentReadRuntime.pipe(Layer.provideMerge(paymentOwnerEvidenceLive));
 
 const paymentActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit, paymentRegistration).pipe(

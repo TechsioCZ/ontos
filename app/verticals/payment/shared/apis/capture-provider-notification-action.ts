@@ -46,7 +46,7 @@ export const CaptureProviderNotificationActionConflictProblemSchema = makeProble
 export const CaptureProviderNotificationActionIneligibleProblemSchema = makeProblemDetailsSchema(
   'CaptureProviderNotificationActionIneligibleProblem',
   422,
-  { code: Schema.Literals(['action_policy_denied', 'action_not_implemented']) },
+  { code: Schema.Literal('action_policy_denied') },
 );
 export const CaptureProviderNotificationActionPreconditionProblemSchema = makeProblemDetailsSchema(
   'CaptureProviderNotificationActionPreconditionProblem',
@@ -63,6 +63,7 @@ export const CaptureProviderNotificationActionUnavailableProblemSchema = makeRet
       'action_transaction_failed',
       'module_state_check_unavailable',
       'operation_context_unavailable',
+      'payment_unavailable',
     ]),
   },
 );
