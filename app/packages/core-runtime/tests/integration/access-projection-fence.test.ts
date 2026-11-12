@@ -322,9 +322,12 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
           // A live lease is never preempted: the reconcile is refused and the tenant stays closed to every Action
           // (`lockActionAccessFence` admits only a Ready fence).
           expect(yield* refusalOf(writer.reconcileTenant({ scope }))).toContain('whose hold has not lapsed');
+          expect(yield* refusalOf(writer.reconcileTenant({ scope }))).toContain('whose hold has not lapsed');
           expect(yield* tenantFence(admin, tenantId)).toEqual([
             { owning_operation_id: DEAD_HOLDER, state: 'Changing' },
           ]);
+          // Each refused attempt ended its own journal: none is left `validated` with nobody to finish it.
+          expect(yield* journalPhases(admin, tenantId)).not.toContain('validated');
 
           yield* lapseLease(admin, tenantId);
           const recovered = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);

@@ -1,8 +1,10 @@
 import { and, eq, inArray } from 'drizzle-orm';
-import { DateTime, Duration, Effect, Match, Schedule, Schema } from 'effect';
+import { DateTime, Duration, Effect, Match, Result, Schema } from 'effect';
 
 import { AccessReleaseStore } from '../access/changes/persistence/release-store.ts';
 import { AccessProjectionWriter } from '../access/intent/projection-writer.ts';
+import type { TenantProjectionWrite } from '../access/intent/projection-writer.ts';
+import type { AccessProjectionWriteError } from '../access/intent/projection-write-error.ts';
 import { RELEASE_ACTOR_DISPLAY_NAME, releaseActorId } from '../access/release/activation.ts';
 import { makeSystemPrincipalContextResolver, registerSystemWorkload } from '../auth/system-principal-context.ts';
 import { preserveSystemPrincipalContextTrust } from '../auth/system-principal-context-provenance.ts';
@@ -328,15 +330,57 @@ const releaseScopeOf = Effect.fn('ReleaseTenantModules.releaseScope')(function* 
   }) satisfies OperationalScope;
 });
 
+/** A projection is started only with at least this much of the budget left, so it never has to be cut short. */
+export const RELEASE_RECONCILE_RESERVE = Duration.minutes(1);
+
+/** Whether the run's budget still covers `reserve` from now; a run with no deadline always has time. */
+const withinBudget = (deadline: DateTime.Utc | undefined, reserve: Duration.Duration) =>
+  DateTime.now.pipe(
+    Effect.map(
+      (now) => deadline === undefined || DateTime.isLessThanOrEqualTo(DateTime.addDuration(now, reserve), deadline),
+    ),
+  );
+
+/**
+ * One projection, and after a failure another one `retrySpacing` later, at most `retriesLeft` more times and each
+ * only while the run's budget still holds `RELEASE_RECONCILE_RESERVE`: a retry is a new projection, and is started
+ * under the same rule as the first.
+ */
+const reconcileWithinBudget = Effect.fn('ReleaseTenantModules.reconcileWithinBudget')(
+  function* reconcileWithinBudgetEffect(
+    scope: OperationalScope,
+    deadline: DateTime.Utc | undefined,
+    retrySpacing: Duration.Duration,
+    retriesLeft: number,
+  ): Effect.fn.Return<TenantProjectionWrite, AccessProjectionWriteError, AccessProjectionWriter> {
+    const writer = yield* AccessProjectionWriter;
+    const written = yield* Effect.result(writer.reconcileTenant({ scope }));
+    if (Result.isSuccess(written)) {
+      return written.success;
+    }
+    if (retriesLeft === 0) {
+      return yield* written.failure;
+    }
+    yield* Effect.sleep(retrySpacing);
+    if (!(yield* withinBudget(deadline, RELEASE_RECONCILE_RESERVE))) {
+      return yield* written.failure;
+    }
+    return yield* reconcileWithinBudget(scope, deadline, retrySpacing, retriesLeft - 1);
+  },
+);
+
 /** Project a Tenant whose modules changed, through the one Core writer, as the Outbox worker would. */
 const reconcileInstalledTenant = Effect.fn('ReleaseTenantModules.reconcileTenant')(
-  function* reconcileReleaseTenant(tenantId: string, runReference: string, retrySpacing: Duration.Duration) {
-    const writer = yield* AccessProjectionWriter;
+  function* reconcileReleaseTenant(
+    tenantId: string,
+    runReference: string,
+    retrySpacing: Duration.Duration,
+    deadline: DateTime.Utc | undefined,
+  ) {
     const scope = yield* releaseScopeOf(tenantId, runReference);
     // A concurrent projection that read the tenant before the install committed can win the fence: try again a few
     // times so the rights are live quickly. A Tenant left closed is the fence sweeper's; see the module comment.
-    const written = yield* writer.reconcileTenant({ scope }).pipe(
-      Effect.retry({ schedule: Schedule.spaced(retrySpacing), times: RELEASE_RECONCILE_RETRIES }),
+    const written = yield* reconcileWithinBudget(scope, deadline, retrySpacing, RELEASE_RECONCILE_RETRIES).pipe(
       Effect.mapError((cause) => refusal(`the projection could not be reconciled: ${cause.reason}`, cause)),
     );
     return { deletions: written.deletions, tenantId, touches: written.touches } satisfies ReleaseTenantReconcile;
@@ -358,16 +402,6 @@ const reconcileInstalledTenant = Effect.fn('ReleaseTenantModules.reconcileTenant
  * Installs every declared module that a Tenant still lacks, then reconciles each Tenant that gained one. A second
  * run over the same state installs and reconciles nothing.
  */
-/** A projection is started only with at least this much of the budget left, so it never has to be cut short. */
-export const RELEASE_RECONCILE_RESERVE = Duration.minutes(1);
-
-/** Whether the run's budget still covers `reserve` from now; a run with no deadline always has time. */
-const withinBudget = (deadline: DateTime.Utc | undefined, reserve: Duration.Duration) =>
-  DateTime.now.pipe(
-    Effect.map(
-      (now) => deadline === undefined || DateTime.isLessThanOrEqualTo(DateTime.addDuration(now, reserve), deadline),
-    ),
-  );
 
 export const installReleaseTenantModules = Effect.fn('ReleaseTenantModules.install')(
   function* installReleaseModules(input: {
@@ -415,6 +449,7 @@ export const installReleaseTenantModules = Effect.fn('ReleaseTenantModules.insta
                   tenantId,
                   input.runReference,
                   input.reconcileRetrySpacing ?? RELEASE_RECONCILE_RETRY_SPACING,
+                  input.deadline,
                 )
               : Effect.succeed({
                   deletions: 0,

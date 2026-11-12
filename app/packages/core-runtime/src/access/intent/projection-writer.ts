@@ -878,7 +878,11 @@ const fencedReconcile = Effect.fn('AccessProjectionWriter.fencedReconcile')(func
       previousHolder: input.previousHolder,
       scopeId: tenantScopeId,
       tenantId,
-    }).pipe(Effect.mapError(fenceRefusalError)),
+    }).pipe(
+      Effect.mapError(fenceRefusalError),
+      // A refused take leaves no `validated` journal behind: every refused attempt would otherwise add one.
+      Effect.tapError(() => abandonOpenedJournal(input, 'fence_refused')),
+    ),
     operationId,
     scopeId: tenantScopeId,
     tenantId,

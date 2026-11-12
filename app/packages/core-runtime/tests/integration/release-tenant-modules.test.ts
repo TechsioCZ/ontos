@@ -1,6 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { DateTime, Duration, Effect, Ref, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
 import { TenantAccessBootstrap } from '../../src/access/bootstrap/index.ts';
@@ -171,6 +172,25 @@ const lapseLeaseOf = (admin: PgClient.PgClient, tenantId: TenantId) =>
     )
     .pipe(Effect.orDie);
 
+/** An engine whose write fails while the countdown is above zero, each failure taking ten seconds of the run. */
+const failingSlowly =
+  (left: Ref.Ref<number>) =>
+  (engine: AccessProjectionCompilerEngine): AccessProjectionCompilerEngine => ({
+    ...engine,
+    reconcile: (intent, options) =>
+      Ref.getAndUpdate(left, (count) => count - 1).pipe(
+        Effect.flatMap((count) =>
+          count > 0
+            ? TestClock.adjust('10 seconds').pipe(
+                Effect.andThen(
+                  Effect.fail([new AccessProjectionError({ code: 'access_projection_unavailable', reason: 'slow' })]),
+                ),
+              )
+            : engine.reconcile(intent, options),
+        ),
+      ),
+  });
+
 /** An engine whose write fails while the countdown is above zero, as a lost race or a blip would. */
 const failingFirst =
   (left: Ref.Ref<number>) =>
@@ -330,6 +350,31 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
         ]);
       }),
     ),
+  );
+
+  suite.effect('tries a failed projection again only while the run budget still holds a whole projection', () =>
+    Effect.gen(function* budgetedRetries() {
+      const left = yield* Ref.make(0);
+      yield* withProjectionTenant({ activeModules: [SELLING], wrapCompiler: failingSlowly(left) }, (tenantId) =>
+        Effect.gen(function* retriesWithinBudget() {
+          yield* bootstrapOwner(tenantId);
+          yield* Ref.set(left, 100);
+          // The test clock starts at the epoch. 65 seconds of budget start the first projection (a minute is
+          // reserved for one); it fails ten seconds in, and the 55 seconds left start no retry.
+          const run = yield* installReleaseTenantModules({
+            catalog,
+            deadline: DateTime.add(DateTime.makeUnsafe(0), { seconds: 65 }),
+            modules: [{ moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }],
+            reconcileRetrySpacing: Duration.zero,
+            runReference: RUN,
+          });
+          expect(run.modules[0]).toMatchObject({ outcome: 'installed' });
+          expect(run.reconciles[0]?.failure).toContain('the projection could not be reconciled');
+          expect(yield* Ref.get(left)).toBe(99);
+          yield* Ref.set(left, 0);
+        }),
+      );
+    }),
   );
 
   suite.effect('never changes a state a person set, and installs nothing where the Tenant does not sell', () =>
