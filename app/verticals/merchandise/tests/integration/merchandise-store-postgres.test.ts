@@ -541,10 +541,12 @@ it.live('UpdateCategory rename renames every product of the category in column a
         const renamed = yield* requiredFixtureValue(productRow(after, id));
         expect(renamed.category).toBe('Metrické šrouby');
         expect(renamed.updatedAt.toISOString()).toBe(nowIso);
+        // The rename edits the stored document in place, so it keeps the rate a rollback reads (`rollbackVatRateOf`).
         expect(renamed.document).toEqual({
           ...decodeProductDocument(old.document),
           category: 'Metrické šrouby',
           updatedAt: nowIso,
+          vatRate: Schema.decodeUnknownSync(Schema.Struct({ vatRate: Schema.Number }))(old.document).vatRate,
         });
         expect({ ...renamed, category: old.category, document: old.document, updatedAt: old.updatedAt }).toEqual(old);
       }
