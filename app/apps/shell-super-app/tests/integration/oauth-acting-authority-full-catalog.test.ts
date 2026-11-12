@@ -57,9 +57,9 @@ import {
   ShellInstalledModuleCatalog,
   ShellInstalledModuleCatalogLive,
 } from '../../api/modules/installed-module-catalog.ts';
+import { timedDescription } from '../../api/mcp/describe-timing.ts';
 import { describeLiveGrant, loadActingAuthority } from '../../api/oauth-connections/connection-service.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
-import { delayedTcpProxy } from '../support/delayed-tcp-proxy.ts';
 import {
   buildAccessGraph,
   replacedDatabase,
@@ -178,40 +178,14 @@ const unsharedStages = Layer.effect(
 const inspectionLayer = (input: {
   readonly authorityCase: AuthorityCase;
   readonly counters: Counters;
-  /** Test-only network latency: PostgreSQL and SpiceDB reached through a proxy adding this delay per round trip. */
-  readonly delayMs?: number;
   /** The published stages without sharing: `staged` answered by the plain calls (the equivalence reference). */
   readonly plainStages?: boolean;
   readonly snapshot: ActiveApplicationCompositionSnapshot;
 }) =>
   Layer.unwrap(
     Effect.gen(function* buildInspection() {
-      const direct = yield* loadSpiceDbConfig();
-      let { runtime } = input.authorityCase;
-      let configuration = direct;
-      if (input.delayMs !== undefined) {
-        const { delayMs } = input;
-        const databaseUrl = new URL(runtime.connectionString);
-        const databasePort = yield* delayedTcpProxy({
-          delayMs,
-          host: databaseUrl.hostname,
-          port: Number(databaseUrl.port),
-        });
-        databaseUrl.hostname = '127.0.0.1';
-        databaseUrl.port = String(databasePort);
-        // Only the runtime side is used; the pair still needs a distinct administrator identity to parse.
-        const adminUrl = new URL(databaseUrl.href);
-        adminUrl.username = 'delayed_proxy_admin';
-        const pair = yield* parseDatabaseConnectionPair({
-          DATABASE_ADMIN_URL: adminUrl.href,
-          DATABASE_URL: databaseUrl.href,
-        });
-        ({ runtime } = pair);
-        const [spiceHost = 'localhost', spicePort = '50051'] = direct.endpoint.split(':');
-        const spiceDbPort = yield* delayedTcpProxy({ delayMs, host: spiceHost, port: Number(spicePort) });
-        configuration = { ...direct, endpoint: `localhost:${spiceDbPort}` };
-      }
-      const database = yield* makeCoreDatabase(runtime);
+      const configuration = yield* loadSpiceDbConfig();
+      const database = yield* makeCoreDatabase(input.authorityCase.runtime);
       const rpc = yield* Effect.acquireRelease(
         Effect.sync(() => spiceDbTransport.open(configuration, SPICEDB_CHECK_TIMEOUT_MS)),
         (opened) => Effect.sync(() => opened.close()),
@@ -473,8 +447,6 @@ const countOf = (spans: ReadonlyMap<string, { readonly count: number }>, name: s
 const measured = <A, E, R>(input: {
   readonly authorityCase: AuthorityCase;
   readonly correlationId: string;
-  /** Test-only per-round-trip delay to PostgreSQL and SpiceDB; absent, both are reached directly. */
-  readonly delayMs?: number;
   readonly plainStages?: boolean;
   readonly read: Effect.Effect<A, E, R>;
   readonly snapshot: ActiveApplicationCompositionSnapshot;
@@ -491,11 +463,8 @@ const measured = <A, E, R>(input: {
         inspectionLayer({
           authorityCase: input.authorityCase,
           counters,
-          ...withOptional(
-            { plainStages: input.plainStages === true, snapshot: input.snapshot },
-            'delayMs',
-            input.delayMs,
-          ),
+          plainStages: input.plainStages === true,
+          snapshot: input.snapshot,
         }),
       ),
     );
@@ -696,25 +665,29 @@ const expectSameHints = (input: {
     return { hints, reference };
   });
 
-/** The owner's connection description, measured with `delayMs` added to every round trip. */
-const describeOwnerAt = Effect.fn('test.describeOwnerAt')(function* describeOwnerAt(input: {
+/**
+ * The owner's connection description, counted by the product's own round-trip counter (`timedDescription`, the
+ * counts the `mcp.request` and `agent-platform.request` lines carry) as well as by this suite's recording tracer.
+ */
+const countedOwnerDescription = Effect.fn('test.countedOwnerDescription')(function* countedOwnerDescription(input: {
   readonly authorityCase: AuthorityCase;
-  readonly delayMs: number;
+  readonly label: string;
   readonly snapshot: ActiveApplicationCompositionSnapshot;
 }) {
   const { companyId, owner, tenantId } = input.authorityCase;
-  const correlationId = `owner-round-trips-${input.delayMs}`;
+  const correlationId = `owner-round-trips-${input.label}`;
   const asker = yield* sessionScope({ correlationId, legalEntityId: companyId, principalId: owner, tenantId });
   return yield* measured({
     authorityCase: input.authorityCase,
     correlationId,
-    delayMs: input.delayMs,
-    read: loadActingAuthority(asker, {
-      actingKind: 'human',
-      actingPrincipalId: owner,
-      legalEntityId: companyId,
-      tenantId,
-    }),
+    read: timedDescription(
+      loadActingAuthority(asker, {
+        actingKind: 'human',
+        actingPrincipalId: owner,
+        legalEntityId: companyId,
+        tenantId,
+      }),
+    ),
     snapshot: input.snapshot,
   });
 });
@@ -1173,35 +1146,39 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
       300_000,
     );
 
-    // Stage reaches PostgreSQL and SpiceDB over the network: every round trip that waits on the one before it adds
-    // the network delay. Measured through a delaying proxy at 0 ms and 5 ms per round trip, the difference divided by
-    // the delay is the number of sequential round trips one description makes.
+    // Stage reaches PostgreSQL and SpiceDB over the network, so every round trip of a description costs a network
+    // delay. The description is counted by the counter the `mcp.request` and `agent-platform.request` lines carry:
+    // its statements, transactions and SpiceDB calls. They count every round trip, concurrent or not.
     suite.effect(
-      "counts the sequential round trips of a full-access owner's connection description",
+      "counts the round trips of a full-access owner's connection description",
       () =>
         withAuthorityCase(
           'work.tasks',
           (authorityCase) =>
             Effect.gen(function* ownerRoundTrips() {
               const snapshot = yield* installedComposition;
-              const describeAt = (delayMs: number) => describeOwnerAt({ authorityCase, delayMs, snapshot });
-              // A warm-up through the proxy, so connection setup is not counted as a round trip of the description.
-              yield* describeAt(0);
-              const at0 = yield* describeAt(0);
-              const at5 = yield* describeAt(5);
-              const sequentialRoundTrips = Math.round((at5.ms - at0.ms) / 5);
-              expect(at5.value.live.read).toEqual(at0.value.live.read);
+              const describe = (label: string) => countedOwnerDescription({ authorityCase, label, snapshot });
+              // A warm-up, so the counted description is the steady one every MCP request repeats.
+              const warmUp = yield* describe('warm-up');
+              const described = yield* describe('counted');
+              const [authority, counted] = described.value;
+              expect(authority.live.read).toEqual(warmUp.value[0].live.read);
+              expect(authority.live.read.size).toBeGreaterThan(20);
+              // The product counter sees every round trip this suite's own tracer records.
+              expect(counted.statements).toBe(described.statements);
+              expect(counted.transactions).toBe(described.transactions);
+              expect(counted.spicedbCalls).toBe(countOf(described.spans, 'AccessDecision.spicedbCheckBulk'));
               const path = yield* roundTripReportPath;
               if (Option.isSome(path)) {
-                const origin = Math.min(...at5.records.map(({ startMs }) => startMs));
+                const origin = Math.min(...described.records.map(({ startMs }) => startMs));
                 const fileSystem = yield* FileSystem.FileSystem;
                 yield* fileSystem.writeFileString(
                   path.value,
                   yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
-                    at0: reportOf(at0),
-                    at5: reportOf(at5),
-                    sequentialRoundTrips,
-                    timeline: at5.records
+                    counted,
+                    described: reportOf(described),
+                    phases: phaseBreakdown(described.records),
+                    timeline: described.records
                       .filter(({ name }) => !name.startsWith('Schema') && !name.startsWith('measured'))
                       .toSorted((left, right) => left.startMs - right.startMs)
                       .map(({ ms, name, parents, startMs }) => ({
@@ -1210,14 +1187,20 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
                         parents,
                         t: Math.round(startMs - origin),
                       })),
+                    warmUp: reportOf(warmUp),
                   }),
                 );
               }
-              // Before the shared stages this description made about 200 sequential round trips, then about 105; with
-              // every LIST of a batch answered together, 85. The bound leaves room for timing noise, never for a stage,
-              // a per-context resolution or a per-LIST read that waits again.
-              expect(sequentialRoundTrips).toBeLessThanOrEqual(100);
-              expect(at5.transactions).toBeLessThanOrEqual(14);
+              // Three companies, the whole catalogue: 100 statements, 12 transactions and 4 SpiceDB check batches,
+              // the same in the warm-up. One more of any is a new stage, a per-context resolution or a per-LIST read.
+              // Statements: identity, scope, the batched cell reads and the evidence writes, never one per capability
+              // (before the batch, 3 252). Transactions: the old proxy-measured bound was 14; there are 12. SpiceDB:
+              // one check per capability batch and one for its LISTs together. With BEGIN and COMMIT per transaction
+              // (no spans of their own), the description makes at most 100 + 2 * 12 + 4 = 128 round trips in all; the
+              // proxy measured about 85 of them waiting on one another.
+              expect(counted.statements).toBeLessThanOrEqual(100);
+              expect(counted.transactions).toBeLessThanOrEqual(12);
+              expect(counted.spicedbCalls).toBeLessThanOrEqual(4);
             }).pipe(Effect.provide(NodeServices.layer)),
           3,
         ),
