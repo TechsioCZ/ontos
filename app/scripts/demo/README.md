@@ -331,7 +331,10 @@ reads), plus Finance's VAT page, navigation and VAT choices reads. No preset rol
 a rate or a regime declaration changes what every sale costs, so people with full access (which follows the
 catalogue) or a role an owner edits in the role editor manage them. Obchodník, Skladník and the e-shop administrators
 hold no Tax right: Merchandise and Finance read the rates through their own module calls, which Tax admits for the
-person they act for without a Tax right of that person. Order-tax finalization (a commerce-order service call) and the
+person they act for without a Tax right of that person. The DPH page's navigation and page reads
+(`dphPageKeys`) go only to roles that can open the page (Účetní, and the tenant owner through full access): a role
+reading Finance without Tax reads (Obchodník, the rental roles) keeps only Finance's VAT choices read, which the invoice
+and price forms need. Order-tax finalization (a commerce-order service call) and the
 regime import (a migration tool) are in no human role. The Novinky review cannot place these rights: it only suggests
 a new capability to roles that already hold the same editor group, and these roles held no tax capability.
 

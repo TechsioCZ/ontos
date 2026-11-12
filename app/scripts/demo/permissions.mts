@@ -78,6 +78,7 @@ export interface DemoRole {
   readonly restrictedModules?: readonly string[];
   /** Tenant ownership: the `owner` membership in the tenant-context scope. */
   readonly tenantOwner?: true;
+  readonly withoutKeys?: PolicyRole['withoutKeys'];
 }
 
 export const pipelineReadCapability = 'demo.sales-pipeline.api-records.read';
@@ -240,6 +241,13 @@ export const financeVatReadKeys = [
   'finance.billing.page-vat.read',
   'finance.billing.vat-choices.read',
 ] as const;
+/**
+ * The DPH page's navigation and page reads. The page reads the company's VAT regime and rates from Tax as the person
+ * (`taxAccountantKeys`), so a role without those reads would see the item and get "forbidden": it does not hold
+ * these two. The VAT choices an invoice or price form offers come through Finance's own Tax read
+ * (`finance.billing.vat-choices.read`), so every role reading Finance keeps that one.
+ */
+export const dphPageKeys = ['finance.billing.navigation-vat.read', 'finance.billing.page-vat.read'] as const;
 
 const everything = {
   [commerceModule]: 'write',
@@ -293,6 +301,8 @@ export const demoRoles = {
     label: 'Obchodník',
     proposalReview: true,
     restrictedModules: [pipelineModule, partyModule],
+    // No Tax read of its own: the DPH page is not for this role (the invoice form's VAT choices stay).
+    withoutKeys: dphPageKeys,
     // Billing is visible but not writable: the rep cannot confirm or void invoices.
     modules: {
       [commerceModule]: 'write',
@@ -424,6 +434,8 @@ export const rentalDemoRoles = {
     },
     proposalReview: true,
     restrictedModules: [partyModule],
+    // No Tax read of its own: the DPH page is not for this role (the invoice form's VAT choices stay).
+    withoutKeys: dphPageKeys,
   },
   headOfSales: {
     capabilityKeys: { [partyModule]: partyHumanWriterKeys },
@@ -444,6 +456,8 @@ export const rentalDemoRoles = {
     },
     proposalReview: true,
     restrictedModules: [partyModule],
+    // No Tax read of its own: the DPH page is not for this role (the invoice form's VAT choices stay).
+    withoutKeys: dphPageKeys,
   },
   salesRep: {
     capabilityKeys: { [partyModule]: partyHumanWriterKeys, [pipelineModule]: pipelineWriterKeys },
@@ -464,6 +478,8 @@ export const rentalDemoRoles = {
     },
     proposalReview: true,
     restrictedModules: [pipelineModule, partyModule],
+    // No Tax read of its own: the DPH page is not for this role (the invoice form's VAT choices stay).
+    withoutKeys: dphPageKeys,
   },
 } as const satisfies Readonly<Partial<Record<DemoRoleKey, DemoRole>>>;
 

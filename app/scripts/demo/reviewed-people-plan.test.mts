@@ -286,7 +286,7 @@ it.effect('pins the reviewed roles, their dangerous cells and the six assignment
         scope,
       ]),
     ).toEqual([
-      ['sales', 443, 397, roleId('sales'), COMPANY_SCOPE],
+      ['sales', 441, 397, roleId('sales'), COMPANY_SCOPE],
       ['accounting', 161, 129, roleId('accounting'), COMPANY_SCOPE],
       ['warehouse', 33, 23, roleId('warehouse'), COMPANY_SCOPE],
       [ROUTING, 1, 0, roleId(ROUTING), TENANT_SCOPE],
@@ -453,7 +453,7 @@ it.effect('adds only the newly reviewed VAT reads to a role saved before them, a
     expect(tagsOf(steps)).toEqual(['SaveRole', 'SaveRole']);
     const saves = steps.flatMap((step) => (step._tag === 'SaveRole' ? [step] : []));
     expect(saves.map(({ addedCells, roleKey }) => [roleKey, addedCells.length])).toEqual([
-      ['sales', 3],
+      ['sales', 1],
       ['accounting', 7],
     ]);
     const [, save] = saves;
