@@ -14,6 +14,7 @@ import {
   captureChannel,
   healModuleCredentialsOnce,
   makeCredentialHolder,
+  makeReplacedKeyLedger,
   planModuleCredentialHealing,
   provisionModuleCredentialsForReleaseWith,
   recordHostBoot,
@@ -395,6 +396,7 @@ describe("a container's record of its host boots", () => {
 });
 
 const BOOT_ORDER_KEY = 'boot-order-key';
+const RENEWED_ORDER_KEY = 'renewed-order-key';
 
 describe('retirement after a handover', () => {
   it.effect('keeps every key the host holds when the superseded retirement runs, not only those of the boot pass', () =>
@@ -419,6 +421,37 @@ describe('retirement after a handover', () => {
       yield* TestClock.adjust('1 minute');
       yield* Fiber.join(retirement);
       expect(runs).toEqual([['retire', [BOOT_ORDER_KEY, 'filled-party-key']]]);
+    }),
+  );
+
+  it.effect('never retires a key a renewal replaced less than the grace period ago', () =>
+    Effect.gen(function* renewalDuringGrace() {
+      const held = yield* Ref.make<readonly string[]>([BOOT_ORDER_KEY]);
+      const ledger = yield* makeReplacedKeyLedger;
+      const runs: (readonly [string, readonly string[]])[] = [];
+      const run = (pass: 'retire' | 'retire-own', retiring: { readonly providerKeyIds: readonly string[] }) =>
+        Effect.sync(() => runs.push([pass, retiring.providerKeyIds]));
+      const retirement = yield* Effect.forkChild(
+        retireAfterHandoverWith(run)({
+          compositionRevision: 'a'.repeat(64),
+          current: ledger.keptWith(Ref.get(held)),
+          earlierBoots: [],
+          replaced: [],
+          shellEnvironment: {},
+          superseded: true,
+        }),
+      );
+      // A minute and a half after publishing a revocation renewal replaces the boot key and hands over a fresh one.
+      yield* TestClock.adjust('90 seconds');
+      yield* ledger.record([BOOT_ORDER_KEY]);
+      yield* Ref.set(held, [RENEWED_ORDER_KEY]);
+      yield* TestClock.adjust('30 seconds');
+      yield* Fiber.join(retirement);
+      // The superseded retirement keeps the replaced key: its own renewal retires it two minutes after its hand-over.
+      expect(runs).toEqual([['retire', [RENEWED_ORDER_KEY, BOOT_ORDER_KEY]]]);
+      // Once that grace has passed, it is no longer kept.
+      yield* TestClock.adjust('2 minutes');
+      expect(yield* ledger.keptWith(Ref.get(held))).toEqual([RENEWED_ORDER_KEY]);
     }),
   );
 

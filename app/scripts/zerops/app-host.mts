@@ -699,6 +699,38 @@ export const retireAfterHandoverWith =
 
 export const retireAfterHandover = retireAfterHandoverWith(runRetirement);
 
+/**
+ * The keys this boot replaced, with when: a replaced key stays in use for the grace period after its hand-over (calls
+ * already started with it), and its own renewal retires it then. Until that moment the superseded-key retirement must
+ * keep it too, or a renewal in the first minutes after publishing would have its replaced keys revoked at once.
+ */
+interface ReplacedKey {
+  readonly at: number;
+  readonly providerKeyId: string;
+}
+const replacedAt =
+  (at: number) =>
+  (providerKeyId: string): ReplacedKey => ({ at, providerKeyId });
+const replacedWithin = (now: number, grace: number) => (replaced: ReplacedKey) => now - replaced.at < grace;
+const replacedKeyIdOf = (replaced: ReplacedKey) => replaced.providerKeyId;
+
+export const makeReplacedKeyLedger = Effect.gen(function* replacedKeyLedger() {
+  const replaced = yield* Ref.make<readonly ReplacedKey[]>([]);
+  const record = Effect.fn('AppHost.recordReplacedKeys')(function* recordReplacedKeys(
+    providerKeyIds: readonly string[],
+  ) {
+    const stamp = replacedAt(yield* Clock.currentTimeMillis);
+    yield* Ref.update(replaced, (earlier) => [...earlier, ...providerKeyIds.map(stamp)]);
+  });
+  /** The keys held now and those replaced less than the grace period ago: what a superseded retirement keeps. */
+  const keptWith = Effect.fn('AppHost.keptKeys')(function* keptKeys(held: Effect.Effect<readonly string[]>) {
+    const within = replacedWithin(yield* Clock.currentTimeMillis, Duration.toMillis(MODULE_CREDENTIAL_HANDOVER_GRACE));
+    const recent = yield* Ref.updateAndGet(replaced, (all) => all.filter(within));
+    return [...new Set([...(yield* held), ...recent.map(replacedKeyIdOf)])];
+  });
+  return { keptWith, record };
+});
+
 /** The provider key ids `held` had for the modules `fresh` gave a new key: what a renewal replaced. */
 export const replacedKeyIdsOf = (held: ProvisioningOutput, fresh: ProvisioningOutput): readonly string[] =>
   Object.entries(held.keys).flatMap(([appId, key]) =>
@@ -1256,6 +1288,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   );
   const exits = [yield* startUnitProcess([SHELL_ID], runtime, shellEnvironment.environment, memoryBytes), owners.exit];
   const credentialHolders = yield* Ref.make<readonly Pick<CredentialHolder, 'handOver'>[]>([owners]);
+  const replacedKeys = yield* makeReplacedKeyLedger;
   const heldCredentials = yield* Ref.make(noProvisionedCredentials(callers));
   const issueFor = (release: HostRelease) => (appIds: readonly string[]) =>
     provisionModuleCredentialsForRelease({
@@ -1283,8 +1316,9 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     retireAfterHandover({
       ...retiring,
       compositionRevision: release.compositionRevision,
-      // Read when the retirement runs, after the grace period: every key the host holds then is kept.
-      current: Ref.get(heldCredentials).pipe(Effect.map(providerKeyIdsOf)),
+      // Read when the retirement runs: every key the host holds then is kept, and every key a renewal replaced less
+      // than the grace period ago (that renewal retires it when its own grace ends).
+      current: replacedKeys.keptWith(Ref.get(heldCredentials).pipe(Effect.map(providerKeyIdsOf))),
       earlierBoots,
       shellEnvironment: shellEnvironment.environment,
     });
@@ -1298,7 +1332,8 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       held: heldCredentials,
       holders: Ref.get(credentialHolders),
       issue: issueFor(release),
-      retireOwn: (replaced) => retireReplaced(release, { replaced, superseded: false }),
+      retireOwn: (replaced) =>
+        replacedKeys.record(replaced).pipe(Effect.andThen(retireReplaced(release, { replaced, superseded: false }))),
       serving,
     });
   yield* Console.log(`[app-host] Shell runtime ${runtime}; owners and Outbox runtime node`);
