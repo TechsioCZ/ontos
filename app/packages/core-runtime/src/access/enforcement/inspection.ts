@@ -1,11 +1,17 @@
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Layer, Option, Schema } from 'effect';
 
 import { readVerifiedGatewayCompositionRevision } from '../../auth/system-principal-context-provenance.ts';
+import {
+  ActiveApplicationCompositionService,
+  validateActiveApplicationCompositionSnapshot,
+} from '../../modules/active-application-composition.ts';
+import { buildApplicationCompositionCatalog } from '../../modules/application-composition-catalog.ts';
+import { declaredActionAuthorities } from '../../permissions/action-authority.ts';
 import type { LegalEntityId } from '../ids.ts';
 import type { DeclaredActionAuthority } from '../../permissions/action-authority.ts';
 import { isCompanyAffiliationValid } from '../../permissions/company-membership.ts';
 import { legalEntityObjectId, objectTypeOf } from '../compiler/object-id.ts';
-import { resolveActorContext } from '../decision/authority.ts';
+import { AccessIntent, resolveActorContext } from '../decision/authority.ts';
 import type {
   ActorContextInput,
   AuthorityCellQuery,
@@ -14,19 +20,21 @@ import type {
   ScopeQuery,
 } from '../decision/authority.ts';
 import type { AccessDecision, DecisionCapabilityPolicy } from '../decision/contract.ts';
-import { decideAccessMany, resolveListAccess } from '../decision/engine.ts';
+import { DecisionCheck, decideAccessMany, resolveListAccess } from '../decision/engine.ts';
 import { withOptional } from '../decision/optional.ts';
 import { holderIdOf } from '../decision/selector.ts';
 import { AgentConnectionIdSchema, AgentIdSchema, PrincipalIdSchema, TenantIdSchema } from '../ids.ts';
 import type { AccessMode, ActorContext } from '../model.ts';
+import { AccessPrincipalKindSource } from './actor.ts';
 import type { AccessPrincipalKinds } from './actor.ts';
 import { capabilityPolicyOf, gateScopeOf } from './capability.ts';
 import type { AccessDecisionPorts } from './contract.ts';
 import { shouldRecordDecision } from './decision-log.ts';
+import { AccessDecisionLogBatch } from './decision-log-batch.ts';
 import type { AccessDecisionLogBatchWriter } from './decision-log-batch.ts';
 import type { AccessDecisionLogEntry } from './decision-log.ts';
 import { seamDenial, seamRefusal } from './decisions.ts';
-import { SubjectInspectionUnavailable } from './inspection-contract.ts';
+import { SubjectAccessInspection, SubjectInspectionUnavailable } from './inspection-contract.ts';
 import type {
   SubjectAccessInspectionService,
   SubjectCapabilityAnswer,
@@ -36,6 +44,7 @@ import type {
   SubjectInspectionInput,
   SubjectListInspection,
 } from './inspection-contract.ts';
+import { SubjectInspectionIdentitySource } from './inspection-facts.ts';
 import type { SubjectIdentityFactsSource } from './inspection-facts.ts';
 
 export interface SubjectInspectionCatalog {
@@ -623,3 +632,47 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
     scope: (input) => checked(input, () => inspectScope(input)),
   });
 };
+
+/** Capture once at a composition root, then retain this real service in the request Context. */
+export const SubjectAccessInspectionLive: Layer.Layer<
+  SubjectAccessInspection,
+  never,
+  | AccessIntent
+  | DecisionCheck
+  | AccessPrincipalKindSource
+  | AccessDecisionLogBatch
+  | SubjectInspectionIdentitySource
+  | ActiveApplicationCompositionService
+> = Layer.effect(
+  SubjectAccessInspection,
+  Effect.gen(function* subjectInspectionLive() {
+    const [intent, check, principalKinds, decisionLog, identities, composition] = yield* Effect.all(
+      [
+        AccessIntent,
+        DecisionCheck,
+        AccessPrincipalKindSource,
+        AccessDecisionLogBatch,
+        SubjectInspectionIdentitySource,
+        ActiveApplicationCompositionService,
+      ] as const,
+      { concurrency: 1 },
+    );
+    const currentCatalog = Effect.gen(function* currentInspectionCatalog() {
+      const snapshot = yield* composition.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
+      const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition);
+      return { actions: declaredActionAuthorities(catalog), revision: snapshot.composition.revision };
+    }).pipe(
+      Effect.mapError(
+        (cause) => new SubjectInspectionUnavailable({ cause, reason: 'Current inspection catalog is unavailable' }),
+      ),
+    );
+    return makeSubjectAccessInspection({
+      authorityFor: intent.authorityFor,
+      check,
+      currentCatalog,
+      decisionLog,
+      identities,
+      principalKinds,
+    });
+  }),
+);

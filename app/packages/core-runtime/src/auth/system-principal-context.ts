@@ -286,7 +286,12 @@ export class SystemPrincipalContextResolver extends Context.Service<
   ReturnType<typeof makeSystemPrincipalContextResolver>
 >()('@app/core-runtime/auth/system-principal-context/SystemPrincipalContextResolver') {}
 
+/** The resolver over the Core database the surrounding layers provide, for Core code already inside them. */
+export const SystemPrincipalContextResolverFromCoreDatabase = CoreDatabase.pipe(
+  Effect.map(makeSystemPrincipalContextResolver),
+);
+
 export const SystemPrincipalContextResolverLive = Layer.effect(
   SystemPrincipalContextResolver,
-  CoreDatabase.pipe(Effect.map(makeSystemPrincipalContextResolver)),
+  SystemPrincipalContextResolverFromCoreDatabase,
 );

@@ -27,9 +27,7 @@ import type { AccessDecisionUnavailable } from '../access/decision/errors.ts';
 import type { LegalEntityId } from '../access/ids.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import type { OperationalScope } from './context.ts';
-import { CoreDatabase } from '../db/client.ts';
-import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
-import { makeAccessAuthorityCurrentness, sameAuthorityRevision } from '../access/enforcement/currentness.ts';
+import { AccessAuthorityCurrentnessLive, sameAuthorityRevision } from '../access/enforcement/currentness.ts';
 import type { AccessAuthorityCurrentness } from '../access/enforcement/currentness.ts';
 import { prepareEngineEvidence } from '../access/enforcement/prepared-check.ts';
 import { accessDecisionUnavailable } from '../access/decision/errors.ts';
@@ -331,12 +329,9 @@ export const bindLiveAccessGate = Effect.gen(function* bindAccessGateFromLayers(
 
 /** Action execution additionally needs persisted currentness; Read and inspection gates do not. */
 export const bindLiveActionAccessGate = Effect.gen(function* bindActionAccessGateFromLayers() {
-  const [gate, ports, database, enrollment] = yield* Effect.all(
-    [AccessDecisionGate, AccessEnforcementPortsLive, CoreDatabase, DatabaseIdentityEnrollmentContext],
-    { concurrency: 4 },
+  const [gate, ports, currentness] = yield* Effect.all(
+    [AccessDecisionGate, AccessEnforcementPortsLive, AccessAuthorityCurrentnessLive],
+    { concurrency: 3 },
   );
-  return bindAccessGate(gate, {
-    ...ports,
-    currentness: makeAccessAuthorityCurrentness({ enrollment, executor: database.executor }),
-  });
+  return bindAccessGate(gate, { ...ports, currentness });
 });

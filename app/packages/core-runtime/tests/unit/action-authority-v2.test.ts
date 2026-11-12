@@ -11,7 +11,7 @@ import {
 import {
   actionCommandGateQuestionV2,
   actionCommandQuestionsV2,
-  makeActionCommandV2,
+  resolveActionCommandV2,
 } from '../../src/access/approvals/action-command-v2.ts';
 import {
   prepareActionAuthorityV2,
@@ -71,7 +71,7 @@ it('rejects a copied continuation prototype without treating it as prepared auth
 
 const makeFixture = (phase: 'approver' | 'requester', withPreparation = false) =>
   Effect.gen(function* proofFixture() {
-    const command = yield* makeActionCommandV2({ payload, registration: actionFor(), scope });
+    const command = yield* resolveActionCommandV2({ payload, registration: actionFor(), scope });
     const mode = phase === 'requester' ? 'propose' : 'approve';
     const spec: AuthoritySpec = {
       cells: [
@@ -308,7 +308,7 @@ it.effect(
       }).pipe(Effect.flip);
       expect(Schema.is(ApprovalRefusedError)(requesterLost)).toBe(true);
       expect(requesterLost).toMatchObject({ code: 'requester_authority_lost' });
-      const changed = yield* makeActionCommandV2({
+      const changed = yield* resolveActionCommandV2({
         payload: { ...payload, salary: 26 },
         registration: actionFor(),
         scope,
@@ -384,7 +384,7 @@ it.effect('rejects copied, missing, reordered, foreign and legacy stored questio
       const exit = yield* Effect.exit(actionAuthorityQuestionsV2(command, invalid, expectation));
       expect(Exit.isFailure(exit)).toBe(true);
     }
-    const changed = yield* makeActionCommandV2({
+    const changed = yield* resolveActionCommandV2({
       payload: { ...payload, salary: 26 },
       registration: actionFor(),
       scope,

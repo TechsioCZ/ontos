@@ -106,7 +106,6 @@ export type {
   SubjectScopeInspection,
 } from './inspection-contract.ts';
 export { SubjectAccessInspection, SubjectInspectionUnavailable } from './inspection-contract.ts';
-export { SubjectAccessInspectionLive } from './inspection-live.ts';
 export type { SubjectIdentityFacts, SubjectIdentityFactsSource } from './inspection-facts.ts';
 export {
   SubjectInspectionIdentitySource,
@@ -114,7 +113,7 @@ export {
   makeDrizzleSubjectIdentityFacts,
 } from './inspection-facts.ts';
 export type { SubjectInspectionCatalog, SubjectInspectionPorts } from './inspection.ts';
-export { makeSubjectAccessInspection } from './inspection.ts';
+export { SubjectAccessInspectionLive, makeSubjectAccessInspection } from './inspection.ts';
 
 export { readScopedSystemWorkloadEnrollment } from '../workloads/system-enrollment.ts';
 
