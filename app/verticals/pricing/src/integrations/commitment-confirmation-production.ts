@@ -182,11 +182,12 @@ export const commitmentConfirmationProductionForScope = Effect.fn('PricingCommit
     transaction: ScopedTransactionExecutor,
     scope: OperationalScope,
     compositionRevision: string | undefined,
+    crypto: Crypto.Crypto,
     preparedBinding?: Effect.Success<ReturnType<typeof pricingFinalizationOwnerGateways>>['verifyBinding'],
   ): Effect.fn.Return<
     CommitmentConfirmationProductionServices,
     OperationContextUnavailable,
-    Crypto.Crypto | CommitmentConfirmationFactoryRequirements
+    CommitmentConfirmationFactoryRequirements
   > {
     // Core read factories can receive no revision; an absent revision must never reach an owner gateway.
     if (compositionRevision === undefined) {
@@ -196,7 +197,6 @@ export const commitmentConfirmationProductionForScope = Effect.fn('PricingCommit
       });
     }
     const proof = yield* pricingCommitmentOwnerProof.pipe(Effect.mapError(unavailable));
-    const crypto = yield* Crypto.Crypto;
     const owners = yield* pricingFinalizationOwnerGateways(scope, compositionRevision, crypto).pipe(
       Effect.mapError(unavailable),
     );
@@ -406,7 +406,8 @@ export const prepareCommitmentConfirmationProductionServices = Effect.fn(
 )(function* prepareServices(
   payload: ManageCommitmentConfirmationPayload,
   context: ActionServicePreparationContext,
-): Effect.fn.Return<PreparedCommitmentConfirmationServices, OperationContextUnavailable, Crypto.Crypto> {
+  crypto: Crypto.Crypto,
+): Effect.fn.Return<PreparedCommitmentConfirmationServices, OperationContextUnavailable> {
   const binding = payload.kind === 'VERIFY_COMMITMENT_CONFIRMATION' ? payload.requestedBinding : payload.binding;
   if (
     binding.purchase.tenantId !== context.scope.tenantId ||
@@ -419,10 +420,7 @@ export const prepareCommitmentConfirmationProductionServices = Effect.fn(
       before: context
         .transaction((transaction) => loadPreparedCommitmentSource(transaction, context.scope, payload))
         .pipe(Effect.mapError(unavailable)),
-      owners: Crypto.Crypto.pipe(
-        Effect.flatMap((crypto) =>
-          pricingFinalizationOwnerGateways(context.scope, context.compositionRevision, crypto),
-        ),
+      owners: pricingFinalizationOwnerGateways(context.scope, context.compositionRevision, crypto).pipe(
         Effect.mapError(unavailable),
       ),
     },
@@ -465,7 +463,7 @@ export const prepareCommitmentConfirmationProductionServices = Effect.fn(
         'The exact retained Quotation or Confirmation changed during owner binding verification',
       );
     }
-    return yield* commitmentConfirmationProductionForScope(transaction, scope, revision, preparedBinding);
+    return yield* commitmentConfirmationProductionForScope(transaction, scope, revision, crypto, preparedBinding);
   });
   return factory;
 });
@@ -474,26 +472,29 @@ export class PricingCommitmentConfirmationProduction extends Context.Service<
   PricingCommitmentConfirmationProduction,
   {
     readonly forScope: (
-      ...input: Parameters<typeof commitmentConfirmationProductionForScope>
+      transaction: ScopedTransactionExecutor,
+      scope: OperationalScope,
+      compositionRevision: string | undefined,
     ) => Effect.Effect<
       CommitmentConfirmationProductionServices,
       OperationContextUnavailable,
       CommitmentConfirmationFactoryRequirements
     >;
     readonly prepareServices?: (
-      ...input: Parameters<typeof prepareCommitmentConfirmationProductionServices>
+      payload: ManageCommitmentConfirmationPayload,
+      context: ActionServicePreparationContext,
     ) => Effect.Effect<PreparedCommitmentConfirmationServices, OperationContextUnavailable>;
   }
 >()('@app/pricing/integrations/commitment-confirmation-production/PricingCommitmentConfirmationProduction') {}
+/** The production ports bind the composition's Crypto once, when the layer is built. */
 export const pricingCommitmentConfirmationProductionLive = Layer.effect(
   PricingCommitmentConfirmationProduction,
   Effect.gen(function* makeProduction() {
     const crypto = yield* Crypto.Crypto;
     return {
-      forScope: (...input: Parameters<typeof commitmentConfirmationProductionForScope>) =>
-        commitmentConfirmationProductionForScope(...input).pipe(Effect.provideService(Crypto.Crypto, crypto)),
-      prepareServices: (...input: Parameters<typeof prepareCommitmentConfirmationProductionServices>) =>
-        prepareCommitmentConfirmationProductionServices(...input).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+      forScope: (transaction, scope, compositionRevision) =>
+        commitmentConfirmationProductionForScope(transaction, scope, compositionRevision, crypto),
+      prepareServices: (payload, context) => prepareCommitmentConfirmationProductionServices(payload, context, crypto),
     };
   }),
 );

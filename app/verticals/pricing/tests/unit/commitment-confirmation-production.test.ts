@@ -10,7 +10,7 @@ import {
 } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
-import { DateTime, Effect, Layer, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Layer, Schema } from 'effect';
 import { afterAll, expect, it, rs } from 'effect-rstest';
 
 import {
@@ -83,7 +83,10 @@ const checkFactory = (compositionRevision?: string) =>
       },
       () => Effect.succeed({ evidence: { resultCount: 1 }, result: true }),
       (transaction, installedScope) =>
-        commitmentConfirmationProductionForScope(transaction, installedScope, compositionRevision).pipe(
+        Crypto.Crypto.pipe(
+          Effect.flatMap((crypto) =>
+            commitmentConfirmationProductionForScope(transaction, installedScope, compositionRevision, crypto),
+          ),
           Effect.flip,
           Effect.orDie,
           Effect.map((failure) => {
