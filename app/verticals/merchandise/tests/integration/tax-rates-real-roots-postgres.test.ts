@@ -88,9 +88,9 @@ import { executeDeclareSellerVatRegimeWithAuthorization } from '../../../tax/src
 
 const COMPOSITION_URL = 'https://composition.merchandise-tax.test/active';
 const MERCHANDISE_ORIGIN = 'http://merchandise.test';
-const SHELL_ORIGIN = 'http://shell.test';
+const SHELL_ORIGIN = 'https://shell.test';
 /** Tax's own origin, for the author who calls Tax directly. */
-const TAX_ORIGIN = 'http://tax.test';
+const TAX_ORIGIN = 'https://tax.test';
 const SHELL_GATEWAY_BASE_URL = `${SHELL_ORIGIN}${shellGatewayContextContract.apiPrefix}`;
 const DELEGATION_PATH = `${shellGatewayContextContract.apiPrefix}/auth/delegated/gateway-context`;
 const TAX_PREFIX = '/tax-api';
