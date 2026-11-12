@@ -1,8 +1,6 @@
 import { HttpEffect, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { Clock, Context, Effect, Exit, Option, Ref, Schema } from 'effect';
 
-import { ownerServerTimings } from '../../src/module-api/response-relay.ts';
-
 /** Fixed names only: timing diagnostics must never contain credentials, identities or request data. */
 const GatewayPhaseSchema = Schema.Literals([
   'document-authentication',
@@ -22,7 +20,7 @@ const GatewayPhaseSchema = Schema.Literals([
   'assertion-issue',
   'owner-dispatch',
 ]);
-export type GatewayPhase = typeof GatewayPhaseSchema.Type;
+type GatewayPhase = typeof GatewayPhaseSchema.Type;
 
 interface GatewayTiming {
   readonly durationMs: number;
@@ -35,7 +33,7 @@ export class GatewayTimings extends Context.Reference<Option.Option<Ref.Ref<read
 ) {}
 
 const MAX_PHASES = 64;
-export const gatewayServerTiming = (timings: readonly GatewayTiming[]): string => {
+const gatewayServerTiming = (timings: readonly GatewayTiming[]): string => {
   const metrics: string[] = [];
   for (const { durationMs, phase } of timings.slice(0, MAX_PHASES)) {
     if (Number.isFinite(durationMs) && durationMs >= 0) {
@@ -74,15 +72,17 @@ export const observeGatewayPhase = (phase: GatewayPhase) =>
     return yield* effect.pipe(Effect.onExit((exit) => recordGatewayTiming(timings.value, phase, startedAt, exit)));
   });
 
-/** The HTTP boundary installs this fresh collector and hook for each request, including error responses. */
+/**
+ * The HTTP boundary installs this fresh collector and hook for each request, including error responses. The header
+ * it sends carries the gateway's own phases only: it replaces any `server-timing` already on the response, so a
+ * module owner's timings never leave the Shell.
+ */
 export const gatewayTimingCollector = Effect.gen(function* gatewayTimingCollectorEffect() {
   const timings = yield* Ref.make<readonly GatewayTiming[]>([]);
   const appendResponseHeader = HttpEffect.appendPreResponseHandler((_request, response) =>
     Ref.get(timings).pipe(
       Effect.map((entries) => {
-        const gateway = gatewayServerTiming(entries).split(', ').filter(Boolean);
-        const owner = ownerServerTimings(response.headers['server-timing'] ?? '').slice(0, MAX_PHASES - gateway.length);
-        const header = [...owner, ...gateway].join(', ');
+        const header = gatewayServerTiming(entries);
         return header.length === 0
           ? HttpServerResponse.removeHeader(response, 'server-timing')
           : HttpServerResponse.setHeader(response, 'server-timing', header);
