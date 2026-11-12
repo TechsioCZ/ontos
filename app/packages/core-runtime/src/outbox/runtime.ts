@@ -2,7 +2,7 @@ import { withoutModuleOperationExecution } from '../modules/module-operation-exe
 import { nativeOutboxClaimRevision, withNativeOutboxClaimExecution } from './worker-runtime-binding.ts';
 /* eslint-disable unicorn/no-array-method-this-argument -- Effect's dual flatMap API is intentional. expires: 2026-12-31. */
 // @effect-diagnostics effectFnOpportunity:off globalDateInEffect:off instanceOfSchema:off -- Existing compatibility boundary; expires: 2026-12-31.
-import { Context, DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Exit, Layer, Option, Result, Schema } from 'effect';
 
 import type {
   AnyOutboxWorkerRegistration,
@@ -15,6 +15,7 @@ import {
   attestOutboxWorkerHandlerContext,
   validateOutboxWorkerRegistrations,
   validateOutboxWorkerSubscriptions,
+  OutboxTerminalFailureSchema,
 } from './definition.ts';
 import { OutboxHandlerExecutionError, OutboxPayloadDecodeError, OutboxWorkerDescriptorError } from './errors.ts';
 import type { PersistenceFailure } from '../database/persistence-failure.ts';
@@ -25,7 +26,11 @@ import {
   outboxDeclaredFailureDiagnostics,
 } from './declared-failure-diagnostics.ts';
 import type { ApplicationCompositionAuthorityError } from '../modules/application-composition-authority.ts';
-import type { OutboxClaim, OutboxRepositoryService as OutboxRepositoryPort } from './repository.ts';
+import type {
+  OutboxClaim,
+  OutboxFailureDisposition,
+  OutboxRepositoryService as OutboxRepositoryPort,
+} from './repository.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -296,8 +301,9 @@ const failOutboxDelivery = Effect.fn('OutboxRuntime.failDelivery')(function* fai
   state: OutboxCycleProgress,
   reason: string,
   outcome: string,
+  disposition: OutboxFailureDisposition,
 ) {
-  const status = yield* repository.fail(claim, reason, now).pipe(
+  const status = yield* repository.fail(claim, reason, now, disposition).pipe(
     Effect.tapErrorTag('PersistenceFailure', () => logUnexpectedPersistence(claim)),
     (effect) => withOutcomeSpan(effect, claim, outcome),
   );
@@ -348,6 +354,7 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
         claimedState,
         decodeError.reason,
         'payload_decode_failure',
+        'retry',
       );
     }
 
@@ -374,7 +381,13 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
               ...outboxDeclaredFailureDiagnostics(
                 Schema.decodeUnknownResult(OutboxDeclaredFailureIdentitySchema)(error),
               ),
-            }).pipe(Effect.as('declared_failure' as const)),
+            }).pipe(
+              Effect.as(
+                Result.isSuccess(Schema.decodeUnknownResult(OutboxTerminalFailureSchema)(error))
+                  ? ('terminal_failure' as const)
+                  : ('declared_failure' as const),
+              ),
+            ),
           onSuccess: () => Effect.succeed('success' as const),
         }),
         Effect.withSpan('OutboxWorker.handle', {
@@ -388,7 +401,7 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
         claimAnnotations(claim, 'handler_defect'),
       );
     }
-    if (Exit.isFailure(handlerExit) || handlerExit.value === 'declared_failure') {
+    if (Exit.isFailure(handlerExit) || handlerExit.value !== 'success') {
       const executionError = new OutboxHandlerExecutionError({
         code: 'outbox_handler_execution_failed',
         reason: Exit.isFailure(handlerExit)
@@ -404,6 +417,8 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
         claimedState,
         executionError.reason,
         'handler_failure',
+        // Only a declared failure the worker marks terminal skips its retry policy; defects always keep it.
+        Exit.isSuccess(handlerExit) && handlerExit.value === 'terminal_failure' ? 'terminal' : 'retry',
       );
     }
 

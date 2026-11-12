@@ -7,7 +7,7 @@ import {
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/sales-pipeline/outbox/opportunity-stage-changed';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { FinanceReferenceUnavailable } from '../../shared/actions/apply-command.ts';
 import { FinanceStateSchema } from '../../shared/apis/records.ts';
@@ -24,6 +24,9 @@ import {
   saveFinanceStateForWorkerRoutine,
 } from '../../src/workers/opportunity-invoice-ledger.ts';
 import { baselineVatChoices } from '../support/finance-tax-rates.ts';
+import { outboxFailureStatus } from '../../../../packages/core-runtime/src/outbox/repository.ts';
+import type { OutboxClaim, OutboxRepositoryService } from '../../../../packages/core-runtime/src/outbox/repository.ts';
+import { makeOutboxRuntime } from '../../../../packages/core-runtime/src/outbox/runtime.ts';
 
 const tenantId = '21000000-0000-4000-8000-000000000001';
 const legalEntityId = '31000000-0000-4000-8000-000000000001';
@@ -46,8 +49,8 @@ const won: OutboxWorkerHandlerContext = attestOutboxWorkerHandlerContext({
   workerKey: draftInvoiceFromWonOpportunityWorker.descriptor.workerKey,
 });
 
-const wonPayload = (vatRate: number) =>
-  Schema.decodeEffect(OutboxPayloadSchema)({
+const wonMessage = (vatRate: number) =>
+  ({
     amountMinor: 100_000,
     changedAt: '2026-11-02T09:00:00.000Z',
     currency: 'CZK',
@@ -65,7 +68,9 @@ const wonPayload = (vatRate: number) =>
     partyId: '41000000-0000-4000-8000-000000000003',
     revision: 1,
     toStage: 'WON',
-  });
+  }) satisfies typeof OutboxPayloadSchema.Encoded;
+
+const wonPayload = (vatRate: number) => Schema.decodeEffect(OutboxPayloadSchema)(wonMessage(vatRate));
 
 /** One company's finance ledger, saved with a revision check exactly like the worker routines. */
 const SaveParametersSchema = Schema.Tuple([Schema.Int, Schema.Unknown]);
@@ -133,6 +138,54 @@ const deliver = (
       forEachScope: (_claim, observe) => observe(scope),
     }),
   );
+
+/** The first claim of the won message, as Core's Outbox hands it to this worker. */
+const firstClaim = (vatRate: number): OutboxClaim => ({
+  attemptId: '51000000-0000-4000-8000-000000000006',
+  attemptNumber: 1,
+  claimId: won.claimId,
+  consumerModuleKey: 'finance.billing',
+  deliveryId: won.deliveryId,
+  domainEventId: won.domainEventId,
+  messageId: won.messageId,
+  originatorInvocationId: '51000000-0000-4000-8000-000000000005',
+  payloadJson: wonMessage(vatRate),
+  producerModuleKey: outboxProducerModuleKey,
+  retryPolicy: draftInvoiceFromWonOpportunityWorker.descriptor.retryPolicy,
+  tenantId,
+  tenantSequenceNo: 1n,
+  topic: outboxTopic,
+  workerKey: draftInvoiceFromWonOpportunityWorker.descriptor.workerKey,
+});
+
+/**
+ * One Outbox cycle of Core's runtime over the first claim of the won message: the real worker registration, settled
+ * by the Outbox repository's own rule for where a failed attempt goes (dead or pending for a retry).
+ */
+const settleFirstAttempt = (scope: OutboxWorkerLegalEntityScope, tax: FinanceTaxRates['Service'], vatRate: number) => {
+  const claims = [firstClaim(vatRate)];
+  const outbox: OutboxRepositoryService = {
+    claimNext: () => Effect.sync(() => Option.fromNullishOr(claims.shift())),
+    complete: () => Effect.void,
+    fail: (claim, _message, _now, disposition) => Effect.succeed(outboxFailureStatus(claim, disposition ?? 'retry')),
+    matchUnmatched: () => Effect.succeed({ deliveriesCreated: 0, messagesMatched: 0 }),
+  };
+  return makeOutboxRuntime(outbox)
+    .runCycle({
+      claimOwner: 'won-opportunity-vat-readiness',
+      compositionRevision: won.compositionRevision,
+      registrations: [draftInvoiceFromWonOpportunityWorker],
+      subscriptions: [draftInvoiceFromWonOpportunityWorker.descriptor],
+    })
+    .pipe(
+      Effect.map(({ dead, retried, succeeded }) => ({ dead, retried, succeeded })),
+      Effect.provideService(FinanceTaxRates, tax),
+      Effect.provideService(OpportunityInvoiceLedger, opportunityInvoiceLedgerLive),
+      Effect.provideService(OutboxWorkerLegalEntityScopeFanout, {
+        forEachScope: (_claim, observe) => observe(scope),
+      }),
+    );
+};
 
 const DAY_MS = 86_400_000;
 
@@ -233,6 +286,41 @@ it.layer(NodeCrypto.layer)('Won opportunity before the company has set up VAT', 
         retryable: false,
       });
       expect(ledger.saves).toBe(0);
+    }),
+  );
+});
+
+it.layer(NodeCrypto.layer)('How Core settles a won opportunity the worker cannot draft yet', (suite) => {
+  suite.effect('a genuinely invalid line ends its delivery as dead on the first attempt', () =>
+    Effect.gen(function* invalidLineDead() {
+      const { ledger, scope } = makeLedger();
+      const tax = taxAnswering(() => baselineVatChoices(tenantId, '2026-11-02'));
+      expect(yield* settleFirstAttempt(scope, tax, 10)).toEqual({ dead: 1, retried: 0, succeeded: 0 });
+      expect(ledger.saves).toBe(0);
+    }),
+  );
+
+  suite.effect('a company without a declared VAT regime is retried', () =>
+    Effect.gen(function* notReadyRetried() {
+      const { scope } = makeLedger();
+      const tax = taxAnswering(() => baselineVatChoices(tenantId, '2026-11-02', 'NOT_DECLARED'));
+      expect(yield* settleFirstAttempt(scope, tax, 21)).toEqual({ dead: 0, retried: 1, succeeded: 0 });
+    }),
+  );
+
+  suite.effect('no published rate for the classification is retried', () =>
+    Effect.gen(function* noRateRetried() {
+      const { scope } = makeLedger();
+      const tax = taxAnswering(() => ({ ...baselineVatChoices(tenantId, '2026-11-02'), rates: [] }));
+      expect(yield* settleFirstAttempt(scope, tax, 21)).toEqual({ dead: 0, retried: 1, succeeded: 0 });
+    }),
+  );
+
+  suite.effect('Tax being unavailable is retried', () =>
+    Effect.gen(function* taxDownRetried() {
+      const { scope } = makeLedger();
+      const tax = FinanceTaxRates.of({ choices: down, choicesFor: down });
+      expect(yield* settleFirstAttempt(scope, tax, 21)).toEqual({ dead: 0, retried: 1, succeeded: 0 });
     }),
   );
 });

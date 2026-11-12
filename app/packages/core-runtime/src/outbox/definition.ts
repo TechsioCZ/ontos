@@ -325,6 +325,16 @@ export function getOutboxWorkerHandler(registration: AnyOutboxWorkerRegistration
   return registration.resolveHandler();
 }
 
+/**
+ * The field a worker's declared failure carries when retrying can never fix it: Core settles that delivery as dead at
+ * once instead of retrying it on the worker's retry policy. Spread it into the failure's schema fields. A failure
+ * without it, and every defect, keeps the retry policy.
+ */
+export const outboxTerminalFailureFields = { outboxTerminal: Schema.optionalKey(Schema.Literal(true)) } as const;
+
+/** A declared handler failure that asks Core to end its delivery now (see `outboxTerminalFailureFields`). */
+export const OutboxTerminalFailureSchema = Schema.Struct({ outboxTerminal: Schema.Literal(true) });
+
 export const retryBackoffMs = (policy: OutboxWorkerRetryPolicy, completedAttempts: number): number =>
   Math.min(
     policy.maxBackoffMs,

@@ -100,6 +100,7 @@ export {
   defineOutboxWorker,
   extractOutboxWorkerSubscriptions,
   isVerifiedOutboxWorkerHandlerContext,
+  outboxTerminalFailureFields,
 } from './definition.ts';
 export { defineOutboxWorkerCompletion, OutboxWorkerCompletionPublicationError } from './completion-publication.ts';
 export { defineOutboxWorkerEntry, OutboxWorkerInfrastructureLive, startOutboxWorkerHost } from './process.ts';

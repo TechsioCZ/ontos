@@ -6,7 +6,7 @@
 import type { OutboxWorkerHandlerContext, OutboxWorkerLegalEntityScope } from '@app/core-runtime';
 import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { OutboxWorkerLegalEntityScopeError } from '@app/core-runtime/outbox/worker';
-import { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
+import { OutboxWorkerLegalEntityScopeFanout, outboxTerminalFailureFields } from '@app/core-runtime/outbox/worker';
 import type { OutboxPayload } from '@app/sales-pipeline/outbox/opportunity-stage-changed';
 import {
   OutboxPayloadSchema,
@@ -39,11 +39,18 @@ export class DraftInvoiceFromWonOpportunityRejected extends Schema.TaggedError<D
     ]),
     reason: Schema.String,
     retryable: Schema.Boolean,
+    ...outboxTerminalFailureFields,
   },
 ) {}
 
+/**
+ * A refusal no retry can fix (a genuinely invalid line, a delivery that is not this worker's) is terminal: Core ends
+ * the delivery as dead at once, where operators see it. Only a retryable failure waits on the long retry policy.
+ */
 const rejected = (code: DraftInvoiceFromWonOpportunityRejected['code'], reason: string, retryable: boolean) =>
-  new DraftInvoiceFromWonOpportunityRejected({ code, reason, retryable });
+  new DraftInvoiceFromWonOpportunityRejected(
+    retryable ? { code, reason, retryable } : { code, outboxTerminal: true, reason, retryable },
+  );
 
 const deliveryMatchesWorker = (context: OutboxWorkerHandlerContext): boolean =>
   context.workerKey === workerKey &&
@@ -158,9 +165,10 @@ export const draftInvoiceFromWonOpportunityWorker = defineOutboxWorker(
     legalEntityScope: 'required',
     payloadSchema: OutboxPayloadSchema,
     producerModuleKey: outboxProducerModuleKey,
-    // Core retries every failed attempt on this one schedule and gives up (dead) at maxAttempts. A company may leave
-    // its VAT regime undeclared for days, so the delivery keeps retrying at the Outbox's longest back-off (Core's
-    // limits: 100 attempts, one day apart): after about a day and a half it retries daily, for about 85 days in all.
+    // Core retries every retryable failure on this one schedule and gives up (dead) at maxAttempts; a terminal refusal
+    // is dead at once. A company may leave its VAT regime undeclared for days, so a not-ready delivery keeps retrying at
+    // the Outbox's longest back-off (Core's limits: 100 attempts, one day apart): after about a day and a half it
+    // retries daily, for about 85 days in all.
     retryPolicy: {
       initialBackoffMs: 1000,
       maxAttempts: 100,
