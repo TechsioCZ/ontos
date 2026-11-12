@@ -28,7 +28,7 @@ rs.mock('@app/shared-contracts/gateway-context-server', () => ({
     return Effect.succeed({ authorization: 'Bearer fixture-token' });
   },
 }));
-rs.mock('@app/privacy/api/client', () => ({
+rs.mock('@app/privacy/api/record-owner-execution-outcome-action/client', () => ({
   executeRecordOwnerExecutionOutcomeWithAuthorization: clients.recordOutcome,
 }));
 const originator = {
