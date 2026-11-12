@@ -7,7 +7,10 @@
  * - the edited order decodes with every line classified as the migration classifies stored lines, its amounts as
  *   the old release stored them;
  * - the ledger the old release rewrote four times decodes with every 21 % and 12 % entry classified and every amount
- *   as stored.
+ *   as stored;
+ * - after the old release kept serving for thirty simulated days (the new release never published, then took over),
+ *   every product, order and invoice it wrote meanwhile is just as complete: classified, held exactly where it sells
+ *   at 10 %, every amount as it computed it.
  * It runs only inside the rehearsal (`ONTOS_VAT_WINDOW_REPORT` names the old release's report).
  */
 import { readFileSync } from 'node:fs';
@@ -20,6 +23,8 @@ import { expect, it } from 'effect-rstest';
 import { LegalEntityIdSchema, TenantIdSchema } from '../../packages/core-runtime/src/access/ids.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../../packages/core-runtime/tests/support/database.ts';
 import { FinanceStateSchema } from '../../verticals/finance-billing/shared/apis/records.ts';
+import type { FinanceState } from '../../verticals/finance-billing/shared/apis/records.ts';
+import { InvoiceRefSchema } from '../../verticals/finance-billing/shared/resources/invoice.ts';
 import { decodeFinanceState } from '../../verticals/finance-billing/src/services/finance-state-repository.ts';
 import {
   OrderIdSchema,
@@ -41,6 +46,19 @@ import { heldRatesOf, sellableRatesOf } from '../../verticals/merchandise/src/se
 const STANDARD = 'cz.vat.standard';
 const REDUCED = 'cz.vat.reduced';
 
+const InvoiceIdSchema = InvoiceRefSchema.fields.resourceId;
+const TotalsSchema = Schema.Struct({
+  subtotalMinor: Schema.Number,
+  totalMinor: Schema.Number,
+  vatMinor: Schema.Number,
+  vatRecap: Schema.Array(Schema.Struct({ baseMinor: Schema.Number, rate: Schema.Number, vatMinor: Schema.Number })),
+});
+const WrittenProductSchema = Schema.Struct({
+  gross: Schema.optionalKey(Schema.Number),
+  id: ProductIdSchema,
+  net: Schema.optionalKey(Schema.Number),
+  vatRate: Schema.Number,
+});
 const ReportSchema = Schema.Struct({
   companyId: LegalEntityIdSchema,
   financeRevision: Schema.Number,
@@ -53,25 +71,19 @@ const ReportSchema = Schema.Struct({
       vatRate: Schema.Number,
     }),
   ),
-  issued: Schema.Struct({
-    id: Schema.String,
-    totals: Schema.Struct({
-      subtotalMinor: Schema.Number,
-      totalMinor: Schema.Number,
-      vatMinor: Schema.Number,
-      vatRecap: Schema.Array(Schema.Struct({ baseMinor: Schema.Number, rate: Schema.Number, vatMinor: Schema.Number })),
-    }),
+  issued: Schema.Struct({ id: InvoiceIdSchema, totals: TotalsSchema }),
+  /** What the old release wrote while it kept serving for `days` simulated days. */
+  longRun: Schema.Struct({
+    days: Schema.Number,
+    invoices: Schema.Array(Schema.Struct({ id: InvoiceIdSchema, totals: TotalsSchema })),
+    orders: Schema.Array(OrderIdSchema),
+    products: Schema.Array(WrittenProductSchema),
+    recurringPeriods: Schema.Array(Schema.String),
   }),
   orderId: OrderIdSchema,
-  products: Schema.Array(
-    Schema.Struct({
-      gross: Schema.optionalKey(Schema.Number),
-      id: ProductIdSchema,
-      net: Schema.optionalKey(Schema.Number),
-      vatRate: Schema.Number,
-    }),
-  ),
+  products: Schema.Array(WrittenProductSchema),
   tenantId: TenantIdSchema,
+  windowInvoiceIds: Schema.Array(InvoiceIdSchema),
 });
 type Report = typeof ReportSchema.Type;
 const RowSchema = Schema.Struct({ revision: Schema.Number, state: Schema.toEncoded(FinanceStateSchema) });
@@ -108,7 +120,7 @@ const checkProducts = Effect.fn('VatWindow.products')(function* checkProducts(
     [report.tenantId, report.companyId],
   );
   const columnOf = new Map(columns.map((row) => [row.id, row]));
-  for (const written of report.products) {
+  for (const written of [...report.products, ...report.longRun.products]) {
     const product = products.find((entry) => entry.id === written.id);
     const column = columnOf.get(written.id);
     expect([product?.taxClassificationCode, column?.classification], written.id).toEqual([
@@ -131,7 +143,15 @@ const checkProducts = Effect.fn('VatWindow.products')(function* checkProducts(
   // The 10 % product the old release created is held at 10 % with BOOK-IT: the storefront sells it unchanged.
   const head = yield* loadHead(db, store);
   const held = heldRatesOf(head?.taxRates);
-  expect(held).toEqual({ 'book-it': 10, [report.heldProductId]: 10 });
+  // Exactly the products selling at 10 %: BOOK-IT, the window's one, and every long-run product whose last rate is 10 %
+  // (a product moved from 10 % to 21 % lost its hold, one moved the other way gained it).
+  const heldLater = report.longRun.products.filter((product) => product.vatRate === 10);
+  expect(heldLater.length).toBeGreaterThan(0);
+  expect(held).toEqual({
+    'book-it': 10,
+    [report.heldProductId]: 10,
+    ...Object.fromEntries(heldLater.map((product) => [product.id, 10])),
+  });
   const rates = sellableRatesOf(head?.taxRates, yield* DateTime.now);
   const heldProduct = products.find((entry) => entry.id === report.heldProductId);
   if (heldProduct === undefined) {
@@ -175,7 +195,52 @@ const checkOrder = Effect.fn('VatWindow.order')(function* checkOrder(report: Rep
     ['p2', 21, STANDARD],
   ]);
   expect(order.totalMinor).toBe(row?.total);
+
+  // Every order it took and confirmed while it kept serving: each line classified as the migration classifies it.
+  const longRun = yield* adminPg.unsafe<{ readonly document: unknown; readonly total: number }>(
+    `select document, total_minor::integer as total from demo_merchandise.orders
+      where tenant_id = $1 and legal_entity_id = $2 and id = any($3::text[]) order by created_at`,
+    [report.tenantId, report.companyId, report.longRun.orders],
+  );
+  expect(longRun.length).toBe(report.longRun.days);
+  for (const stored of longRun) {
+    const decoded = Schema.decodeUnknownSync(OrderSchema)(stored.document);
+    expect([decoded.status, decoded.totalMinor]).toEqual(['CONFIRMED', stored.total]);
+    expect(decoded.lines.map((line) => line.taxClassificationCode)).toEqual(
+      decoded.lines.map((line) => lineClassification(line.vatRate)),
+    );
+  }
 });
+
+/**
+ * Thirty days later: every invoice issued meanwhile confirmed with its lines classified and its amounts as issued, and
+ * every invoice of the ledger (recurring ones included) with each 21 % and 12 % line classified.
+ */
+const checkLongRunLedger = (
+  report: Report,
+  invoices: FinanceState['invoices'],
+  expectedLines: readonly (readonly unknown[])[],
+) => {
+  const invoiceOf = (id: string) => invoices.find((invoice) => invoice.ref.resourceId === id);
+  expect(invoices.length).toBe(
+    report.windowInvoiceIds.length + report.longRun.invoices.length + report.longRun.recurringPeriods.length,
+  );
+  for (const issued of report.longRun.invoices) {
+    const invoice = invoiceOf(issued.id);
+    expect([invoice?.businessState, classified(invoice?.lines ?? [])]).toEqual(['CONFIRMED', expectedLines]);
+    expect({
+      subtotalMinor: invoice?.subtotalMinor,
+      totalMinor: invoice?.totalMinor,
+      vatMinor: invoice?.vatMinor,
+      vatRecap: invoice?.vatRecap,
+    }).toEqual(issued.totals);
+  }
+  for (const invoice of invoices) {
+    for (const line of invoice.lines ?? []) {
+      expect([line.vatRate, line.vatClassification]).toEqual([line.vatRate, lineClassification(line.vatRate)]);
+    }
+  }
+};
 
 /** The ledger it rewrote four times: every 21 % and 12 % entry classified, every amount as stored. */
 const checkLedger = Effect.fn('VatWindow.ledger')(function* checkLedger(report: Report, adminPg: PgClient.PgClient) {
@@ -186,7 +251,9 @@ const checkLedger = Effect.fn('VatWindow.ledger')(function* checkLedger(report: 
   const { revision, state } = yield* decodeFinanceState(Schema.decodeUnknownSync(RowSchema)(row));
   expect(revision).toBe(report.financeRevision);
   const expectedLines = report.invoiceLines.map((line) => [line.vatRate, lineClassification(line.vatRate)]);
-  const [draft, generated] = state.invoices;
+  const invoiceOf = (id: string | undefined) => state.invoices.find((invoice) => invoice.ref.resourceId === id);
+  const draft = invoiceOf(report.issued.id);
+  const generated = invoiceOf(report.windowInvoiceIds.find((id) => id !== report.issued.id));
   expect(classified(draft?.lines ?? [])).toEqual(expectedLines);
   // Issued with 21 %, 12 %, 10 % and 0 % lines: its amounts and VAT recap stay exactly as the old release issued them,
   // and its 10 % line keeps that rate as a fact, with no classification that could later claim 12 %.
@@ -203,6 +270,7 @@ const checkLedger = Effect.fn('VatWindow.ledger')(function* checkLedger(report: 
   expect(classified(generated?.lines ?? [])).toEqual(expectedLines.slice(0, 2));
   expect(classified(state.recurringTemplates?.[0]?.lines ?? [])).toEqual(expectedLines.slice(0, 2));
   expect(classified(state.priceList ?? [])).toEqual([[21, STANDARD]]);
+  checkLongRunLedger(report, state.invoices, expectedLines);
 });
 
 const windowReport = Config.option(Config.String('ONTOS_VAT_WINDOW_REPORT'));

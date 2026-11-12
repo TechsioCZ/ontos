@@ -9,6 +9,12 @@
  * (the recorded transition fixture), the same storefront order is placed with the same lines and totals, and staff
  * product and order writes and Finance invoices, price-list items and recurring invoices all succeed. What it wrote is
  * reported for the new release to check (`vat-window-new-release.test.mts`).
+ *
+ * Then the new release does not publish (the rollback case): the old release keeps serving on the migrated schema for
+ * thirty days of ordinary work, its clock a day further each day. Each day it creates a product at 21, 12 or 10 %,
+ * receives stock, changes a price, moves a product's rate both ways now and then, takes and confirms an order, and
+ * issues and confirms an invoice with 21/12/10/0 % lines; every tenth day it generates a recurring invoice. Everything
+ * it wrote is reported too; the new release then takes over and checks every row.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 
@@ -28,7 +34,7 @@ import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { defineRelations } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Config, Crypto, Effect, Layer, Predicate, Redacted, Schema, Scope } from 'effect';
+import { Clock, Config, Crypto, Effect, Layer, Predicate, Redacted, Schema, Scope } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
@@ -111,6 +117,24 @@ const financeBoundary = Layer.mergeAll(
 );
 
 const windowReport = Config.option(Config.String('ONTOS_VAT_WINDOW_REPORT'));
+
+/** How long the old release keeps serving when the new one never publishes. */
+const LONG_RUN_DAYS = 30;
+const DAY_MILLIS = 86_400_000;
+/** The real clock moved forward by `offsetMillis`; sleeps stay real. */
+const shiftedClock = (real: Clock.Clock, offsetMillis: number): Clock.Clock => {
+  const millis = () => real.currentTimeMillisUnsafe() + offsetMillis;
+  return {
+    currentTimeMillis: Effect.sync(millis),
+    currentTimeMillisUnsafe: millis,
+    currentTimeNanos: Effect.sync(() => BigInt(millis()) * 1_000_000n),
+    currentTimeNanosUnsafe: () => BigInt(millis()) * 1_000_000n,
+    monotonicTimeNanos: real.monotonicTimeNanos,
+    monotonicTimeNanosUnsafe: () => real.monotonicTimeNanosUnsafe(),
+    sleep: (duration) => real.sleep(duration),
+  };
+};
+const calendarDateOf = (millis: number) => new Date(millis).toISOString().slice(0, 10);
 
 it.live('the old release keeps reading and writing whole while the new release migrated its database', () =>
   Effect.gen(function* oldReleaseWindow() {
@@ -417,6 +441,105 @@ it.live('the old release keeps reading and writing whole while the new release m
       financeRevision,
     );
 
+    const [windowLedger] = yield* adminPg.unsafe<{ readonly ids: readonly string[] }>(
+      `select coalesce(jsonb_agg(invoice #>> '{ref,resourceId}'), '[]'::jsonb) as ids
+         from finance_billing.finance_states, jsonb_array_elements(state -> 'invoices') as invoice
+        where tenant_id = $1 and legal_entity_id = $2`,
+      [tenantId, companyId],
+    );
+    const windowInvoiceIds = windowLedger?.ids ?? [];
+
+    // The new release never publishes: thirty days of the old release on the migrated schema.
+    const real = yield* Clock.Clock;
+    const startMillis = real.currentTimeMillisUnsafe();
+    const finalRates = new Map<string, number>();
+    const priced = new Map<string, { readonly gross: number; readonly net: number }>();
+    const longRunOrders: string[] = [];
+    const longRunInvoices: { readonly id: string; readonly totals: ReturnType<typeof computeInvoiceTotals> }[] = [];
+    const recurringPeriods: string[] = [];
+    const invoiceIdOf = (documentNumber: string) =>
+      adminPg
+        .unsafe<{ readonly id: string }>(
+          `select invoice #>> '{ref,resourceId}' as id
+             from finance_billing.finance_states, jsonb_array_elements(state -> 'invoices') as invoice
+            where tenant_id = $1 and legal_entity_id = $2 and invoice ->> 'documentNumber' = $3`,
+          [tenantId, companyId, documentNumber],
+        )
+        .pipe(Effect.map(([row]) => row?.id ?? ''));
+    const oneDay = Effect.fn('VatWindow.longRunDay')(function* oneDay(day: number) {
+      const rate = [21, 12, 10][day % 3] ?? 21;
+      const id = yield* uuid;
+      yield* apply(
+        {
+          _tag: 'CreateProduct',
+          active: true,
+          category: 'Šrouby',
+          lowStockThreshold: 0,
+          name: `Den ${String(day + 1)} ve starém vydání`,
+          priceMinor: 1000 + day,
+          sku: `OLD-DAY-${String(day + 1)}`,
+          unit: 'ks',
+          vatRate: rate,
+        },
+        id,
+      );
+      finalRates.set(id, rate);
+      yield* apply({ _tag: 'RecordStockMovement', delta: 10, productId: id, reason: 'RECEIPT' });
+      yield* apply({ _tag: 'ChangePrice', id, priceMinor: 1100 + day });
+      priced.set(id, { gross: grossUnitPriceMinor(1100 + day, rate), net: 1100 + day });
+      // Now and then a rate moves both ways: a 10 % product to 21 % (its hold ends), a 21 % product to 10 % (held).
+      const moving = [...finalRates].find(([, held]) => held === (day % 2 === 0 ? 10 : 21));
+      if (day % 4 === 3 && moving !== undefined) {
+        const [movingId, from] = moving;
+        const to = from === 10 ? 21 : 10;
+        yield* apply({ _tag: 'UpdateProduct', id: movingId, patch: { vatRate: to } });
+        finalRates.set(movingId, to);
+        priced.delete(movingId);
+      }
+      const orderId = `long-run-order-${String(day + 1)}`;
+      yield* apply({ _tag: 'CreateOrder', id: orderId, lines: [{ productId: id, quantity: 2 }], partyId: 'long-run' });
+      yield* apply({ _tag: 'ChangeOrderStatus', id: orderId, status: 'CONFIRMED' });
+      longRunOrders.push(orderId);
+      const documentNumber = `FV-OLD-DAY-${String(day + 1)}`;
+      financeRevision = yield* financeApply(
+        {
+          _tag: 'CreateInvoiceDraft',
+          counterpartyRef,
+          currency: 'CZK',
+          direction: 'OUTGOING',
+          documentNumber,
+          dueDate: calendarDateOf(startMillis + (day + 14) * DAY_MILLIS),
+          issueDate: calendarDateOf(startMillis + day * DAY_MILLIS),
+          lines: invoiceLines,
+        },
+        financeRevision,
+      );
+      const invoiceRef = { ...issuedRef, resourceId: yield* invoiceIdOf(documentNumber) };
+      financeRevision = yield* financeApply(
+        { _tag: 'MarkInvoicesPrepared', actorLabel: 'Staré vydání', invoiceRefs: [invoiceRef] },
+        financeRevision,
+      );
+      financeRevision = yield* financeApply(
+        { _tag: 'ConfirmInvoice', actorLabel: 'Staré vydání', invoiceRef },
+        financeRevision,
+      );
+      longRunInvoices.push({ id: invoiceRef.resourceId, totals: computeInvoiceTotals(invoiceLines) });
+      if (day % 10 === 9) {
+        // The window generated December 2026; each tenth day the next month after it.
+        const period = `2027-${String((day + 1) / 10).padStart(2, '0')}`;
+        financeRevision = yield* financeApply(
+          { _tag: 'GenerateRecurringInvoice', confirmDuplicate: false, period, templateId: ledger?.templateId ?? '' },
+          financeRevision,
+        );
+        recurringPeriods.push(period);
+      }
+    });
+    yield* Effect.forEach(
+      Array.from({ length: LONG_RUN_DAYS }, (_, day) => day),
+      (day) => oneDay(day).pipe(Effect.provideService(Clock.Clock, shiftedClock(real, (day + 1) * DAY_MILLIS))),
+      { concurrency: 1, discard: true },
+    );
+
     // What the old release wrote, with the money it computed, for the new release to check.
     writeFileSync(
       report.value,
@@ -426,6 +549,13 @@ it.live('the old release keeps reading and writing whole while the new release m
         heldProductId: heldId,
         invoiceLines,
         issued: { id: issuedId, totals: computeInvoiceTotals(invoiceLines) },
+        longRun: {
+          days: LONG_RUN_DAYS,
+          invoices: longRunInvoices,
+          orders: longRunOrders,
+          products: [...finalRates].map(([id, vatRate]) => ({ id, vatRate, ...priced.get(id) })),
+          recurringPeriods,
+        },
         orderId,
         products: [
           { gross: grossUnitPriceMinor(2000, 21), id: standardId, net: 2000, vatRate: 21 },
@@ -434,6 +564,7 @@ it.live('the old release keeps reading and writing whole while the new release m
           { id: 'p3', vatRate: 12 },
         ],
         tenantId,
+        windowInvoiceIds,
       }),
     );
     return yield* Effect.void;
