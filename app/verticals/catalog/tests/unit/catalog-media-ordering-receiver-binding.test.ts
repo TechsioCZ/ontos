@@ -95,6 +95,7 @@ it.effect('keeps the production refusal for a gate that cannot prepare persisted
       decide: scripted.decide,
       decideMany: scripted.decideMany,
       list: scripted.list,
+      listMany: scripted.listMany,
       selectableLegalEntities: scripted.selectableLegalEntities,
     };
     const bound = bindAccessGate(unrebindable, {
