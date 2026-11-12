@@ -33,6 +33,7 @@ import { Table } from '@techsio/ui-kit/organisms/table';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { DateTime, Effect, Match, Option, Predicate, Schema } from 'effect';
+import type { Types } from 'effect';
 import { useEffect, useEffectEvent, useId, useReducer, useRef, useState } from 'react';
 
 import type { OccupancyCommand, Feedback } from '../../../../shared/actions/apply-command.ts';
@@ -431,7 +432,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     setProposal(undefined);
     setActionFeedback('saving');
     type CustomerRequest = Parameters<typeof createCustomer>[0];
-    const request: { -readonly [Key in keyof CustomerRequest]: CustomerRequest[Key] } = {
+    const request: Types.Mutable<CustomerRequest> = {
       displayName: input.displayName.trim(),
       email: input.email.trim(),
       evidenceReference: 'Nájempark – evidence nájemců a zájemců',
