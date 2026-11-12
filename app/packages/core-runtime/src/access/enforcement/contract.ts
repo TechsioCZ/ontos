@@ -137,6 +137,8 @@ export interface AccessDecisionService {
   readonly decide: (input: GateInput) => Effect.Effect<AccessDecision>;
   readonly decideMany: (input: readonly GateInput[]) => Effect.Effect<readonly AccessDecision[]>;
   readonly list: (input: ListGateInput) => Effect.Effect<ListAccessResolution>;
+  /** Many LISTs, one answer each, each exactly as `list` answers it alone, from one engine snapshot per scope. */
+  readonly listMany: (input: readonly ListGateInput[]) => Effect.Effect<readonly ListAccessResolution[]>;
   /**
    * The same seam over other ports (O75): a transaction-aware binding rebinds the gate to ports that
    * join the caller's transaction instead of opening a second connection. A gate that carries no ports

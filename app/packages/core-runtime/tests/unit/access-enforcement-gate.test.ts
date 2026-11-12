@@ -204,7 +204,7 @@ const harness = (options: RunOptions = {}) => {
           },
         },
   );
-  return { authority, batches, gate, scopes, state };
+  return { authority, batches, check, gate, scopes, state };
 };
 
 const gateOf = (overrides: Partial<GateInput> = {}): GateInput => ({
@@ -899,3 +899,79 @@ it.effect(
       ]);
     }),
 );
+
+/*
+ * A page of LISTs answered together: every LIST exactly as `list` answers it alone (decision, predicate, evidence
+ * row), its seam answers untouched, and every LIST that reaches the engine in one cell read and one snapshot.
+ */
+const listPage: readonly ListGateInput[] = [
+  { carrier: { accessDeclaration: declarationOf() }, legalEntityScope: 'forbidden', now, scope: scopeFor(person) },
+  {
+    carrier: {
+      accessDeclaration: decodeAccessDeclarationOrThrow(
+        {
+          key: 'finance.invoice.read',
+          kind: 'read',
+          modes: ['run'],
+          placement: { group: 'finance', level: 'extended' },
+          risk: 'routine',
+          selectors: ['assigned'],
+        },
+        { access: 'read', authorization: { kind: 'protected' }, moduleKey: 'finance', role: 'api' },
+      ),
+    },
+    legalEntityScope: 'forbidden',
+    now,
+    scope: scopeFor(person),
+  },
+  {
+    carrier: { accessDeclaration: declarationOf({ key: 'finance.invoice.archive' }) },
+    legalEntityScope: 'forbidden',
+    now,
+    scope: scopeFor(person),
+  },
+  workloadList,
+  { carrier: {}, legalEntityScope: 'forbidden', now, scope: scopeFor(person) },
+  { carrier: { accessDeclaration: declarationOf() }, legalEntityScope: 'required', now, scope: scopeFor(person) },
+];
+
+for (const options of [
+  {},
+  { batchLog: 'writes' },
+  { batchLog: 'fails' },
+  { logFails: true },
+  { engineFailure: true },
+  { kinds: kindSource('integration'), workloadKeys: [BOUND_WORKLOAD] },
+  {
+    authority: {
+      cells: [
+        cell({ capability: 'finance.invoice.void' }),
+        cell({ capability: 'finance.invoice.read', selector: { _tag: 'assigned' } }),
+      ],
+    },
+  },
+] as const satisfies readonly RunOptions[]) {
+  it.effect(`answers a page of LISTs exactly as one list at a time (${JSON.stringify(options)})`, () =>
+    Effect.gen(function* listPageTogether() {
+      // One authority for both runs (each `cell()` is a new grant), so their answers are comparable.
+      const shared = {
+        ...options,
+        authority: options.authority ?? { cells: [cell({ capability: 'finance.invoice.void' })] },
+      };
+      // A single list never writes through the batch writer: its failing counterpart is the failing single writer.
+      const alone = harness(
+        'batchLog' in shared && shared.batchLog === 'fails' ? { authority: shared.authority, logFails: true } : shared,
+      );
+      const one = yield* Effect.forEach(listPage, (input) => alone.gate.list(input), { concurrency: 1 });
+      const together = harness(shared);
+      const many = yield* together.gate.listMany(listPage);
+      expect(many).toEqual(one);
+      // The same evidence rows, row for row (the batch writer keeps them per scope, the single writer one by one).
+      const rowsOf = (run: ReturnType<typeof harness>) => [...run.state.entries, ...run.batches.flat()];
+      expect(rowsOf(together)).toEqual(rowsOf(alone));
+      // One engine snapshot for the whole page, however many LISTs reach the engine.
+      expect(together.check.calls.checkBulk).toBeLessThanOrEqual(1);
+      expect(together.check.calls.checkBulk).toBeLessThanOrEqual(alone.check.calls.checkBulk);
+    }),
+  );
+}
