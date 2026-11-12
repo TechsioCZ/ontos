@@ -12,8 +12,10 @@
  * administrator, who hold no Tax read, still get rates Tax confirmed; the same person asking Tax directly (the DPH page)
  * is decided on their own rights.
  *
- * Runs only inside the VAT deploy rehearsal (part 3 of `vat-deploy-rehearsal.sh`): `ONTOS_VAT_BUILT_APP` names the app folder of the built export, and the
- * integration environment names a fresh, migrated clone of the deployed database. `ONTOS_VAT_REAL_SHELL_REPORT`, when
+ * Runs only when asked to (`ONTOS_VAT_REAL_SHELL=true`, which the VAT deploy rehearsal sets in its part 3,
+ * `vat-deploy-rehearsal.sh`): `ONTOS_VAT_BUILT_APP` names the app folder of the built export, and the integration
+ * environment names a fresh, migrated clone of the deployed database. Asked to run, it fails when the built export is
+ * absent (no setting, or a unit without its built API bundle) instead of passing without proving anything. `ONTOS_VAT_REAL_SHELL_REPORT`, when
  * set, receives the per-persona table.
  */
 import { writeFileSync } from 'node:fs';
@@ -164,7 +166,13 @@ interface PersonaOutcome {
   readonly shell: string;
 }
 
-const builtApp = Config.option(Config.String('ONTOS_VAT_BUILT_APP'));
+const realShellAsked = Config.Boolean('ONTOS_VAT_REAL_SHELL').pipe(Config.withDefault(false));
+const builtApp = Config.String('ONTOS_VAT_BUILT_APP');
+/** Every unit this proof starts from the export, each with its built API bundle. */
+const BUILT_UNITS = [
+  'apps/shell-super-app',
+  ...[TAX_APP, FINANCE_APP, MERCHANDISE_APP].map((app) => `verticals/${app}`),
+];
 const reportFile = Config.option(Config.String('ONTOS_VAT_REAL_SHELL_REPORT'));
 
 /** The status and reason code of a refused owner or Shell answer; anything else names none. */
@@ -928,10 +936,42 @@ const financePersona = Effect.fn('VatRealShell.financePersona')(function* financ
     ...(yield* taxDecisionsOf(scenario, scenario.core.reader.principalId, since)),
     ...(yield* financeWriteDecisionsOf(scenario, scenario.core.reader.principalId, since)),
   ];
+  // An Obchodník's Merchandise read (his role reads Merchandise) carries nothing from Tax beyond the rate fields.
+  const merchandiseTax =
+    persona === 'Obchodník'
+      ? yield* Effect.all([
+          freshMerchandise(scenario),
+          scenario.sessionContext(cookie, MERCHANDISE_APP),
+          scenario.uuid,
+        ]).pipe(
+          Effect.flatMap(([merchandise, authorization, correlation]) =>
+            executeRecordsWithAuthorization(
+              { view: { limit: 0, ordersLimit: 0, summary: true } },
+              authorization,
+              correlation,
+              {
+                baseUrl: `${merchandise.origin}${MERCHANDISE_API}`,
+                compositionRevision: scenario.revision,
+              },
+            ),
+          ),
+          Effect.map((records) => ({
+            fields: Object.keys(records)
+              .filter((key) => /tax|vat/iu.test(key))
+              .toSorted(),
+            rateFields: [...new Set((records.taxRates ?? []).flatMap((rate) => Object.keys(rate)))].toSorted(),
+            revealsTaxInternals: /taxRuleRevision|fingerprint|regimeHistory|rule-revision/u.test(
+              JSON.stringify(records),
+            ),
+          })),
+          Effect.scoped,
+        )
+      : undefined;
   const revisionNote = line?.taxRuleRevisionRef === undefined ? 'missing' : 'stored';
   const describedLine = `${String(line?.vatRate)} % ${line?.vatClassification ?? '-'}, rule revision ${revisionNote}`;
   return {
     line,
+    merchandiseTax,
     outcome: {
       decisions,
       outcome: [
@@ -950,16 +990,23 @@ it.live(
   'Merchandise and Finance price with Tax through the real Shell for every persona; a person reads Tax only on their own rights',
   () =>
     Effect.gen(function* vatThroughRealShell() {
-      const exportApp = yield* builtApp;
-      if (Option.isNone(exportApp)) {
-        return yield* Effect.logWarning('Not run: the VAT deploy rehearsal sets ONTOS_VAT_BUILT_APP to a built export');
+      if (!(yield* realShellAsked)) {
+        return yield* Effect.void;
       }
+      const exportApp = yield* builtApp;
+      const filesystem = yield* FileSystem.FileSystem;
+      const missing = yield* Effect.filter(
+        BUILT_UNITS,
+        (unit) => filesystem.exists(`${exportApp}/${unit}/dist/api/index.js`).pipe(Effect.map((built) => !built)),
+        { concurrency: 1 },
+      );
+      expect(missing).toEqual([]);
       const children: ChildProcessHandle[] = [];
       const outcomes: PersonaOutcome[] = [];
       const result = yield* Effect.exit(
         Effect.scoped(
           Effect.gen(function* proveVatThroughRealShell() {
-            const scenario = yield* setUpScenario(exportApp.value, children);
+            const scenario = yield* setUpScenario(exportApp, children);
             const { core, fixture } = scenario;
             const ownerCookie = yield* scenario.signIn(fixture.ownerEmail);
             yield* seedTax(scenario, ownerCookie);
@@ -1020,8 +1067,28 @@ it.live(
                 21,
                 true,
               ]);
-              // The Obchodník's role reads Finance only: Finance refuses the invoice itself, whatever Tax would answer.
-              expect(persona !== 'Obchodník' || run.outcome.outcome.includes('invoice draft: refused 403')).toBe(true);
+              if (persona === 'Obchodník') {
+                // His role reads Finance only: Finance refuses the invoice draft itself, whatever Tax would answer. His
+                // own Tax reads (the DPH page) are refused on his rights; Finance's Tax reads for his invoice form are
+                // admitted on Finance's call for a verified person of the company.
+                expect(run.outcome.outcome).toContain(
+                  'invoice draft: refused 403 (https://ontos.dev/problems/action-forbidden)',
+                );
+                expect(run.outcome.decisions.toSorted()).toEqual(
+                  [
+                    'commerce.tax.seller-vat-regime-declaration.read-history by the person: DENIED [{"code": "deny.insufficient_grant"}]',
+                    'commerce.tax.tax-rule-set.read by the person: DENIED [{"code": "deny.insufficient_grant"}]',
+                    'commerce.tax.seller-vat-regime.read-at-instant by finance-billing: ALLOWED [{"code": "allow.actor_identity"}]',
+                    'commerce.tax.tax-rule-set.read by finance-billing: ALLOWED [{"code": "allow.actor_identity"}]',
+                    'finance.billing.apply-command.write: DENIED [{"code": "deny.insufficient_grant"}]',
+                  ].toSorted(),
+                );
+                expect(run.merchandiseTax).toEqual({
+                  fields: ['sellerVatRegime', 'taxRates', 'taxRatesConfirmedAt', 'taxRatesSource'],
+                  rateFields: ['code', 'effectiveFrom', 'ratePercent'],
+                  revealsTaxInternals: false,
+                });
+              }
             }
             yield* Effect.logInfo('Hosted owners and Shell', {
               finance: interestingLines(scenario.finance.diagnostics),

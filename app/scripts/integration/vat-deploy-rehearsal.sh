@@ -95,7 +95,7 @@ on_clone "$sequence_clone" ONTOS_VAT_DEPLOY_REHEARSAL=1 ONTOS_VAT_BUILT_APP="$bu
 # 3. Through the real Shell.
 psql_admin "create database ${shell_clone} template ${deployed}"
 migrate_clone "$shell_clone"
-on_clone "$shell_clone" ONTOS_VAT_BUILT_APP="$built_app" \
+on_clone "$shell_clone" ONTOS_VAT_REAL_SHELL=true ONTOS_VAT_BUILT_APP="$built_app" \
   pnpm exec rstest run --project integration --reporter=default scripts/integration/vat-real-shell.test.mts
 
 # 4. The rollback.

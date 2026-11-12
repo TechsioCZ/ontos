@@ -140,7 +140,27 @@ const checkProducts = Effect.fn('VatWindow.products')(function* checkProducts(
   expect(columns.every((row) => row.classification === STANDARD || row.classification === REDUCED)).toBe(true);
   expect(products.length).toBe(columns.length);
 
-  // The 10 % product the old release created is held at 10 % with BOOK-IT: the storefront sells it unchanged.
+  // The 10 % product the old release created is held at 10 % with BOOK-IT: the storefront sells it unchanged. The old
+  // release wrote it as the deploy's runtime role (`ontos_runtime`, no superuser, row-level security on), so the hold
+  // trigger's update of the company's head ran on that role's own rights. Every role that may write a product
+  // document on the deployed database (the table's owner and each role granted INSERT or UPDATE on it) may update the
+  // heads too, so no writer's product write fails on the hold.
+  const writers = yield* adminPg.unsafe<{
+    readonly heads: boolean;
+    readonly role: string;
+    readonly superuser: boolean;
+  }>(
+    `select r.rolname as role, r.rolsuper as superuser,
+            has_table_privilege(r.oid, 'demo_merchandise.catalog_heads', 'UPDATE') as heads
+       from pg_roles r
+      where pg_has_role(r.oid, (select relowner from pg_class where oid = 'demo_merchandise.products'::regclass), 'USAGE')
+         or has_table_privilege(r.oid, 'demo_merchandise.products', 'INSERT')
+         or has_table_privilege(r.oid, 'demo_merchandise.products', 'UPDATE')`,
+  );
+  expect(writers.filter((writer) => writer.role === 'ontos_runtime')).toEqual([
+    { heads: true, role: 'ontos_runtime', superuser: false },
+  ]);
+  expect(writers.filter((writer) => !writer.heads)).toEqual([]);
   const head = yield* loadHead(db, store);
   const held = heldRatesOf(head?.taxRates);
   // Exactly the products selling at 10 %: BOOK-IT, the window's one, and every long-run product whose last rate is 10 %
