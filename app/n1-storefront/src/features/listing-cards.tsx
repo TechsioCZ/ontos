@@ -22,7 +22,7 @@ export const ListingCards = ({
   locale: string;
 }) => (
   <div className="grid gap-6">
-    {catalog.products.map((product) => {
+    {catalog.products.map((product, index) => {
       const href = `/${locale}/produkt/${encodeURIComponent(product.slug)}`;
       return (
         <ProductCard key={product.id} layout="column" shadow={false}>
@@ -35,7 +35,7 @@ export const ListingCards = ({
                   alt={product.name}
                   as={NextImage}
                   fill
-                  loading="lazy"
+                  loading={index === 0 ? "eager" : "lazy"}
                   objectFit="contain"
                   sizes="(max-width: 767px) calc(100vw - 54px), 336px"
                   src={product.image}
