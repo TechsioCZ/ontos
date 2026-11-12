@@ -243,7 +243,7 @@ import {
   SwitchTenantResponseSchema,
   SwitchToTenantContextResponseSchema,
 } from '../shared/browser-api.ts';
-import { moduleTargetSourceHeader, moduleTargetSourcePathHeader } from '../shared/module-target-diagnostics.ts';
+import { moduleTargetSourceHints } from '../shared/module-target-diagnostics.ts';
 import { moduleTargetLogAnnotations } from './modules/module-target-log.ts';
 import type {
   AuthenticationInternalProblem,
@@ -1527,9 +1527,8 @@ export const resolveModuleTargetHandler = Effect.fn('shell.composition.resolveMo
         request,
         error,
         moduleTargetLogAnnotations(catalog, {
-          reportedSource: request.headers[moduleTargetSourceHeader],
+          ...moduleTargetSourceHints(request.headers),
           selector: payload,
-          sourcePath: request.headers[moduleTargetSourcePathHeader],
         }),
       );
     if (session.state === 'tenant_authenticated') {
@@ -1587,9 +1586,8 @@ export const moduleTargetsHandler = Effect.fn('shell.composition.moduleTargets')
               request,
               error,
               moduleTargetLogAnnotations(catalog, {
-                reportedSource: request.headers[moduleTargetSourceHeader],
+                ...moduleTargetSourceHints(request.headers),
                 selector,
-                sourcePath: request.headers[moduleTargetSourcePathHeader],
               }),
             ),
           ),
@@ -1803,9 +1801,8 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
       });
       const [decision] = decisions;
       if (decisions.length === 1 && decision?.key === context.principal.tenantId && decision.decision === 'allowed') {
-        tenantRelease = yield* captureShellRelease(payload.compositionRevision).pipe(
-          Effect.map((catalog) => catalog.composition.revision),
-          Effect.option,
+        tenantRelease = yield* Effect.option(
+          captureShellRelease(payload.compositionRevision).pipe(Effect.map((catalog) => catalog.composition.revision)),
         );
       }
     }

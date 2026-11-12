@@ -372,7 +372,7 @@ it.effect('plans exactly the remaining steps from every halfway state and nothin
     // All four roles created but still empty: four saves, then the people.
     const created = simulateAll(
       before,
-      steps.filter(({ _tag }) => _tag === 'CreateRole'),
+      steps.filter((step) => Predicate.isTagged(step, 'CreateRole')),
     );
     expect(tagsOf(stepsOf(plan(state, created, apply1)))).toEqual([...times(4, 'SaveRole'), ...PEOPLE_STEPS]);
   }),
@@ -435,7 +435,7 @@ it.effect('after a rollback asks for a new generation, and generation 2 admits a
     const steps = stepsOf(plan(state, stageBefore(state), apply1));
     const admitted = simulateAll(
       stageBefore(state),
-      steps.filter(({ _tag }) => _tag !== 'Assign'),
+      steps.filter((step) => !Predicate.isTagged(step, 'Assign')),
     );
     const endedEarly = simulateAll(admitted, stepsOf(plan(state, admitted, rollback1)));
     expect(haltOf(plan(state, endedEarly, apply1))?.reason).toContain(NEXT_GENERATION);
@@ -457,7 +457,7 @@ it.effect('rolls back only the memberships its own admissions wrote, and stops b
       })),
     };
     const applySteps = stepsOf(plan(state, memberBefore, apply1));
-    expect(applySteps.filter(({ _tag }) => _tag === 'AdmitMember')).toHaveLength(2);
+    expect(applySteps.filter((step) => Predicate.isTagged(step, 'AdmitMember'))).toHaveLength(2);
     const done = simulateAll(memberBefore, applySteps);
     expect(
       done.people
@@ -478,7 +478,7 @@ it.effect('rolls back only the memberships its own admissions wrote, and stops b
     expect(ended).not.toContain(ucetni);
     // A rollback named with a later generation still recognizes the rows generation 1 admitted.
     const later = stepsOf(plan(state, done, { generation: 2, mode: 'rollback' }));
-    expect(later.filter(({ _tag }) => _tag === 'EndMembership')).toHaveLength(4);
+    expect(later.filter((step) => Predicate.isTagged(step, 'EndMembership'))).toHaveLength(4);
 
     // Anything ending an admitted membership would close beyond the two plain member rows stops the plan.
     const withExtra = (extra: (person: ObservedPerson) => ObservedPerson) => ({

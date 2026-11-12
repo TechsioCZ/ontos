@@ -1048,7 +1048,7 @@ it.effect('refuses a foreign case entrustment tenant before any owner reads or w
       caseOwners,
       'unused-checkpoint',
     ).pipe(Effect.flip, Effect.provideService(HttpClient.HttpClient, fixture.http));
-    expect(failure).toMatchObject({ _tag: 'DemoSeedError' });
+    expect(Schema.is(DemoSeedError)(failure)).toBe(true);
     expect(fixture.items).toEqual([]);
     expect(fixture.parties).toEqual([]);
   }).pipe(Effect.provide(NodeServices.layer)),

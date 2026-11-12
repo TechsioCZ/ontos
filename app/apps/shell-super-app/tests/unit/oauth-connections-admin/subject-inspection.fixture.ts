@@ -1,5 +1,5 @@
-import type { ActiveApplicationCompositionSnapshot, OperationalScope } from '@app/core-runtime';
-import { OntosModuleIdSchema, TenantModuleStateService } from '@app/core-runtime';
+import type { ActiveApplicationCompositionSnapshot, ApplicationComposition, OperationalScope } from '@app/core-runtime';
+import { ONTOS_SHELL_CONTRIBUTION_ABI, OntosModuleIdSchema, TenantModuleStateService } from '@app/core-runtime';
 import {
   AccessDecisionLogBatch,
   AccessIntent,
@@ -17,12 +17,33 @@ import {
   RoleRevisionIdSchema,
 } from '@app/core-runtime/access/ids';
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
-import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
+import {
+  makeModuleContractFixture,
+  makePublishedApplicationCompositionSnapshotFixture,
+} from '@app/core-runtime/testing/module-contract';
 import { Effect, Layer, Option, Predicate } from 'effect';
 
 import type { AccessDecisionUnavailable } from '../../../../../packages/core-runtime/src/access/decision/errors.ts';
-import { makeInstalledModuleCatalogLoader } from '../../../api/modules/installed-module-catalog.ts';
-import { makeCompositionSnapshot } from '../../fixtures/application-composition.ts';
+import {
+  installedModuleCatalog,
+  ShellInstalledModuleCatalogLive,
+} from '../../../api/modules/installed-module-catalog.ts';
+import { ultramodernDeliveryUnit } from '../../../shared/ultramodern-build.ts';
+
+/** The Shell's own published runtime contract, as `tests/fixtures/application-composition.ts` publishes it. */
+const shellDeployment: ApplicationComposition['shell']['deployment'] = {
+  appId: 'shell-super-app',
+  buildMarker: ultramodernDeliveryUnit.buildMarker,
+};
+const publishedShellRuntime = {
+  document: JSON.stringify({
+    contributionAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
+    coreCapabilities: [],
+    deployment: shellDeployment,
+    schemaVersion: '2',
+  }),
+  receiverDeployment: shellDeployment,
+};
 
 /**
  * One read-page carrier per module, each under its own declaration key, in the order the modules are given. The
@@ -30,8 +51,8 @@ import { makeCompositionSnapshot } from '../../fixtures/application-composition.
  */
 export const pageCarrierCatalog = (moduleIds: readonly string[]) =>
   Effect.gen(function* pageCarrierCatalogEffect() {
-    const snapshot = yield* makeCompositionSnapshot(
-      moduleIds.map((id) => {
+    const snapshot = yield* makePublishedApplicationCompositionSnapshotFixture({
+      contractInputs: moduleIds.map((id) => {
         const contract = makeModuleContractFixture({ appId: id.replaceAll('.', '-'), moduleId: id });
         return {
           ...contract,
@@ -72,8 +93,17 @@ export const pageCarrierCatalog = (moduleIds: readonly string[]) =>
           },
         };
       }),
+      publishedShellRuntime,
+      validityMs: 60_000,
+    });
+    // The Shell's own installed catalog service, over an Application Composition that serves this snapshot.
+    const installed = yield* installedModuleCatalog.pipe(
+      Effect.provide(
+        ShellInstalledModuleCatalogLive.pipe(
+          Layer.provide(Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) })),
+        ),
+      ),
     );
-    const installed = yield* makeInstalledModuleCatalogLoader(Effect.succeed(snapshot));
     return { installed, snapshot };
   });
 

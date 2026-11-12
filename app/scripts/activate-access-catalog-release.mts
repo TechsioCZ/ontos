@@ -19,6 +19,10 @@
  * the migrator reports it and keeps the release booting, because authorization then simply stays at the previous
  * release.
  */
+import {
+  makeAccessProjectionCompiler,
+  makeAccessProjectionTransport,
+} from '@app/core-runtime/access/compiler/spice-db-compiler';
 import { NodeServices } from '@effect/platform-node';
 import {
   Cause,
@@ -40,10 +44,6 @@ import { Command, Flag } from 'effect/cli';
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../database/identity-enrollment.ts';
 import { AccessCatalogModulesSchema } from '../packages/core-runtime/src/access/catalog/module-schema.ts';
 import {
-  makeAccessProjectionCompiler,
-  makeAccessProjectionTransport,
-} from '../packages/core-runtime/src/access/compiler/spice-db-compiler.ts';
-import {
   AccessChangesStoreLive,
   AccessReleaseStoreLive,
 } from '../packages/core-runtime/src/access/changes/persistence/drizzle-store.ts';
@@ -58,7 +58,7 @@ import { activateCatalogRelease, planCatalogRelease } from '../packages/core-run
 import type { CatalogReleaseActivationReport } from '../packages/core-runtime/src/access/release/activation.ts';
 import { CoreDatabaseLive } from '../packages/core-runtime/src/db/client.ts';
 import { DatabaseConfig, parseDatabaseConfig } from '../packages/core-runtime/src/db/config.ts';
-import { makeDatabaseIdentityEnrollmentLive } from '../packages/core-runtime/src/db/database-identities.ts';
+import { DatabaseIdentityEnrollmentContext } from '../packages/core-runtime/src/db/database-identities.ts';
 import { loadSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
 
 const AUTHORIZATION_CATALOG_ARTIFACT_PATH = 'topology/authorization-catalog.json';
@@ -97,7 +97,7 @@ const DatabaseRuntimeLive = Layer.unwrap(
     );
     return Layer.mergeAll(
       CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, configuration))),
-      makeDatabaseIdentityEnrollmentLive(APP_DATABASE_IDENTITY_ENROLLMENT),
+      Layer.succeed(DatabaseIdentityEnrollmentContext, APP_DATABASE_IDENTITY_ENROLLMENT),
     );
   }),
 );
