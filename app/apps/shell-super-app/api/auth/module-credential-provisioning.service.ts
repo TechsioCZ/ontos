@@ -329,18 +329,19 @@ export interface OwnModuleCredentialRetirement {
 }
 
 /**
- * Retires the issuing host's own module credentials it no longer holds: keys attested for this host and this boot
- * other than the ones it holds now (`keep`, so the keys it rotated out), and keys attested for this host and one of
- * `earlierBoots`, the ended boots its container recorded. A key of any other boot is never touched, even one attested
- * with the same host name (a new container may carry the name of the one it replaces, which still serves): only the
- * authority holder's release retires another host's keys. Each key is disabled first, then its binding revoked. The
- * pass is audited in the platform tenant.
+ * Retires the issuing host's own module credentials it no longer holds, each named by what proves it is its own: the
+ * `replaced` keys (provider key ids its current boot held and replaced, so attested for this host and this boot) and
+ * every key of `earlierBoots`, the ended boots its container recorded. Nothing else is ever touched: not another key
+ * of this boot it was not told about, and not a key of any other boot, even one attested with the same host name (a
+ * new container may carry the name of the one it replaces, which still serves). Only the authority holder's release
+ * retires another host's keys. Each key is disabled first, then its binding revoked. The pass is audited in the
+ * platform tenant.
  */
 export const retireOwnModuleCredentials = Effect.fn('ModuleCredentialProvisioning.retireOwn')(function* retireOwn(
   input: ModuleCredentialIssuer & {
     readonly compositionRevision: string;
     readonly earlierBoots: ReadonlySet<string>;
-    readonly keep: ReadonlySet<string>;
+    readonly replaced: ReadonlySet<string>;
   },
 ) {
   const database = yield* CoreDatabase;
@@ -351,10 +352,10 @@ export const retireOwnModuleCredentials = Effect.fn('ModuleCredentialProvisionin
   );
   const own = attested.filter(
     ({ attestation, providerKeyId }) =>
-      !input.keep.has(providerKeyId) &&
       Option.isSome(attestation) &&
       attestation.value.hostId === input.hostId &&
-      (attestation.value.bootId === input.bootId || input.earlierBoots.has(attestation.value.bootId)),
+      ((attestation.value.bootId === input.bootId && input.replaced.has(providerKeyId)) ||
+        (attestation.value.bootId !== input.bootId && input.earlierBoots.has(attestation.value.bootId))),
   );
   const outcomes = yield* Effect.forEach(
     own,

@@ -219,7 +219,8 @@ describe('module credential healing', () => {
       // Each holder gets one handover line with both fresh keys; nothing restarts.
       expect(result.messages).toHaveLength(2);
       expect(result.messages.every((message) => message.includes(PARTY_KEY_TWO))).toBe(true);
-      expect(result.retirements).toEqual([providerKeyIdsOf(fresh)]);
+      // Exactly the key it replaced; the caller that held none replaced nothing.
+      expect(result.retirements).toEqual([[ORDER_PROVIDER_KEY]]);
       expect(result.healthy).toBe(true);
     }),
   );
@@ -235,7 +236,7 @@ describe('module credential healing', () => {
       expect(late.issues).toEqual([[ORDER, PARTY]]);
       expect(late.held).toEqual(rotated);
       expect(late.messages.every((message) => message.includes(ORDER_KEY_TWO))).toBe(true);
-      expect(late.retirements).toEqual([providerKeyIdsOf(rotated)]);
+      expect(late.retirements).toEqual([providerKeyIdsOf(current)]);
       expect(late.healthy).toBe(true);
     }),
   );
@@ -249,7 +250,8 @@ describe('module credential healing', () => {
       expect(result.held.failedAppIds).toEqual([]);
       expect(result.held.keys[ORDER]?.providerKeyId).toBe(ORDER_PROVIDER_KEY);
       expect(result.messages.every((message) => !message.includes(ORDER))).toBe(true);
-      expect(result.retirements).toEqual([[ORDER_PROVIDER_KEY, `${PARTY}-provider-key-2`]]);
+      // Only the key that was replaced: the order key it could not rotate stays in use and is not retired.
+      expect(result.retirements).toEqual([[`${PARTY}-provider-key`]]);
       expect(result.healthy).toBe(false);
       const nothing = yield* healing(
         Effect.succeed(live),

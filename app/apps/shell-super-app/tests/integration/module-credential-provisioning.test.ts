@@ -527,7 +527,7 @@ it.live(
         const retireOwn = (
           hostId: string,
           bootId: string,
-          keep: ReadonlySet<string>,
+          replaced: ReadonlySet<string>,
           earlierBoots: ReadonlySet<string> = new Set(),
         ) =>
           retireOwnModuleCredentials({
@@ -535,8 +535,8 @@ it.live(
             compositionRevision: release.compositionRevision,
             earlierBoots,
             hostId,
-            keep,
             operationId: crypto.randomUUID(),
+            replaced,
           }).pipe(Effect.provide(services));
         const verifiesAll = (pass: { readonly credentials: ReadonlyMap<string, Redacted.Redacted> }) =>
           Effect.forEach([...pass.credentials.values()], (secret) => verifies(keys, secret)).pipe(
@@ -580,7 +580,7 @@ it.live(
 
         // The other container, which recorded no earlier boot, retires nothing: not K1's or K2's keys, though they carry
         // its host name, so a deploy's new container never cuts off the one still serving.
-        expect(yield* retireOwn('host-a', otherContainerBootId, otherContainer.providerKeyIds)).toEqual({
+        expect(yield* retireOwn('host-a', otherContainerBootId, new Set())).toEqual({
           failed: 0,
           retired: 0,
         });
@@ -589,7 +589,7 @@ it.live(
 
         // Boot K2 retires the keys of the ended boot its container recorded: exactly boot K1's, never the other
         // container's (same host name, a boot it never recorded) or its own.
-        expect(yield* retireOwn('host-a', bootTwoId, bootTwo.providerKeyIds, new Set([bootOneId]))).toEqual({
+        expect(yield* retireOwn('host-a', bootTwoId, new Set(), new Set([bootOneId]))).toEqual({
           failed: 0,
           retired: APP_IDS.length,
         });
@@ -599,7 +599,10 @@ it.live(
 
         // A rotation in boot K2: the rotated keys are handed over, then K2's earlier keys are retired the same way.
         const rotated = yield* issue('host-a', bootTwoId);
-        expect(yield* retireOwn('host-a', bootTwoId, rotated.providerKeyIds, new Set([bootOneId]))).toEqual({
+        // A renewal that names keys it never held (the other container's, same host name) retires none of them.
+        expect(yield* retireOwn('host-a', bootTwoId, otherContainer.providerKeyIds)).toEqual({ failed: 0, retired: 0 });
+        expect(yield* verifiesAll(otherContainer)).toBe(true);
+        expect(yield* retireOwn('host-a', bootTwoId, bootTwo.providerKeyIds, new Set([bootOneId]))).toEqual({
           failed: 0,
           retired: APP_IDS.length,
         });
@@ -607,8 +610,8 @@ it.live(
         expect(yield* verifiesAll(rotated)).toBe(true);
         expect(yield* verifiesAll(otherContainer)).toBe(true);
 
-        // A host that holds every key it was issued retires nothing; another host never names A's keys as its own.
-        expect(yield* retireOwn('host-a', bootTwoId, rotated.providerKeyIds)).toEqual({ failed: 0, retired: 0 });
+        // A renewal that replaced nothing retires nothing of this boot; another host never names A's keys as its own.
+        expect(yield* retireOwn('host-a', bootTwoId, new Set())).toEqual({ failed: 0, retired: 0 });
         expect(yield* retireOwn('host-c', crypto.randomUUID(), new Set())).toEqual({ failed: 0, retired: 0 });
         expect(yield* verifiesAll(rotated)).toBe(true);
 
@@ -626,7 +629,7 @@ it.live(
               eq(auditEvents.eventType, 'platform.module_credentials.retired_own'),
             ),
           );
-        expect(ownAudits).toHaveLength(5);
+        expect(ownAudits).toHaveLength(6);
         const recorded = JSON.stringify(ownAudits);
         expect(recorded).toContain(`"bootId":"${bootTwoId}"`);
         expect(recorded).toContain('"hostId":"host-a"');

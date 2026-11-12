@@ -644,32 +644,41 @@ const runRetirement = (
   );
 
 /**
- * Once the host handed its owners the keys it holds now (`keep`) and the grace period passed for delegated calls
- * already started with the keys they replace, retires the host's own other keys: those its current boot replaced and
- * those of the ended boots this container recorded (`earlierBoots`), by the host and boot each key is attested with
- * (`retire-own`). It never names a boot of another container, even one with the same host name. With `superseded`, the host's
- * release took the authority, and it then also retires the credentials that release superseded: the provisioning
+ * Once the grace period passed for delegated calls already started with keys being replaced, retires the host's own
+ * keys it no longer holds (`retire-own`): exactly the provider key ids this boot `replaced`, and every key of the
+ * ended boots its container recorded (`earlierBoots`). It never names a key of this boot it still holds or of another
+ * container, even one with the same host name. With `superseded`, the host's release took the authority, and it then
+ * also retires the credentials that release superseded, keeping the keys it holds (`current`): the provisioning
  * program decides from the authority row, only while this release holds it and only credentials bound before its
  * revision took it. A failure is reported; the next renewal or boot retries.
  */
 export const retireAfterHandover = (input: {
   readonly compositionRevision: string;
+  readonly current: readonly string[];
   readonly earlierBoots: readonly string[];
-  readonly keep: readonly string[];
+  readonly replaced: readonly string[];
   readonly shellEnvironment: ChildEnvironment;
   readonly superseded: boolean;
 }) =>
-  input.keep.length === 0
-    ? Effect.void
-    : Effect.andThen(
-        runRetirement('retire-own', { ...input, providerKeyIds: input.keep }),
-        input.superseded ? runRetirement('retire', { ...input, providerKeyIds: input.keep }) : Effect.void,
-      ).pipe(Effect.delay(MODULE_CREDENTIAL_HANDOVER_GRACE));
+  Effect.andThen(
+    input.replaced.length === 0 && input.earlierBoots.length === 0
+      ? Effect.void
+      : runRetirement('retire-own', { ...input, providerKeyIds: input.replaced }),
+    input.superseded && input.current.length > 0
+      ? runRetirement('retire', { ...input, providerKeyIds: input.current })
+      : Effect.void,
+  ).pipe(Effect.delay(MODULE_CREDENTIAL_HANDOVER_GRACE));
 
 /**
  * What the host holds after a pass: each module's newest key (a module the pass missed keeps the key it held) and the
  * callers that still hold none.
  */
+/** The provider key ids `held` had for the modules `fresh` gave a new key: what a renewal replaced. */
+export const replacedKeyIdsOf = (held: ProvisioningOutput, fresh: ProvisioningOutput): readonly string[] =>
+  Object.entries(held.keys).flatMap(([appId, key]) =>
+    fresh.keys[appId] !== undefined && fresh.keys[appId].providerKeyId !== key.providerKeyId ? [key.providerKeyId] : [],
+  );
+
 export const mergeProvisioning = (held: ProvisioningOutput, fresh: ProvisioningOutput): ProvisioningOutput => ({
   credentials: { ...held.credentials, ...fresh.credentials },
   failedAppIds: fresh.failedAppIds.filter((appId) => held.keys[appId] === undefined),
@@ -712,8 +721,8 @@ export interface ModuleCredentialHealingInput<Requirements> {
   readonly held: Ref.Ref<ProvisioningOutput>;
   readonly holders: Effect.Effect<readonly Pick<CredentialHolder, 'handOver'>[]>;
   readonly issue: (appIds: readonly string[]) => Effect.Effect<ProvisioningOutput, never, Requirements>;
-  /** Retires the host's own keys other than the given ones it holds now, after the handover grace. */
-  readonly retireOwn: (keep: readonly string[]) => Effect.Effect<void, never, Requirements>;
+  /** Retires exactly the given keys this boot replaced (and its container's ended boots' keys), after the grace. */
+  readonly retireOwn: (replaced: readonly string[]) => Effect.Effect<void, never, Requirements>;
   readonly serving: Effect.Effect<boolean>;
 }
 
@@ -754,7 +763,8 @@ export const healModuleCredentialsOnce = Effect.fn('AppHost.healModuleCredential
   );
   yield* Effect.forEach(yield* input.holders, (holder) => holder.handOver(message), { concurrency: 1, discard: true });
   if (plan.kind === 'renew') {
-    yield* input.retireOwn(providerKeyIdsOf(next));
+    // Exactly the keys this renewal replaced, which only this boot ever held: never a key it was not told about.
+    yield* input.retireOwn(replacedKeyIdsOf(held, fresh));
   }
   return fresh.failedAppIds.length === 0;
 });
@@ -1195,13 +1205,19 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       return provisioned;
     });
   /** After the grace period, retires this host's own other keys and, when it holds the authority, superseded ones. */
-  const retireReplaced = (release: HostRelease, keep: readonly string[], superseded: boolean) =>
+  const retireReplaced = (
+    release: HostRelease,
+    retiring: {
+      readonly current: readonly string[];
+      readonly replaced: readonly string[];
+      readonly superseded: boolean;
+    },
+  ) =>
     retireAfterHandover({
+      ...retiring,
       compositionRevision: release.compositionRevision,
       earlierBoots,
-      keep,
       shellEnvironment: shellEnvironment.environment,
-      superseded,
     });
   const healCredentials = (release: HostRelease, serving: Effect.Effect<boolean>) =>
     healModuleCredentials({
@@ -1212,7 +1228,7 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       held: heldCredentials,
       holders: Ref.get(credentialHolders),
       issue: issueFor(release),
-      retireOwn: (keep) => retireReplaced(release, keep, false),
+      retireOwn: (replaced) => retireReplaced(release, { current: [], replaced, superseded: false }),
       serving,
     });
   yield* Console.log(`[app-host] Shell runtime ${runtime}; owners and Outbox runtime node`);
@@ -1271,9 +1287,9 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     yield* Effect.forEach(units, waitForOwner, { concurrency: 'unbounded', discard: true });
     const snapshot = yield* observeOwners(units, publicOrigin);
     const release = hostReleaseOf(snapshot);
-    const provisioned = yield* provisionForRelease(release);
+    yield* provisionForRelease(release);
     // An observe-only host holds no authority: it retires only its own earlier boots' keys.
-    yield* retireReplaced(release, providerKeyIdsOf(provisioned), false).pipe(Effect.forkChild);
+    yield* retireReplaced(release, { current: [], replaced: [], superseded: false }).pipe(Effect.forkChild);
     yield* healCredentials(release, Effect.succeed(true)).pipe(Effect.forkChild);
     yield* Console.log(
       `[app-host] observe-only: composition ${snapshot.composition.revision} (${String(snapshot.composition.modules.length)} owners) not published`,
@@ -1321,7 +1337,9 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     // Once in-flight delegated calls had time to finish, this host retires its own earlier boots' keys and, as it holds
     // the authority now, the credentials its release superseded. The provisioning program checks the authority row
     // itself: only while this release holds it, and only credentials bound before its revision took it.
-    yield* retireReplaced(release, providerKeyIdsOf(provisioned), true).pipe(Effect.forkChild);
+    yield* retireReplaced(release, { current: providerKeyIdsOf(provisioned), replaced: [], superseded: true }).pipe(
+      Effect.forkChild,
+    );
     // The release step writes no authorization relationship. Authorization v2 (ADR-0030) projects every tuple from
     // PostgreSQL intent through the one Core writer, so the retired `scoped_role`/`action`/`context_permission`
     // reconciliation would only fail here. Live intent is seeded by the operator-gated stage bootstrap

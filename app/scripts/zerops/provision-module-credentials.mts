@@ -12,10 +12,10 @@
  *     The same, for every calling module of the release the Shell serves now (the local demo serves them all).
  *   node scripts/zerops/provision-module-credentials.mts retire --operation <id> --host <host> --boot <id> --revision <rev> <provider-key-id> ...
  *     When <revision> holds the authority, revokes every module credential bound before it took the authority.
- *   node scripts/zerops/provision-module-credentials.mts retire-own --operation <id> --host <host> --boot <id> --revision <rev> --earlier-boots <id,...> [<provider-key-id> ...]
- *     Revokes the host's own module credentials it no longer holds: those attested for <host> and this boot except the
- *     named ones it holds now (rotated out), and those attested for <host> and one of the ended earlier boots its
- *     container recorded. A key of any other boot is never touched, whatever host name it carries.
+ *   node scripts/zerops/provision-module-credentials.mts retire-own --operation <id> --host <host> --boot <id> --revision <rev> --earlier-boots <id,...> [<replaced-provider-key-id> ...]
+ *     Revokes the host's own module credentials it no longer holds: the named keys this boot replaced (attested for
+ *     <host> and this boot), and every key attested for <host> and one of the ended earlier boots its container
+ *     recorded. No other key is ever touched, whatever host name it carries.
  *
  * Logs name modules and counts only, never a key. Every pass is audited in the platform tenant.
  */
@@ -202,8 +202,8 @@ const retireOwn = Command.make(
       compositionRevision: revision,
       earlierBoots: new Set(earlierBoots.split(',').filter((earlierBoot) => earlierBoot.length > 0)),
       hostId,
-      keep: new Set(providerKeyIds),
       operationId,
+      replaced: new Set(providerKeyIds),
     }).pipe(
       Effect.flatMap((outcome) =>
         Console.log(
