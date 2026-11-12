@@ -7,7 +7,7 @@ import type { SpiceDbRpcError } from '../../permissions/spicedb-rpc.ts';
 import type { SpiceDbConfigError } from '../../permissions/config-error.ts';
 import type { SpiceDbConfigValue } from '../../permissions/config.ts';
 import { diffProjection, verifyProjection } from './diff.ts';
-import type { ProjectionDrift, ProjectionUnitDiff, ProjectionVerification } from './diff.ts';
+import type { ProjectionDiff, ProjectionDrift, ProjectionVerification } from './diff.ts';
 import type { AccessProjectionIntent } from './intent.ts';
 import { planAccessProjection } from './plan.ts';
 import type { ProjectionFenceScope } from './plan.ts';
@@ -235,23 +235,33 @@ export const makeAccessProjectionCompiler = (transport: AccessProjectionTranspor
     return settled.flat();
   });
 
-  /** One unit per request, in batches the engine accepts; a `TOUCH` replaces content, never deletes. */
-  const writeUnit = (
-    unitDiff: ProjectionUnitDiff,
+  /**
+   * The whole difference, revocations first. Reads never wait on the tenant's fence, so they can observe a projection
+   * half-written: every DELETE is therefore sent before any TOUCH, and a reader meanwhile may be denied a right that is
+   * being granted, but never sees a revoked right still standing beside a new one. One request is atomic in the
+   * engine, so a difference that fits in one request (most do) is written at once; a larger one is sent in batches
+   * the engine accepts, deletions filling the first. A `TOUCH` replaces content, never deletes.
+   */
+  const writeDiff = (
+    diff: ProjectionDiff,
     beforeWrite: Effect.Effect<void, readonly AccessProjectionError[]>,
   ): Effect.Effect<Option.Option<string>, readonly AccessProjectionError[]> => {
     const updates = [
-      ...unitDiff.touches.map((relationship) =>
-        v1.RelationshipUpdate.create({
-          operation: v1.RelationshipUpdate_Operation.TOUCH,
-          relationship: toSpiceDbRelationship(relationship),
-        }),
+      ...diff.units.flatMap((unitDiff) =>
+        unitDiff.deletions.map((relationship) =>
+          v1.RelationshipUpdate.create({
+            operation: v1.RelationshipUpdate_Operation.DELETE,
+            relationship: toSpiceDbRelationship(relationship),
+          }),
+        ),
       ),
-      ...unitDiff.deletions.map((relationship) =>
-        v1.RelationshipUpdate.create({
-          operation: v1.RelationshipUpdate_Operation.DELETE,
-          relationship: toSpiceDbRelationship(relationship),
-        }),
+      ...diff.units.flatMap((unitDiff) =>
+        unitDiff.touches.map((relationship) =>
+          v1.RelationshipUpdate.create({
+            operation: v1.RelationshipUpdate_Operation.TOUCH,
+            relationship: toSpiceDbRelationship(relationship),
+          }),
+        ),
       ),
     ];
     const batches: (readonly v1.RelationshipUpdate[])[] = [];
@@ -289,11 +299,8 @@ export const makeAccessProjectionCompiler = (transport: AccessProjectionTranspor
       if (diff.touches.length === 0 && diff.deletions.length === 0) {
         return { deletions: 0, drift: [], touches: 0, units, verified: true };
       }
-      // One unit at a time: two writes to one scope never overlap.
-      const beforeWrite = options.beforeWrite ?? Effect.void;
-      const tokens = yield* Effect.forEach(diff.units, (unitDiff) => writeUnit(unitDiff, beforeWrite), {
-        concurrency: 1,
-      });
+      // One request after another: two writes to one tenant never overlap.
+      const token = yield* writeDiff(diff, options.beforeWrite ?? Effect.void);
       const after = yield* readProjection(tenantIds);
       const verification = verifyProjection(desired, after, removedUnits);
       if (!verification.ok) {
@@ -311,8 +318,10 @@ export const makeAccessProjectionCompiler = (transport: AccessProjectionTranspor
         units,
         verified: true,
       };
-      const token = tokens.findLast(Option.isSome);
-      return token === undefined ? report : { ...report, projectionToken: token.value };
+      return Option.match(token, {
+        onNone: () => report,
+        onSome: (projectionToken) => ({ ...report, projectionToken }),
+      });
     },
   );
 

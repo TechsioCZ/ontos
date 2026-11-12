@@ -12,8 +12,9 @@ import { ACCESS_FENCE_CLOCK_SKEW_MARGIN, ACCESS_FENCE_PRE_LEASE_IDLE } from './f
 
 /*
  * The access fence sweeper. A tenant's fence stays closed when its holder died (OOM kill, SIGKILL, host loss) or when
- * a projection failed after it wrote to the engine; its lease then lapses, and only the next reconcile of that tenant
- * takes it over and opens it on a completed projection. Without the sweeper that reconcile waits for an intent write
+ * a projection failed after it wrote to the engine. A closed fence refuses the tenant's Actions; reads never check it
+ * and keep answering from the graph as it is. Only the next reconcile of that tenant takes the fence over (once the
+ * holder's lease lapsed, or at once when its operation failed) and opens it on a completed projection. Without the sweeper that reconcile waits for an intent write
  * or the next deploy. Once a minute the sweeper asks, in one indexed statement, which tenants have a lapsed hold, and
  * reconciles a few of them through the one writer under the tenant's platform release actor. A tenant that fails is
  * tried again later, its wait doubling up to a ceiling. With nothing lapsed a tick is that one statement.

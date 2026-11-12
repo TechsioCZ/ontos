@@ -23,7 +23,8 @@ import {
 
 /*
  * The access fence sweep of the Outbox host. A tenant whose fence holder died, or whose projection failed after it
- * wrote to the engine, stays closed until a reconcile takes the lapsed fence over; once a minute this asks which
+ * wrote to the engine, refuses its Actions (its reads go on, from the graph as it is) until a reconcile takes the
+ * fence over; once a minute this asks which
  * tenants are in that state and reconciles a few of them as each tenant's platform release actor. With nothing
  * lapsed a tick is one small statement. Every recovery and every failure is printed, the failure with its next try.
  */
@@ -69,11 +70,11 @@ export const accessFenceSweepLines = (report: AccessFenceSweepReport) => ({
   ),
   failed: report.failed.map(
     ({ reason, retryInMillis, tenantId }) =>
-      `[access-fence-sweep] TENANT ${tenantId} STAYS CLOSED: ${reason}; next try in ${minutes(retryInMillis)}`,
+      `[access-fence-sweep] TENANT ${tenantId} STILL REFUSES ACTIONS (access projection incomplete): ${reason}; next try in ${minutes(retryInMillis)}`,
   ),
   healed: report.healed.map(
     (tenantId) =>
-      `[access-fence-sweep] tenant ${tenantId}: took over a lapsed access fence and reconciled it; the tenant is open again`,
+      `[access-fence-sweep] tenant ${tenantId}: took over a lapsed access fence and reconciled it; the tenant's Actions run again`,
   ),
 });
 

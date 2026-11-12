@@ -835,11 +835,15 @@ const reconcileUnderFence = Effect.fn('AccessProjectionWriter.reconcileUnderFenc
 });
 
 /**
- * After a reconcile that did not commit, the fence opens only if the engine was never written: a graph the engine
- * holds half-written must not serve reads, nor let Actions commit against it. Such a fence stays closed; its lease
- * lapses once this operation stops renewing it, and the next reconcile (the fence sweeper, a deploy's activation,
- * any intent write) takes it over and opens it only on a completed projection. A committed reconcile already
- * released the fence, and releasing an operation's released fence is a no-op.
+ * After a reconcile that did not commit, the fence opens only if the engine was never written. What a closed fence
+ * protects: writes. Every protected Action locks the fence and runs only on a `Ready` one, so no Action commits a
+ * change, and no other projection writes, against a graph that may be half-written. What it does not protect: reads.
+ * Read and inspection gates do not check the fence (`bindLiveActionAccessGate` adds currentness for Actions only), so
+ * reads keep answering from the graph as it is until a reconcile completes; the compiler sends revocations before
+ * grants, so a half-written graph can only lack a grant being added, never keep a revoked one beside it. The fence
+ * stays closed until the next reconcile (the fence sweeper, a deploy's activation, any intent write) takes it over,
+ * at once since this operation's journal has failed, and opens it only on a completed projection. A committed
+ * reconcile already released the fence, and releasing an operation's released fence is a no-op.
  */
 const releaseAfterReconcile = Effect.fn('AccessProjectionWriter.releaseAfterReconcile')(
   function* releaseAfterReconcileEffect(taken: TakenFence, engineTouched: Ref.Ref<boolean>) {
@@ -852,7 +856,7 @@ const releaseAfterReconcile = Effect.fn('AccessProjectionWriter.releaseAfterReco
       Option.exists(current, (fence) => fence.state === 'Changing' && fence.owningOperationId === taken.operationId)
     ) {
       yield* Effect.logError(
-        `ACCESS FENCE KEPT CLOSED: tenant ${taken.tenantId}'s projection failed after operation ${taken.operationId} began writing the engine. The tenant stays closed to every Action until a reconcile completes; its lease lapses within ${Duration.format(ACCESS_FENCE_LEASE)} and the fence sweeper takes it over`,
+        `ACCESS FENCE KEPT CLOSED: tenant ${taken.tenantId}'s projection failed after operation ${taken.operationId} began writing the engine. Actions of the tenant are refused until a reconcile completes, while reads answer from the graph as it is; the fence sweeper takes it over on its next tick (within ${Duration.format(ACCESS_FENCE_LEASE)} if the journal could not be ended)`,
       );
     }
     return yield* Effect.void;
