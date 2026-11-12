@@ -743,6 +743,12 @@ const seedPendingBatch = Effect.fn('test.seedPendingBatch')(function* seedPendin
   return { batchId, proposalId };
 });
 
+/** The sum of one count over the steps of a route. */
+const totalOf = (
+  steps: readonly { readonly evidenceRows: number; readonly statements: number; readonly transactions: number }[],
+  count: 'evidenceRows' | 'statements' | 'transactions',
+) => steps.reduce((sum, step) => sum + step[count], 0);
+
 const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* measureApprovalPath(stageCase: StageCase) {
   const crypto = yield* Crypto.Crypto;
   const snapshot = yield* installedComposition;
@@ -919,6 +925,16 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
       }),
     );
   }
+  // The counts are written first, so a run that breaks a bound still leaves its numbers.
+  // Each transaction installs and checks the request's scope in one statement, never two: the same transactions and
+  // evidence as before, one round trip fewer each (queue was 220 statements, reject 274, approve's Core parts 576).
+  expect([totalOf(queue, 'transactions'), totalOf(decide, 'transactions'), totalOf(approve, 'transactions')]).toEqual([
+    38, 50, 105,
+  ]);
+  expect(totalOf(queue, 'evidenceRows')).toBe(487);
+  expect(totalOf(queue, 'statements')).toBeLessThanOrEqual(182);
+  expect(totalOf(decide, 'statements')).toBeLessThanOrEqual(220);
+  expect(totalOf(approve, 'statements')).toBeLessThanOrEqual(463);
 });
 
 it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '900 seconds' })(
