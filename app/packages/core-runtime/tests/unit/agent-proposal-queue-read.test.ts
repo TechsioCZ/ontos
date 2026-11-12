@@ -308,6 +308,76 @@ const outcomeOfFailure = (failure: { readonly _tag: string }) => {
   return failure._tag === 'ReadHandlerUnavailable' ? 'unavailable' : 'failed';
 };
 
+/**
+ * Forty-eight more work-tasks Actions besides `update`: forty-nine in all, so `prepare` asks them in three rounds of
+ * eight (`update`, `m1`–`m7`), thirty-two (`m8`–`m39`) and the nine left (`m40`–`m48`).
+ */
+const MANY_SLUGS = Array.from({ length: 48 }, (_, index) => `m${index + 1}`);
+
+/** Every Action key of the forty-nine-Action composition, in its declared order. */
+const MANY_ACTIONS = ['work.tasks.update', ...MANY_SLUGS.map((slug) => `work.tasks.${slug}`)];
+
+/** As `recordingAuthority`, but the `failing`-th question (counted from one) cannot be answered. */
+const failingAuthority = (
+  executable: ReadonlySet<string>,
+  calls: string[][],
+  failing: number,
+): ActionAuthorityService => {
+  const answering = recordingAuthority(executable, calls);
+  return {
+    ...answering,
+    checkActionAuthorities: (query) =>
+      Effect.suspend(() =>
+        calls.length + 1 === failing
+          ? Effect.sync(() => calls.push([...query.actionKeys])).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ActionPermissionCheckError({ code: 'action_permission_check_failed', reason: 'engine down' }),
+                ),
+              ),
+            )
+          : answering.checkActionAuthorities(query),
+      ),
+  };
+};
+
+/**
+ * One exact `batch` read of rows naming `rowSlugs` per authority in `authorities`, in turn over one harness and the
+ * forty-nine-Action composition: each read's outcome and whether that read loaded any proposal row.
+ */
+const manyActionReads = Effect.fn('AgentProposalQueueReadTest.manyActionReads')(function* manyActionReads(
+  rowSlugs: readonly string[],
+  authorities: readonly ActionAuthorityService[],
+) {
+  const harness = yield* makeReadTestHarness({
+    executeOwnerQuery: tableQueries(rowSlugs.map((slug, index) => tableRow(slug, index))),
+    operationTime,
+    ownerAuthorizationDecision: 'allowed',
+    permissionDecision: 'allowed',
+    scope,
+  });
+  const services = yield* Layer.build(
+    Layer.mergeAll(harness.layer, outboxWorkerCompositionLayer(yield* executableComposition('no-review', MANY_SLUGS))),
+  );
+  const reads: { readonly loaded: boolean; readonly outcome: string }[] = [];
+  for (const actionAuthority of authorities) {
+    const before = harness.snapshot().ownerQueries.length;
+    const outcome = yield* harness.runtime
+      .runRead({ input: tableInput('batch'), principal: scope, registration: agentProposalQueueRead, transport })
+      .pipe(
+        Effect.provideService(ActionAuthority, actionAuthority),
+        Effect.provide(services),
+        Effect.match({ onFailure: outcomeOfFailure, onSuccess: (read) => `rows ${read.proposals.length}` }),
+      );
+    const loaded = harness
+      .snapshot()
+      .ownerQueries.slice(before)
+      .some(({ sql }) => sql.includes('"agent_proposals"'));
+    reads.push({ loaded, outcome });
+  }
+  return reads;
+});
+
 /** A person who exists only in the v2 model holds no `module_access` tuple: that retired relation denies. */
 const retiredModuleRelation = (asked: string[]) => (target: { readonly moduleIds: readonly string[] }) =>
   Effect.sync(() => {
@@ -887,6 +957,76 @@ it.layer(
         expect(outcome).toBe('unavailable');
       }),
   );
+
+  /*
+   * A person whose only right lies beyond `prepare`'s first round: the rounds go on until one admits an Action, and
+   * the rows' Actions are still decided one by one, each by its own answer (from `prepare` when it asked it, else in
+   * `finish`).
+   */
+  for (const scenario of [
+    { calls: [8, 32, 1], executable: ['m20', 'm45'], outcome: 'rows 2', round: 2, rows: ['m20', 'm45'] },
+    { calls: [8, 32, 1], executable: ['m20'], outcome: 'denied', round: 2, rows: ['m20', 'm45'] },
+    { calls: [8, 32, 9], executable: ['m45'], outcome: 'rows 1', round: 3, rows: ['m45'] },
+    { calls: [8, 32, 9], executable: ['m45'], outcome: 'denied', round: 3, rows: ['m45', 'm3'] },
+  ] as const) {
+    suite.effect(
+      `continues to round ${scenario.round} for a person whose only rights lie there (${JSON.stringify(scenario.rows)} -> ${scenario.outcome})`,
+      () =>
+        Effect.gen(function* laterRoundRight() {
+          const calls: string[][] = [];
+          const runnable = new Set(scenario.executable.map((slug) => `work.tasks.${slug}`));
+          const [read] = yield* manyActionReads(scenario.rows, [recordingAuthority(runnable, calls)]);
+          expect(read?.outcome).toBe(scenario.outcome);
+          expect(read?.loaded).toBe(true);
+          expect(calls.map((call) => call.length)).toEqual(scenario.calls);
+          // Every Action asked once: `prepare`'s answers are applied, and `finish` asks only rows' Actions it did not.
+          expect(calls.flat().toSorted()).toEqual([...new Set(calls.flat())].toSorted());
+          if (scenario.round === 2) {
+            // Round 2 found a right, so `finish` asks the row Action round 3 would have: nothing else.
+            expect(calls[2]).toEqual(['work.tasks.m45']);
+          }
+        }),
+    );
+  }
+
+  for (const rows of [['m1'], []]) {
+    suite.effect(
+      `asks a person with no right every one of more than eight Actions, each once, then refuses (${rows.length === 0 ? 'missing' : 'existing'} batch)`,
+      () =>
+        Effect.gen(function* noRightManyActions() {
+          const calls: string[][] = [];
+          const [read] = yield* manyActionReads(rows, [recordingAuthority(new Set(), calls)]);
+          expect(read).toEqual({ loaded: false, outcome: 'denied' });
+          // Every Action is asked, in its round, so every denial is decided (and so recorded by the real authority).
+          expect(calls.map((call) => call.length)).toEqual([8, 32, 9]);
+          expect(calls.flat()).toEqual(MANY_ACTIONS);
+        }),
+    );
+  }
+
+  for (const scenario of [
+    { calls: [8], failing: 1, round: 1 },
+    { calls: [8, 32, 9], failing: 3, round: 3 },
+  ] as const) {
+    suite.effect(
+      `answers unavailable, never refused or allowed, when prepare's round ${scenario.round} cannot be asked, and keeps nothing for the next read`,
+      () =>
+        Effect.gen(function* prepareUnavailable() {
+          const failed: string[][] = [];
+          const next: string[][] = [];
+          const runnable = new Set(['work.tasks.update']);
+          const [unavailable, after] = yield* manyActionReads(
+            ['update'],
+            [failingAuthority(new Set(), failed, scenario.failing), recordingAuthority(runnable, next)],
+          );
+          expect(unavailable).toEqual({ loaded: false, outcome: 'unavailable' });
+          expect(failed.map((call) => call.length)).toEqual(scenario.calls);
+          // The next read starts over from the first round: no answer of the failed read was kept.
+          expect(after).toEqual({ loaded: true, outcome: 'rows 1' });
+          expect(next.map((call) => call.length)).toEqual([8]);
+        }),
+    );
+  }
 
   suite.effect('batch access refuses a partial owning-Action view instead of weakening revert-all', () =>
     Effect.gen(function* partialBatch() {
