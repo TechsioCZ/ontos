@@ -114,6 +114,26 @@ it.effect('non-OAuth Better Auth routes are blocked without calling the handler'
   }),
 );
 
+it.effect('never serves Better Auth API-key or admin routes over HTTP, so no key owner is reachable through them', () =>
+  Effect.gen(function* blocksApiKeyAndAdminRoutes() {
+    const seen: Request[] = [];
+    for (const [method, route] of [
+      ['POST', '/oauth/api-key/create'],
+      ['GET', '/oauth/api-key/list'],
+      ['POST', '/oauth/api-key/update'],
+      ['POST', '/oauth/api-key/delete'],
+      ['POST', '/oauth/admin/impersonate-user'],
+      ['POST', '/oauth/admin/set-user-password'],
+    ] as const) {
+      const response = yield* forwardOAuthRequest(fakeEndpoint(seen))(
+        new Request(`http://localhost:3020${route}`, { body: method === 'POST' ? '{}' : null, method }),
+      );
+      expect(response.status).toBe(404);
+    }
+    expect(seen).toHaveLength(0);
+  }),
+);
+
 it.effect('a handler failure becomes a 500 server_error', () =>
   Effect.gen(function* rejectsHandlerFailure() {
     const endpoint = fakeEndpoint([], () => Effect.fail(new Cause.UnknownError(new Error('boom'))));

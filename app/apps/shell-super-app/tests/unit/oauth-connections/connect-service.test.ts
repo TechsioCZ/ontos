@@ -38,6 +38,7 @@ import type { OAuthFlowService, VerifiedOAuthQuery } from '../../../api/oauth-co
 import { toGrantRow } from '../../../api/oauth-connections/grant-store.ts';
 import { makeCompositionSnapshot } from '../../fixtures/application-composition.ts';
 import { SubjectAccessInspection } from '@app/core-runtime/access/enforcement';
+import type { SubjectInspectionStages } from '@app/core-runtime/access/enforcement';
 import { subjectInspectionFixture } from '../oauth-connections-admin/subject-inspection.fixture.ts';
 import { grantRegistryFixture, retainedGrant } from './grant-registry-fixture.ts';
 
@@ -372,6 +373,20 @@ interface InspectionCalls {
 }
 
 /** The fixture's real inspection, counting each call it answers. */
+/** The same stages, counting each scope and capability batch asked. */
+const countedStages = (stages: SubjectInspectionStages, calls: InspectionCalls): SubjectInspectionStages => ({
+  ...stages,
+  capabilities: (asked) =>
+    Effect.suspend(() => {
+      calls.capabilities += 1;
+      return stages.capabilities(asked);
+    }),
+  scope: Effect.suspend(() => {
+    calls.scope += 1;
+    return stages.scope;
+  }),
+});
+
 const countingInspection = (inspection: ReturnType<typeof subjectInspectionFixture>, calls: InspectionCalls) =>
   Layer.effect(
     SubjectAccessInspection,
@@ -379,16 +394,8 @@ const countingInspection = (inspection: ReturnType<typeof subjectInspectionFixtu
       const service = yield* SubjectAccessInspection;
       return {
         ...service,
-        capabilities: (input: Parameters<typeof service.capabilities>[0]) =>
-          Effect.suspend(() => {
-            calls.capabilities += 1;
-            return service.capabilities(input);
-          }),
-        scope: (input: Parameters<typeof service.scope>[0]) =>
-          Effect.suspend(() => {
-            calls.scope += 1;
-            return service.scope(input);
-          }),
+        // The description runs its scope and capability batches as stages of one staged inspection.
+        staged: (input, body) => service.staged(input, (stages) => body(countedStages(stages, calls))),
       };
     }),
   ).pipe(Layer.provideMerge(inspection.layer));

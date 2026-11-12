@@ -313,9 +313,13 @@ const PartyAddressRequirementKeySchema = Schema.Literals([
   'commerce.customer-context.requirement.invoice-recipient-resolution-party',
   'commerce.customer-context.requirement.delivery-destination-resolution-party',
 ]);
-type PartyAddressRequirementKey = typeof PartyAddressRequirementKeySchema.Type;
+export type PartyAddressRequirementKey = typeof PartyAddressRequirementKeySchema.Type;
 
-const partyContactPointExecutorForScope =
+/**
+ * The Party contact point read for one verified scope: the composition's explicit transport when it supplies one,
+ * else Commerce's own module credential acting for that scope's actor through the Shell's delegated issuance.
+ */
+export const partyContactPointExecutorForScope =
   (
     scope: OperationalScope,
     crypto: Crypto.Crypto,
@@ -331,6 +335,7 @@ const partyContactPointExecutorForScope =
         return acquireDelegatedGatewayContext(
           {
             audience: 'party-registry',
+            callingAppId: 'commerce-customer-context',
             legalEntityScope: 'subject',
             requestCorrelation: scope.correlationId,
             subject: { _tag: 'Assertion', scope },

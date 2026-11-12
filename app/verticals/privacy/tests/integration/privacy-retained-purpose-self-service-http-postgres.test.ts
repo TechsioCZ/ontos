@@ -30,11 +30,7 @@ import { makeLiveOperationFixture, makeLiveOperationFixtureRuntime } from '@app/
 import { privacyRegistration } from '../../vertical.registration.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import {
-  grantTestTenantOwnerAccess,
-  liveFixtureSpiceDb,
-  markServicePrincipal,
-} from '@app/core-runtime/testing/tenant-access';
+import { grantTestTenantOwnerAccess, liveFixtureSpiceDb } from '@app/core-runtime/testing/tenant-access';
 import { CreatePartyPayloadSchema, partyRegistryApiContract } from '@app/party-registry/api';
 import {
   createPartyWithAuthorization,
@@ -49,8 +45,7 @@ import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-
 import { shellGatewayContextContract } from '@app/shared-contracts';
 import type { GatewayContextRequestSchema } from '@app/shared-contracts';
 import {
-  ShellNativeRelaySourceBoundCommandSchema,
-  ShellNativeRelaySourceIssueCommandSchema,
+  ShellNativeRelaySourceProvisionCommandSchema,
   ShellNativeSessionGatewayCommandSchema,
   ShellNativeSessionGatewayResponseSchema,
 } from '@app/shell-super-app/testing/api-key-gateway-native';
@@ -228,7 +223,7 @@ const accountReadySchema = Schema.Struct({
 const shellReadySchema = Schema.Struct({
   baseUrl: Schema.String,
   providerUserId: ProviderSubjectIdSchema,
-  relaySourceProviderUserId: ProviderSubjectIdSchema,
+  readerProviderUserId: ProviderSubjectIdSchema,
 });
 const enrolledReplySchema = Schema.TaggedStruct('enrolled', {
   attemptId: uuid.pipe(Schema.brand('EnrollmentAttemptId')),
@@ -397,8 +392,15 @@ const issuedReplySchema = Schema.TaggedStruct('issued', {
   secret: Schema.RedactedFromValue(Schema.String),
 });
 const ackReplySchema = Schema.TaggedStruct('ack', {});
+/** Commerce's module credential as the platform provisioned it: its service principal, key id and key. */
+const provisionedReplySchema = Schema.TaggedStruct('provisioned', {
+  principalId: uuid.pipe(Schema.brand('PrincipalId')),
+  providerKeyId: ProviderSubjectIdSchema,
+  secret: Schema.RedactedFromValue(Schema.String),
+});
 const shellReplySchema = Schema.Union([
   issuedReplySchema,
+  provisionedReplySchema,
   ackReplySchema,
   ShellNativeSessionGatewayResponseSchema,
   Schema.TaggedStruct('unavailable', {}),
@@ -417,8 +419,7 @@ const ownerControlCommandSchema = Schema.Union([
     tenantId: uuid.pipe(Schema.brand('TenantId')),
   }),
   Schema.TaggedStruct('bound', {}),
-  ShellNativeRelaySourceIssueCommandSchema,
-  ShellNativeRelaySourceBoundCommandSchema,
+  ShellNativeRelaySourceProvisionCommandSchema,
   Schema.TaggedStruct('enroll', {
     authorization: Schema.RedactedFromValue(Schema.String),
     partyRef: nonempty.pipe(Schema.brand('EnrollmentResourceId')),
@@ -985,8 +986,7 @@ const privateExchange = <A, I>(
         Match.tag('observe-binding', () => knownFailure.success.command === 'observe-binding'),
         Match.tag('issue', () => false),
         Match.tag('bound', () => false),
-        Match.tag('relay-source-issue', () => false),
-        Match.tag('relay-source-bound', () => false),
+        Match.tag('relay-source-provision', () => false),
         Match.tag('session-gateway', () => false),
         Match.exhaustive,
       );
@@ -1445,7 +1445,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       managerProvisioningNamespaces: [COMMERCE_AUTHENTICATION_NAMESPACE_ID],
       moduleAccess: 'configured-modules',
       moduleKeys: ['core.identity', 'commerce.customer-context', 'party.registry', 'privacy.core'],
-      readerProviderSubjectId: bootstrapReady.relaySourceProviderUserId,
+      readerProviderSubjectId: bootstrapReady.readerProviderUserId,
       runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
     }),
     (value) => value.close().pipe(Effect.orDie),
@@ -1543,39 +1543,16 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     }),
     (value) => value.close().pipe(Effect.orDie),
   );
-  // The fixture reader becomes Commerce's service principal: it binds the module key, then is marked service.
-  const commerceModule = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(fixture.reader);
+  // Commerce's module credential, provisioned by the platform as on every environment.
   const moduleIssued = yield* privateExchange(
     shellReplySchema,
     nativeClock,
     bootstrap,
-    yield* Schema.decodeUnknownEffect(Schema.toType(ownerControlCommandSchema))({
-      _tag: 'relay-source-issue',
-      principalId: commerceModule.principalId,
-      tenantId: commerceModule.tenantId,
-    }),
+    yield* Schema.decodeUnknownEffect(Schema.toType(ownerControlCommandSchema))({ _tag: 'relay-source-provision' }),
   );
-  if (!Schema.is(issuedReplySchema)(moduleIssued)) {
+  if (!Schema.is(provisionedReplySchema)(moduleIssued)) {
     return yield* failed('commerce-module-key');
   }
-  yield* action
-    .runAction({
-      payload: { providerSubjectId: moduleIssued.providerKeyId },
-      principal: commerceModule,
-      registration: bindSelfApiKeyAction,
-      transport: { correlationId: `retained-module-bind:${suffix}`, idempotencyKey: `retained-module-bind:${suffix}` },
-    })
-    .pipe(Effect.provideContext(context));
-  yield* coreEvidenceExecutor.execute(
-    markServicePrincipal({ principalId: commerceModule.principalId, tenantId: commerceModule.tenantId }),
-  );
-  const moduleBound = yield* privateExchange(shellReplySchema, nativeClock, bootstrap, { _tag: 'relay-source-bound' });
-  if (!Schema.is(ackReplySchema)(moduleBound)) {
-    return yield* failed('commerce-module-key-binding');
-  }
-  const gatewayModuleBindings = JSON.stringify([
-    { ...commerceModuleSource, providerKeyId: moduleIssued.providerKeyId },
-  ]);
   const party = yield* startOwner(partyArtifact, {
     ...environment,
     PARTY_REGISTRY_DATABASE_URL: nativeIdentityUrls.PARTY_REGISTRY_DATABASE_URL,
@@ -1664,7 +1641,6 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
       grants,
       providerEndpointAudience: 'commerce-customer-context',
     }),
-    ONTOS_GATEWAY_MODULE_BINDINGS: gatewayModuleBindings,
     SHELL_GATEWAY_ISSUER_DATABASE_URL: nativeIdentityUrls.SHELL_GATEWAY_ISSUER_DATABASE_URL,
   });
   const shellReady = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(readySchema))(

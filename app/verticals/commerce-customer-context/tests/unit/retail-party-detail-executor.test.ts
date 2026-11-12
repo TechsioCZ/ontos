@@ -205,6 +205,7 @@ it.effect('rejects forged, copied and mismatched Retail authority before any HTT
           .execute(candidate.payload, candidate.correlationId, candidate.authority)
           .pipe(Effect.provide(transport.layer), Effect.flip);
         expect(Schema.is(ProfilePersistenceDependencyFailure)(failure)).toBe(true);
+        expect(failure).not.toHaveProperty('cause');
       }
       expect(transport.requests).toHaveLength(0);
       expect(transport.exchanges).toHaveLength(0);
@@ -222,6 +223,7 @@ it.effect('does not contact Party when the issuer changes the admitted compositi
         .execute(payload, correlationId, authorityFor(verifiedScope()))
         .pipe(Effect.provide(transport.layer), Effect.flip);
       expect(Schema.is(ProfilePersistenceDependencyFailure)(failure)).toBe(true);
+      expect(failure).not.toHaveProperty('cause');
       expect(transport.requests).toHaveLength(1);
       expect(transport.exchanges).toHaveLength(1);
       expect(transport.partyCalls).toHaveLength(0);

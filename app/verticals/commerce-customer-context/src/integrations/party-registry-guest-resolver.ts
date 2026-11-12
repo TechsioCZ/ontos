@@ -138,6 +138,7 @@ export const partyRegistryGuestResolverFactoryLive = Layer.succeed(
           acquireDelegatedGatewayContext(
             {
               audience: 'party-registry',
+              callingAppId: 'commerce-customer-context',
               legalEntityScope: 'subject',
               requestCorrelation: scope.correlationId,
               subject: { _tag: 'Assertion', scope },

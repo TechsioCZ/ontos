@@ -29,6 +29,7 @@ export const acquireMarketOwnerDelegation = (
   return acquireDelegatedGatewayContext(
     {
       audience,
+      callingAppId: 'commerce-market-catalog',
       legalEntityScope: 'subject',
       requestCorrelation: scope.correlationId,
       subject: { _tag: 'Assertion', scope },

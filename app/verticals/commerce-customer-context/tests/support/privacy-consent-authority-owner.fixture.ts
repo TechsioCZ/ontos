@@ -140,6 +140,7 @@ class RetainedConsentOwnerFixtureError extends Schema.TaggedError<RetainedConsen
   'RetainedConsentOwnerFixtureError',
   { stage: Schema.String },
 ) {}
+const CUSTOMER_CONTEXT_APP_ID = 'commerce-customer-context';
 const failed = (stage: string) => new RetainedConsentOwnerFixtureError({ stage });
 const bindingObservationStage = 'retail-binding-observation';
 const observeBindingTag = 'observe-binding';
@@ -611,7 +612,7 @@ const readDeclaredEnrollmentPhases = Effect.fn('RetainedConsentOwner.readDeclare
       'continuation' | 'coreReadAuthentication' | 'coreReadCredential' | 'coreTransport' | 'providerVerification'
     >,
   ) {
-    const principal = yield* bindGatewayPrincipalVerifier('commerce-customer-context', ultramodernApiMarker).verify(
+    const principal = yield* bindGatewayPrincipalVerifier(CUSTOMER_CONTEXT_APP_ID, ultramodernApiMarker).verify(
       command.authorization,
     );
     const input = yield* Schema.decodeUnknownEffect(ReadEnrollmentAttemptInputSchema)({
@@ -720,6 +721,7 @@ const retainedPartyDetailTransportLive = Layer.effect(
           const gateway = yield* acquireDelegatedGatewayContext(
             {
               audience: retainedPartyAppId,
+              callingAppId: CUSTOMER_CONTEXT_APP_ID,
               legalEntityScope: 'subject',
               requestCorrelation,
               subject: { _tag: 'Assertion', scope: authority.scope },
@@ -766,7 +768,7 @@ const readOwnedBinding = Effect.fn('RetainedConsentOwner.readOwnedBinding')(func
     Schema.fromJsonString(retainedServerScopeSchema),
     'ONTOS_RETAINED_CONSENT_SERVER_SCOPE',
   );
-  const principal = yield* bindGatewayPrincipalVerifier('commerce-customer-context', ultramodernApiMarker).verify(
+  const principal = yield* bindGatewayPrincipalVerifier(CUSTOMER_CONTEXT_APP_ID, ultramodernApiMarker).verify(
     command.authorization,
   );
   if (

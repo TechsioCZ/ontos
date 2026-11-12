@@ -4,12 +4,11 @@ import {
   ActiveApplicationCompositionService,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime/modules/active-application-composition';
-import { PartyDetailResponseSchema, executePartyDetailWithAuthorization } from '@app/party-registry/api/client';
-import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { PartyDetailResponseSchema } from '@app/party-registry/api/client';
+import { Context, Effect, Layer, Option, Schema } from 'effect';
 import type { Scope } from 'effect';
 
 import { EnsureRetailCustomerProfilePayloadSchema } from '../../shared/actions/ensure-retail-customer-profile.ts';
-import { acquireRetailPartyGateway } from '../enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import type { ProfilePersistenceDependencies } from '../persistence/profile-persistence.ts';
 import { ProfilePersistenceDependencyFailure } from '../persistence/profile-persistence.ts';
 import { RetailPartyDetailExecutor } from './retail-party-detail-executor.ts';
@@ -68,7 +67,7 @@ const samePartyRef = (
 
 /** Server-only owner read. The native preflight, never transactional persistence, calls this. */
 export const makePartyRegistryRetailPartyResolver =
-  (input: PartyRegistryRetailPartyResolverFactoryInput, execute?: RetailPartyResolutionExecutor): RetailPartyResolver =>
+  (input: PartyRegistryRetailPartyResolverFactoryInput, execute: RetailPartyResolutionExecutor): RetailPartyResolver =>
   (request): ReturnType<RetailPartyResolver> => {
     if (
       request.tenantId !== input.tenantId ||
@@ -86,29 +85,7 @@ export const makePartyRegistryRetailPartyResolver =
       resourceType: 'party.registry.party' as const,
       tenantId: input.tenantId,
     };
-    const read: Effect.Effect<
-      Effect.Success<ReturnType<typeof executePartyDetailWithAuthorization>>,
-      | Effect.Error<ReturnType<typeof executePartyDetailWithAuthorization>>
-      | ProfilePersistenceDependencyFailure
-      | Effect.Error<ReturnType<typeof acquireRetailPartyGateway>>
-    > = execute === undefined
-      ? acquireRetailPartyGateway({
-          compositionRevision: request.compositionRevision,
-          legalEntityId: input.legalEntityId,
-          requestCorrelation: input.requestCorrelation,
-          tenantId: input.tenantId,
-        }).pipe(
-          Effect.flatMap(({ credential, options }) =>
-            executePartyDetailWithAuthorization(
-              { partyRef: requestedPartyRef },
-              Redacted.value(credential),
-              input.requestCorrelation,
-              options,
-            ),
-          ),
-        )
-      : execute({ partyRef: requestedPartyRef }, input.requestCorrelation);
-    return read.pipe(
+    return execute({ partyRef: requestedPartyRef }, input.requestCorrelation).pipe(
       Effect.mapError((cause) => dependencyFailure('The Party Registry Party Detail operation is unavailable', cause)),
       Effect.flatMap((response): Effect.Effect<RetailPartyResolution, ProfilePersistenceDependencyFailure> => {
         if (!Schema.is(PartyDetailResponseSchema)(response)) {
@@ -131,6 +108,10 @@ export const makePartyRegistryRetailPartyResolver =
       }),
     );
   };
+
+/** Party is read only for the Action's own actor; a composition without that transport fails closed. */
+export const missingPartyTransport = () =>
+  Effect.fail(dependencyFailure('The actor-bound Party Registry Party Detail transport is not composed'));
 
 const missingPreparedResolution = () =>
   dependencyFailure('No matching invocation-scoped Retail Party resolution is prepared');
@@ -230,14 +211,15 @@ export const preparedRetailPartyResolution: Effect.Effect<
           partyResourceId: payload.subject.partyRef.resourceId,
           tenantId: scope.tenantId,
         };
-        const execute: RetailPartyResolutionExecutor | undefined = Option.isNone(transport)
-          ? undefined
-          : (detailRequest, correlation) =>
-              transport.value.execute(detailRequest, correlation, {
-                actionInvocationId: input.actionInvocationId,
-                compositionRevision: active.composition.revision,
-                scope: input.scope,
-              });
+        if (Option.isNone(transport)) {
+          return yield* missingPartyTransport();
+        }
+        const execute: RetailPartyResolutionExecutor = (detailRequest, correlation) =>
+          transport.value.execute(detailRequest, correlation, {
+            actionInvocationId: input.actionInvocationId,
+            compositionRevision: active.composition.revision,
+            scope: input.scope,
+          });
         const result = yield* makePartyRegistryRetailPartyResolver(scope, execute)(request);
         prepared = { request, result, scope };
         // Owner evidence is not a grant: ordinary native Action authorization still applies.

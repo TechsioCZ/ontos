@@ -157,6 +157,7 @@ export const paymentTermCatalogPortFromEnvironment = Effect.fn('PaymentTermCatal
       acquire(
         {
           audience: 'payment-term-catalog',
+          callingAppId: 'commerce-customer-context',
           legalEntityScope: 'subject',
           requestCorrelation: correlation,
           subject: context.subject,

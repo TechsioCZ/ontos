@@ -287,6 +287,7 @@ export const ApprovalOwnerGatewayLive = Layer.effect(
       const assertion = yield* acquireDelegatedGatewayContext(
         {
           audience: 'commerce-customer-context',
+          callingAppId: 'commerce-order',
           legalEntityScope: 'subject',
           requestCorrelation: scope.correlationId,
           subject: delegationSubject(scope.caller, {

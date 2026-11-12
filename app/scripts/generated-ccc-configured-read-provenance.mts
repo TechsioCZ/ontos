@@ -641,6 +641,7 @@ const executorContract = (source: Source, value: Expression | undefined): boolea
       if (execute !== undefined) { return execute(${payload}, ${correlation}); }
       return ${acquire}({
         audience: 'party-registry',
+        callingAppId: 'commerce-customer-context',
         legalEntityScope: 'subject',
         requestCorrelation: ${scope}.correlationId,
         subject: { _tag: 'Assertion', ${subjectScope} },
