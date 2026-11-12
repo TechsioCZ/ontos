@@ -37,8 +37,10 @@ const product = Schema.encodeSync(ProductRecordSchema)(
     sku: 'CABLE',
     stockOnHand: 10,
     stockValueMinor: 1000,
+    taxClassificationCode: 'cz.vat.standard',
     unit: 'ks',
     updatedAt: instant,
+    // contract: drop once package B's ProductSchema replaces `vatRate` with `taxClassificationCode`.
     vatRate: 21,
   }),
 );
@@ -56,6 +58,8 @@ const responseOf = (products: readonly (typeof product)[]) =>
     orders: [],
     products,
     revision: 7,
+    // contract: package B's staff records responses carry the company's VAT rates.
+    taxRates: [],
   });
 
 /** Every list read the page sent. */

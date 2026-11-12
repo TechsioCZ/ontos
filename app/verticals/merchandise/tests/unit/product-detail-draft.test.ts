@@ -1,3 +1,4 @@
+import { CZ_VAT_REDUCED, CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
 import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
@@ -10,26 +11,31 @@ import {
   sameDetailDraft,
 } from '../../src/routes/[lang]/provoz/produkty/product-detail-draft.ts';
 
-const product: ProductRecord = Schema.decodeSync(ProductRecordSchema)({
-  active: true,
-  category: 'Zrnková káva',
-  createdAt: '2026-10-20T09:00:00.000Z',
-  currentPriceMinor: 25_804,
-  description: 'Etiopie, 250 g.',
-  id: 'product-1',
-  lowStock: false,
-  lowStockThreshold: 3,
-  name: 'Etiopie',
-  priceHistory: [],
-  shortDescription: 'Svěží káva',
-  sku: 'ETI-250',
-  stockOnHand: 12,
-  stockValueMinor: 309_648,
-  unit: 'ks',
-  updatedAt: '2026-10-20T09:00:00.000Z',
-  variants: [{ attributes: 'velikost: 250 g', name: '250 g' }],
-  vatRate: 12,
-});
+// contract: once package B's ProductSchema carries `taxClassificationCode`, put it into the decoded input and drop
+// `vatRate` and this spread.
+const product: ProductRecord = {
+  ...Schema.decodeSync(ProductRecordSchema)({
+    active: true,
+    category: 'Zrnková káva',
+    createdAt: '2026-10-20T09:00:00.000Z',
+    currentPriceMinor: 25_804,
+    description: 'Etiopie, 250 g.',
+    id: 'product-1',
+    lowStock: false,
+    lowStockThreshold: 3,
+    name: 'Etiopie',
+    priceHistory: [],
+    shortDescription: 'Svěží káva',
+    sku: 'ETI-250',
+    stockOnHand: 12,
+    stockValueMinor: 309_648,
+    unit: 'ks',
+    updatedAt: '2026-10-20T09:00:00.000Z',
+    variants: [{ attributes: 'velikost: 250 g', name: '250 g' }],
+    vatRate: 12,
+  }),
+  taxClassificationCode: CZ_VAT_REDUCED,
+};
 const saved = draftOf(product);
 
 describe('product detail draft', () => {
@@ -58,14 +64,24 @@ describe('product detail draft', () => {
     expect(repriced.priceMinor).toBe(30_000);
 
     const edited = detailSaveOf(
-      { ...saved, description: 'Nová káva', lowStock: 5, shortDescription: '', vatRate: 21 },
+      { ...saved, description: 'Nová káva', lowStock: 5, shortDescription: '', taxClassificationCode: CZ_VAT_STANDARD },
       saved,
     );
     expect(edited.patch).toMatchObject({
       description: 'Nová káva',
       lowStockThreshold: 5,
       shortDescription: '',
-      vatRate: 21,
+      taxClassificationCode: CZ_VAT_STANDARD,
+    });
+    expect(edited.patch).not.toHaveProperty('vatRate');
+  });
+
+  it('takes the classification from the product and treats a changed one as an unsaved change', () => {
+    expect(saved.taxClassificationCode).toBe(CZ_VAT_REDUCED);
+    expect(saved).not.toHaveProperty('vatRate');
+    expect(sameDetailDraft(saved, { ...saved, taxClassificationCode: CZ_VAT_STANDARD })).toBe(false);
+    expect(detailSaveOf({ ...saved, taxClassificationCode: CZ_VAT_STANDARD }, saved).patch).toEqual({
+      taxClassificationCode: CZ_VAT_STANDARD,
     });
   });
 

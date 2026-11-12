@@ -4,12 +4,8 @@ import type { ProductPatch } from '../../../../../shared/actions/apply-command.t
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import { isRealVariant, ProductMetadataSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import { moneyInputText } from '../../../../form-number.ts';
-import type {
-  ProductMetadata,
-  ProductUnit,
-  ProductVariant,
-  VatRate,
-} from '../../../../../shared/domain/merchandise-model.ts';
+import type { ProductMetadata, ProductUnit, ProductVariant } from '../../../../../shared/domain/merchandise-model.ts';
+import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 
 /** Editable product fields as typed: the two money/stock inputs keep their text so "2,5" reaches validation. */
 export interface DetailDraft {
@@ -27,9 +23,10 @@ export interface DetailDraft {
   /** Real (sellable) variants are edited on the Varianty tab; the detail form passes them through unchanged. */
   readonly realVariants: readonly ProductVariant[];
   readonly shortDescription: string;
+  /** The VAT classification; Tax gives its rate. */
+  readonly taxClassificationCode: CzVatClassificationCode;
   readonly unit: ProductUnit;
   readonly variants: readonly { readonly attributes: string; readonly key: number; readonly name: string }[];
-  readonly vatRate: VatRate;
   readonly weightGrams: string;
   readonly widthMm: string;
 }
@@ -69,9 +66,9 @@ export const draftOf = (product: ProductRecord): DetailDraft => ({
   priceText: moneyInputText(product.currentPriceMinor / 100),
   realVariants: (product.variants ?? []).filter(isRealVariant),
   shortDescription: product.shortDescription ?? '',
+  taxClassificationCode: product.taxClassificationCode,
   unit: product.unit,
   variants: legacyVariantDraftsOf(product),
-  vatRate: product.vatRate,
   weightGrams: measurementText(product.weightGrams),
   widthMm: measurementText(product.widthMm),
 });
@@ -90,8 +87,8 @@ export const sameDetailDraft = (left: DetailDraft, right: DetailDraft): boolean 
   left.name.trim() === right.name.trim() &&
   left.priceCzk === right.priceCzk &&
   left.shortDescription.trim() === right.shortDescription.trim() &&
+  left.taxClassificationCode === right.taxClassificationCode &&
   left.unit === right.unit &&
-  left.vatRate === right.vatRate &&
   left.weightGrams.trim() === right.weightGrams.trim() &&
   left.widthMm.trim() === right.widthMm.trim() &&
   left.variants.length === right.variants.length &&
@@ -149,8 +146,8 @@ export const detailSaveOf = (draft: DetailDraft, base: DetailDraft): DetailSave 
   if (draft.unit !== base.unit) {
     patch.unit = draft.unit;
   }
-  if (draft.vatRate !== base.vatRate) {
-    patch.vatRate = draft.vatRate;
+  if (draft.taxClassificationCode !== base.taxClassificationCode) {
+    patch.taxClassificationCode = draft.taxClassificationCode;
   }
   if (draft.lowStock !== base.lowStock) {
     patch.lowStockThreshold = draft.lowStock;

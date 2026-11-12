@@ -550,6 +550,7 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
               onReload={reload}
               open={dialog === 'create'}
               revision={revision}
+              taxRates={ready?.taxRates ?? []}
             />
             <ReceiptDialog
               onCommitted={onCommitted}

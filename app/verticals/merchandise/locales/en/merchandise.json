@@ -108,7 +108,7 @@
           "noMatch": "No product matches.",
           "priceNote": "Prices are fixed when the order is created.",
           "product": "Product",
-          "productMeta": "Price {{price}}, on hand {{stock}} pcs",
+          "productMeta": "Price {{price}}, on hand {{stock}} pcs, VAT {{vat}}",
           "quantity": "Quantity (pcs)",
           "removeLine": "Remove item",
           "submitting": "Creating…",
@@ -363,7 +363,7 @@
           "quantity": "Quantity",
           "sku": "SKU",
           "unit": "Unit",
-          "vat": "VAT (%)",
+          "vat": "VAT rate",
           "priceNet": "Price excl. VAT (CZK)",
           "priceGross": "Price incl. VAT (CZK)",
           "shortDescription": "Short description",
@@ -545,6 +545,17 @@
     "loading": "Loading…",
     "sidePanel": {
       "resize": "Resize panel. Drag or use the left and right arrows. Double-click or Home restores the default width."
+    },
+    "tax": {
+      "classification": {
+        "reduced": "Reduced",
+        "standard": "Standard"
+      },
+      "noRates": "No VAT rate is set for this company.",
+      "notSet": "not set",
+      "option": "{{name}} ({{rate}})",
+      "rateMissing": "The “{{name}}” VAT rate is not set for this company, so the product cannot be added.",
+      "scheduled": "From {{date}} {{rate}}"
     },
     "ui": {
       "storefrontBadge": "Online store",

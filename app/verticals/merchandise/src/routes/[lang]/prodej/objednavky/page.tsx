@@ -676,6 +676,7 @@ const OrdersPageContent = (props: OrdersPageContentProps) => {
           onOpenChange={setCreateOpen}
           open={createOpen}
           revision={ready?.records.revision ?? 0}
+          taxRates={ready?.records.taxRates ?? []}
         />
 
         <OrderDetailDialog

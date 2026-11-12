@@ -4,6 +4,7 @@ import type { MerchandiseCommand } from '../../../../../shared/actions/apply-com
 import type { Order } from '../../../../../shared/apis/records.ts';
 import type { ProductId, ShippingMethod, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
 import { moneyInputText } from '../../../../form-number.ts';
+import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 
 type Mutable<Value> = { -readonly [Key in keyof Value]: Value[Key] };
 
@@ -14,9 +15,12 @@ export interface DraftLine {
   readonly productId: ProductId;
   readonly quantityText: string;
   readonly sku: string;
+  /** The line's VAT classification: the order's snapshot, or the picked product's for a new line. */
+  readonly taxClassificationCode: CzVatClassificationCode;
   readonly variantId?: VariantId;
   readonly variantName?: string;
-  readonly vatRate: Order['lines'][number]['vatRate'];
+  /** The line's VAT percentage: the order's snapshot, or the rate Tax gives a new line's classification today. */
+  readonly vatRate: number;
 }
 
 export interface Draft {
@@ -57,6 +61,7 @@ const draftLineOf = (line: Order['lines'][number], index: number): DraftLine => 
     productId: line.productId,
     quantityText: String(line.quantity),
     sku: line.sku,
+    taxClassificationCode: line.taxClassificationCode,
     vatRate: line.vatRate,
   };
   if (line.variantId !== undefined) {

@@ -2,23 +2,54 @@
 // The order edit form as the user sees it: one Save button in the form's footer, the draft's status next to it, and
 // a question before unsaved changes are left. Only the generated clients, the i18n runtime and the router blocker are
 // replaced.
+import { CZ_VAT_REDUCED, CZ_VAT_STANDARD, TaxRateViewSchema } from '@app/shared-contracts/cz-vat-classifications';
+import type { TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
 import { Effect, Option, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
-import { act } from 'react';
+import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import { OrderSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
-import type { Order } from '../../shared/apis/records.ts';
+import { OrderSchema, ProductRecordSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import type { Order, ProductRecord } from '../../shared/apis/records.ts';
 import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
 import { executeRecords } from '../../src/api/records-consumer.ts';
 import { OrderEditForm } from '../../src/routes/[lang]/prodej/objednavky/order-edit-form.tsx';
+import type { ProductRecordState } from '../../src/routes/[lang]/provoz/produkty/product-reads.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
+import { translateTaxCs } from './merchandise-translate.ts';
+
+/** The product the mocked picker picks. */
+interface OfferedProduct {
+  current: ProductRecord | null;
+}
+
+const { offered } = rstest.hoisted(() => {
+  // Set before each test, since the mocks exist before this module's constants.
+  const pick: OfferedProduct = { current: null };
+  return { offered: pick };
+});
 
 rstest.mock('../../src/api/records-consumer.ts');
 rstest.mock('../../src/api/manage-catalog-action-client.ts');
 rstest.mock('../../src/api/cleanup-demo-action-client.ts');
 rstest.mock('../../src/api/change-order-status-action-client.ts');
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
+  useModernI18n: () => ({
+    language: 'cs',
+    t: (key: string, values?: Record<string, number | string>) => translateTaxCs(key, values),
+  }),
+}));
+// The product picker: one button that picks the product the test offers.
+rstest.mock('../../src/routes/[lang]/provoz/produkty/product-search.tsx', () => ({
+  ProductSearchCombobox: (props: { readonly onSelect: (product: ProductRecord | null) => void }) =>
+    createElement('button', { onClick: () => props.onSelect(offered.current), type: 'button' }, 'pick product'),
+}));
+// The picked product's full record arrives at once.
+rstest.mock('../../src/routes/[lang]/provoz/produkty/product-reads.ts', () => ({
+  loadProductRecord: (_productId: string, answer: (state: ProductRecordState) => void) => {
+    if (offered.current !== null) {
+      answer({ product: offered.current, status: 'ready' });
+    }
+  },
 }));
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   useBlocker: () => ({ status: 'idle' }),
@@ -27,8 +58,10 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
 const opened = '2026-10-15T10:00:00.000Z';
 const savedHere = '2026-10-15T10:06:00.000Z';
 
-const orderOf = (fields: { readonly note?: string; readonly updatedAt: string }): Order =>
-  Schema.decodeSync(OrderSchema)({
+// contract: once package B's OrderLineSchema carries `taxClassificationCode` (and `taxRuleRevisionId`), decode them
+// with the order and drop this spread.
+const orderOf = (fields: { readonly note?: string; readonly updatedAt: string }): Order => {
+  const order = Schema.decodeSync(OrderSchema)({
     contact: { email: 'ada@example.test', name: 'Ada Guest' },
     createdAt: opened,
     deliveryAddress: { city: 'Brno', country: 'CZ', postalCode: '60200', street: 'Kavárna 1' },
@@ -45,6 +78,37 @@ const orderOf = (fields: { readonly note?: string; readonly updatedAt: string })
     totalVatMinor: 42,
     updatedAt: fields.updatedAt,
   });
+  return { ...order, lines: order.lines.map((line) => ({ ...line, taxClassificationCode: CZ_VAT_STANDARD })) };
+};
+
+const rate = Schema.decodeSync(TaxRateViewSchema);
+/** Today Tax gives the standard classification 23 %: the order's own line keeps the 21 % it was snapshotted with. */
+const standardRate = rate({ code: CZ_VAT_STANDARD, effectiveFrom: '2020-01-01T00:00:00Z', ratePercent: 23 });
+const reducedRate = rate({ code: CZ_VAT_REDUCED, effectiveFrom: '2020-01-01T00:00:00Z', ratePercent: 12 });
+/** The company's rates the page passes in; a test replaces them. */
+let taxRates: readonly TaxRateView[] = [standardRate, reducedRate];
+
+// contract: once package B's ProductSchema carries `taxClassificationCode`, decode it and drop `vatRate`.
+const beans: ProductRecord = {
+  ...Schema.decodeSync(ProductRecordSchema)({
+    active: true,
+    category: 'Káva',
+    createdAt: opened,
+    currentPriceMinor: 800,
+    id: 'product-2',
+    lowStock: false,
+    lowStockThreshold: 0,
+    name: 'Zrnková káva',
+    priceHistory: [],
+    sku: 'BEANS',
+    stockOnHand: 50,
+    stockValueMinor: 40_000,
+    unit: 'ks',
+    updatedAt: opened,
+    vatRate: 12,
+  }),
+  taxClassificationCode: CZ_VAT_REDUCED,
+};
 
 const recordsWith = (order: Order, revision: number) =>
   Schema.decodeSync(RecordsResponseSchema)({
@@ -93,6 +157,7 @@ const mount = async (): Promise<View> => {
         order={orderOf({ updatedAt: opened })}
         products={[]}
         revision={7}
+        taxRates={taxRates}
       />,
     );
     await settle();
@@ -160,11 +225,14 @@ const waitUntil = async (condition: () => boolean, attempt = 0): Promise<void> =
   await waitUntil(condition, attempt + 1);
 };
 
-const text = () => document.body.textContent ?? '';
+/** What the form shows, with non-breaking spaces (money, percent) read as plain spaces. */
+const text = () => (document.body.textContent ?? '').replaceAll('\u00A0', ' ');
 
 beforeEach(() => {
   rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   rstest.resetAllMocks();
+  offered.current = beans;
+  taxRates = [standardRate, reducedRate];
   rstest.mocked(executeManageCatalog).mockReturnValue(Effect.succeed({ entityIds: [], revision: 8 }));
   rstest
     .mocked(executeRecords)
@@ -248,6 +316,40 @@ describe('order edit form with one Save button', () => {
       yield* Effect.promise(() => click(button('merchandise.pages.orders.detail.backToDetail')));
       expect(buttons('Zůstat')).toHaveLength(0);
       expect(view.cancelled).toEqual(['cancel']);
+    }),
+  );
+});
+
+describe('VAT of the order lines', () => {
+  it.effect("an order's own line shows the VAT it was snapshotted with, named by its classification", () =>
+    Effect.gen(function* snapshot() {
+      yield* Effect.promise(mount);
+      expect(text()).toContain('merchandise.pages.orders.detail.lineVat Základní (21 %)');
+      expect(text()).not.toContain('23 %');
+      // 2 × 1 Kč net + 21 % VAT, as the order already counted it.
+      expect(text()).toContain('2,42 Kč');
+    }),
+  );
+
+  it.effect("an added product takes its classification from the product and today's rate from Tax", () =>
+    Effect.gen(function* added() {
+      yield* Effect.promise(mount);
+      yield* Effect.promise(() => click(button('pick product')));
+      yield* Effect.promise(() => click(button('Přidat')));
+      expect(text()).toContain('merchandise.pages.orders.detail.lineVat Snížená (12 %)');
+      // 2,42 Kč for the order's line, plus 8 Kč net and 0,96 Kč VAT for the new one.
+      expect(text()).toContain('11,38 Kč');
+      expect(edits()).toBe(0);
+    }),
+  );
+
+  it.effect('a product whose classification has no rate in force cannot be added, and the form says why', () =>
+    Effect.gen(function* missing() {
+      taxRates = [standardRate];
+      yield* Effect.promise(mount);
+      yield* Effect.promise(() => click(button('pick product')));
+      expect(text()).toContain('Sazba DPH „Snížená“ není pro tuto firmu nastavená, produkt nelze přidat.');
+      expect(button('Přidat').disabled).toBe(true);
     }),
   );
 });

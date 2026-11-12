@@ -31,6 +31,8 @@ const instant = '2026-10-15T10:00:00Z';
 const PAGE_SIZE = 50;
 const ROWS = 10;
 
+// contract: package B's order lines carry `taxClassificationCode` and the internal `taxRuleRevisionId`; the
+// revision id's exact shape is B's (a placeholder string here).
 const orders = Array.from({ length: ROWS }, (_, index) =>
   Schema.encodeSync(OrderSchema)(
     Schema.decodeSync(OrderSchema)({
@@ -42,6 +44,8 @@ const orders = Array.from({ length: ROWS }, (_, index) =>
           productName: 'Cable',
           quantity: 1,
           sku: 'CABLE',
+          taxClassificationCode: 'cz.vat.standard',
+          taxRuleRevisionId: 'tax-rule-revision-1',
           unitPriceMinor: 100,
           vatRate: 21,
         },
@@ -69,6 +73,8 @@ const responseOf = (rows: { readonly orders?: typeof orders }) =>
     orders: rows.orders ?? [],
     products: [],
     revision: 7,
+    // contract: package B's staff records responses carry the company's VAT rates.
+    taxRates: [],
     totalOrders: ROWS,
   });
 

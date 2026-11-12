@@ -35,10 +35,13 @@ import { shippingOptions } from './order-eshop.ts';
 import { addressIncomplete, contactIncomplete, parseAmount, parseQuantity } from './order-edit-draft.ts';
 import type { Draft, DraftLine } from './order-edit-draft.ts';
 import { useOrderEditDraft } from './order-edit-save.ts';
-import { activeVariants } from './order-line-draft.ts';
+import { activeVariants, lineClassification } from './order-line-draft.ts';
 import { loadProductRecord } from '../../provoz/produkty/product-reads.ts';
 import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts';
 import { ProductSearchCombobox } from '../../provoz/produkty/product-search.tsx';
+import { useTaxLabels } from '../../provoz/produkty/product-tax-classification.ts';
+import type { TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
+import { DateTime } from 'effect';
 
 type Mutable<Value> = { -readonly [Key in keyof Value]: Value[Key] };
 
@@ -51,13 +54,24 @@ interface SellableUnit {
   readonly netMinor: number;
   readonly productId: ProductId;
   readonly sku: string;
+  readonly taxClassificationCode: DraftLine['taxClassificationCode'];
   readonly variantId?: VariantId;
   readonly variantName?: string;
   readonly vatRate: DraftLine['vatRate'];
 }
 
-/** The unit a pick adds: the product itself, or its chosen active variant. Undefined until that choice is complete. */
-const sellableUnit = (product: ProductRecord, variantId: VariantId | null): SellableUnit | undefined => {
+/**
+ * The unit a pick adds: the product itself, or its chosen active variant, with the rate Tax gives the product's
+ * classification today. Undefined until that choice is complete, and while the classification has no rate in force.
+ */
+const sellableUnit = (
+  product: ProductRecord,
+  variantId: VariantId | null,
+  vatRate: number | undefined,
+): SellableUnit | undefined => {
+  if (vatRate === undefined) {
+    return undefined;
+  }
   const variants = activeVariants(product);
   if (variants.length === 0) {
     return {
@@ -65,7 +79,8 @@ const sellableUnit = (product: ProductRecord, variantId: VariantId | null): Sell
       netMinor: product.currentPriceMinor,
       productId: product.id,
       sku: product.sku,
-      vatRate: product.vatRate,
+      taxClassificationCode: product.taxClassificationCode,
+      vatRate,
     };
   }
   const variant = variants.find((entry) => entry.id === variantId);
@@ -76,9 +91,10 @@ const sellableUnit = (product: ProductRecord, variantId: VariantId | null): Sell
         netMinor: variant.priceMinor,
         productId: product.id,
         sku: variant.sku,
+        taxClassificationCode: product.taxClassificationCode,
         variantId: variant.id,
         variantName: variant.name,
-        vatRate: product.vatRate,
+        vatRate,
       };
 };
 
@@ -133,6 +149,8 @@ interface OrderEditFormProps {
   /** Full records of the products on the order's lines. */
   readonly products: readonly ProductRecord[];
   readonly revision: number;
+  /** The company's VAT rates (current and scheduled); a new line's rate comes from its product's classification. */
+  readonly taxRates: readonly TaxRateView[];
 }
 
 /**
@@ -152,8 +170,10 @@ const useOrderEditForm = ({
   pickupBrand,
   products,
   revision,
+  taxRates,
 }: OrderEditFormProps) => {
   const { language, t } = useModernI18n();
+  const taxLabels = useTaxLabels();
   const sequence = useRef(0);
   // The product picked for a new line, with its full record (variants) read on pick.
   const [pick, setPick] = useState<{
@@ -175,7 +195,16 @@ const useOrderEditForm = ({
     }
   };
   const pickedVariants = activeVariants(pickedProduct);
-  const unit = pickedProduct === null ? undefined : sellableUnit(pickedProduct, pickedVariantId);
+  // A product whose classification has no rate in force cannot go on the order: the server snapshots that rate.
+  const pickedClassification = lineClassification(pickedProduct, taxRates, DateTime.nowUnsafe());
+  const pickedRateMissing =
+    pickedClassification !== null && pickedClassification.current === undefined
+      ? taxLabels.rateMissing(pickedClassification.code)
+      : undefined;
+  const unit =
+    pickedProduct === null
+      ? undefined
+      : sellableUnit(pickedProduct, pickedVariantId, pickedClassification?.current?.ratePercent);
   const gross = order.pricesIncludeVat === true;
   const currencyUnit = t(`merchandise.ui.currencyUnit.${orderCurrency(order)}`);
   const rulesFor = (line: Pick<DraftLine, 'productId' | 'variantId'>) => {
@@ -276,6 +305,7 @@ const useOrderEditForm = ({
       productId: unit.productId,
       quantityText: String(Math.ceil(rules.minimum / rules.step) * rules.step),
       sku: unit.sku,
+      taxClassificationCode: unit.taxClassificationCode,
       vatRate: unit.vatRate,
     };
     if (unit.variantId !== undefined) {
@@ -314,6 +344,7 @@ const useOrderEditForm = ({
     patch,
     patchLine,
     pick,
+    pickedRateMissing,
     pickedVariantId,
     pickedVariants,
     pickProduct,
@@ -322,6 +353,7 @@ const useOrderEditForm = ({
     setPickedVariantId,
     shippingInvalid,
     t,
+    taxLabels,
     unit,
   };
 };
@@ -468,6 +500,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
     patch,
     patchLine,
     pick,
+    pickedRateMissing,
     pickedVariantId,
     pickedVariants,
     pickProduct,
@@ -475,6 +508,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
     record,
     setPickedVariantId,
     t,
+    taxLabels,
     unit,
   } = model;
   const { actionsSlot } = props;
@@ -535,6 +569,9 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
                         <span className="font-medium">{line.name}</span>
                         <span className="text-fg-secondary text-xs">
                           {line.variantName === undefined ? line.sku : `${line.variantName} · ${line.sku}`}
+                        </span>
+                        <span className="text-fg-secondary text-xs">
+                          {`${t('merchandise.pages.orders.detail.lineVat')} ${taxLabels.line(line.taxClassificationCode, line.vatRate)}`}
                         </span>
                       </div>
                     </Table.Cell>
@@ -651,6 +688,11 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
                 size="sm"
                 value={pickedVariantId === null ? [] : [pickedVariantId]}
               />
+            )}
+            {pickedRateMissing !== undefined && (
+              <StatusText showIcon status="error">
+                {pickedRateMissing}
+              </StatusText>
             )}
             {pick?.record.status === 'error' && (
               <StatusText showIcon status="error">

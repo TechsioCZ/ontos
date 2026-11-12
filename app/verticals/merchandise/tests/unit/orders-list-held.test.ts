@@ -36,12 +36,23 @@ const otherTenant: ModulePageContext = { legalEntityId: 'company-1', principalId
 const instant = '2026-10-15T10:00:00Z';
 const PAGE_SIZE = 2;
 
+// contract: package B's order lines carry `taxClassificationCode` and the internal `taxRuleRevisionId`; the
+// revision id's exact shape is B's (a placeholder string here).
 const orderOf = (number: string) =>
   Schema.decodeSync(OrderSchema)({
     createdAt: instant,
     id: `order-${number}`,
     lines: [
-      { productId: 'product-1', productName: 'Cable', quantity: 2, sku: 'CABLE', unitPriceMinor: 100, vatRate: 21 },
+      {
+        productId: 'product-1',
+        productName: 'Cable',
+        quantity: 2,
+        sku: 'CABLE',
+        taxClassificationCode: 'cz.vat.standard',
+        taxRuleRevisionId: 'tax-rule-revision-1',
+        unitPriceMinor: 100,
+        vatRate: 21,
+      },
     ],
     number,
     partyId: 'party-1',
@@ -63,8 +74,10 @@ const product = Schema.decodeSync(ProductRecordSchema)({
   sku: 'CABLE',
   stockOnHand: 10,
   stockValueMinor: 1000,
+  taxClassificationCode: 'cz.vat.standard',
   unit: 'ks',
   updatedAt: instant,
+  // contract: drop once package B's ProductSchema replaces `vatRate` with `taxClassificationCode`.
   vatRate: 21,
 });
 const recordsOf = (numbers: readonly string[], revision: number, totalOrders: number) =>
@@ -79,6 +92,8 @@ const recordsOf = (numbers: readonly string[], revision: number, totalOrders: nu
     orders: numbers.map((number) => Schema.encodeSync(OrderSchema)(orderOf(number))),
     products: [],
     revision,
+    // contract: package B's staff records responses carry the company's VAT rates.
+    taxRates: [],
     totalOrders,
   });
 const denied = Schema.decodeSync(RecordsForbiddenProblemSchema)({

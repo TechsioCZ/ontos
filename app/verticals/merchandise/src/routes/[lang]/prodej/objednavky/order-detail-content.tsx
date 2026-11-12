@@ -16,6 +16,7 @@ import type { OrderStatus } from '../../../../../shared/domain/merchandise-model
 import { lineGrossMinor } from '../../../../../shared/domain/order-totals.ts';
 import type { CustomerDirectory } from './customers-directory.ts';
 import { OrderEditForm } from './order-edit-form.tsx';
+import { useTaxLabels } from '../../provoz/produkty/product-tax-classification.ts';
 import { OrderEmailDeliveries } from './order-email-deliveries.tsx';
 import { OrderCustomerButton } from './order-customer-button.tsx';
 import {
@@ -594,7 +595,8 @@ export const OrderDetailContent = ({
   revision,
 }: OrderDetailContentProps) => {
   const { language, t } = useModernI18n();
-  const { movesStock: orderMovesStock, order, products } = detail;
+  const taxLabels = useTaxLabels();
+  const { movesStock: orderMovesStock, order, products, taxRates } = detail;
   const pickupBrand = pickupBrandOf(products, brand);
   const { showCleanup, showCustomerConversion, showEdit, storefront } = orderDetailAffordances(
     order,
@@ -625,6 +627,7 @@ export const OrderDetailContent = ({
           pickupBrand={pickupBrand}
           products={products}
           revision={revision}
+          taxRates={taxRates}
         />
       </div>
     );
@@ -723,7 +726,7 @@ export const OrderDetailContent = ({
                   {formatMoney(line.unitPriceMinor, orderCurrency(order))}
                 </Table.Cell>
                 <Table.Cell align="end" className="whitespace-nowrap tabular-nums">
-                  {`${line.vatRate} %`}
+                  {taxLabels.line(line.taxClassificationCode, line.vatRate)}
                 </Table.Cell>
                 <Table.Cell align="end" className="whitespace-nowrap tabular-nums">
                   {formatMoney(lineGrossMinor(line, order.pricesIncludeVat), orderCurrency(order))}

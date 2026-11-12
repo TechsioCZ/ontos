@@ -33,6 +33,7 @@ import type { DetailRead } from '../../../../runtime/kept-detail.ts';
 import { useSettledPageData } from '../../../../runtime/page-data-hooks.ts';
 import type { SettledPageData } from '../../../../runtime/page-data-hooks.ts';
 import { customerDirectoryData } from './customers-directory.ts';
+import type { TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
 
 const ORDERS_MODULE = 'demo.merchandise';
 
@@ -272,6 +273,8 @@ export interface OrderDetailRecords {
    */
   readonly products: readonly ProductRecord[];
   readonly revision: number;
+  /** The company's VAT rates (current and scheduled); the edit form takes a new line's rate from them. */
+  readonly taxRates: readonly TaxRateView[];
 }
 
 const OrderDetailIncomplete = Data.TaggedError('OrderDetailIncomplete');
@@ -338,6 +341,7 @@ const loadOrderDetail = Effect.fn('OrdersRecords.loadDetail')(function* loadOrde
       ...full.map((response) => response.revision),
       ...ledgers.map((ledger) => ledger.revision),
     ),
+    taxRates: rows.taxRates,
   } satisfies OrderDetailRecords;
 });
 
@@ -1027,7 +1031,8 @@ export const useOrderDetail = (
       left.order === right.order &&
       left.products === right.products &&
       left.revision === right.revision &&
-      left.movesStock === right.movesStock,
+      left.movesStock === right.movesStock &&
+      left.taxRates === right.taxRates,
   });
   if (kept === null) {
     return state;

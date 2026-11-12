@@ -16,7 +16,7 @@ import {
 } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { Effect } from 'effect';
+import { DateTime, Effect } from 'effect';
 import { constVoid } from 'effect/Function';
 import { useRef, useState } from 'react';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -27,7 +27,9 @@ import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts'
 import type { NewOrderLine } from './orders-records.ts';
 import { createOrder, isRevisionConflict } from './orders-records.ts';
 import { OrderLineEditor } from './order-line-editor.tsx';
-import { activeVariants, lineProduct } from './order-line-draft.ts';
+import { activeVariants, lineClassification, lineProduct } from './order-line-draft.ts';
+import { useTaxLabels } from '../../provoz/produkty/product-tax-classification.ts';
+import type { TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
 import type { DraftLine, DraftLinePatch } from './order-line-draft.ts';
 
 const key = (path: string) => `merchandise.pages.orders.${path}`;
@@ -89,10 +91,21 @@ interface OrderCreateDialogProps {
   readonly onOpenChange: (open: boolean) => void;
   readonly open: boolean;
   readonly revision: number;
+  /** The company's VAT rates from the staff records read; each line's VAT comes from its product's classification. */
+  readonly taxRates: readonly TaxRateView[];
 }
 
-export const OrderCreateDialog = ({ customers, onCreated, onOpenChange, open, revision }: OrderCreateDialogProps) => {
+export const OrderCreateDialog = ({
+  customers,
+  onCreated,
+  onOpenChange,
+  open,
+  revision,
+  taxRates,
+}: OrderCreateDialogProps) => {
   const { language, t } = useModernI18n();
+  const taxLabels = useTaxLabels();
+  const now = DateTime.nowUnsafe();
   const toaster = useToast();
   const lineSequence = useRef(1);
   const newLine = (): DraftLine => {
@@ -135,6 +148,10 @@ export const OrderCreateDialog = ({ customers, onCreated, onOpenChange, open, re
       if (activeVariants(product).length > 0 && line.variantId === null) {
         return t(key('create.errorVariant'));
       }
+      // The server snapshots the rate Tax gives the classification; without one in force the line cannot be ordered.
+      if (lineClassification(product, taxRates, now)?.current === undefined) {
+        return taxLabels.rateMissing(product.taxClassificationCode);
+      }
       return isValidQuantity(line.quantity) ? undefined : t(key('create.errorQuantity'));
     });
   const partyError = partyErrorOf(draft);
@@ -143,9 +160,10 @@ export const OrderCreateDialog = ({ customers, onCreated, onOpenChange, open, re
   const priced = draft.lines.flatMap((line) => {
     const product = lineProduct(line);
     const variant = product?.variantRecords?.find((entry) => entry.id === line.variantId);
-    return product === null || !isValidQuantity(line.quantity)
+    const vatRate = lineClassification(product, taxRates, now)?.current?.ratePercent;
+    return product === null || vatRate === undefined || !isValidQuantity(line.quantity)
       ? []
-      : [lineAmounts(variant?.priceMinor ?? product.currentPriceMinor, line.quantity, product.vatRate)];
+      : [lineAmounts(variant?.priceMinor ?? product.currentPriceMinor, line.quantity, vatRate)];
   });
   const totals = sumAmounts(priced);
 
@@ -277,6 +295,7 @@ export const OrderCreateDialog = ({ customers, onCreated, onOpenChange, open, re
                 onChange={(patch) => updateLine(line.key, patch)}
                 onRecord={(productId, record) => receiveRecord(line.key, productId, record)}
                 onRemove={() => removeLine(line.key)}
+                taxRates={taxRates}
               />
             ))}
             <div>

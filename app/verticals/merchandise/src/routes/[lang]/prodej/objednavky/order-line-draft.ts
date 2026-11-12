@@ -1,6 +1,10 @@
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { VariantId, VariantRecord } from '../../../../../shared/domain/merchandise-model.ts';
 import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts';
+import { classificationChoice } from '../../provoz/produkty/product-tax-classification.ts';
+import type { ClassificationChoice } from '../../provoz/produkty/product-tax-classification.ts';
+import type { TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
+import type { DateTime } from 'effect';
 
 export interface DraftLine {
   readonly key: string;
@@ -24,3 +28,14 @@ export const lineProduct = (line: DraftLine): ProductRecord | null =>
 /** Active variants of a product; a product without them is sold as itself. */
 export const activeVariants = (product: ProductRecord | null): readonly VariantRecord[] =>
   (product?.variantRecords ?? []).filter((variant) => variant.active);
+
+/**
+ * The VAT a line for `product` gets: the product's classification with the rate Tax gives it at `now`. The server
+ * snapshots the same rate onto the line; without a rate in force the product cannot be ordered.
+ */
+export const lineClassification = (
+  product: ProductRecord | null,
+  taxRates: readonly TaxRateView[],
+  now: DateTime.Utc,
+): ClassificationChoice | null =>
+  product === null ? null : classificationChoice(taxRates, product.taxClassificationCode, now);

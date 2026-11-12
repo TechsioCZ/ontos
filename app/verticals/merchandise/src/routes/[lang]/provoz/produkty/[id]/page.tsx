@@ -158,6 +158,7 @@ const ProductDetailPageContent = ({ context, legalEntityId, routeParams, search 
           product={state.product}
           revision={state.response.revision}
           tab={tab}
+          taxRates={state.response.taxRates}
           variantId={variantId}
         />
       ) : (
