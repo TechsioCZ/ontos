@@ -421,6 +421,11 @@ const fetchLoopback = (url: string) =>
     return new Uint8Array(yield* response.arrayBuffer);
   }).pipe(Effect.scoped, Effect.timeout(ARTIFACT_FETCH_TIMEOUT));
 
+/** How long the release module installation may take before the host goes on without it. */
+const RELEASE_MODULES_BUDGET = Duration.minutes(3);
+/** The release step that installs the modules each stage Tenant is approved to have and still lacks. */
+export const RELEASE_MODULES_SCRIPT = 'scripts/demo/release-tenant-modules.mts';
+
 const waitForOwner = (owner: HostedUnit) => {
   const probe = owner.id === SHELL_ID ? ONTOS_SHELL_RUNTIME_CONTRACT_PATH : ONTOS_MODULE_CONTRACT_PATH;
   return fetchLoopback(`${loopbackOrigin(owner.port)}${probe}`).pipe(
@@ -908,6 +913,22 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     yield* openPublicPort;
     yield* Ref.set(published, true);
     yield* closePublicPortWhenSuperseded(revision).pipe(Effect.forkChild);
+    // Platform module installation (`release-tenant-modules.mts`): against the composition just published, every
+    // stage Tenant gets the approved modules it still lacks, written as `system` and projected into SpiceDB by the
+    // step itself, so routine module installs need neither a person nor a host shell. It is additive only, bounded,
+    // runs beside the Outbox host and never holds or fails the boot: a failure is one loud line.
+    yield* runChild('release-modules', node, [RELEASE_MODULES_SCRIPT], workspaceRoot, derived).pipe(
+      Effect.timeoutOrElse({
+        duration: RELEASE_MODULES_BUDGET,
+        orElse: () => Effect.fail(failure('the release module installation exceeded its time budget')),
+      }),
+      Effect.catchTag('AppHostError', ({ reason }) =>
+        Console.error(
+          `[app-host] RELEASE MODULE INSTALLATION FAILED (${reason}); the modules stay as they were until the next release`,
+        ),
+      ),
+      Effect.forkChild,
+    );
     // The release step writes no authorization relationship. Authorization v2 (ADR-0030) projects every tuple from
     // PostgreSQL intent through the one Core writer, so the retired `scoped_role`/`action`/`context_permission`
     // reconciliation would only fail here. Live intent is seeded by the operator-gated stage bootstrap

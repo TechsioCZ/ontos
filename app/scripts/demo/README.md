@@ -455,16 +455,31 @@ Run it on the app host with only `DATABASE_URL` set: `--mode dry-run` prints eve
 non-machine principals, inactive companies, an owner that is not the Tenant's current human owner, and a binding
 already registered for another company. It writes no Role, grant, membership or key.
 
-### Tenant-wide module activation on stage
+### Tenant-wide modules on stage: installed by every release
+
+`stage-tenant-modules.mts` is the one per-Tenant list of modules approved to be active on stage: the demo Tenant
+market catalogue, storefront registry, Projekty and `commerce.tax`; N1 Tasks and `commerce.tax`; the AKROS
+playground `commerce.tax`. `commerce.tax` needs a Tenant that sells or invoices (`demo.merchandise` or
+`finance.billing` active). The local development (`…0010`) and verification (`…0090`) Tenants are not listed.
+
+Every release installs what is missing, with no person and no host shell: right after the app host publishes the
+composition it runs `release-tenant-modules.mts` (Core: `packages/core-runtime/src/install/release-tenant-modules.ts`).
+For each listed pair it installs a module that has no state yet (state and history written as `system`), leaves an
+active one alone, and never touches a state a person set (inactive, suspended, …). It refuses a module the published
+composition does not serve. Each Tenant that gained a module is then projected into SpiceDB under its platform
+release actor, the same writer the migrator's access release activation uses, so the owner's "Plný přístup" rights
+in the module are effective when the step logs `[release-modules] tenant … reconciled`. They do not wait for the
+Outbox host. A failure is one loud `RELEASE MODULE INSTALLATION FAILED` line; the boot goes on.
+
+### Tenant-wide module activation by hand
 
 `activate-market-stage.mts` installs one module tenant-wide through Core's own
 `core.modules.change-tenant-module-state` Action, signed in as a tenant-only operator (`ONTOS_AGENT_SETUP_EMAIL`,
 `ONTOS_AGENT_SETUP_PASSWORD`; on the app host also the Shell's `BETTER_AUTH_*`,
 `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT=stage`, `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`). Each Tenant has an explicit
-allowlist: the demo Tenant market catalogue, storefront registry, Projekty and `commerce.tax`; N1 Tasks and
-`commerce.tax`; the AKROS playground `commerce.tax`. `commerce.tax` is installed only where the Tenant already has
-`demo.merchandise` or `finance.billing` active, and those selling modules are part of the reviewed plan. The local
-development (`…0010`) and verification (`…0090`) Tenants neither sell nor invoice and are not listed.
+allowlist, the same list as above. The selling modules `commerce.tax` needs are part of the reviewed plan. It is
+the reviewed manual path for exactly the pairs a release installs; it needs the app host, so routine installs leave
+it to the release.
 
 ```bash
 node scripts/demo/activate-market-stage.mts --module commerce.tax --plan "$WORK/plan.json"            # dry-run
@@ -492,13 +507,16 @@ the same right. A second `apply` plans nothing and adds no revision.
 ```bash
 export ONTOS_DEMO_SEED_URL=https://ontos-stage.web-revolution.cz ONTOS_DEMO_SEED_TENANT_ID=<tenant>
 export ONTOS_DEMO_SEED_EMAIL=<operator> ONTOS_DEMO_SEED_PASSWORD=<from a secret prompt>
-node scripts/demo/seed-tax-baseline.mts --mode dry-run          # table per company + plan fingerprint
+node scripts/demo/seed-tax-baseline.mts --mode dry-run --wait-seconds 600   # table per company + plan fingerprint
 node scripts/demo/seed-tax-baseline.mts --mode apply --reviewed-plan-sha256 <fingerprint>
 node scripts/demo/seed-tax-baseline.mts --mode verify           # exits 1 unless every company has the baseline
 ```
 
 The human table names companies only; `--json` adds ids, the plan and per-write `created`. Only the demo, N1 and
-AKROS playground Tenants are accepted.
+AKROS playground Tenants are accepted. It needs only the Shell origin and a persona's credentials, never the host.
+`--wait-seconds N` (any mode) re-observes every 10 s until each governed read answers and "Proč?" finds no missing
+right, at most N seconds, so a run started right after a deploy waits for the release step instead of failing; a right
+that never arrives is still reported by name.
 
 ## Pseudonymous demo catalog (lane P/b)
 

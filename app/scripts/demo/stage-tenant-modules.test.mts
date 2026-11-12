@@ -1,0 +1,91 @@
+import { readFileSync } from 'node:fs';
+
+import { expect, it } from 'effect-rstest';
+
+import { RELEASE_MODULES_SCRIPT } from '../zerops/app-host.mts';
+import { marketActivationScopeAllowed } from './activate-market-stage.mts';
+import { demoTenantId } from './fixture-ids.mts';
+import { N1_TENANT_ID } from './n1-stage-grants.mts';
+import { reportLines, reportProblems } from './release-tenant-modules.mts';
+import {
+  AKROS_PLAYGROUND_TENANT_ID,
+  sellingModuleKeys,
+  stageActivationScopes,
+  stageMarketModuleKeys,
+  stageReleaseTenantModules,
+} from './stage-tenant-modules.mts';
+
+const tax = 'commerce.tax';
+const selling = ['demo.merchandise', 'finance.billing'];
+
+it('the release installs exactly the pairs the reviewed manual path may activate', () => {
+  const released = stageReleaseTenantModules.map(({ moduleKey, tenantId }) => `${tenantId} ${moduleKey}`);
+  expect(released).toEqual(
+    stageActivationScopes.flatMap(({ moduleKeys, tenantId }) => moduleKeys.map((key) => `${tenantId} ${key}`)),
+  );
+  // One source: every pair the release installs is one the operator could activate by hand, and nothing else.
+  for (const tenantId of [demoTenantId, N1_TENANT_ID, AKROS_PLAYGROUND_TENANT_ID]) {
+    for (const moduleKey of stageMarketModuleKeys) {
+      expect(marketActivationScopeAllowed(tenantId, moduleKey, 'session')).toBe(
+        released.includes(`${tenantId} ${moduleKey}`),
+      );
+    }
+  }
+});
+
+it('declares commerce.tax for the three selling Tenants, only where they already sell or invoice', () => {
+  expect(
+    stageReleaseTenantModules.filter(({ moduleKey }) => moduleKey === tax).map(({ tenantId }) => tenantId),
+  ).toEqual([demoTenantId, N1_TENANT_ID, AKROS_PLAYGROUND_TENANT_ID]);
+  for (const entry of stageReleaseTenantModules) {
+    expect(entry.sellingModuleKeys).toEqual(entry.moduleKey === tax ? selling : []);
+  }
+  expect([...sellingModuleKeys]).toEqual(selling);
+});
+
+it('reports every decision in one line and fails only on a module it could not install or project', () => {
+  const report = {
+    modules: [
+      {
+        detail: 'installed active by the release',
+        moduleKey: tax,
+        outcome: 'installed' as const,
+        tenantId: demoTenantId,
+      },
+      { detail: 'active', moduleKey: tax, outcome: 'already_active' as const, tenantId: N1_TENANT_ID },
+      {
+        detail: 'a person set it inactive; a release never changes that',
+        moduleKey: 'work.tasks',
+        outcome: 'left_as_set' as const,
+        tenantId: N1_TENANT_ID,
+      },
+    ],
+    reconciles: [{ deletions: 0, tenantId: demoTenantId, touches: 12 }],
+  };
+  expect(reportLines(report)).toEqual([
+    `[release-modules] tenant ${demoTenantId} ${tax}: installed (installed active by the release)`,
+    `[release-modules] tenant ${N1_TENANT_ID} ${tax}: already_active (active)`,
+    `[release-modules] tenant ${N1_TENANT_ID} work.tasks: left_as_set (a person set it inactive; a release never changes that)`,
+    `[release-modules] tenant ${demoTenantId}: reconciled, SpiceDB +12/-0`,
+  ]);
+  expect(reportProblems(report)).toEqual([]);
+  const failed = {
+    modules: [{ detail: 'boom', moduleKey: tax, outcome: 'failed' as const, tenantId: demoTenantId }],
+    reconciles: [{ deletions: 0, failure: 'engine down', tenantId: N1_TENANT_ID, touches: 0 }],
+  };
+  expect(reportProblems(failed)).toEqual([`${demoTenantId} ${tax}`, `${N1_TENANT_ID} reconcile`]);
+});
+
+it('the app host runs the release step after it publishes the composition, without holding the boot', () => {
+  const host = readFileSync(new URL('../zerops/app-host.mts', import.meta.url), 'utf-8');
+  expect(RELEASE_MODULES_SCRIPT).toBe('scripts/demo/release-tenant-modules.mts');
+  const published = host.indexOf('yield* openPublicPort;');
+  const step = host.indexOf("yield* runChild('release-modules'");
+  const outbox = host.indexOf('const outbox = yield* startChild(');
+  expect(published).toBeGreaterThan(0);
+  expect(step).toBeGreaterThan(published);
+  expect(outbox).toBeGreaterThan(step);
+  const wiring = host.slice(step, outbox);
+  expect(wiring).toContain('Effect.forkChild');
+  expect(wiring).toContain('RELEASE MODULE INSTALLATION FAILED');
+});

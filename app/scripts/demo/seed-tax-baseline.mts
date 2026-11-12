@@ -22,7 +22,20 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { NodeServices } from '@effect/platform-node';
-import { Config, Console, DateTime, Effect, Exit, Layer, Match, Option, Redacted, Schema } from 'effect';
+import {
+  Config,
+  Console,
+  DateTime,
+  Duration,
+  Effect,
+  Exit,
+  Layer,
+  Match,
+  Option,
+  Redacted,
+  Schedule,
+  Schema,
+} from 'effect';
 import type { Scope } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
@@ -39,7 +52,9 @@ import { executeApplicableTaxRuleSetWithAuthorization } from '../../verticals/ta
 import { executeCreateTaxRuleWithAuthorization } from '../../verticals/tax/src/api/create-tax-rule-action-client.ts';
 import { executeDeclareSellerVatRegimeWithAuthorization } from '../../verticals/tax/src/api/declare-seller-vat-regime-action-client.ts';
 import { executeSellerVatRegimeAtInstantWithAuthorization } from '../../verticals/tax/src/api/seller-vat-regime-at-instant-client.ts';
-import { AKROS_PLAYGROUND_TENANT_ID } from './activate-market-stage.mts';
+import { CZ_VAT_REDUCED, CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
+
+import { AKROS_PLAYGROUND_TENANT_ID } from './stage-tenant-modules.mts';
 import { demoTenantId } from './fixture-ids.mts';
 import { N1_TENANT_ID } from './n1-stage-grants.mts';
 
@@ -49,12 +64,8 @@ type TenantId = typeof TenantIdSchema.Type;
 
 // --- the baseline -------------------------------------------------------------------------------------
 
-/**
- * The two Czech VAT classification codes of this phase. Defined here until the shared constants in
- * `@app/shared-contracts` (`cz-vat-classifications.ts`) land; then import them from there instead.
- */
-export const CZ_VAT_STANDARD = 'cz.vat.standard';
-export const CZ_VAT_REDUCED = 'cz.vat.reduced';
+/** The two Czech VAT classifications, as the shared contract names them (re-exported for the tests). */
+export { CZ_VAT_REDUCED, CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
 
 /** The day both rates and the payer regime start: 1 January 2024 (UTC midnight, the tax module's convention). */
 export const TAX_BASELINE_EFFECTIVE_FROM = '2024-01-01T00:00:00.000Z';
@@ -568,6 +579,45 @@ export interface TaxBaselineRun extends TaxBaselinePlanning {
   readonly outcomes: readonly WriteOutcome[];
 }
 
+export interface TaxBaselineRunOptions {
+  /** The Tenants this run may write to; only the integration test names its private Tenant here. */
+  readonly allowedTenants?: ReadonlyMap<string, string>;
+  /**
+   * Right after a deploy the module and the operator's tax rights may not be effective yet. Re-observe until every
+   * read answers and the explain check finds no missing right, at most `attempts` more times `spacing` apart; then
+   * the run goes on with what it last saw, so a right that never arrives is still reported by name.
+   */
+  readonly waitForRights?: { readonly attempts: number; readonly spacing: Duration.Duration };
+}
+
+/** Observed and planned, but not yet effective: a read refused, or a right explain still denies. */
+const RightsPendingSchema = Schema.TaggedStruct('RightsPending', { reason: Schema.String });
+const rightsPending = (reason: string) => RightsPendingSchema.make({ reason });
+
+const observedPlanning = (tenant: TaxBaselineTenantPort) =>
+  observeTenant(tenant).pipe(
+    Effect.map((observed) => planTaxBaseline(tenant.tenantId, tenant.operatorPrincipalId, observed)),
+  );
+
+const settledPlanning = (tenant: TaxBaselineTenantPort, wait: TaxBaselineRunOptions['waitForRights']) => {
+  if (wait === undefined || wait.attempts <= 0) {
+    return observedPlanning(tenant);
+  }
+  const effective = observedPlanning(tenant).pipe(
+    Effect.mapError(({ reason }) => rightsPending(reason)),
+    Effect.flatMap((planning) =>
+      planning.reports.every(({ missingRights }) => missingRights.length === 0)
+        ? Effect.succeed(planning)
+        : Effect.fail(rightsPending('a tax right is not effective yet')),
+    ),
+  );
+  return effective.pipe(
+    Effect.retry({ schedule: Schedule.spaced(wait.spacing), times: wait.attempts }),
+    // Out of patience: one last plain observation reports exactly what is still missing.
+    Effect.catchTag('RightsPending', () => observedPlanning(tenant)),
+  );
+};
+
 /**
  * dry-run: observe and plan, write nothing. apply: re-plan, require the reviewed fingerprint of exactly that plan,
  * send the writes one at a time, then re-observe and require the baseline. verify: observe and require the baseline.
@@ -576,16 +626,15 @@ export const runTaxBaseline = Effect.fn('TaxBaseline.run')(function* runTaxBasel
   mode: TaxBaselineMode,
   tenant: TaxBaselineTenantPort,
   reviewed: Option.Option<string>,
-  /** The Tenants this run may write to; only the integration test names its private Tenant here. */
-  allowedTenants: ReadonlyMap<string, string> = taxBaselineTenants,
+  options: TaxBaselineRunOptions = {},
 ) {
-  if (!allowedTenants.has(tenant.tenantId)) {
+  if (!(options.allowedTenants ?? taxBaselineTenants).has(tenant.tenantId)) {
     return yield* fail('The tax baseline is seeded only in the three selling stage Tenants');
   }
   if (tenant.companies.length === 0) {
     return yield* fail('The operator can select no company in this Tenant');
   }
-  const planning = planTaxBaseline(tenant.tenantId, tenant.operatorPrincipalId, yield* observeTenant(tenant));
+  const planning = yield* settledPlanning(tenant, options.waitForRights);
   const fingerprint = yield* taxBaselinePlanFingerprint(planning.plan);
   const run: TaxBaselineRun = { ...planning, fingerprint, mode, outcomes: [] };
   if (mode === 'dry-run') {
@@ -980,8 +1029,9 @@ const command = Command.make(
     json: Flag.Boolean('json').pipe(Flag.withDefault(false)),
     mode: Flag.Literals('mode', TaxBaselineModeSchema.literals).pipe(Flag.withDefault('dry-run')),
     reviewed: Flag.String('reviewed-plan-sha256').pipe(Flag.optional),
+    waitSeconds: Flag.Int('wait-seconds').pipe(Flag.withDefault(0)),
   },
-  ({ json, mode, reviewed }) =>
+  ({ json, mode, reviewed, waitSeconds }) =>
     Effect.gen(function* seedTaxBaseline() {
       const target = yield* validateSeedOrigin(
         yield* Config.String('ONTOS_DEMO_SEED_URL'),
@@ -993,7 +1043,9 @@ const command = Command.make(
         yield* Config.String('ONTOS_DEMO_SEED_EMAIL'),
         yield* Config.Redacted('ONTOS_DEMO_SEED_PASSWORD'),
       );
-      const run = yield* runTaxBaseline(mode, tenant, reviewed);
+      const run = yield* runTaxBaseline(mode, tenant, reviewed, {
+        waitForRights: { attempts: Math.ceil(Math.max(waitSeconds, 0) / 10), spacing: Duration.seconds(10) },
+      });
       yield* printTaxBaselineRun(run, json);
       if (run.problems.length > 0) {
         yield* Console.error('apply will refuse until every problem above is resolved.');

@@ -1,4 +1,4 @@
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Duration, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { LegalEntityIdSchema, PrincipalIdSchema, TenantIdSchema } from '../../packages/core-runtime/src/access/ids.ts';
@@ -6,7 +6,7 @@ import { createTaxRuleAction } from '../../verticals/tax/src/actions/create-tax-
 import { declareSellerVatRegimeAction } from '../../verticals/tax/src/actions/declare-seller-vat-regime.action.ts';
 import { applicableTaxRuleSetRead } from '../../verticals/tax/src/api/applicable-tax-rule-set.read.ts';
 import { sellerVatRegimeAtInstantRead } from '../../verticals/tax/src/api/seller-vat-regime-at-instant.read.ts';
-import { AKROS_PLAYGROUND_TENANT_ID } from './activate-market-stage.mts';
+import { AKROS_PLAYGROUND_TENANT_ID } from './stage-tenant-modules.mts';
 import { demoTenantId } from './fixture-ids.mts';
 import {
   CZ_VAT_REDUCED,
@@ -43,6 +43,7 @@ const companies = [
 const baseline = DateTime.makeUnsafe(TAX_BASELINE_EFFECTIVE_FROM);
 const createRight = taxBaselineRights.createRule;
 const declareRight = taxBaselineRights.declareRegime;
+const insufficientGrant = ['DENIED', 'deny.insufficient_grant'];
 
 interface FakeRule {
   readonly classificationCode: string;
@@ -55,6 +56,8 @@ interface FakeCompany {
   /** Calls whose write another run already committed under the same key: applied, but answered "committed". */
   readonly committedElsewhere: Set<string>;
   readonly denied: Map<string, readonly string[]>;
+  /** A denied right becomes effective after this many explain checks, as a release reconcile would land. */
+  readonly grantAfter: Map<string, number>;
   /** A runtime refusal the next matching write answers with, as the Action runner would. */
   readonly refuseNext: Map<string, TaxCallRefusal>;
   readonly regimes: { readonly effectiveFrom: DateTime.Utc; readonly regime: string }[];
@@ -79,6 +82,7 @@ const makeFakeTax = () => {
         committed: new Set(),
         committedElsewhere: new Set(),
         denied: new Map(),
+        grantAfter: new Map(),
         refuseNext: new Map(),
         regimes: [],
         rules: [],
@@ -87,6 +91,7 @@ const makeFakeTax = () => {
     ]),
   );
   const sent: string[] = [];
+  const checks: string[] = [];
   const of = (legalEntityId: string) => {
     const company = state.get(legalEntityId);
     if (company === undefined) {
@@ -119,7 +124,18 @@ const makeFakeTax = () => {
             ? 'SELECTED'
             : 'TAX_RULE_MISSING',
         }),
-      checkRight: (capabilityKey) => Effect.succeed(rightCheckOf(company, capabilityKey)),
+      checkRight: (capabilityKey) =>
+        Effect.sync(() => {
+          checks.push(`${legalEntityId} ${capabilityKey}`);
+          const left = company.grantAfter.get(capabilityKey);
+          if (left !== undefined) {
+            company.grantAfter.set(capabilityKey, left - 1);
+            if (left <= 1) {
+              company.denied.delete(capabilityKey);
+            }
+          }
+          return rightCheckOf(company, capabilityKey);
+        }),
       createRule: (payload, key) => {
         sent.push(key);
         const refusedWith = refusal('createRule', key);
@@ -174,7 +190,7 @@ const makeFakeTax = () => {
     operatorPrincipalId,
     tenantId,
   };
-  return { of, sent, tenant };
+  return { checks, of, sent, tenant };
 };
 
 const dryRun = (tenant: TaxBaselineTenantPort) => runTaxBaseline('dry-run', tenant, Option.none());
@@ -314,7 +330,7 @@ it.effect('never overwrites a regime or rule set differently, and names it', () 
 it.effect('stops before any write when explain shows the operator lacks a needed right, naming it', () =>
   Effect.gen(function* missingRight() {
     const { of, sent, tenant } = makeFakeTax();
-    of(shopId).denied.set(declareRight, ['DENIED', 'deny.insufficient_grant']);
+    of(shopId).denied.set(declareRight, insufficientGrant);
     const planned = yield* dryRun(tenant);
     expect(planned.problems).toEqual([
       `Šroubárna Vysočina s.r.o.: the operator lacks the right ${declareRight} (DENIED, deny.insufficient_grant)`,
@@ -336,6 +352,31 @@ it.effect('a right explain could not check is decided by the Action, and its ref
     expect(renderTaxBaseline(tenantId, planned.reports)).toContain('práva nešlo předem ověřit');
     const reason = yield* failureReason(runTaxBaseline('apply', tenant, Option.some(planned.fingerprint)));
     expect(reason).toBe(`Obchodní firma: the operator lacks the right ${createRight} (action_permission_denied)`);
+  }),
+);
+
+it.live('waits for rights that become effective after a deploy, then plans with them', () =>
+  Effect.gen(function* waitForRights() {
+    const { checks, of, tenant } = makeFakeTax();
+    const shop = of(shopId);
+    shop.denied.set(declareRight, insufficientGrant);
+    // The release reconcile lands while the seed waits: the third check of the right finds it effective.
+    shop.grantAfter.set(declareRight, 3);
+    const planned = yield* runTaxBaseline('dry-run', tenant, Option.none(), {
+      waitForRights: { attempts: 5, spacing: Duration.millis(1) },
+    });
+    expect(planned.problems).toEqual([]);
+    expect(planned.plan.writes).toHaveLength(6);
+    expect(checks.filter((check) => check === `${shopId} ${declareRight}`)).toHaveLength(3);
+    // A right that never arrives is reported by name once the patience is spent.
+    shop.grantAfter.delete(declareRight);
+    shop.denied.set(declareRight, insufficientGrant);
+    const impatient = yield* runTaxBaseline('dry-run', tenant, Option.none(), {
+      waitForRights: { attempts: 2, spacing: Duration.millis(1) },
+    });
+    expect(impatient.problems).toEqual([
+      `Šroubárna Vysočina s.r.o.: the operator lacks the right ${declareRight} (DENIED, deny.insufficient_grant)`,
+    ]);
   }),
 );
 
