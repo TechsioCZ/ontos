@@ -126,6 +126,7 @@ export const intakeClientPartyAction = defineAction(
                 correlationId: context.scope.correlationId,
                 delegatedScope: context.scope,
                 legalEntityId,
+                tenantId: context.scope.tenantId,
               })
               .identify(client, taken, `crm-intake:${context.actionInvocationId}`, snapshot.state.clients.items)
           : Option.none();

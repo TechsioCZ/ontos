@@ -21,6 +21,7 @@ import {
 } from '../../packages/core-runtime/src/db/scoped-transaction.ts';
 import type { OperationalScopeTransactionService } from '../../packages/core-runtime/src/db/scoped-transaction.ts';
 import { insideDatabaseTransaction } from '../../packages/core-runtime/src/db/transaction-io-guard.ts';
+import { holdTestModuleCredentials } from '../../packages/core-runtime/tests/support/module-credentials.ts';
 import { withModuleOperationExecution } from '../../packages/core-runtime/src/modules/module-operation-execution.ts';
 import { manageMarketRetirementAdmissionAction } from '../../verticals/commerce-market-catalog/src/actions/manage-market-retirement-admission.action.ts';
 import type { marketRetirementAdmissions } from '../../verticals/commerce-market-catalog/src/database/schema.ts';
@@ -150,7 +151,6 @@ const assessmentResponse = {
 } as const;
 
 const gatewayConfiguration = ConfigProvider.fromUnknown({
-  ONTOS_GATEWAY_MODULE_API_KEY: 'module-credential',
   ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
 });
 
@@ -308,12 +308,15 @@ const preparedFactory = (
       revision: fixture.compositionRevision,
       scope: fixture.scope,
     },
-    prepareMarketRetirementAdmissionServices(payload, context).pipe(
-      Effect.provide(MarketRetirementImpactAuthorityLive.pipe(Layer.provide(NodeCrypto.layer))),
-      Effect.provide(NodeCrypto.layer),
-      Effect.provideService(ConfigProvider.ConfigProvider, gatewayConfiguration),
-      Effect.provideService(FetchHttpClient.Fetch, scriptedFetchFor(fixture.compositionRevision)),
-    ),
+    // Market's own module credential, as the host hands it over: through its claimed store copy.
+    holdTestModuleCredentials({ 'commerce-market-catalog': 'module-credential' })
+      .pipe(Effect.andThen(prepareMarketRetirementAdmissionServices(payload, context)))
+      .pipe(
+        Effect.provide(MarketRetirementImpactAuthorityLive.pipe(Layer.provide(NodeCrypto.layer))),
+        Effect.provide(NodeCrypto.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, gatewayConfiguration),
+        Effect.provideService(FetchHttpClient.Fetch, scriptedFetchFor(fixture.compositionRevision)),
+      ),
   );
 };
 

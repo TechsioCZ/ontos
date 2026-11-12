@@ -1,5 +1,5 @@
 import { Schema } from 'effect';
-import type { Effect } from 'effect';
+import type { Effect, Option, Redacted } from 'effect';
 
 export { HostedModuleCredentialsSealedError } from './hosted-module-credentials-sealed-error.ts';
 
@@ -8,10 +8,21 @@ export const ModuleAppIdSchema = Schema.String.check(Schema.isPattern(/^[a-z][a-
   Schema.brand('ModuleAppId'),
 );
 
-/** The variable every module deployment reads as its own module credential. */
-export const MODULE_CREDENTIAL_VARIABLE = 'ONTOS_GATEWAY_MODULE_API_KEY';
-
 const MINIMUM_KEY_LENGTH = 16;
+const WORKLOAD_ENTRY =
+  /^[a-z][a-z0-9-]{0,99}\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+\/[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/u;
+
+/** Owners' internal workload credentials (O73), keyed `<app id>/<workload key>/<tenant id>`. */
+export const WorkloadCredentialsSchema = Schema.Record(
+  Schema.String,
+  Schema.RedactedFromValue(Schema.String.check(Schema.isMinLength(MINIMUM_KEY_LENGTH))),
+).check(
+  Schema.makeFilter((workloads) =>
+    Object.keys(workloads).every((entry) => WORKLOAD_ENTRY.test(entry))
+      ? undefined
+      : 'Workload credentials are keyed by app id, workload key and tenant',
+  ),
+);
 
 /**
  * What a host hands a process that serves several owners: owners' module credentials, keyed by app id. It travels on
@@ -28,8 +39,16 @@ export const HostedModuleCredentialsSchema = Schema.Struct({
     ),
   ),
   schemaVersion: Schema.Literal(1),
+  /**
+   * Owners' internal workload credentials, keyed `<app id>/<workload key>/<tenant id>`: the key of the principal the
+   * operator registered for one of the owner's own workloads in one tenant (O73).
+   */
+  workloads: Schema.optionalKey(WorkloadCredentialsSchema),
 });
 export type HostedModuleCredentials = typeof HostedModuleCredentialsSchema.Type;
+
+/** The app id a workload credential entry belongs to. */
+export const workloadEntryAppId = (entry: string): string => entry.slice(0, entry.indexOf('/'));
 
 /** What one handover changed: the owners whose slot now holds the handed key, and the entries it refused. */
 export interface HostedModuleCredentialAcceptance {
@@ -41,4 +60,12 @@ export interface HostedModuleCredentialAcceptance {
 export interface HostedModuleCredentialReceiver {
   readonly accept: (handover: HostedModuleCredentials) => Effect.Effect<HostedModuleCredentialAcceptance>;
   readonly owners: readonly string[];
+}
+
+/**
+ * A claimed store copy, as only its one-time claimer holds it: the receiver, and the copy's own reader (the very read
+ * an owner's delegated client makes), so the host and the build can prove a handed key reaches that module and only it.
+ */
+export interface HostedModuleCredentialCopy extends HostedModuleCredentialReceiver {
+  readonly read: (appId: string) => Effect.Effect<Option.Option<Redacted.Redacted>>;
 }

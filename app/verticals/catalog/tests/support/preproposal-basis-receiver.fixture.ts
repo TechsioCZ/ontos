@@ -157,7 +157,7 @@ const describe = Effect.sync(() =>
       producer: {
         flag: '--produce-preproposal-basis',
         inputFd: 4,
-        outputFd: 3,
+        outputFd: 5,
         protocol: producerProtocol,
         steps: producerSteps,
       },
@@ -273,7 +273,7 @@ const produce = Effect.gen(function* producePreproposalCatalogBasis() {
       catch: () => unavailable('grant-handshake'),
       try: () => {
         writeSync(
-          3,
+          5,
           `${JSON.stringify({
             protocol: producerProtocol,
             resources: resources.map(({ moduleId, resourceId, resourceType }) => ({
@@ -756,7 +756,7 @@ type ProducerResult =
 const writeProducerResult = (result: ProducerResult) =>
   Effect.try({
     catch: () => unavailable('producer-output-fd'),
-    try: () => writeSync(3, `${JSON.stringify(result)}\n`),
+    try: () => writeSync(5, `${JSON.stringify(result)}\n`),
   });
 
 const runProducer = produce.pipe(

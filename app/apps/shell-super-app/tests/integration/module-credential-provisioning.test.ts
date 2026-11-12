@@ -1,5 +1,6 @@
 import { loadModuleCredentialEnrolment, PLATFORM_TENANT } from '@app/core-runtime/auth/module-credentials';
 import { CoreDatabase } from '@app/core-runtime/db/client';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
@@ -33,6 +34,7 @@ import {
   ShellInstalledModuleCatalog,
 } from '../../api/modules/installed-module-catalog.ts';
 import {
+  accessWorkloadBindings,
   applicationCompositionAuthority,
   auditEvents,
   coreRelations,
@@ -45,7 +47,10 @@ import {
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { liveModuleKeyIds } from '../../../../scripts/zerops/module-credential-liveness.mts';
-import { ProvisioningOutputJsonSchema } from '../../../../scripts/zerops/module-credentials.mts';
+import {
+  MODULE_INTERNAL_WORKLOADS,
+  ProvisioningOutputJsonSchema,
+} from '../../../../scripts/zerops/module-credentials.mts';
 
 /** The calling modules this release installs, and one it does not (a credential of it must bind nothing). */
 const INSTALLED = ['catalog', 'pricing'] as const;
@@ -678,6 +683,224 @@ it.live(
             .map(({ id }) => id)
             .toSorted(),
         ).toEqual([...bootOne.providerKeyIds, ...bootTwo.providerKeyIds].toSorted());
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer))),
+);
+
+/** CRM's Party intake: the internal workload its own server acts as, registered by the operator per tenant (O73). */
+const INTAKE_WORKLOAD = 'demo.crm.party-intake';
+
+/** The value a pass must have produced; its absence fails the test. */
+const present = <Value>(value: Value | undefined) =>
+  value === undefined ? Effect.die('An expected workload credential is missing') : Effect.succeed(value);
+
+it.live(
+  'issues, attests, rotates and retires the key of a registered internal workload, admitted only where its binding is',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* internalWorkloadCredential() {
+        const { adminDatabase, catalog, coreDatabase, keys, services } = yield* platform;
+        const registeredTenant = crypto.randomUUID();
+        const unregisteredTenant = crypto.randomUUID();
+        const intakePrincipal = crypto.randomUUID();
+        const otherPrincipal = crypto.randomUUID();
+        const bindingId = crypto.randomUUID();
+        // The operator's data (ADR-0028): two customer tenants, CRM's intake principal registered in one of them, and
+        // a service principal in the other whose registration was already revoked. The platform never writes these.
+        yield* adminDatabase.insert(tenants).values(
+          [registeredTenant, unregisteredTenant].map((tenantId, index) => ({
+            defaultLocale: 'cs',
+            name: `Customer ${String(index)}`,
+            slug: `customer-${tenantId}`,
+            status: 'active',
+            tenantId,
+          })),
+        );
+        yield* adminDatabase.insert(principals).values([
+          {
+            displayName: 'CRM Party intake',
+            kind: 'service',
+            principalId: intakePrincipal,
+            status: 'active',
+            tenantId: registeredTenant,
+          },
+          {
+            displayName: 'CRM Party intake',
+            kind: 'service',
+            principalId: otherPrincipal,
+            status: 'active',
+            tenantId: unregisteredTenant,
+          },
+        ]);
+        yield* adminDatabase.insert(accessWorkloadBindings).values([
+          {
+            bindingId,
+            incarnation: crypto.randomUUID(),
+            principalId: intakePrincipal,
+            status: 'active',
+            tenantId: registeredTenant,
+            workloadKey: INTAKE_WORKLOAD,
+          },
+          {
+            bindingId: crypto.randomUUID(),
+            incarnation: crypto.randomUUID(),
+            principalId: otherPrincipal,
+            revokedAt: yield* DateTime.nowAsDate,
+            status: 'revoked',
+            tenantId: unregisteredTenant,
+            workloadKey: INTAKE_WORKLOAD,
+          },
+        ]);
+        const release: ModuleCredentialRelease = {
+          ...moduleCredentialReleaseOf(catalog),
+          buildMarkers: { ...moduleCredentialReleaseOf(catalog).buildMarkers, crm: 'crm-build' },
+        };
+        const appIds = ['catalog', 'crm'];
+        const hostId = 'host-w';
+        const issue = (bootId: string) =>
+          provisionModuleCredentials({
+            appIds,
+            bootId,
+            hostId,
+            operationId: crypto.randomUUID(),
+            release,
+            workloads: MODULE_INTERNAL_WORKLOADS,
+          }).pipe(Effect.provide(services));
+        const entry = `crm/${INTAKE_WORKLOAD}/${registeredTenant}`;
+        const shell = Layer.mergeAll(
+          ModuleCredentialEnrolmentSourceLive.pipe(Layer.provide(services)),
+          Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
+        );
+        const bindingOf = (providerKeyId: string) =>
+          coreDatabase
+            .select({
+              authenticationNamespaceId: principalAuthBindings.authenticationNamespaceId,
+              principalId: principalAuthBindings.principalId,
+              provider: principalAuthBindings.provider,
+              status: principalAuthBindings.status,
+              subjectType: principalAuthBindings.subjectType,
+              tenantId: principalAuthBindings.tenantId,
+            })
+            .from(principalAuthBindings)
+            .where(eq(principalAuthBindings.providerSubjectId, providerKeyId))
+            .pipe(Effect.map(([row]) => row));
+
+        // A boot: the module keys and one workload key, for the tenant where the workload is registered, only.
+        const bootOne = crypto.randomUUID();
+        const first = yield* issue(bootOne);
+        expect(first.failedAppIds).toEqual([]);
+        expect([...first.workloadCredentials.keys()]).toEqual([entry]);
+        const firstKey = yield* present(first.keys.get(entry));
+        const firstSecret = yield* present(first.workloadCredentials.get(entry));
+        expect(first.providerKeyIds.has(firstKey.providerKeyId)).toBe(true);
+        expect(yield* verifies(keys, firstSecret)).toBe(true);
+        // Bound to the operator's registered principal in that tenant, as the key it replaces was: same principal,
+        // same kind of binding. No new principal and no new subject kind.
+        expect(yield* bindingOf(firstKey.providerKeyId)).toEqual({
+          authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+          principalId: intakePrincipal,
+          provider: 'better_auth',
+          status: 'active',
+          subjectType: 'api_key',
+          tenantId: registeredTenant,
+        });
+        const [stored] = yield* (yield* AuthDatabase.pipe(Effect.provide(services))).executor
+          .select({ metadata: apikey.metadata, referenceId: apikey.referenceId })
+          .from(apikey)
+          .where(eq(apikey.id, firstKey.providerKeyId));
+        expect(stored?.referenceId).toBe('ontos-platform-module-credentials');
+        expect(JSON.parse(stored?.metadata ?? 'null')).toMatchObject({
+          appId: 'crm',
+          bootId: bootOne,
+          hostId,
+          ontosModuleCredential: 'workload_attested_v1',
+          principalId: intakePrincipal,
+          tenantId: registeredTenant,
+          workloadKey: INTAKE_WORKLOAD,
+        });
+        expect(yield* liveModuleKeyIds(coreDatabase, [firstKey.providerKeyId])).toEqual(
+          new Set([firstKey.providerKeyId]),
+        );
+
+        // Admission is unchanged: the workload key is an ordinary key of its principal, admitted at the API-key
+        // endpoint; it is no module credential, so the delegated endpoint binds nothing to it. A module's key stays
+        // refused there as an ordinary key.
+        expect(
+          Exit.isSuccess(
+            yield* Effect.exit(admitIntegrationCredential(firstKey.providerKeyId).pipe(Effect.provide(shell))),
+          ),
+        ).toBe(true);
+        const enrolment = yield* loadModuleCredentialEnrolment(coreDatabase);
+        expect(enrolment.some(({ providerKeyId }) => providerKeyId === firstKey.providerKeyId)).toBe(false);
+        const delegated = yield* loadGatewayModuleBindings.pipe(Effect.provide(shell));
+        expect(delegated.some(({ providerKeyId }) => providerKeyId === firstKey.providerKeyId)).toBe(false);
+        const catalogKey = first.keys.get('catalog');
+        expect(catalogKey).toBeDefined();
+        const refused = yield* Effect.flip(
+          admitIntegrationCredential(catalogKey?.providerKeyId ?? '').pipe(Effect.provide(shell)),
+        );
+        expect(Schema.is(GatewayDelegationError)(refused) && refused.code === 'forbidden').toBe(true);
+
+        // Rotation: the next boot of the host issues a fresh workload key and retires the one its earlier boot held.
+        const bootTwo = crypto.randomUUID();
+        const second = yield* issue(bootTwo);
+        const secondKey = yield* present(second.keys.get(entry));
+        const secondSecret = yield* present(second.workloadCredentials.get(entry));
+        expect(secondKey.providerKeyId).not.toBe(firstKey.providerKeyId);
+        const retiredOwn = yield* retireOwnModuleCredentials({
+          bootId: bootTwo,
+          compositionRevision: release.compositionRevision,
+          earlierBoots: new Set([bootOne]),
+          hostId,
+          operationId: crypto.randomUUID(),
+          replaced: new Set(),
+        }).pipe(Effect.provide(services));
+        expect(retiredOwn.retired).toBe(first.providerKeyIds.size);
+        expect(yield* verifies(keys, firstSecret)).toBe(false);
+        expect((yield* bindingOf(firstKey.providerKeyId))?.status).toBe('revoked');
+        expect(yield* verifies(keys, secondSecret)).toBe(true);
+
+        // The operator ends the registration: the next pass issues no workload key, and once this revision holds the
+        // authority, the key bound before that moment is retired with the superseded module keys.
+        yield* adminDatabase
+          .update(accessWorkloadBindings)
+          .set({ revokedAt: yield* DateTime.nowAsDate, status: 'revoked' })
+          .where(eq(accessWorkloadBindings.bindingId, bindingId));
+        const third = yield* issue(crypto.randomUUID());
+        expect([...third.workloadCredentials.keys()]).toEqual([]);
+        yield* Effect.sleep(Duration.millis(20));
+        yield* adminDatabase
+          .update(applicationCompositionAuthority)
+          .set({ phase: 'active', revision: release.compositionRevision, revisionActivatedAt: sql`clock_timestamp()` })
+          .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+        const superseded = yield* retireSupersededModuleCredentials({
+          bootId: crypto.randomUUID(),
+          compositionRevision: release.compositionRevision,
+          current: third.providerKeyIds,
+          hostId,
+          operationId: crypto.randomUUID(),
+        }).pipe(Effect.provide(services));
+        expect(superseded.holdsAuthority).toBe(true);
+        expect(superseded.retired).toBe(second.providerKeyIds.size);
+        expect(yield* verifies(keys, secondSecret)).toBe(false);
+        expect((yield* bindingOf(secondKey.providerKeyId))?.status).toBe('revoked');
+
+        // Each pass is audited by entry and provider key id, never with a key.
+        const audits = yield* coreDatabase
+          .select({ evidence: auditEvents.evidenceJson })
+          .from(auditEvents)
+          .where(
+            and(
+              eq(auditEvents.tenantId, PLATFORM_TENANT.tenantId),
+              like(auditEvents.eventType, 'platform.module_credentials.%'),
+            ),
+          );
+        const recorded = JSON.stringify(audits);
+        expect(recorded.includes(entry)).toBe(true);
+        expect(recorded.includes(firstKey.providerKeyId)).toBe(true);
+        expect(recorded.includes(secondKey.providerKeyId)).toBe(true);
+        expect(recorded.includes(Redacted.value(firstSecret))).toBe(false);
+        expect(recorded.includes(Redacted.value(secondSecret))).toBe(false);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer))),
 );

@@ -7,7 +7,6 @@ import type { OperationalScope } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { GATEWAY_MODULE_NOT_INSTALLED_TYPE } from '@app/shared-contracts';
 import { vatRateAt } from '@app/shared-contracts/cz-vat-classifications';
-import { MISSING_MODULE_CREDENTIAL_REASON } from '@app/shared-contracts/gateway-context-server';
 import { NodeCrypto } from '@effect/platform-node';
 import {
   ConfigProvider,
@@ -661,7 +660,7 @@ it.effect('a module that holds no module credential reads as an outage that name
     const failure = yield* fetchTaxRateBook(scopeOf(randomUUID())).pipe(
       Effect.flip,
       Effect.provide(NodeCrypto.layer),
-      // No ONTOS_GATEWAY_MODULE_API_KEY at all; the Shell's address is configured, but no request may be sent.
+      // The host handed this process no key of Merchandise; the Shell's address is set, but no request may be sent.
       Effect.provideService(
         ConfigProvider.ConfigProvider,
         ConfigProvider.fromUnknown({ ONTOS_SHELL_GATEWAY_BASE_URL: 'http://shell.test/api' }),
@@ -670,7 +669,7 @@ it.effect('a module that holds no module credential reads as an outage that name
     );
     expect([failure.kind, failure.refusal]).toEqual([
       'UNAVAILABLE',
-      `GatewayDelegationSourceError: ${MISSING_MODULE_CREDENTIAL_REASON}`,
+      'GatewayDelegationSourceError: No module credential of merchandise in this process: the host has not handed one over',
     ]);
   }),
 );

@@ -9,6 +9,7 @@ import { FetchHttpClient } from 'effect/http';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { expect } from 'effect-rstest';
 
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { PartyIntakeLive } from '../../src/services/party-intake.ts';
 import { crmRegistration } from '../../vertical.registration.ts';
 
@@ -121,13 +122,8 @@ export const clientIntakeOwnerFixture = Effect.fn('ClientIntakeTest.ownerFixture
     PartyIntakeLive,
     FetchHttpClient.layer,
     Layer.succeed(FetchHttpClient.Fetch, fetch),
-    Layer.succeed(
-      ConfigProvider.ConfigProvider,
-      ConfigProvider.fromUnknown({
-        ONTOS_GATEWAY_MODULE_API_KEY: 'intake-unit-module-credential',
-        ONTOS_SHELL_GATEWAY_BASE_URL: issuer,
-      }),
-    ),
+    Layer.succeed(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({ ONTOS_SHELL_GATEWAY_BASE_URL: issuer })),
+    Layer.effectDiscard(holdTestModuleCredentials({ crm: 'intake-unit-module-credential' })),
   );
   return { calls, owner, principal: verifiedPrincipal, transport };
 });

@@ -220,6 +220,8 @@ start() { # start <name> <command...>
 }
 start_module() { # start_module <app-id> <directory>: a module's own server; a calling module holds only its own key
   if is_caller "$1"; then
+    # Its API bundle carries its own credential store copy; expose that copy's claim for serve-module (idempotent).
+    node scripts/zerops/hosted-credential-claim-cli.mts expose "$2" >/dev/null || die "credential claim of $1 not exposable"
     # The server keeps its channel open (read-write, so it never sees an end); hand_over fills it later.
     channel_open "$1"
     ONTOS_MODULE_CREDENTIAL_HANDOVER=fd3 start "$1" "${WITH_ENV[@]}" node scripts/demo/serve-module.mts "$1" "$2" \
@@ -303,6 +305,17 @@ curl -fsS -o /dev/null --max-time 10 "http://localhost:$SHELL_PORT/" || say "WAR
 
 # 6. Sales-demo accounts, role grants and the agent-bot API key (needs the running shell; idempotent).
 step demo-permissions "${WITH_ENV[@]}" node scripts/demo/reset-permissions.mts
+# The permissions registered the modules' internal workloads (CRM's Party intake): issue their keys now and hand them
+# to the running callers, beside fresh module keys, exactly as the app host does. Nobody issues such a key by hand.
+say "provisioning module and internal workload credentials after the permissions"
+MODULE_CREDENTIALS="$(ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="http://127.0.0.1:$COMPOSITION_PORT/active" \
+  "${WITH_ENV[@]}" node scripts/zerops/provision-module-credentials.mts issue-installed \
+  --operation="$(uuidgen | tr '[:upper:]' '[:lower:]')" --host="local-demo:$(hostname -s)" \
+  --boot="$(uuidgen | tr '[:upper:]' '[:lower:]')" 3>&1 1>&2)" ||
+  die "module credential provisioning failed"
+for id in "${VERTICALS[@]}"; do
+  if is_caller "$id"; then hand_over_credential "$id" || true; fi
+done
 # The access catalog release activation the stage migrator runs: "Plný přístup" follows the workspace catalog and
 # every other role gets Novinky (scripts/activate-access-catalog-release.mts).
 step access-release "${WITH_ENV[@]}" node scripts/activate-access-catalog-release.mts
@@ -323,8 +336,6 @@ step seed-agent-entities env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" 
 step agent-operators env ONTOS_AGENT_SETUP_EMAIL=obchod@demo.ontos \
   "ONTOS_AGENT_SETUP_PASSWORD=${ONTOS_DEMO_PASSWORD:-password1234}" \
   "${WITH_ENV[@]}" node scripts/demo/setup-agent-operators.mts --mode apply
-# CRM.md §3: key of the CRM's Party Registry intake principal (read by the crm server per intake, no restart).
-step crm-party-intake pnpm_ demo:crm-party-intake
 # ŠroubShop customer accounts: publish the two workload identities/keys and Shell provider configuration first.
 step commerce-portal pnpm_ demo:commerce-portal
 reload_env_keys COMMERCE_CORE_IDENTITY_BASE_URL COMMERCE_TENANT_CREDENTIALS ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT \

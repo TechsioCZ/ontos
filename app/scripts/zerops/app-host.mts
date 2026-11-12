@@ -31,6 +31,7 @@ import {
 } from './module-credentials.mts';
 import type { ProvisioningOutput } from './module-credentials.mts';
 import { liveModuleKeyIds } from './module-credential-liveness.mts';
+import { workloadEntryAppId } from '../../packages/core-runtime/src/auth/hosted-module-credentials.ts';
 import { authenticationQueryRedactions, credentialSubmissionRedirect } from '@app/shared-contracts/credential-url';
 /**
  * One stateless Zerops container that serves the whole OntOS application: the Shell, every MicroVertical owner
@@ -757,22 +758,44 @@ export const makeReplacedKeyLedger = Effect.gen(function* replacedKeyLedger() {
   return { keptWith, record };
 });
 
+/**
+ * A held workload entry a pass leaves behind: its module got its module key and all its workload keys in this pass
+ * (no failure), yet this one is not among them, because the operator no longer registers that workload in that
+ * tenant. Its key is retired and no longer handed over; otherwise its end would ask for a renewal every step.
+ */
+const droppedWorkloadEntry = (fresh: ProvisioningOutput) => {
+  const failed = new Set<string>(fresh.failedAppIds);
+  const renewed = new Set(Object.keys(fresh.credentials).filter((appId) => !failed.has(appId)));
+  return (entry: string) =>
+    entry.includes('/') && renewed.has(workloadEntryAppId(entry)) && fresh.keys[entry] === undefined;
+};
+
 /** The provider key ids `held` had for the modules `fresh` gave a new key: what a renewal replaced. */
-export const replacedKeyIdsOf = (held: ProvisioningOutput, fresh: ProvisioningOutput): readonly string[] =>
-  Object.entries(held.keys).flatMap(([appId, key]) =>
-    fresh.keys[appId] !== undefined && fresh.keys[appId].providerKeyId !== key.providerKeyId ? [key.providerKeyId] : [],
+export const replacedKeyIdsOf = (held: ProvisioningOutput, fresh: ProvisioningOutput): readonly string[] => {
+  const dropped = droppedWorkloadEntry(fresh);
+  return Object.entries(held.keys).flatMap(([entry, key]) =>
+    (fresh.keys[entry] !== undefined && fresh.keys[entry].providerKeyId !== key.providerKeyId) || dropped(entry)
+      ? [key.providerKeyId]
+      : [],
   );
+};
 
 /**
  * What the host holds after a pass: each module's newest key (a module the pass missed keeps the key it held) and the
  * callers that still hold none.
  */
-export const mergeProvisioning = (held: ProvisioningOutput, fresh: ProvisioningOutput): ProvisioningOutput => ({
-  credentials: { ...held.credentials, ...fresh.credentials },
-  failedAppIds: fresh.failedAppIds.filter((appId) => held.keys[appId] === undefined),
-  keys: { ...held.keys, ...fresh.keys },
-  schemaVersion: 1,
-});
+export const mergeProvisioning = (held: ProvisioningOutput, fresh: ProvisioningOutput): ProvisioningOutput => {
+  const dropped = droppedWorkloadEntry(fresh);
+  const kept = <Value,>(entries: Readonly<Record<string, Value>>) =>
+    Object.fromEntries(Object.entries(entries).filter(([entry]) => !dropped(entry)));
+  return {
+    credentials: { ...held.credentials, ...fresh.credentials },
+    failedAppIds: fresh.failedAppIds.filter((appId) => held.keys[appId] === undefined),
+    keys: { ...kept(held.keys), ...fresh.keys },
+    schemaVersion: 1,
+    workloadCredentials: { ...kept(held.workloadCredentials), ...fresh.workloadCredentials },
+  };
+};
 
 /**
  * What healing does next: nothing, fill the callers that hold no key, or renew every caller's key, because some key
@@ -884,9 +907,17 @@ export const healModuleCredentialsOnce = Effect.fn('AppHost.healModuleCredential
   }
   const next = mergeProvisioning(held, fresh);
   yield* Ref.set(input.held, next);
-  const message = yield* encodeModuleCredentialHandover(fresh.credentials, Object.keys(fresh.credentials)).pipe(
-    Effect.orDie,
-  );
+  const message = yield* encodeModuleCredentialHandover(
+    fresh.credentials,
+    [
+      ...new Set([
+        ...Object.keys(fresh.credentials),
+        ...Object.keys(fresh.workloadCredentials).map(workloadEntryAppId),
+      ]),
+    ],
+    // Each named owner's complete current set: the receiver replaces an owner's workloads with what it is handed.
+    next.workloadCredentials,
+  ).pipe(Effect.orDie);
   yield* Effect.forEach(yield* input.holders, (holder) => holder.handOver(message), { concurrency: 1, discard: true });
   if (plan.kind === 'renew') {
     // Exactly the keys this renewal replaced, which only this boot ever held: never a key it was not told about.
@@ -1354,9 +1385,11 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     Effect.gen(function* provisionAndHandOver() {
       const provisioned = yield* issueFor(release)(callers);
       yield* Ref.set(heldCredentials, provisioned);
-      const message = yield* encodeModuleCredentialHandover(provisioned.credentials, callers).pipe(
-        Effect.mapError((problem) => failure(problem.reason)),
-      );
+      const message = yield* encodeModuleCredentialHandover(
+        provisioned.credentials,
+        callers,
+        provisioned.workloadCredentials,
+      ).pipe(Effect.mapError((problem) => failure(problem.reason)));
       yield* owners.handOver(message);
       return provisioned;
     });
@@ -1530,9 +1563,11 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     // (`apps/shell-super-app/scripts/bootstrap-stage-accounts.mts`). The engine's canonical schema arrives with the
     // deployment's SpiceDB bootstrap file, and a live schema or tuple retirement is its own approved operation. The
     // release proves the projected access before it publishes (`verifyReleaseAccessIntent` above).
+    const held = yield* Ref.get(heldCredentials);
     const outboxHandover = yield* encodeModuleCredentialHandover(
-      (yield* Ref.get(heldCredentials)).credentials,
+      held.credentials,
       callers,
+      held.workloadCredentials,
     ).pipe(Effect.mapError((problem) => failure(problem.reason)));
     yield* Console.log(
       `[app-host] ${OUTBOX_HOST_ID} heap limit: ${String(heapLimitMiB('outbox', memoryBytes))} MiB (container ${mebibytes(memoryBytes)} MiB)`,

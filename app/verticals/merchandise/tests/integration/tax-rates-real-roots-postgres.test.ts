@@ -13,6 +13,7 @@
  * (Merchandise's module key, both modules installed for the tenant, a valid source assertion) and signs the
  * module-call assertion with the deployment's gateway key. Everything after it is the real Merchandise and Tax code.
  */
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import {
   canonicalizeApplicationComposition,
   DatabaseConfigLive,
@@ -485,7 +486,6 @@ const configLayer = ConfigProvider.layer(
   ConfigProvider.orElse(
     ConfigProvider.fromUnknown({
       ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: COMPOSITION_URL,
-      ONTOS_GATEWAY_MODULE_API_KEY: MODULE_KEY,
       ONTOS_SHELL_GATEWAY_BASE_URL: SHELL_GATEWAY_BASE_URL,
     }),
     ConfigProvider.fromEnv(),
@@ -580,6 +580,8 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* merchandiseTaxRoots() {
+        // Merchandise's own module key, handed over as the host hands it (never a setting).
+        yield* holdTestModuleCredentials({ merchandise: MODULE_KEY });
         const snapshot = yield* compositionSnapshot;
         const { revision } = snapshot.composition;
         const admin = yield* adminClient;

@@ -30,6 +30,42 @@ export type ModuleCredentialAttestation = typeof ModuleCredentialAttestationSche
 /** The provider metadata form of an attestation. */
 export const ModuleCredentialAttestationJson = Schema.fromJsonString(ModuleCredentialAttestationSchema);
 
+/**
+ * What a module's internal workload credential was issued for: the key of a principal the operator registered for
+ * one of the module's own workloads (O73) in one tenant. It is that principal's ordinary API key, admitted exactly where
+ * the workload binding admits it; the attestation only lets the platform rotate and retire it as its own.
+ */
+export const WorkloadCredentialAttestationSchema = Schema.Struct({
+  appId: ModuleAppIdSchema,
+  bootId: ModuleCredentialBootIdSchema,
+  buildMarker: Schema.String.check(Schema.isMinLength(1)),
+  compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
+  hostId: ModuleCredentialHostIdSchema,
+  ontosModuleCredential: Schema.Literal('workload_attested_v1'),
+  principalId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('WorkloadPrincipalId')),
+  tenantId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('WorkloadTenantId')),
+  workloadKey: Schema.String.check(Schema.isMinLength(1)).pipe(Schema.brand('InternalWorkloadKey')),
+});
+export type WorkloadCredentialAttestation = typeof WorkloadCredentialAttestationSchema.Type;
+export const WorkloadCredentialAttestationJson = Schema.fromJsonString(WorkloadCredentialAttestationSchema);
+
+/** Either kind of platform-issued key, as its metadata attests it. */
+export const PlatformCredentialAttestationJson = Schema.fromJsonString(
+  Schema.Union([ModuleCredentialAttestationSchema, WorkloadCredentialAttestationSchema]),
+);
+export type PlatformCredentialAttestation = ModuleCredentialAttestation | WorkloadCredentialAttestation;
+
+/** The attestation of a platform-issued key of either kind, if its metadata holds one. */
+export const platformAttestationOf = (metadata: null | string): Option.Option<PlatformCredentialAttestation> =>
+  metadata === null ? Option.none() : Schema.decodeOption(PlatformCredentialAttestationJson)(metadata);
+
+/** The handover entry of a workload credential: the module, the workload and the tenant it acts in. */
+export const workloadCredentialEntryId = (entry: {
+  readonly appId: string;
+  readonly tenantId: string;
+  readonly workloadKey: string;
+}): string => `${entry.appId}/${entry.workloadKey}/${entry.tenantId}`;
+
 /** The attestation stored with a key, if its metadata holds one; anything else attests nothing. */
 export const attestationOf = (metadata: null | string): Option.Option<ModuleCredentialAttestation> =>
   metadata === null ? Option.none() : Schema.decodeOption(ModuleCredentialAttestationJson)(metadata);

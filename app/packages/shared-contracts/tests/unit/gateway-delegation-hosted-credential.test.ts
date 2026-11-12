@@ -1,12 +1,12 @@
-import { ConfigProvider, Crypto, Effect, Exit, Redacted } from 'effect';
+import { Cause, ConfigProvider, Crypto, Effect, Exit, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { claimHostedModuleCredentials } from '../../../core-runtime/src/auth/hosted-module-credential-store.ts';
-import { acquireDelegatedGatewayContext } from '../../src/gateway-context-server.ts';
+import { acquireDelegatedGatewayContext, GatewayDelegationSourceError } from '../../src/gateway-context-server.ts';
 
 const compositionRevision = 'a'.repeat(64);
-/** A shared environment that wrongly carries a module key: no owner of a host process may ever present it. */
+/** A shared environment that wrongly carries a module key: no owner may ever present it. */
 const environment = ConfigProvider.fromEnvRecord({
   ONTOS_GATEWAY_MODULE_API_KEY: 'shared-environment-module-key',
   ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
@@ -53,10 +53,22 @@ const presentedKey = (callingAppId: string) =>
     return { outcome, presented: requests.map((request) => request.headers.get('x-api-key')) };
   });
 
-// Declared first: the file's process is a dedicated module process until the next test claims it.
-it.effect('presents a dedicated module process its own environment key', () =>
-  Effect.gen(function* dedicatedProcess() {
-    expect((yield* presentedKey('catalog')).presented).toEqual(['shared-environment-module-key']);
+const isSourceError = Schema.is(GatewayDelegationSourceError);
+
+/** The typed reason a delegated call failed with, if it failed with a source error. */
+const sourceFailureReason = (outcome: Exit.Exit<unknown, unknown>) => {
+  const failure = Exit.isFailure(outcome) ? Cause.findErrorOption(outcome.cause) : Option.none();
+  return Option.isSome(failure) && isSourceError(failure.value) ? failure.value.reason : null;
+};
+
+// Declared first: the file's copy holds no key until the next test claims it.
+it.effect('fails closed without a request when the host handed no key over, never reading the environment', () =>
+  Effect.gen(function* unclaimedProcess() {
+    const unclaimed = yield* presentedKey('catalog');
+    expect(unclaimed.presented).toEqual([]);
+    expect(sourceFailureReason(unclaimed.outcome)).toBe(
+      'No module credential of catalog in this process: the host has not handed one over',
+    );
   }),
 );
 
@@ -77,6 +89,8 @@ it.effect('presents each owner of a host process only its own handed-over key, f
     // An owner the host handed no key makes no call at all; it never falls back to the shared environment.
     const withoutKey = yield* presentedKey('pricing');
     expect(withoutKey.presented).toEqual([]);
-    expect(Exit.isFailure(withoutKey.outcome)).toBe(true);
+    expect(sourceFailureReason(withoutKey.outcome)).toBe(
+      'No module credential of pricing in this process: the host has not handed one over',
+    );
   }),
 );

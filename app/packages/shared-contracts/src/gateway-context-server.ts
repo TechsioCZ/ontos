@@ -1,15 +1,14 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
-import { MODULE_CREDENTIAL_VARIABLE } from '@app/core-runtime/auth/hosted-module-credentials';
-import { moduleCredentialConfigProvider } from '@app/core-runtime/auth/owner-module-credential';
+import { ownModuleCredential, ownWorkloadCredential } from '@app/core-runtime/auth/owner-module-credential';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import {
   readVerifiedGatewayCompositionRevision,
   readVerifiedGatewayScopeAssertion,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { Crypto } from 'effect';
-import { Config, ConfigProvider, Effect, Match, Redacted, Schema } from 'effect';
+import { Config, ConfigProvider, Effect, Match, Option, Redacted, Schema } from 'effect';
 
-import { issueDelegatedGatewayContext } from './gateway-context-api-key.ts';
+import { issueApiKeyGatewayContext, issueDelegatedGatewayContext } from './gateway-context-api-key.ts';
 import type { GatewayDelegatedContextRequest } from './gateway-context.ts';
 
 export class GatewayDelegationSourceError extends Schema.TaggedError<GatewayDelegationSourceError>()(
@@ -101,49 +100,45 @@ const subjectWireOf = (
     Match.exhaustive,
   );
 
-/** Why a delegated call failed before any request: the calling module holds no module credential at all. */
-export const MISSING_MODULE_CREDENTIAL_REASON = 'The calling module holds no module credential';
+/** Hosts a module may reach the Shell on over plain HTTP: the same machine (the app host's loopback relay, a dev box). */
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** Where a module's keys are presented: HTTPS, or plain HTTP to the same machine only. */
+const ShellGatewayBaseUrl = Config.schema(
+  Schema.URLFromString.check(
+    Schema.makeFilter((url) =>
+      (url.protocol === 'https:' || (url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname))) &&
+      url.username === '' &&
+      url.password === '' &&
+      url.hash === ''
+        ? undefined
+        : 'Gateway transport requires HTTPS (plain HTTP only to a loopback host) without credentials or fragment',
+    ),
+  ),
+  'ONTOS_SHELL_GATEWAY_BASE_URL',
+);
 
 /** Requests a fresh module-to-module context authenticated by this deployment's own module credential. */
 export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acquire')(function* acquire(
   request: GatewayDelegationRequest,
   crypto: Crypto.Crypto,
 ) {
-  // Every delegated call reads its caller's own key through the per-owner view, whichever runtime, worker or
-  // background fiber it runs in; nothing else in a process reads a module credential.
-  const owner = moduleCredentialConfigProvider(yield* ConfigProvider.ConfigProvider, request.callingAppId);
-  const [apiKey, configuration, source] = yield* Effect.all(
+  // Every delegated call reads its caller's own key from the slot the host claimed for that module, whichever
+  // runtime, worker or background fiber it runs in; nothing else in a process reads a module credential.
+  const apiKey = yield* ownModuleCredential(request.callingAppId);
+  if (Option.isNone(apiKey)) {
+    const reason = `No module credential of ${request.callingAppId} in this process: the host has not handed one over`;
+    // Owners turn this into a generic unavailable problem; the log keeps the cause visible to the operator.
+    yield* Effect.logWarning(reason);
+    return yield* new GatewayDelegationSourceError({ reason });
+  }
+  const [baseUrl, source] = yield* Effect.all(
     [
-      // A module that holds no credential of its own fails here, before any request, and says so.
-      Config.Redacted(MODULE_CREDENTIAL_VARIABLE)
-        .parse(owner)
-        .pipe(
-          Effect.mapError(
-            (cause) => new GatewayDelegationSourceError({ cause, reason: MISSING_MODULE_CREDENTIAL_REASON }),
-          ),
+      ShellGatewayBaseUrl.parse(yield* ConfigProvider.ConfigProvider).pipe(
+        Effect.mapError(
+          (cause) => new GatewayDelegationSourceError({ cause, reason: 'Gateway delegation transport is unavailable' }),
         ),
-      Config.all({
-        baseUrl: Config.schema(
-          Schema.URLFromString.check(
-            Schema.makeFilter((url) =>
-              (url.protocol === 'http:' || url.protocol === 'https:') &&
-              url.username === '' &&
-              url.password === '' &&
-              url.hash === ''
-                ? undefined
-                : 'Gateway transport requires an HTTP URL without credentials or fragment',
-            ),
-          ),
-          'ONTOS_SHELL_GATEWAY_BASE_URL',
-        ),
-      })
-        .parse(owner)
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new GatewayDelegationSourceError({ cause, reason: 'Gateway delegation transport is unavailable' }),
-          ),
-        ),
+      ),
       subjectWireOf(request.subject),
     ],
     { concurrency: 1 },
@@ -164,8 +159,8 @@ export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acqui
     subject: source.subject,
   };
   const response = yield* issueDelegatedGatewayContext(payload, {
-    apiKey,
-    baseUrl: configuration.baseUrl,
+    apiKey: apiKey.value,
+    baseUrl,
     requestCorrelation: request.requestCorrelation,
   });
   if (response.compositionRevision !== source.compositionRevision) {
@@ -173,7 +168,64 @@ export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acqui
   }
   const authorization: `Bearer ${string}` = `Bearer ${response.token}`;
   return {
-    apiBaseUrl: new URL(response.apiBaseUrl, configuration.baseUrl).toString(),
+    apiBaseUrl: new URL(response.apiBaseUrl, baseUrl).toString(),
+    authorization,
+    compositionRevision: response.compositionRevision,
+    expiresAt: response.expiresAt,
+  };
+});
+
+/** One internal workload context request: the calling module, its own workload and the tenant and company. */
+export interface WorkloadGatewayRequest {
+  readonly audience: string;
+  /** The module whose own internal workload acts; it holds that workload's key for the tenant. */
+  readonly callingAppId: string;
+  readonly compositionRevision: string;
+  readonly legalEntityId: string;
+  readonly requestCorrelation: string;
+  readonly tenantId: string;
+  readonly workloadKey: string;
+}
+
+/**
+ * Requests a gateway context AS a module's internal workload (O73): the principal the operator registered for that
+ * workload in the tenant, authenticated by its own key, which the platform issued and the host handed to this module
+ * (never an environment variable). The Shell admits it exactly as any API key of that principal: through the
+ * workload's binding and the carriers that declare it. Without a key for that tenant it fails closed.
+ */
+export const acquireWorkloadGatewayContext = Effect.fn('GatewayWorkload.acquire')(function* acquireWorkload(
+  request: WorkloadGatewayRequest,
+) {
+  const key = yield* ownWorkloadCredential({
+    appId: request.callingAppId,
+    tenantId: request.tenantId,
+    workloadKey: request.workloadKey,
+  });
+  if (Option.isNone(key)) {
+    return yield* new GatewayDelegationSourceError({
+      reason: `No credential of ${request.workloadKey} for this tenant: the workload is not registered, or not provisioned yet`,
+    });
+  }
+  const baseUrl = yield* ShellGatewayBaseUrl.parse(yield* ConfigProvider.ConfigProvider).pipe(
+    Effect.mapError(
+      (cause) => new GatewayDelegationSourceError({ cause, reason: 'Gateway workload transport is unavailable' }),
+    ),
+  );
+  const response = yield* issueApiKeyGatewayContext(
+    {
+      audience: request.audience,
+      compositionRevision: request.compositionRevision,
+      legalEntityId: request.legalEntityId,
+    },
+    { apiKey: key.value, baseUrl, requestCorrelation: request.requestCorrelation },
+  ).pipe(
+    Effect.mapError(
+      (cause) => new GatewayDelegationSourceError({ cause, reason: 'The workload gateway context was not issued' }),
+    ),
+  );
+  const authorization: `Bearer ${string}` = `Bearer ${response.token}`;
+  return {
+    apiBaseUrl: new URL(response.apiBaseUrl, baseUrl).toString(),
     authorization,
     compositionRevision: response.compositionRevision,
     expiresAt: response.expiresAt,

@@ -315,9 +315,10 @@ it.live('asks no further batch for a release the Shell no longer issues for', ()
       { concurrency: 1 },
     );
     expect(answers.map(({ status }) => status)).toEqual([409, 409, 409]);
-    // The single issuer still answers each remote, which then asks for a reload; no batch repeats the refusal.
+    // Every remote gets the refusal and asks for a reload, but only the first reaches the Shell: the document
+    // answers the rest with that refusal itself, and no batch repeats it.
     expect(issueDocumentGatewayContextsMock).toHaveBeenCalledTimes(1);
-    expect(gatewayRequests()).toHaveLength(3);
+    expect(gatewayRequests()).toHaveLength(1);
     yield* warmDocumentGatewayAssertions(retired, ['retired-c']);
     expect(issueDocumentGatewayContextsMock).toHaveBeenCalledTimes(1);
   }),

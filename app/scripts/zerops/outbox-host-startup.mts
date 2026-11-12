@@ -1,4 +1,4 @@
-import { MODULE_CREDENTIAL_CALLERS, receiveModuleCredentialHandover } from './module-credentials.mts';
+import { holdOwnStoreCopy, MODULE_CREDENTIAL_CALLERS, receiveModuleCredentialHandover } from './module-credentials.mts';
 import { startProcessObservability } from './process-observability.mts';
 import { Effect } from 'effect';
 import { startEmailDispatchTrigger } from '../email-dispatch-trigger.mts';
@@ -9,8 +9,14 @@ import { startAccessFenceSweep } from './access-fence-sweep.mts';
 
 export const startZeropsOutboxHost = () =>
   Effect.andThen(
-    // Before any worker runs: each hosted owner reads only its own module credential from the host's handover.
-    Effect.andThen(startProcessObservability('outbox'), receiveModuleCredentialHandover(MODULE_CREDENTIAL_CALLERS)),
+    // Before any worker runs. The workers run inside this host's own bundle (worker.mjs), which carries one store
+    // copy; it is claimed for the callers here and gets their keys from the host's handover.
+    Effect.andThen(
+      startProcessObservability('outbox'),
+      receiveModuleCredentialHandover(MODULE_CREDENTIAL_CALLERS).pipe(
+        Effect.flatMap((holders) => holdOwnStoreCopy(holders, MODULE_CREDENTIAL_CALLERS)),
+      ),
+    ),
     Effect.andThen(
       Effect.andThen(startProcessDatabasePools, startProcessCompositionSourceReads),
       Effect.andThen(

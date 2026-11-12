@@ -10,6 +10,7 @@ import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 import { getActionServicePreflight } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import {
   insideDatabaseTransaction,
   refuseInsideDatabaseTransaction,
@@ -62,11 +63,13 @@ const payload = Schema.decodeUnknownSync(TriggerPurchaseApprovalPayloadSchema)({
   purchaseValue,
   storefrontId,
 });
-const configuration = ConfigProvider.layer(
-  ConfigProvider.fromUnknown({
-    ONTOS_GATEWAY_MODULE_API_KEY: 'test-only-customer-context-module-key',
-    ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
-  }),
+const configuration = Layer.merge(
+  ConfigProvider.layer(
+    ConfigProvider.fromUnknown({ ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api' }),
+  ),
+  Layer.effectDiscard(
+    holdTestModuleCredentials({ 'commerce-customer-context': 'test-only-customer-context-module-key' }),
+  ),
 );
 
 it('registers SQL-free preparation for every purchase Action that reads another owner', () => {

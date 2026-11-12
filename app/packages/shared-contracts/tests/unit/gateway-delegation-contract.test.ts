@@ -4,6 +4,7 @@ import { ConfigProvider, Crypto, Effect, Match, Redacted, Schema } from 'effect'
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
+import { holdTestModuleCredentials } from '../../../core-runtime/tests/support/module-credentials.ts';
 import { GatewayDelegationSourceError, acquireDelegatedGatewayContext } from '../../src/gateway-context-server.ts';
 import { GatewayDelegatedContextRequestSchema } from '../../src/gateway-context.ts';
 
@@ -19,9 +20,10 @@ const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   tenantId: '30000000-0000-4000-8000-000000000001',
 });
 const configuration = ConfigProvider.fromEnvRecord({
-  ONTOS_GATEWAY_MODULE_API_KEY: 'fixture-module-credential',
   ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
 });
+/** The calling module's key, handed over the way the host does. */
+const holdCallerKey = holdTestModuleCredentials({ catalog: 'fixture-module-credential' });
 const crypto = Crypto.make({
   digest: () => Effect.succeed(new Uint8Array()),
   randomBytes: (size) => new Uint8Array(size).fill(1),
@@ -140,6 +142,7 @@ it.effect('rejects unknown subject tags, extra fields, and malformed identities'
 
 it.effect('authenticates with the module credential and sends the Originator subject', () =>
   Effect.gen(function* delegatedOriginatorWire() {
+    yield* holdCallerKey;
     const requests: Request[] = [];
     const issued = yield* acquireDelegatedGatewayContext(
       {
@@ -185,6 +188,7 @@ it.effect('authenticates with the module credential and sends the Originator sub
 
 it.effect('sends the verified incoming assertion and the requested legal entity for an Assertion subject', () =>
   Effect.gen(function* delegatedAssertionWire() {
+    yield* holdCallerKey;
     const scope = trustVerifiedGatewayPrincipalContext(principal, compositionRevision, {
       assertion: Redacted.make('fixture-signed-source-proof'),
       audience: 'commerce-market-catalog',
@@ -213,6 +217,7 @@ it.effect('sends the verified incoming assertion and the requested legal entity 
 
 it.effect('fails typed without requests when an Assertion subject has no verified scope', () =>
   Effect.gen(function* delegatedMissingScope() {
+    yield* holdCallerKey;
     const requests: Request[] = [];
     const failure = yield* acquireDelegatedGatewayContext(
       {
@@ -236,6 +241,7 @@ it.effect('fails typed without requests when an Assertion subject has no verifie
 
 it.effect('refuses a response for a different admitted release', () =>
   Effect.gen(function* delegatedRevisionChange() {
+    yield* holdCallerKey;
     const failure = yield* acquireDelegatedGatewayContext(
       {
         audience: 'party-registry',

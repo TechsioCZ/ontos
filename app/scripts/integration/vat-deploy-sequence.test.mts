@@ -29,6 +29,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+import { holdTestModuleCredentials } from '../../packages/core-runtime/tests/support/module-credentials.ts';
+
 import {
   canonicalizeApplicationComposition,
   defineDatabaseIdentityEnrollment,
@@ -436,16 +438,17 @@ const migrateAsDeploy = Effect.fn('VatDeploy.migrate')(function* migrateAsDeploy
   expect([owner, migrated.status, migrated.stderr]).toEqual([owner, 0, migrated.stderr]);
 });
 
-/** A calling module's deployment settings: its own module key, the Shell and the active release. */
-const settings = (moduleKey: string) =>
-  ConfigProvider.orElse(
-    ConfigProvider.fromUnknown({
-      ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: COMPOSITION_URL,
-      ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
-      ONTOS_SHELL_GATEWAY_BASE_URL: SHELL_GATEWAY_BASE_URL,
-    }),
-    ConfigProvider.fromEnv(),
-  );
+/**
+ * A calling module's deployment settings: the Shell and the active release. Its own module key is never a setting: the
+ * test holds each caller's key in its own store copy, as the host hands it over (`holdTestModuleCredentials`).
+ */
+const settings = ConfigProvider.orElse(
+  ConfigProvider.fromUnknown({
+    ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: COMPOSITION_URL,
+    ONTOS_SHELL_GATEWAY_BASE_URL: SHELL_GATEWAY_BASE_URL,
+  }),
+  ConfigProvider.fromEnv(),
+);
 
 type RootHandler = ReturnType<ReturnType<typeof assembleEffectBffRuntime>['createHandler']>;
 type ShellHandler = ReturnType<
@@ -487,10 +490,7 @@ const serveTax = Effect.fn('VatDeploy.serveTax')(function* serveTax(
         api: taxApi,
         handlers: taxHandlersLive.pipe(
           Layer.provide(
-            Layer.mergeAll(
-              ConfigProvider.layer(settings(MERCHANDISE_KEY)),
-              Layer.succeed(FetchHttpClient.Fetch, fetchThroughRoots),
-            ),
+            Layer.mergeAll(ConfigProvider.layer(settings), Layer.succeed(FetchHttpClient.Fetch, fetchThroughRoots)),
           ),
           Layer.orDie,
         ),
@@ -652,6 +652,8 @@ const rehearsalRequested = Config.Boolean('ONTOS_VAT_DEPLOY_REHEARSAL').pipe(Con
 const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySequence() {
   // 1. The deploy: migrations on the stage-shaped rows.
   const { adminPg, allowAll, companyId, database, native, tenantId } = yield* deployOnStageRows();
+  // Merchandise and Finance call Tax with their own keys, handed over as the host hands them.
+  yield* holdTestModuleCredentials({ 'finance-billing': FINANCE_KEY, merchandise: MERCHANDISE_KEY });
 
   // The release, the gateway, the stand-in Shell and Tax's deployment root on this database.
   const snapshot = yield* compositionSnapshot;
@@ -687,10 +689,10 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
     }),
   );
   const fetchThroughRoots = yield* serveTax(snapshot, shell);
-  /** A call as one calling module's deployment makes it: its own settings, every request through the roots. */
-  const asModule = <A, E, R>(moduleKey: string, call: Effect.Effect<A, E, R>) =>
+  /** A call as a calling module's deployment makes it: its settings, its own held key, every request through the roots. */
+  const asModule = <A, E, R>(call: Effect.Effect<A, E, R>) =>
     call.pipe(
-      Effect.provide(ConfigProvider.layer(settings(moduleKey))),
+      Effect.provide(ConfigProvider.layer(settings)),
       Effect.provideService(FetchHttpClient.Fetch, fetchThroughRoots),
     );
 
@@ -753,7 +755,7 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
       expectedRevision,
     });
     const scope = yield* scopeIn(merchandiseModule, `vat-deploy-${clientRequestId}`);
-    const prepared = yield* asModule(MERCHANDISE_KEY, prepareCommandTax(payload.command, scope));
+    const prepared = yield* asModule(prepareCommandTax(payload.command, scope));
     const result = yield* runtimeDb.transaction((tx) =>
       installOperationalScope(tx, scope, defineDatabaseIdentityEnrollment([])).pipe(
         Effect.flatMap((scoped) =>
@@ -812,7 +814,6 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
   const financeScope = yield* scopeIn(financeModule, 'vat-deploy-finance');
   const financeChoices = (on: string) =>
     asModule(
-      FINANCE_KEY,
       Effect.gen(function* financeVatChoices() {
         const rates = yield* FinanceTaxRates;
         return yield* rates.choices(financeScope, on);
@@ -853,13 +854,12 @@ const vatDeploySequence = Effect.fn('VatDeploy.sequence')(function* vatDeploySeq
       Effect.provideService(Clock.Clock, shiftedClock(real, Duration.sum(TAX_RATE_FRESHNESS, Duration.seconds(1)))),
     );
   const staffScope = yield* scopeIn(merchandiseModule, 'vat-deploy-staff');
-  yield* later(asModule(MERCHANDISE_KEY, prepareStaffTaxRates(staffScope)));
-  yield* later(asModule(MERCHANDISE_KEY, currentTaxRateBook(staffScope)));
-  const staffTax = yield* later(asModule(MERCHANDISE_KEY, prepareStaffTaxRates(staffScope)));
+  yield* later(asModule(prepareStaffTaxRates(staffScope)));
+  yield* later(asModule(currentTaxRateBook(staffScope)));
+  const staffTax = yield* later(asModule(prepareStaffTaxRates(staffScope)));
   expect(staffTax.fetched?.book.regime).toBe('VAT_PAYER');
   const synced = yield* later(
     asModule(
-      MERCHANDISE_KEY,
       native.runtime
         .runRead({
           input: { view: { limit: 0, ordersLimit: 0, summary: true } },

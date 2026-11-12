@@ -10,6 +10,7 @@ import {
   DatabaseIdentityEnrollmentContext,
   CoreSearchResourceRefSchema,
   GatewayAssertionRedemptionService,
+  ONTOS_MODULE_CONTRACT_PATH,
   OntosModuleDeploymentContractSchema,
   OntosShellRuntimeContractSchema,
   OutboxRepositoryLive,
@@ -31,13 +32,14 @@ import {
 import { DATABASE_IDENTITIES, FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from './database-identities.ts';
 import { DecisionLogIdSchema, LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { parseSpiceDbConfig } from '@app/core-runtime/access/spicedb-config';
+import { HostedModuleCredentialsSchema } from '@app/core-runtime/auth/hosted-module-credentials';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { ChangeCounterpartyPurchaseLimitPayloadSchema } from '../../shared/actions/change-counterparty-purchase-limit.ts';
 import { requireExecutedAction, requireExecutionResult } from './action-execution-result.ts';
 import { executeChangeCounterpartyPurchaseLimitWithAuthorization } from '../../src/api/change-counterparty-purchase-limit-action-client.ts';
 import { grantAccess } from './purchasing-approval-native.ts';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -857,10 +859,26 @@ export const matchesAllocatedPermissionEnvironment = (
   actual.ULTRAMODERN_DEPLOYMENT_ENVIRONMENT === expected.ULTRAMODERN_DEPLOYMENT_ENVIRONMENT;
 
 const applicationRoot = fileURLToPath(new URL('../../../../', import.meta.url));
-const ownerDefinitions = [
+/**
+ * The owners of the native run. A hosted owner calls other modules with its own module key, so it runs the way the app
+ * host runs it: `scripts/zerops/serve-units.mts` serves its built unit and claims its credential store copy, and the
+ * key arrives on the process's private channel, never in its environment. The others serve their test receiver.
+ * Catalog's receiver remains for its private Catalog producer.
+ */
+interface NativeOwnerDefinition {
+  readonly appId: string;
+  readonly describe: string;
+  readonly hosted: boolean;
+  readonly moduleId: string;
+  readonly owner: string;
+  readonly receiver?: string;
+  readonly serve?: string;
+}
+const ownerDefinitions: readonly NativeOwnerDefinition[] = [
   {
     appId: shellAudience,
     describe: describeOwner,
+    hosted: false,
     moduleId: identityModule,
     owner: 'apps/shell-super-app',
     receiver: 'tenant-party-shell-http.ts',
@@ -869,6 +887,7 @@ const ownerDefinitions = [
   {
     appId: partyAudience,
     describe: describeOwner,
+    hosted: false,
     moduleId: 'party.registry',
     owner: 'verticals/party-registry',
     receiver: 'tenant-party-http.ts',
@@ -877,6 +896,7 @@ const ownerDefinitions = [
   {
     appId: cartAudience,
     describe: describePreproposal,
+    hosted: false,
     moduleId: 'commerce.cart',
     owner: 'verticals/commerce-cart',
     receiver: preproposalReceiver,
@@ -885,14 +905,15 @@ const ownerDefinitions = [
   {
     appId: catalogAudience,
     describe: describePreproposal,
+    hosted: true,
     moduleId: catalogModule,
     owner: 'verticals/catalog',
     receiver: preproposalReceiver,
-    serve: servePreproposal,
   },
   {
     appId: registryAudience,
     describe: describeOwner,
+    hosted: false,
     moduleId: registryModule,
     owner: 'verticals/storefront-registry',
     receiver: finalizationReceiver,
@@ -901,28 +922,25 @@ const ownerDefinitions = [
   {
     appId: marketAudience,
     describe: describeOwner,
+    hosted: true,
     moduleId: 'commerce.market-catalog',
     owner: 'verticals/commerce-market-catalog',
-    receiver: finalizationReceiver,
-    serve: serveOwner,
   },
   {
     appId: pricingAudience,
     describe: describeOwner,
+    hosted: true,
     moduleId: pricingModule,
     owner: pricingOwner,
-    receiver: finalizationReceiver,
-    serve: serveOwner,
   },
   {
     appId: contextAudience,
     describe: describeOwner,
+    hosted: true,
     moduleId: contextModule,
     owner: 'verticals/commerce-customer-context',
-    receiver: 'enrollment-current-access-receiver.fixture.ts',
-    serve: serveOwner,
   },
-] as const;
+];
 const MarkerSchema = Schema.Struct({
   appId: Schema.String.pipe(Schema.brand('PreproposalOwnerAppId'), Schema.decodeTo(Schema.String)),
   buildMarker: Schema.String,
@@ -956,21 +974,39 @@ const seedNativeTenantAccess = Effect.fn('PreproposalNative.seedTenantAccess')(f
   });
 });
 
-/** Private scoped child IPC; the standard platform spawner owns termination/fds. */
+/** Lines an owners process (`scripts/zerops/serve-units.mts`) logs on stdout about serving and its credential channel. */
+const isHostLogLine = (line: string) => line.startsWith('[serve-units] ') || line.startsWith('[module-credentials] ');
+
+/**
+ * Private scoped child IPC; the standard platform spawner owns termination/fds. File descriptor 3 is the production
+ * module credential channel (`MODULE_CREDENTIAL_CHANNEL_FD`), fed only when `moduleCredentialChannel` is set; the
+ * harness's own private commands use 4 and its private output 5.
+ */
 export const openNativeChild = Effect.fn('PreproposalNative.openChild')(function* openNativeChild(input: {
   readonly args: readonly string[];
   readonly command?: string;
   readonly cwd?: string;
   readonly environment: Readonly<Record<string, string>>;
+  readonly moduleCredentialChannel?: boolean;
   readonly stage: string;
 }) {
   const inherited = yield* Config.all({ HOME: Config.String('HOME'), PATH: Config.String('PATH') });
+  const credentialChannel = yield* Queue.unbounded<Uint8Array, Cause.Done>();
   const commands = yield* Queue.unbounded<Uint8Array, Cause.Done>();
   const standardInput = yield* Queue.unbounded<Uint8Array, Cause.Done>();
   const publicLines = yield* Queue.unbounded<string, Cause.Done>();
+  const hostLines = yield* Queue.unbounded<string, Cause.Done>();
   const privateLines = yield* Queue.unbounded<string, Cause.Done>();
+  const privateFds = {
+    fd4: { stream: Stream.fromQueue(commands), type: 'input' },
+    fd5: { type: 'output' },
+  } as const satisfies Record<`fd${number}`, ChildProcess.AdditionalFdConfig>;
+  const additionalFds =
+    input.moduleCredentialChannel === true
+      ? { ...privateFds, fd3: { stream: Stream.fromQueue(credentialChannel), type: 'input' as const } }
+      : privateFds;
   const child = yield* ChildProcess.make(input.command ?? process.execPath, [...input.args], {
-    additionalFds: { fd3: { type: 'output' }, fd4: { stream: Stream.fromQueue(commands), type: 'input' } },
+    additionalFds,
     cwd: input.cwd ?? applicationRoot,
     env: { ...inherited, ...input.environment },
     extendEnv: false,
@@ -978,15 +1014,18 @@ export const openNativeChild = Effect.fn('PreproposalNative.openChild')(function
     stdin: Stream.fromQueue(standardInput),
     stdout: 'pipe',
   });
-  yield* Effect.addFinalizer(() => Effect.all([Queue.end(commands), Queue.end(standardInput)]));
+  yield* Effect.addFinalizer(() =>
+    Effect.all([Queue.end(credentialChannel), Queue.end(commands), Queue.end(standardInput)]),
+  );
   yield* child.stdout.pipe(
     Stream.decodeText(),
     Stream.splitLines,
-    Stream.runForEach((line) => Queue.offer(publicLines, line)),
-    Effect.ensuring(Queue.end(publicLines)),
+    // Host log lines never reach a strict public frame read.
+    Stream.runForEach((line) => Queue.offer(isHostLogLine(line) ? hostLines : publicLines, line)),
+    Effect.ensuring(Effect.all([Queue.end(publicLines), Queue.end(hostLines)])),
     Effect.forkScoped,
   );
-  yield* child.getOutputFd(3).pipe(
+  yield* child.getOutputFd(5).pipe(
     Stream.decodeText(),
     Stream.splitLines,
     Stream.runForEach((line) => Queue.offer(privateLines, line)),
@@ -1110,7 +1149,21 @@ export const openNativeChild = Effect.fn('PreproposalNative.openChild')(function
         code === 0 ? Effect.void : Effect.flatMap(childFailure(`${input.stage}:exit-code`), Effect.fail),
       ),
     ),
+    /** Queues one module credential handover line on file descriptor 3; its key never enters a diagnostic. */
+    handOver: (line: string, key: Redacted.Redacted, end = false) =>
+      Effect.gen(function* handOverModuleCredential() {
+        privateDocuments.add(line);
+        privateDocuments.add(Redacted.value(key));
+        yield* Queue.offer(credentialChannel, new TextEncoder().encode(`${line}\n`));
+        if (end) {
+          yield* Queue.end(credentialChannel);
+        }
+      }),
     read,
+    /** The next `[serve-units]` / `[module-credentials]` log line of an owners process. */
+    readHostLog: Queue.take(hostLines).pipe(
+      Effect.catchTag('Done', () => Effect.flatMap(childFailure(`${input.stage}:early-exit`), Effect.fail)),
+    ),
     send: (document: string, channel: 'stdin' | 'private', end = false) =>
       Effect.gen(function* sendClosedCommand() {
         if (channel === 'private') {
@@ -1123,6 +1176,126 @@ export const openNativeChild = Effect.fn('PreproposalNative.openChild')(function
         }
       }),
   };
+});
+
+const HostedOwnerReadyLine = /^\[serve-units\] (?<appId>[a-z][a-z0-9-]*) on 127\.0\.0\.1:(?<port>[1-9][0-9]*)$/u;
+const handoverReceivedPrefix = '[module-credentials] received the credentials of ';
+const HandoverLineSchema = Schema.fromJsonString(HostedModuleCredentialsSchema);
+
+/**
+ * Hands one owner its module key on the child's private channel (file descriptor 3), in the shape the app host
+ * writes (`encodeModuleCredentialHandover`, scripts/zerops/module-credentials.mts).
+ */
+const handOverModuleCredential = Effect.fn('PreproposalNative.handOverModuleCredential')(function* handOver(
+  child: Effect.Success<ReturnType<typeof openNativeChild>>,
+  appId: string,
+  key: Redacted.Redacted,
+  end = false,
+) {
+  const line = yield* Schema.encodeEffect(HandoverLineSchema)({
+    credentials: { [appId]: key },
+    schemaVersion: 1,
+    workloads: {},
+  }).pipe(Effect.mapError(() => safeFailure(`module-credential-handover:${appId}`)));
+  yield* child.handOver(line, key, end);
+});
+
+/**
+ * One owner served the way the app host serves it: `scripts/zerops/serve-units.mts` loads the unit's built entry
+ * (`dist/zerops-entry.mjs`), claims the unit's own credential store copy and serves on the unit's topology port; its
+ * module key arrives only on the process's private channel. Returns the port once the owner holds its key and serves
+ * the exact deployment the composition names.
+ */
+const startHostedOwner = Effect.fn('PreproposalNative.startHostedOwner')(function* startHostedOwner(input: {
+  readonly appId: string;
+  readonly environment: Readonly<Record<string, string>>;
+  readonly key: Redacted.Redacted;
+  readonly marker: typeof MarkerSchema.Type;
+  readonly owner: string;
+}) {
+  yield* io(
+    `hosted-owner-entry:${input.appId}`,
+    async () => await stat(`${applicationRoot}${input.owner}/dist/zerops-entry.mjs`),
+  );
+  const child = yield* openNativeChild({
+    args: ['scripts/zerops/serve-units.mts', input.appId],
+    environment: {
+      ...input.environment,
+      APP_ENV_PATH: '/dev/null',
+      NODE_ENV: 'production',
+      // The app host's switch: the channel lives as long as the harness, so its end stops the process.
+      ONTOS_MODULE_CREDENTIAL_HANDOVER: 'fd3-lifetime',
+    },
+    moduleCredentialChannel: true,
+    stage: `hosted-owner:${input.appId}`,
+  });
+  let port: number | undefined;
+  while (port === undefined) {
+    const listening = HostedOwnerReadyLine.exec(yield* child.readHostLog)?.groups;
+    if (listening?.appId === input.appId) {
+      port = Number(listening.port);
+    }
+  }
+  yield* handOverModuleCredential(child, input.appId, input.key);
+  let accepted: string | undefined;
+  while (accepted === undefined) {
+    const line = yield* child.readHostLog;
+    if (line.startsWith(handoverReceivedPrefix)) {
+      accepted = line.slice(handoverReceivedPrefix.length);
+    }
+  }
+  yield* requireProtocol(accepted.split(', ').includes(input.appId), `hosted-owner-key:${input.appId}`);
+  const client = yield* HttpClient.HttpClient;
+  const contract = yield* client.get(`http://127.0.0.1:${port}${ONTOS_MODULE_CONTRACT_PATH}`).pipe(
+    Effect.flatMap((response) => response.json),
+    Effect.flatMap(Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)),
+    Effect.mapError(() => safeFailure(`hosted-owner-contract:${input.appId}`)),
+  );
+  yield* requireProtocol(
+    contract.deployment.appId === input.appId && contract.deployment.buildMarker === input.marker.buildMarker,
+    `exact-hosted-owner:${input.appId}`,
+  );
+  return port;
+});
+
+/**
+ * Starts one owner of the run and binds its placement: a hosted owner through `serve-units.mts` with only its own
+ * module key on its private channel, any other through its test receiver.
+ */
+const startNativeOwner = Effect.fn('PreproposalNative.startOwner')(function* startNativeOwner(
+  owner: NativeOwnerDefinition & {
+    readonly artifact: string | undefined;
+    readonly bind: (port: number) => Effect.Effect<void>;
+    readonly marker: typeof MarkerSchema.Type;
+  },
+  environment: Readonly<Record<string, string>>,
+  moduleCredentialOf: (appId: string) => Redacted.Redacted,
+) {
+  if (owner.hosted) {
+    return yield* owner.bind(
+      yield* startHostedOwner({
+        appId: owner.appId,
+        environment,
+        key: moduleCredentialOf(owner.appId),
+        marker: owner.marker,
+        owner: owner.owner,
+      }),
+    );
+  }
+  if (owner.artifact === undefined || owner.serve === undefined) {
+    return yield* safeFailure(`receiver-fixture:${owner.appId}`);
+  }
+  const receiver = yield* openNativeChild({
+    args: [owner.artifact, owner.serve],
+    environment,
+    stage: `receiver:${owner.appId}`,
+  });
+  const ready = yield* receiver.read(ReadySchema, 'public');
+  yield* requireProtocol(
+    ready.marker.appId === owner.appId && ready.marker.buildMarker === owner.marker.buildMarker,
+    `exact-receiver:${owner.appId}`,
+  );
+  return yield* owner.bind(ready.port);
 });
 
 const resolveNativeOwnerIdentity = Effect.fn('PreproposalNative.ownerIdentity')(function* resolveNativeOwnerIdentity(
@@ -1153,6 +1326,45 @@ const resolveNativeOwnerIdentity = Effect.fn('PreproposalNative.ownerIdentity')(
       }),
   });
 });
+
+/**
+ * A hosted owner's identity is the one its build recorded (`dist/ultramodern-build.json`): its API bundle verifies
+ * every assertion against that release marker, which a build with a configured source revision derives from that
+ * revision. The checkout the test runs in (a dirty worktree, an export without Git) may resolve a different one.
+ */
+const resolveHostedOwnerIdentity = Effect.fn('PreproposalNative.hostedOwnerIdentity')(function* resolveHostedIdentity(
+  owner: string,
+  appId: string,
+) {
+  const built = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(
+      Schema.Struct({
+        deliveryUnit: Schema.Struct({ ...MarkerSchema.fields, sourceRevision: Schema.String }),
+        surfaces: Schema.Struct({ api: MarkerSchema }),
+      }),
+    ),
+  )(
+    yield* io(
+      `hosted-owner-build-identity:${appId}`,
+      async () => await readFile(`${applicationRoot}${owner}/dist/ultramodern-build.json`, 'utf-8'),
+    ),
+  ).pipe(Effect.mapError(() => safeFailure(`hosted-owner-build-identity:${appId}`)));
+  yield* requireProtocol(
+    built.deliveryUnit.appId === appId &&
+      built.surfaces.api.appId === appId &&
+      built.surfaces.api.buildMarker === built.deliveryUnit.buildMarker,
+    `hosted-owner-build-identity:${appId}`,
+  );
+  return { buildMarker: built.deliveryUnit.buildMarker, sourceRevision: built.deliveryUnit.sourceRevision };
+});
+
+/** The release identity an owner of this run serves and signs as: a hosted owner's built one, else its source's. */
+const resolveOwnerIdentity = (owner: string) => {
+  const hosted = ownerDefinitions.find((definition) => definition.owner === owner && definition.hosted);
+  return hosted === undefined
+    ? resolveNativeOwnerIdentity(owner)
+    : resolveHostedOwnerIdentity(hosted.owner, hosted.appId);
+};
 
 const buildOwnerExecutable = Effect.fn('PreproposalNative.buildOwnerExecutable')(function* buildOwnerExecutable(
   owner: string,
@@ -1185,7 +1397,8 @@ const buildOwnerExecutable = Effect.fn('PreproposalNative.buildOwnerExecutable')
   );
   const identityDefines: string[] = [];
   if (!owner.startsWith('packages/')) {
-    const identity = yield* resolveNativeOwnerIdentity(owner);
+    // A hosted owner's own fixtures (Market's setup child, Catalog's producer) are that same release.
+    const identity = yield* resolveOwnerIdentity(owner);
     identityDefines.push(
       `--define:ULTRAMODERN_BUILD_MARKER=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(identity.buildMarker)}`,
       `--define:ULTRAMODERN_SOURCE_REVISION=${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(identity.sourceRevision)}`,
@@ -1378,6 +1591,8 @@ const makeAdmittedPreproposalOutbox = (
 const makeNativeComposition = Effect.fn('PreproposalNative.composition')(function* makeNativeComposition(
   owners: readonly {
     readonly appId: string;
+    /** A hosted owner's build source revision; its contract names the release marker the build derived from it. */
+    readonly builtSourceRevision: string | undefined;
     readonly marker: typeof MarkerSchema.Type;
     readonly moduleId: string;
     readonly origin: string;
@@ -1395,7 +1610,10 @@ const makeNativeComposition = Effect.fn('PreproposalNative.composition')(functio
       Effect.gen(function* nativeContract() {
         const generator = yield* openNativeChild({
           args: ['scripts/generate-ontos-module-contract.mts', '--vertical', owner.appId, '--target', 'dist'],
-          environment: { APP_ENV_PATH: '/dev/null' },
+          environment:
+            owner.builtSourceRevision === undefined
+              ? { APP_ENV_PATH: '/dev/null' }
+              : { APP_ENV_PATH: '/dev/null', ULTRAMODERN_SOURCE_REVISION: owner.builtSourceRevision },
           stage: `module-contract:${owner.appId}`,
         });
         yield* generator.exit;
@@ -1517,7 +1735,10 @@ const makeNativeComposition = Effect.fn('PreproposalNative.composition')(functio
 });
 
 /** Stable placement before the creator clone exists; unchanged bytes reach the real owner. */
-const makeOwnerPlacement = Effect.fn('PreproposalNative.ownerPlacement')(function* makeOwnerPlacement(appId: string) {
+const makeOwnerPlacement = Effect.fn('PreproposalNative.ownerPlacement')(function* makeOwnerPlacement(
+  appId: string,
+  hosted: boolean,
+) {
   let destination: URL | undefined;
   const layer = yield* Layer.build(NodeHttpServer.layerTest);
   const server = Context.get(layer, HttpServer.HttpServer);
@@ -1530,10 +1751,10 @@ const makeOwnerPlacement = Effect.fn('PreproposalNative.ownerPlacement')(functio
       const incoming = yield* HttpServerRequest.HttpServerRequest;
       const request = yield* HttpServerRequest.toWeb(incoming);
       const url = new URL(incoming.url, destination);
-      // Party/Shell fixtures mount their generated public prefix themselves. The other default
-      // handler fixtures expose the owner-relative router, so this placement mounts its public prefix.
+      // Hosted units and the Party/Shell fixtures mount their generated public prefix themselves. The other
+      // default handler fixtures expose the owner-relative router, so this placement mounts its public prefix.
       const prefix = `/${appId}-api`;
-      if (appId !== partyAudience && appId !== shellAudience && url.pathname.startsWith(`${prefix}/`)) {
+      if (!hosted && appId !== partyAudience && appId !== shellAudience && url.pathname.startsWith(`${prefix}/`)) {
         url.pathname = url.pathname.slice(prefix.length);
       }
       // Buffer the body: a streamed web Request body cannot be re-sent without duplex support.
@@ -1914,7 +2135,10 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
     const owners = yield* Effect.all(
       ownerDefinitions.map((definition) =>
         Effect.gen(function* prepareOwnerPlacement() {
-          const artifact = yield* buildOwnerExecutable(definition.owner, definition.receiver, artifactRoot);
+          const artifact =
+            definition.receiver === undefined
+              ? undefined
+              : yield* buildOwnerExecutable(definition.owner, definition.receiver, artifactRoot);
           // Generated build identity is metadata. Some historical --describe receivers install
           // their server Layer even on that branch; never execute them for discovery.
           const document = yield* io(
@@ -1927,11 +2151,12 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
             ),
           )(document);
           const generatedMarker = definition.appId === shellAudience ? metadata.deliveryUnit : metadata.surfaces.api;
-          const identity = yield* resolveNativeOwnerIdentity(definition.owner);
+          const identity = yield* resolveOwnerIdentity(definition.owner);
           const marker = { ...generatedMarker, buildMarker: identity.buildMarker };
           yield* requireProtocol(marker.appId === definition.appId, `owner-marker:${definition.appId}`);
-          const placement = yield* makeOwnerPlacement(definition.appId);
-          return { ...definition, artifact, marker, ...placement };
+          const placement = yield* makeOwnerPlacement(definition.appId, definition.hosted);
+          const builtSourceRevision = definition.hosted ? identity.sourceRevision : undefined;
+          return { ...definition, artifact, builtSourceRevision, marker, ...placement };
         }),
       ),
     );
@@ -2105,10 +2330,16 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       { appId: marketAudience, identity: identities.marketRelay },
       { appId: catalogAudience, identity: identities.catalog },
     ] as const;
+    const moduleCredentialOf = (appId: string) => {
+      const credential = moduleCredentials.find((candidate) => candidate.appId === appId);
+      if (credential === undefined) {
+        throw safeFailure('module-credential-owner');
+      }
+      return credential.identity.secret;
+    };
     const environment = {
       ...baseEnvironment,
       ...permissionEnvironment,
-      ONTOS_PREPROPOSAL_FAILURE_SPAN: 'service.resolveSubmission',
       // Run-local signing material for Pricing immutable owner proofs; never a deployed secret.
       ONTOS_PRICING_CONFIRMATION_KEY_LINEAGE_REF: 'preproposal-native-lineage',
       ONTOS_PRICING_CONFIRMATION_KEY_REF: 'preproposal-native-key',
@@ -2116,27 +2347,8 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
       ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET: randomBytes(32).toString('hex'),
       ONTOS_SHELL_GATEWAY_BASE_URL: `${shell.origin}/shell-super-app-api`,
     };
-    // Each dedicated module process receives only its own credential.
-    const environmentFor = (appId: string) => {
-      const moduleEnvironment: typeof environment & { ONTOS_GATEWAY_MODULE_API_KEY?: string } = { ...environment };
-      const credential = moduleCredentials.find((candidate) => candidate.appId === appId);
-      if (credential !== undefined) {
-        moduleEnvironment.ONTOS_GATEWAY_MODULE_API_KEY = Redacted.value(credential.identity.secret);
-      }
-      return moduleEnvironment;
-    };
     for (const owner of owners) {
-      const receiver = yield* openNativeChild({
-        args: [owner.artifact, owner.serve],
-        environment: environmentFor(owner.appId),
-        stage: `receiver:${owner.appId}`,
-      });
-      const ready = yield* receiver.read(ReadySchema, 'public');
-      yield* requireProtocol(
-        ready.marker.appId === owner.appId && ready.marker.buildMarker === owner.marker.buildMarker,
-        `exact-receiver:${owner.appId}`,
-      );
-      yield* owner.bind(ready.port);
+      yield* startNativeOwner(owner, environment, moduleCredentialOf);
     }
     const storefrontId = `native-preproposal-${randomUUID()}`;
     const intent = `native-preproposal:${randomUUID()}`;
@@ -2469,7 +2681,7 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
 
     const overlay = commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(Layer.provide(ContextAccessLive));
     const ownerConfiguration = ConfigProvider.layer(ConfigProvider.fromUnknown(environment));
-    const ownIdentity = yield* resolveNativeOwnerIdentity('verticals/commerce-customer-context');
+    const ownIdentity = yield* resolveOwnerIdentity('verticals/commerce-customer-context');
     const ownDeployment = { appId: contextAudience, buildMarker: ownIdentity.buildMarker };
     const database = Layer.succeed(
       DatabaseConfig,
@@ -2678,11 +2890,17 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
           'order-finalization-config-bootstrap.fixture.ts',
           artifactRoot,
         );
+        // A hosted owner's Action calls other modules with its own key: the child claims its credential store copy
+        // and takes the key on its private channel, as an owners process does.
         const child = yield* openNativeChild({
           args: [artifact],
-          environment: environmentFor(owner),
+          environment: definition.hosted ? { ...environment, ONTOS_MODULE_CREDENTIAL_HANDOVER: 'fd3' } : environment,
+          moduleCredentialChannel: definition.hosted,
           stage: `registered-config:${owner}:${operation}`,
         });
+        if (definition.hosted) {
+          yield* handOverModuleCredential(child, owner, moduleCredentialOf(owner), true);
+        }
         const authorization = yield* owner === marketAudience
           ? integrationCredential(identities.buyer, owner)
           : signBuyer(owner, true, false);
@@ -2880,6 +3098,9 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
           ),
         );
         const stage = `catalog-registered-producer:${ordinal}`;
+        if (catalog.artifact === undefined) {
+          return yield* safeFailure('catalog-producer-fixture');
+        }
         const catalogProducer = yield* openNativeChild({
           args: [catalog.artifact, '--produce-preproposal-basis'],
           environment,

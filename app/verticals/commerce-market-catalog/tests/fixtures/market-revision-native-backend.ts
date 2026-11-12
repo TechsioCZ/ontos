@@ -63,6 +63,7 @@ import {
   makeApiKeyGatewayNativeFixture,
   sealApiKeyGatewayNativeComposition,
 } from '@app/shell-super-app/testing/api-key-gateway-native';
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import { deriveActiveApplicationCompositionSnapshot } from '../../../../scripts/active-application-composition.mts';
 import { makeCurrentStorefrontNativeReceiver } from '@app/storefront-registry/testing/current-storefront-native';
 import { makeMarketRetirementNativeReceiver } from '@app/commerce-customer-context/testing/market-retirement-native';
@@ -570,8 +571,9 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
   // Build scoped Core clients once; retained Registry callbacks use this same live context.
   const baseContext = yield* Layer.build(fixture.layer.pipe(Layer.provideMerge(authorization)));
   const binding = yield* shell.issueAndBind(principal).pipe(Effect.provideContext(baseContext));
-  // Market's own module credential, provisioned by the platform as on every environment.
+  // Market's own module credential, provisioned by the platform and handed over by the host, as on every environment.
   const relayBinding = yield* shell.provisionRelaySource();
+  yield* holdTestModuleCredentials({ 'commerce-market-catalog': Redacted.value(relayBinding.secret) });
   const context = Context.add(
     baseContext,
     ConfigProvider.ConfigProvider,
@@ -579,7 +581,6 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
       ConfigProvider.fromEnvRecord({
         ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: shell.compositionSourceUrl,
         ONTOS_GATEWAY_ISSUER: shell.issuer,
-        ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(relayBinding.secret),
         ONTOS_GATEWAY_PUBLIC_JWKS: shell.publicJwks,
         ONTOS_SHELL_GATEWAY_BASE_URL: shell.baseUrl,
       }),

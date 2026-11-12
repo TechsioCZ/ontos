@@ -56,6 +56,31 @@ const offeredTokens = MutableRef.make(new Set<string>());
 /** Revisions the Shell no longer issues for (a release switch); their documents must reload, so no batch is asked. */
 const retiredRevisions = MutableRef.make(new Set<string>());
 
+/** The Shell's own "reload required" answer, as the browser request cache buffers it. */
+export interface RefusedReleaseAnswer {
+  readonly body: ArrayBuffer;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly status: number;
+  readonly statusText: string;
+}
+
+/**
+ * The first "reload required" answer the Shell gave for a revision. Once a document's release was refused, nothing
+ * of it asks the Shell again: every further gateway request of that revision is answered with this refusal until the
+ * page reloads, so an old tab shows its reload banner instead of sending a refused request every few seconds.
+ */
+const refusedReleases = MutableRef.make(new Map<string, RefusedReleaseAnswer>());
+
+export const rememberRefusedRelease = (revision: string, answer: RefusedReleaseAnswer) =>
+  Effect.sync(() => {
+    MutableRef.get(retiredRevisions).add(revision);
+    MutableRef.get(refusedReleases).set(revision, answer);
+  });
+
+/** The refusal a document of this revision answers with instead of asking the Shell; none while it is admitted. */
+export const refusedReleaseAnswer = (revision: string): Option.Option<RefusedReleaseAnswer> =>
+  Option.fromUndefinedOr(MutableRef.get(refusedReleases).get(revision));
+
 const inBrowser = () => 'document' in globalThis;
 
 const usable = (response: GatewayContextResponse, now: number) =>

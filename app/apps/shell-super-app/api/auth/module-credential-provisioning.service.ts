@@ -1,22 +1,24 @@
 import { CoreDatabase } from '@app/core-runtime/db/client';
 import {
-  bindModuleCredential,
+  bindPlatformCredential,
   ensureModulePrincipal,
   ensurePlatformTenant,
   loadCompositionAuthorityActivation,
-  loadModuleCredentialEnrolment,
+  loadInternalWorkloadBindings,
+  loadPlatformCredentialBindings,
   ModuleCredentialUnavailableError,
   modulePrincipalDisplayName,
   PLATFORM_TENANT,
   recordModuleCredentialPass,
-  revokeModuleCredential,
+  revokePlatformCredential,
 } from '@app/core-runtime/auth/module-credentials';
 import type {
   AuditedModuleCredential,
-  ModuleCredentialEnrolment,
+  InternalWorkloadBinding,
   ModuleCredentialPass,
+  PlatformCredentialBinding,
 } from '@app/core-runtime/auth/module-credentials';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { DateTime, Duration, Effect, Exit, Option, Result, Schema } from 'effect';
 import type { Redacted } from 'effect';
 
@@ -24,9 +26,15 @@ import { ApiKeyService } from './api-key-service.ts';
 import { AuthDatabase } from './db/client.ts';
 import { apikey, user } from './db/schema.ts';
 import { PLATFORM_KEY_OWNER } from './platform-key-owner.ts';
-import { ModuleCredentialAttestationJson, ModuleCredentialAttestationSchema } from './module-credential-attestation.ts';
-import type { ModuleCredentialAttestation, ModuleCredentialRelease } from './module-credential-attestation.ts';
-import { loadAttestedModuleCredentials } from './module-credential-enrolment.service.ts';
+import {
+  ModuleCredentialAttestationJson,
+  ModuleCredentialAttestationSchema,
+  platformAttestationOf,
+  WorkloadCredentialAttestationJson,
+  WorkloadCredentialAttestationSchema,
+  workloadCredentialEntryId,
+} from './module-credential-attestation.ts';
+import type { ModuleCredentialRelease, PlatformCredentialAttestation } from './module-credential-attestation.ts';
 
 /**
  * How long a module key lives. A host rotates its keys well before that, so a key nobody retired dies on its own.
@@ -42,12 +50,17 @@ export interface IssuedModuleKey {
   readonly providerKeyId: string;
 }
 
-/** One provisioning pass: each calling module's fresh key, in memory only, and the modules that got none. */
+/**
+ * One provisioning pass: each calling module's fresh key and each of its internal workloads' fresh keys (one per
+ * tenant where the operator registered that workload), in memory only, and the modules that got none. `keys` names
+ * every issued key by its entry: the app id for a module key, `workloadCredentialEntryId` for a workload key.
+ */
 export interface ProvisionedModuleCredentials {
   readonly credentials: ReadonlyMap<string, Redacted.Redacted>;
   readonly failedAppIds: readonly string[];
   readonly keys: ReadonlyMap<string, IssuedModuleKey>;
   readonly providerKeyIds: ReadonlySet<string>;
+  readonly workloadCredentials: ReadonlyMap<string, Redacted.Redacted>;
 }
 
 /** Who runs a pass: the host (its name) and that host's boot (a fresh id each time the host process starts). */
@@ -88,12 +101,55 @@ const ensurePlatformKeyOwner = Effect.gen(function* ensurePlatformKeyOwnerEffect
 /** Records what the key was issued for, replacing its pending marker once its binding committed. */
 const attestKey = Effect.fn('ModuleCredentialProvisioning.attestKey')(function* attestModuleCredential(
   providerKeyId: string,
-  attestation: ModuleCredentialAttestation,
+  attestation: PlatformCredentialAttestation,
 ) {
   const { executor } = yield* AuthDatabase;
-  const metadata = yield* Schema.encodeEffect(ModuleCredentialAttestationJson)(attestation);
+  const metadata =
+    attestation.ontosModuleCredential === 'attested_v2'
+      ? yield* Schema.encodeEffect(ModuleCredentialAttestationJson)(attestation)
+      : yield* Schema.encodeEffect(WorkloadCredentialAttestationJson)(attestation);
   const updatedAt = yield* DateTime.nowAsDate;
   yield* executor.update(apikey).set({ metadata, updatedAt }).where(eq(apikey.id, providerKeyId));
+});
+
+/** Every key the platform issued that is still enabled, with what it attests and where it is bound, if anywhere. */
+interface PlatformCredential {
+  readonly attestation: Option.Option<PlatformCredentialAttestation>;
+  readonly binding: PlatformCredentialBinding;
+  /** The module the key serves: the attested app, else the module principal's (an unattested module key). */
+  readonly entry: string;
+}
+
+const loadPlatformCredentials = Effect.gen(function* loadPlatformCredentialsEffect() {
+  const database = yield* CoreDatabase;
+  const { executor: auth } = yield* AuthDatabase;
+  const owned = yield* auth
+    .select({ id: apikey.id, metadata: apikey.metadata })
+    .from(apikey)
+    .where(and(eq(apikey.referenceId, PLATFORM_KEY_OWNER.id), eq(apikey.enabled, true)))
+    .pipe(Effect.mapError(unavailable('The platform keys could not be read')));
+  const bindings = yield* loadPlatformCredentialBindings(
+    database.executor,
+    owned.map(({ id }) => id),
+  );
+  const metadata = new Map(owned.map(({ id, metadata: value }) => [id, value] as const));
+  return bindings.map((binding): PlatformCredential => {
+    const attestation = platformAttestationOf(metadata.get(binding.providerKeyId) ?? null);
+    return {
+      attestation,
+      binding,
+      entry: Option.match(attestation, {
+        onNone: () => binding.providerKeyId,
+        onSome: (attested) =>
+          attested.ontosModuleCredential === 'attested_v2' ? attested.appId : workloadCredentialEntryId(attested),
+      }),
+    };
+  });
+});
+
+const auditedOf = ({ binding, entry }: PlatformCredential): AuditedModuleCredential => ({
+  appId: entry,
+  providerKeyId: binding.providerKeyId,
 });
 
 /**
@@ -109,6 +165,8 @@ export const provisionModuleCredentials = Effect.fn('ModuleCredentialProvisionin
   input: ModuleCredentialIssuer & {
     readonly appIds: readonly string[];
     readonly release: ModuleCredentialRelease;
+    /** Each calling module's own internal workloads (O73), whose registered principals get a key too. */
+    readonly workloads?: ReadonlyMap<string, readonly string[]>;
   },
 ) {
   const database = yield* CoreDatabase;
@@ -168,7 +226,11 @@ export const provisionModuleCredentials = Effect.fn('ModuleCredentialProvisionin
     // of unbound keys. A bound key without an attestation binds nothing in the Shell.
     yield* database.executor
       .transaction((transaction) =>
-        bindModuleCredential(transaction, { principalId, providerKeyId: issued.providerKeyId }),
+        bindPlatformCredential(transaction, {
+          principalId,
+          providerKeyId: issued.providerKeyId,
+          tenantId: PLATFORM_TENANT.tenantId,
+        }),
       )
       .pipe(
         Effect.andThen(attestKey(issued.providerKeyId, attestation)),
@@ -207,23 +269,111 @@ export const provisionModuleCredentials = Effect.fn('ModuleCredentialProvisionin
       failedAppIds.push(appIds[index] ?? '');
     }
   }
+
+  // Each served module's internal workloads: a key for every principal the operator registered for one of them, in
+  // the tenant it is registered in. The principal and its binding are the operator's; the platform only issues,
+  // rotates and retires the principal's key, which is admitted exactly where that binding admits it.
+  const workloadsOf = (appId: string) => input.workloads?.get(appId) ?? [];
+  const workloadKeys = [...new Set(appIds.flatMap(workloadsOf))];
+  const registered = yield* loadInternalWorkloadBindings(database.executor, workloadKeys).pipe(
+    Effect.mapError(unavailable('The internal workload bindings could not be read')),
+  );
+  const provisionWorkload = Effect.fn('ModuleCredentialProvisioning.provisionWorkload')(function* provisionWorkload(
+    appId: string,
+    binding: InternalWorkloadBinding,
+  ) {
+    const entry = workloadCredentialEntryId({ appId, ...binding });
+    const attestation = yield* Schema.decodeUnknownEffect(WorkloadCredentialAttestationSchema)({
+      appId,
+      bootId: input.bootId,
+      buildMarker: input.release.buildMarkers[appId],
+      compositionRevision: input.release.compositionRevision,
+      hostId: input.hostId,
+      ontosModuleCredential: 'workload_attested_v1',
+      principalId: binding.principalId,
+      tenantId: binding.tenantId,
+      workloadKey: binding.workloadKey,
+    }).pipe(Effect.mapError(unavailable(`The workload ${binding.workloadKey} of ${appId} cannot be attested`)));
+    const workloadKey = yield* keys
+      .issueServerOwned({
+        expiresInSeconds: Duration.toSeconds(MODULE_CREDENTIAL_LIFETIME),
+        issuerPrincipalId: binding.principalId,
+        lifecycleOperationId: input.operationId,
+        name: `workload:${binding.workloadKey}`,
+        ownerUserId: PLATFORM_KEY_OWNER.id,
+        tenantId: binding.tenantId,
+      })
+      .pipe(Effect.mapError(unavailable(`The workload credential ${entry} could not be issued`)));
+    yield* database.executor
+      .transaction((transaction) =>
+        bindPlatformCredential(transaction, {
+          principalId: binding.principalId,
+          providerKeyId: workloadKey.providerKeyId,
+          tenantId: binding.tenantId,
+        }),
+      )
+      .pipe(
+        Effect.andThen(attestKey(workloadKey.providerKeyId, attestation)),
+        Effect.mapError(unavailable(`The workload credential ${entry} could not be bound and attested`)),
+        Effect.tapError(() => disableOrReport(appId, workloadKey.providerKeyId)),
+      );
+    const expiresAt = workloadKey.expiresAt === null ? Option.none() : DateTime.make(workloadKey.expiresAt);
+    if (Option.isNone(expiresAt)) {
+      yield* disableOrReport(appId, workloadKey.providerKeyId);
+      return yield* new ModuleCredentialUnavailableError({
+        reason: `The workload credential ${entry} was issued without an end of life`,
+      });
+    }
+    return {
+      entry,
+      expiresAt: DateTime.toUtc(expiresAt.value),
+      providerKeyId: workloadKey.providerKeyId,
+      secret: workloadKey.secret,
+    };
+  });
+  const keyless = new Set(failedAppIds);
+  const workloadRequests = appIds.flatMap((appId) => {
+    if (keyless.has(appId)) {
+      return [];
+    }
+    const own = new Set(workloadsOf(appId));
+    return registered.flatMap((binding) => (own.has(binding.workloadKey) ? [{ appId, binding }] : []));
+  });
+  const workloadOutcomes = yield* Effect.forEach(
+    workloadRequests,
+    ({ appId, binding }) => provisionWorkload(appId, binding).pipe(Effect.result),
+    { concurrency: 1 },
+  );
+  const workloadCredentials = new Map<string, Redacted.Redacted>();
+  for (const [index, outcome] of workloadOutcomes.entries()) {
+    if (Result.isSuccess(outcome)) {
+      const { entry, expiresAt, providerKeyId, secret } = outcome.success;
+      workloadCredentials.set(entry, secret);
+      keysByModule.set(entry, { expiresAt, providerKeyId });
+      issued.push({ appId: entry, providerKeyId });
+    } else {
+      keyless.add(workloadRequests[index]?.appId ?? '');
+    }
+  }
+  const failedModules = appIds.filter((appId) => keyless.has(appId));
   yield* recordModuleCredentialPass(database.executor, {
     bootId: input.bootId,
     compositionRevision: input.release.compositionRevision,
     credentials: issued,
-    failed: failedAppIds,
+    failed: failedModules,
     hostId: input.hostId,
     kind: 'issued',
     operationId: input.operationId,
-    outcome: failedAppIds.length === 0 ? 'succeeded' : 'failed',
-    outcomeCode: failedAppIds.length === 0 ? 'module_credentials_issued' : 'module_credentials_partially_issued',
+    outcome: failedModules.length === 0 ? 'succeeded' : 'failed',
+    outcomeCode: failedModules.length === 0 ? 'module_credentials_issued' : 'module_credentials_partially_issued',
     undisabled,
   });
   return {
     credentials,
-    failedAppIds,
+    failedAppIds: failedModules,
     keys: keysByModule,
     providerKeyIds: new Set(issued.map(({ providerKeyId }) => providerKeyId)),
+    workloadCredentials,
   } satisfies ProvisionedModuleCredentials;
 });
 
@@ -275,13 +425,14 @@ export const retireSupersededModuleCredentials = Effect.fn('ModuleCredentialProv
     return { failed: 0, holdsAuthority: false, retired: 0 } satisfies ModuleCredentialRetirement;
   }
   const cutoff = authority.value.revisionActivatedAt;
-  const enrolment = yield* loadModuleCredentialEnrolment(database.executor);
-  const superseded = enrolment.filter(
-    (credential) => !input.current.has(credential.providerKeyId) && credential.boundAt.getTime() < cutoff.getTime(),
+  const platform = yield* loadPlatformCredentials;
+  // Module keys and internal workload keys alike: every platform key bound before this revision took the authority.
+  const superseded = platform.filter(
+    ({ binding }) => !input.current.has(binding.providerKeyId) && binding.boundAt.getTime() < cutoff.getTime(),
   );
-  const retireOne = Effect.fn('ModuleCredentialProvisioning.retireOne')(function* retireOne(
-    credential: ModuleCredentialEnrolment,
-  ) {
+  const retireOne = Effect.fn('ModuleCredentialProvisioning.retireOne')(function* retireOne({
+    binding: credential,
+  }: PlatformCredential) {
     // The key is disabled first: once it fails verification nothing can use it, whatever happens to its binding.
     // Only then is the binding revoked, and only while this release still holds the authority.
     return yield* keys.setEnabled(credential.providerKeyId, false).pipe(
@@ -294,7 +445,7 @@ export const retireSupersededModuleCredentials = Effect.fn('ModuleCredentialProv
               if (Option.isNone(still) || still.value.revision !== input.compositionRevision) {
                 return false;
               }
-              yield* revokeModuleCredential(transaction, credential);
+              yield* revokePlatformCredential(transaction, credential);
               return true;
             },
           ),
@@ -314,9 +465,9 @@ export const retireSupersededModuleCredentials = Effect.fn('ModuleCredentialProv
     return outcome === undefined || Result.isFailure(outcome);
   });
   yield* audit({
-    credentials: retired.map(({ appId, providerKeyId }) => ({ appId, providerKeyId })),
+    credentials: retired.map(auditedOf),
     cutoff,
-    failed: failed.map(({ providerKeyId }) => providerKeyId),
+    failed: failed.map(({ binding }) => binding.providerKeyId),
     outcome: failed.length === 0 ? 'succeeded' : 'failed',
     outcomeCode: failed.length === 0 ? 'module_credentials_retired' : 'module_credentials_partially_retired',
   });
@@ -350,26 +501,24 @@ export const retireOwnModuleCredentials = Effect.fn('ModuleCredentialProvisionin
   },
 ) {
   const database = yield* CoreDatabase;
-  const { executor: auth } = yield* AuthDatabase;
   const keys = yield* ApiKeyService;
-  const attested = yield* loadAttestedModuleCredentials(database.executor, auth).pipe(
-    Effect.mapError(unavailable('The module credential enrolment could not be read')),
-  );
-  const own = attested.filter(
-    ({ attestation, providerKeyId }) =>
+  const platform = yield* loadPlatformCredentials;
+  // Module keys and internal workload keys alike: each attests the host and boot that issued it.
+  const own = platform.filter(
+    ({ attestation, binding }) =>
       Option.isSome(attestation) &&
       attestation.value.hostId === input.hostId &&
-      ((attestation.value.bootId === input.bootId && input.replaced.has(providerKeyId)) ||
+      ((attestation.value.bootId === input.bootId && input.replaced.has(binding.providerKeyId)) ||
         (attestation.value.bootId !== input.bootId && input.earlierBoots.has(attestation.value.bootId))),
   );
   const outcomes = yield* Effect.forEach(
     own,
-    (credential) =>
+    ({ binding: credential }) =>
       keys
         .setEnabled(credential.providerKeyId, false)
         .pipe(
           Effect.andThen(
-            database.executor.transaction((transaction) => revokeModuleCredential(transaction, credential)),
+            database.executor.transaction((transaction) => revokePlatformCredential(transaction, credential)),
           ),
           Effect.mapError(unavailable('An own module credential could not be retired')),
           Effect.result,
@@ -381,8 +530,8 @@ export const retireOwnModuleCredentials = Effect.fn('ModuleCredentialProvisionin
   yield* recordModuleCredentialPass(database.executor, {
     bootId: input.bootId,
     compositionRevision: input.compositionRevision,
-    credentials: retired.map(({ appId, providerKeyId }) => ({ appId, providerKeyId })),
-    failed: failed.map(({ providerKeyId }) => providerKeyId),
+    credentials: retired.map(auditedOf),
+    failed: failed.map(({ binding }) => binding.providerKeyId),
     hostId: input.hostId,
     kind: 'retired_own',
     operationId: input.operationId,

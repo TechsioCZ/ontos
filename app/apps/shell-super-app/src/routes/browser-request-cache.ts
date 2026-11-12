@@ -14,6 +14,8 @@ import { onOtherSessionScopeEnded, registerSessionScopedReset, resetSessionScope
 import {
   documentGatewayAssertion,
   noteDocumentGatewayAudience,
+  refusedReleaseAnswer,
+  rememberRefusedRelease,
   resetDocumentGatewayAssertions,
 } from './document-gateway-assertions.ts';
 
@@ -513,11 +515,23 @@ const noteSingleAudience = (requestBody: string) =>
     Effect.ignore,
   );
 
+/** The revision a gateway request names, when it names one. */
+const requestedRevision = (requestBody: string) =>
+  Schema.decodeOption(DocumentGatewayRequestJson)(requestBody).pipe(
+    Option.map((request) => request.compositionRevision),
+  );
+
 const serveGateway = Effect.fn('BrowserRequestCache.serveGateway')(function* serveGatewayEffect(
   state: CacheState,
   request: Extract<ClassifiedRequest, { kind: 'gateway' }>,
 ) {
   const { contextGeneration } = state;
+  const revision = requestedRevision(request.body);
+  // A refused release is never asked again: the document answers with that refusal until it reloads.
+  const refused = Option.isSome(revision) ? refusedReleaseAnswer(revision.value) : Option.none();
+  if (Option.isSome(refused)) {
+    return refused.value;
+  }
   const documentAnswer = yield* documentGatewayAnswer(state, request.body);
   if (state.contextGeneration !== contextGeneration) {
     return yield* new ModuleRequestFailed();
@@ -533,6 +547,9 @@ const serveGateway = Effect.fn('BrowserRequestCache.serveGateway')(function* ser
   if (isOk(response)) {
     yield* rememberAudience(state, request.body, response);
     yield* noteSingleAudience(request.body);
+  }
+  if (response.status === 409 && Option.isSome(revision)) {
+    yield* rememberRefusedRelease(revision.value, response);
   }
   return response;
 });

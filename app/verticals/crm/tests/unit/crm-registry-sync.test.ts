@@ -1,6 +1,6 @@
-import { NodeCrypto, NodePath } from '@effect/platform-node';
-import { ConfigProvider, DateTime, Effect, FileSystem, Layer, Option, Schema } from 'effect';
-import { FetchHttpClient, HttpClient, HttpClientResponse } from 'effect/http';
+import { NodeCrypto } from '@effect/platform-node';
+import { ConfigProvider, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { FetchHttpClient, HttpClient } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 import { ApplyCommandResponseSchema } from '../../shared/apis/apply-command-action.ts';
 import type { ApplyCommandResponse, ClientPartySync } from '../../shared/apis/apply-command-action.ts';
@@ -25,8 +25,22 @@ import {
   reconcileClientPartyBatch,
 } from '../../src/services/party-intake.ts';
 import type { IntakeCrmClient } from '../../src/services/party-intake.ts';
+import { claimHostedModuleCredentials } from '../../../../packages/core-runtime/src/auth/hosted-module-credential-store.ts';
 
 const at = '2026-10-27T09:00:00.000Z';
+const shellGateway = 'https://shell.fixture.invalid/shell-super-app-api';
+const registeredTenant = '70000000-0000-4000-8000-000000000001';
+const unregisteredTenant = '70000000-0000-4000-8000-000000000009';
+const INTAKE_KEY = 'platform-issued-intake-key';
+/** This test process as an owners process: the host hands CRM its intake workload key for one tenant only. */
+const handOverIntakeKey: Effect.Effect<void> = Effect.gen(function* handOver() {
+  const receiver = yield* claimHostedModuleCredentials(['crm']).pipe(Effect.orDie);
+  yield* receiver.accept({
+    credentials: {},
+    schemaVersion: 1,
+    workloads: { [`crm/demo.crm.party-intake/${registeredTenant}`]: Redacted.make(INTAKE_KEY) },
+  });
+});
 it('never reports a parked command as a committed CRM write or completed Party link', () => {
   const accepted = Schema.decodeUnknownSync(ActionProposalAcceptedSchema)({
     _tag: 'ActionProposalAccepted',
@@ -122,56 +136,6 @@ const translate = (key: string, values: { readonly linked: number; readonly rema
   `${key}:${values.linked}:${values.remaining}`;
 const outcomeOf = (result: ApplyCommandResponse) =>
   commandResultOutcome({ _tag: 'SyncClientParties' }, result, translate);
-
-const configuredIntake = (configuration: Readonly<Record<string, string>>) =>
-  Layer.mergeAll(
-    PartyIntakeLive,
-    NodeCrypto.layer,
-    ConfigProvider.layer(
-      ConfigProvider.fromUnknown({
-        ONTOS_CRM_PARTY_INTAKE_API_KEY: 'fixture-intake-key',
-        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
-        ...configuration,
-      }),
-    ),
-    FileSystem.layerNoop({
-      readFileString: () => Effect.die('Configured intake must not read local credential files'),
-    }),
-    NodePath.layer,
-  );
-
-const inspectGatewayRequest = Effect.fn('Crm.registrySyncTest.inspectGatewayRequest')(
-  function* inspectGatewayRequest(_configuration: Readonly<Record<string, string>>) {
-    const requests: string[] = [];
-    const http = HttpClient.make((request, url) => {
-      requests.push(url.href);
-      expect(request.headers['x-api-key']).toBe('fixture-intake-key');
-      // Stop after the credential exchange request. No owner read or mutation is attempted by this fixture.
-      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status: 503 })));
-    });
-    const service = yield* PartyIntake;
-    const observation = yield* observeClientPartySync(
-      service
-        .forRequest({
-          compositionRevision: 'a'.repeat(64),
-          correlationId: 'gateway-routing-fixture',
-          legalEntityId: '70000000-0000-4000-8000-000000000022',
-        })
-        .reconcile()
-        .pipe(Effect.provideService(HttpClient.HttpClient, http)),
-    );
-    expect(observation.status).toBe('unavailable');
-    return requests;
-  },
-  (effect, configuration) => effect.pipe(Effect.provide(configuredIntake(configuration))),
-);
-
-/** Deliberately unsupported protocol fixtures must be rejected before a credential-bearing request. */
-const rejectedGatewayProtocol = (protocol: string) => {
-  const url = new URL('https://public.fixture.invalid');
-  url.protocol = protocol;
-  return url.href;
-};
 
 const select = (entry: IntakeCrmClient) =>
   entry.id === 'review' ? Effect.succeed(Option.none<VerifiedParty>()) : identify(entry);
@@ -282,6 +246,8 @@ describe('CRM registry-link completion', () => {
             compositionRevision: 'a'.repeat(64),
             correlationId: 'missing-intake-config',
             legalEntityId: '70000000-0000-4000-8000-000000000022',
+            // No workload key was handed over for this tenant (the workload is not registered here).
+            tenantId: unregisteredTenant,
           })
           .reconcile()
           .pipe(Effect.provideService(HttpClient.HttpClient, http)),
@@ -294,28 +260,29 @@ describe('CRM registry-link completion', () => {
         Layer.mergeAll(
           PartyIntakeLive,
           NodeCrypto.layer,
-          ConfigProvider.layer(ConfigProvider.fromUnknown({})),
-          FileSystem.layerNoop({ readFileString: () => Effect.succeed('') }),
-          NodePath.layer,
+          ConfigProvider.layer(ConfigProvider.fromUnknown({ ONTOS_SHELL_GATEWAY_BASE_URL: shellGateway })),
         ),
       ),
     ),
   );
 
-  it.effect('uses purpose-only governed reads and fresh audience credentials before and after reconciliation', () =>
+  it.effect('acts as its registered intake workload with the platform-issued key, through purpose-only reads', () =>
     Effect.gen(function* freshAuthoritativeReads() {
+      yield* handOverIntakeKey;
       const requestBodies: (typeof PendingClientIntakeRequestSchema.Type)[] = [];
       const credentials: string[] = [];
       let assertions = 0;
       const fetch: typeof globalThis.fetch = async (input, init) => {
         const request = new Request(input, init);
         const url = new URL(request.url);
-        if (url.pathname === '/shell-super-app-api/auth/api-key/gateway-context') {
+        if (url.href === `${shellGateway}/auth/api-key/gateway-context`) {
           assertions += 1;
-          expect(request.headers.get('x-api-key')).toBe('fixture-intake-key');
+          // The workload's own key for this tenant, as the host handed it over; never an environment variable.
+          expect(request.headers.get('x-api-key')).toBe(INTAKE_KEY);
           return Response.json({
-            apiBaseUrl: 'https://fixture.invalid/crm-api',
+            apiBaseUrl: '/crm-api',
             compositionRevision: 'a'.repeat(64),
+            expiresAt: 4_102_444_800,
             token: `fixture-assertion-${assertions}`,
           });
         }
@@ -334,6 +301,7 @@ describe('CRM registry-link completion', () => {
           compositionRevision: 'a'.repeat(64),
           correlationId: 'fresh-registry-observations',
           legalEntityId: '70000000-0000-4000-8000-000000000022',
+          tenantId: registeredTenant,
         })
         .reconcile()
         .pipe(Effect.provide(FetchHttpClient.layer), Effect.provideService(FetchHttpClient.Fetch, fetch));
@@ -346,78 +314,10 @@ describe('CRM registry-link completion', () => {
         Layer.mergeAll(
           PartyIntakeLive,
           NodeCrypto.layer,
-          ConfigProvider.layer(
-            ConfigProvider.fromUnknown({
-              ONTOS_CRM_PARTY_INTAKE_API_KEY: 'fixture-intake-key',
-              ONTOS_GATEWAY_ISSUER: 'https://fixture.invalid/issuer',
-              ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
-            }),
-          ),
-          FileSystem.layerNoop({
-            readFileString: () => Effect.die('Configured intake must not read local credential files'),
-          }),
-          NodePath.layer,
+          ConfigProvider.layer(ConfigProvider.fromUnknown({ ONTOS_SHELL_GATEWAY_BASE_URL: shellGateway })),
         ),
       ),
     ),
-  );
-
-  it.effect('derives the Shell gateway from the trusted issuer origin, never from an implicit localhost', () =>
-    Effect.gen(function* issuerGateway() {
-      expect(
-        yield* inspectGatewayRequest({
-          ONTOS_GATEWAY_ISSUER: 'https://trusted-shell.fixture.invalid/issuer',
-        }),
-      ).toEqual(['https://trusted-shell.fixture.invalid/shell-super-app-api/auth/api-key/gateway-context']);
-    }),
-  );
-
-  it.effect('honors an explicit valid gateway override and an explicitly configured development loopback', () =>
-    Effect.gen(function* explicitGateway() {
-      expect(
-        yield* inspectGatewayRequest({
-          ONTOS_GATEWAY_ISSUER: 'https://trusted-shell.fixture.invalid',
-          ONTOS_SHELL_GATEWAY_BASE_URL: 'https://override.fixture.invalid:8443/shell-super-app-api/',
-        }),
-      ).toEqual(['https://override.fixture.invalid:8443/shell-super-app-api/auth/api-key/gateway-context']);
-      expect(
-        yield* inspectGatewayRequest({
-          ONTOS_SHELL_GATEWAY_BASE_URL: 'http://127.0.0.1:3020/shell-super-app-api',
-          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'development',
-        }),
-      ).toEqual(['http://127.0.0.1:3020/shell-super-app-api/auth/api-key/gateway-context']);
-    }),
-  );
-
-  it.effect('fails closed before HTTP for missing or malformed trusted gateway configuration', () =>
-    Effect.gen(function* refusesInvalidGateway() {
-      const configurations: readonly Readonly<Record<string, string>>[] = [
-        {},
-        { ONTOS_GATEWAY_ISSUER: '' },
-        { ONTOS_GATEWAY_ISSUER: '/relative-issuer' },
-        { ONTOS_GATEWAY_ISSUER: rejectedGatewayProtocol('http:') },
-        { ONTOS_GATEWAY_ISSUER: rejectedGatewayProtocol('ftp:') },
-        { ONTOS_GATEWAY_ISSUER: 'https://user:password@public.fixture.invalid' },
-        { ONTOS_GATEWAY_ISSUER: 'https://public.fixture.invalid?credential=forbidden' },
-        { ONTOS_GATEWAY_ISSUER: 'https://public.fixture.invalid#fragment' },
-        { ONTOS_GATEWAY_ISSUER: 'http://127.0.0.1:3020' },
-        { ONTOS_GATEWAY_ISSUER: 'https://localhost:3020' },
-        { ONTOS_SHELL_GATEWAY_BASE_URL: 'http://127.0.0.1:3020/shell-super-app-api' },
-        { ONTOS_SHELL_GATEWAY_BASE_URL: 'https://public.fixture.invalid/wrong-api' },
-        { ONTOS_SHELL_GATEWAY_BASE_URL: 'https://public.fixture.invalid/shell-super-app-api?query=forbidden' },
-        { ONTOS_SHELL_GATEWAY_BASE_URL: 'https://public.fixture.invalid/shell-super-app-api#fragment' },
-        { ONTOS_SHELL_GATEWAY_BASE_URL: 'https://user:password@public.fixture.invalid/shell-super-app-api' },
-        { ONTOS_SHELL_GATEWAY_BASE_URL: ' https://public.fixture.invalid/shell-super-app-api' },
-        { ONTOS_SHELL_GATEWAY_BASE_URL: String.raw`https://public.fixture.invalid\shell-super-app-api` },
-        {
-          ONTOS_GATEWAY_ISSUER: 'https://trusted-shell.fixture.invalid',
-          ONTOS_SHELL_GATEWAY_BASE_URL: 'https://public.fixture.invalid/not-the-shell',
-        },
-      ];
-      for (const configuration of configurations) {
-        expect(yield* inspectGatewayRequest(configuration)).toEqual([]);
-      }
-    }),
   );
 
   it('rejects absent, contradictory and unknown completion evidence instead of trusting HTTP 200', () => {

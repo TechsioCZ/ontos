@@ -148,6 +148,38 @@ class OutboxWorkerMaterializationError extends Error {
 /** @param {string} message Error detail. */
 const failure = (message) => new OutboxWorkerMaterializationError(message);
 
+/**
+ * One bundle, one module credential store: the host program's claim (`holdOwnStoreCopy`) and every worker's reader must
+ * resolve to the same store module, or the workers would read a copy nobody claimed and every delegated call of the
+ * Outbox host would fail closed. The bundler's own input map decides it exactly; the output is checked to carry that one
+ * copy and the host's claim of it.
+ *
+ * @param {{ readonly inputs: Readonly<Record<string, unknown>> }} metafile The worker build's input map.
+ * @param {string} bundledWorker The built worker.
+ * @returns {Effect.Effect<void, OutboxWorkerMaterializationError>} Fails when it carries a store other than one claimed copy.
+ */
+const assertOneClaimedStore = (metafile, bundledWorker) => {
+  const inputs = Object.keys(metafile.inputs);
+  const storeInputs = inputs.filter((input) =>
+    input.endsWith('packages/core-runtime/src/auth/hosted-module-credential-store.ts'),
+  );
+  const hostClaims = inputs.some((input) => input.endsWith('scripts/zerops/module-credentials.mts'));
+  const storeCopies = [...bundledWorker.matchAll(/["']HostedModuleCredentials\.claim["']/gu)].length;
+  // A worker that bundles no store at all reads no module credential; any that does must carry exactly one, claimed.
+  const noStore = storeInputs.length === 0 && storeCopies === 0;
+  return noStore ||
+    (storeInputs.length === 1 &&
+      hostClaims &&
+      storeCopies === 1 &&
+      bundledWorker.includes('ModuleCredentials.holdOwnCopy'))
+    ? Effect.void
+    : Effect.fail(
+        failure(
+          `The Outbox Worker must carry exactly one module credential store, claimed by its host: ${String(storeInputs.length)} store module(s), ${String(storeCopies)} copy(ies), host claim ${hostClaims ? 'present' : 'missing'}`,
+        ),
+      );
+};
+
 const nodeRuntime = ManagedRuntime.make(NodeServices.layer);
 
 /**
@@ -629,6 +661,7 @@ const materializeOutboxWorkerEffect = ({
         failure(`The Outbox Worker Core entrypoint does not export: ${missingReExports.join('; ')}`),
       );
     }
+    yield* assertOneClaimedStore(metafile, yield* fs.readFileString(path.join(runtimeDir, WORKER_ENTRY)));
     const externalImports = Object.values(metafile.outputs).flatMap((output) =>
       output.imports.filter((item) => item.external === true),
     );

@@ -7,20 +7,50 @@
 import { Socket } from 'node:net';
 
 import { fromReadable } from '@effect/platform-node/NodeStream';
-import { Config, Console, DateTime, Deferred, Duration, Effect, Exit, Option, Schema, Stream } from 'effect';
+import {
+  Config,
+  Console,
+  DateTime,
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Option,
+  Predicate,
+  Ref,
+  Schema,
+  Semaphore,
+  Stream,
+} from 'effect';
 import type { Redacted } from 'effect';
 
 import { claimHostedModuleCredentials } from '../../packages/core-runtime/src/auth/hosted-module-credential-store.ts';
 import {
   HostedModuleCredentialsSchema,
   ModuleAppIdSchema,
+  workloadEntryAppId,
+  WorkloadCredentialsSchema,
 } from '../../packages/core-runtime/src/auth/hosted-module-credentials.ts';
-import type { HostedModuleCredentialReceiver } from '../../packages/core-runtime/src/auth/hosted-module-credentials.ts';
+import type {
+  HostedModuleCredentialReceiver,
+  HostedModuleCredentials,
+} from '../../packages/core-runtime/src/auth/hosted-module-credentials.ts';
+import type { HostedModuleCredentialsSealedError } from '../../packages/core-runtime/src/auth/hosted-module-credentials-sealed-error.ts';
 
 export class ModuleCredentialHandoverError extends Schema.TaggedError<ModuleCredentialHandoverError>()(
   'ModuleCredentialHandoverError',
   { reason: Schema.String },
 ) {}
+
+/**
+ * The internal workloads (O73) a calling module runs as itself: a workload key the module's own Actions declare and its
+ * own server acts as. Where the operator registered a principal for one (in a tenant), the platform issues that
+ * principal's key next to the module key and hands it to the module, which then authenticates as the registered
+ * workload exactly as before; nobody issues or copies such a key by hand.
+ */
+export const MODULE_INTERNAL_WORKLOADS: ReadonlyMap<string, readonly string[]> = new Map([
+  ['crm', ['demo.crm.party-intake']],
+]);
 
 /**
  * The modules that call other modules through the Shell's delegated issuance, and so get a module credential. A test
@@ -67,7 +97,9 @@ const ProviderKeyIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(Sche
 export const encodeModuleCredentialHandover = Effect.fn('ModuleCredentials.encodeHandover')(function* encodeHandover(
   credentials: Readonly<Record<string, Redacted.Redacted>>,
   owners: readonly string[],
+  workloads: Readonly<Record<string, Redacted.Redacted>> = {},
 ) {
+  const ownWorkloads = Object.entries(workloads).filter(([entry]) => owners.includes(workloadEntryAppId(entry)));
   const json = yield* Schema.encodeEffect(HandoverJsonSchema)({
     credentials: Object.fromEntries(
       owners.flatMap((owner) => {
@@ -76,6 +108,7 @@ export const encodeModuleCredentialHandover = Effect.fn('ModuleCredentials.encod
       }),
     ),
     schemaVersion: 1,
+    workloads: Object.fromEntries(ownWorkloads),
   }).pipe(Effect.mapError(() => new ModuleCredentialHandoverError({ reason: 'The handover could not be encoded' })));
   return new TextEncoder().encode(`${json}\n`);
 });
@@ -148,10 +181,126 @@ const leaveProcess = (reason: string) =>
   );
 
 /**
- * Claims this multi-owner process for `owners` before any owner runs. With the handover switch it keeps reading its
- * private channel (file descriptor 3) in the background, so the host can hand over keys at start and replace them
- * later (a late key, a fresh key after a revocation, a rotation), without a restart; without it, no owner ever holds
- * a key and none falls back to a module key in the shared environment.
+ * What a process's host holds for the credential store copies it claimed. A process holds one copy per built bundle it
+ * loaded (each owner bundle inlines its own), so the host claims each copy as it loads that bundle and registers it
+ * here; every handover line then reaches every registered copy, and each copy takes only its own modules' keys. The
+ * latest keys stay here too, so a copy registered after a line arrived (a unit loaded later) gets them at once.
+ */
+export interface HostedCredentialHolders {
+  /**
+   * Registers one claimed copy for exactly the modules the host loaded it for, and hands it their current keys. A copy
+   * whose claim names any other set of modules is refused: the host does not serve it.
+   */
+  readonly hold: (
+    copy: HostedModuleCredentialReceiver,
+    modules: readonly string[],
+  ) => Effect.Effect<void, ModuleCredentialHandoverError>;
+}
+
+/**
+ * Only the given modules' entries of a handover: their keys and their workload keys. The host filters before a copy
+ * sees anything; the copy's own refusal of strangers stays as the second lock.
+ */
+const handoverFor = (handover: HostedModuleCredentials, modules: ReadonlySet<string>): HostedModuleCredentials => ({
+  credentials: Object.fromEntries(Object.entries(handover.credentials).filter(([owner]) => modules.has(owner))),
+  schemaVersion: 1,
+  workloads: Object.fromEntries(
+    Object.entries(handover.workloads ?? {}).filter(([entry]) => modules.has(workloadEntryAppId(entry))),
+  ),
+});
+
+const holdsAnything = (handover: HostedModuleCredentials) =>
+  Object.keys(handover.credentials).length > 0 || Object.keys(handover.workloads ?? {}).length > 0;
+
+/** A handover's keys merged over what was held: each owner it names gets exactly its new key and workload keys. */
+const mergeHandover = (held: HostedModuleCredentials, handover: HostedModuleCredentials): HostedModuleCredentials => {
+  const named = new Set([
+    ...Object.keys(handover.credentials),
+    ...Object.keys(handover.workloads ?? {}).map(workloadEntryAppId),
+  ]);
+  return {
+    credentials: { ...held.credentials, ...handover.credentials },
+    schemaVersion: 1,
+    workloads: {
+      ...Object.fromEntries(
+        Object.entries(held.workloads ?? {}).filter(([entry]) => !named.has(workloadEntryAppId(entry))),
+      ),
+      ...handover.workloads,
+    },
+  };
+};
+
+/**
+ * The process's holders, for the modules it serves, and the one receiver its channel feeds. A line names keys of
+ * modules this process serves (accepted: handed to their copies now, or once loaded) and of others (refused).
+ */
+export const makeHostedCredentialHolders = Effect.fn('ModuleCredentials.makeHolders')(function* makeHolders(
+  owners: readonly string[],
+) {
+  const lock = yield* Semaphore.make(1);
+  const copies = yield* Ref.make<
+    readonly { readonly copy: HostedModuleCredentialReceiver; readonly modules: ReadonlySet<string> }[]
+  >([]);
+  const held = yield* Ref.make<HostedModuleCredentials>({ credentials: {}, schemaVersion: 1, workloads: {} });
+  const served = new Set(owners);
+  const servedHere = (entry: string) => served.has(entry) || served.has(workloadEntryAppId(entry));
+  const accept = (handover: HostedModuleCredentials) =>
+    Semaphore.withPermits(
+      lock,
+      1,
+    )(
+      Effect.gen(function* acceptLine() {
+        const entries = [...Object.keys(handover.credentials), ...Object.keys(handover.workloads ?? {})];
+        const own = handoverFor(handover, served);
+        yield* Ref.update(held, (current) => mergeHandover(current, own));
+        // Each copy is handed only its own modules' entries; a copy whose modules the line does not name gets nothing.
+        yield* Effect.forEach(
+          yield* Ref.get(copies),
+          ({ copy, modules }) => {
+            const its = handoverFor(own, modules);
+            return holdsAnything(its) ? copy.accept(its) : Effect.void;
+          },
+          { discard: true },
+        );
+        return {
+          accepted: entries.filter((entry) => servedHere(entry)),
+          refused: entries.filter((entry) => !servedHere(entry)),
+        };
+      }),
+    );
+  const hold = (copy: HostedModuleCredentialReceiver, modules: readonly string[]) =>
+    Semaphore.withPermits(
+      lock,
+      1,
+    )(
+      Effect.gen(function* holdCopy() {
+        const expected = new Set(modules);
+        const claimed = new Set(copy.owners);
+        if (claimed.size !== expected.size || [...claimed].some((owner) => !expected.has(owner))) {
+          return yield* new ModuleCredentialHandoverError({
+            reason: `a credential store copy claimed for ${[...claimed].join(', ') || 'no module'} was loaded for ${modules.join(', ')}; it is not served`,
+          });
+        }
+        const its = handoverFor(yield* Ref.get(held), expected);
+        if (holdsAnything(its)) {
+          yield* copy.accept(its);
+        }
+        yield* Ref.update(copies, (registered) => [...registered, { copy, modules: expected }]);
+        return yield* Effect.void;
+      }),
+    );
+  return {
+    holders: { hold } satisfies HostedCredentialHolders,
+    receiver: { accept, owners: [...served] } satisfies HostedModuleCredentialReceiver,
+  };
+});
+
+/**
+ * Starts receiving this process's keys for the modules it serves, before any of them loads: with the handover switch
+ * it keeps reading its private channel (file descriptor 3) in the background, so the host can hand keys over at start
+ * and replace them later (a late key, a fresh key after a revocation, a rotation) without a restart. The host program
+ * then claims each loaded copy and registers it with the returned holders. Without the switch no copy ever holds a
+ * key; there is no environment variable to read one from.
  */
 export const receiveModuleCredentialHandover = Effect.fn('ModuleCredentials.receiveHandover')(function* receive(
   owners: readonly string[],
@@ -166,9 +315,10 @@ export const receiveModuleCredentialHandover = Effect.fn('ModuleCredentials.rece
         }),
     ),
   );
-  const receiver = yield* claimHostedModuleCredentials(owners);
+  const { holders, receiver } = yield* makeHostedCredentialHolders(owners);
   if (Option.isNone(mode)) {
-    return yield* Console.log('[module-credentials] no handover channel; no owner of this process holds a key');
+    yield* Console.log('[module-credentials] no handover channel; no owner of this process holds a key');
+    return holders;
   }
   const channel = fromReadable<Uint8Array, ModuleCredentialHandoverError>({
     // The channel is a pipe (a socket pair, or the local demo's FIFO); it is read as a stream, never seeked.
@@ -181,7 +331,44 @@ export const receiveModuleCredentialHandover = Effect.fn('ModuleCredentials.rece
     leaveProcess,
     mode.value === 'fd3-lifetime' ? 'lives-with-launcher' : 'may-end',
   ).pipe(Effect.forkScoped);
-  return yield* Effect.void;
+  return holders;
+});
+
+/**
+ * Claims the store copy this host program itself carries and registers it: for a process whose owners run inside the
+ * host program's own bundle (the Outbox Worker host's `worker.mjs`, one bundle with one copy).
+ */
+export const holdOwnStoreCopy = Effect.fn('ModuleCredentials.holdOwnCopy')(function* holdOwnCopy(
+  holders: HostedCredentialHolders,
+  owners: readonly string[],
+) {
+  yield* holders.hold(yield* claimHostedModuleCredentials(owners), owners);
+});
+
+/** A loaded unit's claim: the generated entry's re-export of its own bundle's store copy claim. */
+export type UnitCredentialClaim = (
+  owners: readonly string[],
+) => Effect.Effect<HostedModuleCredentialReceiver, HostedModuleCredentialsSealedError>;
+
+/** A loaded module's claim export, as the bundle's `claimHostedModuleCredentials` is: a function. */
+const isUnitCredentialClaim = (cause: unknown): cause is UnitCredentialClaim => Predicate.isFunction(cause);
+export const UnitCredentialClaimSchema = Schema.declare(isUnitCredentialClaim);
+
+/**
+ * Claims one loaded bundle's copy for its module, through the claim the unit's entry exported, and registers it. The
+ * claim is the bundle's own one-time claim: a second call is refused, so code that runs later obtains no receiver.
+ */
+export const holdUnitStoreCopy = Effect.fn('ModuleCredentials.holdUnitCopy')(function* holdUnitCopy(
+  holders: HostedCredentialHolders,
+  unit: string,
+  claim: UnitCredentialClaim,
+) {
+  const copy = yield* claim([unit]).pipe(
+    Effect.mapError(
+      () => new ModuleCredentialHandoverError({ reason: `${unit}'s credential store copy was already claimed` }),
+    ),
+  );
+  yield* holders.hold(copy, [unit]);
 });
 
 /** One issued key, not secret: its provider id (which decides what is superseded) and when it stops verifying. */
@@ -200,6 +387,8 @@ export const ProvisioningOutputSchema = Schema.Struct({
   failedAppIds: Schema.Array(ModuleAppIdSchema),
   keys: Schema.Record(Schema.String, IssuedModuleKeySchema),
   schemaVersion: Schema.Literal(1),
+  /** The served modules' internal workload credentials, by `<app id>/<workload key>/<tenant id>`. */
+  workloadCredentials: WorkloadCredentialsSchema,
 });
 export type ProvisioningOutput = typeof ProvisioningOutputSchema.Type;
 
@@ -222,6 +411,7 @@ export const noProvisionedCredentials = (appIds: readonly string[]): Provisionin
   failedAppIds: appIds.map((appId) => ModuleAppIdSchema.make(appId)),
   keys: {},
   schemaVersion: 1,
+  workloadCredentials: {},
 });
 
 /**

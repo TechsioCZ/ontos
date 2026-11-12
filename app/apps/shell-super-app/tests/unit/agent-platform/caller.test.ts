@@ -518,6 +518,39 @@ it.effect('uses list admission for a record-scoped read instead of asking withou
   }),
 );
 
+it.effect("asks every record-scoped carrier's LIST in one gate call, never one call per carrier", () =>
+  Effect.gen(function* oneListCall() {
+    const ids = ['alpha.pages', 'beta.pages', 'gamma.pages'];
+    const { installed } = yield* pageCarrierCatalog(ids, ['assigned']);
+    const gate = gateAnswering('ALLOWED');
+    const calls = { list: 0, listMany: 0 };
+    const rights = yield* callerModuleAccess(caller).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(tenantModuleStates()),
+      Effect.provideService(AccessDecisionGate, {
+        ...gate,
+        list: (input: Parameters<typeof gate.list>[0]) =>
+          Effect.suspend(() => {
+            calls.list += 1;
+            return gate.list(input);
+          }),
+        listMany: (input: Parameters<typeof gate.listMany>[0]) =>
+          Effect.suspend(() => {
+            calls.listMany += 1;
+            return gate.listMany(input);
+          }),
+      }),
+      Effect.provideService(
+        ActionAuthority,
+        actionAuthority(() => ({ execute: 'denied' as const, propose: 'denied' as const })),
+      ),
+    );
+    expect([...rights.access].toSorted()).toEqual(ids);
+    expect(gate.askedLists).toHaveLength(ids.length);
+    expect(calls).toEqual({ list: 0, listMany: 1 });
+  }),
+);
+
 it.effect('sees a module for a principal that holds only v2 grants and no legacy module tuple', () =>
   Effect.gen(function* v2OnlyPrincipal() {
     const installed = yield* catalog();
