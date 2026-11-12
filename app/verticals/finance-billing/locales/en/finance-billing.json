@@ -27,6 +27,10 @@
       "records": {
         "title": "Invoices and finance",
         "description": "Invoices, payments, receivables and accounting handover."
+      },
+      "vat": {
+        "title": "VAT",
+        "description": "The company's VAT regime and the rates used on invoices."
       }
     },
     "faktury": {
@@ -510,6 +514,101 @@
         "title": "Change the document kind?",
         "description": "The document kind changes from “{{from}}” to “{{to}}”.",
         "confirm": "Change the document kind"
+      }
+    },
+    "vat": {
+      "classification": {
+        "standard": "Standard VAT rate",
+        "reduced": "Reduced VAT rate"
+      },
+      "treatment": {
+        "exempt": "Exempt from VAT",
+        "reverseCharge": "Reverse charge",
+        "nonPayer": "Not a VAT payer – no VAT"
+      },
+      "picker": "VAT",
+      "pickerRate": "{{name}} ({{rate}} %)",
+      "pickerRatePending": "{{name}} (rate not known yet)",
+      "pickerStored": "Original rate {{rate}} %",
+      "storedRate": "{{rate}} %",
+      "ratesUnavailable": "The VAT rates could not be loaded right now. Please try again shortly.",
+      "nonPayerOnly": "The company is not a VAT payer. Choose “Not a VAT payer – no VAT”.",
+      "chooseVat": "Choose a VAT rate the company has for this date in its VAT settings.",
+      "rejected": {
+        "vat_classification_required": "Choose a VAT rate or an exemption for the line. An original rate cannot be used for a new line.",
+        "vat_not_payer": "The company is not a VAT payer, so its lines must be without VAT.",
+        "vat_rate_changed": "The VAT rate has changed in the meantime. Check the lines and save again.",
+        "vat_treatment": "The chosen VAT treatment does not fit this document."
+      }
+    },
+    "vatSettings": {
+      "title": "VAT",
+      "description": "The company's VAT regime and the rates Finance uses on invoices, in the price list and on recurring invoices. Changes are stored in Tax.",
+      "loading": "Loading the VAT settings…",
+      "unavailable": "The VAT settings could not be loaded right now. Please try again shortly.",
+      "forbidden": "You do not have access to the VAT settings",
+      "forbiddenDescription": "The VAT regime and rates are managed by an accountant with access to Tax. Ask the company administrator for access.",
+      "notInstalled": "Tax is not turned on for this company",
+      "notInstalledDescription": "Without Tax the company has no VAT rates. Ask the administrator to turn it on.",
+      "regimeTitle": "VAT regime",
+      "regimeChange": "Change regime",
+      "regimeHistoryHidden": "Only people with access to tax records see the regime history.",
+      "since": "from {{date}}",
+      "between": "{{from}} – {{to}}",
+      "rate": "{{rate}} %",
+      "currentRate": "Now {{rate}} % (since {{date}})",
+      "noCurrentRate": "No rate is set for today.",
+      "undecided": "The rate for today cannot be decided because two rates overlap. Withdraw the extra plan.",
+      "planned": "Planned changes",
+      "noPlans": "No change is planned.",
+      "past": "Earlier rates",
+      "noPast": "There are no earlier rates.",
+      "plan": "Plan a change",
+      "planTitle": "Plan a change: {{name}}",
+      "planDescription": "The new rate applies from the chosen day; the current rate applies until the day before.",
+      "planSave": "Plan",
+      "planLabel": "from {{date}} {{rate}} %",
+      "withdraw": "Withdraw plan",
+      "withdrawTitle": "Withdraw a planned rate",
+      "withdrawDescription": "The plan “{{plan}}” is withdrawn and the current rate keeps applying.",
+      "missing": "No rate set yet",
+      "missingDescription": "Until the company has this rate, it cannot be chosen on invoices.",
+      "firstRate": "Set the rate",
+      "firstRateTitle": "Set the rate: {{name}}",
+      "firstRateDescription": "The rate applies from the chosen day.",
+      "firstRateSave": "Save the rate",
+      "ratePercent": "Rate (%)",
+      "rateInvalid": "Enter a whole number from 1 to 100.",
+      "from": "Applies from",
+      "fromRequired": "Choose the day it applies from.",
+      "reason": "Reason for the change",
+      "reasonExample": "E.g. a change of the VAT act",
+      "reasonRequired": "Enter a reason; it is kept in the history.",
+      "regimeLabel": "Regime",
+      "regimeDescription": "The regime applies from the chosen day. For a day in the past, enter a reason.",
+      "regimeReason": "Reason (required for a past day)",
+      "regimeSave": "Save the regime",
+      "regimeConfirm": "Replace the plan and save",
+      "cancel": "Close",
+      "regime": {
+        "VAT_PAYER": "VAT payer",
+        "NON_PAYER": "Not a VAT payer",
+        "NOT_DECLARED": "No VAT regime set yet"
+      },
+      "state": {
+        "current": "In effect",
+        "scheduled": "Planned"
+      },
+      "outcome": {
+        "alreadyPlanned": "A change already starts on this day. Withdraw it first.",
+        "approvalRequired": "This change must be approved by an authorised person.",
+        "confirmReplace": "Another regime change is planned for a later day. Saving replaces it.",
+        "conflict": "Someone changed the VAT in the meantime. The current state is shown; check it and try again.",
+        "forbidden": "You are not allowed to change the VAT.",
+        "invalid": "The change cannot be saved. Check the rate and the date.",
+        "notInFuture": "A rate change can only be planned from a future day.",
+        "reasonRequired": "Enter a reason for a regime change on a past day.",
+        "unavailable": "The change could not be saved right now. Please try again shortly."
       }
     }
   }

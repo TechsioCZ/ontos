@@ -6,6 +6,7 @@ import { defineOntosModuleManifest } from '@app/core-runtime';
 import { documentResourceDescriptor } from './shared/resources/document.ts';
 import { financialPlanEntryResourceDescriptor } from './shared/resources/financial-plan-entry.ts';
 import { invoiceResourceDescriptor } from './shared/resources/invoice.ts';
+import { VatPage } from './src/routes/[lang]/finance/dph/page.tsx';
 import { RecordsPage } from './src/routes/[lang]/finance/page.tsx';
 // </generated-module-manifest-imports>
 import { financeBillingMcpContribution } from './shared/mcp/contribution.ts';
@@ -31,6 +32,7 @@ export const financeBillingManifest = defineOntosModuleManifest({
     components: {
       // <generated-module-manifest-components>
       'page-records': RecordsPage,
+      'page-vat': VatPage,
       // </generated-module-manifest-components>
     },
     events: [],

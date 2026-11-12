@@ -4,12 +4,17 @@ import { formatMoney, SidePanel, UnsavedChangesDialog } from '@app/admin-ui';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { SelectTemplate } from '@app/admin-ui/select-template';
+import { DateTime } from 'effect';
 import { useState } from 'react';
-import type { VatRate } from '../../../../shared/apis/records.ts';
-import { VAT_RATE_CHOICES } from '../../../../shared/domain/invoice-draft.ts';
+import type { VatChoices } from '../../../../shared/apis/vat-choices.ts';
+import { lineVatProblem } from '../../../../shared/domain/invoice-draft.ts';
+import { defaultLineVatChoice, forSellerRegime, lineVatOf } from '../../../../shared/domain/line-vat.ts';
+import type { LineVatChoice } from '../../../../shared/domain/line-vat.ts';
 import { FinanceSaveActions, useFinanceFormSave } from './finance-form-save.tsx';
 import { parseAmountMinor } from './finance-ui.tsx';
 import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
+import { useVatChoices } from './use-vat-choices.ts';
+import { VatChoiceSelect } from './vat-choice-select.tsx';
 
 interface TemplateDraft {
   readonly amount: string;
@@ -18,24 +23,29 @@ interface TemplateDraft {
   readonly dueDays: string;
   readonly issueDay: string;
   readonly name: string;
-  readonly vatRate: VatRate;
+  /** The rent line's VAT; each generated invoice takes Tax's rate at its own issue date. */
+  readonly vat: LineVatChoice;
 }
 
 /** What the form opens with; the suggested line text and terms are not typed input. */
-const emptyTemplate: TemplateDraft = {
+const emptyTemplate = (regime?: VatChoices['regime']): TemplateDraft => ({
   amount: '',
   customerId: '',
   description: 'Nájemné za prostor',
   dueDays: '14',
   issueDay: '1',
   name: '',
-  vatRate: 21,
-};
+  vat: defaultLineVatChoice('OUTGOING', regime),
+});
 
 type Customers = FinanceViewModel['references']['customers'];
 
 /** Why the draft cannot be saved yet, or undefined when it can. */
-const templateProblem = (draft: TemplateDraft, customers: Customers): string | undefined => {
+const templateProblem = (
+  draft: TemplateDraft,
+  customers: Customers,
+  choices: VatChoices | undefined,
+): string | undefined => {
   const amountMinor = parseAmountMinor(draft.amount);
   const issueDay = Number(draft.issueDay);
   const dueDays = Number(draft.dueDays);
@@ -45,6 +55,9 @@ const templateProblem = (draft: TemplateDraft, customers: Customers): string | u
   }
   if (amountMinor === undefined || amountMinor === 0) {
     return 'Zadejte měsíční částku bez DPH.';
+  }
+  if (lineVatProblem(draft, choices, 'OUTGOING')) {
+    return 'Vyberte DPH, kterou modul Daně pro firmu vede.';
   }
   const daysValid = Number.isInteger(issueDay) && issueDay >= 1 && issueDay <= 28;
   return daysValid && Number.isInteger(dueDays) && dueDays >= 1 && dueDays <= 90
@@ -56,10 +69,17 @@ const templateProblem = (draft: TemplateDraft, customers: Customers): string | u
 const templateCommandOf = (
   draft: TemplateDraft,
   customers: Customers,
+  choices: VatChoices | undefined,
 ): FinanceCommandDraft<'CreateRecurringTemplate'> | undefined => {
   const customer = customers.find((entry) => entry.partyId === draft.customerId);
   const amountMinor = parseAmountMinor(draft.amount);
-  if (customer === undefined || amountMinor === undefined || templateProblem(draft, customers) !== undefined) {
+  const vat = lineVatOf(draft.vat, choices);
+  if (
+    customer === undefined ||
+    amountMinor === undefined ||
+    vat === undefined ||
+    templateProblem(draft, customers, choices) !== undefined
+  ) {
     return undefined;
   }
   const command: FinanceCommandDraft<'CreateRecurringTemplate'> = {
@@ -67,9 +87,7 @@ const templateCommandOf = (
     counterpartyRef: customer.counterpartyRef,
     dueDays: Number(draft.dueDays),
     issueDay: Number(draft.issueDay),
-    lines: [
-      { description: draft.description.trim(), quantity: 1, unitPriceMinor: amountMinor, vatRate: draft.vatRate },
-    ],
+    lines: [{ ...vat, description: draft.description.trim(), quantity: 1, unitPriceMinor: amountMinor }],
     name: draft.name.trim(),
     partyId: customer.partyId,
   };
@@ -88,22 +106,28 @@ export const RecurringTemplateEditor = ({
 }) => {
   const { t } = useModernI18n();
   const { customers } = vm.references;
-  const [draft, setDraft] = useState(emptyTemplate);
-  const set = (patch: Partial<TemplateDraft>) => setDraft((current) => ({ ...current, ...patch }));
+  const today = vm.referenceDate === '' ? DateTime.formatIsoDateUtc(DateTime.nowUnsafe()) : vm.referenceDate;
+  const vatState = useVatChoices(vm.scope, today);
+  const choices = vatState.state === 'ready' ? vatState.choices : undefined;
+  const [typed, setTyped] = useState(() => emptyTemplate());
+  const set = (patch: Partial<TemplateDraft>) => setTyped((current) => ({ ...current, ...patch }));
+  // A company that is not a VAT payer bills rent without VAT; the line reads as the non-payer treatment.
+  const draft = forSellerRegime(typed, choices?.regime);
   const form = useFinanceFormSave({
-    initial: emptyTemplate,
-    isValid: (value) => templateProblem(value, customers) === undefined,
+    initial: emptyTemplate(choices?.regime),
+    isValid: (value) => templateProblem(value, customers, choices) === undefined,
     onClose,
-    reset: setDraft,
+    reset: setTyped,
     send: (value) => {
-      const command = templateCommandOf(value, customers);
+      const command = templateCommandOf(value, customers, choices);
       return command === undefined ? undefined : vm.execute(command, 'Šablona opakované faktury uložena');
     },
     value: draft,
     vm,
   });
-  const problem = form.record.status === 'invalid' ? templateProblem(draft, customers) : undefined;
+  const problem = form.record.status === 'invalid' ? templateProblem(draft, customers, choices) : undefined;
   const amountMinor = parseAmountMinor(draft.amount);
+  const vatRate = lineVatOf(draft.vat, choices)?.vatRate;
   return (
     <>
       <SidePanel
@@ -167,9 +191,9 @@ export const RecurringTemplateEditor = ({
           <div className="grid grid-cols-1 gap-200 md:grid-cols-2">
             <FormInput
               helpText={
-                amountMinor === undefined
+                amountMinor === undefined || vatRate === undefined
                   ? 'Částka bez DPH'
-                  : `s DPH ${formatMoney(Math.round(amountMinor * (1 + draft.vatRate / 100)))}`
+                  : `s DPH ${formatMoney(Math.round(amountMinor * (1 + vatRate / 100)))}`
               }
               id="template-amount"
               inputMode="decimal"
@@ -178,22 +202,13 @@ export const RecurringTemplateEditor = ({
               size="sm"
               value={draft.amount}
             />
-            <SelectTemplate
-              items={VAT_RATE_CHOICES.toReversed().map((rate) => ({
-                displayValue: `${rate} %`,
-                label: `${rate} %`,
-                value: String(rate),
-              }))}
-              label={t('finance-billing.financeUi.common.vatRate')}
-              labelProps={{ className: 'font-label text-label-md' }}
-              onValueChange={({ value }) => {
-                const vatRate = VAT_RATE_CHOICES.find((rate) => String(rate) === value[0]);
-                if (vatRate !== undefined) {
-                  set({ vatRate });
-                }
-              }}
-              size="sm"
-              value={[String(draft.vatRate)]}
+            <VatChoiceSelect
+              choice={draft.vat}
+              direction="OUTGOING"
+              invalid={choices !== undefined && lineVatProblem(draft, choices, 'OUTGOING')}
+              name="template-vat"
+              onChange={(vat) => set({ vat })}
+              vat={vatState}
             />
           </div>
           <div className="grid grid-cols-1 gap-200 md:grid-cols-2">

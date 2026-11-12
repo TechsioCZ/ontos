@@ -17848,6 +17848,32 @@
         },
         {
           "accessDeclaration": {
+            "key": "finance.billing.navigation-vat.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "finance-billing",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "finance.billing.page.vat",
+            "moduleKey": "finance.billing",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "finance.billing.page-finance-billing-home.read",
             "kind": "read",
             "modes": [
@@ -17893,6 +17919,32 @@
               "kind": "protected"
             },
             "entrypointKey": "finance.billing.page.records",
+            "moduleKey": "finance.billing",
+            "role": "page",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "finance.billing.page-vat.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "finance-billing",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "finance.billing.page.vat",
             "moduleKey": "finance.billing",
             "role": "page",
             "scope": "tenant"
@@ -17975,6 +18027,32 @@
             "entrypointKey": "finance.billing.search.invoices",
             "moduleKey": "finance.billing",
             "role": "search",
+            "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "finance.billing.vat-choices.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "finance-billing",
+              "level": "basic"
+            },
+            "risk": "routine",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "finance.billing.api.vat-choices",
+            "moduleKey": "finance.billing",
+            "role": "api",
             "scope": "tenant"
           }
         }
