@@ -17,6 +17,7 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
     priceMinor: 'Cena bez DPH',
     reason: 'Důvod',
     status: 'Stav',
+    taxClassificationCode: 'Daňová klasifikace (základní / snížená sazba DPH)',
   },
   commands: {
     AiDecideChanges: 'hidden',

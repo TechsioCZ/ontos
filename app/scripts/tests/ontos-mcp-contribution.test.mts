@@ -19,6 +19,7 @@ import { crmRuntimeManifest } from '../../verticals/crm/vertical.runtime-declara
 import { crmMcpContribution } from '../../verticals/crm/shared/mcp/contribution.ts';
 import { facilityOperationsRuntimeManifest } from '../../verticals/facility-operations/vertical.runtime-declaration.ts';
 import { facilityOperationsMcpContribution } from '../../verticals/facility-operations/shared/mcp/contribution.ts';
+import { taxManifest } from '../../verticals/tax/vertical.manifest.ts';
 import { deriveOntosMcpContribution, OntosMcpContributionDerivationError } from '../ontos-mcp-contribution.mts';
 
 const APP_ID = 'party-registry';
@@ -335,4 +336,46 @@ it.effect(
         isJsonObject(properties) && isJsonObject(properties.counterpartyRef) && properties.counterpartyRef.$ref,
       ).toEqual(expect.stringMatching(/^#\/\$defs\/S[0-9a-f]{12}$/u));
     }),
+);
+
+it.effect('tax lists only VAT management as typed tools; system steps stay generic-only', () =>
+  Effect.gen(function* taxGenericOnlyContribution() {
+    const derived = deriveOntosMcpContribution({
+      actions: taxManifest.publicSurface.actions,
+      api: taxManifest.publicSurface.api,
+      appId: 'tax',
+      authored: taxManifest.publicSurface.mcp,
+      moduleId: 'commerce.tax',
+    });
+    if (derived === undefined) {
+      expect.unreachable('Expected the tax MCP contribution');
+    }
+    const catalog = yield* Schema.decodeEffect(OntosMcpToolCatalogJsonSchema)(derived.toolCatalog);
+    const ids = (genericOnly: boolean) =>
+      catalog.tools
+        .filter((tool) => (tool.genericOnly === true) === genericOnly)
+        .map((tool) => tool.id)
+        .toSorted();
+    expect(ids(false)).toEqual([
+      'commerce.tax/action/create-tax-rule',
+      'commerce.tax/action/create-tax-rule-revision',
+      'commerce.tax/action/declare-seller-vat-regime',
+      'commerce.tax/action/end-tax-rule-revision',
+      'commerce.tax/read/applicable-tax-rule-set',
+      'commerce.tax/read/seller-vat-regime-at-instant',
+      'commerce.tax/read/tax-rule-history',
+    ]);
+    expect(ids(true)).toEqual([
+      'commerce.tax/action/correct-tax-rule-revision',
+      'commerce.tax/action/finalize-order-tax',
+      'commerce.tax/action/import-seller-vat-regime-declarations',
+      'commerce.tax/read/final-order-tax',
+      'commerce.tax/read/seller-vat-regime-history',
+      'commerce.tax/read/tax-correction-preview',
+      'commerce.tax/read/tax-evaluation',
+      'commerce.tax/read/tax-materiality-comparison',
+    ]);
+    expect(catalog.tools.some((tool) => tool.id.endsWith('/tax-privacy-owner-coverage'))).toBe(false);
+    expect(Object.hasOwn(catalog.tools.find((tool) => tool.genericOnly !== true) ?? {}, 'genericOnly')).toBe(false);
+  }),
 );
