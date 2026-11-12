@@ -19,7 +19,14 @@ import { computePaymentFunds, PaymentFundsLedger } from '../../src/domain/covera
 import { cancellationMaterialRequest } from '../../src/domain/refund-admission.ts';
 import { paymentFundsSnapshotOf } from '../../src/persistence/payment-aggregate-persistence.ts';
 import type { PaymentAggregateRecord } from '../../src/persistence/payment-aggregate-persistence.ts';
-import { failureCodeOf, paymentTestRelations, provenanceFor, withPersistence } from './database-fixture.ts';
+import { installPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
+import {
+  failureCodeOf,
+  paymentTestRelations,
+  provenanceFor,
+  withPersistence,
+  COMPOSITION_REVISION,
+} from './database-fixture.ts';
 import {
   acceptObservation,
   decideReconciliation,
@@ -53,8 +60,14 @@ const B = refundItem('B', 30_000);
 const C = refundItem('C', 40_000);
 const threeItems = [A, B, C] as const;
 
+/**
+ * Every case runs under the shared test authority of COMPOSITION_REVISION with Payment's registered
+ * subscriptions: a gateway REFUND or CANCEL_OR_VOID is completion-bound executor work of that revision (#1158).
+ */
 const native = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
+  Effect.scoped(installPaymentTestCompositionAuthority(COMPOSITION_REVISION).pipe(Effect.andThen(effect))).pipe(
+    Effect.provide(NodeCrypto.layer),
+  );
 
 /** The real Core Action runtime over the worktree database with the registered Payment owner. */
 const nativeRuntime = Effect.gen(function* acquireRefundNativeRuntime() {
@@ -72,6 +85,7 @@ const nativeRuntime = Effect.gen(function* acquireRefundNativeRuntime() {
       contextAccess: refundRuntimeContextAccess,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
+      resolveCompositionRevision: () => Effect.succeed(COMPOSITION_REVISION),
     },
   );
   return { actionRuntime, admin, coreAdmin, database } satisfies RefundNativeRuntime;

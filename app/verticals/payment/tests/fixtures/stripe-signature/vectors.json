@@ -1,0 +1,11 @@
+{
+  "source": "https://docs.stripe.com/webhooks#verify-manually",
+  "algorithm": "HMAC-SHA256(secret, utf8(t + '.') || rawBody), lowercase hex",
+  "generatedWith": "openssl dgst -sha256 -hmac (independent of the implementation)",
+  "secret": "whsec_c17_fixture_not_a_real_secret",
+  "timestamp": 1762992000,
+  "bodyFile": "body.json",
+  "validV1": "15886798b889393ffe606e362965efcf008700fb9a256c60ac450e5ec1698b64",
+  "tamperedBodyV1": "6b7cadb4606883541236305de5ee3e794aec93b6c222629da9c6dc21a8e9c4e1",
+  "zeroV1": "0000000000000000000000000000000000000000000000000000000000000000"
+}

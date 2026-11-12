@@ -38,17 +38,27 @@ export const ConfigureProviderAccountBindingActionForbiddenProblemSchema = makeP
 export const ConfigureProviderAccountBindingActionNotFoundProblemSchema = makeProblemDetailsSchema(
   'ConfigureProviderAccountBindingActionNotFoundProblem',
   404,
-  { code: Schema.Literal('action_invocation_not_found') },
+  { code: Schema.Literals(['action_invocation_not_found', 'gateway_binding_not_found']) },
 );
 export const ConfigureProviderAccountBindingActionConflictProblemSchema = makeProblemDetailsSchema(
   'ConfigureProviderAccountBindingActionConflictProblem',
   409,
-  { code: Schema.Literals(['action_request_hash_conflict', 'action_invocation_state_invalid']) },
+  {
+    code: Schema.Literals([
+      'action_request_hash_conflict',
+      'action_invocation_state_invalid',
+      'gateway_binding_current_exists',
+      'gateway_binding_not_current',
+      'gateway_binding_replacement_mismatch',
+      'gateway_binding_revision_conflict',
+      'gateway_credential_unchanged',
+    ]),
+  },
 );
 export const ConfigureProviderAccountBindingActionIneligibleProblemSchema = makeProblemDetailsSchema(
   'ConfigureProviderAccountBindingActionIneligibleProblem',
   422,
-  { code: Schema.Literals(['action_policy_denied', 'action_not_implemented']) },
+  { code: Schema.Literal('action_policy_denied') },
 );
 export const ConfigureProviderAccountBindingActionPreconditionProblemSchema = makeProblemDetailsSchema(
   'ConfigureProviderAccountBindingActionPreconditionProblem',
@@ -65,6 +75,7 @@ export const ConfigureProviderAccountBindingActionUnavailableProblemSchema = mak
       'action_transaction_failed',
       'module_state_check_unavailable',
       'operation_context_unavailable',
+      'payment_unavailable',
     ]),
   },
 );

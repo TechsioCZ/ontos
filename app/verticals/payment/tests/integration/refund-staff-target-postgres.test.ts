@@ -73,7 +73,8 @@ import { paymentRegistration } from '../../vertical.registration.ts';
 import { refundItem } from '../support/refund-action-driver.ts';
 import { loadPaymentAggregate, seedGatewayRefundRoute, seedPayment } from '../support/refund-native-runtime.ts';
 import { refundableItemsPublicContractFixture } from '../support/refund-owner-evidence.fixture.ts';
-import { makeTestScope, paymentTestRelations, randomUuid } from './database-fixture.ts';
+import { publishPaymentTestCompositionAuthority } from './composition-authority-fixture.ts';
+import { makeTestScope, paymentTestRelations, randomUuid, COMPOSITION_REVISION } from './database-fixture.ts';
 import type { PaymentTestDatabase } from './database-fixture.ts';
 
 const refundDescriptor = requestPaymentRefundAction.descriptor;
@@ -108,6 +109,8 @@ const staffDatabase = Effect.gen(function* staffDatabase() {
     { concurrency: 3 },
   );
   expect(migrationExit).toBe(0);
+  // A gateway REFUND is completion-bound executor work of the admitting revision (#1158).
+  yield* publishPaymentTestCompositionAuthority(admin, COMPOSITION_REVISION);
   const coreAdmin = yield* makeTestDatabaseFromClient(admin, paymentTestRelations);
   const runtime = yield* makeTestPgClient(runtimeConnection);
   const database = yield* makeTestDatabaseFromClient(runtime, paymentTestRelations);
@@ -228,6 +231,7 @@ it.live('#1153 staff REFUND authorizes the exact Payment in a same-entity target
           moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
           moduleStateGate,
           ownerRegistration: paymentRegistration,
+          resolveCompositionRevision: () => Effect.succeed(COMPOSITION_REVISION),
         },
       );
       const refund = Effect.fn('RefundStaffTarget.request')(function* refund(

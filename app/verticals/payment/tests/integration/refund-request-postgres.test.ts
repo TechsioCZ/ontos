@@ -94,8 +94,14 @@ const commitmentAnswer = (answer: 'OUTCOME_UNKNOWN' | 'ATTEMPT_OPEN' | 'TIMEOUT'
 });
 const itemsOf = (basis: PaymentRefundBasis) => (Schema.is(PaymentRefundableItemsBasisSchema)(basis) ? basis.items : []);
 
+/**
+ * Every case runs under the shared test authority of COMPOSITION_REVISION with Payment's registered
+ * subscriptions: a gateway REFUND is completion-bound executor work of that revision (#1158).
+ */
 const native = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
+  Effect.scoped(installPaymentTestCompositionAuthority(COMPOSITION_REVISION).pipe(Effect.andThen(effect))).pipe(
+    Effect.provide(NodeCrypto.layer),
+  );
 
 /** The real Core Action runtime over the worktree database with the registered Payment owner. */
 const nativeRuntime = Effect.gen(function* acquireRefundNativeRuntime() {
@@ -113,6 +119,7 @@ const nativeRuntime = Effect.gen(function* acquireRefundNativeRuntime() {
       contextAccess: refundRuntimeContextAccess,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       ownerRegistration: paymentRegistration,
+      resolveCompositionRevision: () => Effect.succeed(COMPOSITION_REVISION),
     },
   );
   return { actionRuntime, admin, coreAdmin, database } satisfies RefundNativeRuntime;
@@ -194,7 +201,6 @@ it.live('#1150 Attempt to refund half of one item: 250 CZK of a 500 CZK item is 
 it.live('#1150 Two concurrent refunds overlap: a reserved item conflicts and no new key or basis evades it', () =>
   native(
     Effect.gen(function* overlappingRefundsConflict() {
-      yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
       const refundCase = yield* newRefundCase({ amountMinor: 100_000, collected: true });
       const owners = { commitment: closedCommitment, items: threeItems };
       const first = yield* requestRefund(refundCase, itemsRefund(refundCase, 'refund-b', [B]), owners);
@@ -235,7 +241,6 @@ it.live('#1150 Two concurrent refunds overlap: a reserved item conflicts and no 
 it.live('#1150 Refund response is lost: B stays reserved and the same REFUND keeps its original binding', () =>
   native(
     Effect.gen(function* lostRefundResponse() {
-      yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
       const refundCase = yield* newRefundCase({ amountMinor: 100_000, collected: true });
       const owners = { items: threeItems };
       const payload = itemsRefund(refundCase, 'refund-b', [B]);
@@ -271,6 +276,11 @@ it.live('#1150 Refund response is lost: B stays reserved and the same REFUND kee
         first.operation.operationId,
       );
       expect(messages).toHaveLength(1);
+      // #1158: the gateway REFUND dispatch is completion-bound executor work of the admitting revision.
+      expect(messages[0]).toMatchObject({
+        completionConsumerModuleKey: 'payment.core',
+        completionOriginalRevision: COMPOSITION_REVISION,
+      });
     }),
   ),
 );
@@ -291,6 +301,12 @@ it.live(
         });
         expect(cancellation.operation.kind).toBe('CANCEL_OR_VOID');
         expect(cancellation.operation.outcome).toBe('PENDING');
+        // #1158: stopping the gateway collection is completion-bound executor work of the admitting revision.
+        expect(
+          yield* operationRequestedMessages(refundCase.native, refundCase.scope, cancellation.operation.operationId),
+        ).toMatchObject([
+          { completionConsumerModuleKey: 'payment.core', completionOriginalRevision: COMPOSITION_REVISION },
+        ]);
         expect(yield* failureCodeOf(requestRefund(refundCase, itemsRefund(refundCase, 'too-early', [B]), owners))).toBe(
           'payment_no_established_collection',
         );
@@ -496,7 +512,6 @@ it.live('#1150 A prior refund is not deducted twice: 1000 collected, 600 confirm
 it.live('#1150 Pending return cannot be carved out to create partial compensation', () =>
   native(
     Effect.gen(function* noCarvedOutCompensation() {
-      yield* installPaymentTestCompositionAuthority(COMPOSITION_REVISION);
       const refundCase = yield* newRefundCase({ amountMinor: 100_000, collected: true });
       const owners = { commitment: closedCommitment, items: threeItems };
       const uncertain = yield* requestRefund(refundCase, itemsRefund(refundCase, 'refund-a', [A]), owners);
@@ -602,6 +617,8 @@ it.live(
         );
         expect(messages).toHaveLength(1);
         expect(messages[0]?.producerModuleKey).toBe('payment.core');
+        // A non-gateway route makes no provider call: the request waits for owner evidence, untracked.
+        expect(messages[0]).toMatchObject({ completionConsumerModuleKey: null, completionOriginalRevision: null });
         // The executor learns its route from the durable request; the operation keeps it immutably.
         const [requested] = yield* Schema.decodeUnknownEffect(Schema.Array(OperationRequestedPayloadSchema))(
           messages.map((message) => message.payloadJson),
@@ -850,8 +867,6 @@ const recordWithManualExecutor = (
 it.live('#1152 Manual refund outcomes require the original executor’s verified destination and effect', () =>
   native(
     Effect.gen(function* qualifiedManualRefund() {
-      const revision = yield* openActionRuntimeOptions.resolveCompositionRevision();
-      yield* installPaymentTestCompositionAuthority(revision);
       const refundCase = yield* newRefundCase({
         amountMinor: 100_000,
         binding: {

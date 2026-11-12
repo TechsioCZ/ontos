@@ -1,6 +1,7 @@
 import { Context } from 'effect';
 import type { Effect, Option } from 'effect';
 
+import type { PaymentGatewayProviderFamilySchema } from '../../../shared/domain/payment-vocabulary.ts';
 import type { GatewayProviderAccountRef } from '../../../shared/domain/psp-configuration.ts';
 import type { GatewayEnvironment } from '../../../shared/domain/psp-vocabulary.ts';
 import type { PaymentOwnerScope } from '../../ports/owner-evidence-unavailable.ts';
@@ -10,6 +11,8 @@ import type { GatewayExecutionTarget } from './psp-request.ts';
 export interface GatewayCaptureTargetQuery {
   readonly environment: GatewayEnvironment;
   readonly providerAccountRef: GatewayProviderAccountRef;
+  /** The notification route's family; a binding of another family is `None` (BINDING_UNKNOWN). */
+  readonly providerFamily: typeof PaymentGatewayProviderFamilySchema.Type;
   /** The capture Action's verified Tenant and Selling Legal Entity; never taken from webhook fields. */
   readonly scope: PaymentOwnerScope;
 }
@@ -21,8 +24,8 @@ export interface GatewayCaptureTargetQuery {
  */
 export interface GatewayCaptureBindingResolverContract {
   /**
-   * `None` when no binding with this ref exists in this scope and environment (capture result REJECTED
-   * `BINDING_UNKNOWN`); UNAVAILABLE when the binding exists but cannot be used now. `returnUrl` is `None`.
+   * `None` when no binding of this family with this ref exists in this scope and environment (capture result
+   * REJECTED `BINDING_UNKNOWN`); UNAVAILABLE when the binding cannot be read or used now. `returnUrl` is `None`.
    */
   readonly resolveForCapture: (
     query: GatewayCaptureTargetQuery,
