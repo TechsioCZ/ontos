@@ -11,7 +11,8 @@ import {
   AuthenticationNamespaceRegistry,
   makeAuthenticationNamespaceRegistryEffect,
 } from '@app/core-runtime/auth/external-identity-admission';
-import { delegationUnavailable } from './auth/gateway-delegation-errors.ts';
+import { delegationUnavailable, logDelegationRefusal, refusalTenant } from './auth/gateway-delegation-errors.ts';
+import type { RefusalContext } from './auth/gateway-delegation-errors.ts';
 import { GatewayDelegationVerificationLive } from './auth/gateway-delegation-verification.ts';
 import { gatewayReleaseRefusal } from './auth/gateway-release-refusal.ts';
 import type { GatewayReleaseRefusalHeaders } from './auth/gateway-release-refusal.ts';
@@ -20,7 +21,7 @@ import {
   STAFF_AUTHENTICATION_NAMESPACE_ID,
 } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { GatewayDelegationExchangeLedgerLive } from './auth/gateway-delegation-exchanges.service.ts';
-import { issueDelegatedGatewayContextAssertion } from './auth/gateway-delegation-issuer.ts';
+import { bindingsUnavailable, issueDelegatedGatewayContextAssertion } from './auth/gateway-delegation-issuer.ts';
 import {
   admitIntegrationCredential,
   loadGatewayModuleBindings,
@@ -91,7 +92,7 @@ import {
   TenantIntentLoaderLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { API_KEY_GATEWAY_CONTEXT_HEADER, GatewayContextResponseSchema } from '@app/shared-contracts';
-import type { ApiKeyGatewayContextRequest, GatewayContextProblem } from '@app/shared-contracts';
+import type { ApiKeyGatewayContextRequest, GatewayContextProblem, GatewayRefusalReason } from '@app/shared-contracts';
 import {
   AccessDecisionGate,
   SubjectAccessInspectionLive,
@@ -576,6 +577,12 @@ const gatewayAuthenticationUnavailableProblem = (): GatewayProblem<'GatewayUnava
     'https://ontos.dev/problems/gateway-unavailable',
     { retryable: true as const },
   );
+
+/** The same problem, naming the step that refused it; a delegated call's caller logs that code. */
+const withRefusalReason = <Problem extends GatewayContextProblem>(problem: Problem, reason: GatewayRefusalReason) => ({
+  ...problem,
+  reason,
+});
 
 const gatewayAuthorizationUnavailableProblem = (): GatewayProblem<'GatewayUnavailableProblem'> =>
   extendedProblemDetails(
@@ -2448,8 +2455,14 @@ const requireGatewayRelease = Effect.fn('ShellGateway.requireRelease')(function*
   const catalog = yield* authority.load.pipe(
     observeGatewayPhase('gateway-release'),
     Effect.catchTags({
-      InstalledModuleCatalogInvalidError: () => failGatewayProblem(gatewayAuthenticationUnavailableProblem()),
-      InstalledModuleCatalogUnavailableError: () => failGatewayProblem(gatewayAuthenticationUnavailableProblem()),
+      InstalledModuleCatalogInvalidError: () =>
+        failGatewayProblem(
+          withRefusalReason(gatewayAuthenticationUnavailableProblem(), 'installed_release_unavailable'),
+        ),
+      InstalledModuleCatalogUnavailableError: () =>
+        failGatewayProblem(
+          withRefusalReason(gatewayAuthenticationUnavailableProblem(), 'installed_release_unavailable'),
+        ),
     }),
   );
   if (
@@ -2477,7 +2490,7 @@ const requireGatewayRelease = Effect.fn('ShellGateway.requireRelease')(function*
         409,
         'Reload required',
         'https://ontos.dev/problems/gateway-reload-required',
-        { reloadRequired: true as const },
+        { reason: 'release_changed' as const, reloadRequired: true as const },
       ),
     );
   }
@@ -2575,15 +2588,33 @@ export const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(f
     Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)),
   );
 });
-/** The staff namespace is registered for exactly the source apps the module credentials are enrolled for. */
+/**
+ * The staff namespace is registered for exactly the source apps the module credentials are enrolled for. With no
+ * bound module credential it is registered for none, and the issuer refuses the key as unbound.
+ */
 const delegationNamespaceRegistryEffect = loadGatewayModuleBindings.pipe(
+  Effect.mapError(bindingsUnavailable),
   Effect.flatMap((bindings) =>
-    staffAuthenticationNamespaceRegistration([...new Set(bindings.map((binding) => binding.sourceAppId))]).pipe(
-      Effect.flatMap((registration) => makeAuthenticationNamespaceRegistryEffect([registration])),
-    ),
+    (bindings.length === 0
+      ? makeAuthenticationNamespaceRegistryEffect([])
+      : staffAuthenticationNamespaceRegistration([...new Set(bindings.map((binding) => binding.sourceAppId))]).pipe(
+          Effect.flatMap((registration) => makeAuthenticationNamespaceRegistryEffect([registration])),
+        )
+    ).pipe(Effect.mapError(delegationUnavailable('module_enrolment_unavailable'))),
   ),
-  Effect.mapError(delegationUnavailable),
 );
+
+/** The reason code of a key the provider could not verify, when the provider (not the key) is at fault. */
+const apiKeyProviderRefusalReason = (error: ApiKeyProviderError): GatewayRefusalReason | null =>
+  Match.value(error).pipe(
+    Match.tags({
+      ApiKeyCredentialInvalidError: () => null,
+      ApiKeyProviderUnavailableError: () => 'key_provider_unavailable' as const,
+      ApiKeyRateLimitedError: () => null,
+      ApiKeyStateInconsistentError: () => 'key_state_inconsistent' as const,
+    }),
+    Match.exhaustive,
+  );
 
 const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) =>
   handlers
@@ -2697,20 +2728,44 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
     )
     .handle('issueDelegatedGatewayContext', ({ headers, payload, request }) =>
       Effect.gen(function* issueDelegatedGatewayContextHandler() {
-        yield* requireGatewayRelease(payload.compositionRevision);
+        // Before the issuer admits a subject, only an asynchronous subject names its tenant (as the caller states it).
+        const statedContext: RefusalContext = Match.value(payload.subject).pipe(
+          Match.tag('Originator', ({ tenantId }) => refusalTenant(tenantId)),
+          Match.tag('Assertion', () => ({})),
+          Match.exhaustive,
+        );
+        // A refusal before the issuer runs: one warning, and its reason in the problem the caller receives.
+        const refuse = <Problem extends GatewayContextProblem>(refusedProblem: Problem, reason: GatewayRefusalReason) =>
+          logDelegationRefusal({
+            audience: payload.audience,
+            context: statedContext,
+            reason,
+            status: refusedProblem._tag,
+          }).pipe(Effect.andThen(failApiKeyGatewayProblem(withRefusalReason(refusedProblem, reason))));
+        yield* requireGatewayRelease(payload.compositionRevision).pipe(
+          Effect.catch((releaseError) =>
+            releaseError.reason === undefined ? Effect.fail(releaseError) : refuse(releaseError, releaseError.reason),
+          ),
+        );
         const keys = yield* ApiKeyService;
         const rawKey = headers['x-api-key'];
         if (rawKey === undefined || rawKey.trim().length === 0) {
           return yield* failApiKeyGatewayProblem(gatewayAuthenticationRequiredProblem());
         }
-        const verified = yield* keys
-          .verify(rawKey)
-          .pipe(Effect.catch((error) => failApiKeyGatewayProblem(apiKeyProviderGatewayProblem(error))));
+        const verified = yield* keys.verify(rawKey).pipe(
+          Effect.catch((error) => {
+            const reason = apiKeyProviderRefusalReason(error);
+            return reason === null
+              ? failApiKeyGatewayProblem(apiKeyProviderGatewayProblem(error))
+              : refuse(apiKeyProviderGatewayProblem(error), reason);
+          }),
+        );
         const delegationNamespaceRegistry = yield* delegationNamespaceRegistryEffect.pipe(
-          Effect.catchTag('GatewayDelegationError', () =>
-            failApiKeyGatewayProblem(gatewayAuthenticationUnavailableProblem()),
+          Effect.catchTag('GatewayDelegationError', (error) =>
+            refuse(gatewayAuthenticationUnavailableProblem(), error.reason),
           ),
         );
+        // The issuer writes the warning of its own refusals: it knows the calling module and the subject's tenant.
         return yield* issueDelegatedGatewayContextAssertion({
           payload,
           requestCorrelation: correlationFromRequest(request),
@@ -2719,27 +2774,36 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
           Effect.provideService(AuthenticationNamespaceRegistry, delegationNamespaceRegistry),
           Effect.catchTags({
             GatewayDelegationError: (error) =>
-              Match.value(error.code).pipe(
-                Match.when('authentication_required', () =>
-                  failApiKeyGatewayProblem(gatewayAuthenticationRequiredProblem()),
-                ),
-                Match.when('forbidden', () => failApiKeyGatewayProblem(gatewayForbiddenProblem())),
-                Match.when('unavailable', () => failApiKeyGatewayProblem(gatewayAuthenticationUnavailableProblem())),
-                Match.when('reload_required', () =>
-                  failApiKeyGatewayProblem(
-                    extendedProblemDetails(
-                      'GatewayReloadRequiredProblem',
-                      'The document release is no longer admitted. Reload to continue.',
-                      409,
-                      'Reload required',
-                      'https://ontos.dev/problems/gateway-reload-required',
-                      { reloadRequired: true as const },
+              failApiKeyGatewayProblem(
+                withRefusalReason(
+                  Match.value(error.code).pipe(
+                    Match.when('authentication_required', () => gatewayAuthenticationRequiredProblem()),
+                    Match.when('forbidden', () => gatewayForbiddenProblem()),
+                    Match.when('unavailable', () => gatewayAuthenticationUnavailableProblem()),
+                    Match.when('reload_required', () =>
+                      extendedProblemDetails(
+                        'GatewayReloadRequiredProblem',
+                        'The document release is no longer admitted. Reload to continue.',
+                        409,
+                        'Reload required',
+                        'https://ontos.dev/problems/gateway-reload-required',
+                        { reloadRequired: true as const },
+                      ),
                     ),
+                    Match.exhaustive,
                   ),
+                  error.reason,
                 ),
-                Match.exhaustive,
               ),
-            GatewayIssuerError: (error) => pipe(error, gatewayIssuerProblem, failApiKeyGatewayProblem),
+            GatewayIssuerError: (error) =>
+              failApiKeyGatewayProblem(
+                Match.value(gatewayIssuerProblem(error)).pipe(
+                  Match.tag('GatewayUnavailableProblem', (issuerProblem) =>
+                    withRefusalReason(issuerProblem, 'issuer_unavailable'),
+                  ),
+                  Match.orElse((issuerProblem) => issuerProblem),
+                ),
+              ),
           }),
         );
       }).pipe(

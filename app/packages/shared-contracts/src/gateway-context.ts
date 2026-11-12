@@ -244,8 +244,51 @@ export const GatewayContextResponseSchema = Schema.Struct({
 });
 export type GatewayContextResponse = Schema.Schema.Type<typeof GatewayContextResponseSchema>;
 
+/**
+ * Why the Shell refused to issue a gateway context, as a stable code a caller logs and an operator searches for. It
+ * names the failing step only: never a key, a token, a subject or anything the caller did not already send.
+ */
+export const GatewayRefusalReasonSchema = Schema.Literals([
+  // The caller and its key.
+  'key_provider_unavailable',
+  'key_state_inconsistent',
+  'module_enrolment_unavailable',
+  'module_credential_unbound',
+  'module_credential_not_admitted',
+  'caller_principal_unavailable',
+  'caller_principal_unresolved',
+  'caller_not_service',
+  'caller_build_not_installed',
+  // The release.
+  'installed_release_unavailable',
+  'release_changed',
+  'audience_not_installed',
+  // The subject the context is for.
+  'verification_keys_unavailable',
+  'subject_assertion_unverified',
+  'subject_assertion_malformed',
+  'subject_assertion_not_attested',
+  'subject_verification_timeout',
+  'subject_authentication_unavailable',
+  'subject_authentication_ended',
+  'originator_evidence_unavailable',
+  'originator_not_admitted',
+  'subject_not_delegable',
+  // The scope, the modules and the issuance.
+  'scope_unavailable',
+  'scope_refused',
+  'module_states_unavailable',
+  'module_not_active',
+  'exchange_ledger_unavailable',
+  'exchange_replayed',
+  'issuer_unavailable',
+]);
+export type GatewayRefusalReason = typeof GatewayRefusalReasonSchema.Type;
+const refusalReason = { reason: Schema.optionalKey(GatewayRefusalReasonSchema) };
+
 export const GatewayAuthenticationRequiredProblemSchema = Schema.TaggedStruct('GatewayAuthenticationRequiredProblem', {
   ...problemDetailsFields,
+  ...refusalReason,
   status: Schema.Literal(401),
 }).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(401));
 
@@ -256,12 +299,14 @@ export const GatewayAudienceInvalidProblemSchema = Schema.TaggedStruct('GatewayA
 
 export const GatewayReloadRequiredProblemSchema = Schema.TaggedStruct('GatewayReloadRequiredProblem', {
   ...problemDetailsFields,
+  ...refusalReason,
   reloadRequired: Schema.Literal(true),
   status: Schema.Literal(409),
 }).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(409));
 
 export const GatewayUnavailableProblemSchema = Schema.TaggedStruct('GatewayUnavailableProblem', {
   ...problemDetailsFields,
+  ...refusalReason,
   retryable: Schema.Literal(true),
   status: Schema.Literal(503),
 }).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(503));
@@ -272,6 +317,7 @@ export const GatewayInternalProblemSchema = Schema.TaggedStruct('GatewayInternal
 }).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(500));
 export const GatewayForbiddenProblemSchema = Schema.TaggedStruct('GatewayForbiddenProblem', {
   ...problemDetailsFields,
+  ...refusalReason,
   status: Schema.Literal(403),
 }).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(403));
 export const GatewayRateLimitedProblemSchema = Schema.TaggedStruct('GatewayRateLimitedProblem', {

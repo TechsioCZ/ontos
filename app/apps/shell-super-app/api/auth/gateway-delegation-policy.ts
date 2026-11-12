@@ -79,9 +79,8 @@ export const deriveGatewayModuleBindings = (
  */
 export const loadGatewayModuleBindings = Effect.gen(function* loadDerivedGatewayModuleBindings() {
   const enrolment = yield* (yield* ModuleCredentialEnrolmentSource).loadAttested;
-  const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(
-    Effect.mapError((cause) => new GatewayDelegationPolicyUnavailable({ cause })),
-  );
+  // An unreadable release keeps its own failure, so a refusal names which of the two it could not read.
+  const installed = yield* (yield* ShellInstalledModuleCatalog).load;
   return yield* deriveGatewayModuleBindings(enrolment, installed);
 });
 
@@ -100,9 +99,9 @@ export const admitIntegrationCredentialFrom = (source: typeof ModuleCredentialEn
   Effect.fn('GatewayDelegationPolicy.admitIntegrationCredential')(function* admitIntegrationCredential(
     providerKeyId: string,
   ) {
-    const enrolment = yield* source.load.pipe(Effect.mapError(delegationUnavailable));
+    const enrolment = yield* source.load.pipe(Effect.mapError(delegationUnavailable('module_enrolment_unavailable')));
     if (isGatewayModuleCredential(enrolment, providerKeyId)) {
-      return yield* delegationForbidden();
+      return yield* delegationForbidden('module_credential_not_admitted')();
     }
     return yield* Effect.void;
   });

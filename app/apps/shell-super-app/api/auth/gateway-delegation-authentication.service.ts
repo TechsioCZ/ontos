@@ -5,7 +5,10 @@ import { Effect, Predicate } from 'effect';
 
 import { AuthDatabase } from './db/client.ts';
 import { apikey, session, user } from './db/schema.ts';
-import { delegationForbidden as forbidden, delegationUnavailable as unavailable } from './gateway-delegation-errors.ts';
+import { delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
+
+const forbidden = delegationForbidden('subject_authentication_ended', 'subject_authentication_unavailable');
+const unavailable = delegationUnavailable('subject_authentication_unavailable');
 
 /** A Better Auth user ban holds while it is unexpired; an open-ended ban holds until lifted. */
 export const userBanHoldsAt = (

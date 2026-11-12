@@ -4,8 +4,10 @@ import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principa
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
 import { Context, Duration, Effect, Option, Schema } from 'effect';
 
-import { delegationForbidden } from './gateway-delegation-errors.ts';
+import { delegationForbidden as refuse } from './gateway-delegation-errors.ts';
 import type { GatewayDelegationError } from './gateway-delegation-errors.ts';
+
+const delegationForbidden = refuse('originator_not_admitted', 'originator_evidence_unavailable');
 
 /** Asynchronous work may act for a requester whose invocation is at most this old; no live session is required. */
 export const ORIGINATOR_EVIDENCE_MAX_AGE_DAYS = 7;
