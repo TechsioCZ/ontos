@@ -293,31 +293,32 @@ it.live('this release writes products, orders and invoices in its own shape for 
       'select id from demo_merchandise.products where tenant_id = $1 and legal_entity_id = $2 order by id',
       [tenantId, companyId],
     );
-    const storefront = yield* native.runtime
-      .runRead({
-        input: {
-          view: {
-            storefront: true,
-            storefrontCatalog: { fields: 'full', productIds: productIds.map(({ id }) => id) },
-          },
-        },
-        principal: native.principal,
-        registration: recordsRead,
-        transport: { correlationId: 'vat-reverse-storefront' },
-      })
-      .pipe(
-        Effect.provide(native.layer),
-        Effect.provideService(AccessDecisionGate, gate.accessDecision),
-        Effect.provideService(TaxRateSource, { read: () => Effect.succeed(BASELINE) }),
-      );
+    // One storefront detail per product: a full page holds at most two products.
+    const detail = (id: string) =>
+      native.runtime
+        .runRead({
+          input: { view: { storefront: true, storefrontCatalog: { fields: 'full', productIds: [id] } } },
+          principal: native.principal,
+          registration: recordsRead,
+          transport: { correlationId: 'vat-reverse-storefront' },
+        })
+        .pipe(
+          Effect.provide(native.layer),
+          Effect.provideService(AccessDecisionGate, gate.accessDecision),
+          Effect.provideService(TaxRateSource, { read: () => Effect.succeed(BASELINE) }),
+          Effect.map((response) => Schema.decodeUnknownSync(StorefrontPricesSchema)(response).products),
+        );
+    const shown = yield* Effect.forEach(productIds, ({ id }) => detail(id), { concurrency: 1 });
     const selling = Object.fromEntries(
-      Schema.decodeUnknownSync(StorefrontPricesSchema)(storefront).products.map((product) => [
-        product.id,
-        [
-          product.grossPriceMinor ?? null,
-          ...(product.variantRecords ?? []).map((entry) => entry.grossPriceMinor ?? null),
-        ],
-      ]),
+      shown
+        .flat()
+        .map((product) => [
+          product.id,
+          [
+            product.grossPriceMinor ?? null,
+            ...(product.variantRecords ?? []).map((entry) => entry.grossPriceMinor ?? null),
+          ],
+        ]),
     );
     expect(selling[JACKET_ID]).toEqual([1_062_380, 1_062_380, 1_062_380, 1_062_380, 1_062_380, 1_062_380]);
     expect(selling['book-it']).toEqual([33_000, 33_000, 45_920]);

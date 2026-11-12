@@ -59,6 +59,7 @@ import { merchandiseRegistration } from '../../verticals/merchandise/vertical.re
 const FixtureSchema = Schema.Struct({
   after: Schema.Record(Schema.String, Schema.Json),
   before: Schema.Record(Schema.String, Schema.Json),
+  jacketOrder: Schema.Struct({ command: Schema.Json, storefrontOrder: Schema.Json }),
   order: Schema.Struct({ command: Schema.Json, storefrontOrder: Schema.Json }),
   rows: Schema.Record(Schema.String, Schema.Array(Schema.Record(Schema.String, Schema.Json))),
 });
@@ -82,6 +83,10 @@ const views = {
   cart: { view: { ...STOREFRONT, storefrontCatalog: { fields: 'full', productIds: ['book-it', 'p-reduced', 'p2'] } } },
   category: { view: { ...STOREFRONT, storefrontCatalog: { categorySlug: 'metricke', fields: 'card' } } },
   detailBookIt: { view: { ...STOREFRONT, storefrontCatalog: { fields: 'full', slug: 'book-it' } } },
+  detailInformational: { view: { ...STOREFRONT, storefrontCatalog: { fields: 'full', slug: 'tricko-barvy' } } },
+  detailJacket: {
+    view: { ...STOREFRONT, storefrontCatalog: { fields: 'full', slug: 'panska-bunda-spyder-vyper-jacket-cerna' } },
+  },
   detailOddVariant: { view: { ...STOREFRONT, storefrontCatalog: { fields: 'full', slug: 'odd-variant' } } },
   detailReduced: { view: { ...STOREFRONT, storefrontCatalog: { fields: 'full', slug: 'kava-zrnkova' } } },
   featured: { view: { ...STOREFRONT, storefrontCatalog: { featured: true, fields: 'card' } } },
@@ -93,6 +98,7 @@ const views = {
   priceAscending: { view: { ...STOREFRONT, storefrontCatalog: { fields: 'card', sort: 'price-asc' } } },
   priceBounds: { view: { ...STOREFRONT, storefrontCatalog: { fields: 'card', maxMinor: 60_000, minMinor: 100 } } },
   search: { view: { ...STOREFRONT, storefrontCatalog: { fields: 'card', q: 'sroub' } } },
+  searchJacket: { view: { ...STOREFRONT, storefrontCatalog: { fields: 'card', q: 'spyder' } } },
 } satisfies Readonly<Record<string, RecordsRequestEncoded>>;
 
 const encodeResponse = Schema.encodeSync(RecordsResponseSchema);
@@ -238,6 +244,17 @@ it.live('the old release keeps reading and writing whole while the new release m
     expect(Schema.decodeUnknownSync(JsonRecordSchema)(JSON.parse(JSON.stringify(order)))).toEqual({
       ...orderBefore,
       orderId,
+    });
+    // A jacket variant (N1's 38SA073510-BLK) at 10 623,80 and the product with informational variants, as before.
+    const jacket = Schema.decodeUnknownSync(Schema.Struct({ command: JsonRecordSchema }))(fixture.jacketOrder.command);
+    const jacketPlaced = yield* apply(jacket.command);
+    const jacketOrder = Predicate.hasProperty(jacketPlaced, 'storefrontOrder')
+      ? jacketPlaced.storefrontOrder
+      : undefined;
+    const jacketBefore = Schema.decodeUnknownSync(JsonRecordSchema)(fixture.jacketOrder.storefrontOrder);
+    expect(Schema.decodeUnknownSync(JsonRecordSchema)(JSON.parse(JSON.stringify(jacketOrder)))).toEqual({
+      ...jacketBefore,
+      orderId: Predicate.hasProperty(jacketOrder, 'orderId') ? String(jacketOrder.orderId) : '',
     });
     expect(yield* storefront).toEqual(fixture.after);
 
