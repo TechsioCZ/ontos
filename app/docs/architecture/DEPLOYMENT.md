@@ -307,23 +307,37 @@ Stage bootstrap does not issue these keys. `stage-accounts-file.ts` declares onl
 
 Local development sets `ONTOS_GATEWAY_MODULE_BINDINGS=[]` (`pnpm env:local:ensure`), so local module-to-module calls stay unprovisioned and fail closed.
 
-| Module (deployment)         | Module credential (sensitive, `migrator` secret)         | Other values                                                                                                     |
-| --------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `catalog`                   | `ONTOS_GATEWAY_MODULE_API_KEY_CATALOG`                   |                                                                                                                  |
-| `commerce-cart`             | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CART`             |                                                                                                                  |
-| `commerce-customer-context` | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT` |                                                                                                                  |
-| `commerce-market-catalog`   | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_MARKET_CATALOG`   |                                                                                                                  |
-| `commerce-order`            | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER`            |                                                                                                                  |
-| `party-registry`            | `ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY`            |                                                                                                                  |
-| `payment`                   | `ONTOS_GATEWAY_MODULE_API_KEY_PAYMENT`                   | `ONTOS_PAYMENT_PROVIDER_CREDENTIALS` (secret, see below)                                                         |
-| `pricing`                   | `ONTOS_GATEWAY_MODULE_API_KEY_PRICING`                   | `ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET` (secret); `ONTOS_PRICING_CONFIRMATION_KEY_{REF,VERSION,LINEAGE_REF}` |
-| `shell-super-app`           |                                                          | `ONTOS_GATEWAY_MODULE_BINDINGS` (JSON array, one binding per module credential above)                            |
+| Module (deployment)         | Module credential (sensitive, `migrator` secret)         | Other values                                                                                                                                              |
+| --------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `catalog`                   | `ONTOS_GATEWAY_MODULE_API_KEY_CATALOG`                   |                                                                                                                                                           |
+| `commerce-cart`             | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CART`             |                                                                                                                                                           |
+| `commerce-customer-context` | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_CUSTOMER_CONTEXT` |                                                                                                                                                           |
+| `commerce-market-catalog`   | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_MARKET_CATALOG`   |                                                                                                                                                           |
+| `commerce-order`            | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER`            |                                                                                                                                                           |
+| `party-registry`            | `ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY`            |                                                                                                                                                           |
+| `payment`                   | `ONTOS_GATEWAY_MODULE_API_KEY_PAYMENT`                   | `ONTOS_PAYMENT_PROVIDER_CREDENTIALS`, `ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS` (secrets, see below); `ONTOS_PAYMENT_NOTIFICATION_BASE_URL`              |
+| `pricing`                   | `ONTOS_GATEWAY_MODULE_API_KEY_PRICING`                   | `ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET` (secret); `ONTOS_PRICING_CONFIRMATION_KEY_{REF,VERSION,LINEAGE_REF}`                                          |
+| `shell-super-app`           |                                                          | `ONTOS_GATEWAY_MODULE_BINDINGS` (JSON array, one binding per module credential above); `ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS` (secret, see below) |
 
 `party-registry` is the one worker-only unit: only its Outbox Worker makes delegated module calls, so its request service receives no module credential and none of the internal API bases its worker calls (`ONTOS_PARTY_REGISTRY_API_BASE_URL`, `ONTOS_PRIVACY_API_BASE_URL`, `ONTOS_SHELL_GATEWAY_BASE_URL`). `party-registry-worker` alone holds `ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY`.
 
 Each binding is `{compositionRevision, providerKeyId, sourceAppId, sourceBuildMarker}`: the module key's Better Auth ID, the module's topology app ID, and the composition revision and build that module runs. The Shell refuses module and API-key issuance (as unavailable) while the value is absent or malformed, so a deployment with no module enrolled sets `[]`.
 
 `ONTOS_PAYMENT_PROVIDER_CREDENTIALS` is a secret JSON object keyed by the credential secret ref of a provider account binding. Each entry is `{ "family": "GOPAY", "clientId", "clientSecret" }`, `{ "family": "STRIPE", "secretKey", "webhookSigningSecret" }` or `{ "family": "COMGATE", "secret" }`; an entry with any other field is refused. The value is optional: while it is absent every payment gateway operation is unavailable and the other Payment features keep working. Payment reads it on each cache miss, so a rotation is picked up within 60 seconds.
+
+**Payment gateway relay.** Providers deliver notifications to the Shell's typed relay at `/api/payment/v1/notifications/{gopay,stripe,comgate}/<tenantId>/<routeKey>`, and the Payment reconciliation driver requests recoveries at `/api/payment/v1/reconciliation/<routeKey>/recoveries`. Three values serve them:
+
+- `ONTOS_PAYMENT_NOTIFICATION_BASE_URL` (Payment, not secret) is the public Shell origin. Payment composes each binding's notification URL from it, the provider family, the tenant and the binding's generated route key.
+- `ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS` (Shell, secret) and `ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS` (Payment, secret; read by the Payment Outbox Worker) are each a JSON array `[{ "tenantId": "<tenant uuid>", "apiKey": "<managed API key>" }]`, one entry per tenant. The reader decodes each entry on its own and only when it needs that tenant, so a malformed entry fails only its tenant and an absent value makes the relay or the driver unavailable while the rest keeps working. A provider notification for a tenant with no relay entry gets the same 404 as an unknown route.
+
+Before a tenant uses a payment gateway, a human operator, never an agent, provisions two integration principals in that tenant and records their keys:
+
+1. Run `core.identity.create-non-human-principal` with `kind: integration` and the display name `Payment notification relay`. Bind its workloads `payment.provider-notification-ingress` and `payment.source-ingress` (on stage through the accounts file `workloads`).
+2. Run `core.identity.create-non-human-principal` with `kind: integration` and the display name `Payment reconciliation driver`. Bind its workloads `payment.provider-reconciliation` and `payment.source-ingress`.
+3. For each principal, issue a managed API key through Shell's API key service and run `core.identity.bind-managed-api-key` with the principal ID and provider key ID, as for module credentials above.
+4. Add the relay key to `ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS` and the driver key to `ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS`, each under the tenant's ID.
+
+Rotating a relay or driver key changes only that secret; notification URLs stay the same. Revoking a key or a workload binding makes that tenant's relay or driver fail closed, and the providers retry within their own limits.
 
 **Payment evidence workers.** Payment's notification and recovery Outbox Workers submit provider evidence through Payment's own public `accept-payment-observation` Action with a registered-workload assertion. Besides the usual four keys, the Payment binding in `ONTOS_GATEWAY_MODULE_BINDINGS` therefore carries one `registeredWorkloads` rule per worker; without them the Shell refuses the assertion and the evidence stays pending as reconciliation debt:
 

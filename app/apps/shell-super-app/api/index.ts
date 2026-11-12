@@ -154,6 +154,14 @@ import {
 import { symmyUnavailableProblem } from './symmy/contract.ts';
 import { SymmyDefectBoundary, symmyInternalProblem, symmyRouteNotFoundProblem } from './symmy/defect-boundary.ts';
 import {
+  PaymentGatewayHostMountLive,
+  PaymentGatewayRelayTransportLive,
+  PaymentNotificationBoundaryLive,
+  PaymentNotificationHandlersLive,
+  PaymentReconciliationBoundaryLive,
+  PaymentReconciliationHandlersLive,
+} from './payment-gateway/transport.ts';
+import {
   SymmyGovernedDispatch,
   SymmyGovernedDispatchLive,
   forwardSymmyOwnerRelease,
@@ -2789,6 +2797,8 @@ export const makeShellAuthenticationApiRuntime = (
         ),
       ),
     ),
+    PaymentNotificationHandlersLive.pipe(Layer.provide(PaymentNotificationBoundaryLive)),
+    PaymentReconciliationHandlersLive.pipe(Layer.provide(PaymentReconciliationBoundaryLive)),
   ).pipe(
     Layer.provide(outboxMatcherLayer),
     Layer.provide(handlerDependenciesLive),
@@ -2802,6 +2812,7 @@ export const makeShellAuthenticationApiRuntime = (
     transport: Layer.mergeAll(
       ModuleApiTransportLive.pipe(Layer.provide(activeApplicationCompositionLive)),
       SymmyIngressTransportLive.pipe(Layer.provide(SymmyHostMountLive)),
+      PaymentGatewayRelayTransportLive.pipe(Layer.provide(PaymentGatewayHostMountLive)),
     ),
   });
 };

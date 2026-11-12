@@ -1,3 +1,4 @@
+import { PaymentReconciliationGroup } from '@app/payment/payment-gateway-relay';
 import { GatewayContextApiGroup } from '@app/shared-contracts';
 import { SYMMY_FIXTURE_ROUTES, SYMMY_ROUTES } from '@app/shared-contracts/symmy';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
@@ -13,6 +14,9 @@ import {
   symmyWriteOptions,
 } from '../api/symmy/contract.ts';
 import { SymmyDefectBoundary } from '../api/symmy/defect-boundary.ts';
+import { PaymentNotificationBoundary } from '../api/payment-gateway/notification-boundary.ts';
+import { PaymentNotificationsGroup } from '../api/payment-gateway/notification-contract.ts';
+import { PaymentReconciliationBoundary } from '../api/payment-gateway/reconciliation-boundary.ts';
 import {
   SymmyInternalCustomersProjectionSchema,
   SymmyInternalPriceListsProjectionSchema,
@@ -162,4 +166,8 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   .add(ShellBrowserApi.groups.accessAdminChanges)
   .add(ShellBrowserApi.groups.accessAdminApprovals)
   .add(ShellBrowserApi.groups.accessAdminExplain)
-  .add(SymmyIngressGroup);
+  .add(SymmyIngressGroup)
+  // Payment gateway relay (#1157): typed PSP notification and reconciliation driver ingress.
+  .add(PaymentNotificationsGroup.middleware(PaymentNotificationBoundary))
+  // The reconciliation driver is not part of Shell's callable OpenAPI surface.
+  .add(PaymentReconciliationGroup.annotate(OpenApi.Exclude, true).middleware(PaymentReconciliationBoundary));

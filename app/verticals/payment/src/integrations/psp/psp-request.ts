@@ -1,6 +1,7 @@
-import { Schema } from 'effect';
+import { Option, Schema } from 'effect';
 
 import { PaymentGatewayAccountBindingSchema } from '../../../shared/domain/payment-execution-binding.ts';
+import type { PaymentPayerContact } from '../../../shared/domain/payment-payer-contact.ts';
 import {
   PaymentIdSchema,
   PaymentLegalEntityIdSchema,
@@ -68,13 +69,24 @@ export type GatewayExecutionTarget = typeof GatewayExecutionTargetSchema.Type;
 const contactText = (maximumLength: number) =>
   Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(maximumLength), Schema.isTrimmed());
 
-/** Payer contact for providers that require it (Comgate). C16 has no owner for it yet (plan N9). */
+/**
+ * Payer contact handed to a provider adapter for providers that require it (Comgate, GoPay). Its source is
+ * the caller-supplied `PaymentPayerContact` on the start-payment-collection Action (plan D-P3, N9), converted
+ * by `toGatewayPayerContact` during dispatch preparation only.
+ */
 export const GatewayPayerContactSchema = Schema.Struct({
   email: Schema.Option(contactText(254)),
   fullName: Schema.Option(contactText(200)),
   phone: Schema.Option(contactText(40)),
 });
 export type GatewayPayerContact = typeof GatewayPayerContactSchema.Type;
+
+/** Converts the Action's payer contact into the adapter contract; absent fields become `Option.none()`. */
+export const toGatewayPayerContact = (contact: PaymentPayerContact): GatewayPayerContact => ({
+  email: Option.fromUndefinedOr(contact.email),
+  fullName: Option.fromUndefinedOr(contact.fullName),
+  phone: Option.fromUndefinedOr(contact.phone),
+});
 
 /**
  * Every input of a prepare is explicit, so preparation is a pure function of it. The executor calls

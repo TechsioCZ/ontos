@@ -23,6 +23,7 @@ import { paymentAuthorizationValidationRead } from '../../src/api/payment-author
 import { paymentHistoryRead } from '../../src/api/payment-history.read.ts';
 import { paymentMethodApplicabilityRead } from '../../src/api/payment-method-applicability.read.ts';
 import { paymentReconciliationDebtRead } from '../../src/api/payment-reconciliation-debt.read.ts';
+import { providerBindingRouteRead } from '../../src/api/provider-binding-route.read.ts';
 import { paymentManifest } from '../../vertical.manifest.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 
@@ -36,7 +37,7 @@ import { paymentRegistration } from '../../vertical.registration.ts';
 type AccessClass = Exclude<ModuleEntrypointAccess, 'background'>;
 interface ExpectedEntrypoint {
   readonly access: AccessClass;
-  /** Undefined only for the workload-only provider notification capture (#1157). */
+  /** Undefined only for the workload-only notification capture and provider binding route (#1157). */
   readonly accessKey: string | undefined;
   readonly entrypointKey: string;
   readonly role: 'action' | 'api';
@@ -48,7 +49,7 @@ const action = (slug: string, accessKey?: string): ExpectedEntrypoint => ({
   entrypointKey: `payment.core.${slug}`,
   role: 'action',
 });
-const read = (slug: string, accessKey: string, access: AccessClass = 'read'): ExpectedEntrypoint => ({
+const read = (slug: string, accessKey?: string, access: AccessClass = 'read'): ExpectedEntrypoint => ({
   access,
   accessKey,
   entrypointKey: `payment.core.api.${slug}`,
@@ -81,6 +82,7 @@ const DESIGN_INVENTORY: readonly ExpectedEntrypoint[] = [
   read('gateway-customer-action', 'payment.core.gateway-customer-action.read'),
   read('gateway-return-status', 'payment.core.gateway-return-status.read'),
   read('gateway-reconciliation-debt', 'payment.core.gateway-reconciliation-debt.read'),
+  read('provider-binding-route'),
 ];
 
 type MatrixState = TenantModuleState | 'missing';
@@ -118,7 +120,11 @@ const ownerReads = [
   paymentHistoryRead,
   paymentMethodApplicabilityRead,
   paymentReconciliationDebtRead,
+  providerBindingRouteRead,
 ] as const;
+
+/** Reads that resolve a route for a workload and so take no company of their own (phase 2 D-P4/D-P5). */
+const COMPANY_FORBIDDEN_READS: ReadonlySet<string> = new Set(['payment.core.api.provider-binding-route']);
 
 const registeredAccessKeys = (): ReadonlyMap<string, string | undefined> =>
   new Map([
@@ -177,7 +183,9 @@ describe('#1153 TECH-02 Payment entrypoint classification', () => {
       byKey(getVerticalRuntimeReads(paymentRegistration).map((registered) => registered.descriptor.entrypoint)),
     );
     for (const registered of ownerReads) {
-      expect(registered.descriptor.legalEntityScope).toBe('required');
+      expect(registered.descriptor.legalEntityScope).toBe(
+        COMPANY_FORBIDDEN_READS.has(registered.descriptor.entrypoint.entrypointKey) ? 'forbidden' : 'required',
+      );
       expect(registered.descriptor.entrypoint.authorization).toEqual({ kind: 'protected' });
     }
   });
@@ -215,6 +223,19 @@ describe('#1153 TECH-02 Payment entrypoint classification', () => {
     expect(registeredEntrypoints().filter((entrypoint) => entrypoint.role === 'worker')).toEqual([]);
     expect(registeredEntrypoints().filter((entrypoint) => entrypoint.access === 'background')).toEqual([]);
     expect(paymentManifest.publicSurface.events).toEqual([]);
+  });
+
+  it('#1157 the provider binding route is a workload-only read for the relay and reconciliation workloads', () => {
+    expect(providerBindingRouteRead.descriptor.accessDeclaration).toBeUndefined();
+    expect({
+      access: providerBindingRouteRead.descriptor.entrypoint.access,
+      legalEntityScope: providerBindingRouteRead.descriptor.legalEntityScope,
+      workloads: providerBindingRouteRead.descriptor.accessWorkload?.workloads,
+    }).toEqual({
+      access: 'read',
+      legalEntityScope: 'forbidden',
+      workloads: ['payment.provider-notification-ingress', 'payment.provider-reconciliation'],
+    });
   });
 
   it('#1153 historical_read is declared only for the explicit immutable payment-history projection', () => {

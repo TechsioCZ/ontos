@@ -92,6 +92,13 @@ const customerContextApi = byUrl(CUSTOMER_CONTEXT_UNIT, 'ONTOS_COMMERCE_CUSTOMER
 export const SHELL_OPERATOR_VALUES: readonly OperatorValue[] = [moduleBindings(GATEWAY_MODULE_BINDINGS_VARIABLE)];
 
 /**
+ * Secrets only the Shell reads. `ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS` is a JSON array
+ * `[{ "tenantId": <uuid>, "apiKey": <managed API key> }]` of each Tenant's payment notification relay
+ * integration principal; the Shell decodes it per entry and only when a provider notification arrives.
+ */
+export const SHELL_CREDENTIAL_VARIABLES: readonly string[] = ['ONTOS_PAYMENT_NOTIFICATION_RELAY_CREDENTIALS'];
+
+/**
  * Every module deployment that calls another module through `acquireDelegatedGatewayContext`, each with
  * its own module credential. A module that starts calling another module must add its entry here; the
  * deployment contract test derives the callers from source and fails when an entry is missing.
@@ -175,10 +182,13 @@ export const OWNER_RUNTIME_CONFIGURATIONS: readonly OwnerRuntimeConfiguration[] 
   },
   {
     apiDependencies: [shellGateway],
-    credentialVariables: ['ONTOS_PAYMENT_PROVIDER_CREDENTIALS'],
+    // ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS is the reconciliation driver's `[{ tenantId, apiKey }]` JSON
+    // array, read lazily per entry by the Payment Outbox Worker only.
+    credentialVariables: ['ONTOS_PAYMENT_PROVIDER_CREDENTIALS', 'ONTOS_PAYMENT_RECONCILIATION_CREDENTIALS'],
     moduleCredentialHolders: SERVICE_AND_WORKER,
     moduleCredentialVariable: moduleCredentialVariable(PAYMENT_UNIT),
-    operatorValues: [],
+    // The public Shell origin Payment composes provider notification URLs from.
+    operatorValues: [reference('ONTOS_PAYMENT_NOTIFICATION_BASE_URL')],
     unitId: PAYMENT_UNIT,
   },
   {

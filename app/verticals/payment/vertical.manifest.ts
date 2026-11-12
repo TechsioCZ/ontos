@@ -36,6 +36,8 @@ import { PaymentReconciliationDebtApi } from './shared/apis/payment-reconciliati
 import { paymentReconciliationDebtRead } from './src/api/payment-reconciliation-debt.read.ts';
 import { paymentResourceDescriptor } from './shared/resources/payment.ts';
 import { paymentRootResourceDescriptor } from './shared/resources/payment-root.ts';
+import { ProviderBindingRouteApi } from './shared/apis/provider-binding-route.ts';
+import { providerBindingRouteRead } from './src/api/provider-binding-route.read.ts';
 import { recordPaymentLocalEvidenceAction } from './src/actions/record-payment-local-evidence.action.ts';
 import { recordPaymentReconciliationDecisionAction } from './src/actions/record-payment-reconciliation-decision.action.ts';
 import { requestPaymentCancellationAction } from './src/actions/request-payment-cancellation.action.ts';
@@ -116,6 +118,7 @@ export const paymentManifest: OntosModuleManifestInput = defineOntosModuleManife
       'payment-history': PaymentHistoryApi,
       'payment-method-applicability': PaymentMethodApplicabilityApi,
       'payment-reconciliation-debt': PaymentReconciliationDebtApi,
+      'provider-binding-route': ProviderBindingRouteApi,
       // </generated-module-manifest-apis>
     },
     components: {
@@ -166,6 +169,11 @@ export const paymentManifest: OntosModuleManifestInput = defineOntosModuleManife
         apiKey: 'payment-reconciliation-debt',
         operationKey: 'paymentReconciliationDebt.execute',
         registration: paymentReconciliationDebtRead,
+      },
+      {
+        apiKey: 'provider-binding-route',
+        operationKey: 'providerBindingRoute.execute',
+        registration: providerBindingRouteRead,
       },
       // </generated-module-manifest-operation-contracts>
     ],

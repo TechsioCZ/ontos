@@ -34,6 +34,7 @@
     "@app/commerce-market-catalog": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/party-registry": "workspace:*",
+    "@app/payment": "workspace:*",
     "@app/price-group-catalog": "workspace:*",
     "@app/pricing": "workspace:*",
     "@app/pricing-contracts": "workspace:*",
