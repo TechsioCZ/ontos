@@ -21,6 +21,7 @@ import {
   ACCESS_FENCE_LEASE_RENEWAL,
   AccessWriteJournalPort,
   acquireScopeFence,
+  advanceOperationJournal,
   openOperationJournal,
   releaseScopeFence,
   runAccessWrite,
@@ -30,6 +31,7 @@ import type { AccessWriteJournalPortService } from '../lifecycle/fence.ts';
 import { AccessWriteJournalStore } from '../lifecycle/persistence/journal-store.ts';
 import type { AccessIntentError } from './errors.ts';
 import { AccessProjectionCompiler } from './projection-compiler.ts';
+import { ProjectionIntentMoved } from './projection-intent-moved.ts';
 import { projectionWriteRefusal, projectionWriteViolation } from './projection-write-error.ts';
 import type { AccessProjectionWriteError, AccessProjectionWriteErrorCode } from './projection-write-error.ts';
 import { TenantIntentLoader } from './tenant-intent-loader.ts';
@@ -226,6 +228,40 @@ const intentFailure = (error: AccessIntentError): AccessProjectionWriteError =>
 
 const fenceRefusalError = (error: AccessLifecycleError): AccessProjectionWriteError =>
   projectionWriteRefusal('access_projection_write_fence_refused', `${error.code}: ${error.reason}`);
+
+/** How many times one reconcile reads a tenant whose intent keeps moving before it gives up. */
+export const ACCESS_PROJECTION_INTENT_ATTEMPTS = 3;
+
+/** One read of the tenant's intent, planned: the snapshot, its plan, and the digest that names the plan. */
+interface PlannedIntent {
+  readonly digest: CommandDigest;
+  readonly intent: TenantProjectionIntent;
+  readonly plan: ProjectionPlan;
+}
+
+/**
+ * Read the tenant's whole intent and plan it. The snapshot must name the tenant whose fence this operation holds,
+ * or the plan it produces would describe another tenant than the lock it writes under.
+ */
+const planTenantIntent = Effect.fn('AccessProjectionWriter.planTenantIntent')(function* planTenantIntentEffect(
+  loader: ProjectionIntentReads,
+  scope: OperationalScope,
+  tenantScopeId: AccessScopeId,
+) {
+  const intent = yield* loader.loadProjection(scope).pipe(Effect.mapError(intentFailure));
+  const snapshotScope = tenantScopeOf(intent);
+  if (!Option.exists(snapshotScope, (snapshot) => snapshot === tenantScopeId)) {
+    return yield* projectionWriteRefusal(
+      'access_projection_write_scope_missing',
+      `The intent pinned to scope ${tenantScopeId}'s fence names tenant-context scope ${Option.getOrUndefined(snapshotScope) ?? 'none'}, which is not the scope this reconcile writes`,
+    );
+  }
+  const planned = planAccessProjection({ tenants: [intent] });
+  if (Result.isFailure(planned)) {
+    return yield* projectionWriteViolation('access_projection_write_plan_refused', planned.failure.map(violationText));
+  }
+  return { digest: planDigest(planned.success), intent, plan: planned.success } satisfies PlannedIntent;
+});
 
 /**
  * D15's proof that this operation holds the tenant's own fence. The read is handed in, so the module stays a
@@ -431,9 +467,21 @@ const releaseHeldFence = Effect.fn('AccessProjectionWriter.releaseHeldFence')(fu
   if (held === undefined || held.state !== 'Changing' || held.owningOperationId !== taken.operationId) {
     return yield* Effect.void;
   }
-  const released = yield* releaseScopeFence({ current: held, operationId: taken.operationId });
-  yield* port.releaseFence({ ...fenceCommand(taken), expectedRevision: released.revision });
-  return yield* Effect.void;
+  yield* releaseScopeFence({ current: held, operationId: taken.operationId });
+  // The compare-and-set names the revision the fence is at now; the store moves it on as it releases.
+  const outcome = yield* port.releaseFence({ ...fenceCommand(taken), expectedRevision: held.revision });
+  return yield* Match.value(outcome).pipe(
+    Match.tag('Released', () => Effect.void),
+    Match.tag('Conflict', ({ fence }) =>
+      Effect.fail(
+        lifecycleRefusal(
+          'fence_revision_conflict',
+          `Scope ${fence.scopeId} moved to revision ${fence.revision} (${fence.state}) while operation ${taken.operationId} was releasing it`,
+        ),
+      ),
+    ),
+    Match.exhaustive,
+  );
 });
 
 /**
@@ -484,9 +532,72 @@ interface FencedReconcileInput {
   readonly pinnedRevision: number;
   /** The holder whose lapsed hold this reconcile takes over, when the fence was not `Ready`. */
   readonly previousHolder: Option.Option<AccessOperationId>;
+  /** The tenant's intent read and planned again, once the fence is held. */
+  readonly replan: Effect.Effect<PlannedIntent, AccessProjectionWriteError>;
   readonly tenantId: TenantId;
   readonly tenantScopeId: AccessScopeId;
 }
+
+/**
+ * End the journal this reconcile opened when it stops before the write path ran, so no row is left `validated`
+ * with nobody to finish it. A journal the caller resumed is the caller's, and is left as it is.
+ */
+const abandonOpenedJournal = Effect.fn('AccessProjectionWriter.abandonOpenedJournal')(
+  function* abandonOpenedJournalEffect(input: FencedReconcileInput, failureCode: string) {
+    if (!input.openedJournal) {
+      return yield* Effect.void;
+    }
+    const port = yield* AccessWriteJournalPort;
+    const current = yield* port.readJournal({ operationId: input.operationId, tenantId: input.tenantId });
+    if (Option.isNone(current) || current.value.phase !== 'validated') {
+      return yield* Effect.void;
+    }
+    const millis = yield* Clock.currentTimeMillis;
+    const failed = yield* advanceOperationJournal({
+      current: current.value,
+      failureCode,
+      operationId: input.operationId,
+      phase: 'failed',
+      updatedAt: DateTime.toDateUtc(DateTime.makeUnsafe(millis)),
+    });
+    yield* port.writeJournal(failed);
+    return yield* Effect.void;
+  },
+  (effect) =>
+    effect.pipe(
+      Effect.catchTag('AccessLifecycleError', ({ code, reason }) =>
+        Effect.logWarning(`The journal of a reconcile that stopped early could not be ended (${code}: ${reason})`),
+      ),
+    ),
+);
+
+/**
+ * Read the intent again now that the fence is held. Every Action that writes intent holds the fence's lock (shared,
+ * `Ready` only) until it commits, so taking the fence waited for all of them, and this read sees every intent they
+ * committed. Intent writes do not move the fence's revision, so an Action that committed between the first read and
+ * the take is invisible to the compare-and-set; only this second read sees it. A moved intent is refused before the
+ * engine is touched.
+ */
+const intentStillPlanned = Effect.fn('AccessProjectionWriter.intentStillPlanned')(function* intentStillPlannedEffect(
+  input: FencedReconcileInput,
+) {
+  const fresh = yield* input.replan.pipe(Effect.tapError(() => abandonOpenedJournal(input, 'intent_unavailable')));
+  if (fresh.digest === input.digest) {
+    return yield* Effect.void;
+  }
+  yield* abandonOpenedJournal(input, 'intent_moved');
+  const reason = `Tenant ${input.tenantId}'s access intent changed between this reconcile's read and its fence (plan ${input.digest.slice(0, 12)} became ${fresh.digest.slice(0, 12)}), so the plan it read was not projected`;
+  // A fence taken over from a dead holder may cover a half-written graph: it stays closed, its lease lapsing to the
+  // next taker, which reads the intent afresh.
+  return yield* Option.isSome(input.previousHolder)
+    ? Effect.fail(
+        projectionWriteRefusal(
+          'access_projection_write_fence_refused',
+          `${reason}; the tenant stays closed until the next reconcile takes it over`,
+        ),
+      )
+    : Effect.fail(new ProjectionIntentMoved({ reason }));
+});
 
 /** The write path under the tenant's fence: project, commit, and report what the engine did. */
 const reconcileUnderFence = Effect.fn('AccessProjectionWriter.reconcileUnderFence')(function* reconcileUnderFenceEffect(
@@ -594,7 +705,7 @@ const fencedReconcile = Effect.fn('AccessProjectionWriter.fencedReconcile')(func
   };
   // The renewal runs beside the write and stops with it; it is interruptible although the write is not.
   yield* renewHeldLease(taken).pipe(Effect.interruptible, Effect.forkScoped);
-  const reconciled = reconcileUnderFence(input, taken);
+  const reconciled = intentStillPlanned(input).pipe(Effect.andThen(reconcileUnderFence(input, taken)));
   // A fence taken over from a dead holder opens only on a committed reconcile (the write path releases it then);
   // anything short of that leaves it held, its lease lapsing to the next taker.
   return yield* Option.isSome(input.previousHolder)
@@ -602,17 +713,9 @@ const fencedReconcile = Effect.fn('AccessProjectionWriter.fencedReconcile')(func
     : reconciled.pipe(Effect.ensuring(releaseAfterReconcile(taken)));
 }, Effect.scoped);
 
-/**
- * The reconcile program: it states the request scope's fence and journal port in `R` and binds none of
- * them. One `runAccessWrite` is the whole write path — journal (D24), fence (D15), projection,
- * verification — and `projectionToken` is the engine's token of the write, or the identity of the intent
- * a no-op reconcile found already projected.
- */
-export const reconcileTenantIntent = (
-  compiler: AccessProjectionCompilerEngine,
-  loader: ProjectionIntentReads,
-): UnboundAccessProjectionWriter['reconcileTenant'] =>
-  Effect.fn('AccessProjectionWriter.reconcileTenant')(function* reconcileTenantEffect(
+/** One attempt of a reconcile, under one operation: pin, read, plan, journal, then the fenced write. */
+const reconcileAttempt = (compiler: AccessProjectionCompilerEngine, loader: ProjectionIntentReads) =>
+  Effect.fn('AccessProjectionWriter.reconcileAttempt')(function* reconcileAttemptEffect(
     request: TenantProjectionRequest,
   ) {
     const { scope } = request;
@@ -679,25 +782,8 @@ export const reconcileTenantIntent = (
       return yield* projectionWriteRefusal('access_projection_write_fence_refused', pinnedIssue.value);
     }
     const pinnedRevision = Option.match(pinned, { onNone: () => 0, onSome: ({ revision }) => revision });
-    const intent = yield* loader.loadProjection(scope).pipe(Effect.mapError(intentFailure));
-    // The snapshot must name the tenant whose fence this operation will hold, or the plan it produces would
-    // describe another tenant than the lock it writes under.
-    const snapshotScope = tenantScopeOf(intent);
-    if (!Option.exists(snapshotScope, (snapshot) => snapshot === tenantScopeId)) {
-      return yield* projectionWriteRefusal(
-        'access_projection_write_scope_missing',
-        `The intent pinned to scope ${tenantScopeId}'s fence names tenant-context scope ${Option.getOrUndefined(snapshotScope) ?? 'none'}, which is not the scope this reconcile writes`,
-      );
-    }
-    const planned = planAccessProjection({ tenants: [intent] });
-    if (Result.isFailure(planned)) {
-      return yield* projectionWriteViolation(
-        'access_projection_write_plan_refused',
-        planned.failure.map(violationText),
-      );
-    }
-    const plan = planned.success;
-    const digest = planDigest(plan);
+    const replan = planTenantIntent(loader, scope, tenantScopeId);
+    const { digest, intent, plan } = yield* replan;
     // D9: the change is validated before the scope is locked.
     const change = yield* validateAccessChange([
       {
@@ -734,11 +820,42 @@ export const reconcileTenantIntent = (
         operationId,
         pinnedRevision,
         previousHolder,
+        replan,
         tenantId,
         tenantScopeId,
       }),
     );
   });
+
+/**
+ * The reconcile program: it states the request scope's fence and journal port in `R` and binds none of
+ * them. One `runAccessWrite` is the whole write path — journal (D24), fence (D15), projection,
+ * verification — and `projectionToken` is the engine's token of the write, or the identity of the intent
+ * a no-op reconcile found already projected. A reconcile whose intent moved before it took the fence starts
+ * again under a new operation, a bounded number of times; one its caller named cannot, and is refused.
+ */
+export const reconcileTenantIntent = (
+  compiler: AccessProjectionCompilerEngine,
+  loader: ProjectionIntentReads,
+): UnboundAccessProjectionWriter['reconcileTenant'] => {
+  const attempt = reconcileAttempt(compiler, loader);
+  const settle = (
+    request: TenantProjectionRequest,
+    attempted: number,
+  ): ReturnType<UnboundAccessProjectionWriter['reconcileTenant']> =>
+    attempt(request).pipe(
+      Effect.catchTag('ProjectionIntentMoved', ({ reason }) =>
+        request.operationId === undefined && attempted < ACCESS_PROJECTION_INTENT_ATTEMPTS
+          ? Effect.logInfo(`${reason}; reading it again`).pipe(Effect.andThen(settle(request, attempted + 1)))
+          : Effect.fail(projectionWriteRefusal('access_projection_write_fence_refused', reason)),
+      ),
+    );
+  return Effect.fn('AccessProjectionWriter.reconcileTenant')(function* reconcileTenantEffect(
+    request: TenantProjectionRequest,
+  ) {
+    return yield* settle(request, 1);
+  });
+};
 
 export class AccessProjectionWriter extends Context.Service<AccessProjectionWriter, AccessProjectionWriterService>()(
   '@app/core-runtime/access/intent/projection-writer/AccessProjectionWriter',

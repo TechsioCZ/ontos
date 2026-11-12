@@ -19,7 +19,8 @@ import { AccessCatalogSnapshotWriterLive } from '../../src/access/intent/catalog
 import { AccessMembershipStoreLive } from '../../src/access/intent/memberships.ts';
 import { AccessProjectionCompiler } from '../../src/access/intent/projection-compiler.ts';
 import { AccessProjectionWriterLive } from '../../src/access/intent/projection-writer.ts';
-import { TenantIntentLoaderLive } from '../../src/access/intent/tenant-intent-loader.ts';
+import { TenantIntentLoader, TenantIntentLoaderLive } from '../../src/access/intent/tenant-intent-loader.ts';
+import type { TenantIntentLoaderService } from '../../src/access/intent/tenant-intent-loader.ts';
 import { AccessWriteJournalStoreLive } from '../../src/access/lifecycle/persistence/journal-store.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
@@ -46,6 +47,8 @@ export interface ProjectionTenantOptions {
   /** Module states the Tenant has before the suite runs, all `active`. */
   readonly activeModules?: readonly string[];
   readonly wrapCompiler?: (compiler: AccessProjectionCompilerEngine) => AccessProjectionCompilerEngine;
+  /** Wraps the intent loader, e.g. to commit an intent write right after the writer read the tenant. */
+  readonly wrapIntentLoader?: (loader: TenantIntentLoaderService) => TenantIntentLoaderService;
 }
 
 const seedTenant = (admin: PgClient.PgClient, tenantId: TenantId, activeModules: readonly string[]) =>
@@ -126,9 +129,20 @@ export const withProjectionTenant = <Value, Failure, Requirements>(
       Layer.succeed(AccessProjectionCompiler, compiler),
       NodeServices.layer,
     );
+    const { wrapIntentLoader } = options;
+    const liveLoader = TenantIntentLoaderLive.pipe(Layer.provide(platforms));
+    const loader =
+      wrapIntentLoader === undefined
+        ? liveLoader
+        : Layer.effect(
+            TenantIntentLoader,
+            Effect.gen(function* wrappedIntentLoader() {
+              return wrapIntentLoader(yield* TenantIntentLoader);
+            }),
+          ).pipe(Layer.provide(liveLoader));
     const stores = Layer.mergeAll(
       platforms,
-      TenantIntentLoaderLive.pipe(Layer.provide(platforms)),
+      loader,
       AccessWriteJournalStoreLive.pipe(Layer.provide(platforms)),
       AccessChangesStoreLive.pipe(Layer.provide(platforms)),
       AccessReleaseStoreLive.pipe(Layer.provide(platforms)),

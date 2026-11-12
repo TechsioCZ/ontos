@@ -1,6 +1,6 @@
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Deferred, Effect, Fiber, Ref, Schema } from 'effect';
+import { Deferred, Effect, Fiber, Option, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { TenantAccessBootstrap } from '../../src/access/bootstrap/index.ts';
@@ -8,6 +8,7 @@ import { AccessProjectionError } from '../../src/access/compiler/projection-erro
 import type { AccessProjectionCompiler as AccessProjectionCompilerEngine } from '../../src/access/compiler/spice-db-compiler.ts';
 import type { TenantId } from '../../src/access/ids.ts';
 import { AccessProjectionWriter } from '../../src/access/intent/projection-writer.ts';
+import type { TenantIntentLoaderService } from '../../src/access/intent/tenant-intent-loader.ts';
 import type { AccessCatalogModule } from '../../src/authorization/access-declaration.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import {
@@ -65,6 +66,9 @@ export const journals = (admin: PgClient.PgClient, tenantId: TenantId) =>
       `select operation_id, phase from core.access_operation_journals where tenant_id = '${tenantId}' order by started_at`,
     )
     .pipe(Effect.orDie, Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(JournalRowSchema))), Effect.orDie);
+
+const journalPhases = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  journals(admin, tenantId).pipe(Effect.map((rows) => rows.map((journal) => journal.phase)));
 
 export const bootstrapTenant = (tenantId: TenantId) =>
   Effect.gen(function* bootstrapScenarioTenant() {
@@ -155,6 +159,18 @@ const refusalOf = <A, E extends { readonly reason?: string }, R>(effect: Effect.
 
 /** The finalizer that lets a held engine write go. */
 const letGoOf = (letGo: Deferred.Deferred<boolean>) => () => Deferred.succeed(letGo, true);
+
+/** The armed write, taken so it runs once; nothing when none is armed. */
+const runArmed = (afterRead: Ref.Ref<Option.Option<Effect.Effect<void>>>) =>
+  Ref.getAndSet(afterRead, Option.none()).pipe(Effect.flatMap(Option.getOrElse(() => Effect.void)));
+
+/** A loader that runs the armed write once, right after the writer's next read of the tenant's intent. */
+const interleavedLoader =
+  (afterRead: Ref.Ref<Option.Option<Effect.Effect<void>>>) =>
+  (loader: TenantIntentLoaderService): TenantIntentLoaderService => ({
+    ...loader,
+    loadProjection: (scope) => loader.loadProjection(scope).pipe(Effect.tap(runArmed(afterRead))),
+  });
 
 /** An engine that fails its write while `failing` is set, as an unreachable SpiceDB would. */
 const failingEngine =
@@ -324,6 +340,40 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
             yield* Ref.set(failing, false);
             yield* lapseLease(admin, tenantId);
             yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+            expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
+          }),
+      );
+    }),
+  );
+
+  suite.effect('an intent that moved between the read and the fence is read again, never projected stale', () =>
+    Effect.gen(function* movedIntent() {
+      const afterRead = yield* Ref.make(Option.none<Effect.Effect<void>>());
+      yield* withProjectionTenant(
+        { activeModules: [MODULE], wrapIntentLoader: interleavedLoader(afterRead) },
+        (tenantId, admin) =>
+          Effect.gen(function* revocationInTheGap() {
+            const scope = yield* bootstrapTenant(tenantId);
+            // Right after the writer read the tenant, an intent write suspends the module. Like an Action, it commits
+            // while the fence is Ready and moves no revision, so the fence's compare-and-set cannot see it.
+            yield* Ref.set(
+              afterRead,
+              Option.some(
+                admin
+                  .unsafe(
+                    `update core.tenant_module_states set state = 'suspended'
+                      where tenant_id = '${tenantId}' and module_key = '${MODULE}'`,
+                  )
+                  .pipe(Effect.orDie, Effect.asVoid),
+              ),
+            );
+            const writer = yield* AccessProjectionWriter;
+            const written = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+            // The suspension was projected, not the plan read before it.
+            expect(written.deletions).toBeGreaterThan(0);
+            const again = yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
+            expect({ deletions: again.deletions, touches: again.touches }).toEqual({ deletions: 0, touches: 0 });
+            expect((yield* journalPhases(admin, tenantId)).slice(-3)).toEqual(['failed', 'committed', 'committed']);
             expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
           }),
       );
