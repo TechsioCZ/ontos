@@ -415,8 +415,8 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
         DATABASE_URL: Redacted.value(authRuntime.runtimeConnectionString),
         ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: sourceUrl,
         ONTOS_GATEWAY_ISSUER: issuer,
+        // As on stage: the Shell verifies with its own signing key and holds no public key set.
         ONTOS_GATEWAY_PRIVATE_JWK: privateJwk,
-        ONTOS_GATEWAY_PUBLIC_JWKS: publicJwks,
         ONTOS_SHELL_NATIVE_RELAY_SOURCE: yield* Schema.encodeEffect(
           Schema.fromJsonString(Schema.OptionFromNullOr(ShellNativeRelaySourceSchema)),
         )(relaySource === undefined ? Option.none() : Option.some(relaySource)),

@@ -170,10 +170,11 @@ const makePackagedEnvironment = Effect.fn('ServerOwnerRelayNative.makePackagedEn
       Object.assign(environment, { ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: input.compositionUrl });
     }
     if (input.gateway !== undefined) {
-      Object.assign(environment, {
-        ONTOS_GATEWAY_ISSUER: input.gateway.issuer,
-        ONTOS_GATEWAY_PUBLIC_JWKS: input.gateway.publicJwks,
-      });
+      Object.assign(environment, { ONTOS_GATEWAY_ISSUER: input.gateway.issuer });
+      if (input.appId !== SHELL_APP_ID) {
+        Object.assign(environment, { ONTOS_GATEWAY_PUBLIC_JWKS: input.gateway.publicJwks });
+      }
+      // The Shell gets what the app host gives it on stage: its issuer and its own signing key, and no public key set.
       if (input.gateway.privateJwk !== undefined) {
         Object.assign(environment, { ONTOS_GATEWAY_PRIVATE_JWK: Redacted.value(input.gateway.privateJwk) });
       }
