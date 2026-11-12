@@ -23,18 +23,21 @@ const runActionHttp = bindActionHttpRunner({
 
 const AssertionClaimsSchema = Schema.fromJsonString(
   Schema.Struct({
-    principal: Schema.Struct({ legalEntityId: Schema.optionalKey(Schema.String.pipe(Schema.brand('LegalEntityId'))) }),
+    principal: Schema.Struct({
+      legalEntityId: Schema.optionalKey(Schema.String.pipe(Schema.brand('LegalEntityId'))),
+      tenantId: Schema.String.pipe(Schema.brand('TenantId')),
+    }),
   }),
 );
-/** Company of the (already verified and redeemed) gateway assertion of this request. */
-const legalEntityOfAssertion = (authorization: Redacted.Redacted<string | undefined>) => {
+/** Tenant and company of the (already verified and redeemed) gateway assertion of this request. */
+const scopeOfAssertion = (authorization: Redacted.Redacted<string | undefined>) => {
   const payload = Redacted.value(authorization)?.split('.')[1];
   const decoded = Option.fromUndefinedOr(payload).pipe(
     Option.flatMap((value) =>
       Schema.decodeOption(AssertionClaimsSchema)(Buffer.from(value, 'base64url').toString('utf-8')),
     ),
   );
-  return Option.isSome(decoded) ? decoded.value.principal.legalEntityId : undefined;
+  return Option.isSome(decoded) ? decoded.value.principal : undefined;
 };
 
 const reconcileClients = Effect.fn('ApplyCommandActionServer.reconcileClients')(function* reconcileClients(
@@ -42,9 +45,9 @@ const reconcileClients = Effect.fn('ApplyCommandActionServer.reconcileClients')(
   revision: number,
   clientIds?: readonly string[],
 ) {
-  const legalEntityId = legalEntityOfAssertion(Redacted.make(request.headers['authorization']));
+  const scope = scopeOfAssertion(Redacted.make(request.headers['authorization']));
   const compositionRevision = request.headers['x-ontos-composition-revision'];
-  if (legalEntityId === undefined || compositionRevision === undefined) {
+  if (scope?.legalEntityId === undefined || compositionRevision === undefined) {
     return yield* Effect.fail(applyCommandActionProblem.unavailable('operation_context_unavailable'));
   }
   const intake = yield* PartyIntake;
@@ -52,7 +55,8 @@ const reconcileClients = Effect.fn('ApplyCommandActionServer.reconcileClients')(
     .forRequest({
       compositionRevision,
       correlationId: request.headers['x-correlation-id'] ?? `crm-intake-${revision}`,
-      legalEntityId,
+      legalEntityId: scope.legalEntityId,
+      tenantId: scope.tenantId,
     })
     .reconcile(clientIds);
 });

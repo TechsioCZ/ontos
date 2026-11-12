@@ -8,7 +8,11 @@ import { describe, expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
 import { claimHostedModuleCredentials } from '../../packages/core-runtime/src/auth/hosted-module-credential-store.ts';
-import { moduleCredentialConfigProvider } from '../../packages/core-runtime/src/auth/owner-module-credential.ts';
+import { HostedModuleCredentialsSchema } from '../../packages/core-runtime/src/auth/hosted-module-credentials.ts';
+import {
+  moduleCredentialConfigProvider,
+  ownWorkloadCredential,
+} from '../../packages/core-runtime/src/auth/owner-module-credential.ts';
 import {
   AppHostError,
   captureChannel,
@@ -41,6 +45,23 @@ const PARTY_KEY_ONE = 'party-registry-module-key-1';
 const PARTY_KEY_TWO = 'party-registry-module-key-2';
 const GENERATION_TWO = '-2';
 const HANDOVER_LOOKALIKE = '{"schemaVersion":1,"credentials":{}}';
+const TENANT = '70000000-0000-4000-8000-000000000001';
+const OTHER_TENANT = '70000000-0000-4000-8000-000000000002';
+/** An internal workload of the order module, registered in two tenants. */
+const ORDER_WORKLOAD = { appId: ORDER, tenantId: TENANT, workloadKey: 'demo.order.intake' };
+const ORDER_WORKLOAD_ENTRY = `${ORDER}/demo.order.intake/${TENANT}`;
+const ORDER_WORKLOAD_ELSEWHERE = `${ORDER}/demo.order.intake/${OTHER_TENANT}`;
+const WORKLOAD_KEY_ONE = 'order-intake-workload-key-1';
+const WORKLOAD_KEY_TWO = 'order-intake-workload-key-2';
+const WORKLOAD_KEY_ELSEWHERE = 'order-intake-workload-key-x';
+const PRICING_WORKLOAD_ENTRY = `pricing/demo.pricing.sync/${TENANT}`;
+const PRICING_WORKLOAD_KEY = 'pricing-sync-workload-key';
+
+/** What the order module reads as its intake workload key in one tenant. */
+const readWorkload = (tenantId: string) =>
+  ownWorkloadCredential({ ...ORDER_WORKLOAD, tenantId }).pipe(
+    Effect.map((key) => (Option.isSome(key) ? Redacted.value(key.value) : undefined)),
+  );
 const decoder = new TextDecoder();
 
 /** What one owner of this process reads as its module credential, per call. */
@@ -57,18 +78,20 @@ const output = (
   failedAppIds: readonly string[] = [],
   generation = '',
   expiresAt = DAY,
+  workloadCredentials: Readonly<Record<string, string>> = {},
 ) =>
   Schema.decodeUnknownSync(ProvisioningOutputJsonSchema)(
     JSON.stringify({
       credentials,
       failedAppIds,
       keys: Object.fromEntries(
-        Object.keys(credentials).map((appId) => [
-          appId,
-          { expiresAt: new Date(expiresAt).toISOString(), providerKeyId: `${appId}-provider-key${generation}` },
+        [...Object.keys(credentials), ...Object.keys(workloadCredentials)].map((entry) => [
+          entry,
+          { expiresAt: new Date(expiresAt).toISOString(), providerKeyId: `${entry}-provider-key${generation}` },
         ]),
       ),
       schemaVersion: 1,
+      workloadCredentials,
     }),
   );
 
@@ -84,6 +107,7 @@ describe('the provisioning channel', () => {
             failedAppIds: [],
             keys: { [ORDER]: { expiresAt: '2026-11-12T10:00:00.000Z', providerKeyId: 'order-provider-key' } },
             schemaVersion: 1,
+            workloadCredentials: {},
           });
           writeFileSync(
             child,
@@ -137,6 +161,43 @@ describe('a process receiving handovers on its channel', () => {
         expect(yield* readOwnerCredential(ORDER)).toBe('rotated-order-module-key');
         expect(yield* readOwnerCredential(PARTY)).toBe('party-registry-module-key');
         expect(yield* readOwnerCredential('pricing')).toBeUndefined();
+
+        // An owner's internal workload key, per tenant: read from its slot, never from the environment.
+        expect(yield* readWorkload(TENANT)).toBeUndefined();
+        const withWorkloads = yield* encodeModuleCredentialHandover({ [ORDER]: Redacted.make(ORDER_KEY) }, [ORDER], {
+          [ORDER_WORKLOAD_ELSEWHERE]: Redacted.make(WORKLOAD_KEY_ELSEWHERE),
+          [ORDER_WORKLOAD_ENTRY]: Redacted.make(WORKLOAD_KEY_ONE),
+          // Another module's workload is never handed to an owner that does not serve it.
+          [PRICING_WORKLOAD_ENTRY]: Redacted.make(PRICING_WORKLOAD_KEY),
+        });
+        expect(decoder.decode(withWorkloads)).not.toContain(PRICING_WORKLOAD_KEY);
+        yield* applyModuleCredentialHandovers(receiver, Stream.make(withWorkloads));
+        expect(yield* readWorkload(TENANT)).toBe(WORKLOAD_KEY_ONE);
+        expect(yield* readWorkload(OTHER_TENANT)).toBe(WORKLOAD_KEY_ELSEWHERE);
+        expect(yield* readWorkload('70000000-0000-4000-8000-000000000003')).toBeUndefined();
+        // A rotation hands the workload a new key in the running process; a tenant whose registration ended is dropped.
+        const rotatedWorkload = yield* encodeModuleCredentialHandover(
+          { [ORDER]: Redacted.make(ORDER_KEY_TWO) },
+          [ORDER],
+          { [ORDER_WORKLOAD_ENTRY]: Redacted.make(WORKLOAD_KEY_TWO) },
+        );
+        yield* applyModuleCredentialHandovers(receiver, Stream.make(rotatedWorkload));
+        expect(yield* readWorkload(TENANT)).toBe(WORKLOAD_KEY_TWO);
+        expect(yield* readWorkload(OTHER_TENANT)).toBeUndefined();
+        // A handover that names only another owner leaves this owner's workload keys as they are.
+        yield* applyModuleCredentialHandovers(
+          receiver,
+          Stream.make(yield* encodeModuleCredentialHandover({ [PARTY]: Redacted.make(PARTY_KEY_TWO) }, [PARTY])),
+        );
+        expect(yield* readWorkload(TENANT)).toBe(WORKLOAD_KEY_TWO);
+        const stranger = yield* receiver.accept(
+          Schema.decodeUnknownSync(HostedModuleCredentialsSchema)({
+            credentials: {},
+            schemaVersion: 1,
+            workloads: { [PRICING_WORKLOAD_ENTRY]: PRICING_WORKLOAD_KEY },
+          }),
+        );
+        expect(stranger).toEqual({ accepted: [], refused: [PRICING_WORKLOAD_ENTRY] });
       }),
   );
 });
@@ -325,6 +386,38 @@ describe('module credential healing', () => {
       expect(nothing.held).toEqual(current);
       expect(nothing.messages).toEqual([]);
       expect(nothing.retirements).toEqual([]);
+    }),
+  );
+
+  it.effect('rotates workload keys with their module and retires the key of a workload no longer registered', () =>
+    Effect.gen(function* workloadRotation() {
+      const current = output({ [ORDER]: ORDER_KEY_ONE, [PARTY]: PARTY_KEY_ONE }, [], '', DAY, {
+        [ORDER_WORKLOAD_ELSEWHERE]: WORKLOAD_KEY_ELSEWHERE,
+        [ORDER_WORKLOAD_ENTRY]: WORKLOAD_KEY_ONE,
+      });
+      const live = new Set(providerKeyIdsOf(current));
+      // The operator ended the registration in the other tenant: the renewal issues the one still registered.
+      const rotated = output({ [ORDER]: ORDER_KEY_TWO, [PARTY]: PARTY_KEY_TWO }, [], GENERATION_TWO, 40 * HOUR, {
+        [ORDER_WORKLOAD_ENTRY]: WORKLOAD_KEY_TWO,
+      });
+      const result = yield* healing(Effect.succeed(live), rotated, current, 17 * HOUR);
+      expect(result.held).toEqual(rotated);
+      expect(result.messages.every((message) => message.includes(WORKLOAD_KEY_TWO))).toBe(true);
+      expect(result.messages.some((message) => message.includes(WORKLOAD_KEY_ELSEWHERE))).toBe(false);
+      expect(result.retirements).toEqual([providerKeyIdsOf(current)]);
+      // Nothing left behind ends, so the next step renews nothing.
+      expect(
+        planModuleCredentialHealing(result.held, Option.some(new Set(providerKeyIdsOf(rotated))), 17 * HOUR),
+      ).toEqual({
+        kind: 'none',
+      });
+      // A pass that could not issue the order module's workload keys keeps the ones it holds in use.
+      const partial = output({ [ORDER]: ORDER_KEY_TWO, [PARTY]: PARTY_KEY_TWO }, [ORDER], GENERATION_TWO, 40 * HOUR);
+      const kept = yield* healing(Effect.succeed(live), partial, current, 17 * HOUR);
+      expect(Object.keys(kept.held.workloadCredentials).toSorted()).toEqual(
+        [ORDER_WORKLOAD_ENTRY, ORDER_WORKLOAD_ELSEWHERE].toSorted(),
+      );
+      expect(kept.retirements).toEqual([[`${ORDER}-provider-key`, `${PARTY}-provider-key`]]);
     }),
   );
 

@@ -138,7 +138,6 @@
     "demo:agent-api-keys": "node scripts/demo/agent-api-keys.mts",
     "demo:ai-profiles": "node scripts/demo/ai-profiles.mts",
     "demo:commerce-portal": "node scripts/demo/commerce-portal.mts",
-    "demo:crm-party-intake": "node scripts/demo/crm-party-intake.mts",
     "demo:prove:ai:c:obchod": "node scripts/demo/prove-ai-c-obchod.mts",
     "demo:seed:rental": "node scripts/demo/seed-rental-demo.mts",
     "demo:rebrand:rental": "node scripts/demo/rebrand-rental-demo.mts",

@@ -75,6 +75,8 @@ it.live(
             'HostedModuleCredentialsSealedError',
             'MODULE_CREDENTIAL_VARIABLE',
             'ModuleAppIdSchema',
+            'WorkloadCredentialsSchema',
+            'workloadEntryAppId',
           ],
           required: 'pricing-module-key-0000',
           storeExported: false,

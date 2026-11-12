@@ -1,6 +1,6 @@
 import { ConfigProvider, Effect, Option, Redacted } from 'effect';
 
-import { hostedSlot } from './hosted-module-credential-store.ts';
+import { hostedSlot, hostedWorkloadSlot } from './hosted-module-credential-store.ts';
 import { MODULE_CREDENTIAL_VARIABLE } from './hosted-module-credentials.ts';
 
 /*
@@ -56,3 +56,15 @@ export const moduleCredentialConfigProvider = (
   host: ConfigProvider.ConfigProvider,
   appId: string,
 ): ConfigProvider.ConfigProvider => slotConfigProvider(host, hostedSlot(appId));
+
+/**
+ * An owner's internal workload credential for one tenant (O73): the key of the principal the operator registered for
+ * the owner's own workload there, handed over by the host and rotated like the module key. None in a process the host
+ * did not claim, and none for a tenant where the workload is not registered: the caller then fails closed.
+ */
+export const ownWorkloadCredential = (input: {
+  readonly appId: string;
+  readonly tenantId: string;
+  readonly workloadKey: string;
+}): Effect.Effect<Option.Option<Redacted.Redacted>> =>
+  hostedWorkloadSlot(`${input.appId}/${input.workloadKey}/${input.tenantId}`);

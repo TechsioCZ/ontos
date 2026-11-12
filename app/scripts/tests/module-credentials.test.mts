@@ -9,6 +9,7 @@ import {
   earliestExpiryOf,
   encodeModuleCredentialHandover,
   MODULE_CREDENTIAL_CALLERS,
+  MODULE_INTERNAL_WORKLOADS,
   noProvisionedCredentials,
   providerKeyIdsOf,
   ProvisioningOutputJsonSchema,
@@ -16,6 +17,7 @@ import {
 
 const workspace = path.resolve(import.meta.dirname, '../..');
 const DELEGATED_CLIENT = /\bacquireDelegatedGatewayContext\b/u;
+const WORKLOAD_CLIENT = /\bacquireWorkloadGatewayContext\b/u;
 const ORDER = 'commerce-order';
 
 /** Production source of one vertical: no tests, fixtures or generated build output. */
@@ -46,6 +48,34 @@ describe('MODULE_CREDENTIAL_CALLERS', () => {
       .map((vertical) => vertical.id)
       .toSorted();
     expect([...MODULE_CREDENTIAL_CALLERS]).toEqual(callers);
+  });
+});
+
+describe('MODULE_INTERNAL_WORKLOADS', () => {
+  it('names exactly the modules whose own server acts as a workload, each only with workloads its own Actions declare', () => {
+    const topology = Schema.decodeUnknownSync(Schema.fromJsonString(TopologySchema))(
+      readFileSync(path.join(workspace, 'topology/reference-topology.json'), 'utf-8'),
+    );
+    const sourcesOf = (appId: string) => {
+      const vertical = topology.verticals.find(({ id }) => id === appId);
+      return vertical === undefined
+        ? []
+        : productionSources(path.join(workspace, vertical.path)).map((file) => readFileSync(file, 'utf-8'));
+    };
+    const actingModules = topology.verticals
+      .filter((vertical) => sourcesOf(vertical.id).some((source) => WORKLOAD_CLIENT.test(source)))
+      .map((vertical) => vertical.id)
+      .toSorted();
+    expect([...MODULE_INTERNAL_WORKLOADS.keys()].toSorted()).toEqual(actingModules);
+    for (const [appId, workloads] of MODULE_INTERNAL_WORKLOADS) {
+      // A module calls no other module's workload: every key it gets is one its own access declarations admit.
+      expect(MODULE_CREDENTIAL_CALLERS).toContain(appId);
+      for (const workload of workloads) {
+        expect(
+          sourcesOf(appId).some((source) => /\baccessWorkload\b/u.test(source) && source.includes(`'${workload}'`)),
+        ).toBe(true);
+      }
+    }
   });
 });
 
@@ -81,6 +111,9 @@ describe('module credential handover', () => {
             'party-registry': { expiresAt: '2026-11-12T09:00:00.000Z', providerKeyId: 'party-provider-key' },
           },
           schemaVersion: 1,
+          workloadCredentials: {
+            'crm/demo.crm.party-intake/70000000-0000-4000-8000-000000000001': 'crm-intake-workload-key',
+          },
         });
         const decoded = yield* Schema.decodeEffect(ProvisioningOutputJsonSchema)(encoded);
         // What a host decodes it encodes back unchanged, for the next handover.

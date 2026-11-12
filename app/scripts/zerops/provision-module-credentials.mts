@@ -48,6 +48,7 @@ import {
 import {
   MODULE_CREDENTIAL_CALLERS,
   MODULE_CREDENTIAL_CHANNEL_FD,
+  MODULE_INTERNAL_WORKLOADS,
   ModuleCredentialHandoverError,
   ProvisioningOutputJsonSchema,
 } from './module-credentials.mts';
@@ -104,17 +105,18 @@ const issueFor = (input: {
   readonly release: ModuleCredentialRelease;
 }) =>
   Effect.gen(function* issueModuleCredentials() {
-    const provisioned = yield* provisionModuleCredentials(input);
+    const provisioned = yield* provisionModuleCredentials({ ...input, workloads: MODULE_INTERNAL_WORKLOADS });
     const output = yield* Schema.encodeUnknownEffect(ProvisioningOutputJsonSchema)({
       credentials: Object.fromEntries(provisioned.credentials),
       failedAppIds: provisioned.failedAppIds,
       keys: Object.fromEntries(provisioned.keys),
       schemaVersion: 1,
+      workloadCredentials: Object.fromEntries(provisioned.workloadCredentials),
     });
     // Standard output is a log stream here; only the private channel carries keys.
     yield* Console.log(
       provisioned.failedAppIds.length === 0
-        ? `[module-credentials] issued for ${[...provisioned.credentials.keys()].join(', ')}`
+        ? `[module-credentials] issued for ${[...provisioned.credentials.keys()].join(', ')}; ${String(provisioned.workloadCredentials.size)} internal workload credential(s)`
         : `[module-credentials] NOT issued for ${provisioned.failedAppIds.join(', ')}`,
     );
     return yield* writeChannel(output);

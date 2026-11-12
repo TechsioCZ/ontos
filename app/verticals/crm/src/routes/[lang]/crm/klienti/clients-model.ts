@@ -33,7 +33,7 @@ const knownPrincipals = new Map(
     '72000000-0000-4000-8000-000000000021': 'Vedení Nájempark',
     '849fdb3c-fab6-5c14-b20a-d885dc27313d': 'Karel Hanák (správce)',
     '8abb7df7-c19d-5d49-836a-2146dbe5064c': 'Lucie Dvořáková (vedoucí obchodu)',
-    // scripts/demo/crm-party-intake.mts: the CRM service account that writes clients into Party Registry.
+    // The principal registered for CRM's intake workload (scripts/demo/permissions.mts); its key is the platform's.
     'b0442ea3-0560-5337-9012-406ef4b5e028': 'Systém CRM (zápis do evidence zákazníků)',
   }),
 );

@@ -855,10 +855,12 @@ export interface CommercePortalWorkload {
 
 const intakeName = 'crm-party-intake';
 
+/**
+ * The principal registered for CRM's internal workload `demo.crm.party-intake`. Its key is the platform's: module
+ * credential provisioning issues, hands over, rotates and retires it beside CRM's module key; nobody issues it by hand.
+ */
 export const crmPartyIntakePrincipal = {
-  apiKeyName: intakeName,
   displayName: 'CRM · zakládání klientů v Party Registry',
-  envVar: 'ONTOS_CRM_PARTY_INTAKE_API_KEY',
   kind: 'service',
   principalId: demoId(principalResource, intakeName),
 } as const;

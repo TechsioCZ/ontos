@@ -7,6 +7,7 @@ import type {
   HostedModuleCredentialReceiver,
   HostedModuleCredentials,
 } from './hosted-module-credentials.ts';
+import { workloadEntryAppId } from './hosted-module-credentials.ts';
 
 type Slot = Ref.Ref<Option.Option<Redacted.Redacted>>;
 
@@ -21,7 +22,13 @@ type Slot = Ref.Ref<Option.Option<Redacted.Redacted>>;
  * to this same module file, so they all share these slots (`scripts/tests/hosted-module-credential-instance.test.mts`). The isolation between owners of one process is
  * cooperative: see DEPLOYMENT.md, "Module credentials and bindings".
  */
-const hostedClaim = Deferred.makeUnsafe<ReadonlyMap<string, Slot>>();
+interface HostedSlots {
+  readonly owners: ReadonlyMap<string, Slot>;
+  /** The owners' internal workload credentials, by `<app id>/<workload key>/<tenant id>`. */
+  readonly workloads: Ref.Ref<ReadonlyMap<string, Redacted.Redacted>>;
+}
+
+const hostedClaim = Deferred.makeUnsafe<HostedSlots>();
 
 /**
  * Claims this process as a multi-owner host serving `owners`, before any owner runs. From then on each owner reads
@@ -34,7 +41,8 @@ export const claimHostedModuleCredentials = Effect.fn('HostedModuleCredentials.c
   const slots: ReadonlyMap<string, Slot> = new Map(
     [...new Set(owners)].map((owner) => [owner, Ref.makeUnsafe(Option.none<Redacted.Redacted>())] as const),
   );
-  if (!(yield* Deferred.succeed(hostedClaim, slots))) {
+  const workloads = Ref.makeUnsafe<ReadonlyMap<string, Redacted.Redacted>>(new Map());
+  if (!(yield* Deferred.succeed(hostedClaim, { owners: slots, workloads }))) {
     return yield* new HostedModuleCredentialsSealedError({
       reason: 'This process already claimed its hosted module credentials',
     });
@@ -53,9 +61,27 @@ export const claimHostedModuleCredentials = Effect.fn('HostedModuleCredentials.c
       },
       { concurrency: 1 },
     );
+    // A handover carries each owner it names with its complete set of workload credentials: they replace all the
+    // owner held before, so a workload the operator no longer registers is dropped.
+    const workloadEntries = Object.entries(handover.workloads ?? {});
+    const served = workloadEntries.filter(([entry]) => slots.has(workloadEntryAppId(entry)));
+    const renewedOwners = new Set([
+      ...entries.flatMap(([owner]) => (slots.has(owner) ? [owner] : [])),
+      ...served.map(([entry]) => workloadEntryAppId(entry)),
+    ]);
+    yield* Ref.update(
+      workloads,
+      (held) => new Map([...[...held].filter(([entry]) => !renewedOwners.has(workloadEntryAppId(entry))), ...served]),
+    );
     return {
-      accepted: entries.flatMap(([owner], index) => (filled[index] === true ? [owner] : [])),
-      refused: entries.flatMap(([owner], index) => (filled[index] === true ? [] : [owner])),
+      accepted: [
+        ...entries.flatMap(([owner], index) => (filled[index] === true ? [owner] : [])),
+        ...served.map(([entry]) => entry),
+      ],
+      refused: [
+        ...entries.flatMap(([owner], index) => (filled[index] === true ? [] : [owner])),
+        ...workloadEntries.flatMap(([entry]) => (slots.has(workloadEntryAppId(entry)) ? [] : [entry])),
+      ],
     } satisfies HostedModuleCredentialAcceptance;
   });
   return { accept, owners: [...slots.keys()] } satisfies HostedModuleCredentialReceiver;
@@ -67,8 +93,19 @@ export const hostedSlot = Effect.fn('HostedModuleCredentials.hostedSlot')(functi
   if (Option.isNone(claim)) {
     return Option.none<Option.Option<Redacted.Redacted>>();
   }
-  const slot = (yield* claim.value).get(appId);
+  const slot = (yield* claim.value).owners.get(appId);
   return Option.some(slot === undefined ? Option.none<Redacted.Redacted>() : yield* Ref.get(slot));
+});
+
+/** An owner's internal workload credential in one tenant, if the host handed one over; none outside a claimed host. */
+export const hostedWorkloadSlot = Effect.fn('HostedModuleCredentials.hostedWorkloadSlot')(function* readWorkloadSlot(
+  entry: string,
+) {
+  const claim = yield* Deferred.poll(hostedClaim);
+  if (Option.isNone(claim)) {
+    return Option.none<Redacted.Redacted>();
+  }
+  return Option.fromUndefinedOr((yield* Ref.get((yield* claim.value).workloads)).get(entry));
 });
 
 /** Which owners of this host hold a credential now; names only, never a key. */
@@ -77,6 +114,6 @@ export const heldHostedModuleCredentials = Effect.gen(function* heldCredentials(
   if (Option.isNone(claim)) {
     return [];
   }
-  const slots = [...(yield* claim.value).entries()];
+  const slots = [...(yield* claim.value).owners.entries()];
   return slots.flatMap(([owner, slot]) => (Option.isSome(Ref.getUnsafe(slot)) ? [owner] : []));
 });

@@ -14,6 +14,8 @@ import { claimHostedModuleCredentials } from '../../packages/core-runtime/src/au
 import {
   HostedModuleCredentialsSchema,
   ModuleAppIdSchema,
+  workloadEntryAppId,
+  WorkloadCredentialsSchema,
 } from '../../packages/core-runtime/src/auth/hosted-module-credentials.ts';
 import type { HostedModuleCredentialReceiver } from '../../packages/core-runtime/src/auth/hosted-module-credentials.ts';
 
@@ -21,6 +23,16 @@ export class ModuleCredentialHandoverError extends Schema.TaggedError<ModuleCred
   'ModuleCredentialHandoverError',
   { reason: Schema.String },
 ) {}
+
+/**
+ * The internal workloads (O73) a calling module runs as itself: a workload key the module's own Actions declare and its
+ * own server acts as. Where the operator registered a principal for one (in a tenant), the platform issues that
+ * principal's key next to the module key and hands it to the module, which then authenticates as the registered
+ * workload exactly as before; nobody issues or copies such a key by hand.
+ */
+export const MODULE_INTERNAL_WORKLOADS: ReadonlyMap<string, readonly string[]> = new Map([
+  ['crm', ['demo.crm.party-intake']],
+]);
 
 /**
  * The modules that call other modules through the Shell's delegated issuance, and so get a module credential. A test
@@ -65,7 +77,9 @@ const ProviderKeyIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(Sche
 export const encodeModuleCredentialHandover = Effect.fn('ModuleCredentials.encodeHandover')(function* encodeHandover(
   credentials: Readonly<Record<string, Redacted.Redacted>>,
   owners: readonly string[],
+  workloads: Readonly<Record<string, Redacted.Redacted>> = {},
 ) {
+  const ownWorkloads = Object.entries(workloads).filter(([entry]) => owners.includes(workloadEntryAppId(entry)));
   const json = yield* Schema.encodeEffect(HandoverJsonSchema)({
     credentials: Object.fromEntries(
       owners.flatMap((owner) => {
@@ -74,6 +88,7 @@ export const encodeModuleCredentialHandover = Effect.fn('ModuleCredentials.encod
       }),
     ),
     schemaVersion: 1,
+    workloads: Object.fromEntries(ownWorkloads),
   }).pipe(Effect.mapError(() => new ModuleCredentialHandoverError({ reason: 'The handover could not be encoded' })));
   return new TextEncoder().encode(`${json}\n`);
 });
@@ -198,6 +213,8 @@ export const ProvisioningOutputSchema = Schema.Struct({
   failedAppIds: Schema.Array(ModuleAppIdSchema),
   keys: Schema.Record(Schema.String, IssuedModuleKeySchema),
   schemaVersion: Schema.Literal(1),
+  /** The served modules' internal workload credentials, by `<app id>/<workload key>/<tenant id>`. */
+  workloadCredentials: WorkloadCredentialsSchema,
 });
 export type ProvisioningOutput = typeof ProvisioningOutputSchema.Type;
 
@@ -220,6 +237,7 @@ export const noProvisionedCredentials = (appIds: readonly string[]): Provisionin
   failedAppIds: appIds.map((appId) => ModuleAppIdSchema.make(appId)),
   keys: {},
   schemaVersion: 1,
+  workloadCredentials: {},
 });
 
 /**

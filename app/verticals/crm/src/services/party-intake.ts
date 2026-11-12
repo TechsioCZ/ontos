@@ -18,23 +18,12 @@ import {
   executeCrmClientIntakeReviewWithAuthorization,
   resolveDuplicateCandidateCreateWithAuthorization,
 } from '@app/party-registry/api/client';
+import { Crypto, Context, DateTime, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
 import {
-  Config,
-  Crypto,
-  Context,
-  DateTime,
-  Effect,
-  FileSystem,
-  Layer,
-  Option,
-  Path,
-  Redacted,
-  Result,
-  Schema,
-} from 'effect';
-import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
+  acquireDelegatedGatewayContext,
+  acquireWorkloadGatewayContext,
+} from '@app/shared-contracts/gateway-context-server';
 import type { OperationalScope } from '@app/core-runtime';
-import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
 
 import { CrmReferenceUnavailable } from '../../shared/actions/apply-command.ts';
 import { VerifiedPartySchema } from '../../shared/commands/context.ts';
@@ -47,7 +36,8 @@ import { executePendingClientIntakeWithAuthorization } from '../api/pending-clie
 
 const REGISTRY = 'party-registry';
 const CRM = 'crm';
-const KEY_VARIABLE = 'ONTOS_CRM_PARTY_INTAKE_API_KEY';
+/** CRM's own internal workload (O73): the principal the operator registered for it acts for the intake. */
+const INTAKE_WORKLOAD = 'demo.crm.party-intake';
 /** At most this many clients per reconciliation (one request stays short). */
 const BATCH = 20;
 const PROVENANCE_SOURCE = 'demo.crm.client-intake';
@@ -365,70 +355,6 @@ export const observeClientPartySync = Effect.fn('Crm.partyIntake.observe')(funct
   );
 });
 
-const GatewayContextSchema = Schema.Struct({
-  apiBaseUrl: Schema.String,
-  compositionRevision: Schema.String,
-  token: Schema.RedactedFromValue(Schema.String),
-});
-
-const SHELL_API_PATH = '/shell-super-app-api';
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
-const GatewayConfigurationUrlSchema = Schema.String.check(Schema.isPattern(/^https?:\/\/[^\s\\]+$/u))
-  .pipe(Schema.decodeTo(Schema.URLFromString))
-  .check(
-    Schema.makeFilter(
-      (url) =>
-        url.hostname !== '' && url.username === '' && url.password === '' && url.search === '' && url.hash === '',
-    ),
-  );
-
-/** Only deployment configuration chooses the credential destination. There is no implicit local endpoint. */
-const configuredGatewayBase = Effect.fn('Crm.partyIntake.gatewayBase')(function* configuredGatewayBase() {
-  const configured = yield* Config.all({
-    environment: Config.option(Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')),
-    explicit: Config.option(Config.String('ONTOS_SHELL_GATEWAY_BASE_URL')),
-    issuer: Config.option(Config.String('ONTOS_GATEWAY_ISSUER')),
-  }).pipe(Effect.mapError(registryDown));
-  // A present but malformed override is a configuration failure, not permission to try another destination.
-  const source = Option.orElse(configured.explicit, () => configured.issuer);
-  if (Option.isNone(source)) {
-    return yield* registryDown({ operation: 'gateway-configuration' });
-  }
-  const url = yield* Schema.decodeEffect(GatewayConfigurationUrlSchema)(source.value).pipe(
-    Effect.mapError(registryDown),
-  );
-  const loopback = LOOPBACK_HOSTS.has(url.hostname);
-  const local = loopback && Option.contains(configured.environment, 'development');
-  if (
-    (!local && (loopback || url.protocol !== 'https:')) ||
-    (Option.isSome(configured.explicit) && url.pathname !== SHELL_API_PATH && url.pathname !== `${SHELL_API_PATH}/`)
-  ) {
-    return yield* registryDown({ operation: 'gateway-configuration' });
-  }
-  // An issuer may include its own identity path. Only its trusted origin is reused; the API path is code-owned.
-  return `${url.origin}${SHELL_API_PATH}`;
-});
-
-/** A local intake setting: the environment, else the gitignored demo secrets file app/.env.demo.local. */
-const localSetting = Effect.fn('Crm.partyIntake.localSetting')(
-  function* readLocalSetting(name: string) {
-    const fromEnvironment = yield* Config.option(Config.Redacted(name));
-    if (Option.isSome(fromEnvironment) && Redacted.value(fromEnvironment.value).trim() !== '') {
-      return Option.some(Redacted.make(Redacted.value(fromEnvironment.value).trim()));
-    }
-    const path = yield* Path.Path;
-    const fs = yield* FileSystem.FileSystem;
-    const file = yield* Config.String('ONTOS_DEMO_LOCAL_ENV_FILE').pipe(
-      Config.withDefault(path.join(process.cwd(), '../../.env.demo.local')),
-    );
-    const text = yield* fs.readFileString(file, 'utf-8').pipe(Effect.orElseSucceed(() => ''));
-    const line = text.split('\n').find((entry) => entry.startsWith(`${name}=`));
-    const value = line?.slice(name.length + 1).trim() ?? '';
-    return value === '' ? Option.none<Redacted.Redacted>() : Option.some(Redacted.make(value));
-  },
-  Effect.orElseSucceed(() => Option.none<Redacted.Redacted>()),
-);
-
 /**
  * Party Registry intake for one company. `identify` returns the registry identity of a client, `Option.none()` when
  * the registry holds a lookalike Party that needs an identity reviewer (the client stays unlinked; the správce sees
@@ -440,6 +366,7 @@ interface PartyIntakeRequest {
   readonly correlationId: string;
   readonly delegatedScope?: OperationalScope;
   readonly legalEntityId: string;
+  readonly tenantId: string;
 }
 const crmCreatePayload = (client: IntakeClient, evidenceReference: string, now: string) => {
   const organization = client.kind === 'organization';
@@ -496,35 +423,22 @@ const makePartyIntake = (scope: PartyIntakeRequest) => {
         options: { baseUrl: issued.apiBaseUrl, compositionRevision: issued.compositionRevision },
       };
     }
-    const key = yield* localSetting(KEY_VARIABLE);
-    if (Option.isNone(key)) {
-      return yield* unavailable(
-        'Zápis klientů do evidence zákazníků není nastaven (chybí klíč služby CRM); požádejte správce systému',
-      );
-    }
-    const gatewayBase = yield* configuredGatewayBase();
-    const http = yield* HttpClient.HttpClient;
-    const response = yield* HttpClientRequest.post(`${gatewayBase}/auth/api-key/gateway-context`).pipe(
-      HttpClientRequest.setHeaders({ 'x-api-key': Redacted.value(key.value), 'x-correlation-id': correlationId }),
-      HttpClientRequest.bodyJsonUnsafe({ audience, compositionRevision, legalEntityId: scope.legalEntityId }),
-      http.execute,
-      Effect.timeout('15 seconds'),
-      Effect.mapError(registryDown),
-    );
-    if (response.status !== 200) {
-      return yield* registryDown({ audience, operation: 'gateway-context', status: response.status });
-    }
-    const context = yield* HttpClientResponse.schemaBodyJson(GatewayContextSchema)(response).pipe(
-      Effect.mapError(registryDown),
-    );
+    // CRM acts as its registered intake workload, with that workload's key the platform issued and the host handed
+    // over; without one for this tenant (the workload is not registered here) the intake fails closed.
+    const context = yield* acquireWorkloadGatewayContext({
+      audience,
+      callingAppId: 'crm',
+      compositionRevision,
+      legalEntityId: scope.legalEntityId,
+      requestCorrelation: correlationId,
+      tenantId: scope.tenantId,
+      workloadKey: INTAKE_WORKLOAD,
+    }).pipe(Effect.mapError(registryDown));
     ({ compositionRevision } = context);
     return {
-      authorization: Redacted.make(`Bearer ${Redacted.value(context.token)}`),
-      credential: `Bearer ${Redacted.value(context.token)}`,
-      options: {
-        baseUrl: new URL(context.apiBaseUrl, new URL(gatewayBase).origin).href,
-        compositionRevision: context.compositionRevision,
-      },
+      authorization: Redacted.make(context.authorization),
+      credential: context.authorization,
+      options: { baseUrl: context.apiBaseUrl, compositionRevision: context.compositionRevision },
     };
   });
 

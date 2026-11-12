@@ -40,6 +40,7 @@ const handover = Command.make(
       const bytes = yield* encodeModuleCredentialHandover(
         output.credentials,
         owners.length === 0 ? Object.keys(output.credentials) : owners,
+        output.workloadCredentials,
       );
       const stdio = yield* Stdio.Stdio;
       return yield* Stream.make(bytes).pipe(Stream.run(stdio.stdout()));
