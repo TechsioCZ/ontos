@@ -28,7 +28,8 @@ import { makeCompositionSnapshot } from '../../fixtures/application-composition.
  * One read-page carrier per module, each under its own declaration key, in the order the modules are given. The
  * snapshot is what the inspection reads; the installed catalog is what the caller loads.
  */
-export const pageCarrierCatalog = (moduleIds: readonly string[]) =>
+/** One page per module; with `selectors`, each page is a record-scoped read (a LIST question). */
+export const pageCarrierCatalog = (moduleIds: readonly string[], selectors: readonly ('assigned' | 'team')[] = []) =>
   Effect.gen(function* pageCarrierCatalogEffect() {
     const snapshot = yield* makeCompositionSnapshot(
       moduleIds.map((id) => {
@@ -51,7 +52,7 @@ export const pageCarrierCatalog = (moduleIds: readonly string[]) =>
                       modes: ['run'],
                       placement: { group: 'pages', level: 'basic' },
                       risk: 'routine',
-                      selectors: [],
+                      selectors: [...selectors],
                     },
                     componentKey: `${id}.page-home`,
                     contributionKey: `${id}.page.home`,

@@ -534,8 +534,11 @@ const keptIn = (kept: readonly string[], modules: ReadonlySet<string>) => sorted
 
 const reportPath = Config.option(Config.String('CALLER_AUTHORITY_REPORT'));
 
-/** Bounds of a stage tenant's caller authority load; asking every composed module took 86 transactions. */
-const CALLER_INSTALLED_BOUNDS = { checkBulk: 6, transactions: 36 };
+/**
+ * Bounds of a stage tenant's caller authority load: one engine snapshot each for the carriers, the LISTs and the
+ * Actions. Asking every composed module took 86 transactions; one LIST call at a time, 36 and 6 snapshots.
+ */
+const CALLER_INSTALLED_BOUNDS = { checkBulk: 3, transactions: 30 };
 
 it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '900 seconds' })(
   'agent platform caller authority over the installed release',
