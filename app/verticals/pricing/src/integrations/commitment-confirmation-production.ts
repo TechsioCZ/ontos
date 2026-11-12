@@ -381,6 +381,25 @@ export const commitmentConfirmationProductionForScope = Effect.fn('PricingCommit
   },
 );
 
+/** The retained Quotation and previous Confirmation an exact prepared Commitment payload names. */
+const loadPreparedCommitmentSource = Effect.fn('PricingCommitmentConfirmation.loadPreparedSource')(function* loadSource(
+  transaction: ScopedTransactionExecutor,
+  scope: OperationalScope,
+  payload: ManageCommitmentConfirmationPayload,
+) {
+  const confirmations = yield* commitmentConfirmationPersistenceForScope(transaction, scope);
+  const quotations = yield* quotationPersistenceForScope(transaction, scope);
+  const quotation =
+    payload.kind === 'ISSUE_QUOTATION_BACKED_CONFIRMATION'
+      ? yield* quotations.read(payload.quotationRef)
+      : Option.none();
+  const previous =
+    payload.kind === 'RENEW_COMMITMENT_CONFIRMATION' || payload.kind === 'VERIFY_COMMITMENT_CONFIRMATION'
+      ? yield* confirmations.recover(payload.confirmationRef)
+      : undefined;
+  return { previous, quotation };
+});
+
 /** Released owner binding reads, then immutable SQL-source revalidation inside the Action commit. */
 export const prepareCommitmentConfirmationProductionServices = Effect.fn(
   'PricingCommitmentConfirmation.prepareServices',
@@ -395,25 +414,11 @@ export const prepareCommitmentConfirmationProductionServices = Effect.fn(
   ) {
     return yield* unavailable('Commitment preparation does not match the trusted Tenant and Selling Legal Entity');
   }
-  const load = Effect.fn('PricingCommitmentConfirmation.loadPreparedSource')(function* loadSource(
-    transaction: ScopedTransactionExecutor,
-    scope: OperationalScope,
-  ) {
-    const confirmations = yield* commitmentConfirmationPersistenceForScope(transaction, scope);
-    const quotations = yield* quotationPersistenceForScope(transaction, scope);
-    const quotation =
-      payload.kind === 'ISSUE_QUOTATION_BACKED_CONFIRMATION'
-        ? yield* quotations.read(payload.quotationRef)
-        : Option.none();
-    const previous =
-      payload.kind === 'RENEW_COMMITMENT_CONFIRMATION' || payload.kind === 'VERIFY_COMMITMENT_CONFIRMATION'
-        ? yield* confirmations.recover(payload.confirmationRef)
-        : undefined;
-    return { previous, quotation };
-  });
   const { before, owners } = yield* Effect.all(
     {
-      before: context.transaction((transaction) => load(transaction, context.scope)).pipe(Effect.mapError(unavailable)),
+      before: context
+        .transaction((transaction) => loadPreparedCommitmentSource(transaction, context.scope, payload))
+        .pipe(Effect.mapError(unavailable)),
       owners: Crypto.Crypto.pipe(
         Effect.flatMap((crypto) =>
           pricingFinalizationOwnerGateways(context.scope, context.compositionRevision, crypto),
@@ -443,13 +448,11 @@ export const prepareCommitmentConfirmationProductionServices = Effect.fn(
     Schema.Struct({ confirmationRef: Schema.String, outcome: Schema.Literal('ABSENT') }),
     Schema.Struct({ confirmationRef: Schema.String, outcome: Schema.Literal('CORRUPT'), reason: Schema.String }),
   ]);
-  const factory = Effect.fn('PricingCommitmentConfirmation.commitPreparedServices')(function* commitServices(
-    transaction: ScopedTransactionExecutor,
-    scope: OperationalScope,
-    revision: string,
-  ) {
+  const factory: PreparedCommitmentConfirmationServices = Effect.fn(
+    'PricingCommitmentConfirmation.commitPreparedServices',
+  )(function* commitServices(transaction, scope, revision) {
     yield* assertPreparedPricingScope(context, scope, revision);
-    const current = yield* load(transaction, scope).pipe(Effect.mapError(unavailable));
+    const current = yield* loadPreparedCommitmentSource(transaction, scope, payload).pipe(Effect.mapError(unavailable));
     if (
       (Option.isSome(before.quotation)
         ? Option.isNone(current.quotation) || !sameQuotation(before.quotation.value, current.quotation.value)
