@@ -46,6 +46,7 @@ export const acquireRetailOwnerCredential = Effect.fn('RetailEnrollment.acquireO
   const issued = yield* acquireDelegatedGatewayContext(
     {
       audience: request.audience,
+      callingAppId: 'commerce-customer-context',
       legalEntityScope: 'subject',
       requestCorrelation: request.requestCorrelation,
       subject: {

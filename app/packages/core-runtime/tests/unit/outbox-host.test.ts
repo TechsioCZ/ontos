@@ -291,6 +291,13 @@ it.effect('preserves distinct owner failures and startup errors when hosting het
     expect(yield* startupHost.pipe(hostEnvironment({}), Effect.flip)).toBe(startupFailure);
     const loopFailure = yield* runOutboxWorkerHost({ entries: [first, second] }).pipe(hostEnvironment({}), Effect.flip);
     expect(loopFailure).toBe(secondFailure);
+    // A failed watch (the host's lost module credential channel) stops a host whose loops still run.
+    const watchFailure = new ActiveApplicationCompositionUnavailableError({ reason: 'controlled watch failure' });
+    const watched = yield* runOutboxWorkerHost({ entries: [first], watch: Effect.fail(watchFailure) }).pipe(
+      hostEnvironment({}),
+      Effect.flip,
+    );
+    expect(watched).toBe(watchFailure);
   }),
 );
 

@@ -5,6 +5,8 @@ import {
   OntosShellRuntimeContractSchema,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
+import { loadModuleCredentialEnrolment } from '@app/core-runtime/auth/module-credentials';
+import { CoreDatabase } from '@app/core-runtime/db/client';
 import { GatewayContextV2ClaimsSchema, GatewayTrustedPrincipalContextSchema } from '@app/shared-contracts';
 import type { GatewayTrustedPrincipalContext } from '@app/shared-contracts';
 import { jwtVerify } from 'jose';
@@ -14,6 +16,11 @@ import { ChildProcess } from 'effect/process';
 import { HttpClient } from 'effect/http';
 
 import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';
+import { ApiKeyService, makeApiKeyService } from '../../api/auth/api-key-service.ts';
+import { AuthConfig } from '../../api/auth/config.ts';
+import { AuthDatabase } from '../../api/auth/db/client.ts';
+import { moduleCredentialReleaseOf } from '../../api/auth/module-credential-attestation.ts';
+import { provisionModuleCredentials } from '../../api/auth/module-credential-provisioning.service.ts';
 
 const SHELL_APP_ID = 'shell-super-app';
 const CUSTOMER_CONTEXT_APP_ID = 'commerce-customer-context';
@@ -114,16 +121,7 @@ interface PackagedApplicationInput {
   };
   readonly port?: number;
   readonly relativeDirectory: string;
-  /**
-   * `tenantId` names the Tenant whose service Principal the key belongs to. Commerce acts for a Tenant only through
-   * its `COMMERCE_TENANT_CREDENTIALS` entry, so a Commerce child that reads Party needs that pair too.
-   */
-  readonly relaySource?: {
-    readonly apiKey: Redacted.Redacted;
-    readonly shellBaseUrl: string;
-    readonly tenantId?: string;
-  };
-  readonly sourceBindings?: Redacted.Redacted;
+  readonly relaySource?: { readonly apiKey: Redacted.Redacted; readonly shellBaseUrl: string };
 }
 
 const makePackagedEnvironment = Effect.fn('ServerOwnerRelayNative.makePackagedEnvironment')(
@@ -179,24 +177,11 @@ const makePackagedEnvironment = Effect.fn('ServerOwnerRelayNative.makePackagedEn
       }
     }
     if (input.relaySource !== undefined) {
-      const relayKey = Redacted.value(input.relaySource.apiKey);
       Object.assign(environment, {
-        ONTOS_GATEWAY_MODULE_API_KEY: relayKey,
+        ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(input.relaySource.apiKey),
         ONTOS_SHELL_GATEWAY_BASE_URL: input.relaySource.shellBaseUrl,
       });
-      if (input.relaySource.tenantId !== undefined) {
-        // The Commerce module key is the Tenant's own service Principal key, so it serves as both tenant credentials.
-        Object.assign(environment, {
-          COMMERCE_TENANT_CREDENTIALS: JSON.stringify({
-            [input.relaySource.tenantId]: { coreIdentityApiKey: relayKey, gatewayApiKey: relayKey },
-          }),
-        });
-      }
     }
-    // The Shell requires an explicit enrolment; a deployment with no module credential enrols none.
-    Object.assign(environment, {
-      ONTOS_GATEWAY_MODULE_BINDINGS: Redacted.value(input.sourceBindings ?? Redacted.make('[]')),
-    });
     return environment;
   },
 );
@@ -642,5 +627,60 @@ export const runRegisteredPostalFactoryProbe = Effect.fn('ServerOwnerRelayNative
     ).pipe(
       Effect.mapError(() => new PackagedOwnerStartupError({ reason: 'Invalid closed postal probe result protocol' })),
     );
+  },
+);
+
+/**
+ * A source module's credential exactly as the platform provisions it on every boot: the platform's module principal,
+ * a key it owns and its binding. No person issues it, and the Shell derives its binding from the enrolment.
+ */
+export const provisionSourceModuleCredential = Effect.fn('ServerOwnerRelayNative.provisionSourceModuleCredential')(
+  function* provisionSourceModuleCredential(input: {
+    readonly appId: string;
+    /** The composition the Shell serves; the key is attested for its revision and the module's build. */
+    readonly composition: {
+      readonly composition: {
+        readonly modules: readonly { readonly deployment: { readonly appId: string; readonly buildMarker: string } }[];
+        readonly revision: string;
+      };
+    };
+    readonly configuration: typeof AuthConfig.Service;
+    readonly database: (typeof CoreDatabase.Service)['executor'];
+    readonly persistence: typeof AuthDatabase.Service;
+  }) {
+    const crypto = yield* Crypto.Crypto;
+    const keys = yield* makeApiKeyService().pipe(
+      Effect.provideService(AuthConfig, input.configuration),
+      Effect.provideService(AuthDatabase, input.persistence),
+    );
+    const provisioned = yield* provisionModuleCredentials({
+      appIds: [input.appId],
+      bootId: yield* crypto.randomUUIDv4(),
+      hostId: 'server-owner-relay-native',
+      operationId: yield* crypto.randomUUIDv4(),
+      release: moduleCredentialReleaseOf({
+        composition: input.composition.composition,
+        contracts: input.composition.composition.modules,
+      }),
+    }).pipe(
+      Effect.provideService(ApiKeyService, keys),
+      Effect.provideService(AuthDatabase, input.persistence),
+      Effect.provideService(CoreDatabase, { executor: input.database }),
+    );
+    const secret = provisioned.credentials.get(input.appId);
+    const enrolled = (yield* loadModuleCredentialEnrolment(input.database)).find(
+      (credential) => credential.appId === input.appId && provisioned.providerKeyIds.has(credential.providerKeyId),
+    );
+    if (secret === undefined || enrolled === undefined) {
+      return yield* new PackagedOwnerStartupError({
+        reason: `The platform issued no module credential for ${input.appId}`,
+      });
+    }
+    return {
+      authBindingId: enrolled.authBindingId,
+      providerKeyId: enrolled.providerKeyId,
+      secret,
+      serviceId: enrolled.principalId,
+    };
   },
 );

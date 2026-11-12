@@ -8,6 +8,7 @@ const unconfigured = (operation: string) => Effect.die(`${operation} is not conf
 const apiKeyDefaults: ApiKeyServiceContract = {
   clearPendingCleanup: () => unconfigured('clearPendingCleanup'),
   issue: () => unconfigured('issue'),
+  issueServerOwned: () => unconfigured('issueServerOwned'),
   metadata: () => unconfigured('metadata'),
   pendingCleanup: () => unconfigured('pendingCleanup'),
   setEnabled: () => unconfigured('setEnabled'),

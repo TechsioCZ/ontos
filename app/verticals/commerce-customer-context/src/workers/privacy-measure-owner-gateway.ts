@@ -15,6 +15,9 @@ import { ExecutePrivacyMeasureWorkerRejected } from './execute-privacy-measure-w
 
 export { ExecutePrivacyMeasureWorkerRejected } from './execute-privacy-measure-worker-rejected.ts';
 
+/** This module: its own module credential authenticates every delegated call it makes. */
+const CALLING_APP_ID = 'commerce-customer-context' as const;
+
 const httpUrl = Schema.URLFromString.check(
   Schema.makeFilter((url) =>
     (url.protocol === 'http:' || url.protocol === 'https:') &&
@@ -104,6 +107,7 @@ const makeGateway = (
     acquireDelegatedGatewayContext(
       {
         audience,
+        callingAppId: CALLING_APP_ID,
         legalEntityScope: 'subject',
         requestCorrelation: correlation,
         subject: {
@@ -120,7 +124,7 @@ const makeGateway = (
     );
   return {
     execute: (handoff, correlation, compositionRevision, originator) =>
-      credential('commerce-customer-context', correlation, compositionRevision, originator).pipe(
+      credential(CALLING_APP_ID, correlation, compositionRevision, originator).pipe(
         Effect.flatMap((authorization) =>
           executeExecutePrivacyMeasureWithAuthorization({ handoff }, authorization, correlation, {
             baseUrl: configured.ownerBaseUrl,
@@ -134,7 +138,7 @@ const makeGateway = (
         Effect.mapError((cause) => workerFailure(cause, 'Commerce Privacy Measure Action')),
       ),
     load: (handoff, correlation, compositionRevision, originator) =>
-      credential('commerce-customer-context', correlation, compositionRevision, originator).pipe(
+      credential(CALLING_APP_ID, correlation, compositionRevision, originator).pipe(
         Effect.flatMap((authorization) =>
           executePrivacyMeasureExecutionWithAuthorization(
             { idempotencyKey: handoff.idempotencyKey },

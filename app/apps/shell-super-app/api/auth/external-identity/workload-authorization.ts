@@ -3,6 +3,8 @@ import type { TrustedPrincipalContext } from '@app/core-runtime';
 import { Context, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
 
 import { ApiKeyService } from '../api-key-service.ts';
+import type { GatewayDelegationError } from '../gateway-delegation-errors.ts';
+import { admitIntegrationCredentialFrom, ModuleCredentialEnrolmentSource } from '../gateway-delegation-policy.ts';
 import { ExternalIdentityHttpConfigurationSchema, ExternalIdentityHttpConfigurationService } from './configuration.ts';
 import type {
   ExternalIdentityHttpConfiguration,
@@ -124,8 +126,11 @@ const matchesWorkloadGrant = (
   grant.targetAudience === input.targetAudience &&
   grant.targetAuthenticationNamespaceId === input.targetAuthenticationNamespaceId;
 
-const authenticateWorkload = Effect.fn('ExternalIdentityWorkloadAuthorization.authenticate')(
-  function* authenticateWorkload(
+/** Admits a verified key as an integration credential: refuses every enrolled module credential. */
+type IntegrationCredentialAdmission = (providerKeyId: string) => Effect.Effect<void, GatewayDelegationError>;
+
+const authenticateWorkloadWith = (admit: IntegrationCredentialAdmission) =>
+  Effect.fn('ExternalIdentityWorkloadAuthorization.authenticate')(function* authenticateWorkload(
     apiKey: Redacted.Redacted<string | undefined>,
   ): Effect.fn.Return<
     TrustedPrincipalContext,
@@ -147,6 +152,14 @@ const authenticateWorkload = Effect.fn('ExternalIdentityWorkloadAuthorization.au
         }
         return workloadUnavailableError('API-key verification is unavailable', error);
       }),
+    );
+    // A module credential authenticates only on the delegated endpoint, never as a workload.
+    yield* admit(verified.providerKeyId).pipe(
+      Effect.mapError((error) =>
+        error.code === 'forbidden'
+          ? workloadForbiddenError('A module credential cannot authenticate a workload')
+          : workloadUnavailableError('The module credential enrolment is unavailable', error),
+      ),
     );
     const resolver = yield* PrincipalResolver;
     const identity = yield* resolver.resolveBetterAuthApiKey(verified.providerKeyId).pipe(
@@ -177,8 +190,7 @@ const authenticateWorkload = Effect.fn('ExternalIdentityWorkloadAuthorization.au
     }).pipe(
       Effect.mapError((error) => workloadUnavailableError('The workload principal context is unavailable', error)),
     );
-  },
-);
+  });
 
 const authorizeWorkloadPrincipal = Effect.fn('ExternalIdentityWorkloadAuthorization.authorizePrincipal')(
   function* authorizeWorkloadPrincipal(
@@ -219,20 +231,28 @@ const grantedWorkloadNamespaces = Effect.fn('ExternalIdentityWorkloadAuthorizati
   },
 );
 
-const authorizeWorkload = Effect.fn('ExternalIdentityWorkloadAuthorization.authorize')(function* authorizeWorkload(
-  input: ExternalIdentityWorkloadAuthorizationInput,
-): Effect.fn.Return<
-  TrustedPrincipalContext,
-  ExternalIdentityWorkloadAuthorizationError,
-  ExternalIdentityHttpConfigurationService | ApiKeyService | PrincipalResolver
-> {
-  const principal = yield* authenticateWorkload(input.apiKey);
-  return yield* authorizeWorkloadPrincipal(principal, input);
-});
-
-export const externalIdentityWorkloadAuthorizationLive = Layer.succeed(ExternalIdentityWorkloadAuthorization, {
-  authenticate: authenticateWorkload,
-  authorize: authorizeWorkload,
-  authorizePrincipal: authorizeWorkloadPrincipal,
-  grantedNamespaces: grantedWorkloadNamespaces,
-});
+/** The workload authorization over the platform's module credential enrolment, read on every authentication. */
+export const externalIdentityWorkloadAuthorizationLive = Layer.effect(
+  ExternalIdentityWorkloadAuthorization,
+  Effect.gen(function* makeExternalIdentityWorkloadAuthorization() {
+    const authenticateWorkload = authenticateWorkloadWith(
+      admitIntegrationCredentialFrom(yield* ModuleCredentialEnrolmentSource),
+    );
+    const authorizeWorkload = Effect.fn('ExternalIdentityWorkloadAuthorization.authorize')(function* authorizeWorkload(
+      input: ExternalIdentityWorkloadAuthorizationInput,
+    ): Effect.fn.Return<
+      TrustedPrincipalContext,
+      ExternalIdentityWorkloadAuthorizationError,
+      ExternalIdentityHttpConfigurationService | ApiKeyService | PrincipalResolver
+    > {
+      const principal = yield* authenticateWorkload(input.apiKey);
+      return yield* authorizeWorkloadPrincipal(principal, input);
+    });
+    return {
+      authenticate: authenticateWorkload,
+      authorize: authorizeWorkload,
+      authorizePrincipal: authorizeWorkloadPrincipal,
+      grantedNamespaces: grantedWorkloadNamespaces,
+    } satisfies ExternalIdentityWorkloadAuthorizationService;
+  }),
+);

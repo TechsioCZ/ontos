@@ -11,6 +11,19 @@ import { heapLimitArguments, heapLimitMiB, readContainerMemoryBytes } from './he
 import { withKeepAlive } from './http-keep-alive.mts';
 import { observeRuntimeJob } from '../../packages/core-runtime/src/observability/runtime-jobs.ts';
 import { ProcessDatabasePoolsLive } from './process-database-pools.mts';
+import {
+  earliestExpiryOf,
+  encodeModuleCredentialHandover,
+  MODULE_CREDENTIAL_CALLERS,
+  MODULE_CREDENTIAL_HANDOVER_GRACE,
+  MODULE_CREDENTIAL_HANDOVER_VARIABLE,
+  MODULE_CREDENTIAL_ROTATION_LEAD,
+  noProvisionedCredentials,
+  providerKeyIdsOf,
+  ProvisioningOutputJsonSchema,
+} from './module-credentials.mts';
+import type { ProvisioningOutput } from './module-credentials.mts';
+import { liveModuleKeyIds } from './module-credential-liveness.mts';
 import { authenticationQueryRedactions, credentialSubmissionRedirect } from '@app/shared-contracts/credential-url';
 /**
  * One stateless Zerops container that serves the whole OntOS application: the Shell, every MicroVertical owner
@@ -32,7 +45,9 @@ import { authenticationQueryRedactions, credentialSubmissionRedirect } from '@ap
  *   falls through to the container that still serves. When a newer release takes the authority, this host closes
  *   its public port for the same reason. Probes and the composition source live on the loopback control port.
  */
+import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
+import { hostname } from 'node:os';
 import path from 'node:path';
 
 import { NodeHttpServer, NodeServices } from '@effect/platform-node';
@@ -41,6 +56,7 @@ import { request as requestLoopback } from '@effect/platform-node/Undici';
 import { sql } from 'drizzle-orm';
 import {
   Array as EffectArray,
+  Clock,
   Config,
   ConfigProvider,
   Context,
@@ -49,10 +65,12 @@ import {
   Duration,
   Effect,
   Exit,
+  FileSystem,
   Layer,
   Option,
   Order,
   Redacted,
+  Queue,
   Ref,
   Schedule,
   Schema,
@@ -310,19 +328,30 @@ export const shellRuntime = Config.all({
   override: Config.option(Config.schema(ShellRuntime, 'ONTOS_SHELL_RUNTIME')),
 }).pipe(Config.map(({ deploymentDefault, override }) => Option.getOrElse(override, () => deploymentDefault)));
 
-/** Starts one long-running child in the current Scope. Its exit, for any reason, fails the returned effect. */
+/** One process's private handover channel: each message queued here reaches its file descriptor 3, in order. */
+export type HandoverChannel = Queue.Queue<Uint8Array>;
+
+/**
+ * Starts one long-running child in the current Scope. Its exit, for any reason, fails the returned effect. A child
+ * given a handover channel reads it on its file descriptor 3 (never its environment, arguments, stdin or stdout).
+ */
 const startChild = Effect.fn('AppHost.startChild')(function* startChild(
   name: string,
   command: string,
   args: readonly string[],
   cwd: string,
   env: ChildEnvironment,
+  channel?: HandoverChannel,
 ) {
+  const additionalFds =
+    channel === undefined ? undefined : { fd3: { stream: Stream.fromQueue(channel), type: 'input' as const } };
   const handle = yield* ChildProcess.make(command, [...args], {
+    additionalFds,
     cwd,
-    env: { ...env },
+    env: channel === undefined ? { ...env } : { ...env, [MODULE_CREDENTIAL_HANDOVER_VARIABLE]: 'fd3' },
     extendEnv: true,
     stderr: 'inherit',
+    stdin: 'ignore',
     stdout: 'inherit',
   }).pipe(Effect.mapError(() => failure(`${name} failed to start`)));
   return handle.exitCode.pipe(
@@ -333,21 +362,38 @@ const startChild = Effect.fn('AppHost.startChild')(function* startChild(
   );
 });
 
-const MODULE_BINDINGS_KEY = 'ONTOS_GATEWAY_MODULE_BINDINGS';
+/** The hosted owners that call other modules, each of which gets its own module credential. */
+export const moduleCredentialCallersOf = (ownerIds: readonly string[]): readonly string[] =>
+  ownerIds.filter((ownerId) => MODULE_CREDENTIAL_CALLERS.includes(ownerId));
 
 /**
- * This host binds no module credential yet (DEPLOYMENT.md, "Not yet provisioned on this host"), so the Shell receives
- * main's explicit enrolment for a deployment without one, `[]`. The Shell reads an absent enrolment as unavailable and
- * then answers 503 to every API-key gateway issuance. An operator's value, stored in the Shell's owner secrets or set
- * on the container, always wins and is passed through unchanged, so it never conflicts with this declaration.
+ * A long-running child that holds a module credential channel. `handOver` queues a message on its channel, which it
+ * reads on its file descriptor 3 for as long as it runs: its first keys, a late key, a fresh key after a revocation
+ * and every rotation, each replacing the key an owner held, never a restart. `exit` fails, like any child, when it
+ * exits on its own.
  */
-export const shellModuleEnrolment = (
-  shellSecrets: Readonly<Record<string, string>> | undefined,
-  containerValue: Option.Option<string>,
-): ChildEnvironment =>
-  shellSecrets?.[MODULE_BINDINGS_KEY] === undefined && Option.isNone(containerValue)
-    ? { [MODULE_BINDINGS_KEY]: '[]' }
-    : {};
+export interface CredentialHolder<Requirements = never> {
+  readonly exit: Effect.Effect<never, AppHostError, Requirements>;
+  readonly handOver: (message: Uint8Array) => Effect.Effect<void>;
+}
+
+export const makeCredentialHolder = Effect.fn('AppHost.makeCredentialHolder')(function* makeCredentialHolder<
+  Requirements,
+>(
+  spawn: (
+    channel: HandoverChannel,
+  ) => Effect.Effect<Effect.Effect<never, AppHostError>, AppHostError, Requirements | Scope.Scope>,
+  initial?: Uint8Array,
+) {
+  const channel = yield* Queue.unbounded<Uint8Array>();
+  if (initial !== undefined) {
+    yield* Queue.offer(channel, initial);
+  }
+  return {
+    exit: spawn(channel).pipe(Effect.flatten, Effect.scoped),
+    handOver: (message) => Queue.offer(channel, message).pipe(Effect.asVoid),
+  } satisfies CredentialHolder<Exclude<Requirements, Scope.Scope>>;
+});
 
 const mebibytes = (bytes: number) => String(Math.floor(bytes / 1024 / 1024));
 
@@ -360,6 +406,7 @@ export const startUnitProcess = (
   runtime: typeof ShellRuntime.Type,
   env: ChildEnvironment,
   memoryBytes: number,
+  channel?: HandoverChannel,
 ) => {
   const name = ids.length === 1 ? (ids[0] ?? 'owners') : 'owners';
   const shell = ids.length === 1 && ids[0] === SHELL_ID;
@@ -379,6 +426,7 @@ export const startUnitProcess = (
         [...heap, path.join(workspaceRoot, 'scripts/zerops/serve-units.mts'), ...ids],
         workspaceRoot,
         env,
+        channel,
       ),
     ),
   );
@@ -411,6 +459,360 @@ const runChild = (name: string, command: string, args: readonly string[], cwd: s
     observeRuntimeJob('supervisor-child', name),
     Effect.catchTag('PlatformError', () => Effect.fail(failure(`${name} could not run`))),
   );
+
+const PROVISIONING_SCRIPT = path.join(workspaceRoot, 'scripts/zerops/provision-module-credentials.mts');
+/**
+ * The bound of one provisioning pass. A boot runs one pass before it verifies release access and publishes, so this is
+ * all the time module credentials can add to a deploy (Zerops allows the whole start 15 minutes, `zerops.yaml`
+ * `readinessCheck.failureTimeout`). A pass that fails or overruns leaves the callers without a key: their delegated
+ * calls fail closed, the host publishes anyway, and the healing loop retries a minute later.
+ */
+export const PROVISIONING_BUDGET = Duration.minutes(2);
+
+/**
+ * Runs one finite child to a successful exit and returns what it wrote to its private channel (file descriptor 3),
+ * which only this process reads. Its standard output and standard error stay logs, so a stray log line never reaches
+ * the channel. Interrupting the effect (its time budget) stops the child.
+ */
+export const captureChannel = (name: string, args: readonly string[], env: ChildEnvironment) =>
+  Effect.scoped(
+    Effect.gen(function* runCapturedChild() {
+      const handle = yield* ChildProcess.make(process.execPath, [...args], {
+        additionalFds: { fd3: { type: 'output' } },
+        cwd: workspaceRoot,
+        env: finiteProcessEnvironment(env),
+        extendEnv: true,
+        stderr: 'inherit',
+        stdin: 'ignore',
+        stdout: 'inherit',
+      });
+      const [output, code] = yield* Effect.all(
+        [handle.getOutputFd(3).pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
+        { concurrency: 2 },
+      );
+      if (code !== 0) {
+        return yield* failure(`${name} exited with code ${String(code)}`);
+      }
+      return output;
+    }),
+  ).pipe(
+    observeRuntimeJob('supervisor-child', name),
+    Effect.catchTag('PlatformError', () => Effect.fail(failure(`${name} could not run`))),
+  );
+
+/** The release a host serves, as its module credentials are attested: the revision and each module's build. */
+export interface HostRelease {
+  readonly buildMarkers: Readonly<Record<string, string>>;
+  readonly compositionRevision: string;
+}
+
+export const hostReleaseOf = (snapshot: ActiveApplicationCompositionSnapshot): HostRelease => ({
+  buildMarkers: Object.fromEntries(
+    snapshot.composition.modules.map(({ deployment }) => [deployment.appId, deployment.buildMarker] as const),
+  ),
+  compositionRevision: snapshot.composition.revision,
+});
+
+/**
+ * This host's identity: the container's host name, and a fresh id for this boot of the host process. Every key the
+ * host issues is attested with both, so it can prove which keys are its own and retire its earlier boots' keys.
+ */
+const HOST_ID = hostname();
+const BOOT_ID = randomUUID();
+
+/**
+ * One provisioning pass for the given callers of this host's release, with the Shell's settings: each key is attested
+ * for its module's build and the release's revision. It never fails the host and never retries: a pass that cannot
+ * run within `PROVISIONING_BUDGET` leaves those callers without a key (their delegated calls fail closed), the host
+ * says so loudly, and the background healing retries.
+ */
+export const provisionModuleCredentialsForReleaseWith =
+  <Requirements,>(
+    capture: (
+      name: string,
+      args: readonly string[],
+      env: ChildEnvironment,
+    ) => Effect.Effect<string, AppHostError, Requirements>,
+  ) =>
+  (input: {
+    readonly appIds: readonly string[];
+    readonly operationId: string;
+    readonly release: HostRelease;
+    readonly shellEnvironment: ChildEnvironment;
+  }) => {
+    const builds = input.appIds.flatMap((appId) => {
+      const buildMarker = input.release.buildMarkers[appId];
+      return buildMarker === undefined ? [] : [`${appId}=${buildMarker}`];
+    });
+    return builds.length === 0
+      ? Effect.succeed(noProvisionedCredentials(input.appIds))
+      : capture(
+          'module-credentials',
+          [
+            PROVISIONING_SCRIPT,
+            'issue',
+            `--operation=${input.operationId}`,
+            `--host=${HOST_ID}`,
+            `--boot=${BOOT_ID}`,
+            `--revision=${input.release.compositionRevision}`,
+            ...builds,
+          ],
+          input.shellEnvironment,
+        ).pipe(
+          Effect.flatMap((output) =>
+            Schema.decodeEffect(ProvisioningOutputJsonSchema)(output.trim()).pipe(
+              Effect.mapError(() => failure('the module credential provisioning output is malformed')),
+            ),
+          ),
+          Effect.timeoutOrElse({
+            duration: PROVISIONING_BUDGET,
+            orElse: () => Effect.fail(failure('module credential provisioning exceeded its time budget')),
+          }),
+          Effect.tap((output) =>
+            output.failedAppIds.length === 0
+              ? Console.log(`[app-host] module credentials issued for ${Object.keys(output.credentials).join(', ')}`)
+              : Console.error(
+                  `[app-host] MODULE CREDENTIALS UNAVAILABLE for ${output.failedAppIds.join(', ')}; their delegated calls fail closed until a retry succeeds`,
+                ),
+          ),
+          Effect.catchTag('AppHostError', () =>
+            Console.error(
+              `[app-host] MODULE CREDENTIAL PROVISIONING FAILED; delegated calls of ${input.appIds.join(', ')} fail closed until a retry succeeds`,
+            ).pipe(Effect.as(noProvisionedCredentials(input.appIds))),
+          ),
+        );
+  };
+
+export const provisionModuleCredentialsForRelease = provisionModuleCredentialsForReleaseWith(captureChannel);
+
+/**
+ * Where this container records the boots of its host process. A container runs one host process at a time, so every
+ * boot recorded here other than the current one is a host process of this container that has ended: its keys are
+ * provably this host's own and no longer held by anything running. A new container (every deploy) starts with no
+ * record, so it never names the boots of the container it replaces, which keeps serving until the switch, whatever
+ * host name either of them has.
+ */
+export const HOST_BOOT_RECORD = path.join(workspaceRoot, '.zerops/state/module-credential-boots.json');
+const HOST_BOOT_RECORD_LIMIT = 20;
+const HostBootRecordJson = Schema.fromJsonString(Schema.Array(Schema.String.check(Schema.isUUID())));
+
+/**
+ * Records this boot in the container's boot record and returns the earlier boots recorded there. A record that cannot
+ * be read names no earlier boot, and one that cannot be written is reported: either way nothing is retired that this
+ * host cannot prove is its own; those keys end within a day.
+ */
+export const recordHostBoot = Effect.fn('AppHost.recordHostBoot')(function* recordHostBoot(
+  file: string,
+  bootId: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const earlier = yield* fs.readFileString(file).pipe(
+    Effect.flatMap(Schema.decodeEffect(HostBootRecordJson)),
+    Effect.orElseSucceed((): readonly string[] => []),
+  );
+  const recorded = yield* Schema.encodeEffect(HostBootRecordJson)(
+    [...earlier, bootId].slice(-HOST_BOOT_RECORD_LIMIT),
+  ).pipe(
+    Effect.flatMap((json) =>
+      fs.makeDirectory(path.dirname(file), { recursive: true }).pipe(Effect.andThen(fs.writeFileString(file, json))),
+    ),
+    Effect.exit,
+  );
+  if (Exit.isFailure(recorded)) {
+    yield* Console.error('[app-host] this boot could not be recorded; its keys end within a day if never retired');
+  }
+  return earlier.filter((earlierBoot) => earlierBoot !== bootId);
+});
+
+/** One retirement pass of the provisioning program, reported and never failing the host. */
+const runRetirement = (
+  pass: 'retire' | 'retire-own',
+  input: {
+    readonly compositionRevision: string;
+    readonly earlierBoots: readonly string[];
+    readonly providerKeyIds: readonly string[];
+    readonly shellEnvironment: ChildEnvironment;
+  },
+) =>
+  captureChannel(
+    pass === 'retire' ? 'module-credential-retirement' : 'own-module-credential-retirement',
+    [
+      PROVISIONING_SCRIPT,
+      pass,
+      `--operation=${randomUUID()}`,
+      `--host=${HOST_ID}`,
+      `--boot=${BOOT_ID}`,
+      `--revision=${input.compositionRevision}`,
+      ...(pass === 'retire-own' ? [`--earlier-boots=${input.earlierBoots.join(',')}`] : []),
+      ...input.providerKeyIds,
+    ],
+    input.shellEnvironment,
+  ).pipe(
+    Effect.asVoid,
+    Effect.catchTag('AppHostError', () =>
+      Console.error(
+        pass === 'retire'
+          ? '[app-host] superseded module credentials could not be retired; the next boot retries'
+          : "[app-host] this host's own earlier module credentials could not be retired; the next renewal retries",
+      ),
+    ),
+  );
+
+/**
+ * Once the grace period passed for delegated calls already started with keys being replaced, retires the host's own
+ * keys it no longer holds (`retire-own`): exactly the provider key ids this boot `replaced`, and every key of the
+ * ended boots its container recorded (`earlierBoots`). It never names a key of this boot it still holds or of another
+ * container, even one with the same host name. With `superseded`, the host's release took the authority, and it then
+ * also retires the credentials that release superseded, keeping the keys it holds when that pass runs (`current`,
+ * read then, so a key a fill issued during the grace period is kept too): the provisioning
+ * program decides from the authority row, only while this release holds it and only credentials bound before its
+ * revision took it. A failure is reported; the next renewal or boot retries.
+ */
+export interface RetirementAfterHandover {
+  readonly compositionRevision: string;
+  readonly current: Effect.Effect<readonly string[]>;
+  readonly earlierBoots: readonly string[];
+  readonly replaced: readonly string[];
+  readonly shellEnvironment: ChildEnvironment;
+  readonly superseded: boolean;
+}
+
+/** The same, with the given runner of one retirement pass (the provisioning program in the host). */
+export const retireAfterHandoverWith =
+  <Requirements,>(
+    run: (
+      pass: 'retire' | 'retire-own',
+      retiring: Parameters<typeof runRetirement>[1],
+    ) => Effect.Effect<void, never, Requirements>,
+  ) =>
+  (input: RetirementAfterHandover) =>
+    Effect.gen(function* retireReplacedKeys() {
+      if (input.replaced.length > 0 || input.earlierBoots.length > 0) {
+        yield* run('retire-own', { ...input, providerKeyIds: input.replaced });
+      }
+      if (!input.superseded) {
+        return;
+      }
+      // Even when the boot pass issued nothing: the superseded release's keys are retired all the same, and any key a
+      // later fill issues is bound after this release took the authority, so the cutoff never reaches it.
+      yield* run('retire', { ...input, providerKeyIds: yield* input.current });
+    }).pipe(Effect.delay(MODULE_CREDENTIAL_HANDOVER_GRACE));
+
+export const retireAfterHandover = retireAfterHandoverWith(runRetirement);
+
+/** The provider key ids `held` had for the modules `fresh` gave a new key: what a renewal replaced. */
+export const replacedKeyIdsOf = (held: ProvisioningOutput, fresh: ProvisioningOutput): readonly string[] =>
+  Object.entries(held.keys).flatMap(([appId, key]) =>
+    fresh.keys[appId] !== undefined && fresh.keys[appId].providerKeyId !== key.providerKeyId ? [key.providerKeyId] : [],
+  );
+
+/**
+ * What the host holds after a pass: each module's newest key (a module the pass missed keeps the key it held) and the
+ * callers that still hold none.
+ */
+export const mergeProvisioning = (held: ProvisioningOutput, fresh: ProvisioningOutput): ProvisioningOutput => ({
+  credentials: { ...held.credentials, ...fresh.credentials },
+  failedAppIds: fresh.failedAppIds.filter((appId) => held.keys[appId] === undefined),
+  keys: { ...held.keys, ...fresh.keys },
+  schemaVersion: 1,
+});
+
+/**
+ * What healing does next: nothing, fill the callers that hold no key, or renew every caller's key, because some key
+ * the host holds was revoked (another host retired it) or its keys end within `MODULE_CREDENTIAL_ROTATION_LEAD`.
+ */
+export type ModuleCredentialHealing =
+  | { readonly appIds: readonly string[]; readonly kind: 'fill' }
+  | { readonly kind: 'none' }
+  | { readonly kind: 'renew'; readonly reason: 'expiring' | 'revoked' };
+
+/** What healing does next, given what the host holds, which module credentials are still active, and the time. */
+export const planModuleCredentialHealing = (
+  held: ProvisioningOutput,
+  activeProviderKeyIds: ReadonlySet<string>,
+  nowMillis: number,
+): ModuleCredentialHealing => {
+  if (providerKeyIdsOf(held).some((providerKeyId) => !activeProviderKeyIds.has(providerKeyId))) {
+    return { kind: 'renew', reason: 'revoked' };
+  }
+  const earliest = earliestExpiryOf(held);
+  if (earliest !== undefined && earliest - Duration.toMillis(MODULE_CREDENTIAL_ROTATION_LEAD) <= nowMillis) {
+    return { kind: 'renew', reason: 'expiring' };
+  }
+  return held.failedAppIds.length === 0 ? { kind: 'none' } : { appIds: held.failedAppIds, kind: 'fill' };
+};
+
+const HEALING_INTERVAL = Duration.minutes(1);
+const HEALING_BACKOFF_CAP = Duration.minutes(15);
+
+/** The inputs of one host's credential healing. */
+export interface ModuleCredentialHealingInput<Requirements> {
+  readonly activeProviderKeyIds: Effect.Effect<ReadonlySet<string>, unknown, Requirements>;
+  readonly callers: readonly string[];
+  readonly held: Ref.Ref<ProvisioningOutput>;
+  readonly holders: Effect.Effect<readonly Pick<CredentialHolder, 'handOver'>[]>;
+  readonly issue: (appIds: readonly string[]) => Effect.Effect<ProvisioningOutput, never, Requirements>;
+  /** Retires exactly the given keys this boot replaced (and its container's ended boots' keys), after the grace. */
+  readonly retireOwn: (replaced: readonly string[]) => Effect.Effect<void, never, Requirements>;
+  readonly serving: Effect.Effect<boolean>;
+}
+
+/**
+ * One healing step. Returns whether every caller now holds a live key, so the caller can back off while not. When a
+ * key the host holds was revoked (another host retired it) it says so loudly; then, and when its keys near their end,
+ * it issues every caller a fresh key, hands the fresh keys to every process holding the old ones (each replaces its
+ * owner's key, no restart) and, after the grace period, retires its own replaced keys. A caller without a key gets one
+ * handed over late. A pass that issues nothing changes nothing: the keys held stay in use until they end. An
+ * unreadable enrolment is not evidence of anything.
+ */
+export const healModuleCredentialsOnce = Effect.fn('AppHost.healModuleCredentialsOnce')(function* healOnce<
+  Requirements,
+>(input: ModuleCredentialHealingInput<Requirements>) {
+  const active = yield* input.activeProviderKeyIds.pipe(Effect.option);
+  if (Option.isNone(active)) {
+    return true;
+  }
+  const held = yield* Ref.get(input.held);
+  const plan = planModuleCredentialHealing(held, active.value, yield* Clock.currentTimeMillis);
+  if (plan.kind === 'none') {
+    return true;
+  }
+  if (plan.kind === 'renew') {
+    yield* plan.reason === 'revoked'
+      ? Console.error('[app-host] MODULE CREDENTIALS OF THIS HOST WERE REVOKED; issuing and handing over fresh ones')
+      : Console.log('[app-host] module credentials near their end; rotating them');
+  }
+  const appIds = plan.kind === 'fill' ? plan.appIds : input.callers;
+  const fresh = yield* input.issue(appIds);
+  if (providerKeyIdsOf(fresh).length === 0) {
+    return false;
+  }
+  const next = mergeProvisioning(held, fresh);
+  yield* Ref.set(input.held, next);
+  const message = yield* encodeModuleCredentialHandover(fresh.credentials, Object.keys(fresh.credentials)).pipe(
+    Effect.orDie,
+  );
+  yield* Effect.forEach(yield* input.holders, (holder) => holder.handOver(message), { concurrency: 1, discard: true });
+  if (plan.kind === 'renew') {
+    // Exactly the keys this renewal replaced, which only this boot ever held: never a key it was not told about.
+    yield* input.retireOwn(replacedKeyIdsOf(held, fresh));
+  }
+  return fresh.failedAppIds.length === 0;
+});
+
+/**
+ * Keeps this host's callers holding live module credentials, in the background, for as long as it serves: one
+ * healing step a minute, backing off (up to a quarter hour) while a pass keeps failing.
+ */
+export const healModuleCredentials = <Requirements,>(input: ModuleCredentialHealingInput<Requirements>) =>
+  Effect.gen(function* healCredentials() {
+    let backoff = HEALING_INTERVAL;
+    while (yield* input.serving.pipe(Effect.delay(backoff))) {
+      const healthy = yield* healModuleCredentialsOnce(input);
+      backoff = healthy ? HEALING_INTERVAL : Duration.min(Duration.times(backoff, 2), HEALING_BACKOFF_CAP);
+    }
+    return yield* Console.log('[app-host] superseded; module credential healing stops');
+  });
 
 // ---------------------------------------------------------------------------------------------------------------
 // HTTP
@@ -740,7 +1142,6 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     Effect.flatMap((encoded) => Schema.decodeEffect(OwnerSecretsSchema)(Redacted.value(encoded))),
     Effect.mapError(() => failure('ONTOS_OWNER_SECRETS_JSON must be an owner record of string secrets')),
   );
-  const containerModuleEnrolment = yield* Config.option(Config.String(MODULE_BINDINGS_KEY));
   const units = yield* readHostedUnits;
   const ports = new Map(units.map(({ id, port }) => [id, port]));
   const derived = derivedEnvironment(
@@ -803,18 +1204,63 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   if (ownersEnvironment.conflicts.length > 0) {
     return yield* failure(`owners store different values for ${ownersEnvironment.conflicts.join(', ')}`);
   }
-  const exits = [
-    yield* startUnitProcess(
-      [SHELL_ID],
-      runtime,
-      {
-        ...shellModuleEnrolment(ownerSecrets[SHELL_ID], containerModuleEnrolment),
-        ...shellEnvironment.environment,
-      },
-      memoryBytes,
-    ),
-    yield* startUnitProcess(ownerIds, runtime, ownersEnvironment.environment, memoryBytes),
-  ];
+  // Owners start holding no module credential: a key is attested for the release's revision, which exists only once
+  // the owners run and are observed. The platform issues the keys after migrations and schema verification and before
+  // this host serves any traffic, and hands each hosted caller's key over the owners' private channel; the Shell gets
+  // none. The channel stays open, so the host replaces keys there (renewed, rotated) without a restart.
+  const callers = moduleCredentialCallersOf(ownerIds);
+  // Recorded before any key is issued, so even a boot that fails right after issuing is named by the next one.
+  const earlierBoots = yield* recordHostBoot(HOST_BOOT_RECORD, BOOT_ID);
+  const owners = yield* makeCredentialHolder((channel) =>
+    startUnitProcess(ownerIds, runtime, ownersEnvironment.environment, memoryBytes, channel),
+  );
+  const exits = [yield* startUnitProcess([SHELL_ID], runtime, shellEnvironment.environment, memoryBytes), owners.exit];
+  const credentialHolders = yield* Ref.make<readonly Pick<CredentialHolder, 'handOver'>[]>([owners]);
+  const heldCredentials = yield* Ref.make(noProvisionedCredentials(callers));
+  const issueFor = (release: HostRelease) => (appIds: readonly string[]) =>
+    provisionModuleCredentialsForRelease({
+      appIds,
+      operationId: randomUUID(),
+      release,
+      shellEnvironment: shellEnvironment.environment,
+    });
+  /** Issues this release's keys and hands them to the owners; the Outbox host gets them when it starts. */
+  const provisionForRelease = (release: HostRelease) =>
+    Effect.gen(function* provisionAndHandOver() {
+      const provisioned = yield* issueFor(release)(callers);
+      yield* Ref.set(heldCredentials, provisioned);
+      const message = yield* encodeModuleCredentialHandover(provisioned.credentials, callers).pipe(
+        Effect.mapError((problem) => failure(problem.reason)),
+      );
+      yield* owners.handOver(message);
+      return provisioned;
+    });
+  /** After the grace period, retires this host's own other keys and, when it holds the authority, superseded ones. */
+  const retireReplaced = (
+    release: HostRelease,
+    retiring: { readonly replaced: readonly string[]; readonly superseded: boolean },
+  ) =>
+    retireAfterHandover({
+      ...retiring,
+      compositionRevision: release.compositionRevision,
+      // Read when the retirement runs, after the grace period: every key the host holds then is kept.
+      current: Ref.get(heldCredentials).pipe(Effect.map(providerKeyIdsOf)),
+      earlierBoots,
+      shellEnvironment: shellEnvironment.environment,
+    });
+  const healCredentials = (release: HostRelease, serving: Effect.Effect<boolean>) =>
+    healModuleCredentials({
+      // Bound and, for the keys this host holds, still verifying (enabled, not ended) in the key store.
+      activeProviderKeyIds: Ref.get(heldCredentials).pipe(
+        Effect.flatMap((held) => liveModuleKeyIds(database.executor, providerKeyIdsOf(held))),
+      ),
+      callers,
+      held: heldCredentials,
+      holders: Ref.get(credentialHolders),
+      issue: issueFor(release),
+      retireOwn: (replaced) => retireReplaced(release, { replaced, superseded: false }),
+      serving,
+    });
   yield* Console.log(`[app-host] Shell runtime ${runtime}; owners and Outbox runtime node`);
   yield* Console.log(`[app-host] serving ${String(units.length)} units; migrating`);
 
@@ -870,6 +1316,11 @@ export const runAppHost = Effect.gen(function* runAppHost() {
   const observeOnly = Effect.gen(function* observeWithoutAuthority() {
     yield* Effect.forEach(units, waitForOwner, { concurrency: 'unbounded', discard: true });
     const snapshot = yield* observeOwners(units, publicOrigin);
+    const release = hostReleaseOf(snapshot);
+    yield* provisionForRelease(release);
+    // An observe-only host holds no authority: it retires only its own earlier boots' keys.
+    yield* retireReplaced(release, { replaced: [], superseded: false }).pipe(Effect.forkChild);
+    yield* healCredentials(release, Effect.succeed(true)).pipe(Effect.forkChild);
     yield* Console.log(
       `[app-host] observe-only: composition ${snapshot.composition.revision} (${String(snapshot.composition.modules.length)} owners) not published`,
     );
@@ -902,6 +1353,10 @@ export const runAppHost = Effect.gen(function* runAppHost() {
       { concurrency: 'unbounded' },
     );
     const releaseSnapshot = yield* observeOwners(units, publicOrigin);
+    // After migrations, the role bootstrap and schema verification (all inside the migrator) and before this host
+    // serves anything: the observed release's keys are issued and handed to the owners.
+    const release = hostReleaseOf(releaseSnapshot);
+    yield* provisionForRelease(release);
     yield* verifyReleaseAccessIntent(releaseSnapshot);
     const revision = yield* publishSnapshot(releaseSnapshot);
     // From this commit on the old release refuses every governed request and closes its public port, so this one
@@ -909,30 +1364,53 @@ export const runAppHost = Effect.gen(function* runAppHost() {
     yield* openPublicPort;
     yield* Ref.set(published, true);
     yield* closePublicPortWhenSuperseded(revision).pipe(Effect.forkChild);
+    // Once in-flight delegated calls had time to finish, this host retires its own earlier boots' keys and, as it holds
+    // the authority now, the credentials its release superseded. The provisioning program checks the authority row
+    // itself: only while this release holds it, and only credentials bound before its revision took it.
+    yield* retireReplaced(release, { replaced: [], superseded: true }).pipe(Effect.forkChild);
     // The release step writes no authorization relationship. Authorization v2 (ADR-0030) projects every tuple from
     // PostgreSQL intent through the one Core writer, so the retired `scoped_role`/`action`/`context_permission`
     // reconciliation would only fail here. Live intent is seeded by the operator-gated stage bootstrap
     // (`apps/shell-super-app/scripts/bootstrap-stage-accounts.mts`); the engine's canonical schema arrives with the
     // deployment's SpiceDB bootstrap file, and a live schema or tuple retirement is its own approved operation. The
     // release proves the projected access before it publishes (`verifyReleaseAccessIntent` above) and never mutates it.
+    const outboxHandover = yield* encodeModuleCredentialHandover(
+      (yield* Ref.get(heldCredentials)).credentials,
+      callers,
+    ).pipe(Effect.mapError((problem) => failure(problem.reason)));
     yield* Console.log(
       `[app-host] ${OUTBOX_HOST_ID} heap limit: ${String(heapLimitMiB('outbox', memoryBytes))} MiB (container ${mebibytes(memoryBytes)} MiB)`,
     );
-    const outbox = yield* startChild(
-      OUTBOX_HOST_ID,
-      node,
-      [...heapLimitArguments('outbox', memoryBytes), OUTBOX_HOST_BUNDLE],
-      workspaceRoot,
-      {
-        ...processEnvironment([OUTBOX_HOST_ID, ...ownerIds], ownerSecrets, derived).environment,
-        // The host's email trigger authenticates to the Shell's dispatch endpoint with the Shell's own secret.
-        ...Object.fromEntries(
-          Object.entries(ownerSecrets[SHELL_ID] ?? {}).filter(([key]) => key === 'ONTOS_EMAIL_DISPATCH_SECRET'),
+    const outboxHost = yield* makeCredentialHolder(
+      (channel) =>
+        startChild(
+          OUTBOX_HOST_ID,
+          node,
+          [...heapLimitArguments('outbox', memoryBytes), OUTBOX_HOST_BUNDLE],
+          workspaceRoot,
+          {
+            ...processEnvironment([OUTBOX_HOST_ID, ...ownerIds], ownerSecrets, derived).environment,
+            // The host's email trigger authenticates to the Shell's dispatch endpoint with the Shell's own secret.
+            ...Object.fromEntries(
+              Object.entries(ownerSecrets[SHELL_ID] ?? {}).filter(([key]) => key === 'ONTOS_EMAIL_DISPATCH_SECRET'),
+            ),
+            OUTBOX_WORKER_HEALTH_PORT: String(OUTBOX_HEALTH_PORT),
+            PORT: String(OUTBOX_HEALTH_PORT),
+          },
+          channel,
         ),
-        OUTBOX_WORKER_HEALTH_PORT: String(OUTBOX_HEALTH_PORT),
-        PORT: String(OUTBOX_HEALTH_PORT),
-      },
+      outboxHandover,
     );
+    yield* Ref.update(credentialHolders, (holders) => [...holders, outboxHost]);
+    const outbox = outboxHost.exit;
+    // While this release holds the authority, keep every caller holding a live key.
+    yield* healCredentials(
+      release,
+      readAuthority.pipe(
+        Effect.map((rows) => rows[0]?.revision === revision),
+        Effect.orElseSucceed(() => true),
+      ),
+    ).pipe(Effect.forkChild);
     // The host renews its own lease well inside the validity window; no external refresh schedule exists.
     const renew = publish.pipe(
       Effect.tapError((problem) => Console.error(`[app-host] composition renewal failed: ${String(problem)}`)),

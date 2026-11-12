@@ -59,6 +59,7 @@ const executeServerCounterpartyRead = Effect.fn('ProfileCounterpartyRoleEligibil
       .acquire(
         {
           audience: 'party-registry',
+          callingAppId: 'commerce-customer-context',
           legalEntityScope: 'subject',
           requestCorrelation: scope.requestCorrelation,
           subject: { _tag: 'Assertion', scope: scope.operationalScope },
