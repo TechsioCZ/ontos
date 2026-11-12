@@ -484,8 +484,7 @@ export const linkNewTask = Effect.fn('FacilityOperations.linkNewTask')(function*
       severity: input.severity,
       title: k('report.taskTitle', { device: input.device.name, title: input.title }),
     },
-    input.device,
-    input.tenantId,
+    { device: input.device, tenantId: input.tenantId },
   );
   if (task.status !== 'created') {
     return task.status;

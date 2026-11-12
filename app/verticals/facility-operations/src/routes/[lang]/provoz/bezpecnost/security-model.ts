@@ -100,7 +100,13 @@ export type TaskCreation =
  * Only a revision conflict is retried; an accepted proposal is a success and is never resubmitted.
  * Never hide a refused reference by creating an unlinked task.
  */
-export const createServiceTask = (draft: LinkedTaskDraft, device: SecurityDevice, tenantId: string) => {
+/** The device the task is about and the tenant its property/unit references belong to. */
+export interface ServiceTaskTarget {
+  readonly device: SecurityDevice;
+  readonly tenantId: string;
+}
+
+export const createServiceTask = (draft: LinkedTaskDraft, { device, tenantId }: ServiceTaskTarget) => {
   const attempt = Effect.fn('Security.createServiceTaskAttempt')(function* attempt(contextRefs: ContextRef[]) {
     const requestId = yield* correlation;
     const records = yield* executeWorkRecords({ state: 'NEW' }, requestId);
