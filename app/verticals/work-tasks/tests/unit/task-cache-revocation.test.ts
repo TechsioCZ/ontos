@@ -11,7 +11,7 @@ import { preloadPage, RecordsPage } from '../../src/routes/[lang]/ukoly/page.tsx
 rstest.mock('../../src/api/records-client.ts');
 rstest.mock('../../src/api/apply-command-action-client.ts');
 rstest.mock('@app/party-registry/api/client', () => ({ listCustomers: rstest.fn() }));
-rstest.mock('@app/sales-pipeline/clients/records', () => ({ listOpportunities: rstest.fn() }));
+rstest.mock('@app/sales-pipeline/clients/records', () => ({ executeRecords: rstest.fn() }));
 rstest.mock('@app/property-portfolio/clients/records', () => ({ executeRecords: rstest.fn() }));
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => {
   const state = { location: { href: '', searchStr: '' } };

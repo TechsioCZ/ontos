@@ -11,7 +11,7 @@ import {
 } from '@app/admin-ui';
 import type { RevisionedSaveResult, SaveOutcome } from '@app/admin-ui';
 import { executeCustomerList } from '@app/party-registry/apis/customer-list/client';
-import { listOpportunities } from '@app/sales-pipeline/clients/records';
+import { executeRecords as executeOpportunityRecords } from '@app/sales-pipeline/clients/records';
 import { executeRecords as propertyRecords } from '@app/property-portfolio/clients/records';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
@@ -131,7 +131,7 @@ const listCustomers = () =>
   );
 
 type PageReadFailure = Effect.Error<
-  ReturnType<typeof executeRecords> | ReturnType<typeof listCustomers> | ReturnType<typeof listOpportunities>
+  ReturnType<typeof executeRecords> | ReturnType<typeof listCustomers> | ReturnType<typeof executeOpportunityRecords>
 >;
 const isForbiddenReadFailure = (error: PageReadFailure): boolean =>
   Match.value(error).pipe(
@@ -224,7 +224,7 @@ const opportunityDirectory = definePageData({
   key: (legalEntityId: string) => legalEntityId,
   load: () =>
     requestId.pipe(
-      Effect.flatMap((id) => listOpportunities({}, id)),
+      Effect.flatMap((id) => executeOpportunityRecords({}, id)),
       Effect.map((result) => result.items),
       retryTransient,
       Effect.tapError((failure) => Effect.logWarning('Opportunity list unavailable.', failure)),

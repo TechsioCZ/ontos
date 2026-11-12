@@ -28,7 +28,7 @@ const mocks = rstest.hoisted(() => ({
 }));
 
 rstest.mock('@app/party-registry/api/client', () => ({ listCustomers: mocks.customers }));
-rstest.mock('@app/sales-pipeline/clients/records', () => ({ listOpportunities: mocks.opportunities }));
+rstest.mock('@app/sales-pipeline/clients/records', () => ({ executeRecords: mocks.opportunities }));
 rstest.mock('@app/merchandise/clients/records', () => ({ listProducts: mocks.products }));
 rstest.mock('@app/property-portfolio/clients/records', () => ({ executeRecords: () => Effect.fail('no objects') }));
 rstest.mock('@app/legal-agreements/clients/records', () => ({ executeRecords: () => Effect.fail('no contracts') }));

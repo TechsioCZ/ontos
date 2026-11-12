@@ -26,7 +26,9 @@ rstest.mock('@app/legal-agreements/clients/records', () => ({ executeRecords: re
 rstest.mock('@app/property-leasing/clients/records', () => ({ executeRecords: reads.occupancy }));
 rstest.mock('@app/finance-billing/clients/records', () => ({ executeRecords: reads.finance }));
 rstest.mock('@app/work-tasks/clients/records', () => ({ executeRecords: reads.work }));
-rstest.mock('@app/workforce/clients/records', () => ({ listEmployees: reads.employees }));
+rstest.mock('@app/workforce/clients/records', () => ({
+  executeRecords: () => reads.employees().pipe(Effect.map((items: readonly object[]) => ({ items }))),
+}));
 rstest.mock('../../src/api/records-client', () => ({ executeRecords: reads.records }));
 const tenantId = '70000000-0000-4000-8000-000000000020';
 const id = (index: number) => `76000000-0000-4000-8000-${String(index).padStart(12, '0')}`;

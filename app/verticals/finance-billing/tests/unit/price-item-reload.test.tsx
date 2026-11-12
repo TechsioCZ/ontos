@@ -36,7 +36,7 @@ rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.re
 rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: mocks.apply }));
 rstest.mock('@app/merchandise/clients/records', () => ({ listProducts: () => Effect.never }));
 rstest.mock('@app/party-registry/api/client', () => ({ listCustomers: () => Effect.never }));
-rstest.mock('@app/sales-pipeline/clients/records', () => ({ listOpportunities: () => Effect.never }));
+rstest.mock('@app/sales-pipeline/clients/records', () => ({ executeRecords: () => Effect.never }));
 rstest.mock('@app/legal-agreements/clients/records', () => ({ executeRecords: () => Effect.never }));
 rstest.mock('@app/property-portfolio/clients/records', () => ({ executeRecords: () => Effect.never }));
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({

@@ -2,7 +2,7 @@ import type { ProductRecord } from '@app/merchandise/contracts/records';
 import { listProducts } from '@app/merchandise/clients/records';
 import type { CustomerListItem } from '@app/party-registry/api/client';
 import { listCustomers } from '@app/party-registry/api/client';
-import { listOpportunities } from '@app/sales-pipeline/clients/records';
+import { executeRecords as executeOpportunityRecords } from '@app/sales-pipeline/clients/records';
 import { definePageData, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { Effect, Option, Predicate, Result, Schema } from 'effect';
@@ -43,7 +43,7 @@ const loadDirectory = Effect.fn('Finance.referenceDirectory')(function* loadDire
     [
       listCustomers({ includeArchived: true }).pipe(Effect.result),
       access.opportunitiesReadable
-        ? listOpportunities({}, 'finance-billing.opportunities').pipe(Effect.result, Effect.asSome)
+        ? executeOpportunityRecords({}, 'finance-billing.opportunities').pipe(Effect.result, Effect.asSome)
         : Effect.succeedNone,
     ],
     { concurrency: 2 },

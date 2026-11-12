@@ -31,7 +31,9 @@ const mocks = rstest.hoisted(() => ({
 }));
 rstest.mock('../../src/api/records-client.ts', () => ({ executeRecords: mocks.records }));
 rstest.mock('../../src/api/apply-command-action-client.ts', () => ({ executeApplyCommand: mocks.apply }));
-rstest.mock('@app/workforce/clients/records', () => ({ listEmployees: mocks.employees }));
+rstest.mock('@app/workforce/clients/records', () => ({
+  executeRecords: () => mocks.employees().pipe(Effect.map((items: readonly object[]) => ({ items }))),
+}));
 rstest.mock('@app/legal-agreements/clients/records', () => ({ executeRecords: () => Effect.never }));
 rstest.mock('@app/property-leasing/clients/records', () => ({ executeRecords: () => Effect.never }));
 rstest.mock('@app/finance-billing/clients/records', () => ({ executeRecords: () => Effect.never }));
