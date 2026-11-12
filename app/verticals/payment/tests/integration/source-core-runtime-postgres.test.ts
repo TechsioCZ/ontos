@@ -22,7 +22,7 @@ import {
   makeTestDatabaseFromClient,
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { paymentUnavailableOwnerPortsLive } from '../../api/payment-production-layers.ts';
+import { paymentUnavailableOwnerPortsLive } from '../support/unavailable-owner-ports.fixture.ts';
 import type { AcceptPaymentObservationPayloadSchema } from '../../shared/actions/accept-payment-observation.ts';
 import type { PaymentExecutionBinding } from '../../shared/domain/payment-execution-binding.ts';
 import { PaymentSourceRejected } from '../../shared/domain/source-statement.ts';

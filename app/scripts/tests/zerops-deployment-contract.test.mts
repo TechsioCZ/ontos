@@ -27,6 +27,7 @@ const commerceCustomerContextSetup = 'commerce-customer-context';
 const priceGroupCatalogSetup = 'price-group-catalog';
 const PARTY_REGISTRY_WORKER_SETUP = 'party-registry-worker';
 const zeropsYamlPath = new URL('../../zerops.yaml', import.meta.url);
+const hostEntryPath = new URL('../outbox-worker-host.generated.mts', import.meta.url);
 const workflowPath = new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url);
 
 const ZeropsYamlSchema = Schema.Struct({
@@ -185,6 +186,12 @@ it('gives the Order runtimes the Order module credential and no other owner cred
 const ownerRuntimeSetups = (unitId: string, setups: ReadonlySet<string>) =>
   setups.has(`${unitId}-worker`) ? [unitId, `${unitId}-worker`] : [unitId];
 
+/** The stage host runs the Outbox Workers of every unit its generated entry imports, so it reads their secrets too. */
+const secretHolderSetups = (unitId: string, setups: ReadonlySet<string>) =>
+  readFileSync(hostEntryPath, 'utf-8').includes(`'@app/${unitId}/outbox-worker-host'`)
+    ? [...ownerRuntimeSetups(unitId, setups), OUTBOX_WORKER_HOST.stageSetup]
+    : ownerRuntimeSetups(unitId, setups);
+
 /** Every non-test source file under `verticals/`, skipping installed packages and test folders. */
 const verticalSourceFiles = (directory: string): readonly string[] =>
   readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -238,14 +245,15 @@ it('gives every module that calls another module its own module credential, and 
         'shellsuperapp:3020/shell-super-app-api',
       );
     }
+    const secretHolders = secretHolderSetups(unitId, setups);
     for (const key of [...credentialVariables, ...operatorValues.map(({ variable }) => variable)]) {
       const holders = [...environments]
         .filter(([, environment]) =>
           Object.entries(environment).some(([name, value]) => name === key || value.includes(key)),
         )
         .map(([setup]) => setup);
-      expect(holders).toStrictEqual(expected);
-      for (const setup of expected) {
+      expect(holders).toStrictEqual(secretHolders);
+      for (const setup of secretHolders) {
         expect(environments.get(setup)?.[key]).toBe(`\${migrator_${key}}`);
       }
     }
@@ -261,6 +269,7 @@ const HOSTED_OWNER_CREDENTIALS = [
   },
   { binding: 'privacyOutboxWorkerEntry', variable: 'ONTOS_GATEWAY_MODULE_API_KEY_PRIVACY' },
   { binding: 'commerceOrderOutboxWorkerEntry', variable: 'ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER' },
+  { binding: 'paymentOutboxWorkerEntry', variable: 'ONTOS_GATEWAY_MODULE_API_KEY_PAYMENT' },
   { binding: 'symmyIntegrationOutboxWorkerEntry', variable: 'ONTOS_GATEWAY_MODULE_API_KEY_SYMMY_INTEGRATION' },
 ] as const;
 
@@ -282,9 +291,7 @@ it.effect('hands the stage host each hosted owner credential under its own name 
     }
     // Inventory makes no delegated calls, so its entry runs without a module credential.
     expect(generated.hostEntry).toContain('\n    inventoryOutboxWorkerEntry,\n');
-    expect(readFileSync(new URL('../outbox-worker-host.generated.mts', import.meta.url), 'utf-8')).toBe(
-      generated.hostEntry,
-    );
+    expect(readFileSync(hostEntryPath, 'utf-8')).toBe(generated.hostEntry);
   }),
 );
 
@@ -433,7 +440,7 @@ it('declares no dedicated Price Group worker once the module has no Outbox Worke
   expect(zeropsYaml).not.toContain(`setup: 'price-group-catalog-worker'`);
   const imports = readFileSync(zeropsImportPath, 'utf-8');
   expect(imports).not.toContain('hostname: pricegroupcatalogworker');
-  const hostEntry = readFileSync(new URL('../outbox-worker-host.generated.mts', import.meta.url), 'utf-8');
+  const hostEntry = readFileSync(hostEntryPath, 'utf-8');
   expect(hostEntry).not.toContain('priceGroupCatalogOutboxWorkerEntry');
 });
 

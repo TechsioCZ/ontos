@@ -315,13 +315,32 @@ Local development sets `ONTOS_GATEWAY_MODULE_BINDINGS=[]` (`pnpm env:local:ensur
 | `commerce-market-catalog`   | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_MARKET_CATALOG`   |                                                                                                                  |
 | `commerce-order`            | `ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER`            |                                                                                                                  |
 | `party-registry`            | `ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY`            |                                                                                                                  |
-| `payment`                   | `ONTOS_GATEWAY_MODULE_API_KEY_PAYMENT`                   |                                                                                                                  |
+| `payment`                   | `ONTOS_GATEWAY_MODULE_API_KEY_PAYMENT`                   | `ONTOS_PAYMENT_PROVIDER_CREDENTIALS` (secret, see below)                                                         |
 | `pricing`                   | `ONTOS_GATEWAY_MODULE_API_KEY_PRICING`                   | `ONTOS_PRICING_CONFIRMATION_SIGNING_SECRET` (secret); `ONTOS_PRICING_CONFIRMATION_KEY_{REF,VERSION,LINEAGE_REF}` |
 | `shell-super-app`           |                                                          | `ONTOS_GATEWAY_MODULE_BINDINGS` (JSON array, one binding per module credential above)                            |
 
 `party-registry` is the one worker-only unit: only its Outbox Worker makes delegated module calls, so its request service receives no module credential and none of the internal API bases its worker calls (`ONTOS_PARTY_REGISTRY_API_BASE_URL`, `ONTOS_PRIVACY_API_BASE_URL`, `ONTOS_SHELL_GATEWAY_BASE_URL`). `party-registry-worker` alone holds `ONTOS_GATEWAY_MODULE_API_KEY_PARTY_REGISTRY`.
 
 Each binding is `{compositionRevision, providerKeyId, sourceAppId, sourceBuildMarker}`: the module key's Better Auth ID, the module's topology app ID, and the composition revision and build that module runs. The Shell refuses module and API-key issuance (as unavailable) while the value is absent or malformed, so a deployment with no module enrolled sets `[]`.
+
+`ONTOS_PAYMENT_PROVIDER_CREDENTIALS` is a secret JSON object keyed by the credential secret ref of a provider account binding. Each entry is `{ "family": "GOPAY", "clientId", "clientSecret" }`, `{ "family": "STRIPE", "secretKey", "webhookSigningSecret" }` or `{ "family": "COMGATE", "secret" }`; an entry with any other field is refused. The value is optional: while it is absent every payment gateway operation is unavailable and the other Payment features keep working. Payment reads it on each cache miss, so a rotation is picked up within 60 seconds.
+
+**Payment evidence workers.** Payment's notification and recovery Outbox Workers submit provider evidence through Payment's own public `accept-payment-observation` Action with a registered-workload assertion. Besides the usual four keys, the Payment binding in `ONTOS_GATEWAY_MODULE_BINDINGS` therefore carries one `registeredWorkloads` rule per worker; without them the Shell refuses the assertion and the evidence stays pending as reconciliation debt:
+
+```json
+{
+  "audience": "payment",
+  "declarationKey": "payment.core.observation.accept",
+  "entrypointKey": "payment.core.accept-payment-observation",
+  "jobKey": "payment.core.process-provider-notification",
+  "legalEntityScope": "required",
+  "schemaVersion": "1",
+  "workerKey": "payment.core.process-provider-notification",
+  "workloadKey": "payment.source-ingress"
+}
+```
+
+The second rule is the same with `jobKey` and `workerKey` set to `payment.core.recover-gateway-operation`. The Shell admits a request only for a live claim of that worker's delivery whose original invocation came from an active integration principal through one of Payment's `originatorActions`, in that invocation's own company. Each tenant needs exactly one active system principal bound to `payment.source-ingress`; it is the A8 executor. The Payment Outbox Worker reads `ONTOS_GATEWAY_MODULE_API_KEY` and `ONTOS_SHELL_GATEWAY_BASE_URL` like the request service. The issuer admits the `payment` audience only while Payment is in the installed composition.
 
 The bindings pin the release. The Shell accepts a module's call only while `compositionRevision` and `sourceBuildMarker` equal the current release, so every composition publish and every module redeploy changes what the bindings must say. Refresh `ONTOS_GATEWAY_MODULE_BINDINGS` in the same deploy that changes a release, before the module calls it. Until the refresh, every module-to-module call fails closed. The Worker secrets step checks the shape only: one binding per module credential, all for one composition revision. It does not compare the revision or build markers with the published release, so the operator must.
 

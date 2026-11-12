@@ -13,9 +13,20 @@ import type {
 } from '../../shared/apis/payment-method-applicability.ts';
 import type { PaymentUnavailable } from '../../shared/domain/payment-unavailable.ts';
 import { evaluatePaymentMethodApplicability } from '../domain/applicability-evaluation.ts';
-import type { PaymentMethodApplicabilityInput } from '../domain/applicability-evaluation.ts';
+import type {
+  PaymentMethodApplicabilityInput,
+  PaymentMethodApplicabilityRequirements,
+} from '../domain/applicability-evaluation.ts';
 import { paymentApplicabilityPersistenceForTransaction } from '../persistence/payment-applicability-persistence.ts';
 import type { PaymentApplicabilityPersistence } from '../persistence/payment-applicability-persistence.ts';
+import { GatewayBindingPort } from '../ports/gateway-binding-port.ts';
+import type { PaymentGatewayBindingEvidence } from '../ports/gateway-binding-port.ts';
+
+/** Owner services of one Core-scoped Read transaction. */
+export interface PaymentMethodApplicabilityServices {
+  readonly applicability: PaymentApplicabilityPersistence;
+  readonly gateways: PaymentGatewayBindingEvidence;
+}
 
 const paymentMethodApplicabilityEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
@@ -44,16 +55,17 @@ export const readPaymentMethodApplicability = Effect.fn('PaymentMethodApplicabil
   function* readPaymentMethodApplicability(
     input: PaymentMethodApplicabilityRequest,
     scope: { readonly legalEntityId: string; readonly tenantId: string },
-    persistence: PaymentApplicabilityPersistence,
+    services: PaymentMethodApplicabilityServices,
     operationScope?: OperationalScope,
   ) {
-    const enablements = yield* persistence
+    const enablements = yield* services.applicability
       .loadCurrentEnablements(input.customerConfigurationId)
       .pipe(Effect.mapError(unavailable));
     const evaluation: PaymentMethodApplicabilityInput = {
       amount: input.amount,
       customerConfigurationId: input.customerConfigurationId,
       enablements,
+      gateways: services.gateways,
       paymentTermRef: input.paymentTermRef,
       purchase: { _tag: 'PURCHASING_CONTEXT', purchasingContext: input.purchasingContext },
       scope,
@@ -107,7 +119,7 @@ export const paymentMethodApplicabilityRead = defineRead(
     resultSchema: PaymentMethodApplicabilityResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<PaymentApplicabilityPersistence>) => {
+  (input, context: ReadHandlerContext<PaymentMethodApplicabilityServices>) => {
     const { legalEntityId, tenantId } = context.scope;
     return legalEntityId === undefined
       ? scopeRequired
@@ -115,5 +127,17 @@ export const paymentMethodApplicabilityRead = defineRead(
           Effect.map((result) => ({ evidence: { resultCount: result.branches.length }, result })),
         );
   },
-  (transaction) => Effect.succeed(paymentApplicabilityPersistenceForTransaction(transaction)),
+  (
+    transaction,
+  ): Effect.Effect<
+    PaymentMethodApplicabilityServices,
+    never,
+    GatewayBindingPort | PaymentMethodApplicabilityRequirements
+  > =>
+    GatewayBindingPort.pipe(
+      Effect.map((gatewayBindingFor): PaymentMethodApplicabilityServices => ({
+        applicability: paymentApplicabilityPersistenceForTransaction(transaction),
+        gateways: gatewayBindingFor(transaction),
+      })),
+    ),
 );

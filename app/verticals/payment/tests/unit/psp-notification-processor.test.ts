@@ -32,7 +32,11 @@ import {
 import type { ProviderNotificationProcessing } from '../../src/integrations/psp/provider-notification-processor.ts';
 import { GatewayProviderAdapters } from '../../src/integrations/psp/psp-adapter.ts';
 import { deriveProviderCorrelation } from '../../src/integrations/psp/psp-correlation.ts';
-import { GatewayLedgerUnavailable } from '../../src/integrations/psp/psp-errors.ts';
+import {
+  GatewayEvidenceConflict,
+  GatewayLedgerUnavailable,
+  GatewayProviderUnavailable,
+} from '../../src/integrations/psp/psp-errors.ts';
 import {
   GatewayExecutionTargetSchema,
   GatewayExpectedEffectSchema,
@@ -239,6 +243,8 @@ interface Setup {
   readonly a8?: A8Answer;
   readonly findings: (request: GatewayLookupRequest) => readonly ProviderFindingResult[];
   readonly notifications: readonly StoredProviderNotification[];
+  /** The executor already pinned on every evidence row, as a committed earlier attempt left it. */
+  readonly pinnedExecutor?: string;
   readonly records: readonly ProviderDispatchRecord[];
   readonly resolvedBinding?: string;
 }
@@ -271,6 +277,7 @@ const issuedContext = Schema.decodeUnknownSync(GatewayContextResponseSchema)({
 });
 
 const { machineContext: issuedMachineContext } = issuedContext;
+const ISSUED_EXECUTOR = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
 /** What the gateway seam hands the submitter: the issued assertion with the receiving system principal. */
 const issuedGrant = {
   apiBaseUrl: `http://shell.test${issuedContext.apiBaseUrl}`,
@@ -398,6 +405,7 @@ const layerFor = (setup: Setup, world: World) => {
           paymentId: input.paymentId,
           receivedAt: DateTime.makeUnsafe(RECEIVED_AT),
           recordedAt: DateTime.makeUnsafe(OBSERVED_AT),
+          submissionExecutorPrincipalId: setup.pinnedExecutor,
           submissionState: 'PENDING_SUBMISSION',
           verifiedAt: input.evidence.observedAt,
         });
@@ -412,6 +420,23 @@ const layerFor = (setup: Setup, world: World) => {
         yield* Ref.set(world.evidence, updated);
         const marked = updated.find((row) => row.evidenceId === evidenceId);
         return marked ?? (yield* Effect.die('unknown evidence'));
+      }),
+    // Like the routine: write-once while pending; the same principal again is unchanged.
+    pinSubmissionExecutor: ({ evidenceId, principalId }) =>
+      Effect.gen(function* pin() {
+        const rows = yield* Ref.get(world.evidence);
+        const row = rows.find((candidate) => candidate.evidenceId === evidenceId);
+        if (row === undefined || (row.submissionExecutorPrincipalId ?? principalId) !== principalId) {
+          return yield* Effect.fail(
+            new GatewayEvidenceConflict({ code: 'gateway_evidence_conflict', reason: 'executor_mismatch' }),
+          );
+        }
+        const pinned = { ...row, submissionExecutorPrincipalId: principalId };
+        yield* Ref.set(
+          world.evidence,
+          rows.map((candidate) => (candidate.evidenceId === evidenceId ? pinned : candidate)),
+        );
+        return pinned;
       }),
   });
   const resolver = Layer.succeed(GatewayBindingResolver, {
@@ -444,14 +469,10 @@ const layerFor = (setup: Setup, world: World) => {
         verifyNotification: unexpected('verifyNotification'),
       }),
   });
-  return Layer.mergeAll(
-    notificationStore,
-    ledger,
-    evidenceStore,
-    resolver,
-    adapters,
-    ProviderEvidenceSubmitterLive,
-  ).pipe(Layer.provide(nodeCryptoLayer));
+  return Layer.mergeAll(notificationStore, ledger, resolver, adapters, ProviderEvidenceSubmitterLive).pipe(
+    Layer.provideMerge(evidenceStore),
+    Layer.provide(nodeCryptoLayer),
+  );
 };
 
 const run = (setup: Setup, notificationId: string) =>
@@ -552,6 +573,44 @@ describe('process-provider-notification', () => {
       );
       const evidence = yield* Ref.get(world.evidence);
       expect(evidence.map((row) => row.submissionState)).toEqual(['DENIED']);
+      // The first attempt asks for no executor and pins the one Shell attested before calling A8.
+      expect(acquired?.subject).not.toHaveProperty('expectedPrincipalId');
+      expect(evidence.map((row) => row.submissionExecutorPrincipalId)).toEqual([ISSUED_EXECUTOR]);
+    }),
+  );
+
+  it.effect('#1157 A pinned evidence row asks Shell for exactly its executor', () =>
+    Effect.gen(function* pinnedExecutor() {
+      const { result, world } = yield* run(
+        {
+          findings: () => [findingOf({ factKind: 'COLLECTION_CONFIRMED', kind: 'COLLECT', refs: [PI] })],
+          notifications: [notificationOf({ id: N1, refs: [PI] })],
+          pinnedExecutor: ISSUED_EXECUTOR,
+          records: [recordOf({ payment: PI })],
+        },
+        N1,
+      );
+      expect(result).toBe(`SETTLED ${collectId} SUBMITTED [ACCEPTED]`);
+      const [acquired] = yield* Ref.get(world.acquired);
+      expect(acquired?.subject).toMatchObject({ expectedPrincipalId: ISSUED_EXECUTOR });
+      expect(yield* Ref.get(world.statements)).toHaveLength(1);
+    }),
+  );
+
+  it.effect('#1157 An attested executor other than the pinned one never reaches A8', () =>
+    Effect.gen(function* executorMismatch() {
+      const failure = yield* run(
+        {
+          findings: () => [findingOf({ factKind: 'COLLECTION_CONFIRMED', kind: 'COLLECT', refs: [PI] })],
+          notifications: [notificationOf({ id: N1, refs: [PI] })],
+          pinnedExecutor: '12121212-1212-4212-8212-121212121212',
+          records: [recordOf({ payment: PI })],
+        },
+        N1,
+      ).pipe(Effect.flip);
+      // Transient: the delivery retries and asks Shell for the pinned executor again; A8 is never called here.
+      expect(Schema.is(GatewayProviderUnavailable)(failure)).toBe(true);
+      expect(failure).toMatchObject({ reason: 'submission_executor_mismatch' });
     }),
   );
 

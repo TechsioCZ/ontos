@@ -31,6 +31,7 @@
     "dev": "node ../../scripts/prepare-dev-module-contract.mts payment && modern dev",
     "serve": "modern serve",
     "test:integration": "rstest --project integration",
+    "test:sandbox": "rstest --project sandbox",
     "test:unit": "rstest --project unit",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json",
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"

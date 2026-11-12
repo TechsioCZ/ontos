@@ -463,6 +463,7 @@ it.effect('resolves exactly the Outbox Worker mode setup definitions', () =>
       'inventory-worker',
       'privacy-worker',
       'commerce-order-worker',
+      'payment-worker',
       'symmy-integration-worker',
     ]);
     expect(yield* modeWorkerSetups(zeropsYaml, topology, 'host', members)).toEqual([OUTBOX_WORKER_HOST_SETUP]);

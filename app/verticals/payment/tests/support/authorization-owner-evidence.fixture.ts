@@ -16,7 +16,7 @@ import { CommitmentAttemptEvidencePort } from '../../src/ports/commitment-attemp
 import { CommitmentOutcomePort, unavailableCommitmentOutcome } from '../../src/ports/commitment-outcome-port.ts';
 import { DeliveryCapabilityPort } from '../../src/ports/delivery-capability-port.ts';
 import type { PaymentCodNotSupportedReasonSchema } from '../../src/ports/delivery-capability-port.ts';
-import { GatewayBindingPort, unavailableGatewayBinding } from '../../src/ports/gateway-binding-port.ts';
+import { GatewayBindingPort } from '../../src/ports/gateway-binding-port.ts';
 import { ownerEvidenceUnavailable } from '../../src/ports/owner-evidence-unavailable.ts';
 import type { PaymentOwnerScope } from '../../src/ports/owner-evidence-unavailable.ts';
 import { PaymentTermEvidencePort } from '../../src/ports/payment-term-evidence-port.ts';
@@ -24,6 +24,7 @@ import type { PaymentTermPurchase, PaymentTermUseEvidence } from '../../src/port
 import { PickupCapabilityPort } from '../../src/ports/pickup-capability-port.ts';
 import type { PaymentPickupNotSupportedReasonSchema } from '../../src/ports/pickup-capability-port.ts';
 import { RefundableItemsPort, unavailableRefundableItems } from '../../src/ports/refundable-items-port.ts';
+import { unavailableGatewayBindingForTransaction } from './unavailable-owner-ports.fixture.ts';
 
 /**
  * PUBLIC-CONTRACT FIXTURES of the downstream owners Payment Authorization (#1149) consumes:
@@ -174,7 +175,7 @@ export const makeAuthorizationOwnerEvidenceFixture = Effect.gen(function* makeAu
             : { _tag: 'NOT_SUPPORTED' as const, pickupCapabilityRef, reason: answer };
         }),
     }),
-    Layer.succeed(GatewayBindingPort, unavailableGatewayBinding),
+    Layer.succeed(GatewayBindingPort, unavailableGatewayBindingForTransaction),
     Layer.succeed(CommitmentOutcomePort, unavailableCommitmentOutcome),
     Layer.succeed(RefundableItemsPort, unavailableRefundableItems),
   );

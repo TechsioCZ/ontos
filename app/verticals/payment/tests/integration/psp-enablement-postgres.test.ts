@@ -28,7 +28,7 @@ import {
 } from '../../src/persistence/psp-enablement-persistence.ts';
 import type { PspEnablementServices } from '../../src/persistence/psp-enablement-persistence.ts';
 import type {
-  PaymentGatewayBindingService,
+  PaymentGatewayBindingEvidence,
   PaymentGatewayBindingVerification,
 } from '../../src/ports/gateway-binding-port.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
@@ -110,7 +110,7 @@ const nativeEnablementServices = (database: PaymentTestDatabase, scope: PaymentT
 };
 
 /** The live port, each call in its own Core-scoped native transaction of `scope`. */
-const nativeGatewayPort = (database: PaymentTestDatabase, scope: PaymentTestScope): PaymentGatewayBindingService => ({
+const nativeGatewayPort = (database: PaymentTestDatabase, scope: PaymentTestScope): PaymentGatewayBindingEvidence => ({
   listEnabledBindings: (input) =>
     inTransaction(database, scope, (transaction) =>
       gatewayBindingServiceForTransaction(transaction).listEnabledBindings(input),

@@ -7,6 +7,7 @@ import type { PaymentGatewayAccountBinding } from '../../shared/domain/payment-e
 import { CommitmentOutcomePort, unavailableCommitmentOutcome } from '../../src/ports/commitment-outcome-port.ts';
 import { DeliveryCapabilityPort, unavailableDeliveryCapability } from '../../src/ports/delivery-capability-port.ts';
 import { GatewayBindingPort } from '../../src/ports/gateway-binding-port.ts';
+import type { PaymentGatewayBindingEvidence } from '../../src/ports/gateway-binding-port.ts';
 import { ownerEvidenceUnavailable } from '../../src/ports/owner-evidence-unavailable.ts';
 import { PaymentTermEvidencePort } from '../../src/ports/payment-term-evidence-port.ts';
 import { PickupCapabilityPort, unavailablePickupCapability } from '../../src/ports/pickup-capability-port.ts';
@@ -62,6 +63,28 @@ const sameBinding = (left: PaymentGatewayAccountBinding, right: PaymentGatewayAc
 export const makeLifecycleOwnerContractFixture = Effect.fn('LifecycleOwnerContractFixture.make')(
   function* makeLifecycleOwnerContractFixture(initial: LifecycleOwnerContractState) {
     const state = yield* Ref.make(initial);
+    const gateway: PaymentGatewayBindingEvidence = {
+      listEnabledBindings: () =>
+        Ref.get(state).pipe(
+          Effect.flatMap(({ enabledBindings, gatewayAvailable }) =>
+            gatewayAvailable
+              ? Effect.succeed(enabledBindings)
+              : Effect.fail(ownerEvidenceUnavailable('GATEWAY_BINDING', 'Fixture: C17 route is down')),
+          ),
+        ),
+      verifySelectedBinding: ({ binding }) =>
+        Ref.get(state).pipe(
+          Effect.flatMap(({ enabledBindings, gatewayAvailable }) => {
+            if (!gatewayAvailable) {
+              return Effect.fail(ownerEvidenceUnavailable('GATEWAY_BINDING', 'Fixture: C17 route is down'));
+            }
+            const enabled = enabledBindings.some((candidate) => sameBinding(candidate, binding));
+            return Effect.succeed(
+              enabled ? { _tag: 'ENABLED' as const, binding } : { _tag: 'NOT_ENABLED' as const, binding },
+            );
+          }),
+        ),
+    };
     const layer = Layer.mergeAll(
       Layer.succeed(PaymentTermEvidencePort, {
         verifyTermUse: ({ paymentTermRef }) =>
@@ -83,28 +106,7 @@ export const makeLifecycleOwnerContractFixture = Effect.fn('LifecycleOwnerContra
             }),
           ),
       }),
-      Layer.succeed(GatewayBindingPort, {
-        listEnabledBindings: () =>
-          Ref.get(state).pipe(
-            Effect.flatMap(({ enabledBindings, gatewayAvailable }) =>
-              gatewayAvailable
-                ? Effect.succeed(enabledBindings)
-                : Effect.fail(ownerEvidenceUnavailable('GATEWAY_BINDING', 'Fixture: C17 route is down')),
-            ),
-          ),
-        verifySelectedBinding: ({ binding }) =>
-          Ref.get(state).pipe(
-            Effect.flatMap(({ enabledBindings, gatewayAvailable }) => {
-              if (!gatewayAvailable) {
-                return Effect.fail(ownerEvidenceUnavailable('GATEWAY_BINDING', 'Fixture: C17 route is down'));
-              }
-              const enabled = enabledBindings.some((candidate) => sameBinding(candidate, binding));
-              return Effect.succeed(
-                enabled ? { _tag: 'ENABLED' as const, binding } : { _tag: 'NOT_ENABLED' as const, binding },
-              );
-            }),
-          ),
-      }),
+      Layer.succeed(GatewayBindingPort, () => gateway),
       Layer.succeed(DeliveryCapabilityPort, unavailableDeliveryCapability),
       Layer.succeed(PickupCapabilityPort, unavailablePickupCapability),
       Layer.succeed(CommitmentOutcomePort, unavailableCommitmentOutcome),

@@ -2,7 +2,11 @@ import type { OutboxWorkerHandlerContext, OutboxWorkerLegalEntityScope } from '@
 import { Context, Schema } from 'effect';
 import type { Effect, Option } from 'effect';
 
-import { PaymentIdSchema, PaymentOperationIdSchema } from '../../../shared/domain/payment-identifiers.ts';
+import {
+  PaymentIdSchema,
+  PaymentOperationIdSchema,
+  PaymentPrincipalIdSchema,
+} from '../../../shared/domain/payment-identifiers.ts';
 import type { PaymentObservationIdSchema } from '../../../shared/domain/payment-identifiers.ts';
 import { GatewayProviderAccountBindingIdSchema } from '../../../shared/domain/psp-configuration.ts';
 import {
@@ -50,6 +54,11 @@ export const StoredProviderEvidenceSchema = Schema.Struct({
   paymentId: PaymentIdSchema,
   receivedAt: Schema.DateTimeUtc,
   recordedAt: Schema.DateTimeUtc,
+  /**
+   * The principal that executes the governed A8 submission of this row. Pinned once while the row is pending
+   * and never changed, so every later attempt asks Shell for exactly that executor. Absent until pinned.
+   */
+  submissionExecutorPrincipalId: Schema.optional(PaymentPrincipalIdSchema),
   submissionState: ProviderEvidenceSubmissionStateSchema,
   verifiedAt: Schema.DateTimeUtc,
 });
@@ -80,6 +89,13 @@ export interface MarkProviderEvidenceSubmissionInput {
   readonly workerContext: OutboxWorkerHandlerContext;
 }
 
+export interface PinProviderEvidenceSubmissionExecutorInput {
+  readonly evidenceId: ProviderEvidenceId;
+  /** The receiving principal Shell attested for this submission. */
+  readonly principalId: string;
+  readonly scope: OutboxWorkerLegalEntityScope;
+}
+
 export interface ProviderEvidenceStoreContract {
   /**
    * Keyed on (binding, sourceOccurrenceId, sourceRevision). An identical statement for the same operation
@@ -97,6 +113,13 @@ export interface ProviderEvidenceStoreContract {
   readonly markSubmission: (
     input: MarkProviderEvidenceSubmissionInput,
   ) => Effect.Effect<StoredProviderEvidence, GatewayLedgerUnavailableError>;
+  /**
+   * Pins the submission executor of a pending row once; the same principal again returns the row unchanged.
+   * Another principal, or a row that is no longer pending without one, fails with `GatewayEvidenceConflict`.
+   */
+  readonly pinSubmissionExecutor: (
+    input: PinProviderEvidenceSubmissionExecutorInput,
+  ) => Effect.Effect<StoredProviderEvidence, GatewayEvidenceConflictError | GatewayLedgerUnavailableError>;
 }
 
 export class ProviderEvidenceStore extends Context.Service<ProviderEvidenceStore, ProviderEvidenceStoreContract>()(

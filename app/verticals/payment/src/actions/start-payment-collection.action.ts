@@ -49,6 +49,7 @@ import type { PaymentLifecycleServices } from '../persistence/payment-lifecycle-
 import { paymentRefundPersistenceForTransaction } from '../persistence/payment-refund-persistence.ts';
 import { selectBankReceiptAuthorities } from '../persistence/payment-source-persistence.ts';
 import { GatewayBindingPort } from '../ports/gateway-binding-port.ts';
+import type { PaymentGatewayBindingEvidence } from '../ports/gateway-binding-port.ts';
 import { PaymentOwnerEvidenceUnavailable } from '../ports/owner-evidence-unavailable.ts';
 import { recordPaymentAggregateReads, recordPaymentLookup } from './payment-data-access.ts';
 import { createStartPaymentCollectionPaymentCoreOperationRequestedV1OutboxMessage } from './start-payment-collection-payment-core-operation-requested-v1.outbox-message.ts';
@@ -73,9 +74,12 @@ const isGatewayAccountBinding = Schema.is(PaymentGatewayAccountBindingSchema);
  * selects another provider, account or environment.
  */
 const verifyGatewayBinding = Effect.fn('StartPaymentCollectionAction.verifyGatewayBinding')(
-  function* verifyGatewayBinding(payment: PaymentRecord, binding: PaymentGatewayAccountBinding) {
-    const gateway = yield* GatewayBindingPort;
-    const verification = yield* gateway.verifySelectedBinding({
+  function* verifyGatewayBinding(
+    payment: PaymentRecord,
+    binding: PaymentGatewayAccountBinding,
+    gateways: PaymentGatewayBindingEvidence,
+  ) {
+    const verification = yield* gateways.verifySelectedBinding({
       binding,
       customerConfigurationId: payment.customerConfigurationId,
       scope: { legalEntityId: payment.legalEntityId, tenantId: payment.tenantId },
@@ -94,6 +98,8 @@ const verifyGatewayBinding = Effect.fn('StartPaymentCollectionAction.verifyGatew
 );
 
 interface StartCollectionServices extends PaymentLifecycleServices {
+  /** Gateway binding evidence bound to this one Action transaction. */
+  readonly gateways: PaymentGatewayBindingEvidence;
   readonly selectReceiptAuthorities: (
     method: 'BANK_TRANSFER_ADVANCE' | 'DEFERRED_INVOICE',
   ) => Effect.Effect<readonly PaymentBankReceiptAuthority[], PaymentUnavailable>;
@@ -139,7 +145,8 @@ const resolveCollectionBinding = (aggregate: PaymentAggregateRecord, context: St
   return Match.valueTags(binding, {
     BANK_ACCOUNTING_RECEIPT: (bank) => resolveBankBinding(aggregate, bank, context),
     COD_DELIVERY_OFFER: (offer) => Effect.succeed(offer),
-    GATEWAY_ACCOUNT: (gateway) => verifyGatewayBinding(payment, gateway).pipe(Effect.as(gateway)),
+    GATEWAY_ACCOUNT: (gateway) =>
+      verifyGatewayBinding(payment, gateway, context.services.gateways).pipe(Effect.as(gateway)),
     PICKUP_CAPABILITY: (pickup) => Effect.succeed(pickup),
   });
 };
@@ -296,13 +303,16 @@ const lifecycleServices = (transaction: ScopedTransactionExecutor, scope: Operat
           reason: 'Payment lifecycle operations require a verified Selling Legal Entity scope',
         }),
       )
-    : Effect.succeed<StartCollectionServices>({
-        aggregate: paymentAggregatePersistenceForTransaction(transaction),
-        applicability: paymentApplicabilityPersistenceForTransaction(transaction),
-        lifecycle: paymentLifecyclePersistenceForTransaction(transaction),
-        refunds: paymentRefundPersistenceForTransaction(transaction),
-        selectReceiptAuthorities: (method) => selectBankReceiptAuthorities(transaction, method),
-      });
+    : GatewayBindingPort.pipe(
+        Effect.map((gatewayBindingFor): StartCollectionServices => ({
+          aggregate: paymentAggregatePersistenceForTransaction(transaction),
+          applicability: paymentApplicabilityPersistenceForTransaction(transaction),
+          gateways: gatewayBindingFor(transaction),
+          lifecycle: paymentLifecyclePersistenceForTransaction(transaction),
+          refunds: paymentRefundPersistenceForTransaction(transaction),
+          selectReceiptAuthorities: (method) => selectBankReceiptAuthorities(transaction, method),
+        })),
+      );
 
 export const startPaymentCollectionAction = defineAction(
   {

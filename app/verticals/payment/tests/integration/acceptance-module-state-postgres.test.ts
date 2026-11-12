@@ -28,7 +28,7 @@ import {
   makeTestDatabaseFromClient,
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { paymentUnavailableOwnerPortsLive } from '../../api/payment-production-layers.ts';
+import { paymentUnavailableOwnerPortsLive } from '../support/unavailable-owner-ports.fixture.ts';
 import type { AcceptPaymentObservationPayloadSchema } from '../../shared/actions/accept-payment-observation.ts';
 import type { ConfigurePaymentMethodEnablementPayloadSchema } from '../../shared/actions/configure-payment-method-enablement.ts';
 import type { ConfigurePaymentSourceAuthorityPayloadSchema } from '../../shared/actions/configure-payment-source-authority.ts';

@@ -10,7 +10,7 @@ import type { PspGatewayEnablementRecord } from '../../persistence/psp-enablemen
 import { ownerEvidenceUnavailable } from '../../ports/owner-evidence-unavailable.ts';
 import type { PaymentOwnerScope } from '../../ports/owner-evidence-unavailable.ts';
 import type {
-  PaymentGatewayBindingService,
+  PaymentGatewayBindingEvidence,
   PaymentGatewayBindingVerification,
 } from '../../ports/gateway-binding-port.ts';
 
@@ -67,7 +67,7 @@ export const verifiedGatewayBinding = (
  */
 export const gatewayBindingServiceForTransaction = (
   transaction: ScopedTransactionExecutor,
-): PaymentGatewayBindingService => {
+): PaymentGatewayBindingEvidence => {
   const persistence = pspEnablementPersistenceForTransaction(transaction);
 
   /** `providerFamily` narrows the read to one family, so another family's row is never even read. */
@@ -87,12 +87,12 @@ export const gatewayBindingServiceForTransaction = (
           .pipe(Effect.mapError((failure) => unavailableBecause('Gateway Enablement could not be read', failure)))
       : Effect.fail(unavailable('The requested scope is not the verified scope of this transaction'));
 
-  const listEnabledBindings: PaymentGatewayBindingService['listEnabledBindings'] = (input) =>
+  const listEnabledBindings: PaymentGatewayBindingEvidence['listEnabledBindings'] = (input) =>
     currentEnablements({ ...input, providerFamily: Option.none() }).pipe(
       Effect.flatMap((records) => Effect.forEach(records.filter(isOffered), executionBindingOf, { concurrency: 1 })),
     );
 
-  const verifySelectedBinding: PaymentGatewayBindingService['verifySelectedBinding'] = (input) =>
+  const verifySelectedBinding: PaymentGatewayBindingEvidence['verifySelectedBinding'] = (input) =>
     currentEnablements({ ...input, providerFamily: Option.some(input.binding.providerFamily) }).pipe(
       Effect.map((records) => verifiedGatewayBinding(input.binding, records)),
     );

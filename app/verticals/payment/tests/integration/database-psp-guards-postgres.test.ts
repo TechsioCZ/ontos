@@ -17,10 +17,12 @@ import type {
   GatewayProviderAccountRef,
 } from '../../shared/domain/psp-configuration.ts';
 import {
+  PspEvidenceIdSchema,
   PspNotificationIdSchema,
   pspAppendEvidence,
   pspHasUnresolvedRefund,
   pspMarkEvidenceSubmission,
+  pspPinEvidenceSubmissionExecutor,
   pspPrepareDispatch,
   pspReadDispatch,
   pspReadOperationForExecution,
@@ -675,6 +677,202 @@ it.live('#1158 Provider evidence is append-only except its one submission step',
         ownerSql('delete from payment.psp_provider_evidence where tenant_id = $1 and evidence_id = $2'),
         '23514',
         'payment_append_only_ck',
+      );
+    }),
+  ),
+);
+
+it.live('#1157 The submission executor is pinned once and survives the terminal submission step', () =>
+  Effect.scoped(
+    Effect.gen(function* executorPin() {
+      const { admin, runtime: runtimeClient } = yield* testDatabaseClients;
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, paymentTestRelations);
+      const scope = yield* makeTestScope;
+      const fixture = yield* gatewayFixture(runtime, runtimeClient, scope);
+      const origin = yield* workerOrigin;
+      const [executor, otherExecutor, unknownEvidence] = yield* Effect.all([randomUuid, randomUuid, randomUuid], {
+        concurrency: 1,
+      });
+      const appended = yield* withRoutines(runtime, scope, (invoker) =>
+        pspAppendEvidence(invoker, {
+          bindingId: fixture.bindingId,
+          discrepancy: Option.none(),
+          economicEffectKey: Option.some('pi_pin_1'),
+          evidenceOrigin: 'NOTIFICATION_LOOKUP',
+          factFamily: 'GATEWAY_OUTCOME',
+          factKind: 'COLLECTION_CONFIRMED',
+          notificationId: Option.none(),
+          observedAmount: Option.some({ amountMinor: 100_000, currency: 'CZK' }),
+          observedAt: DateTime.makeUnsafe('2026-11-12T10:00:00.000Z'),
+          operationId: fixture.collectOperationId,
+          origin,
+          providerOccurredAt: Option.none(),
+          providerRefs: [{ _tag: 'STRIPE_PAYMENT_INTENT', id: 'pi_pin_1' }],
+          reason: Option.none(),
+          sourceOccurrenceId: 'stripe:evt:evt_pin_1',
+          sourceRevision: 0,
+        }),
+      );
+      const { record } = yield* expectTagged(appended, 'APPENDED');
+      expect(record.submissionExecutorPrincipalId).toBeUndefined();
+      const pin = (evidenceId: string, principalId: string) =>
+        withRoutines(runtime, scope, (invoker) =>
+          Schema.decodeUnknownEffect(PspEvidenceIdSchema)(evidenceId).pipe(
+            Effect.flatMap((id) => pspPinEvidenceSubmissionExecutor(invoker, { evidenceId: id, principalId })),
+          ),
+        );
+
+      const pinned = yield* expectTagged(yield* pin(record.evidenceId, executor), 'PINNED');
+      expect(pinned.record.submissionExecutorPrincipalId).toBe(executor);
+      const unchanged = yield* expectTagged(yield* pin(record.evidenceId, executor), 'UNCHANGED');
+      expect(unchanged.record.submissionExecutorPrincipalId).toBe(executor);
+      const mismatch = yield* pin(record.evidenceId, otherExecutor);
+      expect(conflictReason(mismatch)).toEqual(Option.some('executor_mismatch'));
+      expect(Predicate.isTagged(yield* pin(unknownEvidence, executor), 'NOT_FOUND')).toBe(true);
+
+      // The runtime role never updates evidence directly; only the routine pins.
+      yield* expectSqlFailure(
+        inScope(
+          runtimeClient,
+          scope,
+          runtimeClient.unsafe(
+            'update payment.psp_provider_evidence set submission_executor_principal_id = $3 where tenant_id = $1 and evidence_id = $2',
+            [scope.tenantId, record.evidenceId, otherExecutor],
+          ),
+        ),
+        '42501',
+      );
+      // Even the owner cannot re-pin, pin together with another column, or clear the executor on the terminal step.
+      const ownerSql = (statement: string) =>
+        inScope(admin, scope, admin.unsafe(statement, [scope.tenantId, record.evidenceId, otherExecutor]));
+      yield* expectSqlFailure(
+        ownerSql(
+          'update payment.psp_provider_evidence set submission_executor_principal_id = $3 where tenant_id = $1 and evidence_id = $2',
+        ),
+        '23514',
+        'payment_psp_evidence_transition_ck',
+      );
+      yield* expectSqlFailure(
+        ownerSql(
+          `update payment.psp_provider_evidence set submission_state = 'DENIED', submitted_at = now(),
+             submitted_delivery_id = gen_random_uuid(), submission_executor_principal_id = null
+           where tenant_id = $1 and evidence_id = $2 and $3::uuid is not null`,
+        ),
+        '23514',
+        'payment_psp_evidence_transition_ck',
+      );
+
+      // The terminal step keeps the pinned executor; a settled row is never pinned again.
+      const marked = yield* withRoutines(runtime, scope, (invoker) =>
+        pspMarkEvidenceSubmission(invoker, {
+          deliveryId: origin.deliveryId,
+          evidenceId: record.evidenceId,
+          observationId: Option.none(),
+          state: 'DENIED',
+        }),
+      );
+      expect((yield* expectTagged(marked, 'MARKED')).record.submissionExecutorPrincipalId).toBe(executor);
+      expect(Predicate.isTagged(yield* pin(record.evidenceId, executor), 'UNCHANGED')).toBe(true);
+      expect(conflictReason(yield* pin(record.evidenceId, otherExecutor))).toEqual(Option.some('executor_mismatch'));
+    }),
+  ),
+);
+
+it.live('#1157 A settled row without an executor is never pinned, and a pin cannot change another column', () =>
+  Effect.scoped(
+    Effect.gen(function* settledUnpinned() {
+      const { admin, runtime: runtimeClient } = yield* testDatabaseClients;
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, paymentTestRelations);
+      const scope = yield* makeTestScope;
+      const fixture = yield* gatewayFixture(runtime, runtimeClient, scope);
+      const origin = yield* workerOrigin;
+      const executor = yield* randomUuid;
+      const appended = yield* withRoutines(runtime, scope, (invoker) =>
+        pspAppendEvidence(invoker, {
+          bindingId: fixture.bindingId,
+          discrepancy: Option.none(),
+          economicEffectKey: Option.none(),
+          evidenceOrigin: 'NOTIFICATION_LOOKUP',
+          factFamily: 'GATEWAY_OUTCOME',
+          factKind: 'COLLECTION_NOT_EFFECTED',
+          notificationId: Option.none(),
+          observedAmount: Option.none(),
+          observedAt: DateTime.makeUnsafe('2026-11-12T10:00:00.000Z'),
+          operationId: fixture.collectOperationId,
+          origin,
+          providerOccurredAt: Option.none(),
+          providerRefs: [{ _tag: 'STRIPE_PAYMENT_INTENT', id: 'pi_pin_2' }],
+          reason: Option.none(),
+          sourceOccurrenceId: 'stripe:evt:evt_pin_2',
+          sourceRevision: 0,
+        }),
+      );
+      const { record } = yield* expectTagged(appended, 'APPENDED');
+      // A pin that also changes another column is refused, even for the owner.
+      const ownerPin = (statement: string) =>
+        inScope(admin, scope, admin.unsafe(statement, [scope.tenantId, record.evidenceId, executor]));
+      yield* expectSqlFailure(
+        ownerPin(
+          `update payment.psp_provider_evidence set submission_executor_principal_id = $3, reason = 'changed'
+           where tenant_id = $1 and evidence_id = $2`,
+        ),
+        '23514',
+        'payment_psp_evidence_transition_ck',
+      );
+      yield* withRoutines(runtime, scope, (invoker) =>
+        pspMarkEvidenceSubmission(invoker, {
+          deliveryId: origin.deliveryId,
+          evidenceId: record.evidenceId,
+          observationId: Option.none(),
+          state: 'HELD',
+        }),
+      );
+      const late = yield* withRoutines(runtime, scope, (invoker) =>
+        Schema.decodeUnknownEffect(PspEvidenceIdSchema)(record.evidenceId).pipe(
+          Effect.flatMap((evidenceId) =>
+            pspPinEvidenceSubmissionExecutor(invoker, { evidenceId, principalId: executor }),
+          ),
+        ),
+      );
+      expect(conflictReason(late)).toEqual(Option.some('illegal_transition'));
+    }),
+  ),
+);
+
+it.live('#1158 The execution read carries the stored creation instant and original provenance', () =>
+  Effect.scoped(
+    Effect.gen(function* executionProvenance() {
+      const { admin, runtime: runtimeClient } = yield* testDatabaseClients;
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, paymentTestRelations);
+      const scope = yield* makeTestScope;
+      const fixture = yield* gatewayFixture(runtime, runtimeClient, scope);
+      const [stored] = yield* inScope(
+        admin,
+        scope,
+        admin.unsafe<{ action_invocation_id: string; created_at: Date }>(
+          'select action_invocation_id, created_at from payment.payment_operations where tenant_id = $1 and operation_id = $2',
+          [scope.tenantId, fixture.collectOperationId],
+        ),
+      );
+      const read = yield* withRoutines(runtime, scope, (invoker) =>
+        pspReadOperationForExecution(invoker, fixture.collectOperationId),
+      );
+      expect(
+        read.pipe(
+          Option.map((operation) => [
+            DateTime.toEpochMillis(operation.createdAt),
+            operation.provenance.actionInvocationId,
+            operation.provenance.actorPrincipalId,
+            operation.provenance.compositionRevision,
+          ]),
+        ),
+      ).toEqual(
+        Option.some([
+          stored?.created_at.getTime(),
+          stored?.action_invocation_id,
+          scope.principalId,
+          COMPOSITION_REVISION,
+        ]),
       );
     }),
   ),

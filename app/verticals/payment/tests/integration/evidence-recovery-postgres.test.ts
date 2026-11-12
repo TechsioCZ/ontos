@@ -456,9 +456,9 @@ it.live('#1151 Provider idempotency window has expired: recovery falls back to l
       const recovered = yield* Effect.gen(function* recoverAfterWindow() {
         yield* TestClock.setTime(admittedAt + 7_200_000);
         return yield* evidence.recover(request).pipe(
-          Effect.provideService(PaymentProviderReplayEvidencePort, {
+          Effect.provideService(PaymentProviderReplayEvidencePort, () => ({
             readGuarantee: () => Effect.succeedSome(proof),
-          }),
+          })),
         );
       }).pipe(Effect.provide(TestClock.layer()));
       expect(recovered).toMatchObject({
@@ -529,7 +529,7 @@ it.live(
               { idempotencyKey: key },
             )
             .pipe(
-              Effect.provideService(PaymentProviderReplayEvidencePort, {
+              Effect.provideService(PaymentProviderReplayEvidencePort, () => ({
                 readGuarantee: (target) => {
                   expect(target).toMatchObject({
                     binding: stripeBinding,
@@ -541,7 +541,7 @@ it.live(
                   });
                   return Effect.succeedSome(proof);
                 },
-              }),
+              })),
             );
 
         const first = assertion();

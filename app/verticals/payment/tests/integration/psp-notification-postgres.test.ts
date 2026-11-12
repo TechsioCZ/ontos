@@ -78,11 +78,10 @@ const AMOUNT = { amountMinor: 100_000, currency: 'CZK' } as const;
 
 const storesLayer = Layer.mergeAll(
   ProviderDispatchLedgerLive,
-  ProviderEvidenceStoreLive,
   ProviderNotificationStoreLive,
   GatewayBindingResolverLive,
   ProviderEvidenceSubmitterLive,
-).pipe(Layer.provide(nodeCryptoLayer));
+).pipe(Layer.provideMerge(ProviderEvidenceStoreLive), Layer.provide(nodeCryptoLayer));
 
 const NO_COMPLETION: OutboxWorkerLegalEntityScope['completionPublisher'] = {
   publish: () => Effect.die('Notification processing publishes no completion'),

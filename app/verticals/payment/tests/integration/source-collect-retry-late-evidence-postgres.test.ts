@@ -20,7 +20,7 @@ import {
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
 import type { PaymentBankAccountingReceiptBinding } from '../../shared/domain/payment-execution-binding.ts';
 import type { PaymentObservationFactKind } from '../../shared/domain/payment-vocabulary.ts';
-import { paymentUnavailableOwnerPortsLive } from '../../api/payment-production-layers.ts';
+import { paymentUnavailableOwnerPortsLive } from '../support/unavailable-owner-ports.fixture.ts';
 import { startPaymentCollectionAction } from '../../src/actions/start-payment-collection.action.ts';
 import { paymentRegistration } from '../../vertical.registration.ts';
 import { makeTestScope } from './database-fixture.ts';

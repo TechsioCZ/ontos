@@ -12,6 +12,7 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { GopayOAuthTokenLive } from '../integrations/gopay/gopay-oauth-token.ts';
 import { ProviderCredentialStoreLive } from '../integrations/psp/credentials-live.ts';
+import { ProviderEvidenceStoreLive } from '../integrations/psp/evidence-store-live.ts';
 import { GatewayProviderServicesLive } from '../integrations/psp/gateway-adapters-live.ts';
 import { ProviderHttpLive } from '../integrations/psp/provider-http-live.ts';
 import { outboxWorkers } from '../workers/index.ts';
@@ -38,12 +39,13 @@ const providerHttpClientLive = Layer.effect(
   }),
 ).pipe(Layer.provide(noStoreManualRedirectFetchLive));
 
-const providerSeamLive = Layer.mergeAll(ProviderHttpLive, ProviderCredentialStoreLive).pipe(
+/** The provider HTTP seam and the credential store; credentials are read lazily, never while building. */
+export const providerSeamLive = Layer.mergeAll(ProviderHttpLive, ProviderCredentialStoreLive).pipe(
   Layer.provide(providerHttpClientLive),
 );
 
 /** One GoPay token cache per process, shared by every GoPay call of this host. */
-const gatewayProviderServicesLive = GatewayProviderServicesLive.pipe(
+export const gatewayProviderServicesLive = GatewayProviderServicesLive.pipe(
   Layer.provide(GopayOAuthTokenLive),
   Layer.provide(providerSeamLive),
 );
@@ -58,6 +60,7 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     ),
     outboxWorkerDefinitionLayer,
   ).pipe(
+    Layer.provideMerge(ProviderEvidenceStoreLive),
     Layer.provide(gatewayProviderServicesLive),
     Layer.provide(outboxWorkerRepositoryLive),
     Layer.provide(outboxWorkerCorePersistenceLive),

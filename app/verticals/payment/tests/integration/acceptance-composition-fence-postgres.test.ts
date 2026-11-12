@@ -52,7 +52,7 @@ import {
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { makePaymentApiRuntime } from '../../api/index.ts';
-import { paymentUnavailableOwnerPortsLive } from '../../api/payment-production-layers.ts';
+import { paymentUnavailableOwnerPortsLive } from '../support/unavailable-owner-ports.fixture.ts';
 import type { StartPaymentCollectionPayloadSchema } from '../../shared/actions/start-payment-collection.ts';
 import type { CurrentPaymentRequestSchema } from '../../shared/apis/current-payment.ts';
 import type { PaymentHistoryRequestSchema } from '../../shared/apis/payment-history.ts';

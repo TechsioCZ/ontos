@@ -434,6 +434,7 @@ const recoverWith = (script: Script, message: RecoveryRequested) => {
         rows[index] = updated;
         return updated;
       }),
+    pinSubmissionExecutor: () => Effect.die('The recovery fixture submits through a scripted submitter'),
   });
   const submitter = Layer.succeed(ProviderEvidenceSubmitter, {
     submit: (submission) =>
