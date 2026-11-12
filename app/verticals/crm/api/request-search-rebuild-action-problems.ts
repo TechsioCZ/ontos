@@ -22,8 +22,6 @@ import {
 import type { RequestSearchRebuildActionProblem } from '../shared/apis/request-search-rebuild-action.ts';
 import { requestSearchRebuildAction } from '../src/actions/request-search-rebuild.action.ts';
 
-type DomainError = typeof requestSearchRebuildAction.descriptor.domainErrorSchema.Type;
-
 type ProblemOf<Tag extends RequestSearchRebuildActionProblem['_tag']> = Extract<
   RequestSearchRebuildActionProblem,
   { readonly _tag: Tag }
@@ -176,9 +174,8 @@ const mapCoreProblem = (error: ActionCoreError): RequestSearchRebuildActionProbl
 
 const isDomainError = Schema.is(requestSearchRebuildAction.descriptor.domainErrorSchema);
 /** The Action declares no domain errors (`Schema.Never`), so only Core problems reach the transport. */
-export const mapRequestSearchRebuildActionProblem = (
-  error: ActionCoreError | DomainError,
-): RequestSearchRebuildActionProblem => (isDomainError(error) ? absurd(error) : mapCoreProblem(error));
+export const mapRequestSearchRebuildActionProblem = (error: ActionCoreError): RequestSearchRebuildActionProblem =>
+  isDomainError(error) ? absurd(error) : mapCoreProblem(error);
 
 export const requestSearchRebuildActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   RequestSearchRebuildActionSchemaErrorMiddleware,
