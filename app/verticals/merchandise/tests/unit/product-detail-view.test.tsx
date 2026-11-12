@@ -12,6 +12,7 @@ import { createRoot } from 'react-dom/client';
 import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
 import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
 import { ProductDetailView } from '../../src/routes/[lang]/provoz/produkty/product-detail-dialog.tsx';
+import type { CompanyVat } from '../../src/routes/[lang]/provoz/produkty/product-tax-classification.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
 import { translateTaxCs } from './merchandise-translate.ts';
 
@@ -78,7 +79,7 @@ const companyRates: readonly TaxRateView[] = [
   rate({ code: CZ_VAT_REDUCED, effectiveFrom: '2020-01-01T00:00:00Z', ratePercent: 12 }),
 ];
 /** The rates the page passes in; a test replaces them. */
-let taxRates: readonly TaxRateView[] = companyRates;
+let vat: CompanyVat = { rates: companyRates, regime: 'VAT_PAYER' };
 
 /** The product the page passes in; a test replaces it to deliver a reloaded record. */
 let shown = product;
@@ -115,7 +116,7 @@ const mount = async () => {
           product={shown}
           revision={1}
           tab="detail"
-          taxRates={taxRates}
+          vat={vat}
         />,
       );
       await settle();
@@ -190,7 +191,7 @@ beforeEach(() => {
   navigation.reset = 0;
   navigation.status = 'idle';
   shown = product;
-  taxRates = companyRates;
+  vat = { rates: companyRates, regime: 'VAT_PAYER' };
 });
 
 afterEach(() => {
@@ -346,7 +347,7 @@ describe('VAT classification on the product editor', () => {
 
   it.effect('a classification the company has no rule for is offered disabled, with the reason', () =>
     Effect.gen(function* missingRule() {
-      taxRates = companyRates.filter((entry) => entry.code === CZ_VAT_STANDARD);
+      vat = { ...vat, rates: companyRates.filter((entry) => entry.code === CZ_VAT_STANDARD) };
       yield* Effect.promise(mount);
       expect(vatOptions()).toEqual([
         { disabled: false, label: 'Základní (21\u00A0%)', value: CZ_VAT_STANDARD },
@@ -359,7 +360,7 @@ describe('VAT classification on the product editor', () => {
 
   it.effect('a company Tax gives no rate at all shows that explicitly, never a number', () =>
     Effect.gen(function* noRates() {
-      taxRates = [];
+      vat = { ...vat, rates: [] };
       yield* Effect.promise(mount);
       expect(text()).toContain('Pro tuto firmu není nastavená žádná sazba DPH.');
       expect(vatOptions().map((option) => option.label)).toEqual([

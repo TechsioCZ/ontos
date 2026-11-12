@@ -551,6 +551,8 @@
         "reduced": "Reduced",
         "standard": "Standard"
       },
+      "nonPayer": "the company is not a VAT payer",
+      "nonPayerHint": "The company is not a VAT payer: it sells without VAT, the price including VAT equals the price excluding VAT.",
       "noRates": "No VAT rate is set for this company.",
       "notSet": "not set",
       "option": "{{name}} ({{rate}})",

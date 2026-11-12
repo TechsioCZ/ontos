@@ -40,7 +40,7 @@ import { loadProductRecord } from '../../provoz/produkty/product-reads.ts';
 import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts';
 import { ProductSearchCombobox } from '../../provoz/produkty/product-search.tsx';
 import { useTaxLabels } from '../../provoz/produkty/product-tax-classification.ts';
-import type { TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
+import type { CompanyVat } from '../../provoz/produkty/product-tax-classification.ts';
 import { DateTime } from 'effect';
 
 type Mutable<Value> = { -readonly [Key in keyof Value]: Value[Key] };
@@ -150,7 +150,7 @@ interface OrderEditFormProps {
   readonly products: readonly ProductRecord[];
   readonly revision: number;
   /** The company's VAT rates (current and scheduled); a new line's rate comes from its product's classification. */
-  readonly taxRates: readonly TaxRateView[];
+  readonly vat: CompanyVat;
 }
 
 /**
@@ -170,7 +170,7 @@ const useOrderEditForm = ({
   pickupBrand,
   products,
   revision,
-  taxRates,
+  vat,
 }: OrderEditFormProps) => {
   const { language, t } = useModernI18n();
   const taxLabels = useTaxLabels();
@@ -196,7 +196,7 @@ const useOrderEditForm = ({
   };
   const pickedVariants = activeVariants(pickedProduct);
   // A product whose classification has no rate in force cannot go on the order: the server snapshots that rate.
-  const pickedClassification = lineClassification(pickedProduct, taxRates, DateTime.nowUnsafe());
+  const pickedClassification = lineClassification(pickedProduct, vat, DateTime.nowUnsafe());
   const pickedRateMissing =
     pickedClassification !== null && pickedClassification.current === undefined
       ? taxLabels.rateMissing(pickedClassification.code)

@@ -25,13 +25,13 @@ import { useCommandFailure } from './product-form-labels.ts';
 import { useCommandInputGuard } from './command-input-guard.tsx';
 import { ProductTabSaveBar, useProductTabSave } from './product-tab-save.tsx';
 import type { ProductVariantDestination } from './product-variant-destination.ts';
-import type { TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
 import {
   DEFAULT_TAX_CLASSIFICATION,
   classificationChoice,
   rateAt,
   useTaxLabels,
 } from './product-tax-classification.ts';
+import type { CompanyVat } from './product-tax-classification.ts';
 
 const availabilityPresentation = {
   IN_STOCK: { label: 'Skladem', variant: 'success' },
@@ -245,28 +245,23 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
 };
 
 /** Gross price at the rate Tax gave the product's classification at `at`; none when that period is not published. */
-const grossAt = (
-  netMinor: number,
-  product: ProductRecord,
-  taxRates: readonly TaxRateView[],
-  at: DateTime.Utc,
-): number | undefined => {
-  const rate = rateAt(taxRates, product.taxClassificationCode, at);
+const grossAt = (netMinor: number, product: ProductRecord, vat: CompanyVat, at: DateTime.Utc): number | undefined => {
+  const rate = rateAt(vat, product.taxClassificationCode, at);
   return rate === undefined ? undefined : grossUnitPriceMinor(netMinor, rate.ratePercent);
 };
 
 export const VariantPriceHistory = ({
   product,
-  taxRates,
+  vat,
 }: {
   readonly product: ProductRecord;
-  readonly taxRates: readonly TaxRateView[];
+  readonly vat: CompanyVat;
 }) => {
   const { t } = useModernI18n();
   const variantRows = (product.variantRecords ?? []).flatMap((variant) =>
     variant.priceHistory.map((entry, index) => ({
       at: entry.effectiveFrom,
-      gross: grossAt(entry.priceMinor, product, taxRates, entry.effectiveFrom),
+      gross: grossAt(entry.priceMinor, product, vat, entry.effectiveFrom),
       key: `${variant.id}-${index}`,
       name: `${variant.name} · ${variant.sku}`,
       net: entry.priceMinor,
@@ -277,7 +272,7 @@ export const VariantPriceHistory = ({
     ...variantRows,
     ...product.priceHistory.map((entry, index) => ({
       at: entry.effectiveFrom,
-      gross: grossAt(entry.priceMinor, product, taxRates, entry.effectiveFrom),
+      gross: grossAt(entry.priceMinor, product, vat, entry.effectiveFrom),
       key: `product-${index}`,
       name: `Základní cena produktu · ${product.sku}`,
       net: entry.priceMinor,
@@ -496,7 +491,7 @@ const renderVariantPriceTiers = (record: VariantRecord | undefined, unit: Produc
   );
 };
 
-export const VariantsPanel = (props: PanelProps & { readonly taxRates: readonly TaxRateView[] }) => {
+export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) => {
   const { t } = useModernI18n();
   const {
     addDraft,
@@ -525,7 +520,7 @@ export const VariantsPanel = (props: PanelProps & { readonly taxRates: readonly 
   // The product's classification with the rate Tax gives it today; it names the gross preview of an edited price.
   // Staff records always name the classification; only storefront records omit it.
   const classification = classificationChoice(
-    props.taxRates,
+    props.vat,
     product.taxClassificationCode ?? DEFAULT_TAX_CLASSIFICATION,
     DateTime.nowUnsafe(),
   );
@@ -753,7 +748,7 @@ export const VariantsPanel = (props: PanelProps & { readonly taxRates: readonly 
           revision={revision}
         />
       )}
-      {(product.variantRecords ?? []).length > 0 && <VariantPriceHistory product={product} taxRates={props.taxRates} />}
+      {(product.variantRecords ?? []).length > 0 && <VariantPriceHistory product={product} vat={props.vat} />}
     </div>
   );
 };

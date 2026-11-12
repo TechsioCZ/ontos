@@ -5,7 +5,7 @@
 // i18n runtime and the router blocker are replaced besides.
 import { saveLabelsFor } from '@app/admin-ui';
 import { CZ_VAT_REDUCED, CZ_VAT_STANDARD, TaxRateViewSchema } from '@app/shared-contracts/cz-vat-classifications';
-import type { TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
+import type { CompanyVat } from '../../src/routes/[lang]/provoz/produkty/product-tax-classification.ts';
 import { Effect, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
@@ -99,8 +99,9 @@ const reducedProduct: ProductRecord = decodeProduct({ ...productInput, taxClassi
 const rate = Schema.decodeSync(TaxRateViewSchema);
 const standardRate = rate({ code: CZ_VAT_STANDARD, effectiveFrom: '2020-01-01T00:00:00Z', ratePercent: 21 });
 const reducedRate = rate({ code: CZ_VAT_REDUCED, effectiveFrom: '2020-01-01T00:00:00Z', ratePercent: 12 });
-/** The company's rates the page passes in; a test replaces them. */
-let taxRates: readonly TaxRateView[] = [standardRate, reducedRate];
+/** The company's VAT the page passes in (a payer with both rates); a test replaces it. */
+const payer: CompanyVat = { rates: [standardRate, reducedRate], regime: 'VAT_PAYER' };
+let vat: CompanyVat = payer;
 
 const customers: CustomerDirectory = {
   active: [{ companyId: '12345678', name: 'Kavárna Dolce', partyId: 'party-1', status: 'ACTIVE' }],
@@ -133,7 +134,7 @@ const mount = async () => {
         onOpenChange={constVoid}
         open
         revision={4}
-        taxRates={taxRates}
+        vat={vat}
       />,
     );
     await settle();
@@ -175,7 +176,7 @@ beforeEach(() => {
   productReads.length = 0;
   offered.current = product;
   created.length = 0;
-  taxRates = [standardRate, reducedRate];
+  vat = payer;
   rstest.mocked(executeManageCatalog).mockImplementation(() => Effect.succeed({ entityIds: [], revision: 5 }));
 });
 
@@ -252,10 +253,23 @@ it.effect('standard 21 % keeps the arithmetic the order editor has always shown'
 
 it.effect('a product whose classification has no rate in force says so and cannot be ordered', () =>
   Effect.promise(async () => {
-    taxRates = [standardRate];
+    vat = { ...payer, rates: [standardRate] };
     await fillOneLine(reducedProduct);
     expect(text()).toContain('DPH Snížená (není nastaveno)');
     expect(buttonNamed(labels.save).disabled).toBe(true);
     expect(sent()).toEqual([]);
+  }),
+);
+
+it.effect('a company that is not a VAT payer orders at 0 %: the line says so and the order can be saved', () =>
+  Effect.promise(async () => {
+    vat = { rates: [], regime: 'NON_PAYER' };
+    await fillOneLine(product);
+    expect(text()).toContain('DPH Základní (firma není plátce DPH)');
+    expect(text()).not.toContain('není nastaveno');
+    expect(buttonNamed(labels.save).disabled).toBe(false);
+    await click(labels.save);
+    await waitUntil(() => sent().length === 1);
+    expect(sent()).toEqual([expect.objectContaining({ _tag: 'CreateOrder' })]);
   }),
 );

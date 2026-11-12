@@ -19,7 +19,7 @@ import type { SaveLabels, SaveOutcome, SaveState, UnsavedChangesGuard } from '@a
 import { useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit } from '../../../../../shared/domain/merchandise-model.ts';
-import type { CzVatClassificationCode, TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
+import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import { sameSku } from '../../../../../shared/domain/merchandise-model.ts';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { productCommandOutcome, runCommand } from './products-api.ts';
@@ -39,6 +39,7 @@ import {
   tooLongMessage,
 } from './product-form-validation.ts';
 import { DEFAULT_TAX_CLASSIFICATION } from './product-tax-classification.ts';
+import type { CompanyVat } from './product-tax-classification.ts';
 import { TaxClassificationSelect } from './product-tax-classification-select.tsx';
 
 export interface FormDialogProps {
@@ -243,10 +244,10 @@ export const CreateProductDialog = ({
   onReload,
   open,
   revision,
-  taxRates,
+  vat,
 }: FormDialogProps & {
   /** The company's VAT rates from the staff records read; they name the classifications the select offers. */
-  readonly taxRates: readonly TaxRateView[];
+  readonly vat: CompanyVat;
 }) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
@@ -370,8 +371,8 @@ export const CreateProductDialog = ({
             />
             <TaxClassificationSelect
               onChange={(taxClassificationCode) => update({ taxClassificationCode })}
-              taxRates={taxRates}
               value={draft.taxClassificationCode}
+              vat={vat}
             />
           </div>
           <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">

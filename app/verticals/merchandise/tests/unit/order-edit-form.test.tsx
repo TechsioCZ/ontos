@@ -3,7 +3,7 @@
 // a question before unsaved changes are left. Only the generated clients, the i18n runtime and the router blocker are
 // replaced.
 import { CZ_VAT_REDUCED, CZ_VAT_STANDARD, TaxRateViewSchema } from '@app/shared-contracts/cz-vat-classifications';
-import type { TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
+import type { CompanyVat } from '../../src/routes/[lang]/provoz/produkty/product-tax-classification.ts';
 import { Effect, Option, Schema } from 'effect';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import { act, createElement } from 'react';
@@ -91,7 +91,8 @@ const rate = Schema.decodeSync(TaxRateViewSchema);
 const standardRate = rate({ code: CZ_VAT_STANDARD, effectiveFrom: '2020-01-01T00:00:00Z', ratePercent: 23 });
 const reducedRate = rate({ code: CZ_VAT_REDUCED, effectiveFrom: '2020-01-01T00:00:00Z', ratePercent: 12 });
 /** The company's rates the page passes in; a test replaces them. */
-let taxRates: readonly TaxRateView[] = [standardRate, reducedRate];
+const payer: CompanyVat = { rates: [standardRate, reducedRate], regime: 'VAT_PAYER' };
+let vat: CompanyVat = payer;
 
 const beans: ProductRecord = Schema.decodeSync(ProductRecordSchema)({
   active: true,
@@ -158,7 +159,7 @@ const mount = async (): Promise<View> => {
         order={orderOf({ updatedAt: opened })}
         products={[]}
         revision={7}
-        taxRates={taxRates}
+        vat={vat}
       />,
     );
     await settle();
@@ -233,7 +234,7 @@ beforeEach(() => {
   rstest.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   rstest.resetAllMocks();
   offered.current = beans;
-  taxRates = [standardRate, reducedRate];
+  vat = payer;
   rstest.mocked(executeManageCatalog).mockReturnValue(Effect.succeed({ entityIds: [], revision: 8 }));
   rstest
     .mocked(executeRecords)
@@ -346,11 +347,25 @@ describe('VAT of the order lines', () => {
 
   it.effect('a product whose classification has no rate in force cannot be added, and the form says why', () =>
     Effect.gen(function* missing() {
-      taxRates = [standardRate];
+      vat = { ...payer, rates: [standardRate] };
       yield* Effect.promise(mount);
       yield* Effect.promise(() => click(button('pick product')));
       expect(text()).toContain('Sazba DPH „Snížená“ není pro tuto firmu nastavená, produkt nelze přidat.');
       expect(button('Přidat').disabled).toBe(true);
+    }),
+  );
+
+  it.effect('a company that is not a VAT payer adds a product at 0 % and the line says so', () =>
+    Effect.gen(function* nonPayer() {
+      vat = { rates: [], regime: 'NON_PAYER' };
+      yield* Effect.promise(mount);
+      yield* Effect.promise(() => click(button('pick product')));
+      expect(button('Přidat').disabled).toBe(false);
+      yield* Effect.promise(() => click(button('Přidat')));
+      expect(text()).toContain('merchandise.pages.orders.detail.lineVat Snížená (0 %)');
+      // 2,42 Kč for the order's line, plus 8 Kč net and no VAT for the new one.
+      expect(text()).toContain('10,42 Kč');
+      expect(text()).not.toContain('není nastaveno');
     }),
   );
 });

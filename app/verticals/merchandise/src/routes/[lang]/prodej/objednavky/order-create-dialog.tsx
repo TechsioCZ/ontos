@@ -29,7 +29,7 @@ import { createOrder, isRevisionConflict } from './orders-records.ts';
 import { OrderLineEditor } from './order-line-editor.tsx';
 import { activeVariants, lineClassification, lineProduct } from './order-line-draft.ts';
 import { useTaxLabels } from '../../provoz/produkty/product-tax-classification.ts';
-import type { TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
+import type { CompanyVat } from '../../provoz/produkty/product-tax-classification.ts';
 import type { DraftLine, DraftLinePatch } from './order-line-draft.ts';
 
 const key = (path: string) => `merchandise.pages.orders.${path}`;
@@ -92,7 +92,7 @@ interface OrderCreateDialogProps {
   readonly open: boolean;
   readonly revision: number;
   /** The company's VAT rates from the staff records read; each line's VAT comes from its product's classification. */
-  readonly taxRates: readonly TaxRateView[];
+  readonly vat: CompanyVat;
 }
 
 export const OrderCreateDialog = ({
@@ -101,7 +101,7 @@ export const OrderCreateDialog = ({
   onOpenChange,
   open,
   revision,
-  taxRates,
+  vat,
 }: OrderCreateDialogProps) => {
   const { language, t } = useModernI18n();
   const taxLabels = useTaxLabels();
@@ -149,7 +149,7 @@ export const OrderCreateDialog = ({
         return t(key('create.errorVariant'));
       }
       // The server snapshots the rate Tax gives the classification; without one in force the line cannot be ordered.
-      if (lineClassification(product, taxRates, now)?.current === undefined) {
+      if (lineClassification(product, vat, now)?.current === undefined) {
         return taxLabels.rateMissing(product.taxClassificationCode);
       }
       return isValidQuantity(line.quantity) ? undefined : t(key('create.errorQuantity'));
@@ -160,7 +160,7 @@ export const OrderCreateDialog = ({
   const priced = draft.lines.flatMap((line) => {
     const product = lineProduct(line);
     const variant = product?.variantRecords?.find((entry) => entry.id === line.variantId);
-    const vatRate = lineClassification(product, taxRates, now)?.current?.ratePercent;
+    const vatRate = lineClassification(product, vat, now)?.current?.ratePercent;
     return product === null || vatRate === undefined || !isValidQuantity(line.quantity)
       ? []
       : [lineAmounts(variant?.priceMinor ?? product.currentPriceMinor, line.quantity, vatRate)];
@@ -295,7 +295,7 @@ export const OrderCreateDialog = ({
                 onChange={(patch) => updateLine(line.key, patch)}
                 onRecord={(productId, record) => receiveRecord(line.key, productId, record)}
                 onRemove={() => removeLine(line.key)}
-                taxRates={taxRates}
+                vat={vat}
               />
             ))}
             <div>

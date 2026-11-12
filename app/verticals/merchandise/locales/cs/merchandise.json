@@ -555,6 +555,8 @@
         "reduced": "Snížená",
         "standard": "Základní"
       },
+      "nonPayer": "firma není plátce DPH",
+      "nonPayerHint": "Firma není plátce DPH: prodává bez DPH, cena s DPH je rovna ceně bez DPH.",
       "noRates": "Pro tuto firmu není nastavená žádná sazba DPH.",
       "notSet": "není nastaveno",
       "option": "{{name}} ({{rate}})",

@@ -1,4 +1,5 @@
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { companyVatOf } from '../../provoz/produkty/product-tax-classification.ts';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -676,7 +677,7 @@ const OrdersPageContent = (props: OrdersPageContentProps) => {
           onOpenChange={setCreateOpen}
           open={createOpen}
           revision={ready?.records.revision ?? 0}
-          taxRates={ready?.records.taxRates ?? []}
+          vat={companyVatOf(ready?.records)}
         />
 
         <OrderDetailDialog

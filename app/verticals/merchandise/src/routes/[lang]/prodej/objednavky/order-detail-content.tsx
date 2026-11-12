@@ -596,7 +596,7 @@ export const OrderDetailContent = ({
 }: OrderDetailContentProps) => {
   const { language, t } = useModernI18n();
   const taxLabels = useTaxLabels();
-  const { movesStock: orderMovesStock, order, products, taxRates } = detail;
+  const { movesStock: orderMovesStock, order, products, vat } = detail;
   const pickupBrand = pickupBrandOf(products, brand);
   const { showCleanup, showCustomerConversion, showEdit, storefront } = orderDetailAffordances(
     order,
@@ -627,7 +627,7 @@ export const OrderDetailContent = ({
           pickupBrand={pickupBrand}
           products={products}
           revision={revision}
-          taxRates={taxRates}
+          vat={vat}
         />
       </div>
     );

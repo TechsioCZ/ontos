@@ -21,7 +21,7 @@ import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { useState } from 'react';
 import type { CategoryTrail, ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit } from '../../../../../shared/domain/merchandise-model.ts';
-import type { CzVatClassificationCode, TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
+import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import { orderLineVatMinor } from '../../../../../shared/domain/order-totals.ts';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { useProductDetailDraft } from './product-detail-save.ts';
@@ -37,6 +37,7 @@ import {
 } from './product-form-validation.ts';
 import { useProductLabel } from './product-form-labels.ts';
 import { rateAt, useTaxLabels } from './product-tax-classification.ts';
+import type { CompanyVat } from './product-tax-classification.ts';
 import { TaxClassificationSelect } from './product-tax-classification-select.tsx';
 import { MovementForm, MovementsTable } from './product-movements.tsx';
 import { EMPTY_MOVEMENT_DRAFT, isMovementDraftDirty } from './product-movement-draft.ts';
@@ -83,10 +84,10 @@ export interface ProductDetailViewProps {
   readonly storefrontOrigin?: string;
   /** The active tab, owned by the page so that it survives the remount after a product reload. */
   readonly tab: ProductDetailTab;
-  /** The company's VAT rates from the staff records read (current and scheduled periods); Tax owns them. */
-  readonly taxRates: readonly TaxRateView[];
   /** The opaque variant target from the URL; resolution happens against the current authorized product. */
   readonly variantId?: string | undefined;
+  /** The company's VAT rates from the staff records read (current and scheduled periods); Tax owns them. */
+  readonly vat: CompanyVat;
 }
 
 /** Writable subset of ProductPatch, filled field by field so only changed values are sent. */
@@ -101,16 +102,10 @@ export interface ProductMarketsAccess {
 const NO_MARKETS: ProductMarketsAccess = { canManage: false, entries: [] };
 const REQUIRED_MESSAGE_KEY = 'validation.required';
 
-const PriceHistory = ({
-  product,
-  taxRates,
-}: {
-  readonly product: ProductRecord;
-  readonly taxRates: readonly TaxRateView[];
-}) => {
+const PriceHistory = ({ product, vat }: { readonly product: ProductRecord; readonly vat: CompanyVat }) => {
   const k = useProductLabel();
   if ((product.variantRecords ?? []).length > 0) {
-    return <VariantPriceHistory product={product} taxRates={taxRates} />;
+    return <VariantPriceHistory product={product} vat={vat} />;
   }
   const rows = product.priceHistory.toSorted(
     (left, right) => DateTime.toEpochMillis(right.effectiveFrom) - DateTime.toEpochMillis(left.effectiveFrom),
@@ -149,10 +144,10 @@ interface DetailFormProps {
   /** The form was submitted (Enter in a field): the same one save as the Save button. */
   readonly onSave: () => void;
   readonly product: ProductRecord;
-  readonly taxRates: readonly TaxRateView[];
+  readonly vat: CompanyVat;
 }
 
-const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, taxRates }: DetailFormProps) => {
+const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, vat }: DetailFormProps) => {
   const k = useProductLabel();
   const taxLabels = useTaxLabels();
   const disabled = !canWrite;
@@ -184,7 +179,7 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, taxRates 
   const priceMinor = Math.round(priceCzk * 100);
   const draftInvalid = detailDraftInvalid(draft);
   // The gross preview uses the rate Tax gives the classification today; without one there is no gross price to show.
-  const vatRate = rateAt(taxRates, taxClassificationCode, DateTime.nowUnsafe())?.ratePercent;
+  const vatRate = rateAt(vat, taxClassificationCode, DateTime.nowUnsafe())?.ratePercent;
   const grossMinor =
     vatRate !== undefined && Number.isFinite(priceMinor) && priceMinor >= 0
       ? priceMinor + orderLineVatMinor({ quantity: 1, unitPriceMinor: priceMinor, vatRate })
@@ -245,8 +240,8 @@ const DetailForm = ({ canWrite, draft, onDraftChange, onSave, product, taxRates 
         <TaxClassificationSelect
           disabled={disabled}
           onChange={setTaxClassification}
-          taxRates={taxRates}
           value={taxClassificationCode}
+          vat={vat}
         />
       </div>
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
@@ -440,8 +435,8 @@ export const ProductDetailView = ({
   revision,
   storefrontOrigin,
   tab,
-  taxRates,
   variantId,
+  vat,
 }: ProductDetailViewProps) => {
   const k = useProductLabel();
   const { language } = useModernI18n();
@@ -547,7 +542,7 @@ export const ProductDetailView = ({
               onDraftChange={updateDraft}
               onSave={handleSave}
               product={product}
-              taxRates={taxRates}
+              vat={vat}
             />
             {/* The form's footer: the one Save button of the product fields, with the state of the draft. */}
             {canWrite && (
@@ -564,8 +559,8 @@ export const ProductDetailView = ({
               onStockCommitted={followStockCommit}
               product={product}
               revision={revision}
-              taxRates={taxRates}
               variantDestination={variantDestination}
+              vat={vat}
             />
           </Tabs.Content>
           <Tabs.Content className="flex flex-col gap-250 py-200" value="eshop">
@@ -607,7 +602,7 @@ export const ProductDetailView = ({
             />
           </Tabs.Content>
           <Tabs.Content className="py-200" value="prices">
-            <PriceHistory product={product} taxRates={taxRates} />
+            <PriceHistory product={product} vat={vat} />
           </Tabs.Content>
           <Tabs.Content className="flex flex-col gap-200 py-200" value="movements">
             <MovementsTable movements={movements} variants={product.variantRecords} />

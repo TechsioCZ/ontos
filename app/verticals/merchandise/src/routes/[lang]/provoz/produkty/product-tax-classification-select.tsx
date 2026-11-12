@@ -1,16 +1,17 @@
 import { SelectTemplate } from '@app/admin-ui/select-template';
-import type { CzVatClassificationCode, TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
+import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import { DateTime } from 'effect';
 import { selectItem } from '../../../../ui/select-item.ts';
 import { useProductLabel } from './product-form-labels.ts';
 import { choiceAvailable, classificationChoices, noTaxRates, useTaxLabels } from './product-tax-classification.ts';
+import type { CompanyVat } from './product-tax-classification.ts';
 
 interface TaxClassificationSelectProps {
   readonly disabled?: boolean;
   readonly onChange: (code: CzVatClassificationCode) => void;
-  /** The selected company's rates from the staff records read (current and scheduled periods). */
-  readonly taxRates: readonly TaxRateView[];
   readonly value: CzVatClassificationCode;
+  /** The selected company's rates from the staff records read (current and scheduled periods). */
+  readonly vat: CompanyVat;
 }
 
 /**
@@ -18,19 +19,15 @@ interface TaxClassificationSelectProps {
  * company has no rule for is offered disabled and says so; a scheduled change shows under the select. A company Tax
  * gives no rate at all keeps the select closed and says that no VAT is set.
  */
-export const TaxClassificationSelect = ({
-  disabled = false,
-  onChange,
-  taxRates,
-  value,
-}: TaxClassificationSelectProps) => {
+export const TaxClassificationSelect = ({ disabled = false, onChange, value, vat }: TaxClassificationSelectProps) => {
   const k = useProductLabel();
   const labels = useTaxLabels();
-  const choices = classificationChoices(taxRates, DateTime.nowUnsafe());
+  const choices = classificationChoices(vat, DateTime.nowUnsafe());
   const selected = choices.find((choice) => choice.code === value);
-  const none = noTaxRates(taxRates);
+  const none = noTaxRates(vat);
   const scheduledHint = selected === undefined ? undefined : labels.scheduled(selected);
-  const hint = none ? labels.noRates : scheduledHint;
+  const regimeHint = vat.regime === 'NON_PAYER' ? labels.nonPayerHint : scheduledHint;
+  const hint = none ? labels.noRates : regimeHint;
   return (
     <SelectTemplate
       disabled={disabled || none}

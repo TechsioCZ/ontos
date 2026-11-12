@@ -13,7 +13,7 @@ import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts'
 import { ProductSearchCombobox } from '../../provoz/produkty/product-search.tsx';
 import { activeVariants, lineClassification, lineProduct } from './order-line-draft.ts';
 import { useTaxLabels } from '../../provoz/produkty/product-tax-classification.ts';
-import type { TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
+import type { CompanyVat } from '../../provoz/produkty/product-tax-classification.ts';
 import { DateTime } from 'effect';
 import type { DraftLine, DraftLinePatch } from './order-line-draft.ts';
 
@@ -28,7 +28,7 @@ interface OrderLineEditorProps {
   readonly onRecord: (productId: ProductRecord['id'], record: ProductRecordState) => void;
   readonly onRemove: () => void;
   /** The company's VAT rates from the staff records read; the line's VAT comes from its product's classification. */
-  readonly taxRates: readonly TaxRateView[];
+  readonly vat: CompanyVat;
 }
 
 /**
@@ -42,12 +42,12 @@ export const OrderLineEditor = ({
   onChange,
   onRecord,
   onRemove,
-  taxRates,
+  vat,
 }: OrderLineEditorProps) => {
   const { t } = useModernI18n();
   const taxLabels = useTaxLabels();
   const product = lineProduct(line);
-  const classification = lineClassification(product, taxRates, DateTime.nowUnsafe());
+  const classification = lineClassification(product, vat, DateTime.nowUnsafe());
   const variants = activeVariants(product);
   const variant = variants.find((entry) => entry.id === line.variantId);
   return (

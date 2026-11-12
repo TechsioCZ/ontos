@@ -2,8 +2,7 @@ import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { VariantId, VariantRecord } from '../../../../../shared/domain/merchandise-model.ts';
 import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts';
 import { classificationChoice } from '../../provoz/produkty/product-tax-classification.ts';
-import type { ClassificationChoice } from '../../provoz/produkty/product-tax-classification.ts';
-import type { TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
+import type { ClassificationChoice, CompanyVat } from '../../provoz/produkty/product-tax-classification.ts';
 import type { DateTime } from 'effect';
 
 export interface DraftLine {
@@ -35,9 +34,9 @@ export const activeVariants = (product: ProductRecord | null): readonly VariantR
  */
 export const lineClassification = (
   product: ProductRecord | null,
-  taxRates: readonly TaxRateView[],
+  vat: CompanyVat,
   now: DateTime.Utc,
 ): ClassificationChoice | null =>
   product === null || product.taxClassificationCode === undefined
     ? null
-    : classificationChoice(taxRates, product.taxClassificationCode, now);
+    : classificationChoice(vat, product.taxClassificationCode, now);
