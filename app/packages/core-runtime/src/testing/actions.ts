@@ -112,6 +112,8 @@ const READ_GATEWAY_SCOPE_SQL =
   "select current_user::text as role, coalesce(trust.current_tenant_id()::text, '') as tenant_id, coalesce(trust.current_legal_entity_id()::text, '') as legal_entity_id";
 const INSTALL_TEST_SCOPE_SQL =
   "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)";
+const INSTALL_AND_READ_TEST_SCOPE_SQL =
+  "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id";
 const READ_TEST_SCOPE_SQL =
   "select current_user::text as role, current_setting('ontos.tenant_id', true) as tenant_id, current_setting('ontos.legal_entity_id', true) as legal_entity_id";
 const idempotencyScopeSchema = Schema.Tuple([Schema.String, Schema.String, Schema.String, Schema.String]);
@@ -434,6 +436,12 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
         scope.role = role.value;
         return {
           rows: [{ legal_entity_id: scope.legalEntityId, tenant_id: scope.tenantId }],
+        };
+      } else if (statement === INSTALL_AND_READ_TEST_SCOPE_SQL) {
+        // A session-setting role installs its scope and reads back the connected role in one statement.
+        [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(values);
+        return {
+          rows: [{ legal_entity_id: scope.legalEntityId, role: scope.role, tenant_id: scope.tenantId }],
         };
       } else if (statement === INSTALL_TEST_SCOPE_SQL) {
         [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(values);
