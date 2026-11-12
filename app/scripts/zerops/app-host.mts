@@ -460,8 +460,13 @@ const runChild = (name: string, command: string, args: readonly string[], cwd: s
   );
 
 const PROVISIONING_SCRIPT = path.join(workspaceRoot, 'scripts/zerops/provision-module-credentials.mts');
-const PROVISIONING_ATTEMPTS = 3;
-const PROVISIONING_BUDGET = Duration.minutes(2);
+/**
+ * The bound of one provisioning pass. A boot runs one pass before it verifies release access and publishes, so this is
+ * all the time module credentials can add to a deploy (Zerops allows the whole start 15 minutes, `zerops.yaml`
+ * `readinessCheck.failureTimeout`). A pass that fails or overruns leaves the callers without a key: their delegated
+ * calls fail closed, the host publishes anyway, and the healing loop retries a minute later.
+ */
+export const PROVISIONING_BUDGET = Duration.minutes(2);
 
 /**
  * Runs one finite child to a successful exit and returns what it wrote to its private channel (file descriptor 3),
@@ -516,59 +521,68 @@ const BOOT_ID = randomUUID();
 
 /**
  * One provisioning pass for the given callers of this host's release, with the Shell's settings: each key is attested
- * for its module's build and the release's revision. It never fails the host: a pass that still cannot run after a
- * few attempts leaves those callers without a key (their delegated calls fail closed), the host says so loudly, and
- * the background healing retries.
+ * for its module's build and the release's revision. It never fails the host and never retries: a pass that cannot
+ * run within `PROVISIONING_BUDGET` leaves those callers without a key (their delegated calls fail closed), the host
+ * says so loudly, and the background healing retries.
  */
-export const provisionModuleCredentialsForRelease = (input: {
-  readonly appIds: readonly string[];
-  readonly operationId: string;
-  readonly release: HostRelease;
-  readonly shellEnvironment: ChildEnvironment;
-}) => {
-  const builds = input.appIds.flatMap((appId) => {
-    const buildMarker = input.release.buildMarkers[appId];
-    return buildMarker === undefined ? [] : [`${appId}=${buildMarker}`];
-  });
-  return builds.length === 0
-    ? Effect.succeed(noProvisionedCredentials(input.appIds))
-    : captureChannel(
-        'module-credentials',
-        [
-          PROVISIONING_SCRIPT,
-          'issue',
-          `--operation=${input.operationId}`,
-          `--host=${HOST_ID}`,
-          `--boot=${BOOT_ID}`,
-          `--revision=${input.release.compositionRevision}`,
-          ...builds,
-        ],
-        input.shellEnvironment,
-      ).pipe(
-        Effect.flatMap((output) =>
-          Schema.decodeEffect(ProvisioningOutputJsonSchema)(output.trim()).pipe(
-            Effect.mapError(() => failure('the module credential provisioning output is malformed')),
+export const provisionModuleCredentialsForReleaseWith =
+  <Requirements,>(
+    capture: (
+      name: string,
+      args: readonly string[],
+      env: ChildEnvironment,
+    ) => Effect.Effect<string, AppHostError, Requirements>,
+  ) =>
+  (input: {
+    readonly appIds: readonly string[];
+    readonly operationId: string;
+    readonly release: HostRelease;
+    readonly shellEnvironment: ChildEnvironment;
+  }) => {
+    const builds = input.appIds.flatMap((appId) => {
+      const buildMarker = input.release.buildMarkers[appId];
+      return buildMarker === undefined ? [] : [`${appId}=${buildMarker}`];
+    });
+    return builds.length === 0
+      ? Effect.succeed(noProvisionedCredentials(input.appIds))
+      : capture(
+          'module-credentials',
+          [
+            PROVISIONING_SCRIPT,
+            'issue',
+            `--operation=${input.operationId}`,
+            `--host=${HOST_ID}`,
+            `--boot=${BOOT_ID}`,
+            `--revision=${input.release.compositionRevision}`,
+            ...builds,
+          ],
+          input.shellEnvironment,
+        ).pipe(
+          Effect.flatMap((output) =>
+            Schema.decodeEffect(ProvisioningOutputJsonSchema)(output.trim()).pipe(
+              Effect.mapError(() => failure('the module credential provisioning output is malformed')),
+            ),
           ),
-        ),
-        Effect.timeoutOrElse({
-          duration: PROVISIONING_BUDGET,
-          orElse: () => Effect.fail(failure('module credential provisioning exceeded its time budget')),
-        }),
-        Effect.retry({ schedule: Schedule.exponential(Duration.seconds(2)), times: PROVISIONING_ATTEMPTS - 1 }),
-        Effect.tap((output) =>
-          output.failedAppIds.length === 0
-            ? Console.log(`[app-host] module credentials issued for ${Object.keys(output.credentials).join(', ')}`)
-            : Console.error(
-                `[app-host] MODULE CREDENTIALS UNAVAILABLE for ${output.failedAppIds.join(', ')}; their delegated calls fail closed until a retry succeeds`,
-              ),
-        ),
-        Effect.catchTag('AppHostError', () =>
-          Console.error(
-            `[app-host] MODULE CREDENTIAL PROVISIONING FAILED; delegated calls of ${input.appIds.join(', ')} fail closed until a retry succeeds`,
-          ).pipe(Effect.as(noProvisionedCredentials(input.appIds))),
-        ),
-      );
-};
+          Effect.timeoutOrElse({
+            duration: PROVISIONING_BUDGET,
+            orElse: () => Effect.fail(failure('module credential provisioning exceeded its time budget')),
+          }),
+          Effect.tap((output) =>
+            output.failedAppIds.length === 0
+              ? Console.log(`[app-host] module credentials issued for ${Object.keys(output.credentials).join(', ')}`)
+              : Console.error(
+                  `[app-host] MODULE CREDENTIALS UNAVAILABLE for ${output.failedAppIds.join(', ')}; their delegated calls fail closed until a retry succeeds`,
+                ),
+          ),
+          Effect.catchTag('AppHostError', () =>
+            Console.error(
+              `[app-host] MODULE CREDENTIAL PROVISIONING FAILED; delegated calls of ${input.appIds.join(', ')} fail closed until a retry succeeds`,
+            ).pipe(Effect.as(noProvisionedCredentials(input.appIds))),
+          ),
+        );
+  };
+
+export const provisionModuleCredentialsForRelease = provisionModuleCredentialsForReleaseWith(captureChannel);
 
 /**
  * Where this container records the boots of its host process. A container runs one host process at a time, so every

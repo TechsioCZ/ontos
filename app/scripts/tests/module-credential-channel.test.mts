@@ -10,10 +10,12 @@ import { TestClock } from 'effect/testing';
 import { claimHostedModuleCredentials } from '../../packages/core-runtime/src/auth/hosted-module-credential-store.ts';
 import { moduleCredentialConfigProvider } from '../../packages/core-runtime/src/auth/owner-module-credential.ts';
 import {
+  AppHostError,
   captureChannel,
   healModuleCredentialsOnce,
   makeCredentialHolder,
   planModuleCredentialHealing,
+  provisionModuleCredentialsForReleaseWith,
   recordHostBoot,
   retireAfterHandoverWith,
 } from '../zerops/app-host.mts';
@@ -407,6 +409,28 @@ describe('retirement after a handover', () => {
       yield* TestClock.adjust('2 minutes');
       yield* Fiber.join(retirement);
       expect(runs).toEqual([['retire', []]]);
+    }),
+  );
+});
+
+describe('the boot provisioning pass', () => {
+  it.effect('makes one bounded attempt and never retries before publishing; healing retries later', () =>
+    Effect.gen(function* oneAttempt() {
+      const attempts: string[] = [];
+      const capture = (name: string) =>
+        Effect.sync(() => attempts.push(name)).pipe(Effect.andThen(Effect.fail(new AppHostError({ reason: name }))));
+      const pass = yield* Effect.forkChild(
+        provisionModuleCredentialsForReleaseWith(capture)({
+          appIds: [ORDER],
+          operationId: 'boot-pass',
+          release: { buildMarkers: { [ORDER]: 'order-build' }, compositionRevision: 'a'.repeat(64) },
+          shellEnvironment: {},
+        }),
+      );
+      // However long the clock runs on, the pass made exactly one attempt and left the caller without a key.
+      yield* TestClock.adjust('10 minutes');
+      expect(yield* Fiber.join(pass)).toEqual(noProvisionedCredentials([ORDER]));
+      expect(attempts).toEqual(['module-credentials']);
     }),
   );
 });
