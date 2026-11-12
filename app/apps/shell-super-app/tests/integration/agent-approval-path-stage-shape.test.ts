@@ -801,19 +801,24 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
     present(batches[2]),
   ]);
 
-  // Warm-up: every read once (pools, SpiceDB channel, caches), and one reject.
+  // Warm-up, measured as the first use in this process (pools, the SpiceDB channel, the composition cache and code
+  // never run before): the queue's three reads once, then one reject (its batch read and the reject Action).
   const warm = yield* callerFor('warm-up');
-  yield* inShell(
+  const coldQueue = yield* measure(
+    'cold queue',
+    'warm-up',
     Effect.all([
       callerModuleAccess(warm),
       principalNames(warm.principal, readTransport('warm-up')),
       listCompanyProposalPage(warm.principal, {}),
-      loadBatchProposals(warm.principal, warmUp.batchId),
     ]).pipe(Effect.provideService(AgentReadRequestIdentity, readTransport('warm-up'))),
   );
   const warmReject = yield* actionTransport('warm-up-reject');
-  yield* inShell(
-    markRejected(warm.principal, { batchId: warmUp.batchId, proposalId: warmUp.proposalId }).pipe(
+  const coldReject = yield* measure(
+    'cold reject',
+    'warm-up-reject',
+    loadBatchProposals(warm.principal, warmUp.batchId).pipe(
+      Effect.andThen(markRejected(warm.principal, { batchId: warmUp.batchId, proposalId: warmUp.proposalId })),
       Effect.provideService(AgentReadRequestIdentity, warmReject),
       Effect.provideService(AgentActionRequestIdentity, warmReject),
     ),
@@ -921,18 +926,20 @@ const measureApprovalPath = Effect.fn('test.measureApprovalPath')(function* meas
           decide: acrossSteps(decide),
           queue: acrossSteps(queue),
         },
+        cold: [coldQueue.report, coldReject.report].map(({ fingerprints: _fingerprints, ...step }) => step),
         steps: [...queue, ...decide, ...approve].map(({ fingerprints: _fingerprints, ...step }) => step),
       }),
     );
   }
   // The counts are written first, so a run that breaks a bound still leaves its numbers.
-  // Each transaction installs and checks the request's scope in one statement, never two: the same transactions and
-  // evidence as before, one round trip fewer each (queue was 220 statements, reject 274, approve's Core parts 576).
+  // Each transaction installs and checks the request's scope in one statement, never two, and the queue asks only
+  // the Actions of modules the tenant runs: the same transactions, SpiceDB calls and reject/approve evidence as before;
+  // queue was 220 statements and 487 evidence rows, reject 274 statements, approve's Core parts 576.
   expect([totalOf(queue, 'transactions'), totalOf(decide, 'transactions'), totalOf(approve, 'transactions')]).toEqual([
     38, 50, 105,
   ]);
-  expect(totalOf(queue, 'evidenceRows')).toBe(487);
-  expect(totalOf(queue, 'statements')).toBeLessThanOrEqual(182);
+  expect(totalOf(queue, 'evidenceRows')).toBe(374);
+  expect(totalOf(queue, 'statements')).toBeLessThanOrEqual(184);
   expect(totalOf(decide, 'statements')).toBeLessThanOrEqual(220);
   expect(totalOf(approve, 'statements')).toBeLessThanOrEqual(463);
 });
