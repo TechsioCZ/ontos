@@ -34,6 +34,8 @@ import {
   planReviewedPeople,
   PRINCIPAL_IDS,
   previewIssue,
+  reviewedAdditions,
+  slotOf,
   stepWithinAllowList,
   TENANT_ID,
   TENANT_SCOPE,
@@ -283,9 +285,9 @@ it.effect('pins the reviewed roles, their dangerous cells and the six assignment
         scope,
       ]),
     ).toEqual([
-      ['sales', 440, 397, roleId('sales'), COMPANY_SCOPE],
-      ['accounting', 154, 125, roleId('accounting'), COMPANY_SCOPE],
-      ['warehouse', 33, 23, roleId('warehouse'), COMPANY_SCOPE],
+      ['sales', 442, 399, roleId('sales'), COMPANY_SCOPE],
+      ['accounting', 173, 144, roleId('accounting'), COMPANY_SCOPE],
+      ['warehouse', 35, 25, roleId('warehouse'), COMPANY_SCOPE],
       [ROUTING, 1, 0, roleId(ROUTING), TENANT_SCOPE],
     ]);
     const [obchodnik, ucetni, sklad] = PRINCIPAL_IDS;
@@ -389,7 +391,7 @@ it.effect('halts instead of saving over a managed role with other cells or an un
       ...created,
       roles: created.roles.map((role) =>
         role.id === save.roleId
-          ? { ...role, cells: [{ plain: true, slot: 'work.tasks.api-records.read run all' }] }
+          ? { ...role, cells: [{ plain: true, slot: 'core.identity.unreviewed.read run all' }] }
           : role,
       ),
     };
@@ -402,6 +404,92 @@ it.effect('halts instead of saving over a managed role with other cells or an un
     expect(previewIssue(save, { ...exact, affectedHolders: [Option.some(OWNER)] })).toContain(OUTSIDE);
   }),
 );
+
+const TAX_PREFIX = 'commerce.tax.';
+const withoutTax = (observed: ObservedState, id: string): ObservedState => ({
+  ...observed,
+  roles: observed.roles.map((role) =>
+    role.id === id ? { ...role, cells: role.cells.filter(({ slot }) => !slot.startsWith(TAX_PREFIX)) } : role,
+  ),
+});
+
+it.effect('adds only the newly reviewed tax cells to a role saved before them, and names each one', () =>
+  Effect.gen(function* extendsSavedRole() {
+    const state = yield* desired;
+    const accounting = state.roles.find(({ key }) => key === 'accounting');
+    if (accounting === undefined) {
+      throw new Error('no accounting role');
+    }
+    const taxCells = accounting.cells.filter(({ capabilityKey }) => capabilityKey.startsWith(TAX_PREFIX));
+    expect(taxCells.map(slotOf)).toEqual([
+      'commerce.tax.seller-vat-regime-declaration.declare approve all',
+      'commerce.tax.seller-vat-regime-declaration.declare propose all',
+      'commerce.tax.seller-vat-regime-declaration.declare run all',
+      'commerce.tax.seller-vat-regime-declaration.read-history run all',
+      'commerce.tax.seller-vat-regime.read-at-instant run all',
+      'commerce.tax.tax-rule-revision.correct approve all',
+      'commerce.tax.tax-rule-revision.correct propose all',
+      'commerce.tax.tax-rule-revision.correct run all',
+      'commerce.tax.tax-rule-revision.create approve all',
+      'commerce.tax.tax-rule-revision.create propose all',
+      'commerce.tax.tax-rule-revision.create run all',
+      'commerce.tax.tax-rule-revision.end approve all',
+      'commerce.tax.tax-rule-revision.end propose all',
+      'commerce.tax.tax-rule-revision.end run all',
+      'commerce.tax.tax-rule-set.read run all',
+      'commerce.tax.tax-rule.create approve all',
+      'commerce.tax.tax-rule.create propose all',
+      'commerce.tax.tax-rule.create run all',
+      'commerce.tax.tax-rule.read-history run all',
+    ]);
+    // Stage holds the three reviewed roles as saved before Phase 1: everything except their tax cells.
+    let before = applied(state);
+    for (const id of MANAGED_ROLE_IDS) {
+      before = withoutTax(before, id);
+    }
+    const steps = stepsOf(plan(state, before, apply1));
+    expect(tagsOf(steps)).toEqual(['SaveRole', 'SaveRole', 'SaveRole']);
+    const saves = steps.flatMap((step) => (step._tag === 'SaveRole' ? [step] : []));
+    expect(saves.map(({ addedCells, roleKey }) => [roleKey, addedCells.length])).toEqual([
+      ['sales', 2],
+      ['accounting', 19],
+      ['warehouse', 2],
+    ]);
+    const [, save] = saves;
+    if (save === undefined) {
+      throw new Error('no accounting save');
+    }
+    expect(save.addedCells.map(slotOf)).toEqual(taxCells.map(slotOf));
+    expect(save.cells).toEqual(accounting.cells);
+    expect(save.confirmations.length).toBeGreaterThan(0);
+    expect(save.confirmations.every(({ slot }) => slot.startsWith(TAX_PREFIX))).toBe(true);
+    // The Shell must preview exactly the additions on top of the saved cells.
+    const exact = {
+      added: save.addedCells.map(observedCellOf),
+      affectedHolders: [],
+      cells: save.cells.map(observedCellOf),
+      dangerous: save.confirmations,
+      removed: [],
+    };
+    expect(previewIssue(save, exact)).toBeUndefined();
+    expect(previewIssue(save, { ...exact, added: exact.cells })).toContain('does not add exactly');
+    // Once saved, nothing is left to do.
+    expect(stepsOf(plan(state, simulateAll(before, steps), apply1))).toEqual([]);
+  }),
+);
+
+it('extends a saved role only when it holds nothing but plain reviewed cells', () => {
+  const reviewed = [
+    { capabilityKey: AccessCapabilityKeySchema.make('commerce.tax.tax-rule-set.read'), mode: 'run', selector: 'all' },
+    { capabilityKey: AccessCapabilityKeySchema.make('work.tasks.api-records.read'), mode: 'run', selector: 'all' },
+  ] as const;
+  const tasksCell = { plain: true, slot: 'work.tasks.api-records.read run all' };
+  expect(reviewedAdditions([tasksCell], reviewed)?.map(slotOf)).toEqual(['commerce.tax.tax-rule-set.read run all']);
+  expect(reviewedAdditions([], reviewed)).toHaveLength(2);
+  expect(reviewedAdditions([{ ...tasksCell, plain: false }], reviewed)).toBeUndefined();
+  expect(reviewedAdditions([{ plain: true, slot: 'core.identity.unreviewed.read run all' }], reviewed)).toBeUndefined();
+  expect(reviewedAdditions([tasksCell, tasksCell], reviewed)).toBeUndefined();
+});
 
 it.effect('after a rollback asks for a new generation, and generation 2 admits and assigns under fresh ids', () =>
   Effect.gen(function* reapplyAfterRollback() {

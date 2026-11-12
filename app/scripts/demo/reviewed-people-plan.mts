@@ -433,9 +433,14 @@ export const CreateRoleStep = Schema.TaggedStruct('CreateRole', {
   scope: AccessScopeTargetSchema,
 });
 export const SaveRoleStep = Schema.TaggedStruct('SaveRole', {
+  /** The cells this save adds: every cell of a new role, or only the reviewed additions to a saved one. */
+  addedCells: Schema.Array(ReviewedCellSchema),
+  /** The admin-kind cells among the added ones, by name, for sign-off. */
   adminCells: Schema.Array(Schema.String),
   catalogSnapshotId: AccessCatalogSnapshotIdSchema,
+  /** The role's whole reviewed cell set after the save. */
   cells: Schema.Array(ReviewedCellSchema),
+  /** The dangerous effects of the added cells, as the Shell's preview names them. */
   confirmations: Schema.Array(ConfirmationSchema),
   /** Known once the role exists; the driver only sends a step whose revision is known. */
   expectedRoleRevisionId: Schema.Option(AccessRoleRevisionIdSchema),
@@ -606,19 +611,50 @@ const holdersIssue = (desired: DesiredState, observed: ObservedState): string | 
 const revisionOf = (observed: ObservedState, roleId: RoleId): Option.Option<RoleRevisionId> =>
   Option.map(Option.fromUndefinedOr(observed.roles.find(({ id }) => id === roleId)), ({ revisionId }) => revisionId);
 
+/**
+ * The reviewed cells a saved role lacks, when it holds nothing else: a later review only ever adds rights to a
+ * managed role (for example the tax rights of Phase 1). `undefined` when the role holds a cell outside the review
+ * or a narrowed cell; that role is never rewritten.
+ */
+export const reviewedAdditions = (
+  held: readonly ObservedCell[],
+  reviewed: readonly ReviewedCell[],
+): readonly ReviewedCell[] | undefined => {
+  const reviewedSlots = new Set(reviewed.map(slotOf));
+  const heldSlots = new Set(held.map(({ slot }) => slot));
+  if (heldSlots.size !== held.length || held.some(({ plain, slot }) => !plain || !reviewedSlots.has(slot))) {
+    return undefined;
+  }
+  return reviewed.filter((cell) => !heldSlots.has(slotOf(cell)));
+};
+
 /** The writes one reviewed role still needs, or why it must not be touched. */
-const roleSteps = (role: DesiredRole, observed: ObservedState): Planned => {
+const roleSteps = (
+  role: DesiredRole,
+  observed: ObservedState,
+  entries: ReadonlyMap<string, CatalogSnapshotEntry>,
+): Planned => {
   const listed = observed.roles.find(({ id }) => id === role.roleId);
-  const save = SaveRoleStep.make({
-    adminCells: role.adminCells,
-    catalogSnapshotId: observed.release.catalogSnapshotId,
-    cells: role.cells,
-    confirmations: role.confirmations,
-    expectedRoleRevisionId: revisionOf(observed, role.roleId),
-    idempotencyKey: role.saveKey,
-    roleId: role.roleId,
-    roleKey: role.key,
-  });
+  const save = (addedCells: readonly ReviewedCell[]): Planned => {
+    const confirmations = confirmationsOf(addedCells, entries);
+    if (Result.isFailure(confirmations)) {
+      return halt(`role ${role.key}: ${confirmations.failure}`);
+    }
+    const addedSlots = new Set(addedCells.map(slotOf));
+    return Result.succeed([
+      SaveRoleStep.make({
+        addedCells,
+        adminCells: role.adminCells.filter((admin) => addedSlots.has(admin.slice(0, admin.lastIndexOf(' (')))),
+        catalogSnapshotId: observed.release.catalogSnapshotId,
+        cells: role.cells,
+        confirmations: confirmations.success,
+        expectedRoleRevisionId: revisionOf(observed, role.roleId),
+        idempotencyKey: role.saveKey,
+        roleId: role.roleId,
+        roleKey: role.key,
+      }),
+    ]);
+  };
   if (listed === undefined) {
     const create = CreateRoleStep.make({
       catalogSnapshotId: observed.release.catalogSnapshotId,
@@ -628,18 +664,19 @@ const roleSteps = (role: DesiredRole, observed: ObservedState): Planned => {
       roleKey: role.key,
       scope: role.scope,
     });
-    return Result.succeed([create, save]);
+    return Result.map(save(role.cells), (steps) => [create, ...steps]);
   }
   const wanted: string = role.scope.kind === 'company' ? role.scope.legalEntityId : 'tenant';
   if (Option.getOrElse(listed.legalEntityId, (): string => 'tenant') !== wanted) {
     return halt(`the managed role ${role.key} exists in another scope`);
   }
-  if (listed.cells.length === 0) {
-    return Result.succeed([save]);
+  if (holdsExactly(listed.cells, role.cells)) {
+    return Result.succeed([]);
   }
-  return holdsExactly(listed.cells, role.cells)
-    ? Result.succeed([])
-    : halt(`the managed role ${role.key} holds other cells; this script never rewrites a saved role`);
+  const additions = reviewedAdditions(listed.cells, role.cells);
+  return additions === undefined
+    ? halt(`the managed role ${role.key} holds other cells; this script never rewrites a saved role`)
+    : save(additions);
 };
 
 /** The admission one person still needs, or why the plan must stop. */
@@ -749,7 +786,7 @@ const applyPlan = (desired: DesiredState, observed: ObservedState, generation: n
     return halt(issue);
   }
   const planned = sequence([
-    ...desired.roles.map((role) => () => roleSteps(role, observed)),
+    ...desired.roles.map((role) => () => roleSteps(role, observed, desired.entries)),
     ...PRINCIPAL_IDS.map((principalId) => () => admissionSteps(principalId, observed, generation)),
     () => assignmentSteps(desired.assignments, observed, generation),
   ]);
@@ -913,14 +950,15 @@ export interface ObservedPreview {
 }
 
 /**
- * The save goes ahead only when the server previews exactly the planned edit: nothing removed, every reviewed
- * cell added, the dangerous set equal to the one computed here, and no holder outside the three people.
+ * The save goes ahead only when the server previews exactly the planned edit: nothing removed, exactly the
+ * planned cells added, the reviewed set after it, the dangerous set equal to the one computed here for the added
+ * cells, and no holder outside the three people.
  */
 export const previewIssue = (step: SaveRole, preview: ObservedPreview): string | undefined => {
   if (preview.removed.length > 0) {
     return `the preview of ${step.roleKey} removes ${preview.removed.length} cells`;
   }
-  if (!holdsExactly(preview.added, step.cells) || !holdsExactly(preview.cells, step.cells)) {
+  if (!holdsExactly(preview.added, step.addedCells) || !holdsExactly(preview.cells, step.cells)) {
     return `the preview of ${step.roleKey} does not add exactly the reviewed cells`;
   }
   if (!sameConfirmations(preview.dangerous, step.confirmations)) {

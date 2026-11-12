@@ -86,6 +86,7 @@ import {
   ROLLBACK_REASON,
   saveBody,
   SaveRoleStep,
+  slotOf,
   STEP_PATHS,
   stepWithinAllowList,
 } from './reviewed-people-plan.mts';
@@ -474,6 +475,20 @@ const requestOf = (step: PlannedStep, placeholders: boolean): Effect.Effect<Wire
 
 const byteLength = (json: string): number => new TextEncoder().encode(json).length;
 
+/**
+ * A save that extends an already saved role names every right it adds, so no person gains a right silently: the
+ * reviewer reads the exact added cells and their dangerous effects before the first apply.
+ */
+const savedRoleAdditions = (step: PlannedStep): readonly string[] =>
+  Schema.is(SaveRoleStep)(step) && step.addedCells.length < step.cells.length
+    ? [
+        `     adds to the saved role ${step.roleKey}:`,
+        ...step.addedCells.map((cell) => `       + ${slotOf(cell)}`),
+        ...step.confirmations.map(({ effect, slot }) => `       ! ${slot}: ${effect}`),
+        ...step.adminCells.map((admin) => `       admin: ${admin}`),
+      ]
+    : [];
+
 /** The plan as a person signs it off: the roles with their admin-kind cells, then every write in order. */
 export const describePlan = (desired: DesiredState, steps: readonly PlannedStep[], options: PlanOptions) =>
   Effect.gen(function* describePlanned() {
@@ -494,8 +509,9 @@ export const describePlan = (desired: DesiredState, steps: readonly PlannedStep[
       lines.push(
         `  #${index + 1} POST ${API}${request.path} idempotency-key=${step.idempotencyKey} bytes=${byteLength(request.json)}`,
         Schema.is(SaveRoleStep)(step)
-          ? `     ${step.cells.length} cells, ${step.confirmations.length} confirmed effects; sent after roles/preview answers exactly these (revision and preview token from that answer)`
+          ? `     ${step.cells.length} cells (${step.addedCells.length} added), ${step.confirmations.length} confirmed effects; sent after roles/preview answers exactly these (revision and preview token from that answer)`
           : `     ${request.json}`,
+        ...savedRoleAdditions(step),
       );
       if (Schema.is(AssignStep)(step) && Option.isNone(step.expectedRoleRevisionId)) {
         lines.push(`     expectedRoleRevisionId is a placeholder until the save of ${step.roleKey} answers`);
