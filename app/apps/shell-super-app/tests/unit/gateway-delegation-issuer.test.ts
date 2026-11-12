@@ -86,7 +86,8 @@ interface DelegationCase {
   readonly legalEntityScope?: 'subject' | 'tenant';
   readonly malformed?: boolean;
   readonly missingDeployment?: 'catalog' | 'party-registry';
-  readonly moduleState?: 'suspended' | 'quarantined' | 'missing' | 'unavailable';
+  /** `destination-not-installed`: the calling module is active for the tenant, the module it calls is not. */
+  readonly moduleState?: 'suspended' | 'quarantined' | 'missing' | 'unavailable' | 'destination-not-installed';
   readonly originalBindingRevoked?: boolean;
   /**
    * `tenant` is a workload requester of work started in the tenant context — the Storefront client — and
@@ -178,9 +179,22 @@ const moduleStatesFor = (
   modules.map((module) =>
     Schema.decodeUnknownSync(TenantModuleStateRecordSchema)({
       moduleKey: module.moduleId,
-      state: moduleState === 'missing' || moduleState === 'unavailable' ? 'active' : (moduleState ?? 'active'),
+      state: moduleState === 'suspended' || moduleState === 'quarantined' ? moduleState : 'active',
     }),
   );
+
+/** What the tenant holds: nothing when its states are missing; without the called module when that is not installed. */
+const statesHeld = (
+  moduleState: DelegationCase['moduleState'],
+  states: readonly (typeof TenantModuleStateRecordSchema.Type)[],
+) => {
+  if (moduleState === 'missing') {
+    return [];
+  }
+  return moduleState === 'destination-not-installed'
+    ? states.filter((state) => state.moduleKey !== 'party.registry')
+    : states;
+};
 
 /** The subject of a case: the requester's own live assertion, or the recorded requester of asynchronous work. */
 const subjectFor = (token: string, input: DelegationCase) => {
@@ -377,7 +391,7 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
                     reason: 'Controlled unavailable module state',
                   }),
                 )
-              : Effect.succeed(input.moduleState === 'missing' ? [] : moduleStates),
+              : Effect.succeed(statesHeld(input.moduleState, moduleStates)),
         }),
       ),
       Effect.provideService(GatewayDelegationExchangeLedger, {
@@ -758,6 +772,8 @@ const cryptoNegatives: readonly (readonly [string, DelegationCase, GatewayDelega
   ['suspended-module', { moduleState: 'suspended' }, 'forbidden'],
   ['quarantined-module', { moduleState: 'quarantined' }, 'forbidden'],
   ['missing-module-state', { moduleState: 'missing' }, 'forbidden'],
+  // Only this refusal tells the calling module that the module it calls is not installed for the tenant.
+  ['destination-not-installed', { moduleState: 'destination-not-installed' }, 'module_not_installed'],
   ['originator-denied', { originator: 'denied' }, 'forbidden'],
   ['originator-unavailable', { originator: 'unavailable' }, 'unavailable'],
   ['originator-is-the-calling-module', { originator: 'caller' }, 'forbidden'],

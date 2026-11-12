@@ -282,8 +282,14 @@ export const issueDelegatedGatewayContextAssertion = Effect.fn('GatewayDelegatio
       .getTenantModuleStates(principal.tenantId, moduleKeys)
       .pipe(Effect.mapError(delegationUnavailable));
     const readableStates = new Set(tenantStatesAllowingAccess('read'));
-    if (moduleKeys.some((key) => !states.some((state) => state.moduleKey === key && readableStates.has(state.state)))) {
+    const readable = (key: string) =>
+      states.some((state) => state.moduleKey === key && readableStates.has(state.state));
+    if (!readable(sourceContract.manifest.module.id)) {
       return yield* delegationForbidden();
+    }
+    // The one refusal a calling module may read as "not installed": the module it calls is not active for the tenant.
+    if (!readable(destination.manifest.module.id)) {
+      return yield* new GatewayDelegationError({ code: 'module_not_installed' });
     }
 
     const ledger = yield* GatewayDelegationExchangeLedger;

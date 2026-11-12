@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { OperationalScope } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { GATEWAY_MODULE_NOT_INSTALLED_TYPE } from '@app/shared-contracts';
 import { vatRateAt } from '@app/shared-contracts/cz-vat-classifications';
 import { DateTime, Deferred, Duration, Effect, Fiber, Option, Ref, Result, Scheduler, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -22,6 +23,7 @@ import {
   resolveVatRate,
   sellableRatesAt,
   shownTaxRates,
+  taxCallFailureOf,
   taxRateViews,
 } from '../../src/services/tax-rates.ts';
 import type { CompanyTaxRates, TaxRateBook, TaxRatePeriod } from '../../src/services/tax-rates.ts';
@@ -522,4 +524,45 @@ it("a staff read shows one whole state: the stored one, the one it stored, or Ta
   // No answer: the stored state; Tax refusing a company it was in charge of: nothing.
   expect(shownTaxRates(CONFIRMED, decideTaxRates(CONFIRMED, unreachable, NOW), false)).toBe(CONFIRMED);
   expect(shownTaxRates(CONFIRMED, decideTaxRates(CONFIRMED, refusedByTax, NOW), false)).toBeUndefined();
+});
+
+/** A refusal of the call as the Shell or Tax answers it (problem details). */
+const problem = (tag: string, status: number, type: string) => ({
+  _tag: tag,
+  detail: 'Refused',
+  status,
+  title: 'Refused',
+  type,
+});
+
+it('only the Shell saying Tax is not installed for the tenant reads as not installed; every other refusal is an outage', () => {
+  expect(taxCallFailureOf(problem('GatewayForbiddenProblem', 403, GATEWAY_MODULE_NOT_INSTALLED_TYPE))).toMatchObject({
+    kind: 'REFUSED',
+  });
+  // A retired or wrong module credential, another release, a requester not admitted: the Shell's plain 403.
+  expect(
+    taxCallFailureOf(problem('GatewayForbiddenProblem', 403, 'https://ontos.dev/problems/gateway-forbidden')),
+  ).toMatchObject({
+    kind: 'UNAVAILABLE',
+    refusal: 'GatewayForbiddenProblem 403 https://ontos.dev/problems/gateway-forbidden',
+  });
+  // A missing module credential: the Shell asks for authentication.
+  expect(
+    taxCallFailureOf(problem('GatewayAuthenticationRequiredProblem', 401, 'https://ontos.dev/problems/auth')),
+  ).toMatchObject({
+    kind: 'UNAVAILABLE',
+    refusal: 'GatewayAuthenticationRequiredProblem 401 https://ontos.dev/problems/auth',
+  });
+  // Tax itself not admitting the caller or not finding what was asked.
+  for (const refused of [
+    problem('ApplicableTaxRuleSetForbiddenProblem', 403, 'about:blank'),
+    problem('TaxRuleHistoryNotFoundProblem', 404, 'about:blank'),
+  ]) {
+    expect(taxCallFailureOf(refused).kind).toBe('UNAVAILABLE');
+  }
+  // No module credential configured at all, or no answer: an outage without a refusal.
+  expect(taxCallFailureOf(new Error('Gateway delegation transport is unavailable'))).toEqual(
+    expect.objectContaining({ kind: 'UNAVAILABLE' }),
+  );
+  expect(taxCallFailureOf(new Error('timeout')).refusal).toBeUndefined();
 });

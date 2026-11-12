@@ -270,6 +270,12 @@ export const GatewayInternalProblemSchema = Schema.TaggedStruct('GatewayInternal
   ...problemDetailsFields,
   status: Schema.Literal(500),
 }).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(500));
+/**
+ * The `type` of the 403 a delegated module call gets when the module it calls is not installed (or not active) for
+ * the subject's tenant. Every other refusal of the call is a plain `GatewayForbiddenProblem`.
+ */
+export const GATEWAY_MODULE_NOT_INSTALLED_TYPE = 'https://ontos.dev/problems/gateway-module-not-installed';
+
 export const GatewayForbiddenProblemSchema = Schema.TaggedStruct('GatewayForbiddenProblem', {
   ...problemDetailsFields,
   status: Schema.Literal(403),

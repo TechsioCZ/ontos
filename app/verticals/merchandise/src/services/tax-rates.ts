@@ -11,6 +11,7 @@ import {
   czVatClassificationCodes,
 } from '@app/shared-contracts/cz-vat-classifications';
 import type { CzVatClassificationCode, TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
+import { GATEWAY_MODULE_NOT_INSTALLED_TYPE } from '@app/shared-contracts';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import {
   executeApplicableTaxRuleSetWithAuthorization,
@@ -343,20 +344,45 @@ export const taxRateViews = (book: TaxRateBook, at: DateTime.Utc): TaxRateView[]
     : [];
 
 /**
- * Tax could not answer the company's rates. `REFUSED`: Tax is not installed for the tenant, or it does not admit this
- * caller. `UNAVAILABLE`: Tax or the Shell could not answer now; a retry may succeed.
+ * Tax could not answer the company's rates. `REFUSED`: Tax is not installed (or not active) for the tenant, exactly as
+ * the Shell says when it refuses the module call for that reason. `UNAVAILABLE`: everything else, an outage: Tax or the
+ * Shell did not answer, or refused the call for another reason (a missing or retired module credential, another
+ * release, a requester not admitted), named in `refusal`; the stored rates keep serving under the outage rule.
  */
 export class TaxRatesFailure extends Schema.TaggedError<TaxRatesFailure>()('TaxRatesFailure', {
   cause: Schema.optionalKey(Schema.Defect()),
   kind: Schema.Literals(['REFUSED', 'UNAVAILABLE']),
+  /** Set when Tax was not asked: the wait after the last attempt without an answer runs until then. */
+  nextAttemptAt: Schema.optionalKey(Schema.DateTimeUtc),
+  /** The refusal an outage came from (problem, status and type), for the log line. */
+  refusal: Schema.optionalKey(Schema.String),
 }) {}
 
-const StatusSchema = Schema.Struct({ status: Schema.Number });
-const classify = (cause: unknown): TaxRatesFailure =>
-  new TaxRatesFailure({
-    cause,
-    kind: Schema.is(StatusSchema)(cause) && (cause.status === 403 || cause.status === 404) ? 'REFUSED' : 'UNAVAILABLE',
-  });
+const NotInstalledSchema = Schema.TaggedStruct('GatewayForbiddenProblem', {
+  type: Schema.Literal(GATEWAY_MODULE_NOT_INSTALLED_TYPE),
+});
+const RefusalSchema = Schema.Struct({
+  _tag: Schema.optionalKey(Schema.String),
+  status: Schema.Number,
+  type: Schema.optionalKey(Schema.String),
+});
+
+/** The refusal a failed call names: its problem, status and type; undefined for a failure that is no refusal. */
+const refusalOf = (cause: unknown): string | undefined =>
+  Schema.is(RefusalSchema)(cause)
+    ? [cause._tag, String(cause.status), cause.type].filter((part) => part !== undefined).join(' ')
+    : undefined;
+
+/** Only the Shell's own "module not installed for the tenant" refusal is a refusal; every other failure is an outage. */
+export const taxCallFailureOf = (cause: unknown): TaxRatesFailure => {
+  if (Schema.is(NotInstalledSchema)(cause)) {
+    return new TaxRatesFailure({ cause, kind: 'REFUSED' });
+  }
+  const refusal = refusalOf(cause);
+  return refusal === undefined
+    ? new TaxRatesFailure({ cause, kind: 'UNAVAILABLE' })
+    : new TaxRatesFailure({ cause, kind: 'UNAVAILABLE', refusal });
+};
 
 interface TaxCallOptions {
   readonly baseUrl: string;
@@ -388,13 +414,13 @@ const callTax = <A, E>(scope: OperationalScope, read: TaxRead<A, E>): Effect.Eff
           subject: { _tag: 'Assertion', scope },
         },
         crypto,
-      ).pipe(Effect.mapError(classify)),
+      ).pipe(Effect.mapError(taxCallFailureOf)),
     ),
     Effect.flatMap((issued) =>
       read(Redacted.make(issued.authorization), {
         baseUrl: issued.apiBaseUrl,
         compositionRevision: issued.compositionRevision,
-      }).pipe(Effect.mapError(classify)),
+      }).pipe(Effect.mapError(taxCallFailureOf)),
     ),
   );
 
@@ -573,6 +599,18 @@ const releaseRefresh = (key: string, done: Deferred.Deferred<FetchedTaxRates, Ta
     ),
   );
 
+/** Says why a refresh got no answer: a refusal of the call is logged loudly, it is an outage of the price guard. */
+const logFailedRefresh = (failure: TaxRatesFailure) => {
+  if (failure.kind === 'REFUSED') {
+    return Effect.logWarning('Tax is not installed for the company: nothing of it sells until it is');
+  }
+  return failure.refusal === undefined
+    ? Effect.logWarning('Tax did not answer; Merchandise uses the stored VAT rates under the outage rule')
+    : Effect.logError(
+        'The call to Tax was refused; Merchandise treats it as an outage and uses the stored VAT rates',
+      ).pipe(Effect.annotateLogs({ refusal: failure.refusal }));
+};
+
 /** The leader of a refresh: asks Tax once, records the outcome and releases every caller waiting for it. */
 const runRefresh = Effect.fn('Merchandise.runTaxRatesRefresh')(function* runRefresh(
   scope: OperationalScope,
@@ -580,6 +618,9 @@ const runRefresh = Effect.fn('Merchandise.runTaxRatesRefresh')(function* runRefr
 ) {
   const source = yield* TaxRateSource;
   const read = yield* Effect.result(source.read(scope));
+  if (Result.isFailure(read)) {
+    yield* logFailedRefresh(read.failure);
+  }
   const at = yield* DateTime.now;
   const result = read.pipe(Result.map((book): FetchedTaxRates => ({ book, fetchedAt: at })));
   const key = companyKey(scope);
