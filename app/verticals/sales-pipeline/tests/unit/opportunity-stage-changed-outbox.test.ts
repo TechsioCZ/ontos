@@ -15,7 +15,7 @@ import {
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/sales-pipeline/outbox/opportunity-stage-changed';
-import { Context, DateTime, Effect, Schema } from 'effect';
+import { Context, DateTime, Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ApplyCommandPayloadSchema, SalesPipelineCommandSchema } from '../../shared/actions/apply-command.ts';
@@ -335,7 +335,12 @@ it.effect('missing or unavailable write authority and denied entrusted fields ca
           transport: { correlationId: 'outbox-denied', idempotencyKey: `outbox-denied-${outcome}` },
         })
         .pipe(Effect.provideContext(gate.context), Effect.flip);
-      expect(failure._tag).toBe(outcome === 'UNAVAILABLE' ? 'ActionPermissionCheckError' : 'ActionPermissionDenied');
+      expect(
+        Predicate.isTagged(
+          failure,
+          outcome === 'UNAVAILABLE' ? 'ActionPermissionCheckError' : 'ActionPermissionDenied',
+        ),
+      ).toBe(true);
       expect(harness.snapshot().committed).toEqual([]);
       expect(harness.snapshot().transactionCount).toBe(0);
       expect(harness.snapshot().stages).not.toContain('handler_executed');

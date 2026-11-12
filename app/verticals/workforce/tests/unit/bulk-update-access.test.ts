@@ -173,7 +173,7 @@ const bulkAuthority = (refuseMiddle: boolean): Authority => {
     readCells: (query) => {
       expect(query.tenantId).toBe(tenantId);
       expect(query.scopeId).toBe(companyScopeId);
-      expect(query.holder).toEqual(holder);
+      expect(Predicate.isTagged(query.holder, 'Principal') ? query.holder.principalId : undefined).toBe(principalId);
       return Effect.succeed(
         cells.filter((cell) => cell.capabilityKey === query.capabilityKey && cell.mode === query.mode),
       );
@@ -285,7 +285,9 @@ for (const outcome of ['DENIED', 'UNAVAILABLE'] as const) {
             transport: { correlationId: 'bulk-read-refusal', idempotencyKey: `bulk-read-${outcome}` },
           })
           .pipe(Effect.flip);
-        expect(failure._tag).toBe(outcome === 'DENIED' ? 'ActionPermissionDenied' : 'ActionPermissionCheckError');
+        expect(
+          Predicate.isTagged(failure, outcome === 'DENIED' ? 'ActionPermissionDenied' : 'ActionPermissionCheckError'),
+        ).toBe(true);
         expect(harness.snapshot().transactionCount).toBe(0);
         expect(harness.snapshot().committed).toEqual([]);
         for (const declaration of [
@@ -399,7 +401,10 @@ for (const ids of [[], [employeeId, employeeId]]) {
             transport: { correlationId: 'bad-bulk', idempotencyKey: `bad-bulk-${ids.length}` },
           })
           .pipe(Effect.flip);
-        expect(['ActionPayloadValidationError', 'ActionPermissionCheckError']).toContain(failure._tag);
+        expect(
+          Predicate.isTagged(failure, 'ActionPayloadValidationError') ||
+            Predicate.isTagged(failure, 'ActionPermissionCheckError'),
+        ).toBe(true);
         expect(harness.snapshot().transactionCount).toBe(0);
         expect(harness.snapshot().committed).toEqual([]);
       }),

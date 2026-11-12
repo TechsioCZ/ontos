@@ -1,3 +1,4 @@
+import { ActionPermissionCheckError, ActionPermissionDenied } from '@app/core-runtime';
 import { updateTagAction } from '../../src/actions/update-tag.action.ts';
 import { prepareTaggingCommand } from '../../src/services/persistence.service.ts';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
@@ -48,7 +49,9 @@ for (const [index, command] of commands.entries()) {
               ? harness.runtime.runAction({ ...request, registration: applyCommandAction })
               : harness.runtime.runAction({ ...request, registration: updateTagAction })
           ).pipe(Effect.flip);
-          expect(failure._tag).toBe(access === 'denied' ? 'ActionPermissionDenied' : 'ActionPermissionCheckError');
+          expect(Schema.is(access === 'denied' ? ActionPermissionDenied : ActionPermissionCheckError)(failure)).toBe(
+            true,
+          );
           expect(harness.snapshot().transactionCount).toBe(0);
           expect(harness.snapshot().committed).toEqual([]);
         }),

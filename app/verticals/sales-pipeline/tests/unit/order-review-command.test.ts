@@ -1,6 +1,6 @@
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { ReviewOrderChangesPayloadSchema } from '@app/merchandise/contracts/review-order-changes';
-import { Effect, Result, Schema } from 'effect';
+import { Effect, Predicate, Result, Schema } from 'effect';
 import { beforeEach, expect, it, rstest } from 'effect-rstest';
 
 import { sendOrderReview } from '../../src/routes/[lang]/prodej/schvalovani-ai/order-review-command.ts';
@@ -42,8 +42,8 @@ it.effect('retains a parked proposal as pending, never a committed decision and 
     const result = yield* sendOrderReview(command).pipe(Effect.result);
     expect(Result.isFailure(result)).toBe(true);
     if (Result.isFailure(result)) {
+      expect(Predicate.isTagged(result.failure, 'OrderReviewPendingApproval')).toBe(true);
       expect(result.failure).toMatchObject({
-        _tag: 'OrderReviewPendingApproval',
         detail: 'Návrh čeká na schválení. Změny zatím nebyly provedeny.',
         proposalId: proposal.proposalId,
       });

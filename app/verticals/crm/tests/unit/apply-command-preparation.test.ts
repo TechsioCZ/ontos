@@ -1,5 +1,5 @@
 import { crmRegistration } from '../../vertical.registration.ts';
-import { ActiveApplicationCompositionService } from '@app/core-runtime';
+import { ActionPermissionDenied, ActiveApplicationCompositionService } from '@app/core-runtime';
 import { AccessDecisionGate, makeTestAccessDecision } from '@app/core-runtime/access/enforcement';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
 import { HttpServerRequest } from 'effect/http';
@@ -10,6 +10,8 @@ import { makeTestAccessGateLayers } from '@app/core-runtime/testing/access-gate'
 import { expect, it } from 'effect-rstest';
 import { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
 import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
+import { CrmPermissionDenied } from '../../shared/errors/crm-permission-denied.ts';
+import { CrmReferenceUnavailable } from '../../shared/errors/crm-reference-unavailable.ts';
 
 const unusedReference = () => Effect.die('Unexpected reference boundary access');
 const referenceBoundary = Layer.mergeAll(
@@ -70,9 +72,7 @@ const preparedPermissionTest = (decision: 'denied' | 'unavailable') =>
           transport: { correlationId: 'crm-command', idempotencyKey: `crm-command-${decision}` },
         })
         .pipe(Effect.provideService(AccessDecisionGate, access), Effect.flip);
-      expect(failure).toMatchObject({
-        _tag: decision === 'denied' ? 'CrmPermissionDenied' : 'CrmReferenceUnavailable',
-      });
+      expect(Schema.is(decision === 'denied' ? CrmPermissionDenied : CrmReferenceUnavailable)(failure)).toBe(true);
       expect(checks).toBe(1);
       expect(harness.snapshot().committed).toEqual([]);
       expect(harness.snapshot().transactionCount).toBe(0);
@@ -109,7 +109,7 @@ it.layer(referenceBoundary)('reference boundary is unused on denial', (suite) =>
             }),
             Effect.flip,
           );
-        expect(failure).toMatchObject({ _tag: 'ActionPermissionDenied' });
+        expect(Schema.is(ActionPermissionDenied)(failure)).toBe(true);
         expect(harness.snapshot().transactionCount).toBe(0);
       }),
     ),

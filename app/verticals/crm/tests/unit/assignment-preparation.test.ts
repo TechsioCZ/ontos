@@ -194,7 +194,7 @@ const registeredAssignment = (scenario: Scenario) =>
           reasonCode: scenario === 'unavailable' ? 'assignment_unavailable' : 'assignment_ineligible',
         });
         const loads = directoryLoads;
-        expect((yield* invoke.pipe(Effect.flip))._tag).toBe('ActionPolicyDenied');
+        expect(Predicate.isTagged(yield* invoke.pipe(Effect.flip), 'ActionPolicyDenied')).toBe(true);
         expect(directoryLoads).toBe(loads);
         expect(harness.snapshot().policyDenials).toHaveLength(1);
       }
