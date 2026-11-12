@@ -13,6 +13,7 @@ import { SearchLabelsApi } from '../../verticals/party-registry/shared/apis/sear
 import { partyRegistryMcpContribution } from '../../verticals/party-registry/shared/mcp/contribution.ts';
 import { LeaseInvoicesApi } from '../../verticals/finance-billing/shared/apis/lease-invoices.ts';
 import { RecordsApi as FinanceRecordsApi } from '../../verticals/finance-billing/shared/apis/records.ts';
+import { VatChoicesApi } from '../../verticals/finance-billing/shared/apis/vat-choices.ts';
 import { financeBillingMcpContribution } from '../../verticals/finance-billing/shared/mcp/contribution.ts';
 import { CounterpartyRefSchema } from '../../verticals/party-registry/shared/resources/counterparty.ts';
 import { crmRuntimeManifest } from '../../verticals/crm/vertical.runtime-declaration.ts';
@@ -77,11 +78,11 @@ it.effect('routes the three personal Facility commands to their distinct Action 
   }),
 );
 
-it.effect('keeps the lease detail preload read governed without adding an MCP tool', () =>
+it.effect('keeps the lease detail preload and VAT choices reads governed without adding an MCP tool', () =>
   Effect.gen(function* financePreloadContribution() {
     const derived = deriveOntosMcpContribution({
       actions: [],
-      api: { 'lease-invoices': LeaseInvoicesApi, records: FinanceRecordsApi },
+      api: { 'lease-invoices': LeaseInvoicesApi, records: FinanceRecordsApi, 'vat-choices': VatChoicesApi },
       appId: 'finance-billing',
       authored: { ...financeBillingMcpContribution, actions: {}, commands: {} },
       moduleId: 'finance.billing',
@@ -99,7 +100,7 @@ it('rejects an undeclared lease preload read instead of silently excluding it', 
   expect(() =>
     deriveOntosMcpContribution({
       actions: [],
-      api: { 'lease-invoices': LeaseInvoicesApi, records: FinanceRecordsApi },
+      api: { 'lease-invoices': LeaseInvoicesApi, records: FinanceRecordsApi, 'vat-choices': VatChoicesApi },
       appId: 'finance-billing',
       authored: {
         ...financeBillingMcpContribution,
