@@ -16,6 +16,7 @@ import {
 import { Effect, Option, Predicate, Ref, Schema } from 'effect';
 import type { Crypto } from 'effect';
 import type { FinanceError } from '../../shared/actions/apply-command.ts';
+import type { LineVatIssue } from '../../shared/domain/line-vat.ts';
 import { opportunityWonInvoiceCommand } from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
 import type { CreateInvoiceFromOpportunityCommand } from '../../shared/outbox-consumers/opportunity-won-invoice.ts';
 import { OpportunityInvoiceLedger } from './opportunity-invoice-ledger.ts';
@@ -34,6 +35,7 @@ export class DraftInvoiceFromWonOpportunityRejected extends Schema.TaggedError<D
       'FINANCE_REJECTED',
       'PERSISTENCE_UNAVAILABLE',
       'TAX_UNAVAILABLE',
+      'VAT_NOT_READY',
     ]),
     reason: Schema.String,
     retryable: Schema.Boolean,
@@ -49,6 +51,13 @@ const deliveryMatchesWorker = (context: OutboxWorkerHandlerContext): boolean =>
   context.producerModuleKey === outboxProducerModuleKey &&
   context.topic === outboxTopic;
 
+/**
+ * Line refusals that say the company is not ready for VAT yet, not that the opportunity's lines are wrong: no VAT regime
+ * declared in Tax, or no rate published for a line's classification. A person sees them as refusals on the invoice
+ * form; for a won opportunity they only mean "not yet", so the delivery retries until the company sets VAT up.
+ */
+const vatNotReadyIssues: ReadonlySet<string> = new Set<LineVatIssue>(['vat_regime_not_declared', 'vat_rate_changed']);
+
 const mapFailure = (
   failure: FinanceError | OutboxWorkerLegalEntityScopeError,
 ): DraftInvoiceFromWonOpportunityRejected => {
@@ -58,7 +67,9 @@ const mapFailure = (
       : rejected('PERSISTENCE_UNAVAILABLE', failure.reason, true);
   }
   if (Predicate.isTagged(failure, 'FinanceRejected')) {
-    return rejected('FINANCE_REJECTED', failure.reason, false);
+    return vatNotReadyIssues.has(failure.reason)
+      ? rejected('VAT_NOT_READY', failure.reason, true)
+      : rejected('FINANCE_REJECTED', failure.reason, false);
   }
   // Tax cannot give the lines their VAT now (unreachable, not installed, or refusing): the delivery retries later.
   if (Predicate.isTagged(failure, 'FinanceReferenceUnavailable')) {
@@ -147,10 +158,13 @@ export const draftInvoiceFromWonOpportunityWorker = defineOutboxWorker(
     legalEntityScope: 'required',
     payloadSchema: OutboxPayloadSchema,
     producerModuleKey: outboxProducerModuleKey,
+    // Core retries every failed attempt on this one schedule and gives up (dead) at maxAttempts. A company may leave
+    // its VAT regime undeclared for days, so the delivery keeps retrying at the Outbox's longest back-off (Core's
+    // limits: 100 attempts, one day apart): after about a day and a half it retries daily, for about 85 days in all.
     retryPolicy: {
       initialBackoffMs: 1000,
-      maxAttempts: 5,
-      maxBackoffMs: 60_000,
+      maxAttempts: 100,
+      maxBackoffMs: 86_400_000,
       multiplier: 2,
     },
     topic: outboxTopic,
