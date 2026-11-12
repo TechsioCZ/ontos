@@ -49,6 +49,10 @@ import type {
   OwnerPermissionAccessTarget,
 } from '../permissions/context-access.ts';
 import { failClosedOwnerAuthorizationOverlay } from '../access/enforcement/owner-overlay.ts';
+import type { GateCarrier } from '../access/enforcement/contract.ts';
+import { bindScopedWorkloadAdmission } from '../access/enforcement/workload-admission.ts';
+import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
+import type { OperationalScope } from '../operations/context.ts';
 import type { OwnerAuthorizationDecision, OwnerAuthorizationInput } from '../access/enforcement/owner-overlay.ts';
 import { makeScriptedBoundAccessGate, makeTestOperationalScopeAccess } from './access-gate.ts';
 import type { TestAccessOutcome } from './access-gate.ts';
@@ -734,6 +738,27 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
 );
 
 export const makeActionTestHarness: typeof actionTestHarness = actionTestHarness;
+
+/**
+ * The commit-phase owner transaction for a suite that drives an Action's prepared service factory and
+ * handler itself, over a routine-level fake `invoke` that carries the owner scope. It is bound exactly as
+ * the Action runtime binds its transaction after the in-transaction access recheck: to the invocation, the
+ * registration's carrier and the operation scope, with no admitted workload, so owner code reading its
+ * workload branch sees a caller without one. Close it when the owner phase ends, as the runtime does.
+ */
+export const bindActionTestCommitTransaction = (
+  routines: ScopedTransactionExecutor,
+  input: {
+    readonly actionInvocationId: string;
+    readonly registration: { readonly descriptor: GateCarrier };
+    readonly scope: OperationalScope;
+  },
+) =>
+  bindScopedWorkloadAdmission(routines, {
+    actionInvocationId: input.actionInvocationId,
+    carrier: input.registration.descriptor,
+    scope: input.scope,
+  });
 
 export {
   makeLiveOperationFixture,
