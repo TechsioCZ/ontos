@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
 import { build } from 'esbuild';
-import { Effect, Exit, FileSystem, Schema, Stream } from 'effect';
+import { Config, Effect, Exit, FileSystem, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -147,8 +147,16 @@ const TopologySchema = Schema.Struct({
   verticals: Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String })),
 });
 
+/**
+ * The built-artefact inspection runs only where the artefacts exist: the job that built the units and the Outbox
+ * Worker turns it on with `ONTOS_INSPECT_BUILT_ARTEFACTS=true`. Turned on, it fails when it finds nothing to inspect.
+ */
 it.effect('serves no credential store copy a host cannot claim, in any built unit or the Outbox Worker bundle', () =>
   Effect.gen(function* builtUnits() {
+    const inspect = yield* Config.Boolean('ONTOS_INSPECT_BUILT_ARTEFACTS').pipe(Config.withDefault(false));
+    if (!inspect) {
+      return;
+    }
     const fs = yield* FileSystem.FileSystem;
     const topology = Schema.decodeUnknownSync(Schema.fromJsonString(TopologySchema))(
       yield* fs.readFileString(path.join(workspace, 'topology/reference-topology.json')),
@@ -157,16 +165,16 @@ it.effect('serves no credential store copy a host cannot claim, in any built uni
     const built = yield* Effect.filter(units, (unit) => fs.exists(path.join(workspace, unit, API_BUNDLE)), {
       concurrency: 1,
     });
+    expect(built.length).toBeGreaterThan(0);
     const problems = yield* Effect.forEach(built, (unit) => inspectServedUnit(path.join(workspace, unit)), {
       concurrency: 1,
     });
     expect(problems.flat()).toEqual([]);
     const worker = path.join(workspace, '.zerops/runtime/outbox-worker-host/worker.mjs');
-    if (yield* fs.exists(worker)) {
-      const source = yield* fs.readFileString(worker);
-      // One bundle, one copy: the host program's own, which it claims for every caller (`holdOwnStoreCopy`).
-      expect(storeCopiesIn(source)).toBe(1);
-      expect(source.includes('ModuleCredentials.holdOwnCopy')).toBe(true);
-    }
+    expect(yield* fs.exists(worker)).toBe(true);
+    const source = yield* fs.readFileString(worker);
+    // One bundle, one copy: the host program's own, which it claims for every caller (`holdOwnStoreCopy`).
+    expect(storeCopiesIn(source)).toBe(1);
+    expect(source.includes('ModuleCredentials.holdOwnCopy')).toBe(true);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
