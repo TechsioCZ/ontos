@@ -1,6 +1,5 @@
 import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
-import { ACCESS_DECISION_REQUEST_GRANTS } from '@app/core-runtime';
-import { trustRoutinesForIdentities } from '@app/core-runtime/db/database-identity-manifest';
+import { ACCESS_DECISION_REQUEST_GRANTS, trustRoutinesForIdentities } from '@app/core-runtime';
 import type { DatabaseRoleGrants, DatabaseTableGrant } from '@app/core-runtime';
 
 /**
