@@ -1,6 +1,7 @@
 import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect';
 
 import { createCodesmithGenerator } from '../generator-adapter.mts';
+import { planOwnerApprovalPublication } from './owner-approval-publication.mts';
 import {
   createMutationEffect,
   discoverOntosModuleEffect,
@@ -311,4 +312,18 @@ export const planActionBoundaryScaffold = (
     };
   });
 
-export default createCodesmithGenerator(planActionBoundaryScaffold);
+/**
+ * Demo-only exception: every published Action boundary also mounts Core's original owner-action approval
+ * API (agent proposals are approved by people), which main has no concept of.
+ */
+export const planPublishedActionBoundaryScaffold = (workspaceRoot: string, config: ActionBoundaryScaffoldConfig) =>
+  Effect.gen(function* planPublishedActionBoundaryScaffoldEffect() {
+    const plan = yield* planActionBoundaryScaffold(workspaceRoot, config);
+    const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical);
+    const publication = yield* planOwnerApprovalPublication(vertical);
+    const mutations = [...plan.mutations, ...publication];
+    yield* trySync(() => ensureUniqueMutationPaths(mutations));
+    return { mutations, result: plan.result };
+  });
+
+export default createCodesmithGenerator(planPublishedActionBoundaryScaffold);

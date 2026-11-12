@@ -174,6 +174,8 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
   'effect-native/require-context-service-for-service-interface': 'error',
   'effect-native/require-observability-layers-at-runtime-root': 'error',
   'effect-native/require-timeout-on-external-effect': 'error',
+  // Required admin fields read the required text in the page language; see packages/admin-ui/src/form-controls.tsx.
+  'effect-native/ui-kit-required-label': 'error',
 } as const;
 
 export default defineConfig({
@@ -225,6 +227,13 @@ export default defineConfig({
     typeCheck: true,
   },
   overrides: [
+    {
+      // The admin's form controls are the one place that passes props on to ui-kit's label-bearing controls.
+      files: ['packages/admin-ui/src/form-controls.tsx'],
+      rules: {
+        'effect-native/ui-kit-required-label': 'off',
+      },
+    },
     {
       files: ['**/*.{test,spec}.{ts,tsx,mts}'],
       rules: {
@@ -916,6 +925,37 @@ export default defineConfig({
     {
       // Drizzle column declaration order is the physical Assortment schema contract.
       files: ['verticals/assortment/src/database/schema.ts'],
+      rules: { 'perfectionist/sort-objects': 'off' },
+    },
+    {
+      // Drizzle column declaration order is each owner's physical schema contract (as for Assortment above).
+      files: [
+        'packages/core-runtime/src/db/access-schema.ts',
+        'verticals/commerce-market-catalog/src/database/schema.ts',
+        'verticals/inventory/src/persistence/binding-correction-impact-table.ts',
+        'verticals/inventory/src/persistence/catalog-to-stock-binding-table.ts',
+        'verticals/inventory/src/persistence/external-stock-correlation-table.ts',
+        'verticals/inventory/src/persistence/inventory-effect-ledger-table.ts',
+        'verticals/inventory/src/persistence/inventory-source-assertion-table.ts',
+        'verticals/inventory/src/persistence/inventory-source-conflict-table.ts',
+        'verticals/inventory/src/persistence/inventory-source-import-ledger-table.ts',
+        'verticals/inventory/src/persistence/reservation-create-effect-table.ts',
+        'verticals/inventory/src/persistence/reservation-shortage-impact-table.ts',
+        'verticals/inventory/src/persistence/stock-correction-source-evidence-table.ts',
+        'verticals/inventory/src/persistence/stock-correction-table.ts',
+        'verticals/inventory/src/persistence/stock-location-table.ts',
+        'verticals/inventory/src/persistence/stock-position-table.ts',
+        'verticals/inventory/src/persistence/stock-sharing-eligibility-table.ts',
+        'verticals/price-group-catalog/src/database/schema.ts',
+        'verticals/pricing/src/database/schema.ts',
+        'verticals/storefront-registry/src/database/schema.ts',
+      ],
+      rules: { 'perfectionist/sort-objects': 'off' },
+    },
+    {
+      // The scripted driver rows are positional, in the exact real Drizzle table projection order;
+      // alphabetizing them would stop the fixture from proving the physical column contract.
+      files: ['packages/core-runtime/tests/unit/search-evidence-codec.test.ts'],
       rules: { 'perfectionist/sort-objects': 'off' },
     },
     {
