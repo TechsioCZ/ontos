@@ -4,6 +4,7 @@ import { expect, it } from 'effect-rstest';
 
 import {
   containerMemoryBytes,
+  OWNERS_YOUNG_GENERATION_ARGUMENTS,
   heapLimitArguments,
   heapLimitMiB,
   parseCgroupMemoryLimit,
@@ -62,3 +63,8 @@ it.effect('reads a positive limit on this machine', () =>
     expect(bytes).toBeGreaterThan(0);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it('gives the owners a 64 MiB semi-space and no old-space cap', () => {
+  expect(OWNERS_YOUNG_GENERATION_ARGUMENTS).toEqual(['--max-semi-space-size=64']);
+  expect(OWNERS_YOUNG_GENERATION_ARGUMENTS.some((flag) => flag.startsWith('--max-old-space-size'))).toBe(false);
+});

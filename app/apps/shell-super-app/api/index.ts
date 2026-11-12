@@ -181,6 +181,7 @@ import {
 import { AccessPeopleWritesProvenLive } from './access-admin/people-write-gate.ts';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { dispatchModuleApiRequest } from '../src/module-api/transport.ts';
+import { withRoundTripLog } from './mcp/describe-timing.ts';
 import { mcpRequestIdentityMiddleware } from './mcp/request-identity.ts';
 import { McpEndpointTransportLive } from './mcp/transport.ts';
 import { ShellTransportLive } from './shell-transport.ts';
@@ -2997,7 +2998,7 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
     .handle('agentQueue', ({ payload, request }) =>
       Effect.gen(function* agentQueueHandler() {
         const caller = yield* agentPlatformSessionCaller(request);
-        const response = yield* loadAgentQueue(caller, payload).pipe(
+        const response = yield* withRoundTripLog('queue', loadAgentQueue(caller, payload)).pipe(
           Effect.provideService(AgentReadRequestIdentity, { correlationId: correlationFromRequest(request) }),
           Effect.catch(agentPlatformFailure),
         );
@@ -3013,7 +3014,7 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
           correlationId: correlationFromRequest(request),
           idempotencyKey: yield* requiredIdempotencyKey(headers),
         };
-        const response = yield* decideAgentItems(caller, payload).pipe(
+        const response = yield* withRoundTripLog('decide', decideAgentItems(caller, payload)).pipe(
           Effect.provideService(AgentReadRequestIdentity, transport),
           Effect.provideService(AgentActionRequestIdentity, transport),
           Effect.catch(agentPlatformFailure),
