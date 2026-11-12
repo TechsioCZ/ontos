@@ -6,6 +6,7 @@ import {
 } from '../modules/active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
+import { TenantModuleStateService } from '../modules/tenant-module-state-service.ts';
 import { ActionAuthority } from '../permissions/action-authority-contract.ts';
 import { ContextAccess } from '../permissions/context-access.ts';
 import type { ReadPrepareContext, ReadLoadContext, ReadFinishContext } from '../reads/context.ts';
@@ -122,6 +123,19 @@ const holdsAnyExecutableAction = (actions: readonly AgentProposalQueueAction[], 
     Effect.withSpan('AgentProposalQueueRead.holdsAnyExecutableAction'),
   );
 
+/** No Actions: what every read but the queue carries as the Actions of modules the tenant does not run. */
+const NO_ACTIONS: readonly AgentProposalQueueAction[] = [];
+
+/** The modules the tenant runs now; a state that cannot be read makes the read unavailable. */
+const activeModuleKeys = Effect.fn('AgentProposalQueueRead.activeModuleKeys')(function* activeModuleKeys(
+  tenantId: string,
+) {
+  const active = yield* (yield* TenantModuleStateService)
+    .listActiveTenantModules(tenantId)
+    .pipe(Effect.mapError(unavailable));
+  return new Set(active.map(({ moduleKey }) => moduleKey));
+});
+
 /** No Action answered yet: what every read but an exact batch carries from `prepare`. */
 const NOTHING_ANSWERED: ReadonlyMap<string, boolean> = new Map();
 
@@ -146,12 +160,12 @@ const prepare = Effect.fn('AgentProposalQueueRead.prepare')(function* prepare(
       return yield* agentProposalQueueDenied();
     }
     const actions: readonly AgentProposalQueueAction[] = [];
-    return { actions, answered: NOTHING_ANSWERED, revision: '' };
+    return { actions, answered: NOTHING_ANSWERED, revision: '', uninstalled: actions };
   }
   if (isOwnProposalRead(input)) {
     // Kind is checked against the current principal row in the owner transaction, not client input.
     const actions: readonly AgentProposalQueueAction[] = [];
-    return { actions, answered: NOTHING_ANSWERED, revision: '' };
+    return { actions, answered: NOTHING_ANSWERED, revision: '', uninstalled: actions };
   }
   const snapshot = yield* (yield* ActiveApplicationCompositionService).load.pipe(
     Effect.flatMap(validateActiveApplicationCompositionSnapshot),
@@ -193,13 +207,26 @@ const prepare = Effect.fn('AgentProposalQueueRead.prepare')(function* prepare(
     if (!any.found) {
       return yield* agentProposalQueueDenied();
     }
-    return { actions: unique, answered: any.answered, revision };
+    return { actions: unique, answered: any.answered, revision, uninstalled: NO_ACTIONS };
   }
-  const actions = yield* executableActions(unique, context.scope);
+  // The queue asks only the Actions of modules the tenant runs: an Action of a module it does not run is never
+  // allowed, so asking it in advance only records a denial nobody acted on. A proposal that exists for such a module
+  // still has its Action asked in `finish`, so that refusal is decided and recorded. Unknown module state refuses
+  // nothing and allows nothing: the read is unavailable.
+  const running = yield* activeModuleKeys(context.scope.tenantId);
+  const actions = yield* executableActions(
+    unique.filter(({ moduleKey }) => running.has(moduleKey)),
+    context.scope,
+  );
   if (actions.length === 0) {
     return yield* agentProposalQueueDenied();
   }
-  return { actions, answered: NOTHING_ANSWERED, revision };
+  return {
+    actions,
+    answered: NOTHING_ANSWERED,
+    revision,
+    uninstalled: unique.filter(({ moduleKey }) => !running.has(moduleKey)),
+  };
 });
 
 type Prepared = Effect.Success<ReturnType<typeof prepare>>;
@@ -208,7 +235,8 @@ const load = Effect.fn('AgentProposalQueueRead.load')(function* load(
   input: AgentProposalQueueInput,
   context: ReadLoadContext<Services, Prepared>,
 ) {
-  return yield* context.services.load(input, context.prepared.actions);
+  const queue = yield* context.services.load(input, context.prepared.actions);
+  return { queue, uninstalledNamed: yield* context.services.namedActions(context.prepared.uninstalled) };
 });
 type Loaded = Effect.Success<ReturnType<typeof load>>;
 
@@ -274,7 +302,11 @@ const finish = Effect.fn('AgentProposalQueueRead.finish')(function* finish(
   input: AgentProposalQueueInput,
   context: ReadFinishContext<Prepared, Loaded>,
 ) {
-  const { loaded, prepared } = context;
+  const { prepared } = context;
+  const { queue: loaded, uninstalledNamed } = context.loaded;
+  // Proposals of modules the tenant no longer runs are never shown; their Actions are asked so each refusal is
+  // decided and recorded, and a failure to decide makes the read unavailable.
+  yield* executableActions(uninstalledNamed, context.scope);
   if (input.mode === 'withdrawal-batches') {
     return { evidence: { resultCount: loaded.withdrawalBatches?.batchIds.length ?? 0 }, result: loaded };
   }
