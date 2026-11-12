@@ -1,4 +1,7 @@
+-- The index blocks fence writes while it is built; like the lease migration, never wait long for the table.
+SET LOCAL lock_timeout = '5s';--> statement-breakpoint
 CREATE INDEX "access_scope_fences_held_ix" ON "core"."access_scope_fences" ("lease_expires_at") WHERE "state" = 'Changing';--> statement-breakpoint
+SET LOCAL lock_timeout TO DEFAULT;--> statement-breakpoint
 -- The access fence sweeper runs as ontos_runtime without a tenant until it knows which tenants need it. This is its
 -- only cross-tenant read: the ids of tenants whose access fence is held by an operation whose hold has lapsed (its
 -- lease expired, or, for a hold taken before leases existed, its journal idle for longer than p_pre_lease_idle; or

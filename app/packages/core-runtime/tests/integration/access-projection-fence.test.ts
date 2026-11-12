@@ -1,6 +1,6 @@
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Clock, Deferred, Effect, Fiber, Layer, Option, Ref, Schema } from 'effect';
+import { Clock, Deferred, Effect, Fiber, FileSystem, Layer, Option, Ref, Schema } from 'effect';
 import type { Context } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
@@ -184,6 +184,38 @@ const refusedJournals = (admin: PgClient.PgClient, tenantId: TenantId) =>
         where tenant_id = '${tenantId}' and phase = 'failed' and failure_code = 'fence_refused'`,
     )
     .pipe(Effect.orDie);
+
+/** The statements of one of this branch's Core migrations, as the migrator runs them. */
+const migrationStatements = (name: string) =>
+  FileSystem.FileSystem.pipe(
+    Effect.flatMap((files) =>
+      files.readFileString(new URL(`../../drizzle/${name}/migration.sql`, import.meta.url).pathname),
+    ),
+    Effect.orDie,
+    Effect.map((text) =>
+      text
+        .split('--> statement-breakpoint')
+        .map((statement) => statement.trim())
+        .filter((statement) => statement.length > 0),
+    ),
+  );
+
+/** Apply the lease migration in one transaction, as the deploy's migrator does. */
+const applyLeaseMigration = (admin: PgClient.PgClient, statements: readonly string[]) =>
+  admin.withTransaction(Effect.forEach(statements, (statement) => admin.unsafe(statement), { discard: true }));
+
+/** The database as it was before this branch's two fence migrations. */
+const beforeFenceMigrations = (admin: PgClient.PgClient) =>
+  Effect.forEach(
+    [
+      'drop function core.lapsed_access_fence_tenants(integer, interval, uuid[])',
+      'drop index core.access_scope_fences_held_ix',
+      'alter table core.access_scope_fences drop constraint access_scope_fences_lease_ck',
+      'alter table core.access_scope_fences drop column lease_expires_at',
+    ],
+    (statement) => admin.unsafe(statement).pipe(Effect.orDie),
+    { discard: true },
+  );
 
 /** The finalizer that gives the runtime role its fence writes back. */
 const renewalsRestored = (admin: PgClient.PgClient) => () => renewalsFail(admin, false);
@@ -891,5 +923,30 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('the tenant scope fe
         expect(yield* tenantFence(admin, tenantId)).toEqual([{ owning_operation_id: null, state: 'Ready' }]);
       }),
     ),
+  );
+
+  suite.effect('the lease migration fails within seconds instead of queueing Actions behind its lock', () =>
+    Effect.gen(function* migrationLockBudget() {
+      const lock = { held: yield* Deferred.make<boolean>(), release: yield* Deferred.make<boolean>() };
+      yield* withProjectionTenant({ activeModules: [MODULE] }, (tenantId, admin) =>
+        Effect.gen(function* migrateUnderLiveAction() {
+          yield* bootstrapTenant(tenantId);
+          yield* Effect.addFinalizer(letGoOf(lock.release));
+          const statements = yield* migrationStatements('20261112024527_scope-fence-lease');
+          yield* beforeFenceMigrations(admin);
+          // An Action of the release still serving holds the fence's shared lock.
+          const action = yield* actionHoldingFence(admin, tenantId, lock).pipe(Effect.forkChild);
+          yield* Deferred.await(lock.held);
+          const started = yield* Clock.currentTimeMillis;
+          const refused = yield* Effect.flip(applyLeaseMigration(admin, statements));
+          expect((yield* Clock.currentTimeMillis) - started).toBeLessThan(15_000);
+          expect(refused.cause._tag).toBe('LockTimeoutError');
+          yield* Deferred.succeed(lock.release, true);
+          yield* Fiber.join(action);
+          // Run again once the Action committed, the migration applies.
+          yield* applyLeaseMigration(admin, statements).pipe(Effect.orDie);
+        }),
+      );
+    }),
   );
 });
