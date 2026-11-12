@@ -416,7 +416,12 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
       });
     }
     const apiPrefix = yield* packagedApiPrefix(path.join(directory, '.output', 'route.json'));
-    if (Schema.is(HostedOwnerAppIdSchema)(input.appId)) {
+    // A calling module that joins a composition runs as the app host runs it; a contract-only start (no composition,
+    // no gateway) makes no delegated call and stays a standalone server.
+    if (
+      Schema.is(HostedOwnerAppIdSchema)(input.appId) &&
+      (input.relaySource !== undefined || (input.compositionUrl !== undefined && input.gateway !== undefined))
+    ) {
       return yield* startHostedCaller(input, input.appId, apiPrefix, compiled.deliveryUnit);
     }
     const environment = yield* makePackagedEnvironment(input);

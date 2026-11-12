@@ -123,9 +123,10 @@ export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acqui
   // runtime, worker or background fiber it runs in; nothing else in a process reads a module credential.
   const apiKey = yield* ownModuleCredential(request.callingAppId);
   if (Option.isNone(apiKey)) {
-    return yield* new GatewayDelegationSourceError({
-      reason: `No module credential of ${request.callingAppId} in this process: the host has not handed one over`,
-    });
+    const reason = `No module credential of ${request.callingAppId} in this process: the host has not handed one over`;
+    // Owners turn this into a generic unavailable problem; the log keeps the cause visible to the operator.
+    yield* Effect.logWarning(reason);
+    return yield* new GatewayDelegationSourceError({ reason });
   }
   const [baseUrl, source] = yield* Effect.all(
     [
