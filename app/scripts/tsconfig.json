@@ -7,6 +7,6 @@
   "exclude": [
     "scaffolding",
     "demo/email-dispatcher",
-    "integration/tests/vat-window.old-release.mts"
+    "integration/tests/*.old-release.mts"
   ]
 }

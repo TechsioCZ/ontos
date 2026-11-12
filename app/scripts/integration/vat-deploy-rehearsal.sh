@@ -14,6 +14,9 @@
 #    packaged Shell and its built Tax, Finance and Merchandise under the owners process, every key from the platform's
 #    provisioning on fd 3; each persona (owner, Skladník, e-shop administrator, Účetní, Obchodník) and the registered
 #    storefront client, on a migrated clone.
+# 4. The rollback: this release writes products, orders and invoices in its own shape (`vat-reverse-new-release`), then
+#    the release before classifications, from the trunk checkout, reads and rewrites all of them
+#    (`tests/vat-reverse.old-release.mts`): nothing fails to decode and every amount stays as written.
 #
 #   . <integration env>; ONTOS_VAT_OLD_RELEASE_DIR=<trunk checkout>/app ONTOS_VAT_BUILT_APP=<built export>/app \
 #     scripts/integration/vat-deploy-rehearsal.sh
@@ -35,14 +38,18 @@ stamp="$(date +%s)"
 window_clone="ontos_test_party_gateway_vat_window_${stamp}"
 sequence_clone="ontos_test_party_gateway_vat_rehearsal_${stamp}"
 shell_clone="ontos_test_party_gateway_vat_real_shell_${stamp}"
+reverse_clone="ontos_test_party_gateway_vat_reverse_${stamp}"
+reverse_test="${old_release}/scripts/integration/vat-reverse-old-release.test.mts"
+reverse_report="$(mktemp -t vat-reverse-report)"
 window_test="${old_release}/scripts/integration/vat-window-old-release.test.mts"
 report="$(mktemp -t vat-window-report)"
 psql_admin() { docker exec "$container" sh -c "psql -v ON_ERROR_STOP=1 -U \"\${POSTGRES_USER:-postgres}\" -d postgres -c \"$1\""; }
 cleanup() {
-  rm -f "$window_test" "$report"
+  rm -f "$window_test" "$report" "$reverse_test" "$reverse_report"
   psql_admin "drop database if exists ${window_clone} with (force)" || true
   psql_admin "drop database if exists ${sequence_clone} with (force)" || true
   psql_admin "drop database if exists ${shell_clone} with (force)" || true
+  psql_admin "drop database if exists ${reverse_clone} with (force)" || true
 }
 trap cleanup EXIT
 deployed_env() {
@@ -90,3 +97,13 @@ psql_admin "create database ${shell_clone} template ${deployed}"
 migrate_clone "$shell_clone"
 on_clone "$shell_clone" ONTOS_VAT_BUILT_APP="$built_app" \
   pnpm exec rstest run --project integration --reporter=default scripts/integration/vat-real-shell.test.mts
+
+# 4. The rollback.
+psql_admin "create database ${reverse_clone} template ${deployed}"
+migrate_clone "$reverse_clone"
+on_clone "$reverse_clone" ONTOS_VAT_REVERSE_REPORT="$reverse_report" \
+  ONTOS_VAT_WINDOW_FIXTURE="$app/verticals/merchandise/tests/fixtures/vat-transition-pre-migration.json" \
+  pnpm exec rstest run --project integration --reporter=default scripts/integration/vat-reverse-new-release.test.mts
+cp scripts/integration/tests/vat-reverse.old-release.mts "$reverse_test"
+(cd "$old_release" && on_clone "$reverse_clone" ONTOS_VAT_REVERSE_REPORT="$reverse_report" \
+  pnpm exec rstest run --project integration --reporter=default scripts/integration/vat-reverse-old-release.test.mts)

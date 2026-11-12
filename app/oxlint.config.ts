@@ -251,7 +251,7 @@ export default defineConfig({
     'tools/oxlint/anti-slop/**',
     'tools/oxlint/effect-native/tests/fixtures/**',
     // Written against the trunk a deploy replaces: the VAT deploy rehearsal runs it in a checkout of that trunk.
-    'scripts/integration/tests/vat-window.old-release.mts',
+    'scripts/integration/tests/*.old-release.mts',
   ],
   jsPlugins: [
     ...jsPlugins.jsPlugins,
