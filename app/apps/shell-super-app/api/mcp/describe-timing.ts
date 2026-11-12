@@ -3,7 +3,7 @@
  * the spans the description already emits. Fixed names and numbers only, never an identity. Sums of concurrent
  * spans can exceed the description's wall time.
  */
-import { Effect, Schema, Tracer } from 'effect';
+import { Clock, Effect, Exit, Schema, Tracer } from 'effect';
 
 /** The parts a description's time is split into. */
 const PartSchema = Schema.Literals(['cells', 'composition', 'configure', 'evidence', 'resolution', 'spicedb']);
@@ -34,11 +34,8 @@ export interface DescriptionTiming {
   readonly transactions: number;
 }
 
-/** Runs `effect` with a tracer that also counts its spans; the spans still reach the request's own tracer. */
-export const timedDescription = Effect.fn('Mcp.timedDescription')(function* timedDescription<A, E, R>(
-  effect: Effect.Effect<A, E, R>,
-) {
-  const tracer = yield* Effect.tracer;
+/** A tracer that counts the round trips and parts of the spans it sees, and passes every span on to `tracer`. */
+const makeRoundTripCounter = (tracer: Tracer.Tracer) => {
   const ms = { cells: 0, composition: 0, configure: 0, evidence: 0, resolution: 0, spicedb: 0 };
   const counts = { spicedbCalls: 0, statements: 0, transactions: 0 };
   const count = (name: string, elapsedMs: number) => {
@@ -67,8 +64,7 @@ export const timedDescription = Effect.fn('Mcp.timedDescription')(function* time
   const counting = Tracer.make(
     tracer.context === undefined ? { span } : { context: tracer.context.bind(tracer), span },
   );
-  const value = yield* effect.pipe(Effect.withTracer(counting));
-  const timing: DescriptionTiming = {
+  const timing = (): DescriptionTiming => ({
     cellsMs: Math.round(ms.cells),
     compositionMs: Math.round(ms.composition),
     configureMs: Math.round(ms.configure),
@@ -78,6 +74,44 @@ export const timedDescription = Effect.fn('Mcp.timedDescription')(function* time
     spicedbMs: Math.round(ms.spicedb),
     statements: counts.statements,
     transactions: counts.transactions,
-  };
-  return [value, timing] as const;
+  });
+  return { counting, timing };
+};
+
+/** Runs `effect` with a tracer that also counts its spans; the spans still reach the request's own tracer. */
+export const timedDescription = Effect.fn('Mcp.timedDescription')(function* timedDescription<A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+) {
+  const counter = makeRoundTripCounter(yield* Effect.tracer);
+  const value = yield* effect.pipe(Effect.withTracer(counter.counting));
+  return [value, counter.timing()] as const;
+});
+
+/**
+ * Runs one request of `route` and logs its `agent-platform.request` line when it ends, succeeded or failed: its
+ * milliseconds and the same round-trip counts and parts the `mcp.request` line carries. Fixed names and numbers only.
+ */
+export const withRoundTripLog = Effect.fn('AgentPlatform.roundTripLog')(function* withRoundTripLog<A, E, R>(
+  route: string,
+  effect: Effect.Effect<A, E, R>,
+) {
+  const counter = makeRoundTripCounter(yield* Effect.tracer);
+  const startedAt = yield* Clock.currentTimeMillis;
+  return yield* effect.pipe(
+    Effect.withTracer(counter.counting),
+    Effect.onExit((exit) =>
+      Clock.currentTimeMillis.pipe(
+        Effect.flatMap((finishedAt) =>
+          Effect.logInfo('agent-platform.request').pipe(
+            Effect.annotateLogs({
+              ...counter.timing(),
+              outcome: Exit.isSuccess(exit) ? 'ok' : 'failed',
+              route,
+              totalMs: finishedAt - startedAt,
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
 });

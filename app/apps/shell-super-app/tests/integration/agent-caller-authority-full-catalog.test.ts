@@ -225,6 +225,8 @@ interface AuthorityCase {
   readonly companyId: string;
   readonly owner: string;
   readonly person: string;
+  /** Leaves exactly these modules installed for the tenant and reprojects its graph through the Core writer. */
+  readonly reinstall: (moduleKeys: readonly string[]) => Effect.Effect<void>;
   readonly runtime: DatabaseConnectionPair['runtime'];
   readonly tenantId: string;
 }
@@ -340,7 +342,18 @@ const withAuthorityCase = <A, E>(moduleId: string, run: (authorityCase: Authorit
                  '${roleRevisionId}', 'active', '${owner}', now() - interval '1 day')`,
       );
       yield* graph.writer.reconcileTenant({ scope: ownerScope });
-      return yield* run({ admin, companyId, owner, person, runtime: databases.runtime, tenantId });
+      const reinstall = (moduleKeys: readonly string[]) =>
+        Effect.gen(function* reinstallModules() {
+          yield* admin.unsafe(`delete from core.tenant_module_states where tenant_id = '${tenantId}'`);
+          for (const moduleKey of moduleKeys) {
+            yield* admin.unsafe(
+              `insert into core.tenant_module_states (tenant_module_state_id, tenant_id, module_key, state)
+               values (gen_random_uuid(), '${tenantId}', '${moduleKey}', 'active')`,
+            );
+          }
+          yield* graph.writer.reconcileTenant({ scope: ownerScope });
+        }).pipe(Effect.orDie);
+      return yield* run({ admin, companyId, owner, person, reinstall, runtime: databases.runtime, tenantId });
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
@@ -516,7 +529,13 @@ const queueReadActionKeys = Effect.gen(function* queueReadActionKeys() {
 
 const sorted = (values: Iterable<string>) => [...values].toSorted();
 
+/** The members of `modules` that are in `kept`, sorted. */
+const keptIn = (kept: readonly string[], modules: ReadonlySet<string>) => sorted(kept.filter((id) => modules.has(id)));
+
 const reportPath = Config.option(Config.String('CALLER_AUTHORITY_REPORT'));
+
+/** Bounds of a stage tenant's caller authority load; asking every composed module took 86 transactions. */
+const CALLER_INSTALLED_BOUNDS = { checkBulk: 6, transactions: 36 };
 
 it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '900 seconds' })(
   'agent platform caller authority over the installed release',
@@ -599,6 +618,69 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '900 secon
           }).pipe(Effect.provide(NodeServices.layer)),
         ),
       900_000,
+    );
+
+    suite.effect(
+      "asks a stage tenant owner's caller authority only about the modules the tenant installed",
+      () =>
+        withAuthorityCase('work.tasks', (authorityCase) =>
+          Effect.gen(function* installedCallerAuthority() {
+            const snapshot = yield* installedComposition;
+            const { companyId, owner, tenantId } = authorityCase;
+            // Stage's N1 demo tenant: 6 of the release's modules installed, the owner holding full access.
+            const installed = [
+              'commerce.customer-context',
+              'commerce.market-catalog',
+              'commerce.storefront-registry',
+              'demo.merchandise',
+              'party.registry',
+              'work.tasks',
+            ];
+            yield* authorityCase.reinstall(installed);
+            const ownerScope = (correlationId: string) =>
+              sessionScope({ correlationId, legalEntityId: companyId, principalId: owner, tenantId });
+            const trace = yield* Ref.make(emptyCallerAccessTrace);
+            const caller = yield* measured({
+              authorityCase,
+              correlationId: 'installed-caller-authority',
+              read: callerModuleAccess({ scope: yield* ownerScope('installed-caller-authority') }, trace),
+              snapshot,
+            });
+            // Asking every composed module, as before, then dropping the uninstalled ones (all installed ones are
+            // active, which admits reads and writes) gives the same rights.
+            const everything = yield* measured({
+              authorityCase,
+              correlationId: 'installed-caller-reference',
+              read: callerAccessOneAtATime(yield* ownerScope('installed-caller-reference')),
+              snapshot,
+            });
+            expect(sorted(caller.value.access)).toEqual(keptIn(installed, everything.value.access));
+            expect(sorted(caller.value.propose)).toEqual(keptIn(installed, everything.value.propose));
+            expect(sorted(caller.value.write)).toEqual(keptIn(installed, everything.value.write));
+            const remaining = [...everything.decisionRowContents];
+            for (const row of caller.decisionRowContents) {
+              const at = remaining.indexOf(row);
+              expect(at).toBeGreaterThanOrEqual(0);
+              remaining.splice(at, 1);
+            }
+            const path = yield* reportPath;
+            if (Option.isSome(path)) {
+              yield* (yield* FileSystem.FileSystem).writeFileString(
+                `${path.value}.installed.json`,
+                yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+                  after: reportOf(caller),
+                  everything: reportOf(everything),
+                  trace: yield* Ref.get(trace),
+                }),
+              );
+            }
+            // Asking every composed module: 16 SpiceDB calls (14 of them one LIST each) and 478 evidence rows.
+            expect(caller.counters.checkBulk).toBeLessThanOrEqual(CALLER_INSTALLED_BOUNDS.checkBulk);
+            expect(caller.transactions).toBeLessThanOrEqual(CALLER_INSTALLED_BOUNDS.transactions);
+            expect(caller.decisionRows).toBeLessThan(everything.decisionRows);
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ),
+      300_000,
     );
   },
 );

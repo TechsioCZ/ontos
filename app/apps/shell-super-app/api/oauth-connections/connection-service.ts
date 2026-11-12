@@ -13,7 +13,7 @@ import {
   openPrincipalOperators,
   TenantModuleStateService,
 } from '@app/core-runtime';
-import type { OperationalScope } from '@app/core-runtime';
+import type { OperationalScope, TenantModuleState } from '@app/core-runtime';
 import { SubjectAccessInspection, SubjectInspectionUnavailable } from '@app/core-runtime/access/enforcement';
 import {
   ConnectionClientIdSchema,
@@ -181,6 +181,13 @@ export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingA
         reason: 'OAuth agent has no credential-bound access connection and consent revision',
       });
     }
+    // A module is usable only while the tenant's own state admits the access, exactly as its entrypoints are gated,
+    // so a connection reaches no other module. The states are read first, and only modules whose state admits a read
+    // (every state that admits a write admits a read) are asked about: the answers for any other module were always
+    // dropped here, and asking them cost a question, its reads and its evidence for every module the tenant never
+    // installed. The gate itself answers over the whole composition (a tenant owner is admitted on every
+    // administration declaration, also of a module this tenant never installed).
+    const moduleStates = yield* TenantModuleStateService;
     const sets = yield* subjectModuleAccess(
       {
         queryScope: { legalEntityId: input.legalEntityId, tenantId: input.tenantId },
@@ -188,14 +195,25 @@ export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingA
         subject: { principalId: input.actingPrincipalId, tenantId: input.tenantId },
       },
       trace,
+      (moduleIds) =>
+        moduleStates.getTenantModuleStates(input.tenantId, moduleIds).pipe(
+          Effect.map((states) => {
+            const readable = new Set(
+              states.flatMap(({ moduleKey, state }) =>
+                decideModuleStateAccess(state, 'read') === 'allow' ? [moduleKey] : [],
+              ),
+            );
+            return new Set(moduleIds.filter((moduleId) => readable.has(moduleId)));
+          }),
+        ),
     );
     const { labelOf } = composedModulesOf(mcpModulesOf(sets.installed.composition));
-    // The gate answers over the whole composition: a tenant owner is admitted on every administration declaration,
-    // also of a module this tenant never installed. A module is usable only while the tenant's own state admits the
-    // access, exactly as its entrypoints are gated, so a connection reaches no other module.
+    // The states are read once more after the decisions, as they were before the first read narrowed the questions: a
+    // module deactivated while the description ran (its rights not yet withdrawn from the projection) is dropped. One
+    // indexed statement, outside any transaction.
     const answered = [...new Set([...sets.access, ...sets.run, ...sets.propose])];
-    const states = yield* (yield* TenantModuleStateService).getTenantModuleStates(input.tenantId, answered);
-    const stateOf = new Map(states.map(({ moduleKey, state }) => [moduleKey, state]));
+    const states = yield* moduleStates.getTenantModuleStates(input.tenantId, answered);
+    const stateOf = new Map<string, TenantModuleState>(states.map(({ moduleKey, state }) => [moduleKey, state]));
     const admitted = (modules: ReadonlySet<string>, access: 'read' | 'write'): ReadonlySet<string> =>
       new Set(
         [...modules].filter((moduleId) => decideModuleStateAccess(stateOf.get(moduleId) ?? null, access) === 'allow'),

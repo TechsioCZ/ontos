@@ -164,7 +164,9 @@ export const makeTaxGovernanceAccessFixture = Effect.fn('TaxProductionRuntimeTes
       }
       if (sql.includes('from "core"."access_role_revisions"')) {
         scoped();
-        expect(params).toEqual([tenantId, roleRevisionId]);
+        // The cell read narrows the revision to the asked capability and mode (run or propose) in the statement.
+        expect([params[0], params.slice(-2)]).toEqual([capabilityKey, [tenantId, roleRevisionId]]);
+        expect(['run', 'propose']).toContain(params[1]);
         return Option.some(
           Effect.succeed([
             {

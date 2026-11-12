@@ -15,7 +15,7 @@ import type {
   ScopeQuery,
 } from '../decision/authority.ts';
 import type { AccessDecision, DecisionCapabilityPolicy } from '../decision/contract.ts';
-import { decideAccessMany, resolveListAccess } from '../decision/engine.ts';
+import { decideAccessMany, resolveListAccessMany } from '../decision/engine.ts';
 import { withOptional } from '../decision/optional.ts';
 import { holderIdOf } from '../decision/selector.ts';
 import { AgentConnectionIdSchema, AgentIdSchema, PrincipalIdSchema, TenantIdSchema } from '../ids.ts';
@@ -536,12 +536,17 @@ export const makeSubjectAccessInspection = (ports: SubjectInspectionPorts): Subj
               })),
             },
           ]);
-    const listed = yield* Effect.forEach(
-      pending.filter(({ listing }) => listing),
-      ({ actor, authority, capability, mode, now }) =>
-        resolveListAccess(authority, ports.check, { actor, capability, mode, now }),
-      { concurrency: 2 },
-    );
+    // Every LIST of the batch in one cell read and one engine snapshot, each answered exactly as alone.
+    const listings = pending.filter(({ listing }) => listing);
+    const [firstListing] = listings;
+    const listed =
+      firstListing === undefined
+        ? []
+        : yield* resolveListAccessMany(
+            firstListing.authority,
+            ports.check,
+            listings.map(({ actor, capability, mode, now }) => ({ actor, capability, mode, now })),
+          );
     // Each answer in pending order: the targetless ones and the LISTs each keep their own relative order.
     let targetlessAt = 0;
     let listedAt = 0;

@@ -10,8 +10,14 @@
  * - Shell 25 %, 512..1024 → 752 / 1024. Observed RSS 410–480 MB, so its heap is at most that: ≥ 1.5× headroom.
  * - Outbox worker 25 %, 512..1024 → 752 / 1024. Observed RSS 310–350 MB: ≥ 2.1× headroom; its search rebuilds and
  *   refreshes read in pages, and a heap stop here stops the whole container, so it gets the Shell's share.
- * - Owners: none. Its heap was observed up to 1 GB without evidence of the live set after a full collection, so a
- *   cap could stop all owners; it keeps Node's own limit until that is measured.
+ * - Owners: no old-space cap. Measured (2026-11-12): 617 MB live after a full collection at idle with all 26 units
+ *   (most of it each unit's own bundled module code and its source text), about 785 MB live on stage under storefront
+ *   reads, growing to about 1.04 GB before a major collection. A cap near that only makes major collections more
+ *   frequent, each as long; Node's own limit (about 1.5 GiB on stage) stays.
+ *   Instead the owners get a 64 MiB semi-space (V8 derives at most 16 MiB from the heap limit). Storefront reads
+ *   allocate about 14 MiB each; with eight overlapping, the default young generation promoted 1.06 MiB per read to old
+ *   space, 64 MiB promoted 0.60 MiB (minor collections 102 → 51, GC time 296 → 150 ms per 240 reads). It costs at most
+ *   2 × 64 MiB of RSS while busy. 32 MiB measured no different from the default.
  */
 import os from 'node:os';
 
@@ -58,6 +64,12 @@ export const heapLimitMiB = (role: typeof HeapLimitedRole.Type, memoryBytes: num
   const steps = Math.floor(((memoryBytes / MIB) * share) / STEP_MIB);
   return Math.min(maximumMiB, Math.max(minimumMiB, steps * STEP_MIB));
 };
+
+/** The owners' young generation (see above); like the heap flags it precedes the script. */
+export const OWNERS_SEMI_SPACE_MIB = 64;
+export const OWNERS_YOUNG_GENERATION_ARGUMENTS: readonly string[] = [
+  `--max-semi-space-size=${String(OWNERS_SEMI_SPACE_MIB)}`,
+];
 
 /** The Node flag for a capped role; it precedes the script so Node, not the script, reads it. */
 export const heapLimitArguments = (role: typeof HeapLimitedRole.Type, memoryBytes: number): readonly string[] => [

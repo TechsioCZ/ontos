@@ -132,7 +132,7 @@ export const moduleCarriers = (installed: ShellInstalledCatalog): readonly Modul
 };
 
 /** The inner steps of one caller authority load, in the order they run. */
-export const CALLER_ACCESS_PHASES = ['modules', 'carriers', 'lists', 'actions', 'states'] as const;
+export const CALLER_ACCESS_PHASES = ['modules', 'states', 'carriers', 'lists', 'actions', 'states-after'] as const;
 export type CallerAccessPhase = (typeof CALLER_ACCESS_PHASES)[number];
 
 /**
@@ -205,7 +205,23 @@ export const callerModuleAccess = Effect.fn('AgentPlatform.callerModuleAccess')(
   const authority = yield* ActionAuthority;
   const gate = yield* AccessDecisionGate;
   const now = yield* DateTime.nowAsDate;
-  const carriers = moduleCarriers(installed);
+  // A module is usable only while the tenant's own state admits the access, so the states are read first and only
+  // modules whose state admits a read (every state that admits a write admits a read) are asked about: an answer for
+  // any other module was always dropped below, and asking it cost a question, its reads and its evidence for every
+  // module the tenant never installed.
+  const composed = installed.contracts.map(({ manifest }) => manifest.module.id);
+  const states = yield* callerPhase(
+    progress,
+    'states',
+    (yield* TenantModuleStateService)
+      .getTenantModuleStates(caller.scope.tenantId, composed)
+      .pipe(Effect.mapError((cause) => new AgentStoreUnavailable({ cause }))),
+  );
+  const stateOf = new Map(states.map(({ moduleKey, state }) => [moduleKey, state]));
+  const askable = new Set(
+    composed.filter((moduleId) => decideModuleStateAccess(stateOf.get(moduleId) ?? null, 'read') === 'allow'),
+  );
+  const carriers = moduleCarriers(installed).filter(({ moduleId }) => askable.has(moduleId));
   const scopeWide: { readonly carrier: ModuleCarrier; readonly index: number }[] = [];
   const recordScoped: { readonly carrier: ModuleCarrier; readonly index: number }[] = [];
   for (const [index, carrier] of carriers.entries()) {
@@ -270,7 +286,9 @@ export const callerModuleAccess = Effect.fn('AgentPlatform.callerModuleAccess')(
   // A module's Actions are asked without a record: a record-scoped Action is conservatively not counted
   // as a global right, and its record-scoped admission stays the owner read's own gate (O9, O27).
   const actions = installed.contracts.flatMap(({ manifest }) =>
-    manifest.publicSurface.actions.filter((action) => action.legalEntityScope !== 'forbidden'),
+    manifest.publicSurface.actions.filter(
+      (action) => action.legalEntityScope !== 'forbidden' && askable.has(action.owningModuleId),
+    ),
   );
   const actionKeys = [...new Set(actions.map(({ actionKey }) => actionKey))];
   yield* Ref.update(progress, (current) => ({
@@ -302,17 +320,22 @@ export const callerModuleAccess = Effect.fn('AgentPlatform.callerModuleAccess')(
   const writeAnswered = new Set(
     actions.flatMap(({ actionKey, owningModuleId }) => (executable.has(actionKey) ? [owningModuleId] : [])),
   );
-  const states = yield* callerPhase(
+  // The states are read once more after the decisions, as they were before the first read narrowed the questions: a
+  // module deactivated while the description ran (its rights not yet withdrawn from the projection) is dropped. One
+  // indexed statement, outside any transaction.
+  const current = yield* callerPhase(
     progress,
-    'states',
+    'states-after',
     (yield* TenantModuleStateService)
       .getTenantModuleStates(caller.scope.tenantId, [...visible])
       .pipe(Effect.mapError((cause) => new AgentStoreUnavailable({ cause }))),
   );
-  const stateOf = new Map(states.map(({ moduleKey, state }) => [moduleKey, state]));
+  const currentStateOf = new Map(current.map(({ moduleKey, state }) => [moduleKey, state]));
   const admitted = (modules: ReadonlySet<string>, access: 'read' | 'write'): Set<string> =>
     new Set(
-      [...modules].filter((moduleId) => decideModuleStateAccess(stateOf.get(moduleId) ?? null, access) === 'allow'),
+      [...modules].filter(
+        (moduleId) => decideModuleStateAccess(currentStateOf.get(moduleId) ?? null, access) === 'allow',
+      ),
     );
   return {
     access: admitted(visible, 'read'),
@@ -388,20 +411,24 @@ const askInStages = Effect.fn('AgentPlatform.subjectAccessStages')(function* ask
   readonly access: Set<string>;
   readonly input: SubjectInspectionInput;
   readonly installed: ShellInstalledCatalog;
+  /** Only these modules are asked about; another one's answer could never reach the hints. */
+  readonly modules: ReadonlySet<string>;
   readonly progress: Ref.Ref<SubjectAccessTrace>;
   readonly propose: Set<string>;
   readonly run: Set<string>;
   readonly stages: SubjectInspectionStages;
 }) {
-  const { access, installed, progress, propose, run, stages } = context;
+  const { access, installed, modules, progress, propose, run, stages } = context;
   // The questions come from the installed catalogue; the stages answer them in the release they verify. Both must be
   // one release, or the hints would name modules of one release with answers of another.
   if (stages.revision !== installed.composition.revision) {
     return yield* new SubjectInspectionUnavailable({ reason: 'Composition changed during subject inspection' });
   }
-  const carriers = moduleCarriers(installed);
+  const carriers = moduleCarriers(installed).filter(({ moduleId }) => modules.has(moduleId));
   const actions = installed.contracts.flatMap(({ manifest }) =>
-    manifest.publicSurface.actions.filter((action) => action.legalEntityScope !== 'forbidden'),
+    manifest.publicSurface.actions.filter(
+      (action) => action.legalEntityScope !== 'forbidden' && modules.has(action.owningModuleId),
+    ),
   );
   yield* countInspection(progress, {});
   // While the scope is inspected, the subject is resolved in every company context the batches may ask in; nothing
@@ -521,9 +548,17 @@ const askInStages = Effect.fn('AgentPlatform.subjectAccessStages')(function* ask
  * calls, whatever the catalog size: the subject's scope and one or two capability batches. Executing an Action never
  * relies on these hints; the gate decides it on its own.
  */
-export const subjectModuleAccess = Effect.fn('AgentPlatform.subjectModuleAccess')(function* subjectModuleAccessEffect(
+export const subjectModuleAccess = Effect.fn('AgentPlatform.subjectModuleAccess')(function* subjectModuleAccessEffect<
+  AskableFailure = never,
+  AskableRequirements = never,
+>(
   input: SubjectInspectionInput,
   trace?: Ref.Ref<SubjectAccessTrace>,
+  /**
+   * Narrows the questions to the composed modules whose hints can still be used (a module the tenant has not
+   * installed, say). The sets are then those of asking everything, restricted to these modules; by default all.
+   */
+  askable?: (moduleIds: readonly string[]) => Effect.Effect<ReadonlySet<string>, AskableFailure, AskableRequirements>,
 ) {
   const progress = trace ?? (yield* Ref.make(emptySubjectAccessTrace));
   const inspection = yield* SubjectAccessInspection;
@@ -532,13 +567,15 @@ export const subjectModuleAccess = Effect.fn('AgentPlatform.subjectModuleAccess'
     'modules',
     (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError((cause) => new AgentStoreUnavailable({ cause }))),
   );
+  const composed = installed.contracts.map(({ manifest }) => manifest.module.id);
+  const modules = askable === undefined ? new Set(composed) : yield* askable(composed);
   const access = new Set<string>();
   const propose = new Set<string>();
   const run = new Set<string>();
   // The scope and both batches are stages of ONE inspection: one subject resolution per company context and one
   // composition-revision check for the whole description, as when everything was asked in one batch.
   yield* inspection.staged(input, (stages) =>
-    askInStages({ access, input, installed, progress, propose, run, stages }),
+    askInStages({ access, input, installed, modules, progress, propose, run, stages }),
   );
   return { access, inspectionOnly: true as const, installed, propose, run };
 });
