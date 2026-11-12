@@ -4,6 +4,8 @@ import NextLink from "next/link";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Link } from "@/features/plain-link";
 import { StatusText } from "@techsio/ui-kit/atoms/status-text";
+import { useToast } from "@techsio/ui-kit/molecules/toast";
+import { passwordRecoveryActionFeedback } from "./action-feedback";
 import { FormInput } from "./form-controls";
 import { Effect, Exit, Schema } from "effect";
 import type { Fiber } from "effect";
@@ -41,21 +43,20 @@ const RecoveryFeedback = ({
   if (result === null) {
     return <output aria-live="polite" />;
   }
-  const success = result.state === "requested" || result.state === "completed";
-  const messages = { ...d.passwordRecovery.states };
-  if (mode === "request") {
-    messages.invalid = d.auth.errors.email;
-    messages.unconfirmed = d.passwordRecovery.requestUnconfirmed;
-  }
+  const guidance =
+    (mode === "request" && result.state === "requested") ||
+    (mode === "reset" && result.state === "completed");
+  const { statusText } = passwordRecoveryActionFeedback(result.state, mode, d);
   return (
     <output aria-live="polite">
-      <StatusText status={success ? "success" : "warning"}>{messages[result.state]}</StatusText>
+      <StatusText status={guidance ? "default" : "warning"}>{statusText}</StatusText>
     </output>
   );
 };
 
 /** Password fields stay in native controls; a reset token never enters this component. */
-const useRecoveryForm = (mode: RecoveryMode) => {
+const useRecoveryForm = (mode: RecoveryMode, dictionary: Dictionary) => {
+  const toaster = useToast();
   const form = useRef<HTMLFormElement>(null);
   const active = useRef<Fiber.Fiber<PasswordRecoveryOutcome> | null>(null);
   const [pending, setPending] = useState(false);
@@ -101,6 +102,10 @@ const useRecoveryForm = (mode: RecoveryMode) => {
       }
       setResult(next);
       setPending(false);
+      const { successToast } = passwordRecoveryActionFeedback(next.state, mode, dictionary);
+      if (successToast !== null) {
+        toaster.create(successToast);
+      }
     });
   };
   return { form, pending, result, submit };
@@ -119,7 +124,7 @@ export const PasswordRecoveryView = ({
   tokenPresent?: boolean;
 }) => {
   const fieldId = useId();
-  const { form, pending, result, submit } = useRecoveryForm(mode);
+  const { form, pending, result, submit } = useRecoveryForm(mode, d);
   const text = d.passwordRecovery;
   const blocked = result !== null && terminalStates.has(result.state);
   const missingToken = mode === "reset" && !tokenPresent;
