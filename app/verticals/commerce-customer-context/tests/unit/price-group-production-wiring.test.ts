@@ -97,8 +97,12 @@ it.effect('attaches every Price Group Action and the governed resolution Read to
     expect(getActionServicePreflight(migrateCounterpartyPriceGroupAction)).toBe(
       prepareMigrateCounterpartyPriceGroupServices,
     );
-    expect(getActionServiceFactory(assignCustomerPriceGroupAction)).toBe(assignCustomerPriceGroupServicesForTransaction);
-    expect(getActionServiceFactory(assignCounterpartyPriceGroupAction)).toBe(assignCounterpartyPriceGroupServicesForTransaction);
+    expect(getActionServiceFactory(assignCustomerPriceGroupAction)).toBe(
+      assignCustomerPriceGroupServicesForTransaction,
+    );
+    expect(getActionServiceFactory(assignCounterpartyPriceGroupAction)).toBe(
+      assignCounterpartyPriceGroupServicesForTransaction,
+    );
     expect(getActionServiceFactory(migrateCustomerPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
     expect(getActionServiceFactory(migrateCounterpartyPriceGroupAction)).toBe(priceGroupActionServicesForTransaction);
 
