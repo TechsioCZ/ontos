@@ -4,6 +4,10 @@
 -- their stored rate and amounts and gain the classification only where it is unambiguous: 21 -> standard,
 -- 12 -> reduced, anything else (10 %, 0 %) none. Each company's materialised rates are seeded from the stored ones, so
 -- nothing waits for Tax after the deploy.
+-- The release still serving writes these tables while this runs. A long transaction of it would make the ALTERs and
+-- UPDATEs below wait, and every later write would queue behind them: fail the deploy fast instead. The migrator then
+-- fails, the new container does not publish, the old release keeps serving, and the next deploy runs it again.
+SET LOCAL lock_timeout = '5s';--> statement-breakpoint
 DO $$
 DECLARE
   blocking text;
@@ -222,4 +226,5 @@ CREATE FUNCTION "demo_merchandise"."classify_written_order"() RETURNS trigger
   $$;--> statement-breakpoint
 CREATE TRIGGER "orders_tax_classification"
   BEFORE INSERT OR UPDATE OF "document" ON "demo_merchandise"."orders"
-  FOR EACH ROW EXECUTE FUNCTION "demo_merchandise"."classify_written_order"();
+  FOR EACH ROW EXECUTE FUNCTION "demo_merchandise"."classify_written_order"();--> statement-breakpoint
+SET LOCAL lock_timeout TO DEFAULT;

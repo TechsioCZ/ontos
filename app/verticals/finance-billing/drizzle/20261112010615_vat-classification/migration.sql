@@ -11,6 +11,10 @@
 -- window: whatever it writes is classified exactly as the backfill classifies it. Applying it to a ledger the new
 -- release writes changes nothing (its entries already carry a classification or a treatment). The contract step drops
 -- the trigger and the function.
+-- The release still serving writes these tables while this runs. A long transaction of it would make the ALTERs and
+-- UPDATEs below wait, and every later write would queue behind them: fail the deploy fast instead. The migrator then
+-- fails, the new container does not publish, the old release keeps serving, and the next deploy runs it again.
+SET LOCAL lock_timeout = '5s';--> statement-breakpoint
 -- Every function below has a fixed search path and names its own objects by schema.
 CREATE FUNCTION "finance_billing"."vat_classified_entry"(p_entry jsonb) RETURNS jsonb
   LANGUAGE sql IMMUTABLE PARALLEL SAFE
@@ -73,4 +77,5 @@ CREATE FUNCTION "finance_billing"."vat_classify_finance_state"() RETURNS trigger
   $$;--> statement-breakpoint
 CREATE TRIGGER "finance_states_vat_classification"
   BEFORE INSERT OR UPDATE OF "state" ON "finance_billing"."finance_states"
-  FOR EACH ROW EXECUTE FUNCTION "finance_billing"."vat_classify_finance_state"();
+  FOR EACH ROW EXECUTE FUNCTION "finance_billing"."vat_classify_finance_state"();--> statement-breakpoint
+SET LOCAL lock_timeout TO DEFAULT;

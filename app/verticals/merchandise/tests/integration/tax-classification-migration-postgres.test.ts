@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { migrate } from 'drizzle-orm/effect-postgres/migrator';
-import { Array as Arr, Crypto, Effect, FileSystem, Layer, Order, Predicate, Schema } from 'effect';
+import { Array as Arr, Clock, Crypto, Effect, FileSystem, Layer, Order, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -462,6 +462,60 @@ it.layer(nativeServices, { excludeTestServices: true })('tax classification migr
             order by 1`,
         );
         expect(unpinned).toEqual([]);
+      }),
+    180_000,
+  );
+
+  suite.effect(
+    'fails fast, changing nothing, while a transaction of the release still serving holds products',
+    () =>
+      Effect.gen(function* lockTimeout() {
+        const isolated = yield* makeIsolatedNativeDatabaseFixture({
+          mode: 'empty',
+          purpose: 'merchandise-tax-classification',
+        });
+        yield* isolated.migrateCoreSchema();
+        const client = yield* makeTestPgClient(isolated.connections.admin.connectionString, { maxConnections: 1 });
+        const db = yield* makeTestDatabaseFromClient(client, merchandiseRelations);
+        const fs = yield* FileSystem.FileSystem;
+        const before = yield* fs.makeTempDirectoryScoped({ prefix: 'ontos-merchandise-before-tax-' });
+        for (const name of yield* fs.readDirectory(migrations)) {
+          if (name === TAX_CLASSIFICATION || !(yield* fs.exists(`${migrations}/${name}/migration.sql`))) {
+            continue;
+          }
+          yield* fs.makeDirectory(`${before}/${name}`);
+          yield* fs.copyFile(`${migrations}/${name}/migration.sql`, `${before}/${name}/migration.sql`);
+          yield* fs.copyFile(`${migrations}/${name}/snapshot.json`, `${before}/${name}/snapshot.json`);
+        }
+        yield* migrate(db, migrationOptions(before));
+        // The old release in the middle of a long write: its transaction holds products as any write does.
+        const oldRelease = yield* makeTestPgClient(isolated.connections.admin.connectionString, { maxConnections: 1 });
+        yield* oldRelease.unsafe('begin');
+        yield* oldRelease.unsafe('lock table demo_merchandise.products in row exclusive mode');
+        const started = yield* Clock.currentTimeMillis;
+        const failed = yield* migrate(db, migrationOptions(migrations)).pipe(Effect.flip);
+        const waited = (yield* Clock.currentTimeMillis) - started;
+        yield* oldRelease.unsafe('rollback');
+        // It gave up after its 5 s lock timeout with PostgreSQL's own reason, never queueing behind the old release.
+        const reason = Predicate.hasProperty(failed, 'cause') ? String(failed.cause) : String(failed);
+        expect(reason).toContain('canceling statement due to lock timeout');
+        expect(waited).toBeGreaterThanOrEqual(4500);
+        expect(waited).toBeLessThan(15_000);
+        // Nothing of it was applied: no classification column, no function, no journal entry.
+        const applied = yield* client.unsafe<{
+          readonly column: boolean;
+          readonly fn: boolean;
+          readonly journal: boolean;
+        }>(
+          `select exists(select 1 from information_schema.columns where table_schema = 'demo_merchandise'
+                          and table_name = 'products' and column_name = 'tax_classification_code') as column,
+                  exists(select 1 from pg_proc where proname = 'product_tax_classification') as fn,
+                  exists(select 1 from drizzle.__drizzle_migrations_demo_merchandise
+                          where name = '${TAX_CLASSIFICATION}') as journal`,
+        );
+        expect(applied).toEqual([{ column: false, fn: false, journal: false }]);
+        // The next deploy runs it again and it applies.
+        yield* migrate(db, migrationOptions(migrations));
       }),
     180_000,
   );
