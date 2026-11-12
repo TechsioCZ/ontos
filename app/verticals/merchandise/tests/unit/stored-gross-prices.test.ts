@@ -64,7 +64,7 @@ const grossOf = (state: MerchandiseState, rates = TEST_RATES) => {
   const product = productOf(state);
   return product === undefined
     ? undefined
-    : toProductRecord(product, stockLevelsOf(state.movements, product.id), rates).grossPriceMinor;
+    : toProductRecord(product, stockLevelsOf(state.movements, product.id), rates, {}).grossPriceMinor;
 };
 
 const storefrontOrder = (expectedUnitPriceMinor: number): CommandInput => ({

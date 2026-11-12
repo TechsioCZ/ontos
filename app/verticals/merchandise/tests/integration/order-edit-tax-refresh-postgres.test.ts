@@ -38,7 +38,7 @@ import { persistenceService, prepareCommandTax } from '../../src/services/persis
 import { CompanyTaxRatesSchema, TaxRateSource } from '../../src/services/tax-rates.ts';
 import type { TaxRateBook } from '../../src/services/tax-rates.ts';
 import { merchandiseRegistration } from '../../vertical.registration.ts';
-import { TEST_RATES, TEST_TAX_BOOK, testTaxBook } from '../support/tax-fixtures.ts';
+import { TEST_PRICING, TEST_TAX_BOOK, testTaxBook } from '../support/tax-fixtures.ts';
 import { catalogState } from './support/merchandise-database.ts';
 
 const companyOf = (principal: TrustedPrincipalContext): Effect.Effect<StoreScope> =>
@@ -80,7 +80,7 @@ it.live('an order edit waits for Tax only when it adds a line, and prices that l
           { concurrency: 1 },
         ).pipe(Effect.orDie),
       );
-      yield* admin.transaction((tx) => replaceSnapshot(tx, company, catalogState, TEST_RATES));
+      yield* admin.transaction((tx) => replaceSnapshot(tx, company, catalogState, TEST_PRICING));
       const taxRates = yield* Schema.encodeEffect(CompanyTaxRatesSchema)({
         book: TEST_TAX_BOOK,
         source: 'TAX',

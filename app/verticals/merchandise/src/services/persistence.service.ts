@@ -1146,7 +1146,7 @@ const sellableUnitOf = (
     return { issue: { ...ids, code: 'PRICE_UNAVAILABLE', message: `${product.name}: ${taxed.message}` } };
   }
   const { tax } = taxed;
-  const record = toProductRecord(product, stockLevelsOf(movements, product.id), input.tax.rates);
+  const record = toProductRecord(product, stockLevelsOf(movements, product.id), input.tax.rates, input.tax.held);
   const variants = record.variantRecords ?? [];
   if (variants.length > 0) {
     const variant = variants.find((entry) => entry.id === line.variantId);
@@ -1590,7 +1590,12 @@ const validateEditedStorefrontQuantity = Effect.fn('Merchandise.validateEditedSt
   ) {
     if (existing.channel === 'STOREFRONT' && kept?.quantity !== request.quantity) {
       const product = yield* findProduct(state.products, request.productId);
-      const record = toProductRecord(product, stockLevelsOf(state.movements, product.id), input.tax.rates);
+      const record = toProductRecord(
+        product,
+        stockLevelsOf(state.movements, product.id),
+        input.tax.rates,
+        input.tax.held,
+      );
       const unit =
         request.variantId === undefined
           ? record
@@ -2598,7 +2603,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         );
         return advanced ?? (yield* revisionConflict());
       }
-      const revision = yield* persistChange(transaction, store, working, next, now, tax.rates).pipe(
+      const revision = yield* persistChange(transaction, store, working, next, now, tax.rates, tax.held).pipe(
         Effect.mapError(unavailable),
       );
       return revision ?? (yield* revisionConflict());

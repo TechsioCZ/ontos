@@ -30,10 +30,10 @@ import {
   products,
   stockMovements,
 } from '../database/schema.ts';
-import { grossPriceOf, stockLevelsOf, toProductRecord } from './stock-levels.ts';
+import { grossPriceOf, productRateOf, stockLevelsOf, toProductRecord } from './stock-levels.ts';
 import type { StockLevels } from './stock-levels.ts';
-import { CompanyTaxRatesSchema, sellableRatesOf } from './tax-rates.ts';
-import type { CompanyTaxRates, SellableVatRates } from './tax-rates.ts';
+import { CompanyTaxRatesSchema, heldRatesOf, sellableRatesOf } from './tax-rates.ts';
+import type { CompanyTaxRates, HeldProductRates, SellableVatRates } from './tax-rates.ts';
 import { normalizeSearchText } from './storefront-catalog.ts';
 import { czVatClassificationCodes } from '@app/shared-contracts/cz-vat-classifications';
 
@@ -128,13 +128,15 @@ const hasPhoto = (product: Product) => {
   return image !== undefined && image !== '' && !image.includes('image-unavailable.svg');
 };
 
+/** Products kept at the rate they were migrated with, by product id (`heldProductRates`). */
+type HeldRates = HeldProductRates;
 type ProductRow = typeof products.$inferInsert;
 type VariantRow = typeof productVariants.$inferInsert;
 type TierRow = typeof priceTiers.$inferInsert;
 
 /** Derived projection columns of one product at the given stock. */
-const derivedColumns = (product: Product, stock: StockLevels, rates: SellableVatRates) => {
-  const record = toProductRecord(product, stock, rates);
+const derivedColumns = (product: Product, stock: StockLevels, rates: SellableVatRates, held: HeldRates) => {
+  const record = toProductRecord(product, stock, rates, held);
   return {
     availability: record.availability ?? 'UNKNOWN',
     grossPriceMinor: record.grossPriceMinor ?? null,
@@ -166,14 +168,15 @@ export const productRowsOf = Effect.fn('MerchandiseStore.productRowsOf')(functio
   product: Product,
   stock: StockLevels,
   rates: SellableVatRates,
+  held: HeldRates,
 ) {
-  const rate = rates[product.taxClassificationCode];
+  const rate = productRateOf(product, rates, held);
   const encoded = yield* encodeProduct(product);
   const { priceTiers: _tiers, variants: encodedVariants, ...document } = encoded;
   void _tiers;
   const row: ProductRow = {
     ...scope,
-    ...derivedColumns(product, stock, rates),
+    ...derivedColumns(product, stock, rates, held),
     active: product.active,
     archived: product.demoArchive !== undefined,
     category: product.category,
@@ -491,6 +494,7 @@ export const insertSnapshotPart = Effect.fn('MerchandiseStore.insertSnapshotPart
   scope: StoreScope,
   part: MerchandiseState,
   rates: SellableVatRates,
+  held: HeldRates,
 ) {
   const byProduct = new Map<string, StockMovement[]>();
   for (const movement of part.movements) {
@@ -507,7 +511,8 @@ export const insertSnapshotPart = Effect.fn('MerchandiseStore.insertSnapshotPart
       const orderRows = yield* Effect.forEach(part.orders, (order) => orderRowOf(scope, order), { concurrency: 1 });
       const productRows = yield* Effect.forEach(
         part.products,
-        (product) => productRowsOf(scope, product, stockLevelsOf(byProduct.get(product.id) ?? [], product.id), rates),
+        (product) =>
+          productRowsOf(scope, product, stockLevelsOf(byProduct.get(product.id) ?? [], product.id), rates, held),
         { concurrency: 1 },
       );
       return { categories: categoryRows, movements: movementRows, orders: orderRows, products: productRows };
@@ -563,8 +568,14 @@ const decodeTaxRates = (value: (typeof catalogHeads.$inferSelect)['taxRates']) =
     ? Effect.succeed(Option.getOrUndefined(Option.none<CompanyTaxRates>()))
     : query(Schema.decodeUnknownEffect(CompanyTaxRatesSchema)(value), 'Company tax rates do not decode');
 
-/** The rates the company sells at now, from its last sync with Tax (none before the first sync). */
-export const currentRatesOf = Effect.fn('MerchandiseStore.currentRatesOf')(function* currentRatesOf(
+/** The rates prices are entered at: each classification's rate now, and the products held at their own rate. */
+export interface StorePricing {
+  readonly held: HeldRates;
+  readonly rates: SellableVatRates;
+}
+
+/** The rates the company sells at now, from its last sync with Tax (none before the first sync), and its holds. */
+export const currentPricingOf = Effect.fn('MerchandiseStore.currentPricingOf')(function* currentPricingOf(
   db: MerchandiseDb,
   scope: StoreScope,
 ) {
@@ -573,7 +584,7 @@ export const currentRatesOf = Effect.fn('MerchandiseStore.currentRatesOf')(funct
     'Company tax rates could not be read',
   );
   const stored = yield* decodeTaxRates(rows[0]?.taxRates ?? null);
-  return sellableRatesOf(stored, yield* DateTime.now);
+  return { held: heldRatesOf(stored), rates: sellableRatesOf(stored, yield* DateTime.now) } satisfies StorePricing;
 });
 
 /** Replaces the whole company's merchandise with `state` in batched inserts (seeds); returns the new revision. */
@@ -582,11 +593,11 @@ export const replaceSnapshot = Effect.fn('MerchandiseStore.replaceSnapshot')(fun
   scope: StoreScope,
   state: MerchandiseState,
   /** The rates new prices without a stored gross are derived at; by default the company's current rates. */
-  ratesNow?: SellableVatRates,
+  pricingNow?: StorePricing,
 ) {
-  const rates = ratesNow ?? (yield* currentRatesOf(db, scope));
+  const { held, rates } = pricingNow ?? (yield* currentPricingOf(db, scope));
   yield* deleteScope(db, scope);
-  yield* insertSnapshotPart(db, scope, state, rates);
+  yield* insertSnapshotPart(db, scope, state, rates, held);
   return yield* writeSnapshotHead(db, scope, state);
 });
 
@@ -720,7 +731,6 @@ const grossOfNet = (net: AnyPgColumn, rate: number) => sql<number>`${net} + (${n
  * takes the lowest gross of its active variants (of all of them when none is active), as its projection does.
  */
 /** A product held at its stored rate until Tax first prices its company, by product id (BOOK-IT, 10 %). */
-type HeldRates = Readonly<Record<string, number>>;
 
 /**
  * The groups a missing gross is entered in, each with the rate it is entered at: a held product at its held rate, any
@@ -1394,12 +1404,13 @@ const persistStockUpdates = Effect.fn('MerchandiseStore.persistStockUpdates')(fu
   scope: StoreScope,
   { deltas, stockAfter, stockOnly }: StockChanges,
   rates: SellableVatRates,
+  held: HeldRates,
 ) {
   yield* Effect.forEach(
     stockOnly,
     Effect.fn('MerchandiseStore.persistProductStock')(function* persistProductStock(product: Product) {
       const stock = stockAfter(product.id);
-      const derived = yield* attempt('Stock projection failed', () => derivedColumns(product, stock, rates));
+      const derived = yield* attempt('Stock projection failed', () => derivedColumns(product, stock, rates, held));
       yield* query(
         db
           .update(products)
@@ -1489,6 +1500,7 @@ export const persistChange = Effect.fn('MerchandiseStore.persistChange')(functio
   after: MerchandiseState,
   now: DateTime.Utc,
   rates: SellableVatRates,
+  held: HeldRates,
 ) {
   const before = working.state;
   const changes = stockChangesOf(working, after);
@@ -1497,7 +1509,7 @@ export const persistChange = Effect.fn('MerchandiseStore.persistChange')(functio
     return yield* new MerchandiseStoreFailure({ reason: `Stock movement for an unloaded product ${unknownStock[0]}` });
   }
   const rewritten = yield* query(
-    Effect.forEach(changedProducts, (product) => productRowsOf(scope, product, stockAfter(product.id), rates), {
+    Effect.forEach(changedProducts, (product) => productRowsOf(scope, product, stockAfter(product.id), rates, held), {
       concurrency: 1,
     }),
     'Changed products do not encode',
@@ -1508,7 +1520,7 @@ export const persistChange = Effect.fn('MerchandiseStore.persistChange')(functio
     (batch) => query(db.insert(stockMovements).values([...batch]), 'Stock movements could not be written'),
   );
   yield* persistRewrittenProducts(db, scope, rewritten);
-  yield* persistStockUpdates(db, scope, changes, rates);
+  yield* persistStockUpdates(db, scope, changes, rates, held);
   const changedOrders = yield* query(
     Effect.forEach(changedEntities(before.orders, after.orders), (order) => orderRowOf(scope, order), {
       concurrency: 1,

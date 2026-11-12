@@ -907,7 +907,7 @@ it.effect('repairs every stock page through native updates and reruns without mo
           const offset = view?.offset ?? 0;
           offsets.push(offset);
           const records = EffectArray.sort(
-            computeProductRecords(state, TEST_RATES),
+            computeProductRecords(state, TEST_RATES, {}),
             Order.mapInput(Order.String, (product: ReturnType<typeof computeProductRecords>[number]) => product.sku),
           );
           return HttpClientResponse.fromWeb(

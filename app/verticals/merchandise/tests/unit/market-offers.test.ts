@@ -369,7 +369,7 @@ it.effect('converts every storefront price of a product into the market currency
   Effect.gen(function* marketRecord() {
     const state = yield* seeded;
     const product = requireFixture(state.products[0]);
-    const record = toProductRecord(product, stockLevelsOf(state.movements, product.id), TEST_RATES);
+    const record = toProductRecord(product, stockLevelsOf(state.movements, product.id), TEST_RATES, {});
     const converted = productInMarketCurrency(record, orderMarket);
     expect(converted.grossPriceMinor).toBe(1160);
     expect(converted.variantRecords?.map((variant) => variant.grossPriceMinor)).toEqual([1160, 3960]);

@@ -40,7 +40,7 @@ import type { StoreScope } from '../../src/services/merchandise-store.ts';
 import { persistenceService, prepareCommandTax } from '../../src/services/persistence.service.ts';
 import { CompanyTaxRatesSchema, TaxRateSource, TaxRatesFailure } from '../../src/services/tax-rates.ts';
 import { merchandiseRegistration } from '../../vertical.registration.ts';
-import { TEST_RATES, TEST_TAX_BOOK } from '../support/tax-fixtures.ts';
+import { TEST_PRICING, TEST_TAX_BOOK } from '../support/tax-fixtures.ts';
 import { catalogState } from './support/merchandise-database.ts';
 
 const companyOf = (principal: TrustedPrincipalContext): Effect.Effect<StoreScope> =>
@@ -85,7 +85,7 @@ it.live('Merchandise keeps working while Tax is down, and prices nothing new on 
           { concurrency: 1 },
         ).pipe(Effect.orDie),
       );
-      yield* admin.transaction((tx) => replaceSnapshot(tx, company, catalogState, TEST_RATES));
+      yield* admin.transaction((tx) => replaceSnapshot(tx, company, catalogState, TEST_PRICING));
       const confirmedHoursAgo = Effect.fn('TaxOutage.confirmed')(function* confirmedHoursAgo(hours: number) {
         const syncedAt = DateTime.subtract(yield* DateTime.now, { hours });
         const taxRates = yield* Schema.encodeEffect(CompanyTaxRatesSchema)({

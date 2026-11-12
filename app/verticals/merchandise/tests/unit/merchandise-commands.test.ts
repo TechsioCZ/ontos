@@ -115,7 +115,7 @@ it.effect('CreateProduct normalizes priced variants and preserves informational 
     const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(created.state);
     const decoded = yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(encoded);
     expect(decoded).toEqual(created.state);
-    expect(computeProductRecords(decoded, TEST_RATES)[0]?.variantRecords?.map((variant) => variant.id)).toEqual([
+    expect(computeProductRecords(decoded, TEST_RATES, {})[0]?.variantRecords?.map((variant) => variant.id)).toEqual([
       'variant-product-v1',
       'white-variant',
     ]);
@@ -151,7 +151,7 @@ it.effect('new priced variants immediately accept stock and preserve their own o
       },
       'variant-receipt',
     );
-    expect(computeProductRecords(stocked.state, TEST_RATES)[0]?.variantRecords?.[0]).toMatchObject({
+    expect(computeProductRecords(stocked.state, TEST_RATES, {})[0]?.variantRecords?.[0]).toMatchObject({
       id: 'variant-product-v1',
       priceMinor: 1050,
       stockOnHand: 5,
@@ -173,7 +173,7 @@ it.effect('new priced variants immediately accept stock and preserve their own o
       variantId: 'variant-product-v1',
       variantName: 'Black',
     });
-    expect(computeProductRecords(ordered.state, TEST_RATES)[0]?.variantRecords?.[0]?.stockOnHand).toBe(3);
+    expect(computeProductRecords(ordered.state, TEST_RATES, {})[0]?.variantRecords?.[0]?.stockOnHand).toBe(3);
   }),
 );
 

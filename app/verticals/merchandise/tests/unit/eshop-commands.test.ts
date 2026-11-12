@@ -14,7 +14,7 @@ import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/or
 import { TEST_RATES, TEST_TAX, testTaxBook } from '../support/tax-fixtures.ts';
 
 const recordOf = (product: Parameters<typeof toProductRecord>[0], movements: Parameters<typeof stockLevelsOf>[0]) =>
-  toProductRecord(product, stockLevelsOf(movements, product.id), TEST_RATES);
+  toProductRecord(product, stockLevelsOf(movements, product.id), TEST_RATES, {});
 
 const actor = {
   principalId: '20000000-0000-4000-8000-000000000002',

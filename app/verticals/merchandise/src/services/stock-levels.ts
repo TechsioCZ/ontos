@@ -10,7 +10,7 @@ import type {
   StockMovement,
   VariantRecord,
 } from '../../shared/domain/merchandise-model.ts';
-import type { SellableVatRates } from './tax-rates.ts';
+import type { HeldProductRates, SellableVatRates } from './tax-rates.ts';
 
 /** Stock on hand of one product: the ledger total and each variant's own sum. */
 export interface StockLevels {
@@ -139,13 +139,30 @@ const toVariantRecord = (
 };
 
 /**
+ * The one rate a product's prices use: its held rate while it has one (a product migrated at 10 % keeps selling at
+ * 10 % until Tax first prices its company), otherwise the rate its classification sells at. The displayed gross, the
+ * label and an order line all take this rate.
+ */
+export const productRateOf = (
+  product: Pick<Product, 'id' | 'taxClassificationCode'>,
+  rates: SellableVatRates,
+  held: HeldProductRates,
+): number | undefined => held[product.id] ?? rates[product.taxClassificationCode];
+
+/**
  * Replenishment is a product-level policy: alert only below a positive product minimum.
  * Variant availability stays truthful even when the product is catalogue-only (minimum zero).
  * Products with real variants derive value, availability and the lowest active price from those variants.
+ * A price stored without its gross gets one at the product's rate ({@link productRateOf}).
  */
-export const toProductRecord = (product: Product, stock: StockLevels, rates: SellableVatRates): ProductRecord => {
+export const toProductRecord = (
+  product: Product,
+  stock: StockLevels,
+  rates: SellableVatRates,
+  held: HeldProductRates,
+): ProductRecord => {
   const stockOnHand = stock.total;
-  const rate = rates[product.taxClassificationCode];
+  const rate = productRateOf(product, rates, held);
   const variants = realVariantsOf(product).map((variant) => toVariantRecord(product, variant, stock, rate));
   if (variants.length === 0) {
     const grossPriceMinor = grossPriceOf(product, product.currentPriceMinor, rate);
@@ -193,7 +210,11 @@ export const toProductRecord = (product: Product, stock: StockLevels, rates: Sel
 };
 
 /** All product records of one state; movements are partitioned once so large catalogs stay linear. */
-export const computeProductRecords = (state: MerchandiseState, rates: SellableVatRates): readonly ProductRecord[] => {
+export const computeProductRecords = (
+  state: MerchandiseState,
+  rates: SellableVatRates,
+  held: HeldProductRates,
+): readonly ProductRecord[] => {
   const byProduct = new Map<string, StockMovement[]>();
   for (const movement of state.movements) {
     const bucket = byProduct.get(movement.productId) ?? [];
@@ -201,6 +222,6 @@ export const computeProductRecords = (state: MerchandiseState, rates: SellableVa
     byProduct.set(movement.productId, bucket);
   }
   return state.products.map((product) =>
-    toProductRecord(product, stockLevelsOf(byProduct.get(product.id) ?? [], product.id), rates),
+    toProductRecord(product, stockLevelsOf(byProduct.get(product.id) ?? [], product.id), rates, held),
   );
 };

@@ -7,7 +7,7 @@ import { expect, it } from 'effect-rstest';
 
 import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
-import { grossUnitPriceMinor } from '../../shared/domain/merchandise-model.ts';
+import { ProductSchema, grossUnitPriceMinor } from '../../shared/domain/merchandise-model.ts';
 import { withStorefrontVat } from '../../src/services/merchandise-queries.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
 import type { CommandTax } from '../../src/services/persistence.service.ts';
@@ -99,7 +99,7 @@ it.effect('a price entered for a held product stores its gross at the held rate,
     expect(sold.storefrontOrder?.outcome).toBe('PLACED');
     expect(sold.state.orders[0]?.lines[0]).toMatchObject({ unitPriceMinor: 60_500, vatRate: 10 });
     const product = productOf(bulk.state);
-    const record = toProductRecord(product, stockLevelsOf(bulk.state.movements, product.id), TEST_RATES);
+    const record = toProductRecord(product, stockLevelsOf(bulk.state.movements, product.id), TEST_RATES, {});
     expect(record.grossPriceMinor).toBe(60_500);
     expect(withStorefrontVat(record, TEST_RATES, HELD_TAX.held).vatRate).toBe(10);
     // Tax prices the company: BOOK-IT is held no more. Its stored gross stays, and an order splits it at 12 %.
@@ -143,5 +143,37 @@ it.effect('a variant entered or repriced for a held product stores its gross at 
     // Once Tax prices the company the variant keeps its gross; the order splits it at 12 %.
     const priced = yield* apply(stocked.state, order(44_000, variantId), 'variant-priced', TEST_TAX);
     expect(priced.state.orders[0]?.lines[0]).toMatchObject({ unitPriceMinor: 44_000, vatRate: 12 });
+  }),
+);
+
+it.effect('a held price stored without its gross is shown, labelled and charged at the held rate, never at 12 %', () =>
+  Effect.gen(function* heldWithoutGross() {
+    const state = yield* bookIt;
+    // BOOK-IT and a variant of it as stage may hold them: no gross stored anywhere.
+    const { grossPriceMinor: _gross, ...withoutGross } = productOf(state);
+    void _gross;
+    const variant = { attributes: 'Licence: roční', id: 'yearly', name: 'Roční', priceMinor: 30_000, sku: 'BOOK-IT-Y' };
+    const plain = toProductRecord(withoutGross, stockLevelsOf([], 'book-it'), TEST_RATES, HELD_TAX.held);
+    expect(plain.grossPriceMinor).toBe(grossUnitPriceMinor(49_000, 10));
+    expect(withStorefrontVat(plain, TEST_RATES, HELD_TAX.held).vatRate).toBe(10);
+    const withVariant = toProductRecord(
+      Schema.decodeUnknownSync(ProductSchema)({
+        ...Schema.encodeSync(ProductSchema)(withoutGross),
+        variants: [variant],
+      }),
+      stockLevelsOf([], 'book-it'),
+      TEST_RATES,
+      HELD_TAX.held,
+    );
+    expect(withVariant.variantRecords?.map((entry) => entry.grossPriceMinor)).toEqual([
+      grossUnitPriceMinor(30_000, 10),
+    ]);
+    expect(withVariant.grossPriceMinor).toBe(grossUnitPriceMinor(30_000, 10));
+    // The order line charges the same 10 %: the gross the storefront showed, split at the rate it was labelled with.
+    const sold = yield* apply({ ...state, products: [withoutGross] }, order(grossUnitPriceMinor(49_000, 10)), 'sold');
+    expect(sold.state.orders[0]?.lines[0]).toMatchObject({
+      unitPriceMinor: grossUnitPriceMinor(49_000, 10),
+      vatRate: 10,
+    });
   }),
 );

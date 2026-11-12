@@ -159,7 +159,7 @@ const checkProducts = Effect.fn('VatWindow.products')(function* checkProducts(
   }
   const stock =
     hydrated.find(({ product }) => product.id === heldProduct.id)?.stock ?? stockLevelsOf([], heldProduct.id);
-  const record = withStorefrontVat(toProductRecord(heldProduct, stock, rates), rates, held);
+  const record = withStorefrontVat(toProductRecord(heldProduct, stock, rates, held), rates, held);
   expect([record.vatRate, record.grossPriceMinor]).toEqual([10, 33_000]);
 
   // The first staff read or write backfills a price stored without any gross: the old era's variant without one gets

@@ -128,7 +128,7 @@ it.effect(
   () =>
     Effect.gen(function* catalogueStockMinimums() {
       const built = yield* buildSroubshopEncoded();
-      const records = computeProductRecords(yield* Schema.decodeEffect(MerchandiseStateSchema)(built), TEST_RATES);
+      const records = computeProductRecords(yield* Schema.decodeEffect(MerchandiseStateSchema)(built), TEST_RATES, {});
       expect(records).toHaveLength(1289);
       expect(
         records

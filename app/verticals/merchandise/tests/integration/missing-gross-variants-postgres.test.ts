@@ -29,7 +29,7 @@ import {
   storeMissingGrossPrices,
   whereScope,
 } from '../../src/services/merchandise-store.ts';
-import { TEST_RATES } from '../support/tax-fixtures.ts';
+import { TEST_PRICING, TEST_RATES } from '../support/tax-fixtures.ts';
 import { at, decodeState } from './support/merchandise-database.ts';
 
 const base = {
@@ -114,7 +114,7 @@ it.live('a missing gross is entered at its rate, a held product at its held rate
           { concurrency: 1 },
         ).pipe(Effect.orDie),
       );
-      yield* admin.transaction((tx) => replaceSnapshot(tx, company, state, TEST_RATES));
+      yield* admin.transaction((tx) => replaceSnapshot(tx, company, state, TEST_PRICING));
       // As stage stores them: no gross in the column nor the document for these, only the document for one variant.
       const clearVariant = (id: string) =>
         admin

@@ -435,6 +435,7 @@ const withVariants = (variants: readonly (readonly [string, number, number | und
     }),
     stockLevelsOf([], 'product-1'),
     {},
+    {},
   );
 
 describe('the price including VAT on the product editor', () => {

@@ -40,7 +40,7 @@ import type { StoreScope } from '../../src/services/merchandise-store.ts';
 import { persistenceService } from '../../src/services/persistence.service.ts';
 import { merchandiseRegistration } from '../../vertical.registration.ts';
 import { catalogState } from './support/merchandise-database.ts';
-import { TEST_COMPANY_TAX_RATES, TEST_FETCHED_TAX, TEST_RATES, TEST_TAX_BOOK } from '../support/tax-fixtures.ts';
+import { TEST_COMPANY_TAX_RATES, TEST_FETCHED_TAX, TEST_PRICING, TEST_TAX_BOOK } from '../support/tax-fixtures.ts';
 import { CompanyTaxRatesSchema, TaxRateSource } from '../../src/services/tax-rates.ts';
 
 type Fixture = Effect.Success<ReturnType<typeof makeNativeReadTestContext>>;
@@ -138,7 +138,7 @@ it.live(
           ).pipe(Effect.orDie),
         );
         const stockedRevision = yield* admin.transaction((tx) =>
-          replaceSnapshot(tx, stockedCompany, catalogState, TEST_RATES),
+          replaceSnapshot(tx, stockedCompany, catalogState, TEST_PRICING),
         );
         // The stocked company synced with Tax; the empty one never did.
         yield* admin

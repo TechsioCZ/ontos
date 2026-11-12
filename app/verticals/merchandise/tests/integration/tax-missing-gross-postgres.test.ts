@@ -41,7 +41,7 @@ import type { PreparedTax } from '../../src/services/persistence.service.ts';
 import { CompanyTaxRatesSchema, TaxRateSource, currentTaxRateBook } from '../../src/services/tax-rates.ts';
 import type { FetchedTaxRates } from '../../src/services/tax-rates.ts';
 import { merchandiseRegistration } from '../../vertical.registration.ts';
-import { TEST_RATES, TEST_TAX_BOOK } from '../support/tax-fixtures.ts';
+import { TEST_PRICING, TEST_TAX_BOOK } from '../support/tax-fixtures.ts';
 import { catalogState } from './support/merchandise-database.ts';
 
 const companyOf = (principal: TrustedPrincipalContext): Effect.Effect<StoreScope> =>
@@ -104,7 +104,7 @@ it.live(
             { concurrency: 1 },
           ).pipe(Effect.orDie),
         );
-        yield* admin.transaction((tx) => replaceSnapshot(tx, company, catalogState, TEST_RATES));
+        yield* admin.transaction((tx) => replaceSnapshot(tx, company, catalogState, TEST_PRICING));
         const confirmedHoursAgo = Effect.fn('MissingGross.confirmed')(function* confirmedHoursAgo(hours: number) {
           const taxRates = yield* Schema.encodeEffect(CompanyTaxRatesSchema)({
             book: TEST_TAX_BOOK,

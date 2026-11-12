@@ -366,7 +366,7 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
       ).pipe(Effect.mapError(storedRowsFailure));
       let record: ProductRecord;
       if (input.variants) {
-        record = toProductRecord(product, stock, pricedRates);
+        record = toProductRecord(product, stock, pricedRates, held);
       } else {
         const { variants: _variants, ...rest } = product;
         void _variants;
@@ -1040,6 +1040,7 @@ const searchMatchOf = Effect.fn('MerchandiseQueries.searchMatchOf')(function* se
   selected: Effect.Success<ReturnType<typeof selectedSearchRows>>,
   pricing: Option.Option<StoredMarket>,
   rates: SellableVatRates,
+  held: HeldProductRates,
 ): Effect.fn.Return<SearchMatch, MerchandiseStoreFailure> {
   if (plan.kind === 'multiple') {
     return { count: plan.count, kind: 'multiple' };
@@ -1088,6 +1089,7 @@ const searchMatchOf = Effect.fn('MerchandiseQueries.searchMatchOf')(function* se
         normalized === undefined ? new Map<string, number>() : new Map([[plan.selected.id, normalized.stockOnHand]]),
     },
     rates,
+    held,
   );
   const leaf = sellableLeafOf(record, plan.selected.id);
   if (leaf === undefined) {
@@ -1106,6 +1108,7 @@ const currentSearchMatches = Effect.fn('MerchandiseQueries.currentSearchMatches'
   needle: string,
   pricing: Option.Option<StoredMarket>,
   rates: SellableVatRates,
+  held: HeldProductRates,
 ) {
   if (needle === '' || page.length === 0) {
     return new Map<string, SearchMatch>();
@@ -1116,7 +1119,9 @@ const currentSearchMatches = Effect.fn('MerchandiseQueries.currentSearchMatches'
   const matches = yield* Effect.forEach(
     plans,
     (plan) =>
-      searchMatchOf(plan, selected, pricing, rates).pipe(Effect.map((match) => [plan.product.id, match] as const)),
+      searchMatchOf(plan, selected, pricing, rates, held).pipe(
+        Effect.map((match) => [plan.product.id, match] as const),
+      ),
     { concurrency: 1 },
   );
   return new Map(matches);
@@ -1205,7 +1210,7 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
   if (inclusion !== undefined && inclusion.revision !== result.head.revision) {
     return yield* new MerchandiseStoreFailure({ reason: 'The catalog changed during the search read' });
   }
-  const matches = yield* currentSearchMatches(db, scope, result.products, needle, pricing, result.rates);
+  const matches = yield* currentSearchMatches(db, scope, result.products, needle, pricing, result.rates, result.held);
   yield* verifySearchRevision(db, scope, result.head, needle, result.products.length);
   return {
     head: result.head,

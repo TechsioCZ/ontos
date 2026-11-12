@@ -34,7 +34,7 @@ import { replaceSnapshot, whereScope } from '../../src/services/merchandise-stor
 import type { StoreScope } from '../../src/services/merchandise-store.ts';
 import { CompanyTaxRatesSchema } from '../../src/services/tax-rates.ts';
 import { merchandiseRegistration } from '../../vertical.registration.ts';
-import { TEST_COMPANY_TAX_RATES, TEST_RATES } from '../support/tax-fixtures.ts';
+import { TEST_COMPANY_TAX_RATES, TEST_PRICING } from '../support/tax-fixtures.ts';
 import { catalogInput, decodeState } from './support/merchandise-database.ts';
 
 type Fixture = Effect.Success<ReturnType<typeof makeNativeReadTestContext>>;
@@ -105,7 +105,7 @@ const goldenState = decodeState({
 /** The company synced with Tax's Czech baseline, priced at it: what every selling company is after the migration. */
 const writeCatalog = (admin: Effect.Success<ReturnType<typeof adminDatabase>>, company: StoreScope) =>
   Effect.gen(function* writeSyncedCatalog() {
-    yield* admin.transaction((tx) => replaceSnapshot(tx, company, goldenState, TEST_RATES));
+    yield* admin.transaction((tx) => replaceSnapshot(tx, company, goldenState, TEST_PRICING));
     const taxRates = yield* Schema.encodeEffect(CompanyTaxRatesSchema)(TEST_COMPANY_TAX_RATES);
     yield* admin.update(catalogHeads).set({ taxRates }).where(whereScope(catalogHeads, company));
   });
