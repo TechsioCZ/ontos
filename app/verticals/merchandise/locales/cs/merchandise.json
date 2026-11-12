@@ -108,7 +108,7 @@
           "noMatch": "Žádný produkt neodpovídá.",
           "priceNote": "Ceny se při vytvoření objednávky zafixují.",
           "product": "Produkt",
-          "productMeta": "Cena {{price}}, skladem {{stock}} ks",
+          "productMeta": "Cena {{price}}, skladem {{stock}} ks, DPH {{vat}}",
           "quantity": "Množství (ks)",
           "removeLine": "Odebrat položku",
           "submitting": "Vytvářím…",
@@ -367,7 +367,7 @@
           "quantity": "Množství",
           "sku": "SKU",
           "unit": "Jednotka",
-          "vat": "DPH (%)",
+          "vat": "Sazba DPH",
           "priceNet": "Cena bez DPH (Kč)",
           "priceGross": "Cena s DPH (Kč)",
           "shortDescription": "Krátký popis",
@@ -549,6 +549,17 @@
     "loading": "Načítám…",
     "sidePanel": {
       "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku."
+    },
+    "tax": {
+      "classification": {
+        "reduced": "Snížená",
+        "standard": "Základní"
+      },
+      "noRates": "Pro tuto firmu není nastavená žádná sazba DPH.",
+      "notSet": "není nastaveno",
+      "option": "{{name}} ({{rate}})",
+      "rateMissing": "Sazba DPH „{{name}}“ není pro tuto firmu nastavená, produkt nelze přidat.",
+      "scheduled": "Od {{date}} {{rate}}"
     },
     "ui": {
       "storefrontBadge": "E-shop",

@@ -42,6 +42,8 @@ const orders = Array.from({ length: ROWS }, (_, index) =>
           productName: 'Cable',
           quantity: 1,
           sku: 'CABLE',
+          taxClassificationCode: 'cz.vat.standard',
+          taxRuleRevisionId: 'tax-rule-revision-standard-21',
           unitPriceMinor: 100,
           vatRate: 21,
         },
@@ -69,6 +71,7 @@ const responseOf = (rows: { readonly orders?: typeof orders }) =>
     orders: rows.orders ?? [],
     products: [],
     revision: 7,
+    taxRates: [],
     totalOrders: ROWS,
   });
 

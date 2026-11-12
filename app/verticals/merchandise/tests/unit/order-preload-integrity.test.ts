@@ -271,7 +271,7 @@ it.effect('a complete warm order keeps the full variant read revision and retrie
       }),
     );
     const ready = yield* orderDetailData.read(detail);
-    expect(ready).toEqual({ movesStock: true, order, products: [full], revision: 9 });
+    expect(ready).toEqual({ movesStock: true, order, products: [full], revision: 9, taxRates: [] });
     rstest.mocked(executeRecords).mockClear();
     expect(yield* orderDetailData.read(detail)).toBe(ready);
     expect(executeRecords).not.toHaveBeenCalled();
@@ -289,7 +289,7 @@ it.effect('a cold exact order link obtains the same complete product and revisio
       }),
     );
     const ready = yield* orderDetailData.read({ orderId: order.id, scope });
-    expect(ready).toEqual({ movesStock: true, order, products: [full], revision: 11 });
+    expect(ready).toEqual({ movesStock: true, order, products: [full], revision: 11, taxRates: [] });
     expect(rstest.mocked(executeRecords).mock.calls[0]?.[0].view?.orderId).toBe(order.id);
   }),
 );

@@ -2,6 +2,8 @@
 // The product editor as the user sees it: one Save button under the detail form, the draft's status next to it, a
 // question before unsaved changes are left, and nothing sent unless Save is clicked. Only the generated clients, the
 // i18n runtime and the router blocker are replaced.
+import { CZ_VAT_REDUCED, CZ_VAT_STANDARD, TaxRateViewSchema } from '@app/shared-contracts/cz-vat-classifications';
+import type { TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
 import { Effect, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
@@ -11,11 +13,15 @@ import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
 import { executeManageCatalog } from '../../src/api/manage-catalog-action-client.ts';
 import { ProductDetailView } from '../../src/routes/[lang]/provoz/produkty/product-detail-dialog.tsx';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
+import { translateTaxCs } from './merchandise-translate.ts';
 
 rstest.mock('../../src/api/records-consumer.ts');
 rstest.mock('../../src/api/manage-catalog-action-client.ts');
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
+  useModernI18n: () => ({
+    language: 'cs',
+    t: (key: string, values?: Record<string, number | string>) => translateTaxCs(key, values),
+  }),
 }));
 
 /** The router's blocked navigation: `blocked` while a route change waits for the question's answer. */
@@ -52,12 +58,27 @@ const productInput: typeof ProductRecordSchema.Encoded = {
   sku: 'ETI-250',
   stockOnHand: 12,
   stockValueMinor: 309_648,
+  taxClassificationCode: CZ_VAT_REDUCED,
   unit: 'ks',
   updatedAt: '2026-10-20T09:00:00.000Z',
   variants: [],
-  vatRate: 12,
 };
 const product = Schema.decodeSync(ProductRecordSchema)(productInput);
+
+const rate = Schema.decodeSync(TaxRateViewSchema);
+/** The company's rates: 21\u00A0% and 12\u00A0% in force, and 23\u00A0% scheduled for the standard classification. */
+const companyRates: readonly TaxRateView[] = [
+  rate({
+    code: CZ_VAT_STANDARD,
+    effectiveFrom: '2020-01-01T00:00:00Z',
+    effectiveTo: '2099-01-01T00:00:00Z',
+    ratePercent: 21,
+  }),
+  rate({ code: CZ_VAT_STANDARD, effectiveFrom: '2099-01-01T00:00:00Z', ratePercent: 23 }),
+  rate({ code: CZ_VAT_REDUCED, effectiveFrom: '2020-01-01T00:00:00Z', ratePercent: 12 }),
+];
+/** The rates the page passes in; a test replaces them. */
+let taxRates: readonly TaxRateView[] = companyRates;
 
 /** The product the page passes in; a test replaces it to deliver a reloaded record. */
 let shown = product;
@@ -94,6 +115,7 @@ const mount = async () => {
           product={shown}
           revision={1}
           tab="detail"
+          taxRates={taxRates}
         />,
       );
       await settle();
@@ -168,6 +190,7 @@ beforeEach(() => {
   navigation.reset = 0;
   navigation.status = 'idle';
   shown = product;
+  taxRates = companyRates;
 });
 
 afterEach(() => {
@@ -270,6 +293,107 @@ describe('product editor with one Save button', () => {
       yield* Effect.promise(view.rerender);
       expect(fieldById('content-image-alt').value).toBe('Nový popis');
       expect(fieldById('eshop-slug').value).toBe('etiopie-nova');
+      expect(commands()).toEqual([]);
+    }),
+  );
+});
+
+const vatSelect = (): HTMLSelectElement =>
+  Option.getOrThrow(Option.fromNullOr(document.querySelector<HTMLSelectElement>('select[name="taxClassification"]')));
+
+/** The VAT options as the list offers them: label and whether it can be picked. */
+const vatOptions = () =>
+  [...document.querySelectorAll<HTMLElement>('[role="option"][data-value^="cz.vat."]')].map((option) => ({
+    disabled: option.dataset.disabled !== undefined,
+    label: option.textContent.trim(),
+    value: option.dataset.value,
+  }));
+
+/** Picks a classification through the native select the select component keeps in sync. */
+const pickVat = async (value: string) => {
+  await act(async () => {
+    const select = vatSelect();
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, value);
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+  });
+};
+
+const sentPatches = () =>
+  rstest
+    .mocked(executeManageCatalog)
+    .mock.calls.map(([payload]) => payload.command)
+    .flatMap((command) => (command._tag === 'UpdateProduct' ? [command.patch] : []));
+
+describe('VAT classification on the product editor', () => {
+  it.effect("names both classifications with today's rate and hints a scheduled change", () =>
+    Effect.gen(function* namedByTax() {
+      yield* Effect.promise(mount);
+      expect(vatOptions()).toEqual([
+        { disabled: false, label: 'Základní (21\u00A0%)', value: CZ_VAT_STANDARD },
+        { disabled: false, label: 'Snížená (12\u00A0%)', value: CZ_VAT_REDUCED },
+      ]);
+      expect(vatSelect().value).toBe(CZ_VAT_REDUCED);
+      expect(fieldById('detail-price-gross').value).toContain('289');
+      expect(text()).not.toContain('Od 1. 1. 2099');
+      // No rate input anywhere: the classification is the only VAT field.
+      expect(document.querySelector('input[name="vat"], input[name="vatRate"]')).toBeNull();
+
+      yield* Effect.promise(() => pickVat(CZ_VAT_STANDARD));
+      expect(text()).toContain('Od 1. 1. 2099 23\u00A0%');
+    }),
+  );
+
+  it.effect('a classification the company has no rule for is offered disabled, with the reason', () =>
+    Effect.gen(function* missingRule() {
+      taxRates = companyRates.filter((entry) => entry.code === CZ_VAT_STANDARD);
+      yield* Effect.promise(mount);
+      expect(vatOptions()).toEqual([
+        { disabled: false, label: 'Základní (21\u00A0%)', value: CZ_VAT_STANDARD },
+        { disabled: true, label: 'Snížená (není nastaveno)', value: CZ_VAT_REDUCED },
+      ]);
+      // The product keeps its classification; without a rate there is no gross price, and it says so.
+      expect(fieldById('detail-price-gross').value).toBe('není nastaveno');
+    }),
+  );
+
+  it.effect('a company Tax gives no rate at all shows that explicitly, never a number', () =>
+    Effect.gen(function* noRates() {
+      taxRates = [];
+      yield* Effect.promise(mount);
+      expect(text()).toContain('Pro tuto firmu není nastavená žádná sazba DPH.');
+      expect(vatOptions().map((option) => option.label)).toEqual([
+        'Základní (není nastaveno)',
+        'Snížená (není nastaveno)',
+      ]);
+      expect(vatOptions().every((option) => option.disabled)).toBe(true);
+      expect(fieldById('detail-price-gross').value).toBe('není nastaveno');
+      expect(text()).not.toMatch(/\d\s?%/u);
+    }),
+  );
+
+  it.effect('a picked classification is a draft change: nothing is sent until Save, then only the code', () =>
+    Effect.gen(function* throughTheDraft() {
+      yield* Effect.promise(mount);
+      yield* Effect.promise(() => pickVat(CZ_VAT_STANDARD));
+      expect(text()).toContain('Neuložené změny');
+      expect(commands()).toEqual([]);
+
+      yield* Effect.promise(() => click(button('Uložit')));
+      yield* Effect.promise(() => waitUntil(() => text().includes('Uloženo')));
+      expect(sentPatches()).toEqual([{ taxClassificationCode: CZ_VAT_STANDARD }]);
+    }),
+  );
+
+  it.effect('leaving with a picked classification unsaved asks first', () =>
+    Effect.gen(function* guarded() {
+      const view = yield* Effect.promise(mount);
+      yield* Effect.promise(() => pickVat(CZ_VAT_STANDARD));
+      navigation.status = 'blocked';
+      yield* Effect.promise(view.rerender);
+      expect(buttons('Zůstat')).toHaveLength(1);
+      yield* Effect.promise(() => click(button('Zahodit změny')));
+      expect(vatSelect().value).toBe(CZ_VAT_REDUCED);
       expect(commands()).toEqual([]);
     }),
   );

@@ -171,7 +171,7 @@ it.effect(
       expect(ready).toEqual({
         refreshing: false,
         state: 'ready',
-        value: { movesStock: true, order, products: [full], revision: 7 },
+        value: { movesStock: true, order, products: [full], revision: 7, taxRates: [] },
       });
       rstest.mocked(executeRecords).mockClear();
       expect(orderDetailData.snapshot(detail)).toBe(ready);
@@ -198,6 +198,7 @@ it.effect(
         order,
         products: [full],
         revision: 7,
+        taxRates: [],
       });
       expect(executeRecords).not.toHaveBeenCalled();
     }),

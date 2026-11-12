@@ -4,6 +4,8 @@
 // buttons that pick, the product record read is answered by the test, and only the generated catalog client, the
 // i18n runtime and the router blocker are replaced besides.
 import { saveLabelsFor } from '@app/admin-ui';
+import { CZ_VAT_REDUCED, CZ_VAT_STANDARD, TaxRateViewSchema } from '@app/shared-contracts/cz-vat-classifications';
+import type { TaxRateView } from '@app/shared-contracts/cz-vat-classifications';
 import { Effect, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
@@ -16,6 +18,7 @@ import { OrderCreateDialog } from '../../src/routes/[lang]/prodej/objednavky/ord
 import type { CustomerDirectory } from '../../src/routes/[lang]/prodej/objednavky/customers-directory.ts';
 import type { ProductRecordState } from '../../src/routes/[lang]/provoz/produkty/product-reads.ts';
 import { browserRuntime } from '../../src/runtime/browser-effect-runtime.ts';
+import { translateCs } from './merchandise-translate.ts';
 
 /** A read of a picked product's full record, waiting for the test to answer it. */
 interface ProductRead {
@@ -38,7 +41,10 @@ const { offered, productReads } = rstest.hoisted(() => {
 rstest.mock('../../src/api/records-consumer.ts');
 rstest.mock('../../src/api/manage-catalog-action-client.ts');
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
+  useModernI18n: () => ({
+    language: 'cs',
+    t: (key: string, values?: Record<string, number | string>) => translateCs(key, values),
+  }),
 }));
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   useBlocker: () => ({ proceed: constVoid, reset: constVoid, status: 'idle' }),
@@ -70,7 +76,8 @@ rstest.mock('../../src/routes/[lang]/provoz/produkty/product-reads.ts', () => ({
 const labels = saveLabelsFor('cs');
 const at = '2026-10-19T08:00:00.000Z';
 
-const product: ProductRecord = Schema.decodeUnknownSync(ProductRecordSchema)({
+const decodeProduct = Schema.decodeUnknownSync(ProductRecordSchema);
+const productInput = {
   active: true,
   category: 'Šrouby',
   createdAt: at,
@@ -85,8 +92,15 @@ const product: ProductRecord = Schema.decodeUnknownSync(ProductRecordSchema)({
   stockValueMinor: 32_000,
   unit: 'ks',
   updatedAt: at,
-  vatRate: 21,
-});
+};
+const product: ProductRecord = decodeProduct({ ...productInput, taxClassificationCode: CZ_VAT_STANDARD });
+const reducedProduct: ProductRecord = decodeProduct({ ...productInput, taxClassificationCode: CZ_VAT_REDUCED });
+
+const rate = Schema.decodeSync(TaxRateViewSchema);
+const standardRate = rate({ code: CZ_VAT_STANDARD, effectiveFrom: '2020-01-01T00:00:00Z', ratePercent: 21 });
+const reducedRate = rate({ code: CZ_VAT_REDUCED, effectiveFrom: '2020-01-01T00:00:00Z', ratePercent: 12 });
+/** The company's rates the page passes in; a test replaces them. */
+let taxRates: readonly TaxRateView[] = [standardRate, reducedRate];
 
 const customers: CustomerDirectory = {
   active: [{ companyId: '12345678', name: 'Kavárna Dolce', partyId: 'party-1', status: 'ACTIVE' }],
@@ -119,6 +133,7 @@ const mount = async () => {
         onOpenChange={constVoid}
         open
         revision={4}
+        taxRates={taxRates}
       />,
     );
     await settle();
@@ -160,6 +175,7 @@ beforeEach(() => {
   productReads.length = 0;
   offered.current = product;
   created.length = 0;
+  taxRates = [standardRate, reducedRate];
   rstest.mocked(executeManageCatalog).mockImplementation(() => Effect.succeed({ entityIds: [], revision: 5 }));
 });
 
@@ -196,5 +212,50 @@ it.effect('customer first, then a product whose record loads later: Uložit enab
       lines: [{ productId: 'product-1', quantity: 1 }],
       partyId: 'party-1',
     });
+  }),
+);
+
+/** What the dialog shows, with non-breaking spaces (money, percent) read as plain spaces. */
+const text = () => (document.body.textContent ?? '').replaceAll('\u00A0', ' ');
+
+/** Picks the customer and the offered product, and answers the product's record read. */
+const fillOneLine = async (picked: ProductRecord) => {
+  offered.current = picked;
+  await mount();
+  await click('pick customer');
+  await click('pick product');
+  await act(async () => {
+    productReads[0]?.answer({ product: picked, status: 'ready' });
+    await settle();
+  });
+};
+
+it.effect("the line shows its product's classification with today's rate, and the totals use it", () =>
+  Effect.promise(async () => {
+    await fillOneLine(reducedProduct);
+    expect(text()).toContain('Cena 8 Kč, skladem 40 ks, DPH Snížená (12 %)');
+    // 8 Kč net, 12 % VAT per line rounded half-up: 0,96 Kč, 8,96 Kč with VAT.
+    expect(text()).toContain('0,96 Kč');
+    expect(text()).toContain('8,96 Kč');
+    expect(buttonNamed(labels.save).disabled).toBe(false);
+  }),
+);
+
+it.effect('standard 21 % keeps the arithmetic the order editor has always shown', () =>
+  Effect.promise(async () => {
+    await fillOneLine(product);
+    expect(text()).toContain('DPH Základní (21 %)');
+    expect(text()).toContain('1,68 Kč');
+    expect(text()).toContain('9,68 Kč');
+  }),
+);
+
+it.effect('a product whose classification has no rate in force says so and cannot be ordered', () =>
+  Effect.promise(async () => {
+    taxRates = [standardRate];
+    await fillOneLine(reducedProduct);
+    expect(text()).toContain('DPH Snížená (není nastaveno)');
+    expect(buttonNamed(labels.save).disabled).toBe(true);
+    expect(sent()).toEqual([]);
   }),
 );
