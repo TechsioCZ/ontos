@@ -13,6 +13,7 @@ import { activateCatalogRelease, releaseActorId } from '../../src/access/release
 import { CoreDatabase } from '../../src/db/client.ts';
 import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
 import type { AccessCatalogModule, AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
+import { makeAccessFenceSweepBackoffs, sweepLapsedAccessFences } from '../../src/access/lifecycle/fence-sweeper.ts';
 import { installReleaseTenantModules, installUnderLock } from '../../src/install/release-tenant-modules.ts';
 import type { ReleaseTenantModule } from '../../src/install/release-tenant-modules.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -132,6 +133,44 @@ const wakeUpsOf = (admin: PgClient.PgClient, tenantId: TenantId) =>
     )
     .pipe(Effect.orDie);
 
+/** An engine whose writes reach the engine and then lose the connection while `failing` is set. */
+const failingMidWrite =
+  (failing: Ref.Ref<boolean>) =>
+  (engine: AccessProjectionCompilerEngine): AccessProjectionCompilerEngine => ({
+    ...engine,
+    reconcile: (intent, options) =>
+      Ref.get(failing).pipe(
+        Effect.flatMap((fail) =>
+          fail
+            ? (options.beforeWrite ?? Effect.void).pipe(
+                Effect.andThen(
+                  Effect.fail([
+                    new AccessProjectionError({ code: 'access_projection_unavailable', reason: 'connection lost' }),
+                  ]),
+                ),
+              )
+            : engine.reconcile(intent, options),
+        ),
+      ),
+  });
+
+const tenantFenceOf = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  admin
+    .unsafe(
+      `select f.state from core.access_scope_fences f join core.access_scopes s on s.scope_id = f.scope_id
+        where f.tenant_id = '${tenantId}' and s.legal_entity_id is null`,
+    )
+    .pipe(Effect.orDie);
+
+/** The lapse of the hold, as time passing would bring it. */
+const lapseLeaseOf = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  admin
+    .unsafe(
+      `update core.access_scope_fences set lease_expires_at = now() - interval '1 second'
+        where tenant_id = '${tenantId}' and state = 'Changing'`,
+    )
+    .pipe(Effect.orDie);
+
 /** An engine whose write fails while the countdown is above zero, as a lost race or a blip would. */
 const failingFirst =
   (left: Ref.Ref<number>) =>
@@ -177,16 +216,9 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
             previous_state: null,
           },
         ]);
-        // The Action's wake-up, so the Core installation worker stays the durable healer of the projection.
-        expect(yield* wakeUpsOf(admin, tenantId)).toEqual([
-          {
-            action_invocation_id: null,
-            payload_json: { data: { moduleKey: TAX } },
-            producer_module_key: 'core.modules',
-            subject_module_key: TAX,
-            topic: TOPIC,
-          },
-        ]);
+        // No Outbox wake-up: the Core installation worker admits only a claim a real Action invocation attests, so a
+        // wake-up from the platform could never be processed and would block the next deploy as a dead message.
+        expect(yield* wakeUpsOf(admin, tenantId)).toEqual([]);
         // The preset already holds the tax cells, but they reach the engine only for an installed module: the owner's
         // right becomes effective the moment the step returns, with no Outbox worker in between.
         expect({ after: yield* decide(tenantId), before }).toEqual({
@@ -227,12 +259,12 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
         expect(second.modules[0]).toMatchObject({ moduleKey: TAX, outcome: 'already_active' });
         expect(second.reconciles).toEqual([]);
         expect(yield* historyOf(admin, tenantId)).toHaveLength(1);
-        expect(yield* wakeUpsOf(admin, tenantId)).toHaveLength(1);
+        expect(yield* wakeUpsOf(admin, tenantId)).toEqual([]);
       }),
     ),
   );
 
-  suite.effect('a projection that loses a race once is tried again; one that keeps failing leaves the wake-up', () =>
+  suite.effect('a projection that loses a race once is tried again; one that keeps failing writes no wake-up', () =>
     Effect.gen(function* retriedProjection() {
       const left = yield* Ref.make(0);
       yield* withProjectionTenant({ activeModules: [SELLING], wrapCompiler: failingFirst(left) }, (tenantId, admin) =>
@@ -254,11 +286,12 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
             reconcileRetrySpacing: Duration.zero,
             runReference: RUN,
           });
-          // The install committed; the projection did not, and the run says so. The wake-up written with the install
-          // is what the Core worker (with its own retries) heals the tenant from.
+          // The install committed; the projection did not, and the run says so. It failed before any engine write, so
+          // the fence is open and the module's rights stay denied until the next reconcile (the next deploy's catalog
+          // activation reconciles every Tenant). Nothing is left in the Outbox.
           expect(failed.modules[0]).toMatchObject({ outcome: 'installed' });
           expect(failed.reconciles[0]?.failure).toContain('the projection could not be reconciled');
-          expect(yield* wakeUpsOf(admin, tenantId)).toHaveLength(2);
+          expect(yield* wakeUpsOf(admin, tenantId)).toEqual([]);
           yield* Ref.set(left, 0);
         }),
       );
@@ -384,5 +417,40 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
         expect(yield* wakeUpsOf(admin, tenantId)).toEqual([]);
       }),
     ),
+  );
+});
+
+it.layer(NodeServices.layer, { excludeTestServices: true })('release-time installation healing', (suite) => {
+  suite.effect(
+    'a Tenant whose direct projection failed mid-write is reopened by the fence sweeper, with no wake-up',
+    () =>
+      Effect.gen(function* healedBySweeper() {
+        const failing = yield* Ref.make(false);
+        yield* withProjectionTenant(
+          { activeModules: [SELLING], wrapCompiler: failingMidWrite(failing) },
+          (tenantId, admin) =>
+            Effect.gen(function* sweptAfterRelease() {
+              yield* bootstrapOwner(tenantId);
+              yield* activateCatalogRelease({ modules: deployment }).pipe(Effect.orDie);
+              yield* Ref.set(failing, true);
+              const run = yield* install([{ moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }]);
+              expect(run.modules[0]).toMatchObject({ outcome: 'installed' });
+              expect(run.reconciles[0]?.failure).toContain('the projection could not be reconciled');
+              // The engine may be half-written, so the Tenant stays closed; nothing waits in the Outbox.
+              expect(yield* tenantFenceOf(admin, tenantId)).toEqual([{ state: 'Changing' }]);
+              expect(yield* wakeUpsOf(admin, tenantId)).toEqual([]);
+              yield* Ref.set(failing, false);
+              yield* lapseLeaseOf(admin, tenantId);
+              const backoffs = yield* makeAccessFenceSweepBackoffs;
+              expect(yield* sweepLapsedAccessFences(backoffs, 'tick-1')).toEqual({
+                deferred: 0,
+                failed: [],
+                healed: [tenantId],
+              });
+              expect(yield* tenantFenceOf(admin, tenantId)).toEqual([{ state: 'Ready' }]);
+              expect(yield* decide(tenantId)).toBe('ALLOWED allow.granted');
+            }),
+        );
+      }),
   );
 });

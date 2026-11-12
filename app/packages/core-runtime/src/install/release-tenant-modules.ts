@@ -9,16 +9,7 @@ import { preserveSystemPrincipalContextTrust } from '../auth/system-principal-co
 import { CoreDatabase } from '../db/client.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import type { OperationalScope } from '../operations/context.ts';
-import {
-  auditEvents,
-  domainEvents,
-  outboxMessages,
-  tenantModuleStateChanges,
-  tenantModuleStates,
-  tenants,
-} from '../db/schema.ts';
-import { createChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxMessage } from '../modules/actions/change-tenant-module-state-core-modules-tenant-module-state-changed-v1.outbox-message.ts';
-import { outboxProducerModuleKey, outboxTopic } from '../outbox/core-modules-tenant-module-state-changed-v1.ts';
+import { auditEvents, tenantModuleStateChanges, tenantModuleStates, tenants } from '../db/schema.ts';
 import type { InstalledModuleCatalog } from '../modules/catalog.ts';
 import { OntosModuleIdSchema } from '../modules/manifest.ts';
 import {
@@ -37,11 +28,17 @@ import {
  * - The module must be published by the active composition, and its intrinsic dependencies must be active; a module
  *   that needs a selling Tenant is installed only where one of its selling modules is already active.
  * - The write is the one `core.modules.change-tenant-module-state` makes: the state row and its history row in one
- *   transaction under the Tenant's row lock, recorded as `system` with no person and no Action invocation. Instead of
- *   the Action's Outbox wake-up — whose only consumer, `core.authorization.reconcile-module-installation`, reconciles
- *   the whole Tenant from intent — this step reconciles the Tenant itself, through the same one Core writer, under the
- *   Tenant's platform release actor (the system principal the access release activation already uses). The
- *   installation relations are therefore in the engine when the step returns, not after the Outbox host starts.
+ *   transaction under the Tenant's row lock, recorded as `system` with no person and no Action invocation. It writes
+ *   no Outbox wake-up: the Action's consumer, `core.authorization.reconcile-module-installation`, admits only a claim
+ *   attested by a real Action invocation, and this step has none (a wake-up without one could never be processed,
+ *   would die in the Outbox and block the next deploy). Instead the step reconciles the Tenant itself, through the
+ *   same one Core writer, under the Tenant's platform release actor (the system principal the access release
+ *   activation already uses), so the installation relations are in the engine when the step returns.
+ * - Healing: the direct projection is tried again a few times within the run's budget. A projection that failed
+ *   after it wrote to the engine keeps the Tenant's fence closed, and the access fence sweeper of the Outbox host
+ *   reconciles it once its lease lapses; one that failed before any engine write leaves the module's rights
+ *   unprojected (denied, never granted) until the next reconcile of the Tenant — at the latest the next deploy's
+ *   catalog activation, which reconciles every Tenant.
  * - Every module is decided on its own; one failure is reported by name and never stops the others or the boot.
  */
 
@@ -195,25 +192,6 @@ export const installUnderLock = Effect.fn('ReleaseTenantModules.installUnderLock
       updatedAt: changedAt,
     })
     .pipe(Effect.mapError((cause) => refusal('the module state could not be written', cause)));
-  // The same domain event and Outbox wake-up the module-state Action commits, in the same transaction: the Core
-  // worker `core.authorization.reconcile-module-installation` (with its retries) stays the durable healer of the
-  // tenant's projection, whatever happens to the direct reconcile below. Recorded as the platform's, with no Action.
-  const [event] = yield* transaction
-    .insert(domainEvents)
-    .values({
-      eventType: outboxTopic,
-      payloadJson: { moduleKey: entry.moduleKey, newState: 'active', previousState: null },
-      producerModuleKey: outboxProducerModuleKey,
-      subjectModuleKey: entry.moduleKey,
-      subjectResourceId: entry.moduleKey,
-      subjectResourceType: 'tenant-module-state',
-      tenantId: entry.tenantId,
-    })
-    .returning({ domainEventId: domainEvents.domainEventId })
-    .pipe(Effect.mapError((cause) => refusal('the installation event could not be written', cause)));
-  if (event === undefined) {
-    return yield* refusal('the installation event was not written');
-  }
   // The Action rates this change critical and audits it as sensitive; the platform's install is audited the same
   // way, by the Tenant's release actor (a system principal), with the release that made it. No secret is recorded.
   yield* transaction
@@ -240,13 +218,6 @@ export const installUnderLock = Effect.fn('ReleaseTenantModules.installUnderLock
       tenantId: entry.tenantId,
     })
     .pipe(Effect.mapError((cause) => refusal('the installation audit record could not be written', cause)));
-  const wakeUp = createChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxMessage({
-    data: { moduleKey: entry.moduleKey },
-  });
-  yield* transaction
-    .insert(outboxMessages)
-    .values({ ...wakeUp, domainEventId: event.domainEventId, tenantId: entry.tenantId })
-    .pipe(Effect.mapError((cause) => refusal('the installation wake-up could not be written', cause)));
   return LockedInstallSchema.members[0].make({});
 });
 
@@ -363,7 +334,7 @@ const reconcileInstalledTenant = Effect.fn('ReleaseTenantModules.reconcileTenant
     const writer = yield* AccessProjectionWriter;
     const scope = yield* releaseScopeOf(tenantId, runReference);
     // A concurrent projection that read the tenant before the install committed can win the fence: try again a few
-    // times so the rights are live quickly. The Outbox wake-up written with the install heals it either way.
+    // times so the rights are live quickly. A Tenant left closed is the fence sweeper's; see the module comment.
     const written = yield* writer.reconcileTenant({ scope }).pipe(
       Effect.retry({ schedule: Schedule.spaced(retrySpacing), times: RELEASE_RECONCILE_RETRIES }),
       Effect.mapError((cause) => refusal(`the projection could not be reconciled: ${cause.reason}`, cause)),
