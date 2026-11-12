@@ -13,7 +13,7 @@
  *   node scripts/demo/release-tenant-modules.mts
  */
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
-import { Cause, Config, Console, DateTime, Duration, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
+import { Cause, Config, Console, DateTime, Duration, Effect, Exit, Layer, Predicate, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
@@ -130,6 +130,9 @@ export const installDeclaredModules = Effect.gen(function* installDeclaredModule
 const stageOnly = Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(Config.withDefault(''));
 
 const failureReason = (cause: Cause.Cause<unknown>): string => {
+  if (Cause.hasInterruptsOnly(cause)) {
+    return 'stopped by a signal; a projection already under way was finished first';
+  }
   const problem = Cause.squash(cause);
   if (Schema.is(ReleaseTenantModulesFailure)(problem)) {
     return problem.reason;
@@ -152,8 +155,11 @@ if (import.meta.main) {
   NodeRuntime.runMain(
     program.pipe(
       Effect.provide(ReleaseRuntimeLive),
-      Effect.tapCause((cause) =>
-        Console.error(`${LOG_PREFIX} RELEASE MODULE INSTALLATION FAILED: ${failureReason(cause)}`),
+      // `onExit`, not `tapCause`: it also runs when a signal interrupts the run, so a stop is never silent.
+      Effect.onExit((exit) =>
+        Exit.isFailure(exit)
+          ? Console.error(`${LOG_PREFIX} RELEASE MODULE INSTALLATION FAILED: ${failureReason(exit.cause)}`)
+          : Effect.void,
       ),
       Effect.provide(NodeServices.layer),
     ),

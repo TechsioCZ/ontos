@@ -5,7 +5,8 @@ import { createServer } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Cause, Config, Duration, Effect, Exit, Option } from 'effect';
+import { NodeRuntime } from '@effect/platform-node';
+import { Cause, Config, Duration, Effect, Option } from 'effect';
 
 import { accessReleaseActivationArguments } from './access-release-activation-child.mts';
 import { loadOptionalCommercePortalAuthDatabaseConfig } from '../verticals/commerce-customer-context/scripts/portal-auth-database-config.mts';
@@ -29,12 +30,34 @@ class MigratorError extends Error {
   }
 }
 
-/** @param {ReturnType<typeof spawn>} child - Child process owned by the Effect scope. */
+/** How long a stopped child may take to finish before it is killed: a projection under way runs to its end. */
+const CHILD_STOP_GRACE = Duration.minutes(2);
+
+/**
+ * Stops a child that is still running: SIGTERM, then wait for it to exit, and SIGKILL only once the grace is spent.
+ * The access release activation turns SIGTERM into an interrupt and finishes a tenant projection that holds the
+ * tenant's access fence before it exits, so the fence is never left held by a child stopped for time.
+ * @param {ReturnType<typeof spawn>} child - Child process owned by the Effect scope.
+ */
 const stopChild = (child) =>
-  Effect.sync(() => {
-    if (child.exitCode === null && !child.killed) {
-      child.kill('SIGTERM');
+  Effect.callback((resume) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resume(Effect.void);
+      return Effect.void;
     }
+    const killer = setTimeout(() => {
+      child.kill('SIGKILL');
+    }, Duration.toMillis(CHILD_STOP_GRACE));
+    const onExit = () => {
+      clearTimeout(killer);
+      resume(Effect.void);
+    };
+    child.once('exit', onExit);
+    child.kill('SIGTERM');
+    return Effect.sync(() => {
+      clearTimeout(killer);
+      child.off('exit', onExit);
+    });
   });
 
 const run = Effect.fn('run')(
@@ -223,5 +246,6 @@ const main = Effect.scoped(
   }).pipe(Effect.tapCause((cause) => Effect.logError(Cause.pretty(cause)))),
 );
 
-const exit = await Effect.runPromiseExit(main);
-process.exitCode = Exit.isFailure(exit) ? 1 : 0;
+// SIGTERM (a container stop) interrupts the migrator instead of killing it, so its running child is stopped
+// gracefully by `stopChild` rather than orphaned or killed in the middle of a projection.
+NodeRuntime.runMain(main, { disableErrorReporting: true });
