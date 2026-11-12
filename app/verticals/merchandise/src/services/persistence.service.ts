@@ -2570,8 +2570,8 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         yield* writeTaxRates(transaction, store, taxRates).pipe(Effect.mapError(unavailable));
       }
       // A price stored without its gross (its classification had no usable rate then) gets it as soon as one is
-      // usable, whether or not the rates changed now; a stored gross is never touched.
-      const held = Object.keys(pricing.held);
+      // usable (a held product at its held rate), whether or not the rates changed now; a stored gross is never touched.
+      const { held } = pricing;
       const missing = yield* missingGrossPricesExist(transaction, store, rates, held).pipe(
         Effect.mapError(unavailable),
       );
@@ -2976,7 +2976,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         return Option.getOrUndefined(Option.none<number>());
       }
       const rates = sellableRatesAt(shown.book, now);
-      const held = Object.keys(decision.held);
+      const { held } = decision;
       if (!(yield* missingGrossPricesExist(transaction, store, rates, held).pipe(Effect.mapError(unavailable)))) {
         return Option.getOrUndefined(Option.none<number>());
       }
