@@ -71,6 +71,12 @@
       "schema": "demo_merchandise"
     },
     {
+      "isRlsEnabled": false,
+      "name": "tax_classification_live",
+      "entityType": "tables",
+      "schema": "demo_merchandise"
+    },
+    {
       "type": "uuid",
       "typeSchema": null,
       "notNull": true,
@@ -1732,6 +1738,32 @@
       "table": "stock_movements"
     },
     {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "first_served_at",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "tax_classification_live"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "true",
+      "generated": null,
+      "identity": null,
+      "name": "singleton",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "tax_classification_live"
+    },
+    {
       "nameExplicit": true,
       "columns": [
         {
@@ -2436,6 +2468,16 @@
       "table": "stock_movements"
     },
     {
+      "columns": [
+        "singleton"
+      ],
+      "nameExplicit": false,
+      "name": "tax_classification_live_pkey",
+      "schema": "demo_merchandise",
+      "table": "tax_classification_live",
+      "entityType": "pks"
+    },
+    {
       "value": "\"revision\" >= 0",
       "name": "demo_merchandise_head_revision_nonnegative",
       "entityType": "checks",
@@ -2504,6 +2546,13 @@
       "entityType": "checks",
       "schema": "demo_merchandise",
       "table": "products"
+    },
+    {
+      "value": "\"singleton\"",
+      "name": "demo_merchandise_tax_classification_live_singleton",
+      "entityType": "checks",
+      "schema": "demo_merchandise",
+      "table": "tax_classification_live"
     },
     {
       "as": "PERMISSIVE",

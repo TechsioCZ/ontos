@@ -227,4 +227,12 @@ CREATE FUNCTION "demo_merchandise"."classify_written_order"() RETURNS trigger
 CREATE TRIGGER "orders_tax_classification"
   BEFORE INSERT OR UPDATE OF "document" ON "demo_merchandise"."orders"
   FOR EACH ROW EXECUTE FUNCTION "demo_merchandise"."classify_written_order"();--> statement-breakpoint
+-- Empty until this release, serving the composition it published, writes the catalogue for the first time. The
+-- contract step refuses to drop the rollback `vatRate` before then.
+CREATE TABLE "demo_merchandise"."tax_classification_live" (
+	"first_served_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"singleton" boolean PRIMARY KEY DEFAULT true,
+	CONSTRAINT "demo_merchandise_tax_classification_live_singleton" CHECK ("singleton")
+);--> statement-breakpoint
+GRANT SELECT, INSERT ON "demo_merchandise"."tax_classification_live" TO ontos_runtime;--> statement-breakpoint
 SET LOCAL lock_timeout TO DEFAULT;

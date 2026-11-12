@@ -5,19 +5,25 @@
 // it is unambiguous, and changes no stored price or amount.
 import { fileURLToPath } from 'node:url';
 
+import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { migrate } from 'drizzle-orm/effect-postgres/migrator';
-import { Array as Arr, Clock, Crypto, Effect, FileSystem, Layer, Order, Predicate, Schema } from 'effect';
+import { Array as Arr, Clock, Crypto, DateTime, Effect, FileSystem, Layer, Order, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
   makeTestDatabaseFromClient,
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { merchandiseRelations } from '../../src/database/schema.ts';
+import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
 import { grossUnitPriceMinor } from '../../shared/domain/merchandise-model.ts';
+import { merchandiseRelations } from '../../src/database/schema.ts';
+import { loadHead, loadWorkingSet, persistChange, replaceSnapshot } from '../../src/services/merchandise-store.ts';
+import { evolveMerchandiseState, workingSetRequestOf } from '../../src/services/persistence.service.ts';
 import { CompanyTaxRatesSchema } from '../../src/services/tax-rates.ts';
+import { TEST_RATES, TEST_TAX } from '../support/tax-fixtures.ts';
+import { at, decodeState } from './support/merchandise-database.ts';
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -56,6 +62,24 @@ const DatabaseRefusalSchema = Schema.Struct({
 const refusalMessage = Schema.decodeUnknownSync(DatabaseRefusalSchema);
 
 const classificationOf = (product: ProductFixture) => (product.vatRate === 21 ? 'cz.vat.standard' : 'cz.vat.reduced');
+
+/** One ChangePrice of `p1` the way persistence runs it: locked head, working set, pure evolve, delta write. */
+const changePriceOnce = Effect.fn('TaxClassificationMigration.changePriceOnce')(function* changePriceOnce(
+  tx: Parameters<typeof loadHead>[0],
+  company: { readonly legalEntityId: string; readonly tenantId: string },
+  actor: typeof PrincipalRefSchema.Type,
+  priceMinor: number,
+) {
+  const command = Schema.decodeUnknownSync(MerchandiseCommandSchema)({ _tag: 'ChangePrice', id: 'p1', priceMinor });
+  const head = yield* loadHead(tx, company, { lock: true });
+  if (head === undefined || command._tag !== 'ChangePrice') {
+    return yield* Effect.die('missing head');
+  }
+  const working = yield* loadWorkingSet(tx, company, head, workingSetRequestOf(command, 'p1'));
+  const now = DateTime.makeUnsafe('2026-11-13T10:00:00.000Z');
+  const change = yield* evolveMerchandiseState(working.state, command, { actor, now, resourceId: 'p1', tax: TEST_TAX });
+  return yield* persistChange(tx, company, working, change.state, now, TEST_RATES, {});
+});
 
 it.layer(nativeServices, { excludeTestServices: true })('tax classification migration', (suite) => {
   suite.effect(
@@ -516,6 +540,63 @@ it.layer(nativeServices, { excludeTestServices: true })('tax classification migr
         expect(applied).toEqual([{ column: false, fn: false, journal: false }]);
         // The next deploy runs it again and it applies.
         yield* migrate(db, migrationOptions(migrations));
+      }),
+    180_000,
+  );
+
+  suite.effect(
+    'records once, on the first catalogue write of this release, that it served; the contract step waits for it',
+    () =>
+      Effect.gen(function* servedMarker() {
+        const isolated = yield* makeIsolatedNativeDatabaseFixture({
+          mode: 'empty',
+          purpose: 'merchandise-tax-classification',
+        });
+        yield* isolated.migrateCoreSchema();
+        const client = yield* makeTestPgClient(isolated.connections.admin.connectionString, { maxConnections: 1 });
+        const db = yield* makeTestDatabaseFromClient(client, merchandiseRelations);
+        yield* migrate(db, migrationOptions(migrations));
+        const marker = client.unsafe<{ readonly count: number }>(
+          'select count(*)::integer as count from demo_merchandise.tax_classification_live',
+        );
+        // The deploy itself (migration, backfill) and the release still serving record nothing.
+        expect(yield* marker).toEqual([{ count: 0 }]);
+        const crypto = yield* Crypto.Crypto;
+        const company = { legalEntityId: yield* crypto.randomUUIDv4(), tenantId: yield* crypto.randomUUIDv4() };
+        const actor = Schema.decodeUnknownSync(PrincipalRefSchema)({
+          principalId: yield* crypto.randomUUIDv4(),
+          tenantId: company.tenantId,
+        });
+        const product = {
+          active: true,
+          category: 'Katalog',
+          createdAt: at,
+          currentPriceMinor: 1000,
+          id: 'p1',
+          lowStockThreshold: 0,
+          name: 'Šroub',
+          priceHistory: [],
+          sku: 'P1',
+          taxClassificationCode: 'cz.vat.standard',
+          unit: 'ks',
+          updatedAt: at,
+        };
+        const state = decodeState({ categories: [], movements: [], orders: [], products: [product] });
+        const base = yield* db.transaction((tx) =>
+          replaceSnapshot(tx, company, state, { held: {}, rates: TEST_RATES }),
+        );
+        const write = (priceMinor: number) => db.transaction((tx) => changePriceOnce(tx, company, actor, priceMinor));
+        // This release's first write records it; later writes keep the one row.
+        expect(yield* write(1100)).toBe(base + 1);
+        const [first] = yield* client.unsafe<{ readonly at: Date }>(
+          'select first_served_at as at from demo_merchandise.tax_classification_live',
+        );
+        expect(yield* marker).toEqual([{ count: 1 }]);
+        expect(yield* write(1200)).toBe(base + 2);
+        expect(yield* marker).toEqual([{ count: 1 }]);
+        expect(
+          yield* client.unsafe('select first_served_at as at from demo_merchandise.tax_classification_live'),
+        ).toEqual([first]);
       }),
     180_000,
   );

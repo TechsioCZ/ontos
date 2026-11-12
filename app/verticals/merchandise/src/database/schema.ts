@@ -309,6 +309,20 @@ export const gatewayAssertionRedemptions = merchandiseSchema.table(
   ],
 );
 
+/**
+ * One row, written once by the release that ships the VAT classification (the expand step) on its first catalogue
+ * write while the composition it published serves. The contract step refuses to run until the row exists, so the
+ * documents' rollback `vatRate` is only dropped after that release provably served; the contract step drops the table.
+ */
+export const taxClassificationLive = merchandiseSchema.table(
+  'tax_classification_live',
+  {
+    firstServedAt: timestamp('first_served_at', { withTimezone: true }).defaultNow().notNull(),
+    singleton: boolean('singleton').default(true).primaryKey(),
+  },
+  (table) => [check('demo_merchandise_tax_classification_live_singleton', sql`${table.singleton}`)],
+);
+
 export const merchandiseRelations = defineRelations({
   catalogHeads,
   categories,

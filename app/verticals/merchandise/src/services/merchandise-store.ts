@@ -7,7 +7,7 @@ import type { ReadServiceFactory } from '@app/core-runtime';
 import { and, asc, desc, eq, inArray, isNotNull, isNull, like, notInArray, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
-import { Data, DateTime, Effect, Option, Schema } from 'effect';
+import { Data, DateTime, Effect, Option, Ref, Schema } from 'effect';
 import type { MerchandiseAiSlice, MerchandiseState } from '../../shared/apis/records.ts';
 import { MerchandiseAiSliceSchema } from '../../shared/apis/records.ts';
 import {
@@ -30,6 +30,7 @@ import {
   productVariants,
   products,
   stockMovements,
+  taxClassificationLive,
 } from '../database/schema.ts';
 import { grossPriceOf, productRateOf, realVariantsOf, stockLevelsOf, toProductRecord } from './stock-levels.ts';
 import type { StockLevels } from './stock-levels.ts';
@@ -1538,6 +1539,33 @@ const persistCategories = Effect.fn('MerchandiseStore.persistCategories')(functi
   );
 });
 
+// True once this process saw the marker committed (its insert met the row); until then each catalogue write offers it.
+const taxClassificationLiveSeen = Ref.makeUnsafe(false);
+
+/**
+ * Records, once, that this release served a catalogue write (`tax_classification_live`): every write reaches here only
+ * inside a transaction the composition fence admitted, so only while the composition this release published serves.
+ * The contract step of the VAT classification refuses to run until the row exists.
+ */
+const recordTaxClassificationLive = Effect.fn('MerchandiseStore.recordTaxClassificationLive')(
+  function* recordTaxClassificationLive(db: MerchandiseDb) {
+    if (yield* Ref.get(taxClassificationLiveSeen)) {
+      return;
+    }
+    const written = yield* query(
+      db
+        .insert(taxClassificationLive)
+        .values({})
+        .onConflictDoNothing()
+        .returning({ singleton: taxClassificationLive.singleton }),
+      'The VAT classification marker could not be written',
+    );
+    if (written.length === 0) {
+      yield* Ref.set(taxClassificationLiveSeen, true);
+    }
+  },
+);
+
 /**
  * Writes exactly what changed between the working set and the command's result: new movements, rewritten
  * products (row + variants + tiers) or only their stock columns, changed orders and categories, the AI slice, and
@@ -1595,6 +1623,7 @@ export const persistChange = Effect.fn('MerchandiseStore.persistChange')(functio
     sliceChanged && after.aiChanges !== undefined
       ? yield* query(encodeSlice(after.aiChanges), 'AI changes do not encode')
       : undefined;
+  yield* recordTaxClassificationLive(db);
   const update = { revision: working.revision + 1, updatedAt: date(now) };
   const heads = yield* query(
     db
