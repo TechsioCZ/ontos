@@ -57,7 +57,6 @@ export const CAPTURE_REJECTION_REASONS = [
   'BINDING_UNKNOWN',
 ] as const;
 export const CaptureRejectionReasonSchema = Schema.Literals(CAPTURE_REJECTION_REASONS);
-export type CaptureRejectionReason = typeof CaptureRejectionReasonSchema.Type;
 
 export const CapturedProviderNotificationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('ProviderNotificationId'),

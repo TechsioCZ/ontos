@@ -1,4 +1,4 @@
-import type { ScopedTransactionExecutor } from '@app/core-runtime';
+import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { Context, Schema } from 'effect';
 import type { Effect } from 'effect';
 
@@ -33,6 +33,7 @@ export interface PaymentGatewayBindingEvidence {
 /** Binds the gateway binding evidence to one Core-scoped transaction; Payment reads its own tables there. */
 export type PaymentGatewayBindingEvidenceForTransaction = (
   transaction: ScopedTransactionExecutor,
+  scope: OperationalScope,
 ) => PaymentGatewayBindingEvidence;
 
 /**

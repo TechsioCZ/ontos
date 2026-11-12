@@ -30,11 +30,7 @@ import { ProviderEvidenceSubmitter } from './evidence-submission.ts';
 import type { GatewayProviderAdapter } from './psp-adapter.ts';
 import { GatewayProviderAdapters } from './psp-adapter.ts';
 import { GatewayProviderUnavailable } from './psp-errors.ts';
-import type {
-  GatewayLedgerUnavailableError,
-  GatewayProviderOutcomeUnknownError,
-  GatewayProviderUnavailableError,
-} from './psp-errors.ts';
+import type { GatewayProviderOutcomeUnknownError } from './psp-errors.ts';
 import type {
   GatewayExecutionTarget,
   GatewayExpectedEffect,
@@ -111,11 +107,6 @@ export interface GatewayRecoveryReport {
   /** Rows A8 decided in this delivery, in submission order (a denied row is never marked). */
   readonly submissions: readonly GatewayRecoverySubmission[];
 }
-
-export type GatewayRecoveryFailure =
-  | GatewayLedgerUnavailableError
-  | GatewayProviderOutcomeUnknownError
-  | GatewayProviderUnavailableError;
 
 interface ProviderStep {
   readonly appended: readonly StoredProviderEvidence[];

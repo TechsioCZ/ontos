@@ -7,7 +7,6 @@ import { Schema } from 'effect';
 
 export const GATEWAY_CAPABILITY_SUPPORT = ['SUPPORTED', 'UNSUPPORTED'] as const;
 export const GatewayCapabilitySupportSchema = Schema.Literals(GATEWAY_CAPABILITY_SUPPORT);
-export type GatewayCapabilitySupport = typeof GatewayCapabilitySupportSchema.Type;
 
 export const GatewayCapabilityRowSchema = Schema.Struct({
   CANCEL_OR_VOID: GatewayCapabilitySupportSchema,

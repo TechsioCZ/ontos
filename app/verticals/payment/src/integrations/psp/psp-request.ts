@@ -116,7 +116,6 @@ export const GatewayCancelTargetSchema = Schema.Struct({
   amount: PaymentPositiveMonetaryAmountSchema,
   operationId: PaymentOperationIdSchema,
 });
-export type GatewayCancelTarget = typeof GatewayCancelTargetSchema.Type;
 
 /**
  * The Payment Operation(s) a send, replay or lookup may report on, tagged by operation kind. An adapter

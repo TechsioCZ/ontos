@@ -27,14 +27,12 @@ export const RawProviderNotificationHeadersSchema = Schema.Struct({
   contentType: Schema.Option(headerText),
   stripeSignature: Schema.Option(headerText),
 });
-export type RawProviderNotificationHeaders = typeof RawProviderNotificationHeadersSchema.Type;
 
 /** Only the GoPay callback query parameters `id` and `parent_id`. */
 export const RawProviderNotificationQuerySchema = Schema.Struct({
   parentPaymentRef: Schema.Option(queryText),
   paymentRef: Schema.Option(queryText),
 });
-export type RawProviderNotificationQuery = typeof RawProviderNotificationQuerySchema.Type;
 
 export const RawProviderNotificationSchema = Schema.Struct({
   environment: GatewayEnvironmentSchema,

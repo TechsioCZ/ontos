@@ -275,7 +275,6 @@ const PspRegisterCancelResultSchema = Schema.Union([
   }),
   Schema.TaggedStruct('CONFLICT', { reason: PspRoutineConflictReasonSchema }),
 ]);
-export type PspRegisterCancelResult = typeof PspRegisterCancelResultSchema.Type;
 
 const PspPrepareDispatchResultSchema = Schema.Union([
   Schema.TaggedStruct('PREPARED', { record: PspDispatchRecordSchema }),
@@ -285,7 +284,6 @@ const PspPrepareDispatchResultSchema = Schema.Union([
   Schema.TaggedStruct('DEFERRED', { unresolvedRefundOperationIds: Schema.Array(PaymentOperationIdSchema) }),
   conflict(PspDispatchRecordSchema),
 ]);
-export type PspPrepareDispatchResult = typeof PspPrepareDispatchResultSchema.Type;
 
 const PspDispatchChangeResultSchema = Schema.Union([
   Schema.TaggedStruct('RECORDED', { record: PspDispatchRecordSchema }),
@@ -301,20 +299,17 @@ const PspCorrelateResultSchema = Schema.Union([
   Schema.TaggedStruct('NOT_FOUND', {}),
   conflict(PspDispatchRecordSchema),
 ]);
-export type PspCorrelateResult = typeof PspCorrelateResultSchema.Type;
 
 const PspUnresolvedRefundsSchema = Schema.Struct({
   operationIds: Schema.Array(PaymentOperationIdSchema),
   unresolved: Schema.Boolean,
 });
-export type PspUnresolvedRefunds = typeof PspUnresolvedRefundsSchema.Type;
 
 const PspAppendEvidenceResultSchema = Schema.Union([
   Schema.TaggedStruct('APPENDED', { record: PspEvidenceRecordSchema }),
   Schema.TaggedStruct('EXISTING', { record: PspEvidenceRecordSchema }),
   conflict(PspEvidenceRecordSchema),
 ]);
-export type PspAppendEvidenceResult = typeof PspAppendEvidenceResultSchema.Type;
 
 const PspMarkEvidenceResultSchema = Schema.Union([
   Schema.TaggedStruct('MARKED', { record: PspEvidenceRecordSchema }),
@@ -322,7 +317,6 @@ const PspMarkEvidenceResultSchema = Schema.Union([
   Schema.TaggedStruct('NOT_FOUND', {}),
   conflict(PspEvidenceRecordSchema),
 ]);
-export type PspMarkEvidenceResult = typeof PspMarkEvidenceResultSchema.Type;
 
 const PspPinEvidenceExecutorResultSchema = Schema.Union([
   Schema.TaggedStruct('PINNED', { record: PspEvidenceRecordSchema }),
@@ -330,7 +324,6 @@ const PspPinEvidenceExecutorResultSchema = Schema.Union([
   Schema.TaggedStruct('NOT_FOUND', {}),
   conflict(PspEvidenceRecordSchema),
 ]);
-export type PspPinEvidenceExecutorResult = typeof PspPinEvidenceExecutorResultSchema.Type;
 
 const PspTransitionNotificationResultSchema = Schema.Union([
   Schema.TaggedStruct('TRANSITIONED', { record: PspNotificationRecordSchema }),
@@ -338,7 +331,6 @@ const PspTransitionNotificationResultSchema = Schema.Union([
   Schema.TaggedStruct('NOT_FOUND', {}),
   conflict(PspNotificationRecordSchema),
 ]);
-export type PspTransitionNotificationResult = typeof PspTransitionNotificationResultSchema.Type;
 
 /** The admitting invocation and the delivery of a worker write. Never a human actor (plan §3.4). */
 export interface PspWorkerOrigin {

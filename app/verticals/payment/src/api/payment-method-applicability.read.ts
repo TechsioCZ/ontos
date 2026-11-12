@@ -28,6 +28,13 @@ export interface PaymentMethodApplicabilityServices {
   readonly gateways: PaymentGatewayBindingEvidence;
 }
 
+/** Owner services of one Read transaction, built from the gateway binding port. */
+type PaymentMethodApplicabilityServicesEffect = Effect.Effect<
+  PaymentMethodApplicabilityServices,
+  never,
+  GatewayBindingPort | PaymentMethodApplicabilityRequirements
+>;
+
 const paymentMethodApplicabilityEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'protected' },
@@ -127,17 +134,11 @@ export const paymentMethodApplicabilityRead = defineRead(
           Effect.map((result) => ({ evidence: { resultCount: result.branches.length }, result })),
         );
   },
-  (
-    transaction,
-  ): Effect.Effect<
-    PaymentMethodApplicabilityServices,
-    never,
-    GatewayBindingPort | PaymentMethodApplicabilityRequirements
-  > =>
+  (transaction, scope): PaymentMethodApplicabilityServicesEffect =>
     GatewayBindingPort.pipe(
       Effect.map((gatewayBindingFor): PaymentMethodApplicabilityServices => ({
         applicability: paymentApplicabilityPersistenceForTransaction(transaction),
-        gateways: gatewayBindingFor(transaction),
+        gateways: gatewayBindingFor(transaction, scope),
       })),
     ),
 );

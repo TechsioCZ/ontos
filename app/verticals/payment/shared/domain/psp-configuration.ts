@@ -101,7 +101,6 @@ export const GatewayEnablementViewSchema = Schema.Struct({
   providerFamily: PaymentGatewayProviderFamilySchema,
   revision: revisionSchema,
 });
-export type GatewayEnablementView = typeof GatewayEnablementViewSchema.Type;
 
 /** One operation the reconciliation driver must still resolve (#1158). Absent keys mean "not applicable". */
 export const GatewayReconciliationDebtRowSchema = Schema.Struct({

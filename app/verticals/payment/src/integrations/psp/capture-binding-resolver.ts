@@ -1,4 +1,3 @@
-import { Context } from 'effect';
 import type { Effect, Option } from 'effect';
 
 import type { PaymentGatewayProviderFamilySchema } from '../../../shared/domain/payment-vocabulary.ts';
@@ -22,7 +21,7 @@ export interface GatewayCaptureTargetQuery {
  * credential rules as `resolveForNotification`, read over the Action's own scoped transaction. Implemented
  * by L-CONFIG-BINDING; there is no second resolution path.
  */
-export interface GatewayCaptureBindingResolverContract {
+export interface GatewayCaptureBindingReader {
   /**
    * `None` when no binding of this family with this ref exists in this scope and environment (capture result
    * REJECTED `BINDING_UNKNOWN`); UNAVAILABLE when the binding cannot be read or used now. `returnUrl` is `None`.
@@ -31,8 +30,3 @@ export interface GatewayCaptureBindingResolverContract {
     query: GatewayCaptureTargetQuery,
   ) => Effect.Effect<Option.Option<GatewayExecutionTarget>, GatewayProviderUnavailableError>;
 }
-
-export class GatewayCaptureBindingResolver extends Context.Service<
-  GatewayCaptureBindingResolver,
-  GatewayCaptureBindingResolverContract
->()('@app/payment/integrations/psp/capture-binding-resolver/GatewayCaptureBindingResolver') {}

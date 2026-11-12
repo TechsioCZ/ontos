@@ -19,7 +19,7 @@ import type { GatewayExecutionTarget } from './psp-request.ts';
  * A rotation authenticates the same account, so replay, lookup and notification processing after a
  * rotation use the new revision of the same binding. A dispatch's recorded `credentialRevision` is
  * audit only and never selects a credential. The capture Action resolves through
- * `GatewayCaptureBindingResolver` (capture-binding-resolver.ts) under the same rules.
+ * `GatewayCaptureBindingReader` (capture-binding-resolver.ts) under the same rules.
  */
 
 export interface GatewayExecutionTargetQuery {

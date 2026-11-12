@@ -51,7 +51,6 @@ export const ProviderAccountBindingChangeSchema = Schema.Union([
   CreateProviderAccountBindingSchema,
   RetireProviderAccountBindingSchema,
 ]);
-export type ProviderAccountBindingChange = typeof ProviderAccountBindingChangeSchema.Type;
 
 export const ConfigureProviderAccountBindingPayloadSchema = Schema.Struct({
   change: ProviderAccountBindingChangeSchema,
