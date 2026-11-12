@@ -24750,11 +24750,25 @@ const hasGateMergedReadInjectionStaged = (source: string, factory: SourceRange):
   );
 };
 
+/** The default export is bound to a call of a named factory, e.g. `const apiRuntime = makeCrmApiRuntime(...)`. */
+const executesExportedRuntimeFactoryStaged = (source: string): boolean => {
+  const exported = defaultExportExpression(source);
+  if (exported === undefined || !/^[A-Za-z][A-Za-z0-9]*$/u.test(exported)) {
+    return false;
+  }
+  return /^[A-Za-z_$][A-Za-z0-9_$]*\s*\(/u.test(constInitializerStaged(source, exported) ?? '');
+};
+
 const hasGovernedHandlerRootStaged = (source: string, backendRegistration?: string): boolean => {
   if (!hasBoundOwnerRuntimeConstructors(source, backendRegistration)) {
     return false;
   }
   const factory = exportedRuntimeFactoryStaged(source);
+  // A root whose default export executes a factory call must prove that exact zero-argument factory.
+  // When that proof fails (unbound arguments or parameters), it cannot borrow the legacy module-root path below.
+  if (factory === undefined && executesExportedRuntimeFactoryStaged(source)) {
+    return false;
+  }
   const factoryCode = factory === undefined ? '' : maskNonCode(factory.value);
   const typedRest = /^\(\s*\.\.\.[A-Za-z][A-Za-z0-9]*:\s*[A-Za-z][A-Za-z0-9]*\s*\)/u.test(factoryCode);
   const localMergeBinding = /\b(?:const|let|var)\s+governedReadRuntimeLive\s*=/u.test(factoryCode);
