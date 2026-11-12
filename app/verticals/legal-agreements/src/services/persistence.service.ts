@@ -10,7 +10,7 @@ import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-ver
 import { executeCounterpartyReadWithAuthorization } from '@app/party-registry/api/client';
 import { executeRecordsWithAuthorization as executePropertyRecords } from '@app/property-portfolio/clients/records';
 import { and, eq } from 'drizzle-orm';
-import { DateTime, Effect, Match, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Match, Schema } from 'effect';
 
 import {
   AgreementsConflict,
@@ -621,7 +621,7 @@ export const persistenceService = (
   });
 };
 
-export const makeAgreementsValidators = Effect.fn('Agreements.validators')(function* makeAgreementsValidators(
+const makeAgreementsValidators = Effect.fn('Agreements.validators')(function* makeAgreementsValidators(
   scope: OperationalScope,
 ) {
   if (scope.legalEntityId === undefined) {
@@ -714,4 +714,26 @@ export const makeAgreementsValidators = Effect.fn('Agreements.validators')(funct
       };
     }),
   } satisfies AgreementsValidators;
+});
+
+/**
+ * Builds the command reference validators of one request from that request's operational scope (tenant and
+ * company). Every call returns new validators over a new reference credential source, so two requests never
+ * share a validator or what it looked up. Required by the apply-command Action; provided once in the API root.
+ */
+export class AgreementsReferenceValidators extends Context.Service<
+  AgreementsReferenceValidators,
+  {
+    readonly forScope: (
+      scope: OperationalScope,
+    ) => Effect.Effect<
+      AgreementsValidators,
+      Effect.Error<ReturnType<typeof makeAgreementsValidators>>,
+      Effect.Services<ReturnType<typeof makeAgreementsValidators>>
+    >;
+  }
+>()('@app/legal-agreements/services/persistence.service/AgreementsReferenceValidators') {}
+
+export const AgreementsReferenceValidatorsLive = Layer.succeed(AgreementsReferenceValidators, {
+  forScope: makeAgreementsValidators,
 });
