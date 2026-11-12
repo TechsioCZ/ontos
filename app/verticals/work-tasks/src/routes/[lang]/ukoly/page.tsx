@@ -10,7 +10,7 @@ import {
   useUnsavedChangesScope,
 } from '@app/admin-ui';
 import type { RevisionedSaveResult, SaveOutcome } from '@app/admin-ui';
-import { listCustomers } from '@app/party-registry/api/client';
+import { executeCustomerList } from '@app/party-registry/apis/customer-list/client';
 import { listOpportunities } from '@app/sales-pipeline/clients/records';
 import { executeRecords as propertyRecords } from '@app/property-portfolio/clients/records';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
@@ -122,6 +122,13 @@ type CommandOutcome =
     }
   // A command parked for approval changed nothing yet; `message` says so.
   | { readonly message: string; readonly ok: false; readonly proposed: boolean };
+
+/** Current CUSTOMER Counterparties of the selected Legal Entity through Party Registry's customer-list read. */
+const listCustomers = () =>
+  Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
+    Effect.flatMap(([first, second]) => executeCustomerList({}, `party-registry:customer-list:${first}:${second}`)),
+    Effect.map(({ items }) => items),
+  );
 
 type PageReadFailure = Effect.Error<
   ReturnType<typeof executeRecords> | ReturnType<typeof listCustomers> | ReturnType<typeof listOpportunities>

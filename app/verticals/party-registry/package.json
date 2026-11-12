@@ -42,6 +42,7 @@
     "./apis/legacy-ico-inventory": "./shared/apis/legacy-ico-inventory.ts",
     "./actions/fence-legacy-ico-authority": "./shared/actions/fence-legacy-ico-authority.ts",
     "./apis/legacy-ico-inventory/client": "./src/api/legacy-ico-inventory-client.ts",
+    "./apis/customer-list/client": "./src/api/customer-list-client.ts",
     "./actions/fence-legacy-ico-authority/client": "./src/api/fence-legacy-ico-authority-action-client.ts",
     "./apis/counterparty-migration-correlation": "./shared/apis/counterparty-migration-correlation.ts",
     "./apis/counterparty-migration-correlation/client": "./src/api/counterparty-migration-correlation-client.ts",
