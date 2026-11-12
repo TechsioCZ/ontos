@@ -11,6 +11,7 @@ import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { FinanceReferenceUnavailable } from '../../shared/actions/apply-command.ts';
 import { FinanceStateSchema } from '../../shared/apis/records.ts';
+import type { InvoiceLine } from '../../shared/apis/records.ts';
 import type { VatChoices } from '../../shared/apis/vat-choices.ts';
 import { FinanceTaxRates } from '../../src/integrations/tax-rates.ts';
 import {
@@ -23,7 +24,9 @@ import {
   opportunityInvoiceLedgerLive,
   saveFinanceStateForWorkerRoutine,
 } from '../../src/workers/opportunity-invoice-ledger.ts';
-import { baselineVatChoices } from '../support/finance-tax-rates.ts';
+import { baselineVatChoices, testTaxRuleRevisionRef } from '../support/finance-tax-rates.ts';
+import { CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
+import { forSellerRegime, lineVatOf } from '../../shared/domain/line-vat.ts';
 import { outboxFailureStatus } from '../../../../packages/core-runtime/src/outbox/repository.ts';
 import type { OutboxClaim, OutboxRepositoryService } from '../../../../packages/core-runtime/src/outbox/repository.ts';
 import { makeOutboxRuntime } from '../../../../packages/core-runtime/src/outbox/runtime.ts';
@@ -31,6 +34,9 @@ import { makeOutboxRuntime } from '../../../../packages/core-runtime/src/outbox/
 const tenantId = '21000000-0000-4000-8000-000000000001';
 const legalEntityId = '31000000-0000-4000-8000-000000000001';
 const opportunityId = '41000000-0000-4000-8000-000000000002';
+/** When, and which opportunity, the message reports won. */
+type WonOn = Pick<typeof OutboxPayloadSchema.Encoded, 'changedAt' | 'opportunityId'>;
+const wonOn2Nov: WonOn = { changedAt: '2026-11-02T09:00:00.000Z', opportunityId };
 
 const won: OutboxWorkerHandlerContext = attestOutboxWorkerHandlerContext({
   attemptNumber: 1,
@@ -49,10 +55,10 @@ const won: OutboxWorkerHandlerContext = attestOutboxWorkerHandlerContext({
   workerKey: draftInvoiceFromWonOpportunityWorker.descriptor.workerKey,
 });
 
-const wonMessage = (vatRate: number) =>
+const wonMessage = (vatRate: number, when: WonOn = wonOn2Nov) =>
   ({
     amountMinor: 100_000,
-    changedAt: '2026-11-02T09:00:00.000Z',
+    changedAt: when.changedAt,
     currency: 'CZK',
     fromStage: 'NEGOTIATION',
     lines: [
@@ -64,13 +70,14 @@ const wonMessage = (vatRate: number) =>
         vatRate,
       },
     ],
-    opportunityId,
+    opportunityId: when.opportunityId,
     partyId: '41000000-0000-4000-8000-000000000003',
     revision: 1,
     toStage: 'WON',
   }) satisfies typeof OutboxPayloadSchema.Encoded;
 
-const wonPayload = (vatRate: number) => Schema.decodeEffect(OutboxPayloadSchema)(wonMessage(vatRate));
+const wonPayload = (vatRate: number, when?: WonOn) =>
+  Schema.decodeEffect(OutboxPayloadSchema)(wonMessage(vatRate, when));
 
 /** One company's finance ledger, saved with a revision check exactly like the worker routines. */
 const SaveParametersSchema = Schema.Tuple([Schema.Int, Schema.Unknown]);
@@ -321,6 +328,92 @@ it.layer(NodeCrypto.layer)('How Core settles a won opportunity the worker cannot
       const { scope } = makeLedger();
       const tax = FinanceTaxRates.of({ choices: down, choicesFor: down });
       expect(yield* settleFirstAttempt(scope, tax, 21)).toEqual({ dead: 0, retried: 1, succeeded: 0 });
+    }),
+  );
+});
+
+/** The VAT fields a stored invoice line carries (absent fields stay absent). */
+const vatKeys: ReadonlySet<string> = new Set(['taxRuleRevisionRef', 'vatClassification', 'vatRate', 'vatTreatment']);
+const vatOf = (line: Partial<InvoiceLine>) =>
+  Object.fromEntries(Object.entries(line).filter(([key]) => vatKeys.has(key)));
+
+/** What the invoice form stores for a new standard-rate line of this seller (forSellerRegime, then lineVatOf). */
+const formLineVat = (choices: VatChoices) => {
+  const vat = lineVatOf(
+    forSellerRegime({ vat: { code: CZ_VAT_STANDARD, kind: 'classification' } as const }, choices.regime).vat,
+    choices,
+  );
+  return vatOf(vat ?? {});
+};
+
+it.layer(NodeCrypto.layer)('Won opportunity priced exactly as the invoice form prices it for the seller', (suite) => {
+  suite.effect("a VAT payer gets the classification's rate with its Tax rule revision", () =>
+    Effect.gen(function* payer() {
+      const { invoices, scope } = makeLedger();
+      const choices = baselineVatChoices(tenantId, '2026-11-02');
+      yield* deliver(
+        scope,
+        taxAnswering(() => choices),
+        yield* wonPayload(21),
+      );
+      const [line] = invoices()[0]?.lines ?? [];
+      expect(vatOf(line ?? {})).toEqual({
+        taxRuleRevisionRef: testTaxRuleRevisionRef(tenantId, CZ_VAT_STANDARD),
+        vatClassification: CZ_VAT_STANDARD,
+        vatRate: 21,
+      });
+      expect(vatOf(line ?? {})).toEqual(formLineVat(choices));
+    }),
+  );
+
+  suite.effect('a company that is not a VAT payer gets the non-payer treatment at 0 %, never a refusal', () =>
+    Effect.gen(function* nonPayer() {
+      const { invoices, scope } = makeLedger();
+      const choices = baselineVatChoices(tenantId, '2026-11-02', 'NON_PAYER');
+      yield* deliver(
+        scope,
+        taxAnswering(() => choices),
+        yield* wonPayload(21),
+      );
+      const [invoice] = invoices();
+      const [line] = invoice?.lines ?? [];
+      expect(vatOf(line ?? {})).toEqual({
+        vatRate: 0,
+        vatTreatment: 'NON_PAYER',
+      });
+      expect(vatOf(line ?? {})).toEqual(formLineVat(choices));
+      expect(invoice?.vatMinor ?? 0).toBe(0);
+    }),
+  );
+
+  suite.effect('each opportunity is priced by the regime on its own won date', () =>
+    Effect.gen(function* regimeChange() {
+      const { invoices, scope } = makeLedger();
+      // Not a VAT payer until it registers on 5. 11. 2026; a payer from then on.
+      const choicesOn = (on: string) => baselineVatChoices(tenantId, on, on < '2026-11-05' ? 'NON_PAYER' : 'VAT_PAYER');
+      const tax = FinanceTaxRates.of({
+        choices: () => Effect.die('The worker asks Tax for the originator only'),
+        choicesFor: (_call, on) => Effect.succeed(choicesOn(on)),
+      });
+      const before = wonOn2Nov;
+      const after = { changedAt: '2026-11-10T09:00:00.000Z', opportunityId: '41000000-0000-4000-8000-000000000012' };
+      yield* deliver(scope, tax, yield* wonPayload(21, before));
+      yield* deliver(scope, tax, yield* wonPayload(21, after));
+      const lineVat = (id: string) => {
+        const line = invoices().find((invoice) => invoice.opportunityId === id)?.lines?.[0];
+        return vatOf(line ?? {});
+      };
+      expect(lineVat(before.opportunityId)).toEqual({
+        vatRate: 0,
+        vatTreatment: 'NON_PAYER',
+      });
+      expect(lineVat(after.opportunityId)).toEqual({
+        taxRuleRevisionRef: testTaxRuleRevisionRef(tenantId, CZ_VAT_STANDARD),
+        vatClassification: CZ_VAT_STANDARD,
+        vatRate: 21,
+      });
+      expect(lineVat(before.opportunityId)).toEqual(formLineVat(choicesOn('2026-11-02')));
+      expect(lineVat(after.opportunityId)).toEqual(formLineVat(choicesOn('2026-11-10')));
     }),
   );
 });

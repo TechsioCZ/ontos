@@ -31,7 +31,14 @@ import type {
   RecordsResponse,
 } from '../../shared/apis/records.ts';
 import type { VatChoices } from '../../shared/apis/vat-choices.ts';
-import { lineVatIssue, rateOf, withCurrentTaxRate } from '../../shared/domain/line-vat.ts';
+import {
+  lineVatChoice,
+  lineVatIssue,
+  lineVatOf,
+  rateOf,
+  sellerVatChoice,
+  withCurrentTaxRate,
+} from '../../shared/domain/line-vat.ts';
 import type { InvoiceDirection } from '../../shared/domain/line-vat.ts';
 import { computeInvoiceTotals, isLineDiscountValid, nextInvoiceNumber } from '../../shared/domain/invoice-totals.ts';
 import {
@@ -318,9 +325,11 @@ const handleCreateInvoiceDraft = Effect.fn('Finance.handleCreateInvoiceDraft')(f
 });
 
 /**
- * A won opportunity's lines as a new invoice stores them: each line takes Tax's rate for its classification on the
- * issue date, with the Tax rule revision that published it, exactly as a person's new line must. A line whose rate
- * names no classification, or a company Tax gives no usable VAT, refuses the invoice; Finance never guesses a rate.
+ * A won opportunity's lines as a new invoice stores them, priced exactly as the invoice form prices a person's new line
+ * for this company on the issue date (`sellerVatChoice`, then `lineVatOf`): a VAT payer's line takes Tax's rate for
+ * its classification with the Tax rule revision that published it; a company that is not a VAT payer issues it with
+ * the non-payer treatment at 0 %. A line whose rate names no classification, or a company Tax gives no usable VAT,
+ * refuses the invoice; Finance never guesses a rate.
  */
 const opportunityLines = Effect.fn('Finance.opportunityLines')(function* opportunityLines(
   lines: readonly InvoiceLine[],
@@ -333,12 +342,19 @@ const opportunityLines = Effect.fn('Finance.opportunityLines')(function* opportu
   const choices = yield* validators.vat(issueDate);
   const priced: InvoiceLine[] = [];
   for (const line of lines) {
-    const current = withCurrentTaxRate(line, choices);
-    const issue = current === undefined ? 'vat_rate_changed' : lineVatIssue(current, choices, 'OUTGOING');
-    if (current === undefined || issue !== undefined) {
+    const vat = lineVatOf(sellerVatChoice(lineVatChoice(line), choices.regime), choices);
+    const issue = vat === undefined ? 'vat_rate_changed' : lineVatIssue(vat, choices, 'OUTGOING');
+    if (vat === undefined || issue !== undefined) {
       return yield* rejected(issue ?? 'vat_rate_changed');
     }
-    priced.push(current);
+    const {
+      taxRuleRevisionRef: _snapshotRevision,
+      vatClassification: _snapshotClassification,
+      vatRate: _snapshotRate,
+      vatTreatment: _snapshotTreatment,
+      ...snapshot
+    } = line;
+    priced.push({ ...snapshot, ...vat });
   }
   return priced;
 });

@@ -117,16 +117,21 @@ export const defaultLineVatChoice = (direction: InvoiceDirection, regime?: VatCh
     : { kind: 'treatment', treatment: 'NON_PAYER' };
 
 /**
- * A company that is not a VAT payer invoices without VAT: a line still on a classification is shown and sent with the
- * non-payer treatment instead, since the form offers it nothing else.
+ * The VAT a company's own new line carries in its regime. A company that is not a VAT payer invoices without VAT: a
+ * line on a classification takes the non-payer treatment instead, since the invoice form offers it nothing else. The
+ * one rule for the invoice form and for an invoice drafted from a won opportunity.
  */
+export const sellerVatChoice = (choice: LineVatChoice, regime: VatChoices['regime'] | undefined): LineVatChoice =>
+  regime === 'NON_PAYER' && choice.kind === 'classification' ? { kind: 'treatment', treatment: 'NON_PAYER' } : choice;
+
+/** The form's line in the seller's regime (`sellerVatChoice`): shown and sent with the VAT it will store. */
 export const forSellerRegime = <Line extends { readonly vat: LineVatChoice }>(
   line: Line,
   regime: VatChoices['regime'] | undefined,
-): Line =>
-  regime === 'NON_PAYER' && line.vat.kind === 'classification'
-    ? { ...line, vat: { kind: 'treatment', treatment: 'NON_PAYER' } }
-    : line;
+): Line => {
+  const vat = sellerVatChoice(line.vat, regime);
+  return vat === line.vat ? line : { ...line, vat };
+};
 
 /** Why a line's VAT cannot be stored; the stable codes the server rejects with and the forms explain. */
 export const LineVatIssueSchema = Schema.Literals([
