@@ -18,7 +18,7 @@ import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/iso
 import { NativeReadTestOwnerRegistration, makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { migrate } from 'drizzle-orm/effect-postgres/migrator';
-import { DateTime, Effect, FileSystem, Layer, Predicate, Redacted, Ref, Schema } from 'effect';
+import { Clock, DateTime, Duration, Effect, FileSystem, Layer, Predicate, Redacted, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -32,7 +32,13 @@ import { TaxRuleRevisionIdSchema } from '../../shared/domain/merchandise-model.t
 import { recordsRead } from '../../src/api/records.read.ts';
 import { merchandiseRelations } from '../../src/database/schema.ts';
 import { persistenceService, prepareCommandTax } from '../../src/services/persistence.service.ts';
-import { CompanyTaxRatesSchema, TaxRateSource, TaxRatesFailure } from '../../src/services/tax-rates.ts';
+import {
+  CompanyTaxRatesSchema,
+  TAX_RATE_FRESHNESS,
+  TaxRateSource,
+  TaxRatesFailure,
+  currentTaxRateBook,
+} from '../../src/services/tax-rates.ts';
 import type { TaxRateBook } from '../../src/services/tax-rates.ts';
 import { merchandiseRegistration } from '../../vertical.registration.ts';
 
@@ -186,6 +192,28 @@ const placeOrder = Effect.fn('VatTransition.placeOrder')(function* placeOrder(
   );
 });
 
+/** How far {@link laterClock} runs ahead of the real clock. */
+const clockShift = Ref.makeUnsafe(Duration.zero);
+/**
+ * The real clock moved forward by {@link clockShift}: Tax installed for the tenant is noticed only after Merchandise
+ * waited out its refusal (a full freshness window), so the second phase runs that much later.
+ */
+const laterClock = (real: Clock.Clock): Clock.Clock => {
+  const millis = () =>
+    DateTime.toEpochMillis(
+      DateTime.addDuration(DateTime.makeUnsafe(real.currentTimeMillisUnsafe()), Ref.getUnsafe(clockShift)),
+    );
+  return {
+    currentTimeMillis: Effect.sync(millis),
+    currentTimeMillisUnsafe: millis,
+    currentTimeNanos: Effect.sync(() => BigInt(millis()) * 1_000_000n),
+    currentTimeNanosUnsafe: () => BigInt(millis()) * 1_000_000n,
+    monotonicTimeNanos: real.monotonicTimeNanos,
+    monotonicTimeNanosUnsafe: () => real.monotonicTimeNanosUnsafe(),
+    sleep: (duration) => real.sleep(duration),
+  };
+};
+
 it.layer(nativeServices, { excludeTestServices: true })('VAT classification deploy on a live storefront', (suite) => {
   suite.effect(
     'storefront reads and orders stay exactly as before through the migration and the first sync with Tax',
@@ -316,12 +344,16 @@ it.layer(nativeServices, { excludeTestServices: true })('VAT classification depl
         // The storefront after the order: exactly what the code before classifications showed after it.
         expect(yield* storefront).toEqual(fixture.after);
 
-        // 2. Tax is installed and seeded; staff reads sync the company with no person involved. The first one answers
-        //    from the materialised rates at once and starts the refresh; the next one materialises Tax's answer.
+        // 2. Tax is installed and seeded, and the wait after its refusal has passed; staff reads sync the company with
+        //    no person involved. The first one answers from the materialised rates at once and starts the refresh;
+        //    once that refresh has landed, the next one materialises Tax's answer.
         yield* Ref.set(taxSource, () => Effect.succeed(BASELINE));
+        yield* Ref.set(clockShift, Duration.sum(TAX_RATE_FRESHNESS, Duration.seconds(1)));
         const staffView = { view: { limit: 0, ordersLimit: 0, summary: true } };
         expect((yield* read(staffView)).taxRatesConfirmedAt).toBeNull();
-        yield* Effect.sleep('100 millis');
+        yield* currentTaxRateBook({ ...native.principal, correlationId: 'vat-transition' }).pipe(
+          Effect.provideService(TaxRateSource, source),
+        );
         const staff = yield* read(staffView);
         expect(staff.taxRatesConfirmedAt).not.toBeNull();
         expect(staff.sellerVatRegime).toBe('VAT_PAYER');
@@ -342,7 +374,7 @@ it.layer(nativeServices, { excludeTestServices: true })('VAT classification depl
         const callsBeforeStorefront = yield* Ref.get(taxCalls);
         expect(yield* storefront).toEqual(withBookItAt(fixture.after, 12));
         expect(yield* Ref.get(taxCalls)).toBe(callsBeforeStorefront);
-      }),
+      }).pipe(Effect.provideServiceEffect(Clock.Clock, Clock.Clock.pipe(Effect.map((real) => laterClock(real))))),
     240_000,
   );
 });
