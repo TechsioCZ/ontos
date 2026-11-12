@@ -100,15 +100,19 @@ const subjectWireOf = (
     Match.exhaustive,
   );
 
+/** Hosts a module may reach the Shell on over plain HTTP: the same machine (the app host's loopback relay, a dev box). */
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** Where a module's keys are presented: HTTPS, or plain HTTP to the same machine only. */
 const ShellGatewayBaseUrl = Config.schema(
   Schema.URLFromString.check(
     Schema.makeFilter((url) =>
-      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      (url.protocol === 'https:' || (url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname))) &&
       url.username === '' &&
       url.password === '' &&
       url.hash === ''
         ? undefined
-        : 'Gateway transport requires an HTTP URL without credentials or fragment',
+        : 'Gateway transport requires HTTPS (plain HTTP only to a loopback host) without credentials or fragment',
     ),
   ),
   'ONTOS_SHELL_GATEWAY_BASE_URL',
