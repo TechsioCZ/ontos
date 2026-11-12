@@ -150,6 +150,8 @@ export const subjectInspectionFixture = (input: {
   let compositionLoads = 0;
   /** The rows of each evidence write that completed, by the order writes were started (1-based attempt). */
   const writtenRows = new Map<number, number>();
+  /** Every evidence row written: its capability, mode, outcome and reasons. */
+  const evidence: string[] = [];
   const subjectOf = (principalId: string) => input.subjects.find((subject) => subject.principalId === principalId);
   const companyScopeId = AccessScopeIdSchema.make('00000000-0000-4000-8000-000000000018');
   const tenantScopeId = AccessScopeIdSchema.make('00000000-0000-4000-8000-000000000019');
@@ -288,8 +290,13 @@ export const subjectInspectionFixture = (input: {
                   writtenRows.set(attempt, entries.length);
                   reads.evidenceWrites += 1;
                   reads.evidenceRows += entries.length;
-                  for (const { scope } of entries) {
-                    requesterScopes.push(scope);
+                  for (const entry of entries) {
+                    requesterScopes.push(entry.scope);
+                    evidence.push(
+                      [entry.capability.capabilityKey, entry.mode, entry.outcome, JSON.stringify(entry.reasons)].join(
+                        '|',
+                      ),
+                    );
                   }
                 }),
               ),
@@ -299,6 +306,7 @@ export const subjectInspectionFixture = (input: {
     ),
   );
   return {
+    evidence,
     layer: Layer.merge(inspectionLayer, moduleStates),
     reads,
     requesterScopes,

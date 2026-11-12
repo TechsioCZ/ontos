@@ -305,8 +305,11 @@ interface AuthorityCase {
   readonly companyIds: readonly string[];
   readonly owner: string;
   readonly person: string;
-  /** Leaves exactly these modules installed for the tenant and reprojects its graph through the Core writer. */
-  readonly reinstall: (moduleKeys: readonly string[]) => Effect.Effect<void>;
+  /**
+   * Leaves exactly these modules installed for the tenant and reprojects its graph through the Core writer; with
+   * `project: false` the states change but the projection does not follow yet.
+   */
+  readonly reinstall: (moduleKeys: readonly string[], options?: { readonly project?: boolean }) => Effect.Effect<void>;
   readonly runtime: DatabaseConnectionPair['runtime'];
   readonly tenantId: string;
 }
@@ -434,7 +437,7 @@ const withAuthorityCase = <A, E>(
                  '${roleRevisionId}', 'active', '${owner}', now() - interval '1 day')`,
       );
       yield* graph.writer.reconcileTenant({ scope: ownerScope });
-      const reinstall = (moduleKeys: readonly string[]) =>
+      const reinstall = (moduleKeys: readonly string[], options?: { readonly project?: boolean }) =>
         Effect.gen(function* reinstallModules() {
           yield* admin.unsafe(`delete from core.tenant_module_states where tenant_id = '${tenantId}'`);
           for (const moduleKey of moduleKeys) {
@@ -443,7 +446,9 @@ const withAuthorityCase = <A, E>(
                values (gen_random_uuid(), '${tenantId}', '${moduleKey}', 'active')`,
             );
           }
-          yield* graph.writer.reconcileTenant({ scope: ownerScope });
+          if (options?.project !== false) {
+            yield* graph.writer.reconcileTenant({ scope: ownerScope });
+          }
         }).pipe(Effect.orDie);
       return yield* run({
         admin,
@@ -894,11 +899,16 @@ const describedOnStage = Effect.fn('test.describedOnStage')(function* describedO
   readonly installed: readonly string[];
   readonly label: string;
   readonly principalId: string;
+  /** Modules installed after the projection: their states are active, their rights not projected yet. */
+  readonly unprojected?: readonly string[];
 }) {
   const { authorityCase, installed, label, principalId } = input;
   const { companyId, tenantId } = authorityCase;
   const snapshot = yield* installedComposition;
   yield* authorityCase.reinstall(installed);
+  if (input.unprojected !== undefined) {
+    yield* authorityCase.reinstall([...installed, ...input.unprojected], { project: false });
+  }
   const describe = (correlationId: string) =>
     measured({
       authorityCase,
@@ -965,8 +975,9 @@ const describedOnStage = Effect.fn('test.describedOnStage')(function* describedO
     expect(at).toBeGreaterThanOrEqual(0);
     remaining.splice(at, 1);
   }
-  expect(remaining.every((row) => !installed.includes(ownerOf.get(keyOfRow(row)) ?? ''))).toBe(true);
-  return report;
+  const asked = new Set([...installed, ...(input.unprojected ?? [])]);
+  expect(remaining.every((row) => !asked.has(ownerOf.get(keyOfRow(row)) ?? ''))).toBe(true);
+  return { ...report, liveRead: sortedSet(live.read) };
 });
 
 const reportPath = Config.option(Config.String('ACTING_AUTHORITY_REPORT'));
@@ -1238,6 +1249,30 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               expect(report.transactions).toBeLessThanOrEqual(12);
               expect(report.statements).toBeLessThanOrEqual(82);
               expect(report.spicedb).toBeLessThanOrEqual(4);
+            }).pipe(Effect.provide(NodeServices.layer)),
+          1,
+        ),
+      300_000,
+    );
+
+    suite.effect(
+      'never offers a module installed in the database before its rights are projected',
+      () =>
+        withAuthorityCase(
+          'work.tasks',
+          (authorityCase) =>
+            Effect.gen(function* unprojectedModule() {
+              // facility.operations is installed (active) after the last projection: the owner's full-access cells
+              // for it exist, but SpiceDB holds no relationship for them yet, so every question about it is denied.
+              const report = yield* describedOnStage({
+                authorityCase,
+                installed: N1_MODULES,
+                label: 'unprojected',
+                principalId: authorityCase.owner,
+                unprojected: ['facility.operations'],
+              });
+              expect(report.liveRead).not.toContain('facility.operations');
+              expect(report.liveRead).toContain('work.tasks');
             }).pipe(Effect.provide(NodeServices.layer)),
           1,
         ),
