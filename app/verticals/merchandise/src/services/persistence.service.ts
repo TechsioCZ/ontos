@@ -116,7 +116,14 @@ import {
   sellableRatesAt,
   taxRateViews,
 } from './tax-rates.ts';
-import type { CompanyTaxRates, FetchedTaxRates, HeldProductRates, SellableVatRates, TaxRateBook } from './tax-rates.ts';
+import type {
+  CompanyTaxRates,
+  FetchedTaxRates,
+  HeldProductRates,
+  SellableVatRates,
+  TaxRateBook,
+  TaxRatesDecision,
+} from './tax-rates.ts';
 import { CZ_VAT_STANDARD } from '@app/shared-contracts/cz-vat-classifications';
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import {
@@ -2236,6 +2243,27 @@ const currentRatesWanted = (command: MerchandiseCommand) =>
 const STALE_RATES_REASON =
   'Cenu teď nelze uložit: daně firmy nejsou dostupné a jejich poslední ověřené sazby DPH jsou starší než 24 hodin. Zkuste to prosím za chvíli.';
 
+const NO_RATES_REASON =
+  'Cenu teď nelze uložit: firma zatím nemá žádné sazby DPH z modulu Daně a modul Daně teď neodpovídá. Zkuste to prosím za chvíli.';
+
+const TAX_REFUSED_PRICE_REASON =
+  'Cenu nelze uložit: daně firmy nejsou dostupné (modul Daně není pro firmu aktivní nebo dotaz odmítl).';
+
+/**
+ * Why a command entering a price cannot store the price including VAT now: Tax refused the company, the company has
+ * no rates at all while Tax does not answer, or its last confirmed rates are older than 24 hours. A price is never
+ * stored without its gross while the rates are missing.
+ */
+export const priceRefusalOf = (decision: TaxRatesDecision, refused: boolean): Option.Option<string> => {
+  if (decision.usable && decision.book !== undefined) {
+    return Option.none();
+  }
+  if (refused) {
+    return Option.some(TAX_REFUSED_PRICE_REASON);
+  }
+  return Option.some(decision.book === undefined ? NO_RATES_REASON : STALE_RATES_REASON);
+};
+
 const TAX_REFUSED_REASON =
   'Prodej není možný: daně firmy nejsou dostupné (modul Daně není pro firmu aktivní nebo dotaz odmítl).';
 
@@ -2279,6 +2307,7 @@ const staffTaxFields = (book: TaxRateBook | undefined, state: CompanyTaxRates | 
   sellerVatRegime: book === undefined || book.regime === 'NOT_DECLARED' ? null : book.regime,
   taxRates: book === undefined ? [] : taxRateViews(book, now),
   taxRatesConfirmedAt: state?.source === 'TAX' ? state.syncedAt : null,
+  taxRatesSource: state?.source ?? null,
 });
 
 /** What the records read prepares outside its transaction: the caller's rights and, for staff reads, Tax's answer. */
@@ -2396,8 +2425,9 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       const usable = decision.usable ? decision.book : undefined;
       const rates = usable === undefined ? NO_SELLABLE_RATES : sellableRatesAt(usable, now);
       const unreachable = usable === undefined && !refused && decision.book !== undefined;
-      if (unreachable && entersPrices(command)) {
-        return yield* conflict(STALE_RATES_REASON);
+      const priceRefusal = entersPrices(command) ? priceRefusalOf(decision, refused) : Option.none<string>();
+      if (Option.isSome(priceRefusal)) {
+        return yield* conflict(priceRefusal.value);
       }
       const tax = { book: usable, held: decision.held, rates, refused, unreachable } satisfies CommandTax;
       if (decision.materialise === undefined) {

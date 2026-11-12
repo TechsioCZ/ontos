@@ -13,24 +13,30 @@ const KEY_PREFIX = 'merchandise.tax';
 export const DEFAULT_TAX_CLASSIFICATION: CzVatClassificationCode = CZ_VAT_STANDARD;
 
 /**
- * The selected company's VAT as the staff records read gives it: its rates from Tax, its declared regime (null: none),
- * and when Tax last confirmed them (null: not yet, they are the rates taken over from the stored prices).
+ * The selected company's VAT as the staff records read gives it: its rates, its declared regime (null: none), where
+ * the rates come from (`TAX`; `MIGRATION`: taken over from the stored prices, not yet confirmed by Tax; absent: the
+ * company has none) and, for Tax's rates, when Tax last confirmed them.
  */
 export interface CompanyVat {
-  readonly confirmedAt?: DateTime.Utc | null;
+  readonly confirmedAt?: DateTime.Utc;
   readonly rates: readonly TaxRateView[];
   readonly regime: 'NON_PAYER' | 'VAT_PAYER' | null;
+  readonly source?: 'MIGRATION' | 'TAX';
 }
 
 export const NO_COMPANY_VAT: CompanyVat = { rates: [], regime: null };
 
 /** The company's VAT from a staff records response. */
 export const companyVatOf = (
-  response: Pick<RecordsResponse, 'sellerVatRegime' | 'taxRates' | 'taxRatesConfirmedAt'> | undefined,
+  response:
+    | Pick<RecordsResponse, 'sellerVatRegime' | 'taxRates' | 'taxRatesConfirmedAt' | 'taxRatesSource'>
+    | undefined,
 ): CompanyVat => {
   const vat: CompanyVat = { rates: response?.taxRates ?? [], regime: response?.sellerVatRegime ?? null };
-  const confirmedAt = response?.taxRatesConfirmedAt;
-  return confirmedAt === undefined ? vat : { ...vat, confirmedAt };
+  const source = response?.taxRatesSource ?? undefined;
+  const confirmedAt = response?.taxRatesConfirmedAt ?? undefined;
+  const sourced = source === undefined ? vat : { ...vat, source };
+  return confirmedAt === undefined ? sourced : { ...sourced, confirmedAt };
 };
 
 /** A company that is not a VAT payer sells every classification at 0 %, from always. */
@@ -208,10 +214,10 @@ export const taxLabelsOf = (t: Translate) => {
 
   /**
    * When the company's rates are not current: not yet confirmed by Tax (taken over from the stored prices), or last
-   * confirmed long enough ago to say when. Nothing while they are recent or unknown.
+   * confirmed long enough ago to say when. Nothing while they are recent, or when the company has no rates at all.
    */
   const confirmation = (vat: CompanyVat, now: DateTime.Utc) => {
-    if (vat.confirmedAt === null) {
+    if (vat.source === 'MIGRATION') {
       return t(`${KEY_PREFIX}.unconfirmed`);
     }
     return vat.confirmedAt === undefined ||

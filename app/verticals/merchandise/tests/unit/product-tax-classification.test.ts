@@ -8,6 +8,7 @@ import {
   choiceAvailable,
   classificationChoice,
   classificationChoices,
+  companyVatOf,
   noTaxRates,
   rateAt,
   ratePercentText,
@@ -128,7 +129,7 @@ describe('a company that is not a VAT payer', () => {
 
 describe('how current the company rates are', () => {
   it('says when Tax has not confirmed them yet, and when it last did once that is long ago', () => {
-    expect(cs.confirmation({ confirmedAt: null, rates: [standardNow], regime: 'VAT_PAYER' }, now)).toBe(
+    expect(cs.confirmation({ rates: [standardNow], regime: 'VAT_PAYER', source: 'MIGRATION' }, now)).toBe(
       'Sazby DPH zatím nepotvrdil modul Daně; platí sazby převzaté z dosud uložených cen.',
     );
     const recent = {
@@ -145,6 +146,21 @@ describe('how current the company rates are', () => {
     expect(taxLabelsOf(translateIn('en')).confirmation(stale, now)).toBe(
       'The tax module last confirmed the VAT rates on 12 Nov 2026, 08:30; it is not answering now.',
     );
+  });
+
+  it('tells the migrated rates from none at all, as the staff read states their source', () => {
+    const migrated = companyVatOf({
+      sellerVatRegime: 'VAT_PAYER',
+      taxRates: [standardNow],
+      taxRatesConfirmedAt: null,
+      taxRatesSource: 'MIGRATION',
+    });
+    expect(cs.confirmation(migrated, now)).toBe(
+      'Sazby DPH zatím nepotvrdil modul Daně; platí sazby převzaté z dosud uložených cen.',
+    );
+    // Nothing stored: no rates to call unconfirmed; the form says instead that the company has no rate.
+    const none = companyVatOf({ sellerVatRegime: null, taxRates: [], taxRatesConfirmedAt: null, taxRatesSource: null });
+    expect(cs.confirmation(none, now)).toBeUndefined();
   });
 });
 

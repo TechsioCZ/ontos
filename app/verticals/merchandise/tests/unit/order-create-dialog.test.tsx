@@ -276,7 +276,7 @@ it.effect('a company that is not a VAT payer orders at 0 %: the line says so and
 
 it.effect('rates the tax module has not confirmed yet are named as such above the lines', () =>
   Effect.promise(async () => {
-    vat = { ...payer, confirmedAt: null };
+    vat = { ...payer, source: 'MIGRATION' };
     await mount();
     expect(text()).toContain('Sazby DPH zatím nepotvrdil modul Daně');
   }),

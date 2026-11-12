@@ -6,13 +6,13 @@ import { randomUUID } from 'node:crypto';
 
 import type { OperationalScope } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
-import { DateTime, Duration, Effect, Ref, Schema } from 'effect';
+import { DateTime, Duration, Effect, Option, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
 import { MerchandiseCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
-import { taxLabelsOf } from '../../src/routes/[lang]/provoz/produkty/product-tax-classification.ts';
-import { prepareCommandTax, prepareStaffTaxRates } from '../../src/services/persistence.service.ts';
+import { companyVatOf, taxLabelsOf } from '../../src/routes/[lang]/provoz/produkty/product-tax-classification.ts';
+import { prepareCommandTax, prepareStaffTaxRates, priceRefusalOf } from '../../src/services/persistence.service.ts';
 import type { PreparedTax } from '../../src/services/persistence.service.ts';
 import { TaxRateSource, TaxRatesFailure, decideTaxRates, taxRateViews } from '../../src/services/tax-rates.ts';
 import type { CompanyTaxRates } from '../../src/services/tax-rates.ts';
@@ -97,14 +97,31 @@ it.effect('a 25-hour outage keeps the confirmation at the last answer and refuse
     const { state } = yield* Ref.get(stored);
     expect(state?.syncedAt).toEqual(answeredAt);
     // Staff are told when Tax last confirmed the rates, and a new price is refused.
-    const shown = {
-      confirmedAt: state?.syncedAt ?? null,
-      rates: taxRateViews(TEST_TAX_BOOK, now),
-      regime: 'VAT_PAYER' as const,
-    };
+    const shown = companyVatOf({
+      sellerVatRegime: 'VAT_PAYER',
+      taxRates: taxRateViews(TEST_TAX_BOOK, now),
+      taxRatesConfirmedAt: state?.syncedAt ?? null,
+      taxRatesSource: state?.source ?? null,
+    });
     expect(taxLabelsOf(translateIn('cs')).confirmation(shown, now)).toContain(
       'Sazby DPH naposledy potvrdil modul Daně',
     );
     expect(yield* newPriceUsable).toBe(false);
   }),
 );
+
+it('a new price without usable rates is refused with the reason that fits, never stored without its gross', () => {
+  const now = DateTime.makeUnsafe('2026-11-12T10:00:00.000Z');
+  const reasonOf = (stored: CompanyTaxRates | undefined, refused: boolean) =>
+    Option.getOrUndefined(priceRefusalOf(decideTaxRates(stored, { refused }, now), refused));
+  // Nothing stored and Tax does not answer: refused (before, the price was stored without a gross).
+  expect(reasonOf(undefined, false)).toContain('firma zatím nemá žádné sazby DPH');
+  expect(reasonOf(undefined, true)).toContain('modul Daně není pro firmu aktivní');
+  const confirmed = (hoursAgo: number): CompanyTaxRates => ({
+    book: TEST_TAX_BOOK,
+    source: 'TAX',
+    syncedAt: DateTime.subtract(now, { hours: hoursAgo }),
+  });
+  expect(reasonOf(confirmed(25), false)).toContain('starší než 24 hodin');
+  expect(reasonOf(confirmed(23), false)).toBeUndefined();
+});

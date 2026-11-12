@@ -341,10 +341,14 @@ export const RecordsResponseSchema = Schema.Struct({
    */
   sellerVatRegime: Schema.optionalKey(SellerVatRegimeSchema),
   /**
-   * Staff reads: when Tax last confirmed the rates above; null while they are still the ones the classification
-   * migration took over from the stored prices (not yet confirmed by Tax).
+   * Staff reads: when Tax last confirmed the rates above; null unless they come from Tax (see `taxRatesSource`).
    */
   taxRatesConfirmedAt: Schema.optionalKey(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  /**
+   * Staff reads: where the rates above come from. `TAX`: Tax's answer. `MIGRATION`: the rates the classification
+   * migration took over from the stored prices, not yet confirmed by Tax. null: the company has no rates at all.
+   */
+  taxRatesSource: Schema.optionalKey(Schema.NullOr(Schema.Literals(['MIGRATION', 'TAX']))),
 });
 export type RecordsResponse = typeof RecordsResponseSchema.Type;
 

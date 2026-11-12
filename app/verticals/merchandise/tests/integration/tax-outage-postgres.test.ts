@@ -3,7 +3,8 @@
 // - staff reads answer from the materialised rates (with the time Tax confirmed them), never fail and never wait;
 // - an order edit that touches only existing lines needs no Tax;
 // - a new order line or a new product price is refused with a clear reason, because the confirmation is too old;
-// - with rates Tax confirmed 2 hours ago the same new price is stored.
+// - with rates Tax confirmed 2 hours ago the same new price is stored;
+// - with no rates stored at all a new price is refused too, and the staff read says the company has no rates.
 import { randomUUID } from 'node:crypto';
 
 import { defineDatabaseIdentityEnrollment, loadDatabaseConnectionPair } from '@app/core-runtime';
@@ -125,6 +126,7 @@ it.live('Merchandise keeps working while Tax is down, and prices nothing new on 
       ]);
       expect(staff.sellerVatRegime).toBe('VAT_PAYER');
       expect(staff.taxRatesConfirmedAt).toEqual(confirmedAt);
+      expect(staff.taxRatesSource).toBe('TAX');
 
       const apply = Effect.fn('TaxOutage.apply')(function* apply(
         command: typeof MerchandiseCommandPayloadSchema.Encoded.command,
@@ -207,6 +209,14 @@ it.live('Merchandise keeps working while Tax is down, and prices nothing new on 
         .where(whereScope(products, company))
         .pipe(Effect.map((rows) => rows.filter((row) => row.sku === newProduct.sku)));
       expect([created.revision > stocked.revision, stored?.grossPriceMinor]).toEqual([true, 1210]);
+      // No rates stored at all and Tax still down: a new price is refused instead of being stored without its gross,
+      // and the staff read says the company has no rates (no source) rather than calling them unconfirmed.
+      yield* admin.update(catalogHeads).set({ taxRates: null }).where(whereScope(catalogHeads, company));
+      const bare = yield* read({ view: { ordersLimit: 10, summary: true } });
+      expect([bare.taxRates, bare.taxRatesSource, bare.taxRatesConfirmedAt]).toEqual([[], null, null]);
+      expect(
+        yield* conflictReason(apply({ ...newProduct, sku: `NEW-${randomUUID().slice(0, 8)}` }, bare.revision)),
+      ).toContain('firma zatím nemá žádné sazby DPH');
     }),
   ).pipe(Effect.provide(NodeCrypto.layer)),
 );
