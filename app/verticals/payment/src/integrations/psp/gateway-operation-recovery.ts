@@ -26,6 +26,7 @@ import type {
   ProviderEvidenceSubmissionOutcome,
   StoredProviderEvidence,
 } from './evidence-store.ts';
+import { isPermanentSubmissionRefusal } from './evidence-submission-live.ts';
 import { ProviderEvidenceSubmitter } from './evidence-submission.ts';
 import type { GatewayProviderAdapter } from './psp-adapter.ts';
 import { GatewayProviderAdapters } from './psp-adapter.ts';
@@ -52,9 +53,10 @@ import type { ProviderDispatchResponse, ProviderEvidence, ProviderFindingResult 
  *    order reference. GoPay and Comgate without a ref stay INDETERMINATE; nothing is called.
  * 4. Lookup and replay evidence is appended to the C17 evidence store (PENDING_SUBMISSION).
  * 5. Every pending evidence row of the operation is offered once to A8 through the RegisteredWorkload
- *    submitter. The worker cannot see how A10 was admitted, so it asks: Shell refuses a human-admitted
- *    recovery and the submitter answers DENIED. A denial stops the submission for this delivery without
- *    a retry and leaves the evidence PENDING_SUBMISSION, so the reconciliation debt stays visible.
+ *    submitter. The worker cannot see how A10 was admitted, so it asks: Shell refuses the delegation of a
+ *    human-admitted recovery, a permanent submission refusal. A refusal or an A8 denial stops the
+ *    submission for this delivery without a retry and leaves the evidence PENDING_SUBMISSION, so the
+ *    reconciliation debt stays visible. A transient submission outage fails the delivery and is retried.
  *
  * Failures: binding resolution, provider and ledger outages are typed and retryable. Permanent provider
  * conditions (unsupported lookup, an undecodable provider response, conflicting evidence or correlation)
@@ -564,7 +566,7 @@ interface SubmissionState {
   readonly submissions: readonly GatewayRecoverySubmission[];
 }
 
-/** Offers one row to A8 and records the decision; a denial is not recorded on the row. */
+/** Offers one row to A8 and records the decision; a denial or a permanent refusal is not recorded on the row. */
 const submitOne = Effect.fn('GatewayOperationRecovery.submitOne')(function* submitOne(
   state: SubmissionState,
   evidence: StoredProviderEvidence,
@@ -574,24 +576,33 @@ const submitOne = Effect.fn('GatewayOperationRecovery.submitOne')(function* subm
 ) {
   const store = yield* ProviderEvidenceStore;
   const submitter = yield* ProviderEvidenceSubmitter;
-  const decided = yield* submitter.submit({ binding, evidence, scope, workerContext });
-  if (decided.outcome === 'DENIED') {
-    yield* Effect.logInfo('A8 denied the recovery submission; the provider evidence stays pending').pipe(
+  const decided = yield* submitter.submit({ binding, evidence, scope, workerContext }).pipe(
+    Effect.map((result) => (result.outcome === 'DENIED' ? Option.none() : Option.some(result))),
+    Effect.catchIf(isPermanentSubmissionRefusal, (refusal) =>
+      Effect.logInfo('The governed path refused the recovery submission').pipe(
+        Effect.annotateLogs({ reason: refusal.reason }),
+        Effect.as(Option.none()),
+      ),
+    ),
+  );
+  if (Option.isNone(decided)) {
+    yield* Effect.logInfo('The recovery submission was denied or refused; the provider evidence stays pending').pipe(
       Effect.annotateLogs({ evidenceId: evidence.evidenceId, operationId: evidence.operationId }),
     );
     const denied: SubmissionState = { denied: true, submissions: state.submissions };
     return denied;
   }
+  const { observationId, outcome } = decided.value;
   yield* store.markSubmission({
     evidenceId: evidence.evidenceId,
-    observationId: decided.observationId,
-    outcome: decided.outcome,
+    observationId,
+    outcome,
     scope,
     workerContext,
   });
   const next: SubmissionState = {
     denied: false,
-    submissions: [...state.submissions, { evidenceId: evidence.evidenceId, outcome: decided.outcome }],
+    submissions: [...state.submissions, { evidenceId: evidence.evidenceId, outcome }],
   };
   return next;
 });
