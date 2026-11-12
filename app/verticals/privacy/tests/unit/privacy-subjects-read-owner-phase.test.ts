@@ -1,4 +1,8 @@
-import { TrustedPrincipalContextSchema, trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
+import {
+  ReadHandlerUnavailable,
+  TrustedPrincipalContextSchema,
+  trustVerifiedGatewayPrincipalContext,
+} from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { NodeCrypto } from '@effect/platform-node';
 import { DateTime, Effect, Schema } from 'effect';
@@ -137,7 +141,8 @@ const ownerPhase = Effect.fn('PrivacySubjectsRead.ownerPhaseTest')(function* own
 
   // A selected person whose owner answer is unavailable stays unavailable; nothing fails open.
   const refused = yield* run([person.subjectRef], false).pipe(Effect.flip);
-  expect(refused).toMatchObject({ _tag: 'ReadHandlerUnavailable', code: 'read_handler_unavailable' });
+  expect(Schema.is(ReadHandlerUnavailable)(refused)).toBe(true);
+  expect(refused).toMatchObject({ code: 'read_handler_unavailable' });
   expect(ownerCalls).toHaveLength(2);
 
   // A foreign-Tenant reference selects nothing and asks the owner nothing.

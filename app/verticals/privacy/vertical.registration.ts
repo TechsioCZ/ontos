@@ -53,3 +53,10 @@ export const privacyRegistration = defineVerticalRuntimeRegistration({
   },
   manifest: privacyManifest,
 });
+
+// <generated-public-component-registrations>
+// </generated-public-component-registrations>
+// <generated-search-registrations>
+// </generated-search-registrations>
+// <generated-report-registrations>
+// </generated-report-registrations>
