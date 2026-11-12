@@ -2,13 +2,12 @@
 // @ontos-outbox-worker-host-owner projects.core
 import { Layer } from 'effect';
 import type { CoreSearchWorkerSnapshot, CoreSearchIngestion, OutboxRuntime } from '@app/core-runtime';
+import { CoreSearchIngestionLive, CoreSearchWorkerSnapshotLive } from '@app/core-runtime';
 import {
-  CoreSearchIngestionLive,
-  CoreSearchWorkerSnapshotLive,
+  defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
-} from '@app/core-runtime';
-import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
-import { OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
+  OutboxWorkerInfrastructureLive,
+} from '@app/core-runtime/outbox/worker';
 
 export { CorePersistenceLive as outboxWorkerCorePersistenceLive } from '@app/core-runtime/outbox/worker';
 export { DatabaseConfigLive as outboxWorkerDatabaseConfigLive } from '@app/core-runtime/outbox/worker';

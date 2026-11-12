@@ -6,10 +6,12 @@ import {
   CoreSearchProjectionStoreLive,
   CoreSearchWorkerSnapshotLive,
   coreSearchIngestionRegistryLayer,
+} from '@app/core-runtime';
+import {
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
-} from '@app/core-runtime';
-import { OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
+  OutboxWorkerInfrastructureLive,
+} from '@app/core-runtime/outbox/worker';
 import { workforceSearchIngestionRegistrations } from './search-ingestion-registrations.ts';
 
 export { CorePersistenceLive as outboxWorkerCorePersistenceLive } from '@app/core-runtime/outbox/worker';
