@@ -395,6 +395,48 @@ it.effect('counts a module only while the tenant has it installed, whatever the 
   }),
 );
 
+/** The gate, counting every question it is asked (batched carriers and LISTs alike). */
+const countedGate = (gate: ReturnType<typeof gateAnswering>, asked: { questions: number }) => ({
+  ...gate,
+  decideMany: (input: Parameters<NonNullable<typeof gate.decideMany>>[0]) =>
+    Effect.suspend(() => {
+      asked.questions += input.length;
+      return gate.decideMany?.(input) ?? Effect.die('no batch');
+    }),
+  list: (input: Parameters<typeof gate.list>[0]) =>
+    Effect.suspend(() => {
+      asked.questions += 1;
+      return gate.list(input);
+    }),
+});
+
+it.effect('never asks the gate or the Action authority about a module the tenant has not installed', () =>
+  Effect.gen(function* uninstalledNotAsked() {
+    const installed = yield* catalog();
+    const asked = { actionKeys: 0, questions: 0 };
+    const rights = yield* callerModuleAccess(caller).pipe(
+      Effect.provideService(ShellInstalledModuleCatalog, { load: Effect.succeed(installed) }),
+      Effect.provide(tenantModuleStates([])),
+      Effect.provideService(AccessDecisionGate, countedGate(gateAnswering('ALLOWED'), asked)),
+      Effect.provideService(ActionAuthority, {
+        ...actionAuthority(() => ({ execute: 'allowed' as const, propose: 'allowed' as const })),
+        checkActionAuthorities: (input: { readonly actionKeys: readonly string[]; readonly scope: OperationalScope }) =>
+          Effect.sync(() => {
+            asked.actionKeys += input.actionKeys.length;
+            return [];
+          }),
+      }),
+    );
+    // The answers about it were always dropped; now they are not asked at all.
+    expect({ access: rights.access.size, propose: rights.propose.size, write: rights.write.size }).toEqual({
+      access: 0,
+      propose: 0,
+      write: 0,
+    });
+    expect(asked).toEqual({ actionKeys: 0, questions: 0 });
+  }),
+);
+
 it.effect('keeps reading a read-only module but drops its write and proposal rights', () =>
   Effect.gen(function* readOnlyModuleState() {
     const installed = yield* catalog();

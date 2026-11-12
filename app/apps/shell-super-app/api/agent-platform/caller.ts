@@ -132,7 +132,7 @@ export const moduleCarriers = (installed: ShellInstalledCatalog): readonly Modul
 };
 
 /** The inner steps of one caller authority load, in the order they run. */
-export const CALLER_ACCESS_PHASES = ['modules', 'carriers', 'lists', 'actions', 'states'] as const;
+export const CALLER_ACCESS_PHASES = ['modules', 'states', 'carriers', 'lists', 'actions'] as const;
 export type CallerAccessPhase = (typeof CALLER_ACCESS_PHASES)[number];
 
 /**
@@ -205,7 +205,23 @@ export const callerModuleAccess = Effect.fn('AgentPlatform.callerModuleAccess')(
   const authority = yield* ActionAuthority;
   const gate = yield* AccessDecisionGate;
   const now = yield* DateTime.nowAsDate;
-  const carriers = moduleCarriers(installed);
+  // A module is usable only while the tenant's own state admits the access, so the states are read first and only
+  // modules whose state admits a read (every state that admits a write admits a read) are asked about: an answer for
+  // any other module was always dropped below, and asking it cost a question, its reads and its evidence for every
+  // module the tenant never installed.
+  const composed = installed.contracts.map(({ manifest }) => manifest.module.id);
+  const states = yield* callerPhase(
+    progress,
+    'states',
+    (yield* TenantModuleStateService)
+      .getTenantModuleStates(caller.scope.tenantId, composed)
+      .pipe(Effect.mapError((cause) => new AgentStoreUnavailable({ cause }))),
+  );
+  const stateOf = new Map(states.map(({ moduleKey, state }) => [moduleKey, state]));
+  const askable = new Set(
+    composed.filter((moduleId) => decideModuleStateAccess(stateOf.get(moduleId) ?? null, 'read') === 'allow'),
+  );
+  const carriers = moduleCarriers(installed).filter(({ moduleId }) => askable.has(moduleId));
   const scopeWide: { readonly carrier: ModuleCarrier; readonly index: number }[] = [];
   const recordScoped: { readonly carrier: ModuleCarrier; readonly index: number }[] = [];
   for (const [index, carrier] of carriers.entries()) {
@@ -270,7 +286,9 @@ export const callerModuleAccess = Effect.fn('AgentPlatform.callerModuleAccess')(
   // A module's Actions are asked without a record: a record-scoped Action is conservatively not counted
   // as a global right, and its record-scoped admission stays the owner read's own gate (O9, O27).
   const actions = installed.contracts.flatMap(({ manifest }) =>
-    manifest.publicSurface.actions.filter((action) => action.legalEntityScope !== 'forbidden'),
+    manifest.publicSurface.actions.filter(
+      (action) => action.legalEntityScope !== 'forbidden' && askable.has(action.owningModuleId),
+    ),
   );
   const actionKeys = [...new Set(actions.map(({ actionKey }) => actionKey))];
   yield* Ref.update(progress, (current) => ({
@@ -302,14 +320,6 @@ export const callerModuleAccess = Effect.fn('AgentPlatform.callerModuleAccess')(
   const writeAnswered = new Set(
     actions.flatMap(({ actionKey, owningModuleId }) => (executable.has(actionKey) ? [owningModuleId] : [])),
   );
-  const states = yield* callerPhase(
-    progress,
-    'states',
-    (yield* TenantModuleStateService)
-      .getTenantModuleStates(caller.scope.tenantId, [...visible])
-      .pipe(Effect.mapError((cause) => new AgentStoreUnavailable({ cause }))),
-  );
-  const stateOf = new Map(states.map(({ moduleKey, state }) => [moduleKey, state]));
   const admitted = (modules: ReadonlySet<string>, access: 'read' | 'write'): Set<string> =>
     new Set(
       [...modules].filter((moduleId) => decideModuleStateAccess(stateOf.get(moduleId) ?? null, access) === 'allow'),
