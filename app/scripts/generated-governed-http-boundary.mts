@@ -45,6 +45,8 @@ const GOVERNED_HTTP_RUNTIME_MODULE = '@app/shared-contracts/server/effect-bff-ru
 const GOVERNED_READ_HTTP_MODULE = '@app/core-runtime/http/governed-read';
 const CORE_RUNTIME_MODULE = '@app/core-runtime';
 const PG_CLIENT_MODULE = '@effect/sql-pg';
+const GOVERNED_HANDLER_IMPORTS_SLOT_START = '// <generated-governed-http-handler-imports>';
+const GOVERNED_HANDLER_IMPORTS_SLOT_END = '// </generated-governed-http-handler-imports>';
 const REACTIVITY_MODULE = 'effect/reactivity';
 const REQUEST_SCHEMA_PROBLEM_SCHEMA = 'RequestSchemaProblemSchema';
 const MANIFEST_API_SLOT_START = '// <generated-module-manifest-apis>';
@@ -315,7 +317,7 @@ const constInitializer = (source: string, name: string): string | undefined =>
   constInitializerRange(source, name)?.value;
 
 const isEffectFnCallback = (source: string): boolean => {
-  if (!source.startsWith('Effect.fn(')) {
+  if (!source.startsWith(EFFECT_FN_PREFIX)) {
     return false;
   }
   const opening = source.indexOf('(');
@@ -1980,8 +1982,8 @@ export const hasValidGovernedHttpCompositionRoot = (
   );
   const handlerImports = generatedSlotRange(
     handlerRoot,
-    '// <generated-governed-http-handler-imports>',
-    '// </generated-governed-http-handler-imports>',
+    GOVERNED_HANDLER_IMPORTS_SLOT_START,
+    GOVERNED_HANDLER_IMPORTS_SLOT_END,
   );
   const mounted =
     expectedApi !== undefined &&
@@ -2302,7 +2304,7 @@ const hasScopedReadFactoryExport = (source: string, binding: string, context: Sc
   if (initializer === undefined) {
     return false;
   }
-  const effectOpening = initializer.startsWith('Effect.fn(') ? initializer.indexOf('(') : undefined;
+  const effectOpening = initializer.startsWith(EFFECT_FN_PREFIX) ? initializer.indexOf('(') : undefined;
   const effectClosing =
     effectOpening === undefined ? undefined : matchingDelimiterEnd(initializer, effectOpening, '(', ')');
   const wrapped = effectClosing === undefined ? undefined : initializer.slice(effectClosing + 1).trim();
@@ -3286,8 +3288,7 @@ const hasReadCallbacks = (
         isOwnerLocalImportedCallback(callback) ||
         isOwnerLocalImportedFactoryResult(callback) ||
         // Demo-only exception 3: staged reads bind their scoped service factory by the ported proof.
-        (index === 2 && hasReadServiceFactoryCallback(phaseOwner, source, readExpression, callback)) ||
-        (index === 2 && hasOriginalServiceClosureFactory(phaseOwner, source, callback)) ||
+        (index === 2 && hasStagedReadServiceFactory(phaseOwner, source, readExpression, callback)) ||
         (index === 2 && hasOwnerLocalReadServiceFactory(sources, readFile, ownerPath, callback)) ||
         (index === 2 && hasOwnerLocalReadServiceFactoryResult(sources, readFile, ownerPath, callback)) ||
         (index === 3 && isConditionalPermissionDescriptor(callback))
@@ -3642,8 +3643,8 @@ const hasServerContract = (
         GOVERNED_READ_HTTP_MODULE,
         GOVERNED_HTTP_RUNTIME_MODULE,
         EFFECT_EDGE_MODULE,
-        './auth/action-principal.ts',
-        '../shared/api.ts',
+        ACTION_PRINCIPAL_MODULE,
+        OWNER_SHARED_API_MODULE,
         readImport,
         contractImport,
       ]),
@@ -3651,8 +3652,8 @@ const hasServerContract = (
     ) &&
     hasContractImports(source, {
       [`${escapedCamel}Read`]: readImport,
-      [apiBinding]: '../shared/api.ts',
-      authenticateOperationPrincipal: './auth/action-principal.ts',
+      [apiBinding]: OWNER_SHARED_API_MODULE,
+      authenticateOperationPrincipal: ACTION_PRINCIPAL_MODULE,
       HttpApiBuilder: EFFECT_EDGE_MODULE,
       makeGovernedReadHttpHandler: GOVERNED_READ_HTTP_MODULE,
     }) &&
@@ -3884,7 +3885,7 @@ const hasPublishedRegistration = (registration: string, contribution: GovernedRe
     `// </generated-module-registration-${registrationSection}>`,
   );
   const allRegistrationEntries = entriesAcrossSlots(registration, [
-    ['// <generated-module-registration-apis>', '// </generated-module-registration-apis>'],
+    [REGISTRATION_API_SLOT_START, REGISTRATION_API_SLOT_END],
     ['// <generated-module-registration-reports>', '// </generated-module-registration-reports>'],
     ['// <generated-module-registration-search>', '// </generated-module-registration-search>'],
   ]);
@@ -4149,11 +4150,7 @@ const hasMatchingModuleApiSlots = (
 ): boolean => {
   const moduleApiCount = contributions.filter((entry) => entry[2]?.kind === MODULE_API_KIND).length;
   const manifestApis = generatedSlotEntries(manifest, MANIFEST_API_SLOT_START, MANIFEST_API_SLOT_END);
-  const registrationApis = generatedSlotEntries(
-    registration,
-    '// <generated-module-registration-apis>',
-    '// </generated-module-registration-apis>',
-  );
+  const registrationApis = generatedSlotEntries(registration, REGISTRATION_API_SLOT_START, REGISTRATION_API_SLOT_END);
   if (
     manifestApis === undefined ||
     registrationApis?.filter((entry) => !isOwnerApprovalLoaderEntry(entry)).length !== moduleApiCount
@@ -4598,8 +4595,8 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
       publishesSharedApiContribution(input.sharedApi, escapedApiValue, escapeRegExp(stem)),
       slotHasExactlyOneCodeMatch(
         input.handlerRoot,
-        '// <generated-governed-http-handler-imports>',
-        '// </generated-governed-http-handler-imports>',
+        GOVERNED_HANDLER_IMPORTS_SLOT_START,
+        GOVERNED_HANDLER_IMPORTS_SLOT_END,
         new RegExp(`import \\{ ${escapedLayerValue} \\} from './${escapedSlug}-action-server\\.ts';`, 'gu'),
       ),
       slotHasExactlyOneCodeMatch(
@@ -6972,7 +6969,7 @@ const hasNativeRedemptionServiceEffect = (source: string, expression: string, ow
 };
 
 const hasNativeRedemptionPool = (source: string, expression: string): boolean => {
-  const client = originalPlatformImportBinding(source, 'PgClient', '@effect/sql-pg');
+  const client = originalPlatformImportBinding(source, 'PgClient', PG_CLIENT_MODULE);
   const args =
     client === undefined
       ? undefined
@@ -7008,7 +7005,7 @@ const hasNativeRedemptionLayer = (
   if (name === 'GatewayAssertionRedemptionLive') {
     return args[0] === service && hasNativeRedemptionServiceEffect(source, args[1] ?? '', owner);
   }
-  const client = originalPlatformImportBinding(source, 'PgClient', '@effect/sql-pg');
+  const client = originalPlatformImportBinding(source, 'PgClient', PG_CLIENT_MODULE);
   return (
     hasDisjointOwnerServiceTag(source, args[0] ?? '', context) ||
     (client !== undefined &&
@@ -7050,6 +7047,16 @@ export const hasNativeGatewayRedemptionExports = (
     );
   });
 };
+
+/** Demo-only exception 3: a staged read's service factory callback, proved by the ported staged-read proofs. */
+const hasStagedReadServiceFactory = (
+  phaseOwner: Parameters<typeof hasReadServiceFactoryCallback>[0],
+  source: string,
+  readExpression: string,
+  factory: string | undefined,
+): boolean =>
+  hasReadServiceFactoryCallback(phaseOwner, source, readExpression, factory) ||
+  hasOriginalServiceClosureFactory(phaseOwner, source, factory);
 
 // ---------------------------------------------------------------------------------------------------------------
 // Demo-only exception 3 (staged reads). Main's reads have a single handler; the demo keeps Core's prepare/load/finish read contract so outbound I/O stays outside database transactions. This is the trunk's staged-read and native read-factory proof, kept verbatim (main's same-named helpers take precedence). Offered upstream; changing main needs owner approval.
@@ -23899,6 +23906,14 @@ export const hasOwnerLocalReadServiceFactoryStaged = (
   );
 };
 
+/** Demo-only exception 3: a binding imported from an owner-local sibling module (`./<name>.ts`). */
+const isOwnerLocalImportedModuleBinding = (source: string, candidate: string | undefined): boolean => {
+  const imported =
+    candidate !== undefined && /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate)
+      ? namedSourceImport(source, candidate)
+      : undefined;
+  return /^\.\/[a-z][a-z0-9-]*\.ts$/u.test(imported?.modulePath ?? '');
+};
 const hasReadCallbacksStaged = (
   source: string,
   readExpression: string,
@@ -23914,13 +23929,8 @@ const hasReadCallbacksStaged = (
   if (kind === SEARCH_PROVIDER_KIND) {
     callbacks.push(4);
   }
-  const isOwnerLocalImportedCallback = (candidate: string | undefined): boolean => {
-    if (candidate === undefined || !/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate)) {
-      return false;
-    }
-    const imported = namedSourceImport(source, candidate);
-    return imported !== undefined && /^\.\/[a-z][a-z0-9-]*\.ts$/u.test(imported.modulePath);
-  };
+  const isOwnerLocalImportedCallback = (candidate: string | undefined): boolean =>
+    isOwnerLocalImportedModuleBinding(source, candidate);
   const isOwnerLocalImportedFactoryResult = (candidate: string | undefined): boolean => {
     if (candidate === undefined || !/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate)) {
       return false;
@@ -24332,17 +24342,6 @@ const hasInjectedGovernedReadRuntimeStaged = (source: string): boolean => {
   );
 };
 
-const readFactoryIllegalProtectedReferenceStaged = (
-  tokens: readonly ReadFactoryToken[],
-  index: number,
-  parameters: ReturnType<typeof readFactoryMakerParameterRange>,
-  freshResults: ReadonlySet<string>,
-): boolean =>
-  readFactoryBindingMutatedStaged(tokens, index, freshResults) ||
-  readFactoryDirectAliasReference(tokens, index, parameters) ||
-  (tokens[index + 1]?.kind === SyntaxKind.EqualsGreaterThanToken &&
-    !(tokens[index - 1]?.kind === SyntaxKind.ColonToken && tokens[index - 2]?.kind === SyntaxKind.CloseParenToken));
-
 const hasStableReadFactoryBindingsStaged = (
   source: string,
   expectedDeclarations: ReadonlyMap<string, number>,
@@ -24367,7 +24366,7 @@ const hasStableReadFactoryBindingsStaged = (
     ) {
       if (readFactoryDeclaredBinding(tokens, index)) {
         declarations.set(token.value, (declarations.get(token.value) ?? 0) + 1);
-      } else if (readFactoryIllegalProtectedReferenceStaged(tokens, index, parameters, freshResults)) {
+      } else if (readFactoryIllegalProtectedReference(tokens, index, parameters, freshResults)) {
         return false;
       }
     }
@@ -24662,94 +24661,6 @@ const hasCryptoMergedReadInjectionStaged = (source: string, factory: SourceRange
   return remaining !== null && hasClosedCryptoReadReferencesStaged(remaining, protectedNames);
 };
 
-const hasNativeReadLayerProviderStaged = (
-  source: string,
-  provider: string,
-  native: string,
-  modulePath: string,
-): boolean => {
-  const initializer = constInitializerStaged(source, provider);
-  const pipeline = initializer === undefined ? undefined : outputPipeExpression(initializer);
-  return (
-    pipeline?.base === native &&
-    pipeline.transforms.length > 0 &&
-    pipeline.transforms.every(isOutputSafeLayerTransform) &&
-    hasRuntimeNamedSourceImport(source, native, native, modulePath) &&
-    hasStableReadFactoryBindingsStaged(
-      source,
-      new Map([
-        [native, 0],
-        [provider, 1],
-      ]),
-      '',
-    )
-  );
-};
-
-const hasNativeReadRuntimeProviderStaged = (source: string, binding: string): boolean => {
-  const initializer = constInitializerStaged(source, binding);
-  const pipeline = initializer === undefined ? undefined : outputPipeExpression(initializer);
-  const native = /^(?<binding>makeReadRuntimeLive|GovernedMakeReadRuntimeLive)\(/u.exec(pipeline?.base ?? '')?.groups
-    ?.binding;
-  return (
-    native !== undefined &&
-    pipeline !== undefined &&
-    isWholeCallExpression(pipeline.base, new RegExp(`^${escapeRegExp(native)}\\(`, 'u')) &&
-    hasRuntimeNamedSourceImport(source, native, 'makeReadRuntimeLive', CORE_RUNTIME_MODULE) &&
-    pipeline.transforms.every(isOutputSafeLayerTransform) &&
-    hasStableReadFactoryBindingsStaged(
-      source,
-      new Map([
-        [native, 0],
-        [binding, 1],
-      ]),
-      '',
-    )
-  );
-};
-
-/** The generated runtime may carry the same caller-owned admission gate required by its finish phase. */
-const hasGateMergedReadInjectionStaged = (source: string, factory: SourceRange): boolean => {
-  const merge = nativeReadGateMerge(source, factory);
-  if (merge === undefined) {
-    return false;
-  }
-  const { body, gate, injected, runtime } = merge;
-  const gateType = namedSourceImport(source, 'AccessDecisionGate', true);
-  return (
-    hasRuntimeNamedSourceImport(source, 'Layer', 'Layer', EFFECT_EDGE_MODULE) &&
-    hasRuntimeNamedSourceImport(source, 'GovernedReadLayer', 'Layer', 'effect') &&
-    gateType?.imported === 'AccessDecisionGate' &&
-    gateType.modulePath === `${CORE_RUNTIME_MODULE}/access/enforcement` &&
-    hasNativeReadRuntimeProviderStaged(source, injected.readProvider) &&
-    hasNativeReadLayerProviderStaged(
-      source,
-      injected.provider,
-      'AccessDecisionLive',
-      `${CORE_RUNTIME_MODULE}/actions/runtime-wiring`,
-    ) &&
-    hasStableReadFactoryBindingsStaged(
-      source,
-      new Map([
-        ['Layer', 0],
-        ['GovernedReadLayer', 0],
-        ['AccessDecisionGate', 0],
-      ]),
-      '',
-    ) &&
-    hasStableReadFactoryBindingsStaged(
-      body,
-      new Map([
-        [runtime, 0],
-        [gate, 0],
-        ['governedReadRuntimeLive', 1],
-        [injected.tuple.args, 0],
-      ]),
-      '',
-    )
-  );
-};
-
 /** The default export is bound to a call of a named factory, e.g. `const apiRuntime = makeCrmApiRuntime(...)`. */
 const executesExportedRuntimeFactoryStaged = (source: string): boolean => {
   const exported = defaultExportExpression(source);
@@ -24776,7 +24687,7 @@ const hasGovernedHandlerRootStaged = (source: string, backendRegistration?: stri
     const tuples = [...factoryCode.matchAll(/\b(?:const|let|var)\s*\[/gu)];
     const direct = /const\s*\[\s*governedReadRuntimeLive\s*,/u.test(factoryCode);
     if (tuples.length !== 1 || !direct || localMergeBinding) {
-      return hasCryptoMergedReadInjectionStaged(source, factory) || hasGateMergedReadInjectionStaged(source, factory);
+      return hasCryptoMergedReadInjectionStaged(source, factory) || hasGateMergedReadInjection(source, factory);
     }
     // This is a typed executed factory: failed direct injection cannot borrow a legacy module root.
     return hasInjectedGovernedReadRuntimeStaged(source);
@@ -24837,8 +24748,8 @@ export const hasValidGovernedHttpCompositionRootStaged = (
   );
   const handlerImports = generatedSlotRangeStaged(
     handlerRoot,
-    '// <generated-governed-http-handler-imports>',
-    '// </generated-governed-http-handler-imports>',
+    GOVERNED_HANDLER_IMPORTS_SLOT_START,
+    GOVERNED_HANDLER_IMPORTS_SLOT_END,
   );
   const mounted =
     expectedApi !== undefined &&

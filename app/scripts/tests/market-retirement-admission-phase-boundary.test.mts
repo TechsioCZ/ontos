@@ -4,6 +4,7 @@ import {
   ActiveApplicationCompositionService,
   InstalledModuleCatalogService,
   InstalledModuleCatalogServiceLive,
+  OperationContextUnavailable,
   TrustedPrincipalContextSchema,
   scopedRoutineInvokerFromTransaction,
   trustVerifiedGatewayPrincipalContext,
@@ -27,6 +28,7 @@ import { FetchHttpClient } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
 import { commerceCustomerContextRegistration } from '../../verticals/commerce-customer-context/vertical.registration.ts';
+import { MarketRetirementImpactAssessmentUnavailable } from '../../verticals/commerce-market-catalog/src/actions/market-retirement-impact-assessment-unavailable.ts';
 import {
   OperationalScopeTransaction,
   installOperationalScopeFromTransactionService,
@@ -452,10 +454,8 @@ describe('Market retirement admission phase boundary', () => {
         const failure = yield* ownerServices(factory(transaction, candidate.scope, candidate.revision)).pipe(
           Effect.flip,
         );
-        expect(failure).toMatchObject({
-          _tag: 'OperationContextUnavailable',
-          reason: 'Prepared retirement basis belongs to another operation context',
-        });
+        expect(Schema.is(OperationContextUnavailable)(failure)).toBe(true);
+        expect(failure).toMatchObject({ reason: 'Prepared retirement basis belongs to another operation context' });
       }
       expect(write.inserted).toEqual([]);
     }),
@@ -481,8 +481,8 @@ describe('Market retirement admission phase boundary', () => {
       expect(outcome.basisRead).toBe(false);
       expect(Result.isFailure(outcome.result)).toBe(true);
       if (Result.isFailure(outcome.result)) {
+        expect(Schema.is(MarketRetirementImpactAssessmentUnavailable)(outcome.result.failure)).toBe(true);
         expect(outcome.result.failure).toMatchObject({
-          _tag: 'MarketRetirementImpactAssessmentUnavailable',
           reason: 'The original retirement basis must be prepared before the owner transaction',
         });
       }

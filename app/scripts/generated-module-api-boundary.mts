@@ -4041,7 +4041,7 @@ export const hasGeneratedProviderManifestOwnerDeclared = (
 // Demo-only exception 4 (continued): projection of an owner-declared manifest from its runtime declaration.
 // ---------------------------------------------------------------------------------------------------------------
 /** The virtual filename for parsing an owner manifest; one label keeps every manifest parse the same identity. */
-const PROVIDER_MANIFEST_FILEOwnerDeclared = 'provider-manifest.ts';
+const PROVIDER_MANIFEST_FILE_OWNER_DECLARED = 'provider-manifest.ts';
 
 /**
  * Project a split owner's provider proof surface from its original owning objects: the manifest root's own
@@ -4051,7 +4051,7 @@ const PROVIDER_MANIFEST_FILEOwnerDeclared = 'provider-manifest.ts';
 export const generatedProviderOwnerProjectionOwnerDeclared = (
   sources: GeneratedProviderManifestSources,
 ): string | undefined => {
-  const manifest = parseSync(PROVIDER_MANIFEST_FILEOwnerDeclared, sources.manifestSource, {
+  const manifest = parseSync(PROVIDER_MANIFEST_FILE_OWNER_DECLARED, sources.manifestSource, {
     astType: 'ts',
     lang: 'ts',
     sourceType: 'module',
