@@ -273,6 +273,9 @@
           "title": "Change category"
         },
         "columns": {
+          "priceFrom": "from",
+          "priceWithVat": "incl. VAT",
+          "priceWithoutVat": "excl. VAT",
           "category": "Category",
           "name": "Name",
           "onHand": "On hand",

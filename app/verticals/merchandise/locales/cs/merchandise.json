@@ -273,6 +273,9 @@
           "title": "Změnit kategorii"
         },
         "columns": {
+          "priceFrom": "od",
+          "priceWithVat": "s DPH",
+          "priceWithoutVat": "bez DPH",
           "category": "Kategorie",
           "name": "Název",
           "onHand": "Skladem",
