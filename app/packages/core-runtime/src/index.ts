@@ -292,6 +292,9 @@ export type {
 export { DatabaseConnectionError } from './db/client.ts';
 export { DEFAULT_DATABASE_POOL_DEADLINES, configureDatabasePool } from './db/pool-configuration.ts';
 export { openDatabaseClient } from './db/database-client.ts';
+// Owner-local agent history pages are built through Core's public entry, never a Core `db/` subpath.
+export { agentHistoryPageSql } from './db/agent-history-page.ts';
+export type { AgentHistoryPageRequest } from './db/agent-history-page.ts';
 export { verifySessionRoleOnFirstUse } from './db/session-identity.ts';
 export { databaseRuntime } from '#database-runtime';
 export type { DatabaseConnectionPair } from './db/config.ts';
