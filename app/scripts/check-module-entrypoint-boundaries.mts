@@ -89,6 +89,8 @@ import {
   hasGeneratedProviderRegistration,
   hasGeneratedSourceHeader,
   hasGeneratedModuleApiContract,
+  hasOwnerDeclaredProviderManifest,
+  hasOwnerDeclaredProviderReadContract,
 } from './generated-module-api-boundary.mts';
 import {
   maskNonCode,
@@ -4106,10 +4108,21 @@ const validateGeneratedProviderClient = (
       contractHeader: hasGeneratedSourceHeader(contractSource, generatedHeader),
       endpointGroup: expectedGroups.has(endpointGroup),
       legalEntityScope: hasMatchingProviderLegalEntityScope(providerSource, manifest, moduleId, name, kind),
-      manifest: hasGeneratedProviderManifest(manifest, moduleId, name, kind),
+      manifest:
+        hasGeneratedProviderManifest(manifest, moduleId, name, kind) ||
+        // Demo-only exception 4: owner-declared Search presentation.
+        hasOwnerDeclaredProviderManifest(
+          sourceOrEmpty(sourceMap, `${vertical}/vertical.manifest.ts`),
+          sourceMap.get(`${vertical}/vertical.runtime-declaration.ts`),
+          moduleId,
+          name,
+          kind,
+        ),
       operationGateway: hasGeneratedOperationGatewayContract(gateway, deploymentAppId),
       providerHeader: hasGeneratedSourceHeader(providerSource, generatedHeader),
-      readContract: hasGeneratedProviderReadContract(providerSource, moduleId, name, kind),
+      readContract:
+        hasGeneratedProviderReadContract(providerSource, moduleId, name, kind) ||
+        hasOwnerDeclaredProviderReadContract(providerSource, moduleId, name, kind),
       registration: hasGeneratedProviderRegistration(registration, name, kind),
       serverContract: hasGeneratedGovernedServerContract(
         serverSource,

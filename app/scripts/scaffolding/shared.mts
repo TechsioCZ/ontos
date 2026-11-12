@@ -2394,3 +2394,39 @@ export const insertSortedSlot = (
   );
   return renderGeneratedSlotEntries(content, startMarker, endMarker, entries);
 };
+
+// ---------------------------------------------------------------------------------------------------------------
+// Demo-only exception 3 support: code-position masking used by the ported staged-read proof.
+// ---------------------------------------------------------------------------------------------------------------
+/**
+ * `isCodePosition(content, target)` for every target in one pass. Index `target` is 1 for a
+ * code position; targets past the end share the value at `content.length`.
+ */
+export const codePositions = (content: string): Uint8Array => {
+  const positions = new Uint8Array(content.length + 1);
+  let state: NonCodeState | null = null;
+  let escaped = false;
+  let regexCharacterClass = false;
+  for (let index = 0; index < content.length; index += 1) {
+    positions[index] = Number(state === null);
+    const character = content[index] ?? '';
+    const next = content[index + 1] ?? null;
+    if (state === null) {
+      state = nonCodeStateAt(content, index, character, next);
+      if (state === LINE_COMMENT_STATE || state === BLOCK_COMMENT_STATE) {
+        index += 1;
+        positions[index] = 0;
+      }
+      continue;
+    }
+    const transition = advanceNonCodeState(state, character, next, escaped, regexCharacterClass);
+    const closesBlockComment = state === BLOCK_COMMENT_STATE && transition.state === null;
+    ({ escaped, regexCharacterClass, state } = transition);
+    if (closesBlockComment) {
+      index += 1;
+      positions[index] = 1;
+    }
+  }
+  positions[content.length] = Number(state === null);
+  return positions;
+};
