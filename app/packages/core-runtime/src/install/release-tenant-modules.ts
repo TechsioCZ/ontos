@@ -1,5 +1,5 @@
 import { and, eq, inArray } from 'drizzle-orm';
-import { DateTime, Duration, Effect, Schema } from 'effect';
+import { DateTime, Duration, Effect, Schedule, Schema } from 'effect';
 
 import { AccessReleaseStore } from '../access/changes/persistence/release-store.ts';
 import { AccessProjectionWriter } from '../access/intent/projection-writer.ts';
@@ -9,7 +9,9 @@ import { preserveSystemPrincipalContextTrust } from '../auth/system-principal-co
 import { CoreDatabase } from '../db/client.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import type { OperationalScope } from '../operations/context.ts';
-import { tenantModuleStateChanges, tenantModuleStates, tenants } from '../db/schema.ts';
+import { domainEvents, outboxMessages, tenantModuleStateChanges, tenantModuleStates, tenants } from '../db/schema.ts';
+import { createChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxMessage } from '../modules/actions/change-tenant-module-state-core-modules-tenant-module-state-changed-v1.outbox-message.ts';
+import { outboxProducerModuleKey, outboxTopic } from '../outbox/core-modules-tenant-module-state-changed-v1.ts';
 import type { InstalledModuleCatalog } from '../modules/catalog.ts';
 import { OntosModuleIdSchema } from '../modules/manifest.ts';
 import {
@@ -35,6 +37,10 @@ import {
  *   installation relations are therefore in the engine when the step returns, not after the Outbox host starts.
  * - Every module is decided on its own; one failure is reported by name and never stops the others or the boot.
  */
+
+/** How often, and how far apart, the direct projection is tried again after losing to a concurrent one. */
+export const RELEASE_RECONCILE_RETRIES = 3;
+export const RELEASE_RECONCILE_RETRY_SPACING = Duration.seconds(2);
 
 export const RELEASE_MODULE_INSTALLATION_JOB = registerSystemWorkload({ jobKey: 'release-module-installation' });
 const INSTALLATION_REASON = 'Platform release installation declared by the deployment';
@@ -165,6 +171,32 @@ const installUnderLock = Effect.fn('ReleaseTenantModules.installUnderLock')(func
       updatedAt: changedAt,
     })
     .pipe(Effect.mapError((cause) => refusal('the module state could not be written', cause)));
+  // The same domain event and Outbox wake-up the module-state Action commits, in the same transaction: the Core
+  // worker `core.authorization.reconcile-module-installation` (with its retries) stays the durable healer of the
+  // tenant's projection, whatever happens to the direct reconcile below. Recorded as the platform's, with no Action.
+  const [event] = yield* transaction
+    .insert(domainEvents)
+    .values({
+      eventType: outboxTopic,
+      payloadJson: { moduleKey: entry.moduleKey, newState: 'active', previousState: null },
+      producerModuleKey: outboxProducerModuleKey,
+      subjectModuleKey: entry.moduleKey,
+      subjectResourceId: entry.moduleKey,
+      subjectResourceType: 'tenant-module-state',
+      tenantId: entry.tenantId,
+    })
+    .returning({ domainEventId: domainEvents.domainEventId })
+    .pipe(Effect.mapError((cause) => refusal('the installation event could not be written', cause)));
+  if (event === undefined) {
+    return yield* refusal('the installation event was not written');
+  }
+  const wakeUp = createChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxMessage({
+    data: { moduleKey: entry.moduleKey },
+  });
+  yield* transaction
+    .insert(outboxMessages)
+    .values({ ...wakeUp, domainEventId: event.domainEventId, tenantId: entry.tenantId })
+    .pipe(Effect.mapError((cause) => refusal('the installation wake-up could not be written', cause)));
   return true;
 });
 
@@ -255,12 +287,15 @@ const releaseScopeOf = Effect.fn('ReleaseTenantModules.releaseScope')(function* 
 
 /** Project a Tenant whose modules changed, through the one Core writer, as the Outbox worker would. */
 const reconcileInstalledTenant = Effect.fn('ReleaseTenantModules.reconcileTenant')(
-  function* reconcileReleaseTenant(tenantId: string, runReference: string) {
+  function* reconcileReleaseTenant(tenantId: string, runReference: string, retrySpacing: Duration.Duration) {
     const writer = yield* AccessProjectionWriter;
     const scope = yield* releaseScopeOf(tenantId, runReference);
-    const written = yield* writer
-      .reconcileTenant({ scope })
-      .pipe(Effect.mapError((cause) => refusal(`the projection could not be reconciled: ${cause.reason}`, cause)));
+    // A concurrent projection that read the tenant before the install committed can win the fence: try again a few
+    // times so the rights are live quickly. The Outbox wake-up written with the install heals it either way.
+    const written = yield* writer.reconcileTenant({ scope }).pipe(
+      Effect.retry({ schedule: Schedule.spaced(retrySpacing), times: RELEASE_RECONCILE_RETRIES }),
+      Effect.mapError((cause) => refusal(`the projection could not be reconciled: ${cause.reason}`, cause)),
+    );
     return { deletions: written.deletions, tenantId, touches: written.touches } satisfies ReleaseTenantReconcile;
   },
   (effect, tenantId) =>
@@ -301,6 +336,8 @@ export const installReleaseTenantModules = Effect.fn('ReleaseTenantModules.insta
      */
     readonly deadline?: DateTime.Utc;
     readonly modules: readonly ReleaseTenantModule[];
+    /** How far apart a lost projection is tried again; `RELEASE_RECONCILE_RETRY_SPACING` unless a suite sets it. */
+    readonly reconcileRetrySpacing?: Duration.Duration;
     /** Names this run in the release actor's trusted context, e.g. the composition revision. */
     readonly runReference: string;
   }) {
@@ -331,7 +368,11 @@ export const installReleaseTenantModules = Effect.fn('ReleaseTenantModules.insta
         withinBudget(input.deadline, RELEASE_RECONCILE_RESERVE).pipe(
           Effect.flatMap((open) =>
             open
-              ? reconcileInstalledTenant(tenantId, input.runReference)
+              ? reconcileInstalledTenant(
+                  tenantId,
+                  input.runReference,
+                  input.reconcileRetrySpacing ?? RELEASE_RECONCILE_RETRY_SPACING,
+                )
               : Effect.succeed({
                   deletions: 0,
                   failure: 'deferred: too little of the release budget was left to start the projection',
@@ -342,6 +383,7 @@ export const installReleaseTenantModules = Effect.fn('ReleaseTenantModules.insta
         ),
       { concurrency: 1 },
     );
-    return { modules, reconciles } satisfies ReleaseTenantModulesReport;
+    const result: ReleaseTenantModulesReport = { modules, reconciles };
+    return result;
   },
 );

@@ -91,7 +91,7 @@ export const reportLines = (report: ReleaseTenantModulesReport): readonly string
   ...report.reconciles.map(({ deletions, failure: reconcileFailure, tenantId, touches }) =>
     reconcileFailure === undefined
       ? `${LOG_PREFIX} tenant ${tenantId}: reconciled, SpiceDB +${String(touches)}/-${String(deletions)}`
-      : `${LOG_PREFIX} tenant ${tenantId}: RECONCILE FAILED (${reconcileFailure}); the next release's access activation reconciles it`,
+      : `${LOG_PREFIX} tenant ${tenantId}: RECONCILE FAILED (${reconcileFailure}); the Outbox wake-up written with the install retries it`,
   ),
 ];
 

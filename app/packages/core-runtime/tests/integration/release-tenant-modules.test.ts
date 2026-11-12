@@ -1,63 +1,42 @@
-import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Crypto, DateTime, Effect, Layer, Schema } from 'effect';
+import { DateTime, Duration, Effect, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
-import { AccessEnforcementPortsLive } from '../../src/actions/runtime-wiring.ts';
-import { TenantAccessBootstrap, TenantAccessBootstrapLive } from '../../src/access/bootstrap/index.ts';
-import { AccessChangesStoreLive, AccessReleaseStoreLive } from '../../src/access/changes/persistence/drizzle-store.ts';
-import {
-  makeAccessProjectionCompiler,
-  makeAccessProjectionTransport,
-} from '../../src/access/compiler/spice-db-compiler.ts';
+import { TenantAccessBootstrap } from '../../src/access/bootstrap/index.ts';
+import { AccessProjectionError } from '../../src/access/compiler/projection-error.ts';
+import type { AccessProjectionCompiler as AccessProjectionCompilerEngine } from '../../src/access/compiler/spice-db-compiler.ts';
 import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
-import { AccessDecisionLive } from '../../src/access/enforcement/service.ts';
-import { LegalEntityIdSchema, PrincipalIdSchema, TenantIdSchema } from '../../src/access/ids.ts';
-import type { LegalEntityId, TenantId } from '../../src/access/ids.ts';
-import { AccessCatalogSnapshotWriterLive } from '../../src/access/intent/catalog-snapshot-writer.ts';
-import { AccessMembershipStoreLive } from '../../src/access/intent/memberships.ts';
-import { AccessProjectionCompiler } from '../../src/access/intent/projection-compiler.ts';
-import { AccessProjectionWriter, AccessProjectionWriterLive } from '../../src/access/intent/projection-writer.ts';
-import { TenantIntentLoaderLive } from '../../src/access/intent/tenant-intent-loader.ts';
-import { AccessWriteJournalStoreLive } from '../../src/access/lifecycle/persistence/journal-store.ts';
+import type { TenantId } from '../../src/access/ids.ts';
+import { AccessProjectionWriter } from '../../src/access/intent/projection-writer.ts';
 import { activateCatalogRelease, releaseActorId } from '../../src/access/release/activation.ts';
 import { decodeAccessDeclarationOrThrow } from '../../src/authorization/access-declaration.ts';
 import type { AccessCatalogModule, AccessDeclarationInput } from '../../src/authorization/access-declaration.ts';
-import { CoreDatabase } from '../../src/db/client.ts';
-import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
-import { DatabaseIdentityEnrollmentContext } from '../../src/db/database-identities.ts';
-import { coreRelations } from '../../src/db/schema.ts';
 import { installReleaseTenantModules } from '../../src/install/release-tenant-modules.ts';
 import type { ReleaseTenantModule } from '../../src/install/release-tenant-modules.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import type { OperationalScope } from '../../src/operations/context.ts';
-import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
-import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
-import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
-import {
-  createTemplateDatabase,
-  insertTenantStatement,
-  replacedDatabase,
-} from '../support/access-scenarios/database.ts';
-import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
-import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import { makeInstalledCatalogFixture } from '../support/installed-catalog.ts';
+import {
+  ownerScope,
+  SCENARIO_COMPANY,
+  scenarioUid,
+  withProjectionTenant,
+} from '../support/projection-tenant-scenario.ts';
 
 /*
  * Release-time module installation end to end: a selling Tenant bootstrapped with "Plný přístup" on a deployment that
- * declares a tax module it has not installed. The release step installs it as the platform (state and history as
- * `system`), projects the Tenant through the one Core writer, and the owner's rights in the module are effective as
- * soon as the step returns. A second release changes nothing; a state a person set is never touched.
+ * declares a tax module it has not installed. The release step installs it as the platform (state, history, the
+ * Action's event and Outbox wake-up, recorded as `system`), projects the Tenant through the one Core writer, and the
+ * owner's rights in the module are effective as soon as the step returns. A second release changes nothing; a state
+ * a person set is never touched.
  */
-const uid = (value: number) => `00000000-0000-4000-8000-${value.toString().padStart(12, '0')}`;
-
 const SELLING = 'billing.invoices';
 const TAX = 'tax.rates';
 const OTHER = 'crm.notes';
 const TAX_READ = 'tax.rates.rule-set.read';
+const TOPIC = 'core.modules.tenant-module-state-changed.v1';
+const RUN = 'a'.repeat(64);
 
 const entrypoint = (moduleKey: string, key: string) =>
   defineTenantModuleEntrypoint({
@@ -92,118 +71,16 @@ const catalog = makeInstalledCatalogFixture(
   makeModuleContractFixture({ appId: 'tax', moduleId: TAX }),
 );
 
-const owner = PrincipalIdSchema.make(uid(2));
-const company = LegalEntityIdSchema.make(uid(4));
-
-const seedTenant = (admin: PgClient.PgClient, tenantId: TenantId, sells: boolean) =>
-  Effect.forEach(
-    [
-      insertTenantStatement(tenantId),
-      `insert into core.legal_entities
-         (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values
-         ('${company}', '${tenantId}', 'Firma A s.r.o.', 'CZ', '11111111', 'active')`,
-      `insert into core.principals (tenant_id, principal_id, kind, display_name, status) values
-         ('${tenantId}', '${owner}', 'human', 'Vlastník', 'active')`,
-      ...(sells
-        ? [
-            `insert into core.tenant_module_states (tenant_module_state_id, tenant_id, module_key, state) values
-               ('${uid(6)}', '${tenantId}', '${SELLING}', 'active')`,
-          ]
-        : []),
-    ],
-    (statement) => admin.unsafe(statement).pipe(Effect.orDie),
-    { discard: true },
-  );
-
-const scopeFor = (tenantId: TenantId, legalEntityId?: LegalEntityId) => {
-  const session = {
-    authBindingId: uid(300),
-    authContextRef: 'session:release-tenant-modules:1',
-    authMethod: 'session' as const,
-    principalId: owner,
-    tenantId,
-  };
-  return Schema.decodeEffect(TrustedPrincipalContextSchema)(
-    legalEntityId === undefined ? session : { ...session, legalEntityId },
-  ).pipe(
-    Effect.map((context) => ({ ...context, correlationId: 'release-tenant-modules' }) satisfies OperationalScope),
-    Effect.orDie,
-  );
-};
-
-/** One Tenant on its own database and a SpiceDB with the v2 schema, bootstrapped by its owner. */
-const withTenant = <Value, Failure, Requirements>(
-  sells: boolean,
-  run: (tenantId: TenantId, admin: PgClient.PgClient) => Effect.Effect<Value, Failure, Requirements>,
-) =>
-  Effect.gen(function* tenantScenario() {
-    const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
-    const crypto = yield* Crypto.Crypto;
-    const configuration = yield* loadSpiceDbConfig({ envPath: '/dev/null' });
-    const bootstrapConnection = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
-    const database = `release_tenant_modules_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
-    yield* bootstrapConnection.unsafe(`create database "${database}"`).pipe(Effect.orDie);
-    yield* Effect.addFinalizer(() =>
-      bootstrapConnection.unsafe(`drop database if exists "${database}" with (force)`).pipe(Effect.orDie),
-    );
-    const admin = yield* makeTestPgClient(replacedDatabase(connections.admin.connectionString, database), {
-      maxConnections: 2,
-    });
-    yield* createTemplateDatabase(admin);
-    const tenantId = TenantIdSchema.make(yield* crypto.randomUUIDv4());
-    yield* seedTenant(admin, tenantId, sells);
-    const runtime = yield* makeTestPgClient(replacedDatabase(connections.runtime.connectionString, database), {
-      maxConnections: 2,
-    });
-    const executor = yield* makeTestDatabaseFromClient(runtime, coreRelations);
-    yield* Effect.acquireUseRelease(
-      Effect.sync(() => newSpiceDbGrpcClient(configuration)),
-      (client) =>
-        Effect.tryPromise(() =>
-          client.promises.writeSchema(v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA })),
-        ).pipe(Effect.orDie),
-      (client) => Effect.sync(() => client.close()),
-    );
-    const compiler = makeAccessProjectionCompiler(makeAccessProjectionTransport(configuration));
-    const platforms = Layer.mergeAll(
-      Layer.succeed(CoreDatabase, { executor }),
-      Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
-      Layer.succeed(AccessProjectionCompiler, compiler),
-      NodeServices.layer,
-    );
-    const stores = Layer.mergeAll(
-      platforms,
-      TenantIntentLoaderLive.pipe(Layer.provide(platforms)),
-      AccessWriteJournalStoreLive.pipe(Layer.provide(platforms)),
-      AccessChangesStoreLive.pipe(Layer.provide(platforms)),
-      AccessReleaseStoreLive.pipe(Layer.provide(platforms)),
-    );
-    const base = Layer.mergeAll(
-      stores,
-      AccessMembershipStoreLive.pipe(Layer.provide(platforms)),
-      AccessCatalogSnapshotWriterLive.pipe(Layer.provide(stores)),
-      AccessProjectionWriterLive.pipe(Layer.provide(stores)),
-    );
-    const context = yield* Layer.build(
-      Layer.mergeAll(
-        base,
-        TenantAccessBootstrapLive.pipe(Layer.provide(base)),
-        AccessDecisionLive.pipe(Layer.provide(AccessEnforcementPortsLive), Layer.provide(base)),
-      ),
-    );
-    return yield* run(tenantId, admin).pipe(Effect.provideContext(context));
-  }).pipe(Effect.scoped);
-
 /** The Tenant's owner bootstrapped with "Plný přístup" over the whole deployment, and projected. */
 const bootstrapOwner = (tenantId: TenantId) =>
   Effect.gen(function* bootstrapTenantOwner() {
-    const ownerScope = yield* scopeFor(tenantId);
+    const scope = yield* ownerScope(tenantId);
     const bootstrap = yield* TenantAccessBootstrap;
     yield* bootstrap
-      .bootstrapTenantAccess({ legalEntityIds: [company], modules: deployment, scope: ownerScope })
+      .bootstrapTenantAccess({ legalEntityIds: [SCENARIO_COMPANY], modules: deployment, scope })
       .pipe(Effect.orDie);
     const writer = yield* AccessProjectionWriter;
-    yield* writer.reconcileTenant({ scope: ownerScope }).pipe(Effect.orDie);
+    yield* writer.reconcileTenant({ scope }).pipe(Effect.orDie);
   });
 
 const decide = (tenantId: TenantId) =>
@@ -213,7 +90,7 @@ const decide = (tenantId: TenantId) =>
       carrier: taxCarrier,
       legalEntityScope: 'required',
       now: DateTime.toDateUtc(DateTime.makeUnsafe('2030-01-01T00:00:00Z')),
-      scope: yield* scopeFor(tenantId, company),
+      scope: yield* ownerScope(tenantId, SCENARIO_COMPANY),
     });
     return `${decision.outcome} ${decision.reasons.map(({ code }) => code).join(',')}`;
   });
@@ -221,11 +98,11 @@ const decide = (tenantId: TenantId) =>
 const declared = (tenantId: TenantId): readonly ReleaseTenantModule[] => [
   { moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId },
   { moduleKey: OTHER, sellingModuleKeys: [], tenantId },
-  { moduleKey: TAX, sellingModuleKeys: [], tenantId: uid(99) },
+  { moduleKey: TAX, sellingModuleKeys: [], tenantId: scenarioUid(99) },
 ];
 
 const install = (modules: readonly ReleaseTenantModule[]) =>
-  installReleaseTenantModules({ catalog, modules, runReference: 'a'.repeat(64) });
+  installReleaseTenantModules({ catalog, modules, reconcileRetrySpacing: Duration.zero, runReference: RUN });
 
 const HistoryRowSchema = Schema.Struct({
   action_invocation_id: Schema.Null,
@@ -243,9 +120,35 @@ const historyOf = (admin: PgClient.PgClient, tenantId: TenantId) =>
     )
     .pipe(Effect.orDie, Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(HistoryRowSchema))), Effect.orDie);
 
+/** The wake-ups the Core installation worker consumes, with their events. */
+const wakeUpsOf = (admin: PgClient.PgClient, tenantId: TenantId) =>
+  admin
+    .unsafe(
+      `select m.topic, m.producer_module_key, m.payload_json, e.subject_module_key, e.action_invocation_id
+         from core.outbox_messages m join core.domain_events e
+           on e.tenant_id = m.tenant_id and e.domain_event_id = m.domain_event_id
+        where m.tenant_id = '${tenantId}' and m.topic = '${TOPIC}'`,
+    )
+    .pipe(Effect.orDie);
+
+/** An engine whose write fails while the countdown is above zero, as a lost race or a blip would. */
+const failingFirst =
+  (left: Ref.Ref<number>) =>
+  (engine: AccessProjectionCompilerEngine): AccessProjectionCompilerEngine => ({
+    ...engine,
+    reconcile: (intent, options) =>
+      Ref.getAndUpdate(left, (count) => count - 1).pipe(
+        Effect.flatMap((count) =>
+          count > 0
+            ? Effect.fail([new AccessProjectionError({ code: 'access_projection_unavailable', reason: 'engine busy' })])
+            : engine.reconcile(intent, options),
+        ),
+      ),
+  });
+
 it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) => {
   suite.effect('installs a missing module as the platform, makes it effective at once, and repeats nothing', () =>
-    withTenant(true, (tenantId, admin) =>
+    withProjectionTenant({ activeModules: [SELLING] }, (tenantId, admin) =>
       Effect.gen(function* installsOnce() {
         yield* bootstrapOwner(tenantId);
         // Every deploy's migrator first activates the deployed catalog: "Plný přístup" follows it, tax rights included.
@@ -257,7 +160,7 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
         expect(first.modules.map(({ moduleKey, outcome, tenantId: id }) => [id, moduleKey, outcome])).toEqual([
           [tenantId, TAX, 'installed'],
           [tenantId, OTHER, 'not_published'],
-          [uid(99), TAX, 'tenant_absent'],
+          [scenarioUid(99), TAX, 'tenant_absent'],
         ]);
         expect(first.reconciles).toHaveLength(1);
         expect(first.reconciles[0]).toMatchObject({ tenantId });
@@ -273,37 +176,72 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
             previous_state: null,
           },
         ]);
-        const state = yield* admin
-          .unsafe(
-            `select s.state, (s.last_change_id = c.module_state_change_id) as linked
-               from core.tenant_module_states s join core.tenant_module_state_changes c on c.tenant_id = s.tenant_id
-              where s.tenant_id = '${tenantId}' and s.module_key = '${TAX}'`,
-          )
-          .pipe(Effect.orDie);
-        expect(state).toEqual([{ linked: true, state: 'active' }]);
+        // The Action's wake-up, so the Core installation worker stays the durable healer of the projection.
+        expect(yield* wakeUpsOf(admin, tenantId)).toEqual([
+          {
+            action_invocation_id: null,
+            payload_json: { data: { moduleKey: TAX } },
+            producer_module_key: 'core.modules',
+            subject_module_key: TAX,
+            topic: TOPIC,
+          },
+        ]);
         // The preset already holds the tax cells, but they reach the engine only for an installed module: the owner's
         // right becomes effective the moment the step returns, with no Outbox worker in between.
         expect({ after: yield* decide(tenantId), before }).toEqual({
           after: 'ALLOWED allow.granted',
           before: 'DENIED deny.insufficient_grant',
         });
-        // The release actor acted; it is still never an engine subject.
         const actor = yield* admin
           .unsafe(`select kind, status from core.principals where principal_id = '${releaseActorId(tenantId)}'`)
           .pipe(Effect.orDie);
         expect(actor).toEqual([{ kind: 'system', status: 'active' }]);
 
-        // The next release finds it active: nothing installed, nothing reconciled, no new history.
+        // The next release finds it active: nothing installed, nothing reconciled, no new history or wake-up.
         const second = yield* install(declared(tenantId));
         expect(second.modules[0]).toMatchObject({ moduleKey: TAX, outcome: 'already_active' });
         expect(second.reconciles).toEqual([]);
         expect(yield* historyOf(admin, tenantId)).toHaveLength(1);
+        expect(yield* wakeUpsOf(admin, tenantId)).toHaveLength(1);
       }),
     ),
   );
 
+  suite.effect('a projection that loses a race once is tried again; one that keeps failing leaves the wake-up', () =>
+    Effect.gen(function* retriedProjection() {
+      const left = yield* Ref.make(0);
+      yield* withProjectionTenant({ activeModules: [SELLING], wrapCompiler: failingFirst(left) }, (tenantId, admin) =>
+        Effect.gen(function* raceAndFailure() {
+          yield* bootstrapOwner(tenantId);
+          yield* Ref.set(left, 1);
+          const retried = yield* install([{ moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }]);
+          expect(retried.modules[0]).toMatchObject({ outcome: 'installed' });
+          expect(retried.reconciles).toHaveLength(1);
+          expect(retried.reconciles[0]).not.toHaveProperty('failure');
+
+          yield* Ref.set(left, 100);
+          const failed = yield* installReleaseTenantModules({
+            catalog: makeInstalledCatalogFixture(
+              makeModuleContractFixture({ appId: 'billing', moduleId: SELLING }),
+              makeModuleContractFixture({ appId: 'tax-extra', moduleId: 'tax.extra' }),
+            ),
+            modules: [{ moduleKey: 'tax.extra', sellingModuleKeys: [], tenantId }],
+            reconcileRetrySpacing: Duration.zero,
+            runReference: RUN,
+          });
+          // The install committed; the projection did not, and the run says so. The wake-up written with the install
+          // is what the Core worker (with its own retries) heals the tenant from.
+          expect(failed.modules[0]).toMatchObject({ outcome: 'installed' });
+          expect(failed.reconciles[0]?.failure).toContain('the projection could not be reconciled');
+          expect(yield* wakeUpsOf(admin, tenantId)).toHaveLength(2);
+          yield* Ref.set(left, 0);
+        }),
+      );
+    }),
+  );
+
   suite.effect('starts nothing past its deadline, and never starts a projection it may not have time to finish', () =>
-    withTenant(true, (tenantId, admin) =>
+    withProjectionTenant({ activeModules: [SELLING] }, (tenantId, admin) =>
       Effect.gen(function* boundedRun() {
         yield* bootstrapOwner(tenantId);
         // The suite runs on the test clock, which starts at the epoch: that is the step's `now` as well.
@@ -312,7 +250,7 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
           catalog,
           deadline: DateTime.subtract(now, { seconds: 1 }),
           modules: declared(tenantId),
-          runReference: 'a'.repeat(64),
+          runReference: RUN,
         });
         expect(late.modules.map(({ outcome }) => outcome)).toEqual(['deferred', 'deferred', 'deferred']);
         expect(yield* historyOf(admin, tenantId)).toEqual([]);
@@ -321,7 +259,7 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
           catalog,
           deadline: DateTime.add(now, { seconds: 30 }),
           modules: declared(tenantId),
-          runReference: 'a'.repeat(64),
+          runReference: RUN,
         });
         expect(tight.modules[0]).toMatchObject({ outcome: 'installed' });
         expect(tight.reconciles).toEqual([
@@ -337,7 +275,7 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
   );
 
   suite.effect('never changes a state a person set, and installs nothing where the Tenant does not sell', () =>
-    withTenant(false, (tenantId, admin) =>
+    withProjectionTenant({}, (tenantId, admin) =>
       Effect.gen(function* additiveOnly() {
         yield* bootstrapOwner(tenantId);
         const notSelling = yield* install([{ moduleKey: TAX, sellingModuleKeys: [SELLING], tenantId }]);
@@ -347,7 +285,7 @@ it.layer(NodeServices.layer)('release-time Tenant module installation', (suite) 
         yield* admin
           .unsafe(
             `insert into core.tenant_module_states (tenant_module_state_id, tenant_id, module_key, state) values
-               ('${uid(7)}', '${tenantId}', '${TAX}', 'inactive')`,
+               ('${scenarioUid(7)}', '${tenantId}', '${TAX}', 'inactive')`,
           )
           .pipe(Effect.orDie);
         const left = yield* install([{ moduleKey: TAX, sellingModuleKeys: [], tenantId }]);
