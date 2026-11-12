@@ -28,8 +28,16 @@ const MCP_LATENCY_BUDGET_MS = new Map([
   [CONNECT, 5000],
   [DISCOVER, 3000],
   [CALL_TOOL, 10_000],
-  [LIST_TOOLS, 3000],
+  // A warm description costs about half a second (12 transactions, 4 SpiceDB calls); 2 s leaves the tool list's
+  // own size and network room, and fails a description that grew back toward its old cost.
+  [LIST_TOOLS, 2000],
 ]);
+
+/**
+ * Methods judged on their first sample alone: a real client gives up on a slow connect, and a description no longer
+ * has a cold path worth excusing, so a slow first tool list is a regression, not noise.
+ */
+const SINGLE_SAMPLE_METHODS: ReadonlySet<string> = new Set([CONNECT, LIST_TOOLS]);
 
 /** One request over its method's budget. */
 export interface LatencyMiss {
@@ -48,11 +56,12 @@ export const overBudget = (timings: readonly McpRequestTiming[]): readonly Laten
 
 /**
  * The misses a second sample of the same method confirmed, as `method first ms, again ms > budget ms` lines. One
- * slow sample alone (a cold start, a GC pause) is not a failure; a method slow twice in a row is.
+ * slow sample alone (a GC pause) is not a failure; a method slow twice in a row is, and a single-sample method's
+ * first miss always is.
  */
 export const confirmedSlow = (misses: readonly LatencyMiss[], again: ReadonlyMap<string, number>): readonly string[] =>
   misses.flatMap(({ budget, method, ms }) => {
-    const second = again.get(method);
+    const second = SINGLE_SAMPLE_METHODS.has(method) ? undefined : again.get(method);
     return second === undefined || second > budget
       ? [`${method} ${ms} ms, znovu ${second ?? '–'} ms > ${budget} ms`]
       : [];
@@ -136,9 +145,9 @@ export const connectMcp = (serverUrl: string, accessToken: Redacted.Redacted) =>
   });
 
 /**
- * Every request of this client within its method's budget. The first connect has one sample only: a real client
- * gives up on it, so a slow connect fails as it is. Each warm miss is measured once more: `server/discover` and
- * `tools/list` repeat themselves, a tool call is re-measured with the read-only `ontos_whoami`, so no write repeats.
+ * Every request of this client within its method's budget. The first connect and the first tool list have one
+ * sample only, so a slow one fails as it is. Each other miss is measured once more: `server/discover` repeats itself,
+ * a tool call is re-measured with the read-only `ontos_whoami`, so no write repeats.
  */
 export const confirmLatency = (client: Client) =>
   Effect.gen(function* confirmClientLatency() {
@@ -146,12 +155,10 @@ export const confirmLatency = (client: Client) =>
     const misses = overBudget(first);
     const again = new Map<string, number>();
     yield* Effect.forEach(
-      misses.filter(({ method }) => method !== CONNECT),
+      misses.filter(({ method }) => !SINGLE_SAMPLE_METHODS.has(method)),
       ({ method }) => {
         let probe: Effect.Effect<unknown, unknown> = discoverOnce(client);
-        if (method === LIST_TOOLS) {
-          probe = listTools(client);
-        } else if (method === CALL_TOOL) {
+        if (method === CALL_TOOL) {
           probe = timedRequest(
             client,
             CALL_TOOL,
