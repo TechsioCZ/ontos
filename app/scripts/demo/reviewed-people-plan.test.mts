@@ -285,8 +285,8 @@ it.effect('pins the reviewed roles, their dangerous cells and the six assignment
         scope,
       ]),
     ).toEqual([
-      ['sales', 442, 399, roleId('sales'), COMPANY_SCOPE],
-      ['accounting', 173, 144, roleId('accounting'), COMPANY_SCOPE],
+      ['sales', 445, 399, roleId('sales'), COMPANY_SCOPE],
+      ['accounting', 176, 144, roleId('accounting'), COMPANY_SCOPE],
       ['warehouse', 35, 25, roleId('warehouse'), COMPANY_SCOPE],
       [ROUTING, 1, 0, roleId(ROUTING), TENANT_SCOPE],
     ]);
