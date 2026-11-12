@@ -14,7 +14,7 @@ import {
   CoreShellStableKeySchema,
   CoreSystemSearchPresentationSchema,
 } from '@app/core-runtime/search-contract';
-import { GatewayContextApiGroup } from '@app/shared-contracts';
+import { ApiKeyGatewayReadApiGroup, GatewayContextApiGroup } from '@app/shared-contracts';
 import { EmailReceiptsApi } from '@app/email-delivery/receipt-api';
 import {
   accessAdminApprovalsGroup,
@@ -1545,6 +1545,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
       ),
   )
   .add(GatewayContextApiGroup)
+  .add(ApiKeyGatewayReadApiGroup)
   .add(DocumentGatewayApiGroup)
   .add(ShellDocumentContextApiGroup)
   .add(ExternalIdentityApiGroup)

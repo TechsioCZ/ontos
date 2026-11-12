@@ -84,8 +84,10 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
   expect(gatewayEndpoints).toEqual([
     'issueGatewayContext',
     'issueApiKeyGatewayContext',
-    'readWithApiKeyGatewayContext',
     'issueDelegatedGatewayContext',
+  ]);
+  expect(Object.keys(ShellAuthenticationApi.groups.apiKeyGatewayRead.endpoints)).toEqual([
+    'readWithApiKeyGatewayContext',
   ]);
   expect(Object.keys(ShellAuthenticationApi.groups.documentGateway.endpoints)).toEqual([
     'issueDocumentGatewayContexts',

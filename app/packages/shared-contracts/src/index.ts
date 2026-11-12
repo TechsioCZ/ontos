@@ -73,6 +73,7 @@ export {
   GatewayAudienceInvalidProblemSchema,
   GatewayAuthenticationRequiredProblemSchema,
   GatewayContextApi,
+  ApiKeyGatewayReadApiGroup,
   GatewayContextApiGroup,
   GatewayContextClaimsSchema,
   GatewayContextV2ClaimsSchema,

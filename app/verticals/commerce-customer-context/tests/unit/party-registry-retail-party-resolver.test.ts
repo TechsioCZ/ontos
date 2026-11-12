@@ -203,11 +203,13 @@ const serveNativePartyContract = (compositionRevision: string) =>
       handlers
         .handle('issueGatewayContext', () => issue)
         .handle('issueDelegatedGatewayContext', () => Effect.die('This direct gateway fixture must not delegate'))
-        .handle('readWithApiKeyGatewayContext', () => Effect.succeed(new TextEncoder().encode('null')))
         .handle('issueApiKeyGatewayContext', ({ payload, request: incoming }) => {
           requests.push({ body: JSON.stringify(payload), headers: new Headers(incoming.headers), path: incoming.url });
           return issue;
         }),
+    );
+    const gatewayReadHandlers = HttpApiBuilder.group(api, 'apiKeyGatewayRead', (handlers) =>
+      handlers.handle('readWithApiKeyGatewayContext', () => Effect.succeed(new TextEncoder().encode('null'))),
     );
     const partyHandlers = HttpApiBuilder.group(api, 'partyDetail', (handlers) =>
       handlers.handle('execute', ({ payload, request: incoming }) => {
@@ -219,7 +221,7 @@ const serveNativePartyContract = (compositionRevision: string) =>
       Effect.sync(() =>
         HttpRouter.toWebHandler(
           HttpApiBuilder.layer(api).pipe(
-            Layer.provide(Layer.mergeAll(gatewayHandlers, partyHandlers)),
+            Layer.provide(Layer.mergeAll(gatewayHandlers, gatewayReadHandlers, partyHandlers)),
             Layer.provide(HttpServer.layerServices),
           ),
           { disableLogger: true },

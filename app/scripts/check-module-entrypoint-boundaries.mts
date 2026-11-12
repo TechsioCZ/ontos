@@ -33,6 +33,7 @@ import type { PlatformError } from 'effect/PlatformError';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import {
+  demoCapabilityIssuerEntrypoints,
   gatewayContextAuthorizationEntrypoints,
   shellGatewayContextContract,
 } from '../packages/shared-contracts/src/gateway-context.ts';
@@ -4678,6 +4679,10 @@ const validateRouteManifests = (path: Path.Path, files: readonly string[], root:
     }
   });
 
+const GATEWAY_CONTRACT_FILE = 'packages/shared-contracts/src/gateway-context.ts';
+const SHELL_API_CONTRACT_FILE = 'apps/shell-super-app/shared/api.ts';
+const SHELL_API_RUNTIME_FILE = 'apps/shell-super-app/api/index.ts';
+
 interface GatewayIssuerBinding {
   readonly credential: 'session' | 'api_key';
   readonly handler: string;
@@ -4731,7 +4736,7 @@ export const validateGatewayIssuerEntrypoints = (issuers: readonly GatewayIssuer
     });
     if (issuers.length !== 3 || !exactIssuers) {
       yield* fail(
-        'packages/shared-contracts/src/gateway-context.ts',
+        GATEWAY_CONTRACT_FILE,
         'gateway authorization contract must classify exactly the session, direct API-key, and module delegation issuers',
       );
     }
@@ -4755,7 +4760,7 @@ const validateGatewayRuntime = (shellApiContract: string, shellApiRuntime: strin
     });
     if (!shellApiContract.includes('.add(GatewayContextApiGroup)') || !allHandlersMounted) {
       yield* fail(
-        'apps/shell-super-app/api/index.ts',
+        SHELL_API_RUNTIME_FILE,
         'all three classified capability issuers must be mounted by the Shell API runtime',
       );
     }
@@ -4794,11 +4799,125 @@ const hasMountedIssuerPath = (
   );
 };
 
+// ---------------------------------------------------------------------------------------------------------------
+// Demo-only exception 6: the demo's capability issuers beside main's three gateway issuers.
+// The API-key read relay and the Shell document's two session issuers are classified in
+// `demoCapabilityIssuerEntrypoints`, so main's exact-three issuer rule and its Shell gateway database proof hold. They
+// get the same treatment as main's issuers: an exact classification, a declared endpoint in their own contract group,
+// that group added to the Shell API, a mounted runtime handler, and an entry in the protected entrypoint inventory.
+// ---------------------------------------------------------------------------------------------------------------
+export interface DemoGatewayIssuerBinding extends GatewayIssuerBinding {
+  readonly contractFile: string;
+  readonly entrypointKey: string;
+  readonly groupExport: string;
+  readonly groupId: string;
+}
+
+export const demoGatewayIssuerBindings: readonly DemoGatewayIssuerBinding[] = [
+  {
+    contractFile: GATEWAY_CONTRACT_FILE,
+    credential: 'api_key',
+    entrypointKey: 'shell.gateway-read.issue.api-key',
+    groupExport: 'ApiKeyGatewayReadApiGroup',
+    groupId: 'apiKeyGatewayRead',
+    handler: 'readWithApiKeyGatewayContext',
+    path: shellGatewayContextContract.readWithApiKeyGatewayContextPath,
+  },
+  {
+    contractFile: 'apps/shell-super-app/shared/document-gateway-api.ts',
+    credential: 'session',
+    entrypointKey: 'shell.gateway-contexts.issue.session',
+    groupExport: 'DocumentGatewayApiGroup',
+    groupId: 'documentGateway',
+    handler: 'issueDocumentGatewayContexts',
+    path: shellGatewayContextContract.issueDocumentGatewayContextsPath,
+  },
+  {
+    contractFile: 'apps/shell-super-app/shared/browser-api.ts',
+    credential: 'session',
+    entrypointKey: 'shell.document-context.issue.session',
+    groupExport: 'ShellDocumentContextApiGroup',
+    groupId: 'documentContext',
+    handler: 'documentContext',
+    path: shellGatewayContextContract.documentContextPath,
+  },
+];
+
+export const hasClassifiedDemoIssuers = (issuers: readonly GatewayIssuerEntrypoint[]): boolean => {
+  const keys = new Set(issuers.map((issuer) => issuer.entrypointKey));
+  return (
+    issuers.length === demoGatewayIssuerBindings.length &&
+    keys.size === issuers.length &&
+    issuers.every((issuer) => {
+      const binding = demoGatewayIssuerBindings.find((candidate) => candidate.entrypointKey === issuer.entrypointKey);
+      return (
+        binding !== undefined &&
+        issuer.authorization.kind === 'capability_issuance' &&
+        issuer.authorization.credential === binding.credential &&
+        issuer.path === binding.path &&
+        issuer.owner === shellGatewayContextContract.ownerId &&
+        issuer.deployment === shellGatewayContextContract.ownerId &&
+        issuer.surface === 'capability_issuance'
+      );
+    })
+  );
+};
+
+export const hasMountedDemoIssuer = (
+  sourceMap: ReadonlyMap<string, string>,
+  binding: DemoGatewayIssuerBinding,
+): boolean => {
+  const group = gatewayDeclaration(sourceOrEmpty(sourceMap, binding.contractFile), binding.groupExport);
+  const shellApi = gatewayDeclaration(sourceOrEmpty(sourceMap, SHELL_API_CONTRACT_FILE), 'ShellAuthenticationApi');
+  const runtime = sourceOrEmpty(sourceMap, SHELL_API_RUNTIME_FILE);
+  const endpointPath = binding.path.slice(shellGatewayContextContract.apiPrefix.length);
+  const added = new RegExp(
+    String.raw`\.add\(\s*(?:${binding.groupExport}|ShellBrowserApi\.groups\.${binding.groupId})\s*\)`,
+    'gu',
+  );
+  return (
+    group.startsWith(`HttpApiGroup.make('${binding.groupId}')`) &&
+    new RegExp(String.raw`HttpApiEndpoint\.post\(\s*'${binding.handler}'\s*,\s*'${endpointPath}'\s*,`, 'u').test(
+      group,
+    ) &&
+    [...shellApi.matchAll(added)].length === 1 &&
+    new RegExp(
+      String.raw`^const \w+ = HttpApiBuilder\.group\(ShellAuthenticationApi, '${binding.groupId}',`,
+      'mu',
+    ).test(runtime) &&
+    hasIssuerHandler(runtime, binding.handler)
+  );
+};
+
+export const validateDemoCapabilityIssuers = (
+  sourceMap: ReadonlyMap<string, string>,
+  inventoryEntries: ProtectedEntrypointInventoryEntry[],
+) =>
+  Effect.gen(function* validateDemoCapabilityIssuersEffect() {
+    if (!hasClassifiedDemoIssuers(demoCapabilityIssuerEntrypoints)) {
+      yield* fail(
+        GATEWAY_CONTRACT_FILE,
+        'demo capability issuers must classify exactly the API-key read relay and the two Shell document session issuers',
+      );
+    }
+    for (const binding of demoGatewayIssuerBindings) {
+      if (!hasMountedDemoIssuer(sourceMap, binding)) {
+        yield* fail(
+          SHELL_API_CONTRACT_FILE,
+          `capability issuer ${binding.path} is missing from its mounted contract group ${binding.groupId}`,
+        );
+      }
+    }
+    for (const issuer of demoCapabilityIssuerEntrypoints) {
+      inventoryEntries.push(issuer);
+    }
+  });
+
 const validateGatewayContract = (state: BoundaryCheckState) =>
   Effect.gen(function* validateGatewayContractEffect() {
-    const gatewayContract = sourceOrEmpty(state.sourceMap, 'packages/shared-contracts/src/gateway-context.ts');
-    const shellApiContract = sourceOrEmpty(state.sourceMap, 'apps/shell-super-app/shared/api.ts');
-    const shellApiRuntime = sourceOrEmpty(state.sourceMap, 'apps/shell-super-app/api/index.ts');
+    const gatewayContract = sourceOrEmpty(state.sourceMap, GATEWAY_CONTRACT_FILE);
+    const shellApiContract = sourceOrEmpty(state.sourceMap, SHELL_API_CONTRACT_FILE);
+    const shellApiRuntime = sourceOrEmpty(state.sourceMap, SHELL_API_RUNTIME_FILE);
     yield* validateGatewayIssuerEntrypoints(gatewayContextAuthorizationEntrypoints);
     for (const issuer of gatewayContextAuthorizationEntrypoints) {
       if (
@@ -4806,13 +4925,15 @@ const validateGatewayContract = (state: BoundaryCheckState) =>
         !hasMountedIssuerPath(shellApiContract, gatewayContract, issuer)
       ) {
         yield* fail(
-          'apps/shell-super-app/shared/api.ts',
+          SHELL_API_CONTRACT_FILE,
           `capability issuer ${issuer.path} is missing from the mounted gateway contract`,
         );
       }
       state.inventoryEntries.push(issuer);
     }
     yield* validateGatewayRuntime(shellApiContract, shellApiRuntime);
+    // Demo-only exception 6: the demo's capability issuers, checked and inventoried like main's.
+    yield* validateDemoCapabilityIssuers(state.sourceMap, state.inventoryEntries);
   });
 
 const checkModuleEntrypointBoundariesEffect = (workspaceRoot: string) =>

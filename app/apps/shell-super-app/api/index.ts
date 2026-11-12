@@ -2827,68 +2827,6 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
         ),
       ),
     )
-    .handle('readWithApiKeyGatewayContext', ({ headers, payload: payloadBytes, request }) =>
-      Effect.gen(function* readWithApiKeyGatewayContextHandler() {
-        yield* noStore;
-        const payload = yield* decodeApiKeyGatewayReadRequest(payloadBytes);
-        const issuerMetadata =
-          payload.legalEntityId === undefined
-            ? { audience: payload.audience }
-            : { audience: payload.audience, legalEntityId: payload.legalEntityId };
-        const context = yield* issueApiKeyContext(issuerMetadata, headers['x-api-key'], request);
-        const prefix = '/shell-super-app-api/module-api/';
-        if (!context.apiBaseUrl.startsWith(prefix)) {
-          return yield* failGatewayProblem(
-            problemDetails(
-              'GatewayAudienceInvalidProblem',
-              'The requested audience is not an available MicroVertical.',
-              400,
-              'Invalid gateway audience',
-              'https://ontos.dev/problems/gateway-audience-invalid',
-            ),
-          );
-        }
-        // Dispatch in-process, through the very same composition/release admission and owner transport.
-        // Never forward the API key, cookies or arbitrary caller headers to the owner.
-        const body = yield* payload.ownerBody.pipe(Effect.orDie);
-        const encodedContext = yield* Schema.encodeEffect(Schema.fromJsonString(GatewayContextResponseSchema))(
-          context,
-        ).pipe(Effect.orDie);
-        const ownerRequest = new Request(
-          `https://shell.invalid${context.apiBaseUrl.slice('/shell-super-app-api'.length)}/reads/${encodeURIComponent(payload.readName)}`,
-          {
-            body,
-            headers: {
-              authorization: `Bearer ${context.token}`,
-              'content-type': 'application/json',
-              'x-correlation-id': correlationFromRequest(request),
-              'x-ontos-composition-revision': context.compositionRevision,
-            },
-            method: 'POST',
-          },
-        );
-        const response = yield* dispatchModuleApiRequest(ownerRequest).pipe(
-          observeGatewayPhase('owner-dispatch'),
-          Effect.catch((error) =>
-            HttpServerResponse.schemaJson(Schema.Struct({ code: Schema.Literal('gateway_dispatch_failed') }))(
-              { code: 'gateway_dispatch_failed' },
-              { status: Predicate.isTagged(error, 'ModuleApiDispatchError') ? error.status : 503 },
-            ).pipe(Effect.map(HttpServerResponse.toWeb), Effect.orDie),
-          ),
-        );
-        // The receiving runtime still redeems the assertion and rechecks principal/binding status,
-        // tenant/legal-entity scope and operation authorization. No authorization result is cached here.
-        return HttpServerResponse.fromWeb(response).pipe(
-          HttpServerResponse.setHeader(API_KEY_GATEWAY_CONTEXT_HEADER, encodedContext),
-          noStoreResponse,
-        );
-      }).pipe(
-        withGatewayTimings,
-        recoverUnexpectedDefect(request, 'Unexpected API-key gateway read defect', () =>
-          failGatewayProblem(gatewayInternalProblem()),
-        ),
-      ),
-    )
     .handle('issueDelegatedGatewayContext', ({ headers, payload, request }) =>
       Effect.gen(function* issueDelegatedGatewayContextHandler() {
         yield* requireGatewayRelease(payload.compositionRevision);
@@ -2942,6 +2880,73 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
         ),
       ),
     ),
+);
+
+// Demo divergence: the API-key read relay is its own handler group (ApiKeyGatewayReadApiGroup), so main's gatewayContext
+// group keeps exactly its three issuing endpoints. The handler below is moved verbatim from that group.
+const apiKeyGatewayReadGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'apiKeyGatewayRead', (handlers) =>
+  handlers.handle('readWithApiKeyGatewayContext', ({ headers, payload: payloadBytes, request }) =>
+    Effect.gen(function* readWithApiKeyGatewayContextHandler() {
+      yield* noStore;
+      const payload = yield* decodeApiKeyGatewayReadRequest(payloadBytes);
+      const issuerMetadata =
+        payload.legalEntityId === undefined
+          ? { audience: payload.audience }
+          : { audience: payload.audience, legalEntityId: payload.legalEntityId };
+      const context = yield* issueApiKeyContext(issuerMetadata, headers['x-api-key'], request);
+      const prefix = '/shell-super-app-api/module-api/';
+      if (!context.apiBaseUrl.startsWith(prefix)) {
+        return yield* failGatewayProblem(
+          problemDetails(
+            'GatewayAudienceInvalidProblem',
+            'The requested audience is not an available MicroVertical.',
+            400,
+            'Invalid gateway audience',
+            'https://ontos.dev/problems/gateway-audience-invalid',
+          ),
+        );
+      }
+      // Dispatch in-process, through the very same composition/release admission and owner transport.
+      // Never forward the API key, cookies or arbitrary caller headers to the owner.
+      const body = yield* payload.ownerBody.pipe(Effect.orDie);
+      const encodedContext = yield* Schema.encodeEffect(Schema.fromJsonString(GatewayContextResponseSchema))(
+        context,
+      ).pipe(Effect.orDie);
+      const ownerRequest = new Request(
+        `https://shell.invalid${context.apiBaseUrl.slice('/shell-super-app-api'.length)}/reads/${encodeURIComponent(payload.readName)}`,
+        {
+          body,
+          headers: {
+            authorization: `Bearer ${context.token}`,
+            'content-type': 'application/json',
+            'x-correlation-id': correlationFromRequest(request),
+            'x-ontos-composition-revision': context.compositionRevision,
+          },
+          method: 'POST',
+        },
+      );
+      const response = yield* dispatchModuleApiRequest(ownerRequest).pipe(
+        observeGatewayPhase('owner-dispatch'),
+        Effect.catch((error) =>
+          HttpServerResponse.schemaJson(Schema.Struct({ code: Schema.Literal('gateway_dispatch_failed') }))(
+            { code: 'gateway_dispatch_failed' },
+            { status: Predicate.isTagged(error, 'ModuleApiDispatchError') ? error.status : 503 },
+          ).pipe(Effect.map(HttpServerResponse.toWeb), Effect.orDie),
+        ),
+      );
+      // The receiving runtime still redeems the assertion and rechecks principal/binding status,
+      // tenant/legal-entity scope and operation authorization. No authorization result is cached here.
+      return HttpServerResponse.fromWeb(response).pipe(
+        HttpServerResponse.setHeader(API_KEY_GATEWAY_CONTEXT_HEADER, encodedContext),
+        noStoreResponse,
+      );
+    }).pipe(
+      withGatewayTimings,
+      recoverUnexpectedDefect(request, 'Unexpected API-key gateway read defect', () =>
+        failGatewayProblem(gatewayInternalProblem()),
+      ),
+    ),
+  ),
 );
 
 // One session issuance for every module audience of a Shell document a browser navigation needs: one release check and
@@ -4325,6 +4330,7 @@ export const makeShellAuthenticationApiRuntime = (
     documentContextGroupLive,
     resourcesGroupLive,
     gatewayContextGroupLive,
+    apiKeyGatewayReadGroupLive,
     documentGatewayGroupLive,
     oauthConnectGroupLive,
     // @ontos-codesmith-core-read-server-layers:start

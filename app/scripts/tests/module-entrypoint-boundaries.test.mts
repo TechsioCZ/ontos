@@ -667,7 +667,7 @@ import { routeMeta as route1 } from './[lang]/$/route.meta';`,
     root,
     'apps/shell-super-app/shared/api.ts',
     `import { GatewayContextApiGroup } from '@app/shared-contracts';
-export const ShellAuthenticationApi = HttpApi.make('shell').add(GatewayContextApiGroup);
+export const ShellAuthenticationApi = HttpApi.make('shell').add(GatewayContextApiGroup).add(ShellBrowserApi.groups.apiKeyGatewayRead).add(ShellBrowserApi.groups.documentGateway).add(ShellBrowserApi.groups.documentContext);
 export const paths = ['/shell-super-app-api/auth/gateway-context', '/shell-super-app-api/auth/api-key/gateway-context', '/shell-super-app-api/auth/delegated/gateway-context'];`,
   );
   yield* write(
@@ -676,7 +676,21 @@ export const paths = ['/shell-super-app-api/auth/gateway-context', '/shell-super
     `export const gatewayContextLive = HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) => handlers
   .handle('issueGatewayContext', () => Effect.void)
   .handle('issueApiKeyGatewayContext', () => Effect.void)
-  .handle('issueDelegatedGatewayContext', () => Effect.void));`,
+  .handle('issueDelegatedGatewayContext', () => Effect.void));
+// Demo exception 6: the demo's capability issuers are mounted in their own handler groups.
+const apiKeyGatewayReadLive = HttpApiBuilder.group(ShellAuthenticationApi, 'apiKeyGatewayRead', (handlers) => handlers.handle('readWithApiKeyGatewayContext', () => Effect.void));
+const documentGatewayLive = HttpApiBuilder.group(ShellAuthenticationApi, 'documentGateway', (handlers) => handlers.handle('issueDocumentGatewayContexts', () => Effect.void));
+const documentContextLive = HttpApiBuilder.group(ShellAuthenticationApi, 'documentContext', (handlers) => handlers.handle('documentContext', () => Effect.void));`,
+  );
+  yield* write(
+    root,
+    'apps/shell-super-app/shared/document-gateway-api.ts',
+    `export const DocumentGatewayApiGroup = HttpApiGroup.make('documentGateway').add(HttpApiEndpoint.post('issueDocumentGatewayContexts', '/auth/gateway-contexts', {}));`,
+  );
+  yield* write(
+    root,
+    'apps/shell-super-app/shared/browser-api.ts',
+    `export const ShellDocumentContextApiGroup = HttpApiGroup.make('documentContext').add(HttpApiEndpoint.post('documentContext', '/shell/document-context', {}));`,
   );
   yield* write(
     root,
@@ -700,6 +714,7 @@ export const routeMeta = { moduleId: 'inventory.stock', ownerAppId: 'inventory-s
   .add(HttpApiEndpoint.post('issueGatewayContext', '/auth/gateway-context', {}))
   .add(HttpApiEndpoint.post('issueApiKeyGatewayContext', '/auth/api-key/gateway-context', {}))
   .add(HttpApiEndpoint.post('issueDelegatedGatewayContext', '/auth/delegated/gateway-context', {}));
+export const ApiKeyGatewayReadApiGroup = HttpApiGroup.make('apiKeyGatewayRead').add(HttpApiEndpoint.post('readWithApiKeyGatewayContext', '/auth/api-key/gateway-read', {}));
 export const shellGatewayContextContract = { issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context', issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context', issueDelegatedGatewayContextPath: '/shell-super-app-api/auth/delegated/gateway-context' };`,
   );
   yield* write(root, 'packages/core-runtime/src/index.ts', `export const core = true;`);

@@ -739,23 +739,6 @@ export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
     }),
   )
   .add(
-    HttpApiEndpoint.post('readWithApiKeyGatewayContext', '/auth/api-key/gateway-read', {
-      error: [
-        BadRequestNoContent,
-        GatewayAuthenticationRequiredProblemSchema,
-        GatewayAudienceInvalidProblemSchema,
-        GatewayReloadRequiredProblemSchema,
-        GatewayForbiddenProblemSchema,
-        GatewayRateLimitedProblemSchema,
-        GatewayUnavailableProblemSchema,
-        GatewayInternalProblemSchema,
-      ],
-      headers: ApiKeyGatewayHeadersSchema,
-      payload: ApiKeyGatewayReadRequestSchema,
-      success: ApiKeyGatewayReadResponseSchema,
-    }),
-  )
-  .add(
     HttpApiEndpoint.post('issueDelegatedGatewayContext', '/auth/delegated/gateway-context', {
       error: [
         GatewayAuthenticationRequiredProblemSchema,
@@ -772,7 +755,33 @@ export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
     }),
   );
 
-export const GatewayContextApi = HttpApi.make('shellGatewayContextApi').add(GatewayContextApiGroup);
+/**
+ * Demo divergence: the API-key read relay. A server credential (storefront server, agent) sends one owner read
+ * through the Shell instead of minting a gateway assertion first. It lives in its own group so main's gateway issuer
+ * group keeps exactly its three issuing endpoints, which main's Shell gateway database proof requires. Route,
+ * request, response and admission are unchanged; group names are not part of the HTTP path.
+ */
+export const ApiKeyGatewayReadApiGroup = HttpApiGroup.make('apiKeyGatewayRead').add(
+  HttpApiEndpoint.post('readWithApiKeyGatewayContext', '/auth/api-key/gateway-read', {
+    error: [
+      BadRequestNoContent,
+      GatewayAuthenticationRequiredProblemSchema,
+      GatewayAudienceInvalidProblemSchema,
+      GatewayReloadRequiredProblemSchema,
+      GatewayForbiddenProblemSchema,
+      GatewayRateLimitedProblemSchema,
+      GatewayUnavailableProblemSchema,
+      GatewayInternalProblemSchema,
+    ],
+    headers: ApiKeyGatewayHeadersSchema,
+    payload: ApiKeyGatewayReadRequestSchema,
+    success: ApiKeyGatewayReadResponseSchema,
+  }),
+);
+
+export const GatewayContextApi = HttpApi.make('shellGatewayContextApi')
+  .add(GatewayContextApiGroup)
+  .add(ApiKeyGatewayReadApiGroup);
 
 export const shellGatewayContextContract = {
   apiPrefix: '/shell-super-app-api',
@@ -810,6 +819,14 @@ export const gatewayContextAuthorizationEntrypoints = [
     path: shellGatewayContextContract.issueApiKeyGatewayContextPath,
     surface: 'capability_issuance',
   },
+] as const;
+
+/**
+ * Demo divergence: capability issuers the demo adds beside main's three gateway issuers: the API-key read relay and
+ * the Shell document's session issuers. Kept apart so main's exact-three issuer rule holds; the entrypoint checker
+ * classifies, mount-checks and inventories these the same way (demo exception 6).
+ */
+export const demoCapabilityIssuerEntrypoints = [
   {
     authorization: { credential: 'api_key', kind: 'capability_issuance' },
     deployment: shellGatewayContextContract.ownerId,
