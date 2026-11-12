@@ -155,6 +155,7 @@ const Harness = ({ isValid, order, revision }: HarnessProps) => {
   const value = useOrderEditDraft({
     isValid,
     onOfferedPriceChanged: () => Effect.void,
+    onSaveSucceeded: constVoid,
     onSend: constVoid,
     order,
     revision,

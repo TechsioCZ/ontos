@@ -579,6 +579,7 @@
     },
     "ui": {
       "offeredPriceChanged": "Cena přidaného zboží se mezitím změnila, nic se neuložilo. Řádky teď nesou aktuální cenu — {{lines}}. Zkontrolujte ji a uložte znovu.",
+      "offeredPriceUnreadable": "Cena přidaného zboží se mezitím změnila a novou cenu se nepodařilo načíst. Řádek odeberte a přidejte znovu. Týká se: {{lines}}.",
       "storefrontBadge": "E-shop",
       "demoBadge": "DEMO",
       "variantStockMovement": "Skladový pohyb varianty",

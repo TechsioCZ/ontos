@@ -101,13 +101,30 @@ const currentOffers = (
     { concurrency: OFFER_READS_AT_ONCE },
   ).pipe(Effect.map((offers) => new Map(offers.flat())));
 
+/** A line named as staff see it. */
+const lineName = (line: DraftLine): string =>
+  line.variantName === undefined ? line.name : `${line.name} (${line.variantName})`;
+
 /** The added lines a new offer changes the price of, named as staff see them. */
 const repricedLines = (lines: readonly DraftLine[], offers: ReadonlyMap<string, number>): RepricedLine[] =>
   lines.flatMap((line) => {
     const price = offers.get(line.key);
-    const name = line.variantName === undefined ? line.name : `${line.name} (${line.variantName})`;
-    return price === undefined || price === parseAmount(line.offeredPriceText ?? '') ? [] : [{ name, price }];
+    return price === undefined || price === parseAmount(line.offeredPriceText ?? '')
+      ? []
+      : [{ name: lineName(line), price }];
   });
+
+/**
+ * The added lines whose new price the form could not take after the server refused their old one: a product that can
+ * no longer be read, and, when no line got a new price at all, every added line (the product reads at the price the
+ * line already carries, e.g. one without a stored gross priced at a rate the server no longer uses). Saving again
+ * would be refused the same way, so staff remove those lines and add them again.
+ */
+const unrepricedLines = (lines: readonly DraftLine[], offers: ReadonlyMap<string, number>): string[] => {
+  const added = lines.filter((line) => line.offeredPriceText !== undefined);
+  const noneRepriced = repricedLines(added, offers).length === 0;
+  return added.flatMap((line) => (noneRepriced || !offers.has(line.key) ? [lineName(line)] : []));
+};
 
 /** The lines with their new offers taken. */
 const withOffers = (lines: readonly DraftLine[], offers: ReadonlyMap<string, number>): DraftLine[] =>
@@ -345,10 +362,13 @@ const useOrderEditForm = ({
   };
   // The added lines whose price changed meanwhile, with the price they carry now; shown until the next save is sent.
   const [repriced, setRepriced] = useState<readonly RepricedLine[]>([]);
+  // The added lines whose new price could not be read after a refusal; shown until a save succeeds.
+  const [unrepriced, setUnrepriced] = useState<readonly string[]>([]);
   // Set once `record` exists: takes newly read offers into the draft.
   const takeOffers = useRef<(offers: ReadonlyMap<string, number>) => void>(constVoid);
   const { record, savedOnce } = useOrderEditDraft({
     isValid: (value, confirmed) => draftValidation(value, confirmed).valid,
+    onSaveSucceeded: () => setUnrepriced([]),
     onSend: () => setRepriced([]),
     // The server refused an added line whose price changed after it was picked: read those products again.
     onOfferedPriceChanged: (value) =>
@@ -362,6 +382,7 @@ const useOrderEditForm = ({
   useEffect(() => {
     takeOffers.current = (offers) => {
       setRepriced(repricedLines(draft.lines, offers));
+      setUnrepriced(unrepricedLines(draft.lines, offers));
       record.setDraft((current) => ({ ...current, lines: withOffers(current.lines, offers) }));
     };
   }, [draft.lines, record]);
@@ -471,6 +492,7 @@ const useOrderEditForm = ({
     t,
     taxLabels,
     unit,
+    unrepriced,
   };
 };
 
@@ -628,6 +650,7 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
     t,
     taxLabels,
     unit,
+    unrepriced,
   } = model;
   const { actionsSlot } = props;
   const handleSave = record.save;
@@ -829,6 +852,11 @@ export const OrderEditForm = (props: OrderEditFormProps) => {
                     .map((entry) => `${entry.name}: ${formatMoney(entry.price, orderCurrency(order))}`)
                     .join(', '),
                 })}
+              </StatusText>
+            )}
+            {unrepriced.length > 0 && (
+              <StatusText showIcon status="error">
+                {t('merchandise.ui.offeredPriceUnreadable', { lines: unrepriced.join(', ') })}
               </StatusText>
             )}
           </div>

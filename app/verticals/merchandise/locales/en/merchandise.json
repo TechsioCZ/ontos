@@ -575,6 +575,7 @@
     },
     "ui": {
       "offeredPriceChanged": "The price of an added item changed in the meantime; nothing was saved. The lines now carry the current price — {{lines}}. Check it and save again.",
+      "offeredPriceUnreadable": "The price of an added item changed in the meantime and the new price could not be loaded. Remove the line and add it again. Affected: {{lines}}.",
       "storefrontBadge": "Online store",
       "demoBadge": "DEMO",
       "variantStockMovement": "Variant stock movement",

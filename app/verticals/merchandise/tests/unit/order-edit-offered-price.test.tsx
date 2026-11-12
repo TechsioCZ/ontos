@@ -1,8 +1,10 @@
 // @rstest-environment happy-dom
 // A line added in the order editor whose product changed price before the edit was saved, as staff live through it:
 // the server refuses the save with "the offered price changed", the form reads the product again, puts the current
-// price on the line, says so with the new price, and the next Uložit sends that price and succeeds. Picking the same
-// product again refreshes an added line's price too. Only the generated clients, the i18n runtime (real Czech texts)
+// price on the line, says so with the new price, and the next Uložit sends that price and succeeds. When the form cannot
+// read a new price (the product reads at the price the line carries, or cannot be read at all), it names the line and
+// asks staff to remove and add it again until a save succeeds. Picking the same product again refreshes an added
+// line's price too. Only the generated clients, the i18n runtime (real Czech texts)
 // and the router blocker are replaced.
 import { CZ_VAT_REDUCED, CZ_VAT_STANDARD, TaxRateViewSchema } from '@app/shared-contracts/cz-vat-classifications';
 import { Effect, Schema } from 'effect';
@@ -273,5 +275,57 @@ it.effect('a market order offers an added line in its own currency, as the serve
       { offeredUnitPriceMinor: convertGrossMinor(1000, market), productId: 'product-2', quantity: 1 },
     ]);
     expect(convertGrossMinor(1000, market)).toBe(40);
+  }),
+);
+
+const unreadable = 'novou cenu se nepodařilo načíst';
+
+it.effect(
+  'a refused price the form reads back unchanged names the line and asks to add it again until a save succeeds',
+  () =>
+    Effect.promise(async () => {
+      await mount();
+      await click(button('pick product'));
+      await click(button('Přidat'));
+      // The server refuses the 10 Kč offer, yet the product still reads at 10 Kč (e.g. priced without a stored gross
+      // at a rate the server no longer uses): nothing new to take, and saving again is refused the same way.
+      rstest
+        .mocked(executeManageCatalog)
+        .mockReturnValueOnce(Effect.fail(priceChanged))
+        .mockReturnValueOnce(Effect.fail(priceChanged))
+        .mockReturnValue(Effect.succeed({ entityIds: [], revision: 8 }));
+      await click(button('Uložit'));
+      await waitUntil(() => text().includes(unreadable));
+      expect(text()).toContain('Řádek odeberte a přidejte znovu. Týká se: Zrnková káva.');
+      expect(text()).not.toContain('Řádky teď nesou aktuální cenu');
+      await click(button('Uložit'));
+      await waitUntil(() => sentBeans().length === 2);
+      await act(settle);
+      expect(text()).toContain(unreadable);
+      // A save that succeeds ends it.
+      await click(button('Uložit'));
+      await waitUntil(() => sentBeans().length === 3);
+      await waitUntil(() => !text().includes(unreadable));
+    }),
+);
+
+it.effect('a refused price whose product can no longer be read names that line', () =>
+  Effect.promise(async () => {
+    await mount();
+    await click(button('pick product'));
+    await click(button('Přidat'));
+    // The beans were deleted meanwhile: the form cannot read their new price.
+    catalog.current = null;
+    rstest
+      .mocked(executeManageCatalog)
+      .mockReturnValueOnce(Effect.fail(priceChanged))
+      .mockReturnValue(Effect.succeed({ entityIds: [], revision: 8 }));
+    await click(button('Uložit'));
+    await waitUntil(() => text().includes(unreadable));
+    expect(text()).toContain('Týká se: Zrnková káva.');
+    expect(addedPrice()).toContain('10');
+    await click(button('Uložit'));
+    await waitUntil(() => sentBeans().length === 2);
+    await waitUntil(() => !text().includes(unreadable));
   }),
 );

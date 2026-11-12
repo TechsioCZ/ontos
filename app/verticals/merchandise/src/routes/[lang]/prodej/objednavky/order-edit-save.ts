@@ -110,6 +110,8 @@ interface OrderEditDraftOptions {
    * says so. The save then counts as failed; the next Uložit sends the new prices.
    */
   readonly onOfferedPriceChanged: (draft: Draft) => Effect.Effect<void>;
+  /** Each save the server stored. */
+  readonly onSaveSucceeded: () => void;
   /** Each save, as it sends the edit. */
   readonly onSend: () => void;
   readonly order: Order;
@@ -133,6 +135,7 @@ interface OrderEditDraftOptions {
 export const useOrderEditDraft = ({
   isValid,
   onOfferedPriceChanged,
+  onSaveSucceeded,
   onSend,
   order,
   revision,
@@ -175,6 +178,7 @@ export const useOrderEditDraft = ({
                 return result;
               }
               savedOnce.current = true;
+              onSaveSucceeded();
               setSentReason(command.reason ?? null);
               if (result === 'saved') {
                 return result;
