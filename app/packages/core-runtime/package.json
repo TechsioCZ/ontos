@@ -83,7 +83,9 @@
     "./testing/outbox": "./src/outbox/verified-handler-context.ts",
     "./testing/reads": "./src/testing/reads.ts",
     "./testing/native-reads": "./src/testing/native-reads.ts",
-    "./testing/native-action-v2": "./tests/support/action-live-v2.ts",
+    "./testing/native-action-v2": {
+      "node": "./tests/support/action-live-v2.ts"
+    },
     "./testing/isolated-native-database": "./src/testing/isolated-native-database.ts",
     "./testing/source-execution-fence-native": "./src/testing/source-execution-fence-native.ts",
     "./testing/workload-binding-native": "./src/testing/workload-binding-native.ts",

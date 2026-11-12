@@ -424,7 +424,13 @@ const NodeConditionalPackageTargetSchema = Schema.Union([
   Schema.Struct({ default: Schema.String, workerd: Schema.String }),
   Schema.Struct({ node: Schema.String, workerd: Schema.String }),
 ]);
-const CorePackageTargetSchema = Schema.Union([Schema.String, NodeConditionalPackageTargetSchema]);
+// Core's Node-only test exports (e.g. `./testing/native-action-v2`) declare just a `node` target.
+const NodeOnlyPackageTargetSchema = Schema.Struct({ node: Schema.String });
+const CorePackageTargetSchema = Schema.Union([
+  Schema.String,
+  NodeConditionalPackageTargetSchema,
+  NodeOnlyPackageTargetSchema,
+]);
 const CorePackageExportsSchema = Schema.Struct({
   exports: Schema.Record(Schema.String, CorePackageTargetSchema),
   imports: Schema.Record(Schema.String, NodeConditionalPackageTargetSchema),

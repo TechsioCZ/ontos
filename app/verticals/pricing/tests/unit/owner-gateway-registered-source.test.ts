@@ -11,6 +11,8 @@ import { GatewayDelegationSourceError } from '@app/shared-contracts/gateway-cont
 import { NodeCrypto } from '@effect/platform-node';
 import { ConfigProvider, Crypto, DateTime, Effect, Layer, Match, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+
+import { holdTestModuleCredentials } from '../../../../packages/core-runtime/tests/support/module-credentials.ts';
 import {
   acquireOwnerGatewayConnection,
   pricingOwnerDelegationSubject,
@@ -219,11 +221,10 @@ it.layer(
   Layer.mergeAll(
     NodeCrypto.layer,
     ConfigProvider.layer(
-      ConfigProvider.fromUnknown({
-        ONTOS_GATEWAY_MODULE_API_KEY: 'unit-only-module-key',
-        ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.internal.example/',
-      }),
+      ConfigProvider.fromUnknown({ ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.internal.example/' }),
     ),
+    // Pricing holds its own key, so the refusal below comes from the missing lease and not from a missing credential.
+    Layer.effectDiscard(holdTestModuleCredentials({ pricing: 'unit-only-module-key' })),
   ),
 )('Pricing live conditional requirement enforcement', (suite) => {
   suite.effect('refuses registered delegation without the genuine current factory lease', () =>

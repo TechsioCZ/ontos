@@ -270,6 +270,7 @@ const gateOf = (script: Script) => {
     },
     decideMany: () => Effect.die('this suite asks one declaration at a time'),
     list: () => Effect.die('Novinky reads no list predicate'),
+    listMany: () => Effect.die('Novinky reads no list predicate'),
     selectableLegalEntities: () => Effect.succeed([]),
   };
   return { asked, service };
