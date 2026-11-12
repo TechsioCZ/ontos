@@ -7,6 +7,7 @@ import { systemError } from 'effect/PlatformError';
 import { expect, it } from 'effect-rstest';
 
 import { processEnvironment, shellRuntime, startUnitProcess } from '../zerops/app-host.mts';
+import { OWNERS_YOUNG_GENERATION_ARGUMENTS } from '../zerops/heap-limits.mts';
 import { SHELL_ID, workspaceRoot } from '../zerops/hosted-units.mts';
 
 it.effect('defaults to Node and lets the live override win over the validated deployment default', () =>
@@ -55,10 +56,10 @@ it.live('spawns only the isolated Shell with Bun, preserving arguments, environm
     for (const [ids, runtime, expectedCommand, heap] of [
       [[SHELL_ID], 'bun', path.join(workspaceRoot, '.zerops/bun/bin/bun'), []],
       [[SHELL_ID], 'node', process.execPath, ['--max-old-space-size=1024']],
-      [['crm', 'party-registry'], 'bun', process.execPath, []],
-      [['crm', 'party-registry'], 'node', process.execPath, []],
-      [['crm'], 'bun', process.execPath, []],
-      [[SHELL_ID, 'crm'], 'bun', process.execPath, []],
+      [['crm', 'party-registry'], 'bun', process.execPath, OWNERS_YOUNG_GENERATION_ARGUMENTS],
+      [['crm', 'party-registry'], 'node', process.execPath, OWNERS_YOUNG_GENERATION_ARGUMENTS],
+      [['crm'], 'bun', process.execPath, OWNERS_YOUNG_GENERATION_ARGUMENTS],
+      [[SHELL_ID, 'crm'], 'bun', process.execPath, OWNERS_YOUNG_GENERATION_ARGUMENTS],
     ] as const) {
       let spawned = false;
       const spawnerLayer = Layer.effect(
