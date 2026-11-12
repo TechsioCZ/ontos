@@ -6,6 +6,7 @@ import {
   trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { PrincipalResolver, TenantModuleStateService, tenantStatesAllowingAccess } from '@app/core-runtime';
+import type { OperationContextError } from '@app/core-runtime';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import type { GatewayActorClaim, GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
 import {
@@ -97,10 +98,16 @@ export const bindingsUnavailable = (cause: GatewayDelegationPolicyUnavailable | 
     ? delegationUnavailable('module_enrolment_unavailable')(cause)
     : delegationUnavailable('installed_release_unavailable')(cause);
 
-const scopeFailure = (cause: unknown) =>
-  Predicate.isTagged(cause, 'OperationContextUnavailable')
-    ? delegationUnavailable('scope_unavailable')(cause)
-    : delegationForbidden('scope_refused')(cause);
+/**
+ * A scope the resolver could not establish. Its failures are exactly `OperationContextError`: unavailable answers
+ * `scope_unavailable`, every refusal `scope_refused`. A principal resolver that could not answer reaches the issuer only
+ * as `OperationContextUnavailable`, so no scope failure is ever named after the calling module's principal.
+ */
+const scopeFailure = (cause: OperationContextError) =>
+  Match.value(cause).pipe(
+    Match.tag('OperationContextUnavailable', delegationUnavailable('scope_unavailable')),
+    Match.orElse(delegationForbidden('scope_refused', 'scope_unavailable')),
+  );
 
 /** Verifies a live request's subject assertion exactly as its source module issued it, then rechecks its authentication. */
 const admitAssertionSubject = Effect.fn('GatewayDelegation.admitAssertion')(function* admitAssertionSubject(input: {
