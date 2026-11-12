@@ -1015,16 +1015,40 @@ const namedSourceImport = (source: string, binding: string, allowTypeOnly = fals
 
 // This branch proves only a typed owner injection merged with the canonical Crypto layer.
 // Every protected occurrence must have a known immutable role; unknown argument escapes fail closed.
-const cryptoReadTuple = (source: string, factory: SourceRange) => {
+/**
+ * The rest tuple of an executed owner factory: inline `(...args: T) =>`, or main's typed declaration form where
+ * `export const f: (...args: T) => R` carries the tuple and the executed arrow only spells `(...args) =>`.
+ */
+const cryptoReadSignature = (
+  factorySource: string,
+  declarationType: string | undefined,
+): { readonly args: string; readonly signature: RegExpExecArray; readonly tupleType: string } | undefined => {
+  const inline = /^\(\s*\.\.\.(?<args>[A-Za-z][A-Za-z0-9]*):\s*(?<type>[A-Za-z][A-Za-z0-9]*)\s*\)/u.exec(factorySource);
+  if (inline !== null) {
+    const { args, type } = inline.groups ?? {};
+    return args === undefined || type === undefined ? undefined : { args, signature: inline, tupleType: type };
+  }
+  const inferred =
+    declarationType === undefined
+      ? null
+      : /^\(\s*\.\.\.(?<args>[A-Za-z][A-Za-z0-9]*)\s*\)\s*(?==>)/u.exec(factorySource);
+  const declared =
+    /^\(\s*\.\.\.[A-Za-z][A-Za-z0-9]*:\s*(?<type>[A-Za-z][A-Za-z0-9]*)\s*\)\s*=>\s*[A-Za-z][A-Za-z0-9]*$/u.exec(
+      maskComments(declarationType ?? ''),
+    )?.groups?.type;
+  const args = inferred?.groups?.args;
+  return inferred === null || args === undefined || declared === undefined
+    ? undefined
+    : { args, signature: inferred, tupleType: declared };
+};
+
+const cryptoReadTuple = (source: string, factory: SourceRange & { readonly declarationType?: string | undefined }) => {
   const factorySource = source.slice(factory.start, factory.end);
-  const signature = /^\(\s*\.\.\.(?<args>[A-Za-z][A-Za-z0-9]*):\s*(?<type>[A-Za-z][A-Za-z0-9]*)\s*\)/u.exec(
-    factorySource,
-  );
-  const args = signature?.groups?.args;
-  const tupleType = signature?.groups?.type;
-  if (args === undefined || tupleType === undefined || signature === null) {
+  const resolved = cryptoReadSignature(factorySource, factory.declarationType);
+  if (resolved === undefined) {
     return null;
   }
+  const { args, signature, tupleType } = resolved;
   const code = maskNonCode(source);
   const tuplePattern = new RegExp(`type ${escapeRegExp(tupleType)}\\s*=\\s*readonly\\s*\\[`, 'gu');
   const tuples = [...code.matchAll(tuplePattern)];
@@ -1993,9 +2017,13 @@ export const hasValidGovernedHttpCompositionRoot = (
       GOVERNED_HANDLER_LAYER_SLOT_END,
       expectedApi,
     );
+  // A root proved with its owner context may bind that exact owner's backend-only registration, as the
+  // approval publication and phased-read proofs already accept (e.g. Privacy's UI-free worker host binding).
+  const backendRegistration =
+    context === undefined ? undefined : `${toCamelCase(path.posix.basename(context.ownerPath))}BackendRegistration`;
   return (
     sharedRoot !== undefined &&
-    hasGovernedHandlerRoot(handlerRoot, undefined, context) &&
+    hasGovernedHandlerRoot(handlerRoot, backendRegistration, context) &&
     sharedImports?.depth === 0 &&
     handlerImports?.depth === 0 &&
     hasGovernedSupportSlots(handlerRoot) &&
@@ -17222,6 +17250,8 @@ const hasProjectedReadServiceHelper = (
   target: NonNullable<ReturnType<typeof originalReadCallable>>,
   method: string | undefined,
   prepared = false,
+  // Exception 3: a staged read whose services record nests the owner persistence names that persistence factory.
+  factory?: string,
 ): boolean => {
   const definition = projectedReadServiceHelperDefinition(target, method);
   if (definition === undefined) {
@@ -17254,7 +17284,7 @@ const hasProjectedReadServiceHelper = (
       hasProjectedReadAuthority(fields, input, trusted, prelude, args),
     companyGuard,
     input: new RegExp(`\\b${escapeRegExp(input)}\\b`, 'u').test(call.pipeline.base),
-    method: scopedReadMethods.accepts(owner, source, call.method),
+    method: scopedReadMethods.accepts(owner, source, call.method, factory),
     projection: readValueProvenance.projection(owner, target.source, projection, new Set(), new Set(names)),
     scoped,
     stable: hasStableReadFactoryBindingsStaged(body, new Map(names.map((name): [string, number] => [name, 0])), ''),
@@ -17591,6 +17621,507 @@ const hasPreparedOwnerReadPhase = (
     ) &&
     hasProjectedReadServiceHelper(owner, source, invocation.target, undefined, true) &&
     hasNativePhaseTransforms(owner, source, invocation.pipeline)
+  );
+};
+
+// ---------------------------------------------------------------------------------------------------------------
+// Demo-only exception 3 (continued): fences of the reshaped staged reads. A Read that declares Core Action commit
+// state, forwards a trusted company projection from a single handler, or binds a file-local transaction member is
+// proven in its recognised shape only; when the trigger is present and the shape is not recognised, it fails closed.
+// ---------------------------------------------------------------------------------------------------------------
+const GATEWAY_RECOVERY_PROVENANCE_MODULE = '@app/core-runtime/auth/system-principal-context-provenance';
+const COMMIT_STATE_SCHEMA = "Schema.Literals(['ABSENT', 'COMMITTED', 'OPEN', 'UNAVAILABLE'])";
+const COMMIT_STATE_SCHEMA_PATTERN =
+  /\bSchema\.Literals\(\s*\[\s*'ABSENT'\s*,\s*'COMMITTED'\s*,\s*'OPEN'\s*,\s*'UNAVAILABLE'\s*\]\s*,?\s*\)/u;
+
+/** The read file's one Action commit-state type: `export type T = typeof S.Type` over the closed commit-state schema. */
+const commitStateTypeName = (source: string): string | undefined => {
+  const aliases = [
+    ...maskComments(source).matchAll(
+      /\bexport\s+type\s+(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*typeof\s+(?<schema>[A-Za-z_$][A-Za-z0-9_$]*)\.Type\s*;/gu,
+    ),
+  ].filter((alias) => {
+    const initializer = constInitializerStaged(source, alias.groups?.schema ?? '');
+    return initializer !== undefined && hasExactSourceTokens(tokenizeGovernedClient(initializer), COMMIT_STATE_SCHEMA);
+  });
+  return aliases.length === 1 ? aliases[0]?.groups?.name : undefined;
+};
+
+/** Every listed value is present. */
+const allDefinedStaged = (...values: readonly unknown[]): boolean => values.every((value) => value !== undefined);
+
+type OriginalReadInvocationStaged = ReturnType<typeof originalReadInvocation>;
+
+/** The forwarded `prepare` helper's own parameters, body and phase-context name. */
+const forwardedPrepareHelper = (owner: ReadPhaseOwner, source: string, returned: string) => {
+  const invocation = originalReadInvocation(owner, source, returned);
+  const initializer = invocation?.target.initializer;
+  const parameters = initializer === undefined ? undefined : readCallableParameters(initializer);
+  const body = initializer === undefined ? undefined : nativePhaseGeneratorBody(initializer);
+  const context = parameters === undefined ? undefined : phaseParameterNames(parameters)?.[1];
+  return { body, context, invocation, parameters };
+};
+
+/** `return readVerifiedGatewayRecovery(context.scope) === undefined ? yield* <resolution> : undefined;` */
+const recoveryGuardedResolution = (body: string | undefined, context: string | undefined): string | undefined => {
+  if (body === undefined || context === undefined) {
+    return undefined;
+  }
+  const resolution = new RegExp(
+    `^\\s*return\\s+readVerifiedGatewayRecovery\\(\\s*${escapeRegExp(context)}\\.scope\\s*\\)\\s*===\\s*undefined\\s*\\?\\s*yield\\*\\s*(?<resolution>[\\s\\S]+?)\\s*:\\s*undefined\\s*;?\\s*$`,
+    'u',
+  ).exec(maskComments(body))?.groups?.resolution;
+  return resolution !== undefined &&
+    hasExactSourceTokens(
+      tokenizeGovernedClient(body),
+      `return readVerifiedGatewayRecovery(${context}.scope) === undefined ? yield* ${resolution} : undefined;`,
+    )
+    ? resolution
+    : undefined;
+};
+
+/** `(input, context) => helper(input, context)`: the phase's own two parameters, forwarded unchanged. */
+const isForwardedPhaseCall = (parameters: readonly string[], invocation: OriginalReadInvocationStaged): boolean => {
+  const names = phaseParameterNames(parameters);
+  return (
+    names !== undefined &&
+    invocation?.pipeline === undefined &&
+    invocation?.args.length === 2 &&
+    invocation.args[0] === names[0] &&
+    invocation.args[1] === names[1]
+  );
+};
+
+/** A file-local (never imported) `Effect.fn` helper declared in the Read's own source. */
+const isFileLocalEffectHelper = (source: string, invocation: OriginalReadInvocationStaged): boolean =>
+  invocation?.target.source === source &&
+  namedSourceImport(source, invocation.binding) === undefined &&
+  isEffectFnCallbackStaged(invocation.target.initializer);
+
+const hasGatewayRecoveryImport = (source: string): boolean =>
+  hasRuntimeNamedSourceImport(
+    source,
+    'readVerifiedGatewayRecovery',
+    'readVerifiedGatewayRecovery',
+    GATEWAY_RECOVERY_PROVENANCE_MODULE,
+  ) && hasStableReadFactoryBindingsStaged(source, new Map([['readVerifiedGatewayRecovery', 0]]), '');
+
+/**
+ * `prepare: (input, context) => helper(input, context)` where the file-local `Effect.fn` helper resolves the commit
+ * state only outside a verified gateway recovery, through the proven caller-scoped commit-resolution pipeline.
+ */
+const hasForwardedCommitResolutionPrepare = (
+  owner: ReadPhaseOwner,
+  source: string,
+  parameters: readonly string[],
+  returned: string,
+): boolean => {
+  const helper = forwardedPrepareHelper(owner, source, returned);
+  const resolution = recoveryGuardedResolution(helper.body, helper.context);
+  const helperParameters = helper.parameters ?? [];
+  return hasReadProofChecks(owner, 'commit-state prepare', {
+    body: resolution !== undefined,
+    context:
+      helperParameters.length === 2 &&
+      readParameterAnnotation(helperParameters[1] ?? '') === 'ReadPrepareContext' &&
+      hasOriginalScopedFactoryType(source, 'ReadPrepareContext'),
+    forward: isForwardedPhaseCall(parameters, helper.invocation),
+    helper: isFileLocalEffectHelper(source, helper.invocation),
+    recovery: hasGatewayRecoveryImport(source),
+    resolution: resolution !== undefined && hasCommitResolutionPrepare(owner, source, helperParameters, resolution),
+  });
+};
+
+/** The Read's own file-local `Effect.fn` services factory (the third `defineRead` argument). */
+const fileLocalReadServicesFactory = (owner: ReadPhaseOwner, source: string) => {
+  const factory = callArgument(source, /\bdefineRead\(/u, 2);
+  const target =
+    factory !== undefined && /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(factory)
+      ? originalReadCallable(owner, source, factory)
+      : undefined;
+  return target?.source === source && isEffectFnCallbackStaged(target.initializer) ? target : undefined;
+};
+
+/** An owner-local imported callable, proven original through the owner's own module. */
+const isOwnerImportedCallable = (owner: ReadPhaseOwner, source: string, binding: string | undefined): boolean =>
+  binding !== undefined &&
+  namedSourceImport(source, binding) !== undefined &&
+  originalReadCallable(owner, source, binding) !== undefined;
+
+/** `(transaction: Parameters<ReadServiceFactory<Services>>[0], scope: OperationalScope)`: the factory's own inputs. */
+const recoveryAwareFactoryInputs = (source: string, initializer: string, services: string) => {
+  const parameters = readCallableParameters(initializer) ?? [];
+  const [transaction, scope] = readCallableParameterNames(initializer) ?? [];
+  const valid =
+    parameters.length === 2 &&
+    allDefinedStaged(transaction, scope) &&
+    parameters[0] === `${transaction}: Parameters<ReadServiceFactory<${services}>>[0]` &&
+    parameters[1] === `${scope}: OperationalScope` &&
+    hasOriginalScopedFactoryType(source, 'ReadServiceFactory') &&
+    hasOriginalScopedFactoryType(source, 'OperationalScope');
+  return valid ? { scope, transaction } : undefined;
+};
+
+/** The names the recovery-aware services factory body binds. */
+const recoveryAwareFactoryNames = (code: string) => {
+  const verified = /^\s*const\s+(?<verified>[A-Za-z_$][A-Za-z0-9_$]*)\s*=/u.exec(code)?.groups?.verified;
+  const branch =
+    /\bconst\s+(?<recovered>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?<registered>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(
+      code.slice(code.indexOf('{')),
+    )?.groups;
+  const persistenceFactory = /\byield\*\s*(?<factory>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(code)?.groups?.factory;
+  return { persistenceFactory, recovered: branch?.recovered, registered: branch?.registered, verified };
+};
+
+/**
+ * The Read's services factory for the recovery-aware load: a verified gateway recovery binds the registered owner
+ * recovery services as both members; otherwise only the owner persistence for the factory's own transaction and
+ * scope. Returns that persistence factory binding.
+ */
+const recoveryAwareCommitStateServicesFactory = (
+  owner: ReadPhaseOwner,
+  source: string,
+  services: string,
+  persistence: string,
+  recovery: string,
+): string | undefined => {
+  const target = fileLocalReadServicesFactory(owner, source);
+  const inputs = target === undefined ? undefined : recoveryAwareFactoryInputs(source, target.initializer, services);
+  const body = target === undefined ? undefined : nativePhaseGeneratorBody(target.initializer);
+  if (inputs === undefined || body === undefined) {
+    return undefined;
+  }
+  const code = maskComments(body);
+  const { persistenceFactory, recovered, registered, verified } = recoveryAwareFactoryNames(code);
+  const { scope, transaction } = inputs;
+  const valid =
+    allDefinedStaged(verified, recovered) &&
+    isOwnerImportedCallable(owner, source, registered) &&
+    isOwnerImportedCallable(owner, source, persistenceFactory) &&
+    hasExactSourceTokens(
+      tokenizeGovernedClient(code),
+      `const ${verified} = readVerifiedGatewayRecovery(${scope});
+      if (${verified} !== undefined) {
+        const ${recovered} = ${registered}(${transaction}, ${verified});
+        return { ${persistence}: ${recovered}, ${recovery}: ${recovered} } satisfies ${services};
+      }
+      return { ${persistence}: yield* ${persistenceFactory}(${transaction}, ${scope}) } satisfies ${services};`,
+    );
+  return valid ? persistenceFactory : undefined;
+};
+
+/** The services type of `ReadLoadContext<Services, State | undefined>` over the file's one commit-state type. */
+const commitStateLoadServicesType = (source: string, parameter: string): string | undefined => {
+  const state = commitStateTypeName(source);
+  return state === undefined
+    ? undefined
+    : new RegExp(
+        `^ReadLoadContext<\\s*(?<services>[A-Za-z_$][A-Za-z0-9_$]*)\\s*,\\s*${escapeRegExp(state)}\\s*\\|\\s*undefined\\s*>$`,
+        'u',
+      ).exec(readParameterAnnotation(parameter) ?? '')?.groups?.services;
+};
+
+/** The names the recovery-aware load body binds. */
+const commitStateLoadNames = (code: string) => {
+  const destructured =
+    /^\s*const\s*\{\s*(?<persistence>[A-Za-z_$][A-Za-z0-9_$]*)\s*,\s*(?<recovery>[A-Za-z_$][A-Za-z0-9_$]*)\s*\}\s*=/u.exec(
+      code,
+    )?.groups;
+  const read =
+    /\bconst\s+(?<result>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*yield\*\s*(?<reader>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(
+      code,
+    )?.groups;
+  return {
+    found: /'(?<found>[A-Z][A-Z0-9_]*_FOUND)'/u.exec(code)?.groups?.found,
+    persistence: destructured?.persistence,
+    reader: read?.reader,
+    recovery: destructured?.recovery,
+    resolution: /\bconst\s+(?<resolution>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*[A-Za-z_$][A-Za-z0-9_$]*\s*===/u.exec(code)
+      ?.groups?.resolution,
+    resolver: /\byield\*\s*(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(code)?.groups?.binding,
+    result: read?.result,
+  };
+};
+
+type CommitStateLoadNames = ReturnType<typeof commitStateLoadNames>;
+
+const hasCommitStateLoadBody = (
+  code: string,
+  phase: readonly string[],
+  names: CommitStateLoadNames,
+  readCall: string,
+): boolean => {
+  const [input, context] = phase;
+  const { found, persistence, recovery, resolution, resolver, result } = names;
+  const resultEntry = result === 'result' ? 'result' : `result: ${result}`;
+  return (
+    allDefinedStaged(input, context, persistence, recovery, resolution, resolver, result, found) &&
+    hasExactSourceTokens(
+      tokenizeGovernedClient(code),
+      `const { ${persistence}, ${recovery} } = ${context}.services;
+      const ${resolution} = ${recovery} === undefined
+        ? (${context}.prepared ?? 'UNAVAILABLE')
+        : yield* ${resolver}(${input}, { legalEntityId: ${context}.scope.legalEntityId }, ${recovery}.resolveCommit);
+      const ${result} = yield* ${readCall};
+      return { evidence: { resultCount: ${result}.outcome === '${found}' ? 1 : 0 }, ${resultEntry} };`,
+    )
+  );
+};
+
+/** The services interface declares the persistence member and the optional recovery member. */
+const hasCommitStateServicesContract = (source: string, services: string, names: CommitStateLoadNames): boolean => {
+  const contract = curriedOwnerServiceContract(source, services);
+  return (
+    contract?.kind === 'interface' &&
+    allDefinedStaged(names.persistence, names.recovery) &&
+    new RegExp(`\\breadonly\\s+${escapeRegExp(names.persistence ?? '')}\\s*:`, 'u').test(contract.text) &&
+    new RegExp(`\\breadonly\\s+${escapeRegExp(names.recovery ?? '')}\\?\\s*:`, 'u').test(contract.text)
+  );
+};
+
+/**
+ * The recovery-aware commit-state load: outside a recovery it reads only the prepared commit state; a verified
+ * recovery resolves the state through the registered recovery services under the trusted company. Either way the
+ * owner result is read through the proven prepared-state helper.
+ */
+const hasRecoveryAwareCommitStateLoad = (owner: ReadPhaseOwner, source: string, phaseSource: string): boolean => {
+  const parameters = readCallableParameters(phaseSource) ?? [];
+  const phase = phaseParameterNames(parameters) ?? [];
+  const services = commitStateLoadServicesType(source, parameters[1] ?? '');
+  const code = maskComments(nativePhaseGeneratorBody(phaseSource) ?? '');
+  const names = commitStateLoadNames(code);
+  const { persistence = '', reader, recovery = '', resolution = '', resolver } = names;
+  const readCall = `${reader ?? ''}(${phase[0] ?? ''}, ${resolution}, ${persistence})`;
+  const readInvocation = reader === undefined ? undefined : originalReadInvocation(owner, source, readCall);
+  const persistenceFactory =
+    services === undefined
+      ? undefined
+      : recoveryAwareCommitStateServicesFactory(owner, source, services, persistence, recovery);
+  return hasReadProofChecks(owner, 'commit-state load', {
+    body: hasCommitStateLoadBody(code, phase, names, readCall),
+    context: services !== undefined && hasOriginalScopedFactoryType(source, 'ReadLoadContext'),
+    contract: services !== undefined && hasCommitStateServicesContract(source, services, names),
+    factory: persistenceFactory !== undefined,
+    phase: isEffectFnCallbackStaged(phaseSource),
+    reader:
+      readInvocation !== undefined &&
+      persistenceFactory !== undefined &&
+      hasProjectedReadServiceHelper(owner, source, readInvocation.target, undefined, true, persistenceFactory),
+    resolver: resolver !== undefined && hasScopedCommitResolutionHelper(owner, source, resolver),
+  });
+};
+
+/** `{ prepare, load }`: exactly the two staged phases, prepare forwarded through a direct arrow. */
+const hasCommitStatePrepareEntry = (owner: ReadPhaseOwner, source: string, prepare: string | undefined): boolean => {
+  const parameters = prepare === undefined ? undefined : readCallableParameters(prepare);
+  const returned = prepare === undefined ? undefined : callbackReturnedExpressionStaged(prepare);
+  return (
+    prepare !== undefined &&
+    parameters !== undefined &&
+    returned !== undefined &&
+    hasDirectReadCallbackExpression(prepare, returned) &&
+    hasForwardedCommitResolutionPrepare(owner, source, parameters, returned)
+  );
+};
+
+/** A Read whose file declares Core Action commit state runs exactly the proven commit-state prepare and load. */
+const hasCommitStateReadPipelineStaged = (
+  owner: ReadPhaseOwner,
+  source: string,
+  handler: string | undefined,
+): boolean => {
+  if (!COMMIT_STATE_SCHEMA_PATTERN.test(maskComments(source))) {
+    return true;
+  }
+  const record = handler ?? '';
+  const keys = topLevelObjectEntries(record)?.map((entry) => objectEntryKey(entry)) ?? [];
+  const load = objectPropertyValue(record, 'load');
+  return hasReadProofChecks(owner, 'commit-state read', {
+    keys: keys.length === 2 && keys.includes('prepare') && keys.includes('load'),
+    load: load !== undefined && hasRecoveryAwareCommitStateLoad(owner, source, load),
+    prepare: hasCommitStatePrepareEntry(owner, source, objectPropertyValue(record, 'prepare')),
+  });
+};
+
+/** The single handler's owner helper declares a trusted-company projection as its second parameter. */
+const hasTrustedCompanyHelper = (owner: ReadPhaseOwner, source: string, returned: string | undefined): boolean => {
+  const invocation = returned === undefined ? undefined : originalReadInvocation(owner, source, returned);
+  const helperParameters = invocation === undefined ? undefined : readCallableParameters(invocation.target.initializer);
+  return projectedReadScopeFields(helperParameters?.[1] ?? '')?.includes('legalEntityId') === true;
+};
+
+/**
+ * Core runs a single handler as exactly a load-only pipeline, so a single handler that forwards the trusted company
+ * projection to an owner helper is proven by the same projected owner-read proof (including its company guard).
+ */
+const hasProjectedSingleHandlerStaged = (
+  owner: ReadPhaseOwner,
+  source: string,
+  handler: string | undefined,
+): boolean => {
+  const initializer =
+    handler !== undefined && /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(handler)
+      ? constInitializerStaged(source, handler)
+      : handler;
+  if (initializer === undefined || !hasBalancedArrowCallbackStaged(initializer)) {
+    return true;
+  }
+  const parameters = readCallableParameters(initializer) ?? [];
+  const returned = callbackReturnedExpressionStaged(initializer);
+  // Triggered by the helper's declared trusted-company projection, not by the (mutable) call arguments.
+  if (returned === undefined || !hasTrustedCompanyHelper(owner, source, returned)) {
+    return true;
+  }
+  return hasReadProofChecks(owner, 'projected handler', {
+    context:
+      /^ReadHandlerContext<[\s\S]+>$/u.test(readParameterAnnotation(parameters[1] ?? '') ?? '') &&
+      hasOriginalScopedFactoryType(source, 'ReadHandlerContext'),
+    direct: hasDirectReadCallbackExpression(initializer, returned),
+    owner: hasProjectedOwnerReadPhase(owner, source, parameters, returned),
+  });
+};
+
+/** The Read's own file-local two-parameter arrow services factory (the third `defineRead` argument). */
+const fileLocalArrowReadFactory = (owner: ReadPhaseOwner, source: string) => {
+  const factory = callArgument(source, /\bdefineRead\(/u, 2);
+  const target =
+    factory !== undefined && /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(factory)
+      ? originalReadCallable(owner, source, factory)
+      : undefined;
+  return target?.source === source &&
+    hasBalancedArrowCallbackStaged(target.initializer) &&
+    readCallableParameterNames(target.initializer)?.length === 2
+    ? target
+    : undefined;
+};
+
+/** `(transaction, scope) => Effect.succeed({ member: (...args) => binding(transaction, scope, ...args) })`. */
+const hasSettledSkipFactoryEntry = (
+  owner: ReadPhaseOwner,
+  source: string,
+  member: string,
+  binding: string,
+): number | undefined => {
+  const target = fileLocalArrowReadFactory(owner, source);
+  const [transaction, scope] = readCallableParameterNames(target?.initializer ?? '') ?? [];
+  const returned = target === undefined ? undefined : callbackReturnedExpressionStaged(target.initializer);
+  const record = returned === undefined ? undefined : nativeReadSucceedExpression(returned);
+  const entry = record === undefined ? undefined : objectPropertyValue(record, member);
+  const entryNames = entry === undefined ? undefined : readCallableParameterNames(entry);
+  const valid =
+    target !== undefined &&
+    returned !== undefined &&
+    record !== undefined &&
+    entry !== undefined &&
+    entryNames !== undefined &&
+    allDefinedStaged(transaction, scope) &&
+    hasDirectReadCallbackExpression(target.initializer, returned) &&
+    hasClosedUniqueObjectKeys(record) &&
+    topLevelObjectEntries(record)?.length === 1 &&
+    hasDirectReadCallbackExpression(entry, `${binding}(${[transaction, scope, ...entryNames].join(', ')})`);
+  return valid ? entryNames.length : undefined;
+};
+
+/** The file-local member helper: `(transaction: ScopedTransactionExecutor, scope: OperationalScope, ..., prepared)`. */
+const settledSkipHelperSignature = (source: string, initializer: string, preparedType: string | undefined) => {
+  const parameters = readCallableParameters(initializer) ?? [];
+  const names = readCallableParameterNames(initializer) ?? [];
+  const valid =
+    preparedType !== undefined &&
+    names.length >= 3 &&
+    parameters[0] === `${names[0]}: ScopedTransactionExecutor` &&
+    parameters[1] === `${names[1]}: OperationalScope` &&
+    readParameterAnnotation(parameters.at(-1) ?? '') === preparedType &&
+    hasOriginalScopedFactoryType(source, 'ScopedTransactionExecutor') &&
+    hasOriginalScopedFactoryType(source, 'OperationalScope');
+  return valid ? names : undefined;
+};
+
+/** `if (prepared.kind === 'RESULT') { return Option.none<T>(); } return Option.some(yield* observe(tx, scope, ...));` */
+const settledSkipObservation = (code: string, names: readonly string[]): string | undefined => {
+  const observation = /\bOption\.some\(\s*yield\*\s*(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\(/u.exec(code)?.groups
+    ?.binding;
+  const settled = /\bOption\.none<(?<type>[A-Za-z_$][A-Za-z0-9_$]*)>\(\s*\)/u.exec(code)?.groups?.type;
+  const valid =
+    allDefinedStaged(observation, settled) &&
+    hasExactSourceTokens(
+      tokenizeGovernedClient(code),
+      `if (${names.at(-1)}.kind === 'RESULT') { return Option.none<${settled}>(); }
+      return Option.some(yield* ${observation}(${names.slice(0, -1).join(', ')}));`,
+    );
+  return valid ? observation : undefined;
+};
+
+/**
+ * A file-local transaction member binds the factory's own transaction and scope, and skips the owner-imported
+ * observation only for the settled `RESULT` prepared state (the Position-set shape).
+ */
+const hasSettledSkipServiceMember = (
+  owner: ReadPhaseOwner,
+  source: string,
+  loadParameters: readonly string[],
+  member: string,
+  binding: string,
+): boolean => {
+  const entryArity = hasSettledSkipFactoryEntry(owner, source, member, binding);
+  const helper = originalReadCallable(owner, source, binding);
+  const preparedType =
+    /^ReadLoadContext<\s*[A-Za-z_$][A-Za-z0-9_$]*\s*,\s*(?<prepared>[A-Za-z_$][A-Za-z0-9_$]*)\s*>$/u.exec(
+      readParameterAnnotation(loadParameters[1] ?? '') ?? '',
+    )?.groups?.prepared;
+  const names =
+    helper?.source === source && isEffectFnCallbackStaged(helper.initializer)
+      ? settledSkipHelperSignature(source, helper.initializer, preparedType)
+      : undefined;
+  const code = maskComments(nativePhaseGeneratorBody(helper?.initializer ?? '') ?? '');
+  const observation = names === undefined ? undefined : settledSkipObservation(code, names);
+  const observed = observation === undefined ? undefined : originalReadCallable(owner, source, observation);
+  return hasReadProofChecks(owner, `settled-skip member ${member}`, {
+    body: observation !== undefined,
+    entry: entryArity !== undefined && names?.length === entryArity + 2,
+    helper: names !== undefined,
+    observation:
+      observed !== undefined &&
+      isOwnerImportedCallable(owner, source, observation) &&
+      isExecutableCallback(observed.initializer),
+    option:
+      hasRuntimeNamedSourceImport(source, 'Option', 'Option', 'effect') &&
+      hasStableReadFactoryBindingsStaged(source, new Map([['Option', 0]]), ''),
+  });
+};
+
+/** The `context.services.<member>(...)` the load returns, when it hands the prepared state to that member. */
+const preparedServiceMemberCall = (load: string, context: string) => {
+  const returned = callbackReturnedExpressionStaged(load);
+  const base = returned === undefined ? '' : (outputPipeExpression(returned)?.base ?? returned);
+  const call = new RegExp(`^${escapeRegExp(context)}\\.services\\.(?<member>[A-Za-z_$][A-Za-z0-9_$]*)\\(`, 'u');
+  const member = call.exec(base)?.groups?.member;
+  const args = member === undefined ? undefined : wholeCallArguments(base, call, true);
+  return args?.includes(`${context}.prepared`) === true ? member : undefined;
+};
+
+/** A load that hands the prepared state to a file-local transaction member is proven through that member's shape. */
+const hasPreparedServiceMemberLoadStaged = (
+  owner: ReadPhaseOwner,
+  source: string,
+  handler: string | undefined,
+): boolean => {
+  const load = objectPropertyValue(handler ?? '', 'load');
+  const parameters = load === undefined ? [] : (readCallableParameters(load) ?? []);
+  const context = phaseParameterNames(parameters)?.[1];
+  const member = load === undefined || context === undefined ? undefined : preparedServiceMemberCall(load, context);
+  if (member === undefined) {
+    return true;
+  }
+  const servicesType = /^ReadLoadContext<\s*(?<services>[A-Za-z_$][A-Za-z0-9_$]*)\s*,/u.exec(
+    readParameterAnnotation(parameters[1] ?? '') ?? '',
+  )?.groups?.services;
+  const contract = servicesType === undefined ? undefined : curriedOwnerServiceContract(source, servicesType);
+  const binding = readonlyReadResultBinding(contract?.text, member);
+  return (
+    binding === undefined ||
+    namedSourceImport(source, binding) !== undefined ||
+    hasSettledSkipServiceMember(owner, source, parameters, member, binding)
   );
 };
 
@@ -22744,6 +23275,47 @@ export const hasCompleteGeneratedModuleRead = (
   );
 };
 
+const EMPTY_SERVICES_FACTORY = '() => Effect.succeed({})';
+
+/**
+ * Demo-only exception 3: a staged Read without a service factory (`() => Effect.succeed({})`) binds its owner
+ * requirements record directly in its phases instead of passing it as a factory option. The record must be the
+ * owner's own immutable literal export from an owner-local module, imported under its own name and never re-bound.
+ */
+export const hasOwnerLocalReadRequirementsStaged = (
+  sources: ReadonlyMap<string, string>,
+  readFile: string,
+  ownerPath: string,
+  binding: string,
+): boolean => {
+  const source = sources.get(readFile);
+  if (
+    source === undefined ||
+    !/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(binding) ||
+    path.posix.normalize(ownerPath) !== ownerPath ||
+    path.posix.normalize(readFile) !== readFile ||
+    !readFile.startsWith(`${ownerPath}/`)
+  ) {
+    return false;
+  }
+  const imported = namedSourceImport(source, binding);
+  const file =
+    imported !== undefined && /^\.\.?\//u.test(imported.modulePath) && imported.modulePath.endsWith('.ts')
+      ? path.posix.normalize(path.posix.join(path.posix.dirname(readFile), imported.modulePath))
+      : undefined;
+  const owner = file?.startsWith(`${ownerPath}/`) === true ? sources.get(file) : undefined;
+  return (
+    imported?.imported === binding &&
+    owner !== undefined &&
+    hasImmutableReadFactoryDataExport(owner, binding) &&
+    hasStableReadFactoryBindings(source, new Map([[binding, 0]]), '') &&
+    hasExactSourceTokens(
+      tokenizeGovernedClient(callArgument(source, /\bdefineRead\(/u, 2) ?? ''),
+      EMPTY_SERVICES_FACTORY,
+    )
+  );
+};
+
 // ---------------------------------------------------------------------------------------------------------------
 // Demo-only exceptions 1 and 3 (continued): owner read-handler and conditional Action mount proofs the staged-read provenance tests use.
 // ---------------------------------------------------------------------------------------------------------------
@@ -24024,10 +24596,14 @@ const hasReadCallbacksStaged = (
         phaseOwner,
         hasExactSourceTokens(
           tokenizeGovernedClient(callArgument(readExpression, /^defineRead\(/u, 2) ?? ''),
-          '() => Effect.succeed({})',
+          EMPTY_SERVICES_FACTORY,
         ),
       ) ||
       isOwnerLocalImportedFactoryResult(handler)) &&
+    // Exception 3: the reshaped staged reads keep their fences (commit state, company guard, settled skip).
+    hasCommitStateReadPipelineStaged(phaseOwner, source, handler) &&
+    hasProjectedSingleHandlerStaged(phaseOwner, source, handler) &&
+    hasPreparedServiceMemberLoadStaged(phaseOwner, source, handler) &&
     callbacks.every((index) => {
       const callback = callArgument(readExpression, /^defineRead\(/u, index);
       // A v2 read resolves its record through `accessTarget` and the gate, so its target resolvers are
@@ -24286,17 +24862,37 @@ const generatedSlotRangeStaged = (
   };
 };
 
-const exportedRuntimeFactoryStaged = (source: string): SourceRange | undefined => {
+/**
+ * Main's typed factory form: `export const makeXApiRuntime: (...args: XArguments) => XRuntime = (...args) => …`.
+ * Only that exact rest-tuple function type is accepted as the declaration type.
+ */
+const TYPED_RUNTIME_FACTORY_DECLARATION_STAGED = String.raw`\s*:\s*(?<type>\(\s*\.\.\.[A-Za-z][A-Za-z0-9]*:\s*[A-Za-z][A-Za-z0-9]*\s*\)\s*=>\s*[A-Za-z][A-Za-z0-9]*)\s*=\s*`;
+
+/** Exactly one declaration form, untyped or main's typed rest-tuple form, may bind the executed factory. */
+const runtimeFactoryDeclarationStaged = (source: string, factory: string): RuntimeFactoryRange | undefined => {
+  const untypedDeclaration = new RegExp(`export const ${escapeRegExp(factory)}\\s*=\\s*`, 'u');
+  const typedDeclaration = new RegExp(
+    `export const ${escapeRegExp(factory)}${TYPED_RUNTIME_FACTORY_DECLARATION_STAGED}`,
+    'u',
+  );
+  const untyped = assignedExpressionRangeStaged(source, untypedDeclaration);
+  const typed = assignedExpressionRangeStaged(source, typedDeclaration);
+  const declarationType =
+    typed === undefined ? undefined : typedDeclaration.exec(sourceDepthAnalysisStaged(source).code)?.groups?.type;
+  const range = typed ?? untyped;
+  return range === undefined || (typed !== undefined && (untyped !== undefined || declarationType === undefined))
+    ? undefined
+    : { ...range, declarationType };
+};
+
+const exportedRuntimeFactoryStaged = (source: string): RuntimeFactoryRange | undefined => {
   const exported = defaultExportExpression(source);
   if (exported === undefined || !/^[A-Za-z][A-Za-z0-9]*$/u.test(exported)) {
     return undefined;
   }
   const runtimeInitializer = constInitializerStaged(source, exported);
   const factory = /^(?<factory>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(/u.exec(runtimeInitializer ?? '')?.groups?.factory;
-  const factoryExpression =
-    factory === undefined
-      ? undefined
-      : assignedExpressionRangeStaged(source, new RegExp(`export const ${escapeRegExp(factory)}\\s*=\\s*`, 'u'));
+  const factoryExpression = factory === undefined ? undefined : runtimeFactoryDeclarationStaged(source, factory);
   if (factoryExpression === undefined || runtimeInitializer === undefined || factory === undefined) {
     return undefined;
   }
@@ -24385,8 +24981,11 @@ const hasInjectedGovernedReadRuntimeStaged = (source: string): boolean => {
   ) {
     return false;
   }
-  const signature = new RegExp(`\\.\\.\\.${escapeRegExp(args)}:\\s*(?<type>[A-Za-z][A-Za-z0-9]*)`, 'u').exec(code);
-  const type = signature?.groups?.type;
+  // A typed declaration carries the rest tuple type; its inferred `(...args) =>` parameters must bind the same rest.
+  const type =
+    factory.declarationType === undefined
+      ? new RegExp(`\\.\\.\\.${escapeRegExp(args)}:\\s*(?<type>[A-Za-z][A-Za-z0-9]*)`, 'u').exec(code)?.groups?.type
+      : runtimeRestTupleType(factory, args);
   return (
     type !== undefined &&
     new RegExp(
@@ -24736,7 +25335,10 @@ const hasGovernedHandlerRootStaged = (source: string, backendRegistration?: stri
     return false;
   }
   const factoryCode = factory === undefined ? '' : maskNonCode(factory.value);
-  const typedRest = /^\(\s*\.\.\.[A-Za-z][A-Za-z0-9]*:\s*[A-Za-z][A-Za-z0-9]*\s*\)/u.test(factoryCode);
+  // Main's typed declaration (`export const f: (...args: T) => R = (...args) => …`) is a typed rest factory too.
+  const typedRest =
+    factory?.declarationType !== undefined ||
+    /^\(\s*\.\.\.[A-Za-z][A-Za-z0-9]*:\s*[A-Za-z][A-Za-z0-9]*\s*\)/u.test(factoryCode);
   const localMergeBinding = /\b(?:const|let|var)\s+governedReadRuntimeLive\s*=/u.test(factoryCode);
   if (factory !== undefined && (typedRest || localMergeBinding)) {
     const tuples = [...factoryCode.matchAll(/\b(?:const|let|var)\s*\[/gu)];

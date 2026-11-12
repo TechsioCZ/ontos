@@ -84,6 +84,33 @@ for (const [name, original, replacement] of [
     'context.prepared).pipe(Effect.unknownProperty(mapPositionSetReadFailure))',
   ],
   ['unbound observation', '../persistence/current-relevant-stock-position-set-repository.ts', '../foreign-owner.ts'],
+  [
+    'caller scope in positionSetServices',
+    'observeUnsettledPositionSet(transaction, scope, requested, prepared)',
+    'observeUnsettledPositionSet(transaction, input.scope, requested, prepared)',
+  ],
+  [
+    'a foreign scope in the service factory',
+    'positionSetServices: ReadServiceFactory<PositionSetServices> = (transaction, scope) =>',
+    'positionSetServices: ReadServiceFactory<PositionSetServices> = (transaction, scope) => foreign ??',
+  ],
+  ['an extra service member', 'Effect.succeed({\n    observe:', 'Effect.succeed({\n    leak: foreign,\n    observe:'],
+  ['a changed settled-result branch', "if (prepared.kind === 'RESULT')", "if (prepared.kind !== 'RESULT')"],
+  [
+    'an observation instead of the settled result',
+    'return Option.none<RelevantStockPositionSetObservation>();',
+    'return Option.some(foreign);',
+  ],
+  [
+    'a substituted scope in the owner observation',
+    'observeRelevantStockPositionSet(transaction, scope, requested)',
+    'observeRelevantStockPositionSet(transaction, requested, requested)',
+  ],
+  [
+    'a foreign observation',
+    'Option.some(yield* observeRelevantStockPositionSet(',
+    'Option.some(yield* foreignObserve(',
+  ],
 ] as const) {
   it(`rejects a conditional Position-set load with ${name}`, () => {
     const source = sources.get(readFile(positionSetRead)) ?? '';

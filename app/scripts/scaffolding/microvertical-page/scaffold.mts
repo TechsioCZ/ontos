@@ -429,7 +429,7 @@ const pageWiring = (
     manifestImport: `import { ${componentName} } from './src/routes/[lang]/${route.relativePath}/page.tsx';`,
     manifestNavigation: route.isDynamic
       ? undefined
-      : `navigationContribution({ contributionKey: '${vertical.moduleId}.navigation.${page}', entrypoint: ${entrypoint}, groupKey: 'shell.navigation.modules', order: 100, pageKey: '${contributionKey}' }),`,
+      : `navigationContribution({ contributionKey: '${vertical.moduleId}.navigation.${page}', entrypoint: ${entrypoint}, groupKey: 'shell.navigation.modules', icon: 'icon-[mdi--file-document-outline]', label: { cs: 'Nová stránka', en: 'New Page' }, order: 100, pageKey: '${contributionKey}' }),`,
     manifestPage: `pageContribution({ ${accessDeclaration}componentKey: '${componentKey}', contributionKey: '${contributionKey}', entrypoint: ${entrypoint}, expose: './Page${toPascalCase(page)}', routePath: '${route.canonicalPath}' }),`,
     registrationPage: `'page-${page}': () => import('./src/routes/[lang]/${route.relativePath}/page.tsx'),`,
   } as const;

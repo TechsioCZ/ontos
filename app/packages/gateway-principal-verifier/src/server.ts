@@ -425,13 +425,17 @@ const organizationGovernanceSourceIsApproved = (
 const makeAuthenticatedTokenVerifier = Effect.fn('GatewayPrincipalVerifier.makeAuthenticatedTokenVerifier')(
   function* makeAuthenticatedTokenVerifierEffect() {
     const verifier = yield* GatewayPrincipalVerifierConfiguration;
-    const compositionService = yield* ActiveApplicationCompositionService;
-    return Effect.fn('GatewayPrincipalVerifier.verifyAuthenticatedToken')(function* verifyAuthenticatedTokenEffect(
+    return Effect.fn('GatewayPrincipalVerifier.verifyAuthenticatedToken')(function* verifyAuthenticatedTokenEffect<R>(
       expectedAudience: string,
       expectedDeployment: ReceivingGatewayDeployment,
       token: string,
       options: GatewayPrincipalVerificationOptions,
-    ): Effect.fn.Return<VerifiedGatewayPrincipal, ActionPrincipalError> {
+      loadComposition: Effect.Effect<
+        Effect.Success<ActiveApplicationCompositionService['Service']['load']>,
+        Effect.Error<ActiveApplicationCompositionService['Service']['load']>,
+        R
+      >,
+    ): Effect.fn.Return<VerifiedGatewayPrincipal, ActionPrincipalError, R> {
       const audience = yield* Schema.decodeEffect(GatewayAudienceSchema)(expectedAudience).pipe(
         // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Schema diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
         Effect.mapError(() => configurationError()),
@@ -479,7 +483,8 @@ const makeAuthenticatedTokenVerifier = Effect.fn('GatewayPrincipalVerifier.makeA
       if (claims.iat > now + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS) {
         return yield* Effect.fail(invalidError());
       }
-      const snapshot = yield* compositionService.load.pipe(
+      // The composition is read only after the signature, audience and issuer checks pass, as on main.
+      const snapshot = yield* loadComposition.pipe(
         Effect.flatMap(validateActiveApplicationCompositionSnapshot),
         Effect.catchTags({ ActiveApplicationCompositionUnavailableError: mapRedemptionUnavailable }),
       );
@@ -629,7 +634,13 @@ const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthe
     options: GatewayPrincipalVerificationOptions,
   ) {
     const verifyToken = yield* makeAuthenticatedTokenVerifier();
-    return yield* verifyToken(expectedAudience, expectedDeployment, token, options);
+    return yield* verifyToken(
+      expectedAudience,
+      expectedDeployment,
+      token,
+      options,
+      ActiveApplicationCompositionService.pipe(Effect.flatMap((composition) => composition.load)),
+    );
   },
 );
 
@@ -791,7 +802,7 @@ export const makeReferenceGatewayCredentialSource = Effect.fn('GatewayPrincipalV
           return yield* Effect.fail(invalidError());
         }
         const token = yield* readBearer(credential.authorization);
-        const { principal } = yield* verifyToken(audience, module.deployment, token, {});
+        const { principal } = yield* verifyToken(audience, module.deployment, token, {}, composition.load);
         if (
           principal.tenantId !== scope.tenantId ||
           principal.principalId !== scope.principalId ||

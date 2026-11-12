@@ -218,6 +218,8 @@ import {
   ContextAccessLive as GovernedContextAccessLive,
   CorePersistenceLive as GovernedCorePersistenceLive,
   DatabaseConfigLive as GovernedDatabaseConfigLive,
+  defineDatabaseIdentityEnrollment as governedDefineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive as GovernedMakeDatabaseIdentityEnrollmentLive,
   makeReadRuntimeLive as GovernedMakeReadRuntimeLive,
   TenantModuleStateServiceLive as GovernedTenantModuleStateServiceLive,
 } from '@app/core-runtime';
@@ -240,6 +242,10 @@ ${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END}
 ${GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START}
 ${GOVERNED_HTTP_HANDLER_IMPORT_SLOT_END}
 
+// Core's database-backed access stores read the owner's database identity enrolment, as in the real owner roots.
+const governedDatabaseIdentitiesLive = GovernedMakeDatabaseIdentityEnrollmentLive(
+  governedDefineDatabaseIdentityEnrollment([]),
+);
 const governedTenantModuleStateServiceLive = GovernedTenantModuleStateServiceLive.pipe(
   GovernedReadLayer.provide(GovernedCorePersistenceLive),
 );
@@ -261,6 +267,7 @@ const governedAccessEnforcementLive = GovernedAccessDecisionLive.pipe(
   GovernedReadLayer.provide(GovernedTenantIntentLoaderLive),
   GovernedReadLayer.provide(GovernedCorePersistenceLive),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),
+  GovernedReadLayer.provide(governedDatabaseIdentitiesLive),
   GovernedReadLayer.provide(NodeCrypto.layer),
 );
 const governedApplicationCompositionSourceLive = GovernedApplicationCompositionSourceLive.pipe(
@@ -279,6 +286,7 @@ const governedActiveApplicationCompositionLive = GovernedApplicationCompositionC
 const governedReadRuntimeLive = GovernedMakeReadRuntimeLive(governedActionDeliveryUnit, governedOwnerRegistration).pipe(
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
   GovernedReadLayer.provide(governedActiveApplicationCompositionLive),
+  GovernedReadLayer.provide(governedDatabaseIdentitiesLive),
 );
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(

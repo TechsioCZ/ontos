@@ -3124,6 +3124,147 @@ const hasSelectedContractConstructor = (
   );
 };
 
+// Demo addition (rejection only): a published contract routine must not capture owner state that
+// any code can mutate. Compare native value identities, not identifier spellings: a local counter or
+// collection can mutate without sharing the owner's module-level binding.
+const mutableContractCaptureCache = new WeakMap<SourceModule, ReadonlySet<SchemaNode>>();
+
+const mutableContractCaptureEvidence = (state: BoundaryCheckState, module: SourceModule): ReadonlySet<SchemaNode> => {
+  const cached = mutableContractCaptureCache.get(module);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const evidence = new Set<SchemaNode>();
+  for (const statement of module.file.program.body) {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    if (declaration?.type !== 'VariableDeclaration') {
+      continue;
+    }
+    for (const local of declaration.declarations) {
+      if (declaration.kind === 'const' && local.init !== null && local.init !== undefined && isFunction(local.init)) {
+        continue;
+      }
+      for (const identifier of Object.values(getBindingIdentifiers(local.id))) {
+        if (declaration.kind === 'const' && state.graph.resolveReference(module, identifier) !== undefined) {
+          continue;
+        }
+        for (const value of state.graph.evaluate(module, identifier)) {
+          if (value.kind === 'node' || value.kind === 'unresolved') {
+            evidence.add(value.node);
+          }
+        }
+      }
+    }
+  }
+  mutableContractCaptureCache.set(module, evidence);
+  return evidence;
+};
+
+const contractRoutineNonreferences = (routine: SchemaNode): ReadonlySet<SchemaNode> => {
+  const excluded = new Set<SchemaNode>();
+  traverseFast(routine, (node) => {
+    if (isFunction(node) || node.type === 'VariableDeclarator' || node.type === 'CatchClause') {
+      for (const identifier of Object.values(getBindingIdentifiers(node))) {
+        excluded.add(identifier);
+      }
+    }
+    if ((node.type === 'MemberExpression' || node.type === 'ObjectProperty') && !node.computed) {
+      excluded.add(node.type === 'MemberExpression' ? node.property : node.key);
+    }
+    if ('typeAnnotation' in node && node.typeAnnotation !== null && node.typeAnnotation !== undefined) {
+      traverseFast(node.typeAnnotation, (child) => {
+        excluded.add(child);
+      });
+    }
+  });
+  return excluded;
+};
+
+const contractMutationRoot = (mutation: SchemaNode): SchemaNode => {
+  let target: SchemaNode = mutation;
+  if (mutation.type === 'AssignmentExpression') {
+    target = mutation.left;
+  } else if (mutation.type === 'UpdateExpression') {
+    target = mutation.argument;
+  }
+  while (target.type === 'MemberExpression') {
+    target = target.object;
+  }
+  return target;
+};
+
+const isOwnConstantScalarCapture = (module: SourceModule, reference: SchemaNode, value: GraphValue): boolean => {
+  if (
+    reference.type !== 'Identifier' ||
+    (value.kind !== 'node' && value.kind !== 'unresolved') ||
+    value.module !== module ||
+    !['StringLiteral', 'NumericLiteral', 'BooleanLiteral', 'NullLiteral', 'BigIntLiteral'].includes(value.node.type)
+  ) {
+    return false;
+  }
+  const declared = module.file.program.body.some((statement) => {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    return (
+      declaration?.type === 'VariableDeclaration' &&
+      declaration.kind === 'const' &&
+      declaration.declarations.some(
+        (local) => local.id.type === 'Identifier' && local.id.name === reference.name && local.init === value.node,
+      )
+    );
+  });
+  return (
+    declared &&
+    module.mutations.every((mutation) => {
+      const target = contractMutationRoot(mutation);
+      return target.type !== 'Identifier' || target.name !== reference.name;
+    })
+  );
+};
+
+const hasImmutableContractRoutineCaptures = (
+  state: BoundaryCheckState,
+  module: SourceModule,
+  expression: SchemaNode,
+): boolean => {
+  const pending = [{ expression, module }];
+  const visited = new Set<SchemaNode>();
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    if (visited.has(next.expression)) {
+      continue;
+    }
+    if (visited.size >= 128) {
+      return false;
+    }
+    visited.add(next.expression);
+    const current = next;
+    const excluded = contractRoutineNonreferences(current.expression);
+    let immutable = true;
+    traverseFast(current.expression, (node) => {
+      if (node.type !== 'Identifier' || excluded.has(node)) {
+        return;
+      }
+      for (const value of state.graph.evaluate(current.module, node)) {
+        if (value.kind !== 'node' && value.kind !== 'unresolved') {
+          continue;
+        }
+        if (
+          mutableContractCaptureEvidence(state, value.module).has(value.node) &&
+          !isOwnConstantScalarCapture(current.module, node, value)
+        ) {
+          immutable = false;
+        }
+        if (value.kind === 'node' && isFunction(value.node)) {
+          pending.push({ expression: value.node, module: value.module });
+        }
+      }
+    });
+    if (!immutable) {
+      return false;
+    }
+  }
+  return true;
+};
+
 // Publication and closure origins establish a contract routine boundary, not
 // arbitrary body purity. Runtime authority remains a distinct dependency role.
 const hasPublishedContractRoutine = (
@@ -3163,6 +3304,7 @@ const hasPublishedContractRoutine = (
   });
   return (
     valid &&
+    hasImmutableContractRoutineCaptures(state, binding.module, binding.expression) &&
     !state.graph
       .reachable(binding.module, binding.expression)
       .some((value) =>

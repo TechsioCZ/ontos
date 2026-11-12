@@ -174,7 +174,9 @@ type PartyRegistryApiRuntimeArguments = readonly [
 type PartyRegistryApiRuntime = EffectBffDefinition<typeof partyRegistryApi, EffectRuntimeLayer> &
   EffectBffRuntime<typeof partyRegistryApi, EffectRuntimeLayer>;
 
-export const makePartyRegistryApiRuntime = (...args: PartyRegistryApiRuntimeArguments): PartyRegistryApiRuntime => {
+export const makePartyRegistryApiRuntime: (...args: PartyRegistryApiRuntimeArguments) => PartyRegistryApiRuntime = (
+  ...args
+) => {
   const [
     governedReadRuntimeLive,
     aresSubjectService,

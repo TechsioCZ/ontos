@@ -20,7 +20,7 @@ import {
   hasGeneratedActionHttpRunnerBinding,
   hasGeneratedActionClientPublication,
   hasOwnerLocalReadServiceFactory,
-  hasOwnerLocalReadServiceFactoryResult,
+  hasOwnerLocalReadRequirementsStaged,
   hasNativeHttpActionMount,
   ownerActionClientPublication,
   hasPublishedGeneratedContractShim,
@@ -4296,16 +4296,16 @@ it.live('rejects unbound Core Read layers in generated owner HTTP roots', () =>
   Layer.provide(readRuntimeDependenciesLive),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(activeApplicationCompositionLive),
+  Layer.provide(databaseIdentitiesLive),
   // Scoped owner factories execute after receiving; their Crypto requirement must stay visible in the runtime context.
   Layer.provideMerge(nodeCryptoLayer),
 );`;
     expect(handler).toContain(ownerRuntime);
-    const direct = handler
-      .replace('  makeReadRuntimeLive,', '  ReadRuntimeLive,')
-      .replace(
-        ownerRuntime,
-        'const readRuntimeLive = ReadRuntimeLive.pipe(Layer.provide(readRuntimeDependenciesLive));',
-      );
+    const directReadImport = handler.replace('  makeReadRuntimeLive,', '  ReadRuntimeLive,');
+    const direct = directReadImport.replace(
+      ownerRuntime,
+      'const readRuntimeLive = ReadRuntimeLive.pipe(Layer.provide(readRuntimeDependenciesLive));',
+    );
     const aliased = handler
       .replace('  makeReadRuntimeLive,', '  ReadRuntimeLive as GovernedReadRuntimeLive,')
       .replace(ownerRuntime, '')
@@ -4314,7 +4314,13 @@ it.live('rejects unbound Core Read layers in generated owner HTTP roots', () =>
         'const governedReadRuntimeLive = readRuntimeLive;',
         'const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(GovernedReadLayer.provide(governedReadRuntimeDependenciesLive));',
       );
-    for (const invalid of [direct, aliased]) {
+    // Demo identity enrolment (the owner's databaseIdentitiesLive) is not a Core Read layer binding: providing it
+    // beside a direct Core Read layer never makes that layer owner-bound.
+    const directWithEnrollment = directReadImport.replace(
+      ownerRuntime,
+      'const readRuntimeLive = ReadRuntimeLive.pipe(Layer.provide(readRuntimeDependenciesLive), Layer.provide(databaseIdentitiesLive));',
+    );
+    for (const invalid of [direct, aliased, directWithEnrollment]) {
       expect(invalid).not.toBe(handler);
       expect(hasValidGovernedHttpCompositionRoot(shared, invalid)).toBe(false);
     }
@@ -4432,39 +4438,23 @@ it.live('counts the actual published Pricing read shim in exact owner inventory 
     const requirementsFile = 'verticals/pricing/src/integrations/pricing-operation-requirements.ts';
     const pricingRead = sources.get(pricingReadFile) ?? '';
     const requirements = sources.get(requirementsFile) ?? '';
-    const option = '{ requirements: currentPricingDecisionRequirements }';
+    // Exception 3: Current Pricing Decision is a staged Read without a service factory, so its phases bind the
+    // owner requirements record directly instead of passing it as main's factory option.
+    const requirementsBinding = 'currentPricingDecisionRequirements';
     const acceptsFactory = (changed: ReadonlyMap<string, string>) =>
-      hasOwnerLocalReadServiceFactoryResult(
-        changed,
-        pricingReadFile,
-        'verticals/pricing',
-        'currentPricingDecisionReadServiceFactory',
-      );
+      hasOwnerLocalReadRequirementsStaged(changed, pricingReadFile, 'verticals/pricing', requirementsBinding);
     expect(acceptsFactory(sources)).toBe(true);
     const invalidOptions: readonly (readonly [string, string])[] = [
-      [
-        pricingReadFile,
-        pricingRead.replace(option, '{ ...suppliedOptions, requirements: currentPricingDecisionRequirements }'),
-      ],
-      [pricingReadFile, pricingRead.replace(option, '{ [optionKey]: currentPricingDecisionRequirements }')],
-      [
-        pricingReadFile,
-        pricingRead.replace(option, '{ requirements: currentPricingDecisionRequirements, extra: capability }'),
-      ],
+      [pricingReadFile, `${pricingRead}\n${requirementsBinding} = suppliedRequirements;`],
+      [pricingReadFile, `${pricingRead}\nconst { ${requirementsBinding} } = supplied;`],
       [
         pricingReadFile,
         pricingRead.replace(
-          option,
-          '{ pricingOwnerFinalFenceForScope: pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope }',
+          `  ${requirementsBinding},\n  requirePricingSubjectOperation,`,
+          `  ${requirementsBinding} as requirements,\n  requirePricingSubjectOperation,`,
         ),
       ],
-      [
-        pricingReadFile,
-        pricingRead.replace(
-          'readonly requirements?: PricingWholeEvaluationRequirements',
-          'requirements: PricingWholeEvaluationRequirements',
-        ),
-      ],
+      [pricingReadFile, pricingRead.replace('  () => Effect.succeed({}),\n);', '  foreignServices,\n);')],
       [
         pricingReadFile,
         pricingRead.replace(

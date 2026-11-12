@@ -644,6 +644,25 @@ const json = (value: JsonValue): string => `${JSON.stringify(value, null, 2)}\n`
 const inventoryHandlerRootFile = 'verticals/inventory-stock/api/index.ts';
 
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
+/** Core source directories outside the explicitly linked set that the linked Core sources import. */
+const LINKED_CORE_SOURCE_DIRECTORIES = [
+  'generated-reads',
+  'http',
+  'install',
+  'live',
+  'media',
+  'observability',
+  'people',
+  'resources',
+  'search',
+] as const;
+
+const pathExists = (target: string): Effect.Effect<boolean> =>
+  Effect.promise(() => stat(target)).pipe(
+    Effect.as(true),
+    Effect.catchDefect(() => Effect.succeed(false)),
+  );
+
 const readPrivacyRootProof = Effect.fn('Fixture.privacyRootProof')(function* privacyRootProof() {
   const ownerPath = 'verticals/privacy';
   const facadeFile = `${ownerPath}/api/auth/gateway-assertion-redemption.ts`;
@@ -6423,6 +6442,30 @@ it.live(
           ),
           { concurrency: 'unbounded' },
         );
+        // The remaining Core directories the linked Core sources import. A directory the fixture already owns keeps its
+        // own files and only receives the missing Core files, so generated fixture output never reaches the workspace.
+        const coreSourceRoot = path.join(appRoot, 'packages/core-runtime/src');
+        for (const directory of LINKED_CORE_SOURCE_DIRECTORIES) {
+          const source = path.join(coreSourceRoot, directory);
+          const target = path.join(fixture.root, 'packages/core-runtime/src', directory);
+          const sourceExists = yield* pathExists(source);
+          const targetExists = yield* pathExists(target);
+          if (sourceExists && !targetExists) {
+            yield* Effect.promise(() => symlink(source, target, 'dir'));
+          }
+          const entries =
+            sourceExists && targetExists
+              ? yield* Effect.promise(() => readdir(source, { recursive: true, withFileTypes: true }))
+              : [];
+          for (const entry of entries) {
+            const file = path.relative(source, path.join(entry.parentPath, entry.name));
+            if (!entry.isFile() || (yield* pathExists(path.join(target, file)))) {
+              continue;
+            }
+            yield* Effect.promise(() => mkdir(path.dirname(path.join(target, file)), { recursive: true }));
+            yield* Effect.promise(() => symlink(path.join(source, file), path.join(target, file), 'file'));
+          }
+        }
         // Map every @app/core-runtime export exactly as the package declares it, so the fixture cannot drift.
         const coreRuntimeDirectory = path.join(appRoot, path.dirname(path.dirname(coreRuntimeIndexFile)));
         const corePackage = yield* decodeCorePackageExports(
@@ -6791,6 +6834,31 @@ it.live(
     const renamed = handler.replaceAll(/\breadRuntimeLive\b/gu, 'injectedOwnerRead');
     expect(renamed).not.toBe(handler);
     expect(hasPrivacyRuntimeRoot(shared, renamed)).toBe(true);
+  }),
+);
+
+it.live(
+  "owner context admits only that owner's own backend-only registration in the Privacy runtime",
+  Effect.fn(function* privacyBackendRegistrationBinding() {
+    const { accepts, context } = yield* readPrivacyRootProof();
+    const shared = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_CONTRACT_PATH), 'utf-8'));
+    const handler = yield* Effect.promise(() => readFile(path.join(appRoot, PRIVACY_HANDLER_PATH), 'utf-8'));
+    const binding =
+      "import { privacyBackendRegistration as privacyRegistration } from '../vertical.runtime-declaration.ts';";
+    expect(handler).toContain(binding);
+    expect(accepts(shared, handler)).toBe(true);
+    for (const forged of [
+      "import { partyRegistryBackendRegistration as privacyRegistration } from '../vertical.runtime-declaration.ts';",
+      "import { privacyBackendRegistration as privacyRegistration } from '../foreign/vertical.runtime-declaration.ts';",
+      "import { privacyBackendRegistration as privacyRegistration } from './vertical.runtime-declaration.ts';",
+      "import { privacyRuntimeDeclaration as privacyRegistration } from '../vertical.runtime-declaration.ts';",
+    ]) {
+      expect(accepts(shared, handler.replace(binding, forged)), forged).toBe(false);
+    }
+    // Another owner's context never admits Privacy's backend registration.
+    expect(
+      hasValidGovernedHttpCompositionRoot(shared, handler, { ...context, ownerPath: 'verticals/party-registry' }),
+    ).toBe(false);
   }),
 );
 
