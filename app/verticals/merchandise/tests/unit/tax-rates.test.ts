@@ -268,11 +268,11 @@ it.effect('never hands over an answer older than 12 minutes, and drops it when T
     yield* Ref.set(outcome, Effect.fail(new TaxRatesFailure({ kind: 'UNAVAILABLE' })));
     // The refresh fails: the 13-minute-old answer is not Tax's answer any more.
     expect(Result.isFailure(yield* write)).toBe(true);
-    expect(yield* read).toEqual({ refused: false, waiting: true });
+    expect(yield* read).toMatchObject({ refused: false, waiting: true });
     yield* Ref.set(outcome, Effect.fail(new TaxRatesFailure({ kind: 'REFUSED' })));
     yield* TestClock.adjust('1 minute');
     yield* write;
-    expect(yield* read).toEqual({ refused: true, waiting: true });
+    expect(yield* read).toMatchObject({ refused: true, waiting: true });
   }),
 );
 

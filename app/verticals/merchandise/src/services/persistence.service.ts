@@ -2376,9 +2376,14 @@ export const prepareCommandTax = Effect.fn('Merchandise.prepareCommandTax')(func
   if (Result.isSuccess(outcome)) {
     return { fetched: outcome.success, refused: false } satisfies PreparedTax;
   }
-  yield* Effect.logWarning('Merchandise could not read VAT rates from Tax').pipe(
-    Effect.annotateLogs({ reason: outcome.failure.kind }),
-  );
+  const { nextAttemptAt } = outcome.failure;
+  yield* nextAttemptAt === undefined
+    ? Effect.logWarning('Merchandise could not read VAT rates from Tax').pipe(
+        Effect.annotateLogs({ reason: outcome.failure.kind }),
+      )
+    : Effect.logInfo(
+        `Merchandise uses the stored VAT rates; Tax was not asked, next attempt at ${DateTime.formatIso(nextAttemptAt)}`,
+      );
   return {
     fetched: Option.getOrUndefined(Option.none<FetchedTaxRates>()),
     refused: outcome.failure.kind === 'REFUSED',

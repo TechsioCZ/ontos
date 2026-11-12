@@ -683,6 +683,8 @@ const refreshOf = (scope: OperationalScope, explicit = false) =>
 export interface KnownTaxRates {
   /** Tax's answer, only while younger than {@link TAX_RATE_FRESHNESS}; an older one is never handed over. */
   readonly fetched?: FetchedTaxRates;
+  /** While waiting: when the next attempt to read Tax is due. */
+  readonly nextAttemptAt?: DateTime.Utc;
   readonly refused: boolean;
   /** The last refresh got no answer and its wait before the next one has not passed yet. */
   readonly waiting: boolean;
@@ -693,12 +695,15 @@ const known = Effect.fn('Merchandise.knownTaxRates')(function* known(scope: Oper
   const entry = entryOf(answers, companyKey(scope));
   const recent = (since: DateTime.Utc, window: Duration.Duration) =>
     !DateTime.isGreaterThan(since, now) && Duration.isLessThan(ageOf(since, now), window);
-  const waiting = entry.retry !== undefined && recent(entry.retry.attemptedAt, entry.retry.after);
+  const { retry } = entry;
+  const waiting = retry !== undefined && recent(retry.attemptedAt, retry.after);
   const answer: KnownTaxRates =
     entry.fetched !== undefined && recent(entry.fetched.fetchedAt, TAX_RATE_FRESHNESS)
       ? { fetched: entry.fetched, refused: false, waiting }
       : { refused: entry.refused, waiting };
-  return answer;
+  return waiting && retry !== undefined
+    ? { ...answer, nextAttemptAt: DateTime.addDuration(retry.attemptedAt, retry.after) }
+    : answer;
 });
 
 /**
@@ -739,8 +744,12 @@ export const currentTaxRateBook = Effect.fn('Merchandise.currentTaxRateBook')(fu
   if (answer.fetched !== undefined) {
     return answer.fetched;
   }
-  if (answer.waiting) {
-    return yield* new TaxRatesFailure({ kind: answer.refused ? 'REFUSED' : 'UNAVAILABLE' });
+  if (answer.waiting && answer.nextAttemptAt !== undefined) {
+    // Tax is not asked during the wait: the failure says so, with the time of the next attempt.
+    return yield* new TaxRatesFailure({
+      kind: answer.refused ? 'REFUSED' : 'UNAVAILABLE',
+      nextAttemptAt: answer.nextAttemptAt,
+    });
   }
   return yield* awaitRefresh(scope);
 });

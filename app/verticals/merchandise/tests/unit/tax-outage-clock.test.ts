@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { OperationalScope } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
-import { DateTime, Duration, Effect, Option, Ref, Schema } from 'effect';
+import { DateTime, Duration, Effect, Logger, Option, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -126,3 +126,28 @@ it('a new price is refused while Tax does not answer and no usable rates exist, 
   expect(reasonOf(confirmed(25), false)).toContain('starší než 24 hodin');
   expect(reasonOf(confirmed(23), false)).toBeUndefined();
 });
+
+it.effect('a new price during the wait after a failed attempt says Tax was not asked, and when it will be', () =>
+  Effect.gen(function* waitLog() {
+    const entries: string[] = [];
+    const scope = { ...company, legalEntityId: randomUUID() };
+    const source = { read: () => Effect.fail(new TaxRatesFailure({ kind: 'UNAVAILABLE' })) };
+    const prepare = prepareCommandTax(newPrice, scope).pipe(
+      Effect.provideService(TaxRateSource, source),
+      Effect.provide(
+        Logger.layer([
+          Logger.make((options) => {
+            entries.push(String(options.message));
+          }),
+        ]),
+      ),
+    );
+    yield* prepare;
+    expect(entries.join(' ')).toContain('could not read VAT rates from Tax');
+    entries.length = 0;
+    yield* TestClock.adjust('10 seconds');
+    yield* prepare;
+    expect(entries.join(' ')).not.toContain('could not read VAT rates from Tax');
+    expect(entries.join(' ')).toContain('Tax was not asked, next attempt at');
+  }),
+);
