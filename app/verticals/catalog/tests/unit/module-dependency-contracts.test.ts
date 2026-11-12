@@ -11,6 +11,24 @@ import { setVariantLocalizedFactsRecoveryRead } from '../../src/api/set-variant-
 import { updateProductRecoveryRead } from '../../src/api/update-product-recovery.read.ts';
 import { correctProductRecoveryRead } from '../../src/api/correct-product-recovery.read.ts';
 
+/**
+ * The workload carrier the manifest publishes for an operation that admits workloads (demo exception 8): its access
+ * declaration and the workloads it admits, directly or as subject workloads.
+ */
+const expectedWorkloadCarrier = (descriptor: {
+  readonly accessActor?: { readonly subjectWorkloads?: readonly string[] | undefined } | undefined;
+  readonly accessDeclaration?: { readonly key: string } | undefined;
+  readonly accessWorkload?: { readonly workloads: readonly string[] } | undefined;
+}) => {
+  const workloads = [
+    ...(descriptor.accessWorkload?.workloads ?? []),
+    ...(descriptor.accessActor?.subjectWorkloads ?? []),
+  ];
+  return descriptor.accessDeclaration === undefined || workloads.length === 0
+    ? {}
+    : { workloadCarrier: { declarationKey: descriptor.accessDeclaration.key, workloads: [...new Set(workloads)] } };
+};
+
 describe('Catalog owner-authored dependency contracts', () => {
   it('publishes the native owner operations required by Product integration and Assortment', () => {
     const safe = extractVerticalRuntimeSafeDescriptors(catalogRegistration);
@@ -36,6 +54,7 @@ describe('Catalog owner-authored dependency contracts', () => {
         entrypoint: registration.descriptor.entrypoint,
         operationKey,
         schemaVersion: registration.descriptor.schemaVersion,
+        ...expectedWorkloadCarrier(registration.descriptor),
       });
     }
   });
@@ -65,10 +84,10 @@ describe('Catalog owner-authored dependency contracts', () => {
     for (const contract of safe.operationContracts) {
       expect(contract.entrypoint.moduleKey).toBe('commerce.catalog');
       expect(['1', '2']).toContain(contract.schemaVersion);
-      expect(Object.keys(contract)).toHaveLength(4);
-      expect(Object.keys(contract)).toEqual(
-        expect.arrayContaining(['apiKey', 'entrypoint', 'operationKey', 'schemaVersion']),
-      );
+      const base = ['apiKey', 'entrypoint', 'operationKey', 'schemaVersion'];
+      const keys = Object.keys(contract);
+      expect(keys).toHaveLength('workloadCarrier' in contract ? 5 : 4);
+      expect(keys).toEqual(expect.arrayContaining('workloadCarrier' in contract ? [...base, 'workloadCarrier'] : base));
     }
   });
 });

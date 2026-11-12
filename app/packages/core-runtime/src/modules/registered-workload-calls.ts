@@ -1,6 +1,11 @@
 import { Schema } from 'effect';
 
-import { RegisteredGatewayWorkloadSchema } from '../auth/system-principal-context-provenance.ts';
+import {
+  DeclarationKeySchema,
+  EntrypointKeySchema,
+  JobKeySchema,
+  WorkloadKeySchema,
+} from '../auth/registered-gateway-workload-keys.ts';
 
 const nonEmpty = Schema.String.check(Schema.isMinLength(1));
 /** The gateway audience rule (`GatewayAudienceSchema` in `@app/shared-contracts`, which Core does not import). */
@@ -11,7 +16,6 @@ const GatewayAudienceSchema = nonEmpty.check(
 );
 const sourceActionKeySchema = nonEmpty.pipe(Schema.brand('GatewaySourceActionKey'), Schema.decodeTo(Schema.String));
 const workerKeySchema = nonEmpty.pipe(Schema.brand('GatewayWorkerKey'), Schema.decodeTo(Schema.String));
-const workloadFields = RegisteredGatewayWorkloadSchema.fields;
 
 /**
  * One registered-workload call the calling module makes: exactly the fields of upstream main's env-configured
@@ -22,21 +26,21 @@ export const OntosRegisteredWorkloadCallSchema = Schema.Struct({
   allowHistoricalDeliveryRecovery: Schema.optionalKey(Schema.Boolean),
   allowRecoverySource: Schema.optionalKey(Schema.Boolean),
   audience: GatewayAudienceSchema,
-  declarationKey: workloadFields.declarationKey,
-  entrypointKey: workloadFields.entrypointKey,
-  jobKey: workloadFields.jobKey.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/u)),
+  declarationKey: DeclarationKeySchema,
+  entrypointKey: EntrypointKeySchema,
+  jobKey: JobKeySchema.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/u)),
   legalEntityScope: Schema.Literals(['forbidden', 'optional', 'required']),
   recoveryOf: Schema.optionalKey(
     Schema.Struct({
       actionKey: sourceActionKeySchema,
-      jobKey: workloadFields.jobKey,
+      jobKey: JobKeySchema,
     }),
   ),
   schemaVersion: nonEmpty,
   sourceActionKey: Schema.optionalKey(sourceActionKeySchema),
-  sourceWorkloadKey: Schema.optionalKey(workloadFields.workloadKey),
+  sourceWorkloadKey: Schema.optionalKey(WorkloadKeySchema),
   workerKey: Schema.optionalKey(workerKeySchema),
-  workloadKey: workloadFields.workloadKey,
+  workloadKey: WorkloadKeySchema,
 });
 export type OntosRegisteredWorkloadCall = typeof OntosRegisteredWorkloadCallSchema.Type;
 export type OntosRegisteredWorkloadCallInput = typeof OntosRegisteredWorkloadCallSchema.Encoded;

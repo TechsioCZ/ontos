@@ -1,9 +1,13 @@
 import { Result, Schema } from 'effect';
 
 import { withOptional } from '../access/decision/optional.ts';
+import { AccessKeySyntaxSchema, WorkloadKeySchema } from './access-key-syntax.ts';
+
 import type { ModuleEntrypointDescriptor } from '../modules/module-entrypoint.ts';
 import { AccessCatalogError } from './access-catalog-error.ts';
 import { AccessDeclarationError } from './access-declaration-error.ts';
+
+export { AccessKeySyntaxSchema, WorkloadKeySchema } from './access-key-syntax.ts';
 
 /** One scalar money value of the governed command in minor units (O18); decoded from the payload. */
 export type { AccessAmount } from '../access/decision/contract.ts';
@@ -115,14 +119,7 @@ const accessKeyVerbSegments = (key: string, moduleKey: string): string | undefin
 };
 
 /** Lowercase kebab segments `<module>.<resource>.<verb>[.<qualifier>]`; module IDs may be dotted. */
-/** Lowercase kebab segments `<module>.<resource>.<verb>[.<qualifier>]`; module IDs may be dotted. */
-const accessKeySyntax = Schema.String.check(
-  Schema.isMaxLength(200),
-  Schema.isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*){2,}$/u),
-);
-/** The key grammar alone, for authored descriptors that still carry the key as a plain string. */
-export const AccessKeySyntaxSchema = accessKeySyntax;
-export const AccessKeySchema = accessKeySyntax.pipe(Schema.brand('AccessKey'));
+export const AccessKeySchema = AccessKeySyntaxSchema.pipe(Schema.brand('AccessKey'));
 export type AccessKey = typeof AccessKeySchema.Type;
 
 const accessFieldClassSchema = Schema.String.check(
@@ -560,10 +557,6 @@ export const decodeAccessFieldGroups = <Input>(
  * `core.identity-provider`). A direct `accessWorkload` stays in its carrier module's root namespace.
  * An `accessActor` subject workload keeps the calling flow's namespace, not the receiving owner's.
  */
-export const WorkloadKeySchema = Schema.String.check(
-  Schema.isMaxLength(200),
-  Schema.isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+$/u),
-).pipe(Schema.brand('WorkloadKey'));
 export type WorkloadKey = typeof WorkloadKeySchema.Type;
 
 /**

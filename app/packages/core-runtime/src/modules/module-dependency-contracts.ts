@@ -3,7 +3,7 @@ import type { TenantModuleStateUnsatisfiedDependencyError } from './tenant-modul
 import { unsatisfiedTenantModuleDependency as unsatisfiedDependency } from './tenant-module-state-unsatisfied-dependency-error.ts';
 import { Effect, Schema } from 'effect';
 
-import { AccessKeySyntaxSchema, WorkloadKeySchema } from '../authorization/access-declaration.ts';
+import { AccessKeySyntaxSchema, WorkloadKeySchema } from '../authorization/access-key-syntax.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 
 /** Required compatibility claim; providers advertise it only with executed closure enforcement. */
