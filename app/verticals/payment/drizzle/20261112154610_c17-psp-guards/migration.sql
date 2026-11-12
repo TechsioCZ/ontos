@@ -510,7 +510,10 @@ $$;
 --> statement-breakpoint
 -- Routine: the exact binding of a historical or current operation (never a Current substitute), always with the
 -- binding's current credential revision: a rotation authenticates the same account (#1158), so a dispatch's
--- recorded revision never selects a credential.
+-- recorded revision never selects a credential. The return URL is the one of the latest Gateway Enablement
+-- revision of this Customer Configuration that named this binding, so disablement and account replacement
+-- (which move the Current row to another binding) keep an existing Payment's return URL (#1155). No revision
+-- naming the binding means no return URL; another Customer Configuration's URL is never used.
 CREATE FUNCTION payment.psp_resolve_execution_target(
   p_tenant_id uuid,
   p_legal_entity_id uuid,
@@ -523,10 +526,12 @@ BEGIN
   PERFORM payment.psp_assert_worker_scope(p_tenant_id, p_legal_entity_id);
   RETURN QUERY
   SELECT payment.psp_target_json(binding, credential, (
-    SELECT enablement.return_url FROM payment.psp_gateway_enablements AS enablement
+    SELECT enablement.return_url FROM payment.psp_gateway_enablement_revisions AS enablement
     WHERE enablement.tenant_id = binding.tenant_id AND enablement.legal_entity_id = binding.legal_entity_id
       AND enablement.customer_configuration_id = p_customer_configuration_id
       AND enablement.provider_family = binding.provider_family AND enablement.binding_id = binding.binding_id
+    ORDER BY enablement.revision DESC
+    LIMIT 1
   ))
   FROM payment.psp_provider_account_bindings AS binding
   JOIN payment.psp_credential_revisions AS credential

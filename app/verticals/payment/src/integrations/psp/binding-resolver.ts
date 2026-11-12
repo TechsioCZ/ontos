@@ -23,7 +23,10 @@ import type { GatewayExecutionTarget } from './psp-request.ts';
  */
 
 export interface GatewayExecutionTargetQuery {
-  /** Present for COLLECT (enablement return URL); absent for cancel, refund and recovery. */
+  /**
+   * Present for COLLECT; absent for cancel, refund and recovery. The return URL is the latest one this Customer
+   * Configuration's Gateway Enablement recorded for the resolved binding, also after disablement or replacement.
+   */
   readonly customerConfigurationId: Option.Option<typeof PaymentCustomerConfigurationIdSchema.Type>;
   readonly environment: GatewayEnvironment;
   readonly providerAccountRef: GatewayProviderAccountRef;

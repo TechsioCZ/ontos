@@ -27,6 +27,7 @@ import { PaymentRefundBasisSchema } from '../../shared/domain/payment-refund-bas
 import type { PaymentGatewayProviderFamilySchema } from '../../shared/domain/payment-vocabulary.ts';
 import { PaymentSourceStatementResultSchema } from '../../shared/domain/source-statement.ts';
 import { GatewayProviderAccountRefSchema } from '../../shared/domain/psp-configuration.ts';
+import type { GatewayEnvironment } from '../../shared/domain/psp-vocabulary.ts';
 import { operationRequestedPayloadOf, refundMaterialRequest } from '../../src/domain/refund-admission.ts';
 import { GatewayBindingResolverLive } from '../../src/integrations/psp/binding-resolver-live.ts';
 import { ProviderDispatchLedgerLive } from '../../src/integrations/psp/dispatch-ledger-live.ts';
@@ -49,6 +50,7 @@ import { ProviderObjectRefSchema } from '../../src/integrations/psp/psp-request.
 import type { ProviderObjectRef } from '../../src/integrations/psp/psp-request.ts';
 import { paymentEvidencePersistenceForTransaction } from '../../src/persistence/payment-evidence-persistence.ts';
 import { paymentSourcePersistenceForTransaction } from '../../src/persistence/payment-source-persistence.ts';
+import { pspEnablementPersistenceForTransaction } from '../../src/persistence/psp-enablement-persistence.ts';
 import {
   COMPOSITION_REVISION,
   collectInput,
@@ -93,11 +95,8 @@ export interface NativeBinding {
   readonly executionBinding: Extract<PaymentExecutionBinding, { readonly _tag: 'GATEWAY_ACCOUNT' }>;
 }
 
-/**
- * One CURRENT SANDBOX binding with its ACTIVE credential revision naming `secretRef`, and the Gateway Enablement
- * of the test Customer Configuration (its return URL), as the configuration Actions write them.
- */
-export const nativeBindingFor = Effect.fn('PspNativeGateway.binding')(function* nativeBindingFor(
+/** One CURRENT SANDBOX binding with its ACTIVE credential revision naming `secretRef`, not yet enabled anywhere. */
+export const nativeAccountFor = Effect.fn('PspNativeGateway.account')(function* nativeAccountFor(
   harness: NativeHarness,
   family: NativeFamily,
   secretRef: string,
@@ -125,14 +124,6 @@ export const nativeBindingFor = Effect.fn('PspNativeGateway.binding')(function* 
            values ($1, $2, gen_random_uuid(), $3, $4, $5, now(), 1, $6, 'ACTIVE')`,
           [...common, secretRef],
         ),
-        runtimeClient.unsafe(
-          `insert into payment.psp_gateway_enablements (tenant_id, legal_entity_id, action_invocation_id,
-             actor_principal_id, composition_revision, binding_id, configured_at, customer_configuration_id, enabled,
-             environment, provider_family, reason, return_url, revision)
-           values ($1, $2, gen_random_uuid(), $3, $4, $5, now(), $6, true, 'SANDBOX', $7,
-             'Enable the sandbox gateway', $8, 1)`,
-          [...common, CUSTOMER_CONFIGURATION_ID, family, NATIVE_RETURN_URL],
-        ),
       ],
       { concurrency: 1 },
     ),
@@ -146,6 +137,76 @@ export const nativeBindingFor = Effect.fn('PspNativeGateway.binding')(function* 
       providerFamily: family,
     },
   } satisfies NativeBinding;
+});
+
+export interface NativeEnablementChange {
+  readonly customerConfigurationId?: string;
+  readonly enabled: boolean;
+  /** `undefined` only for the first configuration of the family in the Customer Configuration. */
+  readonly expectedRevision?: number;
+  readonly returnUrl: string;
+}
+
+/**
+ * Configures the Gateway Enablement of `binding` through the owner persistence the configuration Action uses (the
+ * Current row and its appended revision), in one Core-scoped runtime transaction.
+ */
+export const nativeConfigureEnablement = Effect.fn('PspNativeGateway.configureEnablement')(
+  function* nativeConfigureEnablement(harness: NativeHarness, binding: NativeBinding, change: NativeEnablementChange) {
+    const provenance = yield* provenanceFor(harness.scope);
+    return yield* harness.database.transaction((transaction: PaymentTestTransaction) =>
+      installOperationalScope(transaction, operationalScopeOf(harness.scope)).pipe(
+        Effect.flatMap((scoped) => {
+          const persistence = pspEnablementPersistenceForTransaction(scoped);
+          // Every native fixture binding is a SANDBOX binding (`nativeAccountFor`).
+          const environment: GatewayEnvironment = 'SANDBOX';
+          return persistence
+            .lockBinding({ environment, providerAccountRef: binding.executionBinding.providerAccountRef })
+            .pipe(
+              Effect.flatMap((locked) => Effect.fromOption(locked)),
+              Effect.flatMap((lockedBinding) =>
+                persistence.configureEnablement({
+                  binding: lockedBinding,
+                  customerConfigurationId: change.customerConfigurationId ?? CUSTOMER_CONFIGURATION_ID,
+                  enabled: change.enabled,
+                  expectedRevision: Option.fromUndefinedOr(change.expectedRevision),
+                  provenance,
+                  reason: change.enabled ? 'Enable the sandbox gateway' : 'Disable the sandbox gateway',
+                  returnUrl: change.returnUrl,
+                }),
+              ),
+            );
+        }),
+      ),
+    );
+  },
+);
+
+/** Retires `binding` for new Payment intents (its status; the binding revision row is not part of this boundary). */
+export const nativeRetireBinding = (harness: NativeHarness, binding: NativeBinding) =>
+  inScope(
+    harness.runtimeClient,
+    harness.scope,
+    harness.runtimeClient.unsafe(
+      `update payment.psp_provider_account_bindings
+       set status = 'RETIRED_FOR_NEW_INTENTS', revision = revision + 1, configured_at = now()
+       where binding_id = $1`,
+      [binding.bindingId],
+    ),
+  );
+
+/**
+ * One CURRENT SANDBOX binding with its ACTIVE credential revision naming `secretRef`, and the Gateway Enablement
+ * of the test Customer Configuration (its return URL), as the configuration Actions write them.
+ */
+export const nativeBindingFor = Effect.fn('PspNativeGateway.binding')(function* nativeBindingFor(
+  harness: NativeHarness,
+  family: NativeFamily,
+  secretRef: string,
+) {
+  const binding = yield* nativeAccountFor(harness, family, secretRef);
+  yield* nativeConfigureEnablement(harness, binding, { enabled: true, returnUrl: NATIVE_RETURN_URL });
+  return binding;
 });
 
 const payloadFor = (harness: NativeHarness, paymentId: string, operationId: string) =>

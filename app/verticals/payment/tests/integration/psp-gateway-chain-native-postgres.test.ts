@@ -1,3 +1,4 @@
+import type { OutboxPayload } from '@app/payment/outbox/payment-core-operation-requested-v1';
 import { Effect, Exit, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -9,6 +10,7 @@ import {
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
   collectInput,
+  inScope,
   makeTestScope,
   newPaymentInput,
   paymentTestRelations,
@@ -33,12 +35,17 @@ import {
   deliverExecution,
   dispatchStateOf,
   evidenceOf,
+  NATIVE_RETURN_URL,
+  nativeAccountFor,
   nativeBindingFor,
+  nativeConfigureEnablement,
   nativeCollectionFor,
   nativeHarnessOf,
   nativeRefundFor,
+  nativeRetireBinding,
   processNotification,
 } from '../support/psp-native-gateway.fixture.ts';
+import type { NativeBinding, NativeHarness } from '../support/psp-native-gateway.fixture.ts';
 
 /**
  * #1159 level 3 (native owner boundary). Boundary of every test in this file: the production gateway executor and
@@ -82,6 +89,50 @@ const nativeHarness = Effect.gen(function* nativeHarnessEffect() {
 
 const adaptersOver = (routes: RouteScript, credentials: CredentialDocument) =>
   recordedGatewayAdapters(routes).pipe(Effect.provide(credentialConfig(credentials)));
+
+/** One Stripe Checkout create of `collect`, answered with an open session; the sent form and the dispatch binding. */
+const stripeCollection = Effect.fn('PspGatewayChainTest.stripeCollection')(function* stripeCollection(
+  harness: NativeHarness,
+  collect: OutboxPayload,
+  credentials: CredentialDocument,
+) {
+  const step = yield* adaptersOver(
+    {
+      [STRIPE_CREATE]: [
+        respond(
+          200,
+          JSON.stringify(
+            stripeCheckoutSessionObject({
+              orderReference: deriveProviderCorrelation(collect.operationId).orderReference,
+              paymentIntent: null,
+              paymentStatus: 'unpaid',
+              status: 'open',
+            }),
+          ),
+        ),
+      ],
+    },
+    credentials,
+  );
+  const exit = yield* deliverExecution(harness, collect, step.adapters).pipe(
+    Effect.provide(credentialConfig(credentials)),
+  );
+  const dispatched = yield* inScope(
+    harness.runtimeClient,
+    harness.scope,
+    harness.runtimeClient.unsafe<{ readonly binding_id: string; readonly state: string }>(
+      'select binding_id::text, state from payment.psp_provider_dispatches where operation_id = $1',
+      [collect.operationId],
+    ),
+  );
+  const form = new URLSearchParams(step.callsTo(STRIPE_CREATE)[0]?.body ?? '');
+  return {
+    dispatch: dispatched.map((row) => [row.binding_id, row.state] as const),
+    exit,
+    returnUrls: [form.get('success_url'), form.get('cancel_url')].map((url) => url?.split('?')[0]),
+    routes: step.sent.map(({ route }) => route),
+  };
+});
 
 it.live(
   '#1157 #1158 #1159 L3-8 boundary executor+processor+ledger routines: lost Stripe create, then a notification, then a refund on the notified PaymentIntent',
@@ -256,6 +307,54 @@ it.live(
         expect(bankOperation.record.outcome).toBe('PENDING');
         expect(yield* dispatchStateOf(harness, bankOperation.record.operationId)).toEqual(Option.none());
         expect(provider.sent).toHaveLength(1);
+      }),
+    ),
+);
+
+it.live(
+  "#1155 #1159 L3-12 boundary executor+resolver routine+production Stripe adapter: an existing Payment collects under its original binding with that binding's return URL after disablement and after account replacement",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* originalBindingReturnUrl() {
+        const credentials = { [STRIPE_SECRET_REF]: stripeEntry };
+        const harness = yield* nativeHarness;
+        const original: NativeBinding = yield* nativeBindingFor(harness, 'STRIPE', STRIPE_SECRET_REF);
+        // Another Customer Configuration of the same scope enables the same binding with its own return URL.
+        yield* nativeConfigureEnablement(harness, original, {
+          customerConfigurationId: 'customer-configuration-2',
+          enabled: true,
+          returnUrl: 'https://other-shop.example.test/return',
+        });
+        const afterDisablement = yield* nativeCollectionFor(harness, original, STRIPE_AMOUNT);
+        const afterReplacement = yield* nativeCollectionFor(harness, original, STRIPE_AMOUNT);
+
+        // (a) Disablement: the Customer Configuration no longer offers the binding to new intents.
+        yield* nativeConfigureEnablement(harness, original, {
+          enabled: false,
+          expectedRevision: 1,
+          returnUrl: NATIVE_RETURN_URL,
+        });
+        const disabled = yield* stripeCollection(harness, afterDisablement, credentials);
+        expect(Exit.isSuccess(disabled.exit)).toBe(true);
+        expect(disabled.routes).toEqual([STRIPE_CREATE]);
+        expect(disabled.returnUrls).toEqual([NATIVE_RETURN_URL, NATIVE_RETURN_URL]);
+        expect(disabled.dispatch).toEqual([[original.bindingId, 'ACKNOWLEDGED']]);
+
+        // (b) Account replacement: the original binding is retired and the enablement now names another account
+        //     with another return URL. The existing Payment still collects under the original binding with the
+        //     return URL that binding had for its own Customer Configuration.
+        yield* nativeRetireBinding(harness, original);
+        const replacement = yield* nativeAccountFor(harness, 'STRIPE', STRIPE_SECRET_REF);
+        yield* nativeConfigureEnablement(harness, replacement, {
+          enabled: true,
+          expectedRevision: 2,
+          returnUrl: 'https://shop.example.test/replacement-return',
+        });
+        const replaced = yield* stripeCollection(harness, afterReplacement, credentials);
+        expect(Exit.isSuccess(replaced.exit)).toBe(true);
+        expect(replaced.routes).toEqual([STRIPE_CREATE]);
+        expect(replaced.returnUrls).toEqual([NATIVE_RETURN_URL, NATIVE_RETURN_URL]);
+        expect(replaced.dispatch).toEqual([[original.bindingId, 'ACKNOWLEDGED']]);
       }),
     ),
 );
