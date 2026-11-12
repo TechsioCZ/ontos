@@ -571,6 +571,16 @@ const applyCompany = (tenant: TaxBaselineTenantPort, company: TaxBaselineCompany
       ),
   );
 
+/** `--wait-seconds` at most: half an hour covers a deploy with room to spare, and no run waits forever. */
+export const MAX_WAIT_SECONDS = 1800;
+const WAIT_SPACING = Duration.seconds(10);
+
+/** How a `--wait-seconds` value becomes re-observations: every 10 s, never below zero, never past the cap. */
+export const waitForRightsOf = (waitSeconds: number): NonNullable<TaxBaselineRunOptions['waitForRights']> => ({
+  attempts: Math.ceil(Math.min(Math.max(waitSeconds, 0), MAX_WAIT_SECONDS) / Duration.toSeconds(WAIT_SPACING)),
+  spacing: WAIT_SPACING,
+});
+
 export const TaxBaselineModeSchema = Schema.Literals(['dry-run', 'apply', 'verify']);
 export type TaxBaselineMode = typeof TaxBaselineModeSchema.Type;
 export interface TaxBaselineRun extends TaxBaselinePlanning {
@@ -1044,7 +1054,7 @@ const command = Command.make(
         yield* Config.Redacted('ONTOS_DEMO_SEED_PASSWORD'),
       );
       const run = yield* runTaxBaseline(mode, tenant, reviewed, {
-        waitForRights: { attempts: Math.ceil(Math.max(waitSeconds, 0) / 10), spacing: Duration.seconds(10) },
+        waitForRights: waitForRightsOf(waitSeconds),
       });
       yield* printTaxBaselineRun(run, json);
       if (run.problems.length > 0) {

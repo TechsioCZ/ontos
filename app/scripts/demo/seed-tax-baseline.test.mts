@@ -22,6 +22,7 @@ import {
   TaxBaselineFailure,
   taxBaselineRights,
   validateSeedOrigin,
+  waitForRightsOf,
 } from './seed-tax-baseline.mts';
 import type {
   RegimeObservation,
@@ -431,4 +432,13 @@ it('maps tax Problem Details onto the seed refusals and compares exact decimal r
   expect(sameRate('21', '21.00')).toBe(true);
   expect(sameRate('12.0', '12')).toBe(true);
   expect(sameRate('21', '2.1')).toBe(false);
+});
+
+it('caps --wait-seconds at half an hour and never waits for a negative time', () => {
+  expect(waitForRightsOf(600).attempts).toBe(60);
+  expect(waitForRightsOf(5).attempts).toBe(1);
+  expect(waitForRightsOf(0).attempts).toBe(0);
+  expect(waitForRightsOf(-30).attempts).toBe(0);
+  expect(waitForRightsOf(1_000_000).attempts).toBe(180);
+  expect(Duration.toSeconds(waitForRightsOf(600).spacing)).toBe(10);
 });
