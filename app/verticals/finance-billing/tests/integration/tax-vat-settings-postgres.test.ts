@@ -5,6 +5,9 @@
  * - An accountant with Tax's rule rights plans a new standard rate from a future day exactly as the DPH page does
  *   (end the covering rate, add the new one, each against Tax's latest basis) and sees it listed as planned.
  * - A Finance clerk without any Tax right is refused by Tax (403, the problem the page shows as "no access").
+ * - An accountant with only the preset's Tax reads sees the rates and the regime with their history; Tax tells the
+ *   page she may make no VAT change and refuses each one she sends anyway. The author, who holds the change rights,
+ *   is told so.
  * - Finance, calling Tax for that same clerk with the module-call assertion the Shell signs for Finance, gets the
  *   company's rates for an invoice line; Tax's reads list `finance-billing` as a caller.
  */
@@ -31,6 +34,7 @@ import {
   executeDeclareSellerVatRegimeWithAuthorization,
   executeEndTaxRuleRevisionWithAuthorization,
   executeSellerVatRegimeAtInstantWithAuthorization,
+  executeSellerVatRegimeHistoryWithAuthorization,
   executeTaxRuleHistoryWithAuthorization,
 } from '@app/tax/api/client';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
@@ -56,8 +60,15 @@ const FINANCE_APP = 'finance-billing';
 const UNDECLARED_APP = 'work-tasks';
 const COMPOSITION_URL = 'https://composition.finance-vat-settings.test/active';
 const TAX_ORIGIN = 'http://localhost:3020';
+/** Core's own publication lock, taken around each write of the authority row as Core takes it. */
 const AUTHORITY_LOCK = "hashtextextended('ontos.application-composition-authority', 0)";
-const SCENARIO_LOCK = "hashtextextended('ontos.finance-vat-settings-authority', 0)";
+/**
+ * The session lock every suite that replaces the active authority row holds for as long as its row is in place
+ * (Core's native suites, Payment's fixture, Tax's historical-access fixture, the baseline seed test): without it a
+ * suite running alongside could publish its own release mid-scenario, and the owner would then rightly refuse this
+ * scenario's writes as no longer admitted by the approved composition.
+ */
+const FIXTURE_LOCK = "hashtextextended('ontos.search-test-authority', 0)";
 
 const digest = (document: string) => bytesToHex(sha256(utf8ToBytes(document)));
 const uuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
@@ -81,13 +92,15 @@ const compositionSnapshot = Effect.gen(function* compositionSnapshot() {
   });
 });
 
-const adminClient = Effect.gen(function* adminClient() {
-  const connections = yield* loadDatabaseConnectionPair();
-  const services = yield* Layer.build(
-    PgClient.layer({ maxConnections: 2, url: Redacted.make(connections.admin.connectionString) }),
-  );
-  return Context.get(services, PgClient.PgClient);
-});
+const adminClientOf = (maxConnections: number) =>
+  Effect.gen(function* adminClient() {
+    const connections = yield* loadDatabaseConnectionPair();
+    const services = yield* Layer.build(
+      PgClient.layer({ maxConnections, url: Redacted.make(connections.admin.connectionString) }),
+    );
+    return Context.get(services, PgClient.PgClient);
+  });
+const adminClient = adminClientOf(2);
 
 const ClockRowSchema = Schema.Struct({ now: Schema.DateTimeUtcFromString });
 
@@ -119,7 +132,9 @@ const installCompositionAuthority = Effect.fn('FinanceVatSettings.authority')(fu
   admin: PgClient.PgClient,
   revision: string,
 ) {
-  yield* admin.unsafe(`select pg_advisory_lock(${SCENARIO_LOCK})`);
+  // A session lock is held by one connection: a client of its own takes it and releases it.
+  const lockSession = yield* adminClientOf(1);
+  yield* lockSession.unsafe(`select pg_advisory_lock(${FIXTURE_LOCK})`);
   const [previous] = yield* admin.unsafe<AuthorityRow>(
     "select revision, phase, durable_work_admission, valid_until::text as valid_until, subscriptions_json::text as subscriptions_json, updated_at::text as updated_at from core.application_composition_authority where authority_key = 'active'",
   );
@@ -140,7 +155,7 @@ const installCompositionAuthority = Effect.fn('FinanceVatSettings.authority')(fu
           previous.subscriptions_json,
           previous.updated_at,
         ])
-    ).pipe(Effect.andThen(admin.unsafe(`select pg_advisory_unlock(${SCENARIO_LOCK})`)), Effect.orDie),
+    ).pipe(Effect.andThen(lockSession.unsafe(`select pg_advisory_unlock(${FIXTURE_LOCK})`)), Effect.orDie),
   );
   const now = yield* databaseNow(admin);
   yield* write(UPSERT_AUTHORITY, [
@@ -163,6 +178,8 @@ interface Realm {
   readonly financeService: string;
   readonly nonPayerCompanyId: string;
   readonly payerCompanyId: string;
+  /** An accountant with only the preset's Tax reads. */
+  readonly reader: Person;
   readonly staff: Person;
   readonly tenantId: string;
 }
@@ -181,6 +198,7 @@ const seedRealm = Effect.fn('FinanceVatSettings.seedRealm')(function* seedRealm(
     financeService: uuid,
     nonPayerCompanyId: uuid,
     payerCompanyId: uuid,
+    reader: person,
     staff: person,
     tenantId: uuid,
   });
@@ -195,6 +213,7 @@ const seedRealm = Effect.fn('FinanceVatSettings.seedRealm')(function* seedRealm(
   const principalRows = [
     [realm.author.principalId, 'human'],
     [realm.staff.principalId, 'human'],
+    [realm.reader.principalId, 'human'],
     [realm.financeService, 'service'],
   ] as const;
   for (const [principalId, kind] of principalRows) {
@@ -215,7 +234,7 @@ const seedRealm = Effect.fn('FinanceVatSettings.seedRealm')(function* seedRealm(
       [tenantId, moduleKey],
     );
   }
-  for (const staff of [realm.author, realm.staff]) {
+  for (const staff of [realm.author, realm.staff, realm.reader]) {
     yield* admin.unsafe(
       "insert into core.principal_auth_bindings (principal_auth_binding_id, tenant_id, principal_id, authentication_namespace_id, provider, provider_subject_id, subject_type, status) values ($1, $2, $3, $4, 'better-auth', $5, 'user', 'active')",
       [
@@ -368,8 +387,19 @@ const setUp = Effect.fn('FinanceVatSettings.setUp')(function* setUp() {
           'commerce.tax.tax-rule-revision.end',
           'commerce.tax.seller-vat-regime.read-at-instant',
           'commerce.tax.seller-vat-regime-declaration.declare',
+          'commerce.tax.seller-vat-regime-declaration.read-history',
         ],
         principalId: realm.author.principalId,
+      },
+      {
+        // The accountant preset: the DPH page's four Tax reads and no Tax change.
+        capabilityKeys: [
+          'commerce.tax.seller-vat-regime-declaration.read-history',
+          'commerce.tax.seller-vat-regime.read-at-instant',
+          'commerce.tax.tax-rule-set.read',
+          'commerce.tax.tax-rule.read-history',
+        ],
+        principalId: realm.reader.principalId,
       },
       {
         capabilityKeys: ['finance.billing.api-records.read', 'finance.billing.vat-choices.read'],
@@ -388,6 +418,7 @@ const setUp = Effect.fn('FinanceVatSettings.setUp')(function* setUp() {
   const sign = yield* makeGatewaySigner(admin);
   const asAccountant = sign(revision, realm.author, realm.tenantId, realm.payerCompanyId);
   const asClerk = sign(revision, realm.staff, realm.tenantId, realm.payerCompanyId);
+  const asReader = sign(revision, realm.reader, realm.tenantId, realm.payerCompanyId);
   const financeForClerk = (module = financeModule) =>
     sign(revision, realm.staff, realm.tenantId, realm.payerCompanyId, {
       appId: module.deployment.appId,
@@ -450,13 +481,18 @@ const setUp = Effect.fn('FinanceVatSettings.setUp')(function* setUp() {
       executeTaxRuleHistoryWithAuthorization({ taxRuleRef: standard.taxRuleRef }, credential, yield* correlation, read),
     );
   });
+  const regimeHistory = Effect.fn('FinanceVatSettings.regimeHistory')(function* regimeHistory(credential: string) {
+    return yield* throughTax(executeSellerVatRegimeHistoryWithAuthorization({}, credential, yield* correlation, read));
+  });
   return {
     asAccountant,
     asClerk,
+    asReader,
     correlation,
     financeForClerk,
     now,
     read,
+    regimeHistory,
     ruleHistory,
     ruleSet,
     standard,
@@ -605,6 +641,101 @@ it.live(
           Effect.flip,
         );
         expect(undeclared._tag).toBe('ApplicableTaxRuleSetForbiddenProblem');
+      }),
+    ).pipe(Effect.provide(live)),
+  120_000,
+);
+
+it.live(
+  'an accountant with only the Tax reads sees rates and regime with history; Tax offers and admits her no change',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* readOnlyAccountant() {
+        const scenario = yield* setUp();
+        const { asAccountant, asReader, correlation, now, regimeHistory, ruleHistory, ruleSet, standard, write } =
+          scenario;
+        // What the DPH page reads as her: the rate, its history and the regime with its history.
+        const applicable = yield* ruleSet(CZ_VAT_STANDARD, yield* asReader);
+        expect(applicable.applicable.length).toBe(1);
+        const view = classificationView(CZ_VAT_STANDARD, yield* ruleHistory(yield* asReader), now, false);
+        expect(view.state === 'ready' ? view.current?.ratePercent : undefined).toBe('21');
+        const history = yield* regimeHistory(yield* asReader);
+        expect(history.revisions.map(({ regime }) => regime)).toEqual(['VAT_PAYER']);
+        // Tax tells the page she may make no change, and the author, who holds the rights, every one.
+        expect(history.changeRights).toEqual({
+          createRevision: false,
+          createRule: false,
+          declareRegime: false,
+          endRevision: false,
+        });
+        expect((yield* regimeHistory(yield* asAccountant)).changeRights).toEqual({
+          createRevision: true,
+          createRule: true,
+          declareRegime: true,
+          endRevision: true,
+        });
+        // A change sent anyway is refused by Tax: a new rate, ending the current one, and the regime declaration.
+        const from = day('2027-01-01');
+        const created = yield* scenario
+          .throughTax(
+            executeCreateTaxRuleRevisionWithAuthorization(
+              {
+                content: {
+                  compositionKind: 'EXCLUSIVE',
+                  effectiveFrom: from,
+                  jurisdiction: 'CZ_DOMESTIC',
+                  ratePercent: '23',
+                  taxClassificationCode: CZ_VAT_STANDARD,
+                  treatmentCategory: 'TAXABLE',
+                },
+                expectedBasisFingerprint: (yield* ruleHistory(yield* asReader)).basisFingerprint,
+                provenanceRef: 'ontos:finance-billing:vat-settings',
+                reason: 'Pokus bez oprávnění',
+                taxRuleRef: standard.taxRuleRef,
+              },
+              yield* asReader,
+              yield* correlation,
+              yield* write,
+            ),
+          )
+          .pipe(Effect.flip);
+        expect(created._tag).toBe('CreateTaxRuleRevisionActionForbiddenProblem');
+        const [current] = (yield* ruleHistory(yield* asReader)).revisions;
+        if (current === undefined) {
+          return yield* Effect.die('The standard rate has a revision');
+        }
+        const ended = yield* scenario
+          .throughTax(
+            executeEndTaxRuleRevisionWithAuthorization(
+              {
+                endedEffectiveTo: from,
+                expectedBasisFingerprint: (yield* ruleHistory(yield* asReader)).basisFingerprint,
+                provenanceRef: 'ontos:finance-billing:vat-settings',
+                reason: 'Pokus bez oprávnění',
+                taxRuleRevisionRef: current.taxRuleRevisionRef,
+              },
+              yield* asReader,
+              yield* correlation,
+              yield* write,
+            ),
+          )
+          .pipe(Effect.flip);
+        expect(ended._tag).toBe('EndTaxRuleRevisionActionForbiddenProblem');
+        const declared = yield* scenario
+          .throughTax(
+            executeDeclareSellerVatRegimeWithAuthorization(
+              { effectiveFrom: from, expectedCurrentRevision: 1, reason: 'Pokus bez oprávnění', regime: 'NON_PAYER' },
+              yield* asReader,
+              yield* correlation,
+              yield* write,
+            ),
+          )
+          .pipe(Effect.flip);
+        expect(declared._tag).toBe('DeclareSellerVatRegimeActionForbiddenProblem');
+        // Nothing changed.
+        expect((yield* regimeHistory(yield* asReader)).revisions.length).toBe(1);
+        expect((yield* ruleHistory(yield* asReader)).revisions.length).toBe(1);
+        return yield* Effect.void;
       }),
     ).pipe(Effect.provide(live)),
   120_000,

@@ -16,7 +16,7 @@ import {
   ImportSellerVatRegimeDeclarationsPayloadSchema,
   ImportSellerVatRegimeDeclarationsResultSchema,
 } from '../../shared/actions/seller-vat-regime-declaration.ts';
-import { SellerVatRegimeHistoryResponseContractSchema } from '../../shared/domain/seller-vat-regime-contracts.ts';
+import { SellerVatRegimeTimelineContractSchema } from '../../shared/domain/seller-vat-regime-contracts.ts';
 import type { SellerVatRegimeAtInstantSelection } from '../../shared/domain/seller-vat-regime-contracts.ts';
 import { taxRelations, taxSellerVatRegimeDeclarations } from '../../src/database/schema.ts';
 import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-vat-regime-declaration.service.ts';
@@ -193,7 +193,7 @@ const regimeOf = (selection: SellerVatRegimeAtInstantSelection) =>
     Match.exhaustive,
   );
 
-const encodeHistory = Schema.encodeSync(SellerVatRegimeHistoryResponseContractSchema);
+const encodeHistory = Schema.encodeSync(SellerVatRegimeTimelineContractSchema);
 const iso = (instant: DateTime.Utc) => DateTime.formatIso(instant);
 
 it.layer(NodeCrypto.layer, { excludeTestServices: true })('seller VAT regime import', (suite) => {

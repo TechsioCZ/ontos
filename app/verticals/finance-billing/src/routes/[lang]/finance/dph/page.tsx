@@ -17,6 +17,7 @@ import { financePageScope } from '../finance-page-scope.ts';
 import { RateDialog, RegimeDialog, WithdrawDialog } from './vat-dialogs.tsx';
 import { changeRegime, planNewRate, setFirstRate, vatSettingsData, withdrawPlannedRate } from './vat-settings-data.ts';
 import type { VatRegimeView, VatSettings } from './vat-settings-data.ts';
+import type { VatChangeRights } from './tax-access.ts';
 import type { ClassificationView, RateRevision, RegimePeriod } from './vat-settings-model.ts';
 
 const resources = {
@@ -53,21 +54,23 @@ const RegimeRow = ({ period }: { readonly period: RegimePeriod }) => {
   );
 };
 
-const RegimeCard = ({ regime }: { readonly regime: VatRegimeView }) => {
+const RegimeCard = ({ canDeclare, regime }: { readonly canDeclare: boolean; readonly regime: VatRegimeView }) => {
   const { t } = useModernI18n();
   const [open, setOpen] = useState(false);
   return (
     <SectionCard
       actions={
-        <Button
-          icon="icon-[mdi--pencil-outline]"
-          onClick={() => setOpen(true)}
-          size="sm"
-          theme="outlined"
-          variant="secondary"
-        >
-          {t(`${ns}.regimeChange`)}
-        </Button>
+        canDeclare && (
+          <Button
+            icon="icon-[mdi--pencil-outline]"
+            onClick={() => setOpen(true)}
+            size="sm"
+            theme="outlined"
+            variant="secondary"
+          >
+            {t(`${ns}.regimeChange`)}
+          </Button>
+        )
       }
       title={t(`${ns}.regimeTitle`)}
     >
@@ -118,7 +121,7 @@ const RateList = ({
   title,
 }: {
   readonly empty: string;
-  readonly onWithdraw?: (revision: RateRevision) => void;
+  readonly onWithdraw?: ((revision: RateRevision) => void) | undefined;
   readonly revisions: readonly RateRevision[];
   readonly title: string;
 }) => (
@@ -140,7 +143,15 @@ const RateList = ({
   </div>
 );
 
-const ReadyClassificationCard = ({ now, view }: { readonly now: DateTime.Utc; readonly view: ReadyClassification }) => {
+const ReadyClassificationCard = ({
+  now,
+  rights,
+  view,
+}: {
+  readonly now: DateTime.Utc;
+  readonly rights: VatChangeRights;
+  readonly view: ReadyClassification;
+}) => {
   const { t } = useModernI18n();
   const [planning, setPlanning] = useState(false);
   const [withdrawing, setWithdrawing] = useState<RateRevision>();
@@ -148,9 +159,13 @@ const ReadyClassificationCard = ({ now, view }: { readonly now: DateTime.Utc; re
   return (
     <SectionCard
       actions={
-        <Button icon="icon-[mdi--calendar-plus]" onClick={() => setPlanning(true)} size="sm" variant="primary">
-          {t(`${ns}.plan`)}
-        </Button>
+        // A new rate ends the one it follows, so planning needs both changes.
+        rights.createRevision &&
+        rights.endRevision && (
+          <Button icon="icon-[mdi--calendar-plus]" onClick={() => setPlanning(true)} size="sm" variant="primary">
+            {t(`${ns}.plan`)}
+          </Button>
+        )
       }
       title={name}
     >
@@ -166,7 +181,7 @@ const ReadyClassificationCard = ({ now, view }: { readonly now: DateTime.Utc; re
       )}
       <RateList
         empty={t(`${ns}.noPlans`)}
-        onWithdraw={setWithdrawing}
+        onWithdraw={rights.endRevision ? setWithdrawing : undefined}
         revisions={view.scheduled}
         title={t(`${ns}.planned`)}
       />
@@ -191,7 +206,13 @@ const ReadyClassificationCard = ({ now, view }: { readonly now: DateTime.Utc; re
   );
 };
 
-const MissingClassificationCard = ({ view }: { readonly view: ClassificationView }) => {
+const MissingClassificationCard = ({
+  canCreate,
+  view,
+}: {
+  readonly canCreate: boolean;
+  readonly view: ClassificationView;
+}) => {
   const { t } = useModernI18n();
   const [open, setOpen] = useState(false);
   const name = t(classificationLabelKey(view.code));
@@ -199,9 +220,11 @@ const MissingClassificationCard = ({ view }: { readonly view: ClassificationView
     <SectionCard title={name}>
       <EmptyState
         action={
-          <Button icon="icon-[mdi--plus]" onClick={() => setOpen(true)} size="sm" variant="primary">
-            {t(`${ns}.firstRate`)}
-          </Button>
+          canCreate ? (
+            <Button icon="icon-[mdi--plus]" onClick={() => setOpen(true)} size="sm" variant="primary">
+              {t(`${ns}.firstRate`)}
+            </Button>
+          ) : undefined
         }
         description={t(`${ns}.missingDescription`)}
         title={t(`${ns}.missing`)}
@@ -221,12 +244,12 @@ const MissingClassificationCard = ({ view }: { readonly view: ClassificationView
 
 const ReadyVatSettings = ({ settings }: { readonly settings: ReadySettings }) => (
   <>
-    <RegimeCard regime={settings.regime} />
+    <RegimeCard canDeclare={settings.rights.declareRegime} regime={settings.regime} />
     {settings.classifications.map((view) =>
       view.state === 'ready' ? (
-        <ReadyClassificationCard key={view.code} now={settings.now} view={view} />
+        <ReadyClassificationCard key={view.code} now={settings.now} rights={settings.rights} view={view} />
       ) : (
-        <MissingClassificationCard key={view.code} view={view} />
+        <MissingClassificationCard canCreate={settings.rights.createRule} key={view.code} view={view} />
       ),
     )}
   </>

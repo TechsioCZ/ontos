@@ -37,8 +37,10 @@ export const readRuleHistory = (taxRuleRef: TaxRuleRef) => executeTaxRuleHistory
 export const readRegimeAt = (instant: DateTime.Utc) =>
   executeSellerVatRegimeAtInstant({ instant }, REQUEST_CORRELATION);
 
-/** Every declared regime revision of the company. */
+/** Every declared regime revision of the company, and which VAT changes Tax lets this person make. */
 export const readRegimeHistory = () => executeSellerVatRegimeHistory({}, REQUEST_CORRELATION);
+/** The VAT changes Tax says the signed-in person may make in the company. */
+export type VatChangeRights = Effect.Success<ReturnType<typeof readRegimeHistory>>['changeRights'];
 
 /** A refusal of a Tax Action: approval needed (the person may only propose) or no right at all. */
 const refused = (problem: { readonly code: string }): VatChangeOutcome =>

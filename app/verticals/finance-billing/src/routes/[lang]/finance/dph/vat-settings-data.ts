@@ -17,6 +17,7 @@ import {
   readRegimeHistory,
   readRuleHistory,
 } from './tax-access.ts';
+import type { VatChangeRights } from './tax-access.ts';
 import { classificationView, planRateChange, planWithdraw, regimeTimeline } from './vat-settings-model.ts';
 import type { ClassificationView, RateRevision, RegimePeriod, VatChangeOutcome } from './vat-settings-model.ts';
 
@@ -30,6 +31,14 @@ export interface VatRegimeView {
   readonly timeline: readonly RegimePeriod[] | undefined;
 }
 
+/** Nothing offered: a person Tax shows no history to is offered no change either. */
+const NO_CHANGES: VatChangeRights = {
+  createRevision: false,
+  createRule: false,
+  declareRegime: false,
+  endRevision: false,
+};
+
 /** The whole page, or why it cannot be shown. A failed Tax read is part of the value, never a thrown error. */
 export type VatSettings =
   | { readonly state: 'forbidden' }
@@ -38,6 +47,8 @@ export type VatSettings =
       readonly classifications: readonly ClassificationView[];
       readonly now: DateTime.Utc;
       readonly regime: VatRegimeView;
+      /** The changes Tax says this person may make; the page offers only those (Tax decides again on each). */
+      readonly rights: VatChangeRights;
       readonly state: 'ready';
     };
 
@@ -63,10 +74,13 @@ const loadRegime = Effect.fn('VatSettings.regime')(function* loadRegime(now: Dat
     Match.orElse(() => 'NOT_DECLARED' as const),
   );
   return {
-    current,
-    headRevision: atNow.headRevision,
-    timeline: Result.isSuccess(history) ? regimeTimeline(history.success.revisions, now) : undefined,
-  } satisfies VatRegimeView;
+    regime: {
+      current,
+      headRevision: atNow.headRevision,
+      timeline: Result.isSuccess(history) ? regimeTimeline(history.success.revisions, now) : undefined,
+    } satisfies VatRegimeView,
+    rights: Result.isSuccess(history) ? history.success.changeRights : NO_CHANGES,
+  };
 });
 
 const forbidden = (): Effect.Effect<VatSettings> => Effect.succeed({ state: 'forbidden' });
@@ -80,7 +94,13 @@ const loadVatSettings = Effect.fn('VatSettings.load')(function* loadVatSettings(
     ],
     { concurrency: 2 },
   ).pipe(
-    Effect.map(([regime, classifications]): VatSettings => ({ classifications, now, regime, state: 'ready' })),
+    Effect.map(([{ regime, rights }, classifications]): VatSettings => ({
+      classifications,
+      now,
+      regime,
+      rights,
+      state: 'ready',
+    })),
     // Tax (or the Shell, for a company where Tax is not open to the person) refuses: the page says so plainly.
     Effect.catchTags({
       ApplicableTaxRuleSetForbiddenProblem: forbidden,
