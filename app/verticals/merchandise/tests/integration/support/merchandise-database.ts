@@ -83,12 +83,13 @@ export const withMerchandise = <A, E>(
 
 export const at = '2026-10-19T08:00:00.000Z';
 
+const STANDARD = 'cz.vat.standard';
 const base = {
   active: true,
   createdAt: at,
   lowStockThreshold: 0,
   priceHistory: [],
-  taxClassificationCode: 'cz.vat.standard',
+  taxClassificationCode: STANDARD,
   unit: 'ks',
   updatedAt: at,
 };
@@ -127,13 +128,25 @@ export const catalogInput = {
   ],
   homepageFeaturedProductIds: ['p3'],
   movements: [{ at, delta: 5, id: 'receipt', productId: 'p1', reason: 'RECEIPT', variantId: 'v1' }],
+  // Lines as this release writes them, with the classification of their rate. A rate-only line is the release
+  // before's shape: the expand step's trigger classifies it on write, so it would not read back as written.
   orders: [
     {
       channel: 'STOREFRONT',
       clientRequestId: 'secret-request-1',
       createdAt: at,
       id: 'o1',
-      lines: [{ productId: 'p1', productName: 'P1', quantity: 1, sku: 'P1', unitPriceMinor: 100, vatRate: 21 }],
+      lines: [
+        {
+          productId: 'p1',
+          productName: 'P1',
+          quantity: 1,
+          sku: 'P1',
+          taxClassificationCode: STANDARD,
+          unitPriceMinor: 100,
+          vatRate: 21,
+        },
+      ],
       number: 'OBJ-2026-0001',
       partyId: 'storefront-guest',
       status: 'NEW',
@@ -154,7 +167,17 @@ export const catalogInput = {
         reason: 'Ukázka skončila',
       },
       id: 'o2',
-      lines: [{ productId: 'p1', productName: 'P1', quantity: 1, sku: 'P1', unitPriceMinor: 100, vatRate: 21 }],
+      lines: [
+        {
+          productId: 'p1',
+          productName: 'P1',
+          quantity: 1,
+          sku: 'P1',
+          taxClassificationCode: STANDARD,
+          unitPriceMinor: 100,
+          vatRate: 21,
+        },
+      ],
       number: 'OBJ-2026-0002',
       partyId: 'storefront-guest',
       status: 'NEW',
